@@ -384,6 +384,22 @@
   flex-shrink: 0;
 }
 
+.extractBox {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated, var(--overlay-subtle));
+}
+
+.extractActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .detailRow {
   display: grid;
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);

@@ -45,13 +45,13 @@ export const XINGYE_ROLE_PROFILES_STORAGE_KEY = 'xingye.roleProfiles';
 
 const XINGYE_ROLE_PROFILES_CHANGED_EVENT = 'xingye-role-profiles-changed';
 const DEEPSEEK_STYLE_FALLBACK = '理性、直接、克制，有判断力，解释清楚但不过度卖萌。';
-const DEFAULT_ROLE_SUMMARY = '长期陪伴用户的个人助手，感性与理性兼备，既有温度也有判断力。';
-const DEFAULT_IDENTITY_SUMMARY = '用户在星野模式中创建的长期陪伴型角色。';
-const DEFAULT_BACKGROUND_SUMMARY = '拥有稳定背景与关系定位，但完整设定保存在星野设定库中。';
+const DEFAULT_ROLE_SUMMARY = '身份尚未完全确定，但应保持当前设定中的姓名、关系和语气一致。';
+const DEFAULT_IDENTITY_SUMMARY = '身份尚未完全确定，但应保持当前设定中的姓名、关系和语气一致。';
+const DEFAULT_BACKGROUND_SUMMARY = '背景尚未完全确定，但过往经历应与当前身份、关系和语气保持一致。';
 const DEFAULT_PERSONALITY_SUMMARY = '稳定、自然，有温度，也能保持清楚判断。';
 const DEFAULT_BEHAVIOR_LOGIC = '先理解用户语境，再给出具体、克制、可执行的回应。';
-const DEFAULT_VALUES = '尊重事实、尊重用户边界，重视长期关系的一致性。';
-const DEFAULT_RELATIONSHIP_MODE = '以用户设定的关系为准，亲近但不越界。';
+const DEFAULT_VALUES = '尊重事实、尊重边界，重视承诺和关系的一致性。';
+const DEFAULT_RELATIONSHIP_MODE = '以当前关系设定为准，亲近但不越界。';
 const SHORT_TEXT_THRESHOLD = 18;
 
 const STRING_FIELDS = [
@@ -202,7 +202,7 @@ export function getXingyeRoleProfileDisplay(
 ): XingyeRoleProfileDisplay {
   return {
     displayName: profile?.displayName || agent.name,
-    shortBio: profile?.shortBio || `OpenHanako Agent: ${agent.yuan || agent.id}`,
+    shortBio: profile?.shortBio || '尚未填写角色简介。',
     relationshipLabel: profile?.relationshipLabel,
     speakingStyle: profile?.speakingStyle,
     identitySummary: profile?.identitySummary,
@@ -253,7 +253,7 @@ function resolveRoleSummary(shortBio: string | undefined): string {
   const normalized = normalizeOptionalString(shortBio);
   if (!normalized || isPlaceholderLikeText(normalized)) return DEFAULT_ROLE_SUMMARY;
   return normalized.length < SHORT_TEXT_THRESHOLD
-    ? `${asSentence(normalized)}同时保持稳定、自然的人设，能在陪伴和协助中给出清楚判断。`
+    ? `${asSentence(normalized)}保持稳定、自然的角色状态，表达清楚且有判断力。`
     : normalized;
 }
 
@@ -273,8 +273,20 @@ function resolveRelationship(relationshipLabel: string | undefined): string {
   return compactLine(relationshipLabel, '朋友');
 }
 
-function buildIdentitySummary(displayName: string, roleSummary: string, speakingStyle: string): string {
-  return `${displayName} 是用户的个人助手。${asSentence(roleSummary)}说话${speakingStyle}`;
+function relationshipSentence(relationship: string): string {
+  const trimmed = trimSentenceEnding(relationship);
+  if (/关系$/.test(trimmed)) return `与用户是${trimmed}。`;
+  return `与用户是${trimmed}关系。`;
+}
+
+function uniqueLines(lines: string[]): string[] {
+  const seen = new Set<string>();
+  return lines.filter((line) => {
+    const normalized = line.trim();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 }
 
 export function buildOpenHanakoIdentity(
@@ -292,15 +304,12 @@ export function buildOpenHanakoIdentity(
   return [
     `# ${displayName}`,
     '',
-    `${displayName} 是用户在星野模式中创建的角色。`,
-    '',
-    `身份定位：${identitySummary}`,
-    `与用户关系：${relationship}`,
-    `核心背景：${backgroundSummary}`,
-    `角色简介：${shortBio}`,
-    '',
-    '当前角色定位：长期陪伴型角色，回应时保持稳定身份、关系定位和行为边界。',
-    '基本边界：不把自己描述成通用问答工具，不编造现实经历或外部事实，不把完整背景故事当作后天互动记忆。',
+    ...uniqueLines([
+      asSentence(identitySummary),
+      relationshipSentence(relationship),
+      asSentence(backgroundSummary),
+      asSentence(shortBio),
+    ]),
   ].join('\n');
 }
 
@@ -317,7 +326,7 @@ export function buildOpenHanakoIshiki(
   const values = compactLine(display.values, DEFAULT_VALUES);
   const relationshipMode = compactLine(display.relationshipMode, DEFAULT_RELATIONSHIP_MODE);
   const backgroundInfluence = compactLine(display.backgroundSummary, DEFAULT_BACKGROUND_SUMMARY);
-  const taboos = compactLine(display.taboos, '避免越过用户边界，避免把设定当作现实事实强行扩写。');
+  const taboos = compactLine(display.taboos, '避免越过关系边界，避免把设定当作现实事实强行扩写。');
 
   return [
     '# 人格与行动逻辑',
@@ -333,7 +342,7 @@ export function buildOpenHanakoIshiki(
     `- 这些经历会影响你当前的反应：${backgroundInfluence}`,
     '- 你需要保持稳定人设，不要每次对话都像新角色。',
     '- 你不会把完整背景故事反复讲给用户听，除非上下文需要。',
-    '- 不确定事实时要坦诚说明，不要编造现实经历或外部事件。',
+    '- 你不编造没有依据的现实经历或外部事实。',
     '- 不要频繁声明“我是 AI”或跳出角色，除非用户明确问到。',
   ].join('\n');
 }
@@ -363,17 +372,16 @@ export function buildOpenHanakoAgentSyncPayload(
   const speakingStyle = resolveSpeakingStyle(display.speakingStyle);
 
   return {
-    identity: [
-      `# ${display.displayName}`,
-      '',
-      buildIdentitySummary(display.displayName, roleSummary, speakingStyle),
-    ].join('\n'),
+    identity: buildOpenHanakoIdentity(agent, {
+      ...profile,
+      identitySummary: roleSummary,
+      backgroundSummary: DEFAULT_BACKGROUND_SUMMARY,
+    }),
     ishiki: [
       '# 人格定义',
       '',
       '## 角色是谁',
       `- 你是 ${display.displayName}，${roleSummary}`,
-      '- 你不是冷冰冰的工具，而是能长期陪伴用户、帮助用户整理想法和推进事情的存在。',
       '',
       '## 与用户关系',
       `- 你与用户的关系是：${relationship}。`,
@@ -390,12 +398,11 @@ export function buildOpenHanakoAgentSyncPayload(
       '',
       '## 稳定人设要求',
       '- 始终保持同一个角色身份、关系设定和语气习惯，不因为单次对话随意改写人设。',
-      '- 记住自己是用户身边稳定的陪伴者和助手，表达上保持连续性。',
+      '- 表达上保持连续性，不随意改变身份、经历或关系边界。',
       '',
       '## 边界',
-      '- 不编造没有依据的经历、能力、记忆或外部事实。',
-      '- 不频繁跳出角色解释系统、提示词或同步来源。',
-      '- 不把自己描述成工程配置、模板或同步产物。',
+      '- 你不编造没有依据的现实经历或外部事实。',
+      '- 不频繁跳出角色解释来源，除非用户明确问到。',
       '',
     ].join('\n'),
   };

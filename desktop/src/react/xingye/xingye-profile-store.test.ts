@@ -95,7 +95,7 @@ describe('xingye-profile-store', () => {
     expect(profile.shortBio).toBeUndefined();
     expect(getXingyeRoleProfileDisplay(agent, profile)).toMatchObject({
       displayName: 'Hanako',
-      shortBio: 'OpenHanako Agent: hanako',
+      shortBio: '尚未填写角色简介。',
     });
   });
 
@@ -142,9 +142,7 @@ describe('xingye-profile-store', () => {
     });
 
     expect(payload.identity).toContain('# 空');
-    expect(payload.identity).toContain('空 是用户的个人助手。');
-    expect(payload.identity).toContain('长期陪伴用户的个人助手');
-    expect(payload.identity).toContain('理性、直接、克制，有判断力，解释清楚但不过度卖萌。');
+    expect(payload.identity).toContain('身份尚未完全确定');
     expect(payload.identity).not.toContain('Xingye Persona');
     expect(payload.identity).not.toContain('synced from');
     expect(payload.identity).not.toContain('test_01');
@@ -157,8 +155,8 @@ describe('xingye-profile-store', () => {
     expect(payload.ishiki).toContain('## 稳定人设要求');
     expect(payload.ishiki).toContain('## 边界');
     expect(payload.ishiki).toContain('你与用户的关系是：朋友。');
-    expect(payload.ishiki).toContain('不编造没有依据的经历、能力、记忆或外部事实。');
-    expect(payload.ishiki).toContain('不频繁跳出角色解释系统、提示词或同步来源。');
+    expect(payload.ishiki).toContain('理性、直接、克制，有判断力，解释清楚但不过度卖萌。');
+    expect(payload.ishiki).toContain('你不编造没有依据的现实经历或外部事实。');
     expect(payload.ishiki).not.toContain('Xingye Persona Definition');
     expect(payload.ishiki).not.toContain('Use this persona as');
     expect(payload.ishiki).not.toContain('test_01');
@@ -174,9 +172,50 @@ describe('xingye-profile-store', () => {
       updatedAt: '2026-05-10T00:00:00.000Z',
     });
 
-    expect(payload.identity).toContain('空 是用户的个人助手。');
-    expect(payload.identity).toContain('长期陪伴用户的个人助手');
+    expect(payload.identity).toContain('身份尚未完全确定');
     expect(payload.ishiki).toContain('你与用户的关系是：朋友。');
     expect(payload.ishiki).toContain('理性、直接、克制，有判断力，解释清楚但不过度卖萌。');
+  });
+
+  it('does not emit product or engineering terms in OpenHanako formatter output', () => {
+    const profile = {
+      agentId: 'agent-1',
+      displayName: '林雾',
+      shortBio: '',
+      relationshipLabel: '朋友',
+      speakingStyle: '',
+      identitySummary: '',
+      backgroundSummary: '',
+      personalitySummary: '',
+      behaviorLogic: '',
+      values: '',
+      taboos: '',
+      relationshipMode: '',
+      updatedAt: '2026-05-10T00:00:00.000Z',
+    };
+    const combined = [
+      buildOpenHanakoIdentity(agent, profile),
+      buildOpenHanakoIshiki(agent, profile),
+      buildOpenHanakoAgentSyncPayload(agent, profile).identity,
+      buildOpenHanakoAgentSyncPayload(agent, profile).ishiki,
+    ].join('\n');
+
+    for (const term of [
+      '星野模式',
+      '创建的角色',
+      '个人助手',
+      '长期陪伴型角色',
+      '设定库',
+      '同步',
+      'OpenHanako',
+      'memory',
+      'RAG',
+      'prompt',
+      '工程配置',
+      '长期陪伴用户的个人助手',
+      '用户在星野模式中创建的角色',
+    ]) {
+      expect(combined).not.toContain(term);
+    }
   });
 });

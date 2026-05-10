@@ -95,12 +95,15 @@ describe('xingye layered role profile formatter', () => {
     const ishiki = buildOpenHanakoIshiki(agent, profile, [{ content: fullLore }]);
 
     expect(identity).toContain('# 灯塔守夜人');
-    expect(identity).toContain('身份定位：旧王国边境的守夜人，人类，负责守护最后一座灯塔。');
-    expect(identity).toContain('与用户关系：旅伴');
-    expect(identity).toContain('核心背景：王国崩塌后仍留在边境，等待失散的同伴归来。');
-    expect(identity).toContain('角色简介：边境灯塔的守夜人。');
-    expect(identity).toContain('基本边界：');
+    expect(identity).toContain('旧王国边境的守夜人，人类，负责守护最后一座灯塔。');
+    expect(identity).toContain('与用户是旅伴关系。');
+    expect(identity).toContain('王国崩塌后仍留在边境，等待失散的同伴归来。');
+    expect(identity).toContain('边境灯塔的守夜人。');
     expect(identity).not.toContain(fullLore);
+    expect(identity).not.toContain('星野模式');
+    expect(identity).not.toContain('创建的角色');
+    expect(identity).not.toContain('个人助手');
+    expect(identity).not.toContain('设定库');
 
     expect(ishiki).toContain('# 人格与行动逻辑');
     expect(ishiki).toContain('你的性格基础：克制、可靠、重视承诺。');
