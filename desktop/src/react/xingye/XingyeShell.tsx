@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import { AgentPhonePanel } from './AgentPhonePanel';
+import { ChatEntryPanel } from './ChatEntryPanel';
+import { GroupChatPanel } from './GroupChatPanel';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import styles from './XingyeShell.module.css';
@@ -33,6 +35,10 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
   const selectedAgent = useMemo(
     () => agents.find(agent => agent.id === selectedXingyeAgentId) ?? null,
     [agents, selectedXingyeAgentId],
+  );
+  const currentAgent = useMemo(
+    () => agents.find(agent => agent.id === currentAgentId) ?? null,
+    [agents, currentAgentId],
   );
   const activeTab = xingyeTabs.find(tab => tab.id === activeTabId) ?? xingyeTabs[0];
 
@@ -96,6 +102,15 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
             />
           ) : activeTab.id === 'phone' ? (
             <AgentPhonePanel agent={selectedAgent} />
+          ) : activeTab.id === 'chat' ? (
+            <ChatEntryPanel
+              selectedAgent={selectedAgent}
+              currentAgent={currentAgent}
+              currentAgentId={currentAgentId}
+              onExit={onExit}
+            />
+          ) : activeTab.id === 'group-chat' ? (
+            <GroupChatPanel />
           ) : (
             <div className={styles.panelInner}>
               <h2 className={styles.panelTitle}>{activeTab.title}</h2>
