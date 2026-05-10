@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
-import { hanaFetch } from '../settings/api';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import {
   buildOpenHanakoAgentSyncPayload,
   getXingyeRoleProfileDisplay,
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
+import { useXingyeLoreEntries } from './xingye-lore-store';
 import { LoreEditor } from './LoreEditor';
 import styles from './XingyeShell.module.css';
 
@@ -20,6 +21,7 @@ interface RoleDetailPanelProps {
 
 export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, onPhone }: RoleDetailPanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
+  const loreEntries = useXingyeLoreEntries(agent?.id);
   const [displayName, setDisplayName] = useState('');
   const [shortBio, setShortBio] = useState('');
   const [relationshipLabel, setRelationshipLabel] = useState('');
@@ -36,6 +38,9 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [pastedLore, setPastedLore] = useState('');
+  const [extractState, setExtractState] = useState<'idle' | 'extracting' | 'done' | 'error'>('idle');
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   useEffect(() => {
     setDisplayName(profile?.displayName ?? '');
@@ -57,7 +62,25 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setSavedAt(null);
     setSyncState('idle');
     setSyncError(null);
+    setPastedLore('');
+    setExtractState('idle');
+    setExtractError(null);
   }, [agent?.id]);
+
+  const extractionLoreEntries = useMemo(() => loreEntries
+    .filter((entry) => entry.enabled && [
+      'background',
+      'worldview',
+      'relationship',
+      'event',
+      'character',
+    ].includes(entry.category))
+    .map((entry) => ({
+      title: entry.title,
+      content: entry.content,
+      category: entry.category,
+      visibility: entry.visibility,
+    })), [loreEntries]);
 
   const syncDraft = useMemo(() => ({
     agentId: agent?.id ?? '',
@@ -153,6 +176,47 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     }
   };
 
+  const handleExtractProfile = async () => {
+    setExtractState('extracting');
+    setExtractError(null);
+    try {
+      if (extractionLoreEntries.length === 0 && !pastedLore.trim()) {
+        throw new Error('请先填写背景故事，或启用至少一条背景 / 世界观 / 关系 / 事件 / 人物设定。');
+      }
+
+      const response = await hanaFetch('/api/xingye/extract-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 60_000,
+        body: JSON.stringify({
+          agentId: agent.id,
+          displayName,
+          relationshipLabel,
+          shortBio,
+          loreEntries: extractionLoreEntries,
+          pastedLore,
+        }),
+      });
+      const data = await response.json();
+      if (data?.error) throw new Error(data.error);
+      const extracted = data?.profile ?? {};
+
+      if (typeof extracted.shortBio === 'string' && extracted.shortBio.trim()) setShortBio(extracted.shortBio.trim());
+      if (typeof extracted.identitySummary === 'string') setIdentitySummary(extracted.identitySummary.trim());
+      if (typeof extracted.backgroundSummary === 'string') setBackgroundSummary(extracted.backgroundSummary.trim());
+      if (typeof extracted.personalitySummary === 'string') setPersonalitySummary(extracted.personalitySummary.trim());
+      if (typeof extracted.behaviorLogic === 'string') setBehaviorLogic(extracted.behaviorLogic.trim());
+      if (typeof extracted.values === 'string') setValues(extracted.values.trim());
+      if (typeof extracted.taboos === 'string') setTaboos(extracted.taboos.trim());
+      if (typeof extracted.relationshipMode === 'string') setRelationshipMode(extracted.relationshipMode.trim());
+      if (typeof extracted.speakingStyle === 'string') setSpeakingStyle(extracted.speakingStyle.trim());
+      setExtractState('done');
+    } catch (error) {
+      setExtractState('error');
+      setExtractError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <div className={styles.detailPanel}>
       <div className={styles.panelHeading}>
@@ -213,6 +277,31 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
       <section className={styles.detailSection} aria-label="角色设定分层">
         <h3 className={styles.detailSectionTitle}>角色设定分层</h3>
         <div className={styles.profileForm}>
+          <div className={styles.extractBox}>
+            {extractionLoreEntries.length === 0 && (
+              <label className={styles.profileField}>
+                <span>可粘贴背景故事</span>
+                <textarea
+                  value={pastedLore}
+                  placeholder="没有启用的背景设定时，可以把完整背景故事粘贴在这里再提取。"
+                  rows={5}
+                  onChange={(event) => setPastedLore(event.target.value)}
+                />
+              </label>
+            )}
+            <div className={styles.extractActions}>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={handleExtractProfile}
+                disabled={extractState === 'extracting'}
+              >
+                {extractState === 'extracting' ? '提取中...' : 'AI 提取设定'}
+              </button>
+              {extractState === 'done' && <span className={styles.saveStatus}>已填入表单，保存后才会生效</span>}
+              {extractState === 'error' && <span className={styles.syncError}>提取失败: {extractError}</span>}
+            </div>
+          </div>
           <label className={styles.profileField}>
             <span>身份摘要</span>
             <textarea
