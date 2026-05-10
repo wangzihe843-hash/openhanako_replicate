@@ -41,6 +41,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [pastedLore, setPastedLore] = useState('');
   const [extractState, setExtractState] = useState<'idle' | 'extracting' | 'done' | 'error'>('idle');
   const [extractError, setExtractError] = useState<string | null>(null);
+  /** 勾选后同步时用 PUT /api/agents/:id/config 写入 agent.name（与设置页助手名一致）；默认不勾选避免误改 OpenHanako 名称。 */
+  const [syncOpenHanakoAgentName, setSyncOpenHanakoAgentName] = useState(false);
 
   useEffect(() => {
     setDisplayName(profile?.displayName ?? '');
@@ -65,6 +67,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setPastedLore('');
     setExtractState('idle');
     setExtractError(null);
+    setSyncOpenHanakoAgentName(false);
   }, [agent?.id]);
 
   const extractionLoreEntries = useMemo(() => loreEntries
@@ -153,7 +156,19 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setSyncState('syncing');
     setSyncError(null);
     try {
-      const results = await Promise.all([
+      const displayForName = getXingyeRoleProfileDisplay(agent, syncDraft).displayName.trim() || agent.name;
+
+      const requests: Promise<Response>[] = [];
+      if (syncOpenHanakoAgentName) {
+        requests.push(
+          hanaFetch(`/api/agents/${agent.id}/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent: { name: displayForName } }),
+          }),
+        );
+      }
+      requests.push(
         hanaFetch(`/api/agents/${agent.id}/identity`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -164,7 +179,9 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: syncPayload.ishiki }),
         }),
-      ]);
+      );
+
+      const results = await Promise.all(requests);
       for (const response of results) {
         const data = await response.json();
         if (data?.error) throw new Error(data.error);
@@ -224,7 +241,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           <p className={styles.eyebrow}>Xingye Role Detail</p>
           <h2 className={styles.panelTitle}>{resolvedProfile.displayName}</h2>
           <p className={styles.panelDescription}>
-            星野资料保存在本地资料层；同步按钮只写入 OpenHanako identity / ishiki，不写入 memory，也不改聊天生成链路。
+            星野资料保存在本地资料层；默认同步只写入 OpenHanako identity / ishiki。可选将星野昵称写入原生助手名（config.agent.name），不写入 memory，也不改聊天生成链路。
           </p>
         </div>
         <button className={styles.secondaryButton} type="button" onClick={onBack}>
@@ -433,6 +450,21 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           </div>
         </div>
       </section>
+
+      <div className={styles.syncNameSetting} aria-label="同步助手名称选项">
+        <label className={styles.syncNameSettingRow}>
+          <input
+            type="checkbox"
+            checked={syncOpenHanakoAgentName}
+            onChange={(event) => setSyncOpenHanakoAgentName(event.target.checked)}
+            aria-label="同步助手名称"
+          />
+          <span className={styles.syncNameSettingTitle}>同步助手名称</span>
+        </label>
+        <p className={styles.syncNameSettingHint}>
+          只修改 OpenHanako 设置页中的显示名称，不会改变助手 ID、模型配置或聊天记录。
+        </p>
+      </div>
 
       <div className={styles.detailActions}>
         <button type="button" onClick={handleSave}>保存星野资料</button>

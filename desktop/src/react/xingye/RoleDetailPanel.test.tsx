@@ -81,6 +81,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledTimes(2);
     });
+    expect(vi.mocked(hanaFetch).mock.calls.map((c) => c[0])).not.toContain('/api/agents/agent-1/config');
     expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/identity', expect.objectContaining({
       method: 'PUT',
       body: expect.stringContaining('星野花子'),
@@ -91,6 +92,38 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     }));
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('allowAutoMoments');
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('avatarDataUrl');
+  });
+
+  it('optionally PATCHes agent.display name via config when syncing', async () => {
+    render(
+      <RoleDetailPanel
+        agent={agent}
+        isOpenHanakoCurrent={true}
+        onBack={vi.fn()}
+        onChat={vi.fn()}
+        onPhone={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '星野花子' } });
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: '会认真记住用户偏好的搭子。' } });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步助手名称' }));
+    fireEvent.click(screen.getByRole('button', { name: '同步到 OpenHanako Agent' }));
+
+    await waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledTimes(3);
+    });
+    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/config', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ agent: { name: '星野花子' } }),
+    }));
+    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/identity', expect.objectContaining({
+      method: 'PUT',
+    }));
+    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/ishiki', expect.objectContaining({
+      method: 'PUT',
+    }));
   });
 
   it('extracts layered role fields from enabled lore without saving or syncing the agent', async () => {

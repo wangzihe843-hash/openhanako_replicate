@@ -384,6 +384,43 @@
   flex-shrink: 0;
 }
 
+/* OpenHanako 显示名同步 — 轻量一行设置项 */
+.syncNameSetting {
+  margin: var(--space-xs) 0 var(--space-sm);
+  padding: 6px 0 4px;
+  border-top: 1px solid var(--overlay-light);
+  background: transparent;
+}
+
+.syncNameSettingRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.syncNameSettingRow input {
+  flex-shrink: 0;
+}
+
+.syncNameSettingTitle {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.syncNameSettingHint {
+  margin: 4px 0 0;
+  padding-left: calc(16px + 8px); /* checkbox + gap，与标题左缘对齐正文 */
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .extractBox {
   display: grid;
   gap: var(--space-sm);
