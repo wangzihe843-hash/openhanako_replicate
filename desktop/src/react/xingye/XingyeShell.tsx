@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { RoleListPanel } from './RoleListPanel';
 import styles from './XingyeShell.module.css';
 import { xingyeTabs, type XingyeTabId } from './xingye-tabs';
 
@@ -42,17 +43,21 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
         </nav>
 
         <main className={styles.panel}>
-          <div className={styles.panelInner}>
-            <h2 className={styles.panelTitle}>{activeTab.title}</h2>
-            <p className={styles.panelDescription}>{activeTab.description}</p>
-            <div className={styles.placeholderGrid}>
-              {activeTab.items.map(item => (
-                <div className={styles.placeholderItem} key={item}>
-                  {item}
-                </div>
-              ))}
+          {activeTab.id === 'characters' ? (
+            <RoleListPanel onNavigate={setActiveTabId} />
+          ) : (
+            <div className={styles.panelInner}>
+              <h2 className={styles.panelTitle}>{activeTab.title}</h2>
+              <p className={styles.panelDescription}>{activeTab.description}</p>
+              <div className={styles.placeholderGrid}>
+                {activeTab.items.map(item => (
+                  <div className={styles.placeholderItem} key={item}>
+                    {item}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </main>
       </div>
     </section>

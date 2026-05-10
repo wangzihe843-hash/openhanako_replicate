@@ -140,6 +140,162 @@
   font-size: 0.9rem;
 }
 
+.roleListPanel {
+  max-width: 980px;
+}
+
+.panelHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.roleCount {
+  flex-shrink: 0;
+  padding: 4px 9px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--bg-card, var(--overlay-subtle));
+  font-size: 0.78rem;
+}
+
+.roleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.roleCard {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: var(--space-md);
+  min-height: 184px;
+  padding: var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+}
+
+.roleCardCurrent {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.roleAvatar {
+  width: 58px;
+  height: 58px;
+  overflow: hidden;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.roleAvatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.roleBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.roleHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.roleTitleBlock {
+  min-width: 0;
+}
+
+.roleName {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.roleId {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.roleStatus {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--bg);
+  font-size: 0.72rem;
+}
+
+.roleIntro {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.roleMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.roleMeta span {
+  padding: 3px 7px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.roleActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.roleActions button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--bg);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.roleActions button:hover {
+  color: var(--accent);
+  border-color: transparent;
+  background: var(--accent-light);
+}
+
+.emptyState {
+  max-width: 560px;
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;
@@ -165,5 +321,22 @@
 
   .panel {
     padding: var(--space-lg);
+  }
+
+  .panelHeading {
+    flex-direction: column;
+  }
+
+  .roleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .roleCard {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .roleAvatar {
+    width: 48px;
+    height: 48px;
   }
 }
