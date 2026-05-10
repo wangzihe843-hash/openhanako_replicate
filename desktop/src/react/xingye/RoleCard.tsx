@@ -5,20 +5,43 @@ import styles from './XingyeShell.module.css';
 
 interface RoleCardProps {
   agent: Agent;
-  isCurrent: boolean;
+  isSelected: boolean;
+  isOpenHanakoCurrent: boolean;
   avatarVersion: number;
+  onSelect: (agent: Agent) => void;
   onDetails: (agent: Agent) => void;
   onChat: (agent: Agent) => void;
   onPhone: (agent: Agent) => void;
 }
 
-export function RoleCard({ agent, isCurrent, avatarVersion, onDetails, onChat, onPhone }: RoleCardProps) {
+export function RoleCard({
+  agent,
+  isSelected,
+  isOpenHanakoCurrent,
+  avatarVersion,
+  onSelect,
+  onDetails,
+  onChat,
+  onPhone,
+}: RoleCardProps) {
   const avatarSrc = agent.hasAvatar
     ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${avatarVersion}`)
     : yuanFallbackAvatar(agent.yuan);
 
   return (
-    <article className={`${styles.roleCard}${isCurrent ? ` ${styles.roleCardCurrent}` : ''}`}>
+    <article
+      className={`${styles.roleCard}${isSelected ? ` ${styles.roleCardCurrent}` : ''}`}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
+      onClick={() => onSelect(agent)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect(agent);
+        }
+      }}
+    >
       <div className={styles.roleAvatar}>
         <img
           src={avatarSrc}
@@ -38,7 +61,9 @@ export function RoleCard({ agent, isCurrent, avatarVersion, onDetails, onChat, o
             <h3 className={styles.roleName}>{agent.name}</h3>
             <p className={styles.roleId}>{agent.id}</p>
           </div>
-          <span className={styles.roleStatus}>{isCurrent ? '当前选中' : '未选中'}</span>
+          <span className={styles.roleStatus}>
+            {isSelected ? '星野选中' : isOpenHanakoCurrent ? 'OpenHanako 当前' : '未选中'}
+          </span>
         </div>
 
         <p className={styles.roleIntro}>
@@ -51,13 +76,31 @@ export function RoleCard({ agent, isCurrent, avatarVersion, onDetails, onChat, o
         </div>
 
         <div className={styles.roleActions}>
-          <button type="button" onClick={() => onDetails(agent)}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDetails(agent);
+            }}
+          >
             详情
           </button>
-          <button type="button" onClick={() => onChat(agent)}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onChat(agent);
+            }}
+          >
             聊天
           </button>
-          <button type="button" onClick={() => onPhone(agent)}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onPhone(agent);
+            }}
+          >
             TA 的手机
           </button>
         </div>

@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useStore } from '../stores';
+import { AgentPhonePanel } from './AgentPhonePanel';
+import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import styles from './XingyeShell.module.css';
 import { xingyeTabs, type XingyeTabId } from './xingye-tabs';
@@ -7,9 +10,42 @@ interface XingyeShellProps {
   onExit: () => void;
 }
 
+type CharacterPanelMode = 'list' | 'detail';
+
 export function XingyeShell({ onExit }: XingyeShellProps) {
+  const agents = useStore(state => state.agents);
+  const currentAgentId = useStore(state => state.currentAgentId);
   const [activeTabId, setActiveTabId] = useState<XingyeTabId>(xingyeTabs[0].id);
+  const [characterPanelMode, setCharacterPanelMode] = useState<CharacterPanelMode>('list');
+  const [selectedXingyeAgentId, setSelectedXingyeAgentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedXingyeAgentId && agents.some(agent => agent.id === selectedXingyeAgentId)) {
+      return;
+    }
+
+    const fallbackAgentId = currentAgentId && agents.some(agent => agent.id === currentAgentId)
+      ? currentAgentId
+      : agents[0]?.id ?? null;
+    setSelectedXingyeAgentId(fallbackAgentId);
+  }, [agents, currentAgentId, selectedXingyeAgentId]);
+
+  const selectedAgent = useMemo(
+    () => agents.find(agent => agent.id === selectedXingyeAgentId) ?? null,
+    [agents, selectedXingyeAgentId],
+  );
   const activeTab = xingyeTabs.find(tab => tab.id === activeTabId) ?? xingyeTabs[0];
+
+  const handleSelectTab = (tabId: XingyeTabId) => {
+    setActiveTabId(tabId);
+    if (tabId === 'characters') {
+      setCharacterPanelMode('list');
+    }
+  };
+
+  const handleNavigate = (tabId: XingyeTabId) => {
+    setActiveTabId(tabId);
+  };
 
   return (
     <section className={styles.shell} aria-label="星野模式">
@@ -35,7 +71,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               className={`${styles.tabButton}${tab.id === activeTabId ? ` ${styles.tabButtonActive}` : ''}`}
               type="button"
               aria-pressed={tab.id === activeTabId}
-              onClick={() => setActiveTabId(tab.id)}
+              onClick={() => handleSelectTab(tab.id)}
             >
               {tab.label}
             </button>
@@ -43,8 +79,23 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
         </nav>
 
         <main className={styles.panel}>
-          {activeTab.id === 'characters' ? (
-            <RoleListPanel onNavigate={setActiveTabId} />
+          {activeTab.id === 'characters' && characterPanelMode === 'detail' ? (
+            <RoleDetailPanel
+              agent={selectedAgent}
+              isOpenHanakoCurrent={selectedAgent?.id === currentAgentId}
+              onBack={() => setCharacterPanelMode('list')}
+              onChat={() => handleNavigate('chat')}
+              onPhone={() => handleNavigate('phone')}
+            />
+          ) : activeTab.id === 'characters' ? (
+            <RoleListPanel
+              selectedAgentId={selectedXingyeAgentId}
+              onSelectAgent={setSelectedXingyeAgentId}
+              onShowDetails={() => setCharacterPanelMode('detail')}
+              onNavigate={handleNavigate}
+            />
+          ) : activeTab.id === 'phone' ? (
+            <AgentPhonePanel agent={selectedAgent} />
           ) : (
             <div className={styles.panelInner}>
               <h2 className={styles.panelTitle}>{activeTab.title}</h2>

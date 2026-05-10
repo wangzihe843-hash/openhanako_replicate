@@ -5,10 +5,18 @@ import type { XingyeTabId } from './xingye-tabs';
 import styles from './XingyeShell.module.css';
 
 interface RoleListPanelProps {
+  selectedAgentId: string | null;
+  onSelectAgent: (agentId: string) => void;
+  onShowDetails: () => void;
   onNavigate: (tabId: XingyeTabId) => void;
 }
 
-export function RoleListPanel({ onNavigate }: RoleListPanelProps) {
+export function RoleListPanel({
+  selectedAgentId,
+  onSelectAgent,
+  onShowDetails,
+  onNavigate,
+}: RoleListPanelProps) {
   const agents = useStore(state => state.agents);
   const currentAgentId = useStore(state => state.currentAgentId);
   const avatarVersion = Date.now();
@@ -34,7 +42,7 @@ export function RoleListPanel({ onNavigate }: RoleListPanelProps) {
         <div>
           <h2 className={styles.panelTitle}>角色</h2>
           <p className={styles.panelDescription}>
-            使用 OpenHanako 现有 Agent 数据展示星野角色列表，当前不创建新资料或后端数据。
+            点击卡片只更新星野本地选择，不会切换 OpenHanako 当前 Agent。
           </p>
         </div>
         <span className={styles.roleCount}>{agents.length} 个角色</span>
@@ -45,14 +53,22 @@ export function RoleListPanel({ onNavigate }: RoleListPanelProps) {
           <RoleCard
             key={agent.id}
             agent={agent}
-            isCurrent={agent.id === currentAgentId}
+            isSelected={agent.id === selectedAgentId}
+            isOpenHanakoCurrent={agent.id === currentAgentId}
             avatarVersion={avatarVersion}
-            onDetails={(selectedAgent) => logRoleAction('details', selectedAgent)}
+            onSelect={(selectedAgent) => onSelectAgent(selectedAgent.id)}
+            onDetails={(selectedAgent) => {
+              onSelectAgent(selectedAgent.id);
+              logRoleAction('details', selectedAgent);
+              onShowDetails();
+            }}
             onChat={(selectedAgent) => {
+              onSelectAgent(selectedAgent.id);
               logRoleAction('chat', selectedAgent);
               onNavigate('chat');
             }}
             onPhone={(selectedAgent) => {
+              onSelectAgent(selectedAgent.id);
               logRoleAction('phone', selectedAgent);
               onNavigate('phone');
             }}
