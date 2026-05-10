@@ -348,7 +348,8 @@
 }
 
 .profileField input,
-.profileField textarea {
+.profileField textarea,
+.profileField select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--overlay-light);
@@ -366,7 +367,8 @@
 }
 
 .profileField input:focus,
-.profileField textarea:focus {
+.profileField textarea:focus,
+.profileField select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-light);
 }
@@ -412,6 +414,165 @@
   padding: var(--space-sm) var(--space-md) var(--space-md);
   color: var(--text-muted);
   line-height: 1.65;
+}
+
+.syncPreview {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.syncPreview span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.syncPreview pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  color: var(--text);
+  background: var(--bg-elevated, var(--overlay-subtle));
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.syncError {
+  color: var(--danger, #d74b4b);
+  font-size: 0.78rem;
+}
+
+.loreEditor {
+  padding: var(--space-md);
+}
+
+.loreEditorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.loreEditorHeader .detailSectionTitle {
+  padding: 0;
+}
+
+.loreHint,
+.loreEmpty {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.loreForm {
+  display: grid;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.loreMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.primaryAction {
+  justify-self: start;
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--bg);
+  background: var(--accent);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.loreList {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.loreCard {
+  padding: var(--space-sm);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated, var(--overlay-subtle));
+}
+
+.loreCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.loreTitleBlock {
+  min-width: 0;
+}
+
+.loreTitleBlock h4 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.loreTitleBlock p,
+.loreContent {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.loreContent {
+  margin-top: var(--space-xs);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.loreKeywords,
+.loreActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-sm);
+}
+
+.loreKeywords span {
+  padding: 3px 7px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--bg);
+  font-size: 0.72rem;
+}
+
+.loreCard button,
+.loreEditorHeader button {
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--bg);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
 }
 
 .entryNotice {
@@ -616,5 +777,9 @@
 
   .phoneHeader strong {
     text-align: left;
+  }
+
+  .loreMetaGrid {
+    grid-template-columns: 1fr;
   }
 }

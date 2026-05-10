@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
+import { hanaFetch } from '../settings/api';
 import {
+  buildOpenHanakoAgentSyncPayload,
   getXingyeRoleProfileDisplay,
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
+import { LoreEditor } from './LoreEditor';
 import styles from './XingyeShell.module.css';
 
 interface RoleDetailPanelProps {
@@ -21,24 +24,76 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [shortBio, setShortBio] = useState('');
   const [relationshipLabel, setRelationshipLabel] = useState('');
   const [speakingStyle, setSpeakingStyle] = useState('');
+  const [identitySummary, setIdentitySummary] = useState('');
+  const [backgroundSummary, setBackgroundSummary] = useState('');
+  const [personalitySummary, setPersonalitySummary] = useState('');
+  const [behaviorLogic, setBehaviorLogic] = useState('');
+  const [values, setValues] = useState('');
+  const [taboos, setTaboos] = useState('');
+  const [relationshipMode, setRelationshipMode] = useState('');
   const [allowAutoMoments, setAllowAutoMoments] = useState(false);
   const [allowProactiveDM, setAllowProactiveDM] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     setDisplayName(profile?.displayName ?? '');
     setShortBio(profile?.shortBio ?? '');
     setRelationshipLabel(profile?.relationshipLabel ?? '');
     setSpeakingStyle(profile?.speakingStyle ?? '');
+    setIdentitySummary(profile?.identitySummary ?? '');
+    setBackgroundSummary(profile?.backgroundSummary ?? '');
+    setPersonalitySummary(profile?.personalitySummary ?? '');
+    setBehaviorLogic(profile?.behaviorLogic ?? '');
+    setValues(profile?.values ?? '');
+    setTaboos(profile?.taboos ?? '');
+    setRelationshipMode(profile?.relationshipMode ?? '');
     setAllowAutoMoments(profile?.allowAutoMoments ?? false);
     setAllowProactiveDM(profile?.allowProactiveDM ?? false);
   }, [agent?.id, profile]);
 
   useEffect(() => {
     setSavedAt(null);
+    setSyncState('idle');
+    setSyncError(null);
   }, [agent?.id]);
 
-  if (!agent) {
+  const syncDraft = useMemo(() => ({
+    agentId: agent?.id ?? '',
+    displayName,
+    shortBio,
+    relationshipLabel,
+    speakingStyle,
+    identitySummary,
+    backgroundSummary,
+    personalitySummary,
+    behaviorLogic,
+    values,
+    taboos,
+    relationshipMode,
+    updatedAt: profile?.updatedAt ?? new Date(0).toISOString(),
+  }), [
+    agent?.id,
+    displayName,
+    shortBio,
+    relationshipLabel,
+    speakingStyle,
+    identitySummary,
+    backgroundSummary,
+    personalitySummary,
+    behaviorLogic,
+    values,
+    taboos,
+    relationshipMode,
+    profile?.updatedAt,
+  ]);
+  const syncPayload = useMemo(
+    () => agent ? buildOpenHanakoAgentSyncPayload(agent, syncDraft) : null,
+    [agent, syncDraft],
+  );
+
+  if (!agent || !syncPayload) {
     return (
       <div className={styles.emptyState}>
         <h2 className={styles.panelTitle}>角色详情</h2>
@@ -51,16 +106,51 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   }
 
   const resolvedProfile = getXingyeRoleProfileDisplay(agent, profile);
+
   const handleSave = () => {
     const saved = saveXingyeRoleProfile(agent.id, {
       displayName,
       shortBio,
       relationshipLabel,
       speakingStyle,
+      identitySummary,
+      backgroundSummary,
+      personalitySummary,
+      behaviorLogic,
+      values,
+      taboos,
+      relationshipMode,
       allowAutoMoments,
       allowProactiveDM,
     });
     setSavedAt(saved.updatedAt);
+  };
+
+  const handleSyncOpenHanakoAgent = async () => {
+    setSyncState('syncing');
+    setSyncError(null);
+    try {
+      const results = await Promise.all([
+        hanaFetch(`/api/agents/${agent.id}/identity`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: syncPayload.identity }),
+        }),
+        hanaFetch(`/api/agents/${agent.id}/ishiki`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: syncPayload.ishiki }),
+        }),
+      ]);
+      for (const response of results) {
+        const data = await response.json();
+        if (data?.error) throw new Error(data.error);
+      }
+      setSyncState('synced');
+    } catch (error) {
+      setSyncState('error');
+      setSyncError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (
@@ -70,7 +160,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           <p className={styles.eyebrow}>Xingye Role Detail</p>
           <h2 className={styles.panelTitle}>{resolvedProfile.displayName}</h2>
           <p className={styles.panelDescription}>
-            星野资料只保存在当前浏览器的本地资料层，不修改 OpenHanako Agent。
+            星野资料保存在本地资料层；同步按钮只写入 OpenHanako identity / ishiki，不写入 memory，也不改聊天生成链路。
           </p>
         </div>
         <button className={styles.secondaryButton} type="button" onClick={onBack}>
@@ -78,8 +168,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         </button>
       </div>
 
-      <section className={styles.detailSection} aria-label="星野扩展资料">
-        <h3 className={styles.detailSectionTitle}>星野资料</h3>
+      <section className={styles.detailSection} aria-label="星野基础资料">
+        <h3 className={styles.detailSectionTitle}>星野基础资料</h3>
         <div className={styles.profileForm}>
           <label className={styles.profileField}>
             <span>星野昵称</span>
@@ -104,7 +194,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
             <input
               type="text"
               value={relationshipLabel}
-              placeholder="朋友、搭子、老师..."
+              placeholder="朋友、搭子、旅伴..."
               onChange={(event) => setRelationshipLabel(event.target.value)}
             />
           </label>
@@ -112,9 +202,78 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
             <span>说话风格</span>
             <textarea
               value={speakingStyle}
-              placeholder="温柔直接、简短、有分寸..."
+              placeholder="理性、直接、克制，有判断力..."
               rows={2}
               onChange={(event) => setSpeakingStyle(event.target.value)}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className={styles.detailSection} aria-label="角色设定分层">
+        <h3 className={styles.detailSectionTitle}>角色设定分层</h3>
+        <div className={styles.profileForm}>
+          <label className={styles.profileField}>
+            <span>身份摘要</span>
+            <textarea
+              value={identitySummary}
+              placeholder="身份 / 职业 / 物种 / 世界观定位。"
+              rows={2}
+              onChange={(event) => setIdentitySummary(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>背景摘要</span>
+            <textarea
+              value={backgroundSummary}
+              placeholder="只写一句核心背景，不粘贴完整背景故事。"
+              rows={2}
+              onChange={(event) => setBackgroundSummary(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>人格摘要</span>
+            <textarea
+              value={personalitySummary}
+              placeholder="性格基础，例如克制、可靠、敏感但不脆弱。"
+              rows={2}
+              onChange={(event) => setPersonalitySummary(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>行为逻辑</span>
+            <textarea
+              value={behaviorLogic}
+              placeholder="角色如何判断、行动、回应用户。"
+              rows={2}
+              onChange={(event) => setBehaviorLogic(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>价值观</span>
+            <textarea
+              value={values}
+              placeholder="角色重视什么、拒绝什么。"
+              rows={2}
+              onChange={(event) => setValues(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>禁忌 / 边界</span>
+            <textarea
+              value={taboos}
+              placeholder="不该触碰的关系边界、经历边界、表达边界。"
+              rows={2}
+              onChange={(event) => setTaboos(event.target.value)}
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>关系模式</span>
+            <textarea
+              value={relationshipMode}
+              placeholder="角色如何看待用户，亲密度和边界如何保持。"
+              rows={2}
+              onChange={(event) => setRelationshipMode(event.target.value)}
             />
           </label>
           <label className={styles.profileToggle}>
@@ -134,6 +293,10 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
             <span>允许主动私聊</span>
           </label>
         </div>
+      </section>
+
+      <section className={styles.detailSection} aria-label="背景故事与设定库">
+        <LoreEditor agentId={agent.id} />
       </section>
 
       <section className={styles.detailSection} aria-label="角色基础信息">
@@ -168,11 +331,30 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         <p className={styles.detailCopy}>{resolvedProfile.shortBio}</p>
       </section>
 
+      <section className={styles.detailSection} aria-label="同步到 OpenHanako Agent 预览">
+        <h3 className={styles.detailSectionTitle}>同步到 OpenHanako Agent 预览</h3>
+        <div className={styles.syncPreview}>
+          <div>
+            <span>identity.md</span>
+            <pre>{syncPayload.identity}</pre>
+          </div>
+          <div>
+            <span>ishiki.md</span>
+            <pre>{syncPayload.ishiki}</pre>
+          </div>
+        </div>
+      </section>
+
       <div className={styles.detailActions}>
         <button type="button" onClick={handleSave}>保存星野资料</button>
+        <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing'}>
+          {syncState === 'syncing' ? '同步中...' : '同步到 OpenHanako Agent'}
+        </button>
         <button type="button" onClick={onChat}>聊天</button>
         <button type="button" onClick={onPhone}>TA 的手机</button>
         {savedAt && <span className={styles.saveStatus}>已保存 {new Date(savedAt).toLocaleString()}</span>}
+        {syncState === 'synced' && <span className={styles.saveStatus}>已同步到 OpenHanako Agent</span>}
+        {syncState === 'error' && <span className={styles.syncError}>同步失败: {syncError}</span>}
       </div>
     </div>
   );
