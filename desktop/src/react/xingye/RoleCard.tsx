@@ -1,10 +1,15 @@
 import type { Agent } from '../types';
 import { hanaUrl } from '../hooks/use-hana-fetch';
 import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import {
+  getXingyeRoleProfileDisplay,
+  type XingyeRoleProfile,
+} from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
 
 interface RoleCardProps {
   agent: Agent;
+  profile?: XingyeRoleProfile | null;
   isSelected: boolean;
   isOpenHanakoCurrent: boolean;
   avatarVersion: number;
@@ -16,6 +21,7 @@ interface RoleCardProps {
 
 export function RoleCard({
   agent,
+  profile,
   isSelected,
   isOpenHanakoCurrent,
   avatarVersion,
@@ -24,9 +30,11 @@ export function RoleCard({
   onChat,
   onPhone,
 }: RoleCardProps) {
-  const avatarSrc = agent.hasAvatar
-    ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${avatarVersion}`)
-    : yuanFallbackAvatar(agent.yuan);
+  const display = getXingyeRoleProfileDisplay(agent, profile);
+  const avatarSrc = display.avatarDataUrl
+    || (agent.hasAvatar
+      ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${avatarVersion}`)
+      : yuanFallbackAvatar(agent.yuan));
 
   return (
     <article
@@ -58,7 +66,7 @@ export function RoleCard({
       <div className={styles.roleBody}>
         <div className={styles.roleHeader}>
           <div className={styles.roleTitleBlock}>
-            <h3 className={styles.roleName}>{agent.name}</h3>
+            <h3 className={styles.roleName}>{display.displayName}</h3>
             <p className={styles.roleId}>{agent.id}</p>
           </div>
           <span className={styles.roleStatus}>
@@ -66,11 +74,11 @@ export function RoleCard({
           </span>
         </div>
 
-        <p className={styles.roleIntro}>
-          简介占位：后续可接入角色资料、人格设定或星野侧展示文案。
-        </p>
+        <p className={styles.roleIntro}>{display.shortBio}</p>
 
         <div className={styles.roleMeta}>
+          {display.relationshipLabel && <span>{display.relationshipLabel}</span>}
+          {display.speakingStyle && <span>{display.speakingStyle}</span>}
           <span>Yuan: {agent.yuan}</span>
           {agent.isPrimary && <span>主角色</span>}
         </div>

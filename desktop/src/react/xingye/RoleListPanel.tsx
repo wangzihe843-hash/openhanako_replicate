@@ -1,6 +1,7 @@
 import { useStore } from '../stores';
 import type { Agent } from '../types';
 import { RoleCard } from './RoleCard';
+import { useXingyeRoleProfiles } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
 import styles from './XingyeShell.module.css';
 
@@ -19,6 +20,7 @@ export function RoleListPanel({
 }: RoleListPanelProps) {
   const agents = useStore(state => state.agents);
   const currentAgentId = useStore(state => state.currentAgentId);
+  const profiles = useXingyeRoleProfiles();
   const avatarVersion = Date.now();
 
   const logRoleAction = (action: string, agent: Agent) => {
@@ -53,6 +55,7 @@ export function RoleListPanel({
           <RoleCard
             key={agent.id}
             agent={agent}
+            profile={profiles[agent.id]}
             isSelected={agent.id === selectedAgentId}
             isOpenHanakoCurrent={agent.id === currentAgentId}
             avatarVersion={avatarVersion}

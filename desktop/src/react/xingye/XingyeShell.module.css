@@ -329,6 +329,59 @@
   font-weight: 650;
 }
 
+.profileForm {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.profileField {
+  display: grid;
+  gap: 6px;
+}
+
+.profileField span,
+.profileToggle span,
+.saveStatus {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.profileField input,
+.profileField textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--bg-elevated, var(--overlay-subtle));
+  font: inherit;
+  line-height: 1.45;
+  outline: none;
+}
+
+.profileField textarea {
+  resize: vertical;
+}
+
+.profileField input:focus,
+.profileField textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.profileToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profileToggle input {
+  flex-shrink: 0;
+}
+
 .detailRow {
   display: grid;
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
@@ -425,15 +478,24 @@
 }
 
 .phoneShell {
+  width: min(100%, 420px);
   max-width: 420px;
   overflow: hidden;
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
+  background-position: center;
+  background-size: cover;
+}
+
+.phonePanel {
+  max-width: 760px;
+  min-width: 0;
 }
 
 .phoneHeader {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
@@ -442,18 +504,55 @@
 }
 
 .phoneHeader span {
+  flex-shrink: 0;
   color: var(--text-muted);
   font-size: 0.78rem;
 }
 
 .phoneHeader strong {
   min-width: 0;
+  max-width: 100%;
   font-size: 0.95rem;
+  text-align: right;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  text-overflow: ellipsis;
 }
 
 .phoneContent {
   padding: var(--space-sm) 0;
+}
+
+.phoneRow {
+  display: grid;
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+  gap: var(--space-sm);
+  padding: 11px var(--space-md);
+  border-bottom: 1px solid var(--overlay-light);
+}
+
+.phoneRow:last-child {
+  border-bottom: none;
+}
+
+.phoneLabel {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+}
+
+.phoneValue {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 520;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 760px) {
@@ -503,5 +602,19 @@
   .detailRow {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .phoneRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .phoneHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .phoneHeader strong {
+    text-align: left;
   }
 }

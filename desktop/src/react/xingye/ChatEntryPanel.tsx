@@ -1,4 +1,8 @@
 import type { Agent } from '../types';
+import {
+  getXingyeRoleProfileDisplay,
+  useXingyeRoleProfile,
+} from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
 
 interface ChatEntryPanelProps {
@@ -15,6 +19,10 @@ export function ChatEntryPanel({
   onExit,
 }: ChatEntryPanelProps) {
   const selectedAgentId = selectedAgent?.id ?? null;
+  const selectedProfile = useXingyeRoleProfile(selectedAgentId);
+  const currentProfile = useXingyeRoleProfile(currentAgent?.id);
+  const selectedDisplay = selectedAgent ? getXingyeRoleProfileDisplay(selectedAgent, selectedProfile) : null;
+  const currentDisplay = currentAgent ? getXingyeRoleProfileDisplay(currentAgent, currentProfile) : null;
   const isSameAgent = !!selectedAgentId && selectedAgentId === currentAgentId;
 
   return (
@@ -37,7 +45,15 @@ export function ChatEntryPanel({
         </div>
         <div className={styles.detailRow}>
           <span>星野选中角色</span>
-          <strong>{selectedAgent?.name ?? '未选择角色'}</strong>
+          <strong>{selectedDisplay?.displayName ?? '未选择角色'}</strong>
+        </div>
+        <div className={styles.detailRow}>
+          <span>星野简介</span>
+          <strong>{selectedDisplay?.shortBio ?? '未选择角色'}</strong>
+        </div>
+        <div className={styles.detailRow}>
+          <span>关系标签</span>
+          <strong>{selectedDisplay?.relationshipLabel ?? '未设置'}</strong>
         </div>
         <div className={styles.detailRow}>
           <span>OpenHanako currentAgentId</span>
@@ -45,7 +61,7 @@ export function ChatEntryPanel({
         </div>
         <div className={styles.detailRow}>
           <span>OpenHanako 当前聊天角色</span>
-          <strong>{currentAgent?.name ?? '未设置当前角色'}</strong>
+          <strong>{currentDisplay?.displayName ?? '未设置当前角色'}</strong>
         </div>
         <div className={styles.detailRow}>
           <span>二者是否一致</span>
