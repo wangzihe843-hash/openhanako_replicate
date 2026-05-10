@@ -1,0 +1,169 @@
+.shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 48px var(--space-lg) var(--space-md);
+  border-bottom: 1px solid var(--overlay-light);
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.exitButton {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  color: var(--text);
+  background: var(--bg-card, var(--bg));
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.exitButton:hover {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: transparent;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(136px, 180px) minmax(0, 1fr);
+}
+
+.tabs {
+  min-height: 0;
+  padding: var(--space-md) var(--space-sm);
+  border-right: 1px solid var(--overlay-light);
+  overflow-y: auto;
+}
+
+.tabButton {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  margin: 0 0 4px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.84rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.tabButton:hover {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.tabButtonActive {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-xl);
+}
+
+.panelInner {
+  max-width: 760px;
+}
+
+.panelTitle {
+  margin: 0 0 var(--space-xs);
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+
+.panelDescription {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.placeholderGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.placeholderItem {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  padding: var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .content {
+    grid-template-columns: 1fr;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-right: none;
+    border-bottom: 1px solid var(--overlay-light);
+    overflow-x: auto;
+  }
+
+  .tabButton {
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .panel {
+    padding: var(--space-lg);
+  }
+}

@@ -5,7 +5,7 @@
  * 此文件只负责 titlebar + sidebar + 主区域 + overlays 的组装。
  */
 
-import { useEffect, useRef, lazy, Suspense } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { useStore } from './stores';
 import type { ActivePanel } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -45,6 +45,7 @@ import { SettingsModalShell } from './components/SettingsModalShell';
 import { initTheme, initDragPrevention } from './bootstrap';
 import { initApp } from './app-init';
 import { MainContent } from './MainContent';
+import { XingyeShell } from './xingye/XingyeShell';
 import { hanaUrl } from './hooks/use-hana-fetch';
 import { yuanFallbackAvatar } from './utils/agent-helpers';
 import { useAnyBrowserRunning } from './stores/browser-slice';
@@ -172,6 +173,7 @@ function JianChannelInfo() {
 // ── App 根组件 ──
 
 function App() {
+  const [xingyeOpen, setXingyeOpen] = useState(false);
   useSidebarResize();
   // 订阅 locale 变化，驱动整棵树重渲染
   useStore(s => s.locale);
@@ -302,6 +304,12 @@ function App() {
                 <span>{t('automation.title')}</span>
                 <AutomationBadge />
               </button>
+              <button className="sidebar-activity-bar" id="xingyeBar" title="星野" aria-pressed={xingyeOpen} onClick={() => setXingyeOpen(true)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l1.7 4.9L19 9.6l-4.1 3.1.1 5.3-4.3-3.1L6 16.7l1.7-5L4.4 7.6l5.2.1L12 3z"></path>
+                </svg>
+                <span>星野</span>
+              </button>
               <button className={`sidebar-activity-bar browser-bg-bar${browserRunning ? '' : ' hidden'}`} id="browserBgBar" title={t('browser.backgroundHint')} onClick={() => window.platform?.openBrowserViewer?.()}>
                 <svg className="browser-bg-globe" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10"></circle>
@@ -330,46 +338,51 @@ function App() {
 
         {/* Main content */}
         <MainContent>
-
-          <div className={`chat-area${currentTab === 'chat' ? '' : ' hidden'}${hasPanels ? ' has-panels' : ''}`}>
-            <WelcomeContainer />
-            <RegionalErrorBoundary region="chat" resetKeys={[currentSessionPath]}>
-              <ChatArea />
-            </RegionalErrorBoundary>
-          </div>
-
-          <div className={`input-area${currentTab === 'chat' ? '' : ' hidden'}`}>
-            <RegionalErrorBoundary region="input" resetKeys={[currentSessionPath]}>
-              <InputArea key={currentSessionPath || '__new'} cardRef={inputCardRef} />
-            </RegionalErrorBoundary>
-          </div>
-
-          <div className={`channel-view${currentTab === 'channels' ? ' active' : ''}`}>
-            {currentChannel ? (
-              <>
-                <ChannelHeader />
-                <div className="channel-messages">
-                  <ChannelMessages />
-                </div>
-                <ChannelInputArea />
-              </>
-            ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                {t('channel.selectHint')}
+          {xingyeOpen ? (
+            <XingyeShell onExit={() => setXingyeOpen(false)} />
+          ) : (
+            <>
+              <div className={`chat-area${currentTab === 'chat' ? '' : ' hidden'}${hasPanels ? ' has-panels' : ''}`}>
+                <WelcomeContainer />
+                <RegionalErrorBoundary region="chat" resetKeys={[currentSessionPath]}>
+                  <ChatArea />
+                </RegionalErrorBoundary>
               </div>
-            )}
-          </div>
 
-          {isPluginTab && (
-            <div style={{ flex: 1, display: 'flex' }}>
-              <PluginPageView pluginId={currentTab.slice(7)} />
-            </div>
+              <div className={`input-area${currentTab === 'chat' ? '' : ' hidden'}`}>
+                <RegionalErrorBoundary region="input" resetKeys={[currentSessionPath]}>
+                  <InputArea key={currentSessionPath || '__new'} cardRef={inputCardRef} />
+                </RegionalErrorBoundary>
+              </div>
+
+              <div className={`channel-view${currentTab === 'channels' ? ' active' : ''}`}>
+                {currentChannel ? (
+                  <>
+                    <ChannelHeader />
+                    <div className="channel-messages">
+                      <ChannelMessages />
+                    </div>
+                    <ChannelInputArea />
+                  </>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    {t('channel.selectHint')}
+                  </div>
+                )}
+              </div>
+
+              {isPluginTab && (
+                <div style={{ flex: 1, display: 'flex' }}>
+                  <PluginPageView pluginId={currentTab.slice(7)} />
+                </div>
+              )}
+
+              {/* Floating panels render into main-content */}
+              <ActivityPanel />
+              <AutomationPanel />
+              <BridgePanel />
+            </>
           )}
-
-          {/* Floating panels render into main-content */}
-          <ActivityPanel />
-          <AutomationPanel />
-          <BridgePanel />
         </MainContent>
 
         <PreviewPanel />
