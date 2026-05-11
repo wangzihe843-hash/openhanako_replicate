@@ -344,7 +344,7 @@ export async function generateVirtualContactsWithAI(params: {
         if (generated.length > maxCount) generated = generated.slice(0, maxCount);
       }
     }
-    applyAiGeneratedContacts(ownerAgent.id, generated, {
+    const applyResult = applyAiGeneratedContacts(ownerAgent.id, generated, {
       mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
     });
     ensureStoredVirtualContactsNonActiveDistribution(
@@ -364,15 +364,24 @@ export async function generateVirtualContactsWithAI(params: {
       version: 1,
     });
     setContactUpdateState(ownerAgent.id, mode, 'success');
-    const notice = ruleFallbackPadded
-      ? `AI 返回数量偏少，已用本地规则补足 ${ruleFallbackPadded} 个。`
-      : undefined;
+    const noticeBits: string[] = [];
+    if (ruleFallbackPadded) noticeBits.push(`AI 返回数量偏少，已用本地规则补足 ${ruleFallbackPadded} 个。`);
+    if (applyResult.createdCount === 0 && applyResult.mergedCount > 0) {
+      noticeBits.push('生成结果与已有联系人重复，未新增；已合并刷新印象。');
+    } else if (applyResult.createdCount > 0 && applyResult.mergedCount > 0) {
+      noticeBits.push(`实际新增 ${applyResult.createdCount} 条，合并刷新 ${applyResult.mergedCount} 条（同名归并）。`);
+    } else if (applyResult.createdCount > 0) {
+      noticeBits.push(`实际新增 ${applyResult.createdCount} 条联系人。`);
+    }
     return {
       generatedBy: 'ai' as const,
       count: virtuals.length,
       aiReturnedCount,
       ruleFallbackPadded,
-      notice,
+      createdCount: applyResult.createdCount,
+      mergedCount: applyResult.mergedCount,
+      skippedCount: applyResult.skippedCount,
+      notice: noticeBits.length ? noticeBits.join(' ') : undefined,
     };
   } catch (error) {
     ensureGeneratedVirtualContacts(ownerAgent.id, ownerAgent, ownerProfile, agents, profiles);
@@ -446,8 +455,12 @@ export async function regenerateAllContactsWithAI(params: {
   const { ownerAgent, ownerProfile, agents, profiles, profileFingerprint } = params;
   /** 快照与列表上限见 xingye-phone-store：仅保留最近 2 份备份，更早的会在写入快照时丢弃。 */
   createPhoneContactSnapshot(ownerAgent.id, 'regenerate_all_before');
-  /** 清空全部 virtual_contact 后再生成；prompt 只带清空后的 user/agent，不按旧 virtual 名单对齐。 */
-  clearAllVirtualContactsForOwner(ownerAgent.id);
+  /**
+   * 清空 AI 生成的 virtual_contact 后再生成；但保留任何 manualEditedFields 非空 / source=manual 的虚拟
+   * 联系人，以满足「重新生成全部不应清掉手动联系人和手动 blocked/deleted 状态」的需求。
+   * 余下的同名 AI 候选会通过 applyAiGeneratedContacts 的 dedupe 合并到保留项上。
+   */
+  clearAllVirtualContactsForOwner(ownerAgent.id, undefined, { preserveManuallyEdited: true });
   const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
   return generateVirtualContactsWithAI({
     ownerAgent,

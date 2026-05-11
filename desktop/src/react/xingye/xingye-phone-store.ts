@@ -1519,45 +1519,98 @@ export function ensureGeneratedVirtualContacts(
   return generated;
 }
 
-function findVirtualContactByName(ownerAgentId: string, displayName: string, storage: StorageLike | null = getLocalStorage()): XingyeVirtualContact | null {
-  const normalized = displayName.trim().toLowerCase();
-  if (!normalized) return null;
-  const contacts = getVirtualContacts(ownerAgentId, storage);
-  return contacts.find(item => item.displayName.trim().toLowerCase() === normalized) ?? null;
+/**
+ * 把联系人显示名归一化为 dedupe 用的稳定键。
+ *
+ * 规则：
+ * - trim
+ * - 全角 → 半角（含全角空格 \u3000）
+ * - lowercase
+ * - 合并连续空白
+ * - 去掉常见装饰符号 / 引号 / 标点 / 括号（首尾整体清理）
+ *
+ * 仅用于内部去重比对；不会用于显示。
+ */
+export function normalizeContactNameForDedupe(value: string | null | undefined): string {
+  if (typeof value !== 'string') return '';
+  let s = value.trim();
+  if (!s) return '';
+  s = s.replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  s = s.replace(/\u3000/g, ' ');
+  s = s.toLowerCase();
+  s = s.replace(/\s+/g, ' ');
+  const edgeJunk = /^[\s\-_·•●．。、!！?？:：;；'"`*【】\[\](){}<>《》「」『』~～#@&^|/\\.,，]+|[\s\-_·•●．。、!！?？:：;；'"`*【】\[\](){}<>《》「」『』~～#@&^|/\\.,，]+$/g;
+  s = s.replace(edgeJunk, '');
+  return s.trim();
 }
 
-/** 全量 AI 生成时按 displayName 合并：只合并「当前为 active」的同名联系人，避免覆盖 blocked/deleted 行。 */
+/**
+ * 计算联系人的去重 key：
+ * 1. user 不参与 virtual_contact 去重，返回 ''
+ * 2. 有 linkedAgentId → `agent:${linkedAgentId}`
+ * 3. 否则用 normalized displayName
+ * 4. displayName 不存在时用 normalized remark
+ * 5. 不使用随机 id 当 dedupe key
+ */
+export function getContactDedupeKey(contact: {
+  targetType?: string | null;
+  linkedAgentId?: string | null;
+  displayName?: string | null;
+  remark?: string | null;
+}): string {
+  if (contact.targetType === 'user') return '';
+  const linked = typeof contact.linkedAgentId === 'string' ? contact.linkedAgentId.trim() : '';
+  if (linked) return `agent:${linked}`;
+  const name = normalizeContactNameForDedupe(contact.displayName ?? '');
+  if (name) return `name:${name}`;
+  const remark = normalizeContactNameForDedupe(contact.remark ?? '');
+  if (remark) return `remark:${remark}`;
+  return '';
+}
+
+const PLACEHOLDER_DISPLAY_NAMES = new Set<string>([
+  '未命名联系人',
+  '未命名',
+  '未知联系人',
+  '联系人',
+  'unnamed contact',
+  'unknown',
+]);
+
+/** 仅丢弃 displayName 为空 / 占位 / 全符号 / 与 normalizeAiGeneratedContact 给出的兜底相同等明显模板项。 */
+function isPlaceholderContactName(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  if (PLACEHOLDER_DISPLAY_NAMES.has(trimmed.toLowerCase())) return true;
+  const normalized = normalizeContactNameForDedupe(trimmed);
+  if (!normalized) return true;
+  if (PLACEHOLDER_DISPLAY_NAMES.has(normalized)) return true;
+  return false;
+}
+
+export function findVirtualContactByName(ownerAgentId: string, displayName: string, storage: StorageLike | null = getLocalStorage()): XingyeVirtualContact | null {
+  const normalized = normalizeContactNameForDedupe(displayName);
+  if (!normalized) return null;
+  const contacts = getVirtualContacts(ownerAgentId, storage);
+  return contacts.find(item => normalizeContactNameForDedupe(item.displayName) === normalized) ?? null;
+}
+
+/**
+ * AI 生成联系人保存时的同名匹配（旧名 `findVirtualContactForBatchAiMerge`）。
+ *
+ * 关键修复：不再只匹配 active —— 任何状态的同名联系人（active / blocked / deleted）
+ * 都视为同一个人，避免「黑名单/已删除联系人被重复生成」。
+ * 状态如何合并由 `mergeStatusForAiGeneratedVirtual` 决定（blocked/deleted 默认保留）。
+ */
 function findVirtualContactForBatchAiMerge(
   ownerAgentId: string,
   displayName: string,
   storage: StorageLike | null,
 ): XingyeVirtualContact | null {
-  const normalized = displayName.trim().toLowerCase();
+  const normalized = normalizeContactNameForDedupe(displayName);
   if (!normalized) return null;
   const matches = getVirtualContacts(ownerAgentId, storage)
-    .filter(item => item.displayName.trim().toLowerCase() === normalized);
-  if (!matches.length) return null;
-  const statusRank = (c: XingyeVirtualContact): number => {
-    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', c.id, storage);
-    const s = meta?.status ?? c.status ?? 'active';
-    if (s === 'active') return 3;
-    if (s === 'blocked') return 2;
-    return 1;
-  };
-  const best = [...matches].sort((a, b) => statusRank(b) - statusRank(a))[0];
-  return statusRank(best) >= 3 ? best : null;
-}
-
-/** 「重新生成全部」：同名时合并到 active 优先，否则 blocked/deleted 也可被 AI 刷新（避免整表留在已删除）。 */
-function findVirtualContactForRegenerateMerge(
-  ownerAgentId: string,
-  displayName: string,
-  storage: StorageLike | null,
-): XingyeVirtualContact | null {
-  const normalized = displayName.trim().toLowerCase();
-  if (!normalized) return null;
-  const matches = getVirtualContacts(ownerAgentId, storage)
-    .filter(item => item.displayName.trim().toLowerCase() === normalized);
+    .filter(item => normalizeContactNameForDedupe(item.displayName) === normalized);
   if (!matches.length) return null;
   const statusRank = (c: XingyeVirtualContact): number => {
     const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', c.id, storage);
@@ -1571,6 +1624,15 @@ function findVirtualContactForRegenerateMerge(
     if (d !== 0) return d;
     return a.id.localeCompare(b.id);
   })[0];
+}
+
+/** 「重新生成全部」：同名时合并到 active 优先，否则 blocked/deleted 也可被 AI 刷新（避免整表留在已删除）。 */
+function findVirtualContactForRegenerateMerge(
+  ownerAgentId: string,
+  displayName: string,
+  storage: StorageLike | null,
+): XingyeVirtualContact | null {
+  return findVirtualContactForBatchAiMerge(ownerAgentId, displayName, storage);
 }
 
 function resolveVirtualContactIdByStrictMatchName(
@@ -1654,6 +1716,50 @@ function syncVirtualContactEntityWithStoredMeta(
   saveVirtualContact(ownerAgentId, next, storage);
 }
 
+export type ApplyAiGeneratedContactsResult = {
+  /** 实际写入存储的虚拟联系人（含新建与合并后的更新） */
+  saved: XingyeVirtualContact[];
+  /** 真正新建的虚拟联系人条数（去重后） */
+  createdCount: number;
+  /** 与已有联系人合并/更新的条数（同名归并，不新增 id） */
+  mergedCount: number;
+  /** 被丢弃的条数（空名 / 模板占位 / 同名 blocked-deleted 在 never 模式下被跳过等） */
+  skippedCount: number;
+};
+
+/**
+ * 合并 AI 一次返回里两条同名候选的有价值字段。
+ * 不会覆盖已有非空字段；不会改变 displayName / kind。
+ */
+function mergeBatchAiCandidate(base: XingyeAiGeneratedContact, extra: XingyeAiGeneratedContact): XingyeAiGeneratedContact {
+  const mergedTags = canonicalizeContactTags([
+    ...(base.tags ?? []),
+    ...(extra.tags ?? []),
+  ]);
+  return {
+    ...base,
+    impression: base.impression?.trim() ? base.impression : extra.impression,
+    relationshipHint: base.relationshipHint?.trim() ? base.relationshipHint : extra.relationshipHint,
+    shortBio: base.shortBio?.trim() ? base.shortBio : extra.shortBio,
+    remark: base.remark?.trim() ? base.remark : extra.remark,
+    faction: base.faction?.trim() ? base.faction : extra.faction,
+    tags: mergedTags.length ? mergedTags : (base.tags ?? extra.tags ?? []),
+  };
+}
+
+/**
+ * 写入 AI 生成的虚拟联系人。所有去重在此处发生：
+ *
+ * 1. 丢弃空名 / 模板占位（"未命名联系人" / 全符号 等）。
+ * 2. 本批同名合并：同 dedupe key 的多条只保留一条，可合并 tags / faction / impression 等有价值字段。
+ *    包括同名 blocked / deleted —— 模型若一次返回两个同名 blocked 也只写一份。
+ * 3. 与已有联系人按 dedupe key 比对：
+ *    - mode === 'never'（增量 add）：若已存在同名联系人，丢弃（不新增、不修改），交给「更新联系人」流程；
+ *    - mode === 'prefer-active-only'（首次 AI 生成）：合并 patch 到已有联系人；
+ *      status 默认保持原 blocked/deleted（除非 manual 已锁定 → 同样保留 manual）；
+ *    - mode === 'regenerate'（重新生成全部）：合并 patch 到已有；status 允许 AI 刷新但仍 honor manual 锁定。
+ * 4. 真正新建联系人时才分配 id；合并时复用已有 id。
+ */
 export function applyAiGeneratedContacts(
   ownerAgentId: string,
   contacts: XingyeAiGeneratedContact[],
@@ -1662,23 +1768,53 @@ export function applyAiGeneratedContacts(
     storage?: StorageLike | null;
     virtualSource?: XingyeContactSource;
     metaSource?: XingyeContactSource;
-    /** 默认仅合并「同名且当前为 active」；增量 add 传 never；重新生成全部传 regenerate。 */
+    /** 默认合并同名（任意状态）；增量 add 传 never；重新生成全部传 regenerate。 */
     mergeMatchingDisplayName?: 'prefer-active-only' | 'never' | 'regenerate';
   },
-): XingyeVirtualContact[] {
+): ApplyAiGeneratedContactsResult {
   const storage = options?.storage ?? getLocalStorage();
   const virtualSource = options?.virtualSource ?? 'ai_generated';
   const metaSource = options?.metaSource ?? virtualSource;
   const mergeMode = options?.mergeMatchingDisplayName ?? 'prefer-active-only';
   const output: XingyeVirtualContact[] = [];
+  let createdCount = 0;
+  let mergedCount = 0;
+  let skippedCount = 0;
+
+  const batchByKey = new Map<string, XingyeAiGeneratedContact>();
   for (const raw of contacts) {
     const input = normalizeAiGeneratedContact(raw);
-    if (!input.displayName?.trim()) continue;
-    const existed = mergeMode === 'never'
-      ? null
-      : mergeMode === 'regenerate'
-        ? findVirtualContactForRegenerateMerge(ownerAgentId, input.displayName, storage)
-        : findVirtualContactForBatchAiMerge(ownerAgentId, input.displayName, storage);
+    if (!input.displayName?.trim() || isPlaceholderContactName(input.displayName)) {
+      skippedCount += 1;
+      continue;
+    }
+    const key = getContactDedupeKey({
+      targetType: 'virtual_contact',
+      displayName: input.displayName,
+      remark: input.remark,
+    });
+    if (!key) {
+      skippedCount += 1;
+      continue;
+    }
+    const existed = batchByKey.get(key);
+    if (existed) {
+      batchByKey.set(key, mergeBatchAiCandidate(existed, input));
+      skippedCount += 1;
+      continue;
+    }
+    batchByKey.set(key, input);
+  }
+
+  for (const input of batchByKey.values()) {
+    const existed = findVirtualContactForBatchAiMerge(ownerAgentId, input.displayName, storage)
+      ?? (input.remark ? findVirtualContactForBatchAiMerge(ownerAgentId, input.remark, storage) : null);
+
+    if (existed && mergeMode === 'never') {
+      skippedCount += 1;
+      continue;
+    }
+
     const existingMeta = existed ? getPhoneContactMeta(ownerAgentId, 'virtual_contact', existed.id, storage) : null;
     const mergedStatus = mergeStatusForAiGeneratedVirtual({
       existingMeta,
@@ -1704,9 +1840,9 @@ export function applyAiGeneratedContacts(
     const saved = saveVirtualContact(ownerAgentId, {
       ownerAgentId,
       id: existed?.id ?? '',
-      displayName: input.displayName.trim(),
-      kind: input.kind ?? 'unknown',
-      shortBio: input.shortBio,
+      displayName: existed?.displayName ?? input.displayName.trim(),
+      kind: input.kind ?? existed?.kind ?? 'unknown',
+      shortBio: input.shortBio ?? existed?.shortBio,
       remark: patch.remark ?? input.remark ?? existed?.remark,
       impression: patch.impression ?? input.impression ?? existed?.impression,
       relationshipHint: patch.relationshipHint ?? input.relationshipHint ?? existed?.relationshipHint,
@@ -1721,9 +1857,11 @@ export function applyAiGeneratedContacts(
     }, storage);
     savePhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, patch, storage, { markManualFields: false });
     output.push(saved);
+    if (existed) mergedCount += 1;
+    else createdCount += 1;
   }
   ensureDefaultUserContact(ownerAgentId, storage);
-  return output;
+  return { saved: output, createdCount, mergedCount, skippedCount };
 }
 
 export function applyAiContactUpdates(
@@ -1752,11 +1890,12 @@ export function applyAiContactUpdates(
   for (const raw of updates) {
     const update = normalizeAiContactUpdate(raw);
     if (update.action === 'add' && update.contact) {
-      applyAiGeneratedContacts(ownerAgentId, [{
+      const result = applyAiGeneratedContacts(ownerAgentId, [{
         ...update.contact,
         targetType: 'virtual_contact',
       }], { storage, mergeMatchingDisplayName: 'never' });
-      counts.add += 1;
+      if (result.createdCount > 0) counts.add += 1;
+      else counts.skip += 1;
       continue;
     }
 
@@ -1841,31 +1980,50 @@ export function applyAiContactUpdates(
   }
 }
 
-/** 「重新生成全部」专用：清空当前 owner 的所有 virtual_contact 实体与 virtual_contact 类型 meta；不动 user / agent meta。 */
+/**
+ * 「重新生成全部」专用：清空当前 owner 的 virtual_contact 实体与对应 meta；不动 user / agent meta。
+ *
+ * 通过 `preserveManuallyEdited: true` 调用时，保留任何 meta 上有 `manualEditedFields` 的虚拟联系人
+ * （含手动 blocked / deleted、手动改过 remark 等），让 regenerate 不丢失用户手动维护过的条目。
+ */
 export function clearAllVirtualContactsForOwner(
   ownerAgentId: string,
   storage: StorageLike | null = getLocalStorage(),
+  options?: { preserveManuallyEdited?: boolean },
 ) {
   if (!ownerAgentId) return;
+  const preserveManual = options?.preserveManuallyEdited ?? false;
   const virtualMap = loadVirtualContactMap(storage);
+  const metaMap = loadContactMetaMap(storage);
   const virtualPrefix = `${ownerAgentId}::`;
+  const metaPrefix = `${ownerAgentId}::virtual_contact::`;
+
+  const preservedVirtualIds = new Set<string>();
+  if (preserveManual) {
+    for (const [key, meta] of Object.entries(metaMap)) {
+      if (!key.startsWith(metaPrefix)) continue;
+      if ((meta.manualEditedFields?.length ?? 0) > 0 || meta.source === 'manual') {
+        preservedVirtualIds.add(meta.targetId);
+      }
+    }
+  }
+
   let virtualMutated = false;
   for (const key of Object.keys(virtualMap)) {
-    if (key.startsWith(virtualPrefix)) {
-      delete virtualMap[key];
-      virtualMutated = true;
-    }
+    if (!key.startsWith(virtualPrefix)) continue;
+    const contact = virtualMap[key];
+    if (preservedVirtualIds.has(contact.id)) continue;
+    delete virtualMap[key];
+    virtualMutated = true;
   }
   if (virtualMutated) saveVirtualContactMap(virtualMap, storage);
 
-  const metaMap = loadContactMetaMap(storage);
-  const metaPrefix = `${ownerAgentId}::virtual_contact::`;
   let metaMutated = false;
   for (const key of Object.keys(metaMap)) {
-    if (key.startsWith(metaPrefix)) {
-      delete metaMap[key];
-      metaMutated = true;
-    }
+    if (!key.startsWith(metaPrefix)) continue;
+    if (preservedVirtualIds.has(metaMap[key].targetId)) continue;
+    delete metaMap[key];
+    metaMutated = true;
   }
   if (metaMutated) saveContactMetaMap(metaMap, storage);
 }

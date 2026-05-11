@@ -158,6 +158,17 @@ const VIRTUAL_CONTACT_RECENT_CHAT_GUIDE = [
   '【最近 OpenHanako 对话（默认优先参考）】生成虚拟联系人时，先看下一段「最近聊天」是否有可读内容：',
   '- 若有：名单应优先从对话里已出现或可合理映射到手机通讯录的人物、组织、渠道、对立面等衍生（称呼可匿名）；不要机械复述原句进 impression / shortBio。',
   '- 若无或仅有说明、无可用人物：则完全依据「当前角色」资料与下方「现有联系人」列表虚构合理社交圈，不要编造「刚在聊天里说过」的事实。',
+  '- 没有最近聊天不代表"无法生成"——角色的人设、生活圈、世界观本身就足够推导出合理的联系人。',
+].join('\n');
+
+/** AI 生成联系人：明确禁止把已有 blocked/deleted 当作新候选反复输出。 */
+const BLOCKED_DELETED_AVOIDANCE_GUIDE = [
+  '【已拉黑 / 已删除联系人 → 只是去重参考，不是生成目标】下文给出的「已拉黑」「已删除」名单仅供你避免重复输出，不要把它们作为新候选再次返回：',
+  '- 不允许复制已有 blocked / deleted 联系人的 displayName / remark 作为本批新候选；同名条目会被去重层归并，不会产生第二份。',
+  '- 不要反复套用模板化的"黑蛇-危险人物""方老师-旧号码""旧情人-断联""仇人-威胁"这类符号化名字。',
+  '- 已有 blocked / deleted 的角色，如果剧情没明确变化，保持不在本批输出里；它们的状态由保存层保留。',
+  '- 如果 AI 输出已经存在的 blocked / deleted 联系人，会被合并刷新印象，但不会自动恢复为 active，也不会新增第二条。',
+  '- "至少 1 个 blocked / 1 个 deleted"的硬性分布规则只适用于：首次生成且当前完全没有 blocked/deleted；如果当前已经有 blocked 或 deleted，请不要为了凑分布再造同类。',
 ].join('\n');
 
 /** 虚拟联系人生成：同一人多称呼时不能仅靠 displayName 判重。 */
@@ -169,6 +180,20 @@ const SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION = [
   '- 仅当你确信在语义上是新角色时，才使用新的 displayName。',
   '- displayName 字面重复仍不允许：本批内不得出现两条完全相同的 displayName（忽略首尾空格、大小写）。',
 ].join('\n');
+
+function summarizeContactReference(contact: XingyePhoneContactView) {
+  return {
+    targetType: contact.targetType,
+    displayName: contact.displayName,
+    remark: contact.remark,
+    kind: contact.kind,
+    status: contact.status,
+    shortBio: contact.shortBio,
+    relationshipHint: contact.relationshipHint,
+    tags: contact.tags,
+    faction: contact.faction,
+  };
+}
 
 export function buildVirtualContactGenerationPrompt(params: {
   ownerAgent: Agent;
@@ -189,28 +214,34 @@ export function buildVirtualContactGenerationPrompt(params: {
   };
   const countBlock = intent === 'regenerate'
     ? [
-      '【流程】运行时已将旧版 virtual_contact 全量备份为快照；系统只保留最近 2 份快照，更早的备份会被丢弃。当前虚拟联系人表已清空，本任务等于在空白上重新写一整本通讯录。',
-      '【数量】请输出 8–16 条全新的 virtual_contact（目标可落在 10–14 条左右）；少于 8 条视为不合格。不要试图逐条对应、复现或对齐任何旧名单里的 displayName；无需与已备份的旧虚拟联系人去重或合并。',
+      '【流程】运行时已把当前 virtual_contact 表备份为快照；系统只保留最近 2 份快照。手动编辑过或手动拉黑/删除的虚拟联系人会被保留，不在本批清空范围内。',
+      '【数量】请输出 8–16 条 virtual_contact（目标可落在 10–14 条左右）；少于 8 条视为不合格。不要试图复现「已拉黑」/「已删除」名单里的同名条目（它们已经存在并保持原状态）。',
       '【关系网】要像角色手机里长期积累的真实社交网：工作、灰色渠道、旧识、威胁、断联号码、拉黑对象等应同时存在，而不是「全员正常好友列表」。',
     ].join('\n')
     : [
-      '【边界】本任务只新增或合并刷新 virtual_contact（同名且仍为 active 时可视为更新同一人）；不得删除 user/agent，也不得删除下列列表中未出现在你输出里的任何已有联系人。整表清空仅属于「重新生成全部」流程。',
-      '【数量】首次 AI 生成：请自行在 3–8 个 virtual_contact 之间决定输出条数（须像真实手机里一小撮联系人，不要贪多）。条数仅由本 prompt 约束，不要在别处假设程序会截断或补足。',
+      '【边界】本任务只为当前角色补充新的 virtual_contact；不得删除 user/agent，也不得删除任何已有联系人。整表清空仅属于「重新生成全部」流程。',
+      '【数量】请输出 3–8 个 virtual_contact 候选（须像真实手机里一小撮联系人，不要贪多）。保存层会自动去重，与已有 active / blocked / deleted 同名联系人不会新增第二条。',
       '【关系网】混合亲近与风险：可信同伴、谨慎合作、对立或勒索者、断联旧人、拉黑对象等可自然共存；人数少时不必强行凑满类型。',
+      '【最近聊天可能为空】允许且常见——此时请基于角色人设、身份、世界观推导合理生活联系人（同事/朋友/上司/同学/旧识/家人/医生/店员/邻居/任务相关人物/组织成员/过去关系中的人），不要返回 0 条。',
     ].join('\n');
 
+  const activeContacts = contacts.filter(c => c.status === 'active');
+  const blockedContacts = contacts.filter(c => c.status === 'blocked');
+  const deletedContacts = contacts.filter(c => c.status === 'deleted');
+
   const contactsLabel = intent === 'regenerate'
-    ? '下列为当前仍保留的 user / 真实 agent（程序已清空全部旧 virtual；无需对照或去重旧虚拟名单，仅勿把 user 再生成一条虚拟替身）：'
-    : '现有联系人（仅「AI 生成联系人」首轮：请用 shortBio、impression、relationshipHint、kind 等与下列对照做人设级去重，勿仅靠 displayName；含 user/agent/已有 virtual）：';
+    ? '下列为本次重新生成时仍保留的联系人（user / 真实 agent / 手动维护的虚拟联系人 / 已拉黑 / 已删除）。请用 shortBio、impression、relationshipHint、kind 与之做人设级去重，并避免输出同名条目：'
+    : '现有联系人（含 user / agent / 已有 virtual / 已拉黑 / 已删除）。请用 shortBio、impression、relationshipHint、kind 等做人设级去重，勿仅靠 displayName：';
 
   const lines: string[] = [
     '你是角色手机通讯录里的「虚拟联系人」生成器。只返回 JSON，不要 Markdown，不要解释。',
+    '你的任务：为当前角色的小手机生成新的、合理的、非重复联系人。',
+    '主要输入：当前角色人设 / 身份 / 世界观、已有联系人、最近聊天摘要（如有）。',
     countBlock,
   ];
-  if (intent === 'initial') {
-    lines.push(SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION);
-  }
+  lines.push(SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION);
   lines.push(
+    BLOCKED_DELETED_AVOIDANCE_GUIDE,
     VIRTUAL_CONTACT_RECENT_CHAT_GUIDE,
     describeRecentContextForPrompt(recentContext),
     TAG_FACTION_STATUS_RULES,
@@ -228,7 +259,11 @@ export function buildVirtualContactGenerationPrompt(params: {
       profile: ownerProfile ?? null,
     }, null, 2),
     contactsLabel,
-    JSON.stringify(contacts.map(contactShape), null, 2),
+    JSON.stringify(activeContacts.map(contactShape), null, 2),
+    '【已拉黑联系人（避免重复，不得作为新候选输出）】:',
+    JSON.stringify(blockedContacts.map(summarizeContactReference), null, 2),
+    '【已删除联系人（避免重复，不得作为新候选输出）】:',
+    JSON.stringify(deletedContacts.map(summarizeContactReference), null, 2),
   );
   return lines.join('\n');
 }

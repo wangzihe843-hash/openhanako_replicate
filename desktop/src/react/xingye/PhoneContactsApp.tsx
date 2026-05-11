@@ -241,8 +241,12 @@ export function PhoneContactsApp({
       });
       if (result.generatedBy === 'rule_fallback') {
         setAiManageNotice('AI 生成失败，已使用本地规则生成联系人。');
+      } else if (result.notice) {
+        setAiManageNotice(result.notice);
+      } else if ((result.createdCount ?? 0) === 0) {
+        setAiManageNotice('生成结果与已有联系人重复，未新增。');
       } else {
-        setAiManageNotice(result.notice ?? 'AI 联系人生成完成。');
+        setAiManageNotice(`AI 联系人生成完成，实际新增 ${result.createdCount} 条。`);
       }
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
@@ -255,8 +259,11 @@ export function PhoneContactsApp({
       const result = await updateContactsFromRecentContextWithAI({ ownerAgent, ownerProfile, contacts, agents, profiles });
       const ctxNote = result.recentContext.hasOpenHanakoMessages
         ? `已结合最近 OpenHanako 聊天 ${result.recentContext.messageCount} 条。`
-        : '暂未读到最近聊天，本次仅根据角色资料和通讯录更新。';
-      setAiManageNotice(`联系人更新完成。${ctxNote}`);
+        : '未从当前前端缓存读到最近聊天，本次更新可能不会产生变化。请先在「聊天」tab 打开该角色会话并产生新消息，再返回更新。';
+      const changeNote = result.updatesCount === 0
+        ? '没有发现需要更新的联系人。'
+        : `已应用 ${result.updatesCount} 条更新。`;
+      setAiManageNotice(`${changeNote} ${ctxNote}`);
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
     }
@@ -385,9 +392,15 @@ export function PhoneContactsApp({
                     </button>
                   </div>
                   <p className={styles.phoneAppHint}>
+                    AI 生成联系人：从角色人设/最近对话发现新联系人。将生成 3–8 个候选，并自动跳过已有或重复联系人。
+                  </p>
+                  <p className={styles.phoneAppHint}>
+                    更新联系人：根据最近对话更新已有联系人印象。没有明确变化时可能不会更新。
+                  </p>
+                  <p className={styles.phoneAppHint}>
                     {recentContextPreview.hasOpenHanakoMessages
                       ? `更新时会参考最近 OpenHanako 聊天（约 ${recentContextPreview.messages.length} 条）。`
-                      : '暂未读到最近聊天，本次更新将仅根据角色资料和通讯录进行。可在「聊天」tab 与该角色对话后再来更新。'}
+                      : '未从当前前端缓存读到最近聊天。本次更新可能不会产生变化。请先在「聊天」tab 打开该角色会话并产生新消息，再返回更新。'}
                   </p>
                 </>
               ) : null}
