@@ -19,6 +19,10 @@ import {
   getVirtualContacts,
   normalizeAiContactUpdate,
   normalizeAiGeneratedContact,
+  profileLikelyForbidsBlocked,
+  ensureContactDistribution,
+  ensureStoredVirtualContactsNonActiveDistribution,
+  reconcileVirtualContactInferenceFields,
   regenerateAllVirtualContactsWithAI,
   restorePhoneContactSnapshot,
   saveContactAiUpdateState,
@@ -279,8 +283,10 @@ export async function generateVirtualContactsWithAI(params: {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
   const mode = params.mode ?? 'initial_ai_generate';
   const isRegenerate = mode === 'regenerate_all';
-  const minCount = isRegenerate ? 6 : 5;
-  const maxCount = isRegenerate ? 14 : 12;
+  const minCount = 8;
+  const maxCount = isRegenerate ? 16 : 14;
+  const distIntent = isRegenerate ? 'regenerate' as const : 'initial' as const;
+  const softBlock = profileLikelyForbidsBlocked(ownerProfile, ownerAgent);
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
     const prompt = isRegenerate
@@ -295,24 +301,33 @@ export async function generateVirtualContactsWithAI(params: {
       timeoutMs: 120_000,
     });
     let generated = parseGeneratedContacts(raw);
+    const aiReturnedCount = generated.length;
+    generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
     if (generated.length > maxCount) generated = generated.slice(0, maxCount);
-    applyAiGeneratedContacts(ownerAgent.id, generated);
-    let virtuals = getVirtualContacts(ownerAgent.id);
     let ruleFallbackPadded = 0;
-    if (virtuals.length < minCount) {
-      const nameSet = new Set(virtuals.map(c => c.displayName.trim().toLowerCase()).filter(Boolean));
+    if (generated.length < minCount) {
+      const nameSet = new Set(generated.map(c => c.displayName.trim().toLowerCase()).filter(Boolean));
       const extras = buildRuleFallbackAiContacts(
         { ownerAgentId: ownerAgent.id, agent: ownerAgent, profile: ownerProfile, agents },
-        minCount - virtuals.length,
+        minCount - generated.length,
         nameSet,
       );
-      applyAiGeneratedContacts(ownerAgent.id, extras, {
-        virtualSource: 'rule_fallback',
-        metaSource: 'rule_fallback',
-      });
       ruleFallbackPadded = extras.length;
-      virtuals = getVirtualContacts(ownerAgent.id);
+      const normalizedExtras = extras.map(c => normalizeAiGeneratedContact(c));
+      generated = [...generated, ...normalizedExtras];
+      generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
+      if (generated.length > maxCount) generated = generated.slice(0, maxCount);
     }
+    applyAiGeneratedContacts(ownerAgent.id, generated);
+    ensureStoredVirtualContactsNonActiveDistribution(
+      ownerAgent.id,
+      agents,
+      profiles,
+      distIntent,
+      undefined,
+      softBlock,
+    );
+    const virtuals = getVirtualContacts(ownerAgent.id);
     setPhoneContactGenerationState(ownerAgent.id, {
       ownerAgentId: ownerAgent.id,
       generatedAt: new Date().toISOString(),
@@ -322,12 +337,12 @@ export async function generateVirtualContactsWithAI(params: {
     });
     setContactUpdateState(ownerAgent.id, mode, 'success');
     const notice = ruleFallbackPadded
-      ? `AI 返回的虚拟联系人数量偏少，已自动补足 ${ruleFallbackPadded} 个（规则补全，source=rule_fallback）。`
+      ? `AI 返回数量偏少，已用本地规则补足 ${ruleFallbackPadded} 个。`
       : undefined;
     return {
       generatedBy: 'ai' as const,
       count: virtuals.length,
-      aiReturnedCount: generated.length,
+      aiReturnedCount,
       ruleFallbackPadded,
       notice,
     };
@@ -349,8 +364,10 @@ export async function updateContactsFromRecentContextWithAI(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  agents: Agent[];
+  profiles: XingyeRoleProfileMap;
 }) {
-  const { ownerAgent, ownerProfile, contacts } = params;
+  const { ownerAgent, ownerProfile, contacts, agents, profiles } = params;
   setContactUpdateState(ownerAgent.id, 'incremental_update', 'running');
   try {
     const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
@@ -370,6 +387,7 @@ export async function updateContactsFromRecentContextWithAI(params: {
     });
     const updates = parseContactUpdates(raw);
     applyAiContactUpdates(ownerAgent.id, updates);
+    reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
     return { updatesCount: updates.length };
   } catch (error) {
@@ -432,6 +450,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
     });
     const updates = parseContactUpdates(raw);
     applyAiContactUpdates(ownerAgent.id, updates);
+    reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'success');
     return { snapshotId: latest.id, updatesCount: updates.length };
   } catch (error) {

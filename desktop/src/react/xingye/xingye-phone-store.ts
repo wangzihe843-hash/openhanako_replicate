@@ -332,7 +332,7 @@ function normalizeSmsMessage(value: unknown): XingyePhoneSmsMessage | null {
     fromAgentId,
     toAgentId,
     content,
-    source: normalizeOptionalString(value.source) as XingyePhoneSource | undefined,
+    source: normalizeOptionalString(value.source) as XingyeContactSource | undefined,
     createdAt: normalizeOptionalString(value.createdAt) ?? new Date(0).toISOString(),
   };
 }
@@ -611,6 +611,418 @@ export function sanitizeVisibleContactText(
   return { clean: trimmed };
 }
 
+export type XingyeContactDistributionIntent = 'initial' | 'regenerate' | 'incremental';
+
+/** 与下方 XINGYE_DEFAULT_CONTACT_* 导出保持一致（不可在导出前引用那些常量，避免 TDZ）。 */
+const CANONICAL_TAGS_LIST: string[] = ['亲近的人', '需要观察', '不可靠', '同伴', '危险'];
+const CANONICAL_FACTIONS_LIST: string[] = ['自己人', '中立', '对立', '未知'];
+
+function normalizeContactStatusValue(value: unknown): XingyeContactStatus {
+  const s = typeof value === 'string' ? value.trim() : '';
+  if (s === 'blocked' || s === 'deleted' || s === 'active') return s;
+  return 'active';
+}
+
+/** 儿童向 / 全年龄日常等：拉黑可能极不合适，仅强制保留「已删除」类断联。 */
+export function profileLikelyForbidsBlocked(
+  profile: XingyeRoleProfile | null | undefined,
+  agent: Agent | null | undefined,
+): boolean {
+  const t = [
+    agent?.name,
+    agent?.yuan,
+    profile?.displayName,
+    profile?.shortBio,
+    profile?.identitySummary,
+    profile?.backgroundSummary,
+    profile?.personalitySummary,
+  ].filter(Boolean).join(' ');
+  if (!t.trim()) return false;
+  const soft = /(幼儿园|小学低年级|子供向|全年龄|治愈系日常|轻松日常|校园甜文|萌系日常)/.test(t);
+  const hard = /(黑|债|跟踪|骚扰|勒索|威胁|间谍|黑帮|杀手|边境|战|走私|卧底)/.test(t);
+  return soft && !hard;
+}
+
+function tagSynonymToCanonical(tag: string): string | null {
+  const t = tag.trim();
+  if (!t) return null;
+  if (CANONICAL_TAGS_LIST.includes(t)) return t;
+  if (/危险|威胁|敌对|勒索/.test(t)) return '危险';
+  if (/亲近|家人|信任|可靠/.test(t)) return '亲近的人';
+  if (/同伴|搭档|队友|同事/.test(t)) return '同伴';
+  if (/观察|留意|谨慎|线人|灰色/.test(t)) return '需要观察';
+  if (/不可靠|不可信|滑头|两面/.test(t)) return '不可靠';
+  return null;
+}
+
+/** 将模型返回的 tags 映射到固定词表，去掉无效项。 */
+export function canonicalizeContactTags(tags: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of tags ?? []) {
+    const c = tagSynonymToCanonical(typeof raw === 'string' ? raw : '');
+    if (c && !out.includes(c)) out.push(c);
+  }
+  return out.slice(0, 3);
+}
+
+function factionSynonymToCanonical(f: string): string | null {
+  const t = f.trim();
+  if (!t) return null;
+  if (CANONICAL_FACTIONS_LIST.includes(t)) return t;
+  if (/自己|己方|可信|家人|搭档/.test(t)) return '自己人';
+  if (/对立|敌|反派|勒索|威胁/.test(t)) return '对立';
+  if (/中立|路人|普通|灰色/.test(t)) return '中立';
+  if (/未知|不明|不确定|匿名/.test(t)) return '未知';
+  return null;
+}
+
+export function canonicalizeFaction(faction: string | undefined): string | undefined {
+  if (!faction?.trim()) return undefined;
+  return factionSynonymToCanonical(faction) ?? undefined;
+}
+
+export function inferTagsForContact(contact: Pick<XingyeAiGeneratedContact, 'kind' | 'status' | 'faction' | 'shortBio'>): string[] {
+  const k = contact.kind;
+  const bio = (contact.shortBio ?? '').trim();
+  const fc = contact.faction ?? '';
+  const tags: string[] = [];
+  const push = (t: string) => {
+    if (CANONICAL_TAGS_LIST.includes(t) && !tags.includes(t)) tags.push(t);
+  };
+  if (k === 'enemy' || k === 'rival') {
+    push('危险');
+    push('不可靠');
+  } else if (k === 'informant') {
+    push('需要观察');
+    push('不可靠');
+  } else if (k === 'friend' || k === 'family') {
+    push('亲近的人');
+    if (bio.length > 8) push('同伴');
+  } else if (k === 'coworker' || k === 'superior' || k === 'subordinate') {
+    push('同伴');
+    push('需要观察');
+  } else if (k === 'patient' || k === 'client') {
+    push('需要观察');
+    if (k === 'patient') push('同伴');
+  } else if (k === 'ex') {
+    push('需要观察');
+    push('亲近的人');
+  } else if (k === 'neighbor' || k === 'classmate') {
+    push('同伴');
+  } else if (k === 'mentor') {
+    push('同伴');
+    push('需要观察');
+  } else {
+    push('需要观察');
+    push('同伴');
+  }
+  if (fc === '对立' && !tags.includes('危险')) push('危险');
+  if (contact.status === 'blocked' && !tags.includes('危险')) push('危险');
+  return tags.slice(0, 3);
+}
+
+export function inferFactionForContact(
+  contact: Pick<XingyeAiGeneratedContact, 'kind' | 'tags' | 'status' | 'shortBio'>,
+): string {
+  const k = contact.kind;
+  const tagStr = (contact.tags ?? []).join('');
+  if (k === 'enemy' || k === 'rival' || tagStr.includes('危险')) return '对立';
+  if (k === 'friend' || k === 'family' || tagStr.includes('亲近的人')) return '自己人';
+  if (k === 'informant' || k === 'unknown') return '中立';
+  if (k === 'patient' || k === 'neighbor' || k === 'classmate' || k === 'client') return '中立';
+  if (k === 'coworker' || k === 'superior' || k === 'subordinate' || k === 'mentor') return '自己人';
+  if (k === 'ex') return '中立';
+  return '中立';
+}
+
+function scoreForBlocked(contact: XingyeAiGeneratedContact): number {
+  let s = 0;
+  const kinds: XingyeVirtualContactKind[] = ['enemy', 'rival', 'informant', 'unknown'];
+  if (kinds.includes(contact.kind)) s += 6;
+  if ((contact.tags ?? []).includes('危险')) s += 5;
+  if ((contact.tags ?? []).includes('不可靠')) s += 3;
+  if (contact.faction === '对立') s += 4;
+  if (contact.kind === 'ex') s += 2;
+  return s;
+}
+
+function scoreForDeleted(contact: XingyeAiGeneratedContact): number {
+  let s = 0;
+  if (contact.kind === 'ex') s += 8;
+  if (contact.kind === 'patient' || contact.kind === 'client') s += 5;
+  if (contact.kind === 'coworker' || contact.kind === 'subordinate') s += 3;
+  if (contact.kind === 'neighbor' || contact.kind === 'classmate') s += 2;
+  if (contact.kind === 'unknown') s += 4;
+  if ((contact.tags ?? []).includes('需要观察') && contact.faction === '中立') s += 1;
+  return s;
+}
+
+/** 若全员 active，为黑名单/已删除页至少造一条虚拟联系人记录（仅改本次 batch 内对象）。 */
+export function ensureMinimumNonActiveContacts(
+  contacts: XingyeAiGeneratedContact[],
+  ctx: { intent: XingyeContactDistributionIntent; profileAllowsNoBlocked?: boolean },
+): void {
+  if (contacts.length === 0 || ctx.intent === 'incremental') return;
+
+  const st = (c: XingyeAiGeneratedContact) => normalizeContactStatusValue(c.status);
+
+  const pickActiveIndex = (scorer: (c: XingyeAiGeneratedContact) => number, skipIndex = -1): number => {
+    let best = -1;
+    let bestScore = -1;
+    contacts.forEach((c, i) => {
+      if (i === skipIndex || st(c) !== 'active') return;
+      const s = scorer(c);
+      if (s > bestScore) {
+        bestScore = s;
+        best = i;
+      }
+    });
+    return best;
+  };
+
+  const hasBlocked = contacts.some(c => st(c) === 'blocked');
+  const hasDeleted = contacts.some(c => st(c) === 'deleted');
+
+  if (contacts.every(c => st(c) === 'active')) {
+    if (ctx.intent === 'regenerate' && ctx.profileAllowsNoBlocked) {
+      const di = pickActiveIndex(scoreForDeleted);
+      if (di >= 0) contacts[di].status = 'deleted';
+      return;
+    }
+    const bi = pickActiveIndex(scoreForBlocked);
+    if (bi < 0) return;
+    contacts[bi].status = ctx.profileAllowsNoBlocked ? 'deleted' : 'blocked';
+    const di = pickActiveIndex(scoreForDeleted, bi);
+    if (di >= 0) contacts[di].status = 'deleted';
+    else {
+      const alt = contacts.findIndex((_, i) => i !== bi && st(contacts[i]) === 'active');
+      if (alt >= 0) contacts[alt].status = 'deleted';
+    }
+    return;
+  }
+
+  if (ctx.intent === 'regenerate') {
+    if (!ctx.profileAllowsNoBlocked && !hasBlocked) {
+      const i = pickActiveIndex(scoreForBlocked);
+      if (i >= 0 && st(contacts[i]) === 'active') contacts[i].status = 'blocked';
+    }
+    if (!hasDeleted) {
+      const blockedI = contacts.findIndex(c => st(c) === 'blocked');
+      const i = pickActiveIndex(scoreForDeleted, blockedI >= 0 ? blockedI : -1);
+      if (i >= 0 && st(contacts[i]) === 'active') contacts[i].status = 'deleted';
+    }
+    return;
+  }
+
+  if (ctx.intent === 'initial') {
+    if (!hasBlocked && !hasDeleted) {
+      const bi = pickActiveIndex(scoreForBlocked);
+      if (bi >= 0) {
+        contacts[bi].status = ctx.profileAllowsNoBlocked ? 'deleted' : 'blocked';
+        const di = pickActiveIndex(scoreForDeleted, bi);
+        if (di >= 0) contacts[di].status = 'deleted';
+      }
+    } else if (!hasDeleted) {
+      const i = pickActiveIndex(scoreForDeleted);
+      if (i >= 0) contacts[i].status = 'deleted';
+    } else if (!hasBlocked && !ctx.profileAllowsNoBlocked) {
+      const i = pickActiveIndex(scoreForBlocked);
+      if (i >= 0) contacts[i].status = 'blocked';
+    }
+  }
+}
+
+/** 避免阵营几乎全是「未知」。 */
+function ensureFactionVariety(contacts: XingyeAiGeneratedContact[]): void {
+  if (contacts.length < 3) return;
+  const unknownIdx = contacts
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => (canonicalizeFaction(c.faction) ?? '未知') === '未知');
+  const ratio = unknownIdx.length / contacts.length;
+  if (ratio <= 0.45) return;
+  unknownIdx.forEach(({ c, i }, n) => {
+    if (n % 2 === 1) return;
+    const k = c.kind;
+    if (k === 'enemy' || k === 'rival') c.faction = '对立';
+    else if (k === 'friend' || k === 'family') c.faction = '自己人';
+    else c.faction = '中立';
+  });
+}
+
+/** 避免所有联系人都只有「需要观察」。 */
+function ensureTagDiversity(contacts: XingyeAiGeneratedContact[]): void {
+  if (contacts.length < 2) return;
+  const allOnlyObserve = contacts.every(c => {
+    const t = canonicalizeContactTags(c.tags);
+    return t.length === 1 && t[0] === '需要观察';
+  });
+  if (!allOnlyObserve) return;
+  contacts.forEach((c, i) => {
+    const alt: XingyeVirtualContactKind[] = ['friend', 'coworker', 'patient', 'enemy', 'ex', 'neighbor'];
+    const pseudoKind = alt[i % alt.length];
+    c.tags = inferTagsForContact({ ...c, kind: pseudoKind });
+    if (c.tags.length < 2) c.tags = [i % 2 === 0 ? '同伴' : '亲近的人', '需要观察'].filter((t, j, a) => a.indexOf(t) === j).slice(0, 2);
+  });
+}
+
+/**
+ * 对一批即将写入的 AI 虚拟联系人做词表、阵营分布与非全员 active 校正。
+ * incremental：只规范 tags/faction，不强行改 status。
+ */
+export function ensureContactDistribution(
+  contacts: XingyeAiGeneratedContact[],
+  ctx: { intent: XingyeContactDistributionIntent; profileAllowsNoBlocked?: boolean },
+): XingyeAiGeneratedContact[] {
+  if (!contacts.length) return contacts;
+  const out = contacts.map(c => ({ ...c, targetType: 'virtual_contact' as const }));
+  for (const c of out) {
+    c.status = normalizeContactStatusValue(c.status);
+    let tags = canonicalizeContactTags(c.tags);
+    if (!tags.length) tags = inferTagsForContact(c);
+    c.tags = tags.slice(0, 3);
+    c.faction = canonicalizeFaction(c.faction) ?? inferFactionForContact(c);
+    if (!c.relationshipHint?.trim() && c.status === 'blocked') c.relationshipHint = '已拉黑';
+    if (!c.relationshipHint?.trim() && c.status === 'deleted') c.relationshipHint = '已断联';
+  }
+  ensureFactionVariety(out);
+  ensureTagDiversity(out);
+  if (ctx.intent !== 'incremental') {
+    ensureMinimumNonActiveContacts(out, ctx);
+  }
+  return out;
+}
+
+/**
+ * 写入后兜底：若存储里虚拟联系人仍全员 active，则改两条 meta+vc（尊重 manual status）。
+ */
+export function ensureStoredVirtualContactsNonActiveDistribution(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  intent: 'initial' | 'regenerate',
+  storage: StorageLike | null = getLocalStorage(),
+  profileAllowsNoBlocked?: boolean,
+) {
+  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(v => v.targetType === 'virtual_contact');
+  const editable = views.filter((v) => {
+    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', v.targetId, storage);
+    return !meta?.manualEditedFields?.includes('status');
+  });
+  if (editable.length < 2) return;
+  const blocked = views.filter(v => v.status === 'blocked');
+  const deleted = views.filter(v => v.status === 'deleted');
+  const needDeleted = deleted.length === 0;
+  const needBlocked = intent === 'regenerate' && !profileAllowsNoBlocked;
+
+  const toAiShape = (v: XingyePhoneContactView): XingyeAiGeneratedContact => ({
+    targetType: 'virtual_contact',
+    displayName: v.displayName,
+    kind: v.kind ?? 'unknown',
+    shortBio: v.shortBio,
+    remark: v.remark,
+    impression: v.impression,
+    relationshipHint: v.relationshipHint,
+    tags: v.tags ?? [],
+    faction: v.faction,
+    status: v.status,
+    generatedReason: v.generatedReason ?? '',
+  });
+
+  const fix = (targetId: string, status: XingyeContactStatus) => {
+    const vc = getVirtualContacts(ownerAgentId, storage).find(x => x.id === targetId);
+    if (!vc) return;
+    const nextVc: XingyeVirtualContact = { ...vc, status, updatedAt: new Date().toISOString() };
+    saveVirtualContact(ownerAgentId, nextVc, storage);
+    savePhoneContactMeta(ownerAgentId, 'virtual_contact', targetId, {
+      status,
+      source: 'ai_generated',
+    }, storage, { markManualFields: false });
+  };
+
+  if (!blocked.length && !deleted.length) {
+    const pool = editable.map(v => ({ v, s: scoreForBlocked(toAiShape(v)) })).sort((a, b) => b.s - a.s);
+    const first = pool[0]?.v;
+    if (first) {
+      fix(first.targetId, profileAllowsNoBlocked ? 'deleted' : 'blocked');
+    }
+    const poolDel = editable
+      .filter(v => v.targetId !== first?.targetId)
+      .map(v => ({ v, s: scoreForDeleted(toAiShape(v)) }))
+      .sort((a, b) => b.s - a.s);
+    const second = poolDel[0]?.v;
+    if (second) fix(second.targetId, 'deleted');
+    return;
+  }
+
+  if (needDeleted) {
+    const poolDel = editable
+      .filter(v => v.status !== 'blocked')
+      .map(v => ({ v, s: scoreForDeleted(toAiShape(v)) }))
+      .sort((a, b) => b.s - a.s);
+    const pick = poolDel[0]?.v;
+    if (pick) fix(pick.targetId, 'deleted');
+  }
+
+  if (needBlocked && !blocked.length && !profileAllowsNoBlocked) {
+    const poolB = editable
+      .filter(v => v.status !== 'deleted')
+      .map(v => ({ v, s: scoreForBlocked(toAiShape(v)) }))
+      .sort((a, b) => b.s - a.s);
+    const pick = poolB[0]?.v;
+    if (pick) fix(pick.targetId, 'blocked');
+  }
+}
+
+/** 增量更新后：为仍缺 tags/faction 的虚拟联系人补全（不覆盖 manual）。 */
+export function reconcileVirtualContactInferenceFields(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(v => v.targetType === 'virtual_contact');
+  for (const v of views) {
+    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', v.targetId, storage);
+    const manual = new Set(meta?.manualEditedFields ?? []);
+    const shape: XingyeAiGeneratedContact = {
+      targetType: 'virtual_contact',
+      displayName: v.displayName,
+      kind: v.kind ?? 'unknown',
+      shortBio: v.shortBio,
+      tags: v.tags,
+      faction: v.faction,
+      status: v.status,
+      generatedReason: v.generatedReason ?? '',
+    };
+    let tags = canonicalizeContactTags(v.tags);
+    if (!tags.length && !manual.has('tags')) tags = inferTagsForContact(shape);
+    let faction = canonicalizeFaction(v.faction) ?? (manual.has('faction') ? v.faction : inferFactionForContact({ ...shape, tags }));
+    if (!faction) faction = inferFactionForContact({ ...shape, tags });
+    const patch: Partial<XingyePhoneContactMeta> = {};
+    if (!manual.has('tags') && tags.length && JSON.stringify(tags) !== JSON.stringify(v.tags ?? [])) patch.tags = tags;
+    if (!manual.has('faction') && faction && faction !== v.faction) patch.faction = faction;
+    if (Object.keys(patch).length) {
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', v.targetId, { ...patch, source: 'ai_generated' }, storage, { markManualFields: false });
+    }
+    if (!manual.has('tags') || !manual.has('faction')) {
+      const vc = v.virtualContact;
+      if (vc) {
+        const nextVc: XingyeVirtualContact = {
+          ...vc,
+          tags: manual.has('tags') ? vc.tags : (tags.length ? tags : vc.tags),
+          faction: manual.has('faction') ? vc.faction : (faction ?? vc.faction),
+          updatedAt: new Date().toISOString(),
+        };
+        if (nextVc.tags?.length !== vc.tags?.length || nextVc.faction !== vc.faction) {
+          saveVirtualContact(ownerAgentId, nextVc, storage);
+        }
+      }
+    }
+  }
+}
+
 export function normalizeAiGeneratedContact(contact: XingyeAiGeneratedContact): XingyeAiGeneratedContact {
   const reasons: string[] = [];
   if (contact.generatedReason?.trim()) reasons.push(contact.generatedReason.trim());
@@ -638,8 +1050,33 @@ export function normalizeAiGeneratedContact(contact: XingyeAiGeneratedContact): 
     impression = '还没有形成明确印象。';
   }
 
-  const tags = (contact.tags ?? []).map(tag => tag.trim()).filter(Boolean).slice(0, 12);
-  const faction = contact.faction?.trim() ? truncateGraphemes(contact.faction.trim(), 20) : undefined;
+  const rawGenerated = contact.generatedReason?.trim();
+  if (rawGenerated && impression?.trim() && impression.trim() === rawGenerated) {
+    impression = shortBio?.trim()
+      ? truncateGraphemes(shortBio.trim(), 60)
+      : '还没有形成明确印象。';
+    reasons.push('[impression 与生成依据重复，已改写]');
+  }
+
+  let tags = canonicalizeContactTags((contact.tags ?? []).map(tag => String(tag).trim()).filter(Boolean));
+  const inferBase: Pick<XingyeAiGeneratedContact, 'kind' | 'status' | 'faction' | 'shortBio'> = {
+    kind: contact.kind,
+    status: normalizeContactStatusValue(contact.status),
+    faction: contact.faction,
+    shortBio: contact.shortBio ?? shortBio,
+  };
+  if (!tags.length) tags = inferTagsForContact(inferBase);
+
+  let faction = canonicalizeFaction(
+    contact.faction?.trim() ? truncateGraphemes(contact.faction.trim(), 20) : undefined,
+  ) ?? inferFactionForContact({
+    kind: contact.kind,
+    tags,
+    status: normalizeContactStatusValue(contact.status),
+    shortBio: contact.shortBio ?? shortBio,
+  });
+
+  const status = normalizeContactStatusValue(contact.status);
 
   const generatedReason = reasons.filter(Boolean).join('；') || 'AI 生成';
 
@@ -650,9 +1087,9 @@ export function normalizeAiGeneratedContact(contact: XingyeAiGeneratedContact): 
     remark,
     impression,
     relationshipHint,
-    tags,
+    tags: tags.slice(0, 3),
     faction,
-    status: contact.status ?? 'active',
+    status,
     generatedReason,
   };
 }
@@ -673,6 +1110,28 @@ export function normalizeAiContactUpdate(update: XingyeAiContactUpdate): XingyeA
       if (clean) patch[key] = truncateGraphemes(clean, key === 'impression' ? 60 : 12);
       else delete patch[key];
     });
+    if (Array.isArray(patch.tags)) {
+      let t = canonicalizeContactTags(patch.tags);
+      if (!t.length && next.contact) t = inferTagsForContact(next.contact);
+      patch.tags = t;
+    }
+    if (typeof patch.faction === 'string') {
+      const trimmed = patch.faction.trim();
+      if (!trimmed) {
+        delete patch.faction;
+      } else {
+        const f = canonicalizeFaction(trimmed);
+        patch.faction = f ?? inferFactionForContact({
+          kind: next.contact?.kind ?? 'unknown',
+          tags: patch.tags ?? next.contact?.tags,
+          status: (patch.status as XingyeContactStatus | undefined) ?? next.contact?.status ?? 'active',
+          shortBio: next.contact?.shortBio,
+        });
+      }
+    }
+    if (patch.status !== undefined) {
+      patch.status = normalizeContactStatusValue(patch.status);
+    }
     if (spillBits.length) {
       const extra = `[误入 patch 的说明] ${spillBits.join('；')}`;
       next.reason = next.reason?.trim() ? `${next.reason.trim()}；${extra}` : extra;
@@ -1045,6 +1504,8 @@ export function applyAiGeneratedContacts(
       displayName: input.displayName.trim(),
       kind: input.kind ?? 'unknown',
       shortBio: input.shortBio,
+      remark: input.remark,
+      impression: input.impression,
       relationshipHint: input.relationshipHint,
       tags: input.tags ?? [],
       faction: input.faction,
@@ -1463,7 +1924,8 @@ export function getBlockedContacts(
   profiles: XingyeRoleProfileMap,
   storage?: StorageLike | null,
 ): XingyePhoneContactView[] {
-  return getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage);
+  return getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage)
+    .filter(item => item.targetType !== 'user');
 }
 
 export function getDeletedContacts(
@@ -1472,7 +1934,19 @@ export function getDeletedContacts(
   profiles: XingyeRoleProfileMap,
   storage?: StorageLike | null,
 ): XingyePhoneContactView[] {
-  return getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage);
+  return getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage)
+    .filter(item => item.targetType !== 'user');
+}
+
+/** 标签/阵营统计与浏览：含 active 与 blocked，不含已删除（已删除仅在「已删除」页集中展示）。 */
+export function getPhoneContactsForTaggingAndFactions(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(item => item.status !== 'deleted');
 }
 
 export function getContactsByTag(
@@ -1484,7 +1958,7 @@ export function getContactsByTag(
 ): XingyePhoneContactView[] {
   const needle = tag.trim();
   if (!needle) return [];
-  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+  return getPhoneContactsForTaggingAndFactions(ownerAgentId, agents, profiles, storage)
     .filter(item => (item.tags ?? []).includes(needle));
 }
 
@@ -1497,7 +1971,7 @@ export function getContactsByFaction(
 ): XingyePhoneContactView[] {
   const needle = faction.trim();
   if (!needle) return [];
-  const all = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage);
+  const all = getPhoneContactsForTaggingAndFactions(ownerAgentId, agents, profiles, storage);
   if (needle === '未知') {
     return all.filter(item => !item.faction?.trim() || item.faction === '未知');
   }

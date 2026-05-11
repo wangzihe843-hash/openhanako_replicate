@@ -45,7 +45,9 @@ export function PhoneContactDetail({
       </p>
       {contact.shortBio?.trim() ? <p className={styles.phoneAppHint}>简介：{contact.shortBio}</p> : null}
       {contact.generatedReason?.trim() ? (
-        <p className={styles.phoneGeneratedReason}>生成依据：{contact.generatedReason}</p>
+        <p className={styles.phoneGeneratedReason} title="内部生成记录，默认不在列表强调展示">
+          内部记录 · {contact.generatedReason}
+        </p>
       ) : null}
       {contact.linkedAgentId ? <p className={styles.phoneAppHint}>已关联角色：{contact.linkedAgentId}</p> : null}
 

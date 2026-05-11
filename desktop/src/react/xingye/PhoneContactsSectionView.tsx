@@ -162,7 +162,9 @@ export function PhoneContactsTagsHomeView({
   return (
     <section className={styles.phoneAppCard}>
       <h3 className={styles.phoneAppTitle}>标签</h3>
-      <p className={styles.phoneAppHint}>按当前角色视角的分组标签浏览联系人（读取各联系人 tags 字段）。</p>
+      <p className={styles.phoneAppHint}>
+        按当前角色视角的分组标签浏览联系人（统计含正常与已拉黑；不含已删除，已删除请在「已删除」页查看）。读取各联系人 meta.tags 与虚拟联系人上的 tags。
+      </p>
       <div className={styles.phoneList}>
         {rows.map(row => (
           <button key={row.tag} type="button" className={styles.phoneListItem} onClick={() => onOpenTag(row.tag)}>
@@ -224,7 +226,9 @@ export function PhoneContactsFactionsHomeView({
   return (
     <section className={styles.phoneAppCard}>
       <h3 className={styles.phoneAppTitle}>势力阵营</h3>
-      <p className={styles.phoneAppHint}>按当前角色对联系人阵营的判断浏览（读取 faction；未填写归入「未知」）。</p>
+      <p className={styles.phoneAppHint}>
+        按当前角色对联系人阵营的判断浏览（统计含正常与已拉黑；不含已删除）。读取 meta.faction 与虚拟联系人上的 faction；未填写在列表中归入「未知」。
+      </p>
       <div className={styles.phoneList}>
         {rows.map(row => (
           <button key={row.faction} type="button" className={styles.phoneListItem} onClick={() => onOpenFaction(row.faction)}>
@@ -282,7 +286,7 @@ export function PhoneContactsBlockedView({
   onBackHome,
   onSelectContact,
 }: SectionBaseProps) {
-  const list = getBlockedContacts(ownerAgentId, agents, profiles).filter(c => c.targetType !== 'user');
+  const list = getBlockedContacts(ownerAgentId, agents, profiles);
   return (
     <section className={styles.phoneAppCard}>
       <h3 className={styles.phoneAppTitle}>黑名单</h3>

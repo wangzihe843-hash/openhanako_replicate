@@ -237,7 +237,7 @@ export function PhoneContactsApp({
   const handleUpdateContacts = async () => {
     if (!ownerAgent) return;
     try {
-      await updateContactsFromRecentContextWithAI({ ownerAgent, ownerProfile, contacts });
+      await updateContactsFromRecentContextWithAI({ ownerAgent, ownerProfile, contacts, agents, profiles });
       setAiManageNotice('联系人更新完成。');
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));

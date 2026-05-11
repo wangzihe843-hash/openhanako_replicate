@@ -23,7 +23,7 @@ const SHORTCUTS: { id: PhoneContactsSectionId; label: string }[] = [
 ];
 
 export function PhoneContactSections({ contacts, onSelect, onOpenSection }: PhoneContactSectionsProps) {
-  const important = contacts.filter(item => item.targetType === 'user' || item.tags.includes('亲近的人')).slice(0, 4);
+  const important = contacts.filter(item => item.targetType === 'user' || (item.tags ?? []).includes('亲近的人')).slice(0, 4);
   const virtuals = contacts.filter(item => item.targetType === 'virtual_contact' && item.status !== 'deleted');
   const agents = contacts.filter(item => item.targetType === 'agent' && item.status !== 'deleted');
   const blocked = contacts.filter(item => item.status === 'blocked');
