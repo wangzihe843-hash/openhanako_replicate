@@ -5,6 +5,7 @@ import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import { generateSmsHistoryWithAI } from './xingye-phone-ai';
 import {
   addMockSmsMessage,
+  clearAiSmsHistory,
   getPhoneContacts,
   getPhoneAiGenerationState,
   getPhoneProfileFingerprint,
@@ -47,6 +48,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   const [selectedTarget, setSelectedTarget] = useState<{ targetType: XingyeContactTargetType; targetId: string } | null>(initialTarget ?? null);
   const [draftMessage, setDraftMessage] = useState('');
   const [direction, setDirection] = useState<'incoming' | 'outgoing'>('outgoing');
+  const [showTestTools, setShowTestTools] = useState(false);
   const smsAiState = getPhoneAiGenerationState(ownerAgentId, 'sms_history');
   const smsHistoryState = getSmsHistoryGenerationState(ownerAgentId);
 
@@ -63,6 +65,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
       ownerProfile,
       contacts,
       profileFingerprint,
+      mode: 'empty_only',
     }).catch(() => {});
   }, [ownerAgentId, ownerAgent, ownerProfile, contacts, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status]);
 
@@ -74,6 +77,31 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     if (!selectedTarget) return;
     addMockSmsMessage(ownerAgentId, selectedTarget.targetType, selectedTarget.targetId, draftMessage, direction);
     setDraftMessage('');
+  };
+
+  const handleRegenerateEmptyThreads = () => {
+    if (!ownerAgent) return;
+    if (!window.confirm('仅为“空短信线程”补生成旧短信。已有消息不会覆盖，继续吗？')) return;
+    generateSmsHistoryWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts,
+      profileFingerprint,
+      mode: 'empty_only',
+    }).catch(() => {});
+  };
+
+  const handleClearAiAndRegenerate = () => {
+    if (!ownerAgent) return;
+    if (!window.confirm('将清除 AI 生成的旧短信并重新生成。手动 mock 消息会保留，继续吗？')) return;
+    clearAiSmsHistory(ownerAgent.id);
+    generateSmsHistoryWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts,
+      profileFingerprint,
+      mode: 'replace_ai',
+    }).catch(() => {});
   };
 
   return (
@@ -96,20 +124,25 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
           ) : null}
           {smsAiState?.status === 'failed' ? (
             <div className={styles.phoneActionRow}>
-              <span className={styles.phoneAppHint}>生成失败，可以稍后重试：{smsAiState.error ?? '未知错误'}</span>
+              <span className={styles.phoneAppHint}>生成失败，可重试：{smsAiState.error ?? '未知错误'}</span>
               <button
                 type="button"
                 className={styles.secondaryButton}
-                onClick={() => {
-                  if (!ownerAgent) return;
-                  generateSmsHistoryWithAI({ ownerAgent, ownerProfile, contacts, profileFingerprint }).catch(() => {});
-                }}
+                onClick={handleRegenerateEmptyThreads}
               >
-                重试生成
+                重试
               </button>
             </div>
           ) : null}
           {smsAiState?.status === 'success' ? <p className={styles.phoneAppHint}>旧短信已缓存，本次不会重复生成。</p> : null}
+          <div className={styles.phoneActionRow}>
+            <button type="button" className={styles.phoneWeakAction} onClick={handleRegenerateEmptyThreads} disabled={!ownerAgent || smsAiState?.status === 'running'}>
+              重新生成旧短信（仅空线程）
+            </button>
+            <button type="button" className={styles.phoneWeakAction} onClick={handleClearAiAndRegenerate} disabled={!ownerAgent || smsAiState?.status === 'running'}>
+              清除 AI 旧短信并重新生成
+            </button>
+          </div>
         </section>
 
         {!selectedTarget ? (
@@ -131,7 +164,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
                   <span className={styles.phoneListText}>
                     <strong>{contact.remark}</strong>
                     <span>{latest?.content ?? '还没有短信内容'}</span>
-                    <span>{formatSmsTime(thread.updatedAt)}</span>
+                    <span>{formatSmsTime(latest?.createdAt ?? thread.updatedAt)}</span>
                   </span>
                 </button>
               );
@@ -159,17 +192,19 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
             </section>
 
             <section className={styles.phoneMessageList} aria-label="短信详情">
-              {selectedThread?.messages.length ? selectedThread.messages.map(message => {
-                const outgoing = message.fromAgentId === ownerAgentId;
-                return (
-                  <article
-                    key={message.id}
-                    className={`${styles.phoneMessageBubble} ${outgoing ? styles.phoneMessageBubble_outgoing : styles.phoneMessageBubble_incoming}`}
-                  >
-                    <p>{message.content}</p>
-                    <time dateTime={message.createdAt}>{formatSmsTime(message.createdAt)}</time>
-                  </article>
-                );
+              {selectedThread?.messages.length ? [...selectedThread.messages]
+                .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+                .map(message => {
+                  const outgoing = message.fromAgentId === ownerAgentId;
+                  return (
+                    <article
+                      key={message.id}
+                      className={`${styles.phoneMessageBubble} ${outgoing ? styles.phoneMessageBubble_outgoing : styles.phoneMessageBubble_incoming}`}
+                    >
+                      <p>{message.content}</p>
+                      <time dateTime={message.createdAt}>{formatSmsTime(message.createdAt)}</time>
+                    </article>
+                  );
               }) : (
                 <div className={styles.phoneEmptyStateCard}>
                   暂无短信记录。后续可扩展为 AI 自动生成角色间短信；当前仅支持手动 mock 消息。
@@ -178,28 +213,40 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
             </section>
 
             <section className={styles.phoneComposer}>
-              <label className={styles.phoneFormField}>
-                <span>添加 mock 消息</span>
-                <textarea
-                  rows={3}
-                  value={draftMessage}
-                  onChange={event => setDraftMessage(event.target.value)}
-                  placeholder="输入一条短信内容用于测试 UI"
-                />
-              </label>
-              <div className={styles.phoneActionRow}>
-                <select
-                  className={styles.phoneInlineSelect}
-                  value={direction}
-                  onChange={event => setDirection(event.target.value as 'incoming' | 'outgoing')}
-                >
-                  <option value="outgoing">我发给对方</option>
-                  <option value="incoming">对方发给我</option>
-                </select>
-                <button type="button" className={styles.secondaryButton} disabled={!draftMessage.trim()} onClick={handleAddMockMessage}>
-                  添加消息
-                </button>
-              </div>
+              <button
+                type="button"
+                className={styles.phoneWeakAction}
+                onClick={() => setShowTestTools(prev => !prev)}
+              >
+                {showTestTools ? '收起测试工具' : '测试工具 / 添加 mock 消息'}
+              </button>
+              {showTestTools ? (
+                <>
+                  <p className={styles.phoneAppHint}>仅用于测试短信 UI，不属于正式短信历史生成能力。</p>
+                  <label className={styles.phoneFormField}>
+                    <span>添加 mock 消息</span>
+                    <textarea
+                      rows={3}
+                      value={draftMessage}
+                      onChange={event => setDraftMessage(event.target.value)}
+                      placeholder="输入一条测试短信"
+                    />
+                  </label>
+                  <div className={styles.phoneActionRow}>
+                    <select
+                      className={styles.phoneInlineSelect}
+                      value={direction}
+                      onChange={event => setDirection(event.target.value as 'incoming' | 'outgoing')}
+                    >
+                      <option value="outgoing">我发给对方</option>
+                      <option value="incoming">对方发给我</option>
+                    </select>
+                    <button type="button" className={styles.secondaryButton} disabled={!draftMessage.trim()} onClick={handleAddMockMessage}>
+                      添加测试消息
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </section>
           </>
         )}

@@ -3,8 +3,9 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import type { XingyePhoneAiPayload } from './xingye-phone-ai-types';
 import {
-  addMockSmsMessage,
+  addSmsMessage,
   getPhoneContactMeta,
+  getSmsThreads,
   getSmsThread,
   savePhoneContactMeta,
   setPhoneAiGenerationState,
@@ -13,6 +14,25 @@ import {
   type XingyePhoneContactView,
 } from './xingye-phone-store';
 import { buildContactsEnrichmentPrompt, buildSmsHistoryPrompt } from './xingye-phone-prompts';
+
+function asValidIso(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+}
+
+function getSmsFallbackCreatedAt(params: {
+  contactIndex: number;
+  messageIndex: number;
+  status: XingyePhoneContactView['status'];
+}): string {
+  const now = Date.now();
+  const statusBiasDays = params.status === 'deleted' ? 28 : (params.status === 'blocked' ? 14 : 0);
+  const baseDays = (params.contactIndex + 1) * 2 + statusBiasDays;
+  const hourOffset = params.messageIndex * 5 + (params.contactIndex % 3);
+  return new Date(now - (baseDays * 24 + hourOffset) * 60 * 60 * 1000).toISOString();
+}
 
 function parsePayload(raw: unknown): XingyePhoneAiPayload {
   if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { contacts?: unknown[] }).contacts)) {
@@ -29,7 +49,6 @@ function parsePayload(raw: unknown): XingyePhoneAiPayload {
             && typeof msg === 'object'
             && ((msg as { from?: unknown }).from === 'owner' || (msg as { from?: unknown }).from === 'target')
             && typeof (msg as { content?: unknown }).content === 'string'
-            && typeof (msg as { createdAt?: unknown }).createdAt === 'string'
           ))
           : [],
       })),
@@ -156,8 +175,10 @@ export async function generateSmsHistoryWithAI(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   profileFingerprint: string;
+  mode?: 'empty_only' | 'replace_ai';
 }) {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint } = params;
+  const mode = params.mode ?? 'empty_only';
   setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
     status: 'running',
     startedAt: new Date().toISOString(),
@@ -173,8 +194,17 @@ export async function generateSmsHistoryWithAI(params: {
       ownerAgentId: ownerAgent.id,
       ownerProfile,
       contacts,
+      existingThreads: getSmsThreads(ownerAgent.id).map(thread => ({
+        targetType: thread.targetType,
+        targetId: thread.targetId,
+        messageCount: thread.messages.length,
+      })),
       prompt,
       timeoutMs: 120_000,
+    });
+    const contactIndexMap = new Map<string, number>();
+    contacts.forEach((contact, index) => {
+      contactIndexMap.set(`${contact.targetType}:${contact.targetId}`, index);
     });
     for (const suggestion of payload.contacts) {
       const contact = contacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
@@ -182,17 +212,28 @@ export async function generateSmsHistoryWithAI(params: {
       mergeContactSuggestion(ownerAgent.id, contact, suggestion);
       if (!suggestion.messages?.length) continue;
       const existingThread = getSmsThread(ownerAgent.id, suggestion.targetType as XingyeContactTargetType, suggestion.targetId);
-      if (existingThread?.messages.length) continue;
-      for (const message of suggestion.messages.slice(0, 12)) {
+      if (mode === 'empty_only' && existingThread?.messages.length) continue;
+      const contactIndex = contactIndexMap.get(`${contact.targetType}:${contact.targetId}`) ?? 0;
+      const sortedMessages = suggestion.messages
+        .slice(0, 12)
+        .map((message, messageIndex) => ({
+          ...message,
+          createdAt: asValidIso((message as { createdAt?: unknown }).createdAt)
+            ?? getSmsFallbackCreatedAt({ contactIndex, messageIndex, status: contact.status }),
+        }))
+        .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      for (const message of sortedMessages) {
         const content = message.content.trim();
         if (!content) continue;
-        addMockSmsMessage(
-          ownerAgent.id,
-          suggestion.targetType as XingyeContactTargetType,
-          suggestion.targetId,
-          content.slice(0, 80),
-          message.from === 'owner' ? 'outgoing' : 'incoming',
-        );
+        addSmsMessage({
+          ownerAgentId: ownerAgent.id,
+          targetType: suggestion.targetType as XingyeContactTargetType,
+          targetId: suggestion.targetId,
+          content: content.slice(0, 80),
+          direction: message.from === 'owner' ? 'outgoing' : 'incoming',
+          source: 'ai_generated',
+          createdAt: message.createdAt,
+        });
       }
     }
     setSmsHistoryGenerationState(ownerAgent.id, {

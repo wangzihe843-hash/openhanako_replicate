@@ -780,6 +780,16 @@ export function setSmsHistoryGenerationState(
   saveSmsHistoryGenerationStateMap(map, storage);
 }
 
+export function clearSmsHistoryGenerationState(
+  ownerAgentId: string,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadSmsHistoryGenerationStateMap(storage);
+  if (!(ownerAgentId in map)) return;
+  delete map[ownerAgentId];
+  saveSmsHistoryGenerationStateMap(map, storage);
+}
+
 export function getPhoneContacts(
   ownerAgentId: string,
   agents: Agent[],
@@ -870,6 +880,62 @@ export function getSmsThread(
   return loadSmsThreadMap(storage)[threadKey(ownerAgentId, targetType, targetId)] ?? null;
 }
 
+type AddSmsMessageInput = {
+  ownerAgentId: string;
+  targetType: XingyeContactTargetType;
+  targetId: string;
+  content: string;
+  direction: 'incoming' | 'outgoing';
+  source?: XingyeContactSource;
+  createdAt?: string;
+};
+
+function normalizeCreatedAt(value: string | undefined): string {
+  if (!value) return new Date().toISOString();
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? new Date().toISOString() : new Date(parsed).toISOString();
+}
+
+export function addSmsMessage(
+  input: AddSmsMessageInput,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyePhoneSmsThread | null {
+  const normalizedContent = input.content.trim();
+  if (!input.ownerAgentId || !input.targetId || !normalizedContent) return null;
+
+  const map = loadSmsThreadMap(storage);
+  const key = threadKey(input.ownerAgentId, input.targetType, input.targetId);
+  const previous = map[key];
+  const threadId = previous?.id ?? createId('sms-thread');
+  const remoteId = input.targetType === 'agent' ? input.targetId : `${input.targetType}:${input.targetId}`;
+  const createdAt = normalizeCreatedAt(input.createdAt);
+  const message: XingyePhoneSmsMessage = {
+    id: createId('sms-message'),
+    threadId,
+    fromAgentId: input.direction === 'outgoing' ? input.ownerAgentId : remoteId,
+    toAgentId: input.direction === 'outgoing' ? remoteId : input.ownerAgentId,
+    content: normalizedContent,
+    source: input.source ?? 'mock',
+    createdAt,
+  };
+
+  const nextMessages = [...(previous?.messages ?? []), message]
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  const nextUpdatedAt = nextMessages[nextMessages.length - 1]?.createdAt ?? createdAt;
+  const next: XingyePhoneSmsThread = {
+    id: threadId,
+    ownerAgentId: input.ownerAgentId,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    source: previous?.source ?? 'phone_sms',
+    messages: nextMessages,
+    updatedAt: nextUpdatedAt,
+  };
+  map[key] = next;
+  saveSmsThreadMap(map, storage);
+  return next;
+}
+
 export function addMockSmsMessage(
   ownerAgentId: string,
   targetType: XingyeContactTargetType,
@@ -878,36 +944,46 @@ export function addMockSmsMessage(
   direction: 'incoming' | 'outgoing',
   storage: StorageLike | null = getLocalStorage(),
 ): XingyePhoneSmsThread | null {
-  const normalizedContent = content.trim();
-  if (!ownerAgentId || !targetId || !normalizedContent) return null;
-
-  const map = loadSmsThreadMap(storage);
-  const key = threadKey(ownerAgentId, targetType, targetId);
-  const previous = map[key];
-  const threadId = previous?.id ?? createId('sms-thread');
-  const remoteId = targetType === 'agent' ? targetId : `${targetType}:${targetId}`;
-  const message: XingyePhoneSmsMessage = {
-    id: createId('sms-message'),
-    threadId,
-    fromAgentId: direction === 'outgoing' ? ownerAgentId : remoteId,
-    toAgentId: direction === 'outgoing' ? remoteId : ownerAgentId,
-    content: normalizedContent,
-    source: 'mock',
-    createdAt: new Date().toISOString(),
-  };
-
-  const next: XingyePhoneSmsThread = {
-    id: threadId,
+  return addSmsMessage({
     ownerAgentId,
     targetType,
     targetId,
-    source: previous?.source ?? 'phone_sms',
-    messages: [...(previous?.messages ?? []), message],
-    updatedAt: message.createdAt,
-  };
-  map[key] = next;
-  saveSmsThreadMap(map, storage);
-  return next;
+    content,
+    direction,
+    source: 'mock',
+  }, storage);
+}
+
+export function clearAiSmsHistory(
+  ownerAgentId: string,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  if (!ownerAgentId) return;
+  const map = loadSmsThreadMap(storage);
+  let changed = false;
+  for (const [key, thread] of Object.entries(map)) {
+    if (thread.ownerAgentId !== ownerAgentId) continue;
+    const kept = thread.messages.filter(message => message.source !== 'ai_generated');
+    if (kept.length === thread.messages.length) continue;
+    changed = true;
+    if (kept.length === 0) {
+      delete map[key];
+      continue;
+    }
+    const sorted = [...kept].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    map[key] = {
+      ...thread,
+      messages: sorted,
+      updatedAt: sorted[sorted.length - 1]?.createdAt ?? thread.updatedAt,
+    };
+  }
+  if (changed) saveSmsThreadMap(map, storage);
+  clearSmsHistoryGenerationState(ownerAgentId, storage);
+  setPhoneAiGenerationState(ownerAgentId, 'sms_history', {
+    status: 'idle',
+    error: undefined,
+    finishedAt: undefined,
+  }, storage);
 }
 
 export function useXingyePhoneStorageVersion(): number {
@@ -921,6 +997,8 @@ export function useXingyePhoneStorageVersion(): number {
         || event.key === XINGYE_PHONE_SMS_THREADS_STORAGE_KEY
         || event.key === XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY
         || event.key === XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY
+        || event.key === XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY
+        || event.key === XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY
       ) {
         onChanged();
       }

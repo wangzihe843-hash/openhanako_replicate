@@ -1394,7 +1394,7 @@
 
 .phoneMessageList {
   min-height: 180px;
-  max-height: 260px;
+  max-height: 300px;
   overflow: auto;
   display: grid;
   gap: 8px;
@@ -1406,9 +1406,9 @@
 }
 
 .phoneMessageBubble {
-  max-width: 86%;
-  padding: 8px 10px;
-  border-radius: 12px;
+  max-width: 84%;
+  padding: 9px 11px;
+  border-radius: 14px;
   box-shadow: 0 6px 14px rgba(30, 41, 59, 0.1);
 }
 
@@ -1417,6 +1417,8 @@
   color: var(--text);
   font-size: 0.8rem;
   line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1440,6 +1442,8 @@
 }
 
 .phoneComposer {
+  display: grid;
+  gap: 8px;
   padding: 10px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 14px;
