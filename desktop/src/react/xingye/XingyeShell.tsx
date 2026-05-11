@@ -3,6 +3,7 @@ import { useStore } from '../stores';
 import { AgentPhonePanel } from './AgentPhonePanel';
 import { ChatEntryPanel } from './ChatEntryPanel';
 import { GroupChatPanel } from './GroupChatPanel';
+import { MomentsPanel } from './MomentsPanel';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import { enterXingyeAgentChat } from './xingye-chat-actions';
@@ -132,6 +133,12 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
             />
           ) : activeTab.id === 'group-chat' ? (
             <GroupChatPanel />
+          ) : activeTab.id === 'moments' ? (
+            <MomentsPanel
+              agents={agents}
+              currentAgentId={currentAgentId}
+              selectedXingyeAgentId={selectedXingyeAgentId}
+            />
           ) : (
             <div className={styles.panelInner}>
               <h2 className={styles.panelTitle}>{activeTab.title}</h2>
