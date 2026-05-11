@@ -219,6 +219,8 @@ export const XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneCo
 export const XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneAiGenerationState';
 export const XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneSmsHistoryGenerationState';
 export const XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY = 'xingye.phoneContactSnapshots';
+/** 每个 owner 在 localStorage 中最多保留的通讯录快照条数（仅打点，非多份完整联系人副本）。更早的会在加载或新建快照时丢弃。 */
+export const XINGYE_PHONE_CONTACT_SNAPSHOT_MAX = 2;
 export const XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY = 'xingye.phoneContactAiUpdateState';
 
 const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
@@ -1227,7 +1229,41 @@ export function unblockPhoneContact(ownerAgentId: string, targetType: XingyeCont
   return restorePhoneContact(ownerAgentId, targetType, targetId);
 }
 
+/** 保证当前 owner 下存在 user 元数据（__user__ / 「你」），且 v1 不允许 user 处于 blocked/deleted。不覆盖已有 remark/impression/tags/faction。 */
+export function ensureDefaultUserContact(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()) {
+  if (!ownerAgentId) return;
+  const meta = getPhoneContactMeta(ownerAgentId, 'user', '__user__', storage);
+  if (!meta) {
+    savePhoneContactMeta(
+      ownerAgentId,
+      'user',
+      '__user__',
+      {
+        remark: '你',
+        impression: '还没有形成明确印象。',
+        tags: [],
+        status: 'active',
+        source: 'system',
+      },
+      storage,
+      { markManualFields: false },
+    );
+    return;
+  }
+  if (meta.status === 'blocked' || meta.status === 'deleted') {
+    savePhoneContactMeta(
+      ownerAgentId,
+      'user',
+      '__user__',
+      { status: 'active', source: meta.source ?? 'system' },
+      storage,
+      { markManualFields: false },
+    );
+  }
+}
+
 export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyePhoneContactView {
+  ensureDefaultUserContact(ownerAgentId, storage);
   const meta = getPhoneContactMeta(ownerAgentId, 'user', '__user__', storage);
   return {
     ownerAgentId,
@@ -1277,9 +1313,10 @@ function loadContactSnapshotsMap(storage: StorageLike | null = getLocalStorage()
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return {};
     const map: Record<string, XingyeContactSnapshot[]> = {};
+    let mutated = false;
     for (const [ownerAgentId, value] of Object.entries(parsed)) {
       if (!Array.isArray(value)) continue;
-      map[ownerAgentId] = value.filter((snapshot): snapshot is XingyeContactSnapshot => (
+      let arr = value.filter((snapshot): snapshot is XingyeContactSnapshot => (
         isRecord(snapshot)
         && typeof snapshot.id === 'string'
         && typeof snapshot.createdAt === 'string'
@@ -1287,6 +1324,14 @@ function loadContactSnapshotsMap(storage: StorageLike | null = getLocalStorage()
         && Array.isArray(snapshot.virtualContacts)
         && isRecord(snapshot.contactMeta)
       )) as XingyeContactSnapshot[];
+      if (arr.length > XINGYE_PHONE_CONTACT_SNAPSHOT_MAX) {
+        arr = arr.slice(-XINGYE_PHONE_CONTACT_SNAPSHOT_MAX);
+        mutated = true;
+      }
+      map[ownerAgentId] = arr;
+    }
+    if (mutated && storage) {
+      saveContactSnapshotsMap(map, storage);
     }
     return map;
   } catch {
@@ -1323,7 +1368,7 @@ export function createPhoneContactSnapshot(ownerAgentId: string, reason: string,
     contactMeta: filteredMeta,
     generationState,
   };
-  const list = [...(snapshotsMap[ownerAgentId] ?? []), snapshot].slice(-12);
+  const list = [...(snapshotsMap[ownerAgentId] ?? []), snapshot].slice(-XINGYE_PHONE_CONTACT_SNAPSHOT_MAX);
   snapshotsMap[ownerAgentId] = list;
   saveContactSnapshotsMap(snapshotsMap, storage);
   return snapshot;
@@ -1351,6 +1396,7 @@ export function restorePhoneContactSnapshot(ownerAgentId: string, snapshotId: st
   }
   saveContactMetaMap(contactMap, storage);
   if (snapshot.generationState) setPhoneContactGenerationState(ownerAgentId, snapshot.generationState, storage);
+  ensureDefaultUserContact(ownerAgentId, storage);
   return true;
 }
 
@@ -1480,6 +1526,134 @@ function findVirtualContactByName(ownerAgentId: string, displayName: string, sto
   return contacts.find(item => item.displayName.trim().toLowerCase() === normalized) ?? null;
 }
 
+/** 全量 AI 生成时按 displayName 合并：只合并「当前为 active」的同名联系人，避免覆盖 blocked/deleted 行。 */
+function findVirtualContactForBatchAiMerge(
+  ownerAgentId: string,
+  displayName: string,
+  storage: StorageLike | null,
+): XingyeVirtualContact | null {
+  const normalized = displayName.trim().toLowerCase();
+  if (!normalized) return null;
+  const matches = getVirtualContacts(ownerAgentId, storage)
+    .filter(item => item.displayName.trim().toLowerCase() === normalized);
+  if (!matches.length) return null;
+  const statusRank = (c: XingyeVirtualContact): number => {
+    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', c.id, storage);
+    const s = meta?.status ?? c.status ?? 'active';
+    if (s === 'active') return 3;
+    if (s === 'blocked') return 2;
+    return 1;
+  };
+  const best = [...matches].sort((a, b) => statusRank(b) - statusRank(a))[0];
+  return statusRank(best) >= 3 ? best : null;
+}
+
+/** 「重新生成全部」：同名时合并到 active 优先，否则 blocked/deleted 也可被 AI 刷新（避免整表留在已删除）。 */
+function findVirtualContactForRegenerateMerge(
+  ownerAgentId: string,
+  displayName: string,
+  storage: StorageLike | null,
+): XingyeVirtualContact | null {
+  const normalized = displayName.trim().toLowerCase();
+  if (!normalized) return null;
+  const matches = getVirtualContacts(ownerAgentId, storage)
+    .filter(item => item.displayName.trim().toLowerCase() === normalized);
+  if (!matches.length) return null;
+  const statusRank = (c: XingyeVirtualContact): number => {
+    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', c.id, storage);
+    const s = meta?.status ?? c.status ?? 'active';
+    if (s === 'active') return 3;
+    if (s === 'blocked') return 2;
+    return 1;
+  };
+  return [...matches].sort((a, b) => {
+    const d = statusRank(b) - statusRank(a);
+    if (d !== 0) return d;
+    return a.id.localeCompare(b.id);
+  })[0];
+}
+
+function resolveVirtualContactIdByStrictMatchName(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  matchName: string,
+  storage: StorageLike | null,
+): string | undefined {
+  const needle = matchName.trim().toLowerCase();
+  if (!needle) return undefined;
+  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(v => v.targetType === 'virtual_contact');
+  const byDisplay = views.filter(v => v.displayName.trim().toLowerCase() === needle);
+  if (byDisplay.length === 1) return byDisplay[0].targetId;
+  const byRemark = views.filter(v => (v.remark ?? '').trim().toLowerCase() === needle);
+  if (byRemark.length === 1) return byRemark[0].targetId;
+  return undefined;
+}
+
+function resolveAgentIdByStrictName(agents: Agent[], profiles: XingyeRoleProfileMap, matchName: string): string | undefined {
+  const needle = matchName.trim().toLowerCase();
+  if (!needle) return undefined;
+  const matches = agents.filter((a) => {
+    const display = (profiles[a.id]?.displayName || a.name).trim().toLowerCase();
+    const name = a.name.trim().toLowerCase();
+    return display === needle || name === needle;
+  });
+  return matches.length === 1 ? matches[0].id : undefined;
+}
+
+function mergeStatusForAiGeneratedVirtual(params: {
+  existingMeta: XingyePhoneContactMeta | null;
+  existed: XingyeVirtualContact | null;
+  inputStatus: XingyeContactStatus;
+  /** 重新生成全部：允许用 AI 的 status 覆盖原 blocked/deleted（除非用户曾手动锁定 status）。 */
+  refreshStatusFromAi?: boolean;
+}): XingyeContactStatus {
+  const { existingMeta, existed, inputStatus, refreshStatusFromAi } = params;
+  const manual = new Set(existingMeta?.manualEditedFields ?? []);
+  if (manual.has('status')) {
+    return (existingMeta?.status ?? existed?.status ?? 'active') as XingyeContactStatus;
+  }
+  const prev = (existingMeta?.status ?? existed?.status ?? 'active') as XingyeContactStatus;
+  if (refreshStatusFromAi) return inputStatus;
+  if (prev === 'blocked' || prev === 'deleted') return prev;
+  return inputStatus;
+}
+
+function syncVirtualContactEntityWithStoredMeta(
+  ownerAgentId: string,
+  virtualId: string,
+  storage: StorageLike | null,
+) {
+  const vc = getVirtualContacts(ownerAgentId, storage).find(c => c.id === virtualId);
+  if (!vc) return;
+  const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', virtualId, storage);
+  if (!meta) return;
+  const next: XingyeVirtualContact = {
+    ...vc,
+    status: meta.status ?? vc.status ?? 'active',
+    tags: meta.tags?.length ? meta.tags : vc.tags,
+    faction: meta.faction ?? vc.faction,
+    remark: meta.remark ?? vc.remark,
+    impression: meta.impression ?? vc.impression,
+    relationshipHint: meta.relationshipHint ?? vc.relationshipHint,
+    linkedAgentId: meta.linkedAgentId ?? vc.linkedAgentId,
+    updatedAt: new Date().toISOString(),
+  };
+  if (
+    next.status === vc.status
+    && JSON.stringify(next.tags ?? []) === JSON.stringify(vc.tags ?? [])
+    && next.faction === vc.faction
+    && next.remark === vc.remark
+    && next.impression === vc.impression
+    && next.relationshipHint === vc.relationshipHint
+    && next.linkedAgentId === vc.linkedAgentId
+  ) {
+    return;
+  }
+  saveVirtualContact(ownerAgentId, next, storage);
+}
+
 export function applyAiGeneratedContacts(
   ownerAgentId: string,
   contacts: XingyeAiGeneratedContact[],
@@ -1488,127 +1662,212 @@ export function applyAiGeneratedContacts(
     storage?: StorageLike | null;
     virtualSource?: XingyeContactSource;
     metaSource?: XingyeContactSource;
+    /** 默认仅合并「同名且当前为 active」；增量 add 传 never；重新生成全部传 regenerate。 */
+    mergeMatchingDisplayName?: 'prefer-active-only' | 'never' | 'regenerate';
   },
 ): XingyeVirtualContact[] {
   const storage = options?.storage ?? getLocalStorage();
   const virtualSource = options?.virtualSource ?? 'ai_generated';
   const metaSource = options?.metaSource ?? virtualSource;
+  const mergeMode = options?.mergeMatchingDisplayName ?? 'prefer-active-only';
   const output: XingyeVirtualContact[] = [];
   for (const raw of contacts) {
     const input = normalizeAiGeneratedContact(raw);
     if (!input.displayName?.trim()) continue;
-    const existed = findVirtualContactByName(ownerAgentId, input.displayName, storage);
-    const saved = saveVirtualContact(ownerAgentId, {
-      ownerAgentId,
-      id: existed?.id ?? '',
-      displayName: input.displayName.trim(),
-      kind: input.kind ?? 'unknown',
-      shortBio: input.shortBio,
-      remark: input.remark,
-      impression: input.impression,
-      relationshipHint: input.relationshipHint,
-      tags: input.tags ?? [],
-      faction: input.faction,
-      status: input.status ?? 'active',
-      linkedAgentId: existed?.linkedAgentId,
-      source: virtualSource,
-      generatedReason: input.generatedReason,
-      createdAt: existed?.createdAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }, storage);
-    const existingMeta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, storage);
-    const isNewByName = !existed;
+    const existed = mergeMode === 'never'
+      ? null
+      : mergeMode === 'regenerate'
+        ? findVirtualContactForRegenerateMerge(ownerAgentId, input.displayName, storage)
+        : findVirtualContactForBatchAiMerge(ownerAgentId, input.displayName, storage);
+    const existingMeta = existed ? getPhoneContactMeta(ownerAgentId, 'virtual_contact', existed.id, storage) : null;
+    const mergedStatus = mergeStatusForAiGeneratedVirtual({
+      existingMeta,
+      existed,
+      inputStatus: normalizeContactStatusValue(input.status),
+      refreshStatusFromAi: mergeMode === 'regenerate',
+    });
     const aiMetaPatch: Partial<XingyePhoneContactMeta> = {
       remark: input.remark,
       impression: input.impression,
       relationshipHint: input.relationshipHint,
       tags: input.tags,
       faction: input.faction,
-      status: input.status,
-      linkedAgentId: existingMeta?.linkedAgentId,
+      status: mergedStatus,
+      linkedAgentId: existingMeta?.linkedAgentId ?? existed?.linkedAgentId,
       source: metaSource,
     };
-    if (isNewByName && metaSource === 'ai_generated') {
+    if (!existed && metaSource === 'ai_generated') {
       aiMetaPatch.pendingNewFriend = true;
     }
     const patch = preserveManualContactFields(existingMeta, aiMetaPatch);
+    const finalStatus = (patch.status ?? mergedStatus) as XingyeContactStatus;
+    const saved = saveVirtualContact(ownerAgentId, {
+      ownerAgentId,
+      id: existed?.id ?? '',
+      displayName: input.displayName.trim(),
+      kind: input.kind ?? 'unknown',
+      shortBio: input.shortBio,
+      remark: patch.remark ?? input.remark ?? existed?.remark,
+      impression: patch.impression ?? input.impression ?? existed?.impression,
+      relationshipHint: patch.relationshipHint ?? input.relationshipHint ?? existed?.relationshipHint,
+      tags: (patch.tags?.length ? patch.tags : undefined) ?? input.tags ?? existed?.tags ?? [],
+      faction: patch.faction ?? input.faction ?? existed?.faction,
+      status: finalStatus,
+      linkedAgentId: patch.linkedAgentId ?? existingMeta?.linkedAgentId ?? existed?.linkedAgentId,
+      source: virtualSource,
+      generatedReason: input.generatedReason,
+      createdAt: existed?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, storage);
     savePhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, patch, storage, { markManualFields: false });
     output.push(saved);
   }
+  ensureDefaultUserContact(ownerAgentId, storage);
   return output;
 }
 
 export function applyAiContactUpdates(
   ownerAgentId: string,
   updates: XingyeAiContactUpdate[],
-  options?: { storage?: StorageLike | null },
+  options?: {
+    storage?: StorageLike | null;
+    /** 传入后可对 matchName 做唯一性解析，避免误匹配。 */
+    agents?: Agent[];
+    profiles?: XingyeRoleProfileMap;
+  },
 ) {
   const storage = options?.storage ?? getLocalStorage();
+  const agents = options?.agents ?? [];
+  const profiles = options?.profiles ?? {};
+  const canResolveNames = agents.length > 0;
+
+  const preVirtual = getVirtualContacts(ownerAgentId, storage).length;
+  const preBlockedVc = getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage)
+    .filter(c => c.targetType === 'virtual_contact').length;
+  const preDeletedVc = getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage)
+    .filter(c => c.targetType === 'virtual_contact').length;
+
+  const counts = { add: 0, update: 0, delete: 0, block: 0, restore: 0, skip: 0 };
+
   for (const raw of updates) {
     const update = normalizeAiContactUpdate(raw);
     if (update.action === 'add' && update.contact) {
       applyAiGeneratedContacts(ownerAgentId, [{
         ...update.contact,
         targetType: 'virtual_contact',
-      }], { storage });
+      }], { storage, mergeMatchingDisplayName: 'never' });
+      counts.add += 1;
       continue;
     }
-    let resolvedTargetId = update.targetId;
-    if (!resolvedTargetId && update.matchName && update.targetType === 'virtual_contact') {
-      resolvedTargetId = findVirtualContactByName(ownerAgentId, update.matchName, storage)?.id;
+
+    let resolvedTargetId = typeof update.targetId === 'string' ? update.targetId.trim() : '';
+    if (!resolvedTargetId && update.matchName?.trim()) {
+      if (update.targetType === 'virtual_contact') {
+        resolvedTargetId = canResolveNames
+          ? (resolveVirtualContactIdByStrictMatchName(ownerAgentId, agents, profiles, update.matchName, storage) ?? '')
+          : (findVirtualContactByName(ownerAgentId, update.matchName, storage)?.id ?? '');
+      } else if (update.targetType === 'agent') {
+        resolvedTargetId = canResolveNames
+          ? (resolveAgentIdByStrictName(agents, profiles, update.matchName) ?? '')
+          : '';
+      }
     }
-    if (!resolvedTargetId) continue;
-    if (update.targetType === 'user' && (update.action === 'delete' || update.action === 'block')) continue;
+
+    if (update.targetType === 'user') {
+      resolvedTargetId = '__user__';
+    }
+
+    if (!resolvedTargetId) {
+      counts.skip += 1;
+      continue;
+    }
+
+    if (update.targetType === 'user' && (update.action === 'delete' || update.action === 'block')) {
+      counts.skip += 1;
+      continue;
+    }
+
     if (update.action === 'delete') {
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'deleted', source: 'ai_generated' }, storage, { markManualFields: false });
+      if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
+      counts.delete += 1;
       continue;
     }
     if (update.action === 'block') {
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'blocked', source: 'ai_generated' }, storage, { markManualFields: false });
+      if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
+      counts.block += 1;
       continue;
     }
     if (update.action === 'restore') {
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'active', source: 'ai_generated' }, storage, { markManualFields: false });
+      if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
+      counts.restore += 1;
       continue;
     }
     if (update.action === 'update') {
       const existingMeta = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
-      const patch = preserveManualContactFields(existingMeta, {
-        ...update.patch,
+      const aiPayload: Partial<XingyePhoneContactMeta> = {
+        ...(update.patch ?? {}),
         source: 'ai_generated',
-      });
+      };
+      if (update.targetType === 'user') {
+        delete aiPayload.status;
+      }
+      const patch = preserveManualContactFields(existingMeta, aiPayload);
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, patch, storage, { markManualFields: false });
+      if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
+      counts.update += 1;
     }
+  }
+
+  ensureDefaultUserContact(ownerAgentId, storage);
+
+  const postVirtual = getVirtualContacts(ownerAgentId, storage).length;
+  const postBlockedVc = getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage)
+    .filter(c => c.targetType === 'virtual_contact').length;
+  const postDeletedVc = getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage)
+    .filter(c => c.targetType === 'virtual_contact').length;
+
+  if (typeof console !== 'undefined' && console.info) {
+    console.info('[xingye-phone] applyAiContactUpdates', {
+      ownerAgentId,
+      updatesIn: updates.length,
+      counts,
+      virtualContacts: { before: preVirtual, after: postVirtual },
+      virtualBlocked: { before: preBlockedVc, after: postBlockedVc },
+      virtualDeleted: { before: preDeletedVc, after: postDeletedVc },
+    });
   }
 }
 
-export function regenerateAllVirtualContactsWithAI(
+/** 「重新生成全部」专用：清空当前 owner 的所有 virtual_contact 实体与 virtual_contact 类型 meta；不动 user / agent meta。 */
+export function clearAllVirtualContactsForOwner(
   ownerAgentId: string,
-  options?: { preserveLinkedAgent?: boolean; storage?: StorageLike | null },
+  storage: StorageLike | null = getLocalStorage(),
 ) {
-  const storage = options?.storage ?? getLocalStorage();
-  const preserveLinkedAgent = options?.preserveLinkedAgent ?? true;
+  if (!ownerAgentId) return;
   const virtualMap = loadVirtualContactMap(storage);
-  const metaMap = loadContactMetaMap(storage);
-  for (const [key, value] of Object.entries(virtualMap)) {
-    if (!key.startsWith(`${ownerAgentId}::`)) continue;
-    if (preserveLinkedAgent && value.linkedAgentId) continue;
-    delete virtualMap[key];
-  }
-  for (const key of Object.keys(metaMap)) {
-    if (!key.startsWith(`${ownerAgentId}::virtual_contact::`)) continue;
-    const targetId = key.split('::')[2];
-    const linked = metaMap[key]?.linkedAgentId;
-    if (preserveLinkedAgent && linked) continue;
-    delete metaMap[key];
-    if (targetId) {
-      for (const [vKey, vValue] of Object.entries(virtualMap)) {
-        if (vKey === `${ownerAgentId}::${targetId}` && (!preserveLinkedAgent || !vValue.linkedAgentId)) delete virtualMap[vKey];
-      }
+  const virtualPrefix = `${ownerAgentId}::`;
+  let virtualMutated = false;
+  for (const key of Object.keys(virtualMap)) {
+    if (key.startsWith(virtualPrefix)) {
+      delete virtualMap[key];
+      virtualMutated = true;
     }
   }
-  saveVirtualContactMap(virtualMap, storage);
-  saveContactMetaMap(metaMap, storage);
+  if (virtualMutated) saveVirtualContactMap(virtualMap, storage);
+
+  const metaMap = loadContactMetaMap(storage);
+  const metaPrefix = `${ownerAgentId}::virtual_contact::`;
+  let metaMutated = false;
+  for (const key of Object.keys(metaMap)) {
+    if (key.startsWith(metaPrefix)) {
+      delete metaMap[key];
+      metaMutated = true;
+    }
+  }
+  if (metaMutated) saveContactMetaMap(metaMap, storage);
 }
 
 export function rollbackAndUpdateVirtualContactsWithAI(
@@ -1616,6 +1875,8 @@ export function rollbackAndUpdateVirtualContactsWithAI(
   updates: XingyeAiContactUpdate[],
   snapshotId?: string,
   storage: StorageLike | null = getLocalStorage(),
+  agents: Agent[] = [],
+  profiles: XingyeRoleProfileMap = {},
 ): boolean {
   const snapshot = snapshotId
     ? getPhoneContactSnapshots(ownerAgentId, storage).find(item => item.id === snapshotId) ?? null
@@ -1623,7 +1884,7 @@ export function rollbackAndUpdateVirtualContactsWithAI(
   if (!snapshot) return false;
   const restored = restorePhoneContactSnapshot(ownerAgentId, snapshot.id, storage);
   if (!restored) return false;
-  applyAiContactUpdates(ownerAgentId, updates, { storage });
+  applyAiContactUpdates(ownerAgentId, updates, { storage, agents, profiles });
   return true;
 }
 
@@ -1900,7 +2161,7 @@ export function getPhoneContacts(
   }
 
   return views
-    .filter(item => includeDeleted || item.status !== 'deleted')
+    .filter(item => includeDeleted || item.targetType === 'user' || item.status !== 'deleted')
     .sort((a, b) => a.remark.localeCompare(b.remark, 'zh-Hans-CN'));
 }
 

@@ -43,8 +43,6 @@ export function PhoneContactsNewFriendsView({
   profiles,
   onBackHome,
   onSelectContact,
-  onTriggerAiUpdate,
-  aiUpdateBusy,
 }: SectionBaseProps) {
   const pending = getPendingNewContacts(ownerAgentId, agents, profiles);
   return (
@@ -83,11 +81,6 @@ export function PhoneContactsNewFriendsView({
         <button type="button" className={styles.secondaryButton} onClick={onBackHome}>
           返回通讯录
         </button>
-        {onTriggerAiUpdate ? (
-          <button type="button" className={styles.secondaryButton} onClick={onTriggerAiUpdate} disabled={aiUpdateBusy}>
-            去 AI 更新联系人
-          </button>
-        ) : null}
       </div>
     </section>
   );

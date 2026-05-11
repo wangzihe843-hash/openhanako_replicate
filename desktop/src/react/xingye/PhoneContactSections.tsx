@@ -22,12 +22,20 @@ const SHORTCUTS: { id: PhoneContactsSectionId; label: string }[] = [
   { id: 'deleted', label: '已删除' },
 ];
 
+function isActiveContactStatus(status: XingyePhoneContactView['status'] | undefined): boolean {
+  return status === 'active' || status === undefined;
+}
+
 export function PhoneContactSections({ contacts, onSelect, onOpenSection }: PhoneContactSectionsProps) {
-  const important = contacts.filter(item => item.targetType === 'user' || (item.tags ?? []).includes('亲近的人')).slice(0, 4);
-  const virtuals = contacts.filter(item => item.targetType === 'virtual_contact' && item.status !== 'deleted');
-  const agents = contacts.filter(item => item.targetType === 'agent' && item.status !== 'deleted');
-  const blocked = contacts.filter(item => item.status === 'blocked');
-  const deleted = contacts.filter(item => item.status === 'deleted');
+  const important = contacts.filter(item => item.targetType === 'user');
+  const virtuals = contacts.filter(
+    item => item.targetType === 'virtual_contact' && isActiveContactStatus(item.status),
+  );
+  const agents = contacts.filter(
+    item => item.targetType === 'agent' && isActiveContactStatus(item.status),
+  );
+  const blocked = contacts.filter(item => item.status === 'blocked' && item.targetType !== 'user');
+  const deleted = contacts.filter(item => item.status === 'deleted' && item.targetType !== 'user');
 
   const renderList = (title: string, items: XingyePhoneContactView[]) => (
     <section className={styles.phoneAppCard}>

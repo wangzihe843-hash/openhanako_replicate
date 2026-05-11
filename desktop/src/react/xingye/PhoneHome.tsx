@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
@@ -98,7 +99,22 @@ const futureEntries = [
   },
 ] as const;
 
+function formatPhoneStatusTime(date: Date): string {
+  const h = date.getHours();
+  const m = date.getMinutes();
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContacts, onOpenMmChat }: PhoneHomeProps) {
+  const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
+  useEffect(() => {
+    setStatusTime(formatPhoneStatusTime(new Date()));
+    const id = window.setInterval(() => {
+      setStatusTime(formatPhoneStatusTime(new Date()));
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const coverStyle = display?.chatBackgroundDataUrl
     ? { backgroundImage: `url(${display.chatBackgroundDataUrl})` }
     : undefined;
@@ -120,7 +136,7 @@ export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContact
   return (
     <div className={styles.phoneShell} aria-label="角色手机主页">
       <div className={styles.phoneStatusBar}>
-        <span>9:41</span>
+        <span>{statusTime}</span>
         <span>星野</span>
       </div>
 

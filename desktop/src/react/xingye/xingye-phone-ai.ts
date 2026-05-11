@@ -7,6 +7,7 @@ import {
   applyAiContactUpdates,
   applyAiGeneratedContacts,
   addSmsMessage,
+  clearAllVirtualContactsForOwner,
   createPhoneContactSnapshot,
   ensureGeneratedVirtualContacts,
   getContactAiUpdateState,
@@ -23,7 +24,6 @@ import {
   ensureContactDistribution,
   ensureStoredVirtualContactsNonActiveDistribution,
   reconcileVirtualContactInferenceFields,
-  regenerateAllVirtualContactsWithAI,
   restorePhoneContactSnapshot,
   saveContactAiUpdateState,
   sanitizeEnrichmentSuggestionFields,
@@ -318,7 +318,9 @@ export async function generateVirtualContactsWithAI(params: {
       generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
       if (generated.length > maxCount) generated = generated.slice(0, maxCount);
     }
-    applyAiGeneratedContacts(ownerAgent.id, generated);
+    applyAiGeneratedContacts(ownerAgent.id, generated, {
+      mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
+    });
     ensureStoredVirtualContactsNonActiveDistribution(
       ownerAgent.id,
       agents,
@@ -368,6 +370,8 @@ export async function updateContactsFromRecentContextWithAI(params: {
   profiles: XingyeRoleProfileMap;
 }) {
   const { ownerAgent, ownerProfile, contacts, agents, profiles } = params;
+  /** 与「回滚上次并更新」配套：否则 latest 长期停留在 regenerate 时的快照，增量更新无法被回滚到正确基线。 */
+  createPhoneContactSnapshot(ownerAgent.id, 'incremental_update_before');
   setContactUpdateState(ownerAgent.id, 'incremental_update', 'running');
   try {
     const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
@@ -386,7 +390,7 @@ export async function updateContactsFromRecentContextWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates);
+    applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
     return { updatesCount: updates.length };
@@ -404,14 +408,15 @@ export async function regenerateAllContactsWithAI(params: {
   profiles: Record<string, XingyeRoleProfile | undefined>;
   profileFingerprint: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts, agents, profiles, profileFingerprint } = params;
+  const { ownerAgent, ownerProfile, agents, profiles, profileFingerprint } = params;
   createPhoneContactSnapshot(ownerAgent.id, 'regenerate_all_before');
-  regenerateAllVirtualContactsWithAI(ownerAgent.id, { preserveLinkedAgent: true });
+  /** 彻底清空 virtual_contact；user/agent meta 保持不动。不再把旧联系人喂给 prompt，避免模型沿用不满意的内容。 */
+  clearAllVirtualContactsForOwner(ownerAgent.id);
   const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
   return generateVirtualContactsWithAI({
     ownerAgent,
     ownerProfile,
-    contacts: contactsForPrompt.length ? contactsForPrompt : contacts,
+    contacts: contactsForPrompt,
     agents,
     profiles,
     profileFingerprint,
@@ -449,7 +454,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates);
+    applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'success');
     return { snapshotId: latest.id, updatesCount: updates.length };

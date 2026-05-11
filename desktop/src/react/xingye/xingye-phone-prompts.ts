@@ -163,7 +163,8 @@ export function buildVirtualContactGenerationPrompt(params: {
     ? [
       '【数量】重新生成全部 virtual_contact：目标 10–14 个；至少 8 个；最多 16 个。少于 8 个视为不合格输出。',
       '【关系网】要像角色手机里长期积累的真实社交网：工作、灰色渠道、旧识、威胁、断联号码、拉黑对象等应同时存在，而不是「全员正常好友列表」。',
-      '去重：displayName 不要与下列现有联系人重复；同类弱关系可拆成不同具体称呼。',
+      '【必须覆盖】下列 JSON 里每一个 virtual_contact（含 status 为 blocked、deleted 的）都必须在输出的 contacts 里出现一条对应项：displayName 与该联系人 displayName 完全一致（逐字一致），并重写其 impression、shortBio、remark、relationshipHint、tags、faction、status、generatedReason；禁止因「去重」或「已删除」而省略这些人。',
+      '【新增】若需补充名单外的弱关系，仅可使用下列列表中尚不存在的 displayName；新增条数须使总数仍在规模上限内。',
     ].join('\n')
     : [
       '【数量】首次生成 virtual_contact：目标 8–12 个；至少 8 个；最多 14 个。少于 8 个视为不合格输出。',
