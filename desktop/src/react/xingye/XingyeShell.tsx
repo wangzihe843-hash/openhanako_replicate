@@ -119,7 +119,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               onNavigate={handleNavigate}
             />
           ) : activeTab.id === 'phone' ? (
-            <AgentPhonePanel agent={selectedAgent} />
+            <AgentPhonePanel agent={selectedAgent} onNavigate={handleNavigate} />
           ) : activeTab.id === 'chat' ? (
             <ChatEntryPanel
               selectedAgent={selectedAgent}

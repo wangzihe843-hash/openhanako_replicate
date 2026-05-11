@@ -3,14 +3,16 @@ import {
   getXingyeRoleProfileDisplay,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
-import { XingyeAgentAvatar } from './XingyeAgentAvatar';
+import type { XingyeTabId } from './xingye-tabs';
+import { PhoneHome } from './PhoneHome';
 import styles from './XingyeShell.module.css';
 
 interface AgentPhonePanelProps {
   agent: Agent | null;
+  onNavigate: (tabId: XingyeTabId) => void;
 }
 
-export function AgentPhonePanel({ agent }: AgentPhonePanelProps) {
+export function AgentPhonePanel({ agent, onNavigate }: AgentPhonePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
   const display = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
 
@@ -18,55 +20,9 @@ export function AgentPhonePanel({ agent }: AgentPhonePanelProps) {
     <div className={styles.phonePanel}>
       <h2 className={styles.panelTitle}>小手机</h2>
       <p className={styles.panelDescription}>
-        当前只接收星野本地选中的 Agent，不读取朋友圈，不创建群聊调度，也不写入聊天存储。
+        当前只展示星野本地角色资料，不连接 desk 后端，不写入聊天存储。
       </p>
-
-      <div
-        className={styles.phoneShell}
-        style={display?.chatBackgroundDataUrl ? { backgroundImage: `url(${display.chatBackgroundDataUrl})` } : undefined}
-      >
-        {agent && (
-          <XingyeAgentAvatar
-            agent={agent}
-            style={{ width: 42, height: 42, borderRadius: '50%', objectFit: 'cover', marginBottom: 12 }}
-          />
-        )}
-        <div className={styles.phoneHeader}>
-          <span>TA 的手机</span>
-          <strong>{display?.displayName ?? '未选择角色'}</strong>
-        </div>
-
-        <div className={styles.phoneContent}>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>selectedXingyeAgentId</span>
-            <strong className={styles.phoneValue}>{agent?.id ?? 'null'}</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>角色来源</span>
-            <strong className={styles.phoneValue}>OpenHanako Agent store + XingyeRoleProfile</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>简介</span>
-            <strong className={styles.phoneValue}>{display?.shortBio ?? '未选择角色'}</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>关系标签</span>
-            <strong className={styles.phoneValue}>{display?.relationshipLabel ?? '未设置'}</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>说话风格</span>
-            <strong className={styles.phoneValue}>{display?.speakingStyle ?? '未设置'}</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>主动动态</span>
-            <strong className={styles.phoneValue}>{display?.allowAutoMoments ? '允许' : '不允许'}</strong>
-          </div>
-          <div className={styles.phoneRow}>
-            <span className={styles.phoneLabel}>主动私聊</span>
-            <strong className={styles.phoneValue}>{display?.allowProactiveDM ? '允许' : '不允许'}</strong>
-          </div>
-        </div>
-      </div>
+      <PhoneHome agent={agent} display={display} onNavigate={onNavigate} />
     </div>
   );
 }
