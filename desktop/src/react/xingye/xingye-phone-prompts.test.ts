@@ -4,6 +4,7 @@ import {
   buildContactIncrementalUpdatePrompt,
   buildContactRegenerateAllPrompt,
   buildSmsHistoryPrompt,
+  buildSmsIncrementalUpdatePrompt,
   buildVirtualContactGenerationPrompt,
 } from './xingye-phone-prompts';
 import type { XingyePhoneContactView } from './xingye-phone-store';
@@ -249,5 +250,44 @@ describe('buildSmsHistoryPrompt — profile-driven SMS init', () => {
   it('forbids returning address-book fields from the SMS generator', () => {
     expect(prompt).toContain('禁止返回 remark');
     expect(prompt).toContain('只能包含 targetType、targetId、messages');
+  });
+});
+
+describe('buildSmsIncrementalUpdatePrompt', () => {
+  const changeContact = makeContact({
+    targetType: 'virtual_contact',
+    targetId: 'vc-1',
+    displayName: '老周',
+    status: 'active',
+    impression: '最近有点信不过。',
+    tags: ['需要观察'],
+    faction: '中立',
+  });
+  const prompt = buildSmsIncrementalUpdatePrompt({
+    ownerAgent,
+    ownerProfile,
+    changeBundles: [{
+      targetType: 'virtual_contact',
+      targetId: 'vc-1',
+      action: 'update',
+      changedFields: ['impression', 'tags'],
+      mergedReasons: ['聊天里语气变了'],
+      changeLogIds: ['cc-1'],
+      contact: changeContact,
+      smsSummary: { messageCount: 4, latestContent: '上次见什么时候？' },
+    }],
+    recentContext: emptyRecent,
+  });
+
+  it('identifies incremental SMS updater and caps delete at one message', () => {
+    expect(prompt).toContain('短信增量更新器');
+    expect(prompt).toContain('action=delete');
+    expect(prompt).toContain('最多 1');
+  });
+
+  it('includes change bundle reasons and forbids overwriting old messages', () => {
+    expect(prompt).toContain('聊天里语气变了');
+    expect(prompt).toContain('不要覆盖');
+    expect(prompt).toContain('老周');
   });
 });

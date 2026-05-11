@@ -1,6 +1,10 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
-import type { XingyePhoneContactView } from './xingye-phone-store';
+import type {
+  XingyeContactChangeField,
+  XingyeContactChangeLogItem,
+  XingyePhoneContactView,
+} from './xingye-phone-store';
 import type { XingyeRecentContext } from './xingye-recent-context';
 import { describeRecentContextForPrompt } from './xingye-recent-context';
 
@@ -122,6 +126,78 @@ export function buildSmsHistoryPrompt(params: {
     }, null, 2),
     '联系人列表:',
     JSON.stringify(contacts.slice(0, 12).map(contactShape), null, 2),
+  ].join('\n');
+}
+
+export function buildSmsIncrementalUpdatePrompt(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  changeBundles: Array<{
+    targetType: XingyePhoneContactView['targetType'];
+    targetId: string;
+    action: XingyeContactChangeLogItem['action'];
+    changedFields: XingyeContactChangeField[];
+    mergedReasons: string[];
+    changeLogIds: string[];
+    contact: XingyePhoneContactView;
+    smsSummary: { latestContent?: string; messageCount: number };
+  }>;
+  recentContext: XingyeRecentContext | null;
+}) {
+  const { ownerAgent, ownerProfile, changeBundles, recentContext } = params;
+  const recentBlock = recentContext
+    ? describeRecentContextForPrompt(recentContext)
+    : '最近 OpenHanako 聊天上下文：（无）';
+  const bundlesJson = changeBundles.map((b) => ({
+    targetType: b.targetType,
+    targetId: b.targetId,
+    action: b.action,
+    changedFields: b.changedFields,
+    changeLogIds: b.changeLogIds,
+    reasons: b.mergedReasons,
+    contact: contactShape(b.contact),
+    existingSms: {
+      messageCount: b.smsSummary.messageCount,
+      latest: b.smsSummary.latestContent ?? '',
+    },
+  }));
+  return [
+    '你是角色手机短信增量更新器。仅返回严格 JSON，不要 Markdown，不要解释。',
+    '目标：根据通讯录「最近一条或多条变更记录」，仅为下列已变化的联系人各补充 0–3 条**新**短信。',
+    '这些短信表示关系/印象/状态变化之后自然会出现的短消息，不是重写旧聊天历史。',
+    '【硬性约束】',
+    '- 不要为 targetType=user 生成；若误传 user，messages 须为 []。',
+    '- 不要为未在「变化联系人」列表中的任何人生成短信。',
+    '- 不要覆盖、删除或改写任何已有短信；只描述「追加」的新内容（运行时会把 messages 追加到线程末尾）。',
+    '- 每个联系人 messages 条数：add/update/block/restore 为 0–3 条；若 action=delete，则最多 1 条，且须像很久以前、未送达、号码失效或断联余波，禁止热聊。',
+    '- 若 changedFields 含 impression、relationshipHint、tags、status 之一，应优先让这些变化在短信里可被感知（语气、距离、试探、冷淡收尾等）。',
+    '- status=blocked 或 action=block：禁止亲密撒娇体；允许冷淡、已读不回暗示、拒绝、最后通牒式短句。',
+    '- status=deleted 或 action=delete：禁止近期腻歪；时间戳须明显早于「当下」（例如数月前或更久）。',
+    '- 禁止在 JSON 里返回通讯录字段；每个 contacts[] 仅允许 targetType、targetId、messages。',
+    '- 禁止与当前 contact 画像（impression/tags/faction/status）矛盾；矛盾则宁可 messages 为空。',
+    '长度：每条尽量 3–30 个汉字；禁止 Markdown、旁白、长段落。',
+    '输出 schema:',
+    JSON.stringify({
+      contacts: [{
+        targetType: 'user | agent | virtual_contact',
+        targetId: 'string',
+        messages: [{
+          from: 'owner | target',
+          content: 'string',
+          createdAt: 'ISO string',
+        }],
+      }],
+    }, null, 2),
+    '当前角色:',
+    JSON.stringify({
+      id: ownerAgent.id,
+      name: ownerAgent.name,
+      yuan: ownerAgent.yuan,
+      profile: ownerProfile ?? null,
+    }, null, 2),
+    '变化联系人（含变更字段与原因、现有短信摘要）:',
+    JSON.stringify(bundlesJson, null, 2),
+    recentBlock,
   ].join('\n');
 }
 

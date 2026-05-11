@@ -15,8 +15,9 @@ import {
   type PhoneContactsSectionId,
 } from './PhoneContactsSectionView';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
-import { enrichContactsWithAI } from './xingye-phone-ai';
 import {
+  enrichContactsWithAI,
+  generateSmsUpdatesForChangedContactsWithAI,
   generateVirtualContactsWithAI,
   regenerateAllContactsWithAI,
   rollbackAndUpdateContactsWithAI,
@@ -125,6 +126,18 @@ export function PhoneContactsApp({
     setListView('faction_detail');
   };
 
+  const maybeRunSmsIncrementalAfterContactChange = () => {
+    if (!ownerAgent) return;
+    const fresh = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true });
+    void generateSmsUpdatesForChangedContactsWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts: fresh,
+      agents,
+      profiles,
+    }).catch(() => {});
+  };
+
   const goContactsHome = () => {
     setListView('home');
     setTagFilter(null);
@@ -211,6 +224,7 @@ export function PhoneContactsApp({
       faction: factionDraft,
       source: 'manual',
     });
+    maybeRunSmsIncrementalAfterContactChange();
   };
 
   const handleEnrichContacts = async () => {
@@ -346,6 +360,7 @@ export function PhoneContactsApp({
               } else {
                 blockPhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
               }
+              maybeRunSmsIncrementalAfterContactChange();
             }}
             onDeleteToggle={() => {
               if (selectedContact.status === 'deleted') {
@@ -353,12 +368,17 @@ export function PhoneContactsApp({
               } else {
                 deletePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
               }
+              maybeRunSmsIncrementalAfterContactChange();
             }}
             onLinkAgent={(linkedAgentId) => {
               if (!linkedAgentId) return;
               linkVirtualContactToAgent(ownerAgentId, selectedContact.targetId, linkedAgentId);
+              maybeRunSmsIncrementalAfterContactChange();
             }}
-            onUnlinkAgent={() => unlinkVirtualContactFromAgent(ownerAgentId, selectedContact.targetId)}
+            onUnlinkAgent={() => {
+              unlinkVirtualContactFromAgent(ownerAgentId, selectedContact.targetId);
+              maybeRunSmsIncrementalAfterContactChange();
+            }}
           />
         ) : listView === 'home' ? (
           <>

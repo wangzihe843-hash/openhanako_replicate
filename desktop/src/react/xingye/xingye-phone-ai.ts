@@ -17,7 +17,9 @@ import {
   getPhoneContacts,
   getSmsThreads,
   getSmsThread,
+  getUnconsumedContactChangesForSms,
   getVirtualContacts,
+  markContactChangesConsumedBySms,
   normalizeAiContactUpdate,
   normalizeAiGeneratedContact,
   profileLikelyForbidsBlocked,
@@ -32,6 +34,7 @@ import {
   setSmsHistoryGenerationState,
   type XingyeAiContactUpdate,
   type XingyeAiGeneratedContact,
+  type XingyeContactChangeLogItem,
   type XingyeContactGenerationMode,
   type XingyeContactUpdateMode,
   type XingyeContactTargetType,
@@ -43,6 +46,7 @@ import {
   buildContactRollbackAndUpdatePrompt,
   buildContactsEnrichmentPrompt,
   buildSmsHistoryPrompt,
+  buildSmsIncrementalUpdatePrompt,
   buildVirtualContactGenerationPrompt,
 } from './xingye-phone-prompts';
 import {
@@ -55,6 +59,18 @@ function asValidIso(value: unknown): string | null {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return null;
   return new Date(timestamp).toISOString();
+}
+
+function pickPrimaryChangeAction(actions: XingyeContactChangeLogItem['action'][]): XingyeContactChangeLogItem['action'] {
+  const rank: Record<XingyeContactChangeLogItem['action'], number> = {
+    delete: 5,
+    block: 4,
+    restore: 3,
+    update: 2,
+    add: 1,
+  };
+  if (!actions.length) return 'update';
+  return [...actions].sort((a, b) => (rank[b] ?? 0) - (rank[a] ?? 0))[0]!;
 }
 
 function getSmsFallbackCreatedAt(params: {
@@ -420,8 +436,20 @@ export async function updateContactsFromRecentContextWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
+    applyAiContactUpdates(ownerAgent.id, updates, {
+      agents,
+      profiles,
+      contactChangeSource: 'contacts_incremental_update',
+    });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
+    const contactsAfter = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
+    void generateSmsUpdatesForChangedContactsWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts: contactsAfter,
+      agents,
+      profiles,
+    }).catch(() => {});
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
     return {
       updatesCount: updates.length,
@@ -498,8 +526,20 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
+    applyAiContactUpdates(ownerAgent.id, updates, {
+      agents,
+      profiles,
+      contactChangeSource: 'contacts_rollback_update',
+    });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
+    const contactsAfterRollback = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
+    void generateSmsUpdatesForChangedContactsWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts: contactsAfterRollback,
+      agents,
+      profiles,
+    }).catch(() => {});
     setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'success');
     return {
       snapshotId: latest.id,
@@ -608,4 +648,162 @@ export async function generateSmsHistoryWithAI(params: {
     });
     throw error;
   }
+}
+
+type SmsIncrementalBundle = {
+  targetType: XingyeContactTargetType;
+  targetId: string;
+  action: XingyeContactChangeLogItem['action'];
+  changedFields: XingyeContactChangeLogItem['changedFields'];
+  mergedReasons: string[];
+  changeLogIds: string[];
+  contact: XingyePhoneContactView;
+  smsSummary: { latestContent?: string; messageCount: number };
+};
+
+export async function generateSmsUpdatesForChangedContactsWithAI(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+  agents: Agent[];
+  profiles: XingyeRoleProfileMap;
+  storage?: Parameters<typeof getUnconsumedContactChangesForSms>[1];
+}): Promise<
+  | { ok: true; skipped: true; reason: string }
+  | { ok: true; appended: number; consumedLogIds: number }
+> {
+  const storage = params.storage ?? null;
+  const { ownerAgent, ownerProfile, contacts } = params;
+  const unconsumed = getUnconsumedContactChangesForSms(ownerAgent.id, storage);
+  if (!unconsumed.length) {
+    return { ok: true, skipped: true, reason: 'no_unconsumed_changes' };
+  }
+
+  type Agg = {
+    targetType: XingyeContactTargetType;
+    targetId: string;
+    changeIds: string[];
+    reasons: string[];
+    actions: Set<XingyeContactChangeLogItem['action']>;
+    fields: Set<string>;
+  };
+  const groupMap = new Map<string, Agg>();
+  for (const log of unconsumed) {
+    const key = `${log.targetType}:${log.targetId}`;
+    let agg = groupMap.get(key);
+    if (!agg) {
+      agg = {
+        targetType: log.targetType,
+        targetId: log.targetId,
+        changeIds: [],
+        reasons: [],
+        actions: new Set(),
+        fields: new Set(),
+      };
+      groupMap.set(key, agg);
+    }
+    agg.changeIds.push(log.id);
+    if (log.reason.trim()) agg.reasons.push(log.reason.trim());
+    agg.actions.add(log.action);
+    for (const f of log.changedFields) agg.fields.add(f);
+  }
+
+  const invalidIds: string[] = [];
+  const bundles: SmsIncrementalBundle[] = [];
+  for (const agg of groupMap.values()) {
+    const contact = contacts.find(c => c.targetType === agg.targetType && c.targetId === agg.targetId);
+    if (!contact || contact.targetType === 'user') {
+      invalidIds.push(...agg.changeIds);
+      continue;
+    }
+    const thread = getSmsThread(ownerAgent.id, contact.targetType, contact.targetId, storage);
+    const messages = thread?.messages ?? [];
+    const msgCount = messages.length;
+    const latest = messages.length ? messages[messages.length - 1]?.content : '';
+    bundles.push({
+      targetType: contact.targetType,
+      targetId: contact.targetId,
+      action: pickPrimaryChangeAction([...agg.actions]),
+      changedFields: [...agg.fields] as XingyeContactChangeLogItem['changedFields'],
+      mergedReasons: [...new Set(agg.reasons)],
+      changeLogIds: agg.changeIds,
+      contact,
+      smsSummary: { latestContent: latest, messageCount: msgCount },
+    });
+  }
+
+  if (invalidIds.length) {
+    markContactChangesConsumedBySms(ownerAgent.id, invalidIds, storage);
+  }
+
+  if (!bundles.length) {
+    return { ok: true, skipped: true, reason: 'no_eligible_contacts' };
+  }
+
+  const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+  const prompt = buildSmsIncrementalUpdatePrompt({
+    ownerAgent,
+    ownerProfile,
+    changeBundles: bundles,
+    recentContext,
+  });
+  const { raw } = await requestPhoneAi({
+    kind: 'sms_history',
+    ownerAgentId: ownerAgent.id,
+    ownerProfile,
+    contacts: bundles.map(b => b.contact),
+    existingThreads: bundles.map(b => ({
+      targetType: b.targetType,
+      targetId: b.targetId,
+      messageCount: b.smsSummary.messageCount,
+    })),
+    prompt,
+    recentContext,
+    timeoutMs: 90_000,
+  });
+  const payload = parsePayload(raw);
+  const bundleIdsToConsume = new Set(bundles.flatMap(b => b.changeLogIds));
+  let appended = 0;
+  for (const suggestion of payload.contacts) {
+    if (suggestion.targetType === 'user') continue;
+    const bundle = bundles.find(
+      b => b.targetType === suggestion.targetType && b.targetId === suggestion.targetId,
+    );
+    if (!bundle) continue;
+    const maxMsgs = bundle.action === 'delete' ? 1 : 3;
+    const existingThread = getSmsThread(
+      ownerAgent.id,
+      suggestion.targetType as XingyeContactTargetType,
+      suggestion.targetId,
+      storage,
+    );
+    const lastTs = existingThread?.messages.length
+      ? Math.max(...existingThread.messages.map(m => Date.parse(m.createdAt)))
+      : Date.now() - 3_600_000;
+    const sortedMessages = (suggestion.messages ?? [])
+      .slice(0, maxMsgs)
+      .map((message, messageIndex) => ({
+        ...message,
+        createdAt: asValidIso((message as { createdAt?: unknown }).createdAt)
+          ?? new Date(lastTs + (messageIndex + 1) * 120_000).toISOString(),
+      }))
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    for (const message of sortedMessages) {
+      const content = message.content.trim();
+      if (!content) continue;
+      addSmsMessage({
+        ownerAgentId: ownerAgent.id,
+        targetType: suggestion.targetType as XingyeContactTargetType,
+        targetId: suggestion.targetId,
+        content: content.slice(0, 80),
+        direction: message.from === 'owner' ? 'outgoing' : 'incoming',
+        source: 'ai_generated',
+        createdAt: message.createdAt,
+      }, storage);
+      appended += 1;
+    }
+  }
+
+  markContactChangesConsumedBySms(ownerAgent.id, [...bundleIdsToConsume], storage);
+  return { ok: true, appended, consumedLogIds: bundleIdsToConsume.size };
 }

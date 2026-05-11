@@ -222,6 +222,32 @@ export const XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY = 'xingye.phoneContactSn
 /** 每个 owner 在 localStorage 中最多保留的通讯录快照条数（仅打点，非多份完整联系人副本）。更早的会在加载或新建快照时丢弃。 */
 export const XINGYE_PHONE_CONTACT_SNAPSHOT_MAX = 2;
 export const XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY = 'xingye.phoneContactAiUpdateState';
+/** 通讯录实际变更流水，供短信增量补全消费（不依赖 updatedAt 猜测）。 */
+export const XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY = 'xingye.phone.contactChangeLog';
+
+export type XingyeContactChangeField =
+  | 'remark'
+  | 'impression'
+  | 'relationshipHint'
+  | 'tags'
+  | 'faction'
+  | 'status'
+  | 'linkedAgentId';
+
+export type XingyeContactChangeLogItem = {
+  id: string;
+  ownerAgentId: string;
+  targetType: XingyeContactTargetType;
+  targetId: string;
+  action: 'add' | 'update' | 'delete' | 'block' | 'restore';
+  changedFields: XingyeContactChangeField[];
+  reason: string;
+  source: 'contacts_incremental_update' | 'contacts_rollback_update' | 'manual_edit';
+  createdAt: string;
+  consumedBySmsAt?: string;
+};
+
+const MAX_CONTACT_CHANGE_LOG_ITEMS = 2000;
 
 const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
 
@@ -460,6 +486,174 @@ function saveContactMetaMap(next: Record<string, XingyePhoneContactMeta>, storag
   notifyXingyePhoneChanged();
 }
 
+function tagsEqual(a: string[] | undefined, b: string[] | undefined): boolean {
+  return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+}
+
+function diffContactMetaForChangeLog(
+  previous: XingyePhoneContactMeta | null,
+  next: XingyePhoneContactMeta,
+): XingyeContactChangeField[] {
+  const keys: XingyeContactChangeField[] = [
+    'remark',
+    'impression',
+    'relationshipHint',
+    'tags',
+    'faction',
+    'status',
+    'linkedAgentId',
+  ];
+  const out: XingyeContactChangeField[] = [];
+  for (const k of keys) {
+    if (k === 'tags') {
+      if (!tagsEqual(previous?.tags, next.tags)) out.push(k);
+      continue;
+    }
+    const pa = normalizeOptionalString(previous?.[k] as string | undefined);
+    const pb = normalizeOptionalString(next[k] as string | undefined);
+    if (pa !== pb) out.push(k);
+  }
+  return out;
+}
+
+function inferManualContactChangeAction(
+  previous: XingyePhoneContactMeta | null,
+  next: XingyePhoneContactMeta,
+  changedFields: XingyeContactChangeField[],
+): XingyeContactChangeLogItem['action'] {
+  if (
+    changedFields.length === 1
+    && changedFields[0] === 'status'
+    && previous?.status !== next.status
+  ) {
+    if (next.status === 'blocked') return 'block';
+    if (next.status === 'deleted') return 'delete';
+    if (next.status === 'active') return 'restore';
+  }
+  return 'update';
+}
+
+function normalizeChangeLogItem(value: unknown): XingyeContactChangeLogItem | null {
+  if (!isRecord(value)) return null;
+  const id = normalizeOptionalString(value.id);
+  const ownerAgentId = normalizeOptionalString(value.ownerAgentId);
+  const targetType = normalizeOptionalString(value.targetType) as XingyeContactTargetType | undefined;
+  const targetId = normalizeOptionalString(value.targetId);
+  const action = normalizeOptionalString(value.action);
+  const reason = typeof value.reason === 'string' ? value.reason : '';
+  const source = normalizeOptionalString(value.source);
+  const createdAt = normalizeOptionalString(value.createdAt) ?? new Date(0).toISOString();
+  const consumedBySmsAt = normalizeOptionalString(value.consumedBySmsAt);
+  const allowedActions = new Set(['add', 'update', 'delete', 'block', 'restore']);
+  const allowedSources = new Set(['contacts_incremental_update', 'contacts_rollback_update', 'manual_edit']);
+  if (!id || !ownerAgentId || !targetType || !targetId || !action || !allowedActions.has(action)) return null;
+  if (!source || !allowedSources.has(source)) return null;
+  const changedFieldsRaw = Array.isArray(value.changedFields) ? value.changedFields : [];
+  const allowedFields = new Set<XingyeContactChangeField>([
+    'remark',
+    'impression',
+    'relationshipHint',
+    'tags',
+    'faction',
+    'status',
+    'linkedAgentId',
+  ]);
+  const changedFields = changedFieldsRaw
+    .map(item => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item): item is XingyeContactChangeField => allowedFields.has(item as XingyeContactChangeField));
+  return {
+    id,
+    ownerAgentId,
+    targetType,
+    targetId,
+    action: action as XingyeContactChangeLogItem['action'],
+    changedFields,
+    reason,
+    source: source as XingyeContactChangeLogItem['source'],
+    createdAt,
+    consumedBySmsAt,
+  };
+}
+
+function loadContactChangeLog(storage: StorageLike | null = getLocalStorage()): XingyeContactChangeLogItem[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeChangeLogItem).filter((item): item is XingyeContactChangeLogItem => !!item);
+  } catch {
+    return [];
+  }
+}
+
+function persistContactChangeLog(items: XingyeContactChangeLogItem[], storage: StorageLike | null) {
+  const s = storage ?? getLocalStorage();
+  const trimmed = items.length > MAX_CONTACT_CHANGE_LOG_ITEMS ? items.slice(-MAX_CONTACT_CHANGE_LOG_ITEMS) : items;
+  s?.setItem(XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY, JSON.stringify(trimmed));
+  notifyXingyePhoneChanged();
+}
+
+export function appendContactChangeLogItem(
+  item: Omit<XingyeContactChangeLogItem, 'id' | 'createdAt'> & { id?: string; createdAt?: string },
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeContactChangeLogItem {
+  const full: XingyeContactChangeLogItem = {
+    ...item,
+    id: item.id ?? createId('cc-log'),
+    createdAt: item.createdAt ?? new Date().toISOString(),
+  };
+  const items = loadContactChangeLog(storage);
+  items.push(full);
+  persistContactChangeLog(items, storage);
+  return full;
+}
+
+export function getUnconsumedContactChangesForSms(
+  ownerAgentId: string,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeContactChangeLogItem[] {
+  if (!ownerAgentId) return [];
+  return loadContactChangeLog(storage).filter(
+    item => item.ownerAgentId === ownerAgentId && !item.consumedBySmsAt && item.targetType !== 'user',
+  );
+}
+
+export function markContactChangesConsumedBySms(
+  ownerAgentId: string,
+  changeIds: string[],
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  if (!ownerAgentId || !changeIds.length) return;
+  const idSet = new Set(changeIds);
+  const now = new Date().toISOString();
+  const items = loadContactChangeLog(storage).map(item => {
+    if (item.ownerAgentId === ownerAgentId && idSet.has(item.id)) {
+      return { ...item, consumedBySmsAt: now };
+    }
+    return item;
+  });
+  persistContactChangeLog(items, storage);
+}
+
+function changedFieldsFromMetaSnapshot(meta: XingyePhoneContactMeta | null): XingyeContactChangeField[] {
+  if (!meta) return [];
+  const keys: XingyeContactChangeField[] = [
+    'remark',
+    'impression',
+    'relationshipHint',
+    'tags',
+    'faction',
+    'status',
+    'linkedAgentId',
+  ];
+  return keys.filter((k) => {
+    if (k === 'tags') return (meta.tags?.length ?? 0) > 0;
+    return normalizeOptionalString(meta[k] as string | undefined) !== undefined;
+  });
+}
+
 function loadSmsThreadMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyePhoneSmsThread> {
   if (!storage) return {};
   try {
@@ -500,7 +694,7 @@ export function savePhoneContactMeta(
   targetId: string,
   patch: Partial<Omit<XingyePhoneContactMeta, 'ownerAgentId' | 'targetType' | 'targetId' | 'updatedAt'>>,
   storage: StorageLike | null = getLocalStorage(),
-  options?: { markManualFields?: boolean },
+  options?: { markManualFields?: boolean; skipContactChangeLog?: boolean },
 ): XingyePhoneContactMeta {
   const map = loadContactMetaMap(storage);
   const key = contactKey(ownerAgentId, targetType, targetId);
@@ -534,6 +728,20 @@ export function savePhoneContactMeta(
   };
   map[key] = next;
   saveContactMetaMap(map, storage);
+  if (options?.skipContactChangeLog !== true && options?.markManualFields !== false) {
+    const changedFields = diffContactMetaForChangeLog(previous ?? null, next);
+    if (changedFields.length > 0) {
+      appendContactChangeLogItem({
+        ownerAgentId,
+        targetType,
+        targetId,
+        action: inferManualContactChangeAction(previous ?? null, next, changedFields),
+        changedFields,
+        reason: '用户在小手机通讯录中编辑',
+        source: 'manual_edit',
+      }, storage);
+    }
+  }
   return next;
 }
 
@@ -1784,12 +1992,15 @@ export function applyAiContactUpdates(
     /** 传入后可对 matchName 做唯一性解析，避免误匹配。 */
     agents?: Agent[];
     profiles?: XingyeRoleProfileMap;
+    /** 设置时才写入 contact change log（与 AI 增量/回滚后更新配套）。 */
+    contactChangeSource?: 'contacts_incremental_update' | 'contacts_rollback_update';
   },
 ) {
   const storage = options?.storage ?? getLocalStorage();
   const agents = options?.agents ?? [];
   const profiles = options?.profiles ?? {};
   const canResolveNames = agents.length > 0;
+  const contactChangeSource = options?.contactChangeSource;
 
   const preVirtual = getVirtualContacts(ownerAgentId, storage).length;
   const preBlockedVc = getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage)
@@ -1806,7 +2017,25 @@ export function applyAiContactUpdates(
         ...update.contact,
         targetType: 'virtual_contact',
       }], { storage, mergeMatchingDisplayName: 'never' });
-      if (result.createdCount > 0) counts.add += 1;
+      if (result.createdCount > 0) {
+        counts.add += 1;
+        if (contactChangeSource) {
+          const want = update.contact.displayName.trim().toLowerCase();
+          const savedVc = result.saved.filter(s => s.displayName.trim().toLowerCase() === want).at(-1)
+            ?? result.saved[result.saved.length - 1];
+          const metaAfter = getPhoneContactMeta(ownerAgentId, 'virtual_contact', savedVc.id, storage);
+          const changedFields = changedFieldsFromMetaSnapshot(metaAfter);
+          appendContactChangeLogItem({
+            ownerAgentId,
+            targetType: 'virtual_contact',
+            targetId: savedVc.id,
+            action: 'add',
+            changedFields: changedFields.length ? changedFields : ['status'],
+            reason: update.reason,
+            source: contactChangeSource,
+          }, storage);
+        }
+      }
       else counts.skip += 1;
       continue;
     }
@@ -1845,21 +2074,75 @@ export function applyAiContactUpdates(
     }
 
     if (update.action === 'delete') {
+      const metaBefore = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'deleted', source: 'ai_generated' }, storage, { markManualFields: false });
       if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
       counts.delete += 1;
+      if (contactChangeSource) {
+        const metaAfter = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
+        if (metaAfter) {
+          const changedFields = diffContactMetaForChangeLog(metaBefore, metaAfter);
+          if (changedFields.length) {
+            appendContactChangeLogItem({
+              ownerAgentId,
+              targetType: update.targetType,
+              targetId: resolvedTargetId,
+              action: 'delete',
+              changedFields,
+              reason: update.reason,
+              source: contactChangeSource,
+            }, storage);
+          }
+        }
+      }
       continue;
     }
     if (update.action === 'block') {
+      const metaBefore = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'blocked', source: 'ai_generated' }, storage, { markManualFields: false });
       if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
       counts.block += 1;
+      if (contactChangeSource) {
+        const metaAfter = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
+        if (metaAfter) {
+          const changedFields = diffContactMetaForChangeLog(metaBefore, metaAfter);
+          if (changedFields.length) {
+            appendContactChangeLogItem({
+              ownerAgentId,
+              targetType: update.targetType,
+              targetId: resolvedTargetId,
+              action: 'block',
+              changedFields,
+              reason: update.reason,
+              source: contactChangeSource,
+            }, storage);
+          }
+        }
+      }
       continue;
     }
     if (update.action === 'restore') {
+      const metaBefore = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'active', source: 'ai_generated' }, storage, { markManualFields: false });
       if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
       counts.restore += 1;
+      if (contactChangeSource) {
+        const metaAfter = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
+        if (metaAfter) {
+          const changedFields = diffContactMetaForChangeLog(metaBefore, metaAfter);
+          if (changedFields.length) {
+            appendContactChangeLogItem({
+              ownerAgentId,
+              targetType: update.targetType,
+              targetId: resolvedTargetId,
+              action: 'restore',
+              changedFields,
+              reason: update.reason,
+              source: contactChangeSource,
+            }, storage);
+          }
+        }
+      }
       continue;
     }
     if (update.action === 'update') {
@@ -1878,6 +2161,23 @@ export function applyAiContactUpdates(
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, patch, storage, { markManualFields: false });
       if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
       counts.update += 1;
+      if (contactChangeSource) {
+        const afterMeta = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
+        if (afterMeta) {
+          const changedFields = diffContactMetaForChangeLog(existingMeta, afterMeta);
+          if (changedFields.length) {
+            appendContactChangeLogItem({
+              ownerAgentId,
+              targetType: update.targetType,
+              targetId: resolvedTargetId,
+              action: 'update',
+              changedFields,
+              reason: update.reason,
+              source: contactChangeSource,
+            }, storage);
+          }
+        }
+      }
     }
   }
 
@@ -1963,7 +2263,12 @@ export function rollbackAndUpdateVirtualContactsWithAI(
   if (!snapshot) return false;
   const restored = restorePhoneContactSnapshot(ownerAgentId, snapshot.id, storage);
   if (!restored) return false;
-  applyAiContactUpdates(ownerAgentId, updates, { storage, agents, profiles });
+  applyAiContactUpdates(ownerAgentId, updates, {
+    storage,
+    agents,
+    profiles,
+    contactChangeSource: 'contacts_rollback_update',
+  });
   return true;
 }
 
@@ -1972,11 +2277,24 @@ export function linkVirtualContactToAgent(ownerAgentId: string, virtualContactId
   const key = `${ownerAgentId}::${virtualContactId}`;
   const contact = map[key];
   if (!contact) return null;
-  const updated = { ...contact, linkedAgentId, updatedAt: new Date().toISOString() };
+  const prevLinked = normalizeOptionalString(contact.linkedAgentId) ?? '';
+  const nextLinked = linkedAgentId.trim();
+  const updated = { ...contact, linkedAgentId: nextLinked, updatedAt: new Date().toISOString() };
   map[key] = updated;
   saveVirtualContactMap(map);
-  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId, source: 'manual' }, undefined, { markManualFields: false });
+  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId: nextLinked, source: 'manual' }, undefined, { markManualFields: false });
   markContactFieldManual(ownerAgentId, 'virtual_contact', virtualContactId, 'linkedAgentId');
+  if (prevLinked !== nextLinked) {
+    appendContactChangeLogItem({
+      ownerAgentId,
+      targetType: 'virtual_contact',
+      targetId: virtualContactId,
+      action: 'update',
+      changedFields: ['linkedAgentId'],
+      reason: '用户关联虚拟联系人到真实角色',
+      source: 'manual_edit',
+    });
+  }
   return updated;
 }
 
@@ -1985,11 +2303,23 @@ export function unlinkVirtualContactFromAgent(ownerAgentId: string, virtualConta
   const key = `${ownerAgentId}::${virtualContactId}`;
   const contact = map[key];
   if (!contact) return null;
+  const prevLinked = normalizeOptionalString(contact.linkedAgentId) ?? '';
   const updated = { ...contact, linkedAgentId: undefined, updatedAt: new Date().toISOString() };
   map[key] = updated;
   saveVirtualContactMap(map);
   savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId: '', source: 'manual' }, undefined, { markManualFields: false });
   markContactFieldManual(ownerAgentId, 'virtual_contact', virtualContactId, 'linkedAgentId');
+  if (prevLinked) {
+    appendContactChangeLogItem({
+      ownerAgentId,
+      targetType: 'virtual_contact',
+      targetId: virtualContactId,
+      action: 'update',
+      changedFields: ['linkedAgentId'],
+      reason: '用户取消虚拟联系人与真实角色的关联',
+      source: 'manual_edit',
+    });
+  }
   return updated;
 }
 

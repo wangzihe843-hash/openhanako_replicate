@@ -6,10 +6,13 @@ import {
   XINGYE_PHONE_SMS_THREADS_STORAGE_KEY,
   XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY,
   addMockSmsMessage,
+  applyAiContactUpdates,
+  applyAiGeneratedContacts,
   ensureContactDistribution,
   ensureGeneratedVirtualContacts,
   getPhoneContactMeta,
   getPhoneContacts,
+  getUnconsumedContactChangesForSms,
   getVirtualContacts,
   shouldSkipFamilyContacts,
   getSmsThread,
@@ -170,6 +173,76 @@ describe('xingye-phone-store', () => {
       updatedAt: '2026-05-11T00:00:00.000Z',
     }, agents, {}, storage);
     expect(second.length).toBe(generated.length);
+  });
+
+  it('applyAiContactUpdates with contactChangeSource records unconsumed change log for impression/tags', () => {
+    const ownerAgentId = 'role-cc-log';
+    const gen: XingyeAiGeneratedContact = {
+      targetType: 'virtual_contact',
+      displayName: '变更探针',
+      kind: 'coworker',
+      impression: '旧印象',
+      tags: ['需要观察'],
+      faction: '中立',
+      status: 'active',
+      generatedReason: 'test',
+    };
+    applyAiGeneratedContacts(ownerAgentId, [gen], { storage });
+    const vc = getVirtualContacts(ownerAgentId, storage)[0];
+    applyAiContactUpdates(
+      ownerAgentId,
+      [{
+        action: 'update',
+        targetType: 'virtual_contact',
+        targetId: vc.id,
+        patch: { impression: '聊天后起了疑心', tags: ['需要观察', '不可靠'] },
+        reason: 'recent chat',
+      }],
+      { storage, contactChangeSource: 'contacts_incremental_update' },
+    );
+    const pending = getUnconsumedContactChangesForSms(ownerAgentId, storage);
+    expect(pending.length).toBeGreaterThanOrEqual(1);
+    expect(pending[0].changedFields).toContain('impression');
+    expect(pending[0].changedFields).toContain('tags');
+    expect(pending[0].source).toBe('contacts_incremental_update');
+  });
+
+  it('applyAiContactUpdates without contactChangeSource does not write change log', () => {
+    const ownerAgentId = 'role-no-log';
+    applyAiGeneratedContacts(ownerAgentId, [{
+      targetType: 'virtual_contact',
+      displayName: '无日志',
+      kind: 'friend',
+      impression: 'a',
+      tags: ['同伴'],
+      faction: '自己人',
+      status: 'active',
+      generatedReason: 't',
+    }], { storage });
+    const vc = getVirtualContacts(ownerAgentId, storage)[0];
+    applyAiContactUpdates(
+      ownerAgentId,
+      [{
+        action: 'update',
+        targetType: 'virtual_contact',
+        targetId: vc.id,
+        patch: { impression: 'b' },
+        reason: 'x',
+      }],
+      { storage },
+    );
+    expect(getUnconsumedContactChangesForSms(ownerAgentId, storage)).toHaveLength(0);
+  });
+
+  it('appending a third mock SMS keeps earlier messages in order (incremental append)', () => {
+    vi.setSystemTime(new Date('2026-05-11T03:00:00.000Z'));
+    addMockSmsMessage('hanako', 'agent', 'test_01', '第一条', 'outgoing', storage);
+    vi.setSystemTime(new Date('2026-05-11T03:01:00.000Z'));
+    addMockSmsMessage('hanako', 'agent', 'test_01', '第二条', 'incoming', storage);
+    vi.setSystemTime(new Date('2026-05-11T03:02:00.000Z'));
+    addMockSmsMessage('hanako', 'agent', 'test_01', '第三条', 'outgoing', storage);
+    const t = getSmsThread('hanako', 'agent', 'test_01', storage);
+    expect(t?.messages.map(m => m.content)).toEqual(['第一条', '第二条', '第三条']);
   });
 });
 
