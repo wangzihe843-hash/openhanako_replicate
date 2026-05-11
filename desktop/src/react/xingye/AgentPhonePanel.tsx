@@ -1,28 +1,83 @@
+import { useState } from 'react';
 import type { Agent } from '../types';
 import {
   getXingyeRoleProfileDisplay,
+  useXingyeRoleProfiles,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
+import { PhoneContactsApp } from './PhoneContactsApp';
 import type { XingyeTabId } from './xingye-tabs';
+import { PhoneMmChatApp } from './PhoneMmChatApp';
 import { PhoneHome } from './PhoneHome';
+import { PhoneSmsApp } from './PhoneSmsApp';
 import styles from './XingyeShell.module.css';
 
 interface AgentPhonePanelProps {
   agent: Agent | null;
+  agents: Agent[];
+  currentAgentId: string | null;
   onNavigate: (tabId: XingyeTabId) => void;
 }
 
-export function AgentPhonePanel({ agent, onNavigate }: AgentPhonePanelProps) {
+type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat';
+
+export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: AgentPhonePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
+  const profiles = useXingyeRoleProfiles();
   const display = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
+  const [phonePage, setPhonePage] = useState<PhonePage>('home');
+  const [smsTargetAgentId, setSmsTargetAgentId] = useState<string | null>(null);
+
+  const handleOpenSms = (targetAgentId?: string) => {
+    setSmsTargetAgentId(targetAgentId ?? null);
+    setPhonePage('sms');
+  };
 
   return (
     <div className={styles.phonePanel}>
       <h2 className={styles.panelTitle}>小手机</h2>
       <p className={styles.panelDescription}>
-        当前只展示星野本地角色资料，不连接 desk 后端，不写入聊天存储。
+        当前为角色侧本地模拟手机：短信/通讯录/MM Chat 只存 localStorage，不接 OpenHanako 原生聊天与记忆管线。
       </p>
-      <PhoneHome agent={agent} display={display} onNavigate={onNavigate} />
+      {phonePage === 'home' ? (
+        <PhoneHome
+          agent={agent}
+          display={display}
+          onNavigate={onNavigate}
+          onOpenSms={() => handleOpenSms()}
+          onOpenContacts={() => setPhonePage('contacts')}
+          onOpenMmChat={() => setPhonePage('mm-chat')}
+        />
+      ) : null}
+
+      {phonePage === 'sms' ? (
+        <PhoneSmsApp
+          ownerAgent={agent}
+          agents={agents}
+          profiles={profiles}
+          initialTargetAgentId={smsTargetAgentId}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'contacts' ? (
+        <PhoneContactsApp
+          ownerAgent={agent}
+          agents={agents}
+          profiles={profiles}
+          currentAgentId={currentAgentId}
+          onBack={() => setPhonePage('home')}
+          onOpenSms={(targetAgentId) => handleOpenSms(targetAgentId)}
+        />
+      ) : null}
+
+      {phonePage === 'mm-chat' ? (
+        <PhoneMmChatApp
+          ownerAgent={agent}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
     </div>
   );
 }

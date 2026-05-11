@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
@@ -10,6 +9,9 @@ interface PhoneHomeProps {
   agent: Agent | null;
   display: XingyeRoleProfileDisplay | null;
   onNavigate: (tabId: XingyeTabId) => void;
+  onOpenSms: () => void;
+  onOpenContacts: () => void;
+  onOpenMmChat: () => void;
 }
 
 const phoneIcons = {
@@ -56,21 +58,30 @@ const phoneIcons = {
       <path d="M12 14.5v2" />
     </svg>
   ),
+  users: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+      <circle cx="9.5" cy="8" r="3" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 5.13a3 3 0 0 1 0 5.75" />
+    </svg>
+  ),
+  sparkles: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3 9.8 8.8 4 11l5.8 2.2L12 19l2.2-5.8L20 11l-5.8-2.2Z" />
+      <path d="m19 3 1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
-  { label: '日记', tone: 'journal', icon: phoneIcons.notebook },
-  { label: '相册', tone: 'album', icon: phoneIcons.images },
-  { label: '短信', tone: 'message', icon: phoneIcons.message },
-  { label: '音频', tone: 'audio', icon: phoneIcons.mic },
+  { label: '通讯录', subtitle: '联系人与印象', tone: 'contacts', icon: phoneIcons.users, action: 'contacts' },
+  { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
+  { label: 'MM Chat', subtitle: 'AI 助手占位', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
+  { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
+  { label: '日记', subtitle: '功能占位', tone: 'journal', icon: phoneIcons.notebook, action: 'placeholder' },
+  { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
 ] as const;
-
-const appToastMessages: Record<(typeof appShortcuts)[number]['label'], string> = {
-  日记: '日记功能将在后续接入',
-  相册: '相册功能将在后续接入',
-  短信: '短信功能将在后续接入',
-  音频: '音频功能将在后续接入',
-};
 
 const futureEntries = [
   {
@@ -87,24 +98,23 @@ const futureEntries = [
   },
 ] as const;
 
-export function PhoneHome({ agent, display, onNavigate }: PhoneHomeProps) {
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContacts, onOpenMmChat }: PhoneHomeProps) {
   const coverStyle = display?.chatBackgroundDataUrl
     ? { backgroundImage: `url(${display.chatBackgroundDataUrl})` }
     : undefined;
 
-  useEffect(() => {
-    if (!toastMessage) return undefined;
-
-    const timeoutId = window.setTimeout(() => {
-      setToastMessage(null);
-    }, 1800);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [toastMessage]);
-
-  const handleAppClick = (label: keyof typeof appToastMessages) => {
-    setToastMessage(appToastMessages[label]);
+  const handleAppClick = (action: (typeof appShortcuts)[number]['action']) => {
+    if (action === 'sms') {
+      onOpenSms();
+      return;
+    }
+    if (action === 'contacts') {
+      onOpenContacts();
+      return;
+    }
+    if (action === 'mm-chat') {
+      onOpenMmChat();
+    }
   };
 
   return (
@@ -142,14 +152,15 @@ export function PhoneHome({ agent, display, onNavigate }: PhoneHomeProps) {
           </div>
         </section>
 
-        <section className={styles.phoneAppGrid} aria-label="手机应用占位">
+        <section className={styles.phoneAppGrid} aria-label="手机应用">
           {appShortcuts.map(app => (
             <PhoneAppIcon
               key={app.label}
               icon={app.icon}
               label={app.label}
+              subtitle={app.subtitle}
               tone={app.tone}
-              onClick={() => handleAppClick(app.label)}
+              onClick={() => handleAppClick(app.action)}
             />
           ))}
         </section>
@@ -170,10 +181,10 @@ export function PhoneHome({ agent, display, onNavigate }: PhoneHomeProps) {
             </button>
           ))}
         </section>
-      </div>
 
-      <div className={`${styles.phoneToast}${toastMessage ? ` ${styles.phoneToastVisible}` : ''}`} role="status" aria-live="polite">
-        {toastMessage}
+        <section className={styles.phoneEmptyStateCard}>
+          日记/相册/音频仍是占位入口；短信、通讯录、MM Chat 已接入本地模拟版本。
+        </section>
       </div>
     </div>
   );

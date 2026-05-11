@@ -4,16 +4,17 @@ import styles from './XingyeShell.module.css';
 interface PhoneAppIconProps {
   icon: ReactNode;
   label: string;
+  subtitle?: string;
   onClick: () => void;
-  tone: 'journal' | 'album' | 'message' | 'audio';
+  tone: 'journal' | 'album' | 'message' | 'audio' | 'contacts' | 'mmchat';
 }
 
-export function PhoneAppIcon({ icon, label, onClick, tone }: PhoneAppIconProps) {
+export function PhoneAppIcon({ icon, label, subtitle, onClick, tone }: PhoneAppIconProps) {
   return (
     <button
       className={styles.phoneAppIcon}
       type="button"
-      aria-label={`${label}功能将在后续接入`}
+      aria-label={subtitle ? `${label}，${subtitle}` : label}
       onClick={onClick}
     >
       <span className={`${styles.phoneAppGlyph} ${styles[`phoneAppGlyph_${tone}`]}`}>

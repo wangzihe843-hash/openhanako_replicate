@@ -858,6 +858,17 @@
   white-space: nowrap;
 }
 
+.phoneBackButton {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.74);
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
 .phoneHero {
   position: relative;
   min-height: 190px;
@@ -1069,6 +1080,14 @@
   background: linear-gradient(135deg, #705d7f, #a98dba);
 }
 
+.phoneAppGlyph_contacts {
+  background: linear-gradient(135deg, #4f7382, #89a8ba);
+}
+
+.phoneAppGlyph_mmchat {
+  background: linear-gradient(135deg, #6b6496, #a293c8);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;
@@ -1163,6 +1182,244 @@
   color: var(--text-muted);
   font-size: 0.72rem;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.phoneAppCard {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.phoneAppTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.96rem;
+  font-weight: 650;
+}
+
+.phoneAppHint,
+.phoneAppParagraph {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.phoneList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phoneListItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  padding: 9px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.74);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phoneListAvatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.phoneListAvatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.phoneListText {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.phoneListText strong {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.phoneListText span {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.phoneContactHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.phoneContactAvatar {
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+}
+
+.phoneContactHeading {
+  min-width: 0;
+}
+
+.phoneFormField {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.phoneFormField span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.phoneFormField input,
+.phoneFormField textarea,
+.phoneInlineSelect {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.phoneFormField textarea {
+  resize: vertical;
+}
+
+.phoneTagRow {
+  margin-top: 10px;
+}
+
+.phoneTagRow span {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.phoneActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.phoneThreadHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.phoneMessageList {
+  min-height: 180px;
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  align-content: flex-start;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(252, 253, 255, 0.8);
+}
+
+.phoneMessageBubble {
+  max-width: 86%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  box-shadow: 0 6px 14px rgba(30, 41, 59, 0.1);
+}
+
+.phoneMessageBubble p {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.phoneMessageBubble time {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+}
+
+.phoneMessageBubble_incoming {
+  justify-self: start;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.phoneMessageBubble_outgoing {
+  justify-self: end;
+  border: 1px solid rgba(118, 137, 164, 0.25);
+  background: rgba(228, 238, 255, 0.88);
+}
+
+.phoneComposer {
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.phoneEmptyStateCard {
+  min-width: 0;
+  padding: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 0.76rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
