@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useStore } from '../stores';
 import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
 import { PhoneContactSections } from './PhoneContactSections';
@@ -37,6 +38,7 @@ import {
   type XingyePhoneContactView,
   useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
+import { collectRecentContextForAgent } from './xingye-recent-context';
 import styles from './XingyeShell.module.css';
 
 type ContactsListView =
@@ -73,6 +75,19 @@ export function PhoneContactsApp({
   const contacts = useMemo(
     () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
     [ownerAgentId, agents, profiles, _phoneStorageVersion],
+  );
+  // 仅用于 UI 提示「点击更新会读到多少条最近聊天」；与真实 AI 调用同一个 helper，
+  // 避免提示与实际 prompt 内容脱节。
+  const chatSessionsVersionKey = useStore(state => {
+    if (!ownerAgentId) return 0;
+    const sessionPaths = state.sessions
+      .filter(session => session.agentId === ownerAgentId)
+      .map(session => session.path);
+    return sessionPaths.reduce((acc, path) => acc + (state.chatSessions[path]?.items?.length ?? 0), 0);
+  });
+  const recentContextPreview = useMemo(
+    () => collectRecentContextForAgent({ agentId: ownerAgentId }),
+    [ownerAgentId, chatSessionsVersionKey],
   );
   const virtualContacts = contacts.filter(item => item.targetType === 'virtual_contact');
   const generationState = getPhoneContactGenerationState(ownerAgentId);
@@ -237,8 +252,11 @@ export function PhoneContactsApp({
   const handleUpdateContacts = async () => {
     if (!ownerAgent) return;
     try {
-      await updateContactsFromRecentContextWithAI({ ownerAgent, ownerProfile, contacts, agents, profiles });
-      setAiManageNotice('联系人更新完成。');
+      const result = await updateContactsFromRecentContextWithAI({ ownerAgent, ownerProfile, contacts, agents, profiles });
+      const ctxNote = result.recentContext.hasOpenHanakoMessages
+        ? `已结合最近 OpenHanako 聊天 ${result.recentContext.messageCount} 条。`
+        : '暂未读到最近聊天，本次仅根据角色资料和通讯录更新。';
+      setAiManageNotice(`联系人更新完成。${ctxNote}`);
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
     }
@@ -269,8 +287,11 @@ export function PhoneContactsApp({
   const handleRollbackAndUpdate = async () => {
     if (!ownerAgent) return;
     try {
-      await rollbackAndUpdateContactsWithAI({ ownerAgent, ownerProfile, agents, profiles });
-      setAiManageNotice('已回滚上次联系人并完成增量更新。');
+      const result = await rollbackAndUpdateContactsWithAI({ ownerAgent, ownerProfile, agents, profiles });
+      const ctxNote = result.recentContext.hasOpenHanakoMessages
+        ? `已结合最近 OpenHanako 聊天 ${result.recentContext.messageCount} 条。`
+        : '暂未读到最近聊天，本次仅根据角色资料和通讯录更新。';
+      setAiManageNotice(`已回滚上次联系人并完成增量更新。${ctxNote}`);
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
     }
@@ -348,20 +369,27 @@ export function PhoneContactsApp({
                 </span>
               </div>
               {aiManageOpen ? (
-                <div className={styles.phoneActionRow}>
-                  <button type="button" className={styles.secondaryButton} onClick={handleGenerateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
-                    AI 生成联系人
-                  </button>
-                  <button type="button" className={styles.secondaryButton} onClick={handleUpdateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
-                    更新联系人
-                  </button>
-                  <button type="button" className={styles.secondaryButton} onClick={handleRegenerateAll} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
-                    重新生成全部
-                  </button>
-                  <button type="button" className={styles.secondaryButton} onClick={handleRollbackAndUpdate} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
-                    回滚上次并更新
-                  </button>
-                </div>
+                <>
+                  <div className={styles.phoneActionRow}>
+                    <button type="button" className={styles.secondaryButton} onClick={handleGenerateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
+                      AI 生成联系人
+                    </button>
+                    <button type="button" className={styles.secondaryButton} onClick={handleUpdateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
+                      更新联系人
+                    </button>
+                    <button type="button" className={styles.secondaryButton} onClick={handleRegenerateAll} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
+                      重新生成全部
+                    </button>
+                    <button type="button" className={styles.secondaryButton} onClick={handleRollbackAndUpdate} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
+                      回滚上次并更新
+                    </button>
+                  </div>
+                  <p className={styles.phoneAppHint}>
+                    {recentContextPreview.hasOpenHanakoMessages
+                      ? `更新时会参考最近 OpenHanako 聊天（约 ${recentContextPreview.messages.length} 条）。`
+                      : '暂未读到最近聊天，本次更新将仅根据角色资料和通讯录进行。可在「聊天」tab 与该角色对话后再来更新。'}
+                  </p>
+                </>
               ) : null}
               {contactUpdateState?.status === 'running' ? <p className={styles.phoneAppHint}>AI 更新中…</p> : null}
               {contactUpdateState?.status === 'failed' ? <p className={styles.phoneAppHint}>AI 更新失败：{contactUpdateState.error ?? '未知错误'}</p> : null}

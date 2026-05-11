@@ -46,6 +46,10 @@ import {
   buildSmsHistoryPrompt,
   buildVirtualContactGenerationPrompt,
 } from './xingye-phone-prompts';
+import {
+  collectRecentContextForAgent,
+  type XingyeRecentContext,
+} from './xingye-recent-context';
 
 function asValidIso(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -101,6 +105,8 @@ async function requestPhoneAi(input: {
   existingThreads?: unknown[];
   prompt: string;
   timeoutMs?: number;
+  /** 仅在 contacts_incremental_update / contacts_rollback_update 时传入；后端目前只使用 prompt，这里同时把结构化字段挂在请求体里，便于以后服务端单独消费。 */
+  recentContext?: XingyeRecentContext | null;
 }): Promise<{ raw: unknown }> {
   const timeoutMs = input.timeoutMs ?? 90_000;
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -125,6 +131,13 @@ async function requestPhoneAi(input: {
         generatedReason: contact.generatedReason,
       })),
       existingThreads: input.existingThreads ?? [],
+      recentContext: input.recentContext
+        ? {
+          messages: input.recentContext.messages,
+          summaryText: input.recentContext.summaryText,
+          sourceNotes: input.recentContext.sourceNotes,
+        }
+        : null,
       prompt: input.prompt,
       timeoutMs,
     }),
@@ -380,20 +393,29 @@ export async function updateContactsFromRecentContextWithAI(params: {
       latest: thread.messages[thread.messages.length - 1]?.content ?? '',
       count: thread.messages.length,
     }));
-    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary });
+    const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary, recentContext });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_incremental_update',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
       contacts,
       prompt,
+      recentContext,
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
     applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
-    return { updatesCount: updates.length };
+    return {
+      updatesCount: updates.length,
+      recentContext: {
+        hasOpenHanakoMessages: recentContext.hasOpenHanakoMessages,
+        messageCount: recentContext.messages.length,
+        sourceNotes: recentContext.sourceNotes,
+      },
+    };
   } catch (error) {
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'failed', error instanceof Error ? error.message : String(error));
     throw error;
@@ -444,20 +466,30 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       latest: thread.messages[thread.messages.length - 1]?.content ?? '',
       count: thread.messages.length,
     }));
-    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary });
+    const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary, recentContext });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_rollback_update',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
       contacts: contactsAfterRestore,
       prompt,
+      recentContext,
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
     applyAiContactUpdates(ownerAgent.id, updates, { agents, profiles });
     reconcileVirtualContactInferenceFields(ownerAgent.id, agents, profiles);
     setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'success');
-    return { snapshotId: latest.id, updatesCount: updates.length };
+    return {
+      snapshotId: latest.id,
+      updatesCount: updates.length,
+      recentContext: {
+        hasOpenHanakoMessages: recentContext.hasOpenHanakoMessages,
+        messageCount: recentContext.messages.length,
+        sourceNotes: recentContext.sourceNotes,
+      },
+    };
   } catch (error) {
     setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'failed', error instanceof Error ? error.message : String(error));
     throw error;

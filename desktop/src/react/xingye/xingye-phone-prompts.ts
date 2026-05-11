@@ -1,6 +1,8 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import type { XingyePhoneContactView } from './xingye-phone-store';
+import type { XingyeRecentContext } from './xingye-recent-context';
+import { describeRecentContextForPrompt } from './xingye-recent-context';
 
 function contactShape(contact: XingyePhoneContactView) {
   return {
@@ -202,13 +204,28 @@ export function buildContactRegenerateAllPrompt(params: {
   return buildVirtualContactGenerationPrompt({ ...params, intent: 'regenerate' });
 }
 
+const RECENT_CONTEXT_GUIDE = [
+  '【最近 OpenHanako 聊天】下面给出的「最近聊天」是当前角色与用户最近一次原生对话片段，作为本轮更新的主要参考：',
+  '- 提取最近聊天中出现的新人物、组织/势力、地点/渠道、关系变化、冲突、合作、旧识、风险信号。',
+  '- 如有新人物未在当前联系人列表里出现，可 add 为 virtual_contact（仅在能明确从聊天中识别身份/称呼时）。',
+  '- 如已有联系人在聊天中被提到，可 update 其 impression / relationshipHint / tags / faction / status；不要因为聊天没提到某联系人就删除它。',
+  '- 明显断联 / 危险 / 旧号码 / 拉黑暗示 → 可 block 或 delete；可疑但不确定 → 仅添加 "需要观察" tags 而非 block/delete。',
+  '- 严禁把聊天原文直接复制到 impression / remark / relationshipHint / shortBio；要用自然通讯录措辞改写。',
+  '- 严禁出现"根据聊天记录""根据最近对话""强化设定""新增一个"等生成器语言。reason / generatedReason 可解释依据，但不要复述聊天原句。',
+  '- 如「最近聊天」标注为「（无）」，请不要凭空编造关系变化，仅在必要时基于角色资料做小幅 patch。',
+].join('\n');
+
 export function buildContactIncrementalUpdatePrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
+  recentContext?: XingyeRecentContext | null;
 }) {
-  const { ownerAgent, ownerProfile, contacts, smsSummary } = params;
+  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext } = params;
+  const recentBlock = recentContext
+    ? describeRecentContextForPrompt(recentContext)
+    : '最近 OpenHanako 聊天上下文：（无）';
   return [
     '你是角色手机通讯录增量更新器。只返回 JSON，不要 Markdown，不要解释。',
     '【规模】本次更新：新增 virtual_contact 1–4 个；对已有联系人 update 2–6 条；可调整 0–2 个联系人的 status（blocked/deleted/active）；避免大规模 delete；优先用 block/restore 表达关系变化。',
@@ -216,7 +233,9 @@ export function buildContactIncrementalUpdatePrompt(params: {
     TAG_FACTION_STATUS_RULES,
     '【字段边界】add 时的 contact 对象遵守与虚拟联系人生成相同规则：用户可见字段禁止写任务说明或编剧指令；只有 generatedReason 写生成依据；只有顶层 reason 写「为什么执行该 action」。',
     VISIBLE_FIELD_RULES,
+    RECENT_CONTEXT_GUIDE,
     '规则：不要删除真实 agent；不要 delete/block user；对 virtual_contact 可以 add/update/delete/block/restore。',
+    '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
     JSON.stringify({
       updates: [{
@@ -253,6 +272,7 @@ export function buildContactIncrementalUpdatePrompt(params: {
     JSON.stringify(contacts.map(contactShape), null, 2),
     '最近短信摘要:',
     JSON.stringify(smsSummary, null, 2),
+    recentBlock,
   ].join('\n');
 }
 
@@ -261,8 +281,12 @@ export function buildContactRollbackAndUpdatePrompt(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
+  recentContext?: XingyeRecentContext | null;
 }) {
-  const { ownerAgent, ownerProfile, contacts, smsSummary } = params;
+  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext } = params;
+  const recentBlock = recentContext
+    ? describeRecentContextForPrompt(recentContext)
+    : '最近 OpenHanako 聊天上下文：（无）';
   return [
     '你是角色手机通讯录「回滚后微调」更新器。只返回 JSON，不要 Markdown，不要解释。',
     '上下文：联系人列表已恢复到上一快照；请在当前规模上做小幅修订，而不是清空重建。',
@@ -271,6 +295,8 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     '【字段边界】与增量更新相同：用户可见字段禁止开发说明；generatedReason 仅用于 add 的联系人；reason 仅解释 action。',
     VISIBLE_FIELD_RULES,
     TAG_FACTION_STATUS_RULES,
+    RECENT_CONTEXT_GUIDE,
+    '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
     JSON.stringify({
       updates: [{
@@ -307,5 +333,6 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     JSON.stringify(contacts.map(contactShape), null, 2),
     '最近短信摘要:',
     JSON.stringify(smsSummary, null, 2),
+    recentBlock,
   ].join('\n');
 }
