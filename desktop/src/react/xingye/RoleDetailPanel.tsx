@@ -15,6 +15,7 @@ import {
 import { useXingyeLoreEntries } from './xingye-lore-store';
 import { BackgroundPicker } from './BackgroundPicker';
 import { LoreEditor } from './LoreEditor';
+import { RelationshipStatePanel } from './RelationshipStatePanel';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
@@ -369,6 +370,14 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           onChange={handleChangeChatBackground}
         />
       </section>
+
+      <RelationshipStatePanel
+        agent={agent}
+        profile={{
+          ...resolvedProfile,
+          relationshipLabel: relationshipLabel || resolvedProfile.relationshipLabel,
+        }}
+      />
 
       <section className={styles.detailSection} aria-label="角色设定分层">
         <h3 className={styles.detailSectionTitle}>角色设定分层</h3>

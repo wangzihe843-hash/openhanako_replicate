@@ -23,6 +23,11 @@ const ALLOWED_LORE_CATEGORIES = new Set([
   "character",
 ]);
 
+const PHONE_GENERATE_KINDS = new Set([
+  "contacts_enrichment",
+  "relationship_state",
+]);
+
 const FORBIDDEN_TERMS = [
   "AI助手",
   "用户创建",
@@ -366,7 +371,8 @@ export function createXingyeRoute(engine) {
   route.post("/xingye/phone-generate", async (c) => {
     try {
       const body = await safeJson(c);
-      const kind = typeof body?.kind === "string" ? body.kind : "contacts_enrichment";
+      const requestedKind = typeof body?.kind === "string" ? body.kind : "contacts_enrichment";
+      const kind = PHONE_GENERATE_KINDS.has(requestedKind) ? requestedKind : "contacts_enrichment";
       const ownerAgentId = cleanString(body?.ownerAgentId, 120);
       const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
       const agentId = cleanString(body?.agentId, 120);

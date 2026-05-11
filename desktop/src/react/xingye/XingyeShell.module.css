@@ -591,6 +591,193 @@
   overflow-wrap: anywhere;
 }
 
+.relationshipStateHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 0 var(--space-md) var(--space-sm);
+}
+
+.relationshipStateHeader .detailSectionTitle {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.relationshipStateHint {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.relationshipStateBody {
+  display: grid;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md) var(--space-md);
+}
+
+.relationshipStageCard {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-card, white) 84%, var(--accent-light));
+}
+
+.relationshipStageCard span,
+.relationshipInfoItem span,
+.relationshipTextBlock span,
+.relationshipMetric span,
+.relationshipDeltaGrid span {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.relationshipStageCard strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.relationshipStageCard small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.relationshipMetricGrid,
+.relationshipDeltaGrid,
+.relationshipInfoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--space-sm);
+}
+
+.relationshipMetric,
+.relationshipInfoItem,
+.relationshipDeltaGrid > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+}
+
+.relationshipMetric > div:first-child,
+.relationshipInfoItem,
+.relationshipDeltaGrid > div {
+  display: grid;
+  gap: 5px;
+}
+
+.relationshipMetric strong,
+.relationshipInfoItem strong,
+.relationshipDeltaGrid strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 620;
+  overflow-wrap: anywhere;
+}
+
+.relationshipMetricTrack {
+  height: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--overlay-light);
+}
+
+.relationshipMetricTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 42%, var(--text-muted));
+}
+
+.relationshipTextBlock {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-subtle);
+}
+
+.relationshipTextBlock p {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.relationshipError {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #b42318 32%, var(--overlay-light));
+  border-radius: var(--radius-sm);
+  color: #9f1f18;
+  background: color-mix(in srgb, #fff1ef 70%, var(--bg-card, white));
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.relationshipSuggestion {
+  display: grid;
+  gap: var(--space-sm);
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--overlay-light));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-light) 38%, var(--bg-card, white));
+}
+
+.relationshipSuggestionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.relationshipSuggestionHeader strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.relationshipSuggestionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.relationshipSuggestionActions button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--bg-card, white);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.relationshipDebug {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.relationshipDebug summary {
+  width: max-content;
+  cursor: pointer;
+}
+
+.relationshipDebug p {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
 .detailCopy {
   margin: 0;
   padding: var(--space-sm) var(--space-md) var(--space-md);
