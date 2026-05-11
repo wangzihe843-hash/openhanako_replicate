@@ -14,6 +14,7 @@ import type { ChatListItem } from '../../stores/chat-types';
 import { ChatTranscript } from './ChatTranscript';
 import { ChatTimelineNavigator } from './ChatTimelineNavigator';
 import { buildTimelineAnchors } from './timeline-anchors';
+import { useXingyeRoleProfile } from '../../xingye/xingye-profile-store';
 import styles from './Chat.module.css';
 
 const MAX_ALIVE = 5;
@@ -76,6 +77,8 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const loadingMore = useStore(s => s.chatSessions[path]?.loadingMore ?? false);
   const isSessionStreaming = useStore(s => s.streamingSessions.includes(path));
   const sessionAgentId = useStore(s => s.sessions.find(se => se.path === path)?.agentId ?? null);
+  const xingyeProfile = useXingyeRoleProfile(sessionAgentId);
+  const chatBackgroundDataUrl = xingyeProfile?.chatBackgroundDataUrl;
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -191,13 +194,22 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
   return (
     <div
-      className={styles.sessionShell}
+      className={`${styles.sessionShell}${chatBackgroundDataUrl ? ` ${styles.sessionShellWithBackground}` : ''}`}
       style={{
         visibility: active ? 'visible' : 'hidden',
         zIndex: active ? 1 : 0,
         pointerEvents: active ? 'auto' : 'none',
       }}
     >
+      {chatBackgroundDataUrl && (
+        <div
+          className={styles.chatBackgroundLayer}
+          style={{ backgroundImage: `url("${chatBackgroundDataUrl}")` }}
+          aria-hidden="true"
+        >
+          <div className={styles.chatBackgroundScrim} />
+        </div>
+      )}
       <div ref={ref} className={styles.sessionPanel}>
         <div ref={contentRef} className={styles.sessionMessages}>
           {hasMore && (

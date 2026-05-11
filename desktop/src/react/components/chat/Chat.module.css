@@ -973,6 +973,28 @@
     inset: 0;
     overflow-y: auto;
     padding: 76px var(--space-lg) 0;
+    z-index: 1;
+}
+
+.sessionShellWithBackground {
+    background: var(--bg);
+}
+
+.chatBackgroundLayer {
+    position: absolute;
+    inset: 0;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.chatBackgroundScrim {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--bg) 74%, transparent);
+    backdrop-filter: blur(1px);
 }
 
 /* 静默滚动条：默认 thumb 透明（track 已是 transparent），hover 或正在滚动时才显色。
