@@ -96,8 +96,23 @@ describe('buildVirtualContactGenerationPrompt — initial AI generate', () => {
     expect(prompt).toContain('方老师-旧号码');
   });
 
-  it('says blocked/deleted distribution rule only applies if currently none exists', () => {
-    expect(prompt).toMatch(/首次生成且当前完全没有 blocked\/deleted/);
+  it('does not forbid all-active or mandate blocked/deleted quotas', () => {
+    expect(prompt).not.toContain('禁止全员 active');
+    expect(prompt).not.toMatch(/至少 1 个 blocked/);
+    expect(prompt).not.toMatch(/至少 1 个 deleted/);
+    expect(prompt).not.toContain('温和日常也至少应有 1 个 deleted');
+    expect(prompt).not.toContain('blocked 与 deleted 合计通常 1–3');
+  });
+
+  it('requires reasoned blocked/deleted and allows multi non-active when setting supports', () => {
+    expect(prompt).toContain('默认 status=active');
+    expect(prompt).toContain('必须言之有理');
+    expect(prompt).toContain('2–4');
+    expect(prompt).toContain('逐条独立');
+  });
+
+  it('does not inject regenerate-only status floor wording', () => {
+    expect(prompt).not.toContain('重新生成全部 · status 下限');
   });
 });
 
@@ -119,6 +134,15 @@ describe('buildContactRegenerateAllPrompt', () => {
 
   it('requests 8-16 contacts for the full rebuild', () => {
     expect(prompt).toMatch(/8[–-]16/);
+  });
+
+  it('includes regenerate-only prompt floor for at least one blocked or deleted', () => {
+    expect(prompt).toContain('重新生成全部 · status 下限');
+    expect(prompt).toContain('至少出现 1 条 blocked');
+    expect(prompt).toContain('1 条 deleted');
+    expect(prompt).toContain('不必同时有两种');
+    expect(prompt).toContain('2–4 条');
+    expect(prompt).toContain('禁止为过关而复制粘贴式硬凑');
   });
 });
 
@@ -146,5 +170,11 @@ describe('buildContactIncrementalUpdatePrompt — boundaries are preserved', () 
 
   it('treats no-recent-context as acceptable (no error)', () => {
     expect(prompt).toContain('最近 OpenHanako 聊天上下文');
+  });
+
+  it('includes incremental block/delete action guide aligned with reasoned status', () => {
+    expect(prompt).toContain('【拉黑 / 已删除 · 仅 virtual_contact');
+    expect(prompt).toContain('禁止对 agent 使用 block/delete');
+    expect(prompt).toContain('须用户在小手机通讯录内**手动**拉黑/删除');
   });
 });

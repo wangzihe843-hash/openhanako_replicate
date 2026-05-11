@@ -140,6 +140,34 @@
   font-size: 0.9rem;
 }
 
+.secretSpaceStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.secretSpaceSection {
+  min-width: 0;
+}
+
+.secretSpaceSectionTitle {
+  margin: 0 0 var(--space-sm);
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.secretSpacePlaceholder {
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px dashed var(--overlay-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  background: var(--bg-card, var(--overlay-subtle));
+}
+
 .roleListPanel {
   max-width: 980px;
 }

@@ -131,10 +131,13 @@ const TAG_FACTION_STATUS_RULES = [
   '【tags 强制】每个联系人 tags 为非空数组，元素只能来自：亲近的人、需要观察、不可靠、同伴、危险；建议 1–3 个；禁止全员只剩「需要观察」。',
   '【faction 强制】每个联系人 faction 只能为：自己人、中立、对立、未知；禁止为空；禁止几乎全部「未知」——不确定身份的一两条即可，其余应落在自己人/中立/对立。',
   '【阵营分布参考】在贴合设定的前提下，整体大致：自己人 2–4、中立 2–5、对立 1–3、未知 1–3（可按剧情微调，但禁止全员未知）。',
-  '【status 强制】每个联系人 status 必须为 active、blocked、deleted 之一；禁止全员 active。',
-  '【status 语义】blocked 可表示纠缠者、危险线人、不可信供应商、越界者、黑市、旧债主等，不必是大反派；deleted 表示旧号码、断联旧友、失效渠道、已离开的同事等软删除，不是人间蒸发。',
-  '【status 分布参考】active 约 70%–85%；blocked 与 deleted 合计通常 1–3 人；高压/间谍/黑帮等可略多；温和日常也至少应有 1 个 deleted 表示断联旧人；blocked 若与设定严重冲突可省略，但 deleted 仍建议保留。',
-  '【首轮生成硬性】至少 1 个 blocked 或 1 个 deleted；重新生成全部时：至少 1 个 deleted；若角色明显不适合拉黑（全年龄治愈日常且无危险要素），可没有 blocked，但仍须有多种 faction 与 tags。',
+  '【status 默认】仍在往来、或按设定会正常接电话/回消息的人，默认 status=active。',
+  '【blocked / deleted：必须言之有理】凡 status 为 blocked 或 deleted，必须在 shortBio、impression、relationshipHint 中写清**可核对的具体事由**（例如：因何越界被拉黑、哪笔合作撕破脸、哪条渠道何时失效、旧号码对应哪段关系结束），让读者看出与 active 的本质差别；禁止把状态当装饰标签乱贴，禁止用同一句壳子复制多条只改 displayName。',
+  '【何时可出现多条 blocked / deleted（合计常见 2–4 条，仍须逐条独立）】当角色设定或最近对话能支撑**多条互不重复**的负面关系或断联事实时——例如：长期多方树敌或勒索线、灰色盘口多人毁约、战地/疫区多条补给或转诊线断裂、药品或器械多上家跑路、执法与债务人多线施压、线人网络里多人失联等——本批可以写入**合计约 2–4 条** blocked 与/或 deleted，与大量 active 并存；条数随证据走，「2–4」是常见上限参考而非硬编码配额，**少一条能写清就少写，多一条写不清就不要多写**。',
+  '【何时应极少使用非 active】治愈日常、校园轻喜剧、单线职场等设定里若无明确敌对、骚扰、失信或断联线索，则非 active 应很少或为零；此时宁可多写正常联系人，也不要堆「危险人物 / 旧号码」式占位。',
+  '【status 合法值】每个联系人 status 须为 active、blocked、deleted 之一（字段不得为空或自创枚举）。',
+  '【与已有拉黑/已删除名单】下方名单用于去重：不得复制已有 displayName 再投；但若设定与对话仍能支撑**新的、不同身份**的拉黑/断联对象，可以新增，不必因列表里已有非 active 就自我限流——前提是每条新人仍有独立因果，禁止换皮重复。',
+  '【禁止模板化名】除非设定中真实出现或强相关，否则禁止套用：黑蛇-危险人物、方老师-旧号码、黑市眼镜、老疤、老魏、方姐、老班长、战地医院旧号 等套路化黑名单/旧号名。',
   '【禁止】不要把 user 设为 blocked/deleted；不要把已有真实 agent 默认设为 blocked/deleted（除非原数据已是该状态且剧情明确要求）。',
 ].join('\n');
 
@@ -163,12 +166,12 @@ const VIRTUAL_CONTACT_RECENT_CHAT_GUIDE = [
 
 /** AI 生成联系人：明确禁止把已有 blocked/deleted 当作新候选反复输出。 */
 const BLOCKED_DELETED_AVOIDANCE_GUIDE = [
-  '【已拉黑 / 已删除联系人 → 只是去重参考，不是生成目标】下文给出的「已拉黑」「已删除」名单仅供你避免重复输出，不要把它们作为新候选再次返回：',
-  '- 不允许复制已有 blocked / deleted 联系人的 displayName / remark 作为本批新候选；同名条目会被去重层归并，不会产生第二份。',
+  '【已拉黑 / 已删除联系人 → 去重参考，不是禁止写非 active】下文「已拉黑」「已删除」名单用于避免同名重复输出，不要把同名条目当新候选再返回：',
+  '- 不允许复制已有 blocked / deleted 联系人的 displayName / remark 作为本批新候选；同名 incoming 必须 merge 到旧联系人；同名条目会被去重层归并，不会产生第二份。',
   '- 不要反复套用模板化的"黑蛇-危险人物""方老师-旧号码""旧情人-断联""仇人-威胁"这类符号化名字。',
-  '- 已有 blocked / deleted 的角色，如果剧情没明确变化，保持不在本批输出里；它们的状态由保存层保留。',
-  '- 如果 AI 输出已经存在的 blocked / deleted 联系人，会被合并刷新印象，但不会自动恢复为 active，也不会新增第二条。',
-  '- "至少 1 个 blocked / 1 个 deleted"的硬性分布规则只适用于：首次生成且当前完全没有 blocked/deleted；如果当前已经有 blocked 或 deleted，请不要为了凑分布再造同类。',
+  '- 已有 blocked / deleted 的角色，若剧情无新变化，不必在本批重复输出；其状态由保存层保留。',
+  '- 若 AI 输出已存在的 blocked / deleted 同名联系人，会合并刷新印象，不会自动恢复为 active，也不会新增第二条。',
+  '联系人要像真实手机通讯录：同事、朋友、上司、同学、医生、店员、邻居、客户、线人、供应商、旧识等。日常主体应是 active；**若设定与对话里确有纠纷、骚扰、毁约或渠道断联**，应通过 shortBio/impression 把因果写足，再标 blocked/deleted，不要为了「通讯录看起来太平」而抹掉合理冲突线索。',
 ].join('\n');
 
 /** 虚拟联系人生成：同一人多称呼时不能仅靠 displayName 判重。 */
@@ -216,12 +219,13 @@ export function buildVirtualContactGenerationPrompt(params: {
     ? [
       '【流程】运行时已把当前 virtual_contact 表备份为快照；系统只保留最近 2 份快照。手动编辑过或手动拉黑/删除的虚拟联系人会被保留，不在本批清空范围内。',
       '【数量】请输出 8–16 条 virtual_contact（目标可落在 10–14 条左右）；少于 8 条视为不合格。不要试图复现「已拉黑」/「已删除」名单里的同名条目（它们已经存在并保持原状态）。',
-      '【关系网】要像角色手机里长期积累的真实社交网：工作、灰色渠道、旧识、威胁、断联号码、拉黑对象等应同时存在，而不是「全员正常好友列表」。',
+      '【关系网 · status】要像角色手机里长期积累的真实社交网；工作、日常、旧识仍以 active 为主体。若资料或对话指向**多方树敌、多线灰色合作崩盘、倒卖/假药链多人失信、战地或疫区多条转诊与补给断联、讨债与执法多线施压**等，可写入**多条** blocked 与/或 deleted（合计常见 **2–4 条**为参考上限），**每条**须有互不重复的 shortBio/impression 因果；无此类证据时不要硬塞一排「反派占位」。',
+      '【重新生成全部 · status 下限（仅本流程）】本批须至少出现 1 条 blocked **或** 1 条 deleted（满足其一即可，不必同时有两种）。若设定平和、几乎全为 active，仍须用**单条**把因果写充分的 deleted（如失效渠道）或 blocked（如骚扰来源）满足此下限；若设定动荡且证据充分，可按上条写多条非 active，但**禁止为过关而复制粘贴式硬凑**。',
     ].join('\n')
     : [
       '【边界】本任务只为当前角色补充新的 virtual_contact；不得删除 user/agent，也不得删除任何已有联系人。整表清空仅属于「重新生成全部」流程。',
       '【数量】请输出 3–8 个 virtual_contact 候选（须像真实手机里一小撮联系人，不要贪多）。保存层会自动去重，与已有 active / blocked / deleted 同名联系人不会新增第二条。',
-      '【关系网】混合亲近与风险：可信同伴、谨慎合作、对立或勒索者、断联旧人、拉黑对象等可自然共存；人数少时不必强行凑满类型。',
+      '【关系网 · status】以 active 为主，写清仍在往来的日常关系。若设定或最近对话能支撑**多条独立**的敌对、骚扰、毁约或断联事实（如多方勒索、多上家跑路、多线旧号码失效），本批候选里可出现**合计约 2–4 条** blocked 与/或 deleted，**每条**须在可见字段写足事理；若无此类证据则不要写非 active。',
       '【最近聊天可能为空】允许且常见——此时请基于角色人设、身份、世界观推导合理生活联系人（同事/朋友/上司/同学/旧识/家人/医生/店员/邻居/任务相关人物/组织成员/过去关系中的人），不要返回 0 条。',
     ].join('\n');
 
@@ -283,10 +287,22 @@ const RECENT_CONTEXT_GUIDE = [
   '- 重心：凡能在当前联系人列表里对上号的人（用 targetId 或 matchName 精确匹配），优先各返回一条 update，重点调 patch.tags 与 patch.impression（可酌情改 relationshipHint / faction；不要为凑字段大面积改 remark）。',
   '- 尽量不新增联系人：批量「造名单」应走「AI 生成联系人」等流程。仅当聊天里出现明确新人且无法与任何现有联系人视为同一人时，才考虑 add；且全轮 add 不得超过 2 条，默认以 0 条 add 为目标。',
   '- 不要因为聊天没提到某联系人就删除它；未在聊天中出现的联系人不要返回 update。',
-  '- 明显断联 / 危险 / 旧号码 / 拉黑暗示且证据充分时，才用 block 或 delete；可疑但不确定 → 只用 update 调 tags（如「需要观察」「危险」）而非 block/delete。',
+  '- 明显断联 / 危险 / 旧号码 / 拉黑暗示且证据充分时，仅对 **virtual_contact** 才用 block 或 delete；对 agent 只用 update 调 tags/impression。可疑但不确定 → 只用 update 调 tags（如「需要观察」「危险」）而非 block/delete。',
   '- 严禁把聊天原文直接复制到 impression / remark / relationshipHint / shortBio；要用自然通讯录措辞改写。',
   '- 严禁出现"根据聊天记录""根据最近对话""强化设定""新增一个"等生成器语言。reason / generatedReason 可解释依据，但不要复述聊天原句。',
   '- 如「最近聊天」标注为「（无）」，请不要凭空编造关系变化，仅在必要时基于角色资料做小幅 patch。',
+].join('\n');
+
+/** 增量 / 回滚后更新：仅 virtual_contact 可由 AI block/delete；真实 agent 须用户手动（与 store 行为一致）。 */
+const INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE = [
+  '【拉黑 / 已删除 · 仅 virtual_contact（禁止 user；禁止对 agent 使用 block/delete）】',
+  '- **真实 agent（targetType=agent）**：AI 本轮不得使用 `action: "block"`、`action: "delete"`，也不得在 `update.patch` 里改 `status` 为 blocked/deleted；仅可用 `update` 调整 tags/impression/relationshipHint 等。若要把真实角色移入黑名单或已删除，须用户在小手机通讯录内**手动**拉黑/删除。',
+  '- **virtual_contact**：`action: "block"` → status=blocked（纠缠、越界、明确拒绝往来等）；`action: "delete"` → status=deleted（断联、旧号、失效渠道等软删）。写入 meta 并与虚拟实体同步。',
+  '- **把仍为 active 的 virtual_contact 标成 blocked/deleted**：须最近聊天对该**具体条目**给出充分、可核对的事由；顶层 `reason` 写清依据。证据不足 → 只用 `update` 改 tags/impression，不要用 block/delete。',
+  '- **语义分工**：纠缠/威胁/越界 → 倾向 block；旧号/渠道作废/自然断联 → 倾向 delete。',
+  '- **推荐写法**：优先单独一条 `action: "block"` 或 `"delete"`，带准 `targetType: "virtual_contact"` 与 `targetId` 或可靠 `matchName`；若还需改印象可再发 `update`（注意 add+block+delete 合计上限）。',
+  '- **亦可**对 virtual_contact 使用 `update` 且 `patch.status` 为 blocked/deleted，但须满足相同充分事由，且 impression/relationshipHint 与状态一致。',
+  '- **restore**：仅对 virtual_contact；有明确和解、恢复往来时可用，须在 `reason` 写清。',
 ].join('\n');
 
 /** 增量更新 / 回滚后更新专用：与「初次生成整本通讯录」的 TAG 分布规则区分，避免模型为凑人数而乱 add/block。 */
@@ -316,7 +332,8 @@ export function buildContactIncrementalUpdatePrompt(params: {
     '【字段边界】add 时的 contact 对象遵守与虚拟联系人生成相同规则：用户可见字段禁止写任务说明或编剧指令；只有 generatedReason 写生成依据；只有顶层 reason 写「为什么执行该 action」。',
     VISIBLE_FIELD_RULES,
     RECENT_CONTEXT_GUIDE,
-    '规则：不要删除真实 agent；不要 delete/block user；对 virtual_contact 可以 add/update/delete/block/restore。',
+    INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE,
+    '规则：不要 delete/block user。对 agent 仅 add/update（不得 block/delete/restore）；对 virtual_contact 可 add/update/delete/block/restore。',
     '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
     JSON.stringify({
@@ -380,7 +397,8 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     TAG_FACTION_STATUS_RULES,
     INCREMENTAL_VS_TAG_FACTION_RULES,
     RECENT_CONTEXT_GUIDE,
-    '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
+    INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE,
+    '【与本轮指令一致】不要 delete/block user；不要 delete agent；不要对 agent 使用 block/delete/restore；未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
     JSON.stringify({
       updates: [{

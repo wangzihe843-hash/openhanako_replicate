@@ -6,6 +6,7 @@ import {
   XINGYE_PHONE_SMS_THREADS_STORAGE_KEY,
   XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY,
   addMockSmsMessage,
+  ensureContactDistribution,
   ensureGeneratedVirtualContacts,
   getPhoneContactMeta,
   getPhoneContacts,
@@ -14,6 +15,7 @@ import {
   getSmsThread,
   getSmsThreads,
   savePhoneContactMeta,
+  type XingyeAiGeneratedContact,
 } from './xingye-phone-store';
 
 class MemoryStorage implements Storage {
@@ -168,5 +170,46 @@ describe('xingye-phone-store', () => {
       updatedAt: '2026-05-11T00:00:00.000Z',
     }, agents, {}, storage);
     expect(second.length).toBe(generated.length);
+  });
+});
+
+describe('ensureContactDistribution', () => {
+  const warmContact = (name: string): XingyeAiGeneratedContact => ({
+    targetType: 'virtual_contact',
+    displayName: name,
+    kind: 'friend',
+    tags: ['亲近的人'],
+    faction: '自己人',
+    status: 'active',
+    generatedReason: 'test',
+  });
+
+  const edgyContact = (name: string, kind: XingyeAiGeneratedContact['kind']): XingyeAiGeneratedContact => ({
+    targetType: 'virtual_contact',
+    displayName: name,
+    kind,
+    tags: ['危险'],
+    faction: '对立',
+    status: 'active',
+    generatedReason: 'test',
+  });
+
+  it('regenerate intent ensures at least one blocked or deleted when batch was all active', () => {
+    const batch = [edgyContact('A', 'enemy'), edgyContact('B', 'rival'), warmContact('C')];
+    const out = ensureContactDistribution(batch, { intent: 'regenerate' });
+    expect(out.some(c => c.status === 'blocked' || c.status === 'deleted')).toBe(true);
+  });
+
+  it('regenerate intent flips at most one contact when batch had no blocked/deleted', () => {
+    const batch = [edgyContact('A', 'enemy'), edgyContact('B', 'rival'), edgyContact('C', 'rival')];
+    const out = ensureContactDistribution(batch, { intent: 'regenerate' });
+    const nonActive = out.filter(c => c.status === 'blocked' || c.status === 'deleted');
+    expect(nonActive.length).toBe(1);
+  });
+
+  it('initial intent does not promote statuses when all active', () => {
+    const batch = [warmContact('A'), warmContact('B')];
+    const out = ensureContactDistribution(batch, { intent: 'initial' });
+    expect(out.every(c => c.status === 'active')).toBe(true);
   });
 });

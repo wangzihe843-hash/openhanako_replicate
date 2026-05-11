@@ -22,7 +22,6 @@ import {
   normalizeAiGeneratedContact,
   profileLikelyForbidsBlocked,
   ensureContactDistribution,
-  ensureStoredVirtualContactsNonActiveDistribution,
   reconcileVirtualContactInferenceFields,
   restorePhoneContactSnapshot,
   saveContactAiUpdateState,
@@ -296,8 +295,10 @@ export async function generateVirtualContactsWithAI(params: {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
   const mode = params.mode ?? 'initial_ai_generate';
   const isRegenerate = mode === 'regenerate_all';
-  const distIntent = isRegenerate ? 'regenerate' as const : 'initial' as const;
   const softBlock = profileLikelyForbidsBlocked(ownerProfile, ownerAgent);
+  const distCtx = isRegenerate
+    ? { intent: 'regenerate' as const, profileAllowsNoBlocked: softBlock }
+    : { intent: 'initial' as const };
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
@@ -324,7 +325,7 @@ export async function generateVirtualContactsWithAI(params: {
       seenBatch.add(k);
       return true;
     });
-    generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
+    generated = ensureContactDistribution(generated, distCtx);
     let ruleFallbackPadded = 0;
     if (isRegenerate) {
       const minCount = 8;
@@ -340,21 +341,13 @@ export async function generateVirtualContactsWithAI(params: {
         ruleFallbackPadded = extras.length;
         const normalizedExtras = extras.map(c => normalizeAiGeneratedContact(c));
         generated = [...generated, ...normalizedExtras];
-        generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
+        generated = ensureContactDistribution(generated, distCtx);
         if (generated.length > maxCount) generated = generated.slice(0, maxCount);
       }
     }
     const applyResult = applyAiGeneratedContacts(ownerAgent.id, generated, {
       mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
     });
-    ensureStoredVirtualContactsNonActiveDistribution(
-      ownerAgent.id,
-      agents,
-      profiles,
-      distIntent,
-      undefined,
-      softBlock,
-    );
     const virtuals = getVirtualContacts(ownerAgent.id);
     setPhoneContactGenerationState(ownerAgent.id, {
       ownerAgentId: ownerAgent.id,

@@ -613,8 +613,6 @@ export function sanitizeVisibleContactText(
   return { clean: trimmed };
 }
 
-export type XingyeContactDistributionIntent = 'initial' | 'regenerate' | 'incremental';
-
 /** 与下方 XINGYE_DEFAULT_CONTACT_* 导出保持一致（不可在导出前引用那些常量，避免 TDZ）。 */
 const CANONICAL_TAGS_LIST: string[] = ['亲近的人', '需要观察', '不可靠', '同伴', '危险'];
 const CANONICAL_FACTIONS_LIST: string[] = ['自己人', '中立', '对立', '未知'];
@@ -759,20 +757,24 @@ function scoreForDeleted(contact: XingyeAiGeneratedContact): number {
   return s;
 }
 
-/** 若全员 active，为黑名单/已删除页至少造一条虚拟联系人记录（仅改本次 batch 内对象）。 */
-export function ensureMinimumNonActiveContacts(
+/**
+ * 仅「重新生成全部」：若本批仍无任何 blocked/deleted，则最多把 **一条** active 改为 blocked 或 deleted（二者择一，与初次生成分离）。
+ */
+function ensureMinimumNonActiveContactsForRegenerate(
   contacts: XingyeAiGeneratedContact[],
-  ctx: { intent: XingyeContactDistributionIntent; profileAllowsNoBlocked?: boolean },
+  profileAllowsNoBlocked?: boolean,
 ): void {
-  if (contacts.length === 0 || ctx.intent === 'incremental') return;
+  if (contacts.length === 0) return;
 
   const st = (c: XingyeAiGeneratedContact) => normalizeContactStatusValue(c.status);
+  const hasNonActive = contacts.some(c => st(c) === 'blocked' || st(c) === 'deleted');
+  if (hasNonActive) return;
 
-  const pickActiveIndex = (scorer: (c: XingyeAiGeneratedContact) => number, skipIndex = -1): number => {
+  const pickBestActive = (scorer: (c: XingyeAiGeneratedContact) => number): number => {
     let best = -1;
     let bestScore = -1;
     contacts.forEach((c, i) => {
-      if (i === skipIndex || st(c) !== 'active') return;
+      if (st(c) !== 'active') return;
       const s = scorer(c);
       if (s > bestScore) {
         bestScore = s;
@@ -782,57 +784,48 @@ export function ensureMinimumNonActiveContacts(
     return best;
   };
 
-  const hasBlocked = contacts.some(c => st(c) === 'blocked');
-  const hasDeleted = contacts.some(c => st(c) === 'deleted');
+  const firstActive = (): number => contacts.findIndex(c => st(c) === 'active');
 
-  if (contacts.every(c => st(c) === 'active')) {
-    if (ctx.intent === 'regenerate' && ctx.profileAllowsNoBlocked) {
-      const di = pickActiveIndex(scoreForDeleted);
-      if (di >= 0) contacts[di].status = 'deleted';
-      return;
-    }
-    const bi = pickActiveIndex(scoreForBlocked);
-    if (bi < 0) return;
-    contacts[bi].status = ctx.profileAllowsNoBlocked ? 'deleted' : 'blocked';
-    const di = pickActiveIndex(scoreForDeleted, bi);
-    if (di >= 0) contacts[di].status = 'deleted';
-    else {
-      const alt = contacts.findIndex((_, i) => i !== bi && st(contacts[i]) === 'active');
-      if (alt >= 0) contacts[alt].status = 'deleted';
-    }
+  if (profileAllowsNoBlocked) {
+    const i = pickBestActive(scoreForDeleted);
+    const idx = i >= 0 ? i : firstActive();
+    if (idx >= 0) contacts[idx].status = 'deleted';
     return;
   }
 
-  if (ctx.intent === 'regenerate') {
-    if (!ctx.profileAllowsNoBlocked && !hasBlocked) {
-      const i = pickActiveIndex(scoreForBlocked);
-      if (i >= 0 && st(contacts[i]) === 'active') contacts[i].status = 'blocked';
-    }
-    if (!hasDeleted) {
-      const blockedI = contacts.findIndex(c => st(c) === 'blocked');
-      const i = pickActiveIndex(scoreForDeleted, blockedI >= 0 ? blockedI : -1);
-      if (i >= 0 && st(contacts[i]) === 'active') contacts[i].status = 'deleted';
-    }
+  const bi = pickBestActive(scoreForBlocked);
+  const di = pickBestActive(scoreForDeleted);
+  const bs = bi >= 0 ? scoreForBlocked(contacts[bi]) : -1;
+  const ds = di >= 0 ? scoreForDeleted(contacts[di]) : -1;
+
+  if (bi < 0 && di < 0) {
+    const idx = firstActive();
+    if (idx >= 0) contacts[idx].status = 'deleted';
     return;
   }
 
-  if (ctx.intent === 'initial') {
-    if (!hasBlocked && !hasDeleted) {
-      const bi = pickActiveIndex(scoreForBlocked);
-      if (bi >= 0) {
-        contacts[bi].status = ctx.profileAllowsNoBlocked ? 'deleted' : 'blocked';
-        const di = pickActiveIndex(scoreForDeleted, bi);
-        if (di >= 0) contacts[di].status = 'deleted';
-      }
-    } else if (!hasDeleted) {
-      const i = pickActiveIndex(scoreForDeleted);
-      if (i >= 0) contacts[i].status = 'deleted';
-    } else if (!hasBlocked && !ctx.profileAllowsNoBlocked) {
-      const i = pickActiveIndex(scoreForBlocked);
-      if (i >= 0) contacts[i].status = 'blocked';
-    }
+  if (bi === di) {
+    const idx = bi;
+    contacts[idx].status = bs >= ds ? 'blocked' : 'deleted';
+    return;
   }
+
+  if (bs >= ds && bi >= 0) {
+    contacts[bi].status = 'blocked';
+    return;
+  }
+  if (di >= 0) {
+    contacts[di].status = 'deleted';
+    return;
+  }
+  if (bi >= 0) contacts[bi].status = 'blocked';
 }
+
+/** 与 `ensureContactDistribution` 第二参数配合：仅 regenerate 会触发非 active 保底。 */
+export type XingyeContactDistributionContext = {
+  intent: 'initial' | 'regenerate';
+  profileAllowsNoBlocked?: boolean;
+};
 
 /** 避免阵营几乎全是「未知」。 */
 function ensureFactionVariety(contacts: XingyeAiGeneratedContact[]): void {
@@ -868,12 +861,13 @@ function ensureTagDiversity(contacts: XingyeAiGeneratedContact[]): void {
 }
 
 /**
- * 对一批即将写入的 AI 虚拟联系人做词表、阵营分布与非全员 active 校正。
- * incremental：只规范 tags/faction，不强行改 status。
+ * 对一批即将写入的 AI 虚拟联系人做词表与阵营规范化。
+ * - `initial`：不修改模型给出的 status（与「AI 生成联系人」prompt 一致，不本地硬凑 blocked/deleted）。
+ * - `regenerate`：在规范化后调用保底，若仍无任何拉黑/已删除则**至多改一条** active 为 blocked 或 deleted（见 `ensureMinimumNonActiveContactsForRegenerate`）。
  */
 export function ensureContactDistribution(
   contacts: XingyeAiGeneratedContact[],
-  ctx: { intent: XingyeContactDistributionIntent; profileAllowsNoBlocked?: boolean },
+  ctx?: XingyeContactDistributionContext,
 ): XingyeAiGeneratedContact[] {
   if (!contacts.length) return contacts;
   const out = contacts.map(c => ({ ...c, targetType: 'virtual_contact' as const }));
@@ -888,92 +882,10 @@ export function ensureContactDistribution(
   }
   ensureFactionVariety(out);
   ensureTagDiversity(out);
-  if (ctx.intent !== 'incremental') {
-    ensureMinimumNonActiveContacts(out, ctx);
+  if (ctx?.intent === 'regenerate') {
+    ensureMinimumNonActiveContactsForRegenerate(out, ctx.profileAllowsNoBlocked);
   }
   return out;
-}
-
-/**
- * 写入后兜底：若存储里虚拟联系人仍全员 active，则改两条 meta+vc（尊重 manual status）。
- */
-export function ensureStoredVirtualContactsNonActiveDistribution(
-  ownerAgentId: string,
-  agents: Agent[],
-  profiles: XingyeRoleProfileMap,
-  intent: 'initial' | 'regenerate',
-  storage: StorageLike | null = getLocalStorage(),
-  profileAllowsNoBlocked?: boolean,
-) {
-  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
-    .filter(v => v.targetType === 'virtual_contact');
-  const editable = views.filter((v) => {
-    const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', v.targetId, storage);
-    return !meta?.manualEditedFields?.includes('status');
-  });
-  if (editable.length < 2) return;
-  const blocked = views.filter(v => v.status === 'blocked');
-  const deleted = views.filter(v => v.status === 'deleted');
-  const needDeleted = deleted.length === 0;
-  const needBlocked = intent === 'regenerate' && !profileAllowsNoBlocked;
-
-  const toAiShape = (v: XingyePhoneContactView): XingyeAiGeneratedContact => ({
-    targetType: 'virtual_contact',
-    displayName: v.displayName,
-    kind: v.kind ?? 'unknown',
-    shortBio: v.shortBio,
-    remark: v.remark,
-    impression: v.impression,
-    relationshipHint: v.relationshipHint,
-    tags: v.tags ?? [],
-    faction: v.faction,
-    status: v.status,
-    generatedReason: v.generatedReason ?? '',
-  });
-
-  const fix = (targetId: string, status: XingyeContactStatus) => {
-    const vc = getVirtualContacts(ownerAgentId, storage).find(x => x.id === targetId);
-    if (!vc) return;
-    const nextVc: XingyeVirtualContact = { ...vc, status, updatedAt: new Date().toISOString() };
-    saveVirtualContact(ownerAgentId, nextVc, storage);
-    savePhoneContactMeta(ownerAgentId, 'virtual_contact', targetId, {
-      status,
-      source: 'ai_generated',
-    }, storage, { markManualFields: false });
-  };
-
-  if (!blocked.length && !deleted.length) {
-    const pool = editable.map(v => ({ v, s: scoreForBlocked(toAiShape(v)) })).sort((a, b) => b.s - a.s);
-    const first = pool[0]?.v;
-    if (first) {
-      fix(first.targetId, profileAllowsNoBlocked ? 'deleted' : 'blocked');
-    }
-    const poolDel = editable
-      .filter(v => v.targetId !== first?.targetId)
-      .map(v => ({ v, s: scoreForDeleted(toAiShape(v)) }))
-      .sort((a, b) => b.s - a.s);
-    const second = poolDel[0]?.v;
-    if (second) fix(second.targetId, 'deleted');
-    return;
-  }
-
-  if (needDeleted) {
-    const poolDel = editable
-      .filter(v => v.status !== 'blocked')
-      .map(v => ({ v, s: scoreForDeleted(toAiShape(v)) }))
-      .sort((a, b) => b.s - a.s);
-    const pick = poolDel[0]?.v;
-    if (pick) fix(pick.targetId, 'deleted');
-  }
-
-  if (needBlocked && !blocked.length && !profileAllowsNoBlocked) {
-    const poolB = editable
-      .filter(v => v.status !== 'deleted')
-      .map(v => ({ v, s: scoreForBlocked(toAiShape(v)) }))
-      .sort((a, b) => b.s - a.s);
-    const pick = poolB[0]?.v;
-    if (pick) fix(pick.targetId, 'blocked');
-  }
 }
 
 /** 增量更新后：为仍缺 tags/faction 的虚拟联系人补全（不覆盖 manual）。 */
@@ -1926,6 +1838,12 @@ export function applyAiContactUpdates(
       continue;
     }
 
+    /** AI 增量：仅 virtual_contact 可 block/delete/restore；agent 须用户在小手机内手动。 */
+    if (update.targetType === 'agent' && (update.action === 'delete' || update.action === 'block' || update.action === 'restore')) {
+      counts.skip += 1;
+      continue;
+    }
+
     if (update.action === 'delete') {
       savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'deleted', source: 'ai_generated' }, storage, { markManualFields: false });
       if (update.targetType === 'virtual_contact') syncVirtualContactEntityWithStoredMeta(ownerAgentId, resolvedTargetId, storage);
@@ -1951,6 +1869,9 @@ export function applyAiContactUpdates(
         source: 'ai_generated',
       };
       if (update.targetType === 'user') {
+        delete aiPayload.status;
+      }
+      if (update.targetType === 'agent') {
         delete aiPayload.status;
       }
       const patch = preserveManualContactFields(existingMeta, aiPayload);

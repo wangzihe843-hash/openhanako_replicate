@@ -49,6 +49,6 @@ export const xingyeTabs: XingyeTab[] = [
     label: '秘密空间',
     title: '秘密空间',
     description: '角色侧隐藏内容占位区，用于承载 TA 私下保存但暂不公开的内容线索。',
-    items: ['TA 的草稿箱', 'TA 的内心戏', 'TA 收藏的东西', 'TA 未发送的朋友圈', '私藏回忆'],
+    items: ['TA 的状态', 'TA 的草稿箱', 'TA 的梦境', 'TA 收藏的东西', 'TA 未发送的朋友圈', '私藏回忆'],
   },
 ];
