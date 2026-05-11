@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import {
   buildContactIncrementalUpdatePrompt,
   buildContactRegenerateAllPrompt,
+  buildSmsHistoryPrompt,
   buildVirtualContactGenerationPrompt,
 } from './xingye-phone-prompts';
 import type { XingyePhoneContactView } from './xingye-phone-store';
@@ -176,5 +177,77 @@ describe('buildContactIncrementalUpdatePrompt — boundaries are preserved', () 
     expect(prompt).toContain('【拉黑 / 已删除 · 仅 virtual_contact');
     expect(prompt).toContain('禁止对 agent 使用 block/delete');
     expect(prompt).toContain('须用户在小手机通讯录内**手动**拉黑/删除');
+  });
+});
+
+describe('buildSmsHistoryPrompt — profile-driven SMS init', () => {
+  const hostileBlocked = makeContact({
+    targetType: 'virtual_contact',
+    targetId: 'vc-hostile',
+    displayName: '线人A',
+    status: 'blocked',
+    tags: ['危险'],
+    faction: '对立',
+    impression: '不想再沾边，回复都嫌累。',
+    relationshipHint: '已拒绝往来',
+  });
+  const closeActive = makeContact({
+    targetType: 'virtual_contact',
+    targetId: 'vc-close',
+    displayName: '小夏',
+    status: 'active',
+    tags: ['亲近的人'],
+    faction: '自己人',
+    impression: '说话不用过脑子，累了会找她吐槽。',
+    relationshipHint: '家人般信任',
+  });
+
+  const prompt = buildSmsHistoryPrompt({
+    ownerAgent,
+    ownerProfile,
+    contacts: [hostileBlocked, closeActive],
+  });
+
+  it('embeds contact tags/faction/status in the list for the model to consume', () => {
+    expect(prompt).toContain('线人A');
+    expect(prompt).toContain('危险');
+    expect(prompt).toContain('对立');
+    expect(prompt).toContain('blocked');
+    expect(prompt).toContain('小夏');
+    expect(prompt).toContain('亲近的人');
+    expect(prompt).toContain('自己人');
+  });
+
+  it('requires tone to follow profile and forbids contradicting dangerous/blocked with intimate chat', () => {
+    expect(prompt).toContain('【联系人画像驱动');
+    expect(prompt).toContain('tags=危险');
+    expect(prompt).toContain('亲密热聊');
+    expect(prompt).toContain('禁止闺蜜式热聊');
+  });
+
+  it('states distinct message count bands including 0–3 for blocked/deleted and 4–10 for close 自己人 active', () => {
+    expect(prompt).toMatch(/status=blocked：0[–-]3/);
+    expect(prompt).toMatch(/4[–-]10/);
+    expect(prompt).toMatch(/2[–-]6/);
+  });
+
+  it('schema sample only exposes targetType, targetId, messages under contacts[]', () => {
+    const start = prompt.indexOf('输出 schema');
+    const end = prompt.indexOf('当前角色:', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const schemaBlock = prompt.slice(start, end);
+    expect(schemaBlock).toContain('"messages"');
+    expect(schemaBlock).not.toContain('"remark"');
+    expect(schemaBlock).not.toContain('"impression"');
+    expect(schemaBlock).not.toContain('"relationshipHint"');
+    expect(schemaBlock).not.toContain('"tags"');
+    expect(schemaBlock).not.toContain('"faction"');
+    expect(schemaBlock).not.toContain('"status"');
+  });
+
+  it('forbids returning address-book fields from the SMS generator', () => {
+    expect(prompt).toContain('禁止返回 remark');
+    expect(prompt).toContain('只能包含 targetType、targetId、messages');
   });
 });

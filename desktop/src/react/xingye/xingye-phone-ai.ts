@@ -558,13 +558,12 @@ export async function generateSmsHistoryWithAI(params: {
       if (suggestion.targetType === 'user') continue;
       const contact = smsContacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
       if (!contact) continue;
-      mergeContactSuggestion(ownerAgent.id, contact, suggestion);
       if (!suggestion.messages?.length) continue;
       const existingThread = getSmsThread(ownerAgent.id, suggestion.targetType as XingyeContactTargetType, suggestion.targetId);
       if (mode === 'empty_only' && existingThread?.messages.length) continue;
       const contactIndex = contactIndexMap.get(`${contact.targetType}:${contact.targetId}`) ?? 0;
       const sortedMessages = suggestion.messages
-        .slice(0, 12)
+        .slice(0, 10)
         .map((message, messageIndex) => ({
           ...message,
           createdAt: asValidIso((message as { createdAt?: unknown }).createdAt)

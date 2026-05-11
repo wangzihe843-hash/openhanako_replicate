@@ -63,6 +63,26 @@ export function buildContactsEnrichmentPrompt(params: {
   ].join('\n');
 }
 
+const SMS_CONTACT_PROFILE_RULES = [
+  '【联系人画像驱动 — 必须遵守】下方 JSON 里每个联系人已带 impression / relationshipHint / tags / faction / status / shortBio / kind 等；短信内容必须从这些字段推导，不得无视或“各写一套”。',
+  '- impression：决定主人对该联系人的主观语气（厌烦、信任、警惕、心软、客气疏离等），短信里双方的措辞要与之一致。',
+  '- relationshipHint：决定亲疏与称呼习惯（可直呼、带职称、刻意疏远、已决裂等）；不要写成与 relationshipHint 相反的亲密热络。',
+  '- tags：决定互动类型（日常关心、工作对接、试探、催债、威胁、线人式单线等）；「亲近的人」「同伴」才允许家常玩笑式高频互动。',
+  '- faction：决定信任/交易/敌对/试探基调（自己人 vs 中立 vs 对立 vs 未知）；对立/未知不得写成无条件信任体。',
+  '- status：决定近期形态 — active 可有正常来回；blocked 须体现冷淡、拒绝、未回复或拉黑前收尾；deleted 须更久远，像旧号码、断联、过期关系，少近期热络。',
+  '【条数与时间分布 — 按联系人分别计算，禁止全员同一套】先根据该联系人画像归类，再取对应条数区间（闭区间内任选整数条数即可）：',
+  '- status=blocked：0–3 条；整体偏冷、收尾感；末条倾向冷淡、拒绝、已读不回或拉黑前最后一句。',
+  '- status=deleted：0–3 条；时间戳明显更久远（相对 active），像旧号码、过期合作、断联后几乎无新往来。',
+  '- status=active 且（tags 含「危险」或 faction=对立）：1–4 条；短促、试探、施压、对峙或交易式冷淡，禁止闺蜜式热聊与撒娇体。',
+  '- status=active 且（tags 含「需要观察」或「不可靠」）：1–5 条；留余地、互相摸底、信息不全或反复确认。',
+  '- status=active 且（tags 含「亲近的人」或「同伴」）且 faction=自己人：4–10 条；允许更自然的日常碎片、关心与简短玩笑，但仍要像真短信而非小说。',
+  '- 其余 active（偏中立/未知日常）：2–6 条。',
+  '若同一联系人多条规则同时看似适用，取「条数上限更低、关系更紧张」的那一档（例如已 blocked 一律走 blocked 的 0–3，而不按亲近标签放宽）。',
+  '【禁止同质化】禁止对所有联系人复用同一开场模板或同一批万能短句；不同 tags/faction/status 必须在话题密度、情绪温度、称呼与句式上有肉眼可见差异。',
+  '【一致性 — 失败条件】若任一线程的短信氛围、亲疏、信任度与当条联系人的 tags/faction/status/impression/relationshipHint 明显矛盾（例如 tags=危险、faction=对立、status=blocked 却写成亲密热聊、撒娇、日常腻歪），整份输出视为不合格，请自检重写后再返回。',
+  '【禁止修改通讯录】本任务只生成短信。JSON 中每个 contacts[] 对象只能包含 targetType、targetId、messages；禁止返回 remark、impression、relationshipHint、tags、faction、status、shortBio、kind 等任何通讯录字段（即使模型认为在“优化”联系人也不行）。',
+].join('\n');
+
 export function buildSmsHistoryPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
@@ -71,17 +91,17 @@ export function buildSmsHistoryPrompt(params: {
   const { ownerAgent, ownerProfile, contacts } = params;
   return [
     '你是角色手机短信历史生成器。仅返回严格 JSON，不要 Markdown，不要解释。',
-    '任务：为每个联系人生成 4-12 条“旧短信”，像真实手机消息，不是小说对白，不是建议清单。',
+    '任务：为下方每个非 user 联系人，依据其通讯录画像生成“旧短信”，像真实手机消息，不是小说对白，不是建议清单。',
+    SMS_CONTACT_PROFILE_RULES,
     '长度规则：每条尽量 3-30 个汉字；允许少量 30-60 字短信，但占比要很低。',
     '禁止：Markdown、旁白、动作描写、心理描写、ChatGPT 式长回复、说教语气。',
-    '时间规则：不要把所有消息写在同一分钟；createdAt 必须分布在过去几天/几周/几个月。',
-    'active 联系人可有近期消息；blocked 联系人的最后消息更冷淡或中断；deleted 联系人消息更久远。',
-    'virtual_contact 的语气要符合 kind 与 generatedReason；user 联系人要符合当前角色关系，默认不要过度亲密。',
-    '不要为 targetType=user 的联系人编造新短信；若列表含 user，可省略其 messages 或返回空数组。',
+    '时间规则：不要把所有消息写在同一分钟；createdAt 必须分布在过去几天/几周/几个月（deleted 更偏久远）。',
+    'virtual_contact 的语气要符合 kind 与 generatedReason（与画像一致即可）。',
+    '不要为 targetType=user 的联系人编造新短信；若列表含 user，可省略该联系人或返回 messages: []。',
     '短信风格要像手机里常见短句：确认、提醒、试探、遗漏信息、简短应答。',
     '好例子：药到了，老地方取。| 别回头。| 你又熬夜了？| 我没事。| 别再联系我。',
     '坏例子：作为你的朋友我建议三点。| 她看着屏幕手指停顿。| 在这个时代我们都需要互相扶持。',
-    '输出 schema:',
+    '输出 schema（仅此结构，多一字段即错）:',
     JSON.stringify({
       contacts: [{
         targetType: 'user | agent | virtual_contact',
@@ -91,12 +111,6 @@ export function buildSmsHistoryPrompt(params: {
           content: 'string',
           createdAt: 'ISO string',
         }],
-        remark: 'string',
-        impression: 'string',
-        relationshipHint: 'string',
-        tags: ['string'],
-        faction: 'string',
-        status: 'active | blocked | deleted',
       }],
     }, null, 2),
     '当前角色:',
