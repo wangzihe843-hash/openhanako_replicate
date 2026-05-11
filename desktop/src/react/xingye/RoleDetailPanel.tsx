@@ -13,6 +13,7 @@ import {
   useXingyeRoleProfile,
 } from './xingye-profile-store';
 import { useXingyeLoreEntries } from './xingye-lore-store';
+import { BackgroundPicker } from './BackgroundPicker';
 import { LoreEditor } from './LoreEditor';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -44,6 +45,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [pastedLore, setPastedLore] = useState('');
   const [extractState, setExtractState] = useState<'idle' | 'extracting' | 'done' | 'error'>('idle');
   const [extractError, setExtractError] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setSavedAt(null);
     setSyncState('idle');
     setSyncError(null);
+    setProfileSaveError(null);
     setPastedLore('');
     setExtractState('idle');
     setExtractError(null);
@@ -140,22 +143,39 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const resolvedProfile = getXingyeRoleProfileDisplay(agent, profile);
 
   const handleSave = () => {
-    const saved = saveXingyeRoleProfile(agent.id, {
-      displayName,
-      shortBio,
-      relationshipLabel,
-      speakingStyle,
-      identitySummary,
-      backgroundSummary,
-      personalitySummary,
-      behaviorLogic,
-      values,
-      taboos,
-      relationshipMode,
-      allowAutoMoments,
-      allowProactiveDM,
-    });
-    setSavedAt(saved.updatedAt);
+    setProfileSaveError(null);
+    try {
+      const saved = saveXingyeRoleProfile(agent.id, {
+        displayName,
+        shortBio,
+        relationshipLabel,
+        speakingStyle,
+        identitySummary,
+        backgroundSummary,
+        personalitySummary,
+        behaviorLogic,
+        values,
+        taboos,
+        relationshipMode,
+        allowAutoMoments,
+        allowProactiveDM,
+      });
+      setSavedAt(saved.updatedAt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setProfileSaveError(`保存失败：${message}`);
+    }
+  };
+
+  const handleChangeChatBackground = async (chatBackgroundDataUrl: string | undefined) => {
+    setProfileSaveError(null);
+    try {
+      const saved = saveXingyeRoleProfile(agent.id, { chatBackgroundDataUrl });
+      setSavedAt(saved.updatedAt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`保存失败：${message}`);
+    }
   };
 
   const handleChangeAvatar = async () => {
@@ -343,6 +363,13 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         </div>
       </section>
 
+      <section className={styles.detailSection} aria-label="星野聊天背景">
+        <BackgroundPicker
+          value={resolvedProfile.chatBackgroundDataUrl}
+          onChange={handleChangeChatBackground}
+        />
+      </section>
+
       <section className={styles.detailSection} aria-label="角色设定分层">
         <h3 className={styles.detailSectionTitle}>角色设定分层</h3>
         <div className={styles.profileForm}>
@@ -526,6 +553,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         <button type="button" onClick={onChat}>聊天</button>
         <button type="button" onClick={onPhone}>TA 的手机</button>
         {savedAt && <span className={styles.saveStatus}>已保存 {new Date(savedAt).toLocaleString()}</span>}
+        {profileSaveError && <span className={styles.syncError}>{profileSaveError}</span>}
         {syncState === 'synced' && <span className={styles.saveStatus}>已同步到 OpenHanako Agent</span>}
         {syncState === 'error' && <span className={styles.syncError}>同步失败: {syncError}</span>}
       </div>

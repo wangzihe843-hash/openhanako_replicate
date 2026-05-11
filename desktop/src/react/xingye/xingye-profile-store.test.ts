@@ -81,6 +81,31 @@ describe('xingye-profile-store', () => {
     expect(storage.getItem(XINGYE_ROLE_PROFILES_STORAGE_KEY)).toContain('星野花子');
   });
 
+  it('stores and clears a Xingye-only chat background data url', () => {
+    const saved = saveXingyeRoleProfile(
+      'agent-1',
+      {
+        chatBackgroundDataUrl: 'data:image/webp;base64,background',
+      },
+      storage,
+    );
+
+    expect(saved.chatBackgroundDataUrl).toBe('data:image/webp;base64,background');
+    expect(getXingyeRoleProfileDisplay(agent, saved).chatBackgroundDataUrl).toBe('data:image/webp;base64,background');
+    expect(buildOpenHanakoAgentSyncPayload(agent, saved).identity).not.toContain('data:image');
+    expect(buildOpenHanakoAgentSyncPayload(agent, saved).ishiki).not.toContain('data:image');
+
+    const cleared = saveXingyeRoleProfile(
+      'agent-1',
+      {
+        chatBackgroundDataUrl: undefined,
+      },
+      storage,
+    );
+
+    expect(cleared.chatBackgroundDataUrl).toBeUndefined();
+  });
+
   it('falls back to OpenHanako agent fields when local fields are blank', () => {
     const profile = saveXingyeRoleProfile(
       'agent-1',

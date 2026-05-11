@@ -25,6 +25,8 @@ export function ChatEntryPanel({
   const selectedDisplay = selectedAgent ? getXingyeRoleProfileDisplay(selectedAgent, selectedProfile) : null;
   const currentDisplay = currentAgent ? getXingyeRoleProfileDisplay(currentAgent, currentProfile) : null;
   const isSameAgent = !!selectedAgentId && selectedAgentId === currentAgentId;
+  const previewDisplay = selectedDisplay ?? currentDisplay;
+  const previewBackgroundDataUrl = previewDisplay?.chatBackgroundDataUrl;
 
   return (
     <div className={styles.entryPanel}>
@@ -75,6 +77,33 @@ export function ChatEntryPanel({
         <div className={styles.detailRow}>
           <span>二者是否一致</span>
           <strong>{isSameAgent ? '是' : '否'}</strong>
+        </div>
+      </section>
+
+      <section className={styles.detailSection} aria-label="当前角色聊天背景预览">
+        <h3 className={styles.detailSectionTitle}>当前角色聊天背景预览</h3>
+        <div className={styles.chatBackgroundPreview}>
+          <div
+            className={styles.chatBackgroundSurface}
+            style={previewBackgroundDataUrl ? { backgroundImage: `url("${previewBackgroundDataUrl}")` } : undefined}
+          >
+            <div className={styles.chatBackgroundScrim} />
+            <div className={styles.chatBackgroundMessages}>
+              <div className={styles.previewBubbleLeft}>
+                {previewDisplay
+                  ? `${previewDisplay.displayName} 的聊天背景会只显示在星野模式预览中。`
+                  : '请选择一个星野角色查看聊天背景。'}
+              </div>
+              <div className={styles.previewBubbleRight}>
+                不修改 OpenHanako 原生 ChatArea
+              </div>
+            </div>
+          </div>
+          <p className={styles.detailCopy}>
+            {previewBackgroundDataUrl
+              ? '这张背景来自 XingyeRoleProfile.chatBackgroundDataUrl，仅用于星野模式 UI。'
+              : '当前角色还没有设置聊天背景。'}
+          </p>
         </div>
       </section>
 

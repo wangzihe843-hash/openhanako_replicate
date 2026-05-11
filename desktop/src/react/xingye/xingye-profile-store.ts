@@ -190,6 +190,7 @@ export function saveXingyeRoleProfile(
     storage?.setItem(XINGYE_ROLE_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
   } catch (error) {
     console.warn('[xingye-profile-store] failed to save role profile:', error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 
   notifyXingyeRoleProfilesChanged();

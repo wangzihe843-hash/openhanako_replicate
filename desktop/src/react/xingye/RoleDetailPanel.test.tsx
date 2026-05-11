@@ -11,6 +11,7 @@ import { RoleDetailPanel } from './RoleDetailPanel';
 import { XINGYE_LORE_ENTRIES_STORAGE_KEY } from './xingye-lore-store';
 
 vi.mock('../hooks/use-hana-fetch', () => ({
+  hanaUrl: (path: string) => path,
   hanaFetch: vi.fn(async (path: string) => {
     if (path === '/api/xingye/extract-profile') {
       return {
@@ -188,5 +189,25 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/identity');
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/ishiki');
     expect(window.localStorage.getItem('xingye.roleProfiles')).toBeNull();
+  });
+
+  it('shows the concrete localStorage save failure when saving the Xingye profile', () => {
+    render(
+      <RoleDetailPanel
+        agent={agent}
+        isOpenHanakoCurrent={true}
+        onBack={vi.fn()}
+        onChat={vi.fn()}
+        onPhone={vi.fn()}
+      />,
+    );
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('localStorage quota exceeded');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '保存星野资料' }));
+
+    expect(screen.getByText('保存失败：localStorage quota exceeded')).toBeInTheDocument();
   });
 });
