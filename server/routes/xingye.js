@@ -160,6 +160,52 @@ function resolveChatCallOpts(engine, ref) {
 export function createXingyeRoute(engine) {
   const route = new Hono();
 
+  async function callWithModelFallback({ prompt, agentId, timeoutMs = 60_000 }) {
+    const details = [];
+    const messages = [{ role: "user", content: prompt }];
+
+    const tryCall = async (opts) => callText({
+      api: opts.api,
+      model: opts.model,
+      apiKey: opts.apiKey,
+      baseUrl: opts.baseUrl,
+      messages,
+      temperature: 0.35,
+      maxTokens: 6_000,
+      timeoutMs,
+    });
+
+    let utilOpts = null;
+    try { utilOpts = resolveUtilityCallOpts(engine, agentId); }
+    catch (err) { details.push({ tier: "utility", message: errorDetail(err) }); }
+    if (utilOpts) {
+      try { return { tier: "utility", text: await tryCall(utilOpts), details }; }
+      catch (err) { details.push({ tier: "utility", message: errorDetail(err) }); }
+    }
+
+    const agent = agentId ? engine.getAgent?.(agentId) : null;
+    if (agent?.config?.models?.chat) {
+      let agentOpts = null;
+      try { agentOpts = resolveChatCallOpts(engine, agent.config.models.chat); }
+      catch (err) { details.push({ tier: "agent-chat", message: errorDetail(err) }); }
+      if (agentOpts) {
+        try { return { tier: "agent-chat", text: await tryCall(agentOpts), details }; }
+        catch (err) { details.push({ tier: "agent-chat", message: errorDetail(err) }); }
+      }
+    }
+
+    const sessionRef = engine.activeSessionModel ?? engine.currentModel;
+    let currentOpts = null;
+    try { currentOpts = resolveChatCallOpts(engine, sessionRef); }
+    catch (err) { details.push({ tier: "current-chat", message: errorDetail(err) }); }
+    if (currentOpts) {
+      try { return { tier: "current-chat", text: await tryCall(currentOpts), details }; }
+      catch (err) { details.push({ tier: "current-chat", message: errorDetail(err) }); }
+    }
+
+    throw new Error(JSON.stringify(details));
+  }
+
   route.post("/xingye/extract-profile", async (c) => {
     const details = [];
     let lastInvalidJsonRaw = null;
@@ -314,6 +360,30 @@ export function createXingyeRoute(engine) {
       return c.json({ error: "model call failed", details: collapsed }, 502);
     } catch (err) {
       return c.json({ error: err.message || String(err) }, 500);
+    }
+  });
+
+  route.post("/xingye/phone-generate", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const kind = typeof body?.kind === "string" ? body.kind : "contacts_enrichment";
+      const ownerAgentId = cleanString(body?.ownerAgentId, 120);
+      const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+      const agentId = cleanString(body?.agentId, 120);
+      const timeoutMs = Math.min(Math.max(Number(body?.timeoutMs) || 60_000, 30_000), 120_000);
+      if (!prompt) return c.json({ error: "prompt is required" }, 400);
+
+      const result = await callWithModelFallback({ prompt, agentId: agentId || ownerAgentId, timeoutMs });
+      const parsed = parseModelJson(result.text);
+      return c.json({ ok: true, kind, modelTier: result.tier, result: parsed });
+    } catch (err) {
+      const message = errorDetail(err);
+      if (message.startsWith("[")) {
+        try {
+          return c.json({ ok: false, error: "model call failed", details: JSON.parse(message) }, 502);
+        } catch {}
+      }
+      return c.json({ ok: false, error: message }, 502);
     }
   });
 
