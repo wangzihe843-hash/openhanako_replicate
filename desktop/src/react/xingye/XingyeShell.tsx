@@ -125,6 +125,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               agents={agents}
               currentAgentId={currentAgentId}
               onNavigate={handleNavigate}
+              onOpenGroupChatTab={() => handleNavigate('group-chat')}
             />
           ) : activeTab.id === 'chat' ? (
             <ChatEntryPanel

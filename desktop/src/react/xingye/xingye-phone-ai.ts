@@ -449,6 +449,7 @@ export async function generateSmsHistoryWithAI(params: {
 }) {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint } = params;
   const mode = params.mode ?? 'empty_only';
+  const smsContacts = contacts.filter(item => item.targetType !== 'user');
   setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
     status: 'running',
     startedAt: new Date().toISOString(),
@@ -458,12 +459,12 @@ export async function generateSmsHistoryWithAI(params: {
     version: 1,
   });
   try {
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts });
+    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts });
     const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
-      contacts,
+      contacts: smsContacts,
       existingThreads: getSmsThreads(ownerAgent.id).map(thread => ({
         targetType: thread.targetType,
         targetId: thread.targetId,
@@ -474,11 +475,12 @@ export async function generateSmsHistoryWithAI(params: {
     });
     const payload = parsePayload(raw);
     const contactIndexMap = new Map<string, number>();
-    contacts.forEach((contact, index) => {
+    smsContacts.forEach((contact, index) => {
       contactIndexMap.set(`${contact.targetType}:${contact.targetId}`, index);
     });
     for (const suggestion of payload.contacts) {
-      const contact = contacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
+      if (suggestion.targetType === 'user') continue;
+      const contact = smsContacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
       if (!contact) continue;
       mergeContactSuggestion(ownerAgent.id, contact, suggestion);
       if (!suggestion.messages?.length) continue;
@@ -511,7 +513,7 @@ export async function generateSmsHistoryWithAI(params: {
       ownerAgentId: ownerAgent.id,
       generatedAt: new Date().toISOString(),
       profileFingerprint,
-      contactsIncluded: contacts.map(contact => ({ targetType: contact.targetType, targetId: contact.targetId })),
+      contactsIncluded: smsContacts.map(contact => ({ targetType: contact.targetType, targetId: contact.targetId })),
       version: 1,
     });
     setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {

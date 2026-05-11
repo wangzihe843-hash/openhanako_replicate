@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useStore } from '../stores';
 import type { Agent } from '../types';
 import {
   getXingyeRoleProfileDisplay,
@@ -17,11 +18,13 @@ interface AgentPhonePanelProps {
   agents: Agent[];
   currentAgentId: string | null;
   onNavigate: (tabId: XingyeTabId) => void;
+  onOpenGroupChatTab?: () => void;
 }
 
 type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat';
 
-export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: AgentPhonePanelProps) {
+export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
+  const channels = useStore(state => state.channels);
   const profile = useXingyeRoleProfile(agent?.id);
   const profiles = useXingyeRoleProfiles();
   const display = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
@@ -66,8 +69,10 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: A
           agents={agents}
           profiles={profiles}
           currentAgentId={currentAgentId}
+          channels={channels}
           onBack={() => setPhonePage('home')}
           onOpenSms={(targetType, targetId) => handleOpenSms(targetType, targetId)}
+          onOpenGroupChatTab={onOpenGroupChatTab}
         />
       ) : null}
 

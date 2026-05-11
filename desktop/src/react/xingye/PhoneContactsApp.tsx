@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Agent } from '../types';
+import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
 import { PhoneContactSections } from './PhoneContactSections';
+import {
+  PhoneContactsBlockedView,
+  PhoneContactsDeletedView,
+  PhoneContactsFactionsHomeView,
+  PhoneContactsFactionDetailView,
+  PhoneContactsGroupsView,
+  PhoneContactsNewFriendsView,
+  PhoneContactsTagDetailView,
+  PhoneContactsTagsHomeView,
+  type PhoneContactsSectionId,
+} from './PhoneContactsSectionView';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import { enrichContactsWithAI } from './xingye-phone-ai';
 import {
@@ -28,13 +39,21 @@ import {
 } from './xingye-phone-store';
 import styles from './XingyeShell.module.css';
 
+type ContactsListView =
+  | 'home'
+  | PhoneContactsSectionId
+  | 'tag_detail'
+  | 'faction_detail';
+
 interface PhoneContactsAppProps {
   ownerAgent: Agent | null;
   agents: Agent[];
   currentAgentId: string | null;
   profiles: XingyeRoleProfileMap;
+  channels: Channel[];
   onBack: () => void;
   onOpenSms: (targetType: 'agent' | 'virtual_contact' | 'user', targetId: string) => void;
+  onOpenGroupChatTab?: () => void;
 }
 
 export function PhoneContactsApp({
@@ -42,8 +61,10 @@ export function PhoneContactsApp({
   agents,
   currentAgentId,
   profiles,
+  channels,
   onBack,
   onOpenSms,
+  onOpenGroupChatTab,
 }: PhoneContactsAppProps) {
   const _phoneStorageVersion = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? currentAgentId ?? '';
@@ -66,6 +87,71 @@ export function PhoneContactsApp({
   const aiState = getPhoneAiGenerationState(ownerAgentId, 'contacts_enrichment');
   const [aiManageOpen, setAiManageOpen] = useState(false);
   const [aiManageNotice, setAiManageNotice] = useState<string | null>(null);
+  const [listView, setListView] = useState<ContactsListView>('home');
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [factionFilter, setFactionFilter] = useState<string | null>(null);
+
+  const openSection = (section: PhoneContactsSectionId) => {
+    setSelectedContactKey(null);
+    setTagFilter(null);
+    setFactionFilter(null);
+    setListView(section);
+  };
+
+  const openTagDetail = (tag: string) => {
+    setSelectedContactKey(null);
+    setTagFilter(tag);
+    setListView('tag_detail');
+  };
+
+  const openFactionDetail = (faction: string) => {
+    setSelectedContactKey(null);
+    setFactionFilter(faction);
+    setListView('faction_detail');
+  };
+
+  const goContactsHome = () => {
+    setListView('home');
+    setTagFilter(null);
+    setFactionFilter(null);
+    setSelectedContactKey(null);
+  };
+
+  const handleStatusBack = () => {
+    if (selectedContact) {
+      setSelectedContactKey(null);
+      return;
+    }
+    if (listView === 'tag_detail') {
+      setListView('tags');
+      setTagFilter(null);
+      return;
+    }
+    if (listView === 'faction_detail') {
+      setListView('factions');
+      setFactionFilter(null);
+      return;
+    }
+    if (listView !== 'home') {
+      goContactsHome();
+      return;
+    }
+    onBack();
+  };
+
+  const navTitle = selectedContact
+    ? '联系人'
+    : ({
+      home: '通讯录',
+      new_friends: '新的朋友',
+      groups: '群聊',
+      tags: '标签',
+      tag_detail: tagFilter ? `标签：${tagFilter}` : '标签',
+      factions: '势力阵营',
+      faction_detail: factionFilter ? `阵营：${factionFilter}` : '势力阵营',
+      blocked: '黑名单',
+      deleted: '已删除',
+    } as const)[listView];
 
   useEffect(() => {
     if (!ownerAgent || !ownerAgentId) return;
@@ -190,17 +276,63 @@ export function PhoneContactsApp({
     }
   };
 
+  const sectionBaseProps = {
+    ownerAgentId,
+    agents,
+    profiles,
+    onBackHome: goContactsHome,
+    onSelectContact: openContact,
+  };
+
   return (
     <div className={styles.phoneShell} aria-label="通讯录">
       <div className={styles.phoneStatusBar}>
-        <button type="button" className={styles.phoneBackButton} onClick={selectedContact ? () => setSelectedContactKey(null) : onBack}>
-          {selectedContact ? '返回列表' : '返回首页'}
+        <button type="button" className={styles.phoneBackButton} onClick={handleStatusBack}>
+          {selectedContact ? '返回' : listView !== 'home' ? '返回' : '返回首页'}
         </button>
-        <span>通讯录</span>
+        <span>{navTitle}</span>
       </div>
 
       <div className={styles.phoneBody}>
-        {!selectedContact ? (
+        {selectedContact ? (
+          <PhoneContactDetail
+            contact={selectedContact}
+            agents={agents}
+            remarkDraft={remarkDraft}
+            impressionDraft={impressionDraft}
+            relationDraft={relationDraft}
+            tagsDraft={tagsDraft}
+            factionDraft={factionDraft}
+            onChange={(field, value) => {
+              if (field === 'remark') setRemarkDraft(value);
+              if (field === 'impression') setImpressionDraft(value);
+              if (field === 'relation') setRelationDraft(value);
+              if (field === 'tags') setTagsDraft(value);
+              if (field === 'faction') setFactionDraft(value);
+            }}
+            onSave={saveContact}
+            onOpenSms={() => onOpenSms(selectedContact.targetType as 'agent' | 'virtual_contact' | 'user', selectedContact.targetId)}
+            onBlockToggle={() => {
+              if (selectedContact.status === 'blocked') {
+                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              } else {
+                blockPhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              }
+            }}
+            onDeleteToggle={() => {
+              if (selectedContact.status === 'deleted') {
+                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              } else {
+                deletePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              }
+            }}
+            onLinkAgent={(linkedAgentId) => {
+              if (!linkedAgentId) return;
+              linkVirtualContactToAgent(ownerAgentId, selectedContact.targetId, linkedAgentId);
+            }}
+            onUnlinkAgent={() => unlinkVirtualContactFromAgent(ownerAgentId, selectedContact.targetId)}
+          />
+        ) : listView === 'home' ? (
           <>
             <section className={styles.phoneAppCard}>
               <h3 className={styles.phoneAppTitle}>通讯录</h3>
@@ -242,55 +374,47 @@ export function PhoneContactsApp({
                 {aiState?.status === 'success' ? <span className={styles.phoneAppHint}>补全完成</span> : null}
               </div>
             </section>
-            <PhoneContactSections contacts={contacts} onSelect={openContact} />
-            <section className={styles.phoneAppCard}>
-              <h4 className={styles.phoneSectionTitle}>新的朋友</h4>
-              <p className={styles.phoneAppHint}>以后这里会显示 TA 新认识的人、关系变化和待确认的社交请求。</p>
-              <h4 className={styles.phoneSectionTitle}>群聊入口</h4>
-              <p className={styles.phoneAppHint}>这里是通讯录里的群聊入口占位，不是短信。</p>
-              <h4 className={styles.phoneSectionTitle}>标签 / 势力阵营</h4>
-              <p className={styles.phoneAppHint}>默认标签：亲近的人、需要观察、不可靠、同伴、危险；默认阵营：自己人、中立、对立、未知。</p>
-            </section>
+            <PhoneContactSections contacts={contacts} onSelect={openContact} onOpenSection={openSection} />
           </>
-        ) : (
-          <PhoneContactDetail
-            contact={selectedContact}
-            agents={agents}
-            remarkDraft={remarkDraft}
-            impressionDraft={impressionDraft}
-            relationDraft={relationDraft}
-            tagsDraft={tagsDraft}
-            factionDraft={factionDraft}
-            onChange={(field, value) => {
-              if (field === 'remark') setRemarkDraft(value);
-              if (field === 'impression') setImpressionDraft(value);
-              if (field === 'relation') setRelationDraft(value);
-              if (field === 'tags') setTagsDraft(value);
-              if (field === 'faction') setFactionDraft(value);
-            }}
-            onSave={saveContact}
-            onOpenSms={() => onOpenSms(selectedContact.targetType as 'agent' | 'virtual_contact' | 'user', selectedContact.targetId)}
-            onBlockToggle={() => {
-              if (selectedContact.status === 'blocked') {
-                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
-              } else {
-                blockPhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
-              }
-            }}
-            onDeleteToggle={() => {
-              if (selectedContact.status === 'deleted') {
-                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
-              } else {
-                deletePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
-              }
-            }}
-            onLinkAgent={(linkedAgentId) => {
-              if (!linkedAgentId) return;
-              linkVirtualContactToAgent(ownerAgentId, selectedContact.targetId, linkedAgentId);
-            }}
-            onUnlinkAgent={() => unlinkVirtualContactFromAgent(ownerAgentId, selectedContact.targetId)}
+        ) : listView === 'new_friends' ? (
+          <PhoneContactsNewFriendsView
+            {...sectionBaseProps}
+            onTriggerAiUpdate={handleUpdateContacts}
+            aiUpdateBusy={contactUpdateState?.status === 'running'}
           />
-        )}
+        ) : listView === 'groups' ? (
+          <PhoneContactsGroupsView
+            channels={channels}
+            onBackHome={goContactsHome}
+            onOpenNativeGroupTab={onOpenGroupChatTab}
+          />
+        ) : listView === 'tags' ? (
+          <PhoneContactsTagsHomeView
+            {...sectionBaseProps}
+            onOpenTag={openTagDetail}
+          />
+        ) : listView === 'tag_detail' && tagFilter ? (
+          <PhoneContactsTagDetailView
+            {...sectionBaseProps}
+            tag={tagFilter}
+            onBackTags={() => { setListView('tags'); setTagFilter(null); }}
+          />
+        ) : listView === 'factions' ? (
+          <PhoneContactsFactionsHomeView
+            {...sectionBaseProps}
+            onOpenFaction={openFactionDetail}
+          />
+        ) : listView === 'faction_detail' && factionFilter ? (
+          <PhoneContactsFactionDetailView
+            {...sectionBaseProps}
+            faction={factionFilter}
+            onBackFactions={() => { setListView('factions'); setFactionFilter(null); }}
+          />
+        ) : listView === 'blocked' ? (
+          <PhoneContactsBlockedView {...sectionBaseProps} />
+        ) : listView === 'deleted' ? (
+          <PhoneContactsDeletedView {...sectionBaseProps} />
+        ) : null}
       </div>
     </div>
   );

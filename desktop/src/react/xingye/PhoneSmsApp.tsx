@@ -41,6 +41,10 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
     [ownerAgentId, agents, profiles, version],
   );
+  const contactsForSms = useMemo(
+    () => contacts.filter(item => item.targetType !== 'user'),
+    [contacts],
+  );
   const contactsByTarget = useMemo(
     () => new Map(contacts.map(contact => [`${contact.targetType}:${contact.targetId}`, contact] as const)),
     [contacts],
@@ -63,13 +67,17 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     generateSmsHistoryWithAI({
       ownerAgent,
       ownerProfile,
-      contacts,
+      contacts: contactsForSms,
       profileFingerprint,
       mode: 'empty_only',
     }).catch(() => {});
-  }, [ownerAgentId, ownerAgent, ownerProfile, contacts, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status]);
+  }, [ownerAgentId, ownerAgent, ownerProfile, contactsForSms, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status]);
 
   const threads = useMemo(() => getSmsThreads(ownerAgentId), [ownerAgentId, version]);
+  const visibleThreads = useMemo(
+    () => threads.filter(thread => thread.targetType !== 'user'),
+    [threads],
+  );
   const selectedThread = selectedTarget ? getSmsThread(ownerAgentId, selectedTarget.targetType, selectedTarget.targetId) : null;
   const selectedContact = selectedTarget ? contactsByTarget.get(`${selectedTarget.targetType}:${selectedTarget.targetId}`) ?? null : null;
 
@@ -85,7 +93,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     generateSmsHistoryWithAI({
       ownerAgent,
       ownerProfile,
-      contacts,
+      contacts: contactsForSms,
       profileFingerprint,
       mode: 'empty_only',
     }).catch(() => {});
@@ -98,7 +106,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     generateSmsHistoryWithAI({
       ownerAgent,
       ownerProfile,
-      contacts,
+      contacts: contactsForSms,
       profileFingerprint,
       mode: 'replace_ai',
     }).catch(() => {});
@@ -147,7 +155,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
 
         {!selectedTarget ? (
           <section className={styles.phoneList} aria-label="短信线程列表">
-            {threads.map(thread => {
+            {visibleThreads.map(thread => {
               const contact = contactsByTarget.get(`${thread.targetType}:${thread.targetId}`);
               const latest = thread.messages[thread.messages.length - 1];
               if (!contact || contact.status === 'deleted') return null;
@@ -169,9 +177,11 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
                 </button>
               );
             })}
-            {threads.length === 0 ? (
+            {visibleThreads.length === 0 ? (
               <div className={styles.phoneEmptyStateCard}>
-                还没有短信线程。可先去通讯录编辑联系人，再进入短信详情添加一条 mock 消息。
+                {threads.length > 0
+                  ? '当前不显示与「你」的短信线程（单聊请用 OpenHanako 原生聊天）。其他联系人暂无短信。'
+                  : '还没有短信线程。可先去通讯录编辑联系人，再进入短信详情添加一条 mock 消息。'}
               </div>
             ) : null}
           </section>

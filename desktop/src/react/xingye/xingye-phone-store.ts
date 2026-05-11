@@ -77,6 +77,8 @@ export type XingyePhoneContactMeta = {
   faction?: string;
   status?: XingyeContactStatus;
   linkedAgentId?: string;
+  /** AI 新增、待「新的朋友」确认的虚拟联系人等 */
+  pendingNewFriend?: boolean;
   manualEditedFields?: string[];
   source?: XingyeContactSource;
   updatedAt: string;
@@ -207,6 +209,7 @@ export type XingyePhoneContactView = {
   avatarDataUrl?: string;
   agent?: Agent;
   virtualContact?: XingyeVirtualContact;
+  pendingNewFriend?: boolean;
 };
 
 export const XINGYE_PHONE_CONTACTS_STORAGE_KEY = 'xingye.phoneContacts';
@@ -280,6 +283,7 @@ function normalizeContactMeta(value: unknown): XingyePhoneContactMeta | null {
     manualEditedFields: Array.isArray(value.manualEditedFields)
       ? value.manualEditedFields.map(normalizeOptionalString).filter((item): item is string => Boolean(item))
       : [],
+    pendingNewFriend: typeof value.pendingNewFriend === 'boolean' ? value.pendingNewFriend : undefined,
     source: normalizeOptionalString(value.source) as XingyeContactSource | undefined,
     updatedAt: normalizeOptionalString(value.updatedAt) ?? new Date(0).toISOString(),
   };
@@ -519,6 +523,9 @@ export function savePhoneContactMeta(
     faction: normalizeOptionalString(patch.faction) ?? previous?.faction,
     status: patch.status ?? previous?.status ?? 'active',
     linkedAgentId: normalizeOptionalString(patch.linkedAgentId) ?? previous?.linkedAgentId,
+    pendingNewFriend: ('pendingNewFriend' in patch && patch.pendingNewFriend !== undefined)
+      ? patch.pendingNewFriend
+      : previous?.pendingNewFriend,
     manualEditedFields: [...nextManualFields],
     source: patch.source ?? previous?.source ?? 'phone_contacts',
     updatedAt: new Date().toISOString(),
@@ -736,6 +743,7 @@ export function markContactFieldManual(
     faction: previous?.faction,
     status: previous?.status ?? 'active',
     linkedAgentId: previous?.linkedAgentId,
+    pendingNewFriend: previous?.pendingNewFriend,
     manualEditedFields: [...nextManualFields],
     source: previous?.source ?? 'manual',
     updatedAt: new Date().toISOString(),
@@ -755,6 +763,11 @@ export function restorePhoneContact(ownerAgentId: string, targetType: XingyeCont
   return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'active', source: 'manual' }, undefined, { markManualFields: true });
 }
 
+/** 取消拉黑，与 restorePhoneContact 相同：将 status 置为 active。 */
+export function unblockPhoneContact(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string) {
+  return restorePhoneContact(ownerAgentId, targetType, targetId);
+}
+
 export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyePhoneContactView {
   const meta = getPhoneContactMeta(ownerAgentId, 'user', '__user__', storage);
   return {
@@ -772,6 +785,7 @@ export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike
     linkedAgentId: meta?.linkedAgentId,
     source: meta?.source ?? 'system',
     updatedAt: meta?.updatedAt,
+    pendingNewFriend: meta?.pendingNewFriend,
   };
 }
 
@@ -1042,7 +1056,8 @@ export function applyAiGeneratedContacts(
       updatedAt: new Date().toISOString(),
     }, storage);
     const existingMeta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, storage);
-    const patch = preserveManualContactFields(existingMeta, {
+    const isNewByName = !existed;
+    const aiMetaPatch: Partial<XingyePhoneContactMeta> = {
       remark: input.remark,
       impression: input.impression,
       relationshipHint: input.relationshipHint,
@@ -1051,7 +1066,11 @@ export function applyAiGeneratedContacts(
       status: input.status,
       linkedAgentId: existingMeta?.linkedAgentId,
       source: metaSource,
-    });
+    };
+    if (isNewByName && metaSource === 'ai_generated') {
+      aiMetaPatch.pendingNewFriend = true;
+    }
+    const patch = preserveManualContactFields(existingMeta, aiMetaPatch);
     savePhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, patch, storage, { markManualFields: false });
     output.push(saved);
   }
@@ -1391,6 +1410,7 @@ export function getPhoneContacts(
       updatedAt: meta?.updatedAt ?? vc.updatedAt,
       avatarDataUrl: vc.avatarDataUrl,
       virtualContact: vc,
+      pendingNewFriend: meta?.pendingNewFriend,
     });
   }
 
@@ -1414,12 +1434,118 @@ export function getPhoneContacts(
       source: meta?.source,
       updatedAt: meta?.updatedAt,
       agent,
+      pendingNewFriend: meta?.pendingNewFriend,
     });
   }
 
   return views
     .filter(item => includeDeleted || item.status !== 'deleted')
     .sort((a, b) => a.remark.localeCompare(b.remark, 'zh-Hans-CN'));
+}
+
+export const XINGYE_DEFAULT_CONTACT_TAGS = ['亲近的人', '需要观察', '不可靠', '同伴', '危险'] as const;
+export const XINGYE_DEFAULT_CONTACT_FACTIONS = ['自己人', '中立', '对立', '未知'] as const;
+
+export function getContactsByStatus(
+  ownerAgentId: string,
+  status: XingyeContactStatus,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyePhoneContactView[] {
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(item => item.status === status);
+}
+
+export function getBlockedContacts(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  return getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage);
+}
+
+export function getDeletedContacts(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  return getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage);
+}
+
+export function getContactsByTag(
+  ownerAgentId: string,
+  tag: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  const needle = tag.trim();
+  if (!needle) return [];
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(item => (item.tags ?? []).includes(needle));
+}
+
+export function getContactsByFaction(
+  ownerAgentId: string,
+  faction: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  const needle = faction.trim();
+  if (!needle) return [];
+  const all = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage);
+  if (needle === '未知') {
+    return all.filter(item => !item.faction?.trim() || item.faction === '未知');
+  }
+  return all.filter(item => (item.faction?.trim() ?? '') === needle);
+}
+
+export function getDefaultContactTags(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): { tag: string; count: number }[] {
+  return XINGYE_DEFAULT_CONTACT_TAGS.map(tag => ({
+    tag,
+    count: getContactsByTag(ownerAgentId, tag, agents, profiles, storage).length,
+  }));
+}
+
+export function getDefaultContactFactions(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): { faction: string; count: number }[] {
+  return XINGYE_DEFAULT_CONTACT_FACTIONS.map(faction => ({
+    faction,
+    count: getContactsByFaction(ownerAgentId, faction, agents, profiles, storage).length,
+  }));
+}
+
+/** AI 新增、尚未在「新的朋友」里标记已读的联系人（含虚拟与真实 agent）。不含 user。 */
+export function getPendingNewContacts(
+  ownerAgentId: string,
+  agents: Agent[],
+  profiles: XingyeRoleProfileMap,
+  storage?: StorageLike | null,
+): XingyePhoneContactView[] {
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+    .filter(item => item.targetType !== 'user' && item.pendingNewFriend && item.status === 'active');
+}
+
+export function clearPendingNewFriend(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  storage?: StorageLike | null,
+) {
+  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { pendingNewFriend: false }, storage, { markManualFields: false });
 }
 
 export function getSmsThreads(

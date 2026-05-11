@@ -1,3 +1,4 @@
+import type { PhoneContactsSectionId } from './PhoneContactsSectionView';
 import {
   getPhoneContactListMeta,
   getPhoneContactListSubtitle,
@@ -9,9 +10,19 @@ import styles from './XingyeShell.module.css';
 interface PhoneContactSectionsProps {
   contacts: XingyePhoneContactView[];
   onSelect: (contact: XingyePhoneContactView) => void;
+  onOpenSection: (section: PhoneContactsSectionId) => void;
 }
 
-export function PhoneContactSections({ contacts, onSelect }: PhoneContactSectionsProps) {
+const SHORTCUTS: { id: PhoneContactsSectionId; label: string }[] = [
+  { id: 'new_friends', label: '新的朋友' },
+  { id: 'groups', label: '群聊' },
+  { id: 'tags', label: '标签' },
+  { id: 'factions', label: '势力阵营' },
+  { id: 'blocked', label: '黑名单' },
+  { id: 'deleted', label: '已删除' },
+];
+
+export function PhoneContactSections({ contacts, onSelect, onOpenSection }: PhoneContactSectionsProps) {
   const important = contacts.filter(item => item.targetType === 'user' || item.tags.includes('亲近的人')).slice(0, 4);
   const virtuals = contacts.filter(item => item.targetType === 'virtual_contact' && item.status !== 'deleted');
   const agents = contacts.filter(item => item.targetType === 'agent' && item.status !== 'deleted');
@@ -45,8 +56,15 @@ export function PhoneContactSections({ contacts, onSelect }: PhoneContactSection
   return (
     <>
       <section className={styles.phoneShortcutGrid}>
-        {['新的朋友', '群聊', '标签', '势力阵营', '黑名单', '已删除'].map(item => (
-          <span key={item} className={styles.phoneShortcutItem}>{item}</span>
+        {SHORTCUTS.map(item => (
+          <button
+            key={item.id}
+            type="button"
+            className={styles.phoneShortcutButton}
+            onClick={() => onOpenSection(item.id)}
+          >
+            {item.label}
+          </button>
         ))}
       </section>
       {renderList('重要联系人', important)}

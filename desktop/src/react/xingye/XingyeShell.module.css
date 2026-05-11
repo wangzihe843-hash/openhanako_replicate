@@ -1304,6 +1304,31 @@
   overflow-wrap: anywhere;
 }
 
+.phoneSubpageBlock {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.phoneShortcutButton {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  font-size: 0.72rem;
+  text-align: center;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+
+.phoneShortcutButton:hover {
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 1);
+}
+
 .phoneGeneratedReason {
   margin: 8px 0 0;
   color: var(--text-muted);
