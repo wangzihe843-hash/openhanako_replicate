@@ -5,6 +5,7 @@ import { ChatEntryPanel } from './ChatEntryPanel';
 import { GroupChatPanel } from './GroupChatPanel';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
+import { enterXingyeAgentChat } from './xingye-chat-actions';
 import styles from './XingyeShell.module.css';
 import { xingyeTabs, type XingyeTabId } from './xingye-tabs';
 
@@ -20,6 +21,8 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
   const [activeTabId, setActiveTabId] = useState<XingyeTabId>(xingyeTabs[0].id);
   const [characterPanelMode, setCharacterPanelMode] = useState<CharacterPanelMode>('list');
   const [selectedXingyeAgentId, setSelectedXingyeAgentId] = useState<string | null>(null);
+  const [enteringAgentId, setEnteringAgentId] = useState<string | null>(null);
+  const [enterChatError, setEnterChatError] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedXingyeAgentId && agents.some(agent => agent.id === selectedXingyeAgentId)) {
@@ -51,6 +54,20 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
 
   const handleNavigate = (tabId: XingyeTabId) => {
     setActiveTabId(tabId);
+  };
+
+  const handleEnterChat = async (agentId: string) => {
+    setSelectedXingyeAgentId(agentId);
+    setActiveTabId('chat');
+    setEnterChatError(null);
+    setEnteringAgentId(agentId);
+    try {
+      await enterXingyeAgentChat(agentId);
+    } catch (error) {
+      setEnterChatError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEnteringAgentId(null);
+    }
   };
 
   return (
@@ -90,7 +107,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               agent={selectedAgent}
               isOpenHanakoCurrent={selectedAgent?.id === currentAgentId}
               onBack={() => setCharacterPanelMode('list')}
-              onChat={() => handleNavigate('chat')}
+              onChat={handleEnterChat}
               onPhone={() => handleNavigate('phone')}
             />
           ) : activeTab.id === 'characters' ? (
@@ -98,6 +115,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               selectedAgentId={selectedXingyeAgentId}
               onSelectAgent={setSelectedXingyeAgentId}
               onShowDetails={() => setCharacterPanelMode('detail')}
+              onEnterChat={handleEnterChat}
               onNavigate={handleNavigate}
             />
           ) : activeTab.id === 'phone' ? (
@@ -107,6 +125,9 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               selectedAgent={selectedAgent}
               currentAgent={currentAgent}
               currentAgentId={currentAgentId}
+              enteringAgentId={enteringAgentId}
+              enterChatError={enterChatError}
+              onEnterChat={handleEnterChat}
               onExit={onExit}
             />
           ) : activeTab.id === 'group-chat' ? (

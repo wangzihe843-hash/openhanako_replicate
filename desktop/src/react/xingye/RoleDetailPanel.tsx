@@ -22,7 +22,7 @@ interface RoleDetailPanelProps {
   agent: Agent | null;
   isOpenHanakoCurrent: boolean;
   onBack: () => void;
-  onChat: () => void;
+  onChat: (agentId: string) => void;
   onPhone: () => void;
 }
 
@@ -550,7 +550,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing'}>
           {syncState === 'syncing' ? '同步中...' : '同步到 OpenHanako Agent'}
         </button>
-        <button type="button" onClick={onChat}>聊天</button>
+        <button type="button" onClick={() => onChat(agent.id)}>进入聊天</button>
         <button type="button" onClick={onPhone}>TA 的手机</button>
         {savedAt && <span className={styles.saveStatus}>已保存 {new Date(savedAt).toLocaleString()}</span>}
         {profileSaveError && <span className={styles.syncError}>{profileSaveError}</span>}

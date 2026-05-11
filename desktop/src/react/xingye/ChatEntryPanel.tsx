@@ -10,6 +10,9 @@ interface ChatEntryPanelProps {
   selectedAgent: Agent | null;
   currentAgent: Agent | null;
   currentAgentId: string | null;
+  enteringAgentId: string | null;
+  enterChatError: string | null;
+  onEnterChat: (agentId: string) => void;
   onExit: () => void;
 }
 
@@ -17,6 +20,9 @@ export function ChatEntryPanel({
   selectedAgent,
   currentAgent,
   currentAgentId,
+  enteringAgentId,
+  enterChatError,
+  onEnterChat,
   onExit,
 }: ChatEntryPanelProps) {
   const selectedAgentId = selectedAgent?.id ?? null;
@@ -27,6 +33,7 @@ export function ChatEntryPanel({
   const isSameAgent = !!selectedAgentId && selectedAgentId === currentAgentId;
   const previewDisplay = selectedDisplay ?? currentDisplay;
   const previewBackgroundDataUrl = previewDisplay?.chatBackgroundDataUrl;
+  const isEnteringSelectedAgent = !!selectedAgentId && enteringAgentId === selectedAgentId;
 
   return (
     <div className={styles.entryPanel}>
@@ -35,7 +42,7 @@ export function ChatEntryPanel({
           <p className={styles.eyebrow}>OpenHanako Native Chat Entry</p>
           <h2 className={styles.panelTitle}>聊天</h2>
           <p className={styles.panelDescription}>
-            这里是 OpenHanako 原生聊天系统的入口包装层。星野模式只展示当前选择关系，不读取 session，不调用聊天 API，也不创建星野聊天数据。
+            这里是 OpenHanako 原生聊天系统的入口包装层。星野模式只选择目标 Agent，然后复用原生 session action 切换或创建对应聊天上下文。
           </p>
         </div>
       </div>
@@ -91,11 +98,11 @@ export function ChatEntryPanel({
             <div className={styles.chatBackgroundMessages}>
               <div className={styles.previewBubbleLeft}>
                 {previewDisplay
-                  ? `${previewDisplay.displayName} 的聊天背景会只显示在星野模式预览中。`
+                  ? `${previewDisplay.displayName} 的聊天背景会显示在星野预览和真实聊天区中。`
                   : '请选择一个星野角色查看聊天背景。'}
               </div>
               <div className={styles.previewBubbleRight}>
-                不修改 OpenHanako 原生 ChatArea
+                已通过最小显示层接入 OpenHanako 原生 ChatArea
               </div>
             </div>
           </div>
@@ -111,20 +118,27 @@ export function ChatEntryPanel({
         <h3 className={styles.entryNoticeTitle}>
           {isSameAgent
             ? '当前星野角色就是 OpenHanako 当前聊天角色'
-            : '当前只是在星野模式中选中了这个角色，尚未切换 OpenHanako 当前 Agent'}
+            : '当前星野角色尚未切到 OpenHanako 原生聊天上下文'}
         </h3>
         <p>
           {isSameAgent
             ? '可以返回 OpenHanako 主界面，继续使用原生 ChatArea、InputArea、session 与 WebSocket 聊天流程。'
-            : '后续将接入 OpenHanako 原生 Agent 切换 action；当前不会切换 currentAgentId，也不会创建或读取任何聊天 session。'}
+            : '点击进入聊天会优先切换到该 Agent 的已有原生 session；没有时创建 OpenHanako 原生 session，不调用独立聊天 API。'}
         </p>
       </section>
 
       <div className={styles.detailActions}>
+        {enterChatError && <span className={styles.syncError}>{enterChatError}</span>}
         {isSameAgent ? (
           <button type="button" onClick={onExit}>返回 OpenHanako 聊天</button>
         ) : (
-          <button type="button" disabled>等待接入原生 Agent 切换</button>
+          <button
+            type="button"
+            onClick={() => selectedAgentId && onEnterChat(selectedAgentId)}
+            disabled={!selectedAgentId || isEnteringSelectedAgent}
+          >
+            {isEnteringSelectedAgent ? '进入中...' : '进入聊天'}
+          </button>
         )}
       </div>
     </div>

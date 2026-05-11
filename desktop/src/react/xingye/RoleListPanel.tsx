@@ -9,6 +9,7 @@ interface RoleListPanelProps {
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string) => void;
   onShowDetails: () => void;
+  onEnterChat: (agentId: string) => void;
   onNavigate: (tabId: XingyeTabId) => void;
 }
 
@@ -16,6 +17,7 @@ export function RoleListPanel({
   selectedAgentId,
   onSelectAgent,
   onShowDetails,
+  onEnterChat,
   onNavigate,
 }: RoleListPanelProps) {
   const agents = useStore(state => state.agents);
@@ -68,7 +70,7 @@ export function RoleListPanel({
             onChat={(selectedAgent) => {
               onSelectAgent(selectedAgent.id);
               logRoleAction('chat', selectedAgent);
-              onNavigate('chat');
+              onEnterChat(selectedAgent.id);
             }}
             onPhone={(selectedAgent) => {
               onSelectAgent(selectedAgent.id);
