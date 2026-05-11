@@ -7,6 +7,7 @@ import {
   getPhoneContacts,
   getSmsThread,
   getSmsThreads,
+  type XingyeContactTargetType,
   useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
 import styles from './XingyeShell.module.css';
@@ -15,7 +16,7 @@ interface PhoneSmsAppProps {
   ownerAgent: Agent | null;
   agents: Agent[];
   profiles: XingyeRoleProfileMap;
-  initialTargetAgentId?: string | null;
+  initialTarget?: { targetType: XingyeContactTargetType; targetId: string } | null;
   onBack: () => void;
 }
 
@@ -26,7 +27,7 @@ function formatSmsTime(iso: string): string {
   return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 }
 
-export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTargetAgentId, onBack }: PhoneSmsAppProps) {
+export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBack }: PhoneSmsAppProps) {
   const version = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? '';
   const contacts = useMemo(
@@ -34,32 +35,32 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTargetAgentId
     [ownerAgentId, agents, profiles, version],
   );
   const contactsByTarget = useMemo(
-    () => new Map(contacts.map(contact => [contact.targetAgentId, contact] as const)),
+    () => new Map(contacts.map(contact => [`${contact.targetType}:${contact.targetId}`, contact] as const)),
     [contacts],
   );
-  const [selectedTargetAgentId, setSelectedTargetAgentId] = useState<string | null>(initialTargetAgentId ?? null);
+  const [selectedTarget, setSelectedTarget] = useState<{ targetType: XingyeContactTargetType; targetId: string } | null>(initialTarget ?? null);
   const [draftMessage, setDraftMessage] = useState('');
   const [direction, setDirection] = useState<'incoming' | 'outgoing'>('outgoing');
 
   useEffect(() => {
-    setSelectedTargetAgentId(initialTargetAgentId ?? null);
-  }, [initialTargetAgentId]);
+    setSelectedTarget(initialTarget ?? null);
+  }, [initialTarget]);
 
   const threads = useMemo(() => getSmsThreads(ownerAgentId), [ownerAgentId, version]);
-  const selectedThread = selectedTargetAgentId ? getSmsThread(ownerAgentId, selectedTargetAgentId) : null;
-  const selectedContact = selectedTargetAgentId ? contactsByTarget.get(selectedTargetAgentId) ?? null : null;
+  const selectedThread = selectedTarget ? getSmsThread(ownerAgentId, selectedTarget.targetType, selectedTarget.targetId) : null;
+  const selectedContact = selectedTarget ? contactsByTarget.get(`${selectedTarget.targetType}:${selectedTarget.targetId}`) ?? null : null;
 
   const handleAddMockMessage = () => {
-    if (!selectedTargetAgentId) return;
-    addMockSmsMessage(ownerAgentId, selectedTargetAgentId, draftMessage, direction);
+    if (!selectedTarget) return;
+    addMockSmsMessage(ownerAgentId, selectedTarget.targetType, selectedTarget.targetId, draftMessage, direction);
     setDraftMessage('');
   };
 
   return (
     <div className={styles.phoneShell} aria-label="短信">
       <div className={styles.phoneStatusBar}>
-        <button type="button" className={styles.phoneBackButton} onClick={selectedTargetAgentId ? () => setSelectedTargetAgentId(null) : onBack}>
-          {selectedTargetAgentId ? '返回列表' : '返回首页'}
+        <button type="button" className={styles.phoneBackButton} onClick={selectedTarget ? () => setSelectedTarget(null) : onBack}>
+          {selectedTarget ? '返回列表' : '返回首页'}
         </button>
         <span>短信</span>
       </div>
@@ -72,10 +73,10 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTargetAgentId
           </p>
         </section>
 
-        {!selectedTargetAgentId ? (
+        {!selectedTarget ? (
           <section className={styles.phoneList} aria-label="短信线程列表">
             {threads.map(thread => {
-              const contact = contactsByTarget.get(thread.targetAgentId);
+              const contact = contactsByTarget.get(`${thread.targetType}:${thread.targetId}`);
               const latest = thread.messages[thread.messages.length - 1];
               if (!contact) return null;
               return (
@@ -83,10 +84,10 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTargetAgentId
                   key={thread.id}
                   className={styles.phoneListItem}
                   type="button"
-                  onClick={() => setSelectedTargetAgentId(thread.targetAgentId)}
+                  onClick={() => setSelectedTarget({ targetType: thread.targetType, targetId: thread.targetId })}
                 >
                   <span className={styles.phoneListAvatar}>
-                    <XingyeAgentAvatar agent={contact.agent} alt={contact.remark} />
+                    {contact.agent ? <XingyeAgentAvatar agent={contact.agent} alt={contact.remark} /> : (contact.remark || '?').slice(0, 1)}
                   </span>
                   <span className={styles.phoneListText}>
                     <strong>{contact.remark}</strong>
@@ -107,14 +108,14 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTargetAgentId
             <section className={styles.phoneThreadHeader}>
               <span className={styles.phoneListAvatar}>
                 {selectedContact ? (
-                  <XingyeAgentAvatar agent={selectedContact.agent} alt={selectedContact.remark} />
+                  selectedContact.agent ? <XingyeAgentAvatar agent={selectedContact.agent} alt={selectedContact.remark} /> : (selectedContact.remark || '?').slice(0, 1)
                 ) : (
                   <span>?</span>
                 )}
               </span>
               <div className={styles.phoneListText}>
                 <strong>{selectedContact?.remark ?? '未知联系人'}</strong>
-                <span>对方角色：{selectedContact?.targetDisplayName ?? selectedTargetAgentId}</span>
+                <span>对方：{selectedContact?.displayName ?? selectedTarget?.targetId}</span>
               </div>
             </section>
 

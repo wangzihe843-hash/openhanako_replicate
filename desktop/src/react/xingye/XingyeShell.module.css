@@ -1209,6 +1209,29 @@
   overflow-wrap: anywhere;
 }
 
+.phoneSectionTitle {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.phoneShortcutGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.phoneShortcutItem {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  padding: 8px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.66);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
 .phoneList {
   display: grid;
   gap: 8px;
@@ -1343,6 +1366,18 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.phoneWeakAction {
+  min-height: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  padding: 5px 9px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
 }
 
 .phoneThreadHeader {

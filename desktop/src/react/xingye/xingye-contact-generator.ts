@@ -1,0 +1,223 @@
+import type { Agent } from '../types';
+import type { XingyeRoleProfile } from './xingye-profile-store';
+import type {
+  XingyeContactStatus,
+  XingyeVirtualContact,
+  XingyeVirtualContactKind,
+} from './xingye-phone-store';
+
+export type XingyeContactGenerationMode = 'rule' | 'ai';
+
+type GenerateContext = {
+  ownerAgentId: string;
+  agent: Agent;
+  profile: XingyeRoleProfile | null | undefined;
+  agents: Agent[];
+};
+
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function hasAny(text: string, keywords: string[]): boolean {
+  return keywords.some(keyword => text.includes(keyword));
+}
+
+export function shouldSkipFamilyContacts(profileText: string): boolean {
+  return hasAny(profileText, ['父母双亡', '孤儿', '无父无母', '父母已故', '家人全亡']);
+}
+
+export function shouldBlockFamilyContacts(profileText: string): boolean {
+  return hasAny(profileText, ['与父母关系不好', '被父母抛弃', '家庭决裂', '与家人断绝关系', '与父母关系恶劣', '长期断联']);
+}
+
+function createVirtualContact(
+  context: GenerateContext,
+  input: {
+    displayName: string;
+    kind: XingyeVirtualContactKind;
+    shortBio?: string;
+    relationshipHint?: string;
+    tags?: string[];
+    faction?: string;
+    status?: XingyeContactStatus;
+    generatedReason: string;
+  },
+): XingyeVirtualContact {
+  const now = new Date().toISOString();
+  return {
+    ownerAgentId: context.ownerAgentId,
+    id: `vc-${context.ownerAgentId}-${Math.random().toString(36).slice(2, 10)}`,
+    displayName: input.displayName,
+    kind: input.kind,
+    shortBio: input.shortBio,
+    relationshipHint: input.relationshipHint,
+    tags: input.tags,
+    faction: input.faction,
+    status: input.status ?? 'active',
+    source: 'generated',
+    generatedReason: input.generatedReason,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function generateVirtualContactsForRole(context: GenerateContext): XingyeVirtualContact[] {
+  const profileText = [
+    context.agent.name,
+    context.agent.yuan,
+    context.profile?.displayName,
+    context.profile?.shortBio,
+    context.profile?.relationshipLabel,
+    context.profile?.speakingStyle,
+    context.profile?.identitySummary,
+    context.profile?.backgroundSummary,
+    context.profile?.personalitySummary,
+    context.profile?.behaviorLogic,
+  ].map(normalizeText).join(' ');
+
+  const contacts: XingyeVirtualContact[] = [];
+  const push = (entry: Parameters<typeof createVirtualContact>[1]) => {
+    if (contacts.length >= 8) return;
+    contacts.push(createVirtualContact(context, entry));
+  };
+
+  const skipFamily = shouldSkipFamilyContacts(profileText);
+  const blockFamily = shouldBlockFamilyContacts(profileText);
+  const isolated = hasAny(profileText, ['孤僻', '独来独往', '没有朋友', '不信任任何人']);
+  const medical = hasAny(profileText, ['医生', '医师', '护士', '医疗', '药剂', '边境医生']);
+  const student = hasAny(profileText, ['学生', '学校', '班级', '老师', '社团']);
+  const spy = hasAny(profileText, ['杀手', '间谍', '特工', '黑帮', '卧底']);
+  const idol = hasAny(profileText, ['偶像', '艺人', '经纪', '舞台']);
+
+  if (!isolated) {
+    push({
+      displayName: '旧友',
+      kind: 'friend',
+      shortBio: '认识很久，但联系时断时续。',
+      tags: ['亲近的人'],
+      generatedReason: '根据资料默认补充一个亲近联系人或旧友。',
+    });
+  }
+
+  if (medical) {
+    push({
+      displayName: '夜班同事',
+      kind: 'coworker',
+      shortBio: '在同一线值班，配合默契。',
+      tags: ['同伴'],
+      generatedReason: '根据医生/医疗身份生成的同事联系人。',
+    });
+    push({
+      displayName: '药品供应商',
+      kind: 'client',
+      shortBio: '负责紧缺药品调配，交集频繁。',
+      tags: ['需要观察'],
+      generatedReason: '根据医生/药剂设定生成的工作联系人。',
+    });
+    push({
+      displayName: '匿名线人',
+      kind: 'informant',
+      shortBio: '偶尔提供关键情报，可信度不稳定。',
+      tags: ['不可靠'],
+      generatedReason: '根据行动派设定生成的线人联系人。',
+    });
+  }
+
+  if (student) {
+    push({
+      displayName: '班级同学',
+      kind: 'classmate',
+      shortBio: '平时会交换作业和小道消息。',
+      tags: ['同伴'],
+      generatedReason: '根据学生/学校设定生成的同学联系人。',
+    });
+    push({
+      displayName: '指导老师',
+      kind: 'mentor',
+      shortBio: '经常给建议，但要求严格。',
+      tags: ['需要观察'],
+      generatedReason: '根据学校设定生成的老师联系人。',
+    });
+  }
+
+  if (spy) {
+    push({
+      displayName: '联络上级',
+      kind: 'superior',
+      shortBio: '只在任务节点出现，信息有限。',
+      tags: ['危险'],
+      faction: '自己人',
+      generatedReason: '根据特工/黑帮/卧底设定生成的上级联系人。',
+    });
+    push({
+      displayName: '伪装身份联系人',
+      kind: 'unknown',
+      shortBio: '仅在特定身份下沟通，真实性待确认。',
+      tags: ['需要观察'],
+      generatedReason: '根据潜伏设定生成的伪装联系人。',
+    });
+  }
+
+  if (idol) {
+    push({
+      displayName: '经纪人',
+      kind: 'superior',
+      shortBio: '负责行程和资源协调。',
+      tags: ['同伴'],
+      generatedReason: '根据偶像/艺人设定生成的经纪人联系人。',
+    });
+    push({
+      displayName: '制作人',
+      kind: 'coworker',
+      shortBio: '掌握项目节奏，合作频繁。',
+      tags: ['需要观察'],
+      generatedReason: '根据舞台/制作设定生成的工作联系人。',
+    });
+  }
+
+  if (!skipFamily && blockFamily) {
+    push({
+      displayName: '父亲',
+      kind: 'family',
+      relationshipHint: '关系恶劣',
+      status: 'blocked',
+      tags: ['危险'],
+      generatedReason: '根据家庭关系紧张设定生成的拉黑亲属。',
+    });
+  }
+
+  if (!skipFamily && !blockFamily && !isolated) {
+    push({
+      displayName: '家里人',
+      kind: 'family',
+      shortBio: '偶尔联系，保持基本往来。',
+      tags: ['亲近的人'],
+      generatedReason: '根据常规社交关系补充的家庭联系人。',
+    });
+  }
+
+  if (contacts.length < 3) {
+    push({
+      displayName: '工作联系人',
+      kind: 'coworker',
+      shortBio: '日常业务沟通对象。',
+      generatedReason: '资料不足时补充的通用工作联系人。',
+    });
+    push({
+      displayName: '熟人',
+      kind: 'unknown',
+      shortBio: '见面不多，但保持联络。',
+      generatedReason: '资料不足时补充的通用熟人联系人。',
+    });
+    push({
+      displayName: '不太熟的人',
+      kind: 'rival',
+      shortBio: '关系偏紧张，需要留意。',
+      tags: ['需要观察'],
+      generatedReason: '资料不足时补充的关系紧张联系人。',
+    });
+  }
+
+  return contacts.slice(0, 8);
+}

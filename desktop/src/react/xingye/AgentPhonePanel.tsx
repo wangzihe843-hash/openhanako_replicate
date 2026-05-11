@@ -26,10 +26,10 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: A
   const profiles = useXingyeRoleProfiles();
   const display = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
   const [phonePage, setPhonePage] = useState<PhonePage>('home');
-  const [smsTargetAgentId, setSmsTargetAgentId] = useState<string | null>(null);
+  const [smsTarget, setSmsTarget] = useState<{ targetType: 'agent' | 'virtual_contact' | 'user'; targetId: string } | null>(null);
 
-  const handleOpenSms = (targetAgentId?: string) => {
-    setSmsTargetAgentId(targetAgentId ?? null);
+  const handleOpenSms = (targetType: 'agent' | 'virtual_contact' | 'user' = 'agent', targetId?: string) => {
+    setSmsTarget(targetId ? { targetType, targetId } : null);
     setPhonePage('sms');
   };
 
@@ -55,7 +55,7 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: A
           ownerAgent={agent}
           agents={agents}
           profiles={profiles}
-          initialTargetAgentId={smsTargetAgentId}
+          initialTarget={smsTarget}
           onBack={() => setPhonePage('home')}
         />
       ) : null}
@@ -67,7 +67,7 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate }: A
           profiles={profiles}
           currentAgentId={currentAgentId}
           onBack={() => setPhonePage('home')}
-          onOpenSms={(targetAgentId) => handleOpenSms(targetAgentId)}
+          onOpenSms={(targetType, targetId) => handleOpenSms(targetType, targetId)}
         />
       ) : null}
 

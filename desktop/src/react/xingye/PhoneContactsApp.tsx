@@ -1,10 +1,18 @@
 import { useMemo, useState } from 'react';
 import type { Agent } from '../types';
-import type { XingyeRoleProfileMap } from './xingye-profile-store';
-import { XingyeAgentAvatar } from './XingyeAgentAvatar';
+import { PhoneContactDetail } from './PhoneContactDetail';
+import { PhoneContactSections } from './PhoneContactSections';
+import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import {
+  blockPhoneContact,
+  deletePhoneContact,
+  ensureGeneratedVirtualContacts,
   getPhoneContacts,
+  linkVirtualContactToAgent,
+  restorePhoneContact,
   savePhoneContactMeta,
+  unlinkVirtualContactFromAgent,
+  type XingyePhoneContactView,
   useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
 import styles from './XingyeShell.module.css';
@@ -15,7 +23,7 @@ interface PhoneContactsAppProps {
   currentAgentId: string | null;
   profiles: XingyeRoleProfileMap;
   onBack: () => void;
-  onOpenSms: (targetAgentId: string) => void;
+  onOpenSms: (targetType: 'agent' | 'virtual_contact' | 'user', targetId: string) => void;
 }
 
 export function PhoneContactsApp({
@@ -28,27 +36,37 @@ export function PhoneContactsApp({
 }: PhoneContactsAppProps) {
   const _phoneStorageVersion = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? currentAgentId ?? '';
+  const ownerProfile = useXingyeRoleProfile(ownerAgentId);
+  ensureGeneratedVirtualContacts(ownerAgentId, ownerAgent, ownerProfile, agents, profiles);
   const contacts = useMemo(
-    () => getPhoneContacts(ownerAgentId, agents, profiles),
+    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
     [ownerAgentId, agents, profiles, _phoneStorageVersion],
   );
-  const [selectedTargetAgentId, setSelectedTargetAgentId] = useState<string | null>(null);
-  const selectedContact = contacts.find(contact => contact.targetAgentId === selectedTargetAgentId) ?? null;
+  const [selectedContactKey, setSelectedContactKey] = useState<string | null>(null);
+  const selectedContact = contacts.find(contact => `${contact.targetType}:${contact.targetId}` === selectedContactKey) ?? null;
   const [remarkDraft, setRemarkDraft] = useState('');
   const [impressionDraft, setImpressionDraft] = useState('');
+  const [relationDraft, setRelationDraft] = useState('');
+  const [tagsDraft, setTagsDraft] = useState('');
+  const [factionDraft, setFactionDraft] = useState('');
 
-  const openContact = (targetAgentId: string) => {
-    const contact = contacts.find(item => item.targetAgentId === targetAgentId);
-    setSelectedTargetAgentId(targetAgentId);
+  const openContact = (contact: XingyePhoneContactView) => {
+    setSelectedContactKey(`${contact.targetType}:${contact.targetId}`);
     setRemarkDraft(contact?.remark ?? '');
     setImpressionDraft(contact?.impression ?? '');
+    setRelationDraft(contact?.relationshipHint ?? '');
+    setTagsDraft((contact?.tags ?? []).join(','));
+    setFactionDraft(contact?.faction ?? '');
   };
 
   const saveContact = () => {
     if (!ownerAgentId || !selectedContact) return;
-    savePhoneContactMeta(ownerAgentId, selectedContact.targetAgentId, {
+    savePhoneContactMeta(ownerAgentId, selectedContact.targetType, selectedContact.targetId, {
       remark: remarkDraft,
       impression: impressionDraft,
+      relationshipHint: relationDraft,
+      tags: tagsDraft.split(',').map(item => item.trim()).filter(Boolean),
+      faction: factionDraft,
       source: 'manual',
     });
   };
@@ -56,7 +74,7 @@ export function PhoneContactsApp({
   return (
     <div className={styles.phoneShell} aria-label="通讯录">
       <div className={styles.phoneStatusBar}>
-        <button type="button" className={styles.phoneBackButton} onClick={selectedContact ? () => setSelectedTargetAgentId(null) : onBack}>
+        <button type="button" className={styles.phoneBackButton} onClick={selectedContact ? () => setSelectedContactKey(null) : onBack}>
           {selectedContact ? '返回列表' : '返回首页'}
         </button>
         <span>通讯录</span>
@@ -66,74 +84,59 @@ export function PhoneContactsApp({
         {!selectedContact ? (
           <>
             <section className={styles.phoneAppCard}>
-              <h3 className={styles.phoneAppTitle}>联系人</h3>
+              <h3 className={styles.phoneAppTitle}>通讯录</h3>
               <p className={styles.phoneAppHint}>
-                这是“{ownerAgent?.name ?? '当前角色'}眼中的其他角色”，备注与印象按 ownerAgentId + targetAgentId 分开保存。
+                这是“当前角色眼中的社交网络”。联系人可能是真实角色，也可能只是 TA 手机里的虚拟联系人。
               </p>
             </section>
-            <section className={styles.phoneList} aria-label="通讯录角色列表">
-              {contacts.map(contact => (
-                <button
-                  key={contact.targetAgentId}
-                  className={styles.phoneListItem}
-                  type="button"
-                  onClick={() => openContact(contact.targetAgentId)}
-                >
-                  <span className={styles.phoneListAvatar}>
-                    <XingyeAgentAvatar agent={contact.agent} alt={contact.remark} />
-                  </span>
-                  <span className={styles.phoneListText}>
-                    <strong>{contact.remark}</strong>
-                    <span>原名：{contact.targetName} / 星野名：{contact.targetDisplayName}</span>
-                    <span>{contact.impression}</span>
-                  </span>
-                </button>
-              ))}
-              {contacts.length === 0 ? (
-                <div className={styles.phoneEmptyStateCard}>当前没有可显示的其他角色联系人。</div>
-              ) : null}
+            <PhoneContactSections contacts={contacts} onSelect={openContact} />
+            <section className={styles.phoneAppCard}>
+              <h4 className={styles.phoneSectionTitle}>新的朋友</h4>
+              <p className={styles.phoneAppHint}>以后这里会显示 TA 新认识的人、关系变化和待确认的社交请求。</p>
+              <h4 className={styles.phoneSectionTitle}>群聊入口</h4>
+              <p className={styles.phoneAppHint}>这里是通讯录里的群聊入口占位，不是短信。</p>
+              <h4 className={styles.phoneSectionTitle}>标签 / 势力阵营</h4>
+              <p className={styles.phoneAppHint}>默认标签：亲近的人、需要观察、不可靠、同伴、危险；默认阵营：自己人、中立、对立、未知。</p>
             </section>
           </>
         ) : (
-          <section className={styles.phoneAppCard}>
-            <div className={styles.phoneContactHeader}>
-              <span className={styles.phoneContactAvatar}>
-                <XingyeAgentAvatar agent={selectedContact.agent} alt={selectedContact.remark} />
-              </span>
-              <div className={styles.phoneContactHeading}>
-                <h3 className={styles.phoneAppTitle}>{selectedContact.remark}</h3>
-                <p className={styles.phoneAppHint}>原名：{selectedContact.targetName} / 星野名：{selectedContact.targetDisplayName}</p>
-              </div>
-            </div>
-
-            <label className={styles.phoneFormField}>
-              <span>当前角色对 TA 的备注</span>
-              <input value={remarkDraft} onChange={event => setRemarkDraft(event.target.value)} placeholder="例如：小测试" />
-            </label>
-
-            <label className={styles.phoneFormField}>
-              <span>当前角色对 TA 的大概印象</span>
-              <textarea
-                rows={4}
-                value={impressionDraft}
-                onChange={event => setImpressionDraft(event.target.value)}
-                placeholder="例如：有点冒失，但很真诚。"
-              />
-            </label>
-
-            <div className={styles.phoneTagRow}>
-              <span>关系标签占位：{selectedContact.relationshipHint ?? '尚未设置'}</span>
-            </div>
-
-            <div className={styles.phoneActionRow}>
-              <button type="button" className={styles.secondaryButton} onClick={saveContact}>
-                保存备注与印象
-              </button>
-              <button type="button" className={styles.secondaryButton} onClick={() => onOpenSms(selectedContact.targetAgentId)}>
-                查看短信
-              </button>
-            </div>
-          </section>
+          <PhoneContactDetail
+            contact={selectedContact}
+            agents={agents}
+            remarkDraft={remarkDraft}
+            impressionDraft={impressionDraft}
+            relationDraft={relationDraft}
+            tagsDraft={tagsDraft}
+            factionDraft={factionDraft}
+            onChange={(field, value) => {
+              if (field === 'remark') setRemarkDraft(value);
+              if (field === 'impression') setImpressionDraft(value);
+              if (field === 'relation') setRelationDraft(value);
+              if (field === 'tags') setTagsDraft(value);
+              if (field === 'faction') setFactionDraft(value);
+            }}
+            onSave={saveContact}
+            onOpenSms={() => onOpenSms(selectedContact.targetType as 'agent' | 'virtual_contact' | 'user', selectedContact.targetId)}
+            onBlockToggle={() => {
+              if (selectedContact.status === 'blocked') {
+                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              } else {
+                blockPhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              }
+            }}
+            onDeleteToggle={() => {
+              if (selectedContact.status === 'deleted') {
+                restorePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              } else {
+                deletePhoneContact(ownerAgentId, selectedContact.targetType, selectedContact.targetId);
+              }
+            }}
+            onLinkAgent={(linkedAgentId) => {
+              if (!linkedAgentId) return;
+              linkVirtualContactToAgent(ownerAgentId, selectedContact.targetId, linkedAgentId);
+            }}
+            onUnlinkAgent={() => unlinkVirtualContactFromAgent(ownerAgentId, selectedContact.targetId)}
+          />
         )}
       </div>
     </div>
