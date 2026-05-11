@@ -3,6 +3,7 @@ import {
   getXingyeRoleProfileDisplay,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 interface ChatEntryPanelProps {
@@ -40,7 +41,15 @@ export function ChatEntryPanel({
       <section className={styles.detailSection} aria-label="聊天角色对照">
         <h3 className={styles.detailSectionTitle}>角色对照</h3>
         <div className={styles.detailRow}>
-          <span>selectedXingyeAgentId</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {selectedAgent && (
+              <XingyeAgentAvatar
+                agent={selectedAgent}
+                style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
+              />
+            )}
+            <span>selectedXingyeAgentId</span>
+          </span>
           <strong>{selectedAgentId ?? 'null'}</strong>
         </div>
         <div className={styles.detailRow}>

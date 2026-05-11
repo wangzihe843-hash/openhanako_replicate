@@ -1,10 +1,9 @@
 import type { Agent } from '../types';
-import { hanaUrl } from '../hooks/use-hana-fetch';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
 import {
   getXingyeRoleProfileDisplay,
   type XingyeRoleProfile,
 } from './xingye-profile-store';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 interface RoleCardProps {
@@ -24,17 +23,12 @@ export function RoleCard({
   profile,
   isSelected,
   isOpenHanakoCurrent,
-  avatarVersion,
   onSelect,
   onDetails,
   onChat,
   onPhone,
 }: RoleCardProps) {
   const display = getXingyeRoleProfileDisplay(agent, profile);
-  const avatarSrc = display.avatarDataUrl
-    || (agent.hasAvatar
-      ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${avatarVersion}`)
-      : yuanFallbackAvatar(agent.yuan));
 
   return (
     <article
@@ -51,16 +45,7 @@ export function RoleCard({
       }}
     >
       <div className={styles.roleAvatar}>
-        <img
-          src={avatarSrc}
-          alt=""
-          draggable={false}
-          onError={(event) => {
-            const img = event.currentTarget;
-            img.onerror = null;
-            img.src = yuanFallbackAvatar(agent.yuan);
-          }}
-        />
+        <XingyeAgentAvatar agent={agent} />
       </div>
 
       <div className={styles.roleBody}>

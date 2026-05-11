@@ -156,8 +156,9 @@ async function uploadCroppedAvatar(role: string, dataUrl: string) {
   const store = useSettingsStore.getState();
   try {
     let uploadUrl: string;
+    let agentId: string | null = null;
     if (role === 'agent') {
-      const agentId = store.getSettingsAgentId();
+      agentId = store.getSettingsAgentId();
       uploadUrl = `/api/agents/${agentId}/avatar`;
     } else {
       uploadUrl = `/api/avatar/${role}`;
@@ -174,9 +175,15 @@ async function uploadCroppedAvatar(role: string, dataUrl: string) {
     const ts = Date.now();
     if (role === 'agent') {
       await loadAgents();
+      window.dispatchEvent(new CustomEvent('hana-avatar-updated', {
+        detail: { role, agentId, at: ts },
+      }));
     } else {
       const url = hanaUrl(`/api/avatar/${role}?t=${ts}`);
       store.set({ userAvatarUrl: url });
+      window.dispatchEvent(new CustomEvent('hana-avatar-updated', {
+        detail: { role, agentId, at: ts },
+      }));
     }
     store.showToast(t('settings.crop.updated'), 'success');
   } catch (err: any) {

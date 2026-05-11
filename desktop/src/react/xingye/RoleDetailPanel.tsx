@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { useStore } from '../stores';
+import { createLocalServerConnection } from '../services/server-connection';
+import { browseAgent } from '../settings/actions';
+import { CropOverlay } from '../settings/overlays/CropOverlay';
+import { useSettingsStore } from '../settings/store';
 import {
   buildOpenHanakoAgentSyncPayload,
   getXingyeRoleProfileDisplay,
@@ -9,6 +14,7 @@ import {
 } from './xingye-profile-store';
 import { useXingyeLoreEntries } from './xingye-lore-store';
 import { LoreEditor } from './LoreEditor';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 interface RoleDetailPanelProps {
@@ -152,6 +158,35 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setSavedAt(saved.updatedAt);
   };
 
+  const handleChangeAvatar = async () => {
+    const appStore = useStore.getState();
+    const settingsStore = useSettingsStore.getState();
+    if (!settingsStore.activeServerConnection && appStore.serverPort) {
+      useSettingsStore.setState({
+        serverPort: Number(appStore.serverPort),
+        serverToken: appStore.serverToken,
+        activeServerConnection: createLocalServerConnection({
+          serverPort: appStore.serverPort,
+          serverToken: appStore.serverToken,
+        }),
+      });
+    }
+
+    await browseAgent(agent.id);
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.addEventListener('change', () => {
+      if (input.files?.[0]) {
+        window.dispatchEvent(new CustomEvent('hana-open-cropper', {
+          detail: { role: 'agent', file: input.files[0] },
+        }));
+      }
+    });
+    input.click();
+  };
+
   const handleSyncOpenHanakoAgent = async () => {
     setSyncState('syncing');
     setSyncError(null);
@@ -236,10 +271,27 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
 
   return (
     <div className={styles.detailPanel}>
+      <CropOverlay />
       <div className={styles.panelHeading}>
         <div>
           <p className={styles.eyebrow}>Xingye Role Detail</p>
           <h2 className={styles.panelTitle}>{resolvedProfile.displayName}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '10px 0' }}>
+            <XingyeAgentAvatar
+              agent={agent}
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
+                objectFit: 'cover',
+                border: '1px solid var(--overlay-light)',
+                background: 'var(--overlay-subtle)',
+              }}
+            />
+            <button className={styles.secondaryButton} type="button" onClick={handleChangeAvatar}>
+              更换头像
+            </button>
+          </div>
           <p className={styles.panelDescription}>
             星野资料保存在本地资料层；默认同步只写入 OpenHanako identity / ishiki。可选将星野昵称写入原生助手名（config.agent.name），不写入 memory，也不改聊天生成链路。
           </p>
@@ -420,7 +472,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         </div>
         <div className={styles.detailRow}>
           <span>头像</span>
-          <strong>{profile?.avatarDataUrl ? '使用星野预留头像字段' : agent.hasAvatar ? '使用 OpenHanako 头像' : '使用占位头像'}</strong>
+          <strong>{agent.hasAvatar ? '使用 OpenHanako 头像' : '使用 Yuan fallback 头像'}</strong>
         </div>
         <div className={styles.detailRow}>
           <span>主角色</span>

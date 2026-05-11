@@ -3,6 +3,7 @@ import {
   getXingyeRoleProfileDisplay,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 interface AgentPhonePanelProps {
@@ -24,6 +25,12 @@ export function AgentPhonePanel({ agent }: AgentPhonePanelProps) {
         className={styles.phoneShell}
         style={display?.chatBackgroundDataUrl ? { backgroundImage: `url(${display.chatBackgroundDataUrl})` } : undefined}
       >
+        {agent && (
+          <XingyeAgentAvatar
+            agent={agent}
+            style={{ width: 42, height: 42, borderRadius: '50%', objectFit: 'cover', marginBottom: 12 }}
+          />
+        )}
         <div className={styles.phoneHeader}>
           <span>TA 的手机</span>
           <strong>{display?.displayName ?? '未选择角色'}</strong>
