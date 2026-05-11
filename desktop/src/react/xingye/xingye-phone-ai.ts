@@ -105,7 +105,7 @@ async function requestPhoneAi(input: {
   existingThreads?: unknown[];
   prompt: string;
   timeoutMs?: number;
-  /** 仅在 contacts_incremental_update / contacts_rollback_update 时传入；后端目前只使用 prompt，这里同时把结构化字段挂在请求体里，便于以后服务端单独消费。 */
+  /** 后端目前只使用 prompt；结构化字段挂在请求体里便于以后服务端单独消费。 */
   recentContext?: XingyeRecentContext | null;
 }): Promise<{ raw: unknown }> {
   const timeoutMs = input.timeoutMs ?? 90_000;
@@ -296,40 +296,53 @@ export async function generateVirtualContactsWithAI(params: {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
   const mode = params.mode ?? 'initial_ai_generate';
   const isRegenerate = mode === 'regenerate_all';
-  const minCount = 8;
-  const maxCount = isRegenerate ? 16 : 14;
   const distIntent = isRegenerate ? 'regenerate' as const : 'initial' as const;
   const softBlock = profileLikelyForbidsBlocked(ownerProfile, ownerAgent);
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
+    const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
     const prompt = isRegenerate
-      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts })
-      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial' });
+      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts, recentContext })
+      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial', recentContext });
     const { raw } = await requestPhoneAi({
       kind: isRegenerate ? 'contacts_regenerate_all' : 'virtual_contacts_generate',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
       contacts,
       prompt,
+      recentContext,
       timeoutMs: 120_000,
     });
     let generated = parseGeneratedContacts(raw);
     const aiReturnedCount = generated.length;
+    /** 仅去掉本批里 displayName 字面重复；是否与已有联系人为同一人由 prompt 要求模型用 shortBio/impression 等语义自检。 */
+    const seenBatch = new Set<string>();
+    generated = generated.filter((c) => {
+      const k = c.displayName.trim().toLowerCase();
+      if (!k) return false;
+      if (seenBatch.has(k)) return false;
+      seenBatch.add(k);
+      return true;
+    });
     generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
-    if (generated.length > maxCount) generated = generated.slice(0, maxCount);
     let ruleFallbackPadded = 0;
-    if (generated.length < minCount) {
-      const nameSet = new Set(generated.map(c => c.displayName.trim().toLowerCase()).filter(Boolean));
-      const extras = buildRuleFallbackAiContacts(
-        { ownerAgentId: ownerAgent.id, agent: ownerAgent, profile: ownerProfile, agents },
-        minCount - generated.length,
-        nameSet,
-      );
-      ruleFallbackPadded = extras.length;
-      const normalizedExtras = extras.map(c => normalizeAiGeneratedContact(c));
-      generated = [...generated, ...normalizedExtras];
-      generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
+    if (isRegenerate) {
+      const minCount = 8;
+      const maxCount = 16;
       if (generated.length > maxCount) generated = generated.slice(0, maxCount);
+      if (generated.length < minCount) {
+        const nameSet = new Set(generated.map(c => c.displayName.trim().toLowerCase()).filter(Boolean));
+        const extras = buildRuleFallbackAiContacts(
+          { ownerAgentId: ownerAgent.id, agent: ownerAgent, profile: ownerProfile, agents },
+          minCount - generated.length,
+          nameSet,
+        );
+        ruleFallbackPadded = extras.length;
+        const normalizedExtras = extras.map(c => normalizeAiGeneratedContact(c));
+        generated = [...generated, ...normalizedExtras];
+        generated = ensureContactDistribution(generated, { intent: distIntent, profileAllowsNoBlocked: softBlock });
+        if (generated.length > maxCount) generated = generated.slice(0, maxCount);
+      }
     }
     applyAiGeneratedContacts(ownerAgent.id, generated, {
       mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
@@ -431,8 +444,9 @@ export async function regenerateAllContactsWithAI(params: {
   profileFingerprint: string;
 }) {
   const { ownerAgent, ownerProfile, agents, profiles, profileFingerprint } = params;
+  /** 快照与列表上限见 xingye-phone-store：仅保留最近 2 份备份，更早的会在写入快照时丢弃。 */
   createPhoneContactSnapshot(ownerAgent.id, 'regenerate_all_before');
-  /** 彻底清空 virtual_contact；user/agent meta 保持不动。不再把旧联系人喂给 prompt，避免模型沿用不满意的内容。 */
+  /** 清空全部 virtual_contact 后再生成；prompt 只带清空后的 user/agent，不按旧 virtual 名单对齐。 */
   clearAllVirtualContactsForOwner(ownerAgent.id);
   const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
   return generateVirtualContactsWithAI({

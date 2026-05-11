@@ -11,6 +11,7 @@ function contactShape(contact: XingyePhoneContactView) {
     displayName: contact.displayName,
     originalName: contact.originalName,
     kind: contact.kind,
+    shortBio: contact.shortBio,
     status: contact.status,
     remark: contact.remark,
     impression: contact.impression,
@@ -153,30 +154,65 @@ const CONTACT_JSON_SHAPE = [
   }, null, 2),
 ].join('\n');
 
+const VIRTUAL_CONTACT_RECENT_CHAT_GUIDE = [
+  '【最近 OpenHanako 对话（默认优先参考）】生成虚拟联系人时，先看下一段「最近聊天」是否有可读内容：',
+  '- 若有：名单应优先从对话里已出现或可合理映射到手机通讯录的人物、组织、渠道、对立面等衍生（称呼可匿名）；不要机械复述原句进 impression / shortBio。',
+  '- 若无或仅有说明、无可用人物：则完全依据「当前角色」资料与下方「现有联系人」列表虚构合理社交圈，不要编造「刚在聊天里说过」的事实。',
+].join('\n');
+
+/** 虚拟联系人生成：同一人多称呼时不能仅靠 displayName 判重。 */
+const SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION = [
+  '【身份去重（优先于 displayName）】现实里同一人常有多个备注名（如「老王」「AAA建材王姐」「豆豆妈」），仅靠 displayName 比对会漏判或误判。',
+  '- 每写一条新 contact 之前：对照下方「现有联系人」每一条，以及你本批 contacts 里已写好的条目；综合 shortBio、impression、relationshipHint、kind、以及对话/设定里可识别的身份锚点（职业、亲属关系、摊位/公司、孩子昵称等）判断是否为「实为同一人」。',
+  '- 若与某 existing virtual_contact 或 agent 为同一人：不要换 displayName 再造一条平行记录；要么省略该条，要么只保留一条并把身份锚点写进 shortBio，使读者能认出与列表中谁为同一人。',
+  '- 若本批内两条不同 displayName 实为同一人：合并为一条输出。',
+  '- 仅当你确信在语义上是新角色时，才使用新的 displayName。',
+  '- displayName 字面重复仍不允许：本批内不得出现两条完全相同的 displayName（忽略首尾空格、大小写）。',
+].join('\n');
+
 export function buildVirtualContactGenerationPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   intent?: 'initial' | 'regenerate';
+  /** 默认由调用方 `collectRecentContextForAgent` 填入；缺省时 prompt 内仍会写明「无最近聊天则只看资料」。 */
+  recentContext?: XingyeRecentContext | null;
 }) {
   const { ownerAgent, ownerProfile, contacts } = params;
   const intent = params.intent ?? 'initial';
+  const recentContext = params.recentContext ?? {
+    agentId: ownerAgent.id,
+    messages: [],
+    summaryText: '',
+    sourceNotes: ['未提供最近聊天上下文；请完全依据当前角色资料与现有联系人列表生成。'],
+    hasOpenHanakoMessages: false,
+  };
   const countBlock = intent === 'regenerate'
     ? [
-      '【数量】重新生成全部 virtual_contact：目标 10–14 个；至少 8 个；最多 16 个。少于 8 个视为不合格输出。',
+      '【流程】运行时已将旧版 virtual_contact 全量备份为快照；系统只保留最近 2 份快照，更早的备份会被丢弃。当前虚拟联系人表已清空，本任务等于在空白上重新写一整本通讯录。',
+      '【数量】请输出 8–16 条全新的 virtual_contact（目标可落在 10–14 条左右）；少于 8 条视为不合格。不要试图逐条对应、复现或对齐任何旧名单里的 displayName；无需与已备份的旧虚拟联系人去重或合并。',
       '【关系网】要像角色手机里长期积累的真实社交网：工作、灰色渠道、旧识、威胁、断联号码、拉黑对象等应同时存在，而不是「全员正常好友列表」。',
-      '【必须覆盖】下列 JSON 里每一个 virtual_contact（含 status 为 blocked、deleted 的）都必须在输出的 contacts 里出现一条对应项：displayName 与该联系人 displayName 完全一致（逐字一致），并重写其 impression、shortBio、remark、relationshipHint、tags、faction、status、generatedReason；禁止因「去重」或「已删除」而省略这些人。',
-      '【新增】若需补充名单外的弱关系，仅可使用下列列表中尚不存在的 displayName；新增条数须使总数仍在规模上限内。',
     ].join('\n')
     : [
-      '【数量】首次生成 virtual_contact：目标 8–12 个；至少 8 个；最多 14 个。少于 8 个视为不合格输出。',
-      '【关系网】混合亲近与风险：可信同伴、谨慎合作、对立或勒索者、断联旧人、拉黑对象等应自然共存。',
-      '去重：displayName 不要与下列现有联系人重复。',
+      '【边界】本任务只新增或合并刷新 virtual_contact（同名且仍为 active 时可视为更新同一人）；不得删除 user/agent，也不得删除下列列表中未出现在你输出里的任何已有联系人。整表清空仅属于「重新生成全部」流程。',
+      '【数量】首次 AI 生成：请自行在 3–8 个 virtual_contact 之间决定输出条数（须像真实手机里一小撮联系人，不要贪多）。条数仅由本 prompt 约束，不要在别处假设程序会截断或补足。',
+      '【关系网】混合亲近与风险：可信同伴、谨慎合作、对立或勒索者、断联旧人、拉黑对象等可自然共存；人数少时不必强行凑满类型。',
     ].join('\n');
 
-  return [
+  const contactsLabel = intent === 'regenerate'
+    ? '下列为当前仍保留的 user / 真实 agent（程序已清空全部旧 virtual；无需对照或去重旧虚拟名单，仅勿把 user 再生成一条虚拟替身）：'
+    : '现有联系人（仅「AI 生成联系人」首轮：请用 shortBio、impression、relationshipHint、kind 等与下列对照做人设级去重，勿仅靠 displayName；含 user/agent/已有 virtual）：';
+
+  const lines: string[] = [
     '你是角色手机通讯录里的「虚拟联系人」生成器。只返回 JSON，不要 Markdown，不要解释。',
     countBlock,
+  ];
+  if (intent === 'initial') {
+    lines.push(SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION);
+  }
+  lines.push(
+    VIRTUAL_CONTACT_RECENT_CHAT_GUIDE,
+    describeRecentContextForPrompt(recentContext),
     TAG_FACTION_STATUS_RULES,
     VISIBLE_FIELD_RULES,
     CONTACT_JSON_SHAPE,
@@ -191,28 +227,37 @@ export function buildVirtualContactGenerationPrompt(params: {
       yuan: ownerAgent.yuan,
       profile: ownerProfile ?? null,
     }, null, 2),
-    '现有联系人（用于去重和关系参考）:',
+    contactsLabel,
     JSON.stringify(contacts.map(contactShape), null, 2),
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export function buildContactRegenerateAllPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  recentContext?: XingyeRecentContext | null;
 }) {
   return buildVirtualContactGenerationPrompt({ ...params, intent: 'regenerate' });
 }
 
 const RECENT_CONTEXT_GUIDE = [
   '【最近 OpenHanako 聊天】下面给出的「最近聊天」是当前角色与用户最近一次原生对话片段，作为本轮更新的主要参考：',
-  '- 提取最近聊天中出现的新人物、组织/势力、地点/渠道、关系变化、冲突、合作、旧识、风险信号。',
-  '- 如有新人物未在当前联系人列表里出现，可 add 为 virtual_contact（仅在能明确从聊天中识别身份/称呼时）。',
-  '- 如已有联系人在聊天中被提到，可 update 其 impression / relationshipHint / tags / faction / status；不要因为聊天没提到某联系人就删除它。',
-  '- 明显断联 / 危险 / 旧号码 / 拉黑暗示 → 可 block 或 delete；可疑但不确定 → 仅添加 "需要观察" tags 而非 block/delete。',
+  '- 提取最近聊天中出现的人物、组织/势力、地点/渠道、关系变化、冲突、合作、旧识、风险信号。',
+  '- 重心：凡能在当前联系人列表里对上号的人（用 targetId 或 matchName 精确匹配），优先各返回一条 update，重点调 patch.tags 与 patch.impression（可酌情改 relationshipHint / faction；不要为凑字段大面积改 remark）。',
+  '- 尽量不新增联系人：批量「造名单」应走「AI 生成联系人」等流程。仅当聊天里出现明确新人且无法与任何现有联系人视为同一人时，才考虑 add；且全轮 add 不得超过 2 条，默认以 0 条 add 为目标。',
+  '- 不要因为聊天没提到某联系人就删除它；未在聊天中出现的联系人不要返回 update。',
+  '- 明显断联 / 危险 / 旧号码 / 拉黑暗示且证据充分时，才用 block 或 delete；可疑但不确定 → 只用 update 调 tags（如「需要观察」「危险」）而非 block/delete。',
   '- 严禁把聊天原文直接复制到 impression / remark / relationshipHint / shortBio；要用自然通讯录措辞改写。',
   '- 严禁出现"根据聊天记录""根据最近对话""强化设定""新增一个"等生成器语言。reason / generatedReason 可解释依据，但不要复述聊天原句。',
   '- 如「最近聊天」标注为「（无）」，请不要凭空编造关系变化，仅在必要时基于角色资料做小幅 patch。',
+].join('\n');
+
+/** 增量更新 / 回滚后更新专用：与「初次生成整本通讯录」的 TAG 分布规则区分，避免模型为凑人数而乱 add/block。 */
+const INCREMENTAL_VS_TAG_FACTION_RULES = [
+  '【与下方 TAG_FACTION_STATUS_RULES 的关系】该段规则用于保证：凡出现在你输出的 add.contact 或 update.patch 里的 tags/faction/status 等字段，枚举值合法、tags 非空。',
+  '它不要求本轮把整个通讯录凑成「初次生成」时的全局人数比例或「至少若干 blocked」；禁止为凑分布而批量 add、block、delete。',
 ].join('\n');
 
 export function buildContactIncrementalUpdatePrompt(params: {
@@ -228,9 +273,11 @@ export function buildContactIncrementalUpdatePrompt(params: {
     : '最近 OpenHanako 聊天上下文：（无）';
   return [
     '你是角色手机通讯录增量更新器。只返回 JSON，不要 Markdown，不要解释。',
-    '【规模】本次更新：新增 virtual_contact 1–4 个；对已有联系人 update 2–6 条；可调整 0–2 个联系人的 status（blocked/deleted/active）；避免大规模 delete；优先用 block/restore 表达关系变化。',
+    '【规模与重心】本轮不是「造一批新联系人」。批量拉人请用「AI 生成联系人」等入口。本轮以 update 为主：最近聊天里能对上现有联系人的 NPC，应逐条 update，优先 patch.tags 与 patch.impression。',
+    '【硬性数量】本轮 updates 中 action 为 add、block、delete 的条数合计不得超过 2（含 0）；其中 add 单独也不得超过 2 条，且默认尽量 0 条 add。restore 仅在有明确剧情需要时少量使用。',
     '【add 的 contact】必须满足与虚拟联系人生成相同的字段强制：tags 非空且来自固定词表；faction 非空；status 非空；impression 非空；generatedReason 不得写入 impression。',
     TAG_FACTION_STATUS_RULES,
+    INCREMENTAL_VS_TAG_FACTION_RULES,
     '【字段边界】add 时的 contact 对象遵守与虚拟联系人生成相同规则：用户可见字段禁止写任务说明或编剧指令；只有 generatedReason 写生成依据；只有顶层 reason 写「为什么执行该 action」。',
     VISIBLE_FIELD_RULES,
     RECENT_CONTEXT_GUIDE,
@@ -290,11 +337,13 @@ export function buildContactRollbackAndUpdatePrompt(params: {
   return [
     '你是角色手机通讯录「回滚后微调」更新器。只返回 JSON，不要 Markdown，不要解释。',
     '上下文：联系人列表已恢复到上一快照；请在当前规模上做小幅修订，而不是清空重建。',
-    '【规模】允许新增 virtual_contact 1–3 个；允许对若干已有联系人 update（重点改 impression、relationshipHint、tags、faction、status、shortBio）；避免大规模 delete；不要 delete/block user；不要删除 agent。',
-    '【字段强制】add 或 patch 若含 tags/faction/status，须遵守固定词表与非空规则；tags 不得为空数组；status 不得全员 active。',
+    '【规模与重心】与「更新联系人」一致：以 update 为主，逐条对齐最近聊天里能匹配上的联系人，优先 patch.tags 与 patch.impression。批量新增名单请走「AI 生成联系人」。',
+    '【硬性数量】本轮 updates 中 action 为 add、block、delete 的条数合计不得超过 2（含 0）；add 单独也不得超过 2 条，默认尽量 0 条 add。不要 delete/block user；不要删除 agent。',
+    '【字段强制】add 或 patch 若含 tags/faction/status，须遵守固定词表与非空规则；tags 不得为空数组；不要求为凑分布而强行改全员 status。',
     '【字段边界】与增量更新相同：用户可见字段禁止开发说明；generatedReason 仅用于 add 的联系人；reason 仅解释 action。',
     VISIBLE_FIELD_RULES,
     TAG_FACTION_STATUS_RULES,
+    INCREMENTAL_VS_TAG_FACTION_RULES,
     RECENT_CONTEXT_GUIDE,
     '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
