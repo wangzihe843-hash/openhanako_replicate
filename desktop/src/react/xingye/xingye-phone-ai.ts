@@ -1,19 +1,47 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
-import type { XingyeRoleProfile } from './xingye-profile-store';
+import type { XingyeRoleProfile, XingyeRoleProfileMap } from './xingye-profile-store';
 import type { XingyePhoneAiPayload } from './xingye-phone-ai-types';
+import { buildRuleFallbackAiContacts } from './xingye-contact-generator';
 import {
+  applyAiContactUpdates,
+  applyAiGeneratedContacts,
   addSmsMessage,
+  createPhoneContactSnapshot,
+  ensureGeneratedVirtualContacts,
+  getContactAiUpdateState,
+  getLatestPhoneContactSnapshot,
+  getPhoneContactGenerationState,
   getPhoneContactMeta,
+  getPhoneContacts,
   getSmsThreads,
   getSmsThread,
+  getVirtualContacts,
+  normalizeAiContactUpdate,
+  normalizeAiGeneratedContact,
+  regenerateAllVirtualContactsWithAI,
+  restorePhoneContactSnapshot,
+  saveContactAiUpdateState,
+  sanitizeEnrichmentSuggestionFields,
   savePhoneContactMeta,
+  setPhoneContactGenerationState,
   setPhoneAiGenerationState,
   setSmsHistoryGenerationState,
+  type XingyeAiContactUpdate,
+  type XingyeAiGeneratedContact,
+  type XingyeContactGenerationMode,
+  type XingyeContactUpdateMode,
   type XingyeContactTargetType,
   type XingyePhoneContactView,
 } from './xingye-phone-store';
-import { buildContactsEnrichmentPrompt, buildSmsHistoryPrompt } from './xingye-phone-prompts';
+import {
+  buildContactIncrementalUpdatePrompt,
+  buildContactRegenerateAllPrompt,
+  buildContactRollbackAndUpdatePrompt,
+  buildContactsEnrichmentPrompt,
+  buildSmsHistoryPrompt,
+  buildVirtualContactGenerationPrompt,
+} from './xingye-phone-prompts';
 
 function asValidIso(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -56,14 +84,20 @@ function parsePayload(raw: unknown): XingyePhoneAiPayload {
 }
 
 async function requestPhoneAi(input: {
-  kind: 'contacts_enrichment' | 'sms_history';
+  kind:
+    | 'contacts_enrichment'
+    | 'sms_history'
+    | 'virtual_contacts_generate'
+    | 'contacts_incremental_update'
+    | 'contacts_regenerate_all'
+    | 'contacts_rollback_update';
   ownerAgentId: string;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   existingThreads?: unknown[];
   prompt: string;
   timeoutMs?: number;
-}): Promise<XingyePhoneAiPayload> {
+}): Promise<{ raw: unknown }> {
   const timeoutMs = input.timeoutMs ?? 90_000;
   const response = await hanaFetch('/api/xingye/phone-generate', {
     method: 'POST',
@@ -100,25 +134,87 @@ async function requestPhoneAi(input: {
   if (!response.ok || data?.ok === false || data?.error) {
     throw new Error(`模型调用失败：${data?.error || response.statusText || 'unknown error'}`);
   }
-  try {
-    return parsePayload(data.result);
-  } catch {
-    throw new Error('解析失败');
-  }
+  return { raw: data.result };
 }
 
 function mergeContactSuggestion(ownerAgentId: string, contact: XingyePhoneContactView, suggestion: XingyePhoneAiPayload['contacts'][number]) {
   const existing = getPhoneContactMeta(ownerAgentId, contact.targetType, contact.targetId);
   const manualFields = new Set(existing?.manualEditedFields ?? []);
+  const cleaned = sanitizeEnrichmentSuggestionFields({
+    remark: suggestion.remark,
+    impression: suggestion.impression,
+    relationshipHint: suggestion.relationshipHint,
+  });
   savePhoneContactMeta(ownerAgentId, contact.targetType, contact.targetId, {
-    remark: manualFields.has('remark') ? existing?.remark : (suggestion.remark ?? existing?.remark),
-    impression: manualFields.has('impression') ? existing?.impression : (suggestion.impression ?? existing?.impression),
-    relationshipHint: manualFields.has('relationshipHint') ? existing?.relationshipHint : (suggestion.relationshipHint ?? existing?.relationshipHint),
+    remark: manualFields.has('remark') ? existing?.remark : (cleaned.remark ?? existing?.remark),
+    impression: manualFields.has('impression') ? existing?.impression : (cleaned.impression ?? existing?.impression),
+    relationshipHint: manualFields.has('relationshipHint') ? existing?.relationshipHint : (cleaned.relationshipHint ?? existing?.relationshipHint),
     tags: manualFields.has('tags') ? (existing?.tags ?? []) : (suggestion.tags ?? existing?.tags ?? []),
     faction: manualFields.has('faction') ? existing?.faction : (suggestion.faction ?? existing?.faction),
     status: manualFields.has('status') ? existing?.status : (suggestion.status ?? existing?.status ?? contact.status),
     source: 'ai_generated',
   }, undefined, { markManualFields: false });
+}
+
+function parseGeneratedContacts(raw: unknown): XingyeAiGeneratedContact[] {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { contacts?: unknown[] }).contacts)) {
+    throw new Error('解析失败');
+  }
+  return (raw as { contacts: unknown[] }).contacts
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      targetType: 'virtual_contact' as const,
+      displayName: typeof item.displayName === 'string' ? item.displayName.trim() : '',
+      kind: typeof item.kind === 'string' ? item.kind as XingyeAiGeneratedContact['kind'] : 'unknown',
+      shortBio: typeof item.shortBio === 'string' ? item.shortBio : undefined,
+      remark: typeof item.remark === 'string' ? item.remark : undefined,
+      impression: typeof item.impression === 'string' ? item.impression : undefined,
+      relationshipHint: typeof item.relationshipHint === 'string' ? item.relationshipHint : undefined,
+      tags: Array.isArray(item.tags) ? item.tags.filter(tag => typeof tag === 'string') as string[] : [],
+      faction: typeof item.faction === 'string' ? item.faction : undefined,
+      status: typeof item.status === 'string' ? item.status as XingyeAiGeneratedContact['status'] : 'active',
+      generatedReason: typeof item.generatedReason === 'string' ? item.generatedReason : 'AI generated',
+    }))
+    .filter(item => !!item.displayName)
+    .map(normalizeAiGeneratedContact);
+}
+
+function parseContactUpdates(raw: unknown): XingyeAiContactUpdate[] {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { updates?: unknown[] }).updates)) {
+    throw new Error('解析失败');
+  }
+  return (raw as { updates: unknown[] }).updates
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      action: typeof item.action === 'string' ? item.action as XingyeAiContactUpdate['action'] : 'update',
+      targetType: typeof item.targetType === 'string' ? item.targetType as XingyeAiContactUpdate['targetType'] : 'virtual_contact',
+      targetId: typeof item.targetId === 'string' ? item.targetId : undefined,
+      matchName: typeof item.matchName === 'string' ? item.matchName : undefined,
+      contact: item.contact && typeof item.contact === 'object'
+        ? parseGeneratedContacts({ contacts: [item.contact] })[0]
+        : undefined,
+      patch: item.patch && typeof item.patch === 'object' ? item.patch as XingyeAiContactUpdate['patch'] : undefined,
+      reason: typeof item.reason === 'string' ? item.reason : 'AI update',
+    }))
+    .map(normalizeAiContactUpdate);
+}
+
+function setContactUpdateState(
+  ownerAgentId: string,
+  mode: XingyeContactUpdateMode,
+  status: 'running' | 'success' | 'failed',
+  error?: string,
+) {
+  const previous = getContactAiUpdateState(ownerAgentId);
+  saveContactAiUpdateState(ownerAgentId, {
+    ownerAgentId,
+    mode,
+    status,
+    startedAt: status === 'running' ? new Date().toISOString() : previous?.startedAt,
+    finishedAt: status === 'running' ? undefined : new Date().toISOString(),
+    error,
+    version: (previous?.version ?? 0) + 1,
+  });
 }
 
 export async function enrichContactsWithAI(params: {
@@ -138,7 +234,7 @@ export async function enrichContactsWithAI(params: {
   });
   try {
     const prompt = buildContactsEnrichmentPrompt({ ownerAgent, ownerProfile, contacts });
-    const payload = await requestPhoneAi({
+    const { raw } = await requestPhoneAi({
       kind: 'contacts_enrichment',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
@@ -146,6 +242,7 @@ export async function enrichContactsWithAI(params: {
       prompt,
       timeoutMs: 90_000,
     });
+    const payload = parsePayload(raw);
     for (const suggestion of payload.contacts) {
       const contact = contacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
       if (!contact) continue;
@@ -170,6 +267,179 @@ export async function enrichContactsWithAI(params: {
   }
 }
 
+export async function generateVirtualContactsWithAI(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+  agents: Agent[];
+  profiles: Record<string, XingyeRoleProfile | undefined>;
+  profileFingerprint: string;
+  mode?: XingyeContactUpdateMode;
+}) {
+  const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
+  const mode = params.mode ?? 'initial_ai_generate';
+  const isRegenerate = mode === 'regenerate_all';
+  const minCount = isRegenerate ? 6 : 5;
+  const maxCount = isRegenerate ? 14 : 12;
+  setContactUpdateState(ownerAgent.id, mode, 'running');
+  try {
+    const prompt = isRegenerate
+      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts })
+      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial' });
+    const { raw } = await requestPhoneAi({
+      kind: isRegenerate ? 'contacts_regenerate_all' : 'virtual_contacts_generate',
+      ownerAgentId: ownerAgent.id,
+      ownerProfile,
+      contacts,
+      prompt,
+      timeoutMs: 120_000,
+    });
+    let generated = parseGeneratedContacts(raw);
+    if (generated.length > maxCount) generated = generated.slice(0, maxCount);
+    applyAiGeneratedContacts(ownerAgent.id, generated);
+    let virtuals = getVirtualContacts(ownerAgent.id);
+    let ruleFallbackPadded = 0;
+    if (virtuals.length < minCount) {
+      const nameSet = new Set(virtuals.map(c => c.displayName.trim().toLowerCase()).filter(Boolean));
+      const extras = buildRuleFallbackAiContacts(
+        { ownerAgentId: ownerAgent.id, agent: ownerAgent, profile: ownerProfile, agents },
+        minCount - virtuals.length,
+        nameSet,
+      );
+      applyAiGeneratedContacts(ownerAgent.id, extras, {
+        virtualSource: 'rule_fallback',
+        metaSource: 'rule_fallback',
+      });
+      ruleFallbackPadded = extras.length;
+      virtuals = getVirtualContacts(ownerAgent.id);
+    }
+    setPhoneContactGenerationState(ownerAgent.id, {
+      ownerAgentId: ownerAgent.id,
+      generatedAt: new Date().toISOString(),
+      profileFingerprint,
+      mode: 'ai',
+      version: 1,
+    });
+    setContactUpdateState(ownerAgent.id, mode, 'success');
+    const notice = ruleFallbackPadded
+      ? `AI 返回的虚拟联系人数量偏少，已自动补足 ${ruleFallbackPadded} 个（规则补全，source=rule_fallback）。`
+      : undefined;
+    return {
+      generatedBy: 'ai' as const,
+      count: virtuals.length,
+      aiReturnedCount: generated.length,
+      ruleFallbackPadded,
+      notice,
+    };
+  } catch (error) {
+    ensureGeneratedVirtualContacts(ownerAgent.id, ownerAgent, ownerProfile, agents, profiles);
+    setPhoneContactGenerationState(ownerAgent.id, {
+      ownerAgentId: ownerAgent.id,
+      generatedAt: new Date().toISOString(),
+      profileFingerprint,
+      mode: 'rule',
+      version: 1,
+    });
+    setContactUpdateState(ownerAgent.id, mode, 'failed', error instanceof Error ? error.message : String(error));
+    return { generatedBy: 'rule_fallback' as const, count: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function updateContactsFromRecentContextWithAI(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+}) {
+  const { ownerAgent, ownerProfile, contacts } = params;
+  setContactUpdateState(ownerAgent.id, 'incremental_update', 'running');
+  try {
+    const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
+      targetType: thread.targetType,
+      targetId: thread.targetId,
+      latest: thread.messages[thread.messages.length - 1]?.content ?? '',
+      count: thread.messages.length,
+    }));
+    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary });
+    const { raw } = await requestPhoneAi({
+      kind: 'contacts_incremental_update',
+      ownerAgentId: ownerAgent.id,
+      ownerProfile,
+      contacts,
+      prompt,
+      timeoutMs: 120_000,
+    });
+    const updates = parseContactUpdates(raw);
+    applyAiContactUpdates(ownerAgent.id, updates);
+    setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
+    return { updatesCount: updates.length };
+  } catch (error) {
+    setContactUpdateState(ownerAgent.id, 'incremental_update', 'failed', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
+export async function regenerateAllContactsWithAI(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+  agents: Agent[];
+  profiles: Record<string, XingyeRoleProfile | undefined>;
+  profileFingerprint: string;
+}) {
+  const { ownerAgent, ownerProfile, contacts, agents, profiles, profileFingerprint } = params;
+  createPhoneContactSnapshot(ownerAgent.id, 'regenerate_all_before');
+  regenerateAllVirtualContactsWithAI(ownerAgent.id, { preserveLinkedAgent: true });
+  const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
+  return generateVirtualContactsWithAI({
+    ownerAgent,
+    ownerProfile,
+    contacts: contactsForPrompt.length ? contactsForPrompt : contacts,
+    agents,
+    profiles,
+    profileFingerprint,
+    mode: 'regenerate_all',
+  });
+}
+
+export async function rollbackAndUpdateContactsWithAI(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  agents: Agent[];
+  profiles: XingyeRoleProfileMap;
+}) {
+  const { ownerAgent, ownerProfile, agents, profiles } = params;
+  const latest = getLatestPhoneContactSnapshot(ownerAgent.id);
+  if (!latest) throw new Error('没有可回滚版本。');
+  const restored = restorePhoneContactSnapshot(ownerAgent.id, latest.id);
+  if (!restored) throw new Error('回滚失败。');
+  const contactsAfterRestore = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
+  setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'running');
+  try {
+    const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
+      targetType: thread.targetType,
+      targetId: thread.targetId,
+      latest: thread.messages[thread.messages.length - 1]?.content ?? '',
+      count: thread.messages.length,
+    }));
+    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary });
+    const { raw } = await requestPhoneAi({
+      kind: 'contacts_rollback_update',
+      ownerAgentId: ownerAgent.id,
+      ownerProfile,
+      contacts: contactsAfterRestore,
+      prompt,
+      timeoutMs: 120_000,
+    });
+    const updates = parseContactUpdates(raw);
+    applyAiContactUpdates(ownerAgent.id, updates);
+    setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'success');
+    return { snapshotId: latest.id, updatesCount: updates.length };
+  } catch (error) {
+    setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'failed', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
 export async function generateSmsHistoryWithAI(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
@@ -189,7 +459,7 @@ export async function generateSmsHistoryWithAI(params: {
   });
   try {
     const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts });
-    const payload = await requestPhoneAi({
+    const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
       ownerProfile,
@@ -202,6 +472,7 @@ export async function generateSmsHistoryWithAI(params: {
       prompt,
       timeoutMs: 120_000,
     });
+    const payload = parsePayload(raw);
     const contactIndexMap = new Map<string, number>();
     contacts.forEach((contact, index) => {
       contactIndexMap.set(`${contact.targetType}:${contact.targetId}`, index);

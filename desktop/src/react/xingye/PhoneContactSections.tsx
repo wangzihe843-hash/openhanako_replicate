@@ -1,4 +1,9 @@
-import type { XingyePhoneContactView } from './xingye-phone-store';
+import {
+  getPhoneContactListMeta,
+  getPhoneContactListSubtitle,
+  getPhoneContactListTitle,
+  type XingyePhoneContactView,
+} from './xingye-phone-store';
 import styles from './XingyeShell.module.css';
 
 interface PhoneContactSectionsProps {
@@ -21,12 +26,12 @@ export function PhoneContactSections({ contacts, onSelect }: PhoneContactSection
           {items.map(contact => (
             <button key={`${contact.targetType}:${contact.targetId}`} type="button" className={styles.phoneListItem} onClick={() => onSelect(contact)}>
               <span className={styles.phoneListAvatar}>
-                {(contact.remark || contact.displayName).slice(0, 1)}
+                {getPhoneContactListTitle(contact).slice(0, 1)}
               </span>
               <span className={styles.phoneListText}>
-                <strong>{contact.remark}</strong>
-                <span>{contact.impression}</span>
-                <span>{contact.targetType === 'virtual_contact' && contact.generatedReason ? contact.generatedReason : `${contact.targetType} · ${contact.status}`}</span>
+                <strong>{getPhoneContactListTitle(contact)}</strong>
+                <span>{getPhoneContactListSubtitle(contact)}</span>
+                <span className={styles.phoneListMeta}>{getPhoneContactListMeta(contact)}</span>
               </span>
             </button>
           ))}

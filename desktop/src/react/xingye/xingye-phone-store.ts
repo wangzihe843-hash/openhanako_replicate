@@ -6,7 +6,6 @@ import {
   generateVirtualContactsForRole as generateRuleVirtualContacts,
   shouldBlockFamilyContacts as shouldBlockFamilyContactsRule,
   shouldSkipFamilyContacts as shouldSkipFamilyContactsRule,
-  type XingyeContactGenerationMode,
 } from './xingye-contact-generator';
 
 export type XingyeContactTargetType =
@@ -27,7 +26,8 @@ export type XingyeContactSource =
   | 'phone_sms'
   | 'channel'
   | 'system'
-  | 'ai_generated';
+  | 'ai_generated'
+  | 'rule_fallback';
 
 export type XingyeVirtualContactKind =
   | 'friend'
@@ -106,7 +106,60 @@ export type XingyePhoneContactGenerationState = {
   ownerAgentId: string;
   generatedAt: string;
   profileFingerprint: string;
+  mode?: XingyeContactGenerationMode;
   version: number;
+};
+
+export type XingyeContactGenerationMode = 'rule' | 'ai';
+
+export type XingyeContactUpdateMode =
+  | 'initial_ai_generate'
+  | 'incremental_update'
+  | 'regenerate_all'
+  | 'rollback_and_update';
+
+export type XingyeContactSnapshot = {
+  ownerAgentId: string;
+  id: string;
+  createdAt: string;
+  reason: string;
+  virtualContacts: XingyeVirtualContact[];
+  contactMeta: Record<string, XingyePhoneContactMeta>;
+  generationState?: XingyePhoneContactGenerationState;
+};
+
+export type XingyeContactAiUpdateState = {
+  ownerAgentId: string;
+  mode: XingyeContactUpdateMode;
+  status: 'idle' | 'running' | 'success' | 'failed';
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+  version: number;
+};
+
+export type XingyeAiGeneratedContact = {
+  targetType: 'virtual_contact';
+  displayName: string;
+  kind: XingyeVirtualContactKind;
+  shortBio?: string;
+  remark?: string;
+  impression?: string;
+  relationshipHint?: string;
+  tags?: string[];
+  faction?: string;
+  status?: XingyeContactStatus;
+  generatedReason: string;
+};
+
+export type XingyeAiContactUpdate = {
+  action: 'add' | 'update' | 'delete' | 'block' | 'restore';
+  targetType: 'user' | 'agent' | 'virtual_contact';
+  targetId?: string;
+  matchName?: string;
+  contact?: XingyeAiGeneratedContact;
+  patch?: Partial<XingyePhoneContactMeta>;
+  reason: string;
 };
 
 export type XingyePhoneAiGenerationStatus = 'idle' | 'running' | 'success' | 'failed';
@@ -162,6 +215,8 @@ export const XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY = 'xingye.phoneVirtualCon
 export const XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneContactGenerationState';
 export const XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneAiGenerationState';
 export const XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneSmsHistoryGenerationState';
+export const XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY = 'xingye.phoneContactSnapshots';
+export const XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY = 'xingye.phoneContactAiUpdateState';
 
 const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
 
@@ -361,9 +416,10 @@ function loadGenerationStateMap(storage: StorageLike | null = getLocalStorage())
       if (!isRecord(value)) continue;
       const generatedAt = normalizeOptionalString(value.generatedAt);
       const profileFingerprint = normalizeOptionalString(value.profileFingerprint);
+      const mode = normalizeOptionalString(value.mode) as XingyeContactGenerationMode | undefined;
       const version = typeof value.version === 'number' ? value.version : 1;
       if (!generatedAt || !profileFingerprint) continue;
-      result[ownerAgentId] = { ownerAgentId, generatedAt, profileFingerprint, version };
+      result[ownerAgentId] = { ownerAgentId, generatedAt, profileFingerprint, mode, version };
     }
     return result;
   } catch {
@@ -374,6 +430,23 @@ function loadGenerationStateMap(storage: StorageLike | null = getLocalStorage())
 function saveGenerationStateMap(next: Record<string, XingyePhoneContactGenerationState>, storage: StorageLike | null = getLocalStorage()) {
   storage?.setItem(XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY, JSON.stringify(next));
   notifyXingyePhoneChanged();
+}
+
+export function getPhoneContactGenerationState(
+  ownerAgentId: string,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyePhoneContactGenerationState | null {
+  return loadGenerationStateMap(storage)[ownerAgentId] ?? null;
+}
+
+export function setPhoneContactGenerationState(
+  ownerAgentId: string,
+  state: XingyePhoneContactGenerationState,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadGenerationStateMap(storage);
+  map[ownerAgentId] = state;
+  saveGenerationStateMap(map, storage);
 }
 
 function saveContactMetaMap(next: Record<string, XingyePhoneContactMeta>, storage: StorageLike | null = getLocalStorage()) {
@@ -455,6 +528,221 @@ export function savePhoneContactMeta(
   return next;
 }
 
+export function preserveManualContactFields(
+  existingMeta: XingyePhoneContactMeta | null,
+  aiPatch: Partial<XingyePhoneContactMeta>,
+): Partial<XingyePhoneContactMeta> {
+  if (!existingMeta) return aiPatch;
+  const manualFields = new Set(existingMeta.manualEditedFields ?? []);
+  return {
+    ...aiPatch,
+    remark: manualFields.has('remark') ? existingMeta.remark : aiPatch.remark,
+    impression: manualFields.has('impression') ? existingMeta.impression : aiPatch.impression,
+    relationshipHint: manualFields.has('relationshipHint') ? existingMeta.relationshipHint : aiPatch.relationshipHint,
+    tags: manualFields.has('tags') ? existingMeta.tags : aiPatch.tags,
+    faction: manualFields.has('faction') ? existingMeta.faction : aiPatch.faction,
+    status: manualFields.has('status') ? existingMeta.status : aiPatch.status,
+    linkedAgentId: manualFields.has('linkedAgentId') ? existingMeta.linkedAgentId : aiPatch.linkedAgentId,
+  };
+}
+
+const GENERATION_INSTRUCTION_PHRASES = [
+  '增加一个',
+  '新增一个',
+  '添加一个',
+  '生成一个',
+  '补充一个',
+  '强化',
+  '体现',
+  '用于',
+  '根据设定',
+  '根据资料',
+  '符合',
+  '作为角色',
+  '角色设定',
+  '戏剧张力',
+  '功能',
+  '模块',
+  '可拉黑',
+  '对立角色',
+  '任务列表',
+  '开发说明',
+  '生成说明',
+  'AI任务',
+  '联系人列表',
+];
+
+export function looksLikeGenerationInstruction(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return GENERATION_INSTRUCTION_PHRASES.some(phrase => t.includes(phrase));
+}
+
+function truncateGraphemes(value: string, maxUnits: number): string {
+  const chars = [...value];
+  if (chars.length <= maxUnits) return value;
+  return chars.slice(0, maxUnits).join('');
+}
+
+export type XingyeVisibleContactField =
+  | 'displayName'
+  | 'shortBio'
+  | 'remark'
+  | 'impression'
+  | 'relationshipHint';
+
+export function sanitizeVisibleContactText(
+  value: string | undefined,
+  _field: XingyeVisibleContactField,
+): { clean?: string; spillToReason?: string } {
+  if (value === undefined) return {};
+  const trimmed = value.trim();
+  if (!trimmed) return {};
+  if (looksLikeGenerationInstruction(trimmed)) {
+    return { spillToReason: trimmed };
+  }
+  return { clean: trimmed };
+}
+
+export function normalizeAiGeneratedContact(contact: XingyeAiGeneratedContact): XingyeAiGeneratedContact {
+  const reasons: string[] = [];
+  if (contact.generatedReason?.trim()) reasons.push(contact.generatedReason.trim());
+
+  const mergeSpill = (spill?: string) => {
+    if (spill) reasons.push(`[模型误入可见字段] ${spill}`);
+  };
+
+  const takeVisible = (raw: string | undefined, field: XingyeVisibleContactField, maxLen: number) => {
+    const { clean, spillToReason } = sanitizeVisibleContactText(raw, field);
+    mergeSpill(spillToReason);
+    if (!clean) return undefined;
+    return truncateGraphemes(clean, maxLen);
+  };
+
+  let displayName = takeVisible(contact.displayName, 'displayName', 12) ?? '';
+  if (!displayName) displayName = '未命名联系人';
+
+  const shortBio = takeVisible(contact.shortBio, 'shortBio', 40);
+  const remark = takeVisible(contact.remark, 'remark', 12);
+  let impression = takeVisible(contact.impression, 'impression', 60);
+  const relationshipHint = takeVisible(contact.relationshipHint, 'relationshipHint', 24);
+
+  if (!impression?.trim() && !shortBio?.trim()) {
+    impression = '还没有形成明确印象。';
+  }
+
+  const tags = (contact.tags ?? []).map(tag => tag.trim()).filter(Boolean).slice(0, 12);
+  const faction = contact.faction?.trim() ? truncateGraphemes(contact.faction.trim(), 20) : undefined;
+
+  const generatedReason = reasons.filter(Boolean).join('；') || 'AI 生成';
+
+  return {
+    ...contact,
+    displayName,
+    shortBio,
+    remark,
+    impression,
+    relationshipHint,
+    tags,
+    faction,
+    status: contact.status ?? 'active',
+    generatedReason,
+  };
+}
+
+export function normalizeAiContactUpdate(update: XingyeAiContactUpdate): XingyeAiContactUpdate {
+  const next: XingyeAiContactUpdate = { ...update };
+  if (next.contact) {
+    next.contact = normalizeAiGeneratedContact(next.contact);
+  }
+  if (next.patch) {
+    const patch = { ...next.patch };
+    const spillBits: string[] = [];
+    (['remark', 'impression', 'relationshipHint'] as const).forEach((key) => {
+      const raw = patch[key];
+      if (typeof raw !== 'string') return;
+      const { clean, spillToReason } = sanitizeVisibleContactText(raw, key);
+      if (spillToReason) spillBits.push(`${key}: ${spillToReason}`);
+      if (clean) patch[key] = truncateGraphemes(clean, key === 'impression' ? 60 : 12);
+      else delete patch[key];
+    });
+    if (spillBits.length) {
+      const extra = `[误入 patch 的说明] ${spillBits.join('；')}`;
+      next.reason = next.reason?.trim() ? `${next.reason.trim()}；${extra}` : extra;
+    }
+    next.patch = patch;
+  }
+  return next;
+}
+
+export function sanitizeEnrichmentSuggestionFields(suggestion: {
+  remark?: string;
+  impression?: string;
+  relationshipHint?: string;
+}): typeof suggestion {
+  const out = { ...suggestion };
+  (['remark', 'impression', 'relationshipHint'] as const).forEach((key) => {
+    const raw = out[key];
+    if (typeof raw !== 'string') return;
+    const { clean, spillToReason } = sanitizeVisibleContactText(raw, key);
+    if (spillToReason) delete out[key];
+    else if (clean) out[key] = truncateGraphemes(clean, key === 'impression' ? 60 : 12);
+    else delete out[key];
+  });
+  return out;
+}
+
+export function getPhoneContactListTitle(contact: XingyePhoneContactView): string {
+  const remark = contact.remark?.trim();
+  if (remark) return remark;
+  return contact.displayName?.trim() || '联系人';
+}
+
+export function getPhoneContactListSubtitle(contact: XingyePhoneContactView): string {
+  const impression = contact.impression?.trim();
+  if (impression && !looksLikeGenerationInstruction(impression)) return impression;
+  const bio = contact.shortBio?.trim();
+  if (bio && !looksLikeGenerationInstruction(bio)) return bio;
+  if (impression) return impression;
+  if (bio) return bio;
+  if (contact.targetType === 'virtual_contact') return '虚拟联系人';
+  return `${contact.targetType} · ${contact.status}`;
+}
+
+export function getPhoneContactListMeta(contact: XingyePhoneContactView): string {
+  return `${contact.targetType} · ${contact.status}`;
+}
+
+export function markContactFieldManual(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  field: 'remark' | 'impression' | 'relationshipHint' | 'tags' | 'faction' | 'status' | 'linkedAgentId',
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadContactMetaMap(storage);
+  const key = contactKey(ownerAgentId, targetType, targetId);
+  const previous = map[key];
+  const nextManualFields = new Set(previous?.manualEditedFields ?? []);
+  nextManualFields.add(field);
+  map[key] = {
+    ownerAgentId,
+    targetType,
+    targetId,
+    remark: previous?.remark,
+    impression: previous?.impression,
+    relationshipHint: previous?.relationshipHint,
+    tags: previous?.tags ?? [],
+    faction: previous?.faction,
+    status: previous?.status ?? 'active',
+    linkedAgentId: previous?.linkedAgentId,
+    manualEditedFields: [...nextManualFields],
+    source: previous?.source ?? 'manual',
+    updatedAt: new Date().toISOString(),
+  };
+  saveContactMetaMap(map, storage);
+}
+
 export function blockPhoneContact(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string) {
   return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'blocked', source: 'manual' }, undefined, { markManualFields: true });
 }
@@ -506,6 +794,135 @@ export function saveVirtualContact(ownerAgentId: string, contact: XingyeVirtualC
   map[`${ownerAgentId}::${next.id}`] = next;
   saveVirtualContactMap(map, storage);
   return next;
+}
+
+function loadContactSnapshotsMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyeContactSnapshot[]> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const map: Record<string, XingyeContactSnapshot[]> = {};
+    for (const [ownerAgentId, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      map[ownerAgentId] = value.filter((snapshot): snapshot is XingyeContactSnapshot => (
+        isRecord(snapshot)
+        && typeof snapshot.id === 'string'
+        && typeof snapshot.createdAt === 'string'
+        && typeof snapshot.reason === 'string'
+        && Array.isArray(snapshot.virtualContacts)
+        && isRecord(snapshot.contactMeta)
+      )) as XingyeContactSnapshot[];
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function saveContactSnapshotsMap(next: Record<string, XingyeContactSnapshot[]>, storage: StorageLike | null = getLocalStorage()) {
+  storage?.setItem(XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY, JSON.stringify(next));
+  notifyXingyePhoneChanged();
+}
+
+export function getPhoneContactSnapshots(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyeContactSnapshot[] {
+  return loadContactSnapshotsMap(storage)[ownerAgentId] ?? [];
+}
+
+export function getLatestPhoneContactSnapshot(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyeContactSnapshot | null {
+  const snapshots = getPhoneContactSnapshots(ownerAgentId, storage);
+  return snapshots.length ? snapshots[snapshots.length - 1] : null;
+}
+
+export function createPhoneContactSnapshot(ownerAgentId: string, reason: string, storage: StorageLike | null = getLocalStorage()): XingyeContactSnapshot {
+  const snapshotsMap = loadContactSnapshotsMap(storage);
+  const virtualContacts = getVirtualContacts(ownerAgentId, storage);
+  const contactMeta = loadContactMetaMap(storage);
+  const filteredMeta = Object.fromEntries(Object.entries(contactMeta).filter(([key]) => key.startsWith(`${ownerAgentId}::`)));
+  const generationState = getPhoneContactGenerationState(ownerAgentId, storage) ?? undefined;
+  const snapshot: XingyeContactSnapshot = {
+    ownerAgentId,
+    id: createId('contact-snapshot'),
+    createdAt: new Date().toISOString(),
+    reason,
+    virtualContacts,
+    contactMeta: filteredMeta,
+    generationState,
+  };
+  const list = [...(snapshotsMap[ownerAgentId] ?? []), snapshot].slice(-12);
+  snapshotsMap[ownerAgentId] = list;
+  saveContactSnapshotsMap(snapshotsMap, storage);
+  return snapshot;
+}
+
+export function restorePhoneContactSnapshot(ownerAgentId: string, snapshotId: string, storage: StorageLike | null = getLocalStorage()): boolean {
+  const snapshots = getPhoneContactSnapshots(ownerAgentId, storage);
+  const snapshot = snapshots.find(item => item.id === snapshotId);
+  if (!snapshot) return false;
+  const virtualMap = loadVirtualContactMap(storage);
+  for (const key of Object.keys(virtualMap)) {
+    if (key.startsWith(`${ownerAgentId}::`)) delete virtualMap[key];
+  }
+  for (const contact of snapshot.virtualContacts) {
+    virtualMap[`${ownerAgentId}::${contact.id}`] = contact;
+  }
+  saveVirtualContactMap(virtualMap, storage);
+
+  const contactMap = loadContactMetaMap(storage);
+  for (const key of Object.keys(contactMap)) {
+    if (key.startsWith(`${ownerAgentId}::`)) delete contactMap[key];
+  }
+  for (const [key, value] of Object.entries(snapshot.contactMeta)) {
+    contactMap[key] = value;
+  }
+  saveContactMetaMap(contactMap, storage);
+  if (snapshot.generationState) setPhoneContactGenerationState(ownerAgentId, snapshot.generationState, storage);
+  return true;
+}
+
+function loadContactAiUpdateStateMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyeContactAiUpdateState> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const map: Record<string, XingyeContactAiUpdateState> = {};
+    for (const [ownerAgentId, value] of Object.entries(parsed)) {
+      if (!isRecord(value)) continue;
+      const mode = normalizeOptionalString(value.mode) as XingyeContactUpdateMode | undefined;
+      const status = normalizeOptionalString(value.status) as XingyeContactAiUpdateState['status'] | undefined;
+      if (!mode || !status) continue;
+      map[ownerAgentId] = {
+        ownerAgentId,
+        mode,
+        status,
+        startedAt: normalizeOptionalString(value.startedAt),
+        finishedAt: normalizeOptionalString(value.finishedAt),
+        error: normalizeOptionalString(value.error),
+        version: typeof value.version === 'number' ? value.version : 1,
+      };
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function saveContactAiUpdateStateMap(next: Record<string, XingyeContactAiUpdateState>, storage: StorageLike | null = getLocalStorage()) {
+  storage?.setItem(XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY, JSON.stringify(next));
+  notifyXingyePhoneChanged();
+}
+
+export function saveContactAiUpdateState(ownerAgentId: string, state: XingyeContactAiUpdateState, storage: StorageLike | null = getLocalStorage()) {
+  const map = loadContactAiUpdateStateMap(storage);
+  map[ownerAgentId] = state;
+  saveContactAiUpdateStateMap(map, storage);
+}
+
+export function getContactAiUpdateState(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyeContactAiUpdateState | null {
+  return loadContactAiUpdateStateMap(storage)[ownerAgentId] ?? null;
 }
 
 function getProfileFingerprint(agent: Agent, profile: XingyeRoleProfile | null | undefined): string {
@@ -576,10 +993,158 @@ export function ensureGeneratedVirtualContacts(
     ownerAgentId,
     generatedAt: new Date().toISOString(),
     profileFingerprint: fingerprint,
+    mode: 'rule',
     version: 1,
   };
   saveGenerationStateMap(stateMap, storage);
   return generated;
+}
+
+function findVirtualContactByName(ownerAgentId: string, displayName: string, storage: StorageLike | null = getLocalStorage()): XingyeVirtualContact | null {
+  const normalized = displayName.trim().toLowerCase();
+  if (!normalized) return null;
+  const contacts = getVirtualContacts(ownerAgentId, storage);
+  return contacts.find(item => item.displayName.trim().toLowerCase() === normalized) ?? null;
+}
+
+export function applyAiGeneratedContacts(
+  ownerAgentId: string,
+  contacts: XingyeAiGeneratedContact[],
+  options?: {
+    preserveLinkedAgent?: boolean;
+    storage?: StorageLike | null;
+    virtualSource?: XingyeContactSource;
+    metaSource?: XingyeContactSource;
+  },
+): XingyeVirtualContact[] {
+  const storage = options?.storage ?? getLocalStorage();
+  const virtualSource = options?.virtualSource ?? 'ai_generated';
+  const metaSource = options?.metaSource ?? virtualSource;
+  const output: XingyeVirtualContact[] = [];
+  for (const raw of contacts) {
+    const input = normalizeAiGeneratedContact(raw);
+    if (!input.displayName?.trim()) continue;
+    const existed = findVirtualContactByName(ownerAgentId, input.displayName, storage);
+    const saved = saveVirtualContact(ownerAgentId, {
+      ownerAgentId,
+      id: existed?.id ?? '',
+      displayName: input.displayName.trim(),
+      kind: input.kind ?? 'unknown',
+      shortBio: input.shortBio,
+      relationshipHint: input.relationshipHint,
+      tags: input.tags ?? [],
+      faction: input.faction,
+      status: input.status ?? 'active',
+      linkedAgentId: existed?.linkedAgentId,
+      source: virtualSource,
+      generatedReason: input.generatedReason,
+      createdAt: existed?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, storage);
+    const existingMeta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, storage);
+    const patch = preserveManualContactFields(existingMeta, {
+      remark: input.remark,
+      impression: input.impression,
+      relationshipHint: input.relationshipHint,
+      tags: input.tags,
+      faction: input.faction,
+      status: input.status,
+      linkedAgentId: existingMeta?.linkedAgentId,
+      source: metaSource,
+    });
+    savePhoneContactMeta(ownerAgentId, 'virtual_contact', saved.id, patch, storage, { markManualFields: false });
+    output.push(saved);
+  }
+  return output;
+}
+
+export function applyAiContactUpdates(
+  ownerAgentId: string,
+  updates: XingyeAiContactUpdate[],
+  options?: { storage?: StorageLike | null },
+) {
+  const storage = options?.storage ?? getLocalStorage();
+  for (const raw of updates) {
+    const update = normalizeAiContactUpdate(raw);
+    if (update.action === 'add' && update.contact) {
+      applyAiGeneratedContacts(ownerAgentId, [{
+        ...update.contact,
+        targetType: 'virtual_contact',
+      }], { storage });
+      continue;
+    }
+    let resolvedTargetId = update.targetId;
+    if (!resolvedTargetId && update.matchName && update.targetType === 'virtual_contact') {
+      resolvedTargetId = findVirtualContactByName(ownerAgentId, update.matchName, storage)?.id;
+    }
+    if (!resolvedTargetId) continue;
+    if (update.targetType === 'user' && (update.action === 'delete' || update.action === 'block')) continue;
+    if (update.action === 'delete') {
+      savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'deleted', source: 'ai_generated' }, storage, { markManualFields: false });
+      continue;
+    }
+    if (update.action === 'block') {
+      savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'blocked', source: 'ai_generated' }, storage, { markManualFields: false });
+      continue;
+    }
+    if (update.action === 'restore') {
+      savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, { status: 'active', source: 'ai_generated' }, storage, { markManualFields: false });
+      continue;
+    }
+    if (update.action === 'update') {
+      const existingMeta = getPhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, storage);
+      const patch = preserveManualContactFields(existingMeta, {
+        ...update.patch,
+        source: 'ai_generated',
+      });
+      savePhoneContactMeta(ownerAgentId, update.targetType, resolvedTargetId, patch, storage, { markManualFields: false });
+    }
+  }
+}
+
+export function regenerateAllVirtualContactsWithAI(
+  ownerAgentId: string,
+  options?: { preserveLinkedAgent?: boolean; storage?: StorageLike | null },
+) {
+  const storage = options?.storage ?? getLocalStorage();
+  const preserveLinkedAgent = options?.preserveLinkedAgent ?? true;
+  const virtualMap = loadVirtualContactMap(storage);
+  const metaMap = loadContactMetaMap(storage);
+  for (const [key, value] of Object.entries(virtualMap)) {
+    if (!key.startsWith(`${ownerAgentId}::`)) continue;
+    if (preserveLinkedAgent && value.linkedAgentId) continue;
+    delete virtualMap[key];
+  }
+  for (const key of Object.keys(metaMap)) {
+    if (!key.startsWith(`${ownerAgentId}::virtual_contact::`)) continue;
+    const targetId = key.split('::')[2];
+    const linked = metaMap[key]?.linkedAgentId;
+    if (preserveLinkedAgent && linked) continue;
+    delete metaMap[key];
+    if (targetId) {
+      for (const [vKey, vValue] of Object.entries(virtualMap)) {
+        if (vKey === `${ownerAgentId}::${targetId}` && (!preserveLinkedAgent || !vValue.linkedAgentId)) delete virtualMap[vKey];
+      }
+    }
+  }
+  saveVirtualContactMap(virtualMap, storage);
+  saveContactMetaMap(metaMap, storage);
+}
+
+export function rollbackAndUpdateVirtualContactsWithAI(
+  ownerAgentId: string,
+  updates: XingyeAiContactUpdate[],
+  snapshotId?: string,
+  storage: StorageLike | null = getLocalStorage(),
+): boolean {
+  const snapshot = snapshotId
+    ? getPhoneContactSnapshots(ownerAgentId, storage).find(item => item.id === snapshotId) ?? null
+    : getLatestPhoneContactSnapshot(ownerAgentId, storage);
+  if (!snapshot) return false;
+  const restored = restorePhoneContactSnapshot(ownerAgentId, snapshot.id, storage);
+  if (!restored) return false;
+  applyAiContactUpdates(ownerAgentId, updates, { storage });
+  return true;
 }
 
 export function linkVirtualContactToAgent(ownerAgentId: string, virtualContactId: string, linkedAgentId: string) {
@@ -591,6 +1156,7 @@ export function linkVirtualContactToAgent(ownerAgentId: string, virtualContactId
   map[key] = updated;
   saveVirtualContactMap(map);
   savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId, source: 'manual' }, undefined, { markManualFields: false });
+  markContactFieldManual(ownerAgentId, 'virtual_contact', virtualContactId, 'linkedAgentId');
   return updated;
 }
 
@@ -603,6 +1169,7 @@ export function unlinkVirtualContactFromAgent(ownerAgentId: string, virtualConta
   map[key] = updated;
   saveVirtualContactMap(map);
   savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId: '', source: 'manual' }, undefined, { markManualFields: false });
+  markContactFieldManual(ownerAgentId, 'virtual_contact', virtualContactId, 'linkedAgentId');
   return updated;
 }
 
@@ -999,6 +1566,8 @@ export function useXingyePhoneStorageVersion(): number {
         || event.key === XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY
         || event.key === XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY
         || event.key === XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY
+        || event.key === XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY
+        || event.key === XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY
       ) {
         onChanged();
       }

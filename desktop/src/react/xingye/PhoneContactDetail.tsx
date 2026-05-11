@@ -1,5 +1,5 @@
 import type { Agent } from '../types';
-import type { XingyePhoneContactView } from './xingye-phone-store';
+import { getPhoneContactListTitle, type XingyePhoneContactView } from './xingye-phone-store';
 import styles from './XingyeShell.module.css';
 
 interface PhoneContactDetailProps {
@@ -36,13 +36,17 @@ export function PhoneContactDetail({
   onOpenSms,
 }: PhoneContactDetailProps) {
   const linkOptions = agents.filter(agent => agent.id !== contact.ownerAgentId);
+  const listTitle = getPhoneContactListTitle(contact);
   return (
     <section className={styles.phoneAppCard}>
-      <h3 className={styles.phoneAppTitle}>{contact.remark}</h3>
+      <h3 className={styles.phoneAppTitle}>{listTitle}</h3>
       <p className={styles.phoneAppHint}>
         类型：{contact.targetType} · 状态：{contact.status} · source：{contact.source ?? 'manual'}
       </p>
-      {contact.generatedReason ? <p className={styles.phoneAppHint}>{contact.generatedReason}</p> : null}
+      {contact.shortBio?.trim() ? <p className={styles.phoneAppHint}>简介：{contact.shortBio}</p> : null}
+      {contact.generatedReason?.trim() ? (
+        <p className={styles.phoneGeneratedReason}>生成依据：{contact.generatedReason}</p>
+      ) : null}
       {contact.linkedAgentId ? <p className={styles.phoneAppHint}>已关联角色：{contact.linkedAgentId}</p> : null}
 
       <label className={styles.phoneFormField}>

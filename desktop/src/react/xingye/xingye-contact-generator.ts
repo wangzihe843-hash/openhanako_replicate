@@ -1,6 +1,7 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import type {
+  XingyeAiGeneratedContact,
   XingyeContactStatus,
   XingyeVirtualContact,
   XingyeVirtualContactKind,
@@ -78,7 +79,7 @@ export function generateVirtualContactsForRole(context: GenerateContext): Xingye
 
   const contacts: XingyeVirtualContact[] = [];
   const push = (entry: Parameters<typeof createVirtualContact>[1]) => {
-    if (contacts.length >= 8) return;
+    if (contacts.length >= 14) return;
     contacts.push(createVirtualContact(context, entry));
   };
 
@@ -219,5 +220,57 @@ export function generateVirtualContactsForRole(context: GenerateContext): Xingye
     });
   }
 
-  return contacts.slice(0, 8);
+  return contacts.slice(0, 14);
+}
+
+/** 当 AI 返回联系人数量不足时，用规则池补足；source 由调用方设为 rule_fallback。 */
+export function buildRuleFallbackAiContacts(
+  context: GenerateContext,
+  needed: number,
+  excludeNamesLower: Set<string>,
+): XingyeAiGeneratedContact[] {
+  const pool = generateVirtualContactsForRole(context);
+  const out: XingyeAiGeneratedContact[] = [];
+  for (const vc of pool) {
+    if (out.length >= needed) break;
+    const key = vc.displayName.trim().toLowerCase();
+    if (!key || excludeNamesLower.has(key)) continue;
+    excludeNamesLower.add(key);
+    const impression = vc.shortBio?.trim()
+      ? vc.shortBio.trim().slice(0, 60)
+      : '还没有形成明确印象。';
+    out.push({
+      targetType: 'virtual_contact',
+      displayName: vc.displayName,
+      kind: vc.kind,
+      shortBio: vc.shortBio,
+      remark: vc.remark,
+      impression,
+      relationshipHint: vc.relationshipHint,
+      tags: vc.tags ?? [],
+      faction: vc.faction,
+      status: vc.status ?? 'active',
+      generatedReason: vc.generatedReason ?? '本地规则补全联系人。',
+    });
+  }
+  let suffix = 1;
+  while (out.length < needed) {
+    const name = `联系人${suffix}`;
+    suffix += 1;
+    const key = name.toLowerCase();
+    if (excludeNamesLower.has(key)) continue;
+    excludeNamesLower.add(key);
+    out.push({
+      targetType: 'virtual_contact',
+      displayName: name,
+      kind: 'unknown',
+      shortBio: '弱关系，偶尔联系。',
+      impression: '来往不多，印象不深。',
+      relationshipHint: '疏远',
+      tags: [],
+      status: 'active',
+      generatedReason: '因 AI 返回数量不足而插入的规则占位联系人。',
+    });
+  }
+  return out;
 }
