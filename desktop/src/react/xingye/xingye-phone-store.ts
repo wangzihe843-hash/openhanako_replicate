@@ -26,7 +26,8 @@ export type XingyeContactSource =
   | 'phone_contacts'
   | 'phone_sms'
   | 'channel'
-  | 'system';
+  | 'system'
+  | 'ai_generated';
 
 export type XingyeVirtualContactKind =
   | 'friend'
@@ -76,6 +77,7 @@ export type XingyePhoneContactMeta = {
   faction?: string;
   status?: XingyeContactStatus;
   linkedAgentId?: string;
+  manualEditedFields?: string[];
   source?: XingyeContactSource;
   updatedAt: string;
 };
@@ -107,6 +109,30 @@ export type XingyePhoneContactGenerationState = {
   version: number;
 };
 
+export type XingyePhoneAiGenerationStatus = 'idle' | 'running' | 'success' | 'failed';
+
+export type XingyePhoneAiGenerationState = {
+  ownerAgentId: string;
+  kind: 'contacts_enrichment' | 'sms_history';
+  status: XingyePhoneAiGenerationStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  profileFingerprint: string;
+  error?: string;
+  version: number;
+};
+
+export type XingyeGeneratedSmsHistoryState = {
+  ownerAgentId: string;
+  generatedAt: string;
+  profileFingerprint: string;
+  contactsIncluded: {
+    targetType: XingyeContactTargetType;
+    targetId: string;
+  }[];
+  version: number;
+};
+
 export type XingyePhoneContactView = {
   ownerAgentId: string;
   targetType: XingyeContactTargetType;
@@ -134,6 +160,8 @@ export const XINGYE_PHONE_CONTACTS_STORAGE_KEY = 'xingye.phoneContacts';
 export const XINGYE_PHONE_SMS_THREADS_STORAGE_KEY = 'xingye.phoneSmsThreads';
 export const XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY = 'xingye.phoneVirtualContacts';
 export const XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneContactGenerationState';
+export const XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneAiGenerationState';
+export const XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneSmsHistoryGenerationState';
 
 const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
 
@@ -194,6 +222,9 @@ function normalizeContactMeta(value: unknown): XingyePhoneContactMeta | null {
     faction: normalizeOptionalString(value.faction),
     status: (normalizeOptionalString(value.status) as XingyeContactStatus | undefined) ?? 'active',
     linkedAgentId: normalizeOptionalString(value.linkedAgentId),
+    manualEditedFields: Array.isArray(value.manualEditedFields)
+      ? value.manualEditedFields.map(normalizeOptionalString).filter((item): item is string => Boolean(item))
+      : [],
     source: normalizeOptionalString(value.source) as XingyeContactSource | undefined,
     updatedAt: normalizeOptionalString(value.updatedAt) ?? new Date(0).toISOString(),
   };
@@ -390,10 +421,20 @@ export function savePhoneContactMeta(
   targetId: string,
   patch: Partial<Omit<XingyePhoneContactMeta, 'ownerAgentId' | 'targetType' | 'targetId' | 'updatedAt'>>,
   storage: StorageLike | null = getLocalStorage(),
+  options?: { markManualFields?: boolean },
 ): XingyePhoneContactMeta {
   const map = loadContactMetaMap(storage);
   const key = contactKey(ownerAgentId, targetType, targetId);
   const previous = map[key];
+  const nextManualFields = new Set(previous?.manualEditedFields ?? []);
+  if (options?.markManualFields !== false) {
+    if (patch.remark !== undefined) nextManualFields.add('remark');
+    if (patch.impression !== undefined) nextManualFields.add('impression');
+    if (patch.relationshipHint !== undefined) nextManualFields.add('relationshipHint');
+    if (patch.tags !== undefined) nextManualFields.add('tags');
+    if (patch.faction !== undefined) nextManualFields.add('faction');
+    if (patch.status !== undefined) nextManualFields.add('status');
+  }
   const next: XingyePhoneContactMeta = {
     ownerAgentId,
     targetType,
@@ -405,6 +446,7 @@ export function savePhoneContactMeta(
     faction: normalizeOptionalString(patch.faction) ?? previous?.faction,
     status: patch.status ?? previous?.status ?? 'active',
     linkedAgentId: normalizeOptionalString(patch.linkedAgentId) ?? previous?.linkedAgentId,
+    manualEditedFields: [...nextManualFields],
     source: patch.source ?? previous?.source ?? 'phone_contacts',
     updatedAt: new Date().toISOString(),
   };
@@ -414,15 +456,15 @@ export function savePhoneContactMeta(
 }
 
 export function blockPhoneContact(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string) {
-  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'blocked', source: 'manual' });
+  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'blocked', source: 'manual' }, undefined, { markManualFields: true });
 }
 
 export function deletePhoneContact(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string) {
-  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'deleted', source: 'manual' });
+  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'deleted', source: 'manual' }, undefined, { markManualFields: true });
 }
 
 export function restorePhoneContact(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string) {
-  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'active', source: 'manual' });
+  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { status: 'active', source: 'manual' }, undefined, { markManualFields: true });
 }
 
 export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyePhoneContactView {
@@ -548,7 +590,7 @@ export function linkVirtualContactToAgent(ownerAgentId: string, virtualContactId
   const updated = { ...contact, linkedAgentId, updatedAt: new Date().toISOString() };
   map[key] = updated;
   saveVirtualContactMap(map);
-  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId, source: 'manual' });
+  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId, source: 'manual' }, undefined, { markManualFields: false });
   return updated;
 }
 
@@ -560,7 +602,7 @@ export function unlinkVirtualContactFromAgent(ownerAgentId: string, virtualConta
   const updated = { ...contact, linkedAgentId: undefined, updatedAt: new Date().toISOString() };
   map[key] = updated;
   saveVirtualContactMap(map);
-  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId: '', source: 'manual' });
+  savePhoneContactMeta(ownerAgentId, 'virtual_contact', virtualContactId, { linkedAgentId: '', source: 'manual' }, undefined, { markManualFields: false });
   return updated;
 }
 
@@ -600,6 +642,142 @@ export function resolveContactAvatar(
     return null;
   }
   return null;
+}
+
+export function getPhoneProfileFingerprint(agent: Agent | null, profile: XingyeRoleProfile | null | undefined): string {
+  if (!agent) return '';
+  return [
+    agent.id,
+    agent.name,
+    agent.yuan,
+    profile?.displayName ?? '',
+    profile?.shortBio ?? '',
+    profile?.relationshipLabel ?? '',
+    profile?.speakingStyle ?? '',
+    profile?.identitySummary ?? '',
+    profile?.backgroundSummary ?? '',
+    profile?.personalitySummary ?? '',
+  ].join('|');
+}
+
+function loadAiGenerationStateMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyePhoneAiGenerationState> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const map: Record<string, XingyePhoneAiGenerationState> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!isRecord(value)) continue;
+      const ownerAgentId = normalizeOptionalString(value.ownerAgentId);
+      const kind = normalizeOptionalString(value.kind) as XingyePhoneAiGenerationState['kind'] | undefined;
+      const status = normalizeOptionalString(value.status) as XingyePhoneAiGenerationStatus | undefined;
+      const profileFingerprint = normalizeOptionalString(value.profileFingerprint);
+      if (!ownerAgentId || !kind || !status || !profileFingerprint) continue;
+      map[key] = {
+        ownerAgentId,
+        kind,
+        status,
+        profileFingerprint,
+        startedAt: normalizeOptionalString(value.startedAt),
+        finishedAt: normalizeOptionalString(value.finishedAt),
+        error: normalizeOptionalString(value.error),
+        version: typeof value.version === 'number' ? value.version : 1,
+      };
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function saveAiGenerationStateMap(next: Record<string, XingyePhoneAiGenerationState>, storage: StorageLike | null = getLocalStorage()) {
+  storage?.setItem(XINGYE_PHONE_AI_GENERATION_STATE_STORAGE_KEY, JSON.stringify(next));
+  notifyXingyePhoneChanged();
+}
+
+export function getPhoneAiGenerationState(
+  ownerAgentId: string,
+  kind: XingyePhoneAiGenerationState['kind'],
+  storage: StorageLike | null = getLocalStorage(),
+): XingyePhoneAiGenerationState | null {
+  return loadAiGenerationStateMap(storage)[`${ownerAgentId}::${kind}`] ?? null;
+}
+
+export function setPhoneAiGenerationState(
+  ownerAgentId: string,
+  kind: XingyePhoneAiGenerationState['kind'],
+  state: Partial<XingyePhoneAiGenerationState>,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadAiGenerationStateMap(storage);
+  const key = `${ownerAgentId}::${kind}`;
+  const previous = map[key];
+  map[key] = {
+    ownerAgentId,
+    kind,
+    status: state.status ?? previous?.status ?? 'idle',
+    profileFingerprint: state.profileFingerprint ?? previous?.profileFingerprint ?? '',
+    startedAt: state.startedAt ?? previous?.startedAt,
+    finishedAt: state.finishedAt ?? previous?.finishedAt,
+    error: state.error ?? previous?.error,
+    version: state.version ?? previous?.version ?? 1,
+  };
+  saveAiGenerationStateMap(map, storage);
+  return map[key];
+}
+
+function loadSmsHistoryGenerationStateMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyeGeneratedSmsHistoryState> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const map: Record<string, XingyeGeneratedSmsHistoryState> = {};
+    for (const [ownerAgentId, value] of Object.entries(parsed)) {
+      if (!isRecord(value)) continue;
+      const generatedAt = normalizeOptionalString(value.generatedAt);
+      const profileFingerprint = normalizeOptionalString(value.profileFingerprint);
+      if (!generatedAt || !profileFingerprint) continue;
+      map[ownerAgentId] = {
+        ownerAgentId,
+        generatedAt,
+        profileFingerprint,
+        contactsIncluded: Array.isArray(value.contactsIncluded)
+          ? value.contactsIncluded.filter((item): item is XingyeGeneratedSmsHistoryState['contactsIncluded'][number] => (
+            isRecord(item)
+            && typeof item.targetType === 'string'
+            && typeof item.targetId === 'string'
+          ))
+          : [],
+        version: typeof value.version === 'number' ? value.version : 1,
+      };
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function saveSmsHistoryGenerationStateMap(next: Record<string, XingyeGeneratedSmsHistoryState>, storage: StorageLike | null = getLocalStorage()) {
+  storage?.setItem(XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY, JSON.stringify(next));
+  notifyXingyePhoneChanged();
+}
+
+export function getSmsHistoryGenerationState(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyeGeneratedSmsHistoryState | null {
+  return loadSmsHistoryGenerationStateMap(storage)[ownerAgentId] ?? null;
+}
+
+export function setSmsHistoryGenerationState(
+  ownerAgentId: string,
+  state: XingyeGeneratedSmsHistoryState,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadSmsHistoryGenerationStateMap(storage);
+  map[ownerAgentId] = state;
+  saveSmsHistoryGenerationStateMap(map, storage);
 }
 
 export function getPhoneContacts(
@@ -669,10 +847,14 @@ export function getPhoneContacts(
 
 export function getSmsThreads(
   ownerAgentId: string,
-  targetType?: XingyeContactTargetType,
-  storage: StorageLike | null = getLocalStorage(),
+  targetTypeOrStorage?: XingyeContactTargetType | StorageLike | null,
+  storageArg?: StorageLike | null,
 ): XingyePhoneSmsThread[] {
   if (!ownerAgentId) return [];
+  const targetType = typeof targetTypeOrStorage === 'string' ? targetTypeOrStorage : undefined;
+  const storage = typeof targetTypeOrStorage === 'string'
+    ? (storageArg ?? getLocalStorage())
+    : (storageArg ?? targetTypeOrStorage ?? getLocalStorage());
   return Object.values(loadSmsThreadMap(storage))
     .filter(thread => thread.ownerAgentId === ownerAgentId && (!targetType || thread.targetType === targetType))
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));

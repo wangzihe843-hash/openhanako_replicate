@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
-import type { XingyeRoleProfileMap } from './xingye-profile-store';
+import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
+import { generateSmsHistoryWithAI } from './xingye-phone-ai';
 import {
   addMockSmsMessage,
   getPhoneContacts,
+  getPhoneAiGenerationState,
+  getPhoneProfileFingerprint,
+  getSmsHistoryGenerationState,
   getSmsThread,
   getSmsThreads,
   type XingyeContactTargetType,
@@ -30,8 +34,10 @@ function formatSmsTime(iso: string): string {
 export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBack }: PhoneSmsAppProps) {
   const version = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? '';
+  const ownerProfile = useXingyeRoleProfile(ownerAgentId);
+  const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
   const contacts = useMemo(
-    () => getPhoneContacts(ownerAgentId, agents, profiles),
+    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
     [ownerAgentId, agents, profiles, version],
   );
   const contactsByTarget = useMemo(
@@ -41,10 +47,24 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   const [selectedTarget, setSelectedTarget] = useState<{ targetType: XingyeContactTargetType; targetId: string } | null>(initialTarget ?? null);
   const [draftMessage, setDraftMessage] = useState('');
   const [direction, setDirection] = useState<'incoming' | 'outgoing'>('outgoing');
+  const smsAiState = getPhoneAiGenerationState(ownerAgentId, 'sms_history');
+  const smsHistoryState = getSmsHistoryGenerationState(ownerAgentId);
 
   useEffect(() => {
     setSelectedTarget(initialTarget ?? null);
   }, [initialTarget]);
+
+  useEffect(() => {
+    if (!ownerAgent) return;
+    if (smsHistoryState?.generatedAt) return;
+    if (smsAiState?.status === 'running') return;
+    generateSmsHistoryWithAI({
+      ownerAgent,
+      ownerProfile,
+      contacts,
+      profileFingerprint,
+    }).catch(() => {});
+  }, [ownerAgentId, ownerAgent, ownerProfile, contacts, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status]);
 
   const threads = useMemo(() => getSmsThreads(ownerAgentId), [ownerAgentId, version]);
   const selectedThread = selectedTarget ? getSmsThread(ownerAgentId, selectedTarget.targetType, selectedTarget.targetId) : null;
@@ -71,6 +91,25 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
           <p className={styles.phoneAppHint}>
             当前手机主人：{ownerAgent?.name ?? '未选择角色'}。这些是 TA 手机里的角色间短信模拟，不是 OpenHanako 原生聊天。
           </p>
+          {smsAiState?.status === 'running' ? (
+            <p className={styles.phoneAppHint}>正在整理 TA 手机里的旧短信… 这可能需要几十秒。</p>
+          ) : null}
+          {smsAiState?.status === 'failed' ? (
+            <div className={styles.phoneActionRow}>
+              <span className={styles.phoneAppHint}>生成失败，可以稍后重试：{smsAiState.error ?? '未知错误'}</span>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => {
+                  if (!ownerAgent) return;
+                  generateSmsHistoryWithAI({ ownerAgent, ownerProfile, contacts, profileFingerprint }).catch(() => {});
+                }}
+              >
+                重试生成
+              </button>
+            </div>
+          ) : null}
+          {smsAiState?.status === 'success' ? <p className={styles.phoneAppHint}>旧短信已缓存，本次不会重复生成。</p> : null}
         </section>
 
         {!selectedTarget ? (
@@ -78,7 +117,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
             {threads.map(thread => {
               const contact = contactsByTarget.get(`${thread.targetType}:${thread.targetId}`);
               const latest = thread.messages[thread.messages.length - 1];
-              if (!contact) return null;
+              if (!contact || contact.status === 'deleted') return null;
               return (
                 <button
                   key={thread.id}

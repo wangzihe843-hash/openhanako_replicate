@@ -3,11 +3,14 @@ import type { Agent } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
 import { PhoneContactSections } from './PhoneContactSections';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
+import { enrichContactsWithAI } from './xingye-phone-ai';
 import {
   blockPhoneContact,
   deletePhoneContact,
   ensureGeneratedVirtualContacts,
   getPhoneContacts,
+  getPhoneAiGenerationState,
+  getPhoneProfileFingerprint,
   linkVirtualContactToAgent,
   restorePhoneContact,
   savePhoneContactMeta,
@@ -37,6 +40,7 @@ export function PhoneContactsApp({
   const _phoneStorageVersion = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? currentAgentId ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
+  const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
   ensureGeneratedVirtualContacts(ownerAgentId, ownerAgent, ownerProfile, agents, profiles);
   const contacts = useMemo(
     () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
@@ -49,6 +53,7 @@ export function PhoneContactsApp({
   const [relationDraft, setRelationDraft] = useState('');
   const [tagsDraft, setTagsDraft] = useState('');
   const [factionDraft, setFactionDraft] = useState('');
+  const aiState = getPhoneAiGenerationState(ownerAgentId, 'contacts_enrichment');
 
   const openContact = (contact: XingyePhoneContactView) => {
     setSelectedContactKey(`${contact.targetType}:${contact.targetId}`);
@@ -71,6 +76,20 @@ export function PhoneContactsApp({
     });
   };
 
+  const handleEnrichContacts = async () => {
+    if (!ownerAgent) return;
+    try {
+      await enrichContactsWithAI({
+        ownerAgent,
+        ownerProfile,
+        contacts,
+        profileFingerprint,
+      });
+    } catch {
+      // state is already persisted in xingye-phone-store
+    }
+  };
+
   return (
     <div className={styles.phoneShell} aria-label="通讯录">
       <div className={styles.phoneStatusBar}>
@@ -88,6 +107,13 @@ export function PhoneContactsApp({
               <p className={styles.phoneAppHint}>
                 这是“当前角色眼中的社交网络”。联系人可能是真实角色，也可能只是 TA 手机里的虚拟联系人。
               </p>
+              <div className={styles.phoneActionRow}>
+                <button type="button" className={styles.secondaryButton} onClick={handleEnrichContacts} disabled={!ownerAgent || aiState?.status === 'running'}>
+                  {aiState?.status === 'running' ? 'AI 补全中…' : 'AI 补全印象'}
+                </button>
+                {aiState?.status === 'failed' ? <span className={styles.phoneAppHint}>补全失败：{aiState.error ?? '可重试'}</span> : null}
+                {aiState?.status === 'success' ? <span className={styles.phoneAppHint}>补全完成</span> : null}
+              </div>
             </section>
             <PhoneContactSections contacts={contacts} onSelect={openContact} />
             <section className={styles.phoneAppCard}>
