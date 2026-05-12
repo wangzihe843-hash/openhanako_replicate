@@ -53,6 +53,56 @@ import {
   collectRecentContextForAgent,
   type XingyeRecentContext,
 } from './xingye-recent-context';
+import {
+  buildXingyeLoreRuntimeQueryText,
+  collectXingyeLoreRuntimeContext,
+  formatXingyeLoreRuntimeContextBlock,
+  type XingyeLoreRuntimeContextPurpose,
+} from './xingye-lore-runtime-context';
+
+function buildLoreContextForPhone(params: {
+  agentId: string;
+  purpose: XingyeLoreRuntimeContextPurpose;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+  recentContext?: XingyeRecentContext | null;
+  smsSummary?: ReadonlyArray<{ latest?: string | null | undefined; latestContent?: string | null | undefined }>;
+  reasons?: ReadonlyArray<string | null | undefined>;
+}): string {
+  const { agentId, purpose, ownerProfile, contacts, recentContext, smsSummary, reasons } = params;
+  const profileParts: Array<string | undefined> = ownerProfile
+    ? [
+      ownerProfile.displayName,
+      ownerProfile.shortBio,
+      ownerProfile.identitySummary,
+      ownerProfile.backgroundSummary,
+      ownerProfile.personalitySummary,
+      ownerProfile.relationshipLabel,
+      ownerProfile.values,
+      ownerProfile.taboos,
+      ownerProfile.relationshipMode,
+    ]
+    : [];
+  const contactParts: Array<string | undefined> = [];
+  for (const c of contacts.slice(0, 20)) {
+    contactParts.push(c.displayName, c.remark, c.impression, c.relationshipHint, c.shortBio, c.faction);
+  }
+  const smsParts = (smsSummary ?? []).flatMap((s) => [s.latest ?? undefined, s.latestContent ?? undefined]);
+  const reasonParts = (reasons ?? []).filter((r): r is string => typeof r === 'string' && !!r.trim());
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profileParts,
+    recentContext?.summaryText,
+    ...contactParts,
+    ...smsParts,
+    ...reasonParts,
+  ]);
+  const context = collectXingyeLoreRuntimeContext(agentId, {
+    purpose,
+    queryText,
+    maxChars: 2_000,
+  });
+  return formatXingyeLoreRuntimeContextBlock(context);
+}
 
 function asValidIso(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -265,7 +315,13 @@ export async function enrichContactsWithAI(params: {
     version: 1,
   });
   try {
-    const prompt = buildContactsEnrichmentPrompt({ ownerAgent, ownerProfile, contacts });
+    const loreContextText = buildLoreContextForPhone({
+      agentId: ownerAgent.id,
+      purpose: 'phone_contacts',
+      ownerProfile,
+      contacts,
+    });
+    const prompt = buildContactsEnrichmentPrompt({ ownerAgent, ownerProfile, contacts, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_enrichment',
       ownerAgentId: ownerAgent.id,
@@ -318,9 +374,16 @@ export async function generateVirtualContactsWithAI(params: {
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+    const loreContextText = buildLoreContextForPhone({
+      agentId: ownerAgent.id,
+      purpose: 'phone_contacts',
+      ownerProfile,
+      contacts,
+      recentContext,
+    });
     const prompt = isRegenerate
-      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts, recentContext })
-      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial', recentContext });
+      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts, recentContext, loreContextText })
+      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial', recentContext, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: isRegenerate ? 'contacts_regenerate_all' : 'virtual_contacts_generate',
       ownerAgentId: ownerAgent.id,
@@ -425,7 +488,15 @@ export async function updateContactsFromRecentContextWithAI(params: {
       count: thread.messages.length,
     }));
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
-    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary, recentContext });
+    const loreContextText = buildLoreContextForPhone({
+      agentId: ownerAgent.id,
+      purpose: 'phone_contacts',
+      ownerProfile,
+      contacts,
+      recentContext,
+      smsSummary,
+    });
+    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary, recentContext, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_incremental_update',
       ownerAgentId: ownerAgent.id,
@@ -515,7 +586,15 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       count: thread.messages.length,
     }));
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
-    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary, recentContext });
+    const loreContextText = buildLoreContextForPhone({
+      agentId: ownerAgent.id,
+      purpose: 'phone_contacts',
+      ownerProfile,
+      contacts: contactsAfterRestore,
+      recentContext,
+      smsSummary,
+    });
+    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary, recentContext, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_rollback_update',
       ownerAgentId: ownerAgent.id,
@@ -575,7 +654,13 @@ export async function generateSmsHistoryWithAI(params: {
     version: 1,
   });
   try {
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts });
+    const loreContextText = buildLoreContextForPhone({
+      agentId: ownerAgent.id,
+      purpose: 'phone_sms',
+      ownerProfile,
+      contacts: smsContacts,
+    });
+    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
@@ -741,11 +826,21 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
   }
 
   const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+  const loreContextText = buildLoreContextForPhone({
+    agentId: ownerAgent.id,
+    purpose: 'phone_sms',
+    ownerProfile,
+    contacts: bundles.map(b => b.contact),
+    recentContext,
+    smsSummary: bundles.map(b => ({ latestContent: b.smsSummary.latestContent })),
+    reasons: bundles.flatMap(b => b.mergedReasons),
+  });
   const prompt = buildSmsIncrementalUpdatePrompt({
     ownerAgent,
     ownerProfile,
     changeBundles: bundles,
     recentContext,
+    loreContextText,
   });
   const { raw } = await requestPhoneAi({
     kind: 'sms_history',

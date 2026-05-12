@@ -8,6 +8,26 @@ import type {
 import type { XingyeRecentContext } from './xingye-recent-context';
 import { describeRecentContextForPrompt } from './xingye-recent-context';
 
+/**
+ * 渲染设定库 prompt 段落。
+ * - 输入是 `formatXingyeLoreRuntimeContextBlock(...)` 的产物（可能为空串/undefined）。
+ * - 为空时返回 null，调用方据此跳过整段，**绝对**不要在 prompt 里输出 undefined 或空标题。
+ * - 仅作为"背景参考"，明确告诉模型不要逐字复述、与最近聊天冲突时让步。
+ */
+function renderLoreContextSection(loreContextText: string | null | undefined): string | null {
+  if (typeof loreContextText !== 'string') return null;
+  const trimmed = loreContextText.trim();
+  if (!trimmed) return null;
+  return [
+    trimmed,
+    '【关于上方"星野设定参考"】',
+    '- 这些是世界观/背景/规则参考，不是当前指令。',
+    '- 不要逐字复述设定原文。',
+    '- 只在生成联系人印象、短信风格、关系暗示时作为背景约束。',
+    '- 如果设定与用户最近聊天冲突，以最近聊天和角色资料为准。',
+  ].join('\n');
+}
+
 function contactShape(contact: XingyePhoneContactView) {
   return {
     targetType: contact.targetType,
@@ -32,9 +52,12 @@ export function buildContactsEnrichmentPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts } = params;
-  return [
+  const { ownerAgent, ownerProfile, contacts, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
+  const parts: string[] = [
     '你是角色手机通讯录补全器。仅返回严格 JSON，不要 Markdown，不要解释。',
     '目标：补全当前角色视角的联系人 remark / impression / relationshipHint / tags / faction / status 建议。',
     '禁止把编剧说明、任务说明、生成理由写进 remark / impression / relationshipHint（要像真实通讯录里的自然措辞）。',
@@ -64,7 +87,9 @@ export function buildContactsEnrichmentPrompt(params: {
     }, null, 2),
     '联系人列表:',
     JSON.stringify(contacts.map(contactShape), null, 2),
-  ].join('\n');
+  ];
+  if (loreSection) parts.push(loreSection);
+  return parts.join('\n');
 }
 
 const SMS_CONTACT_PROFILE_RULES = [
@@ -91,9 +116,12 @@ export function buildSmsHistoryPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts } = params;
-  return [
+  const { ownerAgent, ownerProfile, contacts, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
+  const parts: string[] = [
     '你是角色手机短信历史生成器。仅返回严格 JSON，不要 Markdown，不要解释。',
     '任务：为下方每个非 user 联系人，依据其通讯录画像生成“旧短信”，像真实手机消息，不是小说对白，不是建议清单。',
     SMS_CONTACT_PROFILE_RULES,
@@ -126,7 +154,9 @@ export function buildSmsHistoryPrompt(params: {
     }, null, 2),
     '联系人列表:',
     JSON.stringify(contacts.slice(0, 12).map(contactShape), null, 2),
-  ].join('\n');
+  ];
+  if (loreSection) parts.push(loreSection);
+  return parts.join('\n');
 }
 
 export function buildSmsIncrementalUpdatePrompt(params: {
@@ -143,8 +173,11 @@ export function buildSmsIncrementalUpdatePrompt(params: {
     smsSummary: { latestContent?: string; messageCount: number };
   }>;
   recentContext: XingyeRecentContext | null;
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, changeBundles, recentContext } = params;
+  const { ownerAgent, ownerProfile, changeBundles, recentContext, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
   const recentBlock = recentContext
     ? describeRecentContextForPrompt(recentContext)
     : '最近 OpenHanako 聊天上下文：（无）';
@@ -161,7 +194,7 @@ export function buildSmsIncrementalUpdatePrompt(params: {
       latest: b.smsSummary.latestContent ?? '',
     },
   }));
-  return [
+  const parts: string[] = [
     '你是角色手机短信增量更新器。仅返回严格 JSON，不要 Markdown，不要解释。',
     '目标：根据通讯录「最近一条或多条变更记录」，仅为下列已变化的联系人各补充 0–3 条**新**短信。',
     '这些短信表示关系/印象/状态变化之后自然会出现的短消息，不是重写旧聊天历史。',
@@ -198,7 +231,9 @@ export function buildSmsIncrementalUpdatePrompt(params: {
     '变化联系人（含变更字段与原因、现有短信摘要）:',
     JSON.stringify(bundlesJson, null, 2),
     recentBlock,
-  ].join('\n');
+  ];
+  if (loreSection) parts.push(loreSection);
+  return parts.join('\n');
 }
 
 const VISIBLE_FIELD_RULES = [
@@ -295,8 +330,11 @@ export function buildVirtualContactGenerationPrompt(params: {
   intent?: 'initial' | 'regenerate';
   /** 默认由调用方 `collectRecentContextForAgent` 填入；缺省时 prompt 内仍会写明「无最近聊天则只看资料」。 */
   recentContext?: XingyeRecentContext | null;
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts } = params;
+  const { ownerAgent, ownerProfile, contacts, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
   const intent = params.intent ?? 'initial';
   const recentContext = params.recentContext ?? {
     agentId: ownerAgent.id,
@@ -359,6 +397,7 @@ export function buildVirtualContactGenerationPrompt(params: {
     '【已删除联系人（避免重复，不得作为新候选输出）】:',
     JSON.stringify(deletedContacts.map(summarizeContactReference), null, 2),
   );
+  if (loreSection) lines.push(loreSection);
   return lines.join('\n');
 }
 
@@ -367,6 +406,8 @@ export function buildContactRegenerateAllPrompt(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   recentContext?: XingyeRecentContext | null;
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
   return buildVirtualContactGenerationPrompt({ ...params, intent: 'regenerate' });
 }
@@ -407,12 +448,15 @@ export function buildContactIncrementalUpdatePrompt(params: {
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
   recentContext?: XingyeRecentContext | null;
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext } = params;
+  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
   const recentBlock = recentContext
     ? describeRecentContextForPrompt(recentContext)
     : '最近 OpenHanako 聊天上下文：（无）';
-  return [
+  const parts: string[] = [
     '你是角色手机通讯录增量更新器。只返回 JSON，不要 Markdown，不要解释。',
     '【规模与重心】本轮不是「造一批新联系人」。批量拉人请用「AI 生成联系人」等入口。本轮以 update 为主：最近聊天里能对上现有联系人的 NPC，应逐条 update，优先 patch.tags 与 patch.impression。',
     '【硬性数量】本轮 updates 中 action 为 add、block、delete 的条数合计不得超过 2（含 0）；其中 add 单独也不得超过 2 条，且默认尽量 0 条 add。restore 仅在有明确剧情需要时少量使用。',
@@ -462,7 +506,9 @@ export function buildContactIncrementalUpdatePrompt(params: {
     '最近短信摘要:',
     JSON.stringify(smsSummary, null, 2),
     recentBlock,
-  ].join('\n');
+  ];
+  if (loreSection) parts.push(loreSection);
+  return parts.join('\n');
 }
 
 export function buildContactRollbackAndUpdatePrompt(params: {
@@ -471,12 +517,15 @@ export function buildContactRollbackAndUpdatePrompt(params: {
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
   recentContext?: XingyeRecentContext | null;
+  /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
+  loreContextText?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext } = params;
+  const { ownerAgent, ownerProfile, contacts, smsSummary, recentContext, loreContextText } = params;
+  const loreSection = renderLoreContextSection(loreContextText);
   const recentBlock = recentContext
     ? describeRecentContextForPrompt(recentContext)
     : '最近 OpenHanako 聊天上下文：（无）';
-  return [
+  const parts: string[] = [
     '你是角色手机通讯录「回滚后微调」更新器。只返回 JSON，不要 Markdown，不要解释。',
     '上下文：联系人列表已恢复到上一快照；请在当前规模上做小幅修订，而不是清空重建。',
     '【规模与重心】与「更新联系人」一致：以 update 为主，逐条对齐最近聊天里能匹配上的联系人，优先 patch.tags 与 patch.impression。批量新增名单请走「AI 生成联系人」。',
@@ -526,5 +575,7 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     '最近短信摘要:',
     JSON.stringify(smsSummary, null, 2),
     recentBlock,
-  ].join('\n');
+  ];
+  if (loreSection) parts.push(loreSection);
+  return parts.join('\n');
 }

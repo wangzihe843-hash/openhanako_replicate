@@ -291,3 +291,152 @@ describe('buildSmsIncrementalUpdatePrompt', () => {
     expect(prompt).toContain('老周');
   });
 });
+
+describe('phone prompt builders — lore runtime context section', () => {
+  const loreText = [
+    '【星野设定参考】',
+    '- 标题：边境医院',
+    '  分类：地点',
+    '  内容：主角任职的小型边境医院。',
+  ].join('\n');
+
+  function expectLoreSection(prompt: string) {
+    expect(prompt).toContain('【星野设定参考】');
+    expect(prompt).toContain('边境医院');
+    expect(prompt).toContain('【关于上方"星野设定参考"】');
+    expect(prompt).toContain('不要逐字复述');
+    expect(prompt).toContain('以最近聊天和角色资料为准');
+  }
+
+  function expectNoLeak(prompt: string) {
+    expect(prompt).not.toContain('【星野设定参考】');
+    expect(prompt).not.toContain('undefined');
+    expect(prompt).not.toContain('【关于上方"星野设定参考"】');
+  }
+
+  it('includes the lore section when loreContextText is provided to buildSmsHistoryPrompt', () => {
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      loreContextText: loreText,
+    });
+    expectLoreSection(prompt);
+  });
+
+  it('does not add any lore heading or emit undefined when loreContextText is omitted', () => {
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+    });
+    expectNoLeak(prompt);
+  });
+
+  it('does not add any lore heading or emit undefined when loreContextText is empty string', () => {
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      loreContextText: '',
+    });
+    expectNoLeak(prompt);
+  });
+
+  it('includes the lore section in buildVirtualContactGenerationPrompt', () => {
+    const prompt = buildVirtualContactGenerationPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      intent: 'initial',
+      recentContext: emptyRecent,
+      loreContextText: loreText,
+    });
+    expectLoreSection(prompt);
+  });
+
+  it('omits the lore section in buildVirtualContactGenerationPrompt when loreContextText is empty', () => {
+    const prompt = buildVirtualContactGenerationPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      intent: 'initial',
+      recentContext: emptyRecent,
+      loreContextText: '   ',
+    });
+    expectNoLeak(prompt);
+  });
+
+  it('includes the lore section in buildContactRegenerateAllPrompt', () => {
+    const prompt = buildContactRegenerateAllPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      recentContext: emptyRecent,
+      loreContextText: loreText,
+    });
+    expectLoreSection(prompt);
+  });
+
+  it('includes the lore section in buildContactIncrementalUpdatePrompt', () => {
+    const prompt = buildContactIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      smsSummary: [],
+      recentContext: emptyRecent,
+      loreContextText: loreText,
+    });
+    expectLoreSection(prompt);
+  });
+
+  it('omits the lore section in buildContactIncrementalUpdatePrompt when loreContextText is undefined', () => {
+    const prompt = buildContactIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      smsSummary: [],
+      recentContext: emptyRecent,
+    });
+    expectNoLeak(prompt);
+  });
+
+  it('includes the lore section in buildSmsIncrementalUpdatePrompt', () => {
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-1',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['聊天里有变化'],
+        changeLogIds: ['cc-1'],
+        contact: activeView,
+        smsSummary: { messageCount: 0 },
+      }],
+      recentContext: emptyRecent,
+      loreContextText: loreText,
+    });
+    expectLoreSection(prompt);
+  });
+
+  it('omits the lore section in buildSmsIncrementalUpdatePrompt when loreContextText is undefined', () => {
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-1',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['聊天里有变化'],
+        changeLogIds: ['cc-1'],
+        contact: activeView,
+        smsSummary: { messageCount: 0 },
+      }],
+      recentContext: emptyRecent,
+    });
+    expectNoLeak(prompt);
+  });
+});
