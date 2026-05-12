@@ -68,6 +68,9 @@ describe('RoleDetailPanel OpenHanako sync', () => {
       />,
     );
 
+    expect(screen.queryByRole('heading', { name: 'TA 当前状态' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '手动刷新状态' })).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '星野花子' } });
     fireEvent.change(screen.getByLabelText('简介'), { target: { value: '会认真记住用户偏好的搭子。' } });
     fireEvent.change(screen.getByLabelText('关系标签'), { target: { value: '同伴' } });
