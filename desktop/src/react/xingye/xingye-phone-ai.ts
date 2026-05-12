@@ -10,6 +10,9 @@ import {
   clearAllVirtualContactsForOwner,
   createPhoneContactSnapshot,
   ensureGeneratedVirtualContacts,
+  computePhoneContactGenerationInputHash,
+  withVirtualContactAiGenerationLock,
+  isStalePhoneContactGenerationRunning,
   getContactAiUpdateState,
   getLatestPhoneContactSnapshot,
   getPhoneContactGenerationState,
@@ -364,13 +367,54 @@ export async function generateVirtualContactsWithAI(params: {
   profileFingerprint: string;
   mode?: XingyeContactUpdateMode;
 }) {
+  const { ownerAgent } = params;
+  return withVirtualContactAiGenerationLock(ownerAgent.id, () => generateVirtualContactsWithAISequential(params));
+}
+
+async function generateVirtualContactsWithAISequential(params: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  contacts: XingyePhoneContactView[];
+  agents: Agent[];
+  profiles: Record<string, XingyeRoleProfile | undefined>;
+  profileFingerprint: string;
+  mode?: XingyeContactUpdateMode;
+}) {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
   const mode = params.mode ?? 'initial_ai_generate';
   const isRegenerate = mode === 'regenerate_all';
+  const sortedAgentIds = agents.map(a => a.id).sort();
+  const inputHash = computePhoneContactGenerationInputHash(profileFingerprint, sortedAgentIds);
   const softBlock = profileLikelyForbidsBlocked(ownerProfile, ownerAgent);
   const distCtx = isRegenerate
     ? { intent: 'regenerate' as const, profileAllowsNoBlocked: softBlock }
     : { intent: 'initial' as const };
+
+  let existingGen = getPhoneContactGenerationState(ownerAgent.id);
+  if (existingGen?.status === 'running' && isStalePhoneContactGenerationRunning(existingGen)) {
+    const finStale = new Date().toISOString();
+    setPhoneContactGenerationState(ownerAgent.id, {
+      ...existingGen,
+      status: 'failed',
+      finishedAt: finStale,
+      error: 'stale_run_aborted',
+      version: existingGen.version,
+    });
+    existingGen = getPhoneContactGenerationState(ownerAgent.id);
+  }
+
+  const startedAt = new Date().toISOString();
+  setPhoneContactGenerationState(ownerAgent.id, {
+    ownerAgentId: ownerAgent.id,
+    generatedAt: startedAt,
+    profileFingerprint,
+    inputHash,
+    mode: 'ai',
+    version: 1,
+    status: 'running',
+    startedAt,
+  });
+
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
@@ -428,12 +472,17 @@ export async function generateVirtualContactsWithAI(params: {
       mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
     });
     const virtuals = getVirtualContacts(ownerAgent.id);
+    const finishedAt = new Date().toISOString();
     setPhoneContactGenerationState(ownerAgent.id, {
       ownerAgentId: ownerAgent.id,
-      generatedAt: new Date().toISOString(),
+      generatedAt: finishedAt,
       profileFingerprint,
+      inputHash,
       mode: 'ai',
       version: 1,
+      status: 'success',
+      startedAt,
+      finishedAt,
     });
     setContactUpdateState(ownerAgent.id, mode, 'success');
     const noticeBits: string[] = [];
@@ -456,16 +505,23 @@ export async function generateVirtualContactsWithAI(params: {
       notice: noticeBits.length ? noticeBits.join(' ') : undefined,
     };
   } catch (error) {
-    ensureGeneratedVirtualContacts(ownerAgent.id, ownerAgent, ownerProfile, agents, profiles);
+    const fin = new Date().toISOString();
+    const errMsg = error instanceof Error ? error.message : String(error);
     setPhoneContactGenerationState(ownerAgent.id, {
       ownerAgentId: ownerAgent.id,
-      generatedAt: new Date().toISOString(),
+      generatedAt: startedAt,
       profileFingerprint,
-      mode: 'rule',
+      inputHash,
+      mode: 'ai',
       version: 1,
+      status: 'failed',
+      startedAt,
+      finishedAt: fin,
+      error: errMsg,
     });
-    setContactUpdateState(ownerAgent.id, mode, 'failed', error instanceof Error ? error.message : String(error));
-    return { generatedBy: 'rule_fallback' as const, count: 0, error: error instanceof Error ? error.message : String(error) };
+    ensureGeneratedVirtualContacts(ownerAgent.id, ownerAgent, ownerProfile, agents, profiles as XingyeRoleProfileMap);
+    setContactUpdateState(ownerAgent.id, mode, 'failed', errMsg);
+    return { generatedBy: 'rule_fallback' as const, count: 0, error: errMsg };
   }
 }
 
@@ -553,7 +609,7 @@ export async function regenerateAllContactsWithAI(params: {
    * 余下的同名 AI 候选会通过 applyAiGeneratedContacts 的 dedupe 合并到保留项上。
    */
   clearAllVirtualContactsForOwner(ownerAgent.id, undefined, { preserveManuallyEdited: true });
-  const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
+  const contactsForPrompt = getPhoneContacts(ownerAgent.id, agents, profiles as XingyeRoleProfileMap, { includeDeleted: true });
   return generateVirtualContactsWithAI({
     ownerAgent,
     ownerProfile,

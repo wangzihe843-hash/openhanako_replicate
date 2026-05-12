@@ -1,44 +1,57 @@
-/**
- * xingye-secret-space-store.ts — 秘密空间历史记录（workspace-first，不经 localStorage）
- */
-
-import { sanitizeAgentIdForPath } from './xingye-agent-path';
+import type { SecretSpaceCategoryId } from './SecretSpaceHome';
+import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { postXingyeStorage } from './xingye-storage-api';
+import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
-export type SecretSpaceCategoryId =
-  | 'state'
-  | 'draft_reply'
-  | 'dream'
-  | 'saved_item'
-  | 'unsent_moment'
-  | 'memory_fragment';
+const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
-export interface SecretSpaceRecordRef {
-  relativePath: string;
-  title: string;
-  createdAt: string;
+function secretSpaceCategoryRel(category: SecretSpaceCategoryId): string {
+  return `secret-space/${category}.jsonl`;
 }
 
-function secretSpaceCategoryRel(agentId: string, category: SecretSpaceCategoryId): string {
-  return `agents/${sanitizeAgentIdForPath(agentId)}/secret-space/${category}`;
+function normalizeRecord(
+  value: unknown,
+  category: SecretSpaceCategoryId,
+  index: number,
+): SecretSpaceSampleRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt ? raw.createdAt : new Date(0).toISOString();
+  const key =
+    (typeof raw.key === 'string' && raw.key)
+    || (typeof raw.id === 'string' && raw.id)
+    || `${category}-${index}`;
+  const title = typeof raw.title === 'string' && raw.title ? raw.title : key;
+  const body = typeof raw.body === 'string'
+    ? raw.body
+    : (typeof raw.content === 'string' ? raw.content : '');
+  const kind = category === 'state' ? 'memory_fragment' : category;
+  if (!body && typeof raw.summary !== 'string') return null;
+  return {
+    key,
+    title,
+    body,
+    createdAt,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : undefined,
+    summary: typeof raw.summary === 'string' ? raw.summary : undefined,
+    meta: typeof raw.meta === 'string' ? raw.meta : undefined,
+    source: typeof raw.source === 'string' ? raw.source : undefined,
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
+    kind,
+  };
 }
 
 export async function listSecretSpaceRecords(
   agentId: string,
   category: SecretSpaceCategoryId,
-): Promise<SecretSpaceRecordRef[]> {
-  const rel = secretSpaceCategoryRel(agentId, category);
+): Promise<SecretSpaceSampleRecord[]> {
+  if (!agentId) return [];
   try {
-    const data = await postXingyeStorage({ action: 'list', relativePath: rel });
-    const entries = Array.isArray(data.entries) ? data.entries : [];
-    return entries
-      .filter((e: { isDir?: boolean; name?: string }) => !e.isDir && typeof e.name === 'string' && /\.json$/i.test(e.name))
-      .map((e: { name: string; mtime?: string }) => ({
-        relativePath: `${rel}/${e.name}`,
-        title: e.name.replace(/\.json$/i, ''),
-        createdAt: e.mtime || '',
-      }))
-      .sort((a: SecretSpaceRecordRef, b: SecretSpaceRecordRef) => Date.parse(b.createdAt || '0') - Date.parse(a.createdAt || '0'));
+    const records = await backend.listJsonl<Record<string, unknown>>(agentId, secretSpaceCategoryRel(category));
+    return records
+      .map((record, index) => normalizeRecord(record, category, index))
+      .filter((record): record is SecretSpaceSampleRecord => Boolean(record))
+      .sort((a, b) => Date.parse(b.createdAt || '0') - Date.parse(a.createdAt || '0'));
   } catch {
     return [];
   }
@@ -49,12 +62,17 @@ export async function appendSecretSpaceRecord(
   category: SecretSpaceCategoryId,
   body: Record<string, unknown>,
 ): Promise<void> {
-  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const rel = `${secretSpaceCategoryRel(agentId, category)}/${runId}.json`;
-  await postXingyeStorage({
-    action: 'write',
-    relativePath: rel,
-    content: JSON.stringify({ ...body, createdAt: new Date().toISOString() }, null, 2),
+  const now = new Date().toISOString();
+  const key = typeof body.key === 'string' && body.key
+    ? body.key
+    : (typeof body.id === 'string' && body.id ? body.id : `${category}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+  await backend.appendJsonl(agentId, secretSpaceCategoryRel(category), {
+    ...body,
+    key,
+    id: typeof body.id === 'string' && body.id ? body.id : key,
+    kind: body.kind ?? category,
+    createdAt: body.createdAt ?? now,
+    updatedAt: body.updatedAt ?? body.createdAt ?? now,
   });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('xingye-secret-space-changed', { detail: { agentId, category } }));

@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   createLocalStorageXingyeBackend,
   createMemoryXingyeStorageBackend,
-  createWorkspaceXingyeStorageBackend,
+  createAgentXingyeStorageBackend,
 } from './xingye-storage-backend';
 
 describe('xingye-storage-backend', () => {
-  it('memory backend readJson writeJson appendRecord listRecords', async () => {
+  it('memory backend readJson writeJson appendJsonl listJsonl', async () => {
     const b = createMemoryXingyeStorageBackend();
-    expect(await b.readJson<{ x: number }>('a1', 'profile')).toBeNull();
-    await b.writeJson('a1', 'profile', { x: 1 });
-    expect(await b.readJson<{ x: number }>('a1', 'profile')).toEqual({ x: 1 });
-    await b.appendRecord('a1', 'log', { id: '1' });
-    await b.appendRecord('a1', 'log', { id: '2' });
-    expect(await b.listRecords<{ id: string }>('a1', 'log')).toEqual([{ id: '1' }, { id: '2' }]);
+    expect(await b.readJson<{ x: number }>('a1', 'profile.json')).toBeNull();
+    await b.writeJson('a1', 'profile.json', { x: 1 });
+    expect(await b.readJson<{ x: number }>('a1', 'profile.json')).toEqual({ x: 1 });
+    await b.appendJsonl('a1', 'secret-space/dream.jsonl', { id: '1' });
+    await b.appendJsonl('a1', 'secret-space/dream.jsonl', { id: '2' });
+    expect(await b.listJsonl<{ id: string }>('a1', 'secret-space/dream.jsonl')).toEqual([{ id: '1' }, { id: '2' }]);
+    expect(await b.listJsonl<{ id: string }>('a2', 'secret-space/dream.jsonl')).toEqual([]);
   });
 
   it('localStorage backend uses key mapper', async () => {
@@ -23,39 +24,52 @@ describe('xingye-storage-backend', () => {
       setItem: (k: string, v: string) => { mem.set(k, v); },
     };
     const b = createLocalStorageXingyeBackend(storage, (agentId, domain) => `k:${agentId}:${domain}`);
-    await b.writeJson('x', 'profile', { hello: true });
-    expect(mem.get('k:x:profile')).toContain('hello');
-    expect(await b.readJson<{ hello: boolean }>('x', 'profile')).toEqual({ hello: true });
+    await b.writeJson('x', 'profile.json', { hello: true });
+    expect(mem.get('k:x:profile.json')).toContain('hello');
+    expect(await b.readJson<{ hello: boolean }>('x', 'profile.json')).toEqual({ hello: true });
   });
 
-  it('workspace backend uses post mock', async () => {
+  it('agent backend sends agentId and relativePath without adding a business prefix', async () => {
     const writes: Array<{ rel: string; content: string }> = [];
     const post = async (body: Record<string, unknown>) => {
-      if (body.action === 'write') {
-        writes.push({ rel: String(body.relativePath), content: String(body.content) });
+      expect(body.agentId).toBe('ag');
+      if (body.action === 'writeJson') {
+        writes.push({ rel: String(body.relativePath), content: JSON.stringify(body.data) });
         return { ok: true };
       }
-      if (body.action === 'read') {
+      if (body.action === 'readJson') {
         const hit = writes.find((w) => w.rel === body.relativePath);
-        if (!hit) return { ok: true, missing: true, content: null };
-        return { ok: true, encoding: 'utf8', content: hit.content };
+        if (!hit) return { ok: true, missing: true, data: null };
+        return { ok: true, data: JSON.parse(hit.content) };
       }
-      if (body.action === 'append') {
+      if (body.action === 'appendJsonl') {
         const rel = String(body.relativePath);
         const prev = writes.find((w) => w.rel === rel);
-        const next = (prev?.content ?? '') + String(body.content);
+        const next = (prev?.content ?? '') + `${JSON.stringify(body.data)}\n`;
         if (prev) writes.splice(writes.indexOf(prev), 1);
         writes.push({ rel, content: next });
         return { ok: true };
       }
+      if (body.action === 'listJsonl') {
+        const hit = writes.find((w) => w.rel === body.relativePath);
+        if (!hit) return { ok: true, records: [] };
+        return {
+          ok: true,
+          records: hit.content
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line)),
+        };
+      }
       return {};
     };
-    const b = createWorkspaceXingyeStorageBackend(post);
-    await b.writeJson('ag', 'profile', { n: 3 });
-    expect(await b.readJson<{ n: number }>('ag', 'profile')).toEqual({ n: 3 });
-    await b.appendRecord('ag', 'events', { e: 1 });
-    await b.appendRecord('ag', 'events', { e: 2 });
-    const rows = await b.listRecords<{ e: number }>('ag', 'events');
+    const b = createAgentXingyeStorageBackend(post);
+    await b.writeJson('ag', 'profile.json', { n: 3 });
+    expect(writes[0].rel).toBe('profile.json');
+    expect(await b.readJson<{ n: number }>('ag', 'profile.json')).toEqual({ n: 3 });
+    await b.appendJsonl('ag', 'secret-space/dream.jsonl', { e: 1 });
+    await b.appendJsonl('ag', 'secret-space/dream.jsonl', { e: 2 });
+    const rows = await b.listJsonl<{ e: number }>('ag', 'secret-space/dream.jsonl');
     expect(rows).toEqual([{ e: 1 }, { e: 2 }]);
   });
 });

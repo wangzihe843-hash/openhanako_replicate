@@ -50,6 +50,21 @@ function buildRuntimeLoreSourceCandidates({
 
   if (!normalizedAgentId || !safeAgentId) return candidates;
 
+  const readAgentLoreEntriesFile = (filePath) => () => Object.values(readJsonObject(filePath))
+    .filter((entry) => normalizeString(entry?.agentId) === normalizedAgentId);
+
+  // Official agent-scope store (same relative path as desktop xingye persistence: lore/entries.json).
+  if (normalizedHanakoHome) {
+    const agentDirName = getAgentDirName(normalizedAgentId, safeAgentId);
+    const entriesPath = path.join(normalizedHanakoHome, 'agents', agentDirName, 'xingye', 'lore', 'entries.json');
+    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath));
+  }
+
+  if (normalizedAgentDir) {
+    const entriesPath = path.join(normalizedAgentDir, 'xingye', 'lore', 'entries.json');
+    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath));
+  }
+
   if (normalizedWorkspaceRoot) {
     const base = path.join(normalizedWorkspaceRoot, '.xingye');
     pushUnique(

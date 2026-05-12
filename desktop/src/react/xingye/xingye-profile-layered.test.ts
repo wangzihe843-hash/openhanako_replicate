@@ -1,41 +1,54 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import {
   buildOpenHanakoIdentity,
   buildOpenHanakoIshiki,
   saveXingyeRoleProfile,
 } from './xingye-profile-store';
+import { postXingyeStorage } from './xingye-storage-api';
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>();
+const hoisted = vi.hoisted(() => ({
+  fileData: new Map<string, unknown>(),
+  mockConnection: {
+    serverId: 'local',
+    spaceId: 'local',
+    label: 'test',
+    baseUrl: 'http://127.0.0.1:17333',
+    wsUrl: 'ws://127.0.0.1:17333',
+    token: null,
+    authState: 'paired' as const,
+    trustState: 'local' as const,
+    capabilities: ['chat'],
+  },
+}));
 
-  get length() {
-    return this.values.size;
-  }
+vi.mock('./xingye-storage-api', () => ({
+  postXingyeStorage: vi.fn(async (body: Record<string, unknown>) => {
+    const agentId = String(body.agentId ?? '');
+    const relativePath = String(body.relativePath ?? '');
+    const key = `${agentId}:${relativePath}`;
+    if (body.action === 'readJson') {
+      return { data: hoisted.fileData.has(key) ? hoisted.fileData.get(key) : null };
+    }
+    if (body.action === 'writeJson') {
+      hoisted.fileData.set(key, body.data);
+      return { ok: true };
+    }
+    return {};
+  }),
+}));
 
-  clear() {
-    this.values.clear();
-  }
-
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-
-  key(index: number) {
-    return Array.from(this.values.keys())[index] ?? null;
-  }
-
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-}
+vi.mock('../stores', () => ({
+  useStore: Object.assign(
+    (fn: (s: { activeServerConnection: typeof hoisted.mockConnection | null; agents: { id: string }[] }) => unknown) =>
+      fn({ activeServerConnection: hoisted.mockConnection, agents: [] }),
+    {
+      getState: () => ({ activeServerConnection: hoisted.mockConnection, agents: [] }),
+    },
+  ),
+}));
 
 describe('xingye layered role profile formatter', () => {
-  let storage: MemoryStorage;
   const agent: Agent = {
     id: 'agent-1',
     name: 'Hanako',
@@ -44,23 +57,33 @@ describe('xingye layered role profile formatter', () => {
   };
 
   beforeEach(() => {
-    storage = new MemoryStorage();
+    hoisted.fileData.clear();
+    vi.mocked(postXingyeStorage).mockClear();
+    vi.mocked(postXingyeStorage).mockImplementation(async (body: Record<string, unknown>) => {
+      const agentId = String(body.agentId ?? '');
+      const relativePath = String(body.relativePath ?? '');
+      const key = `${agentId}:${relativePath}`;
+      if (body.action === 'readJson') {
+        return { data: hoisted.fileData.has(key) ? hoisted.fileData.get(key) : null };
+      }
+      if (body.action === 'writeJson') {
+        hoisted.fileData.set(key, body.data);
+        return { ok: true };
+      }
+      return {};
+    });
   });
 
-  it('saves layered Xingye profile fields locally', () => {
-    const saved = saveXingyeRoleProfile(
-      'agent-1',
-      {
-        identitySummary: '旧王国的守夜人',
-        backgroundSummary: '在王国崩塌后仍守着边境灯塔。',
-        personalitySummary: '冷静、重承诺，但对熟悉的人很柔软。',
-        behaviorLogic: '先确认风险，再给出可执行建议。',
-        values: '守信、克制、保护弱者。',
-        taboos: '不要轻易背叛约定，不把苦难当玩笑。',
-        relationshipMode: '与用户是互相信任的旅伴。',
-      },
-      storage,
-    );
+  it('saves layered Xingye profile fields to profile.json', async () => {
+    const saved = await saveXingyeRoleProfile('agent-1', {
+      identitySummary: '旧王国的守夜人',
+      backgroundSummary: '在王国崩塌后仍守着边境灯塔。',
+      personalitySummary: '冷静、重承诺，但对熟悉的人很柔软。',
+      behaviorLogic: '先确认风险，再给出可执行建议。',
+      values: '守信、克制、保护弱者。',
+      taboos: '不要轻易背叛约定，不把苦难当玩笑。',
+      relationshipMode: '与用户是互相信任的旅伴。',
+    });
 
     expect(saved).toMatchObject({
       identitySummary: '旧王国的守夜人',

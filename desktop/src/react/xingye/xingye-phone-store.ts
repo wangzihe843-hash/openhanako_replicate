@@ -105,12 +105,21 @@ export type XingyePhoneSmsThread = {
   updatedAt: string;
 };
 
+/** persisted lifecycle for virtual-contact AI / rule generation (not contact incremental updates). */
+export type XingyePhoneContactGenerationRunStatus = 'running' | 'success' | 'failed';
+
 export type XingyePhoneContactGenerationState = {
   ownerAgentId: string;
   generatedAt: string;
   profileFingerprint: string;
+  /** Stable hash of profile + roster inputs for auto-run dedupe. */
+  inputHash?: string;
   mode?: XingyeContactGenerationMode;
   version: number;
+  status?: XingyePhoneContactGenerationRunStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
 };
 
 export type XingyeContactGenerationMode = 'rule' | 'ai';
@@ -256,6 +265,11 @@ export type XingyeContactChangeLogItem = {
 const MAX_CONTACT_CHANGE_LOG_ITEMS = 2000;
 
 const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
+
+/** If a run stays `running` past this window (crash / tab killed), auto/manual may recover. */
+const PHONE_CONTACT_GENERATION_STALE_MS = 10 * 60 * 1000;
+
+const virtualContactAiGenerationChains = new Map<string, Promise<unknown>>();
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
@@ -459,11 +473,33 @@ function loadGenerationStateMap(storage: StorageLike | null = getLocalStorage())
     for (const [ownerAgentId, value] of Object.entries(parsed)) {
       if (!isRecord(value)) continue;
       const generatedAt = normalizeOptionalString(value.generatedAt);
+      const startedAt = normalizeOptionalString(value.startedAt);
+      const finishedAt = normalizeOptionalString(value.finishedAt);
       const profileFingerprint = normalizeOptionalString(value.profileFingerprint);
+      const inputHash = normalizeOptionalString(value.inputHash);
       const mode = normalizeOptionalString(value.mode) as XingyeContactGenerationMode | undefined;
       const version = typeof value.version === 'number' ? value.version : 1;
-      if (!generatedAt || !profileFingerprint) continue;
-      result[ownerAgentId] = { ownerAgentId, generatedAt, profileFingerprint, mode, version };
+      const statusRaw = normalizeOptionalString(value.status);
+      const error = normalizeOptionalString(value.error);
+      const allowed = new Set<string>(['running', 'success', 'failed']);
+      const status = statusRaw && allowed.has(statusRaw) ? (statusRaw as XingyePhoneContactGenerationRunStatus) : undefined;
+      if (!profileFingerprint) continue;
+      const effectiveGeneratedAt = generatedAt || startedAt;
+      if (!effectiveGeneratedAt) continue;
+      /** Legacy rows had no `status`; treat as completed so auto-run does not loop forever. */
+      const resolvedStatus: XingyePhoneContactGenerationRunStatus = status ?? 'success';
+      result[ownerAgentId] = {
+        ownerAgentId,
+        generatedAt: effectiveGeneratedAt,
+        profileFingerprint,
+        inputHash,
+        mode,
+        version,
+        status: resolvedStatus,
+        startedAt,
+        finishedAt,
+        error,
+      };
     }
     return result;
   } catch {
@@ -491,6 +527,63 @@ export function setPhoneContactGenerationState(
   const map = loadGenerationStateMap(storage);
   map[ownerAgentId] = state;
   saveGenerationStateMap(map, storage);
+}
+
+export function computePhoneContactGenerationInputHash(profileFingerprint: string, sortedAgentIds: string[]): string {
+  return `${profileFingerprint}||${sortedAgentIds.join(',')}`;
+}
+
+export function isStalePhoneContactGenerationRunning(state: XingyePhoneContactGenerationState | null): boolean {
+  if (!state || state.status !== 'running') return false;
+  const t = state.startedAt ?? state.generatedAt;
+  if (!t) return true;
+  return Date.now() - new Date(t).getTime() > PHONE_CONTACT_GENERATION_STALE_MS;
+}
+
+/**
+ * Auto-run guard for PhoneContactsApp: do not depend on unstable object deps; use fingerprint + inputHash.
+ * - Active non-stale `running` → skip (persisted lock).
+ * - `failed` → skip (user must use manual AI 按钮).
+ * - Terminal success/rule with same fingerprint + inputHash → skip.
+ */
+export function shouldAutoSkipVirtualContactGeneration(
+  ownerAgentId: string,
+  profileFingerprint: string,
+  inputHash: string,
+  storage: StorageLike | null = getLocalStorage(),
+): boolean {
+  if (!ownerAgentId) return true;
+  const s = getPhoneContactGenerationState(ownerAgentId, storage);
+  if (!s) return false;
+  if (s.status === 'running' && !isStalePhoneContactGenerationRunning(s)) return true;
+  if (s.status === 'failed') return true;
+  if (s.profileFingerprint !== profileFingerprint) return false;
+  if (s.inputHash && s.inputHash !== inputHash) return false;
+  if (s.status === 'success') return true;
+  return false;
+}
+
+/** Serialize virtual-contact AI/rule generation per owner (no parallel runs in one JS context). */
+export function withVirtualContactAiGenerationLock<T>(ownerAgentId: string, fn: () => Promise<T>): Promise<T> {
+  if (!ownerAgentId.trim()) {
+    return Promise.reject(new Error('withVirtualContactAiGenerationLock: ownerAgentId required'));
+  }
+  const previous = virtualContactAiGenerationChains.get(ownerAgentId) ?? Promise.resolve();
+  const run = previous.then(
+    () => undefined,
+    () => undefined,
+  ).then(() => fn());
+  virtualContactAiGenerationChains.set(ownerAgentId, run);
+  return run.finally(() => {
+    if (virtualContactAiGenerationChains.get(ownerAgentId) === run) {
+      virtualContactAiGenerationChains.delete(ownerAgentId);
+    }
+  }) as Promise<T>;
+}
+
+/** @internal vitest */
+export function resetVirtualContactAiGenerationLockForTests(): void {
+  virtualContactAiGenerationChains.clear();
 }
 
 function saveContactMetaMap(next: Record<string, XingyePhoneContactMeta>, storage: StorageLike | null = getLocalStorage()) {
@@ -708,6 +801,25 @@ export function savePhoneContactMeta(
   storage: StorageLike | null = getLocalStorage(),
   options?: { markManualFields?: boolean; skipContactChangeLog?: boolean },
 ): XingyePhoneContactMeta {
+  if (!normalizeOptionalString(ownerAgentId)) {
+    console.warn('[xingye-phone-store] savePhoneContactMeta: empty ownerAgentId, not persisted');
+    return {
+      ownerAgentId: ownerAgentId || '',
+      targetType,
+      targetId,
+      remark: normalizeOptionalString(patch.remark),
+      impression: normalizeOptionalString(patch.impression),
+      relationshipHint: normalizeOptionalString(patch.relationshipHint),
+      tags: patch.tags ?? [],
+      faction: normalizeOptionalString(patch.faction),
+      status: patch.status ?? 'active',
+      linkedAgentId: normalizeOptionalString(patch.linkedAgentId),
+      pendingNewFriend: patch.pendingNewFriend,
+      manualEditedFields: [],
+      source: patch.source ?? 'phone_contacts',
+      updatedAt: new Date().toISOString(),
+    };
+  }
   const map = loadContactMetaMap(storage);
   const key = contactKey(ownerAgentId, targetType, targetId);
   const previous = map[key];
@@ -1620,9 +1732,15 @@ export function ensureGeneratedVirtualContacts(
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeVirtualContact[] {
   if (!ownerAgentId || !agent) return [];
+  const genState = getPhoneContactGenerationState(ownerAgentId, storage);
+  if (genState?.status === 'running' && !isStalePhoneContactGenerationRunning(genState)) {
+    return getVirtualContacts(ownerAgentId, storage);
+  }
   const existing = getVirtualContacts(ownerAgentId, storage);
   const stateMap = loadGenerationStateMap(storage);
   const fingerprint = getProfileFingerprint(agent, profile);
+  const sortedIds = agents.map(a => a.id).sort();
+  const inputHash = computePhoneContactGenerationInputHash(fingerprint, sortedIds);
   const state = stateMap[ownerAgentId];
   if (existing.length > 0 && state) return existing;
 
@@ -1640,12 +1758,16 @@ export function ensureGeneratedVirtualContacts(
     }
   }
   saveVirtualContactMap(map, storage);
+  const now = new Date().toISOString();
   stateMap[ownerAgentId] = {
     ownerAgentId,
-    generatedAt: new Date().toISOString(),
+    generatedAt: now,
     profileFingerprint: fingerprint,
+    inputHash,
     mode: 'rule',
     version: 1,
+    status: 'success',
+    finishedAt: now,
   };
   saveGenerationStateMap(stateMap, storage);
   return generated;

@@ -1,7 +1,7 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * Cross-platform dev launcher
- * 解决 POSIX `VAR=val cmd` 语法和 `~` 在 Windows 上不工作的问题
+ * 瑙ｅ喅 POSIX `VAR=val cmd` 璇硶鍜?`~` 鍦?Windows 涓婁笉宸ヤ綔鐨勯棶棰?
  */
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -9,9 +9,9 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-process.env.HANA_HOME = join(homedir(), ".hanako-dev");
-// 本地 Electron 再拉起 server 时，显式把当前 Node runtime 传下去。
-// 这样开发模式的 server/source 进程就不会误用 Electron 自带 Node，避免 native addon ABI 漂移。
+process.env.HANA_HOME = process.env.HANA_HOME || join(homedir(), ".hanako-dev");
+// 鏈湴 Electron 鍐嶆媺璧?server 鏃讹紝鏄惧紡鎶婂綋鍓?Node runtime 浼犱笅鍘汇€?
+// 杩欐牱寮€鍙戞ā寮忕殑 server/source 杩涚▼灏变笉浼氳鐢?Electron 鑷甫 Node锛岄伩鍏?native addon ABI 婕傜Щ銆?
 process.env.HANA_DEV_NODE_BIN = process.execPath;
 
 const mode = process.argv[2];
@@ -45,10 +45,11 @@ switch (mode) {
     process.exit(1);
 }
 
-// Electron 以子进程运行时（如 VS Code / Claude Code 终端），
-// 父进程可能设了 ELECTRON_RUN_AS_NODE=1，会让 Electron 以纯 Node 模式启动，
-// 导致 require('electron') 拿不到内置 API。spawn 前清掉。
+// Electron 浠ュ瓙杩涚▼杩愯鏃讹紙濡?VS Code / Claude Code 缁堢锛夛紝
+// 鐖惰繘绋嬪彲鑳借浜?ELECTRON_RUN_AS_NODE=1锛屼細璁?Electron 浠ョ函 Node 妯″紡鍚姩锛?
+// 瀵艰嚧 require('electron') 鎷夸笉鍒板唴缃?API銆俿pawn 鍓嶆竻鎺夈€?
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 const child = spawn(bin, args, { stdio: "inherit", env: process.env });
 child.on("exit", (code) => process.exit(code ?? 1));
+

@@ -12,7 +12,7 @@ import {
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
-import { flushXingyePersistenceNow, getXingyePersistenceDiagnostics } from './xingye-persistence';
+import { getXingyePersistenceDiagnostics } from './xingye-persistence';
 import { useXingyeLoreEntries, XINGYE_LORE_CATEGORIES } from './xingye-lore-store';
 import { BackgroundPicker } from './BackgroundPicker';
 import { LoreEditor } from './LoreEditor';
@@ -146,10 +146,10 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
 
   const resolvedProfile = getXingyeRoleProfileDisplay(agent, profile);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setProfileSaveError(null);
     try {
-      const saved = saveXingyeRoleProfile(agent.id, {
+      const saved = await saveXingyeRoleProfile(agent.id, {
         displayName,
         shortBio,
         relationshipLabel,
@@ -165,7 +165,6 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         allowProactiveDM,
       });
       setSavedAt(saved.updatedAt);
-      void flushXingyePersistenceNow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setProfileSaveError(`保存失败：${message}`);
@@ -175,9 +174,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const handleChangeChatBackground = async (chatBackgroundDataUrl: string | undefined) => {
     setProfileSaveError(null);
     try {
-      const saved = saveXingyeRoleProfile(agent.id, { chatBackgroundDataUrl });
+      const saved = await saveXingyeRoleProfile(agent.id, { chatBackgroundDataUrl });
       setSavedAt(saved.updatedAt);
-      void flushXingyePersistenceNow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`保存失败：${message}`);
@@ -248,8 +246,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         if (data?.error) throw new Error(data.error);
       }
       setSyncState('synced');
-      saveXingyeRoleProfile(agent.id, { lastOpenHanakoSyncAt: new Date().toISOString() });
-      void flushXingyePersistenceNow();
+      await saveXingyeRoleProfile(agent.id, { lastOpenHanakoSyncAt: new Date().toISOString() });
     } catch (error) {
       setSyncState('error');
       setSyncError(error instanceof Error ? error.message : String(error));
@@ -321,12 +318,15 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
             </button>
           </div>
           <p className={styles.panelDescription}>
-            星野资料保存在本地资料层；「更新核心人格摘要」仅写入 OpenHanako identity / ishiki 的短摘要，不包含设定库全文、不写入 pinned 或 memory。可选将星野昵称写入原生助手名（config.agent.name），也不改聊天生成链路。
-            {persistenceDiag.mode === 'workspace' && (
-              <span> 当前工作区已启用 workspace 持久化（.xingye）。</span>
+            星野人设保存在 OpenHanako 数据目录中各 agent 的 xingye/profile.json（通过 /api/xingye/storage 读写）。「更新核心人格摘要」仅写入 OpenHanako identity / ishiki 的短摘要，不包含设定库全文、不写入 pinned 或 memory。可选将星野昵称写入原生助手名（config.agent.name），也不改聊天生成链路。
+            {persistenceDiag.mode === 'agent' && (
+              <span> 当前已启用 agent scope 持久化（小手机 / 设定库等业务数据）。</span>
             )}
-            {persistenceDiag.mode === 'passthrough' && (
-              <span> 当前未挂接 workspace 持久化，资料仅写入本机浏览器存储。</span>
+            {persistenceDiag.mode === 'disabled' && (
+              <span> 当前未启用星野 agent 持久化（未连接服务器或未选择星野角色）；业务数据不会写入浏览器 localStorage。</span>
+            )}
+            {persistenceDiag.mode === 'error' && (
+              <span> 星野 agent 数据加载失败：{persistenceDiag.lastRefreshError || 'unknown'}。</span>
             )}
           </p>
         </div>
@@ -561,7 +561,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
 
       <div className={styles.detailActions}>
         <button type="button" onClick={handleSave}>
-          {persistenceDiag.mode === 'workspace' ? '保存到 workspace' : '保存星野资料'}
+          {persistenceDiag.mode === 'agent' ? '保存到 agent scope' : '保存（需 agent 持久化）'}
         </button>
         <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing'}>
           {syncState === 'syncing' ? '更新中...' : '更新核心人格摘要'}
@@ -575,7 +575,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
           </span>
         )}
         {persistenceDiag.lastWorkspaceFlushError && (
-          <span className={styles.syncError}>Workspace 写入失败: {persistenceDiag.lastWorkspaceFlushError}</span>
+          <span className={styles.syncError}>Agent scope 写入失败: {persistenceDiag.lastWorkspaceFlushError}</span>
         )}
         {profileSaveError && <span className={styles.syncError}>{profileSaveError}</span>}
         {syncState === 'synced' && <span className={styles.saveStatus}>已更新 OpenHanako 核心人格摘要</span>}

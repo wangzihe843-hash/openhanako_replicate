@@ -17,8 +17,6 @@ import {
 import { hasServerConnection } from '../services/server-connection';
 // @ts-expect-error — shared JS module
 import { mergeWorkspaceHistory, normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
-import { refreshXingyeWorkspacePersistence } from '../xingye/xingye-persistence';
-
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调及 IPC callback data */
 
 const t = (key: string, vars?: Record<string, string | number>) => window.t?.(key, vars) ?? key;
@@ -97,7 +95,6 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       activeTabId: null,
     });
     updateDeskContextBtn();
-    void refreshXingyeWorkspacePersistence();
     return;
   }
 
@@ -124,8 +121,6 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     activeTabId: saved?.activeTabId ?? null,
   });
   updateDeskContextBtn();
-
-  void refreshXingyeWorkspacePersistence();
 
   let effectiveSubdir = nextSubdir;
   if (!saved) {

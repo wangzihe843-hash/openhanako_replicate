@@ -12,7 +12,6 @@ export interface SecretSpaceCategoryMeta {
   id: SecretSpaceCategoryId;
   title: string;
   description: string;
-  /** 记录列表为空时的标题与说明（分类专属空状态） */
   recordsEmptyTitle: string;
   recordsEmptyBody: string;
 }

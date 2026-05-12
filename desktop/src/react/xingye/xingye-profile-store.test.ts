@@ -1,48 +1,65 @@
+/**
+ * @vitest-environment jsdom
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import type { XingyeLoreEntry } from './xingye-lore-store';
 import {
-  XINGYE_ROLE_PROFILES_STORAGE_KEY,
+  XINGYE_PROFILE_JSON_RELATIVE_PATH,
+  XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY,
   buildOpenHanakoAgentSyncPayload,
   filterLoreEntriesForAgentSync,
   buildOpenHanakoIdentity,
   buildOpenHanakoIshiki,
-  getXingyeRoleProfile,
   getXingyeRoleProfileDisplay,
-  loadXingyeRoleProfiles,
+  readXingyeRoleProfile,
   saveXingyeRoleProfile,
 } from './xingye-profile-store';
+import { postXingyeStorage } from './xingye-storage-api';
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>();
+const hoisted = vi.hoisted(() => ({
+  fileData: new Map<string, unknown>(),
+  mockConnection: {
+    serverId: 'local',
+    spaceId: 'local',
+    label: 'test',
+    baseUrl: 'http://127.0.0.1:17333',
+    wsUrl: 'ws://127.0.0.1:17333',
+    token: null,
+    authState: 'paired' as const,
+    trustState: 'local' as const,
+    capabilities: ['chat'],
+  },
+}));
 
-  get length() {
-    return this.values.size;
-  }
+vi.mock('./xingye-storage-api', () => ({
+  postXingyeStorage: vi.fn(async (body: Record<string, unknown>) => {
+    const agentId = String(body.agentId ?? '');
+    const relativePath = String(body.relativePath ?? '');
+    const key = `${agentId}:${relativePath}`;
+    if (body.action === 'readJson') {
+      return { data: hoisted.fileData.has(key) ? hoisted.fileData.get(key) : null };
+    }
+    if (body.action === 'writeJson') {
+      hoisted.fileData.set(key, body.data);
+      return { ok: true };
+    }
+    return {};
+  }),
+}));
 
-  clear() {
-    this.values.clear();
-  }
-
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-
-  key(index: number) {
-    return Array.from(this.values.keys())[index] ?? null;
-  }
-
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-}
+vi.mock('../stores', () => ({
+  useStore: Object.assign(
+    (fn: (s: { activeServerConnection: typeof hoisted.mockConnection | null; agents: { id: string }[] }) => unknown) =>
+      fn({ activeServerConnection: hoisted.mockConnection, agents: [] }),
+    {
+      getState: () => ({ activeServerConnection: hoisted.mockConnection, agents: [] }),
+    },
+  ),
+}));
 
 describe('xingye-profile-store', () => {
-  let storage: MemoryStorage;
   const agent: Agent = {
     id: 'agent-1',
     name: 'Hanako',
@@ -51,22 +68,33 @@ describe('xingye-profile-store', () => {
   };
 
   beforeEach(() => {
-    storage = new MemoryStorage();
+    hoisted.fileData.clear();
+    window.localStorage.clear();
+    vi.mocked(postXingyeStorage).mockClear();
+    vi.mocked(postXingyeStorage).mockImplementation(async (body: Record<string, unknown>) => {
+      const agentId = String(body.agentId ?? '');
+      const relativePath = String(body.relativePath ?? '');
+      const key = `${agentId}:${relativePath}`;
+      if (body.action === 'readJson') {
+        return { data: hoisted.fileData.has(key) ? hoisted.fileData.get(key) : null };
+      }
+      if (body.action === 'writeJson') {
+        hoisted.fileData.set(key, body.data);
+        return { ok: true };
+      }
+      return {};
+    });
   });
 
-  it('saves one local Xingye profile per OpenHanako agent id', () => {
-    const saved = saveXingyeRoleProfile(
-      'agent-1',
-      {
-        displayName: '星野花子',
-        shortBio: '会认真记住你的偏好。',
-        relationshipLabel: '同伴',
-        speakingStyle: '温柔直接',
-        allowAutoMoments: true,
-        allowProactiveDM: false,
-      },
-      storage,
-    );
+  it('saves one Xingye profile per agent id to profile.json via storage API', async () => {
+    const saved = await saveXingyeRoleProfile('agent-1', {
+      displayName: '星野花子',
+      shortBio: '会认真记住你的偏好。',
+      relationshipLabel: '同伴',
+      speakingStyle: '温柔直接',
+      allowAutoMoments: true,
+      allowProactiveDM: false,
+    });
 
     expect(saved).toMatchObject({
       agentId: 'agent-1',
@@ -78,45 +106,38 @@ describe('xingye-profile-store', () => {
       allowProactiveDM: false,
     });
     expect(saved.updatedAt).toEqual(expect.any(String));
-    expect(getXingyeRoleProfile('agent-1', storage)).toEqual(saved);
-    expect(Object.keys(loadXingyeRoleProfiles(storage))).toEqual(['agent-1']);
-    expect(storage.getItem(XINGYE_ROLE_PROFILES_STORAGE_KEY)).toContain('星野花子');
+    expect(await readXingyeRoleProfile('agent-1')).toEqual(saved);
+    expect(vi.mocked(postXingyeStorage)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'writeJson',
+        agentId: 'agent-1',
+        relativePath: XINGYE_PROFILE_JSON_RELATIVE_PATH,
+      }),
+    );
   });
 
-  it('stores and clears a Xingye-only chat background data url', () => {
-    const saved = saveXingyeRoleProfile(
-      'agent-1',
-      {
-        chatBackgroundDataUrl: 'data:image/webp;base64,background',
-      },
-      storage,
-    );
+  it('stores and clears a Xingye-only chat background data url', async () => {
+    const saved = await saveXingyeRoleProfile('agent-1', {
+      chatBackgroundDataUrl: 'data:image/webp;base64,background',
+    });
 
     expect(saved.chatBackgroundDataUrl).toBe('data:image/webp;base64,background');
     expect(getXingyeRoleProfileDisplay(agent, saved).chatBackgroundDataUrl).toBe('data:image/webp;base64,background');
     expect(buildOpenHanakoAgentSyncPayload(agent, saved).identity).not.toContain('data:image');
     expect(buildOpenHanakoAgentSyncPayload(agent, saved).ishiki).not.toContain('data:image');
 
-    const cleared = saveXingyeRoleProfile(
-      'agent-1',
-      {
-        chatBackgroundDataUrl: undefined,
-      },
-      storage,
-    );
+    const cleared = await saveXingyeRoleProfile('agent-1', {
+      chatBackgroundDataUrl: undefined,
+    });
 
     expect(cleared.chatBackgroundDataUrl).toBeUndefined();
   });
 
-  it('falls back to OpenHanako agent fields when local fields are blank', () => {
-    const profile = saveXingyeRoleProfile(
-      'agent-1',
-      {
-        displayName: '   ',
-        shortBio: '',
-      },
-      storage,
-    );
+  it('falls back to OpenHanako agent fields when local fields are blank', async () => {
+    const profile = await saveXingyeRoleProfile('agent-1', {
+      displayName: '   ',
+      shortBio: '',
+    });
 
     expect(profile.displayName).toBeUndefined();
     expect(profile.shortBio).toBeUndefined();
@@ -126,12 +147,30 @@ describe('xingye-profile-store', () => {
     });
   });
 
-  it('ignores malformed storage content', () => {
+  it('returns null when storage read fails', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    storage.setItem(XINGYE_ROLE_PROFILES_STORAGE_KEY, '{bad json');
+    vi.mocked(postXingyeStorage).mockRejectedValueOnce(new Error('network'));
+    await expect(readXingyeRoleProfile('agent-1')).resolves.toBeNull();
+  });
 
-    expect(loadXingyeRoleProfiles(storage)).toEqual({});
-    expect(getXingyeRoleProfile('agent-1', storage)).toBeNull();
+  it('migrates once from legacy localStorage map when profile.json is missing', async () => {
+    window.localStorage.setItem(
+      XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        'agent-legacy': {
+          agentId: 'agent-legacy',
+          displayName: '迁移角色',
+          shortBio: '来自旧 map。',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+    );
+
+    const loaded = await readXingyeRoleProfile('agent-legacy');
+    expect(loaded?.displayName).toBe('迁移角色');
+    expect(hoisted.fileData.get(`agent-legacy:${XINGYE_PROFILE_JSON_RELATIVE_PATH}`)).toMatchObject({
+      displayName: '迁移角色',
+    });
   });
 
   it('builds an OpenHanako sync payload from text persona fields only', () => {

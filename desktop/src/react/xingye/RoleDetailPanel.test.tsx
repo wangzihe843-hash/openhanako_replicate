@@ -7,14 +7,20 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { XINGYE_LORE_ENTRIES_STORAGE_KEY } from './xingye-lore-store';
 
+const profileHoisted = vi.hoisted(() => ({
+  profileByAgent: new Map<string, Record<string, unknown>>(),
+}));
+
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaUrl: (path: string) => path,
-  hanaFetch: vi.fn(async (path: string) => {
+  hanaFetch: vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/xingye/extract-profile') {
       return {
+        ok: true,
         json: async () => ({
           profile: {
             shortBio: '边境医生，冷静可靠。',
@@ -28,11 +34,25 @@ vi.mock('../hooks/use-hana-fetch', () => ({
             speakingStyle: '冷静、直接、少废话，但不是冷漠。',
           },
         }),
-      };
+      } as Response;
+    }
+    if (path === '/api/xingye/storage') {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const aid = String(body.agentId ?? '');
+      if (body.action === 'readJson' && body.relativePath === 'profile.json') {
+        const data = profileHoisted.profileByAgent.get(aid) ?? null;
+        return { ok: true, json: async () => ({ data }) } as Response;
+      }
+      if (body.action === 'writeJson' && body.relativePath === 'profile.json') {
+        profileHoisted.profileByAgent.set(aid, body.data as Record<string, unknown>);
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
     }
     return {
+      ok: true,
       json: async () => ({ ok: true }),
-    };
+    } as Response;
   }),
 }));
 
@@ -48,11 +68,15 @@ describe('RoleDetailPanel OpenHanako sync', () => {
   };
 
   beforeEach(() => {
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
     window.localStorage.clear();
+    profileHoisted.profileByAgent.clear();
     vi.mocked(hanaFetch).mockClear();
+    useStore.setState({ serverPort: '17333', activeServerConnection: null });
   });
 
   afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
     vi.restoreAllMocks();
   });
@@ -80,6 +104,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(screen.getAllByText(/星野花子/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/温柔直接，回答简短。/).length).toBeGreaterThan(0);
 
+    vi.mocked(hanaFetch).mockClear();
     fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
@@ -113,6 +138,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     fireEvent.change(screen.getByLabelText('简介'), { target: { value: '会认真记住用户偏好的搭子。' } });
 
     fireEvent.click(screen.getByRole('checkbox', { name: '同步助手名称' }));
+    vi.mocked(hanaFetch).mockClear();
     fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
@@ -172,6 +198,11 @@ describe('RoleDetailPanel OpenHanako sync', () => {
       />,
     );
 
+    await waitFor(() => {
+      expect(screen.getByLabelText('星野昵称')).toBeInTheDocument();
+    });
+    vi.mocked(hanaFetch).mockClear();
+
     fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '林雾' } });
     fireEvent.change(screen.getByLabelText('关系标签'), { target: { value: '朋友' } });
     fireEvent.click(screen.getByRole('button', { name: 'AI 提取设定' }));
@@ -194,7 +225,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(window.localStorage.getItem('xingye.roleProfiles')).toBeNull();
   });
 
-  it('shows the concrete localStorage save failure when saving the Xingye profile', () => {
+  it('shows save failure when profile storage write fails', async () => {
     render(
       <RoleDetailPanel
         agent={agent}
@@ -205,12 +236,25 @@ describe('RoleDetailPanel OpenHanako sync', () => {
       />,
     );
 
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('localStorage quota exceeded');
+    await waitFor(() => {
+      expect(screen.getByLabelText('星野昵称')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '保存星野资料' }));
+    vi.mocked(hanaFetch).mockImplementation(async (path: string) => {
+      if (path === '/api/xingye/storage') {
+        return {
+          ok: false,
+          statusText: 'Internal Server Error',
+          json: async () => ({ error: 'disk full' }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
 
-    expect(screen.getByText('保存失败：localStorage quota exceeded')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/保存失败：disk full/)).toBeInTheDocument();
+    });
   });
 });

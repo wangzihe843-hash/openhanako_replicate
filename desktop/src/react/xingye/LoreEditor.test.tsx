@@ -38,11 +38,13 @@ function seedLoreEntry(overrides: Partial<Parameters<typeof createLoreEntry>[1]>
 
 describe('LoreEditor — save lore as memory candidate', () => {
   beforeEach(() => {
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
     window.localStorage.clear();
     vi.mocked(hanaFetch).mockReset();
   });
 
   afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
   });
 

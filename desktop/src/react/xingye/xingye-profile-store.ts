@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
-import { getXingyePersistenceStorage } from './xingye-persistence';
+import { useStore } from '../stores';
+import { hasServerConnection } from '../services/server-connection';
+import { postXingyeStorage } from './xingye-storage-api';
+import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
 import type { XingyeLoreEntry } from './xingye-lore-store';
 
@@ -49,7 +52,15 @@ export type XingyeRoleProfileDisplay = {
   allowProactiveDM: boolean;
 };
 
-export const XINGYE_ROLE_PROFILES_STORAGE_KEY = 'xingye.roleProfiles';
+/** Legacy localStorage map key — read-only, one-time migration when `profile.json` is missing. */
+export const XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY = 'xingye.roleProfiles';
+
+/** @deprecated Use {@link XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY}. Kept for older imports/tests. */
+export const XINGYE_ROLE_PROFILES_STORAGE_KEY = XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY;
+
+export const XINGYE_PROFILE_JSON_RELATIVE_PATH = 'profile.json';
+
+const profileBackend = createAgentXingyeStorageBackend(postXingyeStorage);
 
 const XINGYE_ROLE_PROFILES_CHANGED_EVENT = 'xingye-role-profiles-changed';
 const DEEPSEEK_STYLE_FALLBACK = '理性、直接、克制，有判断力，解释清楚但不过度卖萌。';
@@ -90,7 +101,6 @@ const STRING_FIELDS = [
   'chatBackgroundDataUrl',
 ] as const;
 
-type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 type SyncProfileInput = Pick<
   XingyeRoleProfile,
   | 'agentId'
@@ -111,10 +121,6 @@ type SyncProfileInput = Pick<
   | 'allowProactiveDM'
   | 'updatedAt'
 > | null | undefined;
-
-function getLocalStorage(): StorageLike | null {
-  return getXingyePersistenceStorage();
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -158,70 +164,101 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
   return profile;
 }
 
-function notifyXingyeRoleProfilesChanged() {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event(XINGYE_ROLE_PROFILES_CHANGED_EVENT));
-}
-
-export function loadXingyeRoleProfiles(storage: StorageLike | null = getLocalStorage()): XingyeRoleProfileMap {
-  if (!storage) return {};
-
+function readLegacyRoleProfilesMap(): XingyeRoleProfileMap {
+  if (typeof window === 'undefined') return {};
   try {
-    const raw = storage.getItem(XINGYE_ROLE_PROFILES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY);
     if (!raw) return {};
-
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return {};
-
     const profiles: XingyeRoleProfileMap = {};
-    for (const [agentId, value] of Object.entries(parsed)) {
-      const normalized = normalizeProfile(value, agentId);
+    for (const [id, value] of Object.entries(parsed)) {
+      const normalized = normalizeProfile(value, id);
       if (normalized) profiles[normalized.agentId] = normalized;
     }
-
     return profiles;
-  } catch (error) {
-    console.warn('[xingye-profile-store] failed to load role profiles:', error);
+  } catch {
     return {};
   }
 }
 
-export function getXingyeRoleProfile(
-  agentId: string | null | undefined,
-  storage: StorageLike | null = getLocalStorage(),
-): XingyeRoleProfile | null {
-  if (!agentId) return null;
-  return loadXingyeRoleProfiles(storage)[agentId] ?? null;
+function notifyXingyeRoleProfilesChanged(agentId: string) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(XINGYE_ROLE_PROFILES_CHANGED_EVENT, { detail: { agentId } }));
 }
 
-export function saveXingyeRoleProfile(
+function requireServerForProfile(): void {
+  if (!hasServerConnection(useStore.getState())) {
+    throw new Error('未连接本地或远程服务器，无法读写 agent 目录下的人设文件。');
+  }
+}
+
+/**
+ * Reads `HANA_HOME/agents/{agentId}/xingye/profile.json`.
+ * If missing, migrates at most once from legacy `localStorage` map `xingye.roleProfiles` for that agent, then writes `profile.json`.
+ */
+export async function readXingyeRoleProfile(agentId: string | null | undefined): Promise<XingyeRoleProfile | null> {
+  const id = typeof agentId === 'string' ? agentId.trim() : '';
+  if (!id) return null;
+  if (!hasServerConnection(useStore.getState())) return null;
+
+  try {
+    const raw = await profileBackend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
+    let normalized = raw != null ? normalizeProfile(raw, id) : null;
+    if (normalized) return normalized;
+
+    const legacy = readLegacyRoleProfilesMap()[id];
+    const migrated = legacy ? normalizeProfile(legacy, id) : null;
+    if (!migrated) return null;
+
+    await profileBackend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, migrated);
+    notifyXingyeRoleProfilesChanged(id);
+    return migrated;
+  } catch (error) {
+    console.warn('[xingye-profile-store] read profile failed:', error);
+    return null;
+  }
+}
+
+/**
+ * Persists merged profile to `profile.json` for the agent via `/api/xingye/storage` (`writeJson`).
+ */
+export async function saveXingyeRoleProfile(
   agentId: string,
   patch: Partial<Omit<XingyeRoleProfile, 'agentId' | 'updatedAt'>>,
-  storage: StorageLike | null = getLocalStorage(),
-): XingyeRoleProfile {
-  const profiles = loadXingyeRoleProfiles(storage);
-  const previous = profiles[agentId] ?? { agentId, updatedAt: new Date(0).toISOString() };
-  const next = normalizeProfile({
-    ...previous,
-    ...patch,
-    agentId,
-    updatedAt: new Date().toISOString(),
-  }, agentId);
+): Promise<XingyeRoleProfile> {
+  const id = typeof agentId === 'string' ? agentId.trim() : '';
+  if (!id) {
+    throw new Error('保存人设需要有效的 agentId。');
+  }
+  requireServerForProfile();
 
+  const existingRaw = await profileBackend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
+  let previous = existingRaw != null ? normalizeProfile(existingRaw, id) : null;
+  if (!previous) {
+    const legacy = readLegacyRoleProfilesMap()[id];
+    previous = legacy
+      ? normalizeProfile(legacy, id)
+      : { agentId: id, updatedAt: new Date(0).toISOString() };
+  }
+  if (!previous) {
+    throw new Error('Unable to save Xingye role profile without agentId.');
+  }
+
+  const merged: Record<string, unknown> = { ...previous, ...patch, agentId: id, updatedAt: new Date().toISOString() };
+  const next = normalizeProfile(merged, id);
   if (!next) {
     throw new Error('Unable to save Xingye role profile without agentId.');
   }
 
-  profiles[agentId] = next;
-
   try {
-    storage?.setItem(XINGYE_ROLE_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+    await profileBackend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, next);
   } catch (error) {
     console.warn('[xingye-profile-store] failed to save role profile:', error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 
-  notifyXingyeRoleProfilesChanged();
+  notifyXingyeRoleProfilesChanged(id);
   return next;
 }
 
@@ -469,32 +506,93 @@ export function buildOpenHanakoAgentSyncPayload(
   };
 }
 
+async function loadProfilesForAgentIds(agentIds: string[]): Promise<XingyeRoleProfileMap> {
+  const unique = [...new Set(agentIds.map((x) => x.trim()).filter(Boolean))];
+  const entries = await Promise.all(
+    unique.map(async (id) => {
+      const p = await readXingyeRoleProfile(id);
+      return p ? ([id, p] as const) : null;
+    }),
+  );
+  const map: XingyeRoleProfileMap = {};
+  for (const e of entries) {
+    if (e) map[e[0]] = e[1];
+  }
+  return map;
+}
+
 export function useXingyeRoleProfiles(): XingyeRoleProfileMap {
-  const [profiles, setProfiles] = useState<XingyeRoleProfileMap>(() => loadXingyeRoleProfiles());
+  const agents = useStore((s) => s.agents);
+  const agentIds = useMemo(() => agents.map((a) => a.id), [agents]);
+  const agentIdsKey = agentIds.join('\u0001');
+
+  const [profiles, setProfiles] = useState<XingyeRoleProfileMap>({});
 
   useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
-
-    const refresh = () => setProfiles(loadXingyeRoleProfiles());
-    const refreshFromStorage = (event: StorageEvent) => {
-      if (event.key === XINGYE_ROLE_PROFILES_STORAGE_KEY) refresh();
-    };
-
-    const onPersistence = () => refresh();
-    window.addEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, refresh);
-    window.addEventListener('storage', refreshFromStorage);
-    window.addEventListener('xingye-persistence-changed', onPersistence);
+    let cancelled = false;
+    void (async () => {
+      const ids = useStore.getState().agents.map((a) => a.id);
+      const next = await loadProfilesForAgentIds(ids);
+      if (!cancelled) setProfiles(next);
+    })();
     return () => {
-      window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, refresh);
-      window.removeEventListener('storage', refreshFromStorage);
-      window.removeEventListener('xingye-persistence-changed', onPersistence);
+      cancelled = true;
     };
+  }, [agentIdsKey]);
+
+  useEffect(() => {
+    const onChanged = () => {
+      void (async () => {
+        const ids = useStore.getState().agents.map((a) => a.id);
+        setProfiles(await loadProfilesForAgentIds(ids));
+      })();
+    };
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
   }, []);
 
   return profiles;
 }
 
 export function useXingyeRoleProfile(agentId: string | null | undefined): XingyeRoleProfile | null {
-  const profiles = useXingyeRoleProfiles();
-  return agentId ? profiles[agentId] ?? null : null;
+  const trimmed = typeof agentId === 'string' ? agentId.trim() : '';
+  const [profile, setProfile] = useState<XingyeRoleProfile | null>(null);
+
+  useEffect(() => {
+    if (!trimmed) {
+      setProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+    setProfile(null);
+
+    void (async () => {
+      const loaded = await readXingyeRoleProfile(trimmed);
+      if (!cancelled) setProfile(loaded);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trimmed]);
+
+  useEffect(() => {
+    if (!trimmed) return undefined;
+
+    const onChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ agentId?: string }>).detail;
+      if (detail?.agentId && detail.agentId !== trimmed) return;
+      void (async () => {
+        setProfile(await readXingyeRoleProfile(trimmed));
+      })();
+    };
+
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
+  }, [trimmed]);
+
+  return profile;
 }

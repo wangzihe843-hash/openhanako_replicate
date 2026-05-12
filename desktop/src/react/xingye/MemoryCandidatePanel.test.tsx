@@ -34,6 +34,7 @@ describe('MemoryCandidatePanel', () => {
   const agentId = 'agent-panel-1';
 
   beforeEach(() => {
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
     window.localStorage.clear();
     mockPinnedServerPins = [];
     vi.mocked(hanaFetch).mockReset();
@@ -51,6 +52,7 @@ describe('MemoryCandidatePanel', () => {
   });
 
   afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
   });
 

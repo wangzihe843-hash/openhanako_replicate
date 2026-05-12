@@ -17,14 +17,13 @@ import styles from './XingyeShell.module.css';
 interface AgentPhonePanelProps {
   agent: Agent | null;
   agents: Agent[];
-  currentAgentId: string | null;
   onNavigate: (tabId: XingyeTabId) => void;
   onOpenGroupChatTab?: () => void;
 }
 
 type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal';
 
-export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
+export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
   const channels = useStore(state => state.channels);
   const profile = useXingyeRoleProfile(agent?.id);
   const profiles = useXingyeRoleProfiles();
@@ -41,7 +40,7 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate, onO
     <div className={styles.phonePanel}>
       <h2 className={styles.panelTitle}>小手机</h2>
       <p className={styles.panelDescription}>
-        当前为角色侧本地模拟手机：短信/通讯录数据写入当前 agent 工作区下的 <code className={styles.inlineCode}>.xingye/</code>（若未配置工作区则回退 localStorage）。MM Chat / 日记为纯前端文本壳 mock；不接 OpenHanako 原生聊天与记忆管线。
+        当前为角色侧本地模拟手机：短信/通讯录数据写入当前 agent 工作区下的 <code className={styles.inlineCode}>.xingye/</code>（需已连接服务且星野持久化已绑定该角色；未就绪时不写入、不回退到全局 localStorage）。MM Chat / 日记为纯前端文本壳 mock；不接 OpenHanako 原生聊天与记忆管线。
       </p>
       {phonePage === 'home' ? (
         <PhoneHome
@@ -70,7 +69,6 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate, onO
           ownerAgent={agent}
           agents={agents}
           profiles={profiles}
-          currentAgentId={currentAgentId}
           channels={channels}
           onBack={() => setPhonePage('home')}
           onOpenSms={(targetType, targetId) => handleOpenSms(targetType, targetId)}

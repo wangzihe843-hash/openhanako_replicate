@@ -1,27 +1,25 @@
 /**
- * xingye-persistence.ts — 星野数据：localStorage 与 workspace（.xingye）之间的运行时桥
+ * Xingye business persistence bridge.
  *
- * - 无可用 workspace 或未连接 server：透传 window.localStorage。
- * - 有 workspace：内存镜像 + 防抖写入 .xingye/（layout v2：按 agent 分域 manifest.json + agents/...）。
+ * Official business data is stored per agent under:
+ *   HANA_HOME/agents/{agentId}/xingye/
+ *
+ * Callers must explicitly refresh with an OpenHanako agent id (typically the
+ * Xingye shell selected agent). There is no fallback to currentAgentId or
+ * workspace paths. When not in agent mode, getXingyePersistenceStorage() is
+ * null (no silent localStorage writes), except tests may set
+ * `window.__XINGYE_PERSISTENCE_DEV_LOCAL__ = true` to use localStorage.
+ * Unscoped legacy localStorage → agent file migration is disabled unless
+ * `window.__XINGYE_ALLOW_LEGACY_LOCAL_MIGRATE__ = true`.
  */
 
 import { useStore } from '../stores';
 import { hasServerConnection } from '../services/server-connection';
-// @ts-expect-error — shared JS module
-import { normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
 import { postXingyeStorage } from './xingye-storage-api';
-import type { XingyeWorkspaceManifestV2 } from './xingye-workspace-v2';
-import {
-  loadWorkspaceV2IntoMemoryMap,
-  persistMemoryMapToWorkspaceV2,
-  readWorkspaceManifestV2,
-} from './xingye-workspace-v2';
 
 export const XINGYE_WORKSPACE_STORAGE_STATE_KEY = 'xingye.workspaceStorage.v1';
 
-/** 与各 store 中常量一致（避免循环 import） */
 export const XINGYE_KNOWN_STORAGE_KEYS: readonly string[] = [
-  'xingye.roleProfiles',
   'xingye.phoneContacts',
   'xingye.phoneSmsThreads',
   'xingye.phoneVirtualContacts',
@@ -37,144 +35,156 @@ export const XINGYE_KNOWN_STORAGE_KEYS: readonly string[] = [
   'xingye.memoryCandidates',
 ] as const;
 
-const KEY_TO_RELATIVE: Record<string, string> = {
-  'xingye.roleProfiles': 'v1/data/role-profiles.json',
-  'xingye.phoneContacts': 'v1/data/phone-contacts.json',
-  'xingye.phoneSmsThreads': 'v1/data/phone-sms-threads.json',
-  'xingye.phoneVirtualContacts': 'v1/data/phone-virtual-contacts.json',
-  'xingye.phoneContactGenerationState': 'v1/data/phone-contact-generation-state.json',
-  'xingye.phoneAiGenerationState': 'v1/data/phone-ai-generation-state.json',
-  'xingye.phoneSmsHistoryGenerationState': 'v1/data/phone-sms-history-generation-state.json',
-  'xingye.phoneContactSnapshots': 'v1/data/phone-contact-snapshots.json',
-  'xingye.phoneContactAiUpdateState': 'v1/data/phone-contact-ai-update-state.json',
-  'xingye.phone.contactChangeLog': 'v1/data/phone-contact-change-log.json',
-  'xingye.moments': 'v1/data/moments.json',
-  'xingye.loreEntries': 'v1/data/lore-entries.json',
-  'xingye.relationshipStates': 'v1/data/relationship-states.json',
-  'xingye.memoryCandidates': 'v1/data/memory-candidates.json',
+const KEY_TO_AGENT_RELATIVE: Record<string, string> = {
+  'xingye.phoneContacts': 'phone/contacts.json',
+  'xingye.phoneSmsThreads': 'phone/sms-threads.json',
+  'xingye.phoneVirtualContacts': 'phone/virtual-contacts.json',
+  'xingye.phoneContactGenerationState': 'phone/contact-generation-state.json',
+  'xingye.phoneAiGenerationState': 'phone/ai-generation-state.json',
+  'xingye.phoneSmsHistoryGenerationState': 'phone/sms-history-generation-state.json',
+  'xingye.phoneContactSnapshots': 'phone/snapshots/index.json',
+  'xingye.phoneContactAiUpdateState': 'phone/contact-ai-update-state.json',
+  'xingye.phone.contactChangeLog': 'phone/contact-change-log.json',
+  'xingye.moments': 'moments/posts.json',
+  'xingye.loreEntries': 'lore/entries.json',
+  'xingye.relationshipStates': 'relationship-state.json',
+  'xingye.memoryCandidates': 'memory-candidates.json',
 };
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
-interface WorkspaceMigrationState {
-  workspaces: Record<string, { migratedAt: string; version: number }>;
-}
+export type XingyePersistenceMode = 'disabled' | 'agent' | 'error';
 
-function workspaceStateKey(ws: string): string {
-  return normalizeWorkspacePath(ws) || ws;
-}
-
-function readMigrationState(): WorkspaceMigrationState {
-  try {
-    const raw = window.localStorage.getItem(XINGYE_WORKSPACE_STORAGE_STATE_KEY);
-    if (!raw) return { workspaces: {} };
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || !('workspaces' in parsed)) return { workspaces: {} };
-    const w = (parsed as WorkspaceMigrationState).workspaces;
-    return { workspaces: typeof w === 'object' && w ? w : {} };
-  } catch {
-    return { workspaces: {} };
-  }
-}
-
-function isWorkspaceMigrated(ws: string): boolean {
-  return !!readMigrationState().workspaces[workspaceStateKey(ws)];
-}
-
-function markWorkspaceMigrated(ws: string): void {
-  const next = readMigrationState();
-  next.workspaces[workspaceStateKey(ws)] = { migratedAt: new Date().toISOString(), version: 1 };
-  window.localStorage.setItem(XINGYE_WORKSPACE_STORAGE_STATE_KEY, JSON.stringify(next));
-}
-
-async function hydrateRoleProfilesFromDisk(memory: Map<string, string>): Promise<void> {
-  const raw = memory.get('xingye.roleProfiles');
-  if (!raw) return;
-  let map: Record<string, Record<string, unknown>>;
-  try {
-    map = JSON.parse(raw) as Record<string, Record<string, unknown>>;
-  } catch {
-    return;
-  }
-  let changed = false;
-  for (const [, prof] of Object.entries(map)) {
-    if (!prof || typeof prof !== 'object') continue;
-    const avatarPath = prof.avatarMediaPath;
-    if (typeof avatarPath === 'string' && !prof.avatarDataUrl) {
-      try {
-        const r = await postXingyeStorage({ action: 'read', relativePath: avatarPath, binary: true });
-        if (r?.encoding === 'base64' && r?.content) {
-          const ext = (avatarPath.split('.').pop() || 'png').toLowerCase();
-          const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-          prof.avatarDataUrl = `data:${mime};base64,${r.content}`;
-          changed = true;
-        }
-      } catch { /* ignore */ }
-    }
-    const bgPath = prof.chatBackgroundMediaPath;
-    if (typeof bgPath === 'string' && !prof.chatBackgroundDataUrl) {
-      try {
-        const r = await postXingyeStorage({ action: 'read', relativePath: bgPath, binary: true });
-        if (r?.encoding === 'base64' && r?.content) {
-          const ext = (bgPath.split('.').pop() || 'webp').toLowerCase();
-          const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-          prof.chatBackgroundDataUrl = `data:${mime};base64,${r.content}`;
-          changed = true;
-        }
-      } catch { /* ignore */ }
-    }
-  }
-  if (changed) {
-    memory.set('xingye.roleProfiles', JSON.stringify(map));
-  }
-}
-
-let nextFlushManifestPatch:
-  | Partial<Pick<XingyeWorkspaceManifestV2, 'migratedFromLocalStorageAt' | 'migratedFromLayoutV1At' | 'createdAt'>>
-  | undefined;
-
-async function loadWorkspaceIntoMemory(ws: string, memory: Map<string, string>): Promise<void> {
-  void ws;
-  const v2 = await readWorkspaceManifestV2();
-  if (v2) {
-    await loadWorkspaceV2IntoMemoryMap(memory);
-    await hydrateRoleProfilesFromDisk(memory);
-    return;
-  }
-
-  let hadV1Data = false;
-  for (const key of XINGYE_KNOWN_STORAGE_KEYS) {
-    const rel = KEY_TO_RELATIVE[key];
-    if (!rel) continue;
-    try {
-      const data = await postXingyeStorage({ action: 'read', relativePath: rel });
-      if (data?.content != null && typeof data.content === 'string') {
-        memory.set(key, data.content);
-        hadV1Data = true;
-      }
-    } catch {
-      /* skip missing */
-    }
-  }
-  await hydrateRoleProfilesFromDisk(memory);
-  if (hadV1Data) {
-    nextFlushManifestPatch = {
-      ...nextFlushManifestPatch,
-      migratedFromLayoutV1At: new Date().toISOString(),
-    };
-  }
-}
-
-let mode: 'passthrough' | 'workspace' = 'passthrough';
+let mode: XingyePersistenceMode = 'disabled';
 const memory = new Map<string, string>();
-let activeWorkspace: string | null = null;
+let activeAgentId: string | null = null;
 let refreshVersion = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_DEBOUNCE_MS = 450;
-let lastWorkspaceFlushError: string | null = null;
+let lastAgentFlushError: string | null = null;
+let lastRefreshError: string | null = null;
+
+function parseJson(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function devLocalStorageFallbackEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__);
+}
+
+function emitPersistenceChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('xingye-persistence-changed'));
+}
+
+function isScopedPayloadEmpty(key: string, agentId: string, value: unknown): boolean {
+  const scoped = pickAgentScopedData(key, agentId, value);
+  if (scoped == null) return true;
+  if (Array.isArray(scoped)) return scoped.length === 0;
+  if (isRecord(scoped)) return Object.keys(scoped).length === 0;
+  return false;
+}
+
+function ownsAgentScope(value: unknown, agentId: string): boolean {
+  if (!isRecord(value)) return true;
+  const owner =
+    value.ownerAgentId ??
+    value.agentId ??
+    value.authorAgentId ??
+    value.sourceAgentId ??
+    value.characterAgentId;
+  return typeof owner !== 'string' || owner === agentId;
+}
+
+function pickAgentScopedData(key: string, agentId: string, value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.filter((item) => ownsAgentScope(item, agentId));
+  }
+
+  if (!isRecord(value)) return value;
+
+  const entries = Object.entries(value).filter(([, item]) => ownsAgentScope(item, agentId));
+  return Object.fromEntries(entries);
+}
+
+function wrapAgentScopedData(key: string, agentId: string, value: unknown): unknown {
+  if (value == null) return null;
+
+  if (key === 'xingye.loreEntries' && Array.isArray(value)) {
+    return Object.fromEntries(
+      value
+        .filter((entry) => isRecord(entry))
+        .map((entry, index) => [String(entry.id ?? entry.key ?? index), entry]),
+    );
+  }
+
+  return value;
+}
+
+async function readAgentFile(agentId: string, key: string): Promise<string | null> {
+  const relativePath = KEY_TO_AGENT_RELATIVE[key];
+  if (!relativePath) return null;
+  const result = await postXingyeStorage({ action: 'readJson', agentId, relativePath });
+  const data = result?.data ?? null;
+  const wrapped = wrapAgentScopedData(key, agentId, data);
+  return wrapped == null ? null : JSON.stringify(wrapped);
+}
+
+async function writeAgentFile(agentId: string, key: string, raw: string): Promise<void> {
+  const relativePath = KEY_TO_AGENT_RELATIVE[key];
+  if (!relativePath) return;
+  const parsed = parseJson(raw);
+  const data = pickAgentScopedData(key, agentId, parsed);
+  await postXingyeStorage({ action: 'writeJson', agentId, relativePath, data });
+}
+
+/**
+ * When agent-scope JSON is missing, read legacy global localStorage once,
+ * scope to this agent, write to agent files, then re-read from API.
+ * Does not migrate unrelated agents' rows into this agent (pickAgentScopedData).
+ */
+async function tryMigrateFromLocalStorageOnce(agentId: string, key: string): Promise<string | null> {
+  if (typeof window === 'undefined' || devLocalStorageFallbackEnabled()) return null;
+  /** Formal UI must not pull unscoped legacy keys into arbitrary agent dirs (cross-agent / hanako pollution). */
+  if (!(window as unknown as { __XINGYE_ALLOW_LEGACY_LOCAL_MIGRATE__?: boolean }).__XINGYE_ALLOW_LEGACY_LOCAL_MIGRATE__) {
+    return null;
+  }
+  try {
+    const legacy = window.localStorage.getItem(key);
+    if (!legacy) return null;
+    const parsed = parseJson(legacy);
+    if (parsed == null) return null;
+    if (isScopedPayloadEmpty(key, agentId, parsed)) return null;
+    await writeAgentFile(agentId, key, legacy);
+    return await readAgentFile(agentId, key);
+  } catch {
+    return null;
+  }
+}
+
+async function loadAgentIntoMemory(agentId: string): Promise<void> {
+  memory.clear();
+  for (const key of XINGYE_KNOWN_STORAGE_KEYS) {
+    let raw = await readAgentFile(agentId, key);
+    if (raw == null) {
+      raw = await tryMigrateFromLocalStorageOnce(agentId, key);
+    }
+    if (raw != null) memory.set(key, raw);
+  }
+}
 
 function scheduleFlush(): void {
-  if (mode !== 'workspace') return;
+  if (mode !== 'agent') return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
@@ -183,35 +193,46 @@ function scheduleFlush(): void {
 }
 
 async function flushNow(): Promise<void> {
-  if (mode !== 'workspace' || !activeWorkspace) return;
-  lastWorkspaceFlushError = null;
+  if (mode !== 'agent' || !activeAgentId) return;
+  lastAgentFlushError = null;
   try {
-    const patch = nextFlushManifestPatch;
-    nextFlushManifestPatch = undefined;
-    await persistMemoryMapToWorkspaceV2(memory, workspaceStateKey(activeWorkspace), patch);
+    for (const [key, raw] of memory.entries()) {
+      await writeAgentFile(activeAgentId, key, raw);
+    }
   } catch (err) {
-    lastWorkspaceFlushError = err instanceof Error ? err.message : String(err);
-    console.warn('[xingye-persistence] flush failed:', err);
+    lastAgentFlushError = err instanceof Error ? err.message : String(err);
+    console.warn('[xingye-persistence] agent flush failed:', err);
   }
 }
 
-/** 测试或排障：强制把内存写回 workspace */
 export async function flushXingyePersistenceNow(): Promise<void> {
   await flushNow();
 }
 
 export function getXingyePersistenceDiagnostics(): {
-  mode: 'passthrough' | 'workspace';
+  mode: XingyePersistenceMode;
+  activeAgentId: string | null;
+  lastRefreshError: string | null;
+  lastAgentFlushError: string | null;
+  /** @deprecated misleading name; same as activeAgentId */
   activeWorkspace: string | null;
+  /** @deprecated use lastRefreshError / lastAgentFlushError */
   lastWorkspaceFlushError: string | null;
 } {
-  return { mode, activeWorkspace, lastWorkspaceFlushError };
+  return {
+    mode,
+    activeAgentId,
+    lastRefreshError,
+    lastAgentFlushError,
+    activeWorkspace: activeAgentId,
+    lastWorkspaceFlushError: lastRefreshError ?? lastAgentFlushError,
+  };
 }
 
 export function getXingyePersistenceStorage(): StorageLike | null {
   if (typeof window === 'undefined') return null;
 
-  if (mode === 'passthrough') {
+  if (devLocalStorageFallbackEnabled()) {
     try {
       return window.localStorage;
     } catch {
@@ -219,14 +240,13 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     }
   }
 
+  if (mode !== 'agent' || !activeAgentId) {
+    return null;
+  }
+
   return {
     getItem(key: string) {
-      if (memory.has(key)) return memory.get(key) ?? null;
-      try {
-        return window.localStorage.getItem(key);
-      } catch {
-        return null;
-      }
+      return memory.has(key) ? memory.get(key) ?? null : null;
     },
     setItem(key: string, value: string) {
       memory.set(key, value);
@@ -235,87 +255,73 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     removeItem(key: string) {
       memory.delete(key);
       scheduleFlush();
-      try {
-        window.localStorage.removeItem(key);
-      } catch {
-        /* ignore */
-      }
     },
   };
 }
 
 /**
- * 在 desk / workspace 变化后调用：迁移（若需要）、加载 .xingye 数据到内存。
+ * Load agent-scoped Xingye files into memory. Requires a non-empty agent id string.
+ * Pass null/undefined/'' to enter disabled state (no storage, no localStorage writes).
  */
-export async function refreshXingyeWorkspacePersistence(): Promise<void> {
+export async function refreshXingyeAgentPersistence(agentId: string | null | undefined): Promise<void> {
   const myVersion = ++refreshVersion;
+  const id = typeof agentId === 'string' ? agentId.trim() : '';
+
+  lastRefreshError = null;
+
+  if (!id) {
+    mode = 'disabled';
+    memory.clear();
+    activeAgentId = null;
+    emitPersistenceChanged();
+    return;
+  }
+
   if (!hasServerConnection(useStore.getState())) {
-    mode = 'passthrough';
+    mode = 'disabled';
     memory.clear();
-    activeWorkspace = null;
+    activeAgentId = null;
+    emitPersistenceChanged();
     return;
   }
 
-  const s = useStore.getState();
-  const rawWs = s.deskBasePath || s.selectedFolder || s.homeFolder;
-  const ws = typeof rawWs === 'string' ? rawWs.trim() : '';
-  if (!ws) {
-    mode = 'passthrough';
-    memory.clear();
-    activeWorkspace = null;
+  if (activeAgentId === id && mode === 'agent') {
     return;
   }
-
-  const normalized = normalizeWorkspacePath(ws) || ws;
-  if (activeWorkspace === normalized && mode === 'workspace') {
-    return;
-  }
-
-  memory.clear();
-  activeWorkspace = normalized;
 
   try {
-    if (!isWorkspaceMigrated(normalized)) {
-      for (const key of XINGYE_KNOWN_STORAGE_KEYS) {
-        try {
-          const v = window.localStorage.getItem(key);
-          if (v != null) memory.set(key, v);
-        } catch { /* ignore */ }
-      }
-      nextFlushManifestPatch = {
-        ...nextFlushManifestPatch,
-        migratedFromLocalStorageAt: new Date().toISOString(),
-      };
-      await persistMemoryMapToWorkspaceV2(memory, workspaceStateKey(normalized), nextFlushManifestPatch);
-      nextFlushManifestPatch = undefined;
-      markWorkspaceMigrated(normalized);
-    } else {
-      await loadWorkspaceIntoMemory(normalized, memory);
-      if (nextFlushManifestPatch?.migratedFromLayoutV1At) {
-        const patch = nextFlushManifestPatch;
-        nextFlushManifestPatch = undefined;
-        await persistMemoryMapToWorkspaceV2(memory, workspaceStateKey(normalized), patch);
-      }
-    }
+    await loadAgentIntoMemory(id);
     if (myVersion !== refreshVersion) return;
-    mode = 'workspace';
-    window.dispatchEvent(new CustomEvent('xingye-persistence-changed'));
+    activeAgentId = id;
+    mode = 'agent';
+    lastRefreshError = null;
+    emitPersistenceChanged();
   } catch (err) {
-    console.warn('[xingye-persistence] refresh failed, falling back to localStorage:', err);
+    lastRefreshError = err instanceof Error ? err.message : String(err);
+    console.warn('[xingye-persistence] refresh failed:', err);
     if (myVersion !== refreshVersion) return;
-    mode = 'passthrough';
+    mode = 'error';
     memory.clear();
-    activeWorkspace = null;
+    activeAgentId = null;
+    emitPersistenceChanged();
   }
 }
 
-/** 单元测试：重置为透传 localStorage */
+/** @deprecated Use {@link refreshXingyeAgentPersistence}; call with explicit agent id only. */
+export async function refreshXingyeWorkspacePersistence(agentId?: string | null): Promise<void> {
+  if (arguments.length === 0) {
+    console.warn('[xingye-persistence] refreshXingyeWorkspacePersistence() invoked with no agent id — no-op (will not switch active agent).');
+    return;
+  }
+  return refreshXingyeAgentPersistence(agentId);
+}
+
 export function resetXingyePersistenceForTests(): void {
-  mode = 'passthrough';
+  mode = 'disabled';
   memory.clear();
-  activeWorkspace = null;
-  nextFlushManifestPatch = undefined;
-  lastWorkspaceFlushError = null;
+  activeAgentId = null;
+  lastAgentFlushError = null;
+  lastRefreshError = null;
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;

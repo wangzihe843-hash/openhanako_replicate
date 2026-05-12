@@ -26,7 +26,6 @@ import {
 import {
   blockPhoneContact,
   deletePhoneContact,
-  ensureGeneratedVirtualContacts,
   getContactAiUpdateState,
   getPhoneContactGenerationState,
   getPhoneContacts,
@@ -35,6 +34,8 @@ import {
   linkVirtualContactToAgent,
   restorePhoneContact,
   savePhoneContactMeta,
+  computePhoneContactGenerationInputHash,
+  shouldAutoSkipVirtualContactGeneration,
   unlinkVirtualContactFromAgent,
   type XingyePhoneContactView,
   useXingyePhoneStorageVersion,
@@ -51,7 +52,6 @@ type ContactsListView =
 interface PhoneContactsAppProps {
   ownerAgent: Agent | null;
   agents: Agent[];
-  currentAgentId: string | null;
   profiles: XingyeRoleProfileMap;
   channels: Channel[];
   onBack: () => void;
@@ -62,7 +62,6 @@ interface PhoneContactsAppProps {
 export function PhoneContactsApp({
   ownerAgent,
   agents,
-  currentAgentId,
   profiles,
   channels,
   onBack,
@@ -70,9 +69,14 @@ export function PhoneContactsApp({
   onOpenGroupChatTab,
 }: PhoneContactsAppProps) {
   const _phoneStorageVersion = useXingyePhoneStorageVersion();
-  const ownerAgentId = ownerAgent?.id ?? currentAgentId ?? '';
+  const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
+  const agentIdsKey = useMemo(() => agents.map(a => a.id).sort().join(','), [agents]);
+  const contactGenInputHash = useMemo(
+    () => computePhoneContactGenerationInputHash(profileFingerprint, agents.map(a => a.id).sort()),
+    [profileFingerprint, agentIdsKey],
+  );
   const contacts = useMemo(
     () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
     [ownerAgentId, agents, profiles, _phoneStorageVersion],
@@ -182,28 +186,34 @@ export function PhoneContactsApp({
     } as const)[listView];
 
   useEffect(() => {
-    if (!ownerAgent || !ownerAgentId) return;
+    if (!ownerAgentId || !ownerAgent) return;
     if (virtualContacts.length > 0) return;
-    if (generationState) return;
-    generateVirtualContactsWithAI({
+    if (shouldAutoSkipVirtualContactGeneration(ownerAgentId, profileFingerprint, contactGenInputHash)) return;
+    const contactsNow = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true });
+    let cancelled = false;
+    void generateVirtualContactsWithAI({
       ownerAgent,
       ownerProfile,
-      contacts,
+      contacts: contactsNow,
       agents,
       profiles,
       profileFingerprint,
       mode: 'initial_ai_generate',
     }).then((result) => {
+      if (cancelled) return;
       if (result.generatedBy === 'rule_fallback') {
         setAiManageNotice('AI 生成失败，已使用本地规则生成联系人。');
       } else {
         setAiManageNotice(result.notice ?? null);
       }
-    }).catch(() => {
-      ensureGeneratedVirtualContacts(ownerAgentId, ownerAgent, ownerProfile, agents, profiles);
-      setAiManageNotice('AI 生成失败，已使用本地规则生成联系人。');
+    }).catch((err) => {
+      if (cancelled) return;
+      setAiManageNotice(err instanceof Error ? err.message : String(err));
     });
-  }, [ownerAgentId, ownerAgent, ownerProfile, contacts, agents, profiles, profileFingerprint, virtualContacts.length, generationState]);
+    return () => {
+      cancelled = true;
+    };
+  }, [ownerAgentId, ownerAgent, ownerProfile, virtualContacts.length, profileFingerprint, contactGenInputHash, agentIdsKey, _phoneStorageVersion, agents, profiles]);
 
   const openContact = (contact: XingyePhoneContactView) => {
     setSelectedContactKey(`${contact.targetType}:${contact.targetId}`);
@@ -326,6 +336,28 @@ export function PhoneContactsApp({
     onSelectContact: openContact,
   };
 
+  if (!ownerAgent?.id) {
+    return (
+      <div className={styles.phoneShell} aria-label="通讯录">
+        <div className={styles.phoneStatusBar}>
+          <button type="button" className={styles.phoneBackButton} onClick={onBack}>
+            返回首页
+          </button>
+          <span>通讯录</span>
+        </div>
+        <div className={styles.phoneBody}>
+          <section className={styles.phoneAppCard}>
+            <h3 className={styles.phoneAppTitle}>通讯录不可用</h3>
+            <p className={styles.phoneAppHint}>
+              未选择角色 / 小手机不可用。通讯录必须绑定当前小手机所属角色，不能使用 OpenHanako 当前聊天角色作为隐式回退。
+            </p>
+            <p className={styles.phoneAppHint}>请返回星野角色页，选择有效角色后再打开小手机通讯录。</p>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.phoneShell} aria-label="通讯录">
       <div className={styles.phoneStatusBar}>
@@ -392,13 +424,19 @@ export function PhoneContactsApp({
                   {aiManageOpen ? '收起 AI 管理' : 'AI 联系人管理'}
                 </button>
                 <span className={styles.phoneAppHint}>
-                  {generationState?.mode === 'ai' ? 'AI 生成' : generationState?.mode === 'rule' ? '本地规则生成' : '未生成'}
+                  {generationState?.status === 'running'
+                    ? '生成中…'
+                    : generationState?.mode === 'ai'
+                      ? 'AI 生成'
+                      : generationState?.mode === 'rule'
+                        ? '本地规则生成'
+                        : '未生成'}
                 </span>
               </div>
               {aiManageOpen ? (
                 <>
                   <div className={styles.phoneActionRow}>
-                    <button type="button" className={styles.secondaryButton} onClick={handleGenerateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>
+                    <button type="button" className={styles.secondaryButton} onClick={handleGenerateContacts} disabled={contactUpdateState?.status === 'running' || generationState?.status === 'running'}>
                       AI 生成联系人
                     </button>
                     <button type="button" className={styles.secondaryButton} onClick={handleUpdateContacts} disabled={!ownerAgent || contactUpdateState?.status === 'running'}>

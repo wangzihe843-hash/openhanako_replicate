@@ -84,7 +84,7 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
   const handleAccept = () => {
     if (!suggestion) return;
     const next = updateRelationshipState(agent.id, suggestion);
-    saveXingyeRoleProfile(agent.id, { relationshipLabel: next.relationshipLabel });
+    void saveXingyeRoleProfile(agent.id, { relationshipLabel: next.relationshipLabel }).catch(() => {});
     setSuggestion(null);
     setError(null);
   };

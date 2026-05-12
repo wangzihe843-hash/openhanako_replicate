@@ -39,7 +39,28 @@ describe('readXingyeRuntimeLoreEntriesSync', () => {
     }
   });
 
-  it('reads workspace v2 agent lore first', () => {
+  it('prefers hanakoHome agents/.../xingye/lore/entries.json over workspace v2 lore.json', () => {
+    const workspaceRoot = makeRoot();
+    roots.push(workspaceRoot);
+    const hanakoHome = makeRoot();
+    roots.push(hanakoHome);
+    writeJson(path.join(workspaceRoot, '.xingye', 'agents', 'agent-a', 'lore.json'), [
+      entry({ id: 'workspace' }),
+    ]);
+    writeJson(path.join(hanakoHome, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json'), {
+      home: entry({ id: 'hana-lore' }),
+    });
+
+    const entries = readXingyeRuntimeLoreEntriesSync({
+      workspaceRoot,
+      hanakoHome,
+      agentId: 'agent-a',
+    });
+
+    expect(entries.map((item) => item.id)).toEqual(['hana-lore']);
+  });
+
+  it('reads workspace v2 agent lore when hanakoHome has no entries file', () => {
     const root = makeRoot();
     roots.push(root);
     writeJson(path.join(root, '.xingye', 'agents', 'agent-a', 'lore.json'), [
