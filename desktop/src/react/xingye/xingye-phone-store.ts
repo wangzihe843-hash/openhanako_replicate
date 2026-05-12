@@ -214,6 +214,11 @@ export type XingyePhoneContactView = {
 };
 
 export const XINGYE_PHONE_CONTACTS_STORAGE_KEY = 'xingye.phoneContacts';
+/**
+ * SMS threads：localStorage 中单 key 存整张 map（JSON）。每条线程与通讯录一致的 composite key：
+ * `ownerAgentId::targetType::targetId`（见 `threadKey`）。Workspace v2 按 owner 分片到
+ * `agents/<sanitizedAgentId>/phone/sms-threads.json`，同一 map 中仅保留该 owner 的条目。
+ */
 export const XINGYE_PHONE_SMS_THREADS_STORAGE_KEY = 'xingye.phoneSmsThreads';
 export const XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY = 'xingye.phoneVirtualContacts';
 export const XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY = 'xingye.phoneContactGenerationState';
@@ -273,12 +278,23 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function contactKey(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string): string {
+/**
+ * 通讯录与 SMS threads 共用的 storage map 键；须与 `contactKey`/`threadKey` 保持一致（防漂移请改此处一处）。
+ */
+export function phoneCompositeMapKey(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+): string {
   return `${ownerAgentId}::${targetType}::${targetId}`;
 }
 
+function contactKey(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string): string {
+  return phoneCompositeMapKey(ownerAgentId, targetType, targetId);
+}
+
 function threadKey(ownerAgentId: string, targetType: XingyeContactTargetType, targetId: string): string {
-  return `${ownerAgentId}::${targetType}::${targetId}`;
+  return phoneCompositeMapKey(ownerAgentId, targetType, targetId);
 }
 
 function notifyXingyePhoneChanged() {

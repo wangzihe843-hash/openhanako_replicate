@@ -182,6 +182,31 @@ async function readFileText(rel: string): Promise<string | null> {
   return typeof data.content === 'string' ? data.content : null;
 }
 
+/** 读取单个 phone 类 JSON 对象文件（composite key → record），合并进内存 bucket。 */
+async function mergePhoneJsonObjectFile(rel: string, bucket: Record<string, unknown>): Promise<void> {
+  const t = await readFileText(rel);
+  if (!t) return;
+  try {
+    const o = JSON.parse(t) as unknown;
+    if (!isRecord(o)) return;
+    for (const [k, v] of Object.entries(o)) {
+      bucket[k] = v;
+    }
+  } catch { /* */ }
+}
+
+/**
+ * Workspace v2 SMS **monolith** loader：只读 `agents/<id>/phone/sms-threads.json`。
+ * 文件内为扁平对象，键与 localStorage `xingye.phoneSmsThreads` 相同（`ownerAgentId::targetType::targetId`）。
+ * 未来若改为 per-thread / index，应在此函数旁增加分支；本轮不读取 `sms-index.json` 或 per-thread 文件，以免半迁移双格式。
+ *
+ * **Migration marker（仅规范，运行时暂不读写）：** 将来可选用例如 `agents/<id>/phone/.sms-storage-version`
+ * 声明布局版本；未迁移 agent 仅有本 monolith 文件即可。
+ */
+async function mergeAgentPhoneSmsThreadsMonolith(agentId: string, bucket: Record<string, unknown>): Promise<void> {
+  await mergePhoneJsonObjectFile(`${agentBase(agentId)}/phone/sms-threads.json`, bucket);
+}
+
 export async function readWorkspaceManifestV2(): Promise<XingyeWorkspaceManifestV2 | null> {
   const text = await readFileText('manifest.json');
   if (!text) return null;
@@ -289,6 +314,7 @@ export async function persistMemoryMapToWorkspaceV2(
     }
   })();
 
+  /** 电话/SMS 等 map：仅导出属于该 agent 的行（键仍为全局 composite key，值含 ownerAgentId）。 */
   const filterMapByOwner = (m: Record<string, unknown>, agentId: string) => {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(m)) {
@@ -343,6 +369,7 @@ export async function persistMemoryMapToWorkspaceV2(
       `${agentBase(agentId)}/phone/virtual-contacts.json`,
       JSON.stringify(filterMapByOwner(vMap, agentId), null, 2),
     );
+    // SMS monolith：与 load 侧 `mergeAgentPhoneSmsThreadsMonolith` 路径一致。
     await writeFile(
       `${agentBase(agentId)}/phone/sms-threads.json`,
       JSON.stringify(filterMapByOwner(sMap, agentId), null, 2),
@@ -441,18 +468,6 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     }
   };
 
-  const mergePhoneObjectMap = async (rel: string, bucket: Record<string, unknown>) => {
-    const t = await readFileText(rel);
-    if (!t) return;
-    try {
-      const o = JSON.parse(t) as unknown;
-      if (!isRecord(o)) return;
-      for (const [k, v] of Object.entries(o)) {
-        bucket[k] = v;
-      }
-    } catch { /* */ }
-  };
-
   for (const agentId of man.agentIds) {
     const profText = await readFileText(`${agentBase(agentId)}/profile.json`);
     if (profText) {
@@ -515,9 +530,9 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
       } catch { /* */ }
     }
 
-    await mergePhoneObjectMap(`${agentBase(agentId)}/phone/contacts.json`, cMerged);
-    await mergePhoneObjectMap(`${agentBase(agentId)}/phone/virtual-contacts.json`, vMerged);
-    await mergePhoneObjectMap(`${agentBase(agentId)}/phone/sms-threads.json`, sMerged);
+    await mergePhoneJsonObjectFile(`${agentBase(agentId)}/phone/contacts.json`, cMerged);
+    await mergePhoneJsonObjectFile(`${agentBase(agentId)}/phone/virtual-contacts.json`, vMerged);
+    await mergeAgentPhoneSmsThreadsMonolith(agentId, sMerged);
 
     const genT = await readFileText(`${agentBase(agentId)}/phone/contact-generation-state.json`);
     if (genT) {

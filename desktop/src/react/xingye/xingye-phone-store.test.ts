@@ -6,8 +6,10 @@ import {
   XINGYE_PHONE_SMS_THREADS_STORAGE_KEY,
   XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY,
   addMockSmsMessage,
+  addSmsMessage,
   applyAiContactUpdates,
   applyAiGeneratedContacts,
+  clearAiSmsHistory,
   ensureContactDistribution,
   ensureGeneratedVirtualContacts,
   getPhoneContactMeta,
@@ -17,6 +19,7 @@ import {
   shouldSkipFamilyContacts,
   getSmsThread,
   getSmsThreads,
+  phoneCompositeMapKey,
   savePhoneContactMeta,
   type XingyeAiGeneratedContact,
 } from './xingye-phone-store';
@@ -243,6 +246,42 @@ describe('xingye-phone-store', () => {
     addMockSmsMessage('hanako', 'agent', 'test_01', '第三条', 'outgoing', storage);
     const t = getSmsThread('hanako', 'agent', 'test_01', storage);
     expect(t?.messages.map(m => m.content)).toEqual(['第一条', '第二条', '第三条']);
+  });
+
+  it('phoneCompositeMapKey is the single composite key shape for contacts and SMS threads', () => {
+    expect(phoneCompositeMapKey('owner', 'agent', 'peer')).toBe('owner::agent::peer');
+    expect(phoneCompositeMapKey('o', 'virtual_contact', 'vc1')).toBe('o::virtual_contact::vc1');
+  });
+
+  it('clearAiSmsHistory removes ai_generated messages but keeps mock and non-AI sources', () => {
+    vi.setSystemTime(new Date('2026-05-11T04:00:00.000Z'));
+    addSmsMessage({
+      ownerAgentId: 'hanako',
+      targetType: 'agent',
+      targetId: 'test_01',
+      content: 'AI短信',
+      direction: 'outgoing',
+      source: 'ai_generated',
+    }, storage);
+    vi.setSystemTime(new Date('2026-05-11T04:01:00.000Z'));
+    addMockSmsMessage('hanako', 'agent', 'test_01', '手动mock', 'incoming', storage);
+    vi.setSystemTime(new Date('2026-05-11T04:02:00.000Z'));
+    addSmsMessage({
+      ownerAgentId: 'hanako',
+      targetType: 'agent',
+      targetId: 'test_01',
+      content: '非AI',
+      direction: 'incoming',
+      source: 'manual',
+    }, storage);
+
+    clearAiSmsHistory('hanako', storage);
+
+    const t = getSmsThread('hanako', 'agent', 'test_01', storage);
+    const contents = t?.messages.map(m => m.content) ?? [];
+    expect(contents).toContain('手动mock');
+    expect(contents).toContain('非AI');
+    expect(contents).not.toContain('AI短信');
   });
 });
 
