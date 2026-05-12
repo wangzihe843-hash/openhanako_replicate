@@ -2558,6 +2558,191 @@
   line-height: 1.45;
 }
 
+/* —— 秘密空间：分类记录索引（可点击条目，非正文流） —— */
+.secretSpaceRecordIndexList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.secretSpaceRecordIndexItem {
+  margin: 0;
+}
+
+.secretSpaceRecordListButton {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.secretSpaceRecordListButton:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.secretSpaceRecordListButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.secretSpaceRecordListButtonTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.secretSpaceRecordListKind {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--overlay-light);
+  font-size: 0.68rem;
+  font-weight: 650;
+  color: var(--text-muted);
+  background: var(--bg-elevated, var(--overlay-subtle));
+}
+
+.secretSpaceRecordListTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordListTime {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.secretSpaceRecordListSummary {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordListSummaryMuted {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* —— 秘密空间：单条记录详情（长正文可读） —— */
+.secretSpaceRecordDetailPane {
+  min-width: 0;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  padding: var(--space-md);
+}
+
+.secretSpaceRecordDetail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.secretSpaceRecordDetailHeader {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.secretSpaceRecordDetailTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordDetailTime {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+.secretSpaceRecordDetailMeta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(4rem, auto) 1fr;
+  gap: 6px 12px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.secretSpaceRecordDetailMeta dt {
+  margin: 0;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.secretSpaceRecordDetailMeta dd {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordDetailBodyLabel {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.secretSpaceRecordDetailBodyWrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.secretSpaceRecordDetailBodyScroll {
+  max-height: min(60vh, 520px);
+  min-height: 160px;
+  overflow: auto;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated, var(--bg));
+}
+
+.secretSpaceRecordDetailBody {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+
 /* —— 小手机日记 —— */
 .phoneJournalLayout {
   display: grid;
@@ -2639,10 +2824,7 @@
   font-size: 0.74rem;
   color: var(--text-muted);
   line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .phoneJournalDetail {
@@ -2657,6 +2839,16 @@
   color: var(--text-muted);
 }
 
+.phoneJournalDetailBodyScroll {
+  max-height: min(55vh, 420px);
+  min-height: 120px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .phoneJournalDetailBody {
   margin: 0;
   font-size: 0.82rem;
@@ -2664,6 +2856,7 @@
   color: var(--text);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+  font-family: inherit;
 }
 
 .phoneJournalEmpty {

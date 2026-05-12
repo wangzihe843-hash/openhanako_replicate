@@ -1,27 +1,71 @@
-import type { SecretSpaceRecordKind, SecretSpaceSampleRecord } from './secret-space-record-types';
+import type { SecretSpaceSampleRecord } from './secret-space-record-types';
+import { SECRET_SPACE_RECORD_KIND_LABEL } from './secret-space-record-types';
 import styles from './XingyeShell.module.css';
 
-const KIND_LABEL: Record<SecretSpaceRecordKind, string> = {
-  draft_reply: '草稿',
-  dream: '梦境',
-  saved_item: '文字收藏',
-  unsent_moment: '朋友圈草稿',
-  memory_fragment: '回忆',
-};
+function formatDetailTime(createdAt: string, updatedAt?: string): string {
+  try {
+    const c = new Date(createdAt).toLocaleString();
+    if (updatedAt && updatedAt !== createdAt) {
+      return `创建：${c}\n更新：${new Date(updatedAt).toLocaleString()}`;
+    }
+    return `创建：${c}`;
+  } catch {
+    return createdAt;
+  }
+}
 
 export interface SecretSpaceRecordCardProps {
   record: SecretSpaceSampleRecord;
 }
 
+/** 单条记录详情：完整正文、可滚动，用于分类内详情视图 */
 export function SecretSpaceRecordCard({ record }: SecretSpaceRecordCardProps) {
+  const kindLabel = SECRET_SPACE_RECORD_KIND_LABEL[record.kind];
+  const timeBlock = formatDetailTime(record.createdAt, record.updatedAt);
+  const tags = record.tags?.filter((t) => t.trim()).join(' · ');
+  const hasMeta =
+    !!(record.source?.trim() || tags || record.meta?.trim());
+
   return (
-    <article className={styles.secretSpaceRecordCardV2} data-testid={`secret-space-record-${record.key}`}>
-      <div className={styles.secretSpaceRecordCardHeader}>
-        <span className={styles.secretSpaceRecordKind}>{KIND_LABEL[record.kind]}</span>
-        <h4 className={styles.secretSpaceRecordCardTitle}>{record.title}</h4>
+    <article
+      className={styles.secretSpaceRecordDetail}
+      data-testid={`secret-space-record-detail-${record.key}`}
+    >
+      <header className={styles.secretSpaceRecordDetailHeader}>
+        <span className={styles.secretSpaceRecordKind}>{kindLabel}</span>
+        <h4 className={styles.secretSpaceRecordDetailTitle}>{record.title}</h4>
+        <pre className={styles.secretSpaceRecordDetailTime}>{timeBlock}</pre>
+      </header>
+
+      {hasMeta ? (
+        <dl className={styles.secretSpaceRecordDetailMeta}>
+          {record.source?.trim() ? (
+            <>
+              <dt>来源</dt>
+              <dd>{record.source.trim()}</dd>
+            </>
+          ) : null}
+          {tags ? (
+            <>
+              <dt>标签</dt>
+              <dd>{tags}</dd>
+            </>
+          ) : null}
+          {record.meta?.trim() ? (
+            <>
+              <dt>备注</dt>
+              <dd>{record.meta.trim()}</dd>
+            </>
+          ) : null}
+        </dl>
+      ) : null}
+
+      <div className={styles.secretSpaceRecordDetailBodyWrap}>
+        <p className={styles.secretSpaceRecordDetailBodyLabel}>正文</p>
+        <div className={styles.secretSpaceRecordDetailBodyScroll}>
+          <pre className={styles.secretSpaceRecordDetailBody}>{record.body}</pre>
+        </div>
       </div>
-      <p className={styles.secretSpaceRecordBody}>{record.body}</p>
-      {record.meta ? <p className={styles.secretSpaceRecordFoot}>{record.meta}</p> : null}
     </article>
   );
 }

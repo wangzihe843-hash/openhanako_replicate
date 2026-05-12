@@ -34,6 +34,14 @@ function dayLabelForDetail(dayKey: string): string {
   return formatGroupHeading(dayKey);
 }
 
+/** 列表索引用：不展示全文，避免长日记占满列表 */
+function excerptForJournalList(body: string, maxChars = 96): string {
+  const collapsed = body.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  if (collapsed.length <= maxChars) return collapsed;
+  return `${collapsed.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
 export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJournalAppProps) {
   const [entries, setEntries] = useState<JournalEntryMock[]>(() => [...PHONE_JOURNAL_SEED]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -126,7 +134,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                       onClick={() => setSelectedId(e.id)}
                     >
                       <p className={styles.phoneJournalCardTitle}>{e.title}</p>
-                      <p className={styles.phoneJournalCardExcerpt}>{e.body}</p>
+                      <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
                     </button>
                   ))}
                 </div>
@@ -139,7 +147,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
             <h3 className={styles.phoneAppTitle} style={{ margin: 0 }}>
               {selected.title}
             </h3>
-            <p className={styles.phoneJournalDetailBody}>{selected.body}</p>
+            <div className={styles.phoneJournalDetailBodyScroll}>
+              <pre className={styles.phoneJournalDetailBody}>{selected.body}</pre>
+            </div>
           </div>
         )}
       </div>

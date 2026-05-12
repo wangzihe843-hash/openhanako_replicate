@@ -65,8 +65,24 @@ describe('SecretSpacePanel secret space navigation', () => {
 
     fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
 
-    expect(screen.getByTestId('secret-space-record-dr1')).toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-record-row-dr1')).toBeInTheDocument();
     expect(screen.queryByTestId('secret-space-empty')).not.toBeInTheDocument();
+  });
+
+  it('opens record detail and returns to list without leaving category', () => {
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    fireEvent.click(screen.getByTestId('secret-space-record-row-dr1'));
+
+    expect(screen.getByTestId('secret-space-record-detail-dr1')).toBeInTheDocument();
+    expect(screen.queryByTestId('secret-space-record-row-dr1')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回记录列表' }));
+
+    expect(screen.getByTestId('secret-space-record-row-dr1')).toBeInTheDocument();
+    expect(screen.queryByTestId('secret-space-record-detail-dr1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-category-draft_reply')).toBeInTheDocument();
   });
 
   it('shows RelationshipStatePanel content after opening the TA 的状态 category', () => {
