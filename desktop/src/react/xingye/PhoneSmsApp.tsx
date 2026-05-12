@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
-import { generateSmsHistoryWithAI } from './xingye-phone-ai';
+import { generateSmsHistoryWithAI, generateSmsUpdatesForChangedContactsWithAI } from './xingye-phone-ai';
 import {
   addMockSmsMessage,
   clearAiSmsHistory,
@@ -55,6 +55,8 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   const [showTestTools, setShowTestTools] = useState(false);
   const smsAiState = getPhoneAiGenerationState(ownerAgentId, 'sms_history');
   const smsHistoryState = getSmsHistoryGenerationState(ownerAgentId);
+  const [smsIncrementalState, setSmsIncrementalState] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [smsIncrementalError, setSmsIncrementalError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedTarget(initialTarget ?? null);
@@ -112,6 +114,27 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     }).catch(() => {});
   };
 
+  const handleIncrementalSmsFromContacts = async () => {
+    if (!ownerAgent) return;
+    setSmsIncrementalState('running');
+    setSmsIncrementalError(null);
+    try {
+      await generateSmsUpdatesForChangedContactsWithAI({
+        ownerAgent,
+        ownerProfile,
+        contacts,
+        agents,
+        profiles,
+      });
+      setSmsIncrementalState('success');
+    } catch (err) {
+      setSmsIncrementalState('error');
+      setSmsIncrementalError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const smsIncrementalBusy = smsIncrementalState === 'running';
+
   return (
     <div className={styles.phoneShell} aria-label="短信">
       <div className={styles.phoneStatusBar}>
@@ -143,12 +166,26 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
             </div>
           ) : null}
           {smsAiState?.status === 'success' ? <p className={styles.phoneAppHint}>旧短信已缓存，本次不会重复生成。</p> : null}
+          {smsIncrementalState === 'success' ? (
+            <p className={styles.phoneAppHint}>已根据通讯录变化尝试补新短信。</p>
+          ) : null}
+          {smsIncrementalState === 'error' && smsIncrementalError ? (
+            <p className={styles.phoneAppHint}>补新短信失败：{smsIncrementalError}</p>
+          ) : null}
           <div className={styles.phoneActionRow}>
-            <button type="button" className={styles.phoneWeakAction} onClick={handleRegenerateEmptyThreads} disabled={!ownerAgent || smsAiState?.status === 'running'}>
+            <button type="button" className={styles.phoneWeakAction} onClick={handleRegenerateEmptyThreads} disabled={!ownerAgent || smsAiState?.status === 'running' || smsIncrementalBusy}>
               重新生成旧短信（仅空线程）
             </button>
-            <button type="button" className={styles.phoneWeakAction} onClick={handleClearAiAndRegenerate} disabled={!ownerAgent || smsAiState?.status === 'running'}>
+            <button type="button" className={styles.phoneWeakAction} onClick={handleClearAiAndRegenerate} disabled={!ownerAgent || smsAiState?.status === 'running' || smsIncrementalBusy}>
               清除 AI 旧短信并重新生成
+            </button>
+            <button
+              type="button"
+              className={styles.phoneWeakAction}
+              onClick={handleIncrementalSmsFromContacts}
+              disabled={!ownerAgent || smsAiState?.status === 'running' || smsIncrementalBusy}
+            >
+              {smsIncrementalBusy ? '补新短信中…' : '根据通讯录变化补新短信'}
             </button>
           </div>
         </section>

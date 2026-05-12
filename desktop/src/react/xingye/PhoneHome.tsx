@@ -13,6 +13,7 @@ interface PhoneHomeProps {
   onOpenSms: () => void;
   onOpenContacts: () => void;
   onOpenMmChat: () => void;
+  onOpenJournal: () => void;
 }
 
 const phoneIcons = {
@@ -78,9 +79,9 @@ const phoneIcons = {
 const appShortcuts = [
   { label: '通讯录', subtitle: '联系人与印象', tone: 'contacts', icon: phoneIcons.users, action: 'contacts' },
   { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
-  { label: 'MM Chat', subtitle: 'AI 助手占位', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
+  { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
-  { label: '日记', subtitle: '功能占位', tone: 'journal', icon: phoneIcons.notebook, action: 'placeholder' },
+  { label: '日记', subtitle: '纯文本日记壳', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
 ] as const;
 
@@ -105,7 +106,15 @@ function formatPhoneStatusTime(date: Date): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContacts, onOpenMmChat }: PhoneHomeProps) {
+export function PhoneHome({
+  agent,
+  display,
+  onNavigate,
+  onOpenSms,
+  onOpenContacts,
+  onOpenMmChat,
+  onOpenJournal,
+}: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   useEffect(() => {
     setStatusTime(formatPhoneStatusTime(new Date()));
@@ -130,6 +139,10 @@ export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContact
     }
     if (action === 'mm-chat') {
       onOpenMmChat();
+      return;
+    }
+    if (action === 'journal') {
+      onOpenJournal();
     }
   };
 
@@ -199,7 +212,7 @@ export function PhoneHome({ agent, display, onNavigate, onOpenSms, onOpenContact
         </section>
 
         <section className={styles.phoneEmptyStateCard}>
-          日记/相册/音频仍是占位入口；短信、通讯录、MM Chat 已接入本地模拟版本。
+          日记与 MM Chat 为文本 UI 骨架（mock）；相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
         </section>
       </div>
     </div>

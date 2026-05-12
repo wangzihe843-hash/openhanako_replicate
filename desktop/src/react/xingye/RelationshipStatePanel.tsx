@@ -1,6 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { Agent } from '../types';
-import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
+import { saveXingyeRoleProfile, type XingyeRoleProfileDisplay } from './xingye-profile-store';
+import {
+  collectRecentContextForAgent,
+  describeRecentContextForPrompt,
+} from './xingye-recent-context';
 import {
   generateRelationshipStateSuggestion,
   type XingyeRelationshipStateSuggestion,
@@ -51,10 +55,6 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
   const [error, setError] = useState<string | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
 
-  const recentContextNote = useMemo(() => (
-    '本次状态刷新未读取小手机短信或通讯录；最近 OpenHanako 聊天摘要将在后续安全接入后作为只读上下文。'
-  ), []);
-
   if (!relationshipState) return null;
 
   const handleRefresh = async () => {
@@ -62,12 +62,15 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
     setError(null);
     setSuggestion(null);
     try {
+      const recentContext = collectRecentContextForAgent({ agentId: agent.id });
+      const recentChatSummary = describeRecentContextForPrompt(recentContext);
+      const sourceNotes = [...recentContext.sourceNotes];
       const nextSuggestion = await generateRelationshipStateSuggestion({
         agent,
         profile,
         state: relationshipState,
-        recentChatSummary: '',
-        sourceNotes: [recentContextNote],
+        recentChatSummary,
+        sourceNotes,
         trigger: 'manual_refresh',
       });
       setSuggestion(nextSuggestion);
@@ -80,7 +83,8 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
 
   const handleAccept = () => {
     if (!suggestion) return;
-    updateRelationshipState(agent.id, suggestion);
+    const next = updateRelationshipState(agent.id, suggestion);
+    saveXingyeRoleProfile(agent.id, { relationshipLabel: next.relationshipLabel });
     setSuggestion(null);
     setError(null);
   };

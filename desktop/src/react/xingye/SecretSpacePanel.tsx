@@ -6,9 +6,9 @@ import { RelationshipStatePanel } from './RelationshipStatePanel';
 import {
   SecretSpaceCategoryView,
   type SecretSpaceCategoryMeta,
-  type SecretSpaceSampleRecord,
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
+import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
@@ -26,33 +26,118 @@ const CATEGORY_META: SecretSpaceCategoryMeta[] = [
     id: 'state',
     title: 'TA 的状态',
     description: '与情绪、关系快照相关的视图；在「角色」页编辑资料与关系标签。',
+    recordsEmptyTitle: '尚无额外的文字记录',
+    recordsEmptyBody:
+      '这里预留展示与「状态」相关的短笔记。当前上方为关系与标签面板；下方列表后续可接入工作区，仅 UI 占位。',
   },
   {
     id: 'draft_reply',
     title: 'TA 的草稿箱',
-    description: 'draft_reply 类占位视图（后续接入工作区记录）。',
+    description: '尚未发送的回复草稿（纯文本）。',
+    recordsEmptyTitle: '草稿箱是空的',
+    recordsEmptyBody: '还没有未发出的回复草稿。后续可从工作区读取 draft_reply 类记录。',
   },
   {
     id: 'dream',
     title: 'TA 的梦境',
-    description: '象征化梦境碎片等占位视图。',
+    description: '象征化、片段化的梦记（纯文本）。',
+    recordsEmptyTitle: '还没有梦境记录',
+    recordsEmptyBody: '梦记只以文字呈现，不接图片或语音解梦。',
   },
   {
     id: 'saved_item',
     title: 'TA 收藏的东西',
-    description: '收藏类占位视图。',
+    description: '仅展示收藏的文字摘录、事件摘要与对话片段（不含图片/音频/文件）。',
+    recordsEmptyTitle: '收藏夹是空的',
+    recordsEmptyBody: '此分类只表现纯文本收藏，不做相册式或附件式收藏 UI。',
   },
   {
     id: 'unsent_moment',
     title: 'TA 未发送的朋友圈',
-    description: '未发送动态草稿占位视图。',
+    description: '未发送的朋友圈动态草稿，仅纯文字（无配图、无九宫格）。',
+    recordsEmptyTitle: '没有未发送草稿',
+    recordsEmptyBody: '朋友圈草稿在此仅以文字呈现；不展示图片排版或语音。',
   },
   {
     id: 'memory_fragment',
     title: '私藏回忆',
-    description: '回忆碎片类占位视图。',
+    description: '短回忆与碎片句；底部可手动写入「重要记忆候选」（沿用既有工作区逻辑）。',
+    recordsEmptyTitle: '还没有回忆片段',
+    recordsEmptyBody: '可记录一句场景、气味或对话残片。下方表单仍用于创建记忆候选（非本轮 mock 数据）。',
   },
 ];
+
+/** UI 骨架用 mock，不从工作区读取 */
+const SECRET_SPACE_UI_MOCK_RECORDS: Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]> = {
+  state: [],
+  draft_reply: [
+    {
+      key: 'dr1',
+      title: '想发又删掉的回复',
+      body: '「谢谢你那天陪我走到车站。我其实…不太会说这些，但我想让你知道这对我挺重要的。」',
+      meta: '草稿 · 未发送',
+      kind: 'draft_reply',
+    },
+    {
+      key: 'dr2',
+      title: '给工作群的一句客气话',
+      body: '「我这边今晚可以把一版结论先贴出来，细节我们明天对齐。」',
+      meta: '草稿 · 待发送',
+      kind: 'draft_reply',
+    },
+  ],
+  dream: [
+    {
+      key: 'dm1',
+      title: '电梯里一直在下雨',
+      body: '电梯门打开不是楼层，而是一小片积水的月台。有人递给我一把没伞骨的伞，说「拿着，别出声」。',
+      meta: '昨夜 · 象征片段',
+      kind: 'dream',
+    },
+  ],
+  saved_item: [
+    {
+      key: 'sv1',
+      title: '收藏：一句台词',
+      body: '「今天先到这里，剩下的交给明天的自己。」',
+      meta: '文字摘录',
+      kind: 'saved_item',
+    },
+    {
+      key: 'sv2',
+      title: '收藏：小事记',
+      body: '周三下雨，TA 在便利店门口多等了我五分钟。',
+      meta: '事件摘要',
+      kind: 'saved_item',
+    },
+    {
+      key: 'sv3',
+      title: '收藏：对话片段',
+      body: '对方：你真的不用逞强。\nTA：我只是…还不太习惯把软弱放在别人看得见的地方。',
+      meta: '对话片段（纯文本）',
+      kind: 'saved_item',
+    },
+  ],
+  unsent_moment: [
+    {
+      key: 'um1',
+      title: '朋友圈草稿',
+      body:
+        '本来以为只是普通的一天，结果晚上路过那盏坏掉的路灯，突然想起很久以前也有人陪我等过车。',
+      meta: '纯文字 · 未配图',
+      kind: 'unsent_moment',
+    },
+  ],
+  memory_fragment: [
+    {
+      key: 'mf1',
+      title: '碎片：气味',
+      body: '洗衣粉和雨的味道叠在一起，会让人莫名其妙平静下来。',
+      meta: '私藏回忆',
+      kind: 'memory_fragment',
+    },
+  ],
+};
 
 function metaById(id: SecretSpaceCategoryId): SecretSpaceCategoryMeta {
   const found = CATEGORY_META.find((m) => m.id === id);
@@ -62,23 +147,12 @@ function metaById(id: SecretSpaceCategoryId): SecretSpaceCategoryMeta {
   return found;
 }
 
-function emptySamples(): Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]> {
-  return {
-    state: [],
-    draft_reply: [],
-    dream: [],
-    saved_item: [],
-    unsent_moment: [],
-    memory_fragment: [],
-  };
-}
-
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
   const [view, setView] = useState<'home' | 'category'>('home');
   const [activeCategory, setActiveCategory] = useState<SecretSpaceCategoryId | null>(null);
   const [samplesByCategory] = useState<Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]>>(
-    emptySamples,
+    () => ({ ...SECRET_SPACE_UI_MOCK_RECORDS }),
   );
 
   const [manualContent, setManualContent] = useState('');

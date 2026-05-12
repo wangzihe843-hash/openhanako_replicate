@@ -15,6 +15,8 @@ export interface BuildRelationshipStatePromptArgs {
   state: XingyeRelationshipState;
   recentChatSummary?: string;
   sourceNotes?: string[];
+  /** 由 xingye-state-ai 内构造；可选覆盖（测试用） */
+  loreContextText?: string;
   trigger: XingyeRelationshipStateTrigger;
 }
 
@@ -43,6 +45,7 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
     },
     currentRelationshipState: args.state,
     recentOpenHanakoChat: args.recentChatSummary?.trim() || '(no safe recent chat summary was provided)',
+    xingyeLoreContext: args.loreContextText?.trim() || '(no matching canonical lore was provided)',
     sourceNotes: args.sourceNotes ?? [],
   };
 
@@ -52,6 +55,7 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
     '状态系统只表示：当前 agent 对 user("__user__") 的态度，以及当前 agent 自己的心情/精神状态。',
     '禁止生成 agent-agent、agent-NPC、通讯录联系人、短信联系人、群聊成员、黑名单、阵营或标签关系。',
     '禁止写入或假设 OpenHanako memory。不要编造没有出现在输入里的重大事件。',
+    '设定库（xingyeLoreContext）内容只作为当前状态判断参考；不得写入 OpenHanako memory；不得编造输入中没有的重大事件。',
     '',
     '请生成“建议变化”，不是最终状态。前端会先展示建议，用户接受后才写入 localStorage。',
     '',

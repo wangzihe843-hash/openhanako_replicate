@@ -2249,6 +2249,493 @@
   font-size: 0.9rem;
 }
 
+/* —— MM Chat：TA 咨询 AI 助手（纯文本壳） —— */
+.mmChatIntro {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.mmChatLayout {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 320px;
+  max-height: min(62vh, 520px);
+}
+
+.mmChatSessionStrip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.mmChatSessionChip {
+  flex: 0 0 auto;
+  max-width: 160px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.mmChatSessionChip:hover {
+  border-color: rgba(107, 100, 150, 0.45);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.mmChatSessionChipActive {
+  border-color: rgba(107, 100, 150, 0.55);
+  box-shadow: 0 0 0 2px rgba(162, 147, 200, 0.28);
+  background: rgba(250, 248, 255, 0.95);
+}
+
+.mmChatSessionChipTitle {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mmChatSessionChipPreview {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mmChatThread {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px 4px;
+}
+
+.mmChatEmpty {
+  margin: auto 0;
+  padding: 18px 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.32);
+  border-radius: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.mmChatEmptyTitle {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.mmChatEmptyBody {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.mmChatBubbleRow {
+  display: flex;
+  width: 100%;
+}
+
+.mmChatBubbleRowTa {
+  justify-content: flex-end;
+}
+
+.mmChatBubbleRowAi {
+  justify-content: flex-start;
+}
+
+.mmChatBubble {
+  max-width: 88%;
+  padding: 9px 11px;
+  border-radius: 14px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mmChatBubbleTa {
+  border: 1px solid rgba(107, 100, 150, 0.28);
+  background: linear-gradient(135deg, rgba(107, 100, 150, 0.12), rgba(162, 147, 200, 0.14));
+  color: var(--text);
+}
+
+.mmChatBubbleAi {
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+}
+
+.mmChatBubbleLabel {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.65rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.mmChatChipsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mmChatChip {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.78);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.mmChatChip:hover {
+  border-color: rgba(107, 100, 150, 0.4);
+  color: var(--text);
+  background: rgba(250, 248, 255, 0.95);
+}
+
+.mmChatComposer {
+  display: grid;
+  gap: 6px;
+}
+
+.mmChatComposer textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  resize: none;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.mmChatComposerHint {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.mmChatComposerActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mmChatSendDisabled {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: var(--text-muted);
+  background: rgba(248, 250, 252, 0.9);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: not-allowed;
+}
+
+/* —— 秘密空间：文本记录卡片 —— */
+.secretSpaceEmptyBlock {
+  display: grid;
+  gap: 8px;
+  padding: var(--space-lg);
+  border: 1px dashed var(--overlay-light);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  background: var(--bg-card, var(--overlay-subtle));
+}
+
+.secretSpaceEmptyBlockTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.secretSpaceEmptyBlockBody {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordCardV2 {
+  display: grid;
+  gap: 8px;
+  padding: var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  text-align: left;
+}
+
+.secretSpaceRecordCardHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.secretSpaceRecordKind {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--overlay-light);
+  font-size: 0.68rem;
+  font-weight: 650;
+  color: var(--text-muted);
+  background: var(--bg-elevated, var(--overlay-subtle));
+}
+
+.secretSpaceRecordCardTitle {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.secretSpaceRecordBody {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.secretSpaceRecordFoot {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* —— 小手机日记 —— */
+.phoneJournalLayout {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.phoneJournalToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.phoneJournalPrimaryButton {
+  border: none;
+  border-radius: 12px;
+  padding: 8px 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #7b6f54, #b99d69);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(91, 79, 58, 0.22);
+}
+
+.phoneJournalPrimaryButton:hover {
+  filter: brightness(1.03);
+}
+
+.phoneJournalGroup {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phoneJournalGroupLabel {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.phoneJournalCard {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.phoneJournalCard:hover {
+  border-color: rgba(123, 111, 84, 0.45);
+  box-shadow: 0 6px 14px rgba(91, 79, 58, 0.12);
+}
+
+.phoneJournalCardTitle {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.phoneJournalCardExcerpt {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.phoneJournalDetail {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.phoneJournalDetailMeta {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.phoneJournalDetailBody {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.phoneJournalEmpty {
+  margin: 0;
+  padding: 20px 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.32);
+  border-radius: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.phoneModalOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  align-items: flex-end;
+  justify-items: stretch;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.38);
+  border-radius: inherit;
+}
+
+.phoneModalSheet {
+  width: 100%;
+  max-height: 78%;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px 18px 14px 14px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 -8px 28px rgba(30, 41, 59, 0.18);
+}
+
+.phoneModalTitle {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.phoneModalBody {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.phoneModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.phoneModalGhostButton {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  padding: 7px 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;

@@ -1,6 +1,11 @@
 import type { Agent } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
+import {
+  buildXingyeLoreRuntimeQueryText,
+  collectXingyeLoreRuntimeContext,
+  formatXingyeLoreRuntimeContextBlock,
+} from './xingye-lore-runtime-context';
 import type { XingyeRelationshipState, XingyeRelationshipStatePatch } from './xingye-state-store';
 import {
   buildRelationshipStatePrompt,
@@ -15,7 +20,46 @@ export interface GenerateRelationshipStateSuggestionArgs {
   state: XingyeRelationshipState;
   recentChatSummary?: string;
   sourceNotes?: string[];
+  /** 可选；未传时由本模块按 profile / state / recentChatSummary 自动构造 */
+  loreContextText?: string;
   trigger?: XingyeRelationshipStateTrigger;
+}
+
+function buildLoreContextForRelationshipState(params: {
+  agentId: string;
+  profile: Partial<XingyeRoleProfileDisplay> | null | undefined;
+  state: XingyeRelationshipState;
+  recentChatSummary: string;
+}): string {
+  const profile = params.profile ?? {};
+  const profileParts: Array<string | undefined> = [
+    profile.displayName,
+    profile.shortBio,
+    profile.identitySummary,
+    profile.backgroundSummary,
+    profile.personalitySummary,
+    profile.relationshipLabel,
+    profile.values,
+    profile.taboos,
+    profile.relationshipMode,
+  ];
+  const stateParts: Array<string | undefined> = [
+    params.state.mood,
+    params.state.relationshipLabel,
+    params.state.stateSummary,
+    params.state.lastReason,
+  ];
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profileParts,
+    ...stateParts,
+    params.recentChatSummary.trim() || undefined,
+  ]);
+  const context = collectXingyeLoreRuntimeContext(params.agentId, {
+    purpose: 'relationship_state',
+    queryText,
+    maxChars: 2000,
+  });
+  return formatXingyeLoreRuntimeContextBlock(context);
 }
 
 function asNumber(value: unknown): number {
@@ -52,8 +96,19 @@ export function normalizeRelationshipStateSuggestion(value: unknown): XingyeRela
 export async function generateRelationshipStateSuggestion(
   args: GenerateRelationshipStateSuggestionArgs,
 ): Promise<XingyeRelationshipStateSuggestion> {
+  const recentChatSummary = args.recentChatSummary?.trim() ?? '';
+  const loreContextText = args.loreContextText?.trim()
+    ? args.loreContextText
+    : buildLoreContextForRelationshipState({
+      agentId: args.agent.id,
+      profile: args.profile,
+      state: args.state,
+      recentChatSummary,
+    });
   const prompt = buildRelationshipStatePrompt({
     ...args,
+    recentChatSummary,
+    loreContextText,
     trigger: args.trigger ?? 'manual_refresh',
   });
 

@@ -1,18 +1,18 @@
 import type { ReactNode } from 'react';
 import type { SecretSpaceCategoryId } from './SecretSpaceHome';
+import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { SecretSpaceRecordCard } from './SecretSpaceRecordCard';
 import styles from './XingyeShell.module.css';
+
+export type { SecretSpaceSampleRecord } from './secret-space-record-types';
 
 export interface SecretSpaceCategoryMeta {
   id: SecretSpaceCategoryId;
   title: string;
   description: string;
-}
-
-export interface SecretSpaceSampleRecord {
-  key: string;
-  title: string;
-  meta?: string;
+  /** 记录列表为空时的标题与说明（分类专属空状态） */
+  recordsEmptyTitle: string;
+  recordsEmptyBody: string;
 }
 
 interface SecretSpaceCategoryViewProps {
@@ -52,13 +52,14 @@ export function SecretSpaceCategoryView({
 
       <section className={styles.secretSpaceCategoryRecords} aria-label={`${meta.title} 记录列表`}>
         {empty ? (
-          <p className={styles.secretSpaceEmptyState} data-testid="secret-space-empty">
-            暂无记录
-          </p>
+          <div className={styles.secretSpaceEmptyBlock} data-testid="secret-space-empty">
+            <p className={styles.secretSpaceEmptyBlockTitle}>{meta.recordsEmptyTitle}</p>
+            <p className={styles.secretSpaceEmptyBlockBody}>{meta.recordsEmptyBody}</p>
+          </div>
         ) : (
           <div className={styles.secretSpaceRecordStack}>
             {records.map((rec) => (
-              <SecretSpaceRecordCard key={rec.key} title={rec.title} meta={rec.meta} />
+              <SecretSpaceRecordCard key={rec.key} record={rec} />
             ))}
           </div>
         )}

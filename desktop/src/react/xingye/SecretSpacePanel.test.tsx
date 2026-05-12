@@ -52,12 +52,21 @@ describe('SecretSpacePanel secret space navigation', () => {
     expect(screen.queryByTestId('secret-space-category-dream')).not.toBeInTheDocument();
   });
 
-  it('shows empty state copy when there are no records', () => {
+  it('shows category-specific empty state when records list is empty', () => {
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-state'));
+
+    expect(screen.getByTestId('secret-space-empty')).toHaveTextContent('尚无额外的文字记录');
+  });
+
+  it('shows mock text records in draft_reply category', () => {
     render(<SecretSpacePanel agent={agent} />);
 
     fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
 
-    expect(screen.getByTestId('secret-space-empty')).toHaveTextContent('暂无记录');
+    expect(screen.getByTestId('secret-space-record-dr1')).toBeInTheDocument();
+    expect(screen.queryByTestId('secret-space-empty')).not.toBeInTheDocument();
   });
 
   it('shows RelationshipStatePanel content after opening the TA 的状态 category', () => {
