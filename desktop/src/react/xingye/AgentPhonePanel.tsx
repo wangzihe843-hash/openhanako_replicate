@@ -40,7 +40,7 @@ export function AgentPhonePanel({ agent, agents, currentAgentId, onNavigate, onO
     <div className={styles.phonePanel}>
       <h2 className={styles.panelTitle}>小手机</h2>
       <p className={styles.panelDescription}>
-        当前为角色侧本地模拟手机：短信/通讯录/MM Chat 只存 localStorage，不接 OpenHanako 原生聊天与记忆管线。
+        当前为角色侧本地模拟手机：短信/通讯录/MM Chat 数据写入当前 agent 工作区下的 <code className={styles.inlineCode}>.xingye/</code>（若未配置工作区则回退 localStorage），不接 OpenHanako 原生聊天与记忆管线。
       </p>
       {phonePage === 'home' ? (
         <PhoneHome

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeMomentPost = {
   id: string;
@@ -24,13 +25,7 @@ const XINGYE_MOMENTS_CHANGED_EVENT = 'xingye-moments-changed';
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
 function getLocalStorage(): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  return getXingyePersistenceStorage();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -232,11 +227,14 @@ export function useXingyeMomentPosts(): XingyeMomentPost[] {
       if (event.key === XINGYE_MOMENTS_STORAGE_KEY) refresh();
     };
 
+    const onPersistence = () => refresh();
     window.addEventListener(XINGYE_MOMENTS_CHANGED_EVENT, refresh);
     window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
     return () => {
       window.removeEventListener(XINGYE_MOMENTS_CHANGED_EVENT, refresh);
       window.removeEventListener('storage', refreshFromStorage);
+      window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
   }, []);
 

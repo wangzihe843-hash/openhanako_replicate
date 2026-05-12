@@ -168,6 +168,47 @@
   background: var(--bg-card, var(--overlay-subtle));
 }
 
+.inlineCode {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--overlay-subtle);
+}
+
+.secretSpaceRecordList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.secretSpaceRecordItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+}
+
+.secretSpaceRecordTitle {
+  font-size: 0.9rem;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.secretSpaceRecordMeta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .roleListPanel {
   max-width: 980px;
 }

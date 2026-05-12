@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeLoreCategory =
   | 'background'
@@ -56,13 +57,7 @@ const VISIBILITIES: XingyeLoreVisibility[] = ['canonical', 'private', 'draft'];
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
 function getLocalStorage(): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  return getXingyePersistenceStorage();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -263,11 +258,14 @@ export function useXingyeLoreEntries(agentId: string | null | undefined): Xingye
       if (event.key === XINGYE_LORE_ENTRIES_STORAGE_KEY) refresh();
     };
 
+    const onPersistence = () => refresh();
     window.addEventListener(XINGYE_LORE_ENTRIES_CHANGED_EVENT, refresh);
     window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
     return () => {
       window.removeEventListener(XINGYE_LORE_ENTRIES_CHANGED_EVENT, refresh);
       window.removeEventListener('storage', refreshFromStorage);
+      window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
   }, [agentId]);
 

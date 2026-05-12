@@ -8,6 +8,7 @@ import { SecretSpacePanel } from './SecretSpacePanel';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import { enterXingyeAgentChat } from './xingye-chat-actions';
+import { refreshXingyeWorkspacePersistence } from './xingye-persistence';
 import styles from './XingyeShell.module.css';
 import { xingyeTabs, type XingyeTabId } from './xingye-tabs';
 
@@ -20,6 +21,9 @@ type CharacterPanelMode = 'list' | 'detail';
 export function XingyeShell({ onExit }: XingyeShellProps) {
   const agents = useStore(state => state.agents);
   const currentAgentId = useStore(state => state.currentAgentId);
+  const deskBasePath = useStore(state => state.deskBasePath);
+  const homeFolder = useStore(state => state.homeFolder);
+  const selectedFolder = useStore(state => state.selectedFolder);
   const [activeTabId, setActiveTabId] = useState<XingyeTabId>(xingyeTabs[0].id);
   const [characterPanelMode, setCharacterPanelMode] = useState<CharacterPanelMode>('list');
   const [selectedXingyeAgentId, setSelectedXingyeAgentId] = useState<string | null>(null);
@@ -46,6 +50,10 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
     [agents, currentAgentId],
   );
   const activeTab = xingyeTabs.find(tab => tab.id === activeTabId) ?? xingyeTabs[0];
+
+  useEffect(() => {
+    void refreshXingyeWorkspacePersistence();
+  }, [deskBasePath, homeFolder, selectedFolder]);
 
   const handleSelectTab = (tabId: XingyeTabId) => {
     setActiveTabId(tabId);

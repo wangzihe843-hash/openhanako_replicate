@@ -50,6 +50,7 @@ import { createCheckpointsRoute } from "./routes/checkpoints.js";
 import { createCommandsRoute } from "./routes/commands.js";
 import { createServerIdentityRoute } from "./routes/server-identity.js";
 import { createXingyeRoute } from "./routes/xingye.js";
+import { createXingyeStorageRoute } from "./routes/xingye-storage.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
 // upgrade handler below (WsTransport needs raw ws .on()/.off() methods)
@@ -387,6 +388,7 @@ app.route("/api", createCheckpointsRoute(engine));
 app.route("/api", createCommandsRoute(engine));
 app.route("/api", createServerIdentityRoute({ hanakoHome: engine.hanakoHome, appVersion }));
 app.route("/api", createXingyeRoute(engine));
+app.route("/api", createXingyeStorageRoute(engine));
 // internal-browser WS — see unified upgrade handler in server startup below
 
 // 健康检查 + 身份信息

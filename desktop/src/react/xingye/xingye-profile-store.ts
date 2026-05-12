@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Agent } from '../types';
+import { getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeRoleProfile = {
   agentId: string;
@@ -16,6 +17,9 @@ export type XingyeRoleProfile = {
   relationshipMode?: string;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
+  /** workspace 落盘引用（由 xingye-persistence 写入/加载） */
+  avatarMediaPath?: string;
+  chatBackgroundMediaPath?: string;
   allowAutoMoments?: boolean;
   allowProactiveDM?: boolean;
   updatedAt: string;
@@ -87,13 +91,7 @@ type SyncProfileInput = Pick<
 > | null | undefined;
 
 function getLocalStorage(): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  return getXingyePersistenceStorage();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -119,6 +117,11 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
     const normalized = normalizeOptionalString(value[field]);
     if (normalized) profile[field] = normalized;
   }
+
+  const avatarMediaPath = normalizeOptionalString(value.avatarMediaPath);
+  if (avatarMediaPath) profile.avatarMediaPath = avatarMediaPath;
+  const chatBackgroundMediaPath = normalizeOptionalString(value.chatBackgroundMediaPath);
+  if (chatBackgroundMediaPath) profile.chatBackgroundMediaPath = chatBackgroundMediaPath;
 
   if (typeof value.allowAutoMoments === 'boolean') {
     profile.allowAutoMoments = value.allowAutoMoments;
@@ -420,11 +423,14 @@ export function useXingyeRoleProfiles(): XingyeRoleProfileMap {
       if (event.key === XINGYE_ROLE_PROFILES_STORAGE_KEY) refresh();
     };
 
+    const onPersistence = () => refresh();
     window.addEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, refresh);
     window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
     return () => {
       window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, refresh);
       window.removeEventListener('storage', refreshFromStorage);
+      window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
   }, []);
 

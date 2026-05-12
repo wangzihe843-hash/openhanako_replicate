@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import { getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeStateTargetType = 'user';
 
@@ -70,12 +71,7 @@ const INITIAL_LABEL_RULES: Array<{ affection: number; words: string[] }> = [
 ];
 
 function getLocalStorage(): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  return getXingyePersistenceStorage();
 }
 
 function notifyRelationshipStatesChanged() {
@@ -307,8 +303,13 @@ export function useRelationshipState(
 
     setState(ensureRelationshipState(agentId, profile));
     const handleChange = () => setState(getRelationshipState(agentId));
+    const onPersistence = () => handleChange();
     window.addEventListener(XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT, handleChange);
-    return () => window.removeEventListener(XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT, handleChange);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
+    return () => {
+      window.removeEventListener(XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT, handleChange);
+      window.removeEventListener('xingye-persistence-changed', onPersistence);
+    };
   }, [agentId, profile?.relationshipLabel]);
 
   return state;

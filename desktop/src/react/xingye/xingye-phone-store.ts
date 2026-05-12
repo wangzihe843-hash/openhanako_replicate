@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import type { XingyeRoleProfileMap } from './xingye-profile-store';
+import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   generateVirtualContactsForRole as generateRuleVirtualContacts,
   shouldBlockFamilyContacts as shouldBlockFamilyContactsRule,
@@ -254,12 +255,7 @@ const XINGYE_PHONE_CHANGED_EVENT = 'xingye-phone-changed';
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
 function getLocalStorage(): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
+  return getXingyePersistenceStorage();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2838,15 +2834,19 @@ export function useXingyePhoneStorageVersion(): number {
         || event.key === XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY
         || event.key === XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY
         || event.key === XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY
+        || event.key === XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY
       ) {
         onChanged();
       }
     };
+    const onPersistence = () => onChanged();
     window.addEventListener(XINGYE_PHONE_CHANGED_EVENT, onChanged);
     window.addEventListener('storage', onStorage);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
     return () => {
       window.removeEventListener(XINGYE_PHONE_CHANGED_EVENT, onChanged);
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
   }, []);
   return version;

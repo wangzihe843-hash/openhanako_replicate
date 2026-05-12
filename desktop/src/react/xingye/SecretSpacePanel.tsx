@@ -1,14 +1,74 @@
+import { useCallback, useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfile } from './xingye-profile-store';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
+import {
+  listSecretSpaceRecords,
+  type SecretSpaceCategoryId,
+  type SecretSpaceRecordRef,
+} from './xingye-secret-space-store';
 import styles from './XingyeShell.module.css';
 
 interface SecretSpacePanelProps {
   agent: Agent | null;
 }
 
+const CATEGORIES: { id: SecretSpaceCategoryId; title: string; description: string }[] = [
+  { id: 'draft_reply', title: 'TA 的草稿箱', description: 'draft_reply 类生成记录，保存在当前工作区 .xingye 下。' },
+  { id: 'dream', title: 'TA 的梦境', description: '象征化梦境碎片等历史记录。' },
+  { id: 'saved_item', title: 'TA 收藏的东西', description: '收藏类历史记录。' },
+  { id: 'unsent_moment', title: 'TA 未发送的朋友圈', description: '未发送动态草稿历史。' },
+  { id: 'memory_fragment', title: '私藏回忆', description: '回忆碎片类历史记录。' },
+];
+
+function emptyByCategory(): Record<SecretSpaceCategoryId, SecretSpaceRecordRef[]> {
+  return {
+    draft_reply: [],
+    dream: [],
+    saved_item: [],
+    unsent_moment: [],
+    memory_fragment: [],
+  };
+}
+
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
+  const [byCategory, setByCategory] = useState<Record<SecretSpaceCategoryId, SecretSpaceRecordRef[]>>(emptyByCategory);
+  const [loading, setLoading] = useState(false);
+
+  const loadRecords = useCallback(async () => {
+    if (!agent?.id) {
+      setByCategory(emptyByCategory());
+      return;
+    }
+    setLoading(true);
+    try {
+      const next = emptyByCategory();
+      await Promise.all(CATEGORIES.map(async (c) => {
+        next[c.id] = await listSecretSpaceRecords(agent.id, c.id);
+      }));
+      setByCategory(next);
+    } catch (err) {
+      console.warn('[SecretSpacePanel] load records failed:', err);
+      setByCategory(emptyByCategory());
+    } finally {
+      setLoading(false);
+    }
+  }, [agent?.id]);
+
+  useEffect(() => {
+    void loadRecords();
+  }, [loadRecords]);
+
+  useEffect(() => {
+    const onRefresh = () => { void loadRecords(); };
+    window.addEventListener('xingye-secret-space-changed', onRefresh);
+    window.addEventListener('xingye-persistence-changed', onRefresh);
+    return () => {
+      window.removeEventListener('xingye-secret-space-changed', onRefresh);
+      window.removeEventListener('xingye-persistence-changed', onRefresh);
+    };
+  }, [loadRecords]);
 
   if (!agent) {
     return (
@@ -27,7 +87,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     <div className={styles.panelInner}>
       <h2 className={styles.panelTitle}>秘密空间</h2>
       <p className={styles.panelDescription}>
-        角色侧隐藏内容占位区，用于承载 TA 私下保存但暂不公开的内容线索。
+        角色侧隐藏内容：TA 的状态仍来自关系状态；下列分类展示已写入当前工作区 <code className={styles.inlineCode}>.xingye/</code> 的历史 JSON 记录（不经 OpenHanako 聊天管线）。
       </p>
 
       <div className={styles.secretSpaceStack}>
@@ -36,32 +96,26 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
           <RelationshipStatePanel agent={agent} profile={displayProfile} />
         </section>
 
-        <section className={styles.secretSpaceSection} aria-labelledby="secret-space-draft-heading">
-          <h3 id="secret-space-draft-heading" className={styles.secretSpaceSectionTitle}>TA 的草稿箱</h3>
-          <p className={styles.secretSpacePlaceholder}>后续承载 draft_reply。</p>
-        </section>
-
-        <section className={styles.secretSpaceSection} aria-labelledby="secret-space-dream-heading">
-          <h3 id="secret-space-dream-heading" className={styles.secretSpaceSectionTitle}>TA 的梦境</h3>
-          <p className={styles.secretSpacePlaceholder}>
-            梦境碎片用于承载 TA 在休眠/回忆/情绪波动时生成的象征化内容。当前仅占位，后续可接入 heartbeat 或手动生成。
-          </p>
-        </section>
-
-        <section className={styles.secretSpaceSection} aria-labelledby="secret-space-saved-heading">
-          <h3 id="secret-space-saved-heading" className={styles.secretSpaceSectionTitle}>TA 收藏的东西</h3>
-          <p className={styles.secretSpacePlaceholder}>后续承载 saved_item。</p>
-        </section>
-
-        <section className={styles.secretSpaceSection} aria-labelledby="secret-space-unsent-heading">
-          <h3 id="secret-space-unsent-heading" className={styles.secretSpaceSectionTitle}>TA 未发送的朋友圈</h3>
-          <p className={styles.secretSpacePlaceholder}>后续承载 unsent_moment。</p>
-        </section>
-
-        <section className={styles.secretSpaceSection} aria-labelledby="secret-space-memory-heading">
-          <h3 id="secret-space-memory-heading" className={styles.secretSpaceSectionTitle}>私藏回忆</h3>
-          <p className={styles.secretSpacePlaceholder}>后续承载 memory_fragment。</p>
-        </section>
+        {CATEGORIES.map((cat) => (
+          <section key={cat.id} className={styles.secretSpaceSection} aria-labelledby={`secret-cat-${cat.id}`}>
+            <h3 id={`secret-cat-${cat.id}`} className={styles.secretSpaceSectionTitle}>{cat.title}</h3>
+            <p className={styles.secretSpacePlaceholder}>{cat.description}</p>
+            {loading ? (
+              <p className={styles.secretSpacePlaceholder}>加载中…</p>
+            ) : byCategory[cat.id].length === 0 ? (
+              <p className={styles.secretSpacePlaceholder}>暂无历史记录。</p>
+            ) : (
+              <ul className={styles.secretSpaceRecordList}>
+                {byCategory[cat.id].map((rec) => (
+                  <li key={rec.relativePath} className={styles.secretSpaceRecordItem}>
+                    <span className={styles.secretSpaceRecordTitle}>{rec.title}</span>
+                    <span className={styles.secretSpaceRecordMeta}>{rec.createdAt || ''}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
       </div>
     </div>
   );
