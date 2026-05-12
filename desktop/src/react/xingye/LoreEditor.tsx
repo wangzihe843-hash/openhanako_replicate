@@ -5,6 +5,8 @@ import {
   toggleLoreEntry,
   updateLoreEntry,
   useXingyeLoreEntries,
+  XINGYE_LORE_CATEGORIES,
+  XINGYE_LORE_CATEGORY_LABELS,
   type XingyeLoreCategory,
   type XingyeLoreEntry,
   type XingyeLoreInsertionMode,
@@ -17,16 +19,9 @@ interface LoreEditorProps {
   agentId: string;
 }
 
-const CATEGORY_OPTIONS: Array<{ value: XingyeLoreCategory; label: string }> = [
-  { value: 'background', label: '背景' },
-  { value: 'worldview', label: '世界观' },
-  { value: 'relationship', label: '关系' },
-  { value: 'event', label: '事件' },
-  { value: 'location', label: '地点' },
-  { value: 'organization', label: '组织' },
-  { value: 'character', label: '人物' },
-  { value: 'rule', label: '规则' },
-];
+const CATEGORY_OPTIONS: Array<{ value: XingyeLoreCategory; label: string }> = XINGYE_LORE_CATEGORIES.map(
+  (value) => ({ value, label: XINGYE_LORE_CATEGORY_LABELS[value] }),
+);
 
 const INSERTION_OPTIONS: Array<{ value: XingyeLoreInsertionMode; label: string }> = [
   { value: 'manual', label: '手动' },
@@ -84,11 +79,14 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
   };
 
   const saveDraft = () => {
+    const keywords = Array.from(
+      new Set(draft.keywords.split(/[,\n，、]/).map((s) => s.trim()).filter(Boolean)),
+    );
     const input = {
       title: draft.title,
       content: draft.content,
       category: draft.category,
-      keywords: draft.keywords,
+      keywords,
       priority: draft.priority,
       insertionMode: draft.insertionMode,
       visibility: draft.visibility,
@@ -107,7 +105,7 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
         <div>
           <h3 className={styles.detailSectionTitle}>背景故事 / 设定库</h3>
           <p className={styles.loreHint}>
-            完整背景、世界观、事件、地点和组织保存在星野设定库。MVP 只保存和展示，不写入 OpenHanako memory，也不参与 prompt 注入。
+            完整背景、世界观、事件、地点和组织保存在星野设定库。设定库条目仅保存在 workspace，不会自动写入 OpenHanako identity / ishiki。
           </p>
         </div>
         {editingEntry && <button type="button" onClick={resetDraft}>取消编辑</button>}

@@ -1,4 +1,5 @@
 import type { XingyeLoreEntry } from './xingye-lore-store';
+import { XINGYE_LORE_CATEGORY_LABELS } from './xingye-lore-store';
 import styles from './XingyeShell.module.css';
 
 interface LoreEntryCardProps {
@@ -8,17 +9,6 @@ interface LoreEntryCardProps {
   onDelete: (id: string) => void;
 }
 
-const CATEGORY_LABELS: Record<XingyeLoreEntry['category'], string> = {
-  background: '背景',
-  worldview: '世界观',
-  relationship: '关系',
-  event: '事件',
-  location: '地点',
-  organization: '组织',
-  character: '人物',
-  rule: '规则',
-};
-
 export function LoreEntryCard({ entry, onEdit, onToggle, onDelete }: LoreEntryCardProps) {
   return (
     <article className={styles.loreCard}>
@@ -26,7 +16,7 @@ export function LoreEntryCard({ entry, onEdit, onToggle, onDelete }: LoreEntryCa
         <div className={styles.loreTitleBlock}>
           <h4>{entry.title}</h4>
           <p>
-            {CATEGORY_LABELS[entry.category]} · {entry.visibility} · {entry.insertionMode} · priority {entry.priority}
+            {XINGYE_LORE_CATEGORY_LABELS[entry.category]} · {entry.visibility} · {entry.insertionMode} · priority {entry.priority}
           </p>
         </div>
         <button type="button" onClick={() => onToggle(entry.id)}>

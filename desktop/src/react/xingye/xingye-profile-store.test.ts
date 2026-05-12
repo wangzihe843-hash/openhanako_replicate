@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+import type { XingyeLoreEntry } from './xingye-lore-store';
 import {
   XINGYE_ROLE_PROFILES_STORAGE_KEY,
   buildOpenHanakoAgentSyncPayload,
+  filterLoreEntriesForAgentSync,
   buildOpenHanakoIdentity,
   buildOpenHanakoIshiki,
   getXingyeRoleProfile,
@@ -200,6 +202,152 @@ describe('xingye-profile-store', () => {
     expect(payload.identity).toContain('身份尚未完全确定');
     expect(payload.ishiki).toContain('你与用户的关系是：朋友。');
     expect(payload.ishiki).toContain('理性、直接、克制，有判断力，解释清楚但不过度卖萌。');
+  });
+
+  it('never injects lore into identity or ishiki sync payload', () => {
+    const profile = {
+      agentId: 'agent-1',
+      displayName: '角色',
+      shortBio: '这是一段足够长的简介用于避免占位符回退逻辑。',
+      relationshipLabel: '朋友',
+      speakingStyle: '温柔',
+      identitySummary: '身份足量文字用于走完整人设分支。',
+      backgroundSummary: '背景摘要。',
+      personalitySummary: '人格摘要。',
+      behaviorLogic: '行为逻辑。',
+      values: '价值观。',
+      taboos: '禁忌。',
+      relationshipMode: '关系模式。',
+      updatedAt: '2026-05-10T00:00:00.000Z',
+    };
+    const entries: XingyeLoreEntry[] = [
+      {
+        id: 'a',
+        agentId: 'agent-1',
+        title: '常驻',
+        content: '始终生效的句子。',
+        category: 'rule',
+        keywords: [],
+        enabled: true,
+        priority: 10,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'b',
+        agentId: 'agent-1',
+        title: '关键词条',
+        content: '关键词内容不应进入同步。',
+        category: 'rule',
+        keywords: ['k'],
+        enabled: true,
+        priority: 99,
+        insertionMode: 'keyword',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'c',
+        agentId: 'agent-1',
+        title: '关闭',
+        content: '禁用内容不出现。',
+        category: 'rule',
+        keywords: [],
+        enabled: false,
+        priority: 100,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const payload = buildOpenHanakoAgentSyncPayload(agent, profile, entries);
+    expect(payload.ishiki).not.toContain('始终生效的句子');
+    expect(payload.ishiki).not.toContain('星野设定（常驻条目）');
+    expect(payload.ishiki).not.toContain('关键词内容不应进入同步');
+    expect(payload.ishiki).not.toContain('禁用内容不出现');
+    expect(payload.identity).not.toContain('始终生效的句子');
+  });
+
+  it('truncates very long profile fields in OpenHanako sync output', () => {
+    const long = 'x'.repeat(500);
+    const marker = 'UNIQUE_LONG_LORE_SNIPPET_SHOULD_NOT_APPEAR';
+    const profile = {
+      agentId: 'agent-1',
+      displayName: '角色',
+      shortBio: long,
+      relationshipLabel: '朋友',
+      speakingStyle: long,
+      identitySummary: long,
+      backgroundSummary: long,
+      personalitySummary: long,
+      behaviorLogic: long,
+      values: long,
+      taboos: long,
+      relationshipMode: long,
+      updatedAt: '2026-05-10T00:00:00.000Z',
+    };
+    const entries: XingyeLoreEntry[] = [
+      {
+        id: 'a',
+        agentId: 'agent-1',
+        title: 't',
+        content: marker,
+        category: 'background',
+        keywords: [],
+        enabled: true,
+        priority: 10,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const payload = buildOpenHanakoAgentSyncPayload(agent, profile, entries);
+    expect(payload.identity.length).toBeLessThan(2000);
+    expect(payload.ishiki.length).toBeLessThan(4000);
+    expect(payload.identity).not.toContain(marker);
+    expect(payload.ishiki).not.toContain(marker);
+    expect(payload.identity).toContain('…');
+    expect(payload.ishiki).toContain('…');
+  });
+
+  it('filterLoreEntriesForAgentSync prefers higher priority first', () => {
+    const entries: XingyeLoreEntry[] = [
+      {
+        id: 'low',
+        agentId: 'agent-1',
+        title: '低',
+        content: 'x',
+        category: 'rule',
+        keywords: [],
+        enabled: true,
+        priority: 1,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'high',
+        agentId: 'agent-1',
+        title: '高',
+        content: 'y',
+        category: 'rule',
+        keywords: [],
+        enabled: true,
+        priority: 80,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const sorted = filterLoreEntriesForAgentSync(entries);
+    expect(sorted.map((e) => e.id)).toEqual(['high', 'low']);
   });
 
   it('does not emit product or engineering terms in OpenHanako formatter output', () => {

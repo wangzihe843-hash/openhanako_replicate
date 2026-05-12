@@ -12,7 +12,8 @@ import {
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
 } from './xingye-profile-store';
-import { useXingyeLoreEntries } from './xingye-lore-store';
+import { flushXingyePersistenceNow, getXingyePersistenceDiagnostics } from './xingye-persistence';
+import { useXingyeLoreEntries, XINGYE_LORE_CATEGORIES } from './xingye-lore-store';
 import { BackgroundPicker } from './BackgroundPicker';
 import { LoreEditor } from './LoreEditor';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
@@ -80,14 +81,17 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setSyncOpenHanakoAgentName(false);
   }, [agent?.id]);
 
+  const [persistRev, setPersistRev] = useState(0);
+  useEffect(() => {
+    const onPersistence = () => setPersistRev((n) => n + 1);
+    window.addEventListener('xingye-persistence-changed', onPersistence);
+    return () => window.removeEventListener('xingye-persistence-changed', onPersistence);
+  }, []);
+  void persistRev;
+  const persistenceDiag = getXingyePersistenceDiagnostics();
+
   const extractionLoreEntries = useMemo(() => loreEntries
-    .filter((entry) => entry.enabled && [
-      'background',
-      'worldview',
-      'relationship',
-      'event',
-      'character',
-    ].includes(entry.category))
+    .filter((entry) => entry.enabled && XINGYE_LORE_CATEGORIES.includes(entry.category))
     .map((entry) => ({
       title: entry.title,
       content: entry.content,
@@ -125,7 +129,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     profile?.updatedAt,
   ]);
   const syncPayload = useMemo(
-    () => agent ? buildOpenHanakoAgentSyncPayload(agent, syncDraft) : null,
+    () => (agent ? buildOpenHanakoAgentSyncPayload(agent, syncDraft) : null),
     [agent, syncDraft],
   );
 
@@ -162,6 +166,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         allowProactiveDM,
       });
       setSavedAt(saved.updatedAt);
+      void flushXingyePersistenceNow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setProfileSaveError(`保存失败：${message}`);
@@ -173,6 +178,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     try {
       const saved = saveXingyeRoleProfile(agent.id, { chatBackgroundDataUrl });
       setSavedAt(saved.updatedAt);
+      void flushXingyePersistenceNow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`保存失败：${message}`);
@@ -243,6 +249,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         if (data?.error) throw new Error(data.error);
       }
       setSyncState('synced');
+      saveXingyeRoleProfile(agent.id, { lastOpenHanakoSyncAt: new Date().toISOString() });
+      void flushXingyePersistenceNow();
     } catch (error) {
       setSyncState('error');
       setSyncError(error instanceof Error ? error.message : String(error));
@@ -314,7 +322,13 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
             </button>
           </div>
           <p className={styles.panelDescription}>
-            星野资料保存在本地资料层；默认同步只写入 OpenHanako identity / ishiki。可选将星野昵称写入原生助手名（config.agent.name），不写入 memory，也不改聊天生成链路。
+            星野资料保存在本地资料层；「更新核心人格摘要」仅写入 OpenHanako identity / ishiki 的短摘要，不包含设定库全文、不写入 pinned 或 memory。可选将星野昵称写入原生助手名（config.agent.name），也不改聊天生成链路。
+            {persistenceDiag.mode === 'workspace' && (
+              <span> 当前工作区已启用 workspace 持久化（.xingye）。</span>
+            )}
+            {persistenceDiag.mode === 'passthrough' && (
+              <span> 当前未挂接 workspace 持久化，资料仅写入本机浏览器存储。</span>
+            )}
           </p>
         </div>
         <button className={styles.secondaryButton} type="button" onClick={onBack}>
@@ -525,8 +539,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         <p className={styles.detailCopy}>{resolvedProfile.shortBio}</p>
       </section>
 
-      <section className={styles.detailSection} aria-label="同步到 OpenHanako Agent 预览">
-        <h3 className={styles.detailSectionTitle}>同步到 OpenHanako Agent 预览</h3>
+      <section className={styles.detailSection} aria-label="OpenHanako 核心人格摘要预览">
+        <h3 className={styles.detailSectionTitle}>OpenHanako 核心人格摘要预览</h3>
         <div className={styles.syncPreview}>
           <div>
             <span>identity.md</span>
@@ -555,16 +569,26 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
       </div>
 
       <div className={styles.detailActions}>
-        <button type="button" onClick={handleSave}>保存星野资料</button>
+        <button type="button" onClick={handleSave}>
+          {persistenceDiag.mode === 'workspace' ? '保存到 workspace' : '保存星野资料'}
+        </button>
         <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing'}>
-          {syncState === 'syncing' ? '同步中...' : '同步到 OpenHanako Agent'}
+          {syncState === 'syncing' ? '更新中...' : '更新核心人格摘要'}
         </button>
         <button type="button" onClick={() => onChat(agent.id)}>进入聊天</button>
         <button type="button" onClick={onPhone}>TA 的手机</button>
-        {savedAt && <span className={styles.saveStatus}>已保存 {new Date(savedAt).toLocaleString()}</span>}
+        {savedAt && <span className={styles.saveStatus}>上次保存 {new Date(savedAt).toLocaleString()}</span>}
+        {profile?.lastOpenHanakoSyncAt && (
+          <span className={styles.saveStatus}>
+            上次更新核心人格摘要 {new Date(profile.lastOpenHanakoSyncAt).toLocaleString()}
+          </span>
+        )}
+        {persistenceDiag.lastWorkspaceFlushError && (
+          <span className={styles.syncError}>Workspace 写入失败: {persistenceDiag.lastWorkspaceFlushError}</span>
+        )}
         {profileSaveError && <span className={styles.syncError}>{profileSaveError}</span>}
-        {syncState === 'synced' && <span className={styles.saveStatus}>已同步到 OpenHanako Agent</span>}
-        {syncState === 'error' && <span className={styles.syncError}>同步失败: {syncError}</span>}
+        {syncState === 'synced' && <span className={styles.saveStatus}>已更新 OpenHanako 核心人格摘要</span>}
+        {syncState === 'error' && <span className={styles.syncError}>更新失败: {syncError}</span>}
       </div>
     </div>
   );

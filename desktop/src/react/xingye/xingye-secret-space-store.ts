@@ -2,9 +2,11 @@
  * xingye-secret-space-store.ts — 秘密空间历史记录（workspace-first，不经 localStorage）
  */
 
-import { xingyeStorageClient } from './xingye-persistence';
+import { sanitizeAgentIdForPath } from './xingye-agent-path';
+import { postXingyeStorage } from './xingye-storage-api';
 
 export type SecretSpaceCategoryId =
+  | 'state'
   | 'draft_reply'
   | 'dream'
   | 'saved_item'
@@ -17,17 +19,17 @@ export interface SecretSpaceRecordRef {
   createdAt: string;
 }
 
-function agentDir(agentId: string): string {
-  return agentId.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 120) || 'agent';
+function secretSpaceCategoryRel(agentId: string, category: SecretSpaceCategoryId): string {
+  return `agents/${sanitizeAgentIdForPath(agentId)}/secret-space/${category}`;
 }
 
 export async function listSecretSpaceRecords(
   agentId: string,
   category: SecretSpaceCategoryId,
 ): Promise<SecretSpaceRecordRef[]> {
-  const rel = `v1/secret-space/${agentDir(agentId)}/${category}`;
+  const rel = secretSpaceCategoryRel(agentId, category);
   try {
-    const data = await xingyeStorageClient({ action: 'list', relativePath: rel });
+    const data = await postXingyeStorage({ action: 'list', relativePath: rel });
     const entries = Array.isArray(data.entries) ? data.entries : [];
     return entries
       .filter((e: { isDir?: boolean; name?: string }) => !e.isDir && typeof e.name === 'string' && /\.json$/i.test(e.name))
@@ -36,7 +38,7 @@ export async function listSecretSpaceRecords(
         title: e.name.replace(/\.json$/i, ''),
         createdAt: e.mtime || '',
       }))
-      .sort((a, b) => Date.parse(b.createdAt || '0') - Date.parse(a.createdAt || '0'));
+      .sort((a: SecretSpaceRecordRef, b: SecretSpaceRecordRef) => Date.parse(b.createdAt || '0') - Date.parse(a.createdAt || '0'));
   } catch {
     return [];
   }
@@ -48,8 +50,8 @@ export async function appendSecretSpaceRecord(
   body: Record<string, unknown>,
 ): Promise<void> {
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const rel = `v1/secret-space/${agentDir(agentId)}/${category}/${runId}.json`;
-  await xingyeStorageClient({
+  const rel = `${secretSpaceCategoryRel(agentId, category)}/${runId}.json`;
+  await postXingyeStorage({
     action: 'write',
     relativePath: rel,
     content: JSON.stringify({ ...body, createdAt: new Date().toISOString() }, null, 2),

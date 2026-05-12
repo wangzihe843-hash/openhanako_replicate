@@ -137,4 +137,55 @@ describe('xingye-lore-store', () => {
       visibility: 'canonical',
     }]);
   });
+
+  it('maps removed legacy category strings to canonical categories when loading', () => {
+    storage.setItem(XINGYE_LORE_ENTRIES_STORAGE_KEY, JSON.stringify({
+      e1: {
+        id: 'e1',
+        agentId: 'agent-1',
+        title: 'a',
+        content: 'c',
+        category: 'world',
+        keywords: [],
+        enabled: true,
+        priority: 1,
+        insertionMode: 'manual',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      e2: {
+        id: 'e2',
+        agentId: 'agent-1',
+        title: 'b',
+        content: 'c',
+        category: 'memory',
+        keywords: [],
+        enabled: true,
+        priority: 1,
+        insertionMode: 'manual',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      e3: {
+        id: 'e3',
+        agentId: 'agent-1',
+        title: 'c',
+        content: 'c',
+        category: 'other',
+        keywords: [],
+        enabled: true,
+        priority: 1,
+        insertionMode: 'manual',
+        visibility: 'canonical',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    }));
+    const list = listLoreEntries('agent-1', storage);
+    expect(list.find((e) => e.id === 'e1')?.category).toBe('worldview');
+    expect(list.find((e) => e.id === 'e2')?.category).toBe('background');
+    expect(list.find((e) => e.id === 'e3')?.category).toBe('rule');
+  });
 });

@@ -73,11 +73,11 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     fireEvent.change(screen.getByLabelText('关系标签'), { target: { value: '同伴' } });
     fireEvent.change(screen.getByLabelText('说话风格'), { target: { value: '温柔直接，回答简短。' } });
 
-    expect(screen.getByText('同步到 OpenHanako Agent 预览')).toBeTruthy();
+    expect(screen.getByText('OpenHanako 核心人格摘要预览')).toBeTruthy();
     expect(screen.getAllByText(/星野花子/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/温柔直接，回答简短。/).length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('button', { name: '同步到 OpenHanako Agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledTimes(2);
@@ -110,7 +110,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     fireEvent.change(screen.getByLabelText('简介'), { target: { value: '会认真记住用户偏好的搭子。' } });
 
     fireEvent.click(screen.getByRole('checkbox', { name: '同步助手名称' }));
-    fireEvent.click(screen.getByRole('button', { name: '同步到 OpenHanako Agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledTimes(3);

@@ -91,8 +91,8 @@ describe('xingye layered role profile formatter', () => {
     };
     const fullLore = '这里是一整段很长的完整背景故事原文，包含灯塔、旧王国、战争、组织和地点细节。';
 
-    const identity = buildOpenHanakoIdentity(agent, profile, [{ content: fullLore }]);
-    const ishiki = buildOpenHanakoIshiki(agent, profile, [{ content: fullLore }]);
+    const identity = buildOpenHanakoIdentity(agent, profile);
+    const ishiki = buildOpenHanakoIshiki(agent, profile);
 
     expect(identity).toContain('# 灯塔守夜人');
     expect(identity).toContain('旧王国边境的守夜人，人类，负责守护最后一座灯塔。');

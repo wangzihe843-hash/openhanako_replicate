@@ -40,8 +40,7 @@ export type XingyeLoreEntryInput = Partial<
 
 export const XINGYE_LORE_ENTRIES_STORAGE_KEY = 'xingye.loreEntries';
 
-const XINGYE_LORE_ENTRIES_CHANGED_EVENT = 'xingye-lore-entries-changed';
-const LORE_CATEGORIES: XingyeLoreCategory[] = [
+export const XINGYE_LORE_CATEGORIES: readonly XingyeLoreCategory[] = [
   'background',
   'worldview',
   'relationship',
@@ -51,6 +50,25 @@ const LORE_CATEGORIES: XingyeLoreCategory[] = [
   'character',
   'rule',
 ];
+
+/** UI 展示用中文名（与设定库下拉、卡片一致）。 */
+export const XINGYE_LORE_CATEGORY_LABELS: Record<XingyeLoreCategory, string> = {
+  background: '背景',
+  worldview: '世界观',
+  relationship: '关系',
+  event: '事件',
+  location: '地点',
+  organization: '组织',
+  character: '人物',
+  rule: '规则',
+};
+
+const XINGYE_LORE_ENTRIES_CHANGED_EVENT = 'xingye-lore-entries-changed';
+const LEGACY_LORE_CATEGORY: Record<string, XingyeLoreCategory> = {
+  world: 'worldview',
+  memory: 'background',
+  other: 'rule',
+};
 const INSERTION_MODES: XingyeLoreInsertionMode[] = ['always', 'keyword', 'manual'];
 const VISIBILITIES: XingyeLoreVisibility[] = ['canonical', 'private', 'draft'];
 
@@ -79,9 +97,11 @@ function normalizeKeywords(value: unknown): string[] {
 }
 
 function normalizeCategory(value: unknown): XingyeLoreCategory {
-  return typeof value === 'string' && LORE_CATEGORIES.includes(value as XingyeLoreCategory)
-    ? value as XingyeLoreCategory
-    : 'background';
+  if (typeof value !== 'string') return 'background';
+  const raw = value.trim();
+  const mapped = LEGACY_LORE_CATEGORY[raw];
+  if (mapped) return mapped;
+  return XINGYE_LORE_CATEGORIES.includes(raw as XingyeLoreCategory) ? (raw as XingyeLoreCategory) : 'background';
 }
 
 function normalizeInsertionMode(value: unknown): XingyeLoreInsertionMode {

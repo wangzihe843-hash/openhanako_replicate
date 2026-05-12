@@ -28,6 +28,12 @@ function xingyeBaseDir(workspaceRoot) {
  * @param {string} relativePath
  * @returns {string|null}
  */
+function isInsideBase(realTarget, realBase) {
+  if (!realTarget || !realBase) return false;
+  const prefix = realBase.endsWith(path.sep) ? realBase : realBase + path.sep;
+  return realTarget === realBase || realTarget.startsWith(prefix);
+}
+
 function safeResolveUnderXingye(baseReal, relativePath) {
   const rel = String(relativePath ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
   if (!rel) return baseReal;
@@ -39,6 +45,11 @@ function safeResolveUnderXingye(baseReal, relativePath) {
   const resolved = path.resolve(joined);
   const prefix = baseReal.endsWith(path.sep) ? baseReal : baseReal + path.sep;
   if (resolved !== baseReal && !resolved.startsWith(prefix)) return null;
+  const realJoined = realPath(resolved);
+  if (realJoined) {
+    const realBaseResolved = realPath(baseReal) || baseReal;
+    if (!isInsideBase(realJoined, realBaseResolved)) return null;
+  }
   return resolved;
 }
 
