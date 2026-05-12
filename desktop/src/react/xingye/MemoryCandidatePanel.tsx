@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  confirmXingyeMemoryCandidateToPinned,
+  confirmXingyeMemoryCandidate,
   formatMemoryCandidateImportanceLabel,
   importanceLevelFromNumber,
   importanceNumberFromLevel,
@@ -12,6 +12,12 @@ import {
   useXingyeMemoryCandidates,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS,
 } from './xingye-memory-candidate-store';
+import {
+  getXingyeMemoryCandidateConfirmBlockedReason,
+  getXingyeMemoryTargetDescription,
+  getXingyeMemoryTargetLabel,
+  isXingyeMemoryTargetWritable,
+} from './xingye-memory-target-policy';
 import styles from './XingyeShell.module.css';
 
 type StatusFilter = XingyeMemoryCandidateStatus | 'all';
@@ -127,7 +133,10 @@ function MemoryCandidateCard({
   }, [c.id, c.content, c.reason, c.importance, c.updatedAt]);
 
   const canEdit = c.status === 'pending';
-  const canConfirm = c.status === 'pending' && c.target === 'pinned';
+  const targetWritable = isXingyeMemoryTargetWritable(c.target);
+  const canConfirm = c.status === 'pending' && targetWritable;
+  const confirmBlockedReason =
+    c.status === 'pending' && !targetWritable ? getXingyeMemoryCandidateConfirmBlockedReason(c.target) : '';
 
   const handleSaveEdits = () => {
     if (!canEdit) return;
@@ -160,7 +169,7 @@ function MemoryCandidateCard({
     if (!canConfirm) return;
     onBusy(c.id);
     try {
-      const { alreadyInPinned } = await confirmXingyeMemoryCandidateToPinned(agentId, c.id);
+      const { alreadyInPinned } = await confirmXingyeMemoryCandidate(agentId, c.id);
       onFlash(
         alreadyInPinned
           ? 'pinned 中已有相同内容；已标记为已写入。'
@@ -181,6 +190,13 @@ function MemoryCandidateCard({
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
         <strong data-testid={`memory-candidate-status-${c.id}`}>{statusLabel(c.status)}</strong>
+        <span
+          className={styles.secretSpaceRecordMeta}
+          title={getXingyeMemoryTargetDescription(c.target)}
+          data-testid={`memory-candidate-target-${c.id}`}
+        >
+          目标 {getXingyeMemoryTargetLabel(c.target)}
+        </span>
         <span className={styles.secretSpaceRecordMeta}>
           重要度 {formatMemoryCandidateImportanceLabel(c.importance)}
         </span>
@@ -188,6 +204,11 @@ function MemoryCandidateCard({
           <span className={styles.secretSpaceRecordMeta}>来源 {c.sourceDomain}</span>
         ) : null}
       </div>
+      {confirmBlockedReason ? (
+        <p className={styles.secretSpacePlaceholder} style={{ margin: 0 }} data-testid={`memory-candidate-blocked-${c.id}`}>
+          {confirmBlockedReason}
+        </p>
+      ) : null}
       {canEdit ? (
         <>
           <label className={styles.profileField}>
@@ -231,7 +252,7 @@ function MemoryCandidateCard({
             </button>
             {canConfirm ? (
               <button type="button" className={styles.secondaryButton} onClick={handleConfirm} disabled={busy}>
-                确认写入 pinned
+                确认写入
               </button>
             ) : null}
           </div>

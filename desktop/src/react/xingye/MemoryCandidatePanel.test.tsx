@@ -48,13 +48,13 @@ describe('MemoryCandidatePanel', () => {
 
     render(<MemoryCandidatePanel agentId={agentId} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '确认写入 pinned' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
 
     await waitFor(() => {
       expect(screen.getByTestId(`memory-candidate-status-${c.id}`)).toHaveTextContent('已写入');
     });
     expect(hanaFetch).toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: '确认写入 pinned' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认写入' })).not.toBeInTheDocument();
   });
 
   it('confirm shows already-in-pinned flash when GET returns normalized match', async () => {
@@ -65,12 +65,30 @@ describe('MemoryCandidatePanel', () => {
     } as Response);
 
     render(<MemoryCandidatePanel agentId={agentId} />);
-    fireEvent.click(screen.getByRole('button', { name: '确认写入 pinned' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('memory-candidate-flash')).toHaveTextContent('pinned 中已有相同内容');
     });
     expect(hanaFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fact pending shows target label and blocked reason without confirm button', () => {
+    const c = createXingyeMemoryCandidate(agentId, { content: 'fact line', target: 'fact' });
+    render(<MemoryCandidatePanel agentId={agentId} />);
+
+    expect(screen.getByTestId(`memory-candidate-target-${c.id}`)).toHaveTextContent(/事实/);
+    expect(screen.getByTestId(`memory-candidate-blocked-${c.id}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认写入' })).not.toBeInTheDocument();
+  });
+
+  it('longterm pending shows target label and blocked reason without confirm button', () => {
+    const c = createXingyeMemoryCandidate(agentId, { content: 'lt', target: 'longterm' });
+    render(<MemoryCandidatePanel agentId={agentId} />);
+
+    expect(screen.getByTestId(`memory-candidate-target-${c.id}`)).toHaveTextContent(/长期/);
+    expect(screen.getByTestId(`memory-candidate-blocked-${c.id}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认写入' })).not.toBeInTheDocument();
   });
 
   it('status filter hides non-matching rows', async () => {

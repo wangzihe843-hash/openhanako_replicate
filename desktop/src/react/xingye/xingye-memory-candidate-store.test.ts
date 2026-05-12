@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as XingyeMemoryCandidateStore from './xingye-memory-candidate-store';
 import {
+  confirmXingyeMemoryCandidate,
   confirmXingyeMemoryCandidateToPinned,
   createXingyeMemoryCandidate,
   getXingyeMemoryCandidate,
   listXingyeMemoryCandidates,
+  loadXingyeMemoryCandidateMap,
   rejectXingyeMemoryCandidate,
   updateXingyeMemoryCandidate,
+  XINGYE_MEMORY_CANDIDATES_STORAGE_KEY,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_HIGH,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_MEDIUM,
 } from './xingye-memory-candidate-store';
@@ -104,11 +107,11 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
     expect(alreadyInPinned).toBe(true);
   });
 
-  it('rejects fact target without calling import API', async () => {
+  it('rejects fact target without calling fetch', async () => {
     const c = createXingyeMemoryCandidate('agent-1', { content: 'x', target: 'fact' }, storage);
     await expect(
       confirmXingyeMemoryCandidateToPinned('agent-1', c.id, { storage, fetchImpl: hanaFetch }),
-    ).rejects.toThrow(/fact write path not implemented/);
+    ).rejects.toThrow('fact import disabled');
     expect(hanaFetch).not.toHaveBeenCalled();
   });
 
@@ -116,7 +119,7 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
     const c = createXingyeMemoryCandidate('agent-1', { content: 'x', target: 'longterm' }, storage);
     await expect(
       confirmXingyeMemoryCandidateToPinned('agent-1', c.id, { storage, fetchImpl: hanaFetch }),
-    ).rejects.toThrow(/longterm write path not implemented/);
+    ).rejects.toThrow(/longterm is compile output/);
     expect(hanaFetch).not.toHaveBeenCalled();
   });
 
@@ -163,6 +166,93 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
     expect(hanaFetch).toHaveBeenCalledTimes(1);
     expect(alreadyInPinned).toBe(true);
     expect(candidate.status).toBe('written');
+  });
+});
+
+describe('confirmXingyeMemoryCandidate gateway', () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    vi.mocked(hanaFetch).mockReset();
+  });
+
+  it('pinned pending succeeds same as toPinned', async () => {
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'gw' }, storage);
+    vi.mocked(hanaFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pins: [] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) } as Response);
+    const { candidate, alreadyInPinned } = await confirmXingyeMemoryCandidate('agent-1', c.id, {
+      storage,
+      fetchImpl: hanaFetch,
+    });
+    expect(candidate.status).toBe('written');
+    expect(alreadyInPinned).toBe(false);
+    expect(hanaFetch).toHaveBeenCalled();
+  });
+
+  it('fact throws fact import disabled with zero hanaFetch', async () => {
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'x', target: 'fact' }, storage);
+    await expect(confirmXingyeMemoryCandidate('agent-1', c.id, { storage, fetchImpl: hanaFetch })).rejects.toThrow(
+      'fact import disabled',
+    );
+    expect(hanaFetch).not.toHaveBeenCalled();
+  });
+
+  it('longterm throws compile message with zero fetch', async () => {
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'x', target: 'longterm' }, storage);
+    await expect(confirmXingyeMemoryCandidate('agent-1', c.id, { storage, fetchImpl: hanaFetch })).rejects.toThrow(
+      /longterm is compile output/,
+    );
+    expect(hanaFetch).not.toHaveBeenCalled();
+  });
+
+  it('unknown target throws invalid memory target (unknown)', async () => {
+    storage.setItem(
+      XINGYE_MEMORY_CANDIDATES_STORAGE_KEY,
+      JSON.stringify({
+        bad: {
+          id: 'bad',
+          agentId: 'agent-1',
+          content: 'dirty',
+          target: 'nope',
+          status: 'pending',
+          createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
+        },
+      }),
+    );
+    await expect(confirmXingyeMemoryCandidate('agent-1', 'bad', { storage, fetchImpl: hanaFetch })).rejects.toThrow(
+      'invalid memory target (unknown)',
+    );
+    expect(hanaFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('xingye-memory-candidate-store normalize from storage', () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+  });
+
+  it('loads illegal persisted target as unknown', () => {
+    storage.setItem(
+      XINGYE_MEMORY_CANDIDATES_STORAGE_KEY,
+      JSON.stringify({
+        bad: {
+          id: 'bad',
+          agentId: 'agent-1',
+          content: 'dirty',
+          target: 'nope',
+          status: 'pending',
+          createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
+        },
+      }),
+    );
+    const map = loadXingyeMemoryCandidateMap(storage);
+    expect(map.bad?.target).toBe('unknown');
   });
 });
 

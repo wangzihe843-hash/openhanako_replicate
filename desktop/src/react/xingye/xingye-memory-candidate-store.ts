@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { getXingyePersistenceStorage } from './xingye-persistence';
+import {
+  assertXingyeMemoryTargetWritable,
+  normalizeXingyeMemoryCandidateTarget,
+  type XingyeMemoryCandidateCanonicalTarget,
+  type XingyeMemoryCandidateTarget,
+} from './xingye-memory-target-policy';
 
-export type XingyeMemoryCandidateTarget = 'pinned' | 'fact' | 'longterm';
+export type { XingyeMemoryCandidateCanonicalTarget, XingyeMemoryCandidateTarget } from './xingye-memory-target-policy';
 export type XingyeMemoryCandidateStatus = 'pending' | 'rejected' | 'written';
 
 /** 存为 number（1/2/3）；UI 用 low/medium/high 映射，不向用户展示数字。 */
@@ -33,7 +39,6 @@ export const XINGYE_MEMORY_CANDIDATES_STORAGE_KEY = 'xingye.memoryCandidates';
 
 export const XINGYE_MEMORY_CANDIDATES_CHANGED = 'xingye-memory-candidates-changed';
 
-const TARGETS: XingyeMemoryCandidateTarget[] = ['pinned', 'fact', 'longterm'];
 const STATUSES: XingyeMemoryCandidateStatus[] = ['pending', 'rejected', 'written'];
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
@@ -63,9 +68,7 @@ function normalizeCandidate(value: unknown, fallbackId?: string): XingyeMemoryCa
   const agentId = normalizeOptionalString(value.agentId);
   const content = normalizeOptionalString(value.content);
   if (!id || !agentId || !content) return null;
-  const target = typeof value.target === 'string' && TARGETS.includes(value.target as XingyeMemoryCandidateTarget)
-    ? (value.target as XingyeMemoryCandidateTarget)
-    : 'pinned';
+  const target = normalizeXingyeMemoryCandidateTarget(value.target);
   const status = typeof value.status === 'string' && STATUSES.includes(value.status as XingyeMemoryCandidateStatus)
     ? (value.status as XingyeMemoryCandidateStatus)
     : 'pending';
@@ -174,7 +177,7 @@ export function createXingyeMemoryCandidate(
   agentId: string,
   input: {
     content: string;
-    target?: XingyeMemoryCandidateTarget;
+    target?: XingyeMemoryCandidateCanonicalTarget;
     sourceDomain?: string;
     sourceId?: string;
     reason?: string;
@@ -184,7 +187,7 @@ export function createXingyeMemoryCandidate(
 ): XingyeMemoryCandidate {
   const now = new Date().toISOString();
   const id = createId();
-  const target = input.target ?? 'pinned';
+  const target = normalizeXingyeMemoryCandidateTarget(input.target ?? 'pinned');
   const candidate = normalizeCandidate({
     id,
     agentId,
@@ -309,8 +312,26 @@ export type ConfirmXingyeMemoryCandidateToPinnedResult = {
 };
 
 /**
- * 将 pending 且 target 为 pinned 的候选合并写入原生 pinned.md（GET 再必要时 PUT）。
- * fact / longterm：抛出错误（TODO：下轮接 /api/memories/import 等）。
+ * 统一「重要记忆」写入网关：校验候选存在、agent 一致、状态为 pending，再经 target policy 断言可写性。
+ * 不代表所有 target 可写；**当前仅 pinned** 会走通并成功调用底层 pinned 写入。
+ */
+export async function confirmXingyeMemoryCandidate(
+  agentId: string,
+  candidateId: string,
+  options?: { fetchImpl?: FetchLike; storage?: StorageLike | null },
+): Promise<ConfirmXingyeMemoryCandidateToPinnedResult> {
+  const storage = options?.storage ?? getLocalStorage();
+  const c = getXingyeMemoryCandidate(candidateId, storage);
+  if (!c) throw new Error('memory candidate not found');
+  if (c.agentId !== agentId) throw new Error('memory candidate agent mismatch');
+  if (c.status !== 'pending') throw new Error('candidate is not pending');
+  assertXingyeMemoryTargetWritable(c.target);
+  return confirmXingyeMemoryCandidateToPinned(agentId, candidateId, options);
+}
+
+/**
+ * 底层：仅将 **target 为 pinned** 的待定候选合并写入原生 pinned.md（GET 再必要时 PUT）。
+ * 非 pinned（fact / longterm / unknown）在可写性断言处拒绝；上层请优先使用 {@link confirmXingyeMemoryCandidate}。
  */
 export async function confirmXingyeMemoryCandidateToPinned(
   agentId: string,
@@ -323,10 +344,10 @@ export async function confirmXingyeMemoryCandidateToPinned(
   if (!c) throw new Error('memory candidate not found');
   if (c.agentId !== agentId) throw new Error('memory candidate agent mismatch');
   if (c.status !== 'pending') throw new Error('candidate is not pending');
-  if (c.target === 'fact' || c.target === 'longterm') {
-    throw new Error(`${c.target} write path not implemented (TODO: memories import / longterm)`);
+  assertXingyeMemoryTargetWritable(c.target);
+  if (c.target !== 'pinned') {
+    throw new Error('only pinned targets can use the pinned write path');
   }
-  if (c.target !== 'pinned') throw new Error('unsupported target');
 
   const bullet = normalizePinBulletText(c.content);
   if (!bullet) throw new Error('empty candidate content');
