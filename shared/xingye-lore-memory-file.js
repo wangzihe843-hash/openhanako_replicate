@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -305,6 +306,29 @@ export async function readXingyeStableLoreMemoryForPrompt({
   maxChars = DEFAULT_MAX_CHARS,
 } = {}) {
   const content = await readXingyeLoreMemoryFile({ hanakoHome, agentId });
+  if (!content) return '';
+  const promptContent = extractManagedPromptContent(content);
+  if (!promptContent) return '';
+  return truncateText(promptContent, normalizeMaxChars(maxChars));
+}
+
+export function readXingyeStableLoreMemoryForPromptSync({
+  hanakoHome,
+  agentId,
+  maxChars = DEFAULT_MAX_CHARS,
+} = {}) {
+  const identity = getReadableIdentity({ hanakoHome, agentId });
+  if (!identity) return '';
+  const filePath = path.join(identity.normalizedHanakoHome, 'agents', identity.normalizedAgentId, 'xingye', 'lore-memory.md');
+
+  let content = '';
+  try {
+    content = readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return '';
+    throw error;
+  }
+
   if (!content) return '';
   const promptContent = extractManagedPromptContent(content);
   if (!promptContent) return '';

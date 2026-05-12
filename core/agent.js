@@ -37,6 +37,9 @@ import { createStopTaskTool } from "../lib/tools/stop-task-tool.js";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { getPlatformPromptNote } from "./platform-prompt.js";
+import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
+import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
+import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
 
 export class Agent {
   /**
@@ -795,6 +798,11 @@ export class Agent {
     const cwdOverride = Object.prototype.hasOwnProperty.call(options, "cwdOverride")
       ? (typeof options.cwdOverride === "string" ? options.cwdOverride : "")
       : null;
+    const userText = typeof options.userText === "string" ? options.userText : "";
+    const recentMessages = Array.isArray(options.recentMessages) ? options.recentMessages : [];
+    const xingyeWorkspaceRoot = typeof options.xingyeWorkspaceRoot === "string"
+      ? options.xingyeWorkspaceRoot
+      : "";
     const memoryEnabled = typeof forceMemoryEnabled === "boolean"
       ? forceMemoryEnabled
       : this.memoryEnabled;
@@ -1139,6 +1147,50 @@ export class Agent {
     // 记忆规则 + 置顶记忆 + 记忆（动态，后台 compile 会更新；按 session 快照）
     if (memoryBlock) {
       parts.push(...memoryBlock);
+    }
+
+    if (!forSubagent) {
+      try {
+        const xingyeStableLore = readXingyeStableLoreMemoryForPromptSync({
+          hanakoHome: path.dirname(path.dirname(this.agentDir)),
+          agentId: this.id,
+          maxChars: 4000,
+        }).trim();
+        if (xingyeStableLore) {
+          parts.push(...section(
+            "# 星野核心设定",
+            [
+              "这是角色长期背景、核心关系、核心人物设定。",
+              "它不是刚发生的事件。如果与当前对话事实冲突，以当前对话事实为准。",
+              "",
+              xingyeStableLore,
+            ].join("\n")
+          ));
+        }
+      } catch (error) {
+        console.warn(`[xingye] skip stable lore prompt section: ${error?.message || error}`);
+      }
+
+      try {
+        const entries = readXingyeRuntimeLoreEntriesSync({
+          workspaceRoot: xingyeWorkspaceRoot,
+          hanakoHome: path.dirname(path.dirname(this.agentDir)),
+          agentId: this.id,
+          agentDir: this.agentDir,
+        });
+        const runtimeLore = buildXingyeRuntimeLoreContext({
+          entries,
+          agentId: this.id,
+          userText,
+          recentMessages,
+          maxChars: 2000,
+        }).text.trim();
+        if (runtimeLore) {
+          parts.push("", "---", "", runtimeLore);
+        }
+      } catch (error) {
+        console.warn(`[xingye] skip runtime lore prompt section: ${error?.message || error}`);
+      }
     }
 
     // 日期时间（尊重用户时区偏好，fallback 到系统时区）

@@ -25,7 +25,7 @@ import {
 } from "./session-permission-mode.js";
 import { findModel } from "../shared/model-ref.js";
 import { computeToolSnapshot, DEFAULT_DISABLED_TOOL_NAMES, uniqueToolNames } from "../shared/tool-categories.js";
-import { isActiveSessionPath } from "./message-utils.js";
+import { extractTextContent, isActiveSessionPath } from "./message-utils.js";
 import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/workspace-scope.js";
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
 import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";
@@ -84,6 +84,21 @@ function jsonClone(value, fallback) {
 
 function normalizeStringArray(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
+function sessionMessageText(message) {
+  if (!message || typeof message !== "object") return "";
+  if (typeof message.content === "string") return message.content.trim();
+  const extracted = extractTextContent(message.content, { stripThink: true });
+  return (extracted?.text || "").trim();
+}
+
+function recentSessionMessageTexts(messages, limit = 8) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .slice(-Math.max(0, limit))
+    .map(sessionMessageText)
+    .filter(Boolean);
 }
 
 function computeRuntimeDisabledToolNames(tools, agentConfig, context = {}) {
@@ -937,9 +952,23 @@ export class SessionCoordinator {
       opts = { ...opts, images: prepared.images };
     }
     assertVideoInputSupported(entry.session.model, opts?.videos);
+    const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+    if (agent && typeof agent.buildSystemPrompt === "function") {
+      const workspaceRoot = entry.session?.sessionManager?.getCwd?.()
+        || entry.session?.getCwd?.()
+        || "";
+      const runtimePrompt = agent.buildSystemPrompt({
+        forceMemoryEnabled: entry.memoryEnabled,
+        forceExperienceEnabled: entry.experienceEnabled,
+        cwdOverride: workspaceRoot,
+        xingyeWorkspaceRoot: workspaceRoot,
+        userText: text,
+        recentMessages: recentSessionMessageTexts(entry.session?.messages),
+      });
+      this._applyFinalPromptSnapshot(entry.session, runtimePrompt);
+    }
     const promptOpts = buildPromptMediaOptions(opts);
     await entry.session.prompt(text, promptOpts);
-    const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
     agent?._memoryTicker?.notifyTurn(sessionPath);
   }
 
