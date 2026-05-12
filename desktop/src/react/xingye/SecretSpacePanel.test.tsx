@@ -5,9 +5,29 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { SecretSpacePanel } from './SecretSpacePanel';
+
+vi.mock('../hooks/use-hana-fetch', () => ({
+  hanaUrl: (path: string) => path,
+  hanaFetch: vi.fn(async (path: string) => {
+    if (typeof path === 'string' && path.includes('/pinned')) {
+      return { ok: true, json: async () => ({ pins: [] }) } as Response;
+    }
+    return { ok: true, json: async () => ({}) } as Response;
+  }),
+}));
+
+vi.mock('../stores', () => ({
+  useStore: (fn: (s: { currentAgentId: string; agentName: string }) => unknown) =>
+    fn({ currentAgentId: 'agent-secret-1', agentName: 'Test' }),
+}));
+
+vi.mock('../settings/store', () => ({
+  useSettingsStore: (fn: (s: { settingsAgentId: null; currentAgentId: string; ready: boolean }) => unknown) =>
+    fn({ settingsAgentId: null, currentAgentId: 'agent-secret-1', ready: false }),
+}));
 
 describe('SecretSpacePanel secret space navigation', () => {
   const agent: Agent = {
@@ -100,7 +120,7 @@ describe('SecretSpacePanel secret space navigation', () => {
 
 describe('SecretSpacePanel memory candidate manual entry', () => {
   const agent: Agent = {
-    id: 'agent-secret-2',
+    id: 'agent-secret-1',
     name: 'Test',
     yuan: 'test',
     isPrimary: true,

@@ -1,6 +1,7 @@
 /**
  * Settings 共享工具函数
  */
+import { emitAgentPinnedMemoryChanged } from '../agent-pinned-memory';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
 import registry from '../../shared/theme-registry.cjs';
@@ -131,6 +132,7 @@ export function savePins() {
     const store = useSettingsStore.getState();
     try {
       const agentId = store.getSettingsAgentId();
+      if (!agentId) throw new Error('no agent selected');
       const res = await hanaFetch(`/api/agents/${agentId}/pinned`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -138,6 +140,11 @@ export function savePins() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      emitAgentPinnedMemoryChanged({
+        agentId,
+        source: 'settings',
+        pinsCount: store.currentPins.length,
+      });
       store.showToast(t('settings.autoSaved'), 'success');
     } catch (err: any) {
       store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');

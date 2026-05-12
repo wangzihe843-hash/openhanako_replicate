@@ -652,9 +652,13 @@ export function createAgentsRoute(engine) {
         .map(line => line.trim())
         .filter(line => line.length > 0)
         .map(line => line.replace(/^-\s*/, ""));
+      console.debug("[agents/pinned] GET ok", { agentId: id, file: "pinned.md", pinsCount: pins.length });
       return c.json({ pins });
     } catch (err) {
-      if (err.code === "ENOENT") return c.json({ pins: [] });
+      if (err.code === "ENOENT") {
+        console.debug("[agents/pinned] GET ok", { agentId: id, file: "pinned.md", pinsCount: 0, note: "missing" });
+        return c.json({ pins: [] });
+      }
       return c.json({ error: err.message }, 500);
     }
   });
@@ -670,13 +674,15 @@ export function createAgentsRoute(engine) {
       if (!Array.isArray(pins)) {
         return c.json({ error: "pins must be an array" }, 400);
       }
-      const content = pins
+      const trimmedPins = pins
         .map(p => (typeof p === "string" ? p.trim() : ""))
-        .filter(p => p.length > 0)
+        .filter(p => p.length > 0);
+      const content = trimmedPins
         .map(p => `- ${p}`)
         .join("\n")
         + "\n";
       await fs.writeFile(path.join(agentDir(engine, id), "pinned.md"), content, "utf-8");
+      console.debug("[agents/pinned] PUT ok", { agentId: id, file: "pinned.md", pinsCount: trimmedPins.length });
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       return c.json({ ok: true });

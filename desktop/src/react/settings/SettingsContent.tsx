@@ -31,6 +31,10 @@ import { ClearMemoryConfirm } from './overlays/ClearMemoryConfirm';
 import { BridgeTutorial } from './overlays/BridgeTutorial';
 import { WechatQrcodeOverlay } from './overlays/WechatQrcodeOverlay';
 import { InputContextMenu } from '../components/InputContextMenu';
+import {
+  subscribeAgentPinnedMemoryChanged,
+  type AgentPinnedMemoryChangedDetail,
+} from '../agent-pinned-memory';
 import styles from './Settings.module.css';
 
 const TAB_COMPONENTS: Record<string, React.ComponentType> = {
@@ -133,6 +137,35 @@ export function SettingsContent({
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, []);
+
+  // 同 renderer：星野 / 设置 savePins 写入 pinned 后刷新当前设置上下文
+  useEffect(() => {
+    const unsub = subscribeAgentPinnedMemoryChanged((detail: AgentPinnedMemoryChangedDetail) => {
+      const targetId = useSettingsStore.getState().getSettingsAgentId();
+      if (!targetId || detail.agentId !== targetId) return;
+      void loadSettingsConfig();
+    });
+    return unsub;
+  }, []);
+
+  // 独立设置窗口：回到前台时兜底拉取（跨 BrowserWindow 无 CustomEvent）
+  useEffect(() => {
+    if (variant !== 'window') return;
+    const reload = () => {
+      const store = useSettingsStore.getState();
+      if (!store.ready) return;
+      void loadSettingsConfig();
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    window.addEventListener('focus', reload);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', reload);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [variant]);
 
   const availablePluginSettingsTabs = pluginSettingsTabs || [];
   const effectiveActiveTab = normalizeNativeTabForPlatform(activeTab, platformName);

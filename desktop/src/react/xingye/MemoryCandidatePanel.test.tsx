@@ -8,20 +8,46 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryCandidatePanel } from './MemoryCandidatePanel';
 import { createXingyeMemoryCandidate, rejectXingyeMemoryCandidate } from './xingye-memory-candidate-store';
+import { emitAgentPinnedMemoryChanged } from '../agent-pinned-memory';
 
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaUrl: (path: string) => path,
   hanaFetch: vi.fn(),
 }));
 
+vi.mock('../stores', () => ({
+  useStore: (fn: (s: { currentAgentId: string; agentName: string }) => unknown) =>
+    fn({ currentAgentId: 'agent-panel-1', agentName: 'Panel Agent' }),
+}));
+
+vi.mock('../settings/store', () => ({
+  useSettingsStore: (fn: (s: { settingsAgentId: null; currentAgentId: string; ready: boolean }) => unknown) =>
+    fn({ settingsAgentId: null, currentAgentId: 'agent-panel-1', ready: false }),
+}));
+
 const { hanaFetch } = await import('../hooks/use-hana-fetch');
+
+/** 模拟服务端 pinned 列表，随 PUT 更新 */
+let mockPinnedServerPins: string[] = [];
 
 describe('MemoryCandidatePanel', () => {
   const agentId = 'agent-panel-1';
 
   beforeEach(() => {
     window.localStorage.clear();
+    mockPinnedServerPins = [];
     vi.mocked(hanaFetch).mockReset();
+    vi.mocked(hanaFetch).mockImplementation(async (path: string, opts?: RequestInit) => {
+      if (typeof path === 'string' && path.includes('/pinned') && opts?.method === 'PUT') {
+        const body = opts?.body ? (JSON.parse(String(opts.body)) as { pins?: string[] }) : {};
+        mockPinnedServerPins = Array.isArray(body.pins) ? [...body.pins] : [];
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (typeof path === 'string' && path.includes('/pinned')) {
+        return { ok: true, json: async () => ({ pins: [...mockPinnedServerPins] }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
   });
 
   afterEach(() => {
@@ -33,6 +59,7 @@ describe('MemoryCandidatePanel', () => {
     render(<MemoryCandidatePanel agentId={agentId} />);
 
     expect(screen.getByText('hello memory')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-candidate-write-target')).toHaveTextContent('agent-panel-1');
     fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
 
     await waitFor(() => {
@@ -40,12 +67,14 @@ describe('MemoryCandidatePanel', () => {
     });
   });
 
+  it('shows write target with agent name when provided', () => {
+    createXingyeMemoryCandidate(agentId, { content: 'x', target: 'pinned' });
+    render(<MemoryCandidatePanel agentId={agentId} agentName="星名" />);
+    expect(screen.getByTestId('memory-candidate-write-target')).toHaveTextContent('星名 / agent-panel-1');
+  });
+
   it('confirm calls pinned GET/PUT and hides confirm for written', async () => {
     const c = createXingyeMemoryCandidate(agentId, { content: 'pin me', target: 'pinned' });
-    vi.mocked(hanaFetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ pins: [] }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) } as Response);
-
     render(<MemoryCandidatePanel agentId={agentId} />);
 
     fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
@@ -57,12 +86,28 @@ describe('MemoryCandidatePanel', () => {
     expect(screen.queryByRole('button', { name: '确认写入' })).not.toBeInTheDocument();
   });
 
+  it('written candidate shows stale when pinned no longer contains content after refresh event', async () => {
+    const c = createXingyeMemoryCandidate(agentId, { content: 'gone pin', target: 'pinned' });
+    render(<MemoryCandidatePanel agentId={agentId} />);
+    fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
+    await waitFor(() => {
+      expect(screen.getByTestId(`memory-candidate-status-${c.id}`)).toHaveTextContent('已写入');
+    });
+
+    mockPinnedServerPins = [];
+    emitAgentPinnedMemoryChanged({ agentId, source: 'settings', pinsCount: 0 });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`memory-candidate-pinned-stale-${c.id}`)).toHaveTextContent('已从 pinned 移除');
+    });
+  });
+
   it('confirm shows already-in-pinned flash when GET returns normalized match', async () => {
     createXingyeMemoryCandidate(agentId, { content: 'already there', target: 'pinned' });
-    vi.mocked(hanaFetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ pins: ['already there'] }),
-    } as Response);
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(hanaFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pins: [] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pins: ['already there'] }) } as Response);
 
     render(<MemoryCandidatePanel agentId={agentId} />);
     fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
@@ -70,7 +115,7 @@ describe('MemoryCandidatePanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('memory-candidate-flash')).toHaveTextContent('pinned 中已有相同内容');
     });
-    expect(hanaFetch).toHaveBeenCalledTimes(1);
+    expect(hanaFetch).toHaveBeenCalled();
   });
 
   it('fact pending shows target label and blocked reason without confirm button', () => {

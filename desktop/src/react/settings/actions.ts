@@ -89,6 +89,12 @@ export async function loadSettingsConfig() {
     const userProfileData = await userProfileRes.json();
     config._userProfile = userProfileData.content || '';
     const pinnedData = await pinnedRes.json();
+    const pinsArr = Array.isArray(pinnedData.pins) ? pinnedData.pins : [];
+    console.debug('[settings] load pinned snapshot', {
+      settingsAgentId: agentId,
+      path: `${agentBase}/pinned`,
+      pinsCount: pinsArr.length,
+    });
     config._experience = '';
     if (config.experience?.enabled === true) {
       const experienceRes = await hanaFetch(`${agentBase}/experience`, { signal: controller.signal });
@@ -102,7 +108,7 @@ export async function loadSettingsConfig() {
       settingsConfig: config,
       globalModelsConfig: globalModels,
       homeFolder: config.desk?.home_folder || null,
-      currentPins: pinnedData.pins || [],
+      currentPins: pinsArr,
     });
   } catch (err) {
     if (isAbortError(err)) return;

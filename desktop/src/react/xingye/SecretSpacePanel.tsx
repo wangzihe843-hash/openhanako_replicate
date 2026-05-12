@@ -276,7 +276,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         <button type="button" className={styles.secondaryButton} onClick={handleCreateManualCandidate}>
           创建候选记忆
         </button>
-        <MemoryCandidatePanel agentId={agent.id} />
+        <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} />
       </div>
     ) : null;
 

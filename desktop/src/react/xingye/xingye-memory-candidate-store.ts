@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { emitAgentPinnedMemoryChanged } from '../agent-pinned-memory';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
@@ -381,6 +382,19 @@ export async function confirmXingyeMemoryCandidateToPinned(
       throw new Error(String(putJson.error));
     }
   }
+
+  const pinsCount = alreadyInPinned ? existing.length : existing.length + 1;
+  console.debug('[xingye] confirm pinned ok', {
+    agentId,
+    alreadyInPinned,
+    priorPinsCount: existing.length,
+    pinsCount,
+  });
+  emitAgentPinnedMemoryChanged({
+    agentId,
+    source: 'xingye-secret-space',
+    pinsCount,
+  });
 
   const writtenAt = new Date().toISOString();
   const updated = patchXingyeMemoryCandidateForAgent(

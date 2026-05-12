@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  loadAgentPinnedMemory,
+  pinnedListContainsNormalizedContent,
+  subscribeAgentPinnedMemoryChanged,
+} from '../agent-pinned-memory';
+import { hanaFetch } from '../hooks/use-hana-fetch';
+import { useStore } from '../stores';
+import { useSettingsStore } from '../settings/store';
+import {
   confirmXingyeMemoryCandidate,
   formatMemoryCandidateImportanceLabel,
   importanceLevelFromNumber,
@@ -38,13 +46,53 @@ function formatTs(iso: string): string {
 
 interface MemoryCandidatePanelProps {
   agentId: string | null;
+  /** 写入目标助手展示名（与 agentId 对应） */
+  agentName?: string | null;
 }
 
-export function MemoryCandidatePanel({ agentId }: MemoryCandidatePanelProps) {
+export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePanelProps) {
   const candidates = useXingyeMemoryCandidates(agentId);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [flash, setFlash] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [remotePins, setRemotePins] = useState<string[] | null>(null);
+  const [remotePinsError, setRemotePinsError] = useState<string | null>(null);
+
+  const currentAgentId = useStore(s => s.currentAgentId);
+  const currentChatAgentName = useStore(s => s.agentName);
+  const settingsViewingId = useSettingsStore(s => s.settingsAgentId || s.currentAgentId);
+  const settingsReady = useSettingsStore(s => s.ready);
+
+  const writeTargetLabel = agentName?.trim() ? `${agentName.trim()} / ${agentId}` : (agentId ?? '');
+
+  const reloadRemotePins = useCallback(async () => {
+    if (!agentId) return;
+    setRemotePinsError(null);
+    try {
+      const pins = await loadAgentPinnedMemory(agentId, hanaFetch);
+      setRemotePins(pins);
+    } catch (e) {
+      setRemotePins(null);
+      setRemotePinsError(e instanceof Error ? e.message : String(e));
+    }
+  }, [agentId]);
+
+  useEffect(() => {
+    if (!agentId) {
+      setRemotePins(null);
+      setRemotePinsError(null);
+      return;
+    }
+    void reloadRemotePins();
+  }, [agentId, reloadRemotePins]);
+
+  useEffect(() => {
+    if (!agentId) return;
+    return subscribeAgentPinnedMemoryChanged((detail) => {
+      if (detail.agentId !== agentId) return;
+      void reloadRemotePins();
+    });
+  }, [agentId, reloadRemotePins]);
 
   const filtered = useMemo(() => {
     if (filter === 'all') return candidates;
@@ -55,6 +103,13 @@ export function MemoryCandidatePanel({ agentId }: MemoryCandidatePanelProps) {
     setFlash(msg);
     window.setTimeout(() => setFlash(null), 5000);
   }, []);
+
+  const chatMismatch = !!agentId && !!currentAgentId && agentId !== currentAgentId;
+  const settingsMismatch =
+    !!agentId &&
+    !!settingsViewingId &&
+    settingsViewingId !== agentId &&
+    settingsReady;
 
   if (!agentId) {
     return (
@@ -67,6 +122,24 @@ export function MemoryCandidatePanel({ agentId }: MemoryCandidatePanelProps) {
   return (
     <div className={styles.detailSection} data-testid="memory-candidate-panel">
       <h4 className={styles.detailSectionTitle}>重要记忆候选</h4>
+      <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }} data-testid="memory-candidate-write-target">
+        将写入 OpenHanako 置顶记忆（pinned）目标：<strong>{writeTargetLabel}</strong>
+      </p>
+      {chatMismatch ? (
+        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }} role="status">
+          当前 OpenHanako 聊天助手为「{currentChatAgentName}」；与上述写入目标不同。设置页默认展示当前助手时，请切换到写入目标对应的助手卡片后再查看「置顶记忆」。
+        </p>
+      ) : null}
+      {settingsMismatch ? (
+        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }} role="status">
+          若设置页正在浏览其他助手，需切换到与写入目标相同的助手后才能看到这条置顶记忆。
+        </p>
+      ) : null}
+      {remotePinsError ? (
+        <p className={styles.saveStatus} role="alert">
+          无法与服务器对账 pinned：{remotePinsError}
+        </p>
+      ) : null}
       <div className={styles.profileForm}>
         <label className={styles.profileField}>
           <span>按状态筛选</span>
@@ -94,8 +167,10 @@ export function MemoryCandidatePanel({ agentId }: MemoryCandidatePanelProps) {
               <MemoryCandidateCard
                 key={c.id}
                 agentId={agentId}
+                writeTargetLabel={writeTargetLabel}
                 candidate={c}
                 busy={busyId === c.id}
+                remotePins={remotePins}
                 onBusy={(id) => setBusyId(id)}
                 onFlash={showFlash}
               />
@@ -109,14 +184,18 @@ export function MemoryCandidatePanel({ agentId }: MemoryCandidatePanelProps) {
 
 function MemoryCandidateCard({
   agentId,
+  writeTargetLabel,
   candidate: c,
   busy,
+  remotePins,
   onBusy,
   onFlash,
 }: {
   agentId: string;
+  writeTargetLabel: string;
   candidate: XingyeMemoryCandidate;
   busy: boolean;
+  remotePins: string[] | null;
   onBusy: (id: string | null) => void;
   onFlash: (msg: string) => void;
 }) {
@@ -137,6 +216,11 @@ function MemoryCandidateCard({
   const canConfirm = c.status === 'pending' && targetWritable;
   const confirmBlockedReason =
     c.status === 'pending' && !targetWritable ? getXingyeMemoryCandidateConfirmBlockedReason(c.target) : '';
+
+  const writtenButMissingFromPinned =
+    c.status === 'written' &&
+    remotePins !== null &&
+    !pinnedListContainsNormalizedContent(remotePins, c.content);
 
   const handleSaveEdits = () => {
     if (!canEdit) return;
@@ -172,8 +256,8 @@ function MemoryCandidateCard({
       const { alreadyInPinned } = await confirmXingyeMemoryCandidate(agentId, c.id);
       onFlash(
         alreadyInPinned
-          ? 'pinned 中已有相同内容；已标记为已写入。'
-          : '已成功写入 OpenHanako pinned。',
+          ? `pinned 中已有相同内容；已标记为已写入。（目标：${writeTargetLabel}）`
+          : `已成功写入 OpenHanako pinned。（目标：${writeTargetLabel}）`,
       );
     } catch (e) {
       onFlash(e instanceof Error ? e.message : String(e));
@@ -190,6 +274,11 @@ function MemoryCandidateCard({
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
         <strong data-testid={`memory-candidate-status-${c.id}`}>{statusLabel(c.status)}</strong>
+        {writtenButMissingFromPinned ? (
+          <span className={styles.secretSpaceRecordMeta} data-testid={`memory-candidate-pinned-stale-${c.id}`}>
+            已从 pinned 移除
+          </span>
+        ) : null}
         <span
           className={styles.secretSpaceRecordMeta}
           title={getXingyeMemoryTargetDescription(c.target)}
@@ -204,6 +293,11 @@ function MemoryCandidateCard({
           <span className={styles.secretSpaceRecordMeta}>来源 {c.sourceDomain}</span>
         ) : null}
       </div>
+      {writtenButMissingFromPinned ? (
+        <p className={styles.secretSpacePlaceholder} style={{ margin: 0 }} data-testid={`memory-candidate-stale-note-${c.id}`}>
+          已写入过，但当前 OpenHanako pinned 中已不存在该条内容；不会自动写回。若仍需置顶，请重新确认写入。
+        </p>
+      ) : null}
       {confirmBlockedReason ? (
         <p className={styles.secretSpacePlaceholder} style={{ margin: 0 }} data-testid={`memory-candidate-blocked-${c.id}`}>
           {confirmBlockedReason}
