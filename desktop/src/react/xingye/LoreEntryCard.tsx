@@ -7,11 +7,20 @@ interface LoreEntryCardProps {
   onEdit: (entry: XingyeLoreEntry) => void;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
+  onSaveAsCandidate?: (entry: XingyeLoreEntry) => void;
+  saveAsCandidateDisabled?: boolean;
 }
 
-export function LoreEntryCard({ entry, onEdit, onToggle, onDelete }: LoreEntryCardProps) {
+export function LoreEntryCard({
+  entry,
+  onEdit,
+  onToggle,
+  onDelete,
+  onSaveAsCandidate,
+  saveAsCandidateDisabled,
+}: LoreEntryCardProps) {
   return (
-    <article className={styles.loreCard}>
+    <article className={styles.loreCard} data-testid={`lore-entry-card-${entry.id}`}>
       <div className={styles.loreCardHeader}>
         <div className={styles.loreTitleBlock}>
           <h4>{entry.title}</h4>
@@ -32,6 +41,16 @@ export function LoreEntryCard({ entry, onEdit, onToggle, onDelete }: LoreEntryCa
       <div className={styles.loreActions}>
         <button type="button" onClick={() => onEdit(entry)}>编辑</button>
         <button type="button" onClick={() => onDelete(entry.id)}>删除</button>
+        {onSaveAsCandidate ? (
+          <button
+            type="button"
+            onClick={() => onSaveAsCandidate(entry)}
+            disabled={saveAsCandidateDisabled}
+            data-testid={`lore-entry-save-candidate-${entry.id}`}
+          >
+            保存为候选重要记忆
+          </button>
+        ) : null}
       </div>
     </article>
   );

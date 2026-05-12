@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createLoreEntry,
   deleteLoreEntry,
@@ -12,8 +12,19 @@ import {
   type XingyeLoreInsertionMode,
   type XingyeLoreVisibility,
 } from './xingye-lore-store';
+import {
+  createXingyeMemoryCandidate,
+  importanceNumberFromLevel,
+} from './xingye-memory-candidate-store';
 import { LoreEntryCard } from './LoreEntryCard';
 import styles from './XingyeShell.module.css';
+
+const LORE_CANDIDATE_REASON = '用户从设定库保存为候选重要记忆';
+const LORE_CANDIDATE_FLASH_OK = '已加入候选重要记忆，请到记忆候选中确认写入';
+
+function buildLoreCandidateContent(entry: XingyeLoreEntry): string {
+  return `【设定】${entry.title}\n${entry.content}`;
+}
 
 interface LoreEditorProps {
   agentId: string;
@@ -49,11 +60,51 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
   const entries = useXingyeLoreEntries(agentId);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [savingCandidateId, setSavingCandidateId] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setEditingId(null);
     setDraft(emptyDraft);
+    setFlash(null);
   }, [agentId]);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
+
+  const showFlash = useCallback((msg: string) => {
+    setFlash(msg);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    if (typeof window === 'undefined') return;
+    flashTimerRef.current = setTimeout(() => setFlash(null), 5000);
+  }, []);
+
+  const handleSaveAsCandidate = useCallback(
+    (entry: XingyeLoreEntry) => {
+      if (!agentId) return;
+      setSavingCandidateId(entry.id);
+      try {
+        createXingyeMemoryCandidate(agentId, {
+          content: buildLoreCandidateContent(entry),
+          sourceDomain: 'lore',
+          sourceId: entry.id,
+          reason: LORE_CANDIDATE_REASON,
+          importance: importanceNumberFromLevel('medium'),
+          target: 'pinned',
+        });
+        showFlash(LORE_CANDIDATE_FLASH_OK);
+      } catch (error) {
+        showFlash(error instanceof Error ? error.message : String(error));
+      } finally {
+        setSavingCandidateId(null);
+      }
+    },
+    [agentId, showFlash],
+  );
 
   const editingEntry = useMemo(
     () => entries.find((entry) => entry.id === editingId) ?? null,
@@ -183,6 +234,12 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
         </button>
       </div>
 
+      {flash ? (
+        <p className={styles.saveStatus} role="status" data-testid="lore-editor-flash">
+          {flash}
+        </p>
+      ) : null}
+
       <div className={styles.loreList}>
         {entries.length === 0 ? (
           <p className={styles.loreEmpty}>还没有设定条目。</p>
@@ -194,6 +251,8 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
               onEdit={startEdit}
               onToggle={(id) => toggleLoreEntry(id)}
               onDelete={(id) => deleteLoreEntry(id)}
+              onSaveAsCandidate={handleSaveAsCandidate}
+              saveAsCandidateDisabled={savingCandidateId === entry.id}
             />
           ))
         )}
