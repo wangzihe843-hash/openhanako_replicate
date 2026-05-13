@@ -31,6 +31,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "contacts_enrichment",
   "relationship_state",
   "secret_space",
+  "journal_draft",
 ]);
 
 const FORBIDDEN_TERMS = [

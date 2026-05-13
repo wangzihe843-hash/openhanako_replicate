@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
+import { generateJournalDraftWithAI } from './xingye-journal-ai';
 import {
   appendJournalEntry,
   deleteJournalEntry,
   listJournalEntries,
   type XingyeJournalEntry,
 } from './xingye-journal-store';
+import { useXingyeRoleProfile } from './xingye-profile-store';
 
 export interface PhoneJournalAppProps {
   ownerAgent: Agent | null;
@@ -39,6 +41,7 @@ function excerptForJournalList(body: string, maxChars = 96): string {
 
 export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJournalAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
+  const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const [entries, setEntries] = useState<XingyeJournalEntry[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -49,6 +52,8 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [draftAiBusy, setDraftAiBusy] = useState(false);
+  const [draftAiError, setDraftAiError] = useState<string | null>(null);
 
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
@@ -100,7 +105,23 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setDraftTitle('');
     setDraftBody('');
     setSaveError(null);
+    setDraftAiError(null);
     setComposeOpen(true);
+  };
+
+  const handleGenerateDraft = async () => {
+    if (!ownerAgent) return;
+    setDraftAiBusy(true);
+    setDraftAiError(null);
+    try {
+      const r = await generateJournalDraftWithAI({ agent: ownerAgent, ownerProfile });
+      setDraftTitle(r.title);
+      setDraftBody(r.body);
+    } catch (e) {
+      setDraftAiError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftAiBusy(false);
+    }
   };
 
   const saveCompose = async () => {
@@ -278,6 +299,21 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                 <span>正文</span>
                 <textarea value={draftBody} onChange={(e) => setDraftBody(e.target.value)} rows={6} placeholder="写点什么…" />
               </label>
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className={styles.phoneModalGhostButton}
+                  onClick={() => void handleGenerateDraft()}
+                  disabled={draftAiBusy || saveBusy}
+                >
+                  {draftAiBusy ? '生成中…' : '生成草稿'}
+                </button>
+              </div>
+              {draftAiError ? (
+                <p className={styles.phoneAppHint} role="alert">
+                  {draftAiError}
+                </p>
+              ) : null}
               {saveError ? (
                 <p className={styles.phoneAppHint} role="alert">
                   {saveError}
@@ -285,10 +321,10 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               ) : null}
             </div>
             <div className={styles.phoneModalActions}>
-              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setComposeOpen(false)} disabled={saveBusy}>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setComposeOpen(false)} disabled={saveBusy || draftAiBusy}>
                 取消
               </button>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void saveCompose()} disabled={saveBusy}>
+              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void saveCompose()} disabled={saveBusy || draftAiBusy}>
                 {saveBusy ? '保存中…' : '保存'}
               </button>
             </div>

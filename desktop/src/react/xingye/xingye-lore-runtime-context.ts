@@ -27,8 +27,8 @@ import {
 
 /**
  * Purpose 枚举：`phone_*`、`relationship_state` 已用于对应链路；`secret_space_*` 由
- * `xingye-secret-space-ai-context.buildSecretSpaceLoreRuntimeOptions` 传入，仅供调试/记录（不在 lore-store 内分支）。
- * SecretSpace 文本生成的组装逻辑见 `xingye-secret-space-ai.ts`，不在本文件实现。
+ * `xingye-secret-space-ai-context.buildSecretSpaceLoreRuntimeOptions` 传入；`journal_draft` 用于
+ * 小手机日记草稿的 keyword 命中检索。仅供调试/记录（不在 lore-store 内分支）。
  */
 export type XingyeLoreRuntimeContextPurpose =
   | 'phone_contacts'
@@ -44,6 +44,8 @@ export type XingyeLoreRuntimeContextPurpose =
   /** 记忆碎片 lore 用途（与普通 JSONL 生成分开；记忆候选见 memory-candidate-store） */
   | 'secret_space_memory_fragment'
   | 'relationship_state'
+  /** 小手机日记草稿：仅 keyword 命中设定（与 stable 块分离） */
+  | 'journal_draft'
   | 'generic';
 
 export type XingyeLoreRuntimeContextOptions = {

@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -161,9 +162,14 @@ export function PhoneHome({
       if (!res.ok || data?.error) {
         throw new Error(typeof data?.error === 'string' ? data.error : res.statusText || 'heartbeat failed');
       }
-      setHeartbeatStatus(data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发');
+      const statusLine = data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发';
+      setHeartbeatStatus(statusLine);
+      const detail = typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : '';
+      rememberDeskHeartbeatUiOutcome(agent.id, detail ? `${statusLine} · ${detail}` : statusLine);
     } catch (error) {
-      setHeartbeatStatus(`巡检失败：${error instanceof Error ? error.message : String(error)}`);
+      const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
+      setHeartbeatStatus(fail);
+      rememberDeskHeartbeatUiOutcome(agent.id, fail);
     } finally {
       setHeartbeatBusy(false);
     }
