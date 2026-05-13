@@ -81,6 +81,13 @@ function writeAgentMirrorRuntimeLore(agentDir, entries) {
   );
 }
 
+/** Official HANA_HOME lore store mirror (same path readXingyeRuntimeLoreEntriesSync prefers first). */
+function writeAgentLoreEntriesJson(agentDir, data) {
+  const dir = path.join(agentDir, "xingye", "lore");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "entries.json"), JSON.stringify(data, null, 2), "utf-8");
+}
+
 function runtimeLore(overrides = {}) {
   return {
     id: overrides.id ?? "runtime-1",
@@ -242,6 +249,40 @@ describe("agent Xingye lore prompt", () => {
 
     expect(stableIndex).toBeGreaterThan(-1);
     expect(runtimeIndex).toBeGreaterThan(stableIndex);
+  });
+
+  it("injects a single stable heading from lore-memory only; no bracket stable title; lore/entries.json always is not merged into chat stable", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    writeManagedLore(agentDir, "Stable from lore-memory only.");
+    writeAgentLoreEntriesJson(agentDir, {
+      "json-always-1": {
+        id: "json-always-1",
+        agentId: "hana",
+        title: "WouldDuplicateIfMergedTwice",
+        content: "DUPLICATE_MARKER_FROM_ENTRIES_JSON",
+        category: "background",
+        insertionMode: "always",
+        enabled: true,
+        visibility: "canonical",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      },
+      "kw-1": runtimeLore({ id: "kw-1" }),
+    });
+    writeWorkspaceRuntimeLore(root, [runtimeLore({ id: "ws-only", content: "should not be read when entries.json wins" })]);
+
+    const prompt = agent.buildSystemPrompt({
+      xingyeWorkspaceRoot: root,
+      userText: "observatory",
+    });
+
+    expect((prompt.match(/# 星野核心设定/g) || []).length).toBe(1);
+    expect(prompt).not.toContain("【星野核心设定】");
+    expect(prompt).toContain("Stable from lore-memory only.");
+    expect(prompt).not.toContain("DUPLICATE_MARKER_FROM_ENTRIES_JSON");
+    expect(prompt).toContain("# 星野设定参考");
+    expect(prompt).toContain("The moon observatory opens only during silver rain.");
+    expect(prompt).not.toContain("should not be read when entries.json wins");
   });
 
   it("fails closed when runtime lore entries cannot be read", () => {

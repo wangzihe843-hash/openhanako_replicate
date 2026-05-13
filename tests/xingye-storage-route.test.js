@@ -271,6 +271,110 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("writeJson lore/entries.json syncs always stable lore into lore-memory.md", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const agents = new Map([["agent-a", { id: "agent-a", name: "A" }]]);
+      const engine = {
+        agentsDir,
+        /** Intentionally wrong: route must derive hanakoHome from agentsDir only. */
+        hanakoHome: path.join(tempRoot, "wrong-hanako-home"),
+        getAgent: (id) => agents.get(id) || null,
+      };
+      expect("hanakoHome" in engine).toBe(true);
+      expect("agentsHome" in engine).toBe(false);
+
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const { readXingyeStableLoreMemoryForPromptSync } = await import("../shared/xingye-lore-memory-file.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const stableEntry = {
+        id: "lore-bg-1",
+        agentId: "agent-a",
+        title: "Origin",
+        content: "Stable summary for core prompt.",
+        category: "background",
+        insertionMode: "always",
+        enabled: true,
+        visibility: "canonical",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        priority: 10,
+      };
+
+      const writeA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+          data: { "lore-bg-1": stableEntry },
+        }),
+      });
+      expect(writeA.status).toBe(200);
+
+      const wrongLoreMemory = path.join(tempRoot, "wrong-hanako-home", "agents", "agent-a", "xingye", "lore-memory.md");
+      expect(fs.existsSync(wrongLoreMemory)).toBe(false);
+
+      const loreMemoryPath = path.join(agentsDir, "agent-a", "xingye", "lore-memory.md");
+      expect(fs.existsSync(loreMemoryPath)).toBe(true);
+      const md = fs.readFileSync(loreMemoryPath, "utf8");
+      expect(md).toContain("<!-- xingye-lore:id=lore-bg-1");
+      expect(md).toContain("Stable summary for core prompt.");
+
+      const hanakoHome = path.dirname(agentsDir);
+      const promptSlice = readXingyeStableLoreMemoryForPromptSync({
+        hanakoHome,
+        agentId: "agent-a",
+        maxChars: 4000,
+      }).trim();
+      expect(promptSlice.length).toBeGreaterThan(0);
+      expect(promptSlice).toContain("Stable summary for core prompt.");
+
+      const keywordOnly = {
+        id: "lore-kw-1",
+        agentId: "agent-a",
+        title: "Side note",
+        content: "Keyword only body.",
+        category: "location",
+        keywords: ["observatory"],
+        insertionMode: "keyword",
+        enabled: true,
+        visibility: "canonical",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+        priority: 5,
+      };
+
+      const writeKw = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJson",
+          agentId: "agent-a",
+          relativePath: "lore\\entries.json",
+          data: { "lore-kw-1": keywordOnly },
+        }),
+      });
+      expect(writeKw.status).toBe(200);
+
+      const mdAfter = fs.readFileSync(loreMemoryPath, "utf8");
+      expect(mdAfter).not.toContain("<!-- xingye-lore:id=lore-bg-1");
+      expect(mdAfter).not.toContain("Stable summary for core prompt.");
+
+      const promptAfter = readXingyeStableLoreMemoryForPromptSync({
+        hanakoHome,
+        agentId: "agent-a",
+        maxChars: 4000,
+      }).trim();
+      expect(promptAfter).toBe("");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports jsonl append and list under agent scope", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {

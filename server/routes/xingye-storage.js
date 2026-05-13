@@ -11,6 +11,7 @@
 import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
+import { syncXingyeStableLoreMemoryFile } from "../../shared/xingye-lore-memory-file.js";
 import { safeJson } from "../hono-helpers.js";
 import { realPath } from "../utils/path-security.js";
 
@@ -122,6 +123,21 @@ async function atomicWrite(target, data) {
   await fs.promises.rename(tmp, target);
 }
 
+function isAgentLoreEntriesJsonPath(relativePath) {
+  return String(relativePath ?? "").replace(/\\/g, "/") === "lore/entries.json";
+}
+
+/**
+ * OpenHanako engine uses `agentsDir === join(hanakoHome, "agents")`.
+ * Derive hanakoHome only from `agentsDir` (do not read `engine.hanakoHome` / `engine.agentsHome`).
+ */
+function resolveHanakoHomeFromAgentsDir(agentsDir) {
+  if (typeof agentsDir !== "string") return null;
+  const trimmed = agentsDir.trim();
+  if (!trimmed) return null;
+  return path.dirname(path.resolve(trimmed));
+}
+
 export function createXingyeStorageRoute(engine) {
   const route = new Hono();
 
@@ -182,6 +198,32 @@ export function createXingyeStorageRoute(engine) {
             return c.json({ error: "data required" }, 400);
           }
           await atomicWrite(target, Buffer.from(JSON.stringify(body.data, null, 2), "utf-8"));
+          if (
+            isAgentLoreEntriesJsonPath(relativePath)
+            && body.data != null
+            && typeof body.data === "object"
+            && !Array.isArray(body.data)
+          ) {
+            const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
+            if (!hanakoHome) {
+              console.warn(
+                `[xingye-storage] skip stable lore-memory sync (${agentId}): engine.agentsDir missing or invalid`,
+              );
+            } else {
+              try {
+                await syncXingyeStableLoreMemoryFile({
+                  hanakoHome,
+                  agentId,
+                  entries: body.data,
+                });
+              } catch (err) {
+                console.warn(
+                  `[xingye-storage] sync stable lore-memory failed (${agentId}):`,
+                  err?.message || err,
+                );
+              }
+            }
+          }
           return c.json({ ok: true });
         }
         case "appendJsonl": {
