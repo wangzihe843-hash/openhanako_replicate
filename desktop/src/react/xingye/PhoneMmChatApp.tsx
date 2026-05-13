@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
+import { generateMmChatRoundWithAI } from './xingye-mm-chat-ai';
 import {
   cloneDefaultMmChatPersisted,
   readMmChatPersistence,
   saveMmChatPersistence,
   type XingyeMmChatSession,
 } from './xingye-mm-chat-store';
+import type { XingyeRoleProfile } from './xingye-profile-store';
 
 interface PhoneMmChatAppProps {
   ownerAgent: Agent | null;
+  ownerProfile: XingyeRoleProfile | null | undefined;
   displayName: string;
   onBack: () => void;
 }
@@ -34,12 +37,14 @@ function previewFromUserText(text: string): string {
   return one.length > 48 ? `${one.slice(0, 47)}…` : one;
 }
 
-export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatAppProps) {
+export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => cloneDefaultMmChatPersisted().sessions);
   const [sessionId, setSessionId] = useState(() => cloneDefaultMmChatPersisted().activeSessionId);
   const [composer, setComposer] = useState('');
   const [persistReady, setPersistReady] = useState(!ownerAgentId);
+  const [generateRunning, setGenerateRunning] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ownerAgentId) {
@@ -98,6 +103,7 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
   const roleLine = ownerAgent ? `当前角色：${taLabel}` : '未选择角色';
 
   const canSendLocalTa = Boolean(ownerAgentId && persistReady && composer.trim());
+  const canGenerateAi = Boolean(ownerAgent && ownerAgentId && persistReady && !generateRunning);
 
   const appendLocalTaMessage = () => {
     const text = composer.trim();
@@ -113,6 +119,37 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
       }),
     );
     setComposer('');
+  };
+
+  const appendGeneratedRound = async () => {
+    if (!ownerAgent || !ownerAgentId || !persistReady || generateRunning) return;
+    setGenerateError(null);
+    setGenerateRunning(true);
+    try {
+      const round = await generateMmChatRoundWithAI({ agent: ownerAgent, ownerProfile });
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== sessionId) return s;
+          const wasEmpty = s.messages.length === 0;
+          const taId = newLocalMessageId();
+          const aiId = newLocalMessageId();
+          return {
+            ...s,
+            title: wasEmpty ? round.title.slice(0, 200) : s.title,
+            preview: previewFromUserText(round.answer),
+            messages: [
+              ...s.messages,
+              { id: taId, role: 'ta' as const, text: round.question },
+              { id: aiId, role: 'ai' as const, text: round.answer },
+            ],
+          };
+        }),
+      );
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerateRunning(false);
+    }
   };
 
   return (
@@ -200,25 +237,39 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
               onChange={(e) => setComposer(e.target.value)}
               placeholder={
                 ownerAgentId
-                  ? '输入内容后点发送：仅追加到当前会话（本地 TA 气泡），不请求模型，用于测持久化。'
+                  ? '可手动输入后点「发送」追加为 TA 消息；或点「生成对话」由模型补一轮问答。'
                   : '未选择角色时无法写入；请先选择角色。'
               }
               aria-label="咨询输入框"
               rows={2}
             />
             <p className={styles.mmChatComposerHint}>
-              不向模型请求。点「发送」会把输入作为 TA 的一条消息写入当前会话，并在已连接服务时随{' '}
+              点「生成对话」会请求模型生成一轮「角色提问 + 通用助手回答」并写入当前会话；点「发送」仅把输入框内容作为 TA
+              的一条本地消息追加（不请求模型）。已连接服务时随{' '}
               <code className={styles.inlineCode}>xingye/mm-chat/sessions.json</code>
-              一起保存；换角色后各自独立，可刷新验证。
+              保存；换角色后各自独立。
             </p>
+            {generateError ? (
+              <p className={styles.mmChatComposerHint} role="alert">
+                {generateError}
+              </p>
+            ) : null}
             <div className={styles.mmChatComposerActions}>
+              <button
+                type="button"
+                className={canGenerateAi ? styles.phoneJournalPrimaryButton : styles.mmChatSendDisabled}
+                disabled={!canGenerateAi}
+                onClick={() => void appendGeneratedRound()}
+              >
+                {generateRunning ? '生成中…' : ownerAgentId ? '生成对话' : '生成对话（需选择角色）'}
+              </button>
               <button
                 type="button"
                 className={canSendLocalTa ? styles.phoneJournalPrimaryButton : styles.mmChatSendDisabled}
                 disabled={!canSendLocalTa}
                 onClick={appendLocalTaMessage}
               >
-                {ownerAgentId ? '发送（仅本地·测持久化）' : '发送（需选择角色）'}
+                {ownerAgentId ? '发送（仅本地）' : '发送（需选择角色）'}
               </button>
             </div>
           </div>

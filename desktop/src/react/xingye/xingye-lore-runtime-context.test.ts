@@ -210,6 +210,7 @@ describe('collectXingyeLoreRuntimeContext — selection rules', () => {
       'secret_space_memory_fragment',
       'relationship_state',
       'journal_draft',
+      'mm_chat',
       'generic',
     ];
     for (const purpose of purposes) {

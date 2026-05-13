@@ -46,6 +46,8 @@ export type XingyeLoreRuntimeContextPurpose =
   | 'relationship_state'
   /** 小手机日记草稿：仅 keyword 命中设定（与 stable 块分离） */
   | 'journal_draft'
+  /** MM Chat：角色向通用助手咨询；keyword 设定仅按需命中 */
+  | 'mm_chat'
   | 'generic';
 
 export type XingyeLoreRuntimeContextOptions = {
