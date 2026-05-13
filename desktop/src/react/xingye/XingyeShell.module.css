@@ -974,6 +974,47 @@
   cursor: pointer;
 }
 
+.relationshipHistoryList {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.relationshipHistoryCard {
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  color: var(--text);
+}
+
+.relationshipHistoryCard summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  min-width: 0;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.relationshipHistoryCard summary span,
+.relationshipHistoryCard summary small {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.relationshipHistoryCard summary strong {
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 620;
+  overflow-wrap: anywhere;
+}
+
+.relationshipHistoryBody {
+  display: grid;
+  gap: var(--space-sm);
+  padding: 0 12px 12px;
+}
+
 .relationshipDebug {
   color: var(--text-muted);
   font-size: 0.78rem;

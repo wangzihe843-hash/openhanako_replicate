@@ -13,7 +13,14 @@ export type XingyeRelationshipStage =
   | 'lover'
   | 'bond';
 
-export type XingyeRelationshipState = {
+export type XingyeRelationshipStateSource =
+  | 'initial'
+  | 'manual'
+  | 'ai_suggested'
+  | 'accepted_ai_suggestion'
+  | 'system';
+
+export type XingyeRelationshipStateHistoryItem = {
   agentId: string;
   targetType: 'user';
   targetId: '__user__';
@@ -27,8 +34,12 @@ export type XingyeRelationshipState = {
   relationshipLabel: string;
   stateSummary?: string;
   lastReason?: string;
-  source?: 'initial' | 'manual' | 'ai_suggested' | 'accepted_ai_suggestion' | 'system';
+  source?: XingyeRelationshipStateSource;
   updatedAt: string;
+};
+
+export type XingyeRelationshipState = XingyeRelationshipStateHistoryItem & {
+  previousStates?: XingyeRelationshipStateHistoryItem[];
 };
 
 export type XingyeRelationshipStatePatch = {
@@ -49,6 +60,7 @@ export const XINGYE_RELATIONSHIP_STATES_STORAGE_KEY = 'xingye.relationshipStates
 
 const XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT = 'xingye-relationship-states-changed';
 const USER_TARGET_ID = '__user__';
+const MAX_PREVIOUS_STATES = 8;
 
 const STAGE_LABELS: Record<XingyeRelationshipStage, string> = {
   enemy: '水火不容',
@@ -104,7 +116,7 @@ function normalizeState(value: unknown, fallbackAgentId?: string): XingyeRelatio
   const agentId = normalizeString(value.agentId, fallbackAgentId ?? '');
   if (!agentId) return null;
 
-  return clampRelationshipState({
+  const state = clampRelationshipState({
     agentId,
     targetType: 'user',
     targetId: USER_TARGET_ID,
@@ -123,6 +135,19 @@ function normalizeState(value: unknown, fallbackAgentId?: string): XingyeRelatio
       ? normalizeString(value.updatedAt)
       : new Date().toISOString(),
   });
+  const previousStates = Array.isArray(value.previousStates)
+    ? value.previousStates
+      .map((item) => normalizeHistoryItem(item, agentId))
+      .filter((item): item is XingyeRelationshipStateHistoryItem => !!item)
+      .slice(0, MAX_PREVIOUS_STATES)
+    : undefined;
+  return previousStates?.length ? { ...state, previousStates } : state;
+}
+
+function normalizeHistoryItem(value: unknown, fallbackAgentId?: string): XingyeRelationshipStateHistoryItem | null {
+  const normalized = normalizeState(value, fallbackAgentId);
+  if (!normalized) return null;
+  return toRelationshipStateHistoryItem(normalized);
 }
 
 function loadRelationshipStates(storage: StorageLike | null = getLocalStorage()): RelationshipStateMap {
@@ -191,6 +216,11 @@ export function clampRelationshipState(state: XingyeRelationshipState): XingyeRe
   };
 }
 
+function toRelationshipStateHistoryItem(state: XingyeRelationshipState): XingyeRelationshipStateHistoryItem {
+  const { previousStates: _previousStates, ...historyItem } = state;
+  return historyItem;
+}
+
 export function getRelationshipState(
   agentId: string | null | undefined,
   storage: StorageLike | null = getLocalStorage(),
@@ -250,6 +280,10 @@ export function updateRelationshipState(
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeRelationshipState {
   const current = ensureRelationshipState(agentId, null, storage);
+  const previousStates = [
+    toRelationshipStateHistoryItem(current),
+    ...(current.previousStates ?? []),
+  ].slice(0, MAX_PREVIOUS_STATES);
   return saveRelationshipState({
     ...current,
     affection: current.affection + asFiniteNumber(patch.affectionDelta),
@@ -261,6 +295,7 @@ export function updateRelationshipState(
     stateSummary: normalizeString(patch.stateSummary, current.stateSummary ?? '') || current.stateSummary,
     lastReason: normalizeString(patch.reason, current.lastReason ?? '') || current.lastReason,
     source: 'accepted_ai_suggestion',
+    previousStates,
     updatedAt: new Date().toISOString(),
   }, storage);
 }

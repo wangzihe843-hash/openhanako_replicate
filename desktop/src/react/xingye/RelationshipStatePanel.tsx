@@ -13,6 +13,7 @@ import {
   resetRelationshipState,
   updateRelationshipState,
   useRelationshipState,
+  type XingyeRelationshipStateHistoryItem,
 } from './xingye-state-store';
 import styles from './XingyeShell.module.css';
 
@@ -46,6 +47,46 @@ function formatUpdatedAt(value: string): string {
   } catch {
     return value;
   }
+}
+
+function RelationshipHistoryCard({ state }: { state: XingyeRelationshipStateHistoryItem }) {
+  return (
+    <details className={styles.relationshipHistoryCard} aria-label={`旧状态 ${state.mood}`}>
+      <summary>
+        <span>旧状态</span>
+        <strong>{state.mood}</strong>
+        <small>{formatUpdatedAt(state.updatedAt)}</small>
+      </summary>
+      <div className={styles.relationshipHistoryBody}>
+        <div className={styles.relationshipInfoGrid}>
+          <div className={styles.relationshipInfoItem}>
+            <span>关系阶段</span>
+            <strong>{state.relationshipLabel}</strong>
+          </div>
+          <div className={styles.relationshipInfoItem}>
+            <span>好感度</span>
+            <strong>{state.affection}</strong>
+          </div>
+          <div className={styles.relationshipInfoItem}>
+            <span>信任</span>
+            <strong>{state.trust}</strong>
+          </div>
+          <div className={styles.relationshipInfoItem}>
+            <span>忠诚</span>
+            <strong>{state.loyalty}</strong>
+          </div>
+        </div>
+        <div className={styles.relationshipTextBlock}>
+          <span>状态摘要</span>
+          <p>{state.stateSummary || '暂无状态摘要。'}</p>
+        </div>
+        <div className={styles.relationshipTextBlock}>
+          <span>变化原因</span>
+          <p>{state.lastReason || '暂无变化原因。'}</p>
+        </div>
+      </div>
+    </details>
+  );
 }
 
 export function RelationshipStatePanel({ agent, profile }: RelationshipStatePanelProps) {
@@ -163,6 +204,17 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
 
         {error && <div className={styles.relationshipError}>状态建议生成失败：{error}</div>}
 
+        {relationshipState.previousStates?.length ? (
+          <div className={styles.relationshipHistoryList}>
+            {relationshipState.previousStates.map((state) => (
+              <RelationshipHistoryCard
+                key={`${state.updatedAt}-${state.affection}-${state.trust}`}
+                state={state}
+              />
+            ))}
+          </div>
+        ) : null}
+
         {suggestion && (
           <div className={styles.relationshipSuggestion}>
             <div className={styles.relationshipSuggestionHeader}>
@@ -170,12 +222,15 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
               <span>接受后才会写入本地状态</span>
             </div>
             <div className={styles.relationshipDeltaGrid}>
-              {METRICS.map((metric) => (
-                <div key={metric.key}>
-                  <span>{metric.label}</span>
-                  <strong>{formatDelta(suggestion[metric.key])}</strong>
-                </div>
-              ))}
+              {METRICS.map((metric) => {
+                const delta = formatDelta(suggestion[metric.key]);
+                return (
+                  <div key={metric.key} aria-label={`${metric.label} 建议变化 ${delta}`}>
+                    <span>{metric.label} 建议变化</span>
+                    <strong>{delta}</strong>
+                  </div>
+                );
+              })}
             </div>
             <div className={styles.relationshipInfoGrid}>
               <div className={styles.relationshipInfoItem}>

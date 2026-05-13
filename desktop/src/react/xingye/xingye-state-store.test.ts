@@ -125,6 +125,56 @@ describe('xingye-state-store', () => {
     });
   });
 
+  it('keeps the previous state as collapsed UI history after an update', () => {
+    const previous = saveRelationshipState(
+      clampRelationshipState({
+        agentId: 'agent-1',
+        targetType: 'user',
+        targetId: '__user__',
+        affection: 10,
+        trust: 1,
+        loyalty: 2,
+        jealousy: 3,
+        corruption: 4,
+        mood: 'old mood',
+        relationshipKey: 'stranger',
+        relationshipLabel: 'ignored',
+        stateSummary: 'old summary',
+        lastReason: 'old reason',
+        source: 'manual',
+        updatedAt: '2026-05-13T00:00:00.000Z',
+      }),
+      storage,
+    );
+
+    const updated = updateRelationshipState(
+      'agent-1',
+      {
+        affectionDelta: 5,
+        trustDelta: 3,
+        loyaltyDelta: 2,
+        jealousyDelta: 0,
+        corruptionDelta: 0,
+        mood: 'new mood',
+        stateSummary: 'new summary',
+        reason: 'new reason',
+      },
+      storage,
+    );
+
+    expect(updated.stateSummary).toBe('new summary');
+    expect(updated.previousStates).toHaveLength(1);
+    expect(updated.previousStates?.[0]).toMatchObject({
+      affection: previous.affection,
+      trust: previous.trust,
+      loyalty: previous.loyalty,
+      mood: 'old mood',
+      stateSummary: 'old summary',
+      lastReason: 'old reason',
+    });
+    expect(getRelationshipState('agent-1', storage)?.previousStates?.[0].stateSummary).toBe('old summary');
+  });
+
   it('normalizes malformed saved state and reset rebuilds from the profile label', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const raw: Record<string, Partial<XingyeRelationshipState>> = {
