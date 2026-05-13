@@ -9,7 +9,7 @@ import {
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
-import { listSecretSpaceRecords } from './xingye-secret-space-store';
+import { appendSecretSpaceRecord, listSecretSpaceRecords } from './xingye-secret-space-store';
 import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
@@ -95,6 +95,14 @@ function metaById(id: SecretSpaceCategoryId): SecretSpaceCategoryMeta {
   return found;
 }
 
+/** Categories that allow appending a plain-text record via storage (not state / memory_fragment). */
+const ADD_RECORD_CATEGORY_IDS = new Set<SecretSpaceCategoryId>([
+  'draft_reply',
+  'dream',
+  'saved_item',
+  'unsent_moment',
+]);
+
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
   const [view, setView] = useState<'home' | 'category'>('home');
@@ -108,17 +116,34 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [manualLevel, setManualLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [manualError, setManualError] = useState<string | null>(null);
 
+  const [addRecordTitle, setAddRecordTitle] = useState('');
+  const [addRecordBody, setAddRecordBody] = useState('');
+  const [addRecordError, setAddRecordError] = useState<string | null>(null);
+  const [addRecordSaving, setAddRecordSaving] = useState(false);
+
   useEffect(() => {
     if (!agent?.id) {
       setManualContent('');
       setManualReason(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
       setManualLevel('medium');
       setManualError(null);
+      setAddRecordTitle('');
+      setAddRecordBody('');
+      setAddRecordError(null);
+      setAddRecordSaving(false);
       setView('home');
       setActiveCategory(null);
       setRecordsByCategory(emptyRecords());
     }
   }, [agent?.id]);
+
+  useEffect(() => {
+    if (!activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
+    setAddRecordTitle('');
+    setAddRecordBody('');
+    setAddRecordError(null);
+    setAddRecordSaving(false);
+  }, [activeCategory, agent?.id]);
 
   useEffect(() => {
     if (!agent?.id || !activeCategory) return undefined;
@@ -141,6 +166,35 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       window.removeEventListener('xingye-secret-space-changed', onChanged);
     };
   }, [agent?.id, activeCategory]);
+
+  const handleAppendSecretSpaceRecord = async () => {
+    if (!agent?.id || !activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
+    const bodyText = addRecordBody.trim();
+    if (!bodyText) {
+      setAddRecordError('请填写正文。');
+      return;
+    }
+    setAddRecordError(null);
+    setAddRecordSaving(true);
+    try {
+      const titleText = addRecordTitle.trim();
+      const title = titleText || bodyText.slice(0, 48);
+      const summary = bodyText.length > 120 ? `${bodyText.slice(0, 120)}…` : bodyText;
+      await appendSecretSpaceRecord(agent.id, activeCategory, {
+        title,
+        body: bodyText,
+        summary,
+      });
+      const records = await listSecretSpaceRecords(agent.id, activeCategory);
+      setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
+      setAddRecordTitle('');
+      setAddRecordBody('');
+    } catch (e) {
+      setAddRecordError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddRecordSaving(false);
+    }
+  };
 
   const handleCreateManualCandidate = () => {
     if (!agent?.id) return;
@@ -247,8 +301,53 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       </div>
     ) : null;
 
+  const addRecordFooter =
+    activeCategory && ADD_RECORD_CATEGORY_IDS.has(activeCategory) ? (
+      <div className={styles.profileForm} data-testid="secret-space-add-record">
+        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
+          在本分类追加一条纯文本记录；保存后写入当前角色的秘密空间存储。
+        </p>
+        <label className={styles.profileField}>
+          <span>标题（可选）</span>
+          <input
+            type="text"
+            value={addRecordTitle}
+            onChange={(e) => setAddRecordTitle(e.target.value)}
+            placeholder="简短标题"
+            aria-label="秘密空间记录标题"
+            disabled={addRecordSaving}
+            data-testid="secret-space-add-record-title"
+          />
+        </label>
+        <label className={styles.profileField}>
+          <span>正文</span>
+          <textarea
+            value={addRecordBody}
+            onChange={(e) => setAddRecordBody(e.target.value)}
+            rows={4}
+            placeholder="输入记录正文"
+            aria-label="秘密空间记录正文"
+            disabled={addRecordSaving}
+            data-testid="secret-space-add-record-body"
+          />
+        </label>
+        {addRecordError ? <p className={styles.saveStatus}>{addRecordError}</p> : null}
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => void handleAppendSecretSpaceRecord()}
+          disabled={addRecordSaving}
+          data-testid="secret-space-add-record-submit"
+        >
+          {addRecordSaving ? '保存中…' : '保存记录'}
+        </button>
+      </div>
+    ) : null;
+
   const categoryFooter =
-    activeCategory === 'memory_fragment' ? memoryFragmentFooter : null;
+    activeCategory === 'memory_fragment'
+      ? memoryFragmentFooter
+      : addRecordFooter;
 
   return (
     <div className={styles.panelInner}>
