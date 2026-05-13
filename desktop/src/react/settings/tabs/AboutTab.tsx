@@ -14,7 +14,7 @@ import styles from '../Settings.module.css';
 
 export function AboutTab() {
   const hana = window.hana;
-  const { settingsConfig } = useSettingsStore();
+  const settingsConfig = useSettingsStore(s => s.settingsConfig);
   const [version, setVersion] = useState('');
   const [autoLaunch, setAutoLaunch] = useState<AutoLaunchStatus | null>(null);
   const [autoLaunchSaving, setAutoLaunchSaving] = useState(false);

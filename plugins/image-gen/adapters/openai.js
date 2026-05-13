@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { saveImage } from "../lib/download.js";
+import { resolveModelId } from "../lib/model-catalog.js";
 
 const FORMAT_TO_MIME = {
   png: "image/png",
@@ -47,8 +48,9 @@ export const openaiImageAdapter = {
 
     const { apiKey, baseUrl } = creds;
 
-    // 2. Resolve model
-    const modelId = params.model || ctx.config?.get?.("defaultImageModel")?.id || "gpt-image-1";
+    // 2. Resolve model — short names resolved via shared catalog
+    const rawModel = params.model || ctx.config?.get?.("defaultImageModel")?.id;
+    const modelId = resolveModelId("openai", rawModel);
 
     // 3. Get provider defaults
     const allDefaults = ctx.config?.get?.("providerDefaults") || {};

@@ -100,3 +100,53 @@ export const renderImage = defineTool({
 ```
 
 Use `stageFile()` for plugin-generated local files. `createMediaDetails()` normalizes staged files, existing `session_file` media items, and serialized `SessionFile` records into the `details.media.items` shape consumed by desktop, Bridge, and future mobile clients.
+
+## Provider contributions
+
+Provider plugins live in `providers/*.js` and require `trust: "full-access"`.
+The runtime package exposes provider types and `defineProvider()` for authoring, but the host loader still reads named exports from each provider file.
+
+```ts
+import { defineProvider } from '@hana/plugin-runtime';
+
+const provider = defineProvider({
+  id: 'my-image-cli',
+  displayName: 'My Image CLI',
+  authType: 'none',
+  runtime: {
+    kind: 'local-cli',
+    protocolId: 'local-cli-media',
+    command: {
+      executable: 'my-image-cli',
+      args: [
+        { literal: 'generate' },
+        { option: '--prompt', from: 'prompt' },
+        { option: '--model', from: 'modelId' },
+        { option: '--output', from: 'outputDir' },
+      ],
+      timeoutMs: 120_000,
+      output: { kind: 'file_glob', directory: 'outputDir', pattern: '*.png' },
+    },
+  },
+  capabilities: {
+    chat: { projection: 'none' },
+    media: {
+      imageGeneration: {
+        models: [
+          {
+            id: 'my-image-model',
+            displayName: 'My Image Model',
+            protocolId: 'local-cli-media',
+            inputs: ['text'],
+            outputs: ['image'],
+          },
+        ],
+      },
+    },
+  },
+});
+
+export const { id, displayName, authType, runtime, capabilities } = provider;
+```
+
+Keep chat and media capabilities explicit. Media-only providers should use `chat.projection = "none"`, and CLI providers must use structured argument bindings rather than shell command strings.

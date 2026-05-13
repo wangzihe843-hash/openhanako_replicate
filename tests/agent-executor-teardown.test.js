@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createAgentSessionMock = vi.fn();
 const sessionManagerCreateMock = vi.fn();
+const sessionManagerOpenMock = vi.fn();
 const emitSessionShutdownMock = vi.fn(async (session) => {
   const runner = session?.extensionRunner;
   if (runner?.hasHandlers?.("session_shutdown")) {
@@ -22,12 +23,16 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
     SessionManager: {
       ...actual.SessionManager,
       create: (...args) => sessionManagerCreateMock(...args),
+      open: (...args) => sessionManagerOpenMock(...args),
     },
     emitSessionShutdown: (...args) => emitSessionShutdownMock(...args),
   };
 });
 
 import { runAgentSession } from "../hub/agent-executor.js";
+import { runAgentPhoneSession } from "../hub/agent-executor.js";
+import { getAgentPhoneProjectionPath, readAgentPhoneProjection, updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
+import { getAgentPhoneSessionDir } from "../lib/conversations/agent-phone-session.js";
 
 let rootDir;
 
@@ -64,7 +69,9 @@ describe("runAgentSession teardown", () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-executor-teardown-"));
     createAgentSessionMock.mockReset();
     sessionManagerCreateMock.mockReset();
+    sessionManagerOpenMock.mockReset();
     emitSessionShutdownMock.mockClear();
+    vi.useRealTimers();
   });
 
   afterEach(() => {
@@ -151,5 +158,234 @@ describe("runAgentSession teardown", () => {
       "search_memory",
     ]);
     expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toContain("search_memory");
+  });
+
+  it("phone session exposes its session path and mirrors live stream events", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const emitEvent = vi.fn();
+    const engine = {
+      ...makeEngine(agent, cwd),
+      emitEvent,
+    };
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    let subscriber = null;
+    const session = {
+      prompt: vi.fn(async () => {
+        subscriber?.({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "hi" },
+        });
+        subscriber?.({ type: "turn_end" });
+      }),
+      subscribe: vi.fn((cb) => {
+        subscriber = cb;
+        return () => {};
+      }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const onSessionReady = vi.fn();
+
+    const text = await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      emitEvents: true,
+      onSessionReady,
+    });
+
+    expect(text).toBe("hi");
+    expect(onSessionReady).toHaveBeenCalledWith(sessionFile);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "message_update",
+        isolated: true,
+      }),
+      sessionFile,
+    );
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "turn_end", isolated: true }),
+      sessionFile,
+    );
+    expect(fs.existsSync(sessionFile)).toBe(true);
+  });
+
+  it("phone session appends channel-scoped custom tools after applying phone tool policy", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    agent.tools = [{ name: "channel" }, { name: "search_memory" }];
+    agent.getToolsSnapshot = vi.fn(() => agent.tools);
+
+    const buildTools = vi.fn((_cwd, customTools) => ({
+      tools: [],
+      customTools,
+    }));
+    const engine = {
+      ...makeEngine(agent, cwd),
+      createSessionContext: () => ({
+        resourceLoader: {},
+        getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
+        buildTools,
+        resolveModel: () => ({ id: "gpt-4o", provider: "openai", name: "GPT-4o" }),
+        authStorage: {},
+        modelRegistry: {},
+      }),
+    };
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-tools.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => sessionFile },
+        getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      toolMode: "read_only",
+      extraCustomTools: [
+        { name: "channel_reply", execute: vi.fn() },
+        { name: "channel_pass", execute: vi.fn() },
+      ],
+    });
+
+    expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toEqual([
+      "search_memory",
+      "channel_reply",
+      "channel_pass",
+    ]);
+  });
+
+  it("phone session can use a channel-scoped model override without mutating the agent default", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const agentDefaultModel = { id: "gpt-4o", provider: "openai", name: "GPT-4o" };
+    const channelModel = { id: "deepseek-v4-flash", provider: "deepseek", name: "DeepSeek V4 Flash" };
+    const resolveModel = vi.fn(() => agentDefaultModel);
+    const engine = {
+      ...makeEngine(agent, cwd),
+      availableModels: [agentDefaultModel, channelModel],
+      createSessionContext: () => ({
+        resourceLoader: {},
+        getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
+        buildTools: () => ({ tools: [], customTools: [] }),
+        resolveModel,
+        authStorage: {},
+        modelRegistry: {},
+      }),
+    };
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-model.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => sessionFile },
+        getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      modelOverride: { id: "deepseek-v4-flash", provider: "deepseek" },
+    });
+
+    expect(createAgentSessionMock.mock.calls[0][0].model).toBe(channelModel);
+    expect(agent.config.models.chat).toEqual({ id: "gpt-4o", provider: "openai" });
+    expect(resolveModel).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a reused phone session once per local day", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-12T10:00:00"));
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const engine = makeEngine(agent, cwd);
+
+    const phoneSessionDir = getAgentPhoneSessionDir(agent.agentDir, "ch_crew");
+    const oldSessionFile = path.join(phoneSessionDir, "old.jsonl");
+    const newSessionFile = path.join(phoneSessionDir, "new.jsonl");
+    fs.mkdirSync(path.dirname(oldSessionFile), { recursive: true });
+    fs.writeFileSync(oldSessionFile, "old", "utf-8");
+    await updateAgentPhoneProjectionMeta({
+      agentDir: agent.agentDir,
+      agentId: "agent-a",
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      patch: {
+        phoneSessionFile: path.relative(agent.agentDir, oldSessionFile).split(path.sep).join("/"),
+        lastRefreshedDate: "2026-05-11",
+      },
+    });
+
+    const oldManager = { getSessionFile: () => oldSessionFile };
+    const newManager = { getSessionFile: () => newSessionFile };
+    sessionManagerOpenMock.mockReturnValue(oldManager);
+    sessionManagerCreateMock.mockReturnValue(newManager);
+    createAgentSessionMock.mockImplementation(async (options) => ({
+      session: {
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: options.sessionManager,
+        getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    }));
+
+    await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+    });
+
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(sessionManagerCreateMock).toHaveBeenCalledOnce();
+    const projectionPath = getAgentPhoneProjectionPath(agent.agentDir, "ch_crew");
+    let projection = readAgentPhoneProjection(projectionPath);
+    expect(projection.meta).toMatchObject({
+      phoneSessionFile: path.relative(agent.agentDir, newSessionFile).split(path.sep).join("/"),
+      lastRefreshedDate: "2026-05-12",
+    });
+
+    fs.writeFileSync(newSessionFile, "new", "utf-8");
+    sessionManagerOpenMock.mockClear();
+    sessionManagerCreateMock.mockClear();
+    await runAgentPhoneSession("agent-a", [{ text: "hello again", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+    });
+
+    expect(sessionManagerOpenMock).toHaveBeenCalledWith(newSessionFile, path.dirname(newSessionFile));
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    projection = readAgentPhoneProjection(projectionPath);
+    expect(projection.meta.lastRefreshedDate).toBe("2026-05-12");
   });
 });

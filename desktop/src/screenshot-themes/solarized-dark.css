@@ -166,6 +166,15 @@ img {
 strong { font-weight: 600; color: var(--base1); }
 em { font-style: italic; }
 
+/* Task Lists */
+.task-list-item {
+  list-style-type: none;
+}
+.task-list-item-checkbox {
+  margin-right: 0.5em;
+  vertical-align: middle;
+}
+
 /* Conversation Mode */
 .chat-user {
   color: #D4A574;

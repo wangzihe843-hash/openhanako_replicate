@@ -28,6 +28,7 @@ Built-in plugins may use the same source patterns, but they should be checked ag
 - Tool-only plugins usually need only `tools/*.js` and `@hana/plugin-runtime` helpers. They can stay `restricted`.
 - Runtime plugins use `index.js` for lifecycle, EventBus handlers, background tasks, schedules, or dynamic tools. They require `trust: "full-access"`.
 - UI plugins use iframe routes plus `@hana/plugin-sdk` and, for React UI, `@hana/plugin-components`. They require `trust: "full-access"` and explicit `ui.hostCapabilities` grants for host calls such as `external.open` or `clipboard.writeText`.
+- Provider contribution plugins use `providers/*.js` declarations. They require `trust: "full-access"` and should declare `capabilities.chat` separately from `capabilities.media.*` so chat selectors stay clean while image, video, or speech tools discover media providers.
 - Marketplace metadata lives outside the app repo in `OH-Plugins`, the official community plugin catalog. The app reads the generated catalog URL by default, installs `distribution.kind = "release"` entries by downloading the zip package and verifying `sha256`, and keeps `distribution.kind = "source"` for local file marketplace development only. `readmePath` is resolved relative to the catalog when the official URL is used.
 
 ## UI Path
@@ -79,5 +80,50 @@ Tools should return local files through `stageFile()` and `createMediaDetails()`
 Lifecycle plugins should declare `activationEvents` in `manifest.json` when they do not need to start on app launch. Existing lifecycle plugins without this field still activate on startup for compatibility.
 
 Long-running plugins should use the runtime task helpers (`registerTask`, `updateTask`, `completeTask`, `failTask`, `cancelTask`, `scheduleTask`) instead of hand-writing EventBus payloads.
+
+Provider plugins can use `defineProvider()` for TypeScript-friendly authoring, then export named provider fields from `providers/*.js`:
+
+```js
+import { defineProvider } from '@hana/plugin-runtime';
+
+const provider = defineProvider({
+  id: 'my-image-cli',
+  displayName: 'My Image CLI',
+  authType: 'none',
+  runtime: {
+    kind: 'local-cli',
+    protocolId: 'local-cli-media',
+    command: {
+      executable: 'my-image-cli',
+      args: [
+        { literal: 'generate' },
+        { option: '--prompt', from: 'prompt' },
+        { option: '--model', from: 'modelId' },
+        { option: '--output', from: 'outputDir' },
+      ],
+      timeoutMs: 120000,
+      output: { kind: 'file_glob', directory: 'outputDir', pattern: '*.png' },
+    },
+  },
+  capabilities: {
+    chat: { projection: 'none' },
+    media: {
+      imageGeneration: {
+        models: [{
+          id: 'my-image-model',
+          displayName: 'My Image Model',
+          protocolId: 'local-cli-media',
+          inputs: ['text'],
+          outputs: ['image'],
+        }],
+      },
+    },
+  },
+});
+
+export const { id, displayName, authType, runtime, capabilities } = provider;
+```
+
+CLI-backed providers must use structured argument bindings. Avoid shell command strings; the host runtime validates the contract and runs local commands through non-shell execution.
 
 See `examples/plugins/sdk-showcase/` for a compact plugin that shows the current recommended shape.

@@ -27,6 +27,7 @@ vi.mock("@mariozechner/pi-coding-agent", async () => ({
 
 vi.mock("@mariozechner/pi-ai", async () => ({
   StringEnum: vi.fn(values => values),
+  AssistantMessageEventStream: class {},
 }));
 
 vi.mock("@mariozechner/pi-ai/oauth", async () => ({

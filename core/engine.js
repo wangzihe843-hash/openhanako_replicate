@@ -17,6 +17,7 @@ import os from "os";
 import path from "path";
 import { migrateConfigScope } from "../shared/migrate-config-scope.js";
 import { migrateToProvidersYaml } from "./migrate-providers.js";
+import { migrateProviderMediaConfig } from "./provider-media-config.js";
 import { runMigrations } from "./migrations.js";
 import { findModel } from "../shared/model-ref.js";
 import { resolveWorkspaceSkillPaths } from "../shared/workspace-skill-paths.js";
@@ -95,6 +96,7 @@ import {
   isComputerUsePlatformSupported,
 } from "./computer-use/platform-support.js";
 import { SessionFileRegistry } from "../lib/session-files/session-file-registry.js";
+import { NotificationService } from "../lib/notifications/notification-service.js";
 import {
   getSkillNameTranslationCachePath,
   translateSkillNamesWithCache,
@@ -221,6 +223,13 @@ export class HanaEngine {
       registerSessionFile: (entry) => this.registerSessionFile(entry),
       getSessionFile: (fileId, options) => this.getSessionFile(fileId, options),
       getSessionFileByPath: (filePath, options) => this.getSessionFileByPath(filePath, options),
+      emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+    });
+    this._notifications = new NotificationService({
+      emitDesktop: ({ title, body, agentId }) => {
+        this._hubCallbacks?.eventBus?.emit({ type: "notification", title, body, agentId: agentId || null }, null);
+      },
+      getBridgeManager: () => this._hubCallbacks?.hub?.bridgeManager || null,
     });
 
     // ── Slash Command System ──
@@ -431,6 +440,9 @@ export class HanaEngine {
   async abortBridgeSession(key) { return this._bridge?.abortSession(key) ?? false; }
   steerBridgeSession(key, text) { return this._bridge?.steerSession(key, text) ?? false; }
   get bridgeSessionManager() { return this._bridge; }
+  async deliverNotification(payload, opts = {}) {
+    return this._notifications.notify(payload, opts);
+  }
   get slashRegistry() { return this._slashSystem?.registry ?? null; }
   get slashDispatcher() { return this._slashSystem?.dispatcher ?? null; }
   /** /rc 接管态 + pending-selection 内存 store（Phase 2-A） */
@@ -656,7 +668,8 @@ export class HanaEngine {
   // ════════════════════════════
 
   async deleteChannelByName(n) { return this._channels.deleteChannelByName(n); }
-  async triggerChannelTriage(n, o) { return this._channels.triggerChannelTriage(n, o); }
+  async triggerChannelDelivery(n, o) { return this._channels.triggerChannelDelivery(n, o); }
+  async triggerChannelTriage(n, o) { return this.triggerChannelDelivery(n, o); }
 
   // ════════════════════════════
   //  Bridge 代理（→ BridgeSessionManager）
@@ -856,6 +869,9 @@ export class HanaEngine {
 
     // 0b. Provider 迁移（旧数据 → added-models.yaml，只跑一次）
     migrateToProvidersYaml(this.hanakoHome, this.agentsDir, log);
+
+    // 0b2. Provider media 迁移（旧 type:image 模型 → media.image_generation）
+    migrateProviderMediaConfig(this.hanakoHome, log);
 
     // 0c. Model overrides 迁移（config.models.overrides → added-models.yaml，只跑一次）
     this._models.providerRegistry.migrateOverridesToAddedModels(this.agentsDir, log);
@@ -1116,6 +1132,15 @@ export class HanaEngine {
     });
     this._pluginManager.scan();
     await this._pluginManager.loadAll();
+
+    let providerContributionsChanged = false;
+    for (const provider of this._pluginManager.getProviderPlugins()) {
+      this._models.providerRegistry.registerProviderContribution(provider);
+      providerContributionsChanged = true;
+    }
+    if (providerContributionsChanged) {
+      await this._models.reloadAndSync();
+    }
 
     if (this._skills) {
       await this.syncWorkspaceSkillPaths(this.currentSessionPath ? this.cwd : null, {

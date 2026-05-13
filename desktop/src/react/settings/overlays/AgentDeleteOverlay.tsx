@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
@@ -7,14 +8,15 @@ import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 
 export function AgentDeleteOverlay() {
-  const { agents, currentAgentId, showToast } = useSettingsStore();
+  const { agents, currentAgentId, settingsAgentId } = useSettingsStore(
+    useShallow(s => ({ agents: s.agents, currentAgentId: s.currentAgentId, settingsAgentId: s.settingsAgentId }))
+  );
+  const showToast = useSettingsStore(s => s.showToast);
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [nameInput, setNameInput] = useState('');
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const settingsAgentId = useSettingsStore(s => s.settingsAgentId);
   const targetId = deleteTargetId || settingsAgentId || currentAgentId;
   const target = agents.find(a => a.id === targetId);
 

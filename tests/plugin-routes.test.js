@@ -683,6 +683,54 @@ describe("plugin management API", () => {
         sessionPath: undefined,
       });
     });
+
+    it("accepts legacy bare config value bodies without silently dropping them", async () => {
+      const setConfig = vi.fn(() => ({
+        pluginId: "image-gen",
+        schema: { properties: { defaultImageModel: { type: "object" } } },
+        values: { defaultImageModel: { provider: "volcengine", id: "seedream-5" } },
+      }));
+      const engine = mockEngine({ setConfig });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/image-gen/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultImageModel: { provider: "volcengine", id: "seedream-5" } }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(setConfig).toHaveBeenCalledWith("image-gen", {
+        defaultImageModel: { provider: "volcengine", id: "seedream-5" },
+      }, {
+        scope: "global",
+        agentId: undefined,
+        sessionPath: undefined,
+      });
+    });
+
+    it("decodes null values as config deletes for HTTP patches", async () => {
+      const setConfig = vi.fn(() => ({
+        pluginId: "demo",
+        schema: { properties: { defaultImageModel: { type: "object" } } },
+        values: {},
+      }));
+      const engine = mockEngine({ setConfig });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/demo/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values: { defaultImageModel: null } }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(setConfig).toHaveBeenCalledWith("demo", { defaultImageModel: undefined }, {
+        scope: "global",
+        agentId: undefined,
+        sessionPath: undefined,
+      });
+    });
   });
 
   describe("POST /plugins/install", () => {

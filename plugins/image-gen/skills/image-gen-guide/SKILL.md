@@ -24,7 +24,7 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 - `ratio`：长宽比（1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9）
 - `resolution`：分辨率（2k, 4k）
 - `quality`：画质（low, medium, high）
-- `provider`：指定 provider（可选，默认自动选择）
+- `provider`：指定生图 provider（可选，默认自动选择）。可用 provider 来自 Hana Provider Registry 的 `media.imageGeneration` capability，不从聊天模型列表推断
 
 ### image-gen_generate-video
 
@@ -48,6 +48,7 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 ## 注意
 
 - 生成消耗 provider 额度，大批量前建议提醒用户
-- 不同 provider 支持的参数不同，工具会自动处理
+- 不同 provider 支持的参数不同，工具会按 provider 的媒体能力和 adapter 处理
+- Provider 可能来自内置 provider、插件贡献，或 CLI wrapper。不要假设它一定是聊天 provider
 - 视频生成通常比图片慢（几十秒到几分钟），但同样不阻塞
 - 图中需要出现文字时，把文字内容放在**双引号**里

@@ -2,7 +2,7 @@
  * UserMessage — 用户消息气泡
  */
 
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import { AttachmentChip } from '../shared/AttachmentChip';
 import { MessageActions } from './MessageActions';
@@ -14,6 +14,7 @@ import { extractSelectedTexts } from '../../utils/message-text';
 import { openFilePreview } from '../../utils/file-preview';
 import { isImageOrSvgExt, extOfName } from '../../utils/file-kind';
 import { getUserAttachmentImageSrc } from '../../utils/user-attachment-media';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import styles from './Chat.module.css';
 import badgeStyles from '../input/SkillBadgeView.module.css';
 
@@ -23,24 +24,28 @@ interface Props {
   sessionPath: string;
   readOnly?: boolean;
   hideIdentity?: boolean;
+  userIdentity?: { name?: string | null; avatarUrl?: string | null };
   messageRef?: (element: HTMLDivElement | null) => void;
 }
 
-export const UserMessage = memo(function UserMessage({ message, showAvatar, sessionPath, readOnly = false, hideIdentity = false, messageRef }: Props) {
+export const UserMessage = memo(function UserMessage({ message, showAvatar, sessionPath, readOnly = false, hideIdentity = false, userIdentity, messageRef }: Props) {
   const userAvatarUrl = useStore(s => s.userAvatarUrl);
   const t = window.t ?? ((p: string) => p);
-  const userName = useStore(s => s.userName) || t('common.me');
-  const [avatarFailed, setAvatarFailed] = useState(false);
+  const storeUserName = useStore(s => s.userName) || t('common.me');
+  const userName = userIdentity?.name || storeUserName;
+  const displayAvatarUrl = userIdentity ? (userIdentity.avatarUrl || null) : userAvatarUrl;
+  const userDisplayInfo = useMemo(() => resolveAgentDisplayInfo({
+    id: 'user',
+    agents: [],
+    userName,
+    userAvatarUrl: displayAvatarUrl,
+  }), [userName, displayAvatarUrl]);
 
   const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
   const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
   const isSelected = selectedIds.includes(message.id);
 
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    setAvatarFailed(false);
-  }, [userAvatarUrl]);
 
   const handleCopy = useCallback(() => {
     const ids = selectSelectedIdsBySession(useStore.getState(), sessionPath);
@@ -66,18 +71,11 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar, sess
       {showAvatar && !hideIdentity && (
         <div className={`${styles.avatarRow} ${styles.avatarRowUser}`}>
           <span className={styles.avatarName}>{userName}</span>
-          {userAvatarUrl && !avatarFailed ? (
-            <img
-              className={styles.avatar}
-              src={userAvatarUrl}
-              alt={userName}
-              draggable={false}
-              onError={() => setAvatarFailed(true)}
-              style={{ objectFit: 'cover' }}
-            />
-          ) : (
-            <span className={`${styles.avatar} ${styles.userAvatar}`}>👧🏻</span>
-          )}
+          <AgentAvatar
+            info={userDisplayInfo}
+            className={`${styles.avatar} ${styles.userAvatar}`}
+            alt={userName}
+          />
         </div>
       )}
       {message.quotedText && (

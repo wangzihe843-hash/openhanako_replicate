@@ -39,6 +39,8 @@ vi.mock('@tiptap/react', () => ({
     }),
     getText: () => '',
     getJSON: () => ({ type: 'doc', content: [] }),
+    state: { tr: { setMeta: vi.fn(() => ({})) } },
+    view: { dispatch: vi.fn() },
     on: vi.fn(),
     off: vi.fn(),
   }),

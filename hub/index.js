@@ -7,7 +7,7 @@
  *
  * 模块：
  *   EventBus      — 统一事件总线
- *   ChannelRouter  — 频道 triage + 调度
+ *   ChannelRouter  — 频道手机送达 + 调度
  *   GuestHandler   — Guest 留言机
  *   Scheduler      — Heartbeat + Cron
  */
@@ -20,6 +20,7 @@ import { ChannelRouter } from "./channel-router.js";
 import { GuestHandler } from "./guest-handler.js";
 import { Scheduler } from "./scheduler.js";
 import { DmRouter } from "./dm-router.js";
+import { AgentPhoneActivityStore } from "../lib/conversations/agent-phone-activity.js";
 import {
   extractTextContent,
   loadSessionHistoryMessages,
@@ -40,6 +41,9 @@ export class Hub {
     this._guestHandler = new GuestHandler({ hub: this });
     this._scheduler = new Scheduler({ hub: this });
     this._dmRouter = new DmRouter({ hub: this });
+    this._agentPhoneActivities = new AgentPhoneActivityStore({
+      emit: (event) => this._eventBus.emit(event, null),
+    });
 
     // 注入 Hub 回调到 Engine（单向：Hub → Engine，不再双向引用）
     engine.setHubCallbacks({
@@ -50,6 +54,7 @@ export class Hub {
       eventBus: this._eventBus,
       pauseForAgentSwitch: () => this.pauseForAgentSwitch(),
       resumeAfterAgentSwitch: () => this.resumeAfterAgentSwitch(),
+      triggerChannelDelivery: (name, opts) => this._channelRouter.triggerImmediate(name, opts),
       triggerChannelTriage: (name, opts) => this._channelRouter.triggerImmediate(name, opts),
     });
 
@@ -76,6 +81,8 @@ export class Hub {
   /** @returns {import('../lib/bridge/bridge-manager.js').BridgeManager|null} */
   get bridgeManager() { return this._bridgeManager || null; }
   set bridgeManager(bm) { this._bridgeManager = bm; }
+
+  get agentPhoneActivities() { return this._agentPhoneActivities; }
 
   // ──────────── 订阅 ────────────
 
@@ -204,11 +211,11 @@ export class Hub {
       },
       { // Bridge guest
         match: o => o.sessionKey && o.role === "guest",
-        handle: () => this._guestHandler.handle(text, o.sessionKey, o.meta, { isGroup: o.isGroup, agentId: o.agentId, onDelta: o.onDelta, images: o.images, imageAttachmentPaths: o.imageAttachmentPaths, videos: o.videos, videoAttachmentPaths: o.videoAttachmentPaths, inboundFiles: o.inboundFiles }),
+        handle: () => this._guestHandler.handle(text, o.sessionKey, o.meta, { isGroup: o.isGroup, agentId: o.agentId, onDelta: o.onDelta, images: o.images, imageAttachmentPaths: o.imageAttachmentPaths, videos: o.videos, videoAttachmentPaths: o.videoAttachmentPaths, inboundFiles: o.inboundFiles, displayMessage: o.displayMessage }),
       },
       { // Bridge owner
         match: o => o.sessionKey && !o.ephemeral,
-        handle: () => this._engine.executeExternalMessage(text, o.sessionKey, o.meta, { guest: false, agentId: o.agentId, onDelta: o.onDelta, images: o.images, imageAttachmentPaths: o.imageAttachmentPaths, videos: o.videos, videoAttachmentPaths: o.videoAttachmentPaths, inboundFiles: o.inboundFiles }),
+        handle: () => this._engine.executeExternalMessage(text, o.sessionKey, o.meta, { guest: false, agentId: o.agentId, onDelta: o.onDelta, images: o.images, imageAttachmentPaths: o.imageAttachmentPaths, videos: o.videos, videoAttachmentPaths: o.videoAttachmentPaths, inboundFiles: o.inboundFiles, displayMessage: o.displayMessage }),
       },
       { // 隔离执行（cron/heartbeat/channel）
         match: o => o.ephemeral,
@@ -276,8 +283,12 @@ export class Hub {
 
   // ──────────── 频道代理方法 ────────────
 
-  triggerChannelTriage(channelName, opts) {
+  triggerChannelDelivery(channelName, opts) {
     return this._channelRouter.triggerImmediate(channelName, opts);
+  }
+
+  triggerChannelTriage(channelName, opts) {
+    return this.triggerChannelDelivery(channelName, opts);
   }
 
   async toggleChannels(enabled) {
@@ -405,6 +416,27 @@ export class Hub {
         return { models: engine.providerRegistry.getModelsByType(providerId, type) };
       }
       return { models: engine.providerRegistry.getAllModelsByType(type) };
+    }));
+
+    this._sessionHandlerCleanups.push(bus.handle("provider:media-providers", async ({ capability = "image_generation" } = {}) => {
+      const providers = {};
+      for (const provider of engine.providerRegistry.getMediaProviders(capability)) {
+        const creds = engine.providerRegistry.getCredentials(provider.providerId);
+        providers[provider.providerId] = {
+          ...provider,
+          hasCredentials: provider.authType === "none" || !!creds?.apiKey,
+          unavailableReason: provider.authType !== "none" && !creds?.apiKey ? "no_credentials" : null,
+          models: provider.models.map((model) => ({
+            id: model.id,
+            name: model.displayName || model.name || model.id,
+            displayName: model.displayName || model.name || model.id,
+            protocolId: model.protocolId,
+            credentialLaneId: model.credentialLaneId,
+          })),
+          availableModels: [],
+        };
+      }
+      return { providers };
     }));
 
     this._sessionHandlerCleanups.push(bus.handle("agent:config", async ({ agentId }) => {

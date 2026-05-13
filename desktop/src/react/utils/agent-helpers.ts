@@ -8,10 +8,13 @@
 
 import { useStore } from '../stores';
 
-declare function t(key: string, vars?: Record<string, string>): any;
+function tr(key: string, vars?: Record<string, string>): any {
+  const fn = (globalThis as any).t || (globalThis as any).window?.t;
+  return typeof fn === 'function' ? fn(key, vars) : undefined;
+}
 
 export function yuanFallbackAvatar(yuan?: string): string {
-  const types = t('yuan.types') || {};
+  const types = tr('yuan.types') || {};
   const entry = types[yuan || 'hanako'];
   return `assets/${entry?.avatar || 'Hanako.png'}`;
 }
@@ -20,8 +23,8 @@ export function randomWelcome(agentName?: string, yuan?: string): string {
   const s = useStore.getState();
   const name = agentName || s.agentName;
   const y = yuan || s.agentYuan;
-  const yuanMsgs = t(`yuan.welcome.${y}`);
-  const msgs = Array.isArray(yuanMsgs) ? yuanMsgs : t('welcome.messages');
+  const yuanMsgs = tr(`yuan.welcome.${y}`);
+  const msgs = Array.isArray(yuanMsgs) ? yuanMsgs : tr('welcome.messages');
   if (!Array.isArray(msgs) || msgs.length === 0) return '';
   const raw = msgs[Math.floor(Math.random() * msgs.length)];
   return raw.replaceAll('{name}', name);
@@ -30,6 +33,6 @@ export function randomWelcome(agentName?: string, yuan?: string): string {
 export function yuanPlaceholder(yuan?: string): string {
   const s = useStore.getState();
   const y = yuan || s.agentYuan;
-  const yuanPh = t(`yuan.placeholder.${y}`);
-  return (yuanPh && !yuanPh.startsWith('yuan.')) ? yuanPh : t('input.placeholder');
+  const yuanPh = tr(`yuan.placeholder.${y}`);
+  return (yuanPh && !yuanPh.startsWith('yuan.')) ? yuanPh : tr('input.placeholder');
 }

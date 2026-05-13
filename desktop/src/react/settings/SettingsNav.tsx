@@ -1,4 +1,5 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore, type PluginSettingsTab } from './store';
 import { getNativeSettingsTabComponent } from './native-settings-tabs';
 import { t } from './helpers';
@@ -70,7 +71,10 @@ function buildNavItems(pluginSettingsTabs: PluginSettingsTab[], platformName?: s
 }
 
 export function SettingsNav({ onTabChange }: SettingsNavProps) {
-  const { activeTab, platformName, pluginSettingsTabs, set } = useSettingsStore();
+  const { activeTab, platformName, pluginSettingsTabs } = useSettingsStore(
+    useShallow(s => ({ activeTab: s.activeTab, platformName: s.platformName, pluginSettingsTabs: s.pluginSettingsTabs }))
+  );
+  const set = useSettingsStore(s => s.set);
   const navItems = buildNavItems(pluginSettingsTabs || [], platformName);
   const activeNavTab = activeTab === 'plugin-marketplace' ? 'plugins' : activeTab;
 

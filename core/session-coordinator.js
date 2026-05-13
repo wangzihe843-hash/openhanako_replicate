@@ -28,9 +28,9 @@ import { computeToolSnapshot, DEFAULT_DISABLED_TOOL_NAMES, uniqueToolNames } fro
 import { extractTextContent, isActiveSessionPath } from "./message-utils.js";
 import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/workspace-scope.js";
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
-import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";
+import { prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { adaptVisualContextMessages } from "./visual-context-pipeline.js";
-import { modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
 import {
   normalizeSessionThinkingLevel,
   normalizeThinkingLevelForModel,
@@ -55,6 +55,9 @@ function assertVideoInputSupported(model, videos) {
   if (!videos?.length) return;
   if (!modelSupportsVideoInput(model)) {
     throw new Error("current model does not support video input");
+  }
+  if (!modelSupportsDirectVideoInput(model)) {
+    throw new Error("current provider does not support direct video input");
   }
 }
 
@@ -232,6 +235,7 @@ export class SessionCoordinator {
     this._pendingPermissionMode = null;
     this._runtimePermissionModeDefault = DEFAULT_SESSION_PERMISSION_MODE;
     this._metaWriteQueue = Promise.resolve();
+    this._prePromptAbortControllers = new Map();
   }
 
   static _TITLES_TTL = 60_000; // 60 秒
@@ -866,27 +870,16 @@ export class SessionCoordinator {
       const entry = this._sessions.get(sp);
       if (entry) entry.lastTouchedAt = Date.now();
     }
-    // 非 image 模型：剥离新贴的图片（历史里的 ImageContent 由 engine 的
-    // context extension handler 统一净化，见 core/message-sanitizer.js）。
-    // model.input 缺失/非数组时视为未知，放行让 API 决定。
-    const inputMods = this._session.model?.input;
-    if (opts?.images?.length && Array.isArray(inputMods) && !inputMods.includes("image")) {
-      const engine = this._d.getEngine?.();
-      requireVisionAuxiliaryEnabled(engine);
-      const bridge = engine?.getVisionBridge?.();
-      if (!bridge) {
-        throw new Error("vision auxiliary model is required for image input with the current text-only model");
-      }
-      const prepared = await bridge.prepare({
-        sessionPath: sp,
-        targetModel: this._session.model,
-        text,
-        images: opts.images,
-        imageAttachmentPaths: opts.imageAttachmentPaths,
-      });
-      text = prepared.text;
-      opts = { ...opts, images: prepared.images };
-    }
+    const engine = this._d.getEngine?.();
+    ({ text, opts } = await prepareVisionInputForTextOnlyModel({
+      targetModel: this._session.model,
+      text,
+      opts,
+      sessionPath: sp,
+      getVisionBridge: () => engine?.getVisionBridge?.(),
+      visionPolicyTarget: engine,
+      warn: (msg) => (engine?.log || console).warn?.(`[session] ${msg}`),
+    }));
     assertVideoInputSupported(this._session.model, opts?.videos);
     const promptOpts = buildPromptMediaOptions(opts);
     await this._session.prompt(text, promptOpts);
@@ -932,24 +925,24 @@ export class SessionCoordinator {
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
     entry.lastTouchedAt = Date.now();
     if (sessionPath === this.currentSessionPath) this._sessionStarted = true;
-    // 非 image 模型：剥离新贴的图片（历史净化见 core/message-sanitizer.js）
-    const inputMods2 = entry.session.model?.input;
-    if (opts?.images?.length && Array.isArray(inputMods2) && !inputMods2.includes("image")) {
-      const engine = this._d.getEngine?.();
-      requireVisionAuxiliaryEnabled(engine);
-      const bridge = engine?.getVisionBridge?.();
-      if (!bridge) {
-        throw new Error("vision auxiliary model is required for image input with the current text-only model");
-      }
-      const prepared = await bridge.prepare({
-        sessionPath,
+    const engine = this._d.getEngine?.();
+    const abortController = new AbortController();
+    this._prePromptAbortControllers.set(sessionPath, abortController);
+    try {
+      ({ text, opts } = await prepareVisionInputForTextOnlyModel({
         targetModel: entry.session.model,
         text,
-        images: opts.images,
-        imageAttachmentPaths: opts.imageAttachmentPaths,
-      });
-      text = prepared.text;
-      opts = { ...opts, images: prepared.images };
+        opts,
+        sessionPath,
+        getVisionBridge: () => engine?.getVisionBridge?.(),
+        visionPolicyTarget: engine,
+        warn: (msg) => (engine?.log || console).warn?.(`[session] ${msg}`),
+        signal: abortController.signal,
+      }));
+    } finally {
+      if (this._prePromptAbortControllers.get(sessionPath) === abortController) {
+        this._prePromptAbortControllers.delete(sessionPath);
+      }
     }
     assertVideoInputSupported(entry.session.model, opts?.videos);
     const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
@@ -981,6 +974,12 @@ export class SessionCoordinator {
   }
 
   async abortSession(sessionPath) {
+    const pending = this._prePromptAbortControllers.get(sessionPath);
+    if (pending) {
+      pending.abort();
+      this._prePromptAbortControllers.delete(sessionPath);
+      return true;
+    }
     const entry = this._sessions.get(sessionPath);
     if (!entry?.session.isStreaming) return false;
     return this._forceReleaseStreamingSession(entry, sessionPath, "abort");

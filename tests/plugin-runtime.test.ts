@@ -60,16 +60,70 @@ describe('plugin runtime SDK', () => {
   it('defines providers without altering provider metadata', () => {
     const provider = defineProvider({
       id: 'demo-provider',
-      name: 'Demo Provider',
-      api: 'openai-chat',
-      models: ['demo-model'],
+      displayName: 'Demo Provider',
+      authType: 'none',
+      runtime: {
+        kind: 'local-cli',
+        protocolId: 'local-cli-media',
+        command: {
+          executable: 'demo-image-cli',
+          args: [
+            { literal: 'generate' },
+            { option: '--prompt', from: 'prompt' },
+            { option: '--output', from: 'outputDir' },
+          ],
+          timeoutMs: 120000,
+          output: { kind: 'file_glob', directory: 'outputDir', pattern: '*.png' },
+        },
+      },
+      capabilities: {
+        chat: { projection: 'none' },
+        media: {
+          imageGeneration: {
+            models: [{
+              id: 'demo-image',
+              displayName: 'Demo Image',
+              protocolId: 'local-cli-media',
+              inputs: ['text'],
+              outputs: ['image'],
+            }],
+          },
+        },
+      },
     });
 
     expect(provider).toEqual({
       id: 'demo-provider',
-      name: 'Demo Provider',
-      api: 'openai-chat',
-      models: ['demo-model'],
+      displayName: 'Demo Provider',
+      authType: 'none',
+      runtime: {
+        kind: 'local-cli',
+        protocolId: 'local-cli-media',
+        command: {
+          executable: 'demo-image-cli',
+          args: [
+            { literal: 'generate' },
+            { option: '--prompt', from: 'prompt' },
+            { option: '--output', from: 'outputDir' },
+          ],
+          timeoutMs: 120000,
+          output: { kind: 'file_glob', directory: 'outputDir', pattern: '*.png' },
+        },
+      },
+      capabilities: {
+        chat: { projection: 'none' },
+        media: {
+          imageGeneration: {
+            models: [{
+              id: 'demo-image',
+              displayName: 'Demo Image',
+              protocolId: 'local-cli-media',
+              inputs: ['text'],
+              outputs: ['image'],
+            }],
+          },
+        },
+      },
     });
   });
 

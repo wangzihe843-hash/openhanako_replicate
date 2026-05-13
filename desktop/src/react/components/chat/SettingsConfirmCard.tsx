@@ -9,7 +9,7 @@ import { memo, useState, useCallback, useMemo } from 'react';
 import styles from './Chat.module.css';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
-import registry from '../../../shared/theme-registry.cjs';
+import registry from '../../../shared/theme-registry';
 
 interface Props {
   confirmId?: string;

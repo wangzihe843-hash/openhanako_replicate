@@ -31,7 +31,9 @@ export default function (app, ctx) {
           const openUrl = `${mediaBase}/media/open/${esc(file)}${tokenParam ? tokenParam + '&' : '?'}token=${token}`;
           return `<div class="video-wrap" onclick="fetch('${openUrl}',{method:'POST'})"><video src="${videoUrl}" preload="metadata" muted playsinline></video><div class="play-btn">▶</div></div>`;
         }
-        return `<img src="${mediaBase}/media/${esc(file)}${tokenParam}">`;
+        const imgUrl = `${mediaBase}/media/${esc(file)}${tokenParam}`;
+        const openUrl = `${mediaBase}/media/open/${esc(file)}${tokenParam ? tokenParam + '&' : '?'}token=${token}`;
+        return `<img src="${imgUrl}" class="clickable" onclick="fetch('${openUrl}',{method:'POST'})">`;
       }
       if (t.status === "failed") {
         return `<div class="failed">${esc(t.failReason || "生成失败")}</div>`;
@@ -60,6 +62,8 @@ ${hanaCss ? `<link rel="stylesheet" href="${hanaCss}">` : ''}
 body{background:var(--bg-card,#FCFAF5);padding:6px}
 .cell{display:block}
 img{display:block;max-width:100%;border-radius:8px}
+img.clickable{cursor:pointer;transition:opacity 0.15s}
+img.clickable:hover{opacity:0.85}
 .skeleton{aspect-ratio:${cssRatio};max-height:580px;background:linear-gradient(90deg,#f0ede8 25%,#e8e4de 50%,#f0ede8 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:4px}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .video-wrap{position:relative;cursor:pointer;border-radius:8px;overflow:hidden}
@@ -97,7 +101,8 @@ img{display:block;max-width:100%;border-radius:8px}
                '<video src="' + videoUrl + '" preload="metadata" muted playsinline></video>' +
                '<div class="play-btn">▶</div></div>';
       }
-      return '<img src="' + mediaBase + '/media/' + encoded + tokenParam + '">';
+      var imgOpenUrl = mediaBase + '/media/open/' + encoded + (tokenParam ? tokenParam + '&' : '?') + 'token=' + token;
+      return '<img src="' + mediaBase + '/media/' + encoded + tokenParam + '" class="clickable" onclick="fetch(\'' + imgOpenUrl + '\',{method:\'POST\'})">';
     }
     if (t.status === 'failed') {
       return '<div class="failed">' + escHtml(t.failReason || '生成失败') + '</div>';

@@ -119,7 +119,10 @@ export function SkillViewerOverlay() {
         body = content.slice(fmMatch[0].length);
         description = parseFmDescription(fmMatch[1]);
       }
-      rendered = renderMarkdownPreview(body);
+      rendered = renderMarkdownPreview(body, {
+        filePath: activeFile,
+        getFileUrl: window.platform?.getFileUrl,
+      });
     }
   }
 

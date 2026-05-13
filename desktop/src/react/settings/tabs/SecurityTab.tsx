@@ -32,7 +32,8 @@ const SIZE_OPTIONS = [
 ];
 
 export function SecurityTab() {
-  const { settingsConfig, showToast } = useSettingsStore();
+  const settingsConfig = useSettingsStore(s => s.settingsConfig);
+  const showToast = useSettingsStore(s => s.showToast);
   const sandboxEnabled = settingsConfig?.sandbox !== false;
   const fileBackup = settingsConfig?.file_backup || { enabled: false, retention_days: 1, max_file_size_kb: 1024 };
 

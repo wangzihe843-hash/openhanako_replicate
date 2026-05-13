@@ -16,7 +16,7 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig, isPrese
   presetInfo?: { label: string; value: string; url?: string; api?: string; local?: boolean };
   onRefresh: () => Promise<void>;
 }) {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const [keyVal, setKeyVal] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const derivedBaseUrl = summary.base_url || presetInfo?.url || '';

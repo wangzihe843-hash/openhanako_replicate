@@ -6,6 +6,26 @@ describe("callText provider-compat routing", () => {
     vi.restoreAllMocks();
   });
 
+  it("classifies response body read aborts from timeout as LLM_TIMEOUT", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => {
+        const err = new Error("body read aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+    });
+
+    await expect(callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: "qwen3.5-plus",
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    })).rejects.toMatchObject({ code: "LLM_TIMEOUT" });
+  });
+
   it("裸 model id + opts.quirks 仍走 qwen utility 兼容层", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -287,5 +307,45 @@ describe("callText provider-compat routing", () => {
         cacheCreated: true,
       }),
     });
+  });
+
+  it("classifies responses that become empty only after thinking cleanup", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "<think>The user asked for OK.</think>\n\n" } }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: { id: "MiniMax-M2.7", provider: "minimax", reasoning: true },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).rejects.toMatchObject({
+      code: "LLM_EMPTY_RESPONSE",
+      message: "LLM returned only thinking content without visible text",
+      context: expect.objectContaining({ reason: "empty_after_thinking" }),
+    });
+  });
+
+  it("returns visible text after stripping a leading thinking block", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "<think>The user asked for OK.</think>\n\nOK" } }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: { id: "MiniMax-M2.7", provider: "minimax", reasoning: true },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("OK");
   });
 });

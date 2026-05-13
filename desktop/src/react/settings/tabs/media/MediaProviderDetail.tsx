@@ -22,7 +22,7 @@ interface Props {
 }
 
 export function MediaProviderDetail({ providerId, provider, config, onSaveConfig, onRefresh }: Props) {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const defaults = config.providerDefaults?.[providerId] || {};
   const isDefault = (modelId: string) =>
     config.defaultImageModel?.id === modelId && config.defaultImageModel?.provider === providerId;

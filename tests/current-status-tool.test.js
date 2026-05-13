@@ -15,6 +15,15 @@ function makeCtx(sessionPath = "/tmp/agents/hana/sessions/s1.jsonl") {
 }
 
 describe("current_status tool", () => {
+  it("describes time and logical_date as distinct lookup contracts", () => {
+    const tool = createCurrentStatusTool();
+
+    expect(tool.description).toContain('key="time"');
+    expect(tool.description).toContain("hour/minute");
+    expect(tool.description).toContain('key="logical_date"');
+    expect(tool.description).toContain("does not return hour/minute/second");
+  });
+
   it("lists available status keys without returning live status values", async () => {
     const tool = createCurrentStatusTool({
       now: () => new Date("2026-05-03T19:30:00.000Z"),
@@ -31,6 +40,7 @@ describe("current_status tool", () => {
       "agent",
       "model",
       "ui_context",
+      "session_files",
     ]);
     expect(payload.usage).toContain("list");
     expect(payload.usage).toContain("get");
@@ -152,6 +162,100 @@ describe("current_status tool", () => {
         pinnedFiles: [],
       },
     });
+  });
+
+  it("returns normalized current session files for get session_files", async () => {
+    const tool = createCurrentStatusTool({
+      listSessionFiles: (sessionPath) => sessionPath.endsWith("s1.jsonl")
+        ? [
+            {
+              id: "sf_browser",
+              fileId: "sf_browser",
+              sessionPath,
+              filePath: "/tmp/session-files/browser-screenshot.jpg",
+              realPath: "/private/tmp/session-files/browser-screenshot.jpg",
+              label: "browser-screenshot.jpg",
+              displayName: "Browser Screenshot",
+              filename: "browser-screenshot.jpg",
+              ext: "jpg",
+              mime: "image/jpeg",
+              kind: "image",
+              size: 12345,
+              origin: "browser_screenshot",
+              operations: ["captured"],
+              storageKind: "managed_cache",
+              status: "available",
+              missingAt: null,
+              createdAt: 1778432852184,
+              isDirectory: false,
+              internalOnly: "must not leak",
+            },
+            {
+              id: "sf_expired",
+              sessionPath,
+              filePath: "/tmp/session-files/old.png",
+              label: "old.png",
+              mime: "image/png",
+              kind: "image",
+              origin: "browser_screenshot",
+              operations: ["captured"],
+              storageKind: "managed_cache",
+              status: "expired",
+              missingAt: 1778432859999,
+            },
+          ]
+        : [],
+    });
+
+    const payload = textPayload(await tool.execute("call_1", { action: "get", key: "session_files" }, null, null, makeCtx()));
+
+    expect(payload).toEqual({
+      session_files: {
+        sessionPath: "/tmp/agents/hana/sessions/s1.jsonl",
+        registryAvailable: true,
+        files: [
+          {
+            fileId: "sf_browser",
+            label: "browser-screenshot.jpg",
+            displayName: "Browser Screenshot",
+            filename: "browser-screenshot.jpg",
+            ext: "jpg",
+            kind: "image",
+            mime: "image/jpeg",
+            size: 12345,
+            origin: "browser_screenshot",
+            operations: ["captured"],
+            storageKind: "managed_cache",
+            status: "available",
+            missingAt: null,
+            createdAt: 1778432852184,
+            isDirectory: false,
+            filePath: "/tmp/session-files/browser-screenshot.jpg",
+            realPath: "/private/tmp/session-files/browser-screenshot.jpg",
+          },
+          {
+            fileId: "sf_expired",
+            label: "old.png",
+            displayName: null,
+            filename: null,
+            ext: null,
+            kind: "image",
+            mime: "image/png",
+            size: null,
+            origin: "browser_screenshot",
+            operations: ["captured"],
+            storageKind: "managed_cache",
+            status: "expired",
+            missingAt: 1778432859999,
+            createdAt: null,
+            isDirectory: false,
+            filePath: "/tmp/session-files/old.png",
+            realPath: null,
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("internalOnly");
   });
 
   it("returns a clear error for unknown keys", async () => {

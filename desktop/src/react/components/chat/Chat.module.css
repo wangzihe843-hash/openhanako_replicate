@@ -796,26 +796,80 @@
     color: var(--text-muted);
 }
 
-.fileOutputOpen {
+.fileOutputActions {
     flex-shrink: 0;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
     margin-left: auto;
-    background: transparent;
-    color: var(--text-muted);
     border: 1px solid var(--border, rgba(0,0,0,0.1));
     border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: color var(--duration-fast), background var(--duration-fast), border-color var(--duration-fast);
+    overflow: hidden;
+    background: var(--bg-card, var(--bg));
 }
 
-.fileOutputOpen:hover {
+.fileOutputActionButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    color: var(--text-muted);
+    border: 0;
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.fileOutputActionButton:hover,
+.fileOutputActionButton[aria-expanded="true"] {
     color: var(--text);
-    border-color: var(--text-muted);
     background: var(--overlay-light, rgba(0,0,0,0.04));
+}
+
+.fileOutputActionButton:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.fileOutputActionPrimary {
+    width: 31px;
+}
+
+.fileOutputActionMenuButton {
+    width: 22px;
+    border-left: 1px solid var(--border, rgba(0,0,0,0.1));
+}
+
+.fileOutputActionMenu {
+    padding: 5px 0;
+    background: var(--bg-card, var(--bg));
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-md);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.07);
+    animation: hana-fade-up var(--duration-fast) var(--ease-out);
+}
+
+.fileOutputActionMenuItem {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 11px;
+    background: transparent;
+    color: var(--text);
+    border: 0;
+    font: inherit;
+    font-size: 0.72rem;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background var(--duration-instant) var(--ease-out);
+}
+
+.fileOutputActionMenuItem:hover,
+.fileOutputActionMenuItem:focus-visible {
+    background: var(--overlay-subtle);
+    outline: none;
 }
 
 /* ── 图片输出卡片 ── */
@@ -1014,7 +1068,7 @@
 }
 
 .sessionMessages {
-    max-width: 640px;
+    max-width: 800px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -1093,7 +1147,7 @@
     cursor: pointer;
     padding: 0 var(--timeline-marker-pad-right) 0 var(--timeline-marker-pad-left);
     opacity: 0;
-    pointer-events: auto;
+    pointer-events: none;
     display: grid;
     grid-template-columns: minmax(0, 1fr) 24px;
     align-items: center;
@@ -1105,10 +1159,10 @@
 .timelineNav:hover .timelineMarker,
 .timelineNav:focus-within .timelineMarker {
     opacity: 1;
-    pointer-events: auto;
 }
 
 .timelineNavExpanded .timelineCard,
+.timelineNavExpanded .timelineMarker,
 .timelineNavExpanded .timelineLabel {
     pointer-events: auto;
 }
@@ -1123,6 +1177,7 @@
 }
 
 .timelineLine {
+    position: relative;
     justify-self: end;
     width: var(--timeline-marker-width);
     min-width: 0.5em;
@@ -1131,7 +1186,14 @@
     border-radius: 999px;
     background: currentColor;
     opacity: 0.74;
+    pointer-events: auto;
     transition: opacity var(--duration-instant) var(--ease-out);
+}
+
+.timelineLine::before {
+    content: "";
+    position: absolute;
+    inset: -12px -4px;
 }
 
 .timelineMarker:hover .timelineLine,

@@ -37,7 +37,8 @@ Hana plugins can provide:
 - Skills, agents, and knowledge that guide model behavior.
 - Iframe pages, widgets, and cards using Hana theme and host capabilities.
 - Lifecycle and EventBus handlers for full-access integrations.
-- Provider or extension-style integrations where the app has explicit extension points.
+- Provider contributions for chat and media capabilities, including image/video/speech providers backed by HTTP, OAuth HTTP, local CLI, browser CLI, or plugin runtimes.
+- Extension-style integrations where the app has explicit extension points.
 - SessionFile-backed outputs for files and media.
 
 Hana provides install/enable/reload, per-agent skill toggles, manifest capability checks, iframe host messaging, theme tokens, toast/clipboard/external host APIs, EventBus, data directories, and SDK packages.
@@ -52,13 +53,18 @@ Current boundaries: iframe UI is the stable extension surface. Native renderer c
    - `direct`: no npm install, no build step, best for a beginner's first runnable plugin.
    - `guided-react`: React/Vite/SDK starter with shared Hana components and a gentler README.
    - `professional-react`: React/Vite/SDK starter for developers who expect package scripts and typed UI code.
-4. Pick the target location:
+4. Pick the contribution kind:
+   - `tool`: restricted plugin with `tools/*.js`.
+   - `ui`: full-access iframe page/widget.
+   - `full`: tool, lifecycle/EventBus entry, and iframe UI.
+   - `provider`: full-access provider declaration under `providers/*.js`.
+5. Pick the target location:
    - Built-in plugin shipped with Hana: `plugins/<plugin-id>`.
    - Example or template plugin: `examples/plugins/<plugin-id>`.
    - User-installed plugin: the directory reported by `/api/plugins/settings` or `${HANA_HOME}/plugins`.
-5. Generate the scaffold with the bundled script, then adjust names, descriptions, tools, routes, capabilities, and UI to the user's request.
-6. If the user wants marketplace publication, add or update the `OH-Plugins/plugins/<plugin-id>.json` entry and README source after the plugin works locally.
-7. Run focused verification. When editing this skill, at minimum validate the skill and run the scaffold script against a temp directory.
+6. Generate the scaffold with the bundled script, then adjust names, descriptions, tools, routes, capabilities, and UI to the user's request.
+7. If the user wants marketplace publication, add or update the `OH-Plugins/plugins/<plugin-id>.json` entry and README source after the plugin works locally.
+8. Run focused verification. When editing this skill, at minimum validate the skill and run the scaffold script against a temp directory.
 
 ## Scaffold Commands
 
@@ -79,9 +85,16 @@ Useful options:
 - `--kind tool`: restricted plugin with a static `tools/create-note.js`.
 - `--kind ui`: full-access plugin with `page` and `widget` iframe UI.
 - `--kind full`: tool, lifecycle/EventBus entry, and iframe UI.
+- `--kind provider`: full-access provider contribution with a media-capability provider declaration.
 - `--sdk-mode workspace`: use repo-local SDK packages.
 - `--sdk-mode bundled`: copy SDK tarballs from this skill into the generated plugin.
 - `--force`: replace an existing generated directory only when the user explicitly wants overwrite.
+
+Provider contribution starter:
+
+```bash
+python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "Jimeng Provider" --path examples/plugins --kind provider --audience developer
+```
 
 ## SDK Rules
 
@@ -92,6 +105,9 @@ Useful options:
 - Declare only the iframe host capabilities actually used.
 - EventBus handlers should return `HANA_BUS_SKIP` for payloads that do not belong to them.
 - Keep iframe UI self-contained. Do not import renderer internals from `desktop/src/react`.
+- Provider declarations live in `providers/*.js` and require `"trust": "full-access"`.
+- Keep `capabilities.chat` separate from `capabilities.media.*`. Media-only providers must set `chat.projection = "none"` so they never appear in chat model selectors.
+- CLI-backed providers must declare `runtime.kind = "local-cli"` or `"browser-cli"` with structured arg bindings and output contracts. Do not build shell command strings.
 
 ## Marketplace Rules
 

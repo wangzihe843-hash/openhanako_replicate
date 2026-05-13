@@ -81,6 +81,17 @@ const KNOWN_MODELS = {
       visionCapabilities: { grounding: true, boxes: true, points: true, coordinateSpace: "norm-1000", boxOrder: "xyxy", outputFormat: "anchor", groundingMode: "prompted" },
     },
   },
+  moonshot: {
+    "kimi-k2.6": {
+      name: "Kimi K2.6",
+      context: 262144,
+      maxOutput: 98304,
+      image: true,
+      video: true,
+      reasoning: true,
+      visionCapabilities: { grounding: true, boxes: true, points: true, coordinateSpace: "norm-1000", boxOrder: "xyxy", outputFormat: "anchor", groundingMode: "prompted" },
+    },
+  },
   minimax: {
     "MiniMax-M2.7": { name: "MiniMax M2.7", context: 204800, maxOutput: 131072, reasoning: true },
   },
@@ -563,6 +574,28 @@ describe("syncModels", () => {
     expect(result.providers.dashscope.models[0].compat.hanaVideoInput).toBe(true);
   });
 
+  it("projects Moonshot Kimi official video capability into Hana compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      moonshot: {
+        base_url: "https://api.moonshot.cn/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["kimi-k2.6"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.moonshot.models[0]).toMatchObject({
+      id: "kimi-k2.6",
+      input: ["text", "image"],
+      compat: { hanaVideoInput: true },
+    });
+  });
+
   it("projects MiMo V2.5 full-modal metadata without invalid Pi input", async () => {
     const syncModels = await loadSync();
 
@@ -590,6 +623,8 @@ describe("syncModels", () => {
     expect(model.compat).toMatchObject({
       supportsDeveloperRole: false,
       hanaVideoInput: true,
+      thinkingFormat: "qwen-chat-template",
+      reasoningProfile: "mimo-openai",
     });
   });
 
@@ -610,8 +645,12 @@ describe("syncModels", () => {
 
     const registry = createModelRegistry(new AuthStorage(tmpDir), modelsJsonPath);
     const available = await registry.getAvailable();
-    expect(available).toHaveLength(1);
-    expect(available[0]).toMatchObject({
+    const model = available.find((item) => (
+      item.id === "qwen3-vl-plus" && item.provider === "dashscope"
+    ));
+
+    expect(model).toBeDefined();
+    expect(model).toMatchObject({
       id: "qwen3-vl-plus",
       provider: "dashscope",
       input: ["text", "image"],

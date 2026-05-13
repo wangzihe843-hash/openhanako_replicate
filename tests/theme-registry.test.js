@@ -2,6 +2,25 @@ import { describe, it, expect } from 'vitest';
 import reg from '../desktop/src/shared/theme-registry.cjs';
 
 describe('theme-registry', () => {
+  it('CJS and ESM adapters expose the same public contract', async () => {
+    const esm = await import('../desktop/src/shared/theme-registry.ts');
+
+    expect(esm.STORAGE_KEY).toBe(reg.STORAGE_KEY);
+    expect(esm.DEFAULT_THEME).toBe(reg.DEFAULT_THEME);
+    expect(esm.AUTO_LIGHT_DEFAULT).toBe(reg.AUTO_LIGHT_DEFAULT);
+    expect(esm.AUTO_DARK_DEFAULT).toBe(reg.AUTO_DARK_DEFAULT);
+    expect(esm.PAPER_TEXTURE_BLOCKED_THEME_IDS).toEqual(reg.PAPER_TEXTURE_BLOCKED_THEME_IDS);
+    expect(esm.AUTO_OPTION).toEqual(reg.AUTO_OPTION);
+    expect(esm.LEGACY_THEME_ALIASES).toEqual(reg.LEGACY_THEME_ALIASES);
+    expect(esm.THEMES).toEqual(reg.THEMES);
+    expect(esm.getThemeIds()).toEqual(reg.getThemeIds());
+    expect(esm.getAllUIOptions()).toEqual(reg.getAllUIOptions());
+    expect(esm.migrateSavedTheme('claude-design')).toBe(reg.migrateSavedTheme('claude-design'));
+    expect(esm.resolveSavedTheme('auto', true)).toEqual(reg.resolveSavedTheme('auto', true));
+    expect(esm.isPaperTextureBlockedTheme('midnight')).toBe(reg.isPaperTextureBlockedTheme('midnight'));
+    expect(esm.default.getThemeIds()).toEqual(reg.getThemeIds());
+  });
+
   describe('constants', () => {
     it('STORAGE_KEY 是 "hana-theme"', () => {
       expect(reg.STORAGE_KEY).toBe('hana-theme');

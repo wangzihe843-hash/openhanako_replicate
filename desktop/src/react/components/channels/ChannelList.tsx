@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../stores';
 import { useI18n } from '../../hooks/use-i18n';
-import { hanaFetch, hanaUrl } from '../../hooks/use-hana-fetch';
+import { hanaFetch } from '../../hooks/use-hana-fetch';
 import {
   loadChannels,
   openChannel,
@@ -16,35 +16,26 @@ import { toggleSidebar } from '../SidebarLayout';
 import { ContextMenu, type ContextMenuItem } from '../../ui';
 import { ChannelWarningModal } from './ChannelWarningModal';
 import type { Channel, Agent } from '../../types';
-import { yuanFallbackAvatar } from '../../utils/agent-helpers';
+import {
+  AgentAvatar,
+  buildAgentDisplayMap,
+  resolveAgentDisplayInfo,
+  refreshAgentAvatarVersion,
+  type AgentDisplayInfo,
+} from '../../utils/agent-display';
 import styles from './Channels.module.css';
 
 
-// ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
-let _avatarTs = Date.now();
-export function refreshAvatarTs() { _avatarTs = Date.now(); }
-
 // ── 辅助类型 ──
 
-export interface MemberInfo {
-  id: string;
-  displayName: string;
-  avatarUrl: string | null;
-  fallbackAvatar: string | null;
-  yuan?: string;
-  isUser: boolean;
-}
+export type MemberInfo = AgentDisplayInfo;
+export function refreshAvatarTs() { refreshAgentAvatarVersion(); }
 
 // ── 辅助函数 ──
 
 /** 构建 agent 查找 Map（按 id 和 name 双索引），配合 useMemo 使用 */
 export function buildAgentMap(agents: Agent[]): Map<string, Agent> {
-  const m = new Map<string, Agent>();
-  for (const a of agents) {
-    m.set(a.id, a);
-    if (a.name) m.set(a.name, a);
-  }
-  return m;
+  return buildAgentDisplayMap(agents);
 }
 
 export function resolveChannelMember(
@@ -55,33 +46,14 @@ export function resolveChannelMember(
   currentAgentId: string | null,
   agentMap?: Map<string, Agent>,
 ): MemberInfo {
-  if (memberId === 'user' || memberId === userName) {
-    return {
-      id: memberId,
-      displayName: userName || 'user',
-      avatarUrl: userAvatarUrl,
-      fallbackAvatar: null,
-      isUser: true,
-    };
-  }
-  const agent = agentMap ? agentMap.get(memberId) : agents.find((a) => a.id === memberId || a.name === memberId);
-  if (agent) {
-    return {
-      id: memberId,
-      displayName: agent.name || agent.id,
-      avatarUrl: agent.hasAvatar ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`) : null,
-      fallbackAvatar: yuanFallbackAvatar(agent.yuan),
-      yuan: agent.yuan,
-      isUser: false,
-    };
-  }
-  return {
+  return resolveAgentDisplayInfo({
     id: memberId,
-    displayName: memberId,
-    avatarUrl: null,
-    fallbackAvatar: null,
-    isUser: false,
-  };
+    agents,
+    agentMap,
+    userName,
+    userAvatarUrl,
+    fallbackAgentName: currentAgentId === memberId ? undefined : null,
+  });
 }
 
 export function formatChannelTime(timestamp: string): string {
@@ -105,21 +77,7 @@ export function formatChannelTime(timestamp: string): string {
 // ── MemberAvatar ──
 
 export function MemberAvatar({ info, className }: { info: MemberInfo; className?: string }) {
-  const [imgError, setImgError] = useState(false);
-
-  if (info.avatarUrl && !imgError) {
-    return (
-      <img
-        className={className}
-        src={info.avatarUrl}
-        onError={() => setImgError(true)}
-      />
-    );
-  }
-  if (imgError && info.fallbackAvatar) {
-    return <img className={className} src={info.fallbackAvatar} />;
-  }
-  return <>{(info.displayName || '?').charAt(0).toUpperCase()}</>;
+  return <AgentAvatar info={info} className={className} />;
 }
 
 // ══════════════════════════════════════════════════════

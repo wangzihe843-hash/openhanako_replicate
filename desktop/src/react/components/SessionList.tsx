@@ -8,12 +8,12 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '../stores';
-import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { formatSessionDate } from '../utils/format';
 import { switchSession, archiveSession, renameSession, pinSession } from '../stores/session-actions';
 import type { Session, Agent } from '../types';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { buildSessionSections } from './session-sections';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
@@ -178,7 +178,7 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   const parts: string[] = [];
   if (s.agentName || s.agentId) parts.push(s.agentName || s.agentId!);
   if (s.cwd) {
-    const dirName = s.cwd.split('/').filter(Boolean).pop();
+    const dirName = s.cwd.split(/[/\\]/).filter(Boolean).pop();
     if (dirName) parts.push(dirName);
   }
   if (s.modified) parts.push(formatSessionDate(s.modified));
@@ -469,21 +469,17 @@ const AgentBadge = memo(function AgentBadge({ agentId, agentName, agents }: {
   agentName: string | null;
   agents: Agent[];
 }) {
-  const agent = agents.find(a => a.id === agentId);
-  const [apiUrl] = useState(() =>
-    agent?.hasAvatar ? hanaUrl(`/api/agents/${agentId}/avatar?t=${Date.now()}`) : null,
-  );
-  const [errored, setErrored] = useState(false);
-
-  const src = (!apiUrl || errored) ? yuanFallbackAvatar(agent?.yuan) : apiUrl;
+  const info = resolveAgentDisplayInfo({
+    id: agentId,
+    agents,
+    fallbackAgentName: agentName || agentId,
+  });
 
   return (
-    <img
+    <AgentAvatar
+      info={info}
       className={styles.sessionAgentBadge}
-      src={src}
       title={agentName || agentId}
-      draggable={false}
-      onError={() => setErrored(true)}
     />
   );
 });

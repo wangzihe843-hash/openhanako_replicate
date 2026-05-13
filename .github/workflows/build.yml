@@ -165,6 +165,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 3
           path: |
             dist/*.dmg
             dist/*.zip

@@ -38,6 +38,31 @@
     "disabled": "頻道功能已關閉",
     "toggleLabel": "頻道功能開關",
     "members": "成員",
+    "addMember": "新增成員",
+    "removeMember": "移除成員",
+    "removeMemberConfirm": "確定將「{name}」移出這個頻道？",
+    "addMemberFailed": "新增成員失敗",
+    "removeMemberFailed": "移除成員失敗",
+    "noAvailableMembers": "沒有可新增的 Agent",
+    "agentActivity": "Agent 動態",
+    "agentSettings": "群聊設定",
+    "toolPermission": "工具權限",
+    "agentIdle": "空閒",
+    "phoneReceivedNewMessages": "收到新的群聊訊息",
+    "replyRange": "回覆字數",
+    "replyMinPlaceholder": "最少",
+    "replyMaxPlaceholder": "最多",
+    "replyRangeInvalid": "最少字數不能大於最多字數",
+    "settingsSaveFailed": "儲存設定失敗",
+    "reminderInterval": "主動提醒間隔（分鐘）",
+    "guardLimit": "輪次上限",
+    "modelOverride": "覆寫模型",
+    "modelDefault": "預設",
+    "modelOverrideOn": "覆寫",
+    "selectModel": "選擇模型",
+    "noModelsAvailable": "沒有可用模型",
+    "toolReadOnly": "只讀",
+    "toolWrite": "寫入",
     "createIntroOptional": "說明"
   },
   "sidebar": {
@@ -130,7 +155,12 @@
     "browserScreenshot": "瀏覽器截圖",
     "compacting": "上下文壓縮中",
     "visionAuxiliary": "輔助視覺",
-    "fileExpired": "檔案已過期"
+    "fileExpired": "檔案已過期",
+    "fileActions": {
+      "more": "更多檔案操作",
+      "revealInFinder": "在 Finder 中顯示",
+      "copyPath": "複製檔案路徑"
+    }
   },
   "time": {
     "justNow": "剛剛",
@@ -236,7 +266,7 @@
       "每個 Agent 可以配置自己獨立的 Skills",
       "試試晴天模式的日光浴！",
       "工作區裡的 Markdown 檔案打開可以直接編輯",
-      "和助手相處一段時間，試試日記功能吧！",
+      "和助手相處一段時間後，試試日記功能吧！",
       "日記和截圖都保存在主助手的工作目錄",
       "不同助手可以設定不同工作空間，開啟巡檢後會在那裡自主行動"
     ]
@@ -1887,7 +1917,7 @@
     },
     "notify": {
       "label": "通知",
-      "description": "向使用者傳送系統通知（桌面彈窗）。\n使用場景：\n- 使用者說「提醒我 xxx」「到時候通知我」「記得叫我 xxx」\n- 排程任務的 prompt 中明確包含「通知」「提醒」等意圖\n- 巡檢/排程任務中發現需要使用者關注的事項\n如果一切正常、無異常，不要呼叫此工具。",
+      "description": "向使用者傳送通知。可依任務要求選擇桌面彈窗、Bridge owner 對話，或預設通道。\n使用場景：\n- 使用者說「提醒我 xxx」「到時候通知我」「記得叫我 xxx」\n- 排程任務的 prompt 中明確包含「通知」「提醒」「發到微信」等意圖\n- 巡檢/排程任務中發現需要使用者關注的事項\n如果一切正常、無異常，不要呼叫此工具。Bridge 通知成功投遞後會依 contextPolicy 寫入對應對話上下文。",
       "titleDesc": "通知標題（簡短）",
       "bodyDesc": "通知內容"
     },

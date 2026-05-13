@@ -10,7 +10,6 @@ import { clearChat } from './agent-actions';
 import type { DeskFile, DeskSearchResult } from '../types';
 import type { WorkspaceDeskState } from './desk-slice';
 import {
-  hydratePersistedPreviewItems,
   loadPersistedWorkspaceUiState,
   schedulePersistCurrentWorkspaceUiState,
 } from './workspace-ui-state-actions';
@@ -47,10 +46,9 @@ function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): Works
     deskJianContent: s.deskJianContent ?? null,
     cwdSkills: [...(s.cwdSkills || [])],
     cwdSkillsOpen: !!s.cwdSkillsOpen,
-    previewOpen: !!s.previewOpen,
     jianDrawerOpen: !!s.jianDrawerOpen,
-    openTabs: [...(s.openTabs || [])],
-    activeTabId: s.activeTabId ?? null,
+    rightWorkspaceTab: s.rightWorkspaceTab || 'workspace',
+    jianView: s.jianView || 'desk',
   };
 }
 
@@ -89,10 +87,9 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       deskJianContent: null,
       cwdSkills: [],
       cwdSkillsOpen: false,
-      previewOpen: false,
       jianDrawerOpen: false,
-      openTabs: [],
-      activeTabId: null,
+      rightWorkspaceTab: 'workspace',
+      jianView: 'desk',
     });
     updateDeskContextBtn();
     return;
@@ -115,40 +112,25 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     deskJianContent: null,
     cwdSkills: saved?.cwdSkills || [],
     cwdSkillsOpen: saved?.cwdSkillsOpen || false,
-    previewOpen: saved?.previewOpen || false,
     jianDrawerOpen: saved?.jianDrawerOpen ?? false,
-    openTabs: saved?.openTabs || [],
-    activeTabId: saved?.activeTabId ?? null,
+    rightWorkspaceTab: saved?.rightWorkspaceTab || 'workspace',
+    jianView: saved?.jianView || 'desk',
   });
   updateDeskContextBtn();
 
   let effectiveSubdir = nextSubdir;
   if (!saved) {
     const persisted = await loadPersistedWorkspaceUiState(normalized);
-    const restoredPreviewItems = await hydratePersistedPreviewItems(normalized, persisted);
-    const restoredPreviewItemsById = new Map(restoredPreviewItems.map(item => [item.id, item]));
-    const restoredOpenTabs = persisted?.openTabs?.filter(id => restoredPreviewItemsById.has(id)) || [];
-    const restoredActiveTabId = persisted?.activeTabId && restoredOpenTabs.includes(persisted.activeTabId)
-      ? persisted.activeTabId
-      : (restoredOpenTabs[0] || null);
     if (persisted && normalizeFolder(useStore.getState().deskBasePath) === normalized) {
       effectiveSubdir = sameRoot ? effectiveSubdir : (persisted.deskCurrentPath || '');
-      useStore.setState((state: any) => ({
+      useStore.setState({
         deskCurrentPath: effectiveSubdir,
         deskExpandedPaths: persisted.deskExpandedPaths || [],
         deskSelectedPath: persisted.deskSelectedPath || '',
-        previewOpen: !!persisted.previewOpen,
-        openTabs: restoredOpenTabs,
-        activeTabId: restoredActiveTabId,
-        ...(restoredPreviewItems.length > 0
-          ? {
-              previewItems: [
-                ...state.previewItems.filter((item: any) => !restoredPreviewItemsById.has(item.id)),
-                ...restoredPreviewItems,
-              ],
-            }
-          : {}),
-      }));
+        rightWorkspaceTab: persisted.rightWorkspaceTab || 'workspace',
+        jianView: persisted.jianView || 'desk',
+        jianDrawerOpen: persisted.jianDrawerOpen ?? false,
+      } as never);
     }
   }
 
@@ -751,15 +733,16 @@ export function toggleJianSidebar(forceOpen?: boolean): void {
   const s = useStore.getState();
   const newOpen = forceOpen !== undefined ? forceOpen : !s.jianOpen;
   s.setJianOpen(newOpen);
-  const tab = s.currentTab || 'chat';
-  localStorage.setItem(`hana-jian-${tab}`, newOpen ? 'open' : 'closed');
+  localStorage.setItem('hana-jian', newOpen ? 'open' : 'closed');
   if (forceOpen === undefined) s.setJianAutoCollapsed(false);
 }
 
 export function initJian(): void {
   const legacy = localStorage.getItem('hana-jian');
-  if (legacy && !localStorage.getItem('hana-jian-chat')) localStorage.setItem('hana-jian-chat', legacy);
-  const savedJian = localStorage.getItem('hana-jian-chat');
+  const savedJian = legacy ?? localStorage.getItem('hana-jian-chat');
+  if (savedJian !== null && legacy === null) {
+    localStorage.setItem('hana-jian', savedJian);
+  }
   if (savedJian !== null) useStore.getState().setJianOpen(savedJian !== 'closed');
   const s = useStore.getState();
   void activateWorkspaceDesk(s.selectedFolder || s.homeFolder || null);

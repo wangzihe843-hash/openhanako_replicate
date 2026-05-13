@@ -14,12 +14,12 @@ import { t, getLocale } from "../server/i18n.js";
 import { safeReadJSON } from "../shared/safe-fs.js";
 import { findModel } from "../shared/model-ref.js";
 import { teardownSessionResources } from "./session-teardown.js";
-import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";
+import { isAbortLikeError, prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { adaptVisualContextMessages } from "./visual-context-pipeline.js";
 import { SESSION_PERMISSION_MODES } from "./session-permission-mode.js";
 import { collectMediaItems } from "../lib/tools/media-details.js";
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.js";
-import { modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
@@ -30,6 +30,9 @@ function assertVideoInputSupported(model, videos) {
   if (!videos?.length) return;
   if (!modelSupportsVideoInput(model)) {
     throw new Error("current model does not support video input");
+  }
+  if (!modelSupportsDirectVideoInput(model)) {
+    throw new Error("current provider does not support direct video input");
   }
 }
 
@@ -128,18 +131,35 @@ export class BridgeSessionManager {
   constructor(deps) {
     this._deps = deps;
     this._activeSessions = new Map();
+    this._prePromptAbortControllers = new Map();
   }
 
   /** 活跃 bridge sessions（供 bridge-manager abort 用） */
   get activeSessions() { return this._activeSessions; }
 
+  _emitSessionEvent(event, sessionPath) {
+    if (!sessionPath || typeof this._deps.emitEvent !== "function") return;
+    try {
+      this._deps.emitEvent(event, sessionPath);
+    } catch (err) {
+      console.warn(`[bridge-session] emit ${event?.type || "event"} failed: ${err?.message || err}`);
+    }
+  }
+
   /** 指定 bridge session 是否正在 streaming */
   isSessionStreaming(sessionKey) {
-    return this._activeSessions.get(sessionKey)?.isStreaming ?? false;
+    return this._prePromptAbortControllers.has(sessionKey)
+      || (this._activeSessions.get(sessionKey)?.isStreaming ?? false);
   }
 
   /** abort 指定 bridge session（如果正在 streaming） */
   async abortSession(sessionKey) {
+    const pending = this._prePromptAbortControllers.get(sessionKey);
+    if (pending) {
+      pending.abort();
+      this._prePromptAbortControllers.delete(sessionKey);
+      return true;
+    }
     const session = this._activeSessions.get(sessionKey);
     if (!session?.isStreaming) return false;
     this._activeSessions.delete(sessionKey);
@@ -368,6 +388,7 @@ export class BridgeSessionManager {
       sessionPathRef.current = activeSessionPath;
       this._activeSessions.set(sessionKey, session);
 
+      let displayAttachments = [];
       if (opts.inboundFiles?.length && !activeSessionPath) {
         throw new Error("bridge inbound files require a resolved sessionPath");
       }
@@ -388,7 +409,24 @@ export class BridgeSessionManager {
             ],
           };
         }
+        displayAttachments = materialized.displayAttachments || [];
       }
+
+      this._emitSessionEvent({ type: "session_status", isStreaming: true }, activeSessionPath);
+      const displayMessage = {
+        timestamp: Date.now(),
+        ...(opts.displayMessage || {}),
+        text: opts.displayMessage?.text ?? promptText,
+        source: opts.displayMessage?.source || "bridge",
+        bridgeSessionKey: sessionKey,
+      };
+      if (displayAttachments.length && !displayMessage.attachments?.length) {
+        displayMessage.attachments = displayAttachments;
+      }
+      this._emitSessionEvent({
+        type: "session_user_message",
+        message: displayMessage,
+      }, activeSessionPath);
 
       // 捕获文本输出
       let capturedText = "";
@@ -407,33 +445,32 @@ export class BridgeSessionManager {
             capturedText += (capturedText ? "\n\n" : "") + card.description;
           }
         }
+        this._emitSessionEvent(event, activeSessionPath);
       });
 
       try {
-        // 非 image 模型：用视觉桥生成隐藏纸条，历史由 context extension 注入
-        const bridgeInput = session.model?.input;
-        if (opts.images?.length && Array.isArray(bridgeInput) && !bridgeInput.includes("image")) {
-          requireVisionAuxiliaryEnabled({
+        const abortController = new AbortController();
+        this._prePromptAbortControllers.set(sessionKey, abortController);
+        ({ text: promptText, opts } = await prepareVisionInputForTextOnlyModel({
+          targetModel: session.model,
+          text: promptText,
+          opts,
+          sessionPath: activeSessionPath,
+          getVisionBridge: () => this._deps.getVisionBridge?.(),
+          visionPolicyTarget: {
             isVisionAuxiliaryEnabled: this._deps.isVisionAuxiliaryEnabled,
-          });
-          const visionBridge = this._deps.getVisionBridge?.();
-          if (!visionBridge) {
-            throw new Error("vision auxiliary model is required for image input with the current text-only model");
-          }
-          const prepared = await visionBridge.prepare({
-            sessionPath: activeSessionPath,
-            targetModel: session.model,
-            text: promptText,
-            images: opts.images,
-            imageAttachmentPaths: opts.imageAttachmentPaths,
-          });
-          promptText = prepared.text;
-          opts = { ...opts, images: prepared.images };
+          },
+          warn: (msg) => console.warn(`[bridge-session] ${msg}`),
+          signal: abortController.signal,
+        }));
+        if (this._prePromptAbortControllers.get(sessionKey) === abortController) {
+          this._prePromptAbortControllers.delete(sessionKey);
         }
         assertVideoInputSupported(session.model, opts?.videos);
         const promptOpts = buildPromptMediaOptions(opts);
         await session.prompt(promptText, promptOpts);
       } finally {
+        this._prePromptAbortControllers.delete(sessionKey);
         await teardownSessionResources({
           session,
           unsub,
@@ -441,6 +478,7 @@ export class BridgeSessionManager {
           warn: (msg) => console.warn(`[bridge-session] ${msg}`),
         });
         this._activeSessions.delete(sessionKey);
+        this._emitSessionEvent({ type: "session_status", isStreaming: false }, activeSessionPath);
       }
 
       // 更新索引 + 元数据
@@ -469,6 +507,7 @@ export class BridgeSessionManager {
       }
       return text;
     } catch (err) {
+      if (isAbortLikeError(err)) return null;
       console.error(`[bridge-session] external message failed (${sessionKey}):`, err.message);
       return { __bridgeError: true, message: err.message };
     }
@@ -488,42 +527,76 @@ export class BridgeSessionManager {
   }
 
   /**
-   * 往指定 bridge session 追加一条 assistant 消息（不触发 LLM）
+   * 往指定 bridge session 追加一条 assistant 消息（不触发 LLM）。
+   * createIfMissing 仅用于真实外发成功后的主动通知记录。
+   *
    * @param {string} sessionKey - bridge session 标识
    * @param {string} text - 要追加的 assistant 消息文本
-   * @param {object} [opts] - { agentId?: string }
+   * @param {object} [opts] - { agentId?: string, createIfMissing?: boolean, meta?: object }
    * @returns {boolean}
    */
-  injectMessage(sessionKey, text, opts = {}) {
-    const agent = this._resolveAgent(opts, "injectMessage");
+  recordAssistantMessage(sessionKey, text, opts = {}) {
+    const agent = this._resolveAgent(opts, "recordAssistantMessage");
     try {
       const index = this.readIndex(agent);
       const raw = index[sessionKey];
       const existingFile = typeof raw === "string" ? raw : raw?.file || null;
-      if (!existingFile) {
-        console.warn(`[bridge-session] injectMessage: sessionKey "${sessionKey}" 不存在`);
-        return false;
-      }
-
       const bridgeDir = path.join(agent.sessionDir, "bridge");
-      const sessionPath = path.join(bridgeDir, existingFile);
-      if (!fs.existsSync(sessionPath)) {
-        console.warn(`[bridge-session] injectMessage: session 文件不存在: ${sessionPath}`);
+      const sessionDir = path.join(bridgeDir, "owner");
+      fs.mkdirSync(sessionDir, { recursive: true });
+
+      let mgr = null;
+      let sessionPath = null;
+      if (existingFile) {
+        sessionPath = path.join(bridgeDir, existingFile);
+        if (fs.existsSync(sessionPath)) {
+          mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
+        } else if (!opts.createIfMissing) {
+          console.warn(`[bridge-session] recordAssistantMessage: session 文件不存在: ${sessionPath}`);
+          return false;
+        }
+      } else if (!opts.createIfMissing) {
+        console.warn(`[bridge-session] recordAssistantMessage: sessionKey "${sessionKey}" 不存在`);
         return false;
       }
 
-      const mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
+      if (!mgr) {
+        const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
+        mgr = SessionManager.create(homeCwd, sessionDir);
+        sessionPath = mgr.getSessionFile?.() || null;
+        if (!sessionPath) {
+          console.warn(`[bridge-session] recordAssistantMessage: new session path unavailable for "${sessionKey}"`);
+          return false;
+        }
+      }
+
       mgr.appendMessage({
         role: "assistant",
         content: [{ type: "text", text }],
       });
 
-      debugLog()?.log("bridge-session", `injected message to ${sessionKey} (${text.length} chars)`);
+      if (sessionPath) {
+        const { changed } = this._syncIndexEntry(index, sessionKey, raw, {
+          bridgeDir,
+          sessionPath,
+          meta: opts.meta || null,
+        });
+        if (changed) this.writeIndex(index, agent);
+      }
+
+      debugLog()?.log("bridge-session", `recorded assistant message to ${sessionKey} (${text.length} chars)`);
       return true;
     } catch (err) {
-      console.error(`[bridge-session] injectMessage failed: ${err.message}`);
+      console.error(`[bridge-session] recordAssistantMessage failed: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * Back-compat wrapper used by slash/session ops.
+   */
+  injectMessage(sessionKey, text, opts = {}) {
+    return this.recordAssistantMessage(sessionKey, text, { ...opts, createIfMissing: false });
   }
 
   /**

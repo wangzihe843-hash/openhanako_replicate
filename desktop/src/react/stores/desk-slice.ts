@@ -1,4 +1,5 @@
 import type { DeskFile } from '../types';
+import type { RightWorkspaceTab } from '../types';
 
 export interface CwdSkillInfo {
   name: string;
@@ -17,10 +18,9 @@ export interface WorkspaceDeskState {
   deskJianContent: string | null;
   cwdSkills: CwdSkillInfo[];
   cwdSkillsOpen: boolean;
-  previewOpen: boolean;
   jianDrawerOpen: boolean;
-  openTabs: string[];
-  activeTabId: string | null;
+  rightWorkspaceTab: RightWorkspaceTab;
+  jianView: string;
 }
 
 export interface DeskSlice {

@@ -1039,6 +1039,74 @@ describe("SessionCoordinator", () => {
     expect(sessionPrompt).not.toHaveBeenCalled();
   });
 
+  it("blocks video prompts when the provider transport cannot carry video", async () => {
+    const sessionFile = path.join(tempDir, "kimi-coding-video.jsonl");
+    const sessionPrompt = vi.fn();
+    const kimiCodingModel = {
+      id: "kimi-for-coding",
+      provider: "kimi-coding",
+      api: "anthropic-messages",
+      input: ["text", "image"],
+      compat: { hanaVideoInput: true },
+    };
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      sessionMemoryEnabled: true,
+      memoryMasterEnabled: true,
+      config: { locale: "zh-CN" },
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "BASE",
+      tools: [],
+    };
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        sessionManager: { getSessionFile: () => sessionFile },
+        subscribe: vi.fn(() => vi.fn()),
+        setActiveToolsByName: vi.fn(),
+        prompt: sessionPrompt,
+        model: kimiCodingModel,
+      },
+    });
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: kimiCodingModel,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, tempDir, true);
+
+    await expect(coordinator.prompt("看一下", {
+      videos: [{ type: "video", data: "abc", mimeType: "video/mp4" }],
+    })).rejects.toThrow(/current provider does not support direct video input/);
+    expect(sessionPrompt).not.toHaveBeenCalled();
+  });
+
   it("fresh session freezes the effective memory state into meta for cache safety", async () => {
     const sessionFile = path.join(tempDir, "frozen-memory.jsonl");
     let sessionMemoryEnabled = true;

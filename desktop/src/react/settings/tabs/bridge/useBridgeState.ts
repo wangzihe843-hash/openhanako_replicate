@@ -1,7 +1,7 @@
 /**
  * Bridge state management hook — loads status, saves config, tests platforms.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '../../store';
 import { hanaFetch } from '../../api';
 import { loadSettingsConfig } from '../../actions';
@@ -37,14 +37,16 @@ export interface BridgeStatus {
 export type BridgePlatform = 'telegram' | 'feishu' | 'whatsapp' | 'qq' | 'wechat';
 
 export function useBridgeState() {
-  const store = useSettingsStore();
-  const { showToast } = store;
+  // Atomic selectors: only re-render when these specific fields change
+  const showToast = useSettingsStore(s => s.showToast);
+  const currentAgentId = useSettingsStore(s => s.currentAgentId);
+
   const [status, setStatus] = useState<BridgeStatus | null>(null);
   const [testingPlatform, setTestingPlatform] = useState<BridgePlatform | null>(null);
 
   // Selected agent for bridge config (independent of Agent tab selection)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
-    store.currentAgentId
+    currentAgentId
   );
   const selectedAgentIdRef = useRef(selectedAgentId);
   selectedAgentIdRef.current = selectedAgentId;
@@ -52,8 +54,8 @@ export function useBridgeState() {
   // Sync initial value when store becomes ready (only if null)
   useEffect(() => {
     if (selectedAgentId) return;
-    if (store.currentAgentId) setSelectedAgentId(store.currentAgentId);
-  }, [store.currentAgentId]);
+    if (currentAgentId) setSelectedAgentId(currentAgentId);
+  }, [currentAgentId]);
 
   // Public Ishiki — keyed to selectedAgentId
   const [publicIshiki, setPublicIshiki] = useState('');
@@ -93,9 +95,10 @@ export function useBridgeState() {
     }
   };
 
-  const loadStatus = async (signal?: AbortSignal) => {
+  const loadStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const query = selectedAgentId ? `?agentId=${encodeURIComponent(selectedAgentId)}` : '';
+      const agentId = selectedAgentIdRef.current;
+      const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
       const res = await hanaFetch(`/api/bridge/status${query}`, signal ? { signal } : undefined);
       const data = await res.json();
       if (signal?.aborted) return;
@@ -109,7 +112,7 @@ export function useBridgeState() {
       if ((err as Error)?.name === 'AbortError') return;
       console.error('[bridge] load status failed:', err);
     }
-  };
+  }, []); // stable: reads agentId from ref, all setters are stable
 
   // Auto-fetch when selectedAgentId changes (abort stale on switch)
   useEffect(() => {
@@ -117,13 +120,13 @@ export function useBridgeState() {
     const ac = new AbortController();
     loadStatus(ac.signal);
     return () => ac.abort();
-  }, [selectedAgentId]);
+  }, [selectedAgentId, loadStatus]);
 
   useEffect(() => {
     const handler = () => loadStatus();
     window.addEventListener('hana-bridge-reload', handler);
     return () => window.removeEventListener('hana-bridge-reload', handler);
-  }, [selectedAgentId]);
+  }, [loadStatus]);
 
   const saveBridgeConfig = async (plat: string, credentials: Record<string, string> | null, enabled?: boolean) => {
     // Snapshot agentId at call time to avoid stale closure

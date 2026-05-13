@@ -24,15 +24,20 @@
  */
 
 import { getReasoningProfile } from "../../shared/model-capabilities.js";
+import {
+  ensureAssistantContentForToolCalls,
+  ensureReasoningContentForToolCalls as ensureReasoningContentForToolCallsBase,
+  extractReasoningFromContent,
+  stripReasoningContent,
+} from "./reasoning-content-replay.js";
+
+export { ensureAssistantContentForToolCalls, extractReasoningFromContent };
 
 const DEEPSEEK_HIGH_THINKING_BUDGET = 32768;
 const DEEPSEEK_HIGH_SAFE_MAX_TOKENS = 65536;
 const DEEPSEEK_MAX_SAFE_MAX_TOKENS = 131072;
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
-const MISSING_TOOL_REASONING_ERROR =
-  "DeepSeek thinking mode reasoning_content is missing for tool_calls history. "
-  + "Compact this session or start a new session before continuing with DeepSeek thinking mode.";
 const MISSING_ANTHROPIC_TOOL_THINKING_ERROR =
   "DeepSeek Anthropic thinking mode history is missing non-empty thinking content for a tool call. "
   + "Compact this session or start a new session before continuing with DeepSeek Anthropic thinking mode.";
@@ -44,29 +49,6 @@ function lower(value) {
 function positiveInteger(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
-}
-
-function hasToolCalls(message) {
-  return Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
-}
-
-function isNonEmptyString(value) {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function hasStringReasoningContent(message) {
-  return hasOwn(message, "reasoning_content") && typeof message.reasoning_content === "string";
-}
-
-function normalizeAssistantContent(content) {
-  if (typeof content === "string") return content;
-  if (content === null || content === undefined) return "";
-  if (!Array.isArray(content)) return "";
-
-  return content
-    .filter((block) => block && block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text)
-    .join("");
 }
 
 export function matches(model) {
@@ -145,20 +127,6 @@ function normalizeReasoningEffort(payload) {
   }
 }
 
-function stripReasoningContent(messages) {
-  let changed = false;
-  const next = messages.map((message) => {
-    if (!message || typeof message !== "object" || !hasOwn(message, "reasoning_content")) {
-      return message;
-    }
-    changed = true;
-    const copy = { ...message };
-    delete copy.reasoning_content;
-    return copy;
-  });
-  return changed ? next : messages;
-}
-
 function disableThinking(payload) {
   delete payload.reasoning_effort;
   payload.thinking = { type: "disabled" };
@@ -201,50 +169,6 @@ function ensureThinkingTokenBudget(payload, model) {
 }
 
 /**
- * 从 message.content 恢复 DeepSeek 思考链原文。
- *
- * 处理两种历史路径：
- *   1. 同模型保留路径：pi-ai 流式累积时把 delta.reasoning_content 累加到
- *      content[i] = { type: "thinking", thinking: "...", thinkingSignature: "reasoning_content" }
- *   2. 跨模型降级路径：pi-ai transform-messages 跨模型保护把 thinking block
- *      降级为 { type: "text", text: <思考原文> }，convertMessages 随后会把
- *      text block 拼成出站 assistant.content 字符串。若调用方在 convertMessages
- *      之前测试本函数，也可能看到 content 数组。
- *      由于 DeepSeek 流式累积 reasoning_content 一定先于 content 到达
- *      （参见 openai-completions.js:115-172 的 currentBlock 切换逻辑），
- *      原始 content 首位是 thinking → 降级后的首段 text / 字符串即思考原文。
- *      若未来 SDK 改变累积顺序，此假设需重新评估（README 升级 SDK 检查清单已点名本函数）。
- *
- * 找不到原文时返回空字符串（调用方决定是否 fail closed）。
- *
- * 注：导出仅供单元测试使用，运行时只在本文件内部被 ensureReasoningContentForToolCalls 调用。
- *
- * @param {object|null|undefined} message
- * @returns {string}
- */
-export function extractReasoningFromContent(message) {
-  if (!message || typeof message !== "object") return "";
-  const content = message.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content) || content.length === 0) return "";
-
-  // 路径 1：同模型，content 里有 thinking block
-  for (const block of content) {
-    if (block && block.type === "thinking" && typeof block.thinking === "string") {
-      return block.thinking;
-    }
-  }
-
-  // 路径 2：跨模型降级，第一个 text block 即原文
-  const first = content[0];
-  if (first && first.type === "text" && typeof first.text === "string") {
-    return first.text;
-  }
-
-  return "";
-}
-
-/**
  * 恢复/校验：保证所有「带 tool_calls 的 assistant message」都有真实 reasoning_content 字段。
  *
  * 三档策略：
@@ -263,60 +187,7 @@ export function extractReasoningFromContent(message) {
  * @returns {Array|any} 原数组或新数组
  */
 export function ensureReasoningContentForToolCalls(messages) {
-  if (!Array.isArray(messages)) return messages;
-
-  let changed = false;
-  const next = messages.map((message) => {
-    if (!message || typeof message !== "object" || message.role !== "assistant") {
-      return message;
-    }
-    if (!hasToolCalls(message)) {
-      return message;
-    }
-    if (hasStringReasoningContent(message)) {
-      return message;
-    }
-    const recovered = extractReasoningFromContent(message);
-    if (!isNonEmptyString(recovered)) {
-      throw new Error(MISSING_TOOL_REASONING_ERROR);
-    }
-    changed = true;
-    return { ...message, reasoning_content: recovered };
-  });
-
-  return changed ? next : messages;
-}
-
-/**
- * DeepSeek V4 thinking + tool replay 要求 assistant tool-call message 的
- * content 字段非 null。Pi SDK/OpenAI 格式常用 content:null 表示“只有工具调用”，
- * 这里在 DeepSeek 专用路径显式收窄成字符串，避免把供应商契约漏到上层。
- *
- * @param {Array|any} messages payload.messages
- * @returns {Array|any} 原数组或新数组
- */
-export function ensureAssistantContentForToolCalls(messages) {
-  if (!Array.isArray(messages)) return messages;
-
-  let changed = false;
-  const next = messages.map((message) => {
-    if (!message || typeof message !== "object" || message.role !== "assistant") {
-      return message;
-    }
-    if (!hasToolCalls(message)) {
-      return message;
-    }
-
-    const content = normalizeAssistantContent(message.content);
-    if (message.content === content) {
-      return message;
-    }
-
-    changed = true;
-    return { ...message, content };
-  });
-
-  return changed ? next : messages;
+  return ensureReasoningContentForToolCallsBase(messages, { providerLabel: "DeepSeek" });
 }
 
 function hasAgentToolCall(content) {

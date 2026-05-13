@@ -29,6 +29,11 @@ vi.mock("../lib/memory/deep-memory.js", () => ({
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 // ── Import under test ──

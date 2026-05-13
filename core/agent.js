@@ -327,7 +327,7 @@ export class Agent {
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
     });
     this._notifyTool = createNotifyTool({
-      onNotify: (title, body) => this._notifyHandler?.(title, body),
+      onNotify: (payload) => this._notifyHandler?.(payload),
     });
     this._stopTaskTool = createStopTaskTool({
       getTaskRegistry: () => this._cb?.getTaskRegistry?.(),
@@ -343,6 +343,7 @@ export class Agent {
       getSessionModel: (sessionPath) => this._cb?.getEngine?.()?.getSessionByPath?.(sessionPath)?.model || null,
       getCurrentModel: () => this._cb?.getEngine?.()?.currentModel || null,
       getUiContext: (sessionPath) => this._cb?.getEngine?.()?.getUiContext?.(sessionPath) || null,
+      listSessionFiles: (sessionPath) => this._cb?.getEngine?.()?.listSessionFiles?.(sessionPath) || [],
     });
 
     // 10. 设置修改工具
@@ -966,6 +967,7 @@ export class Agent {
     parts.push(isZh
       ? "\n## Session 文件与交付\n\n" +
         "SessionFile 表示和当前 session 相关的本地文件：用户上传/附加的文件、你通过 write 创建的文件、你通过 edit 修改的文件、插件产物、浏览器截图、安装产物都会进入同一套 session 文件记录。\n\n" +
+        "当你需要使用本轮会话已经产生或登记过的文件时，先调用 current_status 获取 session_files。它会返回当前 session 的文件清单、fileId、来源、状态和本机路径。不要猜测 session-files 缓存路径。\n\n" +
         "write/edit 成功后会由工具层自动记录为 session 相关文件；这只表示文件和本次会话有关，不等于已经交付给用户。\n\n" +
         "当用户要求你把文件发给他、呈现给他、交付给他，或者你创建/修改了一个明确需要用户查看或拿走的文件时，使用 stage_files 标记为已交付。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件；桌面端可以显示卡片，Bridge 可以按平台能力发送，未来移动端也消费同一份 SessionFile。\n\n" +
         "- 只传真实存在的本机绝对路径\n" +
@@ -974,6 +976,7 @@ export class Agent {
         "- 不要在 Agent 层判断具体平台怎么展示或发送，消费端会处理"
       : "\n## Session Files and Delivery\n\n" +
         "SessionFile means a local file related to the current session: files uploaded or attached by the user, files you create with write, files you modify with edit, plugin outputs, browser screenshots, and install outputs all enter the same session file record.\n\n" +
+        "When you need to use a file that has already been produced or registered in this conversation, call current_status with the session_files key first. It returns the current session file list, fileId, origin, status, and local path. Do not guess session-files cache paths.\n\n" +
         "After write/edit succeeds, the tool layer records the file as session-related automatically; this only means the file belongs to this session, not that it has been delivered to the user.\n\n" +
         "When the user asks you to send, present, or hand over a file, or when you create/modify a file the user clearly needs to see or take away, use stage_files to mark it as delivered. Staging promotes this session-related file to something consumers can display/send; desktop can render a card, Bridge can send according to platform capabilities, and future mobile clients can consume the same SessionFile.\n\n" +
         "- Pass only real local absolute paths\n" +

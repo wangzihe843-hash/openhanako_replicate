@@ -149,6 +149,9 @@ export interface SessionModel {
   provider: string;
   /** 输入模态数组（Pi SDK 标准字段），镜像后端 /models, /models/switch 响应。 */
   input?: ("text" | "image" | "video")[];
+  video?: boolean;
+  videoTransport?: string | null;
+  videoTransportSupported?: boolean;
   reasoning?: boolean;
   xhigh?: boolean;
   contextWindow?: number;

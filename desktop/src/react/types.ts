@@ -90,6 +90,29 @@ export interface ChannelMessage {
   body: string;
 }
 
+export interface AgentPhoneActivity {
+  conversationId: string;
+  conversationType: 'channel' | 'dm';
+  agentId: string;
+  state: 'idle' | 'viewed' | 'triaging' | 'no_reply' | 'replying' | 'using_tool' | 'waiting_permission' | 'compacting' | 'error' | string;
+  summary: string;
+  timestamp: string;
+  details?: Record<string, unknown> | null;
+}
+
+export type ChannelAgentActivities = Record<string, Record<string, AgentPhoneActivity[]>>;
+export type AgentPhoneToolMode = 'read_only' | 'write';
+
+export interface AgentPhoneSettings {
+  mode: AgentPhoneToolMode;
+  replyMinChars: number | null;
+  replyMaxChars: number | null;
+  reminderIntervalMinutes: number;
+  guardLimit: number;
+  modelOverrideEnabled: boolean;
+  modelOverrideModel: { id: string; provider: string } | null;
+}
+
 export interface Activity {
   id: string;
   type: string;

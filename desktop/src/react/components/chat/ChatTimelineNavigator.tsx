@@ -157,8 +157,6 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
       <div
         className={styles.timelineCard}
         style={cardVars}
-        onMouseEnter={() => setCardOpen(true)}
-        onMouseLeave={() => setCardOpen(false)}
       >
         <div className={styles.timelineList} ref={listRef}>
           {renderedAnchors.map((anchor) => {
@@ -175,11 +173,14 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
                 aria-label={`跳转到 ${anchor.label}`}
                 title={anchor.label}
                 onFocus={() => setCardOpen(true)}
-                onMouseEnter={() => setCardOpen(true)}
                 onClick={() => jumpTo(anchor)}
               >
                 <span className={styles.timelineLabel}>{anchor.label}</span>
-                <span className={styles.timelineLine} aria-hidden="true" />
+                <span
+                  className={styles.timelineLine}
+                  aria-hidden="true"
+                  onMouseEnter={() => setCardOpen(true)}
+                />
               </button>
             );
           })}

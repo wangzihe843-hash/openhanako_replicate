@@ -103,11 +103,95 @@ export interface HanaCommandDefinition<Context = HanaCommandContext> {
   execute?: (ctx: Context) => MaybePromise<unknown>;
 }
 
+export type HanaProviderRuntimeKind = 'http' | 'oauth-http' | 'local-cli' | 'browser-cli' | 'plugin';
+export type HanaMediaCapabilityName = 'imageGeneration' | 'videoGeneration' | 'speechGeneration' | string;
+export type HanaMediaOutputKind = 'file_glob' | 'json_stdout' | 'url_stdout';
+export type HanaCliBindingSource = 'prompt' | 'modelId' | 'inputFile' | 'outputDir' | 'size' | 'duration';
+
+export type HanaCliArgBinding =
+  | { literal: string }
+  | { option: string; from: HanaCliBindingSource };
+
+export interface HanaCliOutputContract {
+  kind: HanaMediaOutputKind;
+  directory?: HanaCliBindingSource | string;
+  pattern?: string;
+  [key: string]: unknown;
+}
+
+export interface HanaCliCommandSpec {
+  executable: string;
+  args: HanaCliArgBinding[];
+  timeoutMs: number;
+  output: HanaCliOutputContract;
+}
+
+export interface HanaProviderRuntime {
+  kind: HanaProviderRuntimeKind;
+  protocolId?: string;
+  command?: HanaCliCommandSpec;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderChatCapability {
+  projection?: 'models-json' | 'sdk-auth-alias' | 'none' | string;
+  runtimeProviderId?: string;
+  displayProviderId?: string;
+  allowListSource?: string;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderMediaModel {
+  id: string;
+  displayName?: string;
+  protocolId: string;
+  inputs?: string[];
+  outputs?: string[];
+  supportsEdit?: boolean;
+  aliases?: string[];
+  credentialLaneId?: string;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderCredentialLane {
+  id: string;
+  kind?: string;
+  label?: string;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderMediaCapability {
+  defaultModelId?: string;
+  models: HanaProviderMediaModel[];
+  credentialLanes?: HanaProviderCredentialLane[];
+  [key: string]: unknown;
+}
+
+export interface HanaProviderCapabilities {
+  chat?: HanaProviderChatCapability;
+  media?: Partial<Record<HanaMediaCapabilityName, HanaProviderMediaCapability>>;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderSource {
+  kind: 'builtin' | 'plugin' | 'user' | string;
+  pluginId?: string;
+  [key: string]: unknown;
+}
+
 export interface HanaProviderDefinition {
   id: string;
+  displayName?: string;
   name?: string;
+  authType?: 'api-key' | 'oauth' | 'none' | string;
+  authJsonKey?: string;
+  defaultBaseUrl?: string;
+  defaultApi?: string;
   api?: string;
   models?: unknown[];
+  runtime?: HanaProviderRuntime;
+  capabilities?: HanaProviderCapabilities;
+  source?: HanaProviderSource;
   [key: string]: unknown;
 }
 

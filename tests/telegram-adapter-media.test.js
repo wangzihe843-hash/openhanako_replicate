@@ -90,9 +90,11 @@ describe("createTelegramAdapter media delivery", () => {
     });
 
     expect(bot.sendMessage).toHaveBeenNthCalledWith(1, "chat-1", "hello", {
+      parse_mode: "HTML",
       message_thread_id: 67890,
     });
     expect(bot.sendMessage).toHaveBeenNthCalledWith(2, "chat-1", "block", {
+      parse_mode: "HTML",
       message_thread_id: 67890,
     });
     expect(bot.sendPhoto).toHaveBeenNthCalledWith(1, "chat-1", "https://example.com/image.png", {
@@ -101,6 +103,27 @@ describe("createTelegramAdapter media delivery", () => {
     expect(bot.sendPhoto).toHaveBeenNthCalledWith(2, "chat-1", Buffer.from("png"), {
       message_thread_id: 67890,
     }, { filename: "image.png", contentType: "image/png" });
+    adapter.stop();
+  });
+
+  it("renders common Markdown replies as Telegram HTML in the adapter boundary", async () => {
+    const { adapter, bot } = makeAdapter();
+
+    await adapter.sendReply("chat-1", "**bold** and `code`");
+    await adapter.sendBlockReply("chat-1", "- first\n- second");
+
+    expect(bot.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      "chat-1",
+      "<b>bold</b> and <code>code</code>",
+      { parse_mode: "HTML" },
+    );
+    expect(bot.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      "chat-1",
+      "- first\n- second",
+      { parse_mode: "HTML" },
+    );
     adapter.stop();
   });
 

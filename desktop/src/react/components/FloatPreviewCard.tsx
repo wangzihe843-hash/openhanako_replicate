@@ -7,9 +7,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../stores';
-import { hanaUrl } from '../hooks/use-hana-fetch';
 import { createNewSession, switchSession } from '../stores/session-actions';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { saveJianContent } from '../stores/desk-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 
@@ -145,23 +144,16 @@ function SessionListCard({ onAction }: { onAction: () => void }) {
 }
 
 function SessionAvatar({ sess, agents, agentYuan }: { sess: any; agents: any[]; agentYuan: string }) {
-  const [src, setSrc] = useState(() => {
-    if (sess.agentId) {
-      const ag = agents.find((x: any) => x.id === sess.agentId);
-      if (ag?.hasAvatar) return hanaUrl(`/api/agents/${sess.agentId}/avatar?t=${Date.now()}`);
-      return yuanFallbackAvatar(ag?.yuan || agentYuan);
-    }
-    return yuanFallbackAvatar(agentYuan);
+  const info = resolveAgentDisplayInfo({
+    id: sess.agentId || null,
+    agents,
+    fallbackAgentName: sess.agentName || null,
+    fallbackAgentYuan: agentYuan,
   });
   return (
-    <img
+    <AgentAvatar
+      info={info}
       className="float-card-avatar"
-      draggable={false}
-      src={src}
-      onError={() => {
-        const ag = agents.find((x: any) => x.id === sess.agentId);
-        setSrc(yuanFallbackAvatar(ag?.yuan));
-      }}
     />
   );
 }

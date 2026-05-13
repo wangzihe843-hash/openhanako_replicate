@@ -6,9 +6,16 @@ import { safeJson } from "../hono-helpers.js";
 import { t } from "../i18n.js";
 import { modelRefEquals, parseModelRef } from "../../shared/model-ref.js";
 import { lookupKnown } from "../../shared/known-models.js";
-import { modelSupportsVideoInput } from "../../shared/model-capabilities.js";
+import {
+  modelSupportsDirectVideoInput,
+  modelSupportsVideoInput,
+  resolveModelVideoInputTransport,
+} from "../../shared/model-capabilities.js";
 import { callText } from "../../core/llm-client.js";
 import { modelSupportsXhigh } from "../../core/session-thinking-level.js";
+
+const HEALTH_CHECK_PROMPT = "Reply exactly OK.";
+const HEALTH_CHECK_MAX_TOKENS = 128;
 
 /** 查询模型显示名：overrides > SDK name > known-models > id */
 function resolveModelName(id, sdkName, overrides, provider) {
@@ -33,6 +40,25 @@ function parseHealthModelRef(body) {
   return { id: parsed.id, provider };
 }
 
+function serializeModelInfo(model, { current = null, overrides = null } = {}) {
+  if (!model) return null;
+  const videoTransport = resolveModelVideoInputTransport(model);
+  return {
+    id: model.id,
+    name: resolveModelName(model.id, model.name, overrides, model.provider),
+    provider: model.provider,
+    ...(current !== null ? { isCurrent: modelRefEquals(model, current) } : {}),
+    input: Array.isArray(model.input) ? model.input : ["text"],
+    video: modelSupportsVideoInput(model),
+    videoTransport,
+    videoTransportSupported: modelSupportsDirectVideoInput(model),
+    reasoning: model.reasoning,
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    ...(modelSupportsXhigh(model) ? { xhigh: true } : {}),
+  };
+}
+
 export function createModelsRoute(engine) {
   const route = new Hono();
 
@@ -42,18 +68,7 @@ export function createModelsRoute(engine) {
       const overrides = engine.config?.models?.overrides;
       const cur = engine.currentModel;
       const activeModel = engine.activeSessionModel;
-      const models = engine.availableModels.map(m => ({
-        id: m.id,
-        name: resolveModelName(m.id, m.name, overrides, m.provider),
-        provider: m.provider,
-        isCurrent: modelRefEquals(m, cur),
-        input: Array.isArray(m.input) ? m.input : ["text"],
-        video: modelSupportsVideoInput(m),
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        ...(modelSupportsXhigh(m) ? { xhigh: true } : {}),
-      }));
+      const models = engine.availableModels.map(m => serializeModelInfo(m, { current: cur, overrides }));
       return c.json({
         models,
         current: cur?.id || null,
@@ -85,14 +100,19 @@ export function createModelsRoute(engine) {
         apiKey: resolved.api_key,
         baseUrl: resolved.base_url,
         model: resolved.model,
-        messages: [{ role: "user", content: "Reply OK." }],
-        maxTokens: 8,
+        messages: [{ role: "user", content: HEALTH_CHECK_PROMPT }],
+        maxTokens: HEALTH_CHECK_MAX_TOKENS,
         timeoutMs: 15_000,
       });
 
       return c.json({ ok: true, status: 200, provider: resolved.provider });
     } catch (err) {
-      return c.json({ ok: false, error: err.message });
+      return c.json({
+        ok: false,
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+        ...(err.context?.reason ? { reason: err.context.reason } : {}),
+      });
     }
   });
 
@@ -133,16 +153,7 @@ export function createModelsRoute(engine) {
       const session = engine.getSessionByPath(sessionPath);
       const sessionModel = session?.model;
       const overrides = engine.config?.models?.overrides;
-      const modelInfo = sessionModel ? {
-        id: sessionModel.id,
-        name: resolveModelName(sessionModel.id, sessionModel.name, overrides, sessionModel.provider),
-        provider: sessionModel.provider,
-        input: Array.isArray(sessionModel.input) ? sessionModel.input : ["text"],
-        video: modelSupportsVideoInput(sessionModel),
-        reasoning: sessionModel.reasoning,
-        contextWindow: sessionModel.contextWindow,
-        ...(modelSupportsXhigh(sessionModel) ? { xhigh: true } : {}),
-      } : null;
+      const modelInfo = serializeModelInfo(sessionModel, { overrides });
 
       return c.json({ ok: true, model: modelInfo, adaptations: result.adaptations, thinkingLevel: result.thinkingLevel });
     } catch (err) {

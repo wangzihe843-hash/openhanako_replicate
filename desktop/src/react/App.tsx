@@ -10,24 +10,14 @@ import { useStore } from './stores';
 import type { ActivePanel } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { RegionalErrorBoundary } from './components/RegionalErrorBoundary';
-import { ActivityPanel } from './components/ActivityPanel';
-import { AutomationPanel } from './components/AutomationPanel';
-import { BridgePanel } from './components/BridgePanel';
 
 const SkillViewerOverlay = lazy(() => import('./components/SkillViewerOverlay').then(m => ({ default: m.SkillViewerOverlay })));
-import { PreviewPanel } from './components/PreviewPanel';
-import { RightWorkspacePanel } from './components/right-workspace/RightWorkspacePanel';
-import { PluginPageView } from './components/plugin/PluginPageView';
-import { InputArea } from './components/InputArea';
 import { SessionList } from './components/SessionList';
 import { ArchivedChatsButton } from './components/ArchivedChatsButton';
-import { WelcomeScreen } from './components/WelcomeScreen';
-import { ChatArea } from './components/chat/ChatArea';
-import { ChannelsPanel, ChannelMessages, ChannelMembers, ChannelInput, ChannelReadonly } from './components/ChannelsPanel';
+import { ChannelsPanel } from './components/ChannelsPanel';
 import { ChannelTabBar } from './components/channels/ChannelTabBar';
 import { WidgetButtons } from './components/plugin/WidgetButtons';
 import { ChannelListSidebar } from './components/channels/ChannelList';
-import { ChannelHeader } from './components/channels/ChannelHeader';
 import { ChannelCreateOverlay } from './components/channels/ChannelCreateOverlay';
 import { SidebarLayout, toggleSidebar } from './components/SidebarLayout';
 import { FloatPreviewCard, useFloatCard } from './components/FloatPreviewCard';
@@ -44,12 +34,10 @@ import { SelectionFloatingInput } from './components/floating-input/SelectionFlo
 import { SettingsModalShell } from './components/SettingsModalShell';
 import { initTheme, initDragPrevention } from './bootstrap';
 import { initApp } from './app-init';
-import { MainContent } from './MainContent';
 import { XingyeShell } from './xingye/XingyeShell';
-import { hanaUrl } from './hooks/use-hana-fetch';
-import { yuanFallbackAvatar } from './utils/agent-helpers';
 import { useAnyBrowserRunning } from './stores/browser-slice';
 import { openSettingsModal } from './stores/settings-modal-actions';
+import { AppPages } from './components/app/AppPages';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
 
@@ -65,15 +53,6 @@ function togglePanel(panel: ActivePanel) {
 }
 
 // ── 内联子组件 ──
-
-function WelcomeContainer() {
-  const visible = useStore(s => s.welcomeVisible);
-  return (
-    <div className={`welcome${visible ? '' : ' hidden'}`} id="welcome">
-      <WelcomeScreen />
-    </div>
-  );
-}
 
 function AutomationBadge() {
   const count = useStore(s => s.automationCount);
@@ -97,79 +76,6 @@ function ConnectionStatus() {
   );
 }
 
-function ChannelInputArea() {
-  const currentChannel = useStore(s => s.currentChannel);
-  const isDM = useStore(s => s.channelIsDM);
-
-  if (!currentChannel) return null;
-
-  if (isDM) {
-    return (
-      <div className="channel-readonly-notice">
-        <ChannelReadonly />
-      </div>
-    );
-  }
-
-  return (
-    <div className="channel-input-area">
-      <ChannelInput />
-    </div>
-  );
-}
-
-function JianChannelInfo() {
-  const channelInfoName = useStore(s => s.channelInfoName);
-  const isDM = useStore(s => s.channelIsDM);
-  const channelMembers = useStore(s => s.channelMembers);
-  const agents = useStore(s => s.agents);
-  const currentAgentId = useStore(s => s.currentAgentId);
-
-  if (isDM) {
-    const peerId = channelMembers[0] || '';
-    const mainAgent = agents.find(a => a.id === currentAgentId);
-    const peerAgent = agents.find(a => a.id === peerId || a.name === peerId);
-    const dmAgents = [mainAgent, peerAgent].filter(Boolean);
-    return (
-      <div className="jian-card">
-        <div className="channel-info-section">
-          <div className="channel-info-label">{t('channel.dmLabel')}</div>
-          <div className="channel-members-list">
-            {dmAgents.map(a => (
-              <div key={a!.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                <img
-                  src={a!.hasAvatar ? hanaUrl(`/api/agents/${a!.id}/avatar?t=${Date.now()}`) : yuanFallbackAvatar(a!.yuan)}
-                  style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }}
-                  onError={e => {
-                    (e.target as HTMLImageElement).onerror = null;
-                    (e.target as HTMLImageElement).src = yuanFallbackAvatar(a!.yuan);
-                  }}
-                />
-                <span>{a!.name || a!.id}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="jian-card">
-      <div className="channel-info-section">
-        <div className="channel-info-label">{t('channel.info')}</div>
-        <div className="channel-info-name">{channelInfoName}</div>
-      </div>
-      <div className="channel-info-section">
-        <div className="channel-info-label">{t('channel.members')}</div>
-        <div className="channel-members-list">
-          <ChannelMembers />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── App 根组件 ──
 
 function App() {
@@ -181,12 +87,8 @@ function App() {
   const jianOpen = useStore(s => s.jianOpen);
   const currentTab = useStore(s => s.currentTab);
   const browserRunning = useAnyBrowserRunning();
-  const welcomeVisible = useStore(s => s.welcomeVisible);
-  const currentSessionPath = useStore(s => s.currentSessionPath);
   const currentAgentId = useStore(s => s.currentAgentId);
-  const currentChannel = useStore(s => s.currentChannel);
   const isPluginTab = typeof currentTab === 'string' && currentTab.startsWith('plugin:');
-  const hasPanels = !welcomeVisible && !!currentSessionPath;
   const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
 
   useEffect(() => {
@@ -239,7 +141,7 @@ function App() {
           <button
               className={`tb-toggle tb-toggle-right${jianOpen ? ' active' : ''}`}
               id="tbToggleRight"
-              title={currentTab === 'channels' ? t('channel.info') : t('sidebar.jian')}
+              title={t('sidebar.jian')}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => { hideFloat(); toggleJianSidebar(); }}
               onMouseEnter={(e) => showFloat('right', e.currentTarget)}
@@ -335,73 +237,13 @@ function App() {
           </div>
           <div className="resize-handle resize-handle-right" id="sidebarResizeHandle"></div>
         </aside>
-
-        {/* Main content */}
-        <MainContent>
+        <RegionalErrorBoundary region="app-pages" resetKeys={[currentTab]}>
           {xingyeOpen ? (
             <XingyeShell onExit={() => setXingyeOpen(false)} />
           ) : (
-            <>
-              <div className={`chat-area${currentTab === 'chat' ? '' : ' hidden'}${hasPanels ? ' has-panels' : ''}`}>
-                <WelcomeContainer />
-                <RegionalErrorBoundary region="chat" resetKeys={[currentSessionPath]}>
-                  <ChatArea />
-                </RegionalErrorBoundary>
-              </div>
-
-              <div className={`input-area${currentTab === 'chat' ? '' : ' hidden'}`}>
-                <RegionalErrorBoundary region="input" resetKeys={[currentSessionPath]}>
-                  <InputArea key={currentSessionPath || '__new'} cardRef={inputCardRef} />
-                </RegionalErrorBoundary>
-              </div>
-
-              <div className={`channel-view${currentTab === 'channels' ? ' active' : ''}`}>
-                {currentChannel ? (
-                  <>
-                    <ChannelHeader />
-                    <div className="channel-messages">
-                      <ChannelMessages />
-                    </div>
-                    <ChannelInputArea />
-                  </>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    {t('channel.selectHint')}
-                  </div>
-                )}
-              </div>
-
-              {isPluginTab && (
-                <div style={{ flex: 1, display: 'flex' }}>
-                  <PluginPageView pluginId={currentTab.slice(7)} />
-                </div>
-              )}
-
-              {/* Floating panels render into main-content */}
-              <ActivityPanel />
-              <AutomationPanel />
-              <BridgePanel />
-            </>
+            <AppPages inputCardRef={inputCardRef} />
           )}
-        </MainContent>
-
-        <PreviewPanel />
-
-        {/* Right sidebar (Jian) */}
-        <aside className={`jian-sidebar${jianOpen ? '' : ' collapsed'}`} id="jianSidebar">
-          <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
-          <div className="jian-sidebar-inner">
-            <div className={`jian-chat-content${currentTab === 'chat' || isPluginTab ? '' : ' hidden'}`}>
-              <RegionalErrorBoundary region="right-workspace">
-                <RightWorkspacePanel />
-              </RegionalErrorBoundary>
-            </div>
-
-            <div className={`jian-channel-content${currentTab === 'channels' ? '' : ' hidden'}`}>
-              <JianChannelInfo />
-            </div>
-          </div>
-        </aside>
+        </RegionalErrorBoundary>
       </div>
 
       {/* Connection status */}

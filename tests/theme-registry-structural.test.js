@@ -112,4 +112,30 @@ describe('theme-registry structural constraint', () => {
       );
     }
   });
+
+  it('renderer TypeScript 不直接导入 CommonJS registry', () => {
+    const SCAN_ROOTS = [
+      path.join(ROOT, 'desktop/src/shared'),
+      path.join(ROOT, 'desktop/src/react'),
+    ].filter((d) => fs.existsSync(d));
+
+    const files = SCAN_ROOTS.flatMap((d) => walk(d));
+    const violations = [];
+    for (const file of files) {
+      if (!['.ts', '.tsx'].includes(path.extname(file))) continue;
+      const rel = relPath(file);
+      if (rel.includes('/__tests__/') || rel.endsWith('.test.ts') || rel.endsWith('.test.tsx')) continue;
+      const content = fs.readFileSync(file, 'utf8');
+      if (/from\s+['"][^'"]+\.cjs['"]/.test(content) || /import\(\s*['"][^'"]+\.cjs['"]\s*\)/.test(content)) {
+        violations.push(`${rel}: renderer source imports a .cjs module`);
+      }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        'Renderer source must import the ESM theme registry adapter instead of .cjs:\n' +
+        violations.map((v) => '  ' + v).join('\n'),
+      );
+    }
+  });
 });

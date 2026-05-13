@@ -37,7 +37,7 @@ export function AddProviderOverlay({ onDone, onCancel }: { onDone: () => void; o
 }
 
 function AddProviderForm({ onDone }: { onDone: () => void }) {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [apiKey, setApiKey] = useState('');

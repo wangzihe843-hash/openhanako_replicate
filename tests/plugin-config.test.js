@@ -86,5 +86,29 @@ describe("plugin config schema", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
-});
 
+  it("removes optional keys when a patch value is undefined", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-config-"));
+    try {
+      const schema = normalizePluginConfigSchema("image-gen", {
+        properties: {
+          defaultImageModel: { type: "object" },
+          providerDefaults: { type: "object" },
+        },
+      });
+      const store = createPluginConfigStore({ dataDir: dir, schema });
+
+      store.set("defaultImageModel", { id: "gpt-image-1", provider: "openai" });
+      store.setMany({
+        defaultImageModel: undefined,
+        providerDefaults: { openai: { size: "1024x1024" } },
+      });
+
+      expect(store.getAll()).toEqual({
+        providerDefaults: { openai: { size: "1024x1024" } },
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

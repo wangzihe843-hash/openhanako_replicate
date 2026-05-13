@@ -57,6 +57,7 @@
     /* sidebar 宽度 */
     --sidebar-width: 240px;
     --jian-sidebar-width: 260px;
+    --channel-inspector-width: 280px;
     --preview-panel-width: 580px;
     --jian-columns: 1;
 
@@ -2212,7 +2213,8 @@ body.resizing * {
 body.resizing .sidebar,
 body.resizing .sidebar-inner,
 body.resizing .jian-sidebar,
-body.resizing .jian-sidebar-inner {
+body.resizing .jian-sidebar-inner,
+body.resizing .channel-inspector-rail {
     transition: none !important;
 }
 
@@ -2559,7 +2561,12 @@ body.resizing .jian-sidebar-inner {
    频道 — 主区域 IM 视图
    ======================================== */
 .channel-view {
-    display: none;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .channel-view.active {
@@ -2569,6 +2576,40 @@ body.resizing .jian-sidebar-inner {
     min-width: 0;
     min-height: 0;       /* 允许在父 flex 中被约束高度 */
     overflow: hidden;     /* 约束子元素，让 messages 的 overflow-y: auto 生效 */
+}
+
+.channel-page {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+}
+
+.channel-select-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.channel-inspector-rail {
+    position: relative;
+    width: var(--channel-inspector-width);
+    min-width: var(--channel-inspector-width);
+    flex-shrink: 0;
+    padding: 50px 7px 7px 8px;
+    overflow-y: auto;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.045);
+}
+
+.plugin-page-shell {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
 }
 
 /* ── IM 风格消息 ── */
@@ -2620,6 +2661,11 @@ body.resizing .jian-sidebar-inner {
     min-height: 0;
 }
 
+.jian-channel-content {
+    overflow-y: auto;
+    padding-bottom: var(--space-sm);
+}
+
 .jian-chat-content.hidden,
 .jian-channel-content.hidden {
     display: none;
@@ -2627,6 +2673,13 @@ body.resizing .jian-sidebar-inner {
 
 .channel-info-section {
     padding: var(--space-sm) var(--space-md) var(--space-md);
+}
+
+.channel-info-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-height: 0;
 }
 
 .channel-info-label {

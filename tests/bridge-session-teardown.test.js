@@ -134,6 +134,72 @@ describe("BridgeSessionManager teardown", () => {
     expect(manager.activeSessions.has("bridge-k1")).toBe(false);
   });
 
+  it("emits normal bridge turns through the desktop chat stream contract", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "stream.jsonl");
+    const deps = makeDeps(agent);
+    deps.emitEvent = vi.fn();
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const subscribers = [];
+    const session = {
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {
+        for (const fn of subscribers) {
+          fn({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hello" } });
+          fn({ type: "tool_execution_start", toolName: "read", args: { file_path: "/tmp/a.txt" } });
+          fn({ type: "tool_execution_end", toolName: "read", isError: false, result: { details: {} } });
+        }
+      }),
+      subscribe: vi.fn((fn) => {
+        subscribers.push(fn);
+        return vi.fn();
+      }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const reply = await manager.executeExternalMessage("model prompt", "tg_dm_owner@agent-a", null, {
+      agentId: "agent-a",
+      displayMessage: { text: "visible bridge message", source: "bridge" },
+    });
+
+    expect(reply).toBe("Hello");
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      { type: "session_status", isStreaming: true },
+      mgrPath,
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      {
+        type: "session_user_message",
+        message: expect.objectContaining({
+          text: "visible bridge message",
+          source: "bridge",
+          bridgeSessionKey: "tg_dm_owner@agent-a",
+        }),
+      },
+      mgrPath,
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hello" } },
+      mgrPath,
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      { type: "tool_execution_start", toolName: "read", args: { file_path: "/tmp/a.txt" } },
+      mgrPath,
+    );
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      { type: "tool_execution_end", toolName: "read", isError: false, result: { details: {} } },
+      mgrPath,
+    );
+    expect(deps.emitEvent).toHaveBeenLastCalledWith(
+      { type: "session_status", isStreaming: false },
+      mgrPath,
+    );
+  });
+
   it("registers bridge inbound image files after the bridge session path exists", async () => {
     const agent = makeAgent(rootDir);
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s-inbound.jsonl");
@@ -198,6 +264,60 @@ describe("BridgeSessionManager teardown", () => {
     expect(abort).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalled();
     expect(manager.activeSessions.has("bridge-k1")).toBe(false);
+  });
+
+  it("abortSession cancels pre-prompt vision prepare before bridge streaming starts", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "pre-vision.jsonl");
+    let resolvePrepareStarted;
+    const prepareStarted = new Promise((resolve) => { resolvePrepareStarted = resolve; });
+    let prepareSignal;
+    const deps = {
+      ...makeDeps(agent),
+      isVisionAuxiliaryEnabled: () => true,
+      getVisionBridge: () => ({
+        prepare: vi.fn(({ signal }) => {
+          prepareSignal = signal;
+          resolvePrepareStarted();
+          return new Promise((_, reject) => {
+            signal.addEventListener("abort", () => {
+              const err = new Error("This operation was aborted");
+              err.name = "AbortError";
+              err.type = "aborted";
+              reject(err);
+            }, { once: true });
+          });
+        }),
+      }),
+    };
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+    const session = {
+      model: { input: ["text"] },
+      isStreaming: false,
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+      extensionRunner: {
+        hasHandlers: vi.fn(() => false),
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const task = manager.executeExternalMessage("hello", "bridge-pre", null, {
+      agentId: "agent-a",
+      images: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+    });
+    await prepareStarted;
+
+    expect(manager.isSessionStreaming("bridge-pre")).toBe(true);
+    await expect(manager.abortSession("bridge-pre")).resolves.toBe(true);
+    await expect(task).resolves.toBeNull();
+    expect(prepareSignal.aborted).toBe(true);
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.dispose).toHaveBeenCalled();
+    expect(manager.activeSessions.has("bridge-pre")).toBe(false);
   });
 
   it("owner bridge session prompt snapshot uses the same home cwd as execution", async () => {
@@ -475,6 +595,43 @@ describe("BridgeSessionManager teardown", () => {
     ).rejects.toThrow(/agent "missing-agent" not found/);
     expect(sessionManagerCreateMock).not.toHaveBeenCalled();
     expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+  });
+
+  it("recordAssistantMessage creates an owner bridge session when requested", () => {
+    const agent = makeAgent(rootDir);
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    const sessionPath = path.join(agent.sessionDir, "bridge", "owner", "proactive.jsonl");
+    const appendMessage = vi.fn();
+    sessionManagerCreateMock.mockReturnValue({
+      getSessionFile: () => sessionPath,
+      appendMessage,
+    });
+
+    const recorded = manager.recordAssistantMessage(
+      "wx_dm_owner@agent-a",
+      "AI 日报\n\n今天有三条新闻。",
+      {
+        agentId: "agent-a",
+        createIfMissing: true,
+        meta: { userId: "owner", chatId: "owner", name: "Owner" },
+      },
+    );
+
+    expect(recorded).toBe(true);
+    expect(sessionManagerCreateMock).toHaveBeenCalledWith(
+      rootCwd,
+      path.join(agent.sessionDir, "bridge", "owner"),
+    );
+    expect(appendMessage).toHaveBeenCalledWith({
+      role: "assistant",
+      content: [{ type: "text", text: "AI 日报\n\n今天有三条新闻。" }],
+    });
+    expect(manager.readIndex(agent)["wx_dm_owner@agent-a"]).toMatchObject({
+      file: "owner/proactive.jsonl",
+      userId: "owner",
+      chatId: "owner",
+      name: "Owner",
+    });
   });
 
   it("reconcile cleans bridge indexes for every agent, not just focus agent", () => {

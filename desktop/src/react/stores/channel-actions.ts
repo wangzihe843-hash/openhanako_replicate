@@ -9,7 +9,7 @@
 import { useStore } from './index';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { hasServerConnection } from '../services/server-connection';
-import type { Channel, ChannelMessage } from '../types';
+import type { AgentPhoneActivity, AgentPhoneSettings, AgentPhoneToolMode, Channel, ChannelAgentActivities, ChannelMessage } from '../types';
 
 // ══════════════════════════════════════════════════════
 // 加载频道列表
@@ -52,6 +52,173 @@ export async function loadChannels(): Promise<void> {
   } catch (err) {
     console.error('[channels] load failed:', err);
   }
+}
+
+function keyActivities(activities: AgentPhoneActivity[]): Record<string, AgentPhoneActivity[]> {
+  const keyed: Record<string, AgentPhoneActivity[]> = {};
+  for (const activity of activities || []) {
+    if (!activity?.agentId) continue;
+    keyed[activity.agentId] = [activity];
+  }
+  return keyed;
+}
+
+export async function loadConversationAgentActivities(conversationId: string): Promise<void> {
+  const s = useStore.getState();
+  if (!conversationId || !hasServerConnection(s)) return;
+  try {
+    const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/agent-activities`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const activities = keyActivities(data.activities || []);
+    const current = (useStore.getState().channelAgentActivities || {}) as ChannelAgentActivities;
+    useStore.setState({
+      channelAgentActivities: {
+        ...current,
+        [conversationId]: activities,
+      },
+    });
+  } catch (err) {
+    console.error('[channels] load agent activities failed:', err);
+  }
+}
+
+export function upsertConversationAgentActivity(activity: AgentPhoneActivity): void {
+  if (!activity?.conversationId || !activity.agentId) return;
+  const state = useStore.getState();
+  const current = (state.channelAgentActivities || {}) as ChannelAgentActivities;
+  const byAgent = current[activity.conversationId] || {};
+  const history = byAgent[activity.agentId] || [];
+  const nextHistory = [
+    activity,
+    ...history.filter((item: AgentPhoneActivity) =>
+      item.timestamp !== activity.timestamp || item.state !== activity.state || item.summary !== activity.summary),
+  ].slice(0, 20);
+
+  useStore.setState({
+    channelAgentActivities: {
+      ...current,
+      [activity.conversationId]: {
+        ...byAgent,
+        [activity.agentId]: nextHistory,
+      },
+    },
+  });
+}
+
+function normalizeAgentPhoneToolMode(mode: unknown): AgentPhoneToolMode {
+  return mode === 'write' ? 'write' : 'read_only';
+}
+
+function normalizeNullablePositiveInt(value: unknown): number | null {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.floor(num);
+}
+
+function normalizeAgentPhoneSettings(data: any): AgentPhoneSettings {
+  const overrideModel = data?.modelOverrideModel;
+  return {
+    mode: normalizeAgentPhoneToolMode(data?.mode),
+    replyMinChars: normalizeNullablePositiveInt(data?.replyMinChars),
+    replyMaxChars: normalizeNullablePositiveInt(data?.replyMaxChars),
+    reminderIntervalMinutes: normalizeNullablePositiveInt(data?.reminderIntervalMinutes) || 31,
+    guardLimit: normalizeNullablePositiveInt(data?.guardLimit) || 36,
+    modelOverrideEnabled: data?.modelOverrideEnabled === true,
+    modelOverrideModel: overrideModel?.id && overrideModel?.provider
+      ? { id: String(overrideModel.id), provider: String(overrideModel.provider) }
+      : null,
+  };
+}
+
+function applyAgentPhoneSettings(settings: AgentPhoneSettings): void {
+  useStore.setState({
+    channelAgentPhoneToolMode: settings.mode,
+    channelAgentReplyMinChars: settings.replyMinChars,
+    channelAgentReplyMaxChars: settings.replyMaxChars,
+    channelAgentReminderIntervalMinutes: settings.reminderIntervalMinutes,
+    channelAgentGuardLimit: settings.guardLimit,
+    channelAgentModelOverrideEnabled: settings.modelOverrideEnabled,
+    channelAgentModelOverrideModel: settings.modelOverrideModel,
+  });
+}
+
+function applyChannelMembers(channelId: string, members: string[]): void {
+  const state = useStore.getState();
+  const t = typeof window !== 'undefined' && window.t ? window.t : ((key: string) => key);
+  const displayMembers = [state.userName || 'user', ...members];
+  useStore.setState({
+    channelMembers: state.currentChannel === channelId ? members : state.channelMembers,
+    channelHeaderMembersText: state.currentChannel === channelId
+      ? `${displayMembers.length} ${t('channel.membersCount')}`
+      : state.channelHeaderMembersText,
+    channels: state.channels.map((channel: Channel) =>
+      channel.id === channelId ? { ...channel, members } : channel,
+    ),
+  });
+}
+
+export async function loadConversationAgentPhoneToolMode(conversationId: string): Promise<void> {
+  await loadConversationAgentPhoneSettings(conversationId);
+}
+
+export async function loadConversationAgentPhoneSettings(conversationId: string): Promise<void> {
+  const s = useStore.getState();
+  if (!conversationId || !hasServerConnection(s)) return;
+  try {
+    const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/agent-phone-settings`);
+    if (!res.ok) {
+      applyAgentPhoneSettings({
+        mode: 'read_only',
+        replyMinChars: null,
+        replyMaxChars: null,
+        reminderIntervalMinutes: 31,
+        guardLimit: 36,
+        modelOverrideEnabled: false,
+        modelOverrideModel: null,
+      });
+      return;
+    }
+    const data = await res.json();
+    applyAgentPhoneSettings(normalizeAgentPhoneSettings(data));
+  } catch (err) {
+    console.error('[channels] load phone settings failed:', err);
+    applyAgentPhoneSettings({
+      mode: 'read_only',
+      replyMinChars: null,
+      replyMaxChars: null,
+      reminderIntervalMinutes: 31,
+      guardLimit: 36,
+      modelOverrideEnabled: false,
+      modelOverrideModel: null,
+    });
+  }
+}
+
+export async function setConversationAgentPhoneToolMode(mode: AgentPhoneToolMode): Promise<void> {
+  await saveConversationAgentPhoneSettings({ mode });
+}
+
+export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPhoneSettings>): Promise<void> {
+  const s = useStore.getState();
+  const conversationId = s.currentChannel;
+  if (!conversationId || !hasServerConnection(s)) return;
+  const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/agent-phone-settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: patch.mode !== undefined ? normalizeAgentPhoneToolMode(patch.mode) : s.channelAgentPhoneToolMode,
+      replyMinChars: patch.replyMinChars !== undefined ? patch.replyMinChars : s.channelAgentReplyMinChars,
+      replyMaxChars: patch.replyMaxChars !== undefined ? patch.replyMaxChars : s.channelAgentReplyMaxChars,
+      reminderIntervalMinutes: patch.reminderIntervalMinutes !== undefined ? patch.reminderIntervalMinutes : s.channelAgentReminderIntervalMinutes,
+      guardLimit: patch.guardLimit !== undefined ? patch.guardLimit : s.channelAgentGuardLimit,
+      modelOverrideEnabled: patch.modelOverrideEnabled !== undefined ? patch.modelOverrideEnabled : s.channelAgentModelOverrideEnabled,
+      modelOverrideModel: patch.modelOverrideModel !== undefined ? patch.modelOverrideModel : s.channelAgentModelOverrideModel,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  applyAgentPhoneSettings(normalizeAgentPhoneSettings(data));
 }
 
 // ══════════════════════════════════════════════════════
@@ -127,6 +294,10 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
         }
       }
     }
+    loadConversationAgentActivities(channelId).catch((err: unknown) =>
+      console.warn('[channel-actions] load agent activities failed', err));
+    loadConversationAgentPhoneToolMode(channelId).catch((err: unknown) =>
+      console.warn('[channel-actions] load phone tool mode failed', err));
   } catch (err) {
     console.error('[channels] open failed:', err);
   }
@@ -273,6 +444,34 @@ export async function deleteChannel(channelId: string): Promise<void> {
   } catch (err) {
     console.error('[channels] delete failed:', err);
   }
+}
+
+// ══════════════════════════════════════════════════════
+// 频道成员管理
+// ══════════════════════════════════════════════════════
+
+export async function addChannelMember(channelId: string, memberId: string): Promise<void> {
+  const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  applyChannelMembers(channelId, data.members || []);
+}
+
+export async function removeChannelMember(channelId: string, memberId: string): Promise<void> {
+  const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/members/${encodeURIComponent(memberId)}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  applyChannelMembers(channelId, data.members || []);
 }
 
 // ══════════════════════════════════════════════════════

@@ -73,6 +73,14 @@ const migrations = {
   19: migrateLegacyApiKeyAuthEntriesToProviders,
   // Pi SDK 0.70+ 严格限制 model.input，只允许 text/image；Hana 视频能力迁入 compat
   20: migratePiInputSchemaVideoCompat,
+  // 刷新高确定性视频模型能力；补齐已升级用户 models.json 里的 Hana compat
+  21: refreshVideoCapabilityProjection,
+  // 频道 phone 设置显式化：主动提醒默认 31 分钟，模型覆写默认关闭
+  22: migrateChannelPhoneSettingsDefaults,
+  // 删除本轮开发期间加入但已废弃的自由文本回复范围设置
+  23: removeAgentPhoneReplyInstructions,
+  // 频道 phone 轮次 guard limit 显式化，默认按成员数 × 12
+  24: migrateChannelPhoneGuardLimitDefaults,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -1323,6 +1331,19 @@ function migratePiInputSchemaVideoCompat(ctx) {
 }
 
 /**
+ * #21 — 视频传输能力抽象落地后的投影刷新
+ *
+ * 这次变更把"模型会看视频"与"provider 协议能直传视频"拆开。新增的已知
+ * 视频模型仍复用 compat.hanaVideoInput 表示语义能力，传输能力由运行时根据
+ * provider/api/baseUrl 推导。老用户已存在的 models.json 需要重跑一次投影修补，
+ * 否则新增的 Kimi 等模型不会拿到 Hana 视频能力字段。
+ */
+function refreshVideoCapabilityProjection(ctx) {
+  const patched = repairModelsJsonPiInputSchema(ctx);
+  ctx.log?.(`[migrations] #21: video capability projection refreshed (patched=${patched})`);
+}
+
+/**
  * #17 — bridge sessionKey 补齐 agent 维度
  *
  * 旧格式：wx_dm_user / tg_dm_user
@@ -2017,4 +2038,235 @@ function migrateLocalIdentityRegistries(ctx) {
 function migrateLegacyApiKeyAuthEntriesToProviders(ctx) {
   const result = migrateLegacyApiKeyAuthToProviders(ctx);
   ctx.log?.(`[migrations] #19: legacy API-key auth migrated (${result.providers.join(", ") || "none"})`);
+}
+
+function migrateChannelPhoneSettingsDefaults(ctx) {
+  const { hanakoHome, log } = ctx;
+  const channelsDir = path.join(hanakoHome, "channels");
+  if (!fs.existsSync(channelsDir)) {
+    log?.("[migrations] #22: no channels dir");
+    return;
+  }
+
+  let patched = 0;
+  for (const entry of fs.readdirSync(channelsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = path.join(channelsDir, entry.name);
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const next = patchChannelPhoneSettingsFrontmatter(raw);
+    if (next === raw) continue;
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, next, "utf-8");
+    fs.renameSync(tmp, filePath);
+    patched++;
+  }
+
+  log?.(`[migrations] #22: channel phone settings defaults patched (${patched})`);
+}
+
+function removeAgentPhoneReplyInstructions(ctx) {
+  const { hanakoHome, agentsDir, log } = ctx;
+  let channelPatched = 0;
+  let projectionPatched = 0;
+
+  const patchFile = (filePath, keys) => {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const next = removeFrontmatterKeys(raw, keys);
+    if (next === raw) return false;
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, next, "utf-8");
+    fs.renameSync(tmp, filePath);
+    return true;
+  };
+
+  const channelsDir = path.join(hanakoHome, "channels");
+  if (fs.existsSync(channelsDir)) {
+    for (const entry of fs.readdirSync(channelsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      if (patchFile(path.join(channelsDir, entry.name), new Set(["agentPhoneReplyInstructions"]))) {
+        channelPatched++;
+      }
+    }
+  }
+
+  if (fs.existsSync(agentsDir)) {
+    for (const agentEntry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (!agentEntry.isDirectory()) continue;
+      const conversationsDir = path.join(agentsDir, agentEntry.name, "phone", "conversations");
+      if (!fs.existsSync(conversationsDir)) continue;
+      for (const entry of fs.readdirSync(conversationsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        if (patchFile(path.join(conversationsDir, entry.name), new Set(["replyInstructions"]))) {
+          projectionPatched++;
+        }
+      }
+    }
+  }
+
+  log?.(`[migrations] #23: deprecated reply-scope settings removed (channels=${channelPatched}, projections=${projectionPatched})`);
+}
+
+function migrateChannelPhoneGuardLimitDefaults(ctx) {
+  const { hanakoHome, log } = ctx;
+  const channelsDir = path.join(hanakoHome, "channels");
+  if (!fs.existsSync(channelsDir)) {
+    log?.("[migrations] #24: no channels dir");
+    return;
+  }
+
+  let patched = 0;
+  for (const entry of fs.readdirSync(channelsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = path.join(channelsDir, entry.name);
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const next = patchChannelGuardLimitFrontmatter(raw);
+    if (next === raw) continue;
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, next, "utf-8");
+    fs.renameSync(tmp, filePath);
+    patched++;
+  }
+
+  log?.(`[migrations] #24: channel phone guard limits patched (${patched})`);
+}
+
+function removeFrontmatterKeys(raw, keys) {
+  const lines = raw.split("\n");
+  if (lines[0]?.trim() !== "---") return raw;
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return raw;
+
+  let changed = false;
+  const nextFm = [];
+  for (const line of lines.slice(1, end)) {
+    const idx = line.indexOf(":");
+    const key = idx >= 0 ? line.slice(0, idx).trim() : "";
+    if (key && keys.has(key)) {
+      changed = true;
+      continue;
+    }
+    nextFm.push(line);
+  }
+  if (!changed) return raw;
+  return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
+}
+
+function patchChannelGuardLimitFrontmatter(raw) {
+  const lines = raw.split("\n");
+  if (lines[0]?.trim() !== "---") return raw;
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return raw;
+
+  const fmLines = lines.slice(1, end);
+  const meta = new Map();
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    meta.set(line.slice(0, idx).trim(), line.slice(idx + 1).trim());
+  }
+
+  const current = Number(meta.get("agentPhoneGuardLimit"));
+  if (Number.isFinite(current) && current > 0) return raw;
+
+  const memberCount = parseFrontmatterMemberCount(meta.get("members"));
+  meta.set("agentPhoneGuardLimit", String(memberCount * 12));
+
+  const originalKeys = [];
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    originalKeys.push(line.slice(0, idx).trim());
+  }
+  const orderedKeys = [
+    ...originalKeys,
+    ...[...meta.keys()].filter((key) => !originalKeys.includes(key)),
+  ];
+  const nextFm = orderedKeys.map((key) => `${key}: ${meta.get(key)}`);
+  return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
+}
+
+function parseFrontmatterMemberCount(value) {
+  if (typeof value !== "string") return 3;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return 3;
+  const count = trimmed
+    .slice(1, -1)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .length;
+  return count > 0 ? count : 3;
+}
+
+function patchChannelPhoneSettingsFrontmatter(raw) {
+  const lines = raw.split("\n");
+  if (lines[0]?.trim() !== "---") return raw;
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return raw;
+
+  const fmLines = lines.slice(1, end);
+  const meta = new Map();
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    meta.set(line.slice(0, idx).trim(), line.slice(idx + 1).trim());
+  }
+
+  let changed = false;
+  const setKey = (key, value) => {
+    const str = String(value);
+    if (meta.get(key) === str) return;
+    meta.set(key, str);
+    changed = true;
+  };
+
+  const interval = Number(meta.get("agentPhoneReminderIntervalMinutes"));
+  if (!Number.isFinite(interval) || interval <= 0) {
+    setKey("agentPhoneReminderIntervalMinutes", "31");
+  }
+
+  const overrideEnabled = meta.get("agentPhoneModelOverrideEnabled") === "true";
+  const overrideId = meta.get("agentPhoneModelOverrideId") || "";
+  const overrideProvider = meta.get("agentPhoneModelOverrideProvider") || "";
+  if (!meta.has("agentPhoneModelOverrideEnabled")) {
+    setKey("agentPhoneModelOverrideEnabled", "false");
+  }
+  if (overrideEnabled && (!overrideId || !overrideProvider)) {
+    setKey("agentPhoneModelOverrideEnabled", "false");
+    setKey("agentPhoneModelOverrideId", "");
+    setKey("agentPhoneModelOverrideProvider", "");
+  }
+
+  if (!changed) return raw;
+
+  const originalKeys = [];
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    originalKeys.push(line.slice(0, idx).trim());
+  }
+  const orderedKeys = [
+    ...originalKeys,
+    ...[...meta.keys()].filter((key) => !originalKeys.includes(key)),
+  ];
+  const nextFm = orderedKeys.map((key) => `${key}: ${meta.get(key)}`);
+  return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
 }

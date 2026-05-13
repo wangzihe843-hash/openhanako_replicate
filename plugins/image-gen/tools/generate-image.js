@@ -17,7 +17,7 @@ export const parameters = {
     image:      { type: "string", description: "参考图路径（图生图）" },
     ratio:      { type: "string", description: "长宽比：1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9" },
     resolution: { type: "string", description: "分辨率：2k, 4k（默认 2k）" },
-    model:      { type: "string", description: "模型版本：3.0, 3.1, 4.0, 4.1, 4.5, 4.6, 5.0（默认 5.0）" },
+    model:      { type: "string", description: "模型 ID 或简称（如 5.0、dall-e-3）。省略时使用已配置的默认模型" },
     provider:   { type: "string", description: "指定 provider（可选）" },
   },
   required: ["prompt"],

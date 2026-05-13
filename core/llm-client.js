@@ -34,6 +34,31 @@ function normalizeTextFromContent(content) {
     .join("");
 }
 
+function createUserAbortError() {
+  const abortErr = new Error("This operation was aborted");
+  abortErr.name = "AbortError";
+  abortErr.type = "aborted";
+  return abortErr;
+}
+
+function stripTaggedThinking(text) {
+  const stripped = text
+    .replace(/<think>[\s\S]*?<\/think>\s*/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, "");
+  return {
+    text: stripped.trim(),
+    removedThinking: stripped !== text,
+  };
+}
+
+function throwAbortOrTimeout(err, signal, modelId) {
+  if (err.name === "AbortError" || err.name === "TimeoutError") {
+    if (signal?.aborted) throw createUserAbortError();
+    throw new AppError('LLM_TIMEOUT', { context: { model: modelId }, cause: err });
+  }
+  throw err;
+}
+
 function convertContentForApi(content, api) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return typeof content === "undefined" ? "" : JSON.stringify(content);
@@ -189,12 +214,12 @@ export async function callText({
   const modelForCompat = modelObj
     ? (
       Array.isArray(modelObj.quirks)
-        ? { ...modelObj, api: modelObj.api ?? api }
-        : { ...modelObj, api: modelObj.api ?? api, quirks }
+        ? { ...modelObj, api: modelObj.api ?? api, baseUrl: modelObj.baseUrl ?? modelObj.base_url ?? baseUrl }
+        : { ...modelObj, api: modelObj.api ?? api, baseUrl: modelObj.baseUrl ?? modelObj.base_url ?? baseUrl, quirks }
     )
     : (
-      quirks.length > 0 || api === "anthropic-messages"
-        ? { id: modelId, provider, api, quirks }
+      quirks.length > 0 || api === "anthropic-messages" || baseUrl
+        ? { id: modelId, provider, api, baseUrl, quirks }
         : null
     );
   body = normalizeProviderPayload(body, modelForCompat, { mode: "utility", outputBudgetSource });
@@ -214,14 +239,17 @@ export async function callText({
     signal: combinedSignal,
   }).catch(err => {
     clearTimeout(slowTimer);
-    if (err.name === "AbortError" || err.name === "TimeoutError") {
-      throw new AppError('LLM_TIMEOUT', { context: { model: modelId }, cause: err });
-    }
-    throw err;
+    throwAbortOrTimeout(err, signal, modelId);
   });
 
   // ── 5. 解析响应 ──
-  const rawText = await res.text();
+  let rawText;
+  try {
+    rawText = await res.text();
+  } catch (err) {
+    clearTimeout(slowTimer);
+    throwAbortOrTimeout(err, signal, modelId);
+  }
   clearTimeout(slowTimer);
   let data;
   try {
@@ -263,13 +291,28 @@ export async function callText({
   }
 
   // 清理 <think> 标签（部分 provider 用标签而非 content block 包裹思考内容）
-  text = text.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+  const rawTextBeforeThinkingStrip = text;
+  const thinkingStripped = stripTaggedThinking(text);
+  text = thinkingStripped.text;
 
   if (!text) {
+    if (signal?.aborted) {
+      throw createUserAbortError();
+    }
     if (combinedSignal.aborted) {
       throw new AppError('LLM_TIMEOUT', { context: { model: modelId } });
     }
-    throw new AppError('LLM_EMPTY_RESPONSE', { context: { model: modelId } });
+    throw new AppError('LLM_EMPTY_RESPONSE', {
+      message: thinkingStripped.removedThinking && rawTextBeforeThinkingStrip.trim()
+        ? "LLM returned only thinking content without visible text"
+        : undefined,
+      context: {
+        model: modelId,
+        ...(thinkingStripped.removedThinking && rawTextBeforeThinkingStrip.trim()
+          ? { reason: "empty_after_thinking" }
+          : {}),
+      },
+    });
   }
 
   const usage = normalizeLlmUsage(data?.usage, { costRates: modelObj?.cost });

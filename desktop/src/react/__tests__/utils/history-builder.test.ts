@@ -18,6 +18,21 @@ describe('buildItemsFromHistory user image restoration', () => {
     expect(first.data.timestamp).toBe(Date.parse('2026-05-07T05:42:00.000Z'));
   });
 
+  it('隐藏 bridge 写入用户消息里的内部时间标签', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: '<t>05-13 05:03</t> hello from phone',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('hello from phone');
+  });
+
   it('把辅助视觉 attached_image 标记恢复成图片附件，并从正文隐藏', () => {
     const items = buildItemsFromHistory({
       messages: [{

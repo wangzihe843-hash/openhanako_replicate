@@ -500,6 +500,8 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       });
     } else if (event.type === "dm_new_message") {
       broadcast({ type: "dm_new_message", from: event.from, to: event.to });
+    } else if (event.type === "conversation_agent_activity") {
+      broadcast({ type: "conversation_agent_activity", activity: event.activity });
     } else if (event.type === "message_end") {
       // Provider 级别错误（超时、连接断开等）通过 message_end 传递，不经过 message_update
       if (!ss) return;
@@ -656,9 +658,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
               const abortSs = getState(abortPath);
               if (abortSs) abortSs.isAborted = true;
               let abortAccepted = false;
-              if (engine.isSessionStreaming(abortPath)) {
-                try { abortAccepted = !!(await hub.abort(abortPath)); } catch {}
-              }
+              try { abortAccepted = !!(await hub.abort(abortPath)); } catch {}
               if (!abortAccepted) {
                 finishStreamingState(abortSs);
                 broadcast({ type: "status", isStreaming: false, sessionPath: abortPath });
@@ -851,7 +851,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
                   displayMessage: msg.displayMessage,
                 });
               } catch (err) {
-                if (!err.message?.includes("aborted")) {
+                const isUserAbort = err.name === 'AbortError'
+                  || (err.message === 'This operation was aborted')
+                  || (err.type === 'aborted');
+                if (!isUserAbort) {
                   const errMessage = err.message === "session_busy"
                     ? t("error.stillStreaming", { name: engine.agentName })
                     : err.message;
@@ -862,7 +865,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
           })().catch((err) => {
             const appErr = AppError.wrap(err);
             errorBus.report(appErr, { context: { wsMessageType: msg.type } });
-            if (!appErr.message?.includes('aborted')) {
+            const isUserAbort = appErr.name === 'AbortError'
+              || appErr.message === 'This operation was aborted'
+              || appErr.type === 'aborted';
+            if (!isUserAbort) {
               wsSend(ws, { type: 'error', message: appErr.message || 'Unknown error', error: appErr.toJSON(), sessionPath: msg.sessionPath });
             }
           });
@@ -874,7 +880,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
           debugLog()?.error("ws", err.message || String(err));
         },
 
-        // 清理：WS 断开时只中断前台 session（后台 channel triage / cron 不受影响）
+        // 清理：WS 断开时只中断前台 session（后台 channel delivery / cron 不受影响）
         onClose(event, ws) {
           if (closed) return;
           closed = true;

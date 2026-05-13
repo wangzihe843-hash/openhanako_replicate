@@ -95,7 +95,10 @@ export class ModelManager {
     const userModelSets = new Map();
     for (const [name, raw] of Object.entries(rawProviders)) {
       if (!raw.models?.length) continue;
-      const ids = new Set(raw.models.map(m => typeof m === "object" ? m.id : m));
+      const chatIds = typeof this.providerRegistry.getChatModelIds === "function"
+        ? this.providerRegistry.getChatModelIds(name)
+        : raw.models.map(m => typeof m === "object" ? m.id : m);
+      const ids = new Set(chatIds);
       userModelSets.set(name, ids);
       // OAuth provider 的 authJsonKey 可能不同于 provider ID
       const authKey = this.providerRegistry.getAuthJsonKey(name);
@@ -138,6 +141,7 @@ export class ModelManager {
       modelsJsonPath: this.modelsJsonPath,
       authJsonPath: this.authJsonPath,
       oauthKeyMap: this._buildOAuthKeyMap(),
+      chatProjectionMap: this._buildChatProjectionMap(),
     });
     if (changed) {
       this._modelRegistry.refresh();
@@ -171,6 +175,15 @@ export class ModelManager {
     for (const id of this.providerRegistry.getOAuthProviderIds()) {
       const authKey = this.providerRegistry.getAuthJsonKey(id);
       if (authKey !== id) map[id] = authKey;
+    }
+    return map;
+  }
+
+  _buildChatProjectionMap() {
+    const map = {};
+    for (const id of Object.keys(this.providerRegistry.getAllProvidersRaw())) {
+      const projection = this.providerRegistry.getChatProjection?.(id);
+      if (projection && projection !== "models-json") map[id] = projection;
     }
     return map;
   }

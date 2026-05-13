@@ -312,6 +312,22 @@
     border-top: 1px solid var(--border);
 }
 
+:global(.cm-list-bullet) {
+    display: inline-block;
+    width: 0.4em;
+    margin-right: 0.45em;
+}
+
+:global(.cm-list-bullet)::after {
+    content: '';
+    display: block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: currentColor;
+    opacity: 0.45;
+}
+
 :global(.cm-checkbox) {
     cursor: pointer;
     accent-color: var(--accent);

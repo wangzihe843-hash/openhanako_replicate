@@ -60,6 +60,17 @@ describe("getThinkingFormat", () => {
       compat: { supportsDeveloperRole: false },
     })).toBe("anthropic");
   });
+
+  it("兼容旧 models.json：官方 MiMo reasoning 模型派生 chat template thinking 格式", () => {
+    expect(getThinkingFormat({
+      id: "mimo-v2-flash",
+      provider: "mimo",
+      api: "openai-completions",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false },
+    })).toBe("qwen-chat-template");
+  });
 });
 
 describe("getReasoningProfile", () => {
@@ -97,6 +108,16 @@ describe("getReasoningProfile", () => {
       reasoning: true,
       compat: { thinkingFormat: "anthropic" },
     })).toBe(null);
+  });
+
+  it("官方 MiMo reasoning 模型派生 mimo-openai profile", () => {
+    expect(getReasoningProfile({
+      id: "mimo-v2-flash",
+      provider: "mimo",
+      api: "openai-completions",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      reasoning: true,
+    })).toBe("mimo-openai");
   });
 });
 

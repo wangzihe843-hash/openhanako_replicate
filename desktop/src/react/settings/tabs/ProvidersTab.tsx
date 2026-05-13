@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore, type ProviderSummary } from '../store';
 import { hanaFetch } from '../api';
 import { t, PROVIDER_PRESETS } from '../helpers';
@@ -10,7 +11,9 @@ import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
 
 export function ProvidersTab() {
-  const { providersSummary, selectedProviderId, settingsConfig } = useSettingsStore();
+  const { providersSummary, selectedProviderId, settingsConfig } = useSettingsStore(
+    useShallow(s => ({ providersSummary: s.providersSummary, selectedProviderId: s.selectedProviderId, settingsConfig: s.settingsConfig }))
+  );
   const providers = settingsConfig?.providers || {};
   const [addingProvider, setAddingProvider] = useState(false);
 

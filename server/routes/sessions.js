@@ -37,6 +37,11 @@ import { serializeSessionFile } from "../../lib/session-files/session-file-respo
 import { deleteSessionSkillSnapshotSync } from "../../lib/skills/session-skill-snapshot.js";
 import { browserScreenshotPath } from "../../lib/session-files/browser-screenshot-file.js";
 import { modelSupportsXhigh } from "../../core/session-thinking-level.js";
+import {
+  modelSupportsDirectVideoInput,
+  modelSupportsVideoInput,
+  resolveModelVideoInputTransport,
+} from "../../shared/model-capabilities.js";
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -581,6 +586,9 @@ export function createSessionsRoute(engine) {
         currentModelProvider: activeModel?.provider || null,
         currentModelName: activeModel?.name || null,
         currentModelInput: Array.isArray(activeModel?.input) ? activeModel.input : null,
+        currentModelVideo: modelSupportsVideoInput(activeModel),
+        currentModelVideoTransport: resolveModelVideoInputTransport(activeModel),
+        currentModelVideoTransportSupported: modelSupportsDirectVideoInput(activeModel),
         currentModelReasoning: activeModel?.reasoning ?? null,
         currentModelXhigh: modelSupportsXhigh(activeModel),
         currentModelContextWindow: activeModel?.contextWindow ?? null,

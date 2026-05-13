@@ -16,6 +16,7 @@ const MAX_VISUAL_PRIMITIVES = 16;
 const MAX_PRIMITIVE_REF_CHARS = 96;
 const VISION_ANALYSIS_TIMEOUT_MS = 120_000;
 const VISION_NOTES_FILE = "session-vision-notes.json";
+const DEFAULT_VISION_MAX_TOKENS = 4096;
 
 function normalizeUserRequest(text) {
   return String(text || "")
@@ -39,6 +40,26 @@ function imagePromptCacheKey(img, userRequest, modelSignature = "") {
 function truncate(text, max = MAX_NOTE_CHARS) {
   const s = String(text || "").trim();
   return s.length > max ? `${s.slice(0, max - 20)}\n[truncated]` : s;
+}
+
+function positiveInteger(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function visionOutputLimit(model) {
+  return positiveInteger(model?.maxTokens ?? model?.maxOutput ?? model?.maxOutputTokens);
+}
+
+function abortError() {
+  const err = new Error("This operation was aborted");
+  err.name = "AbortError";
+  err.type = "aborted";
+  return err;
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
 }
 
 function hasExplicitTextOnlyInput(model) {
@@ -362,18 +383,21 @@ export class VisionBridge {
     callText = defaultCallText,
     now = () => Date.now(),
     maxCacheEntries = MAX_CACHE_ENTRIES,
+    visionMaxTokens = DEFAULT_VISION_MAX_TOKENS,
   } = {}) {
     this._resolveVisionConfig = resolveVisionConfig || (() => null);
     this._callText = callText;
     this._now = now;
     this._maxCacheEntries = maxCacheEntries;
+    this._visionMaxTokens = positiveInteger(visionMaxTokens) || DEFAULT_VISION_MAX_TOKENS;
     this._analysisByPrompt = new Map();
     this._noteByPath = new Map();
   }
 
-  async prepare({ sessionPath, targetModel, text, images, imageAttachmentPaths } = {}) {
+  async prepare({ sessionPath, targetModel, text, images, imageAttachmentPaths, signal } = {}) {
     if (!images?.length) return { text, images };
     if (!hasExplicitTextOnlyInput(targetModel)) return { text, images };
+    throwIfAborted(signal);
 
     const config = this._resolveVisionConfig?.();
     if (!config?.model) {
@@ -388,7 +412,8 @@ export class VisionBridge {
     const notes = [];
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
-      const note = await this._analyzeImage(config, img, i, userRequest);
+      throwIfAborted(signal);
+      const note = await this._analyzeImage(config, img, i, userRequest, signal);
       const imagePath = paths[i];
       if (imagePath) {
         const entry = {
@@ -410,9 +435,10 @@ export class VisionBridge {
     return { text, images: undefined, visionNotes: notes };
   }
 
-  async prepareResources({ sessionPath, targetModel, userRequest, text, resources } = {}) {
+  async prepareResources({ sessionPath, targetModel, userRequest, text, resources, signal } = {}) {
     if (!resources?.length) return { notes: [] };
     if (!hasExplicitTextOnlyInput(targetModel)) return { notes: [] };
+    throwIfAborted(signal);
 
     const config = this._resolveVisionConfig?.();
     if (!config?.model) {
@@ -441,7 +467,8 @@ export class VisionBridge {
         continue;
       }
 
-      const note = await this._analyzeImage(config, img, i, request);
+      throwIfAborted(signal);
+      const note = await this._analyzeImage(config, img, i, request, signal);
       const entry = {
         note,
         sessionPath: sessionPath || null,
@@ -550,7 +577,12 @@ export class VisionBridge {
     return restored;
   }
 
-  async _analyzeImage(config, img, index, userRequest) {
+  _maxTokensForModel(model) {
+    const limit = visionOutputLimit(model);
+    return limit ? Math.min(this._visionMaxTokens, limit) : this._visionMaxTokens;
+  }
+
+  async _analyzeImage(config, img, index, userRequest, signal) {
     const visionCapabilities = getVisionCapabilities(config.model);
     const key = imagePromptCacheKey(
       img,
@@ -564,8 +596,8 @@ export class VisionBridge {
     }
 
     const note = visionCapabilities
-      ? await this._analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities)
-      : await this._analyzeImageAsNote(config, img, userRequest);
+      ? await this._analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal)
+      : await this._analyzeImageAsNote(config, img, userRequest, signal);
 
     this._analysisByPrompt.set(key, {
       note,
@@ -577,7 +609,7 @@ export class VisionBridge {
     return note;
   }
 
-  async _analyzeImageAsNote(config, img, userRequest) {
+  async _analyzeImageAsNote(config, img, userRequest, signal) {
     return truncate(await this._callText({
       api: config.api,
       apiKey: config.api_key,
@@ -607,12 +639,13 @@ export class VisionBridge {
           img,
         ],
       }],
-      maxTokens: 900,
+      maxTokens: this._maxTokensForModel(config.model),
       timeoutMs: VISION_ANALYSIS_TIMEOUT_MS,
+      signal,
     }));
   }
 
-  async _analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities) {
+  async _analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal) {
     const primitiveShape = primitivePromptShape(visionCapabilities);
     const responseText = await this._callText({
       api: config.api,
@@ -652,8 +685,9 @@ export class VisionBridge {
           img,
         ],
       }],
-      maxTokens: 1100,
+      maxTokens: this._maxTokensForModel(config.model),
       timeoutMs: VISION_ANALYSIS_TIMEOUT_MS,
+      signal,
     });
 
     const analysis = extractJsonObject(responseText);

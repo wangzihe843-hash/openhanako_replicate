@@ -179,6 +179,7 @@ export class ThinkTagParser {
     this.buffer = "";
     this._justEnded = false;
     this._currentTag = null;
+    this._allowOpenTag = true;
   }
 
   feed(delta, emit) {
@@ -203,13 +204,16 @@ export class ThinkTagParser {
     this.buffer = "";
     this._justEnded = false;
     this._currentTag = null;
+    this._allowOpenTag = true;
   }
 
   _findOpenTag() {
+    if (!this._allowOpenTag) return null;
     let best = null;
     for (const tag of THINK_TAGS) {
       const openTag = `<${tag}>`;
       const idx = this.buffer.indexOf(openTag);
+      if (idx !== -1 && this.buffer.slice(0, idx).trim().length > 0) continue;
       if (idx !== -1 && (best === null || idx < best.idx)) {
         best = { tag, idx, openTag };
       }
@@ -218,6 +222,7 @@ export class ThinkTagParser {
   }
 
   _maxTrailingPrefix() {
+    if (!this._allowOpenTag) return 0;
     let max = 0;
     for (const tag of THINK_TAGS) {
       const len = trailingPrefixLen(this.buffer, `<${tag}>`);
@@ -250,11 +255,20 @@ export class ThinkTagParser {
         const holdLen = this._maxTrailingPrefix();
         if (holdLen > 0) {
           const safe = this.buffer.slice(0, -holdLen);
-          if (safe) emit({ type: "text", data: safe });
+          if (safe.trim().length > 0) {
+            emit({ type: "text", data: this.buffer });
+            this._allowOpenTag = false;
+            this.buffer = "";
+            break;
+          }
+          if (safe) {
+            emit({ type: "text", data: safe });
+          }
           this.buffer = this.buffer.slice(-holdLen);
           break;
         }
         emit({ type: "text", data: this.buffer });
+        if (this.buffer.trim().length > 0) this._allowOpenTag = false;
         this.buffer = "";
       } else {
         const closeTag = `</${this._currentTag}>`;

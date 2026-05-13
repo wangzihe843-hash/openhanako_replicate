@@ -79,4 +79,63 @@ describe('buildSessionSections', () => {
       titleKey: 'time.thisWeek',
     });
   });
+
+  it('sorts sessions within a date group by modified descending', () => {
+    const sections = buildSessionSections([
+      makeSession({
+        path: '/sessions/older.jsonl',
+        firstMessage: 'older',
+        modified: '2026-04-29T02:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/newer.jsonl',
+        firstMessage: 'newer',
+        modified: '2026-04-29T09:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/middle.jsonl',
+        firstMessage: 'middle',
+        modified: '2026-04-29T05:00:00.000Z',
+      }),
+    ], {
+      mode: 'time',
+      now: new Date('2026-04-29T12:00:00.000Z'),
+    });
+
+    const todaySection = sections.find(s => s.kind === 'date' && s.group === 'today');
+    expect(todaySection).toBeDefined();
+    expect(todaySection!.items.map(i => i.path)).toEqual([
+      '/sessions/newer.jsonl',
+      '/sessions/middle.jsonl',
+      '/sessions/older.jsonl',
+    ]);
+  });
+
+  it('uses a deterministic path tie-breaker and sinks malformed dates', () => {
+    const sections = buildSessionSections([
+      makeSession({
+        path: '/sessions/z-same-time.jsonl',
+        modified: '2026-04-29T09:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/bad-date.jsonl',
+        modified: 'not-a-date',
+      }),
+      makeSession({
+        path: '/sessions/a-same-time.jsonl',
+        modified: '2026-04-29T09:00:00.000Z',
+      }),
+    ], {
+      mode: 'time',
+      now: new Date('2026-04-29T12:00:00.000Z'),
+    });
+
+    const todaySection = sections.find(s => s.kind === 'date' && s.group === 'today');
+    const earlierSection = sections.find(s => s.kind === 'date' && s.group === 'earlier');
+    expect(todaySection!.items.map(i => i.path)).toEqual([
+      '/sessions/a-same-time.jsonl',
+      '/sessions/z-same-time.jsonl',
+    ]);
+    expect(earlierSection!.items.map(i => i.path)).toEqual(['/sessions/bad-date.jsonl']);
+  });
 });

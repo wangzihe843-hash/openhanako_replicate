@@ -25,6 +25,11 @@ vi.mock("../lib/memory/deep-memory.js", () => ({
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 import { createMemoryTicker } from "../lib/memory/memory-ticker.js";

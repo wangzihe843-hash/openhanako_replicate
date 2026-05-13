@@ -39,7 +39,32 @@
     "warningConfirm": "我了解了，开启频道",
     "disabled": "频道功能已关闭",
     "toggleLabel": "频道功能开关",
-    "members": "成员"
+    "members": "成员",
+    "addMember": "添加成员",
+    "removeMember": "移除成员",
+    "removeMemberConfirm": "确定将「{name}」移出这个频道？",
+    "addMemberFailed": "添加成员失败",
+    "removeMemberFailed": "移除成员失败",
+    "noAvailableMembers": "没有可添加的 Agent",
+    "agentActivity": "Agent 动态",
+    "agentSettings": "群聊设置",
+    "toolPermission": "工具权限",
+    "agentIdle": "空闲",
+    "phoneReceivedNewMessages": "收到新的群聊消息",
+    "replyRange": "回复字数",
+    "replyMinPlaceholder": "最少",
+    "replyMaxPlaceholder": "最多",
+    "replyRangeInvalid": "最少字数不能大于最多字数",
+    "settingsSaveFailed": "保存设置失败",
+    "reminderInterval": "主动提醒间隔（分钟）",
+    "guardLimit": "轮次上限",
+    "modelOverride": "覆写模型",
+    "modelDefault": "默认",
+    "modelOverrideOn": "覆写",
+    "selectModel": "选择模型",
+    "noModelsAvailable": "没有可用模型",
+    "toolReadOnly": "只读",
+    "toolWrite": "写入"
   },
   "sidebar": {
     "title": "对话",
@@ -131,7 +156,12 @@
     "browserScreenshot": "浏览器截图",
     "compacting": "上下文压缩中",
     "visionAuxiliary": "辅助视觉",
-    "fileExpired": "文件已过期"
+    "fileExpired": "文件已过期",
+    "fileActions": {
+      "more": "更多文件操作",
+      "revealInFinder": "打开文件夹",
+      "copyPath": "复制文件路径"
+    }
   },
   "time": {
     "justNow": "刚刚",
@@ -237,7 +267,7 @@
       "每个 Agent 可以配置自己独立的 Skills",
       "试试晴天模式的日光浴！",
       "工作区里的 Markdown 文件打开可以直接编辑",
-      "和助手相处一段时间，试试日记功能吧！",
+      "和助手相处一段时间后，试试日记功能吧！",
       "日记和截图都保存在主助手的工作目录",
       "不同助手可以设置不同工作空间，开启巡检后会在那里自主行动"
     ]
@@ -1940,7 +1970,7 @@
     },
     "notify": {
       "label": "通知",
-      "description": "向用户发送系统通知（桌面弹窗）。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n如果一切正常、无异常，不要调用此工具。",
+      "description": "向用户发送通知。可以按任务要求选择桌面弹窗、Bridge owner 对话，或默认通道。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」「发到微信」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n如果一切正常、无异常，不要调用此工具。Bridge 通知成功投递后会按 contextPolicy 写入对应对话上下文。",
       "titleDesc": "通知标题（简短）",
       "bodyDesc": "通知内容"
     },

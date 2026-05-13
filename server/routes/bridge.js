@@ -235,7 +235,9 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
 
       // 获取最后修改时间
       let lastActive = null;
-      const fp = path.join(bridgeDir, file);
+      const fp = path.resolve(bridgeDir, file);
+      const bridgeRoot = path.resolve(bridgeDir);
+      if (!fp.startsWith(bridgeRoot + path.sep)) continue;
       try {
         const stat = fs.statSync(fp);
         lastActive = stat.mtimeMs;
@@ -245,7 +247,7 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
       const isOwner = isBridgeOwner({ platform: plat, chatType, userId, agent });
 
       sessions.push({
-        sessionKey, platform: plat, chatType, chatId, file, lastActive,
+        sessionKey, platform: plat, chatType, chatId, file, sessionPath: fp, lastActive,
         displayName: entry.name || null,
         avatarUrl: entry.avatarUrl || null,
         isOwner,

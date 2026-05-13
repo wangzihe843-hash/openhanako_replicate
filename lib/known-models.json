@@ -476,6 +476,73 @@
         "outputFormat": "qwen",
         "groundingMode": "native"
       }
+    },
+    "qwen3.6-plus-2026-04-02": {
+      "name": "Qwen 3.6 Plus (2026-04-02)",
+      "context": 1000000,
+      "maxOutput": 65536,
+      "image": true,
+      "reasoning": true,
+      "quirks": ["enable_thinking"],
+      "visionCapabilities": {
+        "grounding": true,
+        "boxes": true,
+        "points": true,
+        "coordinateSpace": "norm-1000",
+        "boxOrder": "xyxy",
+        "outputFormat": "qwen",
+        "groundingMode": "native"
+      }
+    },
+    "qwen3.6-flash-2026-04-16": {
+      "name": "Qwen 3.6 Flash (2026-04-16)",
+      "context": 131072,
+      "maxOutput": 8192,
+      "image": true,
+      "reasoning": true,
+      "quirks": ["enable_thinking"]
+    },
+    "qwen3.5-plus-2026-02-15": {
+      "name": "Qwen 3.5 Plus (2026-02-15)",
+      "context": 1000000,
+      "maxOutput": 65536,
+      "image": true,
+      "reasoning": true,
+      "quirks": ["enable_thinking"],
+      "visionCapabilities": {
+        "grounding": true,
+        "boxes": true,
+        "points": true,
+        "coordinateSpace": "norm-1000",
+        "boxOrder": "xyxy",
+        "outputFormat": "qwen",
+        "groundingMode": "native"
+      }
+    },
+    "qwen3.5-flash-2026-02-23": {
+      "name": "Qwen 3.5 Flash (2026-02-23)",
+      "context": 131072,
+      "maxOutput": 8192,
+      "image": true,
+      "reasoning": true,
+      "quirks": ["enable_thinking"]
+    },
+    "qwen3-vl-flash-2026-01-22": {
+      "name": "Qwen3 VL Flash (2026-01-22)",
+      "context": 262144,
+      "maxOutput": 32768,
+      "image": true,
+      "video": true,
+      "quirks": ["enable_thinking"],
+      "visionCapabilities": {
+        "grounding": true,
+        "boxes": true,
+        "points": true,
+        "coordinateSpace": "norm-1000",
+        "boxOrder": "xyxy",
+        "outputFormat": "qwen",
+        "groundingMode": "native"
+      }
     }
   },
   "dashscope-coding": {
@@ -2501,6 +2568,7 @@
       "context": 262144,
       "maxOutput": 98304,
       "image": true,
+      "video": true,
       "reasoning": true,
       "visionCapabilities": {
         "grounding": true,
@@ -2820,10 +2888,11 @@
       "reasoning": true
     },
     "doubao-seed-2-0-lite-260428": {
-      "name": "Doubao Seed 2.0 Lite",
+      "name": "Doubao Seed 2.0 Lite (Full-Modal)",
       "context": 256000,
       "maxOutput": 128000,
       "image": true,
+      "video": true,
       "reasoning": true
     },
     "doubao-seed-2-0-code-preview-260215": {
@@ -2913,6 +2982,8 @@
       "name": "MiMo V2.5 Pro",
       "context": 1048576,
       "maxOutput": 131072,
+      "image": true,
+      "video": true,
       "reasoning": true
     },
     "mimo-v2.5": {
@@ -6233,6 +6304,20 @@
     }
   },
   "stepfun": {
+    "step-3.5-flash": {
+      "name": "Step 3.5 Flash",
+      "context": 262144,
+      "maxOutput": 16384,
+      "image": true,
+      "reasoning": true
+    },
+    "step-3": {
+      "name": "Step 3",
+      "context": 262144,
+      "maxOutput": 16384,
+      "image": true,
+      "reasoning": true
+    },
     "step-2-16k": {
       "name": "Step 2 16K",
       "context": 16384,
@@ -6393,10 +6478,11 @@
       "reasoning": true
     },
     "doubao-seed-2-0-lite-260428": {
-      "name": "Doubao Seed 2.0 Lite",
+      "name": "Doubao Seed 2.0 Lite (Full-Modal)",
       "context": 256000,
       "maxOutput": 128000,
       "image": true,
+      "video": true,
       "reasoning": true
     },
     "doubao-seed-2-0-code-preview-260215": {

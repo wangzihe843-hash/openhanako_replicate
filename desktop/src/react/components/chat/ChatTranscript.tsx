@@ -9,6 +9,7 @@ interface Props {
   agentId?: string | null;
   readOnly?: boolean;
   hideUserIdentity?: boolean;
+  userIdentity?: { name?: string | null; avatarUrl?: string | null };
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }
 
@@ -18,6 +19,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   agentId,
   readOnly = false,
   hideUserIdentity = false,
+  userIdentity,
   registerMessageElement,
 }: Props) {
   return (
@@ -31,6 +33,7 @@ export const ChatTranscript = memo(function ChatTranscript({
           agentId={agentId}
           readOnly={readOnly}
           hideUserIdentity={hideUserIdentity}
+          userIdentity={userIdentity}
           registerMessageElement={registerMessageElement}
         />
       ))}
@@ -45,6 +48,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   agentId,
   readOnly,
   hideUserIdentity,
+  userIdentity,
   registerMessageElement,
 }: {
   item: ChatListItem;
@@ -53,6 +57,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   agentId?: string | null;
   readOnly: boolean;
   hideUserIdentity: boolean;
+  userIdentity?: { name?: string | null; avatarUrl?: string | null };
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const messageId = item.type === 'message' ? item.data.id : null;
@@ -74,6 +79,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
         sessionPath={sessionPath}
         readOnly={readOnly}
         hideIdentity={hideUserIdentity}
+        userIdentity={userIdentity}
         messageRef={messageRef}
       />
     );

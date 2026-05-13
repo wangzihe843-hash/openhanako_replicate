@@ -53,6 +53,92 @@ describe("createWin32Exec", () => {
     );
   });
 
+  it("routes simple Git commands through bundled git.exe without bash", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "git", reason: "git-command" });
+    const gitExe = "C:\\Hanako\\resources\\git\\cmd\\git.exe";
+    existsSync.mockImplementation((p) => p === gitExe);
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    try {
+      await exec('git -C "C:\\Users\\Me\\repo" status --short "src file.txt"', "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      gitExe,
+      ["-C", "C:\\Users\\Me\\repo", "status", "--short", "src file.txt"],
+      expect.objectContaining({ cwd: "C:\\work" })
+    );
+  });
+
+  it("routes sandboxed simple Git commands through bundled git.exe via the helper", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "git", reason: "git-command" });
+    const gitExe = "C:\\Hanako\\resources\\git\\cmd\\git.exe";
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === gitExe || p === helper);
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await exec("git status --short", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      helper,
+      expect.arrayContaining([
+        "--grant-read",
+        "C:\\Hanako\\resources\\git",
+        "--",
+        gitExe,
+        "status",
+        "--short",
+      ]),
+      expect.objectContaining({ cwd: "C:\\work" })
+    );
+  });
+
   it("keeps bash-routed commands on the bash fallback path", async () => {
     classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
     existsSync.mockImplementation((p) => p === "C:\\mock\\bash.exe");
@@ -174,5 +260,54 @@ describe("createWin32Exec", () => {
       ]),
       expect.objectContaining({ cwd: "C:\\work" })
     );
+  });
+
+  it("does not fall back to system Git Bash for sandboxed POSIX commands", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
+    const systemBash = "C:\\Program Files\\Git\\bin\\bash.exe";
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === systemBash || p === helper);
+    spawnSync.mockImplementation((cmd, args) => {
+      if (cmd === systemBash && args?.[0] === "-c") {
+        return { status: 0, stdout: "__hana_probe_ok__\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    });
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await expect(exec("ls && pwd", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: {
+          PATH: "C:\\Windows\\System32",
+          ProgramFiles: "C:\\Program Files",
+        },
+      })).rejects.toThrow("Sandboxed POSIX commands require bundled");
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    expect(spawnAndStream).not.toHaveBeenCalled();
   });
 });

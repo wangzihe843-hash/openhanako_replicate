@@ -36,14 +36,14 @@ describe('ChannelTabBar switchTab', () => {
     } as never);
   });
 
-  it('restores right Jian sidebar state for each plugin tab', () => {
+  it('keeps the right workspace companion state independent from tab switches', () => {
     localStorage.setItem('hana-jian-plugin:hanako-hyperframes', 'closed');
     localStorage.setItem('hana-jian-plugin:other-plugin', 'open');
 
     switchTab('plugin:hanako-hyperframes');
 
     expect(useStore.getState().currentTab).toBe('plugin:hanako-hyperframes');
-    expect(useStore.getState().jianOpen).toBe(false);
+    expect(useStore.getState().jianOpen).toBe(true);
 
     switchTab('plugin:other-plugin');
 

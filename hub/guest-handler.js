@@ -48,6 +48,7 @@ export class GuestHandler {
       images: opts.images,
       imageAttachmentPaths: opts.imageAttachmentPaths,
       inboundFiles: opts.inboundFiles,
+      displayMessage: opts.displayMessage,
     });
   }
 }

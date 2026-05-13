@@ -5,34 +5,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { useI18n } from '../../hooks/use-i18n';
-import { hanaUrl } from '../../hooks/use-hana-fetch';
 import { createChannel } from '../../stores/channel-actions';
-import { yuanFallbackAvatar } from '../../utils/agent-helpers';
+import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { Overlay } from '../../ui';
+import type { Agent } from '../../types';
 import styles from './Channels.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- catch(err: any) 提取 message */
 
-let _avatarTs = Date.now();
-export function refreshCreateAvatarTs() { _avatarTs = Date.now(); }
+export function refreshCreateAvatarTs() { refreshAgentAvatarVersion(); }
 
-function AgentChipAvatar({ agentId, agentName, yuan, hasAvatar }: {
-  agentId: string; agentName: string; yuan?: string; hasAvatar?: boolean;
+function AgentChipAvatar({ agent, agents }: {
+  agent: Agent;
+  agents: Agent[];
 }) {
-  const [error, setError] = useState(false);
-  const src = hasAvatar ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`) : null;
+  const info = resolveAgentDisplayInfo({
+    id: agent.id,
+    agents,
+    fallbackAgentName: agent.name,
+    fallbackAgentYuan: agent.yuan,
+  });
 
   return (
     <span className={styles.chipAvatar}>
-      {src && !error ? (
-        <img
-          src={src}
-          className={styles.chipAvatarImg}
-          onError={() => setError(true)}
-        />
-      ) : (
-        <img src={yuanFallbackAvatar(yuan)} className={styles.chipAvatarImg} />
-      )}
+      <AgentAvatar info={info} className={styles.chipAvatarImg} />
     </span>
   );
 }
@@ -144,7 +140,7 @@ export function ChannelCreateOverlay() {
                   className={`${styles.channelCreateMemberChip}${isSelected ? ` ${styles.channelCreateMemberChipSelected}` : ''}`}
                   onClick={() => toggleMember(agent.id)}
                 >
-                  <AgentChipAvatar agentId={agent.id} agentName={agent.name} yuan={agent.yuan} hasAvatar={agent.hasAvatar} />
+                  <AgentChipAvatar agent={agent} agents={agents} />
                   <span>{agent.name || agent.id}</span>
                 </button>
               );

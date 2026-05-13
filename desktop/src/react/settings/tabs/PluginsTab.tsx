@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
@@ -141,7 +142,11 @@ function count(value: unknown[] | undefined): number {
 /* ── Main tab ── */
 
 export function PluginsTab() {
-  const { showToast, pluginAllowFullAccess, pluginUserDir, set } = useSettingsStore();
+  const { pluginAllowFullAccess, pluginUserDir } = useSettingsStore(
+    useShallow(s => ({ pluginAllowFullAccess: s.pluginAllowFullAccess, pluginUserDir: s.pluginUserDir }))
+  );
+  const showToast = useSettingsStore(s => s.showToast);
+  const set = useSettingsStore(s => s.set);
 
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);

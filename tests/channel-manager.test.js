@@ -99,7 +99,22 @@ describe("ChannelManager", () => {
   });
 
   describe("setupChannelsForNewAgent", () => {
-    it("creates ch_crew channel if not exists", async () => {
+    it("does not create ch_crew until at least two agents exist", async () => {
+      const agentDir = path.join(agentsDir, "new-agent");
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: New\n", "utf-8");
+
+      await manager.setupChannelsForNewAgent("new-agent");
+
+      expect(fs.existsSync(path.join(channelsDir, "ch_crew.md"))).toBe(false);
+      expect(readBookmarks(path.join(agentDir, "channels.md")).has("ch_crew")).toBe(false);
+    });
+
+    it("creates ch_crew channel with all existing agents once the second agent joins", async () => {
+      const existingDir = path.join(agentsDir, "existing-agent");
+      fs.mkdirSync(existingDir, { recursive: true });
+      fs.writeFileSync(path.join(existingDir, "config.yaml"), "agent:\n  name: Existing\n", "utf-8");
+
       const agentDir = path.join(agentsDir, "new-agent");
       fs.mkdirSync(agentDir, { recursive: true });
       fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: New\n", "utf-8");
@@ -108,7 +123,10 @@ describe("ChannelManager", () => {
 
       expect(fs.existsSync(path.join(channelsDir, "ch_crew.md"))).toBe(true);
       const members = readMembers(channelsDir, "ch_crew");
+      expect(members).toContain("existing-agent");
       expect(members).toContain("new-agent");
+      expect(readBookmarks(path.join(existingDir, "channels.md")).get("ch_crew")).toBe("never");
+      expect(readBookmarks(path.join(agentDir, "channels.md")).get("ch_crew")).toBe("never");
     });
 
     it("adds to existing ch_crew channel", async () => {
@@ -143,7 +161,9 @@ describe("ChannelManager", () => {
       expect(dmFiles).toHaveLength(0);
     });
 
-    it("writes channels.md for new agent with ch_crew", async () => {
+    it("writes channels.md for new agent with ch_crew when the crew channel exists", async () => {
+      writeChannelMd(channelsDir, "ch_crew", ["existing-agent"]);
+
       const agentDir = path.join(agentsDir, "new-agent");
       fs.mkdirSync(agentDir, { recursive: true });
       fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: New\n", "utf-8");

@@ -7,6 +7,8 @@
  * GET    /channels              — 列出所有频道 + 用户 bookmark + 未读数
  * POST   /channels              — 创建新频道
  * GET    /channels/:id          — 获取频道消息 + 成员列表
+ * POST   /channels/:id/members  — 添加频道成员
+ * DELETE /channels/:id/members/:agentId — 移除频道成员
  * POST   /channels/:id/messages — 用户发送群聊消息
  * POST   /channels/:id/read     — 更新用户已读 bookmark
  * DELETE /channels/:id          — 删除频道
@@ -24,8 +26,107 @@ import {
   readBookmarks,
   updateBookmark,
   addBookmarkEntry,
+  removeBookmarkEntry,
+  getChannelMembers,
   getChannelMeta,
+  assertValidChannelMembers,
+  addChannelMember,
+  removeChannelMember,
+  updateChannelMeta,
 } from "../../lib/channels/channel-store.js";
+import { normalizeAgentPhoneToolMode } from "../../lib/conversations/agent-phone-session.js";
+import {
+  DEFAULT_AGENT_PHONE_SETTINGS,
+  defaultAgentPhoneGuardLimit,
+  normalizeAgentPhoneModelOverride,
+  positiveIntegerOrDefault,
+  resolveAgentPhoneGuardLimit,
+} from "../../lib/conversations/agent-phone-prompt.js";
+import {
+  getAgentPhoneProjectionPath,
+  readAgentPhoneProjection,
+  updateAgentPhoneProjectionMeta,
+} from "../../lib/conversations/agent-phone-projection.js";
+import { resolveAgent } from "../utils/resolve-agent.js";
+import { findModel } from "../../shared/model-ref.js";
+
+function normalizeOptionalPositiveInt(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new Error(`${fieldName} must be a positive number`);
+  }
+  return Math.floor(num);
+}
+
+function readOptionalPositiveInt(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.floor(num);
+}
+
+function normalizePhoneSettingsPayload(body = {}) {
+  const replyMinChars = normalizeOptionalPositiveInt(body.replyMinChars, "replyMinChars");
+  const replyMaxChars = normalizeOptionalPositiveInt(body.replyMaxChars, "replyMaxChars");
+  if (replyMinChars && replyMaxChars && replyMinChars > replyMaxChars) {
+    throw new Error("replyMinChars must be <= replyMaxChars");
+  }
+  const reminderIntervalMinutes = normalizeOptionalPositiveInt(
+    body.reminderIntervalMinutes ?? DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+    "reminderIntervalMinutes",
+  ) || DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes;
+  const guardLimit = normalizeOptionalPositiveInt(body.guardLimit, "guardLimit");
+  const override = normalizeAgentPhoneModelOverride({
+    enabled: body.modelOverrideEnabled,
+    id: body.modelOverrideModel?.id ?? body.modelOverrideId,
+    provider: body.modelOverrideModel?.provider ?? body.modelOverrideProvider,
+  });
+  return {
+    mode: normalizeAgentPhoneToolMode(body.mode),
+    replyMinChars,
+    replyMaxChars,
+    reminderIntervalMinutes,
+    guardLimit,
+    modelOverrideEnabled: override.enabled,
+    modelOverrideModel: override.model,
+  };
+}
+
+function readChannelPhoneSettingsFromMeta(meta) {
+  const memberCount = Array.isArray(meta.members) ? meta.members.length : 3;
+  const override = normalizeAgentPhoneModelOverride({
+    enabled: meta.agentPhoneModelOverrideEnabled,
+    id: meta.agentPhoneModelOverrideId,
+    provider: meta.agentPhoneModelOverrideProvider,
+  });
+  return {
+    mode: normalizeAgentPhoneToolMode(meta.agentPhoneToolMode),
+    replyMinChars: readOptionalPositiveInt(meta.agentPhoneReplyMinChars),
+    replyMaxChars: readOptionalPositiveInt(meta.agentPhoneReplyMaxChars),
+    reminderIntervalMinutes: positiveIntegerOrDefault(
+      meta.agentPhoneReminderIntervalMinutes,
+      DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+    ),
+    guardLimit: resolveAgentPhoneGuardLimit(meta.agentPhoneGuardLimit, memberCount),
+    modelOverrideEnabled: override.enabled,
+    modelOverrideModel: override.model,
+  };
+}
+
+function assertAvailableModelOverride(engine, settings) {
+  if (!settings.modelOverrideEnabled || !settings.modelOverrideModel) return;
+  const { id, provider } = settings.modelOverrideModel;
+  try {
+    const found = findModel(engine.availableModels || [], id, provider);
+    if (found) return;
+  } catch {
+    // Fall through to the explicit 400 below.
+  }
+  const err = new Error(`Model override not available: ${provider}/${id}`);
+  err.status = 400;
+  throw err;
+}
 
 export function createChannelsRoute(engine, hub) {
   const route = new Hono();
@@ -45,6 +146,149 @@ export function createChannelsRoute(engine, hub) {
     }
     return resolved;
   }
+
+  function safeAgentDir(agentId) {
+    if (!agentId || /[/\\]|\.\./.test(agentId)) return null;
+    const resolved = path.resolve(path.join(engine.agentsDir, agentId));
+    const base = path.resolve(engine.agentsDir);
+    if (!resolved.startsWith(base + path.sep) && resolved !== base) return null;
+    if (engine.getAgent?.(agentId)) return resolved;
+    if (fs.existsSync(resolved)) return resolved;
+    return null;
+  }
+
+  route.get("/conversations/:id/agent-activities", async (c) => {
+    const id = c.req.param("id");
+    return c.json({
+      activities: hub?.agentPhoneActivities?.snapshot?.(id) || [],
+    });
+  });
+
+  async function readConversationPhoneSettings(id, c) {
+    if (id.startsWith("dm:")) {
+      const agent = resolveAgent(engine, c);
+      const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agent.agentDir, id));
+      return {
+        mode: normalizeAgentPhoneToolMode(projection.meta.toolMode),
+        replyMinChars: readOptionalPositiveInt(projection.meta.replyMinChars),
+        replyMaxChars: readOptionalPositiveInt(projection.meta.replyMaxChars),
+        reminderIntervalMinutes: DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+        guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
+        modelOverrideEnabled: false,
+        modelOverrideModel: null,
+      };
+    }
+    const filePath = safeChannelPath(id);
+    if (!filePath) {
+      const err = new Error("Invalid conversation id");
+      err.status = 400;
+      throw err;
+    }
+    if (!fs.existsSync(filePath)) {
+      const err = new Error("Channel not found");
+      err.status = 404;
+      throw err;
+    }
+    return readChannelPhoneSettingsFromMeta(getChannelMeta(filePath));
+  }
+
+  async function writeConversationPhoneSettings(id, settings, c) {
+    if (id.startsWith("dm:")) {
+      const peerId = id.slice(3);
+      if (!peerId || /[/\\]|\.\./.test(peerId)) {
+        const err = new Error("Invalid DM peer id");
+        err.status = 400;
+        throw err;
+      }
+      const agent = resolveAgent(engine, c);
+      await updateAgentPhoneProjectionMeta({
+        agentDir: agent.agentDir,
+        agentId: agent.id,
+        conversationId: id,
+        conversationType: "dm",
+        patch: {
+          toolMode: settings.mode,
+          replyMinChars: settings.replyMinChars || "",
+          replyMaxChars: settings.replyMaxChars || "",
+        },
+      });
+      return {
+        ...settings,
+        guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
+      };
+    }
+    const filePath = safeChannelPath(id);
+    if (!filePath) {
+      const err = new Error("Invalid conversation id");
+      err.status = 400;
+      throw err;
+    }
+    if (!fs.existsSync(filePath)) {
+      const err = new Error("Channel not found");
+      err.status = 404;
+      throw err;
+    }
+    assertAvailableModelOverride(engine, settings);
+    const memberCount = getChannelMembers(filePath).length;
+    const guardLimit = settings.guardLimit || defaultAgentPhoneGuardLimit(memberCount);
+    await updateChannelMeta(filePath, {
+      agentPhoneToolMode: settings.mode,
+      agentPhoneReplyMinChars: settings.replyMinChars || "",
+      agentPhoneReplyMaxChars: settings.replyMaxChars || "",
+      agentPhoneReminderIntervalMinutes: settings.reminderIntervalMinutes,
+      agentPhoneGuardLimit: guardLimit,
+      agentPhoneModelOverrideEnabled: settings.modelOverrideEnabled ? "true" : "false",
+      agentPhoneModelOverrideId: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.id : "",
+      agentPhoneModelOverrideProvider: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.provider : "",
+    });
+    return { ...settings, guardLimit };
+  }
+
+  route.get("/conversations/:id/agent-phone-settings", async (c) => {
+    try {
+      const id = c.req.param("id");
+      return c.json(await readConversationPhoneSettings(id, c));
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
+    }
+  });
+
+  route.post("/conversations/:id/agent-phone-settings", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const body = await safeJson(c);
+      const settings = normalizePhoneSettingsPayload(body);
+      const saved = await writeConversationPhoneSettings(id, settings, c);
+      return c.json({ ok: true, ...(saved || settings) });
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
+    }
+  });
+
+  route.get("/conversations/:id/agent-phone-tool-mode", async (c) => {
+    try {
+      const settings = await readConversationPhoneSettings(c.req.param("id"), c);
+      return c.json({ mode: settings.mode });
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
+    }
+  });
+
+  route.post("/conversations/:id/agent-phone-tool-mode", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const current = await readConversationPhoneSettings(id, c).catch(() => ({
+        ...DEFAULT_AGENT_PHONE_SETTINGS,
+        mode: DEFAULT_AGENT_PHONE_SETTINGS.toolMode,
+      }));
+      const body = await safeJson(c);
+      const settings = { ...current, mode: normalizeAgentPhoneToolMode(body.mode) };
+      await writeConversationPhoneSettings(id, settings, c);
+      return c.json({ ok: true, mode: settings.mode });
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
+    }
+  });
 
   // ── 列出所有频道 ──
   route.get("/channels", async (c) => {
@@ -110,8 +354,11 @@ export function createChannelsRoute(engine, hub) {
       if (!name || typeof name !== "string") {
         return c.json({ error: "name is required" }, 400);
       }
-      if (!Array.isArray(members) || members.length < 2) {
-        return c.json({ error: "members must be an array with at least 2 items" }, 400);
+      let normalizedMembers;
+      try {
+        normalizedMembers = assertValidChannelMembers(members);
+      } catch (err) {
+        return c.json({ error: err.message }, 400);
       }
 
       const channelsDir = engine.channelsDir;
@@ -120,13 +367,13 @@ export function createChannelsRoute(engine, hub) {
       const { id: channelId } = await createChannel(channelsDir, {
         name,
         description: description || undefined,
-        members,
+        members: normalizedMembers,
         intro: intro || undefined,
       });
 
       // 给每个 agent 成员的 channels.md 添加 bookmark
       const agentsDir = engine.agentsDir;
-      for (const memberId of members) {
+      for (const memberId of normalizedMembers) {
         const memberDir = path.join(agentsDir, memberId);
         if (fs.existsSync(memberDir)) {
           const memberChannelsMd = path.join(memberDir, "channels.md");
@@ -137,8 +384,8 @@ export function createChannelsRoute(engine, hub) {
       // 也给用户添加 bookmark
       await addBookmarkEntry(userBookmarkPath(), channelId);
 
-      debugLog()?.log("api", `POST /channels — created "${channelId}" (${name}) members=[${members}]`);
-      return c.json({ ok: true, id: channelId, name, members });
+      debugLog()?.log("api", `POST /channels — created "${channelId}" (${name}) members=[${normalizedMembers}]`);
+      return c.json({ ok: true, id: channelId, name, members: normalizedMembers });
     } catch (err) {
       if (err.message?.includes("已存在")) {
         return c.json({ error: err.message }, 409);
@@ -169,6 +416,68 @@ export function createChannelsRoute(engine, hub) {
         messages,
         members,
       });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // ── 添加频道成员 ──
+  route.post("/channels/:name/members", async (c) => {
+    try {
+      const name = c.req.param("name");
+      const filePath = safeChannelPath(name);
+      if (!filePath) return c.json({ error: "Invalid channel id" }, 400);
+      if (!fs.existsSync(filePath)) return c.json({ error: "Channel not found" }, 404);
+
+      const body = await safeJson(c);
+      const memberId = typeof body.memberId === "string" ? body.memberId.trim() : "";
+      if (!memberId) return c.json({ error: "memberId is required" }, 400);
+
+      const agentDir = safeAgentDir(memberId);
+      if (!agentDir) return c.json({ error: "Agent not found" }, 404);
+
+      const members = getChannelMembers(filePath);
+      assertValidChannelMembers([...members, memberId]);
+      await addChannelMember(filePath, memberId);
+      await addBookmarkEntry(path.join(agentDir, "channels.md"), name);
+
+      const nextMembers = getChannelMembers(filePath);
+      debugLog()?.log("api", `POST /channels/${name}/members member=${memberId}`);
+      return c.json({ ok: true, members: nextMembers });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // ── 移除频道成员 ──
+  route.delete("/channels/:name/members/:memberId", async (c) => {
+    try {
+      const name = c.req.param("name");
+      const memberId = c.req.param("memberId");
+      const filePath = safeChannelPath(name);
+      if (!filePath) return c.json({ error: "Invalid channel id" }, 400);
+      if (!fs.existsSync(filePath)) return c.json({ error: "Channel not found" }, 404);
+      if (!memberId || /[/\\]|\.\./.test(memberId)) return c.json({ error: "Invalid member id" }, 400);
+
+      const members = getChannelMembers(filePath);
+      if (!members.includes(memberId)) {
+        return c.json({ ok: true, members });
+      }
+      const nextMembers = members.filter((id) => id !== memberId);
+      try {
+        assertValidChannelMembers(nextMembers);
+      } catch (err) {
+        return c.json({ error: err.message }, 400);
+      }
+
+      await removeChannelMember(filePath, memberId);
+      const agentDir = safeAgentDir(memberId);
+      if (agentDir) {
+        await removeBookmarkEntry(path.join(agentDir, "channels.md"), name);
+      }
+
+      debugLog()?.log("api", `DELETE /channels/${name}/members/${memberId}`);
+      return c.json({ ok: true, members: nextMembers });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -218,8 +527,9 @@ export function createChannelsRoute(engine, hub) {
         }
       }
 
-      hub.triggerChannelTriage(name, { mentionedAgents })?.catch(err =>
-        console.error(`[channel] 触发立即 triage 失败: ${err.message}`)
+      const triggerDelivery = hub.triggerChannelDelivery || hub.triggerChannelTriage;
+      triggerDelivery.call(hub, name, { mentionedAgents })?.catch(err =>
+        console.error(`[channel] 触发手机送达失败: ${err.message}`)
       );
 
       return c.json({ ok: true, timestamp: result.timestamp });

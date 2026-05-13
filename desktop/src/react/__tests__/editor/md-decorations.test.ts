@@ -3,8 +3,15 @@
  */
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildMarkdownDecorations, collectLivePreviewRanges, markdownBlockDecoField } from '../../editor/md-decorations';
+import {
+  buildMarkdownDecorations,
+  collectLivePreviewRanges,
+  markdownBlockDecoField,
+  markdownDecoPlugin,
+  markdownImageContextFacet,
+} from '../../editor/md-decorations';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -106,6 +113,63 @@ describe('collectLivePreviewRanges', () => {
       if ((deco.spec as { block?: boolean }).block) blockSpecs.push(deco.spec);
     });
     expect(blockSpecs).toEqual([]);
+
+    view.destroy();
+  });
+
+  it('renders standard markdown images relative to the markdown file in live preview', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const seenPaths: string[] = [];
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'intro\n![Cover](./assets/cover.png)',
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/chapter.md',
+            getFileUrl: (filePath) => {
+              seenPaths.push(filePath);
+              return `file://${filePath}`;
+            },
+          }),
+          markdownDecoPlugin,
+        ],
+      }),
+    });
+
+    const img = parent.querySelector('.cm-image-widget img');
+
+    expect(seenPaths).toEqual(['/vault/notes/assets/cover.png']);
+    expect(img?.getAttribute('src')).toBe('file:///vault/notes/assets/cover.png');
+    expect(img?.getAttribute('alt')).toBe('Cover');
+
+    view.destroy();
+  });
+
+  it('renders Obsidian image embeds in live preview', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'intro\n![[attachments/diagram.png|120]]',
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/chapter.md',
+            getFileUrl: (filePath) => `file://${filePath}`,
+          }),
+          markdownDecoPlugin,
+        ],
+      }),
+    });
+
+    const img = parent.querySelector('.cm-image-widget img');
+
+    expect(img?.getAttribute('src')).toBe('file:///vault/notes/attachments/diagram.png');
+    expect(img?.getAttribute('alt')).toBe('diagram.png');
 
     view.destroy();
   });

@@ -7,10 +7,11 @@ import os from "os";
 import path from "path";
 import YAML from "js-yaml";
 import { runMigrations } from "../core/migrations.js";
+import { getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-projection.js";
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 20;
+const LATEST_DATA_VERSION = 24;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -1564,6 +1565,57 @@ describe("migration #20: Pi model input schema compatibility", () => {
   });
 });
 
+describe("migration #21: video transport capability refresh", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = tmpDir;
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runMigration21(prefs) {
+    prefs.savePreferences({ _dataVersion: 20 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+  }
+
+  it("repairs existing models.json entries for newly declared Kimi video models", () => {
+    const prefs = makePrefs(userDir);
+    const modelsJsonPath = path.join(tmpDir, "models.json");
+    fs.writeFileSync(modelsJsonPath, JSON.stringify({
+      providers: {
+        moonshot: {
+          baseUrl: "https://api.moonshot.cn/v1",
+          api: "openai-completions",
+          apiKey: "sk-test",
+          models: [
+            { id: "kimi-k2.6", name: "Kimi K2.6", input: ["text", "image"] },
+          ],
+        },
+      },
+    }, null, 2) + "\n", "utf-8");
+
+    runMigration21(prefs);
+
+    const raw = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(raw.providers.moonshot.models[0]).toMatchObject({
+      id: "kimi-k2.6",
+      input: ["text", "image"],
+      compat: { hanaVideoInput: true },
+    });
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
 describe("migration #8 — repairPostMigrationModelRefs", () => {
   let tmpDir, userDir, agentsDir;
 
@@ -1786,6 +1838,189 @@ describe("migration #17 — migrateBridgeSessionKeysToAgentScoped", () => {
     const index = readBridgeIndex("hana");
     expect(index["wx_dm_user"]).toEqual({ file: "owner/legacy.jsonl", userId: "user", name: "Old" });
     expect(index["wx_dm_user@hana"]).toEqual({ file: "owner/current.jsonl", userId: "user", name: "Current" });
+  });
+});
+
+describe("migration #22 — migrateChannelPhoneSettingsDefaults", () => {
+  let tmpDir, userDir, agentsDir, channelsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    userDir = path.join(tmpDir, "user");
+    agentsDir = path.join(tmpDir, "agents");
+    channelsDir = path.join(tmpDir, "channels");
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("adds explicit default reminder and disabled model override fields to legacy channel files", () => {
+    fs.writeFileSync(
+      path.join(channelsDir, "ch_legacy.md"),
+      [
+        "---",
+        "id: ch_legacy",
+        "members: [hana, butter]",
+        "name: Legacy",
+        "---",
+        "",
+        "### user | 2026-05-12 12:00:00",
+        "",
+        "hello",
+        "",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 21 });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const raw = fs.readFileSync(path.join(channelsDir, "ch_legacy.md"), "utf-8");
+    expect(raw).toContain("agentPhoneReminderIntervalMinutes: 31");
+    expect(raw).toContain("agentPhoneModelOverrideEnabled: false");
+    expect(raw).toContain("### user | 2026-05-12 12:00:00");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #23 — removeAgentPhoneReplyInstructions", () => {
+  let tmpDir, userDir, agentsDir, channelsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    userDir = path.join(tmpDir, "user");
+    agentsDir = path.join(tmpDir, "agents");
+    channelsDir = path.join(tmpDir, "channels");
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("removes the deprecated free-text reply-scope settings from channel and phone projection files", () => {
+    fs.writeFileSync(
+      path.join(channelsDir, "ch_legacy.md"),
+      [
+        "---",
+        "id: ch_legacy",
+        "members: [hana, butter]",
+        "name: Legacy",
+        `agentPhoneReplyInstructions: ${encodeURIComponent("只在能推进话题时回复")}`,
+        "agentPhoneReplyMinChars: 20",
+        "---",
+        "",
+        "### user | 2026-05-12 12:00:00",
+        "",
+        "hello",
+        "",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const agentDir = path.join(agentsDir, "hana");
+    const projectionPath = getAgentPhoneProjectionPath(agentDir, "ch_legacy");
+    fs.mkdirSync(path.dirname(projectionPath), { recursive: true });
+    fs.writeFileSync(
+      projectionPath,
+      [
+        "---",
+        "agentId: hana",
+        "conversationId: ch_legacy",
+        `replyInstructions: ${encodeURIComponent("只在能推进话题时回复")}`,
+        "replyMinChars: 20",
+        "---",
+        "",
+        "# Agent Phone",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 22 });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const channelRaw = fs.readFileSync(path.join(channelsDir, "ch_legacy.md"), "utf-8");
+    expect(channelRaw).not.toContain("agentPhoneReplyInstructions");
+    expect(channelRaw).toContain("agentPhoneReplyMinChars: 20");
+    expect(channelRaw).toContain("### user | 2026-05-12 12:00:00");
+
+    const projectionRaw = fs.readFileSync(projectionPath, "utf-8");
+    expect(projectionRaw).not.toContain("replyInstructions");
+    expect(projectionRaw).toContain("replyMinChars: 20");
+    expect(projectionRaw).toContain("# Agent Phone");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #24 — migrateChannelPhoneGuardLimitDefaults", () => {
+  let tmpDir, userDir, agentsDir, channelsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    userDir = path.join(tmpDir, "user");
+    agentsDir = path.join(tmpDir, "agents");
+    channelsDir = path.join(tmpDir, "channels");
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("adds a per-channel guard limit based on channel member count", () => {
+    fs.writeFileSync(
+      path.join(channelsDir, "ch_crew.md"),
+      [
+        "---",
+        "id: ch_crew",
+        "members: [hana, butter, ming]",
+        "name: Crew",
+        "---",
+        "",
+        "### user | 2026-05-12 12:00:00",
+        "",
+        "hello",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 23 });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const raw = fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8");
+    expect(raw).toContain("agentPhoneGuardLimit: 36");
+    expect(raw).toContain("### user | 2026-05-12 12:00:00");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 });
 

@@ -7,7 +7,7 @@ import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 
 export function AgentCreateOverlay() {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const [visible, setVisible] = useState(false);
   const [name, setName] = useState('');
   const [yuan, setYuan] = useState('hanako');

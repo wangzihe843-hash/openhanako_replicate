@@ -44,6 +44,28 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+function isDesktopShell(): boolean {
+  return typeof window !== 'undefined' && !!(window as unknown as { hana?: unknown }).hana;
+}
+
+function shouldRestoreInputFocus(path: string | null): boolean {
+  const state = useStore.getState() as Record<string, any>;
+  if (!isDesktopShell()) return false;
+  if (state.currentTab !== 'chat') return false;
+  if (path) {
+    if (state.currentSessionPath !== path) return false;
+  } else if (state.pendingNewSession !== true || state.currentSessionPath !== null || state.pendingSessionSwitchPath) {
+    return false;
+  }
+  if (state.settingsModal?.open || state.mediaViewer || state.skillViewerData || state.channelCreateOverlayVisible) return false;
+  if (path && state.computerOverlayBySession?.[path]) return false;
+  return true;
+}
+
+function requestChatInputFocus(path: string | null): void {
+  if (shouldRestoreInputFocus(path)) useStore.getState().requestInputFocus?.();
+}
+
 async function resetDeskForSessionCwd(cwd?: string | null): Promise<void> {
   // Session 切换后的 cwd 以服务端显式返回值为准；右侧 desk 视图归 workspace/CWD 所有。
   // 切到同一 workspace 时保留当前子目录；切到不同 workspace 时恢复该 workspace 的上次子目录。
@@ -342,6 +364,9 @@ export async function switchSession(path: string): Promise<void> {
         name: data.currentModelName || data.currentModelId,
         provider: data.currentModelProvider,
         input: Array.isArray(data.currentModelInput) ? data.currentModelInput : undefined,
+        video: data.currentModelVideo ?? undefined,
+        videoTransport: data.currentModelVideoTransport ?? undefined,
+        videoTransportSupported: data.currentModelVideoTransportSupported ?? undefined,
         reasoning: data.currentModelReasoning ?? undefined,
         xhigh: data.currentModelXhigh ?? undefined,
         contextWindow: data.currentModelContextWindow ?? undefined,
@@ -365,6 +390,9 @@ export async function switchSession(path: string): Promise<void> {
     }).catch((err) => {
       console.warn('[session] context usage refresh skipped:', err);
     });
+
+    // Restore input focus only if the user is still in the chat surface that initiated the switch.
+    requestChatInputFocus(path);
   } catch (err) {
     if (myVersion !== _switchVersion || isAbortError(err)) return;
     useStore.setState((state: Record<string, any>) => (
@@ -429,7 +457,7 @@ export async function createNewSession(): Promise<void> {
   // pending 状态下刷新 model 列表，让 ModelSelector 显示 agent Chat 默认 model
   loadModels();
 
-  useStore.getState().requestInputFocus();
+  requestChatInputFocus(null);
 }
 
 // ══════════════════════════════════════════════════════

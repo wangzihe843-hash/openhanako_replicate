@@ -1,4 +1,4 @@
-import registry from './theme-registry.cjs';
+import registry from './theme-registry';
 
 type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem'>;
 type PaperTextureTheme = string | null | undefined;

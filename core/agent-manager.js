@@ -687,8 +687,18 @@ export class AgentManager {
       ag.updateConfig({ skills: { enabled: [...enabled] } });
       skills.syncAgentSkills(ag);
     });
-    ag.setNotifyHandler((title, body) => {
-      this._d.getHub()?.eventBus?.emit({ type: "notification", title, body }, null);
+    ag.setNotifyHandler((payload) => {
+      const engine = this._d.getEngine?.();
+      if (typeof engine?.deliverNotification === "function") {
+        return engine.deliverNotification(payload, { agentId: ag.id });
+      }
+      this._d.getHub()?.eventBus?.emit({
+        type: "notification",
+        title: payload?.title || "",
+        body: payload?.body || "",
+        agentId: ag.id,
+      }, null);
+      return undefined;
     });
     ag.setDescriptionRefreshHandler(() => {
       this._refreshDescription(ag.id).catch(() => {});

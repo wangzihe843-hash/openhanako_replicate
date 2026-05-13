@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t, autoSaveConfig } from '../helpers';
@@ -18,15 +19,25 @@ import {
 } from './agent/AgentExperience';
 
 export function AgentTab() {
-  const store = useSettingsStore();
   const {
-    agents, currentAgentId, settingsConfig, currentPins,
-    showToast,
+    agents, currentAgentId, settingsAgentId, settingsConfig, currentPins,
     globalModelsConfig,
-  } = store;
+  } = useSettingsStore(
+    useShallow(s => ({
+      agents: s.agents,
+      currentAgentId: s.currentAgentId,
+      settingsAgentId: s.settingsAgentId,
+      settingsConfig: s.settingsConfig,
+      currentPins: s.currentPins,
+      globalModelsConfig: s.globalModelsConfig,
+    }))
+  );
+  const showToast = useSettingsStore(s => s.showToast);
+  const set = useSettingsStore(s => s.set);
+  const getSettingsAgentId = useSettingsStore(s => s.getSettingsAgentId);
 
   const hasUtilityModel = !!(globalModelsConfig?.models?.utility && globalModelsConfig?.models?.utility_large);
-  const settingsAgentId = store.getSettingsAgentId();
+  const selectedSettingsAgentId = settingsAgentId || currentAgentId;
 
   const [agentName, setAgentName] = useState('');
   const [identity, setIdentity] = useState('');
@@ -42,7 +53,7 @@ export function AgentTab() {
     }
   }, [settingsConfig]);
 
-  const isViewingOther = settingsAgentId !== currentAgentId;
+  const isViewingOther = selectedSettingsAgentId !== currentAgentId;
   const currentYuan = settingsConfig?.agent?.yuan || 'hanako';
 
   // 用 "provider/id" 复合键作为 SelectWidget 的 value，区分多 provider 下同名模型。
@@ -87,7 +98,7 @@ export function AgentTab() {
 
   const saveAgent = async () => {
     try {
-      const agentId = store.getSettingsAgentId()!;
+      const agentId = getSettingsAgentId()!;
       const agentBase = `/api/agents/${agentId}`;
       const isActive = agentId === currentAgentId;
 
@@ -135,7 +146,7 @@ export function AgentTab() {
 
       showToast(t('settings.saved'), 'success');
       if (isActive && (configPartial as { agent?: { name: string } })?.agent?.name) {
-        store.set({ agentName: (configPartial as { agent: { name: string } }).agent.name });
+        set({ agentName: (configPartial as { agent: { name: string } }).agent.name });
       }
       await loadSettingsConfig();
     } catch (err: unknown) {
@@ -151,7 +162,7 @@ export function AgentTab() {
         <h2 className={styles['settings-section-title']}>{t('settings.agent.title')}</h2>
         <AgentCardStack
           agents={agents}
-          selectedId={settingsAgentId}
+          selectedId={selectedSettingsAgentId}
           currentAgentId={currentAgentId}
           onSelect={(id) => browseAgent(id)}
           onAvatarClick={() => {
@@ -223,14 +234,14 @@ export function AgentTab() {
           <YuanSelector
             currentYuan={currentYuan}
             onChange={async (key) => {
-              const agentId = store.getSettingsAgentId()!;
+              const agentId = getSettingsAgentId()!;
               try {
                 await hanaFetch(`/api/agents/${agentId}/config`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ agent: { yuan: key } }),
                 });
-                if (agentId === currentAgentId) store.set({ agentYuan: key });
+                if (agentId === currentAgentId) set({ agentYuan: key });
                 await loadSettingsConfig();
                 await loadAgents();
               } catch (err) {
@@ -304,12 +315,12 @@ export function AgentTab() {
                   onSave={(updated) => {
                     const next = expCategories.map(c => c.name === cat.name ? updated : c);
                     setExpCategories(next);
-                    putExperience(store, next);
+                    putExperience({ getSettingsAgentId, showToast }, next);
                   }}
                   onDelete={() => {
                     const next = expCategories.filter(c => c.name !== cat.name);
                     setExpCategories(next);
-                    putExperience(store, next);
+                    putExperience({ getSettingsAgentId, showToast }, next);
                   }}
                 />
               ))}

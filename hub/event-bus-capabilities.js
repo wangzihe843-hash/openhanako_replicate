@@ -185,6 +185,23 @@ export const BUILTIN_EVENT_BUS_CAPABILITIES = Object.freeze([
     owner: "system",
   },
   {
+    type: "provider:media-providers",
+    title: "List media-capable providers",
+    description: "List providers that expose media capabilities such as image_generation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capability: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: OBJECT_SCHEMA,
+    permission: "provider.read",
+    errors: ["NO_HANDLER", "TIMEOUT", "INTERNAL_ERROR"],
+    stability: "experimental",
+    owner: "system",
+  },
+  {
     type: "deferred:register",
     title: "Register deferred result",
     description: "Register a long-running task result placeholder for a session.",

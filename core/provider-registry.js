@@ -21,6 +21,7 @@ import {
   providerCredentialAllowsMissingApiKey,
 } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
+import { validateProviderRuntime } from "./media-runtime-contract.js";
 
 const _defaultModels = JSON.parse(
   fs.readFileSync(fromRoot("lib", "default-models.json"), "utf-8"),
@@ -29,6 +30,14 @@ const _defaultModels = JSON.parse(
 const MALFORMED_PROVIDER_CONFIG = "malformed_provider_config";
 const INVALID_MODELS_CONFIG = "invalid_models_config";
 const PROVIDER_RUNTIME_META_KEYS = new Set(["_config_error"]);
+const MEDIA_CAPABILITY_KEYS = {
+  image_generation: "imageGeneration",
+  image: "imageGeneration",
+  video_generation: "videoGeneration",
+  video: "videoGeneration",
+  speech_generation: "speechGeneration",
+  speech: "speechGeneration",
+};
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -88,6 +97,111 @@ function stripProviderRuntimeMetaMap(providers) {
     clean[providerId] = stripProviderRuntimeMeta(config);
   }
   return clean;
+}
+
+function capabilityKey(capability) {
+  return MEDIA_CAPABILITY_KEYS[capability] || capability;
+}
+
+function defaultChatCapability(providerId) {
+  return {
+    runtimeProviderId: providerId,
+    displayProviderId: providerId,
+    projection: "models-json",
+    allowListSource: "provider.models",
+  };
+}
+
+function normalizeProviderSource(plugin, isBuiltin) {
+  if (plugin?.source?.kind) return plugin.source;
+  if (plugin?._pluginId) return { kind: "plugin", pluginId: plugin._pluginId };
+  return { kind: isBuiltin ? "builtin" : "user" };
+}
+
+function normalizeMediaModel(model, fallback = {}) {
+  if (!model) return null;
+  const isObj = typeof model === "object";
+  const id = isObj ? model.id : model;
+  if (typeof id !== "string" || !id.trim()) return null;
+  const protocolId = (isObj && (model.protocolId || model.protocol_id)) || fallback.protocolId || fallback.protocol_id;
+  return {
+    ...(isObj ? model : {}),
+    id: id.trim(),
+    displayName: (isObj && (model.displayName || model.display_name || model.name)) || fallback.displayName || fallback.name || id.trim(),
+    ...(protocolId ? { protocolId } : {}),
+  };
+}
+
+function normalizeImageGenerationCapability(capability, entry) {
+  if (!capability || typeof capability !== "object") return null;
+  const models = [];
+  const seen = new Set();
+  for (const model of capability.models || []) {
+    const normalized = normalizeMediaModel(model, { protocolId: entry?.runtime?.protocolId });
+    if (!normalized) continue;
+    if (seen.has(normalized.id)) {
+      throw new Error(`Duplicate media model "${normalized.id}" in provider "${entry.id}"`);
+    }
+    if (!normalized.protocolId) {
+      throw new Error(`Media model "${normalized.id}" in provider "${entry.id}" missing protocolId`);
+    }
+    seen.add(normalized.id);
+    models.push(normalized);
+  }
+  return {
+    ...capability,
+    models,
+  };
+}
+
+function normalizeCapabilities(plugin, entry) {
+  const raw = plugin?.capabilities || {};
+  const capabilities = {
+    ...raw,
+    chat: raw.chat ? { ...defaultChatCapability(entry.id), ...raw.chat } : defaultChatCapability(entry.id),
+  };
+  const media = raw.media || {};
+  const imageGeneration = normalizeImageGenerationCapability(media.imageGeneration, entry);
+  if (imageGeneration) {
+    capabilities.media = { ...media, imageGeneration };
+  } else if (Object.keys(media).length > 0) {
+    capabilities.media = { ...media };
+  }
+  return capabilities;
+}
+
+function getModelId(modelEntry) {
+  return typeof modelEntry === "object" && modelEntry !== null ? modelEntry.id : modelEntry;
+}
+
+function getModelType(providerId, modelEntry) {
+  const isObj = typeof modelEntry === "object" && modelEntry !== null;
+  const id = getModelId(modelEntry);
+  const known = lookupKnown(providerId, id);
+  return (isObj && modelEntry.type) || known?.type || "chat";
+}
+
+function normalizeUserMediaModels(providerId, userConfig, capabilityName, declaredModels, runtime) {
+  const snake = capabilityName;
+  const camel = capabilityKey(capabilityName);
+  const mediaConfig = userConfig?.media?.[snake] || userConfig?.media?.[camel] || {};
+  const rawModels = [];
+  if (Array.isArray(mediaConfig.models)) rawModels.push(...mediaConfig.models);
+  if (camel === "imageGeneration" && Array.isArray(userConfig?.models)) {
+    rawModels.push(...userConfig.models.filter((model) => getModelType(providerId, model) === "image"));
+  }
+  const declaredById = new Map(declaredModels.map((model) => [model.id, model]));
+  const result = [];
+  const seen = new Set();
+  for (const raw of rawModels) {
+    const id = getModelId(raw);
+    const fallback = declaredById.get(id) || { protocolId: runtime?.protocolId };
+    const model = normalizeMediaModel(raw, fallback);
+    if (!model || seen.has(model.id)) continue;
+    seen.add(model.id);
+    result.push(model);
+  }
+  return result;
 }
 
 // ── 内置插件 ────────────────────────────────────────────────────────────────
@@ -215,9 +329,14 @@ export class ProviderRegistry {
    */
   register(plugin) {
     if (!plugin?.id) throw new Error("ProviderPlugin must have an id");
+    validateProviderRuntime(plugin.runtime);
     this._plugins.set(plugin.id, plugin);
     // 让 reload() 在下次调用时重新合并
     this._entries.delete(plugin.id);
+  }
+
+  registerProviderContribution(plugin) {
+    this.register(plugin);
   }
 
   /**
@@ -364,6 +483,9 @@ export class ProviderRegistry {
         authType: normalizeProviderAuthType(uc.auth_type),
         defaultBaseUrl: uc.base_url || "",
         defaultApi: uc.api || "openai-completions",
+        runtime: uc.runtime,
+        capabilities: uc.capabilities,
+        source: { kind: "user" },
       };
       this._entries.set(id, this._merge(syntheticPlugin, uc, false));
     }
@@ -374,7 +496,8 @@ export class ProviderRegistry {
    * @private
    */
   _merge(plugin, userConfig, isBuiltin) {
-    return {
+    const runtime = plugin.runtime ? validateProviderRuntime(plugin.runtime) : null;
+    const entry = {
       id: plugin.id,
       displayName: userConfig.display_name || plugin.displayName,
       authType: normalizeProviderAuthType(userConfig.auth_type || plugin.authType),
@@ -382,7 +505,11 @@ export class ProviderRegistry {
       api: userConfig.api || plugin.defaultApi,
       authJsonKey: plugin.authJsonKey || plugin.id,
       isBuiltin,
+      source: normalizeProviderSource(plugin, isBuiltin),
+      ...(runtime ? { runtime } : {}),
     };
+    entry.capabilities = normalizeCapabilities(plugin, entry);
+    return entry;
   }
 
   /**
@@ -410,6 +537,99 @@ export class ProviderRegistry {
     }
     if (direct) return direct;
     return null;
+  }
+
+  getProviderCapabilities(providerId) {
+    return this.get(providerId)?.capabilities || null;
+  }
+
+  resolveChatProvider(providerId) {
+    const entry = this.get(providerId);
+    if (!entry) return null;
+    const chat = entry.capabilities?.chat || defaultChatCapability(entry.id);
+    return {
+      originalProviderId: providerId,
+      providerId: chat.runtimeProviderId || entry.id,
+      displayProviderId: chat.displayProviderId || chat.runtimeProviderId || entry.id,
+      projection: chat.projection || "models-json",
+      allowListSource: chat.allowListSource || "provider.models",
+      entry,
+    };
+  }
+
+  getChatProjection(providerId) {
+    return this.resolveChatProvider(providerId)?.projection || "models-json";
+  }
+
+  getChatModelIds(providerId) {
+    const userConfig = this._loadAddedModels();
+    const models = userConfig[providerId]?.models || [];
+    return models
+      .filter((model) => getModelType(providerId, model) === "chat")
+      .map(getModelId)
+      .filter(Boolean);
+  }
+
+  getMediaModels(providerId, capability) {
+    if (this._entries.size === 0) this.reload();
+    const entry = this._entries.get(providerId) || this.get(providerId);
+    if (!entry) return [];
+    const key = capabilityKey(capability);
+    const declared = entry.capabilities?.media?.[key]?.models || [];
+    const userConfig = this._loadAddedModels()[providerId] || {};
+    const userModels = normalizeUserMediaModels(providerId, userConfig, capability, declared, entry.runtime);
+    const byId = new Map();
+    for (const model of declared) byId.set(model.id, model);
+    for (const model of userModels) byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
+    return [...byId.values()];
+  }
+
+  getMediaProviders(capability) {
+    if (this._entries.size === 0) this.reload();
+    const providers = [];
+    for (const entry of this._entries.values()) {
+      const models = this.getMediaModels(entry.id, capability);
+      if (models.length === 0) continue;
+      providers.push({
+        providerId: entry.id,
+        displayName: entry.displayName,
+        authType: entry.authType,
+        source: entry.source,
+        runtime: entry.runtime || null,
+        models,
+      });
+    }
+    return providers;
+  }
+
+  resolveMediaModel(ref) {
+    const providerId = ref?.providerId || ref?.provider;
+    const modelId = ref?.modelId || ref?.id || ref?.model;
+    const capability = ref?.capability || "image_generation";
+    if (!providerId) throw new Error("Media provider required");
+    if (!modelId) throw new Error("Media model required");
+    const entry = this._entries.get(providerId) || this.get(providerId);
+    if (!entry) throw new Error(`Media provider "${providerId}" not found`);
+    const models = this.getMediaModels(providerId, capability);
+    const model = models.find((item) => item.id === modelId || item.aliases?.includes?.(modelId));
+    if (!model) throw new Error(`Media model "${providerId}/${modelId}" not found`);
+    const key = capabilityKey(capability);
+    const mediaCapability = entry.capabilities?.media?.[key] || {};
+    const credentialLaneId = ref?.credentialLaneId || model.credentialLaneId;
+    const credentialLane = credentialLaneId
+      ? (mediaCapability.credentialLanes || []).find((lane) => lane.id === credentialLaneId)
+      : null;
+    if (credentialLaneId && !credentialLane) {
+      throw new Error(`Credential lane "${credentialLaneId}" not found for provider "${providerId}"`);
+    }
+    return {
+      capability,
+      providerId,
+      provider: entry,
+      model,
+      credentialLane: credentialLane || null,
+      runtime: entry.runtime || null,
+    };
   }
 
   /**

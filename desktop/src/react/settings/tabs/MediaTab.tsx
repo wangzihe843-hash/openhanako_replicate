@@ -21,16 +21,30 @@ interface MediaConfig {
   providerDefaults?: Record<string, any>;
 }
 
+function encodeConfigPatch(updates: Partial<MediaConfig>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(updates).map(([key, value]) => [key, value === undefined ? null : value]),
+  );
+}
+
+function applyConfigPatch(prev: MediaConfig, updates: Partial<MediaConfig>): MediaConfig {
+  const next: MediaConfig = { ...prev };
+  for (const [key, value] of Object.entries(updates) as Array<[keyof MediaConfig, MediaConfig[keyof MediaConfig]]>) {
+    if (value === undefined) delete next[key];
+    else next[key] = value as any;
+  }
+  return next;
+}
+
 export function MediaTab() {
   const [providers, setProviders] = useState<Record<string, MediaProvider>>({});
   const [config, setConfig] = useState<MediaConfig>({});
   const [selected, setSelected] = useState<string | null>(null);
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
 
   const load = useCallback(async () => {
     try {
-      const agentId = useSettingsStore.getState().getSettingsAgentId();
-      const res = await hanaFetch(`/api/plugins/image-gen/providers?agentId=${agentId}`);
+      const res = await hanaFetch('/api/plugins/image-gen/providers');
       const data = await res.json();
       setProviders(data.providers || {});
       setConfig(data.config || {});
@@ -51,13 +65,14 @@ export function MediaTab() {
 
   const saveConfig = async (updates: Partial<MediaConfig>) => {
     try {
-      const agentId = useSettingsStore.getState().getSettingsAgentId();
-      await hanaFetch(`/api/plugins/image-gen/config?agentId=${agentId}`, {
+      const res = await hanaFetch('/api/plugins/image-gen/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
+        body: JSON.stringify({ values: encodeConfigPatch(updates) }),
       });
-      setConfig(prev => ({ ...prev, ...updates }));
+      const data = await res.json().catch(() => null);
+      if (data?.values) setConfig(data.values);
+      else setConfig(prev => applyConfigPatch(prev, updates));
       showToast(t('settings.saved'), 'success');
     } catch (err: any) {
       showToast(err.message || 'Save failed', 'error');

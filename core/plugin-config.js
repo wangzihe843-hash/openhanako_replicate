@@ -86,7 +86,8 @@ export function createPluginConfigStore({ dataDir, schema }) {
       const bucket = resolveBucket(state, options, true);
       const errors = validatePluginConfigPatch(normalizedSchema, { [key]: value }, options);
       if (errors.length > 0) throw new PluginConfigValidationError(errors);
-      bucket[key] = value;
+      if (value === undefined) delete bucket[key];
+      else bucket[key] = value;
       writeState(state);
     },
     setMany(values, options = {}) {
@@ -98,7 +99,8 @@ export function createPluginConfigStore({ dataDir, schema }) {
       const state = readState();
       const bucket = resolveBucket(state, options, true);
       for (const [key, value] of Object.entries(values)) {
-        bucket[key] = value;
+        if (value === undefined) delete bucket[key];
+        else bucket[key] = value;
       }
       writeState(state);
       return structuredClone(bucket);
@@ -118,6 +120,7 @@ export function createPluginConfigStore({ dataDir, schema }) {
         : structuredClone(state);
     },
   };
+
 }
 
 export function validatePluginConfigPatch(schema, values, options = {}) {

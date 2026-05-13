@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { t, autoSaveConfig } from '../helpers';
 import { hanaFetch } from '../api';
@@ -17,7 +18,10 @@ type AgentDeskConfig = {
 };
 
 export function WorkTab() {
-  const { settingsConfig, showToast, currentAgentId } = useSettingsStore();
+  const { settingsConfig, currentAgentId } = useSettingsStore(
+    useShallow(s => ({ settingsConfig: s.settingsConfig, currentAgentId: s.currentAgentId }))
+  );
+  const showToast = useSettingsStore(s => s.showToast);
 
   // ── Global toggles：直接从 store 派生，单一数据源，避免挂载时 flicker ──
   const heartbeatMaster = settingsConfig?.desk?.heartbeat_master !== false;

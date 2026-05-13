@@ -38,6 +38,31 @@
     "disabled": "채널 기능이 꺼져 있어요",
     "toggleLabel": "채널 기능 전환",
     "members": "멤버",
+    "addMember": "멤버 추가",
+    "removeMember": "멤버 제거",
+    "removeMemberConfirm": "\"{name}\"을(를) 이 채널에서 제거할까요?",
+    "addMemberFailed": "멤버 추가 실패",
+    "removeMemberFailed": "멤버 제거 실패",
+    "noAvailableMembers": "추가할 수 있는 Agent가 없어요",
+    "agentActivity": "Agent 상태",
+    "agentSettings": "채팅 설정",
+    "toolPermission": "도구 권한",
+    "agentIdle": "대기 중",
+    "phoneReceivedNewMessages": "새 그룹 채팅 메시지를 받음",
+    "replyRange": "답장 글자 수",
+    "replyMinPlaceholder": "최소",
+    "replyMaxPlaceholder": "최대",
+    "replyRangeInvalid": "최소 글자 수는 최대 글자 수보다 클 수 없어요",
+    "settingsSaveFailed": "설정 저장 실패",
+    "reminderInterval": "능동 알림 간격(분)",
+    "guardLimit": "턴 상한",
+    "modelOverride": "모델 덮어쓰기",
+    "modelDefault": "기본",
+    "modelOverrideOn": "덮어쓰기",
+    "selectModel": "모델 선택",
+    "noModelsAvailable": "사용 가능한 모델이 없어요",
+    "toolReadOnly": "읽기",
+    "toolWrite": "쓰기",
     "createIntroOptional": "설명"
   },
   "sidebar": {
@@ -130,7 +155,12 @@
     "browserScreenshot": "브라우저 스크린샷",
     "compacting": "컨텍스트 압축 중",
     "visionAuxiliary": "보조 시각",
-    "fileExpired": "파일 만료됨"
+    "fileExpired": "파일 만료됨",
+    "fileActions": {
+      "more": "파일 작업 더 보기",
+      "revealInFinder": "파일 관리자에서 보기",
+      "copyPath": "파일 경로 복사"
+    }
   },
   "time": {
     "justNow": "방금",
@@ -1887,7 +1917,7 @@
     },
     "notify": {
       "label": "알림",
-      "description": "사용자에게 시스템 알림 (데스크톱 팝업)을 보내요.\n사용 상황:\n- 사용자가 'xxx 알려줘', '그때 알려줘', 'xxx 잊지 않게 해줘'라고 말했을 때\n- 예약 작업의 prompt에 알림/리마인드 의도가 명시되어 있을 때\n- 순찰/예약 작업에서 사용자의 관심이 필요한 사항을 발견했을 때\n모든 게 정상이고 문제가 없으면 이 도구를 호출하지 마세요.",
+      "description": "사용자에게 알림을 보내요. 작업 요구에 따라 데스크톱 팝업, Bridge owner 대화, 또는 기본 채널을 선택해요.\n사용 상황:\n- 사용자가 'xxx 알려줘', '그때 알려줘', 'xxx 잊지 않게 해줘'라고 말했을 때\n- 예약 작업의 prompt에 알림/리마인드/Bridge 또는 WeChat 전송 의도가 명시되어 있을 때\n- 순찰/예약 작업에서 사용자의 관심이 필요한 사항을 발견했을 때\n모든 게 정상이고 문제가 없으면 이 도구를 호출하지 마세요. Bridge 알림이 성공적으로 전달되면 contextPolicy에 따라 해당 대화 컨텍스트에 기록할 수 있어요.",
       "titleDesc": "알림 제목 (간결하게)",
       "bodyDesc": "알림 내용"
     },

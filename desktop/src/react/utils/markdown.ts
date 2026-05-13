@@ -13,8 +13,38 @@ import mk from '@traptitech/markdown-it-katex';
 import taskLists from 'markdown-it-task-lists';
 import 'katex/dist/katex.min.css';
 import { sanitizeMarkdownPreviewHtml } from './markdown-html-sanitizer';
+import { extOfName, isImageOrSvgExt } from './file-kind';
 
 type MarkdownItInstance = ReturnType<typeof markdownit>;
+type MarkdownRenderEnv = {
+  markdownImage?: MarkdownImageContext;
+};
+
+export interface MarkdownPreviewOptions {
+  filePath?: string | null;
+  getFileUrl?: ((filePath: string) => string | undefined) | null;
+}
+
+export interface MarkdownImageContext {
+  filePath?: string | null;
+  getFileUrl?: ((filePath: string) => string | undefined) | null;
+}
+
+export interface ImageDimensions {
+  width?: string;
+  height?: string;
+}
+
+export interface ImageLabel {
+  alt: string;
+  dimensions: ImageDimensions | null;
+}
+
+export interface ParsedMarkdownImage {
+  src: string;
+  alt: string;
+  dimensions: ImageDimensions | null;
+}
 
 let _md: MarkdownItInstance | null = null;
 let _previewMd: MarkdownItInstance | null = null;
@@ -27,6 +57,10 @@ const INLINE_MATH_CLOSE = '\\)';
 const BLOCK_MATH_OPEN = '\\[';
 const BLOCK_MATH_CLOSE = '\\]';
 const CALLOUT_MARKER_RE = /^\s*\[!([A-Za-z][A-Za-z0-9_-]*)\]([+-])?(?:[ \t]+(.+?))?\s*$/;
+const ABSOLUTE_WINDOWS_PATH_RE = /^[A-Za-z]:[\\/]/;
+const EXPLICIT_PROTOCOL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const SAFE_IMAGE_URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const IMAGE_SIZE_RE = /^([1-9]\d{0,4})(?:x([1-9]\d{0,4}))?$/i;
 
 const CALLOUT_ALIASES: Record<string, string> = {
   note: 'note',
@@ -57,6 +91,201 @@ const CALLOUT_ALIASES: Record<string, string> = {
   quote: 'quote',
   cite: 'quote',
 };
+
+function normalizePathSeparators(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
+function dirnamePortable(filePath: string): string | null {
+  const normalized = normalizePathSeparators(filePath);
+  const slash = normalized.lastIndexOf('/');
+  if (slash < 0) return null;
+  if (slash === 0) return '/';
+  return normalized.slice(0, slash);
+}
+
+function isAbsoluteLocalPath(value: string): boolean {
+  return value.startsWith('/') || ABSOLUTE_WINDOWS_PATH_RE.test(value) || value.startsWith('\\\\') || value.startsWith('//');
+}
+
+function normalizeJoinedPath(pathname: string): string {
+  const normalized = normalizePathSeparators(pathname);
+  const prefixMatch = normalized.match(/^(?:[A-Za-z]:|\/\/[^/]+\/[^/]+|\/)?/);
+  const prefix = prefixMatch?.[0] ?? '';
+  const rest = normalized.slice(prefix.length);
+  const parts: string[] = [];
+
+  for (const part of rest.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (parts.length > 0 && parts[parts.length - 1] !== '..') {
+        parts.pop();
+      } else if (!prefix) {
+        parts.push(part);
+      }
+      continue;
+    }
+    parts.push(part);
+  }
+
+  if (!prefix) return parts.join('/');
+  if (prefix.endsWith('/')) return `${prefix}${parts.join('/')}`;
+  return parts.length ? `${prefix}/${parts.join('/')}` : prefix;
+}
+
+function decodeMarkdownPath(rawPath: string): string {
+  try {
+    return decodeURI(rawPath);
+  } catch {
+    return rawPath;
+  }
+}
+
+function splitResourceSuffix(raw: string): { pathname: string; suffix: string } {
+  const hash = raw.indexOf('#');
+  const query = raw.indexOf('?');
+  const indexes = [hash, query].filter(index => index >= 0);
+  const splitAt = indexes.length ? Math.min(...indexes) : -1;
+  if (splitAt < 0) return { pathname: raw, suffix: '' };
+  return {
+    pathname: raw.slice(0, splitAt),
+    suffix: raw.slice(splitAt),
+  };
+}
+
+function sanitizeImageUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  if (!EXPLICIT_PROTOCOL_RE.test(value)) return null;
+
+  try {
+    const parsed = new URL(value);
+    return SAFE_IMAGE_URL_PROTOCOLS.has(parsed.protocol) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLocalImagePath(rawPath: string, currentFilePath: string): string | null {
+  const decodedPath = decodeMarkdownPath(rawPath.trim());
+  if (!decodedPath) return null;
+  if (isAbsoluteLocalPath(decodedPath)) return normalizeJoinedPath(decodedPath);
+
+  const baseDir = dirnamePortable(currentFilePath);
+  if (!baseDir) return null;
+  return normalizeJoinedPath(`${baseDir}/${decodedPath}`);
+}
+
+export function resolveMarkdownImageSrc(src: string, context: MarkdownImageContext | undefined): string {
+  const trimmed = src.trim();
+  if (!trimmed) return src;
+
+  const safeUrl = sanitizeImageUrl(trimmed);
+  if (safeUrl) return safeUrl;
+  if (EXPLICIT_PROTOCOL_RE.test(trimmed)) return trimmed;
+
+  if (!context?.filePath || typeof context.getFileUrl !== 'function') return src;
+
+  const { pathname, suffix } = splitResourceSuffix(trimmed);
+  const resolvedPath = resolveLocalImagePath(pathname, context.filePath);
+  if (!resolvedPath) return src;
+
+  const fileUrl = context.getFileUrl(resolvedPath);
+  return fileUrl ? `${fileUrl}${suffix}` : src;
+}
+
+export function parseImageDimensions(raw: string): ImageDimensions | null {
+  const match = IMAGE_SIZE_RE.exec(raw.trim());
+  if (!match) return null;
+  return {
+    width: match[1],
+    ...(match[2] ? { height: match[2] } : {}),
+  };
+}
+
+function splitUnescapedPipe(value: string): [string, string] | null {
+  for (let i = value.length - 1; i >= 0; i -= 1) {
+    if (value[i] === '|' && !isEscaped(value, i)) {
+      return [value.slice(0, i), value.slice(i + 1)];
+    }
+  }
+  return null;
+}
+
+export function parseImageLabel(raw: string): ImageLabel {
+  const trimmed = raw.trim();
+  const pureSize = parseImageDimensions(trimmed);
+  if (pureSize) return { alt: '', dimensions: pureSize };
+
+  const split = splitUnescapedPipe(raw);
+  if (!split) return { alt: raw, dimensions: null };
+
+  const [alt, maybeSize] = split;
+  const dimensions = parseImageDimensions(maybeSize);
+  if (!dimensions) return { alt: raw, dimensions: null };
+  return { alt: alt.trim(), dimensions };
+}
+
+function basenamePortable(value: string): string {
+  const normalized = normalizePathSeparators(value);
+  const slash = normalized.lastIndexOf('/');
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+function splitObsidianEmbedTarget(raw: string): { target: string; label: string | null } {
+  const split = splitUnescapedPipe(raw);
+  if (!split) return { target: raw.trim(), label: null };
+  return { target: split[0].trim(), label: split[1].trim() };
+}
+
+function stripObsidianFragment(raw: string): string {
+  const hash = raw.indexOf('#');
+  return (hash >= 0 ? raw.slice(0, hash) : raw).trim();
+}
+
+function isImageEmbedTarget(target: string): boolean {
+  const pathname = splitResourceSuffix(stripObsidianFragment(target)).pathname;
+  const ext = extOfName(pathname);
+  return isImageOrSvgExt(ext);
+}
+
+export function parseObsidianImageEmbed(rawInner: string): ParsedMarkdownImage | null {
+  const { target, label } = splitObsidianEmbedTarget(rawInner);
+  const imageTarget = stripObsidianFragment(target);
+  if (!imageTarget || !isImageEmbedTarget(imageTarget)) return null;
+
+  const dimensions = label ? parseImageDimensions(label) : null;
+  return {
+    src: imageTarget,
+    alt: dimensions ? basenamePortable(imageTarget) : (label || basenamePortable(imageTarget)),
+    dimensions,
+  };
+}
+
+function obsidianImageEmbeds(md: MarkdownItInstance): void {
+  md.inline.ruler.before('image', 'obsidian_image_embed', (state: StateInline, silent: boolean) => {
+    const start = state.pos;
+    if (state.src.slice(start, start + 3) !== '![[') return false;
+
+    const close = findUnescapedDelimiter(state.src, ']]', start + 3, state.posMax);
+    if (close < 0) return false;
+
+    const parsed = parseObsidianImageEmbed(state.src.slice(start + 3, close));
+    if (!parsed) return false;
+
+    if (!silent) {
+      const token = state.push('image', 'img', 0);
+      token.attrs = [['src', parsed.src]];
+      token.content = parsed.alt;
+      if (parsed.dimensions?.width) token.attrSet('width', parsed.dimensions.width);
+      if (parsed.dimensions?.height) token.attrSet('height', parsed.dimensions.height);
+      token.markup = '![[]]';
+    }
+
+    state.pos = close + 2;
+    return true;
+  });
+}
 
 function normalizeCalloutType(type: string): string {
   return CALLOUT_ALIASES[type.toLowerCase()] || 'note';
@@ -327,9 +556,11 @@ function applyMarkdownPlugins(md: MarkdownItInstance): void {
   md.use(mk);
   md.use(texBracketMath);
   md.use(taskLists, { enabled: false, label: true });
+  md.use(obsidianImageEmbeds);
   md.use(obsidianHighlights);
   md.use(obsidianCallouts);
   md.use(mermaidFences);
+  md.use(markdownImageRenderer);
 }
 
 function fenceLanguage(info: string): string {
@@ -353,6 +584,40 @@ function mermaidFences(md: MarkdownItInstance): void {
       '<div class="mermaid-rendered"></div>',
       '</div>\n',
     ].join('');
+  };
+}
+
+function markdownImageRenderer(md: MarkdownItInstance): void {
+  md.renderer.rules.image = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const markdownEnv = env as MarkdownRenderEnv;
+    const src = token.attrGet('src');
+    if (src) token.attrSet('src', resolveMarkdownImageSrc(src, markdownEnv.markdownImage));
+
+    const rawAlt = token.children
+      ? self.renderInlineAsText(token.children, options, env)
+      : token.content;
+    const parsedLabel = parseImageLabel(rawAlt);
+    token.attrSet('alt', parsedLabel.alt);
+    if (parsedLabel.dimensions?.width && !token.attrGet('width')) {
+      token.attrSet('width', parsedLabel.dimensions.width);
+    }
+    if (parsedLabel.dimensions?.height && !token.attrGet('height')) {
+      token.attrSet('height', parsedLabel.dimensions.height);
+    }
+    token.attrSet('loading', 'lazy');
+    token.attrSet('decoding', 'async');
+
+    return self.renderToken(tokens, idx, options);
+  };
+}
+
+function buildMarkdownEnv(options: MarkdownPreviewOptions = {}): MarkdownRenderEnv {
+  return {
+    markdownImage: {
+      filePath: options.filePath,
+      getFileUrl: options.getFileUrl,
+    },
   };
 }
 
@@ -386,9 +651,9 @@ export function renderMarkdown(src: string): string {
   return getMd().render(src);
 }
 
-export function renderMarkdownPreview(src: string): string {
+export function renderMarkdownPreview(src: string, options: MarkdownPreviewOptions = {}): string {
   try {
-    return sanitizeMarkdownPreviewHtml(getPreviewMd().render(src));
+    return sanitizeMarkdownPreviewHtml(getPreviewMd().render(src, buildMarkdownEnv(options)));
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.warn('[markdown] preview sanitizer failed:', err);

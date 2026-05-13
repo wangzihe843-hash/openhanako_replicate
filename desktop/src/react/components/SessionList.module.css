@@ -55,6 +55,14 @@
     color: var(--text-muted);
     margin-top: 1px;
     opacity: 0.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: padding-right var(--duration-fast);
+}
+
+.sessionItem:hover .sessionItemMeta {
+    padding-right: 68px;
 }
 
 .sessionRcBadge {

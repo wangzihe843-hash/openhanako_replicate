@@ -91,6 +91,12 @@ def choose_template(template: str, audience: str) -> str:
     return "direct"
 
 
+def choose_scaffold_template(args: argparse.Namespace) -> str:
+    if args.kind == "provider" and args.template == "auto":
+        return "direct"
+    return choose_template(args.template, args.audience)
+
+
 def choose_sdk_mode(sdk_mode: str, hana_root: Path | None, template: str) -> str:
     if template not in REACT_TEMPLATES:
         return "none"
@@ -174,7 +180,14 @@ def sdk_dependency(
     raise SystemExit(f"Unsupported SDK mode for {package_name}: {sdk_mode}")
 
 
-def manifest_for(args: argparse.Namespace, plugin_id: str, display_name: str, include_ui: bool, include_lifecycle: bool) -> dict:
+def manifest_for(
+    args: argparse.Namespace,
+    plugin_id: str,
+    display_name: str,
+    include_ui: bool,
+    include_lifecycle: bool,
+    include_provider: bool,
+) -> dict:
     manifest = {
         "manifestVersion": 1,
         "id": plugin_id,
@@ -183,7 +196,7 @@ def manifest_for(args: argparse.Namespace, plugin_id: str, display_name: str, in
         "description": args.description or f"{display_name} plugin for Hana.",
         "minAppVersion": args.min_app_version,
     }
-    if include_ui or include_lifecycle:
+    if include_ui or include_lifecycle or include_provider:
         manifest["trust"] = "full-access"
     if include_ui:
         manifest["ui"] = {
@@ -416,6 +429,51 @@ export default definePlugin({{
     ctx.log.info({js_string(display_name + " unloaded")});
   }},
 }});
+"""
+
+
+def create_provider_contribution(plugin_id: str, display_name: str) -> str:
+    model_id = f"{plugin_id}-image"
+    executable = f"{plugin_id}-image"
+    return f"""
+export const id = {js_string(plugin_id)};
+export const displayName = {js_string(display_name)};
+export const authType = "none";
+
+export const runtime = {{
+  kind: "local-cli",
+  protocolId: "local-cli-media",
+  command: {{
+    executable: {js_string(executable)},
+    args: [
+      {{ literal: "generate" }},
+      {{ option: "--prompt", from: "prompt" }},
+      {{ option: "--model", from: "modelId" }},
+      {{ option: "--output", from: "outputDir" }},
+    ],
+    timeoutMs: 120000,
+    output: {{ kind: "file_glob", directory: "outputDir", pattern: "*.png" }},
+  }},
+}};
+
+export const capabilities = {{
+  chat: {{ projection: "none" }},
+  media: {{
+    imageGeneration: {{
+      defaultModelId: {js_string(model_id)},
+      models: [
+        {{
+          id: {js_string(model_id)},
+          displayName: {js_string(display_name + " Image")},
+          protocolId: "local-cli-media",
+          inputs: ["text", "image"],
+          outputs: ["image"],
+          supportsEdit: true,
+        }},
+      ],
+    }},
+  }},
+}};
 """
 
 
@@ -934,7 +992,16 @@ def create_tsconfig() -> str:
 """
 
 
-def create_readme(plugin_id: str, display_name: str, include_ui: bool, include_lifecycle: bool, template: str, audience: str) -> str:
+def create_readme(
+    plugin_id: str,
+    display_name: str,
+    include_tool: bool,
+    include_ui: bool,
+    include_lifecycle: bool,
+    include_provider: bool,
+    template: str,
+    audience: str,
+) -> str:
     lines = [
         f"# {display_name}",
         "",
@@ -948,8 +1015,14 @@ def create_readme(plugin_id: str, display_name: str, include_ui: bool, include_l
             "## What to edit first",
             "",
             "- `manifest.json`: the name, description, and permissions Hana sees.",
-            "- `tools/create-note.js`: the sample action the Agent can call.",
         ])
+        if include_provider:
+            lines.extend([
+                "- `providers/*.js`: the provider declaration Hana discovers.",
+                "- Replace the sample CLI executable with the real command before enabling this provider for users.",
+            ])
+        if include_tool:
+            lines.append("- `tools/create-note.js`: the sample action the Agent can call.")
         if include_ui:
             lines.extend([
                 "- `assets/panel.js`: the iframe UI behavior.",
@@ -960,8 +1033,11 @@ def create_readme(plugin_id: str, display_name: str, include_ui: bool, include_l
             "## Contents",
             "",
             "- `manifest.json`: plugin metadata and capability declarations.",
-            "- `tools/create-note.js`: sample SessionFile-aware tool.",
         ])
+        if include_provider:
+            lines.append("- `providers/*.js`: provider contribution with explicit chat/media capabilities.")
+        if include_tool:
+            lines.append("- `tools/create-note.js`: sample SessionFile-aware tool.")
         if include_lifecycle:
             lines.append("- `index.js`: sample lifecycle entry and EventBus handler.")
         if include_ui:
@@ -989,6 +1065,12 @@ def create_readme(plugin_id: str, display_name: str, include_ui: bool, include_l
     ])
     if include_ui:
         lines.append("This plugin requires full-access because Hana page and widget contributions are route-backed iframe UI.")
+    if include_provider:
+        lines.extend([
+            "This plugin requires full-access because provider contributions can affect model discovery and runtime execution.",
+            "The sample provider is media-only: `chat.projection = \"none\"` keeps it out of chat model selectors.",
+            "CLI-backed providers must use structured argument bindings and output contracts; do not replace them with shell command strings.",
+        ])
     return "\n".join(lines)
 
 
@@ -997,10 +1079,11 @@ def scaffold(args: argparse.Namespace) -> Path:
     display_name = args.display_name or titleize(args.name)
     parent = Path(args.path).expanduser().resolve()
     plugin_dir = parent / plugin_id
-    template = choose_template(args.template, args.audience)
+    template = choose_scaffold_template(args)
     include_tool = args.kind in {"tool", "full"}
     include_ui = args.kind in {"ui", "full"}
     include_lifecycle = args.kind == "full"
+    include_provider = args.kind == "provider"
 
     if plugin_dir.exists():
         if not args.force:
@@ -1014,7 +1097,14 @@ def scaffold(args: argparse.Namespace) -> Path:
     sdk_packages = required_sdk_packages(include_tool, include_ui, include_lifecycle, template)
     bundled_sdk = prepare_bundled_sdk(plugin_dir, sdk_packages) if sdk_mode == "bundled" else {}
 
-    write_json(plugin_dir / "manifest.json", manifest_for(args, plugin_id, display_name, include_ui, include_lifecycle))
+    write_json(plugin_dir / "manifest.json", manifest_for(
+        args,
+        plugin_id,
+        display_name,
+        include_ui,
+        include_lifecycle,
+        include_provider,
+    ))
     if template in REACT_TEMPLATES:
         write_json(plugin_dir / "package.json", package_json_for(
             plugin_dir,
@@ -1028,7 +1118,16 @@ def scaffold(args: argparse.Namespace) -> Path:
             sdk_mode,
             bundled_sdk,
         ))
-    write_text(plugin_dir / "README.md", create_readme(plugin_id, display_name, include_ui, include_lifecycle, template, args.audience))
+    write_text(plugin_dir / "README.md", create_readme(
+        plugin_id,
+        display_name,
+        include_tool,
+        include_ui,
+        include_lifecycle,
+        include_provider,
+        template,
+        args.audience,
+    ))
 
     if include_tool:
         tool_source = create_runtime_tool(plugin_id, display_name) if template in REACT_TEMPLATES else create_direct_tool(plugin_id, display_name)
@@ -1036,6 +1135,8 @@ def scaffold(args: argparse.Namespace) -> Path:
     if include_lifecycle:
         index_source = create_runtime_index(plugin_id, display_name) if template in REACT_TEMPLATES else create_direct_index(plugin_id, display_name)
         write_text(plugin_dir / "index.js", index_source)
+    if include_provider:
+        write_text(plugin_dir / "providers" / f"{plugin_id}-provider.js", create_provider_contribution(plugin_id, display_name))
     if include_ui:
         write_text(plugin_dir / "routes" / "ui.js", create_route(display_name))
         if template in REACT_TEMPLATES:
@@ -1057,7 +1158,7 @@ def main() -> int:
     parser.add_argument("--display-name", help="Display name. Defaults to title-cased name.")
     parser.add_argument("--description", help="Manifest description.")
     parser.add_argument("--path", default="examples/plugins", help="Parent directory for the plugin. Defaults to examples/plugins.")
-    parser.add_argument("--kind", choices=["tool", "ui", "full"], default="full", help="Scaffold shape.")
+    parser.add_argument("--kind", choices=["tool", "ui", "full", "provider"], default="full", help="Scaffold shape.")
     parser.add_argument("--audience", choices=["auto", "beginner", "developer"], default="auto", help="Controls generated README tone and auto template choice.")
     parser.add_argument("--template", choices=["auto", "direct", "guided-react", "professional-react"], default="auto", help="UI/project template.")
     parser.add_argument("--sdk-mode", choices=["auto", "workspace", "bundled"], default="auto", help="SDK dependency source for React templates.")
@@ -1066,12 +1167,15 @@ def main() -> int:
     args = parser.parse_args()
 
     plugin_dir = scaffold(args)
-    template = choose_template(args.template, args.audience)
+    template = choose_scaffold_template(args)
     print(f"Created Hana plugin scaffold: {plugin_dir}")
     print(f"Template: {template}")
     print("Next steps:")
     print("  1. Review manifest.json capabilities and trust.")
-    if template in REACT_TEMPLATES:
+    if args.kind == "provider":
+        print("  2. Edit the provider declaration under providers/ and replace the sample CLI executable.")
+        print("  3. Install or drag the plugin folder into Hana with full-access enabled.")
+    elif template in REACT_TEMPLATES:
         print("  2. Run npm install inside the plugin directory.")
         print("  3. Run npm run build:ui to produce assets/panel.js and assets/panel.css.")
     else:

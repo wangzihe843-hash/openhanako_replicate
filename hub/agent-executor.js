@@ -15,6 +15,29 @@ import { t } from "../server/i18n.js";
 import { createDefaultSettings } from "../core/session-defaults.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "../core/config-coordinator.js";
 import { teardownSessionResources } from "../core/session-teardown.js";
+import {
+  filterAgentPhoneTools,
+  getAgentPhoneSessionDir,
+  getAgentPhoneRefreshDate,
+  shouldCompactAgentPhoneSession,
+  shouldRefreshAgentPhoneSession,
+} from "../lib/conversations/agent-phone-session.js";
+import {
+  ensureAgentPhoneProjection,
+  readAgentPhoneProjection,
+  updateAgentPhoneProjectionMeta,
+} from "../lib/conversations/agent-phone-projection.js";
+import { findModel, requireModelRef } from "../shared/model-ref.js";
+
+function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
+  if (!modelOverride) return ctx.resolveModel(agentConfig);
+  const ref = requireModelRef(modelOverride);
+  const found = findModel(engine.availableModels || [], ref.id, ref.provider);
+  if (!found) {
+    throw new Error(`Agent phone model override not available: ${ref.provider}/${ref.id}`);
+  }
+  return found;
+}
 
 /**
  * 以指定 agentId 的身份跑一次临时会话。
@@ -145,5 +168,225 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     .trim();
 
   debugLog()?.log("agent-executor", `${agentId} done, ${text.length} chars captured`);
+  return text;
+}
+
+function storedRelativePath(agentDir, filePath) {
+  return path.relative(agentDir, filePath).split(path.sep).join("/");
+}
+
+function resolveStoredSessionPath(agentDir, stored) {
+  if (!stored || typeof stored !== "string") return null;
+  const resolved = path.resolve(agentDir, ...stored.split("/").filter(Boolean));
+  const base = path.resolve(agentDir);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) return null;
+  return resolved;
+}
+
+async function maybeCompactPhoneSession(session, { isActive = false, onActivity } = {}) {
+  const usage = session.getContextUsage?.() ?? null;
+  const reason = shouldCompactAgentPhoneSession({
+    tokens: usage?.tokens,
+    isActive,
+  });
+  if (!reason) return null;
+  if (session.isCompacting) return null;
+
+  await onActivity?.(
+    "compacting",
+    reason === "hard" ? "正在压缩手机会话（180K 硬上限）" : "正在空闲压缩手机会话",
+    {
+      reason,
+      tokensBefore: usage?.tokens ?? null,
+      contextWindow: usage?.contextWindow ?? null,
+    },
+  );
+  await session.compact();
+  const after = session.getContextUsage?.() ?? null;
+  await onActivity?.(
+    "idle",
+    "手机会话压缩完成",
+    {
+      reason,
+      tokensBefore: usage?.tokens ?? null,
+      tokensAfter: after?.tokens ?? null,
+      contextWindow: after?.contextWindow ?? usage?.contextWindow ?? null,
+    },
+  );
+  return { reason, before: usage, after };
+}
+
+/**
+ * 以 Agent Phone 方式运行可复用会话。
+ *
+ * 每个 agent + conversation 复用同一个 session 文件；projection 文档记录
+ * session file。该函数不删除 session 文件。
+ */
+export async function runAgentPhoneSession(agentId, rounds, {
+  engine,
+  signal,
+  conversationId,
+  conversationType = "channel",
+  systemAppend,
+  noMemory = false,
+  toolMode = "read_only",
+  modelOverride = null,
+  onActivity,
+  onSessionReady,
+  emitEvents = false,
+  extraCustomTools = [],
+} = {}) {
+  if (!conversationId) throw new Error("conversationId is required for agent phone session");
+
+  const agent = engine.getAgent(agentId);
+  if (!agent) {
+    throw new Error(t("error.agentExecNotInit", { id: agentId }));
+  }
+  const agentDir = agent.agentDir;
+  await ensureAgentPhoneProjection({
+    agentDir,
+    agentId,
+    conversationId,
+    conversationType,
+  });
+
+  const ctx = engine.createSessionContext();
+  const tempResourceLoader = Object.create(ctx.resourceLoader);
+  const basePrompt = noMemory ? agent.personality : agent.systemPrompt;
+  tempResourceLoader.getSystemPrompt = () =>
+    systemAppend ? `${basePrompt}\n\n${systemAppend}` : basePrompt;
+  tempResourceLoader.getSkills = () => ctx.getSkillsForAgent(agent);
+
+  const cwd = engine.getHomeCwd(agentId) || process.cwd();
+  const sessionDir = getAgentPhoneSessionDir(agentDir, conversationId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const projectionPath = await ensureAgentPhoneProjection({
+    agentDir,
+    agentId,
+    conversationId,
+    conversationType,
+  });
+  const projection = readAgentPhoneProjection(projectionPath);
+  const existingSessionPath = resolveStoredSessionPath(agentDir, projection.meta.phoneSessionFile);
+  const refreshNow = new Date();
+  const refreshDate = getAgentPhoneRefreshDate(refreshNow);
+  const shouldRefresh = shouldRefreshAgentPhoneSession(projection.meta, refreshNow);
+  const sessionManager = !shouldRefresh && existingSessionPath && fs.existsSync(existingSessionPath)
+    ? SessionManager.open(existingSessionPath, sessionDir)
+    : SessionManager.create(cwd, sessionDir);
+
+  const agentToolsSnapshot = typeof agent.getToolsSnapshot === "function"
+    ? agent.getToolsSnapshot({
+      forceMemoryEnabled: agent.memoryMasterEnabled !== false,
+      ...(typeof agent.experienceEnabled === "boolean"
+        ? { forceExperienceEnabled: agent.experienceEnabled === true }
+        : {}),
+    })
+    : agent.tools;
+  const built = ctx.buildTools(cwd, agentToolsSnapshot, {
+    agentDir,
+    workspace: engine.getHomeCwd(agentId),
+  });
+  const { tools, customTools } = filterAgentPhoneTools(built, { toolMode });
+  const model = resolveAgentPhoneModel(engine, ctx, agent.config, modelOverride);
+  const { session } = await createAgentSession({
+    cwd,
+    sessionManager,
+    settingsManager: createDefaultSettings(),
+    authStorage: ctx.authStorage,
+    modelRegistry: ctx.modelRegistry,
+    model,
+    thinkingLevel: "medium",
+    resourceLoader: tempResourceLoader,
+    tools,
+    customTools: [
+      ...customTools,
+      ...(Array.isArray(extraCustomTools) ? extraCustomTools : []),
+    ],
+  });
+
+  const sessionPath = session.sessionManager?.getSessionFile?.();
+  if (sessionPath) {
+    await updateAgentPhoneProjectionMeta({
+      agentDir,
+      agentId,
+      conversationId,
+      conversationType,
+      patch: {
+        phoneSessionFile: storedRelativePath(agentDir, sessionPath),
+        lastRefreshedDate: refreshDate,
+        toolMode,
+      },
+    });
+    try { await onSessionReady?.(sessionPath); } catch {}
+  }
+
+  let onAbort;
+  if (signal) {
+    onAbort = () => { try { session.abort(); } catch {} };
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  let capturedText = "";
+  let isCapturing = false;
+  let lastLiveActivity = null;
+  const recordLiveActivity = (key, state, summary, details = {}) => {
+    if (!isCapturing || lastLiveActivity === key) return;
+    lastLiveActivity = key;
+    Promise.resolve(onActivity?.(state, summary, details)).catch(() => {});
+  };
+  const unsub = session.subscribe((event) => {
+    if (emitEvents && sessionPath && isCapturing) {
+      engine.emitEvent?.({ ...event, isolated: true }, sessionPath);
+    }
+    if (!isCapturing) return;
+    if (event.type === "message_update") {
+      const sub = event.assistantMessageEvent;
+      if (sub?.type === "thinking_delta") {
+        recordLiveActivity("thinking", "thinking", "正在思考");
+      }
+      if (sub?.type === "text_delta") {
+        recordLiveActivity("composing", "replying", "正在准备回复");
+      }
+      if (sub?.type === "text_delta") capturedText += sub.delta || "";
+    } else if (event.type === "tool_execution_start") {
+      if (event.toolName === "channel_reply") {
+        recordLiveActivity("channel_reply", "replying", "正在发送频道消息");
+      } else if (event.toolName === "channel_pass") {
+        recordLiveActivity("channel_pass", "no_reply", "正在选择本轮不发言");
+      }
+    }
+  });
+
+  debugLog()?.log("agent-executor", `${agentId} phone session started (${conversationType}:${conversationId}, ${rounds.length} rounds)`);
+
+  try {
+    await maybeCompactPhoneSession(session, { isActive: false, onActivity });
+    for (const round of rounds) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      isCapturing = !!round.capture;
+      if (round.capture) {
+        capturedText = "";
+        lastLiveActivity = null;
+      }
+      await session.prompt(round.text);
+    }
+    await maybeCompactPhoneSession(session, { isActive: false, onActivity });
+  } finally {
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    await teardownSessionResources({
+      session,
+      unsub,
+      label: `hub.runAgentPhoneSession[${agentId}:${conversationId}]`,
+      warn: (msg) => debugLog()?.warn("agent-executor", msg),
+    });
+  }
+
+  const text = capturedText
+    .replace(/```(?:mood|pulse|reflect)[\s\S]*?```\n*|<(?:mood|pulse|reflect)>[\s\S]*?<\/(?:mood|pulse|reflect)>\n*/gi, "")
+    .trim();
+
+  debugLog()?.log("agent-executor", `${agentId} phone done, ${text.length} chars captured`);
   return text;
 }

@@ -805,6 +805,373 @@
 }
 
 .channelMemberName {
+    flex: 1;
+    min-width: 0;
     font-size: 0.82rem;
     color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.channelMemberRemoveButton {
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.62;
+}
+
+.channelMemberRemoveButton:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--danger, #b45757);
+    opacity: 1;
+}
+
+.channelMemberRemoveButton:disabled {
+    cursor: default;
+    opacity: 0.25;
+}
+
+.channelMemberAddButton {
+    width: 100%;
+    min-height: 26px;
+    margin-top: 4px;
+    padding: 0 7px;
+    border: 1px dashed rgba(0, 0, 0, 0.09);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.26);
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    cursor: pointer;
+}
+
+.channelMemberAddButton:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.46);
+    color: var(--text);
+}
+
+.channelMemberAddButton:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+/* ========================================
+   频道 — Agent 动态
+   ======================================== */
+.agentActivityList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.agentActivityHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: var(--space-sm);
+}
+
+.agentActivityHeader :global(.channel-info-label) {
+    margin-bottom: 0;
+}
+
+.agentSettingsHeader {
+    margin-bottom: var(--space-sm);
+}
+
+.agentToolModeToggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.025);
+}
+
+.agentToolModeToggleFill {
+    width: 100%;
+}
+
+.agentToolModeToggleFill .agentToolModeButton {
+    flex: 1;
+}
+
+.agentToolModeButton {
+    min-width: 34px;
+    height: 22px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    cursor: pointer;
+}
+
+.agentToolModeButton:disabled {
+    cursor: default;
+    opacity: 0.58;
+}
+
+.agentToolModeButtonActive {
+    background: var(--bg-card);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.agentActivityItem {
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.34);
+    overflow: hidden;
+}
+
+.agentActivityRow {
+    width: 100%;
+    min-height: 34px;
+    padding: 6px 8px;
+    display: grid;
+    grid-template-columns: 20px minmax(48px, max-content) minmax(0, 1fr);
+    gap: 7px;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.agentActivityRow:hover {
+    background: rgba(0, 0, 0, 0.025);
+}
+
+.agentActivityAvatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--overlay-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 0.58rem;
+    font-weight: 600;
+}
+
+.agentActivityAvatarImg {
+    width: 20px;
+    height: 20px;
+    object-fit: cover;
+    border-radius: 50%;
+}
+
+.agentActivityName {
+    font-size: 0.78rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.agentActivitySummary {
+    min-width: 0;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.agentActivityDetails {
+    border-top: 1px solid rgba(0, 0, 0, 0.045);
+}
+
+.agentActivityTranscriptScroll {
+    max-height: 11.5rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px 7px 7px;
+    font-size: 0.74rem;
+}
+
+.agentActivityTranscriptScroll :global(.message) {
+    max-width: 100%;
+}
+
+.agentActivityTranscriptScroll :global(.messageAssistant),
+.agentActivityTranscriptScroll :global(.messageUser) {
+    font-size: 0.74rem;
+}
+
+.agentActivityEmpty {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    padding: 2px 0;
+}
+
+/* ========================================
+   频道 — 当前群聊 Agent 设置
+   ======================================== */
+.agentSettingsCard {
+    position: relative;
+    z-index: 40;
+    overflow: visible;
+}
+
+.agentSettingsInlineGrid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+
+.agentSettingsInlineGrid .agentSettingsField {
+    margin-top: 0;
+}
+
+.agentSettingsField {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 10px;
+}
+
+.agentSettingsField:first-of-type {
+    margin-top: 0;
+}
+
+.agentSettingsLabel {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+.agentReplyRangeRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr);
+    align-items: center;
+    gap: 5px;
+}
+
+.agentReplyRangeInput {
+    width: 100%;
+    height: 26px;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.34);
+    color: var(--text);
+    font-size: 0.72rem;
+    padding: 0 7px;
+    outline: none;
+}
+
+.agentReplyRangeSep {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    text-align: center;
+}
+
+.agentReplyRangeInput:focus {
+    border-color: rgba(47, 111, 143, 0.28);
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.agentModelOverrideRow {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.agentModelSelect {
+    position: relative;
+    min-width: 0;
+}
+
+.agentModelSelectButton {
+    width: 100%;
+    height: 26px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.34);
+    color: var(--text);
+    font-size: 0.7rem;
+    padding: 0 7px;
+    cursor: pointer;
+}
+
+.agentModelSelectButton:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.agentModelSelectButton span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agentModelSelectArrow {
+    color: var(--text-muted);
+    font-size: 0.62rem;
+}
+
+.agentModelDropdown {
+    position: absolute;
+    z-index: 1000;
+    right: 0;
+    top: calc(100% + 4px);
+    width: min(240px, 72vw);
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 7px;
+    background: var(--bg-card);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+
+.agentModelGroupHeader {
+    padding: 5px 7px 3px;
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.02em;
+}
+
+.agentModelOption {
+    width: 100%;
+    min-height: 26px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text);
+    font-size: 0.7rem;
+    text-align: left;
+    padding: 5px 7px;
+    cursor: pointer;
+}
+
+.agentModelOption:hover {
+    background: rgba(0, 0, 0, 0.045);
+}
+
+.agentModelOptionActive {
+    background: rgba(47, 111, 143, 0.1);
+    color: var(--accent);
 }

@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.173.8",
+  "version": "0.178.2",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -60,6 +60,7 @@
     "@mariozechner/pi-ai": "0.70.5",
     "@mariozechner/pi-coding-agent": "0.70.2",
     "@tiptap/core": "^3.22.0",
+    "@tiptap/extension-bold": "^3.22.0",
     "@tiptap/extension-placeholder": "^3.22.0",
     "@tiptap/pm": "^3.22.0",
     "@tiptap/react": "^3.22.0",

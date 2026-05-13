@@ -1,11 +1,10 @@
 import os from "node:os";
 
-// Hana 在三平台执行 AI 命令时，真实使用的 shell 固定为 bash：
-//   darwin：seatbelt 沙盒脚本 shebang 是 #!/bin/bash
-//   linux：bwrap 直接调用 /bin/bash
-//   win32：win32-exec 只接受 Git Bash / MSYS2 / Bundled MinGit 的 bash.exe
-// 因此 system prompt 里声明的 shell 固定为 bash，与用户登录 shell ($SHELL) 无关。
-const HANA_EXEC_SHELL = "bash";
+// Hana 在 macOS/Linux 上执行 AI 命令时，真实使用 bash。
+// Windows 由 win32-exec 在 Git/cmd/POSIX compatibility 三条 runtime 之间显式分派。
+function getExecShellLabel(platform) {
+  return platform === "win32" ? "platform-adaptive" : "bash";
+}
 
 export function getPlatformPromptNote({
   platform = process.platform,
@@ -14,16 +13,16 @@ export function getPlatformPromptNote({
 } = {}) {
   const lines = [
     `Platform: ${platform}`,
-    `Shell: ${HANA_EXEC_SHELL}`,
+    `Shell: ${getExecShellLabel(platform)}`,
     `OS Version: ${osType} ${osRelease}`,
   ];
   if (platform === "win32") {
     lines.push(
-      "Host OS is Windows, but the bash tool runs in a bash-compatible layer such as Git Bash, MSYS2, or bundled MinGit.",
-      "Command syntax: use bash/POSIX syntax for pipes, paths, environment variables, and redirection.",
-      "Prefer bash-compatible paths such as /c/Users/name/file when a Windows path is needed.",
-      "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native command.",
-      "Discard bash output with /dev/null; do not use CMD's nul device unless the command is explicitly run through cmd.exe.",
+      "Host OS is Windows. Simple git commands run through Hanako's bundled git.exe when available.",
+      "Simple Windows-native commands may run through cmd.exe; POSIX shell commands run through Hanako's bundled POSIX compatibility layer in sandbox mode.",
+      "Use POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.",
+      "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native shell.",
+      "Discard POSIX command output with /dev/null; use CMD's nul device only inside an explicit cmd.exe command.",
     );
   }
   return lines.join("\n");

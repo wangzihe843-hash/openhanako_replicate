@@ -38,6 +38,7 @@ const {
 } = require("../shared/hana-runtime-paths.cjs");
 const {
   buildBrowserSearchExtractionScript,
+  buildBrowserSearchLoadOptions,
   buildBrowserSearchUrl,
 } = require("../lib/browser/browser-search-extractors.cjs");
 
@@ -613,7 +614,7 @@ async function _spawnServerOnce(serverInfoPath) {
 
   // Windows: 注入 MinGit 路径
   if (process.platform === "win32") {
-    // MinGit-busybox 结构：cmd/git.exe, mingw64/bin/git.exe+sh.exe
+    // MinGit-busybox 结构：cmd/git.exe, mingw64/bin/git.exe + ash/busybox
     const gitRoot = path.join(process.resourcesPath || "", "git");
     const gitPaths = [
       path.join(gitRoot, "mingw64", "bin"),
@@ -1633,10 +1634,13 @@ async function handleBrowserCommand(cmd, params) {
       const provider = String(params.provider || "");
       const query = String(params.query || "").trim();
       const maxResults = Math.max(1, Math.min(10, Number(params.maxResults) || 5));
+      const locale = String(params.locale || "").trim();
       if (!query) throw new Error("browserSearch requires query");
 
       const started = Date.now();
-      const searchUrl = buildBrowserSearchUrl(provider, query, maxResults);
+      const searchOptions = { locale };
+      const searchUrl = buildBrowserSearchUrl(provider, query, maxResults, searchOptions);
+      const loadOptions = buildBrowserSearchLoadOptions(provider, searchOptions);
       const ses = session.fromPartition("hana-search");
       const view = new WebContentsView({
         webPreferences: {
@@ -1647,12 +1651,15 @@ async function handleBrowserCommand(cmd, params) {
         },
       });
       view.webContents.setAudioMuted(true);
+      if (loadOptions.userAgent) view.webContents.setUserAgent(loadOptions.userAgent);
       view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
       try {
         const NAV_TIMEOUT = 30000;
         await Promise.race([
-          view.webContents.loadURL(searchUrl),
+          view.webContents.loadURL(searchUrl, loadOptions.extraHeaders
+            ? { extraHeaders: loadOptions.extraHeaders }
+            : undefined),
           new Promise((_, reject) => setTimeout(() => {
             try { view.webContents.stop(); } catch {}
             reject(new Error(`Search navigation timed out after ${NAV_TIMEOUT / 1000}s: ${searchUrl}`));
@@ -1671,6 +1678,7 @@ async function handleBrowserCommand(cmd, params) {
             search_url: searchUrl,
             final_url: extracted.final_url || view.webContents.getURL(),
             page_title: extracted.title || view.webContents.getTitle(),
+            status: extracted.status || "",
             blocked: !!extracted.blocked,
             captcha: !!extracted.captcha,
             reason: extracted.reason || "",
@@ -2230,6 +2238,10 @@ function _getScreenshotMd() {
     const mk = require("@traptitech/markdown-it-katex");
     _screenshotMd.use(mk);
   } catch { /* katex not available */ }
+  try {
+    const taskLists = require("markdown-it-task-lists");
+    _screenshotMd.use(taskLists, { enabled: false, label: true });
+  } catch { /* task-lists not available */ }
   return _screenshotMd;
 }
 

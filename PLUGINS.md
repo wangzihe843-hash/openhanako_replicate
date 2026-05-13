@@ -86,7 +86,7 @@ my-plugin/
 │   └── *.json
 ├── routes/                # HTTP 路由（需要 full-access）
 │   └── *.js
-├── providers/             # LLM Provider 声明（需要 full-access）
+├── providers/             # Provider 声明：聊天/媒体能力（需要 full-access）
 │   └── *.js
 ├── extensions/            # Pi SDK extension 工厂（需要 full-access）
 │   └── *.js
@@ -143,7 +143,7 @@ restricted 插件的 tool/command 代码在主进程运行，有完整的 Node.j
 | `bus.handle` | 注册能力供其他 plugin 调用 |
 | `routes/*.js` | HTTP 端点 |
 | `extensions/*.js` | Pi SDK 事件拦截（tool 调用、provider 请求等） |
-| `providers/*.js` | LLM Provider |
+| `providers/*.js` | Provider 声明：聊天/媒体能力 |
 | `ctx.registerTool` | 运行时动态注册工具 |
 | `onload` / `onunload` | 生命周期钩子 |
 
@@ -362,7 +362,7 @@ export default function(pi) {
 
 工厂函数在 session 创建时被 Pi SDK 调用，handler 在对应事件触发时执行。完整事件列表参见 Pi SDK extension 文档。
 
-### Providers（LLM Provider）⚡ full-access
+### Providers（Provider Contribution）⚡ full-access
 
 `providers/*.js` export ProviderPlugin 数据对象：
 
@@ -373,6 +373,49 @@ export const authType = "api-key";
 export const defaultBaseUrl = "https://api.my-llm.com/v1";
 export const defaultApi = "openai-completions";
 ```
+
+Provider 可以声明多种 capability。聊天侧只消费 `capabilities.chat`，生图/生视频/生语音消费 `capabilities.media.*`。如果 provider 只提供媒体能力，把 `chat.projection` 设为 `"none"`，它就不会进入聊天模型列表：
+
+```js
+export const id = "my-image-cli";
+export const displayName = "My Image CLI";
+export const authType = "none";
+
+export const runtime = {
+  kind: "local-cli",
+  protocolId: "local-cli-media",
+  command: {
+    executable: "my-image-cli",
+    args: [
+      { literal: "generate" },
+      { option: "--prompt", from: "prompt" },
+      { option: "--model", from: "modelId" },
+      { option: "--output", from: "outputDir" },
+    ],
+    timeoutMs: 120000,
+    output: { kind: "file_glob", directory: "outputDir", pattern: "*.png" },
+  },
+};
+
+export const capabilities = {
+  chat: { projection: "none" },
+  media: {
+    imageGeneration: {
+      models: [
+        {
+          id: "my-image-model",
+          displayName: "My Image Model",
+          protocolId: "local-cli-media",
+          inputs: ["text"],
+          outputs: ["image"],
+        },
+      ],
+    },
+  },
+};
+```
+
+CLI provider 必须使用结构化参数绑定。不要拼 shell 字符串；Hana 会通过 `execFile` / `spawn` 的非 shell 模式运行命令，并把输出收束进媒体任务目录。
 
 ### Configuration（配置 schema）
 

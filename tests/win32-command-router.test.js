@@ -25,8 +25,11 @@ describe("classifyWin32Command", () => {
     expect(classifyWin32Command('powershell -Command "ipconfig /all"', { resolveNativePath }).runner).toBe("bash");
   });
 
-  it("keeps POSIX and Git commands on the bash path", () => {
-    expect(classifyWin32Command("git status", { resolveNativePath }).runner).toBe("bash");
+  it("routes simple Git commands to the structured git runner", () => {
+    expect(classifyWin32Command("git status", { resolveNativePath }).runner).toBe("git");
+  });
+
+  it("keeps complex POSIX commands on the bash path", () => {
     expect(classifyWin32Command("ls && pwd", { resolveNativePath }).runner).toBe("bash");
   });
 });

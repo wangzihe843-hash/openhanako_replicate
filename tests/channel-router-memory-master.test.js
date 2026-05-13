@@ -96,23 +96,23 @@ describe("ChannelRouter memory master fallback", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("uses config.yaml memory.enabled when triage has no live agent instance", async () => {
-    const paths = writeAgentFixture(false);
+  it("uses config.yaml memory.enabled when summarizing channel memory without a live agent instance", async () => {
+    const paths = writeAgentFixture(true);
     const router = makeRouter(paths);
-    callTextMock.mockResolvedValue("NO");
+    callTextMock.mockResolvedValue("summary");
 
-    await router._executeCheck(
+    await router._memorySummarize(
       "hana",
       "general",
-      [{ sender: "user", text: "hello" }],
-      [],
+      "context",
     );
 
     expect(callTextMock).toHaveBeenCalledOnce();
-    const systemPrompt = callTextMock.mock.calls[0][0].systemPrompt;
-    expect(systemPrompt).toContain("IDENTITY_FALLBACK_BEACON");
-    expect(systemPrompt).toContain("USER_PROFILE_BEACON");
-    expect(systemPrompt).not.toContain("MEMORY_FALLBACK_BEACON");
+    expect(factAddMock).toHaveBeenCalledWith(expect.objectContaining({
+      fact: "[#general] summary",
+      tags: expect.arrayContaining(["general"]),
+      session_id: "channel-general",
+    }));
   });
 
   it("skips memory summarization from config.yaml when no live agent instance exists", async () => {

@@ -540,9 +540,53 @@ describe("model sync related routes", () => {
       apiKey: "sk-test",
       baseUrl: "https://api.deepseek.com/v1",
       model: resolved.model,
-      maxTokens: 8,
+      maxTokens: 128,
       timeoutMs: 15_000,
     }));
+  });
+
+  it("model health reports empty-after-thinking as a diagnostic failure", async () => {
+    const { AppError } = await import("../shared/errors.js");
+    const { createModelsRoute } = await import("../server/routes/models.js");
+    const app = new Hono();
+    const resolved = {
+      model: {
+        id: "MiniMax-M2.7",
+        provider: "minimax",
+        reasoning: true,
+      },
+      provider: "minimax",
+      api: "openai-completions",
+      api_key: "sk-test",
+      base_url: "https://api.minimax.io/v1",
+    };
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      resolveModelWithCredentials: vi.fn(() => resolved),
+    };
+    callText.mockRejectedValue(new AppError("LLM_EMPTY_RESPONSE", {
+      message: "LLM returned only thinking content without visible text",
+      context: { model: "MiniMax-M2.7", reason: "empty_after_thinking" },
+    }));
+
+    app.route("/api", createModelsRoute(engine));
+
+    const healthRes = await app.request("/api/models/health", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId: "MiniMax-M2.7", provider: "minimax" }),
+    });
+    const healthData = await healthRes.json();
+
+    expect(healthRes.status).toBe(200);
+    expect(healthData).toMatchObject({
+      ok: false,
+      code: "LLM_EMPTY_RESPONSE",
+      reason: "empty_after_thinking",
+      error: "LLM returned only thinking content without visible text",
+    });
   });
 
   it("oauth provider with empty baseUrl falls back to registry", async () => {
@@ -579,6 +623,62 @@ describe("model sync related routes", () => {
     const data = await res.json();
     expect(data.source).toBe("registry");
     expect(data.models[0].id).toBe("gpt-5.4");
+  });
+
+  it("provider model delete refreshes runtime models and notifies the app", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const removeModel = vi.fn();
+    const engine = {
+      currentAgentId: "hana",
+      onProviderChanged: vi.fn().mockResolvedValue(undefined),
+      emitEvent: vi.fn(),
+      providerRegistry: { removeModel },
+      hanakoHome: "/tmp",
+    };
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/openrouter/models/openrouter%2Fqwen%2Fqwen-vl-plus", {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(200);
+    expect(removeModel).toHaveBeenCalledWith("openrouter", "openrouter/qwen/qwen-vl-plus");
+    expect(clearConfigCache).toHaveBeenCalledTimes(1);
+    expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expect(engine.emitEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("provider model update refreshes runtime models and notifies the app", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const updateModelEntry = vi.fn();
+    const engine = {
+      currentAgentId: "hana",
+      onProviderChanged: vi.fn().mockResolvedValue(undefined),
+      emitEvent: vi.fn(),
+      providerRegistry: { updateModelEntry },
+      hanakoHome: "/tmp",
+    };
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/openrouter/models/openrouter%2Fqwen%2Fqwen-vl-plus", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Qwen VL Plus" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(updateModelEntry).toHaveBeenCalledWith("openrouter", "openrouter/qwen/qwen-vl-plus", {
+      name: "Qwen VL Plus",
+    });
+    expect(clearConfigCache).toHaveBeenCalledTimes(1);
+    expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expect(engine.emitEvent).toHaveBeenCalledTimes(1);
   });
 
   it("providers summary treats no-auth providers as credential-ready without api_key", async () => {

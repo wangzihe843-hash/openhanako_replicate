@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import type { TabType, PluginPageInfo } from '../../types';
 import { toggleSidebar } from '../SidebarLayout';
-import { toggleJianSidebar } from '../../stores/desk-actions';
 import { resolvePluginTitle } from '../../utils/resolve-plugin-title';
 import { reorderTabs, hidePluginTab, showPluginTab } from '../../stores/plugin-ui-actions';
 import { PluginTabOverflow } from '../plugin/PluginTabOverflow';
@@ -40,9 +39,6 @@ export function switchTab(tab: TabType) {
     if (s.sidebarOpen !== wantLeftOpen) toggleSidebar(wantLeftOpen);
   }
 
-  const savedRight = localStorage.getItem(`hana-jian-${tab}`);
-  const wantRightOpen = savedRight !== 'closed';
-  if (s.jianOpen !== wantRightOpen) toggleJianSidebar(wantRightOpen);
 }
 
 // ── Build ordered tab list ──

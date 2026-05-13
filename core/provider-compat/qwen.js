@@ -3,7 +3,7 @@
  *
  * 处理 provider:
  *   - 任何 model.quirks 包含 "enable_thinking" 的模型（known-models.json 声明）
- *   - DashScope OpenAI-compatible 视频模型（input 含 video）
+ *   - DashScope OpenAI-compatible 视频模型（Hana compat 声明 video，且 shared 层确认可走 video_url）
  *
  * 注：dashscope-coding 下托管的 Kimi 系列模型（kimi-k2 / kimi-k2.5）虽然不是 Qwen 模型，
  * 但通过阿里 dashscope 协议暴露，同样使用 enable_thinking 字段控制思考模式，故走本子模块。
@@ -27,6 +27,7 @@
  * 接口契约：见 ./README.md
  */
 import { modelSupportsVideoInput } from "../../shared/model-capabilities.js";
+import { normalizeOpenAIVideoUrlPayload } from "./openai-video-url.js";
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
@@ -56,29 +57,7 @@ export function apply(payload, model, options = {}) {
 
 function normalizeDashScopeVideoPayload(payload, model) {
   if (!isDashScopeVideoModel(model)) return payload;
-  if (!Array.isArray(payload?.messages)) return payload;
-
-  let changed = false;
-  const messages = payload.messages.map((message) => {
-    if (!Array.isArray(message?.content)) return message;
-    let contentChanged = false;
-    const content = message.content.map((part) => {
-      const url = part?.image_url?.url;
-      if (part?.type !== "image_url" || typeof url !== "string" || !url.startsWith("data:video/")) {
-        return part;
-      }
-      contentChanged = true;
-      return {
-        type: "video_url",
-        video_url: { url },
-      };
-    });
-    if (!contentChanged) return message;
-    changed = true;
-    return { ...message, content };
-  });
-
-  return changed ? { ...payload, messages } : payload;
+  return normalizeOpenAIVideoUrlPayload(payload);
 }
 
 function isDashScopeVideoModel(model) {

@@ -181,6 +181,40 @@ describe("compiled section formatting", () => {
     expect(fs.readFileSync(todayPath, "utf-8")).toBe("用户关注记忆系统。");
   });
 
+  it("strips closed think and thinking tags before writing compiled memory sections", async () => {
+    callText
+      .mockResolvedValueOnce("<think>先整理内部推理</think>\n用户关注记忆系统。")
+      .mockResolvedValueOnce("<thinking>先整理内部推理</thinking>\n用户关注长期记忆。");
+    const todayPath = path.join(tmpDir, "today.md");
+    const weekPath = path.join(tmpDir, "week.md");
+    const mgr = makeFakeSummaryManager([
+      { session_id: "s1", updated_at: "2026-04-29T08:30:00.000Z", summary: "用户关注记忆系统。" },
+    ]);
+
+    await compileToday(mgr, todayPath, RESOLVED_MODEL);
+    await compileWeek(mgr, weekPath, RESOLVED_MODEL);
+
+    expect(fs.readFileSync(todayPath, "utf-8")).toBe("用户关注记忆系统。");
+    expect(fs.readFileSync(weekPath, "utf-8")).toBe("用户关注长期记忆。");
+  });
+
+  it("rejects dangling leading thinking blocks without overwriting memory or fingerprinting the bad output", async () => {
+    callText.mockResolvedValueOnce("<thinking>未闭合的内部推理\n这些内容不应进入记忆");
+    const todayPath = path.join(tmpDir, "today.md");
+    const fpPath = `${todayPath}.fingerprint`;
+    fs.writeFileSync(todayPath, "已有记忆", "utf-8");
+    const mgr = makeFakeSummaryManager([
+      { session_id: "s1", updated_at: "2026-04-29T08:30:00.000Z", summary: "用户关注记忆系统。" },
+    ]);
+
+    await expect(compileToday(mgr, todayPath, RESOLVED_MODEL)).rejects.toThrow(
+      "unterminated thinking block",
+    );
+
+    expect(fs.readFileSync(todayPath, "utf-8")).toBe("已有记忆");
+    expect(fs.existsSync(fpPath)).toBe(false);
+  });
+
   it("compiles short facts updates instead of directly appending them", async () => {
     callText.mockResolvedValueOnce("用户长期关注记忆系统。");
     const factsPath = path.join(tmpDir, "facts.md");

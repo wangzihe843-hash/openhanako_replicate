@@ -18,7 +18,8 @@ interface ExternalPathsData {
 }
 
 export function SkillsTab() {
-  const { settingsConfig, showToast } = useSettingsStore();
+  const settingsConfig = useSettingsStore(s => s.settingsConfig);
+  const showToast = useSettingsStore(s => s.showToast);
   const currentAgentId = useSettingsStore(s => s.currentAgentId);
 
   const [skillsViewAgentId, setSkillsViewAgentId] =

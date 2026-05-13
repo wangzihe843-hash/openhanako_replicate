@@ -16,12 +16,26 @@
 import fs from "fs";
 import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.js";
-import { appendMessage, formatMessagesForLLM } from "../lib/channels/channel-store.js";
+import { Type } from "../lib/pi-sdk/index.js";
+import { appendMessage, formatMessagesForLLM, getChannelMeta, getRecentMessages } from "../lib/channels/channel-store.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { callText } from "../core/llm-client.js";
-import { runAgentSession } from "./agent-executor.js";
+import { runAgentPhoneSession } from "./agent-executor.js";
 import { debugLog } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
+import {
+  getAgentPhoneProjectionPath,
+  readAgentPhoneProjection,
+  recordAgentPhoneActivity,
+} from "../lib/conversations/agent-phone-projection.js";
+import { normalizeAgentPhoneToolMode } from "../lib/conversations/agent-phone-session.js";
+import {
+  DEFAULT_AGENT_PHONE_SETTINGS,
+  formatAgentPhonePromptGuidance,
+  normalizeAgentPhoneModelOverride,
+  positiveIntegerOrDefault,
+  positiveIntegerOrNull,
+} from "../lib/conversations/agent-phone-prompt.js";
 
 export class ChannelRouter {
   /**
@@ -51,11 +65,245 @@ export class ChannelRouter {
     return resolvedCfg?.memory?.enabled !== false;
   }
 
+  async _recordPhoneActivity(agentId, channelName, state, summary, details = {}) {
+    try {
+      const agent = this._getAgentInstance(agentId);
+      const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
+      const activity = {
+        conversationId: channelName,
+        conversationType: "channel",
+        agentId,
+        state,
+        summary,
+        details,
+      };
+      this._hub.agentPhoneActivities?.record?.(activity);
+      await recordAgentPhoneActivity({
+        agentDir,
+        ...activity,
+      });
+    } catch (err) {
+      debugLog()?.warn?.("channel", `phone activity record failed (${agentId}/#${channelName}): ${err.message}`);
+    }
+  }
+
+  _resolvePhoneToolMode(channelName) {
+    try {
+      const filePath = path.join(this._engine.channelsDir, `${channelName}.md`);
+      if (!fs.existsSync(filePath)) return "read_only";
+      return normalizeAgentPhoneToolMode(getChannelMeta(filePath).agentPhoneToolMode);
+    } catch {
+      return "read_only";
+    }
+  }
+
+  _resolveChannelPhoneSettings(channelName) {
+    try {
+      const filePath = path.join(this._engine.channelsDir, `${channelName}.md`);
+      if (!fs.existsSync(filePath)) {
+        return DEFAULT_AGENT_PHONE_SETTINGS;
+      }
+      const meta = getChannelMeta(filePath);
+      const override = normalizeAgentPhoneModelOverride({
+        enabled: meta.agentPhoneModelOverrideEnabled,
+        id: meta.agentPhoneModelOverrideId,
+        provider: meta.agentPhoneModelOverrideProvider,
+      });
+      return {
+        toolMode: normalizeAgentPhoneToolMode(meta.agentPhoneToolMode),
+        replyMinChars: positiveIntegerOrNull(meta.agentPhoneReplyMinChars),
+        replyMaxChars: positiveIntegerOrNull(meta.agentPhoneReplyMaxChars),
+        reminderIntervalMinutes: positiveIntegerOrDefault(
+          meta.agentPhoneReminderIntervalMinutes,
+          DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+        ),
+        modelOverrideEnabled: override.enabled,
+        modelOverrideModel: override.model,
+      };
+    } catch {
+      return DEFAULT_AGENT_PHONE_SETTINGS;
+    }
+  }
+
+  _formatPhonePromptGuidance(agentId, settings, isZh) {
+    return formatAgentPhonePromptGuidance({
+      agentId,
+      agent: this._getAgentInstance(agentId),
+      agentsDir: this._engine.agentsDir,
+      settings,
+      isZh,
+      zhConversationName: "群聊",
+      enConversationName: "channel",
+    });
+  }
+
+  _resolvePhoneSessionPath(agentId, channelName) {
+    try {
+      const agent = this._getAgentInstance(agentId);
+      const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
+      const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, channelName));
+      const stored = projection.meta.phoneSessionFile;
+      if (!stored || typeof stored !== "string") return null;
+      const resolved = path.resolve(agentDir, ...stored.split("/").filter(Boolean));
+      const base = path.resolve(agentDir);
+      if (!resolved.startsWith(base + path.sep) && resolved !== base) return null;
+      return resolved;
+    } catch {
+      return null;
+    }
+  }
+
+  _createChannelPhoneTools(agentId, channelName, { setDecision } = {}) {
+    const engine = this._engine;
+    const isZh = getLocale().startsWith("zh");
+    const channelFile = path.join(engine.channelsDir || "", `${channelName}.md`);
+    let decided = false;
+
+    const markDecision = (decision) => {
+      if (decided) return false;
+      decided = true;
+      setDecision?.(decision);
+      return true;
+    };
+
+    return [
+      {
+        name: "channel_read_context",
+        label: isZh ? "读取频道上下文" : "Read channel context",
+        description: isZh
+          ? "读取当前手机群聊频道的最近消息。数据源是频道聊天记录 Truth，不是你的 phone session。"
+          : "Read recent messages from the current phone channel. The source is the channel transcript Truth, not your phone session.",
+        parameters: Type.Object({
+          count: Type.Optional(Type.Number({
+            description: isZh ? "要读取的最近消息数量，默认 20，最多 50。" : "Number of recent messages to read, defaults to 20, max 50.",
+          })),
+        }),
+        execute: async (_toolCallId, params = {}) => {
+          if (!fs.existsSync(channelFile)) {
+            return {
+              content: [{ type: "text", text: isZh ? "频道不存在。" : "Channel not found." }],
+              details: { action: "read_context", error: "channel not found" },
+            };
+          }
+          const count = Math.max(1, Math.min(50, Number(params.count) || 20));
+          const messages = getRecentMessages(channelFile, count);
+          return {
+            content: [{
+              type: "text",
+              text: messages.length > 0 ? formatMessagesForLLM(messages) : (isZh ? "频道暂无消息。" : "No channel messages."),
+            }],
+            details: { action: "read_context", channel: channelName, messageCount: messages.length },
+          };
+        },
+      },
+      {
+        name: "channel_reply",
+        label: isZh ? "发送频道消息" : "Send channel message",
+        description: isZh
+          ? "把本轮回复发送到当前频道。只有这个工具的 content 会写入群聊；普通生成文本只会留在你的手机动态里。"
+          : "Send this turn's reply to the current channel. Only this tool's content is posted; ordinary generated text stays in your phone activity.",
+        parameters: Type.Object({
+          content: Type.String({
+            description: isZh ? "要发送到频道的正文。不要包含 mood、解释或工具调用说明。" : "Message body to post. Do not include mood, explanations, or tool-call notes.",
+          }),
+          mood: Type.Optional(Type.String({
+            description: isZh ? "可选：本次发言前的内省摘要，只记录在工具详情中，不发送到频道。" : "Optional private mood summary. Stored in tool details, not posted.",
+          })),
+        }),
+        execute: async (_toolCallId, params = {}) => {
+          const content = String(params.content || "").trim();
+          if (!content) {
+            return {
+              content: [{ type: "text", text: isZh ? "发送失败：content 为空。" : "Send failed: content is empty." }],
+              details: { action: "reply", error: "empty content" },
+            };
+          }
+          if (decided) {
+            return {
+              content: [{ type: "text", text: isZh ? "本轮已经完成过频道决定。" : "This phone turn already made a channel decision." }],
+              details: { action: "reply", error: "already decided" },
+            };
+          }
+          if (engine.isChannelsEnabled && !engine.isChannelsEnabled()) {
+            return {
+              content: [{ type: "text", text: isZh ? "发送失败：频道功能已关闭。" : "Send failed: channels are disabled." }],
+              details: { action: "reply", error: "channels disabled" },
+            };
+          }
+          if (!fs.existsSync(channelFile)) {
+            return {
+              content: [{ type: "text", text: isZh ? "发送失败：频道不存在。" : "Send failed: channel not found." }],
+              details: { action: "reply", error: "channel not found" },
+            };
+          }
+
+          const { timestamp } = await appendMessage(channelFile, agentId, content);
+          const decision = {
+            type: "reply",
+            replied: true,
+            replyContent: content,
+            timestamp,
+            mood: typeof params.mood === "string" ? params.mood : null,
+          };
+          markDecision(decision);
+
+          this._hub.eventBus.emit({
+            type: "channel_new_message",
+            channelName,
+            sender: agentId,
+            message: { sender: agentId, timestamp, body: content },
+          }, null);
+
+          return {
+            content: [{ type: "text", text: isZh ? `已发送到 #${channelName}` : `Posted to #${channelName}` }],
+            details: { action: "reply", channel: channelName, timestamp, mood: decision.mood },
+          };
+        },
+      },
+      {
+        name: "channel_pass",
+        label: isZh ? "本轮不发言" : "Pass this turn",
+        description: isZh
+          ? "表示你已经看过这批手机群聊消息，但本轮选择不在频道发言。"
+          : "Mark these phone channel messages as seen while choosing not to post this turn.",
+        parameters: Type.Object({
+          reason: Type.Optional(Type.String({
+            description: isZh ? "简短说明为什么本轮不发言。" : "Brief reason for not posting this turn.",
+          })),
+          mood: Type.Optional(Type.String({
+            description: isZh ? "可选：本次判断的内省摘要。" : "Optional private mood summary for this decision.",
+          })),
+        }),
+        execute: async (_toolCallId, params = {}) => {
+          if (decided) {
+            return {
+              content: [{ type: "text", text: isZh ? "本轮已经完成过频道决定。" : "This phone turn already made a channel decision." }],
+              details: { action: "pass", error: "already decided" },
+            };
+          }
+          const decision = {
+            type: "pass",
+            replied: false,
+            passed: true,
+            reason: typeof params.reason === "string" ? params.reason : "",
+            mood: typeof params.mood === "string" ? params.mood : null,
+          };
+          markDecision(decision);
+          return {
+            content: [{ type: "text", text: isZh ? "已标记为本轮不发言。" : "Marked as pass for this turn." }],
+            details: { action: "pass", channel: channelName, reason: decision.reason, mood: decision.mood },
+          };
+        },
+      },
+    ];
+  }
+
   // ──────────── 生命周期 ────────────
 
   start() {
     const engine = this._engine;
     if (!engine.channelsDir) return;
+    if (this._ticker) return;
 
     this._ticker = createChannelTicker({
       channelsDir: engine.channelsDir,
@@ -70,6 +318,14 @@ export class ChannelRouter {
       },
     });
     this._ticker.start();
+  }
+
+  ensureStarted() {
+    if (this._ticker) return true;
+    if (!this._engine.isChannelsEnabled?.()) return false;
+    this.start();
+    this.setupPostHandler();
+    return !!this._ticker;
   }
 
   async stop() {
@@ -90,17 +346,18 @@ export class ChannelRouter {
   }
 
   triggerImmediate(channelName, opts) {
-    return this._ticker?.triggerImmediate(channelName, opts);
+    this.ensureStarted();
+    return this._ticker?.triggerImmediate(channelName, opts) || Promise.resolve();
   }
 
   /**
    * 注入频道 post 回调到当前 agent
-   * agent 用 channel tool 发消息后，触发其他 agent 的 triage
+   * agent 用 channel tool 发消息后，触发其他 agent 的手机送达
    */
   setupPostHandler() {
     for (const [, agent] of this._engine.agents || []) {
       agent.setChannelPostHandler((channelName, senderId, message) => {
-        debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, triggering triage`);
+        debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, triggering phone delivery`);
         if (message) {
           this._hub.eventBus.emit({
             type: "channel_new_message",
@@ -110,7 +367,7 @@ export class ChannelRouter {
           }, null);
         }
         this.triggerImmediate(channelName)?.catch(err =>
-          console.error(`[channel] agent post triage 失败: ${err.message}`)
+          console.error(`[channel] agent post delivery 失败: ${err.message}`)
         );
       });
     }
@@ -140,186 +397,193 @@ export class ChannelRouter {
     }
   }
 
-  // ──────────── Triage + Reply ────────────
+  // ──────────── Phone Delivery + Reply ────────────
 
   /**
-   * 频道检查回调：triage → 两轮 Agent Session → 写入回复
+   * 频道检查回调：未读消息送达 → Agent Phone Session → 频道工具写入或 pass
    * 从 engine._executeChannelCheck 搬入
    */
-  async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal } = {}) {
+  async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal, proactive = false } = {}) {
     const engine = this._engine;
     const msgText = formatMessagesForLLM(newMessages);
-
-    // ── 读 agent 完整上下文 ──
-    const readFile = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
-    const agentDir = path.join(engine.agentsDir, agentId);
-
-    // 复用 Agent 实例的 personality（identity + yuan + ishiki 已在内存中组装）
-    const agentInstance = this._getAgentInstance(agentId);
-    const cfg = agentInstance?.config || loadConfig(path.join(agentDir, "config.yaml"));
-    const agentName = cfg.agent?.name || agentId;
-
-    const agentContext = agentInstance?.personality
-      || [readFile(path.join(agentDir, "identity.md")),
-          readFile(path.join(engine.productDir, "yuan", `${cfg.agent?.yuan || "hanako"}.md`)),
-          readFile(path.join(agentDir, "ishiki.md"))].filter(Boolean).join("\n\n");
-
-    // memory.md 和 user.md 内容会变，仍需从磁盘读取
-    // 记忆 master 关闭时跳过 memory.md（user.md 是用户档案，不属于记忆系统）
-    const memoryMasterOn = this._resolveMemoryMasterEnabled(agentId, { agentInstance, cfg });
-    const memoryMd = memoryMasterOn ? readFile(path.join(agentDir, "memory", "memory.md")) : "";
-    const userMd = readFile(path.join(engine.userDir, "user.md"));
     const isZh = getLocale().startsWith("zh");
-    const memoryContext = memoryMd?.trim()
-      ? (isZh ? `\n\n你的记忆：\n${memoryMd}` : `\n\nYour memory:\n${memoryMd}`)
-      : "";
-    const userContext = userMd?.trim()
-      ? (isZh ? `\n\n用户档案：\n${userMd}` : `\n\nUser profile:\n${userMd}`)
-      : "";
+    const lastNewMessage = newMessages[newMessages.length - 1] || null;
+    await this._recordPhoneActivity(
+      agentId,
+      channelName,
+      "viewed",
+      isZh ? `已查看 ${newMessages.length} 条新消息` : `Viewed ${newMessages.length} new message(s)`,
+      {
+        messageCount: newMessages.length,
+        lastMessageTimestamp: lastNewMessage?.timestamp || null,
+      },
+    );
 
-    // ── 检测 @ ──
-    const isMentioned = msgText.includes(`@${agentName}`) || msgText.includes(`@${agentId}`);
-
-    // ── Step 1: Triage ──
-    let shouldReply = isMentioned;
-
-    if (!shouldReply) {
-      try {
-        const utilCfg = engine.resolveUtilityConfig({ agentId }) || {};
-        const { utility_large: model, large_api_key: api_key, large_base_url: base_url, large_api: api } = utilCfg;
-        if (api_key && base_url && api) {
-          const triageSystem = agentContext + memoryContext + userContext
-            + "\n\n---\n\n"
-            + (isZh
-              ? "你在一个群聊频道里。阅读以下最近的消息，判断你是否要回复。\n"
-                + "回答 YES 的情况：有人跟你说话、@你、问了你能回答的问题、或者你有想说的话。\n"
-                + "回答 NO 的情况：别人已经充分回答了问题（你没有新的补充）、话题跟你无关、你插不上话、或者你刚回复过且没人追问你。\n"
-                + "只回答 YES 或 NO。"
-              : "You are in a group chat channel. Read the recent messages below and decide whether you should reply.\n"
-                + "Answer YES if: someone is talking to you, @-mentions you, asks a question you can answer, or you have something to say.\n"
-                + "Answer NO if: the question has already been adequately answered (you have nothing new to add), the topic is irrelevant to you, you can't contribute, or you just replied and no one followed up.\n"
-                + "Answer only YES or NO.");
-
-          const triageTimeout = AbortSignal.timeout(10_000);
-          const triageSignal = signal
-            ? AbortSignal.any([signal, triageTimeout])
-            : triageTimeout;
-          const answer = await callText({
-            api, model,
-            apiKey: api_key,
-            baseUrl: base_url,
-            systemPrompt: triageSystem,
-            messages: [{ role: "user", content: isZh ? `#${channelName} 频道最近消息：\n${msgText}` : `#${channelName} recent messages:\n${msgText}` }],
-            temperature: 0,
-            maxTokens: 10,
-            timeoutMs: 10_000,
-            signal: triageSignal,
-          });
-          shouldReply = answer.trim().toUpperCase().includes("YES");
-        } else {
-          // utility_large 凭证不完整，跳过 triage 直接回复
-          shouldReply = true;
-        }
-      } catch (err) {
-        // utility 模型未配置或 triage 调用失败 → 默认回复（让 agent 自己在 reply 阶段判断要不要说话）
-        console.warn(`[channel] triage 不可用，默认回复 (${agentId}/#${channelName}): ${err.message}`);
-        shouldReply = true;
-      }
-    }
-
-    console.log(`\x1b[90m[channel] triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (@)" : ""}\x1b[0m`);
-    debugLog()?.log("channel", `triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (mentioned)" : ""} (${newMessages.length} msgs)`);
-
-    if (!shouldReply) {
-      return { replied: false };
-    }
-
-    // ── Step 2: 两轮 Agent Session 生成回复 ──
+    // ── 手机送达：不做 utility 预判，Agent 必须用频道专属工具完成本轮 ──
     try {
-      const replyText = await this._executeReply(agentId, channelName, msgText, { signal });
-
-      if (!replyText) {
-        console.log(`\x1b[90m[channel] ${agentId} 回复为空 (#${channelName})\x1b[0m`);
-        return { replied: false };
-      }
-
-      // 幽灵消息守卫：reply 生成期间若开关被关 / 任务被 abort，丢弃写入
-      if (signal?.aborted || !engine.isChannelsEnabled?.()) {
-        debugLog()?.log("channel", `${agentId}/#${channelName}: reply discarded (channels disabled or aborted)`);
-        return { replied: false };
-      }
-
-      // 写入频道文件
-      const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
-      const { timestamp } = await appendMessage(channelFile, agentId, replyText);
-
-      console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
-      debugLog()?.log("channel", `${agentId} replied #${channelName} (${replyText.length} chars)`);
-
-      // WS 广播
-      this._hub.eventBus.emit({
-        type: "channel_new_message",
+      await this._recordPhoneActivity(
+        agentId,
         channelName,
-        sender: agentId,
-        message: { sender: agentId, timestamp, body: replyText },
-      }, null);
+        "replying",
+        proactive
+          ? (isZh ? "收到频道提醒，正在看群聊" : "Received channel reminder and is reading")
+          : (isZh ? "正在查看手机群聊" : "Reading phone channel messages"),
+        { messageCount: newMessages.length, proactive },
+      );
+      const decision = await this._executeReply(agentId, channelName, msgText, {
+        signal,
+        messageCount: newMessages.length,
+        proactive,
+      });
 
-      return { replied: true, replyContent: replyText };
+      if (decision?.replied) {
+        console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${decision.replyContent.length} chars)\x1b[0m`);
+        debugLog()?.log("channel", `${agentId} replied #${channelName} (${decision.replyContent.length} chars)`);
+        await this._recordPhoneActivity(
+          agentId,
+          channelName,
+          "idle",
+          isZh ? "已回复" : "Replied",
+          {
+            replyTimestamp: decision.timestamp,
+            ...(decision.mood ? { mood: decision.mood } : {}),
+            ...(this._resolvePhoneSessionPath(agentId, channelName)
+              ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+              : {}),
+          },
+        );
+        return { replied: true, replyContent: decision.replyContent };
+      }
+
+      if (decision?.passed) {
+        await this._recordPhoneActivity(
+          agentId,
+          channelName,
+          "no_reply",
+          isZh ? "已查看，选择不发言" : "Viewed and chose not to post",
+          {
+            messageCount: newMessages.length,
+            ...(decision.reason ? { reason: decision.reason } : {}),
+            ...(decision.mood ? { mood: decision.mood } : {}),
+            ...(this._resolvePhoneSessionPath(agentId, channelName)
+              ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+              : {}),
+          },
+        );
+        return { replied: false, passed: true };
+      }
+
+      await this._recordPhoneActivity(
+        agentId,
+        channelName,
+        "error",
+        isZh ? "没有调用频道回复工具" : "Did not call a channel decision tool",
+        {
+          messageCount: newMessages.length,
+          ...(this._resolvePhoneSessionPath(agentId, channelName)
+            ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+            : {}),
+        },
+      );
+      return { replied: false, missingDecision: true };
     } catch (err) {
       console.error(`[channel] 回复失败 (${agentId}/#${channelName}): ${err.message}`);
       debugLog()?.error("channel", `回复失败 (${agentId}/#${channelName}): ${err.message}`);
+      await this._recordPhoneActivity(
+        agentId,
+        channelName,
+        "error",
+        isZh ? "处理消息失败" : "Failed to process message",
+        { error: err.message },
+      );
       return { replied: false };
     }
   }
 
   /**
-   * 两轮 Agent Session 生成频道回复
+   * 将未读群聊消息送入 Agent Phone session。频道写入只能由 channel_reply 工具完成。
    */
-  async _executeReply(agentId, channelName, msgText, { signal } = {}) {
+  async _executeReply(agentId, channelName, msgText, { signal, messageCount = null, proactive = false } = {}) {
     const isZh = getLocale().startsWith("zh");
-    const text = await runAgentSession(
+    const phoneSettings = this._resolveChannelPhoneSettings(channelName);
+    const promptGuidance = this._formatPhonePromptGuidance(agentId, phoneSettings, isZh);
+    const zhIntro = proactive
+      ? `你的手机收到了 #${channelName} 的频道提醒。\n\n`
+        + `以下是最近的频道内容，来源是频道聊天记录 Truth，不是用户单独发给你的请求，也不一定是新消息：\n\n`
+      : `你的手机收到了 #${channelName} 的新群聊消息。\n\n`
+        + `这些是这部手机尚未处理的新消息，来源是频道聊天记录 Truth，不是用户单独发给你的请求：\n\n`;
+    const enIntro = proactive
+      ? `Your phone received a channel reminder for #${channelName}.\n\n`
+        + `Here is recent channel content. The source is the channel transcript Truth, not a direct user request, and it may not be new:\n\n`
+      : `Your phone received new messages in #${channelName}.\n\n`
+        + `These are the new messages this phone has not processed yet. The source is the channel transcript Truth, not a direct user request:\n\n`;
+    let activeSessionPath = null;
+    let decision = null;
+    await runAgentPhoneSession(
       agentId,
       [
         {
           text: isZh
-            ? `#${channelName} 频道的最近消息：\n\n${msgText}\n\n`
-              + `请阅读这些消息，用 search_memory 查阅记忆来了解上下文和真实发生过的事。\n`
-              + `注意：你现在的回复用户看不到，这是你的内部思考环节，仅用于查阅资料和理解上下文。下一轮才是你真正发到群聊的内容。`
-            : `Recent messages in #${channelName}:\n\n${msgText}\n\n`
-              + `Read these messages and use search_memory to look up memories for context and real events.\n`
-              + `Note: your reply right now is invisible to users — this is your internal thinking phase, for research and understanding context only. The next round is what actually gets posted to the chat.`,
-          capture: false,
-        },
-        {
-          text: isZh
-            ? `现在请给出你想在 #${channelName} 群聊中发送的回复。这条回复会直接发送到群聊，所有人都能看到。\n\n`
-              + `回复规定：\n`
-              + `- 默认30字以内，像在群里说话，简短自然\n`
-              + `- 如果话题确实需要展开（比如讲故事、分析问题、详细解释），可以写到1000字\n`
-              + `- 直接输出回复内容，不要加任何前缀、解释、MOOD 或代码块\n`
-              + `- 不要重复别人已经说过的内容\n`
-              + `- 只说真实发生过的事，不要编造你没做过的活动或经历\n`
-              + `- 如果你觉得没什么好说的，回复 [NO_REPLY]`
-            : `Now give the reply you want to post in #${channelName}. This reply will be sent directly to the group chat — everyone can see it.\n\n`
-              + `Reply rules:\n`
-              + `- Keep it under 30 words by default — short and natural, like chatting in a group\n`
-              + `- If the topic truly requires elaboration (storytelling, analysis, detailed explanation), you may write up to 1000 words\n`
-              + `- Output the reply directly — no prefixes, explanations, MOOD blocks, or code fences\n`
-              + `- Don't repeat what others have already said\n`
-              + `- Only mention things that actually happened — don't fabricate activities or experiences\n`
-              + `- If you have nothing to say, reply [NO_REPLY]`,
+            ? zhIntro
+              + `${msgText || "（没有新消息）"}\n\n`
+              + `请像群聊成员一样阅读并行动：\n`
+              + `- 你可以因为被问到、被提到、想补充、想推动话题、表达情绪、主动开启话题或觉得有价值而发言\n`
+              + `- 不需要只在事情与你直接相关时才发言\n`
+              + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
+              + `${promptGuidance}\n`
+              + `- 本轮最后必须调用 channel_reply 或 channel_pass 之一完成动作\n`
+              + `- 不要把最终群聊回复写在普通文本里；只有 channel_reply.content 会进入群聊`
+            : enIntro
+              + `${msgText || "(No new messages)"}\n\n`
+              + `Read and act like a group chat member:\n`
+              + `- You may post because you were asked, mentioned, have something useful to add, want to move the topic, want to start a topic, or feel it is worth saying\n`
+              + `- You do not need the topic to be directly about you\n`
+              + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
+              + `${promptGuidance}\n`
+              + `- End this turn by calling exactly one of channel_reply or channel_pass\n`
+              + `- Do not write the final channel reply as ordinary text; only channel_reply.content enters the channel`,
           capture: true,
         },
       ],
-      { engine: this._engine, signal, sessionSuffix: "channel-temp", readOnly: true },
+      {
+        engine: this._engine,
+        signal,
+        conversationId: channelName,
+        conversationType: "channel",
+        toolMode: phoneSettings.toolMode,
+        modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
+        emitEvents: true,
+        extraCustomTools: this._createChannelPhoneTools(agentId, channelName, {
+          setDecision: (next) => { if (!decision) decision = next; },
+        }),
+        onSessionReady: (sessionPath) => {
+          activeSessionPath = sessionPath;
+          return this._recordPhoneActivity(
+            agentId,
+            channelName,
+            "replying",
+            isZh ? "正在查看手机群聊" : "Reading phone channel messages",
+            {
+              ...(messageCount != null ? { messageCount } : {}),
+              sessionPath,
+            },
+          );
+        },
+        onActivity: (state, summary, details) =>
+          this._recordPhoneActivity(
+            agentId,
+            channelName,
+            state,
+            summary,
+            {
+              ...(details || {}),
+              ...(activeSessionPath ? { sessionPath: activeSessionPath } : {}),
+            },
+        ),
+      },
     );
 
-    if (!text || text.includes("[NO_REPLY]")) {
-      debugLog()?.log("channel", `${agentId}/#${channelName}: chose not to reply`);
-      return null;
-    }
-
-    return text;
+    return decision || { replied: false, missingDecision: true };
   }
 
   /**

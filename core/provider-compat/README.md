@@ -33,7 +33,7 @@
 1. 跑 `npm test` 全套，重点关注 `tests/provider-compat.test.js` 和 `tests/provider-compat/*.test.js`
 2. 检查每个 `provider-compat/*.js` 顶部的"删除条件"，对照 SDK 升级 changelog 看是否还需要保留
 3. 如果某个 provider 子模块的删除条件已满足（SDK 升级后官方一等公民化），删除该文件并从 `PROVIDER_MODULES` 移除 import
-4. 如果 SDK 改了 `convertMessages` 后的 assistant payload 形态（尤其是 `message.content` 字符串 / 数组边界，影响 `deepseek.js` 的 `extractReasoningFromContent`），更新 extract 逻辑和 `tests/acceptance-issue-468.test.js` 的真实转换场景
+4. 如果 SDK 改了 `convertMessages` 后的 assistant payload 形态（尤其是 `message.content` 字符串 / 数组边界，影响 `reasoning-content-replay.js` 的 `extractReasoningFromContent`），更新 extract 逻辑和相关 provider replay 测试
 
 ## 接口契约
 
@@ -78,6 +78,7 @@ export function apply(payload, model, options) { ... }
 |---|---|---|
 | `anthropic` | `thinking: { type, budget_tokens }` | Anthropic、Kimi Coding、MiniMax Anthropic API |
 | `qwen` | `enable_thinking: boolean` | DashScope / SiliconFlow / ModelScope 上的 Qwen-style 模型 |
+| `qwen-chat-template` | `chat_template_kwargs: { enable_thinking, preserve_thinking }` | MiMo OpenAI-compatible API |
 | `deepseek` | DeepSeek 子模块统一转换 | DeepSeek V4 / reasoner |
 
 `compat.reasoningProfile` 表示同一 wire format 内部更细的协议契约，例如
@@ -125,9 +126,11 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 | 文件 | 处理 provider | 删除条件 |
 |---|---|---|
 | [`deepseek.js`](deepseek.js) | DeepSeek 思考模式协议（含 reasoning_content 恢复/校验） | DeepSeek 不再要求回传 reasoning_content；或 pi-ai 直接处理 reasoning_content 字段不再走 thinkingSignature 路标 |
-| [`qwen.js`](qwen.js) | Qwen-style 思考模型 `enable_thinking` quirk；DashScope 视频输入 `video_url` 兼容 | quirks 系统重构 / Qwen-style 协议改成 reasoning_effort；DashScope 和 Pi SDK 原生支持 video_url |
+| [`mimo.js`](mimo.js) | MiMo OpenAI-compatible 思考模式协议（chat_template_kwargs + reasoning_content 回放） | MiMo 不再通过 chat_template_kwargs 控制 thinking；或 pi-ai 原生处理 MiMo replay |
+| [`qwen.js`](qwen.js) | Qwen-style 思考模型 `enable_thinking` quirk；DashScope 视频输入复用 `openai-video-url` 转换 | quirks 系统重构 / Qwen-style 协议改成 reasoning_effort；DashScope 和 Pi SDK 原生支持 video_url |
+| [`openai-video-url.js`](openai-video-url.js) | OpenAI-compatible 视频输入 `image_url data:video` → `video_url`，当前用于 Moonshot Kimi 与 DashScope Qwen | Pi SDK 原生按 video MIME 输出 `video_url`；或相关 provider 接受 `image_url data:video` |
 
-子模块的对外 API 仅有 `matches` 和 `apply` 两个 export。其它 export（如 `deepseek.js` 的 `extractReasoningFromContent`、`ensureReasoningContentForToolCalls`）属于实现细节、仅供同文件和单元测试访问，**不构成对外契约**。升级 SDK 想删 helper 时不需顾虑外部依赖。
+子模块的对外 API 仅有 `matches` 和 `apply` 两个 export。其它 export（如 replay helper 的 `extractReasoningFromContent`、`ensureReasoningContentForToolCalls`）属于实现细节、仅供同文件和单元测试访问，**不构成对外契约**。升级 SDK 想删 helper 时不需顾虑外部依赖。
 
 ## 历史背景
 

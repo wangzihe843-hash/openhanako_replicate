@@ -18,17 +18,17 @@ describe("getPlatformPromptNote", () => {
     const out = getPlatformPromptNote({ ...baseOpts, platform: "win32" });
     expect(out).toBe(
       "Platform: win32\n" +
-      "Shell: bash\n" +
+      "Shell: platform-adaptive\n" +
       "OS Version: TestOS 1.2.3\n" +
-      "Host OS is Windows, but the bash tool runs in a bash-compatible layer such as Git Bash, MSYS2, or bundled MinGit.\n" +
-      "Command syntax: use bash/POSIX syntax for pipes, paths, environment variables, and redirection.\n" +
-      "Prefer bash-compatible paths such as /c/Users/name/file when a Windows path is needed.\n" +
-      "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native command.\n" +
-      "Discard bash output with /dev/null; do not use CMD's nul device unless the command is explicitly run through cmd.exe."
+      "Host OS is Windows. Simple git commands run through Hanako's bundled git.exe when available.\n" +
+      "Simple Windows-native commands may run through cmd.exe; POSIX shell commands run through Hanako's bundled POSIX compatibility layer in sandbox mode.\n" +
+      "Use POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.\n" +
+      "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native shell.\n" +
+      "Discard POSIX command output with /dev/null; use CMD's nul device only inside an explicit cmd.exe command."
     );
   });
 
-  it("hard-codes Shell: bash regardless of $SHELL (reflects sandbox execution reality)", () => {
+  it("keeps Shell: bash on POSIX platforms regardless of $SHELL", () => {
     const out = getPlatformPromptNote({ ...baseOpts, platform: "darwin" });
     expect(out).toContain("Shell: bash");
     expect(out).not.toContain("zsh");

@@ -30,6 +30,8 @@ describe('chat image send preflight', () => {
     expect(getModelVideoInputMode({ input: ['text', 'image'] })).toBe('no-native-video');
     expect(getModelVideoInputMode({ input: ['text', 'video'] })).toBe('native-video');
     expect(getModelVideoInputMode({ input: ['text', 'image'], video: true })).toBe('native-video');
+    expect(getModelVideoInputMode({ input: ['text', 'image'], video: true, videoTransportSupported: false })).toBe('no-native-video');
+    expect(getModelVideoInputMode({ input: ['text', 'image'], video: true, videoTransport: 'openai-video-url' })).toBe('native-video');
     expect(getModelVideoInputMode({})).toBe('unknown');
   });
 

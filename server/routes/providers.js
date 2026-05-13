@@ -5,9 +5,11 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { Hono } from "hono";
+import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
 import { buildProviderAuthHeaders, probeProvider } from "../../lib/llm/provider-client.js";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.js";
+import { clearConfigCache } from "../../lib/memory/config-loader.js";
 
 // ── Models-cache helpers ──
 
@@ -237,6 +239,12 @@ export function createProvidersRoute(engine) {
     return payload;
   }
 
+  async function refreshProviderModels() {
+    clearConfigCache();
+    await engine.onProviderChanged();
+    emitAppEvent(engine, "models-changed", { agentId: engine.currentAgentId || null });
+  }
+
   /** Registry → defaults 两级 fallback，fetch-models 和 Anthropic 路径共用 */
   function registryOrDefaultsFallback(name) {
     if (!name) {
@@ -402,18 +410,34 @@ export function createProvidersRoute(engine) {
    */
   route.put("/providers/:name/models/:modelId", async (c) => {
     const providerName = c.req.param("name");
-    const modelId = decodeURIComponent(c.req.param("modelId"));
+    const modelId = c.req.param("modelId");
     const body = await safeJson(c);
     if (!body || typeof body !== "object") {
       return c.json({ error: "invalid body" }, 400);
     }
     try {
       engine.providerRegistry.updateModelEntry(providerName, modelId, body);
-      await engine.onProviderChanged();
+      await refreshProviderModels();
       return c.json({ ok: true });
     } catch (err) {
       const status = err.message?.includes("not found") ? 404 : 500;
       return c.json({ error: err.message }, status);
+    }
+  });
+
+  /**
+   * 删除模型配置
+   * 从 added-models.yaml 移除指定模型 → 触发 model-sync
+   */
+  route.delete("/providers/:name/models/:modelId", async (c) => {
+    const providerName = c.req.param("name");
+    const modelId = c.req.param("modelId");
+    try {
+      engine.providerRegistry.removeModel(providerName, modelId);
+      await refreshProviderModels();
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
     }
   });
 

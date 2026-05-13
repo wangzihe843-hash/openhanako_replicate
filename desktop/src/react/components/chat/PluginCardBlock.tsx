@@ -4,7 +4,7 @@ import { usePluginIframe } from '../../hooks/use-plugin-iframe';
 import { useStore } from '../../stores';
 import type { PluginCardDetails } from '../../types';
 import s from './PluginCardBlock.module.css';
-import { DEFAULT_THEME } from '../../../shared/theme-registry.cjs';
+import { DEFAULT_THEME } from '../../../shared/theme-registry';
 
 interface Props {
   card: PluginCardDetails;

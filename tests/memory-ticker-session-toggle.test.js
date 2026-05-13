@@ -17,6 +17,11 @@ vi.mock("../lib/memory/deep-memory.js", () => ({
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 import { createMemoryTicker } from "../lib/memory/memory-ticker.js";
@@ -117,6 +122,20 @@ describe("memory ticker respects session-level memory toggle", () => {
 
     ticker.notifyTurn(sessionPath);
     await ticker.notifySessionEnd(sessionPath);
+
+    expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
+    expect(compileToday).not.toHaveBeenCalled();
+    expect(assemble).not.toHaveBeenCalled();
+  });
+
+  it("never summarizes agent phone sessions even if session memory is enabled", async () => {
+    const phoneSessionPath = path.join(tmpDir, "phone", "sessions", "ch_crew", "phone.jsonl");
+    fs.mkdirSync(path.dirname(phoneSessionPath), { recursive: true });
+    writeSession(phoneSessionPath);
+    const { ticker, summaryManager } = makeTicker(tmpDir, () => true);
+
+    ticker.notifyTurn(phoneSessionPath);
+    await ticker.notifySessionEnd(phoneSessionPath);
 
     expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
     expect(compileToday).not.toHaveBeenCalled();

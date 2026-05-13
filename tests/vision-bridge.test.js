@@ -458,6 +458,30 @@ describe("VisionBridge", () => {
     expect(callText.mock.calls[0][0].timeoutMs).toBe(120_000);
   });
 
+  it("caps auxiliary vision output by the model maxTokens contract", async () => {
+    const callText = vi.fn(async () => "image_overview: capped");
+    const bridge = new VisionBridge({
+      resolveVisionConfig: () => ({
+        model: { id: "qwen-vl-plus", provider: "openrouter", input: ["text", "image"], maxTokens: 2048 },
+        api: "openai-completions",
+        api_key: "sk-test",
+        base_url: "https://example.test/v1",
+      }),
+      callText,
+      visionMaxTokens: 4096,
+    });
+
+    await bridge.prepare({
+      sessionPath: "/tmp/session.jsonl",
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      text: `[attached_image: ${pathA}]\nwhat is this?`,
+      images: [image],
+      imageAttachmentPaths: [pathA],
+    });
+
+    expect(callText.mock.calls[0][0].maxTokens).toBe(2048);
+  });
+
   it("does nothing for image-capable target models", async () => {
     const { bridge, callText } = makeBridge();
 

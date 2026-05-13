@@ -86,7 +86,7 @@ my-plugin/
 │   └── *.json
 ├── routes/                # HTTP routes (requires full-access)
 │   └── *.js
-├── providers/             # LLM Provider declarations (requires full-access)
+├── providers/             # Provider declarations: chat/media capabilities (requires full-access)
 │   └── *.js
 ├── extensions/            # Pi SDK extension factories (requires full-access)
 │   └── *.js
@@ -143,7 +143,7 @@ In addition to restricted capabilities:
 | `bus.handle` | Register capabilities for other plugins to call |
 | `routes/*.js` | HTTP endpoints |
 | `extensions/*.js` | Pi SDK event interception (tool calls, provider requests, etc.) |
-| `providers/*.js` | LLM Providers |
+| `providers/*.js` | Provider declarations: chat/media capabilities |
 | `ctx.registerTool` | Dynamically register tools at runtime |
 | `onload` / `onunload` | Lifecycle hooks |
 
@@ -362,7 +362,7 @@ Common events:
 
 Factory functions are invoked by Pi SDK at session creation time; handlers fire when the corresponding event occurs. See Pi SDK extension documentation for the full event list.
 
-### Providers (LLM Provider) ⚡ full-access
+### Providers (Provider Contribution) ⚡ full-access
 
 `providers/*.js` export a ProviderPlugin data object:
 
@@ -373,6 +373,49 @@ export const authType = "api-key";
 export const defaultBaseUrl = "https://api.my-llm.com/v1";
 export const defaultApi = "openai-completions";
 ```
+
+Providers can declare multiple capabilities. Chat surfaces consume `capabilities.chat`; image/video/speech tools consume `capabilities.media.*`. Media-only providers should set `chat.projection = "none"` so they never appear in the chat model selector.
+
+```js
+export const id = "my-image-cli";
+export const displayName = "My Image CLI";
+export const authType = "none";
+
+export const runtime = {
+  kind: "local-cli",
+  protocolId: "local-cli-media",
+  command: {
+    executable: "my-image-cli",
+    args: [
+      { literal: "generate" },
+      { option: "--prompt", from: "prompt" },
+      { option: "--model", from: "modelId" },
+      { option: "--output", from: "outputDir" },
+    ],
+    timeoutMs: 120000,
+    output: { kind: "file_glob", directory: "outputDir", pattern: "*.png" },
+  },
+};
+
+export const capabilities = {
+  chat: { projection: "none" },
+  media: {
+    imageGeneration: {
+      models: [
+        {
+          id: "my-image-model",
+          displayName: "My Image Model",
+          protocolId: "local-cli-media",
+          inputs: ["text"],
+          outputs: ["image"],
+        },
+      ],
+    },
+  },
+};
+```
+
+CLI providers must use structured argument bindings. Do not build shell command strings; Hana runs commands through non-shell `execFile` / `spawn` paths and collects outputs into the media task directory.
 
 ### Configuration (Config Schema)
 

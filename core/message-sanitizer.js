@@ -11,7 +11,7 @@
  * 非静默降级：调用方（engine）根据返回的 stripped 计数决定是否通过事件总线
  * 通知 UI，避免用户悄无声息地丢失信息。
  */
-import { modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
 
 const IMAGE_PLACEHOLDER_TEXT = "[图片已省略：当前模型不支持图像输入]";
 const VIDEO_PLACEHOLDER_TEXT = "[视频已省略：当前模型不支持视频输入]";
@@ -43,7 +43,7 @@ export function modelSupportsVideo(model) {
 export function sanitizeMessagesForModel(messages, model) {
   if (!Array.isArray(messages)) return emptySanitizeResult(messages);
   const supportsImage = modelSupportsImage(model);
-  const supportsVideo = modelSupportsVideo(model);
+  const supportsVideo = modelSupportsDirectVideoInput(model);
   if (supportsImage && supportsVideo) return emptySanitizeResult(messages);
 
   // 快速探测：没有任何需要剥离的媒体 block 就返回原数组，避免无谓分配

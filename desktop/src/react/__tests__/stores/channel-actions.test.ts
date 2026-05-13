@@ -21,6 +21,14 @@ const mockState: Record<string, unknown> = {
   channelHeaderMembersText: '',
   channelIsDM: false,
   channelInfoName: '',
+  channelAgentActivities: {},
+  channelAgentPhoneToolMode: 'read_only',
+  channelAgentReplyMinChars: null,
+  channelAgentReplyMaxChars: null,
+  channelAgentReminderIntervalMinutes: 31,
+  channelAgentGuardLimit: 36,
+  channelAgentModelOverrideEnabled: false,
+  channelAgentModelOverrideModel: null,
 };
 
 const setStateCalls: Array<Record<string, unknown>> = [];
@@ -51,6 +59,13 @@ describe('channel-actions', () => {
     mockState.channelMessages = [];
     mockState.channelTotalUnread = 0;
     mockState.channelsEnabled = true;
+    mockState.channelAgentPhoneToolMode = 'read_only';
+    mockState.channelAgentReplyMinChars = null;
+    mockState.channelAgentReplyMaxChars = null;
+    mockState.channelAgentReminderIntervalMinutes = 31;
+    mockState.channelAgentGuardLimit = 36;
+    mockState.channelAgentModelOverrideEnabled = false;
+    mockState.channelAgentModelOverrideModel = null;
     mockFetch.mockReset();
   });
 
@@ -86,6 +101,143 @@ describe('channel-actions', () => {
       await loadChannels();
       expect(mockFetch).not.toHaveBeenCalled();
       mockState.serverPort = '3210';
+    });
+  });
+
+  describe('loadConversationAgentActivities', () => {
+    it('loads and keys agent phone activities by conversation and agent', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          activities: [{
+            conversationId: 'ch1',
+            conversationType: 'channel',
+            agentId: 'hana',
+            state: 'idle',
+            summary: '已回复',
+            timestamp: '2026-05-12T12:00:00.000Z',
+          }],
+        }),
+      } as Response);
+
+      const { loadConversationAgentActivities } = await import('../../stores/channel-actions');
+      await loadConversationAgentActivities('ch1');
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/conversations/ch1/agent-activities');
+      expect((mockState.channelAgentActivities as any).ch1.hana[0]).toMatchObject({
+        state: 'idle',
+        summary: '已回复',
+      });
+    });
+  });
+
+  describe('setConversationAgentPhoneToolMode', () => {
+    it('persists and updates the current conversation phone tool mode', async () => {
+      mockState.currentChannel = 'ch1';
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, mode: 'write' }),
+      } as Response);
+
+      const { setConversationAgentPhoneToolMode } = await import('../../stores/channel-actions');
+      await setConversationAgentPhoneToolMode('write');
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/conversations/ch1/agent-phone-settings', expect.objectContaining({
+        method: 'POST',
+      }));
+      expect(mockState.channelAgentPhoneToolMode).toBe('write');
+    });
+
+    it('persists reply range settings without changing API output budget', async () => {
+      mockState.currentChannel = 'ch1';
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          mode: 'read_only',
+          replyMinChars: 20,
+          replyMaxChars: 80,
+          reminderIntervalMinutes: 45,
+          guardLimit: 9,
+          modelOverrideEnabled: true,
+          modelOverrideModel: { id: 'deepseek-v4-flash', provider: 'deepseek' },
+        }),
+      } as Response);
+
+      const { saveConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
+      await saveConversationAgentPhoneSettings({
+        replyMinChars: 20,
+        replyMaxChars: 80,
+        reminderIntervalMinutes: 45,
+        guardLimit: 9,
+        modelOverrideEnabled: true,
+        modelOverrideModel: { id: 'deepseek-v4-flash', provider: 'deepseek' },
+      });
+
+      const [, init] = mockFetch.mock.calls[0];
+      expect(mockFetch.mock.calls[0][0]).toBe('/api/conversations/ch1/agent-phone-settings');
+      const body = JSON.parse(String((init as RequestInit).body));
+      expect(body).toMatchObject({
+        replyMinChars: 20,
+        replyMaxChars: 80,
+        reminderIntervalMinutes: 45,
+        guardLimit: 9,
+        modelOverrideEnabled: true,
+        modelOverrideModel: { id: 'deepseek-v4-flash', provider: 'deepseek' },
+      });
+      expect(body).not.toHaveProperty('replyInstructions');
+      expect(body).not.toHaveProperty('maxTokens');
+      expect(mockState.channelAgentReplyMinChars).toBe(20);
+      expect(mockState.channelAgentReplyMaxChars).toBe(80);
+      expect(mockState.channelAgentReminderIntervalMinutes).toBe(45);
+      expect(mockState.channelAgentGuardLimit).toBe(9);
+      expect(mockState.channelAgentModelOverrideEnabled).toBe(true);
+      expect(mockState.channelAgentModelOverrideModel).toEqual({ id: 'deepseek-v4-flash', provider: 'deepseek' });
+    });
+  });
+
+  describe('channel member management', () => {
+    it('adds a member and updates the current channel projection', async () => {
+      mockState.currentChannel = 'ch1';
+      mockState.userName = 'testuser';
+      mockState.channelMembers = ['hana', 'butter'];
+      mockState.channels = [{
+        id: 'ch1',
+        name: 'general',
+        members: ['hana', 'butter'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+      }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, members: ['hana', 'butter', 'ming'] }),
+      } as Response);
+
+      const { addChannelMember } = await import('../../stores/channel-actions');
+      await addChannelMember('ch1', 'ming');
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/channels/ch1/members', expect.objectContaining({
+        method: 'POST',
+      }));
+      expect(mockState.channelMembers).toEqual(['hana', 'butter', 'ming']);
+      expect((mockState.channels as any[])[0].members).toEqual(['hana', 'butter', 'ming']);
+      expect(mockState.channelHeaderMembersText).toBe('4 channel.membersCount');
+    });
+
+    it('surfaces backend member removal errors without mutating local members', async () => {
+      mockState.currentChannel = 'ch1';
+      mockState.channelMembers = ['hana', 'butter'];
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'channel requires at least 2 agent members' }),
+      } as Response);
+
+      const { removeChannelMember } = await import('../../stores/channel-actions');
+      await expect(removeChannelMember('ch1', 'butter')).rejects.toThrow(/at least 2/i);
+      expect(mockState.channelMembers).toEqual(['hana', 'butter']);
     });
   });
 

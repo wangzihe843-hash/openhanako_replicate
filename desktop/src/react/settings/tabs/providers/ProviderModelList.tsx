@@ -48,7 +48,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   summary: ProviderSummary;
   onRefresh: () => Promise<void>;
 }) {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const [search, setSearch] = useState('');
   const [customInput, setCustomInput] = useState('');
   const [discoveredModels, setDiscoveredModels] = useState<DiscoveredModel[]>([]);

@@ -51,6 +51,7 @@ function createMocks() {
     steerBridgeSession: vi.fn().mockReturnValue(false),
     bridgeSessionManager: {
       injectMessage: vi.fn(() => true),
+      recordAssistantMessage: vi.fn(() => true),
       readIndex: () => ({}),
       writeIndex: () => {},
     },
@@ -457,11 +458,85 @@ describe("BridgeManager._handleMessage", () => {
 
       expect(wechatAdapter.canReply).toHaveBeenCalledWith("wx-user");
       expect(wechatAdapter.sendReply).toHaveBeenCalledWith("wx-user", "hello");
+      expect(engine.bridgeSessionManager.recordAssistantMessage).toHaveBeenCalledWith(
+        "wx_dm_wx-user@hana",
+        "hello",
+        expect.objectContaining({
+          agentId: "hana",
+          createIfMissing: true,
+          meta: expect.objectContaining({
+            userId: "wx-user",
+            chatId: "wx-user",
+          }),
+        }),
+      );
       expect(result).toMatchObject({
         platform: "wechat",
         chatId: "wx-user",
         sessionKey: "wx_dm_wx-user@hana",
       });
+    });
+
+    it("does not record proactive WeChat context when the reply window is unavailable", async () => {
+      const { bm, engine } = createMocks();
+      const wechatAdapter = {
+        capabilities: { proactive: false },
+        canReply: vi.fn().mockReturnValue(false),
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      bm._platforms.clear();
+      bm._platforms.set("wechat:hana", {
+        adapter: wechatAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "wechat",
+      });
+      engine.getAgent.mockImplementation((id) => {
+        if (id === "hana") return { agentName: "TestAgent", config: { bridge: { wechat: {} } }, sessionDir: os.tmpdir() };
+        return null;
+      });
+      engine.getBridgeIndex = vi.fn().mockReturnValue({
+        "wx_dm_wx-user@hana": {
+          file: "owner/wx.jsonl",
+          userId: "wx-user",
+          name: "微信用户",
+        },
+      });
+
+      const result = await bm.sendProactive("hello", "hana");
+
+      expect(result).toBeNull();
+      expect(wechatAdapter.sendReply).not.toHaveBeenCalled();
+      expect(engine.bridgeSessionManager.recordAssistantMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not send proactive replies through a Bridge entry owned by another agent", async () => {
+      const { bm } = createMocks();
+      const otherAdapter = {
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      const unboundAdapter = {
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      bm._platforms.clear();
+      bm._platforms.set("telegram:other", {
+        adapter: otherAdapter,
+        status: "connected",
+        agentId: "other",
+        platform: "telegram",
+      });
+      bm._platforms.set("telegram", {
+        adapter: unboundAdapter,
+        status: "connected",
+        agentId: null,
+        platform: "telegram",
+      });
+
+      const result = await bm.sendProactive("hello", "hana");
+
+      expect(result).toBeNull();
+      expect(otherAdapter.sendReply).not.toHaveBeenCalled();
+      expect(unboundAdapter.sendReply).not.toHaveBeenCalled();
     });
 
     it("sends proactive Feishu replies to the stored DM chatId instead of the owner user id", async () => {

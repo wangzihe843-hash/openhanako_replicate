@@ -241,8 +241,12 @@ em {
 }
 
 /* Task Lists */
-input[type="checkbox"] {
+.task-list-item {
+  list-style-type: none;
+}
+.task-list-item-checkbox {
   margin-right: 0.5em;
+  vertical-align: middle;
 }
 
 /* Definition Lists */

@@ -5,10 +5,11 @@
  * 思考 / 文字输出 / 工具调用 / 已完成 / 失败 / 已中断
  */
 
-import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeStreamKey } from '../../services/stream-key-dispatcher';
 import { hanaUrl } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { SubagentSessionPreview } from './SubagentSessionPreview';
 import styles from './Chat.module.css';
 
@@ -48,23 +49,17 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   const previewEntry = useStore(s => s.subagentPreviewByTaskId[block.taskId]);
   const agentId = block.agentId || block.executorAgentId || currentAgentId || '';
   const previewAgentId = block.agentId || block.executorAgentId || currentAgentId || null;
-  const agentName = block.agentName || block.executorAgentNameSnapshot || block.agentId || 'Subagent';
+  const displayInfo = resolveAgentDisplayInfo({
+    id: agentId || null,
+    agents,
+    fallbackAgentName: block.agentName || block.executorAgentNameSnapshot || block.agentId || 'Subagent',
+  });
+  const agentName = displayInfo.displayName;
   const isOpen = previewEntry?.open ?? false;
   const previewSessionPath = previewEntry?.sessionPath ?? (block.streamKey || null);
   const [shouldRenderPreview, setShouldRenderPreview] = useState(isOpen);
   const [isClosingPreview, setIsClosingPreview] = useState(false);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
-
-  const agent = agents?.find((a: any) => a.id === agentId);
-  const fallbackAvatar = useMemo(() => {
-    const types = (window.t?.('yuan.types') || {}) as Record<string, { avatar?: string }>;
-    const yuan = agent?.yuan || 'hanako';
-    const entry = types[yuan] || types['hanako'];
-    return `assets/${entry?.avatar || 'Hanako.png'}`;
-  }, [agent?.yuan]);
-  const avatarSrc = (agent?.hasAvatar && agentId)
-    ? hanaUrl(`/api/agents/${agentId}/avatar?t=${agentId}`)
-    : fallbackAvatar;
 
   // Sync block prop changes (from block_update patch)
   useEffect(() => {
@@ -159,20 +154,10 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
           aria-expanded={isOpen}
           onClick={handleToggle}
         >
-          <img
+          <AgentAvatar
+            info={displayInfo}
             className={styles.subagentAvatar}
-            src={avatarSrc}
             alt={agentName}
-            draggable={false}
-            onError={(e) => {
-              const img = e.target as HTMLImageElement;
-              if (img.src.endsWith(fallbackAvatar)) {
-                img.onerror = null;
-                return;
-              }
-              img.onerror = null;
-              img.src = fallbackAvatar;
-            }}
           />
           <div className={styles.subagentBody}>
             <div className={styles.subagentName}>

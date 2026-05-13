@@ -66,6 +66,7 @@ describe("web_search browser providers", () => {
       provider: "bing_browser",
       query: "hana search",
       maxResults: 3,
+      locale: "zh",
     });
     expect(result.details).toMatchObject({
       query: "hana search",
@@ -188,6 +189,7 @@ describe("web_search browser providers", () => {
       provider: "bing_browser",
       query: "hana default",
       maxResults: 2,
+      locale: "zh",
     });
     expect(result.details).toMatchObject({
       query: "hana default",
@@ -203,5 +205,28 @@ describe("web_search browser providers", () => {
         },
       ],
     });
+  });
+
+  it("surfaces browser extraction failures instead of reporting them as empty results", async () => {
+    searchWebMock.mockResolvedValue({
+      query: "中文 搜索",
+      provider: "bing_browser",
+      source_type: "browser",
+      results: [],
+      diagnostics: {
+        status: "extraction_failed",
+        blocked: false,
+        captcha: false,
+        reason: "Search results could not be extracted from bing page.",
+      },
+    });
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "bing_browser", api_key: "" }),
+    });
+    const result = await tool.execute("call-extraction-failed", { query: "中文 搜索", maxResults: 3 });
+
+    expect(result.content[0].text).toContain("could not be extracted");
+    expect(result.content[0].text).not.toContain("不太理想");
   });
 });

@@ -502,8 +502,6 @@ export class ConfigCoordinator {
     prefs.setChannelsEnabled(next);
     log.log(`setChannelsEnabled: ${next}`);
 
-    if (prev === next) return;
-
     const hub = this._d.getHub();
     if (hub && typeof hub.toggleChannels === "function") {
       await hub.toggleChannels(next);

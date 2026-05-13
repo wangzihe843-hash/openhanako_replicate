@@ -30,7 +30,8 @@ interface MarketplaceResponse {
 }
 
 export function PluginMarketplaceTab() {
-  const { showToast, set } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
+  const set = useSettingsStore(s => s.set);
   const [marketplace, setMarketplace] = useState<MarketplaceResponse | null>(null);
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
   const [selectedPlugin, setSelectedPlugin] = useState<MarketplacePlugin | null>(null);

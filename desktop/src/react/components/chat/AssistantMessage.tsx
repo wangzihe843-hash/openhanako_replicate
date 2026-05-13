@@ -2,7 +2,7 @@
  * AssistantMessage — 助手消息，遍历 ContentBlock 按类型渲染
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import { MoodBlock } from './MoodBlock';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -12,16 +12,18 @@ import { SubagentCard } from './SubagentCard';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { MessageActions } from './MessageActions';
 import { BLOCK_RENDERERS } from './block-renderers';
+import { FileOutputActions } from './FileOutputActions';
 const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
 import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
-import { hanaFetch, hanaUrl } from '../../hooks/use-hana-fetch';
+import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { openFilePreview, openSkillPreview } from '../../utils/file-preview';
 import { openMediaViewerForRef } from '../../utils/open-media-viewer';
 import { buildFileRefId, isImageOrSvgExt } from '../../utils/file-kind';
 import { openPreview } from '../../stores/preview-actions';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts } from '../../utils/message-text';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import styles from './Chat.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -42,24 +44,16 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
   const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
   const isSelected = selectedIds.includes(message.id);
-  const [avatarFailed, setAvatarFailed] = useState(false);
 
   // Resolve agent identity from agentId prop; fall back to global values
-  const agent = agentId ? agents.find(a => a.id === agentId) : null;
-  const displayName = agent?.name || globalAgentName;
-  const displayYuan = agent?.yuan || globalYuan;
-  const fallbackAvatar = useMemo(() => {
-    const types = (window.t?.('yuan.types') || {}) as Record<string, { avatar?: string }>;
-    const entry = types[displayYuan] || types['hanako'];
-    return `assets/${entry?.avatar || 'Hanako.png'}`;
-  }, [displayYuan]);
-  const avatarSrc = (agent?.hasAvatar && agentId)
-    ? hanaUrl(`/api/agents/${agentId}/avatar?t=${agentId}`)
-    : fallbackAvatar;
-
-  useEffect(() => {
-    setAvatarFailed(false);
-  }, [avatarSrc, fallbackAvatar]);
+  const displayInfo = resolveAgentDisplayInfo({
+    id: agentId || null,
+    agents,
+    fallbackAgentName: globalAgentName,
+    fallbackAgentYuan: globalYuan,
+  });
+  const displayName = displayInfo.displayName;
+  const displayYuan = displayInfo.yuan || globalYuan;
 
   const blocks = useMemo(
     () => (message.blocks || []).filter(block => block.type !== 'session_confirmation' || block.surface !== 'input'),
@@ -100,26 +94,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
          data-message-id={message.id}>
       {showAvatar && (
         <div className={styles.avatarRow}>
-          {!avatarFailed ? (
-            <img
-              className={`${styles.avatar} ${styles.hanaAvatar}`}
-              src={avatarSrc}
-              alt={displayName}
-              draggable={false}
-              onError={(e) => {
-                const img = e.target as HTMLImageElement;
-                if (img.src.endsWith(fallbackAvatar)) {
-                  img.onerror = null;
-                  setAvatarFailed(true);
-                  return;
-                }
-                img.onerror = null;
-                img.src = fallbackAvatar;
-              }}
-            />
-          ) : (
-            <span className={`${styles.avatar} ${styles.userAvatar}`}>🌸</span>
-          )}
+          <AgentAvatar
+            info={displayInfo}
+            className={`${styles.avatar} ${styles.hanaAvatar}`}
+            alt={displayName}
+          />
           <span className={styles.avatarName}>{displayName}</span>
         </div>
       )}
@@ -249,12 +228,6 @@ const ImageOutputCard = memo(function ImageOutputCard({ filePath, label, ext, st
 const FileOutputCard = memo(function FileOutputCard({ filePath, label, ext, status, ctx }: { filePath: string; label: string; ext: string; status?: string; ctx: FileBlockCtx }) {
   const expired = status === 'expired';
   const expiredLabel = window.t('chat.fileExpired');
-  const handleOpen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (expired) return;
-    const p = window.platform;
-    if (p?.openFile) p.openFile(filePath);
-  };
   const handlePreview = () => {
     if (expired) return;
     openFilePreview(filePath, label, ext, {
@@ -288,13 +261,7 @@ const FileOutputCard = memo(function FileOutputCard({ filePath, label, ext, stat
         </div>
       </div>
       {!expired && (
-        <button className={styles.fileOutputOpen} onClick={handleOpen} title={window.t('desk.openWithDefault')}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            <polyline points="15 3 21 3 21 9" />
-            <line x1="10" y1="14" x2="21" y2="3" />
-          </svg>
-        </button>
+        <FileOutputActions filePath={filePath} displayName={displayName} />
       )}
     </div>
   );

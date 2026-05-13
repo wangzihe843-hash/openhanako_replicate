@@ -74,7 +74,8 @@ function ToolModelTestBtn({ modelRef }: { modelRef: unknown }) {
 }
 
 export function OtherModelsSection({ providers }: { providers: Record<string, { models?: string[]; base_url?: string }> }) {
-  const { globalModelsConfig, showToast } = useSettingsStore();
+  const globalModelsConfig = useSettingsStore(s => s.globalModelsConfig);
+  const showToast = useSettingsStore(s => s.showToast);
   const savedSearchKey = globalModelsConfig?.search?.api_key || '';
   const [searchApiKey, setSearchApiKey] = useState('');
   const [searchKeyEdited, setSearchKeyEdited] = useState(false);

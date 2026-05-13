@@ -8,22 +8,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
-import { hanaUrl, hanaFetch } from '../hooks/use-hana-fetch';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
 import { addWorkspaceFolder, applyFolder, removeWorkspaceFolder } from '../stores/desk-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent } from '../types';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../utils/agent-display';
 import styles from './Welcome.module.css';
 // @ts-expect-error — shared JS module
 import { buildWorkspacePickerItems } from '../../../../shared/workspace-history.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调 (s: any) */
 
-// ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
-let _avatarTs = Date.now();
-export function refreshAvatarTs() { _avatarTs = Date.now(); }
+export function refreshAvatarTs() { refreshAgentAvatarVersion(); }
 
 // ── 主组件 ──
 
@@ -66,8 +64,15 @@ function WelcomeInner() {
     return agents.find(a => a.id === sel) || null;
   }, [agents, selectedAgentId, currentAgentId]);
 
-  const displayName = displayAgent?.name || agentName;
-  const displayYuan = displayAgent?.yuan || agentYuan;
+  const displayInfo = resolveAgentDisplayInfo({
+    id: displayAgent?.id || selectedAgentId || currentAgentId,
+    agents,
+    fallbackAgentName: agentName,
+    fallbackAgentYuan: agentYuan,
+    fallbackAgentAvatarUrl: agentAvatarUrl,
+  });
+  const displayName = displayInfo.displayName;
+  const displayYuan = displayInfo.yuan || agentYuan;
   const memoryMasterEnabled = displayAgent?.memoryMasterEnabled ?? activeMemoryMasterEnabled;
 
   // Greeting text — regenerate when agent changes or welcome becomes visible
@@ -94,13 +99,7 @@ function WelcomeInner() {
 
   return (
     <div className={styles.welcome}>
-      <WelcomeAvatar
-        agentId={displayAgent?.id || null}
-        hasAvatar={displayAgent?.hasAvatar ?? false}
-        agentAvatarUrl={agentAvatarUrl}
-        yuan={displayYuan}
-        name={displayName}
-      />
+      <WelcomeAvatar info={displayInfo} />
       <p className={styles.welcomeText}>{greeting}</p>
       {agents.length >= 2 && (
         <AgentChips
@@ -121,42 +120,19 @@ function WelcomeInner() {
 
 // ── Welcome Avatar ──
 
-function WelcomeAvatar({ agentId, hasAvatar, agentAvatarUrl, yuan, name }: {
-  agentId: string | null;
-  hasAvatar: boolean;
-  agentAvatarUrl: string | null;
-  yuan: string;
-  name: string;
+function WelcomeAvatar({ info }: {
+  info: AgentDisplayInfo;
 }) {
-  const [src, setSrc] = useState(() => {
-    if (agentId && hasAvatar) return hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`);
-    return yuanFallbackAvatar(yuan);
-  });
-
-  useEffect(() => {
-    if (agentId && hasAvatar) {
-      setSrc(hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`));
-    } else {
-      setSrc(yuanFallbackAvatar(yuan));
-    }
-  }, [agentId, hasAvatar, yuan]);
-
-  const handleError = useCallback(() => {
-    setSrc(yuanFallbackAvatar(yuan));
-  }, [yuan]);
-
   const handleClick = useCallback(() => {
     openSettingsModal('agent');
   }, []);
 
   return (
-    <img
+    <AgentAvatar
+      info={info}
       className={styles.welcomeAvatar}
-      src={src}
-      alt={name}
-      draggable={false}
+      alt={info.displayName}
       onClick={handleClick}
-      onError={handleError}
     />
   );
 }
@@ -199,28 +175,24 @@ function AgentChip({ agent, isSelected, onClick }: {
   isSelected: boolean;
   onClick: (id: string) => void;
 }) {
-  const [src, setSrc] = useState(() =>
-    agent.hasAvatar ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`) : yuanFallbackAvatar(agent.yuan),
-  );
-
-  const handleError = useCallback(() => {
-    setSrc(yuanFallbackAvatar(agent.yuan));
-  }, [agent.yuan]);
-
   const handleClick = useCallback(() => {
     onClick(agent.id);
   }, [agent.id, onClick]);
+  const info = resolveAgentDisplayInfo({
+    id: agent.id,
+    agents: [agent],
+    fallbackAgentName: agent.name,
+    fallbackAgentYuan: agent.yuan,
+  });
 
   return (
     <button
       className={`${styles.welcomeAgentChip}${isSelected ? ` ${styles.welcomeAgentChipSelected}` : ''}`}
       onClick={handleClick}
     >
-      <img
+      <AgentAvatar
+        info={info}
         className={styles.welcomeAgentChipAvatar}
-        src={src}
-        draggable={false}
-        onError={handleError}
       />
       <span>{agent.name}</span>
     </button>

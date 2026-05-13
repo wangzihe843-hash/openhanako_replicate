@@ -39,6 +39,31 @@
     "disabled": "Channels disabled",
     "toggleLabel": "Channel toggle",
     "members": "Members",
+    "addMember": "Add member",
+    "removeMember": "Remove member",
+    "removeMemberConfirm": "Remove \"{name}\" from this channel?",
+    "addMemberFailed": "Failed to add member",
+    "removeMemberFailed": "Failed to remove member",
+    "noAvailableMembers": "No agents available",
+    "agentActivity": "Agent activity",
+    "agentSettings": "Chat settings",
+    "toolPermission": "Tool permission",
+    "agentIdle": "Idle",
+    "phoneReceivedNewMessages": "Received new channel messages",
+    "replyRange": "Reply length",
+    "replyMinPlaceholder": "Min",
+    "replyMaxPlaceholder": "Max",
+    "replyRangeInvalid": "Minimum length cannot exceed maximum length",
+    "settingsSaveFailed": "Failed to save settings",
+    "reminderInterval": "Active reminder interval (min)",
+    "guardLimit": "Turn guard limit",
+    "modelOverride": "Model override",
+    "modelDefault": "Default",
+    "modelOverrideOn": "Override",
+    "selectModel": "Select model",
+    "noModelsAvailable": "No models available",
+    "toolReadOnly": "Read",
+    "toolWrite": "Write",
     "createIntroOptional": "Description"
   },
   "sidebar": {
@@ -131,7 +156,12 @@
     "browserScreenshot": "Browser screenshot",
     "compacting": "Compacting context",
     "visionAuxiliary": "Vision auxiliary",
-    "fileExpired": "File expired"
+    "fileExpired": "File expired",
+    "fileActions": {
+      "more": "More file actions",
+      "revealInFinder": "Reveal in file manager",
+      "copyPath": "Copy file path"
+    }
   },
   "time": {
     "justNow": "Just now",
@@ -1935,7 +1965,7 @@
     },
     "notify": {
       "label": "Notification",
-      "description": "Send a system notification (desktop popup) to the user.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent\n- A monitoring/scheduled task discovers something requiring user attention\nIf everything is normal with no issues, do not call this tool.",
+      "description": "Send a notification to the user. Choose desktop popup, Bridge owner chat, or the default channel according to the task.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent or asks to send it through Bridge/WeChat\n- A monitoring/scheduled task discovers something requiring user attention\nIf everything is normal with no issues, do not call this tool. Successful Bridge notifications can be appended to that conversation context according to contextPolicy.",
       "titleDesc": "Notification title (brief)",
       "bodyDesc": "Notification content"
     },

@@ -26,7 +26,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { markdownHighlight, codeHighlight } from '../editor/highlight';
 import { markdownTheme, codeTheme } from '../editor/theme';
-import { markdownBlockDecoField, markdownDecoPlugin } from '../editor/md-decorations';
+import { markdownBlockDecoField, markdownDecoPlugin, markdownImageContextFacet } from '../editor/md-decorations';
 import { mermaidDecoField } from '../editor/mermaid-field';
 import { linkClickHandler } from '../editor/link-handler';
 import { tableDecoField } from '../editor/table-field';
@@ -269,7 +269,15 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         c.highlight.of(
           syntaxHighlighting(isMd ? markdownHighlight : codeHighlight),
         ),
-        c.conceal.of(isMd ? [markdownDecoPlugin, markdownBlockDecoField, mermaidDecoField] : []),
+        c.conceal.of(isMd ? [
+          markdownImageContextFacet.of({
+            filePath,
+            getFileUrl: window.platform?.getFileUrl,
+          }),
+          markdownDecoPlugin,
+          markdownBlockDecoField,
+          mermaidDecoField,
+        ] : []),
         ...(isMd ? [tableDecoField] : []),
         ...(isCsv ? [csvTableField] : []),
         c.theme.of(isMd || isCsv ? markdownTheme : codeTheme),
@@ -292,7 +300,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.destroy();
         viewRef.current = null;
       };
-    }, [mode, language, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+    }, [mode, language, readOnly, filePath]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
 
     // content prop change → update editor (skip if already in sync)
     useEffect(() => {

@@ -61,7 +61,7 @@ interface PreviewRendererProps {
 
 // ── MarkdownPreview ──
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({ content, filePath }: { content: string; filePath?: string }) {
   const divRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -75,7 +75,12 @@ function MarkdownPreview({ content }: { content: string }) {
     <div
       ref={divRef}
       className="preview-markdown md-content"
-      dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(content) }}
+      dangerouslySetInnerHTML={{
+        __html: renderMarkdownPreview(content, {
+          filePath,
+          getFileUrl: window.platform?.getFileUrl,
+        }),
+      }}
     />
   );
 }
@@ -174,7 +179,7 @@ export function PreviewRenderer({ previewItem }: PreviewRendererProps) {
       );
 
     case 'markdown':
-      return <MarkdownPreview content={previewItem.content} />;
+      return <MarkdownPreview content={previewItem.content} filePath={previewItem.filePath} />;
 
     case 'code':
       return (

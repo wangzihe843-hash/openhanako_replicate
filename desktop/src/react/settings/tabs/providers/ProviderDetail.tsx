@@ -52,7 +52,7 @@ export function ProviderDetail({ providerId, summary, providerConfig, isPresetSe
 }
 
 function ProviderDeleteButton({ providerId, onRefresh }: { providerId: string; onRefresh: () => Promise<void> }) {
-  const { showToast } = useSettingsStore();
+  const showToast = useSettingsStore(s => s.showToast);
   const [confirming, setConfirming] = useState(false);
 
   const handleDelete = async () => {

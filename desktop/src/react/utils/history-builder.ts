@@ -149,7 +149,9 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
 
     if (m.role === 'user') {
       // strip steer 前缀（内部标记，不应展示给用户）
-      const rawContent = (m.content || '').replace(/^（插话，无需 MOOD）\n?/, '');
+      const rawContent = (m.content || '')
+        .replace(/^（插话，无需 MOOD）\n?/, '')
+        .replace(/^<t>[^<]*<\/t>\s*/, '');
 
       // 过滤系统注入的后台任务通知（steer 消息），不展示给用户
       if (/<hana-background-result\s/.test(rawContent) || /<hana-deferred-tasks>/.test(rawContent)) {

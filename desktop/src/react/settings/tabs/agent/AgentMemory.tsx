@@ -116,7 +116,8 @@ export function MemorySection({ hasUtilityModel, memoryEnabled, isViewingOther, 
 function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const store = useSettingsStore();
+  // Only actions needed — use getState() to avoid subscribing to the full store
+  const getStore = () => useSettingsStore.getState();
 
   useEffect(() => {
     if (!open) return;
@@ -130,7 +131,7 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
   const exportMemories = async () => {
     setOpen(false);
     try {
-      const aid = store.getSettingsAgentId();
+      const aid = getStore().getSettingsAgentId();
       const res = await hanaFetch(`/api/memories/export?agentId=${aid}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -144,10 +145,10 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      store.showToast(t('settings.memory.actions.exportSuccess'), 'success');
+      getStore().showToast(t('settings.memory.actions.exportSuccess'), 'success');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      store.showToast(t('settings.saveFailed') + ': ' + msg, 'error');
+      getStore().showToast(t('settings.saveFailed') + ': ' + msg, 'error');
     }
   };
 
@@ -165,11 +166,11 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
         const json = JSON.parse(text);
         const entries = json.facts || json.memories;
         if (!Array.isArray(entries) || entries.length === 0) {
-          store.showToast(t('settings.memory.actions.invalidFile'), 'error');
+          getStore().showToast(t('settings.memory.actions.invalidFile'), 'error');
           return;
         }
-        store.showToast(t('settings.memory.actions.importing'), 'success');
-        const aid = store.getSettingsAgentId();
+        getStore().showToast(t('settings.memory.actions.importing'), 'success');
+        const aid = getStore().getSettingsAgentId();
         const res = await hanaFetch(`/api/memories/import?agentId=${aid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -178,10 +179,10 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const importMsg = t('settings.memory.actions.importSuccess').replace('{count}', data.imported);
-        store.showToast(importMsg, 'success');
+        getStore().showToast(importMsg, 'success');
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        store.showToast(t('settings.saveFailed') + ': ' + errMsg, 'error');
+        getStore().showToast(t('settings.saveFailed') + ': ' + errMsg, 'error');
       }
     });
     input.click();

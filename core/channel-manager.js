@@ -9,14 +9,13 @@
 import fs from "fs";
 import path from "path";
 import { createModuleLogger } from "../lib/debug-log.js";
-import { t, getLocale } from "../server/i18n.js";
+import { t } from "../server/i18n.js";
 import {
   createChannel as createChannelFile,
-  generateChannelId,
   addBookmarkEntry,
   addChannelMember,
   getChannelMembers,
-  getChannelMeta,
+  MIN_CHANNEL_AGENT_MEMBERS,
   removeChannelMember,
   removeBookmarkEntry,
   deleteChannel,
@@ -104,10 +103,14 @@ export class ChannelManager {
   }
 
   /**
-   * 触发频道立即 triage（用户发消息后调用）
+   * 触发频道立即手机送达（群聊新消息后调用）
    */
+  async triggerChannelDelivery(channelName, opts) {
+    return this._getHub()?.triggerChannelDelivery(channelName, opts);
+  }
+
   async triggerChannelTriage(channelName, opts) {
-    return this._getHub()?.triggerChannelTriage(channelName, opts);
+    return this.triggerChannelDelivery(channelName, opts);
   }
 
   /**
@@ -121,36 +124,57 @@ export class ChannelManager {
     // 确保 ch_crew 频道存在
     const crewFile = path.join(this._channelsDir, "ch_crew.md");
     if (!fs.existsSync(crewFile)) {
+      const members = this._listConfiguredAgentIds();
+      if (!members.includes(agentId)) members.push(agentId);
+      if (members.length < MIN_CHANNEL_AGENT_MEMBERS) {
+        return;
+      }
+
       const chName = t("error.defaultChannelName");
       const chDesc = t("error.defaultChannelDesc");
       await createChannelFile(this._channelsDir, {
         id: "ch_crew",
         name: chName,
         description: chDesc,
-        members: [agentId],
+        members,
         intro: chDesc,
       });
+      for (const memberId of members) {
+        await addBookmarkEntry(path.join(this._agentsDir, memberId, "channels.md"), "ch_crew");
+      }
     } else {
       await addChannelMember(crewFile, agentId);
     }
 
     // 写 agent 的 channels.md（扫描所有频道，加入包含该 agent 的）
-    const allChannels = ["ch_crew"];
+    const allChannels = [];
     try {
       const files = fs.readdirSync(this._channelsDir);
       for (const f of files) {
         if (!f.endsWith(".md")) continue;
         const channelId = f.replace(".md", "");
-        if (channelId === "ch_crew") continue;
         const members = getChannelMembers(path.join(this._channelsDir, f));
         if (members.includes(agentId)) {
           allChannels.push(channelId);
         }
       }
-    } catch {}
+    } catch {
+      // Missing channels directory is fine during first-run initialization.
+    }
 
     for (const ch of allChannels) {
       await addBookmarkEntry(channelsMdPath, ch);
+    }
+  }
+
+  _listConfiguredAgentIds() {
+    try {
+      return fs.readdirSync(this._agentsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((id) => fs.existsSync(path.join(this._agentsDir, id, "config.yaml")));
+    } catch {
+      return [];
     }
   }
 

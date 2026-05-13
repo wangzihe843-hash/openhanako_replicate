@@ -1,18 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { usePanel } from '../hooks/use-panel';
-import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { fetchConfig, invalidateConfigCache } from '../hooks/use-config';
 import { loadSessions, switchSession } from '../stores/session-actions';
 import { formatSessionDate, injectCopyButtons, parseMoodFromContent } from '../utils/format';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { getMd } from '../utils/markdown';
 import { useMermaidDiagrams } from '../hooks/use-mermaid-diagrams';
 import fp from './FloatingPanels.module.css';
 import chatStyles from './chat/Chat.module.css';
-
-// ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
-let _avatarTs = Date.now();
 
 interface ActivityItem {
   id: string;
@@ -208,16 +205,17 @@ function ActivityCard({
   onOpen,
 }: {
   activity: ActivityItem;
-  agents: { id: string; yuan: string; hasAvatar?: boolean }[];
+  agents: { id: string; name?: string; yuan: string; hasAvatar?: boolean }[];
   currentAgentId: string | null;
   agentName: string;
   onOpen: (id: string) => void;
 }) {
   const agentId = a.agentId || currentAgentId;
-  const ag = agents.find(x => x.id === agentId);
-  const avatarSrc = ag?.hasAvatar
-    ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`)
-    : yuanFallbackAvatar(ag?.yuan);
+  const displayInfo = resolveAgentDisplayInfo({
+    id: agentId,
+    agents: agents as any,
+    fallbackAgentName: a.agentName || agentName,
+  });
 
   const t = window.t ?? ((p: string) => p);
   const typeText = a.type === 'heartbeat' ? t('activity.heartbeat')
@@ -240,13 +238,11 @@ function ActivityCard({
       onClick={a.sessionFile ? () => onOpen(a.id) : undefined}
     >
       <div className={fp.actCardHead}>
-        <img
+        <AgentAvatar
+          info={displayInfo}
           className={fp.actCardAvatar}
-          src={avatarSrc}
-          onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(ag?.yuan); }}
-          draggable={false}
         />
-        <span className={fp.actCardAgentName}>{a.agentName || agentName}</span>
+        <span className={fp.actCardAgentName}>{displayInfo.displayName}</span>
         <span className={fp.actCardBadge}>{typeText}</span>
         <span className={fp.actCardTime}>
           {a.startedAt ? formatSessionDate(new Date(a.startedAt).toISOString()) : ''}
@@ -266,21 +262,20 @@ function ActivityCard({
 
 function DetailHeader({ detail }: { detail: DetailState }) {
   const agents = useStore(s => s.agents);
-  const ag = agents.find(x => x.id === detail.agentId);
-  const avatarSrc = ag?.hasAvatar
-    ? hanaUrl(`/api/agents/${detail.agentId}/avatar?t=${_avatarTs}`)
-    : yuanFallbackAvatar(ag?.yuan);
+  const displayInfo = resolveAgentDisplayInfo({
+    id: detail.agentId,
+    agents,
+    fallbackAgentName: detail.agentName,
+  });
 
   return (
     <div className={fp.detailHeaderInfo}>
-      <img
+      <AgentAvatar
+        info={displayInfo}
         className={fp.detailHeaderAvatar}
-        src={avatarSrc}
-        onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(ag?.yuan); }}
-        draggable={false}
       />
       <div className={fp.detailHeaderText}>
-        <span className={fp.detailHeaderName}>{detail.agentName}</span>
+        <span className={fp.detailHeaderName}>{displayInfo.displayName}</span>
         <span className={fp.detailHeaderSubtitle}>{detail.title}</span>
       </div>
     </div>

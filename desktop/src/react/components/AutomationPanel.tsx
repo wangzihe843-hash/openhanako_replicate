@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '../stores';
 import { usePanel } from '../hooks/use-panel';
-import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { cronToHuman } from '../utils/format';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import fp from './FloatingPanels.module.css';
 
 interface CronJob {
@@ -30,6 +30,7 @@ export function AutomationPanel() {
   const agentName = useStore(s => s.agentName);
   const agentYuan = useStore(s => s.agentYuan);
   const currentAgentId = useStore(s => s.currentAgentId);
+  const agents = useStore(s => s.agents);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
@@ -129,6 +130,7 @@ export function AutomationPanel() {
                   agentName={agentName}
                   agentYuan={agentYuan}
                   currentAgentId={currentAgentId}
+                  agents={agents}
                   onToggle={toggleJob}
                   onRemove={removeJob}
                   onUpdate={updateJob}
@@ -170,6 +172,7 @@ function AutomationItem({
   agentName,
   agentYuan,
   currentAgentId,
+  agents,
   onToggle,
   onRemove,
   onUpdate,
@@ -180,6 +183,7 @@ function AutomationItem({
   agentName: string;
   agentYuan: string;
   currentAgentId: string | null;
+  agents: Array<{ id: string; name: string; yuan: string; hasAvatar?: boolean; isPrimary: boolean }>;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, fields: Record<string, unknown>) => void;
@@ -214,7 +218,13 @@ function AutomationItem({
     setEditing(false);
   }, [editValue, labelText, job.id, onUpdate]);
 
-  const avatarSrc = agentAvatarUrl || yuanFallbackAvatar(agentYuan);
+  const displayInfo = resolveAgentDisplayInfo({
+    id: currentAgentId,
+    agents,
+    fallbackAgentName: agentName,
+    fallbackAgentYuan: agentYuan,
+    fallbackAgentAvatarUrl: agentAvatarUrl,
+  });
 
   // 构建模型选项
   const jobModelRef = parseCronJobModel(job.model);
@@ -292,12 +302,11 @@ function AutomationItem({
         )}
         <div className={fp.autoItemMeta}>
           <div className={fp.autoItemExecutor}>
-            <img
+            <AgentAvatar
+              info={displayInfo}
               className={fp.autoItemExecutorAvatar}
-              src={avatarSrc}
-              onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(agentYuan); }}
             />
-            <span className={fp.autoItemExecutorName}>{agentName}</span>
+            <span className={fp.autoItemExecutorName}>{displayInfo.displayName}</span>
           </div>
           <span className={fp.autoItemSchedule}>{cronToHuman(job.schedule)}</span>
           {availableModels.length > 0 && (

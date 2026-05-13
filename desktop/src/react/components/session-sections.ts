@@ -42,7 +42,21 @@ function isPinnedSession(session: Session): boolean {
 }
 
 function pinnedTime(session: Session): number {
-  return session.pinnedAt ? Date.parse(session.pinnedAt) || 0 : 0;
+  return timestamp(session.pinnedAt);
+}
+
+function modifiedTime(session: Session): number {
+  return timestamp(session.modified);
+}
+
+function timestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function compareByPath(a: Session, b: Session): number {
+  return String(a.path || '').localeCompare(String(b.path || ''));
 }
 
 export function buildSessionSections(
@@ -57,7 +71,7 @@ export function buildSessionSections(
 
   const pinned = sessions
     .filter(isPinnedSession)
-    .sort((a, b) => pinnedTime(b) - pinnedTime(a));
+    .sort((a, b) => pinnedTime(b) - pinnedTime(a) || compareByPath(a, b));
   const regular = sessions.filter(session => !isPinnedSession(session));
 
   const sections: SessionSection[] = [];
@@ -76,6 +90,11 @@ export function buildSessionSections(
   };
   for (const session of regular) {
     dateGroups[getSessionDateGroup(session.modified, now)].push(session);
+  }
+
+  // Sort within each group: newest modified first
+  for (const group of DATE_GROUP_ORDER) {
+    dateGroups[group].sort((a, b) => modifiedTime(b) - modifiedTime(a) || compareByPath(a, b));
   }
 
   for (const group of DATE_GROUP_ORDER) {

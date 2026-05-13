@@ -41,6 +41,12 @@ export function SettingsModalShell() {
     closeSettingsModal();
   }, []);
 
+  const handleActiveTabChange = useCallback((tab: string) => {
+    const current = useStore.getState().settingsModal;
+    if (current?.activeTab === tab) return;
+    setSettingsModalActiveTab(tab);
+  }, []);
+
   // 保存打开前的焦点，关闭后恢复
   useEffect(() => {
     if (mounted && returnFocusRef.current === null) {
@@ -57,6 +63,7 @@ export function SettingsModalShell() {
   // 同步 activeTab 到 settings store（仅在打开期间）
   useEffect(() => {
     if (!mounted) return;
+    if (useSettingsStore.getState().activeTab === settingsModal.activeTab) return;
     useSettingsStore.setState({ activeTab: settingsModal.activeTab });
   }, [mounted, settingsModal.activeTab]);
 
@@ -112,7 +119,7 @@ export function SettingsModalShell() {
         <SettingsContent
           variant="modal"
           onClose={requestClose}
-          onActiveTabChange={setSettingsModalActiveTab}
+          onActiveTabChange={handleActiveTabChange}
         />
       </div>
     </div>

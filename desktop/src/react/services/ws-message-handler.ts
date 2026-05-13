@@ -17,6 +17,7 @@ import {
   appendChannelMessage as appendChannelMessageAction,
   loadChannels as loadChannelsAction,
   openChannel as openChannelAction,
+  upsertConversationAgentActivity as upsertConversationAgentActivityAction,
 } from '../stores/channel-actions';
 import { showError } from '../utils/ui-helpers';
 import { handleAppEvent } from './app-event-actions';
@@ -490,13 +491,24 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'dm_new_message': {
-      const dmId = `dm:${msg.from}`;
       const store2 = useStore.getState();
+      const currentAgentId = store2.currentAgentId;
+      const peerId = currentAgentId && msg.from === currentAgentId && msg.to
+        ? msg.to
+        : msg.from;
+      const dmId = `dm:${peerId}`;
       const isViewingDM = store2.currentTab === 'channels' && store2.currentChannel === dmId && document.visibilityState === 'visible';
       if (isViewingDM) {
         openChannelAction(dmId, true);
       } else {
         loadChannelsAction();
+      }
+      break;
+    }
+
+    case 'conversation_agent_activity': {
+      if (msg.activity) {
+        upsertConversationAgentActivityAction(msg.activity);
       }
       break;
     }

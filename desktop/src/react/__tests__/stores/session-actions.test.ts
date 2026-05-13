@@ -36,6 +36,12 @@ const initialStateFactory = (): MockState => ({
   inlineErrors: {} as Record<string, string | null>,
   addToast: vi.fn(),
   activePanel: null,
+  currentTab: 'chat',
+  settingsModal: { open: false, activeTab: 'agent' },
+  mediaViewer: null,
+  skillViewerData: null,
+  channelCreateOverlayVisible: false,
+  computerOverlayBySession: {} as Record<string, unknown>,
   agents: [] as unknown[],
   currentAgentId: null,
   agentName: '',
@@ -221,6 +227,7 @@ describe('session-actions', () => {
     Object.keys(mockState).forEach(k => delete mockState[k]);
     Object.assign(mockState, initialStateFactory());
     Object.assign(mockState, { workspaceDeskStateByRoot: {} as Record<string, unknown> });
+    (globalThis.window as unknown as { hana?: unknown }).hana = {};
     installStoreMethods();
     mockFetch.mockReset();
     mockClearChat.mockReset();
@@ -336,6 +343,29 @@ describe('session-actions', () => {
 
       const permissionEvent = dispatchedEvents.filter(e => e.type === 'hana-plan-mode').at(-1);
       expect(permissionEvent?.detail).toEqual({ enabled: true, mode: 'read_only' });
+    });
+
+    it('does not restore focus when a stale new-session continuation is no longer pending', async () => {
+      let resolveDesk!: () => void;
+      deskActionMocks.activateWorkspaceDesk.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveDesk = resolve;
+      }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        mode: 'ask',
+        defaultMode: 'ask',
+      }));
+
+      const creating = createNewSession();
+      Object.assign(mockState, {
+        pendingNewSession: false,
+        currentSessionPath: '/session/existing.jsonl',
+        pendingSessionSwitchPath: null,
+      });
+      resolveDesk();
+      await creating;
+
+      expect((mockState as unknown as { requestInputFocus: ReturnType<typeof vi.fn> }).requestInputFocus)
+        .not.toHaveBeenCalled();
     });
 
     it('sends extra workspace folders when creating a pending session', async () => {
@@ -667,6 +697,42 @@ describe('session-actions', () => {
       // 只应该有一次 /api/sessions/switch，不应该有 /api/sessions/messages
       const calls = mockFetch.mock.calls.map(c => String(c[0]));
       expect(calls.filter(u => u.startsWith('/api/sessions/messages'))).toHaveLength(0);
+    });
+
+    it('切换完成后仍在 chat surface 时恢复输入焦点', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        agentId: null,
+        currentModelId: null,
+        currentModelName: null,
+        currentModelProvider: null,
+      }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [{ text: 'history' }], blocks: [], todos: [], hasMore: false,
+      }));
+
+      await switchSession('/a');
+
+      expect((mockState as unknown as { requestInputFocus: ReturnType<typeof vi.fn> }).requestInputFocus)
+        .toHaveBeenCalledTimes(1);
+    });
+
+    it('用户已离开 chat surface 时不抢回输入焦点', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        agentId: null,
+        currentModelId: null,
+        currentModelName: null,
+        currentModelProvider: null,
+      }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [{ text: 'history' }], blocks: [], todos: [], hasMore: false,
+      }));
+
+      const switching = switchSession('/a');
+      (mockState as Record<string, unknown>).currentTab = 'channels';
+      await switching;
+
+      expect((mockState as unknown as { requestInputFocus: ReturnType<typeof vi.fn> }).requestInputFocus)
+        .not.toHaveBeenCalled();
     });
 
     it('切 session 时激活目标 cwd 的工作空间面板，不携带旧 deskCurrentPath', async () => {

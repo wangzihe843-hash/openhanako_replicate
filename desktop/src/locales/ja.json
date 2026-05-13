@@ -38,6 +38,31 @@
     "disabled": "チャンネル機能は無効です",
     "toggleLabel": "チャンネル切替",
     "members": "メンバー",
+    "addMember": "メンバーを追加",
+    "removeMember": "メンバーを削除",
+    "removeMemberConfirm": "「{name}」をこのチャンネルから削除しますか？",
+    "addMemberFailed": "メンバーの追加に失敗しました",
+    "removeMemberFailed": "メンバーの削除に失敗しました",
+    "noAvailableMembers": "追加できる Agent はありません",
+    "agentActivity": "Agent の動き",
+    "agentSettings": "チャット設定",
+    "toolPermission": "ツール権限",
+    "agentIdle": "待機中",
+    "phoneReceivedNewMessages": "新しいグループチャットメッセージを受信",
+    "replyRange": "返信文字数",
+    "replyMinPlaceholder": "最小",
+    "replyMaxPlaceholder": "最大",
+    "replyRangeInvalid": "最小文字数は最大文字数以下にしてください",
+    "settingsSaveFailed": "設定の保存に失敗しました",
+    "reminderInterval": "能動リマインド間隔（分）",
+    "guardLimit": "ターン上限",
+    "modelOverride": "モデル上書き",
+    "modelDefault": "既定",
+    "modelOverrideOn": "上書き",
+    "selectModel": "モデルを選択",
+    "noModelsAvailable": "利用可能なモデルがありません",
+    "toolReadOnly": "読取",
+    "toolWrite": "書込",
     "createIntroOptional": "説明"
   },
   "sidebar": {
@@ -130,7 +155,12 @@
     "browserScreenshot": "ブラウザスクリーンショット",
     "compacting": "コンテキスト圧縮中",
     "visionAuxiliary": "補助ビジョン",
-    "fileExpired": "ファイル期限切れ"
+    "fileExpired": "ファイル期限切れ",
+    "fileActions": {
+      "more": "その他のファイル操作",
+      "revealInFinder": "ファイルマネージャーで表示",
+      "copyPath": "ファイルパスをコピー"
+    }
   },
   "time": {
     "justNow": "たった今",
@@ -1887,7 +1917,7 @@
     },
     "notify": {
       "label": "通知",
-      "description": "ユーザーにシステム通知（デスクトップポップアップ）を送信します。\n使用場面：\n- ユーザーが「xxx を思い出させて」「その時通知して」「xxx を忘れないように」と言った場合\n- スケジュールタスクの prompt に通知やリマインドの意図が明記されている場合\n- 巡回/スケジュールタスクでユーザーの注意が必要な事項が見つかった場合\nすべて正常で問題がなければ、このツールを呼び出さないでください。",
+      "description": "ユーザーに通知を送信します。タスクの要求に応じてデスクトップポップアップ、Bridge owner チャット、または既定チャンネルを選びます。\n使用場面：\n- ユーザーが「xxx を思い出させて」「その時通知して」「xxx を忘れないように」と言った場合\n- スケジュールタスクの prompt に通知、リマインド、Bridge/WeChat 送信の意図が明記されている場合\n- 巡回/スケジュールタスクでユーザーの注意が必要な事項が見つかった場合\nすべて正常で問題がなければ、このツールを呼び出さないでください。Bridge 通知が成功した場合、contextPolicy に従って対応する会話コンテキストへ追記できます。",
       "titleDesc": "通知タイトル（簡潔に）",
       "bodyDesc": "通知内容"
     },
