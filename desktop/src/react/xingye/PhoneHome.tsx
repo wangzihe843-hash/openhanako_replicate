@@ -254,7 +254,7 @@ export function PhoneHome({
         </section>
 
         <section className={styles.phoneEmptyStateCard}>
-          日记为按角色本地持久化；MM Chat 为文本 UI 骨架（mock）；相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
+          日记与 MM Chat 会话列表为按角色本地持久化；MM Chat 仍未接模型。相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
         </section>
       </div>
     </div>

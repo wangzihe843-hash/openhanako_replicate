@@ -1,61 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
+import {
+  cloneDefaultMmChatPersisted,
+  readMmChatPersistence,
+  saveMmChatPersistence,
+  type XingyeMmChatSession,
+} from './xingye-mm-chat-store';
 
 interface PhoneMmChatAppProps {
   ownerAgent: Agent | null;
   displayName: string;
   onBack: () => void;
 }
-
-type MmChatRole = 'ta' | 'ai';
-
-interface MmChatTurn {
-  id: string;
-  role: MmChatRole;
-  text: string;
-}
-
-interface MmChatSessionMock {
-  id: string;
-  title: string;
-  preview: string;
-  /** 空数组则展示「尚无消息」占位 */
-  messages: MmChatTurn[];
-}
-
-/** 本地展示用 mock，不接 LLM */
-const MM_CHAT_MOCK_SESSIONS: MmChatSessionMock[] = [
-  {
-    id: 's1',
-    title: '今晚的安排',
-    preview: 'AI：可以把目标拆成三步…',
-    messages: [
-      { id: 'm1', role: 'ta', text: '明天要交小组作业，我现在脑子很乱，帮我排个顺序。' },
-      {
-        id: 'm2',
-        role: 'ai',
-        text:
-          '可以先把「必须交付」列出来，再估时间。\n' +
-          '1) 确认题目与分工\n' +
-          '2) 各自草稿\n' +
-          '3) 合并与检查引用格式',
-      },
-      { id: 'm3', role: 'ta', text: '如果只有三小时呢？' },
-      {
-        id: 'm4',
-        role: 'ai',
-        text: '三小时就只做合并版：先写结论段，再补证据与图表占位，最后统一术语。',
-      },
-    ],
-  },
-  {
-    id: 's2',
-    title: '新建咨询',
-    preview: '尚无消息',
-    messages: [],
-  },
-];
 
 const MM_CHAT_QUICK_CHIPS = [
   '帮我把焦虑写成可执行清单',
@@ -64,17 +21,99 @@ const MM_CHAT_QUICK_CHIPS = [
   '给我一版「拒绝」话术，不伤关系',
 ];
 
-export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatAppProps) {
-  const [sessionId, setSessionId] = useState(MM_CHAT_MOCK_SESSIONS[0].id);
-  const [composer, setComposer] = useState('');
+function newLocalMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `m-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
-  const session = useMemo(
-    () => MM_CHAT_MOCK_SESSIONS.find((s) => s.id === sessionId) ?? MM_CHAT_MOCK_SESSIONS[0],
-    [sessionId],
-  );
+function previewFromUserText(text: string): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  if (!one) return '尚无消息';
+  return one.length > 48 ? `${one.slice(0, 47)}…` : one;
+}
+
+export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatAppProps) {
+  const ownerAgentId = ownerAgent?.id ?? '';
+  const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => cloneDefaultMmChatPersisted().sessions);
+  const [sessionId, setSessionId] = useState(() => cloneDefaultMmChatPersisted().activeSessionId);
+  const [composer, setComposer] = useState('');
+  const [persistReady, setPersistReady] = useState(!ownerAgentId);
+
+  useEffect(() => {
+    if (!ownerAgentId) {
+      const d = cloneDefaultMmChatPersisted();
+      setSessions(d.sessions);
+      setSessionId(d.activeSessionId);
+      setPersistReady(true);
+      return;
+    }
+    setPersistReady(false);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const fromDisk = await readMmChatPersistence(ownerAgentId);
+        if (cancelled) return;
+        if (fromDisk) {
+          setSessions(fromDisk.sessions);
+          setSessionId(fromDisk.activeSessionId);
+        } else {
+          const seed = cloneDefaultMmChatPersisted();
+          setSessions(seed.sessions);
+          setSessionId(seed.activeSessionId);
+          await saveMmChatPersistence(ownerAgentId, seed);
+        }
+      } catch {
+        if (!cancelled) {
+          const d = cloneDefaultMmChatPersisted();
+          setSessions(d.sessions);
+          setSessionId(d.activeSessionId);
+        }
+      } finally {
+        if (!cancelled) setPersistReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ownerAgentId]);
+
+  useEffect(() => {
+    if (!ownerAgentId || !persistReady) return;
+    const t = window.setTimeout(() => {
+      void saveMmChatPersistence(ownerAgentId, { version: 1, activeSessionId: sessionId, sessions }).catch((err) => {
+        console.warn('[xingye-mm-chat] save failed:', err);
+      });
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [ownerAgentId, persistReady, sessionId, sessions]);
+
+  const session = useMemo(() => {
+    const s = sessions.find((x) => x.id === sessionId) ?? sessions[0];
+    return s ?? cloneDefaultMmChatPersisted().sessions[0]!;
+  }, [sessions, sessionId]);
 
   const taLabel = displayName || 'TA';
   const roleLine = ownerAgent ? `当前角色：${taLabel}` : '未选择角色';
+
+  const canSendLocalTa = Boolean(ownerAgentId && persistReady && composer.trim());
+
+  const appendLocalTaMessage = () => {
+    const text = composer.trim();
+    if (!ownerAgentId || !text || !persistReady) return;
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== sessionId) return s;
+        return {
+          ...s,
+          messages: [...s.messages, { id: newLocalMessageId(), role: 'ta' as const, text }],
+          preview: previewFromUserText(text),
+        };
+      }),
+    );
+    setComposer('');
+  };
 
   return (
     <div className={styles.phoneShell} aria-label="MM Chat：TA 咨询 AI 助手">
@@ -92,7 +131,7 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
 
         <div className={styles.mmChatLayout}>
           <div className={styles.mmChatSessionStrip} role="list" aria-label="咨询会话列表">
-            {MM_CHAT_MOCK_SESSIONS.map((s) => {
+            {sessions.map((s) => {
               const active = s.id === session.id;
               return (
                 <button
@@ -114,7 +153,7 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
               <div className={styles.mmChatEmpty} data-testid="mm-chat-thread-empty">
                 <p className={styles.mmChatEmptyTitle}>这条会话还没有记录</p>
                 <p className={styles.mmChatEmptyBody}>
-                  真实版本里会展示 TA 与助手的历史消息。当前为纯前端 mock，不连接模型。
+                  真实版本里会展示 TA 与助手的历史消息。会话列表已按角色写入星野目录；尚未连接真实模型。
                 </p>
               </div>
             ) : (
@@ -159,14 +198,27 @@ export function PhoneMmChatApp({ ownerAgent, displayName, onBack }: PhoneMmChatA
             <textarea
               value={composer}
               onChange={(e) => setComposer(e.target.value)}
-              placeholder="输入区仅作展示；不向真实模型发送。"
-              aria-label="咨询输入框（展示用）"
+              placeholder={
+                ownerAgentId
+                  ? '输入内容后点发送：仅追加到当前会话（本地 TA 气泡），不请求模型，用于测持久化。'
+                  : '未选择角色时无法写入；请先选择角色。'
+              }
+              aria-label="咨询输入框"
               rows={2}
             />
-            <p className={styles.mmChatComposerHint}>演示壳：无网络请求、无工作区写入、不触发 OpenHanako 聊天。</p>
+            <p className={styles.mmChatComposerHint}>
+              不向模型请求。点「发送」会把输入作为 TA 的一条消息写入当前会话，并在已连接服务时随{' '}
+              <code className={styles.inlineCode}>xingye/mm-chat/sessions.json</code>
+              一起保存；换角色后各自独立，可刷新验证。
+            </p>
             <div className={styles.mmChatComposerActions}>
-              <button type="button" className={styles.mmChatSendDisabled} disabled>
-                发送（未接模型）
+              <button
+                type="button"
+                className={canSendLocalTa ? styles.phoneJournalPrimaryButton : styles.mmChatSendDisabled}
+                disabled={!canSendLocalTa}
+                onClick={appendLocalTaMessage}
+              >
+                {ownerAgentId ? '发送（仅本地·测持久化）' : '发送（需选择角色）'}
               </button>
             </div>
           </div>
