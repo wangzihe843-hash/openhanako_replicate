@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Agent } from '../types';
+import {
+  emitAgentPinnedMemoryChanged,
+  loadAgentPinnedMemory,
+  normalizePinBulletForMatch,
+  subscribeAgentPinnedMemoryChanged,
+} from '../agent-pinned-memory';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfile } from './xingye-profile-store';
 import { MemoryCandidatePanel } from './MemoryCandidatePanel';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
@@ -100,6 +107,29 @@ function metaById(id: SecretSpaceCategoryId): SecretSpaceCategoryMeta {
   return found;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function pinnedMemoryToRecord(pin: string, index: number): SecretSpaceSampleRecord {
+  const body = pin.trim();
+  const title = body.length > 48 ? `${body.slice(0, 48)}…` : body;
+  return {
+    recordId: `memory-fragment-pinned-${index}`,
+    key: `memory-fragment-pinned-${index}`,
+    title,
+    body,
+    summary: body.length > 120 ? `${body.slice(0, 120)}…` : body,
+    createdAt: '1970-01-01T00:00:00.000Z',
+    kind: 'memory_fragment',
+    source: 'OpenHanako pinned',
+  };
+}
+
+function pinnedMemoryRecordsFromPins(pins: string[]): SecretSpaceSampleRecord[] {
+  return pins.map(pinnedMemoryToRecord);
+}
+
 /**
  * 允许在本面板追加纯文本 JSONL 的分类。
  * `state` 使用上方 RelationshipStatePanel，不进此列表；`memory_fragment` 用手动记忆候选表单。
@@ -173,11 +203,23 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     setAiLoading(false);
   }, [activeCategory, agent?.id]);
 
+  const reloadPinnedMemoryFragmentRecords = useCallback(async () => {
+    if (!agent?.id) return;
+    const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
+    setRecordsByCategory((prev) => ({
+      ...prev,
+      memory_fragment: pinnedMemoryRecordsFromPins(pins),
+    }));
+  }, [agent?.id]);
+
   useEffect(() => {
     if (!agent?.id || !activeCategory) return undefined;
     let cancelled = false;
     const load = async () => {
-      const records = await listSecretSpaceRecords(agent.id, activeCategory).catch(() => []);
+      const records =
+        activeCategory === 'memory_fragment'
+          ? pinnedMemoryRecordsFromPins(await loadAgentPinnedMemory(agent.id, hanaFetch).catch(() => []))
+          : await listSecretSpaceRecords(agent.id, activeCategory).catch(() => []);
       if (cancelled) return;
       setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
     };
@@ -194,6 +236,14 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       window.removeEventListener('xingye-secret-space-changed', onChanged);
     };
   }, [agent?.id, activeCategory]);
+
+  useEffect(() => {
+    if (!agent?.id || activeCategory !== 'memory_fragment') return undefined;
+    return subscribeAgentPinnedMemoryChanged((detail) => {
+      if (detail.agentId !== agent.id) return;
+      void reloadPinnedMemoryFragmentRecords();
+    });
+  }, [agent?.id, activeCategory, reloadPinnedMemoryFragmentRecords]);
 
   const handleAppendSecretSpaceRecord = async () => {
     if (!agent?.id || !activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
@@ -221,6 +271,63 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setAddRecordError(e instanceof Error ? e.message : String(e));
     } finally {
       setAddRecordSaving(false);
+    }
+  };
+
+  const handleDeletePinnedMemoryFragment = async (recordKey: string) => {
+    if (!agent?.id) {
+      setSecretSpaceDeleteError('删除失败：当前未绑定角色（缺少 agentId）。');
+      return false;
+    }
+    const selected = recordsByCategory.memory_fragment.find((record) => record.key === recordKey);
+    if (!selected) {
+      setSecretSpaceDeleteError('删除失败：未找到当前 pinned 回忆。');
+      return false;
+    }
+    const target = normalizePinBulletForMatch(selected.body);
+    if (!target) {
+      setSecretSpaceDeleteError('删除失败：当前 pinned 回忆内容为空。');
+      return false;
+    }
+    setSecretSpaceDeleteError(null);
+    try {
+      const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
+      const removeIndex = pins.findIndex((pin) => normalizePinBulletForMatch(pin) === target);
+      if (removeIndex < 0) {
+        setSecretSpaceDeleteError('删除失败：当前 pinned 中未找到这条回忆（可能已经被删除）。');
+        await reloadPinnedMemoryFragmentRecords();
+        return false;
+      }
+      const nextPins = pins.filter((_, index) => index !== removeIndex);
+      const putRes = await hanaFetch(`/api/agents/${agent.id}/pinned`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pins: nextPins }),
+      });
+      const putJson: unknown = await putRes.json().catch(() => ({}));
+      if (!putRes.ok) {
+        const err =
+          isRecord(putJson) && typeof putJson.error === 'string'
+            ? putJson.error
+            : `PUT pinned failed (${putRes.status})`;
+        throw new Error(err);
+      }
+      if (isRecord(putJson) && putJson.error) {
+        throw new Error(String(putJson.error));
+      }
+      emitAgentPinnedMemoryChanged({
+        agentId: agent.id,
+        source: 'xingye-secret-space',
+        pinsCount: nextPins.length,
+      });
+      setRecordsByCategory((prev) => ({
+        ...prev,
+        memory_fragment: pinnedMemoryRecordsFromPins(nextPins),
+      }));
+      return true;
+    } catch (e) {
+      setSecretSpaceDeleteError(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
 
@@ -327,6 +434,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             rows={3}
             placeholder="输入一条你希望记住的要点"
             aria-label="候选记忆内容"
+            data-testid="secret-space-memory-candidate-content"
           />
         </label>
         <label className={styles.profileField}>
@@ -353,7 +461,12 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
           />
         </label>
         {manualError ? <p className={styles.saveStatus}>{manualError}</p> : null}
-        <button type="button" className={styles.secondaryButton} onClick={handleCreateManualCandidate}>
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          onClick={handleCreateManualCandidate}
+          data-testid="secret-space-create-memory-candidate"
+        >
           创建候选记忆
         </button>
         <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} />
@@ -488,7 +601,12 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
           records={activeSamples}
           footer={categoryFooter}
           onRequestDeleteRecord={
-            agent?.id ? (key) => handleRequestDeleteSecretSpaceRecord(key) : undefined
+            agent?.id
+              ? (key) =>
+                  activeCategory === 'memory_fragment'
+                    ? handleDeletePinnedMemoryFragment(key)
+                    : handleRequestDeleteSecretSpaceRecord(key)
+              : undefined
           }
           deleteError={secretSpaceDeleteError}
         />

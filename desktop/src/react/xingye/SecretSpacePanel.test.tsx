@@ -18,10 +18,20 @@ function storeKey(agentId: string, relativePath: string): string {
 }
 
 const jsonlStore = vi.hoisted(() => new Map<string, JsonlRow[]>());
+const pinnedStore = vi.hoisted(() => new Map<string, string[]>());
 
 const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: RequestInit) => {
   if (typeof path === 'string' && path.includes('/pinned')) {
-    return { ok: true, json: async () => ({ pins: [] }) } as Response;
+    const match = path.match(/^\/api\/agents\/([^/]+)\/pinned$/);
+    const agentId = match?.[1] ?? null;
+    if (!agentId) return { ok: false, status: 404, json: async () => ({ error: 'bad pinned path' }) } as Response;
+    if (init?.method === 'PUT') {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const pins = Array.isArray(body.pins) ? body.pins.filter((p: unknown): p is string => typeof p === 'string') : [];
+      pinnedStore.set(agentId, pins);
+      return { ok: true, json: async () => ({ ok: true }) } as Response;
+    }
+    return { ok: true, json: async () => ({ pins: pinnedStore.get(agentId) ?? [] }) } as Response;
   }
   if (typeof path === 'string' && path.includes('/api/xingye/phone-generate')) {
     const raw = init?.body ? JSON.parse(String(init.body)) : {};
@@ -123,6 +133,7 @@ describe('SecretSpacePanel secret space navigation', () => {
   beforeEach(() => {
     hanaFetchMock.mockClear();
     jsonlStore.clear();
+    pinnedStore.clear();
     jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
       {
         key: 'stored-dr1',
@@ -134,9 +145,11 @@ describe('SecretSpacePanel secret space navigation', () => {
       },
     ]);
     window.localStorage.clear();
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
   });
 
   afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
   });
 
@@ -459,6 +472,37 @@ describe('SecretSpacePanel secret space navigation', () => {
     });
   });
 
+  it.each(['draft_reply', 'dream', 'saved_item', 'unsent_moment'] as const)(
+    'keeps %s JSONL delete behavior working',
+    async (category) => {
+      jsonlStore.clear();
+      const rowKey = `delete-${category}`;
+      jsonlStore.set(storeKey('agent-secret-1', `secret-space/${category}.jsonl`), [
+        {
+          key: rowKey,
+          id: rowKey,
+          title: `${category} title`,
+          createdAt: '2026-05-12T12:00:00.000Z',
+          summary: `${category} summary`,
+          body: `${category} body`,
+          kind: category,
+        },
+      ]);
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId(`secret-space-entry-${category}`));
+      await waitFor(() => expect(screen.getByTestId(`secret-space-record-row-${rowKey}`)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId(`secret-space-record-row-${rowKey}`));
+      fireEvent.click(screen.getByTestId(`secret-space-delete-${rowKey}`));
+
+      await waitFor(() => expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument());
+      expect(jsonlStore.get(storeKey('agent-secret-1', `secret-space/${category}.jsonl`)) ?? []).toHaveLength(0);
+      confirmSpy.mockRestore();
+    },
+  );
+
   it('does not mix records when switching agents', async () => {
     const { rerender } = render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
@@ -479,6 +523,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
   beforeEach(() => {
     hanaFetchMock.mockClear();
     jsonlStore.clear();
+    pinnedStore.clear();
     jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
       {
         key: 'stored-dr1',
@@ -490,9 +535,11 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
       },
     ]);
     window.localStorage.clear();
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
   });
 
   afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
   });
 
@@ -514,5 +561,120 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     await waitFor(() => {
       expect(contentInput).toHaveValue('');
     });
+  });
+
+  it('reads and displays pinned memory as the memory_fragment main list', async () => {
+    pinnedStore.set('agent-secret-1', ['first pinned memory', 'second pinned memory']);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toBeInTheDocument();
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-1')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent(
+      'first pinned memory',
+    );
+    expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-1')).toHaveTextContent(
+      'second pinned memory',
+    );
+    expect(screen.queryByTestId('secret-space-empty')).not.toBeInTheDocument();
+  });
+
+  it('shows an empty state when memory_fragment has no pinned memory', async () => {
+    pinnedStore.set('agent-secret-1', []);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId(/^secret-space-record-row-memory-fragment-pinned-/)).not.toBeInTheDocument();
+  });
+
+  it('manual memory input creates a pending candidate in the candidate area', async () => {
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+
+    const manualForm = screen.getByTestId('secret-space-manual-candidate');
+    fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
+      target: { value: 'pending memory candidate from secret space' },
+    });
+    fireEvent.click(within(manualForm).getByTestId('secret-space-create-memory-candidate'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId(/^memory-candidate-row-/)).toBeInTheDocument();
+    });
+    const row = screen.getByTestId(/^memory-candidate-row-/);
+    expect(within(row).getByDisplayValue('pending memory candidate from secret space')).toBeInTheDocument();
+    expect(within(row).getByTestId(/^memory-candidate-status-/)).toHaveTextContent('待定');
+  });
+
+  it('refreshes the memory_fragment main list after confirming a pending candidate to pinned', async () => {
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+
+    const manualForm = screen.getByTestId('secret-space-manual-candidate');
+    fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
+      target: { value: 'confirmed pinned from candidate' },
+    });
+    fireEvent.click(within(manualForm).getByTestId('secret-space-create-memory-candidate'));
+    await waitFor(() => expect(screen.getByTestId(/^memory-candidate-row-/)).toBeInTheDocument());
+
+    const candidateRow = screen.getByTestId(/^memory-candidate-row-/);
+    const buttons = within(candidateRow).getAllByRole('button');
+    fireEvent.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent(
+        'confirmed pinned from candidate',
+      );
+    });
+    expect(pinnedStore.get('agent-secret-1')).toEqual(['confirmed pinned from candidate']);
+  });
+
+  it('deletes one pinned memory while preserving the others', async () => {
+    pinnedStore.set('agent-secret-1', ['delete this pinned', 'keep this pinned']);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    await waitFor(() => expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0'));
+    fireEvent.click(screen.getByTestId('secret-space-delete-memory-fragment-pinned-0'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('delete this pinned')).not.toBeInTheDocument();
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent('keep this pinned');
+    });
+    expect(pinnedStore.get('agent-secret-1')).toEqual(['keep this pinned']);
+    confirmSpy.mockRestore();
+  });
+
+  it('does not show agent A pinned memory for agent B', async () => {
+    pinnedStore.set('agent-secret-1', ['agent A private pinned']);
+    pinnedStore.set('agent-secret-2', ['agent B private pinned']);
+
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    await waitFor(() =>
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent(
+        'agent A private pinned',
+      ),
+    );
+
+    rerender(<SecretSpacePanel agent={agentOther} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent(
+        'agent B private pinned',
+      ),
+    );
+    expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).not.toHaveTextContent(
+      'agent A private pinned',
+    );
   });
 });

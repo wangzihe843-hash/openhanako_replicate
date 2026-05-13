@@ -50,6 +50,7 @@ export function SecretSpaceCategoryView({
 
   const empty = records.length === 0;
   const inDetail = !!selectedRecord;
+  const deleteButtonLabel = meta.id === 'memory_fragment' ? '删除这条回忆' : '删除此记录';
 
   const handleBack = () => {
     if (inDetail) {
@@ -116,7 +117,7 @@ export function SecretSpaceCategoryView({
                   disabled={deleteBusy}
                   data-testid={`secret-space-delete-${selectedRecord.key}`}
                 >
-                  {deleteBusy ? '删除中…' : '删除此记录'}
+                  {deleteBusy ? '删除中…' : deleteButtonLabel}
                 </button>
               </div>
             ) : null}
