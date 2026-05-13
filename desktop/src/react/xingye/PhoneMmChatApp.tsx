@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import { generateMmChatRoundWithAI } from './xingye-mm-chat-ai';
 import {
-  cloneDefaultMmChatPersisted,
+  createEmptyMmChatPersisted,
+  createMmChatSession,
+  deleteMmChatSession,
   readMmChatPersistence,
   saveMmChatPersistence,
+  sortMmChatSessionsByUpdatedAtDesc,
   type XingyeMmChatSession,
+  type XingyeMmChatTurn,
 } from './xingye-mm-chat-store';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 
@@ -16,13 +20,6 @@ interface PhoneMmChatAppProps {
   displayName: string;
   onBack: () => void;
 }
-
-const MM_CHAT_QUICK_CHIPS = [
-  '帮我把焦虑写成可执行清单',
-  '用三个问题澄清我的目标',
-  '用更温柔的语气改写这段话',
-  '给我一版「拒绝」话术，不伤关系',
-];
 
 function newLocalMessageId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -37,20 +34,40 @@ function previewFromUserText(text: string): string {
   return one.length > 48 ? `${one.slice(0, 47)}…` : one;
 }
 
+function formatSessionTime(iso: string | undefined): string {
+  if (!iso || !iso.trim()) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  try {
+    return new Date(t).toLocaleString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+type MmChatView = 'list' | 'detail';
+
 export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
-  const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => cloneDefaultMmChatPersisted().sessions);
-  const [sessionId, setSessionId] = useState(() => cloneDefaultMmChatPersisted().activeSessionId);
-  const [composer, setComposer] = useState('');
+  const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => createEmptyMmChatPersisted().sessions);
+  const [sessionId, setSessionId] = useState('');
+  const [view, setView] = useState<MmChatView>('list');
   const [persistReady, setPersistReady] = useState(!ownerAgentId);
   const [generateRunning, setGenerateRunning] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   useEffect(() => {
     if (!ownerAgentId) {
-      const d = cloneDefaultMmChatPersisted();
-      setSessions(d.sessions);
-      setSessionId(d.activeSessionId);
+      setSessions(createEmptyMmChatPersisted().sessions);
+      setSessionId('');
+      setView('list');
       setPersistReady(true);
       return;
     }
@@ -62,18 +79,14 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
         if (cancelled) return;
         if (fromDisk) {
           setSessions(fromDisk.sessions);
-          setSessionId(fromDisk.activeSessionId);
         } else {
-          const seed = cloneDefaultMmChatPersisted();
-          setSessions(seed.sessions);
-          setSessionId(seed.activeSessionId);
-          await saveMmChatPersistence(ownerAgentId, seed);
+          const empty = createEmptyMmChatPersisted();
+          setSessions(empty.sessions);
+          await saveMmChatPersistence(ownerAgentId, empty);
         }
       } catch {
         if (!cancelled) {
-          const d = cloneDefaultMmChatPersisted();
-          setSessions(d.sessions);
-          setSessionId(d.activeSessionId);
+          setSessions(createEmptyMmChatPersisted().sessions);
         }
       } finally {
         if (!cancelled) setPersistReady(true);
@@ -87,68 +100,90 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   useEffect(() => {
     if (!ownerAgentId || !persistReady) return;
     const t = window.setTimeout(() => {
-      void saveMmChatPersistence(ownerAgentId, { version: 1, activeSessionId: sessionId, sessions }).catch((err) => {
+      void saveMmChatPersistence(ownerAgentId, {
+        version: 1,
+        activeSessionId: '',
+        sessions: sessionsRef.current,
+      }).catch((err) => {
         console.warn('[xingye-mm-chat] save failed:', err);
       });
     }, 450);
     return () => window.clearTimeout(t);
-  }, [ownerAgentId, persistReady, sessionId, sessions]);
+  }, [ownerAgentId, persistReady, sessions]);
+
+  const sortedSessions = useMemo(() => sortMmChatSessionsByUpdatedAtDesc(sessions), [sessions]);
 
   const session = useMemo(() => {
-    const s = sessions.find((x) => x.id === sessionId) ?? sessions[0];
-    return s ?? cloneDefaultMmChatPersisted().sessions[0]!;
+    if (!sessionId) return null;
+    return sessions.find((x) => x.id === sessionId) ?? null;
   }, [sessions, sessionId]);
 
   const taLabel = displayName || 'TA';
   const roleLine = ownerAgent ? `当前角色：${taLabel}` : '未选择角色';
 
-  const canSendLocalTa = Boolean(ownerAgentId && persistReady && composer.trim());
-  const canGenerateAi = Boolean(ownerAgent && ownerAgentId && persistReady && !generateRunning);
+  const canNewChat = Boolean(ownerAgent && ownerAgentId && persistReady && !generateRunning);
 
-  const appendLocalTaMessage = () => {
-    const text = composer.trim();
-    if (!ownerAgentId || !text || !persistReady) return;
-    setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id !== sessionId) return s;
-        return {
-          ...s,
-          messages: [...s.messages, { id: newLocalMessageId(), role: 'ta' as const, text }],
-          preview: previewFromUserText(text),
-        };
-      }),
-    );
-    setComposer('');
+  const flushPersist = async () => {
+    if (!ownerAgentId || !persistReady) return;
+    await saveMmChatPersistence(ownerAgentId, {
+      version: 1,
+      activeSessionId: '',
+      sessions: sessionsRef.current,
+    });
   };
 
-  const appendGeneratedRound = async () => {
+  const handleNewChat = async () => {
     if (!ownerAgent || !ownerAgentId || !persistReady || generateRunning) return;
     setGenerateError(null);
     setGenerateRunning(true);
     try {
+      await flushPersist();
       const round = await generateMmChatRoundWithAI({ agent: ownerAgent, ownerProfile });
-      setSessions((prev) =>
-        prev.map((s) => {
-          if (s.id !== sessionId) return s;
-          const wasEmpty = s.messages.length === 0;
-          const taId = newLocalMessageId();
-          const aiId = newLocalMessageId();
-          return {
-            ...s,
-            title: wasEmpty ? round.title.slice(0, 200) : s.title,
-            preview: previewFromUserText(round.answer),
-            messages: [
-              ...s.messages,
-              { id: taId, role: 'ta' as const, text: round.question },
-              { id: aiId, role: 'ai' as const, text: round.answer },
-            ],
-          };
-        }),
-      );
+      const now = new Date().toISOString();
+      const turns: XingyeMmChatTurn[] = [
+        { id: newLocalMessageId(), role: 'ta', text: round.question, createdAt: now },
+        { id: newLocalMessageId(), role: 'ai', text: round.answer, createdAt: now },
+      ];
+      const created = await createMmChatSession(ownerAgentId, {
+        title: round.title.slice(0, 200),
+        preview: previewFromUserText(round.answer),
+        messages: turns,
+      });
+      const row = await readMmChatPersistence(ownerAgentId);
+      setSessions(row?.sessions ?? []);
+      setSessionId(created.id);
+      setView('detail');
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : String(err));
     } finally {
       setGenerateRunning(false);
+    }
+  };
+
+  const openSession = (id: string) => {
+    setGenerateError(null);
+    setSessionId(id);
+    setView('detail');
+  };
+
+  const backToList = () => {
+    setGenerateError(null);
+    setView('list');
+    setSessionId('');
+  };
+
+  const handleDeleteSession = async () => {
+    if (!ownerAgentId || !sessionId || !session) return;
+    if (!window.confirm('确定删除这条咨询会话？删除后无法恢复。')) return;
+    try {
+      await flushPersist();
+      await deleteMmChatSession(ownerAgentId, sessionId);
+      const row = await readMmChatPersistence(ownerAgentId);
+      setSessions(row?.sessions ?? []);
+      backToList();
+    } catch (err) {
+      console.warn('[xingye-mm-chat] delete failed:', err);
+      setGenerateError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -163,117 +198,104 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
 
       <div className={styles.phoneBody}>
         <p className={styles.mmChatIntro}>
-          <strong>TA 咨询 AI 助手</strong>：{roleLine}。这里是 TA 自己向独立助手提问的文本壳，不是短信、不是群聊，也不是您与角色的对话。
+          <strong>TA 咨询 AI 助手</strong>：{roleLine}。每条记录是一次独立咨询，不是短信、不是群聊，也不是您与角色的对话。
         </p>
 
-        <div className={styles.mmChatLayout}>
-          <div className={styles.mmChatSessionStrip} role="list" aria-label="咨询会话列表">
-            {sessions.map((s) => {
-              const active = s.id === session.id;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  role="listitem"
-                  className={`${styles.mmChatSessionChip} ${active ? styles.mmChatSessionChipActive : ''}`}
-                  onClick={() => setSessionId(s.id)}
-                >
-                  <p className={styles.mmChatSessionChipTitle}>{s.title}</p>
-                  <p className={styles.mmChatSessionChipPreview}>{s.preview}</p>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className={styles.mmChatThread} aria-live="polite">
-            {session.messages.length === 0 ? (
-              <div className={styles.mmChatEmpty} data-testid="mm-chat-thread-empty">
-                <p className={styles.mmChatEmptyTitle}>这条会话还没有记录</p>
-                <p className={styles.mmChatEmptyBody}>
-                  真实版本里会展示 TA 与助手的历史消息。会话列表已按角色写入星野目录；尚未连接真实模型。
-                </p>
-              </div>
-            ) : (
-              session.messages.map((turn) => (
-                <div
-                  key={turn.id}
-                  className={`${styles.mmChatBubbleRow} ${
-                    turn.role === 'ta' ? styles.mmChatBubbleRowTa : styles.mmChatBubbleRowAi
-                  }`}
-                >
-                  <div
-                    className={`${styles.mmChatBubble} ${
-                      turn.role === 'ta' ? styles.mmChatBubbleTa : styles.mmChatBubbleAi
-                    }`}
-                  >
-                    {turn.role === 'ta' ? (
-                      <span className={styles.mmChatBubbleLabel}>{taLabel} · 提问</span>
-                    ) : (
-                      <span className={styles.mmChatBubbleLabel}>AI 助手 · 回复</span>
-                    )}
-                    {turn.text}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div aria-label="快捷问题">
-            <p className={styles.phoneSectionTitle} style={{ marginBottom: 6 }}>
-              快捷问题（仅填入输入框）
-            </p>
-            <div className={styles.mmChatChipsRow}>
-              {MM_CHAT_QUICK_CHIPS.map((q) => (
-                <button key={q} type="button" className={styles.mmChatChip} onClick={() => setComposer(q)}>
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className={styles.mmChatComposer}>
-            <textarea
-              value={composer}
-              onChange={(e) => setComposer(e.target.value)}
-              placeholder={
-                ownerAgentId
-                  ? '可手动输入后点「发送」追加为 TA 消息；或点「生成对话」由模型补一轮问答。'
-                  : '未选择角色时无法写入；请先选择角色。'
-              }
-              aria-label="咨询输入框"
-              rows={2}
-            />
-            <p className={styles.mmChatComposerHint}>
-              点「生成对话」会请求模型生成一轮「角色提问 + 通用助手回答」并写入当前会话；点「发送」仅把输入框内容作为 TA
-              的一条本地消息追加（不请求模型）。已连接服务时随{' '}
-              <code className={styles.inlineCode}>xingye/mm-chat/sessions.json</code>
-              保存；换角色后各自独立。
-            </p>
+        {view === 'list' ? (
+          <div className={styles.mmChatListRoot}>
+            <button
+              type="button"
+              className={canNewChat ? styles.mmChatNewChatButton : styles.mmChatSendDisabled}
+              disabled={!canNewChat}
+              onClick={() => void handleNewChat()}
+            >
+              {generateRunning ? '正在生成新会话…' : '+ 新聊天'}
+            </button>
             {generateError ? (
               <p className={styles.mmChatComposerHint} role="alert">
                 {generateError}
               </p>
             ) : null}
-            <div className={styles.mmChatComposerActions}>
-              <button
-                type="button"
-                className={canGenerateAi ? styles.phoneJournalPrimaryButton : styles.mmChatSendDisabled}
-                disabled={!canGenerateAi}
-                onClick={() => void appendGeneratedRound()}
-              >
-                {generateRunning ? '生成中…' : ownerAgentId ? '生成对话' : '生成对话（需选择角色）'}
+            <p className={styles.mmChatListHint}>以下为历史咨询，点按进入查看；在详情页可删除。</p>
+            <div className={styles.mmChatListScroll} role="list" aria-label="历史咨询列表">
+              {sortedSessions.length === 0 ? (
+                <div className={styles.mmChatEmpty} data-testid="mm-chat-list-empty">
+                  <p className={styles.mmChatEmptyTitle}>暂无咨询记录</p>
+                  <p className={styles.mmChatEmptyBody}>点击上方「新聊天」生成一轮角色向通用助手的问答，并保存为独立会话。</p>
+                </div>
+              ) : (
+                sortedSessions.map((s) => {
+                  const timeLabel = formatSessionTime(s.updatedAt ?? s.createdAt);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      role="listitem"
+                      className={styles.mmChatHistoryRow}
+                      onClick={() => openSession(s.id)}
+                    >
+                      <p className={styles.mmChatHistoryRowTitle}>{s.title || '未命名'}</p>
+                      <p className={styles.mmChatHistoryRowPreview}>{s.preview}</p>
+                      {timeLabel ? <p className={styles.mmChatHistoryRowTime}>{timeLabel}</p> : null}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <p className={styles.mmChatComposerHint}>
+              数据保存在当前角色目录下的{' '}
+              <code className={styles.inlineCode}>xingye/mm-chat/sessions.json</code>，与其它 agent 隔离。
+            </p>
+          </div>
+        ) : (
+          <div className={styles.mmChatDetailRoot}>
+            <div className={styles.mmChatDetailToolbar}>
+              <button type="button" className={styles.mmChatDetailBack} onClick={backToList}>
+                ← 返回列表
               </button>
-              <button
-                type="button"
-                className={canSendLocalTa ? styles.phoneJournalPrimaryButton : styles.mmChatSendDisabled}
-                disabled={!canSendLocalTa}
-                onClick={appendLocalTaMessage}
-              >
-                {ownerAgentId ? '发送（仅本地）' : '发送（需选择角色）'}
+              <button type="button" className={styles.mmChatDetailDelete} onClick={() => void handleDeleteSession()}>
+                删除会话
               </button>
             </div>
+            {!session ? (
+              <div className={styles.mmChatEmpty} data-testid="mm-chat-detail-missing">
+                <p className={styles.mmChatEmptyTitle}>找不到该会话</p>
+                <button type="button" className={styles.phoneJournalPrimaryButton} onClick={backToList}>
+                  返回列表
+                </button>
+              </div>
+            ) : session.messages.length === 0 ? (
+              <div className={styles.mmChatEmpty} data-testid="mm-chat-thread-empty">
+                <p className={styles.mmChatEmptyTitle}>这条会话没有内容</p>
+                <p className={styles.mmChatEmptyBody}>可返回列表删除此条，或重新「新聊天」生成。</p>
+              </div>
+            ) : (
+              <div className={styles.mmChatThread} aria-live="polite">
+                {session.messages.map((turn) => (
+                  <div
+                    key={turn.id}
+                    className={`${styles.mmChatBubbleRow} ${
+                      turn.role === 'ta' ? styles.mmChatBubbleRowTa : styles.mmChatBubbleRowAi
+                    }`}
+                  >
+                    <div
+                      className={`${styles.mmChatBubble} ${
+                        turn.role === 'ta' ? styles.mmChatBubbleTa : styles.mmChatBubbleAi
+                      }`}
+                    >
+                      {turn.role === 'ta' ? (
+                        <span className={styles.mmChatBubbleLabel}>{taLabel} · 提问</span>
+                      ) : (
+                        <span className={styles.mmChatBubbleLabel}>AI 助手 · 回复</span>
+                      )}
+                      {turn.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

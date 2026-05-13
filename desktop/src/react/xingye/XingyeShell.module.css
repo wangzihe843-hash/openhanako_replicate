@@ -2577,6 +2577,151 @@
   cursor: not-allowed;
 }
 
+.mmChatListRoot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 320px;
+  max-height: min(62vh, 520px);
+  min-width: 0;
+}
+
+.mmChatNewChatButton {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #7b6f54, #b99d69);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(91, 79, 58, 0.22);
+}
+
+.mmChatNewChatButton:hover {
+  filter: brightness(1.03);
+}
+
+.mmChatListHint {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.mmChatListScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.mmChatHistoryRow {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.mmChatHistoryRow:hover {
+  border-color: rgba(107, 100, 150, 0.45);
+  background: rgba(250, 248, 255, 0.95);
+}
+
+.mmChatHistoryRowTitle {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mmChatHistoryRowPreview {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mmChatHistoryRowTime {
+  margin: 0;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.mmChatDetailRoot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 320px;
+  max-height: min(62vh, 520px);
+  min-width: 0;
+}
+
+.mmChatDetailToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mmChatDetailBack {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.mmChatDetailBack:hover {
+  border-color: rgba(107, 100, 150, 0.45);
+}
+
+.mmChatDetailDelete {
+  border: 1px solid rgba(220, 90, 90, 0.35);
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: #b42318;
+  background: rgba(254, 242, 242, 0.9);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.mmChatDetailDelete:hover {
+  filter: brightness(0.97);
+}
+
+.mmChatDetailRoot > .mmChatThread {
+  flex: 1;
+  min-height: 0;
+}
+
 /* —— 秘密空间：文本记录卡片 —— */
 .secretSpaceEmptyBlock {
   display: grid;

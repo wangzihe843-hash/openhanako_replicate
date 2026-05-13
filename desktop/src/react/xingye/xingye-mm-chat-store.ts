@@ -15,6 +15,7 @@ export type XingyeMmChatTurn = {
   id: string;
   role: XingyeMmChatRole;
   text: string;
+  createdAt?: string;
 };
 
 export type XingyeMmChatSession = {
@@ -22,66 +23,64 @@ export type XingyeMmChatSession = {
   title: string;
   preview: string;
   messages: XingyeMmChatTurn[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type XingyeMmChatPersistedV1 = {
   version: 1;
+  /** 空字符串表示未选中会话（列表态）；非空时应对应 `sessions` 中某条 id（兼容旧数据）。 */
   activeSessionId: string;
   sessions: XingyeMmChatSession[];
 };
 
-/** 与原先 PhoneMmChatApp 内嵌 mock 一致，用作首次落盘种子 */
-export const XINGYE_MM_CHAT_DEFAULT_SEED_SESSIONS: XingyeMmChatSession[] = [
-  {
-    id: 's1',
-    title: '今晚的安排',
-    preview: 'AI：可以把目标拆成三步…',
-    messages: [
-      { id: 'm1', role: 'ta', text: '明天要交小组作业，我现在脑子很乱，帮我排个顺序。' },
-      {
-        id: 'm2',
-        role: 'ai',
-        text:
-          '可以先把「必须交付」列出来，再估时间。\n'
-          + '1) 确认题目与分工\n'
-          + '2) 各自草稿\n'
-          + '3) 合并与检查引用格式',
-      },
-      { id: 'm3', role: 'ta', text: '如果只有三小时呢？' },
-      {
-        id: 'm4',
-        role: 'ai',
-        text: '三小时就只做合并版：先写结论段，再补证据与图表占位，最后统一术语。',
-      },
-    ],
-  },
-  {
-    id: 's2',
-    title: '新建咨询',
-    preview: '尚无消息',
-    messages: [],
-  },
-];
-
-export function cloneDefaultMmChatPersisted(): XingyeMmChatPersistedV1 {
-  return {
-    version: 1,
-    activeSessionId: XINGYE_MM_CHAT_DEFAULT_SEED_SESSIONS[0]!.id,
-    sessions: JSON.parse(JSON.stringify(XINGYE_MM_CHAT_DEFAULT_SEED_SESSIONS)) as XingyeMmChatSession[],
-  };
+function newSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function isMmChatRole(value: unknown): value is XingyeMmChatRole {
-  return value === 'ta' || value === 'ai';
+/** 新 agent 或无落盘文件时的空壳（不再写入 mock 示例会话）。 */
+export function createEmptyMmChatPersisted(): XingyeMmChatPersistedV1 {
+  return { version: 1, activeSessionId: '', sessions: [] };
+}
+
+/** @deprecated 使用 createEmptyMmChatPersisted；历史命名保留，行为与空壳一致。 */
+export function cloneDefaultMmChatPersisted(): XingyeMmChatPersistedV1 {
+  return createEmptyMmChatPersisted();
+}
+
+function isIsoLike(value: string): boolean {
+  const t = Date.parse(value);
+  return Number.isFinite(t);
+}
+
+function normalizeRole(value: unknown): XingyeMmChatRole | null {
+  if (value === 'ta' || value === 'agent') return 'ta';
+  if (value === 'ai' || value === 'assistant') return 'ai';
+  return null;
 }
 
 function normalizeTurn(value: unknown): XingyeMmChatTurn | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
-  const text = typeof raw.text === 'string' ? raw.text : '';
-  if (!id || !isMmChatRole(raw.role)) return null;
-  return { id, role: raw.role, text };
+  const textRaw = typeof raw.text === 'string' ? raw.text : (typeof raw.content === 'string' ? raw.content : '');
+  const text = textRaw;
+  const role = normalizeRole(raw.role);
+  if (!id || !role || !String(text).trim()) return null;
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim() && isIsoLike(raw.createdAt.trim())
+    ? raw.createdAt.trim()
+    : undefined;
+  return { id, role, text, createdAt };
+}
+
+function fillSessionDefaults(sess: XingyeMmChatSession): XingyeMmChatSession {
+  const firstMsgAt = sess.messages.find((m) => m.createdAt)?.createdAt;
+  const createdAt = sess.createdAt && isIsoLike(sess.createdAt) ? sess.createdAt : (firstMsgAt ?? undefined);
+  const updatedAt = sess.updatedAt && isIsoLike(sess.updatedAt) ? sess.updatedAt : (firstMsgAt ?? createdAt ?? undefined);
+  return { ...sess, createdAt, updatedAt };
 }
 
 function normalizeSession(value: unknown): XingyeMmChatSession | null {
@@ -99,27 +98,40 @@ function normalizeSession(value: unknown): XingyeMmChatSession | null {
       if (t) messages.push(t);
     }
   }
-  return { id, title, preview, messages };
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim() ? raw.createdAt.trim() : undefined;
+  const updatedAt = typeof raw.updatedAt === 'string' && raw.updatedAt.trim() ? raw.updatedAt.trim() : undefined;
+  return fillSessionDefaults({ id, title, preview, messages, createdAt, updatedAt });
 }
 
 function normalizePersisted(value: unknown): XingyeMmChatPersistedV1 | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   if (raw.version !== 1) return null;
-  const activeSessionId = typeof raw.activeSessionId === 'string' && raw.activeSessionId.trim()
-    ? raw.activeSessionId.trim()
-    : '';
+  const activeRaw = typeof raw.activeSessionId === 'string' ? raw.activeSessionId.trim() : '';
   const sessionsRaw = raw.sessions;
-  if (!activeSessionId || !Array.isArray(sessionsRaw) || sessionsRaw.length === 0) return null;
+  if (!Array.isArray(sessionsRaw)) return null;
   const sessions: XingyeMmChatSession[] = [];
   for (const s of sessionsRaw) {
     const sess = normalizeSession(s);
     if (sess) sessions.push(sess);
   }
-  if (!sessions.length) return null;
+  if (sessions.length === 0) {
+    return { version: 1, activeSessionId: '', sessions: [] };
+  }
   const ids = new Set(sessions.map((s) => s.id));
-  if (!ids.has(activeSessionId)) return null;
+  let activeSessionId = activeRaw;
+  if (!activeSessionId || !ids.has(activeSessionId)) {
+    activeSessionId = '';
+  }
   return { version: 1, activeSessionId, sessions };
+}
+
+export function sortMmChatSessionsByUpdatedAtDesc(sessions: XingyeMmChatSession[]): XingyeMmChatSession[] {
+  return [...sessions].sort((a, b) => {
+    const ta = Date.parse(a.updatedAt ?? a.createdAt ?? '') || 0;
+    const tb = Date.parse(b.updatedAt ?? b.createdAt ?? '') || 0;
+    return tb - ta;
+  });
 }
 
 export async function readMmChatPersistence(agentId: string): Promise<XingyeMmChatPersistedV1 | null> {
@@ -141,12 +153,88 @@ export async function saveMmChatPersistence(agentId: string, data: XingyeMmChatP
   if (!SAFE_AGENT_ID_RE.test(aid)) {
     throw new Error('保存失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
   }
-  if (data.version !== 1 || !data.sessions.length) {
+  if (data.version !== 1 || !Array.isArray(data.sessions)) {
     throw new Error('保存失败：数据无效。');
   }
-  const ids = new Set(data.sessions.map((s) => s.id));
-  if (!ids.has(data.activeSessionId)) {
-    throw new Error('保存失败：activeSessionId 与会话列表不一致。');
+  if (data.sessions.length === 0) {
+    if (data.activeSessionId !== '') {
+      throw new Error('保存失败：无会话时 activeSessionId 应为空字符串。');
+    }
+  } else {
+    const ids = new Set(data.sessions.map((s) => s.id));
+    if (data.activeSessionId && !ids.has(data.activeSessionId)) {
+      throw new Error('保存失败：activeSessionId 与会话列表不一致。');
+    }
   }
   await backend.writeJson(aid, XINGYE_MM_CHAT_SESSIONS_JSON, data);
 }
+
+export async function listMmChatSessions(agentId: string): Promise<XingyeMmChatSession[]> {
+  const row = await readMmChatPersistence(agentId);
+  return sortMmChatSessionsByUpdatedAtDesc(row?.sessions ?? []);
+}
+
+export async function getMmChatSession(agentId: string, sessionId: string): Promise<XingyeMmChatSession | null> {
+  const sid = sessionId.trim();
+  if (!sid) return null;
+  const row = await readMmChatPersistence(agentId);
+  return row?.sessions.find((s) => s.id === sid) ?? null;
+}
+
+export async function createMmChatSession(
+  agentId: string,
+  draft: { title: string; preview: string; messages: XingyeMmChatTurn[] },
+): Promise<XingyeMmChatSession> {
+  const aid = agentId.trim();
+  if (!aid || !SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('创建失败：agentId 无效。');
+  }
+  const existing = (await readMmChatPersistence(aid)) ?? createEmptyMmChatPersisted();
+  const now = new Date().toISOString();
+  const id = newSessionId();
+  const messages = draft.messages.map((m) => ({
+    ...m,
+    createdAt: m.createdAt && isIsoLike(m.createdAt) ? m.createdAt : now,
+  }));
+  const session: XingyeMmChatSession = {
+    id,
+    title: draft.title.trim().slice(0, 200) || '咨询',
+    preview: draft.preview.trim() || '尚无消息',
+    messages,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const sessions = [...existing.sessions, session];
+  await saveMmChatPersistence(aid, {
+    version: 1,
+    activeSessionId: '',
+    sessions,
+  });
+  return session;
+}
+
+export async function deleteMmChatSession(agentId: string, sessionId: string): Promise<void> {
+  const aid = agentId.trim();
+  const sid = sessionId.trim();
+  if (!aid || !sid || !SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('删除失败：参数无效。');
+  }
+  const existing = await readMmChatPersistence(aid);
+  if (!existing) return;
+  const sessions = existing.sessions.filter((s) => s.id !== sid);
+  let activeSessionId = existing.activeSessionId;
+  if (activeSessionId === sid) activeSessionId = '';
+  if (sessions.length === 0) {
+    await saveMmChatPersistence(aid, { version: 1, activeSessionId: '', sessions: [] });
+    return;
+  }
+  const ids = new Set(sessions.map((s) => s.id));
+  if (activeSessionId && !ids.has(activeSessionId)) activeSessionId = '';
+  await saveMmChatPersistence(aid, { version: 1, activeSessionId, sessions });
+}
+
+/** 别名：与需求文档 `listSessions` / `getSession` / `createSession` / `deleteSession` 对齐 */
+export const listSessions = listMmChatSessions;
+export const getSession = getMmChatSession;
+export const createSession = createMmChatSession;
+export const deleteSession = deleteMmChatSession;
