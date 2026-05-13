@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./xingye-event-log', () => ({
+  appendXingyeEventOnce: vi.fn(async () => ({ id: 'event-1' })),
+}));
+
 import {
   applyAiGeneratedContacts,
   findVirtualContactByName,

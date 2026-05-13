@@ -8,6 +8,7 @@ import {
   shouldBlockFamilyContacts as shouldBlockFamilyContactsRule,
   shouldSkipFamilyContacts as shouldSkipFamilyContactsRule,
 } from './xingye-contact-generator';
+import { appendXingyeEventOnce } from './xingye-event-log';
 
 export type XingyeContactTargetType =
   | 'user'
@@ -290,6 +291,16 @@ function createId(prefix: string): string {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function appendXingyePhoneEventBestEffort(
+  agentId: string,
+  input: Parameters<typeof appendXingyeEventOnce>[1],
+  dedupeKey: string,
+) {
+  void appendXingyeEventOnce(agentId, input, dedupeKey).catch((error) => {
+    console.warn('[xingye-phone-store] failed to append Xingye event:', error);
+  });
 }
 
 /**
@@ -712,6 +723,22 @@ export function appendContactChangeLogItem(
   const items = loadContactChangeLog(storage);
   items.push(full);
   persistContactChangeLog(items, storage);
+  appendXingyePhoneEventBestEffort(full.ownerAgentId, {
+    type: 'phone.contact_changed',
+    source: 'xingye-phone-store',
+    subjectId: full.targetId,
+    createdAt: full.createdAt,
+    payload: {
+      contactId: full.targetId,
+      targetType: full.targetType,
+      changedFields: full.changedFields,
+      changeLogId: full.id,
+      reason: full.reason,
+      source: full.source,
+      action: full.action,
+      createdAt: full.createdAt,
+    },
+  }, `phone.contact_changed:${full.ownerAgentId}:${full.id}`);
   return full;
 }
 
@@ -2926,6 +2953,24 @@ export function addSmsMessage(
   };
   map[key] = next;
   saveSmsThreadMap(map, storage);
+  appendXingyePhoneEventBestEffort(input.ownerAgentId, {
+    type: 'phone.sms_appended',
+    source: 'xingye-phone-store',
+    subjectId: threadId,
+    createdAt,
+    payload: {
+      threadId,
+      contactId: input.targetId,
+      targetType: input.targetType,
+      messageId: message.id,
+      direction: input.direction,
+      createdAt,
+      sentAt: createdAt,
+      from: message.fromAgentId,
+      to: message.toAgentId,
+      source: message.source,
+    },
+  }, `phone.sms_appended:${input.ownerAgentId}:${message.id}`);
   return next;
 }
 

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+
+const appendEventOnceMock = vi.hoisted(() => vi.fn(async () => ({ id: 'event-1' })));
+
+vi.mock('./xingye-event-log', () => ({
+  appendXingyeEventOnce: appendEventOnceMock,
+}));
+
 import {
   XINGYE_PHONE_CONTACTS_STORAGE_KEY,
   XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY,
@@ -65,6 +72,7 @@ describe('xingye-phone-store', () => {
   beforeEach(() => {
     vi.useRealTimers();
     storage = new MemoryStorage();
+    appendEventOnceMock.mockReset();
   });
 
   it('stores contact remark/impression by ownerAgentId + targetType + targetId', () => {
@@ -211,6 +219,51 @@ describe('xingye-phone-store', () => {
     expect(pending[0].source).toBe('contacts_incremental_update');
   });
 
+  it('appends a phone.contact_changed event after a real contact change is saved', () => {
+    savePhoneContactMeta('hanako', 'agent', 'test_01', {
+      remark: 'event contact',
+      source: 'manual',
+    }, storage);
+
+    expect(appendEventOnceMock).toHaveBeenCalledWith(
+      'hanako',
+      expect.objectContaining({
+        type: 'phone.contact_changed',
+        source: 'xingye-phone-store',
+        subjectId: 'test_01',
+        payload: expect.objectContaining({
+          contactId: 'test_01',
+          targetType: 'agent',
+          changedFields: expect.arrayContaining(['remark']),
+          changeLogId: expect.any(String),
+          source: 'manual_edit',
+        }),
+      }),
+      expect.stringMatching(/^phone\.contact_changed:hanako:cc-log-/),
+    );
+  });
+
+  it('uses the same contact change log id as the event dedupe key', () => {
+    savePhoneContactMeta('hanako', 'agent', 'test_01', {
+      remark: 'first event contact',
+      source: 'manual',
+    }, storage);
+    savePhoneContactMeta('hanako', 'agent', 'test_01', {
+      remark: 'second event contact',
+      source: 'manual',
+    }, storage);
+
+    const dedupeKeys = appendEventOnceMock.mock.calls
+      .filter(call => call[1]?.type === 'phone.contact_changed')
+      .map(call => call[2]);
+
+    expect(new Set(dedupeKeys).size).toBe(dedupeKeys.length);
+    for (const [agentId, input, dedupeKey] of appendEventOnceMock.mock.calls) {
+      if (input?.type !== 'phone.contact_changed') continue;
+      expect(dedupeKey).toBe(`phone.contact_changed:${agentId}:${input.payload.changeLogId}`);
+    }
+  });
+
   it('applyAiContactUpdates updates the existing user contact without duplicating it', () => {
     const ownerAgentId = 'agent-linwu';
     const existingUserTargetId = '__user__';
@@ -305,6 +358,72 @@ describe('xingye-phone-store', () => {
     addMockSmsMessage('hanako', 'agent', 'test_01', '第三条', 'outgoing', storage);
     const t = getSmsThread('hanako', 'agent', 'test_01', storage);
     expect(t?.messages.map(m => m.content)).toEqual(['第一条', '第二条', '第三条']);
+  });
+
+  it('appends a phone.sms_appended event after a new SMS is saved', () => {
+    const thread = addSmsMessage({
+      ownerAgentId: 'hanako',
+      targetType: 'agent',
+      targetId: 'test_01',
+      content: 'event sms',
+      direction: 'incoming',
+      source: 'manual',
+      createdAt: '2026-05-11T05:00:00.000Z',
+    }, storage);
+
+    const message = thread?.messages[0];
+    expect(message).toBeTruthy();
+    expect(appendEventOnceMock).toHaveBeenCalledWith(
+      'hanako',
+      expect.objectContaining({
+        type: 'phone.sms_appended',
+        source: 'xingye-phone-store',
+        subjectId: thread?.id,
+        payload: expect.objectContaining({
+          threadId: thread?.id,
+          contactId: 'test_01',
+          messageId: message?.id,
+          direction: 'incoming',
+          createdAt: '2026-05-11T05:00:00.000Z',
+          from: 'test_01',
+          to: 'hanako',
+        }),
+      }),
+      `phone.sms_appended:hanako:${message?.id}`,
+    );
+  });
+
+  it('keeps phone flows working when event append fails and does not leak events across agents', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appendEventOnceMock.mockRejectedValueOnce(new Error('event write failed'));
+
+    const meta = savePhoneContactMeta('agent-a', 'agent', 'peer-a', {
+      remark: 'still saved',
+      source: 'manual',
+    }, storage);
+    const thread = addSmsMessage({
+      ownerAgentId: 'agent-b',
+      targetType: 'agent',
+      targetId: 'peer-b',
+      content: 'still saved sms',
+      direction: 'outgoing',
+    }, storage);
+
+    expect(meta.remark).toBe('still saved');
+    expect(thread?.messages).toHaveLength(1);
+    expect(getPhoneContactMeta('agent-a', 'agent', 'peer-a', storage)?.remark).toBe('still saved');
+    expect(getPhoneContactMeta('agent-b', 'agent', 'peer-a', storage)).toBeNull();
+
+    const contactEvent = appendEventOnceMock.mock.calls.find(call => call[1]?.type === 'phone.contact_changed');
+    const smsEvent = appendEventOnceMock.mock.calls.find(call => call[1]?.type === 'phone.sms_appended');
+    expect(contactEvent?.[0]).toBe('agent-a');
+    expect(smsEvent?.[0]).toBe('agent-b');
+    await Promise.resolve();
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[xingye-phone-store] failed to append Xingye event:',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
   });
 
   it('phoneCompositeMapKey is the single composite key shape for contacts and SMS threads', () => {

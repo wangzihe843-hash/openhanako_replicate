@@ -9,10 +9,12 @@ import {
   generateRelationshipStateSuggestion,
   type XingyeRelationshipStateSuggestion,
 } from './xingye-state-ai';
+import { appendXingyeEventOnce } from './xingye-event-log';
 import {
   resetRelationshipState,
   updateRelationshipState,
   useRelationshipState,
+  type XingyeRelationshipState,
   type XingyeRelationshipStateHistoryItem,
 } from './xingye-state-store';
 import styles from './XingyeShell.module.css';
@@ -21,6 +23,10 @@ interface RelationshipStatePanelProps {
   agent: Agent;
   profile: Partial<XingyeRoleProfileDisplay>;
 }
+
+type RelationshipSuggestionWithEventId = XingyeRelationshipStateSuggestion & {
+  suggestionId: string;
+};
 
 const METRICS: Array<{
   key: keyof Pick<XingyeRelationshipStateSuggestion, 'affectionDelta' | 'trustDelta' | 'loyaltyDelta' | 'jealousyDelta' | 'corruptionDelta'>;
@@ -47,6 +53,54 @@ function formatUpdatedAt(value: string): string {
   } catch {
     return value;
   }
+}
+
+function createSuggestionId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `rs-suggestion-${crypto.randomUUID()}`;
+  }
+  return `rs-suggestion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function summarizeRelationshipState(state: XingyeRelationshipState) {
+  return {
+    affection: state.affection,
+    trust: state.trust,
+    loyalty: state.loyalty,
+    jealousy: state.jealousy,
+    corruption: state.corruption,
+    mood: state.mood,
+    relationshipKey: state.relationshipKey,
+    relationshipLabel: state.relationshipLabel,
+    updatedAt: state.updatedAt,
+  };
+}
+
+function summarizeReason(reason: string): string {
+  return reason.replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function getAppliedFields(suggestion: XingyeRelationshipStateSuggestion): string[] {
+  const fields: string[] = [];
+  if (suggestion.affectionDelta) fields.push('affectionDelta');
+  if (suggestion.trustDelta) fields.push('trustDelta');
+  if (suggestion.loyaltyDelta) fields.push('loyaltyDelta');
+  if (suggestion.jealousyDelta) fields.push('jealousyDelta');
+  if (suggestion.corruptionDelta) fields.push('corruptionDelta');
+  if (suggestion.mood) fields.push('mood');
+  if (suggestion.stateSummary) fields.push('stateSummary');
+  if (suggestion.reason) fields.push('reason');
+  return fields;
+}
+
+function appendRelationshipStateEventBestEffort(
+  agentId: string,
+  input: Parameters<typeof appendXingyeEventOnce>[1],
+  dedupeKey: string,
+) {
+  void appendXingyeEventOnce(agentId, input, dedupeKey).catch((error) => {
+    console.warn('[RelationshipStatePanel] failed to append Xingye event:', error);
+  });
 }
 
 function RelationshipHistoryCard({ state }: { state: XingyeRelationshipStateHistoryItem }) {
@@ -91,7 +145,7 @@ function RelationshipHistoryCard({ state }: { state: XingyeRelationshipStateHist
 
 export function RelationshipStatePanel({ agent, profile }: RelationshipStatePanelProps) {
   const relationshipState = useRelationshipState(agent.id, profile);
-  const [suggestion, setSuggestion] = useState<XingyeRelationshipStateSuggestion | null>(null);
+  const [suggestion, setSuggestion] = useState<RelationshipSuggestionWithEventId | null>(null);
   const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -114,7 +168,24 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
         sourceNotes,
         trigger: 'manual_refresh',
       });
-      setSuggestion(nextSuggestion);
+      const suggestionId = createSuggestionId();
+      setSuggestion({ ...nextSuggestion, suggestionId });
+      appendRelationshipStateEventBestEffort(agent.id, {
+        type: 'relationship_state.suggested',
+        source: 'RelationshipStatePanel',
+        subjectId: relationshipState.targetId,
+        payload: {
+          suggestionId,
+          mood: nextSuggestion.mood,
+          affectionDelta: nextSuggestion.affectionDelta,
+          trustDelta: nextSuggestion.trustDelta,
+          loyaltyDelta: nextSuggestion.loyaltyDelta,
+          jealousyDelta: nextSuggestion.jealousyDelta,
+          corruptionDelta: nextSuggestion.corruptionDelta,
+          reasonSummary: summarizeReason(nextSuggestion.reason),
+          recentContextCount: sourceNotes.length,
+        },
+      }, `relationship_state.suggested:${agent.id}:${suggestionId}`);
       setRefreshState('idle');
     } catch (err) {
       setRefreshState('error');
@@ -124,7 +195,19 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
 
   const handleAccept = () => {
     if (!suggestion) return;
+    const previous = relationshipState;
     const next = updateRelationshipState(agent.id, suggestion);
+    appendRelationshipStateEventBestEffort(agent.id, {
+      type: 'relationship_state.applied',
+      source: 'RelationshipStatePanel',
+      subjectId: next.targetId,
+      payload: {
+        suggestionId: suggestion.suggestionId,
+        previous: summarizeRelationshipState(previous),
+        next: summarizeRelationshipState(next),
+        appliedFields: getAppliedFields(suggestion),
+      },
+    }, `relationship_state.applied:${agent.id}:${suggestion.suggestionId}:${next.updatedAt}`);
     void saveXingyeRoleProfile(agent.id, { relationshipLabel: next.relationshipLabel }).catch(() => {});
     setSuggestion(null);
     setError(null);
