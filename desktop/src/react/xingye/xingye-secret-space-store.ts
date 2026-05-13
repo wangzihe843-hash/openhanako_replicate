@@ -2,6 +2,7 @@ import type { SecretSpaceCategoryId } from './SecretSpaceHome';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent } from './xingye-event-log';
 import {
   recordFieldAsString,
   stableSecretSpaceRecordId,
@@ -77,6 +78,26 @@ function logDeleteDebug(
   });
 }
 
+async function appendSecretSpaceEvent(
+  agentId: string,
+  event: {
+    type: 'secret_space.record_appended' | 'secret_space.record_deleted';
+    subjectId: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, {
+      type: event.type,
+      source: 'xingye-secret-space-store',
+      subjectId: event.subjectId,
+      payload: event.payload,
+    });
+  } catch (error) {
+    console.warn('[xingye-secret-space-store] event log append failed:', error);
+  }
+}
+
 /** 写回时补齐 recordId/key/id，便于后续删除不再依赖 legacy 推导 */
 function enrichRowForPersist(category: SecretSpaceCategoryId, raw: Record<string, unknown>): Record<string, unknown> {
   const id = stableSecretSpaceRecordId(category, raw);
@@ -143,6 +164,12 @@ export async function deleteSecretSpaceRecord(
     encoding: 'utf8',
   });
 
+  await appendSecretSpaceEvent(aid, {
+    type: 'secret_space.record_deleted',
+    subjectId: category,
+    payload: { category, recordId: rid },
+  });
+
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('xingye-secret-space-changed', { detail: { agentId: aid, category } }));
   }
@@ -167,6 +194,16 @@ export async function appendSecretSpaceRecord(
     kind: body.kind ?? category,
     createdAt: body.createdAt ?? now,
     updatedAt: body.updatedAt ?? body.createdAt ?? now,
+  });
+  await appendSecretSpaceEvent(agentId, {
+    type: 'secret_space.record_appended',
+    subjectId: category,
+    payload: {
+      category,
+      recordId: stableId,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      source: typeof body.source === 'string' ? body.source : undefined,
+    },
   });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('xingye-secret-space-changed', { detail: { agentId, category } }));

@@ -1,0 +1,287 @@
+import { postXingyeStorage } from './xingye-storage-api';
+import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+
+export const XINGYE_EVENT_LOG_RELATIVE_PATH = 'events/log.json';
+
+export const XINGYE_EVENT_TYPES = [
+  'recent_chat.observed',
+  'phone.contact_changed',
+  'phone.sms_appended',
+  'secret_space.record_appended',
+  'secret_space.record_deleted',
+  'pinned_memory.changed',
+  'memory_candidate.created',
+  'memory_candidate.written',
+  'relationship_state.suggested',
+  'relationship_state.applied',
+  'moment.created',
+  'moment.deleted',
+] as const;
+
+export type XingyeEventType = typeof XINGYE_EVENT_TYPES[number];
+
+export type XingyeEvent = {
+  id: string;
+  agentId: string;
+  type: XingyeEventType;
+  source: string;
+  subjectId?: string;
+  createdAt: string;
+  payload: Record<string, unknown>;
+  consumedBy?: Record<string, string>;
+};
+
+export type XingyeEventInput = {
+  id?: string;
+  agentId?: string;
+  type: XingyeEventType;
+  source: string;
+  subjectId?: string;
+  createdAt?: string;
+  payload: Record<string, unknown>;
+  consumedBy?: Record<string, string>;
+};
+
+export type XingyeEventListOptions = {
+  types?: readonly XingyeEventType[];
+  source?: string;
+  since?: string;
+  limit?: number;
+  newestFirst?: boolean;
+};
+
+type XingyeEventLogFile = {
+  version: 1;
+  events: XingyeEvent[];
+  dedupeKeys: Record<string, string>;
+};
+
+const EVENT_TYPE_SET = new Set<string>(XINGYE_EVENT_TYPES);
+const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizePayload(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function normalizeConsumedBy(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [consumer, consumedAt] of Object.entries(value)) {
+    if (typeof consumedAt === 'string' && consumedAt) out[consumer] = consumedAt;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function normalizeDateString(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function createId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `xe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function normalizeXingyeEvent(input: unknown): XingyeEvent | null {
+  if (!isRecord(input)) return null;
+  const id = normalizeString(input.id);
+  const agentId = normalizeString(input.agentId);
+  const type = normalizeString(input.type);
+  const source = normalizeString(input.source);
+  const createdAt = normalizeDateString(input.createdAt);
+  const payload = normalizePayload(input.payload);
+
+  if (!id || !agentId || !type || !EVENT_TYPE_SET.has(type) || !source || !createdAt || !payload) {
+    return null;
+  }
+
+  const subjectId = normalizeString(input.subjectId);
+  const event: XingyeEvent = {
+    id,
+    agentId,
+    type: type as XingyeEventType,
+    source,
+    createdAt,
+    payload,
+  };
+  if (subjectId) event.subjectId = subjectId;
+  const consumedBy = normalizeConsumedBy(input.consumedBy);
+  if (consumedBy) event.consumedBy = consumedBy;
+  return event;
+}
+
+export function createXingyeEvent(input: XingyeEventInput): XingyeEvent {
+  const event = normalizeXingyeEvent({
+    ...input,
+    id: input.id ?? createId(),
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  });
+  if (!event) throw new Error('invalid Xingye event');
+  return event;
+}
+
+function normalizeDedupeKeys(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, eventId] of Object.entries(value)) {
+    if (key && typeof eventId === 'string' && eventId) out[key] = eventId;
+  }
+  return out;
+}
+
+async function readLog(agentId: string): Promise<XingyeEventLogFile> {
+  const raw = await backend.readJson<unknown>(agentId, XINGYE_EVENT_LOG_RELATIVE_PATH);
+  const eventsRaw = Array.isArray(raw)
+    ? raw
+    : (isRecord(raw) && Array.isArray(raw.events) ? raw.events : []);
+  const events = eventsRaw
+    .map((event) => normalizeXingyeEvent(event))
+    .filter((event): event is XingyeEvent => Boolean(event))
+    .filter((event) => event.agentId === agentId)
+    .sort(compareEventsByCreatedAt);
+  const dedupeKeys = isRecord(raw) ? normalizeDedupeKeys(raw.dedupeKeys) : {};
+  return { version: 1, events, dedupeKeys };
+}
+
+async function writeLog(agentId: string, log: XingyeEventLogFile): Promise<void> {
+  await backend.writeJson(agentId, XINGYE_EVENT_LOG_RELATIVE_PATH, {
+    version: 1,
+    events: log.events.sort(compareEventsByCreatedAt),
+    dedupeKeys: log.dedupeKeys,
+  });
+}
+
+function compareEventsByCreatedAt(a: XingyeEvent, b: XingyeEvent): number {
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function applyListOptions(events: XingyeEvent[], options?: XingyeEventListOptions): XingyeEvent[] {
+  let out = [...events];
+  if (options?.types?.length) {
+    const types = new Set(options.types);
+    out = out.filter((event) => types.has(event.type));
+  }
+  if (options?.source) {
+    out = out.filter((event) => event.source === options.source);
+  }
+  if (options?.since) {
+    const since = Date.parse(options.since);
+    if (Number.isFinite(since)) {
+      out = out.filter((event) => Date.parse(event.createdAt) >= since);
+    }
+  }
+  out.sort(compareEventsByCreatedAt);
+  if (options?.newestFirst) out.reverse();
+  if (typeof options?.limit === 'number' && options.limit >= 0) out = out.slice(0, options.limit);
+  return out;
+}
+
+export async function listXingyeEvents(
+  agentId: string,
+  options?: XingyeEventListOptions,
+): Promise<XingyeEvent[]> {
+  if (!agentId.trim()) return [];
+  const log = await readLog(agentId.trim());
+  return applyListOptions(log.events, options);
+}
+
+export async function appendXingyeEvent(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'> & { agentId?: string },
+): Promise<XingyeEvent> {
+  const aid = agentId.trim();
+  if (!aid) throw new Error('agentId is required');
+  const event = createXingyeEvent({ ...input, agentId: aid });
+  const log = await readLog(aid);
+  log.events.push(event);
+  await writeLog(aid, log);
+  return event;
+}
+
+export async function markXingyeEventConsumed(
+  agentId: string,
+  eventId: string,
+  consumerName: string,
+): Promise<XingyeEvent | null> {
+  const aid = agentId.trim();
+  const id = eventId.trim();
+  const consumer = consumerName.trim();
+  if (!aid || !id || !consumer) return null;
+  const log = await readLog(aid);
+  const index = log.events.findIndex((event) => event.id === id);
+  if (index < 0) return null;
+  const next: XingyeEvent = {
+    ...log.events[index],
+    consumedBy: {
+      ...(log.events[index].consumedBy ?? {}),
+      [consumer]: new Date().toISOString(),
+    },
+  };
+  log.events[index] = next;
+  await writeLog(aid, log);
+  return next;
+}
+
+export async function listUnconsumedXingyeEvents(
+  agentId: string,
+  consumerName: string,
+  options?: XingyeEventListOptions,
+): Promise<XingyeEvent[]> {
+  const consumer = consumerName.trim();
+  if (!consumer) return [];
+  const events = await listXingyeEvents(agentId, options);
+  return events.filter((event) => !event.consumedBy?.[consumer]);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function makeXingyeEventDedupeKey(input: Pick<XingyeEventInput, 'type' | 'source' | 'subjectId' | 'payload'>): string {
+  return stableStringify({
+    type: input.type,
+    source: input.source,
+    subjectId: input.subjectId ?? '',
+    payload: input.payload,
+  });
+}
+
+export async function appendXingyeEventOnce(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'> & { agentId?: string },
+  dedupeKey: string,
+): Promise<XingyeEvent> {
+  const aid = agentId.trim();
+  const key = dedupeKey.trim();
+  if (!aid) throw new Error('agentId is required');
+  if (!key) return appendXingyeEvent(aid, input);
+
+  const log = await readLog(aid);
+  const existingEventId = log.dedupeKeys[key];
+  const existingEvent = existingEventId ? log.events.find((event) => event.id === existingEventId) : null;
+  if (existingEvent) return existingEvent;
+
+  const event = createXingyeEvent({ ...input, agentId: aid });
+  log.events.push(event);
+  log.dedupeKeys[key] = event.id;
+  await writeLog(aid, log);
+  return event;
+}

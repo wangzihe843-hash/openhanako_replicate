@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { SecretSpacePanel } from './SecretSpacePanel';
-import { appendSecretSpaceRecord } from './xingye-secret-space-store';
+import { appendSecretSpaceRecord, deleteSecretSpaceRecord } from './xingye-secret-space-store';
 import { stableSecretSpaceRecordId } from './xingye-secret-space-record-id';
 
 type JsonlRow = Record<string, unknown>;
@@ -18,6 +18,7 @@ function storeKey(agentId: string, relativePath: string): string {
 }
 
 const jsonlStore = vi.hoisted(() => new Map<string, JsonlRow[]>());
+const jsonStore = vi.hoisted(() => new Map<string, unknown>());
 const pinnedStore = vi.hoisted(() => new Map<string, string[]>());
 
 const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: RequestInit) => {
@@ -61,6 +62,18 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
         ok: true,
         json: async () => ({ ok: true, records }),
       } as Response;
+    }
+
+    if (body.action === 'readJson') {
+      return {
+        ok: true,
+        json: async () => ({ ok: true, data: jsonStore.get(key) ?? null }),
+      } as Response;
+    }
+
+    if (body.action === 'writeJson') {
+      jsonStore.set(key, body.data);
+      return { ok: true, json: async () => ({ ok: true }) } as Response;
     }
 
     if (body.action === 'appendJsonl' && body.data && typeof body.data === 'object') {
@@ -133,6 +146,7 @@ describe('SecretSpacePanel secret space navigation', () => {
   beforeEach(() => {
     hanaFetchMock.mockClear();
     jsonlStore.clear();
+    jsonStore.clear();
     pinnedStore.clear();
     jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
       {
@@ -365,6 +379,44 @@ describe('SecretSpacePanel secret space navigation', () => {
       expect(rows.length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.getByText('fresh title')).toBeInTheDocument();
+  });
+
+  it('append/delete secret space records append event-log entries and keep changed event', async () => {
+    const changedEvents: Array<CustomEvent<{ agentId: string; category: string }>> = [];
+    const onChanged = (event: Event) => changedEvents.push(event as CustomEvent<{ agentId: string; category: string }>);
+    window.addEventListener('xingye-secret-space-changed', onChanged);
+
+    await appendSecretSpaceRecord(agent.id, 'dream', {
+      recordId: 'dream-event-1',
+      title: 'event title',
+      body: 'event body',
+      source: 'manual',
+    });
+    await expect(deleteSecretSpaceRecord(agent.id, 'dream', 'dream-event-1')).resolves.toBe(true);
+
+    window.removeEventListener('xingye-secret-space-changed', onChanged);
+
+    const log = jsonStore.get(storeKey(agent.id, 'events/log.json')) as { events?: Array<Record<string, unknown>> };
+    expect(log.events?.map((event) => event.type)).toEqual([
+      'secret_space.record_appended',
+      'secret_space.record_deleted',
+    ]);
+    expect(log.events?.[0]).toEqual(expect.objectContaining({
+      agentId: agent.id,
+      source: 'xingye-secret-space-store',
+      subjectId: 'dream',
+      payload: expect.objectContaining({
+        category: 'dream',
+        recordId: 'dream-event-1',
+        title: 'event title',
+        source: 'manual',
+      }),
+    }));
+    expect(log.events?.[1]).toEqual(expect.objectContaining({
+      payload: { category: 'dream', recordId: 'dream-event-1' },
+    }));
+    expect(changedEvents).toHaveLength(2);
+    expect(changedEvents.every((event) => event.detail.agentId === agent.id && event.detail.category === 'dream')).toBe(true);
   });
 
   it('shows AI generate on plain categories but not state or memory_fragment', () => {

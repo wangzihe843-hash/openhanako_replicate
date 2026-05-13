@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { emitAgentPinnedMemoryChanged } from '../agent-pinned-memory';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { appendXingyeEvent } from './xingye-event-log';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   assertXingyeMemoryTargetWritable,
@@ -243,6 +244,31 @@ export const XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS: readonly {
 
 export const XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT = '用户从秘密空间手动保存为候选重要记忆';
 
+async function appendMemoryCandidateWrittenEvent(
+  agentId: string,
+  payload: {
+    candidateId: string;
+    alreadyInPinned: boolean;
+    pinsCount: number;
+  },
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, {
+      type: 'memory_candidate.written',
+      source: 'xingye-secret-space',
+      subjectId: payload.candidateId,
+      payload: {
+        candidateId: payload.candidateId,
+        target: 'pinned',
+        alreadyInPinned: payload.alreadyInPinned,
+        pinsCount: payload.pinsCount,
+      },
+    });
+  } catch (error) {
+    console.warn('[xingye-memory-candidate-store] event log append failed:', error);
+  }
+}
+
 export function updateXingyeMemoryCandidate(
   agentId: string,
   candidateId: string,
@@ -395,6 +421,11 @@ export async function confirmXingyeMemoryCandidateToPinned(
   emitAgentPinnedMemoryChanged({
     agentId,
     source: 'xingye-secret-space',
+    pinsCount,
+  });
+  await appendMemoryCandidateWrittenEvent(agentId, {
+    candidateId,
+    alreadyInPinned,
     pinsCount,
   });
 

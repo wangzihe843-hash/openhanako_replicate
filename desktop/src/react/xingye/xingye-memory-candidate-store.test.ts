@@ -1,4 +1,9 @@
+/**
+ * @vitest-environment jsdom
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED } from '../agent-pinned-memory';
 import * as XingyeMemoryCandidateStore from './xingye-memory-candidate-store';
 import {
   confirmXingyeMemoryCandidate,
@@ -13,6 +18,7 @@ import {
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_HIGH,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_MEDIUM,
 } from './xingye-memory-candidate-store';
+import { listXingyeEvents } from './xingye-event-log';
 
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaUrl: (path: string) => path,
@@ -20,6 +26,33 @@ vi.mock('../hooks/use-hana-fetch', () => ({
 }));
 
 const { hanaFetch } = await import('../hooks/use-hana-fetch');
+
+const eventJsonStore = new Map<string, unknown>();
+
+function eventLogKey(body: Record<string, unknown>): string {
+  return `${body.agentId}|${body.relativePath}`;
+}
+
+function resetHanaFetchMock(): void {
+  vi.mocked(hanaFetch).mockReset();
+  vi.mocked(hanaFetch).mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === '/api/xingye/storage') {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const key = eventLogKey(body);
+      if (body.action === 'readJson') return { ok: true, json: async () => ({ ok: true, data: eventJsonStore.get(key) ?? null }) } as Response;
+      if (body.action === 'writeJson') {
+        eventJsonStore.set(key, body.data);
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+    }
+    return undefined as unknown as Response;
+  });
+}
+
+function pinnedCalls() {
+  return vi.mocked(hanaFetch).mock.calls.filter((call) =>
+    typeof call[0] === 'string' && call[0].includes('/pinned'));
+}
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -54,7 +87,8 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
 
   beforeEach(() => {
     storage = new MemoryStorage();
-    vi.mocked(hanaFetch).mockReset();
+    eventJsonStore.clear();
+    resetHanaFetchMock();
   });
 
   it('GET pinned then PUT with deduped append and marks candidate written', async () => {
@@ -76,10 +110,10 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
       fetchImpl: hanaFetch,
     });
 
-    expect(hanaFetch).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(hanaFetch).mock.calls[0][0]).toBe('/api/agents/agent-1/pinned');
-    expect(vi.mocked(hanaFetch).mock.calls[1][0]).toBe('/api/agents/agent-1/pinned');
-    const putInit = vi.mocked(hanaFetch).mock.calls[1][1] as RequestInit;
+    expect(pinnedCalls()).toHaveLength(2);
+    expect(pinnedCalls()[0][0]).toBe('/api/agents/agent-1/pinned');
+    expect(pinnedCalls()[1][0]).toBe('/api/agents/agent-1/pinned');
+    const putInit = pinnedCalls()[1][1] as RequestInit;
     expect(putInit?.method).toBe('PUT');
     const putBody = JSON.parse(String(putInit?.body));
     expect(putBody.pins).toEqual(['existing', 'new pin', 'third line']);
@@ -102,7 +136,7 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
       fetchImpl: hanaFetch,
     });
 
-    expect(hanaFetch).toHaveBeenCalledTimes(1);
+    expect(pinnedCalls()).toHaveLength(1);
     expect(candidate.status).toBe('written');
     expect(alreadyInPinned).toBe(true);
   });
@@ -150,7 +184,7 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ pins: [] }) } as Response)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) } as Response);
     await confirmXingyeMemoryCandidateToPinned('agent-1', first.id, { storage, fetchImpl: hanaFetch });
-    vi.mocked(hanaFetch).mockReset();
+    resetHanaFetchMock();
 
     const second = createXingyeMemoryCandidate('agent-1', { content: '  dup  ' }, storage);
     vi.mocked(hanaFetch).mockResolvedValueOnce({
@@ -163,9 +197,64 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
       fetchImpl: hanaFetch,
     });
 
-    expect(hanaFetch).toHaveBeenCalledTimes(1);
+    expect(pinnedCalls()).toHaveLength(1);
     expect(alreadyInPinned).toBe(true);
     expect(candidate.status).toBe('written');
+  });
+
+  it('appends memory_candidate.written event and keeps pinned changed event', async () => {
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'event pin' }, storage);
+    const pinnedChanged: Array<CustomEvent<{ agentId: string; source: string; pinsCount?: number }>> = [];
+    const onPinned = (event: Event) => {
+      pinnedChanged.push(event as CustomEvent<{ agentId: string; source: string; pinsCount?: number }>);
+    };
+    window.addEventListener(OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED, onPinned);
+
+    vi.mocked(hanaFetch).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/agents/agent-1/pinned') {
+        if (init?.method === 'PUT') return { ok: true, json: async () => ({ ok: true }) } as Response;
+        return { ok: true, json: async () => ({ pins: ['existing'] }) } as Response;
+      }
+      if (path === '/api/xingye/storage') {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const key = `${body.agentId}|${body.relativePath}`;
+        if (body.action === 'readJson') return { ok: true, json: async () => ({ ok: true, data: eventJsonStore.get(key) ?? null }) } as Response;
+        if (body.action === 'writeJson') {
+          eventJsonStore.set(key, body.data);
+          return { ok: true, json: async () => ({ ok: true }) } as Response;
+        }
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'unexpected path' }) } as Response;
+    });
+
+    const { candidate, alreadyInPinned } = await confirmXingyeMemoryCandidateToPinned('agent-1', c.id, {
+      storage,
+      fetchImpl: hanaFetch,
+    });
+
+    window.removeEventListener(OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED, onPinned);
+
+    expect(candidate.status).toBe('written');
+    expect(alreadyInPinned).toBe(false);
+    const events = await listXingyeEvents('agent-1');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: 'memory_candidate.written',
+      source: 'xingye-secret-space',
+      subjectId: c.id,
+      payload: expect.objectContaining({
+        candidateId: c.id,
+        target: 'pinned',
+        alreadyInPinned: false,
+        pinsCount: 2,
+      }),
+    }));
+    expect(pinnedChanged).toHaveLength(1);
+    expect(pinnedChanged[0].detail).toEqual({
+      agentId: 'agent-1',
+      source: 'xingye-secret-space',
+      pinsCount: 2,
+    });
   });
 });
 
@@ -174,7 +263,7 @@ describe('confirmXingyeMemoryCandidate gateway', () => {
 
   beforeEach(() => {
     storage = new MemoryStorage();
-    vi.mocked(hanaFetch).mockReset();
+    resetHanaFetchMock();
   });
 
   it('pinned pending succeeds same as toPinned', async () => {
