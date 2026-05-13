@@ -1,23 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
+import {
+  appendJournalEntry,
+  deleteJournalEntry,
+  listJournalEntries,
+  type XingyeJournalEntry,
+} from './xingye-journal-store';
 
 export interface PhoneJournalAppProps {
   ownerAgent: Agent | null;
   displayName: string;
   onBack: () => void;
 }
-
-interface JournalEntryMock {
-  id: string;
-  /** ISO 日期（本地日界线按浏览器时区） */
-  dayKey: string;
-  title: string;
-  body: string;
-}
-
-/** 纯前端 mock：默认空列表以展示空状态；可通过「写日记」添加条目（仅存页面内存） */
-const PHONE_JOURNAL_SEED: JournalEntryMock[] = [];
 
 function formatGroupHeading(dayKey: string): string {
   const [y, m, d] = dayKey.split('-').map(Number);
@@ -43,11 +38,45 @@ function excerptForJournalList(body: string, maxChars = 96): string {
 }
 
 export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJournalAppProps) {
-  const [entries, setEntries] = useState<JournalEntryMock[]>(() => [...PHONE_JOURNAL_SEED]);
+  const ownerAgentId = ownerAgent?.id ?? '';
+  const [entries, setEntries] = useState<XingyeJournalEntry[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftBody, setDraftBody] = useState('');
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const reloadEntries = useCallback(async () => {
+    if (!ownerAgentId) {
+      setEntries([]);
+      return;
+    }
+    setListLoading(true);
+    setListError(null);
+    try {
+      const rows = await listJournalEntries(ownerAgentId);
+      setEntries(rows);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setListLoading(false);
+    }
+  }, [ownerAgentId]);
+
+  useEffect(() => {
+    setSelectedId(null);
+    setComposeOpen(false);
+    setSaveError(null);
+    setListError(null);
+  }, [ownerAgentId]);
+
+  useEffect(() => {
+    void reloadEntries();
+  }, [reloadEntries]);
 
   const selected = useMemo(
     () => (selectedId ? entries.find((e) => e.id === selectedId) ?? null : null),
@@ -55,7 +84,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   );
 
   const grouped = useMemo(() => {
-    const map = new Map<string, JournalEntryMock[]>();
+    const map = new Map<string, XingyeJournalEntry[]>();
     const sorted = [...entries].sort((a, b) => (a.dayKey < b.dayKey ? 1 : a.dayKey > b.dayKey ? -1 : 0));
     for (const e of sorted) {
       const list = map.get(e.dayKey) ?? [];
@@ -70,25 +99,80 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const openCompose = () => {
     setDraftTitle('');
     setDraftBody('');
+    setSaveError(null);
     setComposeOpen(true);
   };
 
-  const saveCompose = () => {
+  const saveCompose = async () => {
     const title = draftTitle.trim() || '无标题';
     const body = draftBody.trim();
-    if (!body) {
+    if (!body || !ownerAgentId) {
       return;
     }
-    const now = new Date();
-    const dayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const id = `local-${now.getTime()}`;
-    setEntries((prev) => [{ id, dayKey, title, body }, ...prev]);
-    setComposeOpen(false);
-    setSelectedId(id);
+    setSaveBusy(true);
+    setSaveError(null);
+    try {
+      const row = await appendJournalEntry(ownerAgentId, { title, body });
+      setEntries((prev) => {
+        const next = [row, ...prev.filter((p) => p.id !== row.id)];
+        next.sort((a, b) => {
+          if (a.dayKey !== b.dayKey) return a.dayKey < b.dayKey ? 1 : -1;
+          const taMs = Date.parse(a.createdAt);
+          const tbMs = Date.parse(b.createdAt);
+          return tbMs - taMs;
+        });
+        return next;
+      });
+      setComposeOpen(false);
+      setSelectedId(row.id);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaveBusy(false);
+    }
   };
 
+  const handleDeleteSelected = async () => {
+    if (!selected || !ownerAgentId) return;
+    if (!window.confirm('确定删除这条日记？此操作不可恢复。')) return;
+    setDeleteBusy(true);
+    try {
+      const ok = await deleteJournalEntry(ownerAgentId, selected.id);
+      if (ok) {
+        setEntries((prev) => prev.filter((e) => e.id !== selected.id));
+        setSelectedId(null);
+      } else {
+        await reloadEntries();
+      }
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  if (!ownerAgentId) {
+    return (
+      <div className={styles.phoneShell} aria-label="日记">
+        <div className={styles.phoneStatusBar}>
+          <button type="button" className={styles.phoneBackButton} onClick={onBack}>
+            返回首页
+          </button>
+          <span>日记</span>
+        </div>
+        <div className={styles.phoneBody}>
+          <section className={styles.phoneAppCard}>
+            <h3 className={styles.phoneAppTitle}>日记不可用</h3>
+            <p className={styles.phoneAppHint}>
+              未选择角色 / 小手机不可用。日记写入当前角色在 HANA_HOME 下的星野目录，不能使用隐式角色回退。
+            </p>
+            <p className={styles.phoneAppHint}>请返回星野角色页，选择有效角色后再打开小手机日记。</p>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={styles.phoneShell} aria-label="日记（文本 mock）">
+    <div className={styles.phoneShell} aria-label="日记">
       <div className={styles.phoneStatusBar}>
         {selected ? (
           <button type="button" className={styles.phoneBackButton} onClick={() => setSelectedId(null)}>
@@ -104,8 +188,16 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
 
       <div className={styles.phoneBody}>
         <p className={styles.mmChatIntro}>
-          <strong>{ta} 的日记本</strong>：纯文本占位，数据仅存于当前页面内存；不自动生成、不写工作区。
+          <strong>{ta} 的日记本</strong>：纯文本，按角色保存在本机{' '}
+          <code className={styles.inlineCode}>agents/&lt;agentId&gt;/xingye/journal/entries.jsonl</code>
+          ；换角色互不串数据。需已连接服务且星野存储可用。
         </p>
+        {listError ? (
+          <p className={styles.phoneAppHint} role="alert">
+            加载失败：{listError}
+          </p>
+        ) : null}
+        {listLoading && entries.length === 0 ? <p className={styles.phoneAppHint}>加载中…</p> : null}
 
         {!selected ? (
           <div className={styles.phoneJournalLayout}>
@@ -113,33 +205,34 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <p className={styles.phoneSectionTitle} style={{ margin: 0 }}>
                 按日期分组
               </p>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openCompose}>
+              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openCompose} disabled={listLoading}>
                 写日记
               </button>
             </div>
 
-            {grouped.length === 0 ? (
+            {grouped.length === 0 && !listLoading ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-journal-empty">
-                还没有日记。点「写日记」添加一条纯文本记录（仅本页展示用 mock）。
+                还没有日记。点「写日记」添加一条记录（写入当前角色目录，刷新或重启后仍在）。
               </p>
-            ) : (
-              grouped.map(([dayKey, list]) => (
-                <div key={dayKey} className={styles.phoneJournalGroup}>
-                  <p className={styles.phoneJournalGroupLabel}>{formatGroupHeading(dayKey)}</p>
-                  {list.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      className={styles.phoneJournalCard}
-                      onClick={() => setSelectedId(e.id)}
-                    >
-                      <p className={styles.phoneJournalCardTitle}>{e.title}</p>
-                      <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
-                    </button>
-                  ))}
-                </div>
-              ))
-            )}
+            ) : null}
+            {grouped.length > 0
+              ? grouped.map(([dayKey, list]) => (
+                  <div key={dayKey} className={styles.phoneJournalGroup}>
+                    <p className={styles.phoneJournalGroupLabel}>{formatGroupHeading(dayKey)}</p>
+                    {list.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        className={styles.phoneJournalCard}
+                        onClick={() => setSelectedId(e.id)}
+                      >
+                        <p className={styles.phoneJournalCardTitle}>{e.title}</p>
+                        <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
+                      </button>
+                    ))}
+                  </div>
+                ))
+              : null}
           </div>
         ) : (
           <div className={styles.phoneJournalDetail}>
@@ -149,6 +242,16 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
             </h3>
             <div className={styles.phoneJournalDetailBodyScroll}>
               <pre className={styles.phoneJournalDetailBody}>{selected.body}</pre>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className={styles.phoneModalGhostButton}
+                onClick={() => void handleDeleteSelected()}
+                disabled={deleteBusy}
+              >
+                {deleteBusy ? '删除中…' : '删除这条日记'}
+              </button>
             </div>
           </div>
         )}
@@ -164,7 +267,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         >
           <div className={styles.phoneModalSheet} role="dialog" aria-modal="true" aria-labelledby="phone-journal-compose-title">
             <h3 id="phone-journal-compose-title" className={styles.phoneModalTitle}>
-              写日记（mock）
+              写日记
             </h3>
             <div className={styles.phoneModalBody}>
               <label className={styles.phoneFormField}>
@@ -175,13 +278,18 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                 <span>正文</span>
                 <textarea value={draftBody} onChange={(e) => setDraftBody(e.target.value)} rows={6} placeholder="写点什么…" />
               </label>
+              {saveError ? (
+                <p className={styles.phoneAppHint} role="alert">
+                  {saveError}
+                </p>
+              ) : null}
             </div>
             <div className={styles.phoneModalActions}>
-              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setComposeOpen(false)}>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setComposeOpen(false)} disabled={saveBusy}>
                 取消
               </button>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={saveCompose}>
-                保存到本页
+              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void saveCompose()} disabled={saveBusy}>
+                {saveBusy ? '保存中…' : '保存'}
               </button>
             </div>
           </div>

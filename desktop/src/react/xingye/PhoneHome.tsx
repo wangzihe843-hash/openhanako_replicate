@@ -82,7 +82,7 @@ const appShortcuts = [
   { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
   { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
-  { label: '日记', subtitle: '纯文本日记壳', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
+  { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
 ] as const;
 
@@ -248,7 +248,7 @@ export function PhoneHome({
         </section>
 
         <section className={styles.phoneEmptyStateCard}>
-          日记与 MM Chat 为文本 UI 骨架（mock）；相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
+          日记为按角色本地持久化；MM Chat 为文本 UI 骨架（mock）；相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
         </section>
       </div>
     </div>
