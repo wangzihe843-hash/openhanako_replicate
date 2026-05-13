@@ -88,7 +88,7 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
         jsonlStore.set(key, []);
       } else {
         const lines = content.trim().split('\n').filter(Boolean);
-        const parsed = lines.map((line) => JSON.parse(line) as JsonlRow);
+        const parsed = lines.map((line: string) => JSON.parse(line) as JsonlRow);
         jsonlStore.set(key, parsed);
       }
       return { ok: true, json: async () => ({ ok: true }) } as Response;
@@ -419,7 +419,7 @@ describe('SecretSpacePanel secret space navigation', () => {
     expect(changedEvents.every((event) => event.detail.agentId === agent.id && event.detail.category === 'dream')).toBe(true);
   });
 
-  it('shows AI generate on plain categories but not state or memory_fragment', () => {
+  it('shows AI generate on plain categories and state but not memory_fragment', () => {
     render(<SecretSpacePanel agent={agent} />);
 
     fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
@@ -427,7 +427,7 @@ describe('SecretSpacePanel secret space navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '返回' }));
     fireEvent.click(screen.getByTestId('secret-space-entry-state'));
-    expect(screen.queryByTestId('secret-space-ai-generate')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '返回' }));
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));

@@ -1,6 +1,7 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeRelationshipState } from './xingye-state-store';
+import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 export type XingyeRelationshipStateTrigger =
   | 'manual_refresh'
@@ -11,6 +12,7 @@ export type XingyeRelationshipStateTrigger =
 
 export interface BuildRelationshipStatePromptArgs {
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>;
+  userName?: string;
   profile: Partial<XingyeRoleProfileDisplay> | null | undefined;
   state: XingyeRelationshipState;
   recentChatSummary?: string;
@@ -22,6 +24,10 @@ export interface BuildRelationshipStatePromptArgs {
 
 export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptArgs): string {
   const profile = args.profile ?? {};
+  const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
+    userName: args.userName,
+    agentName: profile.displayName ?? args.agent.name,
+  });
   const context = {
     trigger: args.trigger,
     targetRule: 'Only update the current agent attitude and internal state toward user("__user__").',
@@ -45,6 +51,7 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
     },
     currentRelationshipState: args.state,
     recentOpenHanakoChat: args.recentChatSummary?.trim() || '(no safe recent chat summary was provided)',
+    speakerContext: speakerContextBlock,
     xingyeLoreContext: args.loreContextText?.trim() || '(no matching canonical lore was provided)',
     sourceNotes: args.sourceNotes ?? [],
   };
@@ -56,6 +63,7 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
     '禁止生成 agent-agent、agent-NPC、通讯录联系人、短信联系人、群聊成员、黑名单、阵营或标签关系。',
     '禁止写入或假设 OpenHanako memory。不要编造没有出现在输入里的重大事件。',
     '设定库（xingyeLoreContext）内容只作为当前状态判断参考；不得写入 OpenHanako memory；不得编造输入中没有的重大事件。',
+    '判断 user 与 agent 的语义时必须遵守下方 speaker context，不要把 NPC 当成 user 或 agent。',
     '',
     '请生成“建议变化”，不是最终状态。前端会先展示建议，用户接受后才写入 localStorage。',
     '',
@@ -81,6 +89,8 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
       stateSummary: '当前状态摘要',
       reason: '变化原因',
     }, null, 2),
+    '',
+    speakerContextBlock,
     '',
     '输入：',
     JSON.stringify(context, null, 2),

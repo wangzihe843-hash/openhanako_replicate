@@ -32,10 +32,13 @@ const display = {
   shortBio: 'bio',
   relationshipLabel: 'friend',
   speakingStyle: 'calm',
-  chatBackgroundDataUrl: null,
+  chatBackgroundDataUrl: undefined,
+  allowAutoMoments: false,
+  allowProactiveDM: false,
 };
 
 function renderPhoneHome() {
+  const onOpenSchedule = vi.fn();
   return render(
     <PhoneHome
       agent={agent}
@@ -45,6 +48,7 @@ function renderPhoneHome() {
       onOpenContacts={vi.fn()}
       onOpenMmChat={vi.fn()}
       onOpenJournal={vi.fn()}
+      onOpenSchedule={onOpenSchedule}
     />,
   );
 }
@@ -92,5 +96,25 @@ describe('PhoneHome heartbeat trigger', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检失败：Heartbeat not initialized');
     });
+  });
+
+  it('opens the schedule app from the phone home grid', () => {
+    const onOpenSchedule = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={onOpenSchedule}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /日程/ }));
+
+    expect(onOpenSchedule).toHaveBeenCalledTimes(1);
   });
 });

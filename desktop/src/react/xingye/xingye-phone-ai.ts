@@ -56,6 +56,7 @@ import {
   collectRecentContextForAgent,
   type XingyeRecentContext,
 } from './xingye-recent-context';
+import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -318,13 +319,14 @@ export async function enrichContactsWithAI(params: {
     version: 1,
   });
   try {
+    const userName = await resolveXingyeSpeakerUserName();
     const loreContextText = buildLoreContextForPhone({
       agentId: ownerAgent.id,
       purpose: 'phone_contacts',
       ownerProfile,
       contacts,
     });
-    const prompt = buildContactsEnrichmentPrompt({ ownerAgent, ownerProfile, contacts, loreContextText });
+    const prompt = buildContactsEnrichmentPrompt({ ownerAgent, ownerProfile, contacts, userName, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_enrichment',
       ownerAgentId: ownerAgent.id,
@@ -417,6 +419,7 @@ async function generateVirtualContactsWithAISequential(params: {
 
   setContactUpdateState(ownerAgent.id, mode, 'running');
   try {
+    const userName = await resolveXingyeSpeakerUserName();
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
     const loreContextText = buildLoreContextForPhone({
       agentId: ownerAgent.id,
@@ -426,8 +429,8 @@ async function generateVirtualContactsWithAISequential(params: {
       recentContext,
     });
     const prompt = isRegenerate
-      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts, recentContext, loreContextText })
-      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial', recentContext, loreContextText });
+      ? buildContactRegenerateAllPrompt({ ownerAgent, ownerProfile, contacts, recentContext, userName, loreContextText })
+      : buildVirtualContactGenerationPrompt({ ownerAgent, ownerProfile, contacts, intent: 'initial', recentContext, userName, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: isRegenerate ? 'contacts_regenerate_all' : 'virtual_contacts_generate',
       ownerAgentId: ownerAgent.id,
@@ -537,6 +540,7 @@ export async function updateContactsFromRecentContextWithAI(params: {
   createPhoneContactSnapshot(ownerAgent.id, 'incremental_update_before');
   setContactUpdateState(ownerAgent.id, 'incremental_update', 'running');
   try {
+    const userName = await resolveXingyeSpeakerUserName();
     const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
       targetType: thread.targetType,
       targetId: thread.targetId,
@@ -552,7 +556,7 @@ export async function updateContactsFromRecentContextWithAI(params: {
       recentContext,
       smsSummary,
     });
-    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary, recentContext, loreContextText });
+    const prompt = buildContactIncrementalUpdatePrompt({ ownerAgent, ownerProfile, contacts, smsSummary, recentContext, userName, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_incremental_update',
       ownerAgentId: ownerAgent.id,
@@ -635,6 +639,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
   const contactsAfterRestore = getPhoneContacts(ownerAgent.id, agents, profiles, { includeDeleted: true });
   setContactUpdateState(ownerAgent.id, 'rollback_and_update', 'running');
   try {
+    const userName = await resolveXingyeSpeakerUserName();
     const smsSummary = getSmsThreads(ownerAgent.id).slice(0, 20).map(thread => ({
       targetType: thread.targetType,
       targetId: thread.targetId,
@@ -650,7 +655,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       recentContext,
       smsSummary,
     });
-    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary, recentContext, loreContextText });
+    const prompt = buildContactRollbackAndUpdatePrompt({ ownerAgent, ownerProfile, contacts: contactsAfterRestore, smsSummary, recentContext, userName, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'contacts_rollback_update',
       ownerAgentId: ownerAgent.id,
@@ -710,13 +715,14 @@ export async function generateSmsHistoryWithAI(params: {
     version: 1,
   });
   try {
+    const userName = await resolveXingyeSpeakerUserName();
     const loreContextText = buildLoreContextForPhone({
       agentId: ownerAgent.id,
       purpose: 'phone_sms',
       ownerProfile,
       contacts: smsContacts,
     });
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, loreContextText });
+    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText });
     const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
@@ -882,6 +888,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
   }
 
   const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
+  const userName = await resolveXingyeSpeakerUserName();
   const loreContextText = buildLoreContextForPhone({
     agentId: ownerAgent.id,
     purpose: 'phone_sms',
@@ -896,6 +903,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     ownerProfile,
     changeBundles: bundles,
     recentContext,
+    userName,
     loreContextText,
   });
   const { raw } = await requestPhoneAi({

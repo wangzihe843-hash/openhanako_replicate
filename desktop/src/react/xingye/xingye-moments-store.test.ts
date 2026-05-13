@@ -6,7 +6,13 @@ import {
   deleteXingyeMomentPost,
   listXingyeMomentPosts,
   toggleXingyeMomentLike,
+  type XingyeMomentPost,
 } from './xingye-moments-store';
+
+function requireMomentPost(post: XingyeMomentPost | null | undefined): XingyeMomentPost {
+  if (!post) throw new Error('expected moment post');
+  return post;
+}
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -45,10 +51,10 @@ describe('xingye-moments-store', () => {
 
   it('creates text-only posts, stores imageUrls, and lists newest first', () => {
     vi.setSystemTime(new Date('2026-05-11T02:00:00.000Z'));
-    const first = createXingyeMomentPost('agent-1', '第一条动态', storage);
+    const first = requireMomentPost(createXingyeMomentPost('agent-1', '第一条动态', storage));
 
     vi.setSystemTime(new Date('2026-05-11T03:00:00.000Z'));
-    const second = createXingyeMomentPost('agent-2', '第二条动态', storage);
+    const second = requireMomentPost(createXingyeMomentPost('agent-2', '第二条动态', storage));
 
     expect(first).toMatchObject({
       authorAgentId: 'agent-1',
@@ -66,7 +72,7 @@ describe('xingye-moments-store', () => {
   });
 
   it('toggles likes, adds comments, and deletes posts', () => {
-    const post = createXingyeMomentPost('agent-1', '可以互动的动态', storage);
+    const post = requireMomentPost(createXingyeMomentPost('agent-1', '可以互动的动态', storage));
 
     expect(toggleXingyeMomentLike(post.id, 'agent-2', storage)?.likes).toEqual(['agent-2']);
     expect(toggleXingyeMomentLike(post.id, 'agent-2', storage)?.likes).toEqual([]);

@@ -1,5 +1,5 @@
 /** 下一轮再接 import；本轮 false → fact 不可确认 */
-export const XINGYE_ENABLE_FACT_MEMORY_IMPORT = false as const;
+export const XINGYE_ENABLE_FACT_MEMORY_IMPORT: boolean = false;
 
 export const XINGYE_MEMORY_TARGETS = ['pinned', 'fact', 'longterm'] as const;
 export type XingyeMemoryCandidateCanonicalTarget = (typeof XINGYE_MEMORY_TARGETS)[number];
@@ -34,8 +34,7 @@ export function getXingyeMemoryTargetDescription(target: XingyeMemoryCandidateTa
 
 export function isXingyeMemoryTargetWritable(target: XingyeMemoryCandidateTarget): boolean {
   if (target === 'pinned') return true;
-  if (target === 'fact') return XINGYE_ENABLE_FACT_MEMORY_IMPORT === true;
-  return false;
+  return target === 'fact' && XINGYE_ENABLE_FACT_MEMORY_IMPORT;
 }
 
 export function assertXingyeMemoryTargetWritable(target: XingyeMemoryCandidateTarget): void {

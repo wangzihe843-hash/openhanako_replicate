@@ -14,6 +14,7 @@ import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
 } from './xingye-recent-context';
+import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
 
@@ -70,6 +71,10 @@ async function buildStableLoreBlock(agentId: string): Promise<string> {
   return fallback.trim();
 }
 
+function safeText(value: string | undefined): string {
+  return value?.trim() || '';
+}
+
 function formatRelationshipBlock(agentId: string): string {
   const storage = getXingyePersistenceStorage();
   const state = getRelationshipState(agentId, storage);
@@ -91,15 +96,15 @@ function formatRelationshipBlock(agentId: string): string {
 function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
   if (!profile) return [];
   return [
-    profile.displayName,
-    profile.shortBio,
-    profile.identitySummary,
-    profile.backgroundSummary,
-    profile.personalitySummary,
-    profile.relationshipLabel,
-    profile.values,
-    profile.taboos,
-    profile.relationshipMode,
+    safeText(profile.displayName),
+    safeText(profile.shortBio),
+    safeText(profile.identitySummary),
+    safeText(profile.backgroundSummary),
+    safeText(profile.personalitySummary),
+    safeText(profile.relationshipLabel),
+    safeText(profile.values),
+    safeText(profile.taboos),
+    safeText(profile.relationshipMode),
   ];
 }
 
@@ -139,6 +144,7 @@ export async function generateJournalDraftWithAI(params: {
   const timeoutMs = params.timeoutMs ?? 90_000;
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const userName = await resolveXingyeSpeakerUserName();
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
   const relationshipBlock = formatRelationshipBlock(agent.id);
@@ -164,6 +170,7 @@ export async function generateJournalDraftWithAI(params: {
 
   const prompt = buildJournalDraftPrompt({
     agent,
+    userName,
     profile: ownerProfile,
     recentSceneBlock,
     stableLoreBlock,

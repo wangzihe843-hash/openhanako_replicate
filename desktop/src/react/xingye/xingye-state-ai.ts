@@ -11,6 +11,7 @@ import {
   buildRelationshipStatePrompt,
   type XingyeRelationshipStateTrigger,
 } from './xingye-state-prompts';
+import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 
 export type XingyeRelationshipStateSuggestion = Required<XingyeRelationshipStatePatch>;
 
@@ -97,6 +98,7 @@ export async function generateRelationshipStateSuggestion(
   args: GenerateRelationshipStateSuggestionArgs,
 ): Promise<XingyeRelationshipStateSuggestion> {
   const recentChatSummary = args.recentChatSummary?.trim() ?? '';
+  const userName = await resolveXingyeSpeakerUserName();
   const loreContextText = args.loreContextText?.trim()
     ? args.loreContextText
     : buildLoreContextForRelationshipState({
@@ -107,6 +109,7 @@ export async function generateRelationshipStateSuggestion(
     });
   const prompt = buildRelationshipStatePrompt({
     ...args,
+    userName,
     recentChatSummary,
     loreContextText,
     trigger: args.trigger ?? 'manual_refresh',

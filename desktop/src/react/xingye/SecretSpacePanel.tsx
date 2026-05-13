@@ -16,7 +16,7 @@ import {
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
-import { generateSecretSpaceRecordWithAI } from './xingye-secret-space-ai';
+import { generateSecretSpaceRecordWithAI, isSecretSpaceAiGenerableCategory } from './xingye-secret-space-ai';
 import {
   appendSecretSpaceRecord,
   deleteSecretSpaceRecord,
@@ -193,7 +193,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   }, [agent?.id, activeCategory]);
 
   useEffect(() => {
-    if (!activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
+    if (!activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
     setAddRecordTitle('');
     setAddRecordBody('');
     setAddRecordError(null);
@@ -366,7 +366,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   };
 
   const handleAiGenerate = async () => {
-    if (!agent?.id || !activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
+    if (!agent?.id || !activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
     setAiError(null);
     setAiLoading(true);
     try {
@@ -505,9 +505,9 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     ) : null;
 
   const addRecordFooter =
-    activeCategory && ADD_RECORD_CATEGORY_IDS.has(activeCategory) ? (
+    activeCategory && isSecretSpaceAiGenerableCategory(activeCategory) ? (
       <div className={styles.profileForm} data-testid="secret-space-category-record-actions">
-        {isSecretSpaceManualAppendDebugEnabled() ? (
+        {ADD_RECORD_CATEGORY_IDS.has(activeCategory) && isSecretSpaceManualAppendDebugEnabled() ? (
           <div data-testid="secret-space-manual-add-record">
             <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
               [调试] 在本分类追加一条纯文本记录；保存后写入当前角色的秘密空间存储。

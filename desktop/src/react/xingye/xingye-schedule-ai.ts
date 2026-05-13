@@ -2,7 +2,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
-import { buildMmChatGenerationPrompt } from './xingye-mm-chat-prompts';
+import { buildScheduleDraftPrompt } from './xingye-schedule-prompts';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -14,14 +14,44 @@ import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
 } from './xingye-recent-context';
-import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
+import {
+  buildXingyeSpeakerAiDebugSnapshot,
+  buildXingyeRecentChatExcerpts,
+  formatXingyeRecentChatExcerptsForPrompt,
+  resolveXingyeSpeakerUserName,
+  type XingyeSpeakerAiDebugSnapshot,
+} from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
+import type { XingyeScheduleStatus } from './xingye-schedule-store';
+
+export type XingyeScheduleAiDraft = {
+  title: string;
+  dateLabel: string;
+  timeText?: string;
+  content: string;
+  note?: string;
+  status: XingyeScheduleStatus;
+};
 
 function truncateChars(text: string, max: number): string {
   const t = text.trim();
-  if (t.length > max) return `${t.slice(0, Math.max(0, max - 1))}…`;
-  return t;
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+export const buildScheduleRecentChatExcerpts = buildXingyeRecentChatExcerpts;
+export const formatScheduleRecentChatExcerptsForPrompt = formatXingyeRecentChatExcerptsForPrompt;
+export const buildScheduleAiDebugSnapshot = buildXingyeSpeakerAiDebugSnapshot;
+
+function shouldLogScheduleAiDebug(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as Record<string, unknown>).__XINGYE_DEBUG_SCHEDULE_AI__);
+}
+
+function logScheduleAiDebugSnapshot(snapshot: XingyeSpeakerAiDebugSnapshot): void {
+  if (!shouldLogScheduleAiDebug()) return;
+  console.info('[xingye-schedule-ai] sanitized prompt input', snapshot);
 }
 
 async function readLoreMemoryMarkdown(agentId: string): Promise<string | null> {
@@ -64,15 +94,8 @@ function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): st
 
 async function buildStableLoreBlock(agentId: string): Promise<string> {
   const fromFile = await readLoreMemoryMarkdown(agentId);
-  if (fromFile && fromFile.trim()) {
-    return truncateChars(fromFile, 3200);
-  }
-  const fallback = buildStableLoreFromAlwaysEntries(agentId, 2800);
-  return fallback.trim();
-}
-
-function safeText(value: string | undefined): string {
-  return value?.trim() || '';
+  if (fromFile && fromFile.trim()) return truncateChars(fromFile, 3200);
+  return buildStableLoreFromAlwaysEntries(agentId, 2800).trim();
 }
 
 function formatRelationshipBlock(agentId: string): string {
@@ -96,80 +119,82 @@ function formatRelationshipBlock(agentId: string): string {
 function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
   if (!profile) return [];
   return [
-    safeText(profile.displayName),
-    safeText(profile.shortBio),
-    safeText(profile.identitySummary),
-    safeText(profile.backgroundSummary),
-    safeText(profile.personalitySummary),
-    safeText(profile.relationshipLabel),
-    safeText(profile.values),
-    safeText(profile.taboos),
-    safeText(profile.relationshipMode),
-  ];
+    profile.displayName,
+    profile.shortBio,
+    profile.identitySummary,
+    profile.backgroundSummary,
+    profile.personalitySummary,
+    profile.relationshipLabel,
+    profile.values,
+    profile.taboos,
+    profile.relationshipMode,
+  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
 }
 
-function clampCodePoints(s: string, maxCodePoints: number): string {
-  const t = s.trim();
-  const chars = [...t];
-  if (chars.length <= maxCodePoints) return t;
-  return `${chars.slice(0, maxCodePoints).join('')}…`;
+function normalizeOptional(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  return truncateChars(text, max);
 }
 
-export type XingyeMmChatAiRound = {
-  title: string;
-  question: string;
-  answer: string;
-};
-
-export function normalizeMmChatRoundResult(raw: unknown): XingyeMmChatAiRound | null {
+export function normalizeScheduleDraftResult(raw: unknown): XingyeScheduleAiDraft | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
-  const qRaw = record.question;
-  const aRaw = record.answer;
-  const question = typeof qRaw === 'string' ? qRaw.trim() : '';
-  const answer = typeof aRaw === 'string' ? aRaw.trim() : '';
-  if (!question || !answer) return null;
-  const titleRaw = record.title;
-  const title = typeof titleRaw === 'string' && titleRaw.trim()
-    ? titleRaw.trim().slice(0, 200)
-    : truncateChars(question, 48);
+  const title = typeof record.title === 'string' ? record.title.trim() : '';
+  const dateLabel = typeof record.dateLabel === 'string' ? record.dateLabel.trim() : '';
+  const content = typeof record.content === 'string' ? record.content.trim() : '';
+  if (!title || !dateLabel || !content) return null;
+  const status = record.status === 'done' || record.status === 'skipped' ? record.status : 'planned';
   return {
-    title,
-    question: clampCodePoints(question, 3500),
-    answer: clampCodePoints(answer, 3500),
+    title: truncateChars(title, 160),
+    dateLabel: truncateChars(dateLabel, 80),
+    timeText: normalizeOptional(record.timeText, 80),
+    content: truncateChars(content, 1200),
+    note: normalizeOptional(record.note, 500),
+    status,
   };
 }
 
-/**
- * 调用 `POST /api/xingye/phone-generate`（`kind: mm_chat`），与日记 / 秘密空间 / TA 状态一致。
- * 不写入 MM Chat 存储；由调用方合并进当前会话并走既有 `saveMmChatPersistence`。
- */
-export async function generateMmChatRoundWithAI(params: {
+export async function generateScheduleDraftWithAI(params: {
   agent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
+  userName?: string;
+  userIntent?: string;
   timeoutMs?: number;
-}): Promise<XingyeMmChatAiRound> {
+}): Promise<XingyeScheduleAiDraft> {
   const { agent, ownerProfile } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
+  const userIntent = params.userIntent?.trim() ?? '';
+  const userName = await resolveXingyeSpeakerUserName(params.userName);
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
-  const userName = await resolveXingyeSpeakerUserName();
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
-  const recentSceneBlock = describeRecentContextForPrompt(recentContext);
+  const recentChatExcerpts = buildScheduleRecentChatExcerpts({
+    context: recentContext,
+    userName,
+    agentName,
+  });
+  const recentChatExcerptsBlock = formatScheduleRecentChatExcerptsForPrompt(recentChatExcerpts);
+  const recentSceneBlock = recentChatExcerptsBlock || describeRecentContextForPrompt(recentContext);
   const relationshipBlock = formatRelationshipBlock(agent.id);
   const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
   const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
 
   const queryText = buildXingyeLoreRuntimeQueryText([
     ...profilePartsForQuery(ownerProfile ?? null),
-    recentContext.summaryText,
+    userName,
+    agentName,
+    userIntent,
+    recentChatExcerpts.map((excerpt) => `${excerpt.speakerLabel}: ${excerpt.text}`).join('\n') || recentContext.summaryText,
     relationshipBlock,
     stableLoreBlock.slice(0, 2000),
     heartbeatLine ?? '',
   ]);
 
   const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
-    purpose: 'mm_chat',
+    purpose: 'generic',
     queryText,
     maxChars: 2000,
     includeAlways: false,
@@ -177,23 +202,30 @@ export async function generateMmChatRoundWithAI(params: {
   });
   const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
 
-  const prompt = buildMmChatGenerationPrompt({
+  const prompt = buildScheduleDraftPrompt({
     agent,
     userName,
     profile: ownerProfile,
+    userIntent,
     recentSceneBlock,
     stableLoreBlock,
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
   });
+  logScheduleAiDebugSnapshot(buildScheduleAiDebugSnapshot({
+    userName,
+    agentName,
+    recentChatExcerpts,
+    prompt,
+  }));
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     timeout: timeoutMs,
     body: JSON.stringify({
-      kind: 'mm_chat',
+      kind: 'schedule_draft',
       ownerAgentId: agent.id,
       agentId: agent.id,
       prompt,
@@ -215,16 +247,14 @@ export async function generateMmChatRoundWithAI(params: {
 
   if (!response.ok || data?.ok === false || data?.error) {
     const details = Array.isArray(data?.details)
-      ? `：${(data.details as { message?: string }[])
-        .map((item) => item.message ?? '')
-        .join('；')}`
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
       : '';
     throw new Error(`${data?.error || '模型调用失败'}${details}`);
   }
 
-  const normalized = normalizeMmChatRoundResult(data?.result);
+  const normalized = normalizeScheduleDraftResult(data?.result);
   if (!normalized) {
-    throw new Error('模型返回无效：缺少 question/answer 或 JSON 解析失败');
+    throw new Error('模型返回无效：缺少明确日程安排或 JSON 解析失败');
   }
   return normalized;
 }

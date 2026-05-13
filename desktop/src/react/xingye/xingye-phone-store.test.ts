@@ -1,7 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+import type { XingyeEvent, XingyeEventInput } from './xingye-event-log';
 
-const appendEventOnceMock = vi.hoisted(() => vi.fn(async () => ({ id: 'event-1' })));
+type AppendXingyeEventOnceCall = [
+  string,
+  Omit<XingyeEventInput, 'agentId'> & { agentId?: string },
+  string,
+];
+
+const appendEventOnceMock = vi.hoisted(() =>
+  vi.fn(async (
+    _agentId: AppendXingyeEventOnceCall[0],
+    _input: AppendXingyeEventOnceCall[1],
+    _dedupeKey: AppendXingyeEventOnceCall[2],
+  ): Promise<XingyeEvent> => ({
+    id: 'event-1',
+    agentId: 'hanako',
+    type: 'phone.contact_changed',
+    source: 'test',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    payload: {},
+  })),
+);
 
 vi.mock('./xingye-event-log', () => ({
   appendXingyeEventOnce: appendEventOnceMock,
@@ -113,7 +133,7 @@ describe('xingye-phone-store', () => {
         displayName: '测试一号',
         updatedAt: '2026-05-11T00:00:00.000Z',
       },
-    }, storage);
+    }, undefined, storage);
 
     const user = contacts.find(item => item.targetType === 'user');
     const anzu = contacts.find(item => item.targetType === 'agent' && item.targetId === 'anzu');

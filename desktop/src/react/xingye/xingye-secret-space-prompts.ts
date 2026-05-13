@@ -1,16 +1,28 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import type { SecretSpaceCategoryId } from './SecretSpaceHome';
+import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 /**
- * 本模块负责四类「纯文本 JSONL」秘密空间的 AI 生成。
- * - 不含 `state`：`TA 的状态` 已由 RelationshipStatePanel / 关系状态存储单独维护，不是往后排。
- * - 不含 `memory_fragment`：走私藏回忆与记忆候选流程，与本批普通生成分开。
+ * 允许走 `generateSecretSpaceRecordWithAI` 的秘密空间分类（与 `SecretSpaceCategoryId` 子集对齐）。
+ * - 含 `state`：TA 状态分类可追加 JSONL 短笔记；上方仍有 RelationshipStatePanel。
+ * - 不含 `memory_fragment`：私藏回忆与记忆候选流程单独维护。
  */
-export type SecretSpaceAiGenerableCategory =
-  | 'draft_reply'
-  | 'dream'
-  | 'saved_item'
-  | 'unsent_moment';
+export const SECRET_SPACE_AI_GENERABLE_CATEGORIES = [
+  'state',
+  'draft_reply',
+  'dream',
+  'saved_item',
+  'unsent_moment',
+] as const;
+
+export type SecretSpaceAiGenerableCategory = (typeof SECRET_SPACE_AI_GENERABLE_CATEGORIES)[number];
+
+export function isSecretSpaceAiGenerableCategory(
+  id: SecretSpaceCategoryId,
+): id is SecretSpaceAiGenerableCategory {
+  return SECRET_SPACE_AI_GENERABLE_CATEGORIES.some((c) => c === id);
+}
 
 function renderLoreSection(loreContextText: string | null | undefined): string | null {
   if (typeof loreContextText !== 'string') return null;
@@ -25,6 +37,8 @@ function renderLoreSection(loreContextText: string | null | undefined): string |
 }
 
 const CATEGORY_TASK: Record<SecretSpaceAiGenerableCategory, string> = {
+  state:
+    '生成一条与「TA 当前状态、情绪或关系快照」相关的短文字笔记：语气符合角色；像随手记下的状态备忘，不要写成系统说明或元描述。',
   draft_reply:
     '生成一条「尚未发送给用户的回复草稿」：第一人称、符合角色语气；像手机里未发出的消息草稿，不要写成创作说明或旁白。',
   dream:
@@ -42,6 +56,7 @@ const CATEGORY_TASK: Record<SecretSpaceAiGenerableCategory, string> = {
 export function buildSecretSpaceGenerationPrompt(args: {
   category: SecretSpaceAiGenerableCategory;
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>;
+  userName?: string;
   profile: XingyeRoleProfile | null | undefined;
   recentChatBlock: string;
   loreContextText: string | null | undefined;
@@ -50,6 +65,10 @@ export function buildSecretSpaceGenerationPrompt(args: {
 }): string {
   const { category, agent, profile, recentChatBlock, seedText } = args;
   const loreSection = renderLoreSection(args.loreContextText);
+  const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
+    userName: args.userName,
+    agentName: profile?.displayName ?? agent.name,
+  });
   const seedTrimmed = typeof seedText === 'string' ? seedText.replace(/\s+/g, ' ').trim() : '';
 
   const parts: string[] = [
@@ -68,6 +87,8 @@ export function buildSecretSpaceGenerationPrompt(args: {
       yuan: agent.yuan,
       profile: profile ?? null,
     }, null, 2),
+    '',
+    speakerContextBlock,
     '',
     '最近 OpenHanako 聊天参考（可能为空；为空时仅依据资料与设定参考）：',
     recentChatBlock,

@@ -7,6 +7,10 @@ describe('buildSecretSpaceGenerationPrompt', () => {
 
   const categories = ['draft_reply', 'dream', 'saved_item', 'unsent_moment'] as const;
 
+  it('maps state category to relationship_state lore purpose', () => {
+    expect(getSecretSpaceLorePurpose('state')).toBe('relationship_state');
+  });
+
   it.each(categories)('maps category %s to matching lore purpose', (category) => {
     expect(getSecretSpaceLorePurpose(category)).toBe(`secret_space_${category}`);
   });

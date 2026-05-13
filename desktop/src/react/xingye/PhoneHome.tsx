@@ -16,6 +16,7 @@ interface PhoneHomeProps {
   onOpenContacts: () => void;
   onOpenMmChat: () => void;
   onOpenJournal: () => void;
+  onOpenSchedule: () => void;
 }
 
 const phoneIcons = {
@@ -25,6 +26,17 @@ const phoneIcons = {
       <path d="M8 4.5v15" />
       <path d="M11 8h4" />
       <path d="M11 11h3" />
+    </svg>
+  ),
+  calendar: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 3.5v3" />
+      <path d="M17 3.5v3" />
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M4 9h16" />
+      <path d="M8 13h2" />
+      <path d="M13 13h3" />
+      <path d="M8 16h5" />
     </svg>
   ),
   images: (
@@ -82,6 +94,7 @@ const appShortcuts = [
   { label: '通讯录', subtitle: '联系人与印象', tone: 'contacts', icon: phoneIcons.users, action: 'contacts' },
   { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
   { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
+  { label: '日程', subtitle: '安排与约定记录', tone: 'schedule', icon: phoneIcons.calendar, action: 'schedule' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
@@ -116,6 +129,7 @@ export function PhoneHome({
   onOpenContacts,
   onOpenMmChat,
   onOpenJournal,
+  onOpenSchedule,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -147,6 +161,10 @@ export function PhoneHome({
     }
     if (action === 'journal') {
       onOpenJournal();
+      return;
+    }
+    if (action === 'schedule') {
+      onOpenSchedule();
     }
   };
 

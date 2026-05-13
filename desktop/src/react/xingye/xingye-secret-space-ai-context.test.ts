@@ -8,6 +8,7 @@ import {
 describe('xingye-secret-space-ai-context', () => {
   it('maps each SecretSpace category to its reserved lore purpose', () => {
     const cases: Array<[XingyeSecretSpaceLoreCategory, string]> = [
+      ['state', 'relationship_state'],
       ['dream', 'secret_space_dream'],
       ['draft_reply', 'secret_space_draft_reply'],
       ['unsent_moment', 'secret_space_unsent_moment'],

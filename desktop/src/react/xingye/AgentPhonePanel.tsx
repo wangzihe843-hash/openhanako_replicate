@@ -11,6 +11,7 @@ import type { XingyeTabId } from './xingye-tabs';
 import { PhoneJournalApp } from './PhoneJournalApp';
 import { PhoneMmChatApp } from './PhoneMmChatApp';
 import { PhoneHome } from './PhoneHome';
+import { PhoneScheduleApp } from './PhoneScheduleApp';
 import { PhoneSmsApp } from './PhoneSmsApp';
 import styles from './XingyeShell.module.css';
 
@@ -21,7 +22,7 @@ interface AgentPhonePanelProps {
   onOpenGroupChatTab?: () => void;
 }
 
-type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal';
+type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule';
 
 export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
   const channels = useStore(state => state.channels);
@@ -51,6 +52,7 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           onOpenContacts={() => setPhonePage('contacts')}
           onOpenMmChat={() => setPhonePage('mm-chat')}
           onOpenJournal={() => setPhonePage('journal')}
+          onOpenSchedule={() => setPhonePage('schedule')}
         />
       ) : null}
 
@@ -88,6 +90,15 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
       {phonePage === 'journal' ? (
         <PhoneJournalApp
           ownerAgent={agent}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'schedule' ? (
+        <PhoneScheduleApp
+          ownerAgent={agent}
+          ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
           onBack={() => setPhonePage('home')}
         />

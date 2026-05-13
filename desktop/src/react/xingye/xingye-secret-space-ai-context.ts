@@ -10,7 +10,7 @@
  * - 不经由本文件读取 OpenHanako 记忆候选内容（`memory_fragment` 的 purpose 仅作 lore keyword 查询用途，
  *   实际「私藏回忆 → 记忆候选」仍在 `xingye-memory-candidate-store`）。
  *
- * 仅把分类映射到 `XingyeLoreRuntimeContextPurpose` 的 `secret_space_*`，并组装 options。
+ * 仅把分类映射到 `XingyeLoreRuntimeContextPurpose`：`state` → `relationship_state`，其余为 `secret_space_*`。
  */
 
 import {
@@ -20,6 +20,7 @@ import {
 } from './xingye-lore-runtime-context';
 
 export type XingyeSecretSpaceLoreCategory =
+  | 'state'
   | 'dream'
   | 'draft_reply'
   | 'unsent_moment'
@@ -28,10 +29,11 @@ export type XingyeSecretSpaceLoreCategory =
 
 /**
  * SecretSpace AI 生成允许使用的 purpose 子集。
- * 与 `XingyeLoreRuntimeContextPurpose` 中的 `secret_space_*` 一一对应，是其严格子类型。
+ * 与 `XingyeLoreRuntimeContextPurpose` 的子集对应：`state` 使用 `relationship_state`，其余为 `secret_space_*`。
  */
 export type XingyeSecretSpaceLorePurpose = Extract<
   XingyeLoreRuntimeContextPurpose,
+  | 'relationship_state'
   | 'secret_space_dream'
   | 'secret_space_draft_reply'
   | 'secret_space_unsent_moment'
@@ -40,6 +42,7 @@ export type XingyeSecretSpaceLorePurpose = Extract<
 >;
 
 const CATEGORY_TO_PURPOSE: Record<XingyeSecretSpaceLoreCategory, XingyeSecretSpaceLorePurpose> = {
+  state: 'relationship_state',
   dream: 'secret_space_dream',
   draft_reply: 'secret_space_draft_reply',
   unsent_moment: 'secret_space_unsent_moment',

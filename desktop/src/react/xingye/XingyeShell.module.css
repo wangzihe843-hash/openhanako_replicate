@@ -1585,6 +1585,10 @@
   background: linear-gradient(135deg, #6b6496, #a293c8);
 }
 
+.phoneAppGlyph_schedule {
+  background: linear-gradient(135deg, #7d5f5f, #c28f86);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;
@@ -3121,6 +3125,182 @@
   font-size: 0.8rem;
   line-height: 1.55;
   background: rgba(255, 255, 255, 0.62);
+}
+
+/* —— 小手机日程 —— */
+.scheduleLayout {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.scheduleToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scheduleTodayBlock {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.scheduleTodayBlock strong {
+  color: var(--text);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.scheduleTodayKicker {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.scheduleDateStrip {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.scheduleDateChip {
+  flex: 0 0 auto;
+  min-width: 72px;
+  max-width: 130px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  text-align: left;
+}
+
+.scheduleDateChip span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+}
+
+.scheduleDateChip strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleDateChipActive {
+  border-color: rgba(125, 95, 95, 0.48);
+  background: rgba(255, 246, 244, 0.95);
+  box-shadow: 0 0 0 2px rgba(194, 143, 134, 0.18);
+}
+
+.scheduleGroup {
+  display: grid;
+  gap: 8px;
+}
+
+.scheduleCard {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(52px, 72px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  text-align: left;
+}
+
+.scheduleCard:hover {
+  border-color: rgba(125, 95, 95, 0.42);
+  box-shadow: 0 6px 14px rgba(91, 79, 58, 0.1);
+}
+
+.scheduleCardTime {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.scheduleCardMain {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.scheduleCardMain strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleCardMain span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleStatusPill {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.scheduleStatus_planned {
+  background: rgba(194, 143, 134, 0.14);
+  color: #7d4c48;
+}
+
+.scheduleStatus_done {
+  background: rgba(95, 123, 96, 0.14);
+  color: #456d46;
+}
+
+.scheduleStatus_skipped {
+  background: rgba(148, 163, 184, 0.14);
+  color: #64748b;
+}
+
+.scheduleDetailNote {
+  margin: 10px 0 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  padding-top: 10px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.scheduleStatusActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scheduleStatusButtonActive {
+  border: 1px solid rgba(125, 95, 95, 0.35);
+  border-radius: 10px;
+  padding: 7px 10px;
+  background: rgba(255, 246, 244, 0.95);
+  color: #7d4c48;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .phoneModalOverlay {

@@ -1,8 +1,10 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 export function buildJournalDraftPrompt(args: {
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>;
+  userName?: string;
   profile: XingyeRoleProfile | null | undefined;
   recentSceneBlock: string;
   stableLoreBlock: string;
@@ -11,6 +13,10 @@ export function buildJournalDraftPrompt(args: {
   heartbeatBlock: string;
 }): string {
   const { agent, profile, recentSceneBlock, stableLoreBlock, keywordLoreBlock, relationshipBlock, heartbeatBlock } = args;
+  const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
+    userName: args.userName,
+    agentName: profile?.displayName ?? agent.name,
+  });
 
   const parts: string[] = [
     '你是星野模式「小手机日记」草稿生成器。只返回严格 JSON，不要 Markdown，不要解释。',
@@ -36,6 +42,8 @@ export function buildJournalDraftPrompt(args: {
       null,
       2,
     ),
+    '',
+    speakerContextBlock,
     '',
     '【最近发生的事（场景参考；勿在正文里交代信息来源）】',
     recentSceneBlock.trim() || '（无）',

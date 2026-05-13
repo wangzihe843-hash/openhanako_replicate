@@ -7,6 +7,19 @@ import { sanitizeAgentIdForPath } from './xingye-agent-path';
 export const XINGYE_LAYOUT_VERSION = 2;
 const WORKSPACE_V2_DISABLED_ERROR = 'workspace v2 storage is disabled; use agent-scoped Xingye storage under HANA_HOME/agents/{agentId}/xingye/';
 
+/**
+ * Legacy v2 FS code stays in-repo for migration reference but is disabled at runtime.
+ * Typed as `boolean` (not `false` const) so the implementation body is not collapsed
+ * to unreachable `never` by control-flow analysis.
+ */
+let workspaceV2LegacyImplReachable: boolean = false;
+
+function throwIfWorkspaceV2Disabled(): void {
+  if (!workspaceV2LegacyImplReachable) {
+    throw new Error(WORKSPACE_V2_DISABLED_ERROR);
+  }
+}
+
 export type XingyeWorkspaceManifestV2 = {
   schemaVersion: 2;
   layoutVersion: number;
@@ -21,6 +34,74 @@ export type XingyeWorkspaceManifestV2 = {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function parseWorkspaceManifestFromJson(raw: string): XingyeWorkspaceManifestV2 | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  if (parsed.schemaVersion !== 2) return null;
+  if (typeof parsed.layoutVersion !== 'number' || parsed.layoutVersion < XINGYE_LAYOUT_VERSION) return null;
+  const createdAt = typeof parsed.createdAt === 'string' ? parsed.createdAt : '';
+  const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '';
+  const workspaceRoot = typeof parsed.workspaceRoot === 'string' ? parsed.workspaceRoot : '';
+  const workspaceRootHash = typeof parsed.workspaceRootHash === 'string' ? parsed.workspaceRootHash : '';
+  if (!createdAt || !updatedAt || !workspaceRoot || !workspaceRootHash) return null;
+  const agentIdsRaw = parsed.agentIds;
+  const agentIds: string[] = [];
+  if (Array.isArray(agentIdsRaw)) {
+    for (const id of agentIdsRaw) {
+      if (typeof id === 'string' && id) agentIds.push(id);
+    }
+  }
+  const migratedFromLocalStorageAt = typeof parsed.migratedFromLocalStorageAt === 'string'
+    ? parsed.migratedFromLocalStorageAt
+    : undefined;
+  const migratedFromLayoutV1At = typeof parsed.migratedFromLayoutV1At === 'string'
+    ? parsed.migratedFromLayoutV1At
+    : undefined;
+  return {
+    schemaVersion: 2,
+    layoutVersion: parsed.layoutVersion,
+    createdAt,
+    updatedAt,
+    workspaceRoot,
+    workspaceRootHash,
+    migratedFromLocalStorageAt,
+    migratedFromLayoutV1At,
+    agentIds,
+  };
+}
+
+function parseJsonObjectMap(raw: string | undefined): Record<string, unknown> {
+  if (raw == null || raw === '') return {};
+  try {
+    const p: unknown = JSON.parse(raw);
+    return isRecord(p) ? p : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseNestedRecordMap(raw: string | undefined): Record<string, Record<string, unknown>> {
+  const top = parseJsonObjectMap(raw);
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(top)) {
+    if (isRecord(v)) out[k] = v;
+  }
+  return out;
+}
+
+function shallowRecordCopy(source: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(source)) {
+    out[k] = v;
+  }
+  return out;
 }
 
 const SMS_INDEX_SCHEMA_VERSION = 1;
@@ -177,16 +258,24 @@ function parseSmsThreadKey(threadKey: string): SmsThreadIdentity | null {
 function createSmsIndexEntry(threadKey: string, thread: Record<string, unknown>): SmsIndexEntry | null {
   const identity = parseSmsThreadKey(threadKey);
   if (!identity) return null;
+  const owner = thread.ownerAgentId;
+  const targetType = thread.targetType;
+  const targetId = thread.targetId;
   if (
-    thread.ownerAgentId !== identity.ownerAgentId
-    || thread.targetType !== identity.targetType
-    || thread.targetId !== identity.targetId
+    typeof owner !== 'string'
+    || typeof targetType !== 'string'
+    || typeof targetId !== 'string'
+    || owner !== identity.ownerAgentId
+    || targetType !== identity.targetType
+    || targetId !== identity.targetId
   ) {
     return null;
   }
   const safeThreadId = safeSmsThreadId(threadKey);
   return {
-    ...identity,
+    ownerAgentId: identity.ownerAgentId,
+    targetType: identity.targetType,
+    targetId: identity.targetId,
     threadKey,
     safeThreadId,
     file: smsThreadRelativeFile(safeThreadId),
@@ -333,27 +422,23 @@ export function collectXingyeAgentIds(memory: Map<string, string>): string[] {
   addFromChangeLog(memory.get('xingye.phone.contactChangeLog'));
   addFromMemoryCandidates(memory.get('xingye.memoryCandidates'));
 
-  return [...ids].sort();
+  return Array.from(ids).sort();
 }
 
 function agentBase(agentId: string): string {
   return `agents/${sanitizeAgentIdForPath(agentId)}`;
 }
 
-function rejectWorkspaceV2Storage(): never {
+async function writeFile(_rel: string, _content: string, _encoding: 'utf8' | 'base64' = 'utf8'): Promise<void> {
   throw new Error(WORKSPACE_V2_DISABLED_ERROR);
 }
 
-async function writeFile(_rel: string, _content: string, _encoding: 'utf8' | 'base64' = 'utf8'): Promise<void> {
-  rejectWorkspaceV2Storage();
-}
-
 async function readFileText(_rel: string): Promise<string | null> {
-  rejectWorkspaceV2Storage();
+  throw new Error(WORKSPACE_V2_DISABLED_ERROR);
 }
 
 async function readFileBase64(_rel: string): Promise<string | null> {
-  rejectWorkspaceV2Storage();
+  throw new Error(WORKSPACE_V2_DISABLED_ERROR);
 }
 
 async function readJsonObjectFile(rel: string): Promise<Record<string, unknown> | null> {
@@ -390,35 +475,79 @@ async function mergeAgentPhoneSmsThreadsMonolith(agentId: string, bucket: Record
 
 function isValidSmsIndexEntry(agentId: string, threadKey: string, value: unknown): value is SmsIndexEntry {
   if (!isRecord(value)) return false;
-  if (value.threadKey !== threadKey) return false;
+  if (typeof value.threadKey !== 'string' || value.threadKey !== threadKey) return false;
   const identity = parseSmsThreadKey(threadKey);
   if (!identity || identity.ownerAgentId !== agentId) return false;
+  const owner = value.ownerAgentId;
+  const targetType = value.targetType;
+  const targetId = value.targetId;
   if (
-    value.ownerAgentId !== identity.ownerAgentId
-    || value.targetType !== identity.targetType
-    || value.targetId !== identity.targetId
+    typeof owner !== 'string'
+    || typeof targetType !== 'string'
+    || typeof targetId !== 'string'
+    || owner !== identity.ownerAgentId
+    || targetType !== identity.targetType
+    || targetId !== identity.targetId
   ) {
     return false;
   }
   const expectedSafeThreadId = safeSmsThreadId(threadKey);
-  return (
-    value.safeThreadId === expectedSafeThreadId
-    && value.file === smsThreadRelativeFile(expectedSafeThreadId)
-  );
+  const safeId = value.safeThreadId;
+  const file = value.file;
+  const threadId = value.threadId;
+  const updatedAt = value.updatedAt;
+  const messageCount = value.messageCount;
+  if (typeof safeId !== 'string' || safeId !== expectedSafeThreadId) return false;
+  if (typeof file !== 'string' || file !== smsThreadRelativeFile(expectedSafeThreadId)) return false;
+  if (typeof threadId !== 'string' || typeof updatedAt !== 'string' || typeof messageCount !== 'number') {
+    return false;
+  }
+  return true;
+}
+
+function parseSmsIndexFromRecord(agentId: string, index: Record<string, unknown>): SmsIndexFile | null {
+  if (index.schemaVersion !== SMS_INDEX_SCHEMA_VERSION) return null;
+  const owner = index.ownerAgentId;
+  if (typeof owner !== 'string' || owner !== agentId) return null;
+  const updatedAt = typeof index.updatedAt === 'string' ? index.updatedAt : '';
+  if (!updatedAt) return null;
+  const threadsRaw = index.threads;
+  if (!isRecord(threadsRaw)) return null;
+  const threads: Record<string, SmsIndexEntry> = {};
+  for (const [threadKey, rawEntry] of Object.entries(threadsRaw)) {
+    if (!isValidSmsIndexEntry(agentId, threadKey, rawEntry)) continue;
+    threads[threadKey] = rawEntry;
+  }
+  return {
+    schemaVersion: SMS_INDEX_SCHEMA_VERSION,
+    ownerAgentId: owner,
+    updatedAt,
+    threads,
+  };
 }
 
 function smsThreadFromThreadFile(agentId: string, entry: SmsIndexEntry, value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
-  if (value.threadKey !== entry.threadKey) return null;
+  if (typeof value.threadKey !== 'string' || value.threadKey !== entry.threadKey) return null;
+  const owner = value.ownerAgentId;
+  const targetType = value.targetType;
+  const targetId = value.targetId;
   if (
-    value.ownerAgentId !== agentId
-    || value.ownerAgentId !== entry.ownerAgentId
-    || value.targetType !== entry.targetType
-    || value.targetId !== entry.targetId
+    typeof owner !== 'string'
+    || typeof targetType !== 'string'
+    || typeof targetId !== 'string'
+    || owner !== agentId
+    || owner !== entry.ownerAgentId
+    || targetType !== entry.targetType
+    || targetId !== entry.targetId
   ) {
     return null;
   }
-  const { schemaVersion: _schemaVersion, threadKey: _threadKey, ...thread } = value;
+  const thread: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (key === 'schemaVersion' || key === 'threadKey') continue;
+    thread[key] = val;
+  }
   return thread;
 }
 
@@ -433,11 +562,12 @@ async function writeAgentPhoneSmsThreadsPerThread(
     const entry = createSmsIndexEntry(threadKey, thread);
     if (!entry || entry.ownerAgentId !== agentId) continue;
     threads[threadKey] = entry;
-    const threadFile = {
-      ...thread,
-      schemaVersion: SMS_THREAD_SCHEMA_VERSION,
-      threadKey,
-    };
+    const threadFile: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(thread)) {
+      threadFile[k] = v;
+    }
+    threadFile.schemaVersion = SMS_THREAD_SCHEMA_VERSION;
+    threadFile.threadKey = threadKey;
     await writeFile(
       `${agentBase(agentId)}/phone/sms/${entry.file}`,
       JSON.stringify(threadFile, null, 2),
@@ -454,15 +584,10 @@ async function writeAgentPhoneSmsThreadsPerThread(
 }
 
 async function mergeAgentPhoneSmsThreadsPerThread(agentId: string, bucket: Record<string, unknown>): Promise<void> {
-  const index = await readJsonObjectFile(`${agentBase(agentId)}/phone/sms/index.json`) as SmsIndexFile | null;
-  if (
-    !index
-    || index.schemaVersion !== SMS_INDEX_SCHEMA_VERSION
-    || index.ownerAgentId !== agentId
-    || !isRecord(index.threads)
-  ) {
-    return;
-  }
+  const rawIndex = await readJsonObjectFile(`${agentBase(agentId)}/phone/sms/index.json`);
+  if (!rawIndex) return;
+  const index = parseSmsIndexFromRecord(agentId, rawIndex);
+  if (!index) return;
 
   for (const [threadKey, rawEntry] of Object.entries(index.threads)) {
     if (!isValidSmsIndexEntry(agentId, threadKey, rawEntry)) continue;
@@ -473,24 +598,19 @@ async function mergeAgentPhoneSmsThreadsPerThread(agentId: string, bucket: Recor
 }
 
 export async function readWorkspaceManifestV2(): Promise<XingyeWorkspaceManifestV2 | null> {
-  rejectWorkspaceV2Storage();
+  throwIfWorkspaceV2Disabled();
   const text = await readFileText('manifest.json');
-  if (!text) return null;
-  try {
-    const o = JSON.parse(text) as XingyeWorkspaceManifestV2;
-    if (o?.schemaVersion !== 2 || typeof o.layoutVersion !== 'number' || o.layoutVersion < XINGYE_LAYOUT_VERSION) {
-      return null;
-    }
-    return o;
-  } catch {
-    return null;
-  }
+  if (text == null || text === '') return null;
+  return parseWorkspaceManifestFromJson(text);
 }
 
 function parseDataUrl(dataUrl: string): { mime: string; base64: string } | null {
   const m = /^data:([^;,]+);base64,(.*)$/is.exec(dataUrl);
   if (!m) return null;
-  return { mime: m[1].trim(), base64: m[2].trim().replace(/\s/g, '') };
+  const mimePart = m[1];
+  const b64Part = m[2];
+  if (typeof mimePart !== 'string' || typeof b64Part !== 'string') return null;
+  return { mime: mimePart.trim(), base64: b64Part.trim().replace(/\s/g, '') };
 }
 
 function extFromMime(mime: string): string {
@@ -506,7 +626,7 @@ export async function materializeProfileMediaForV2(
   agentId: string,
   prof: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const copy = { ...prof };
+  const copy = shallowRecordCopy(prof);
   const base = `${agentBase(agentId)}/media`;
   const avatarUrl = copy.avatarDataUrl;
   if (typeof avatarUrl === 'string' && avatarUrl.startsWith('data:')) {
@@ -540,41 +660,31 @@ export async function persistMemoryMapToWorkspaceV2(
     Pick<XingyeWorkspaceManifestV2, 'migratedFromLocalStorageAt' | 'migratedFromLayoutV1At' | 'createdAt'>
   >,
 ): Promise<void> {
-  rejectWorkspaceV2Storage();
+  throwIfWorkspaceV2Disabled();
   const agentIds = collectXingyeAgentIds(memory);
   const now = new Date().toISOString();
   const prevMan = await readWorkspaceManifestV2();
 
-  const parseObj = (raw: string | undefined): Record<string, unknown> => {
-    if (!raw) return {};
-    try {
-      const p = JSON.parse(raw);
-      return isRecord(p) ? p : {};
-    } catch {
-      return {};
-    }
-  };
+  const profiles = parseNestedRecordMap(memory.get('xingye.roleProfiles'));
+  const loreMap = parseNestedRecordMap(memory.get('xingye.loreEntries'));
+  const relStates = parseJsonObjectMap(memory.get('xingye.relationshipStates'));
+  const moments = parseNestedRecordMap(memory.get('xingye.moments'));
+  const mcMap = parseNestedRecordMap(memory.get('xingye.memoryCandidates'));
 
-  const profiles = parseObj(memory.get('xingye.roleProfiles')) as Record<string, Record<string, unknown>>;
-  const loreMap = parseObj(memory.get('xingye.loreEntries')) as Record<string, Record<string, unknown>>;
-  const relStates = parseObj(memory.get('xingye.relationshipStates'));
-  const moments = parseObj(memory.get('xingye.moments')) as Record<string, Record<string, unknown>>;
-  const mcMap = parseObj(memory.get('xingye.memoryCandidates')) as Record<string, Record<string, unknown>>;
-
-  const cMap = parseObj(memory.get('xingye.phoneContacts'));
-  const vMap = parseObj(memory.get('xingye.phoneVirtualContacts'));
-  const sMap = parseObj(memory.get('xingye.phoneSmsThreads'));
-  const genMap = parseObj(memory.get('xingye.phoneContactGenerationState'));
-  const aiGenMap = parseObj(memory.get('xingye.phoneAiGenerationState'));
-  const smsHistMap = parseObj(memory.get('xingye.phoneSmsHistoryGenerationState'));
-  const snapMap = parseObj(memory.get('xingye.phoneContactSnapshots'));
-  const aiUpdMap = parseObj(memory.get('xingye.phoneContactAiUpdateState'));
+  const cMap = parseJsonObjectMap(memory.get('xingye.phoneContacts'));
+  const vMap = parseJsonObjectMap(memory.get('xingye.phoneVirtualContacts'));
+  const sMap = parseJsonObjectMap(memory.get('xingye.phoneSmsThreads'));
+  const genMap = parseJsonObjectMap(memory.get('xingye.phoneContactGenerationState'));
+  const aiGenMap = parseJsonObjectMap(memory.get('xingye.phoneAiGenerationState'));
+  const smsHistMap = parseJsonObjectMap(memory.get('xingye.phoneSmsHistoryGenerationState'));
+  const snapMap = parseJsonObjectMap(memory.get('xingye.phoneContactSnapshots'));
+  const aiUpdMap = parseJsonObjectMap(memory.get('xingye.phoneContactAiUpdateState'));
 
   const changeItems: unknown[] = (() => {
     const raw = memory.get('xingye.phone.contactChangeLog');
-    if (!raw) return [];
+    if (raw == null || raw === '') return [];
     try {
-      const p = JSON.parse(raw);
+      const p: unknown = JSON.parse(raw);
       return Array.isArray(p) ? p : [];
     } catch {
       return [];
@@ -582,22 +692,29 @@ export async function persistMemoryMapToWorkspaceV2(
   })();
 
   /** 电话/SMS 等 map：仅导出属于该 agent 的行（键仍为全局 composite key，值含 ownerAgentId）。 */
-  const filterMapByOwner = (m: Record<string, unknown>, agentId: string) => {
+  const filterMapByOwner = (m: Record<string, unknown>, agentId: string): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(m)) {
-      if (isRecord(v) && v.ownerAgentId === agentId) out[k] = v;
+      if (!isRecord(v)) continue;
+      const owner = v.ownerAgentId;
+      if (typeof owner !== 'string' || owner !== agentId) continue;
+      out[k] = v;
     }
     return out;
   };
 
-  const filterAiGen = (m: Record<string, unknown>, agentId: string) => {
+  const filterAiGen = (m: Record<string, unknown>, agentId: string): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
+    const prefix = `${agentId}::`;
     for (const [k, v] of Object.entries(m)) {
-      if (k.startsWith(`${agentId}::`)) {
+      if (k.startsWith(prefix)) {
         out[k] = v;
         continue;
       }
-      if (isRecord(v) && v.ownerAgentId === agentId) out[k] = v;
+      if (!isRecord(v)) continue;
+      const owner = v.ownerAgentId;
+      if (typeof owner !== 'string' || owner !== agentId) continue;
+      out[k] = v;
     }
     return out;
   };
@@ -605,11 +722,17 @@ export async function persistMemoryMapToWorkspaceV2(
   for (const agentId of agentIds) {
     const prof = profiles[agentId];
     if (prof && typeof prof === 'object') {
-      const diskProf = await materializeProfileMediaForV2(agentId, { ...prof, agentId });
+      const diskProfIn = shallowRecordCopy(prof);
+      diskProfIn.agentId = agentId;
+      const diskProf = await materializeProfileMediaForV2(agentId, diskProfIn);
       await writeFile(`${agentBase(agentId)}/profile.json`, JSON.stringify(diskProf, null, 2));
     }
 
-    const loreList = Object.values(loreMap).filter((e) => isRecord(e) && (e as { agentId?: string }).agentId === agentId);
+    const loreList = Object.values(loreMap).filter((e): e is Record<string, unknown> => {
+      if (!isRecord(e)) return false;
+      const aid = e.agentId;
+      return typeof aid === 'string' && aid === agentId;
+    });
     await writeFile(`${agentBase(agentId)}/lore.json`, JSON.stringify(loreList, null, 2));
 
     const rel = relStates[agentId];
@@ -619,13 +742,18 @@ export async function persistMemoryMapToWorkspaceV2(
 
     const momSub: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(moments)) {
-      if (isRecord(v) && v.authorAgentId === agentId) momSub[k] = v;
+      if (!isRecord(v)) continue;
+      const author = v.authorAgentId;
+      if (typeof author !== 'string' || author !== agentId) continue;
+      momSub[k] = v;
     }
     await writeFile(`${agentBase(agentId)}/moments/moments.json`, JSON.stringify(momSub, null, 2));
 
-    const mcList = Object.values(mcMap).filter(
-      (e) => isRecord(e) && String((e as { agentId?: string }).agentId) === agentId,
-    );
+    const mcList = Object.values(mcMap).filter((e): e is Record<string, unknown> => {
+      if (!isRecord(e)) return false;
+      const aid = e.agentId;
+      return typeof aid === 'string' && aid === agentId;
+    });
     await writeFile(`${agentBase(agentId)}/memory-candidates.json`, JSON.stringify(mcList, null, 2));
 
     await writeFile(
@@ -669,9 +797,11 @@ export async function persistMemoryMapToWorkspaceV2(
       await writeFile(`${agentBase(agentId)}/phone/contact-ai-update-state.json`, JSON.stringify(aiUpd, null, 2));
     }
 
-    const changes = changeItems.filter(
-      (item) => isRecord(item) && (item as { ownerAgentId?: string }).ownerAgentId === agentId,
-    );
+    const changes = changeItems.filter((item): item is Record<string, unknown> => {
+      if (!isRecord(item)) return false;
+      const owner = item.ownerAgentId;
+      return typeof owner === 'string' && owner === agentId;
+    });
     await writeFile(`${agentBase(agentId)}/phone/contact-change-log.json`, JSON.stringify(changes, null, 2));
     const jsonl = changes.map((c) => JSON.stringify(c)).join('\n');
     if (jsonl) {
@@ -694,7 +824,7 @@ export async function persistMemoryMapToWorkspaceV2(
 }
 
 export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>): Promise<void> {
-  rejectWorkspaceV2Storage();
+  throwIfWorkspaceV2Disabled();
   const man = await readWorkspaceManifestV2();
   if (!man) return;
 
@@ -742,10 +872,10 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const profText = await readFileText(`${agentBase(agentId)}/profile.json`);
     if (profText) {
       try {
-        const p = JSON.parse(profText) as Record<string, unknown>;
-        if (isRecord(p) && typeof p.agentId === 'string') {
-          await hydrateMediaPath(p);
-          profiles[p.agentId] = p;
+        const parsed: unknown = JSON.parse(profText);
+        if (isRecord(parsed) && typeof parsed.agentId === 'string') {
+          await hydrateMediaPath(parsed);
+          profiles[parsed.agentId] = parsed;
         }
       } catch { /* */ }
     }
@@ -753,9 +883,9 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const loreText = await readFileText(`${agentBase(agentId)}/lore.json`);
     if (loreText) {
       try {
-        const arr = JSON.parse(loreText) as unknown;
-        if (Array.isArray(arr)) {
-          for (const item of arr) {
+        const parsed: unknown = JSON.parse(loreText);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
             if (!isRecord(item)) continue;
             const id = typeof item.id === 'string' ? item.id : '';
             if (id) loreMerged[id] = item;
@@ -767,9 +897,9 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const relText = await readFileText(`${agentBase(agentId)}/relationship/state.json`);
     if (relText) {
       try {
-        const st = JSON.parse(relText) as unknown;
-        if (isRecord(st) && typeof st.agentId === 'string') {
-          relStates[st.agentId] = st;
+        const parsed: unknown = JSON.parse(relText);
+        if (isRecord(parsed) && typeof parsed.agentId === 'string') {
+          relStates[parsed.agentId] = parsed;
         }
       } catch { /* */ }
     }
@@ -777,9 +907,9 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const momText = await readFileText(`${agentBase(agentId)}/moments/moments.json`);
     if (momText) {
       try {
-        const o = JSON.parse(momText) as unknown;
-        if (isRecord(o)) {
-          for (const [k, v] of Object.entries(o)) {
+        const parsed: unknown = JSON.parse(momText);
+        if (isRecord(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) {
             if (isRecord(v)) momentsMerged[k] = v;
           }
         }
@@ -789,9 +919,9 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const mcText = await readFileText(`${agentBase(agentId)}/memory-candidates.json`);
     if (mcText) {
       try {
-        const arr = JSON.parse(mcText) as unknown;
-        if (Array.isArray(arr)) {
-          for (const item of arr) {
+        const parsed: unknown = JSON.parse(mcText);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
             if (!isRecord(item)) continue;
             const id = typeof item.id === 'string' ? item.id : '';
             if (id) mcMerged[id] = item;
@@ -808,16 +938,19 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const genT = await readFileText(`${agentBase(agentId)}/phone/contact-generation-state.json`);
     if (genT) {
       try {
-        genMerged[agentId] = JSON.parse(genT);
+        const parsed: unknown = JSON.parse(genT);
+        genMerged[agentId] = parsed;
       } catch { /* */ }
     }
 
     const aiGenT = await readFileText(`${agentBase(agentId)}/phone/ai-generation-state.json`);
     if (aiGenT) {
       try {
-        const o = JSON.parse(aiGenT) as Record<string, unknown>;
-        for (const [k, v] of Object.entries(o)) {
-          aiGenMerged[k] = v;
+        const parsed: unknown = JSON.parse(aiGenT);
+        if (isRecord(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) {
+            aiGenMerged[k] = v;
+          }
         }
       } catch { /* */ }
     }
@@ -825,29 +958,36 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const smsHistT = await readFileText(`${agentBase(agentId)}/phone/sms-history-generation-state.json`);
     if (smsHistT) {
       try {
-        smsHistMerged[agentId] = JSON.parse(smsHistT);
+        const parsed: unknown = JSON.parse(smsHistT);
+        smsHistMerged[agentId] = parsed;
       } catch { /* */ }
     }
 
     const snapT = await readFileText(`${agentBase(agentId)}/phone/contact-snapshots.json`);
     if (snapT) {
       try {
-        snapMerged[agentId] = JSON.parse(snapT);
+        const parsed: unknown = JSON.parse(snapT);
+        snapMerged[agentId] = parsed;
       } catch { /* */ }
     }
 
     const aiUpdT = await readFileText(`${agentBase(agentId)}/phone/contact-ai-update-state.json`);
     if (aiUpdT) {
       try {
-        aiUpdMerged[agentId] = JSON.parse(aiUpdT);
+        const parsed: unknown = JSON.parse(aiUpdT);
+        aiUpdMerged[agentId] = parsed;
       } catch { /* */ }
     }
 
     const chT = await readFileText(`${agentBase(agentId)}/phone/contact-change-log.json`);
     if (chT) {
       try {
-        const arr = JSON.parse(chT) as unknown;
-        if (Array.isArray(arr)) changeMerged.push(...arr);
+        const parsed: unknown = JSON.parse(chT);
+        if (Array.isArray(parsed)) {
+          for (const el of parsed) {
+            changeMerged.push(el);
+          }
+        }
       } catch { /* */ }
     }
   }

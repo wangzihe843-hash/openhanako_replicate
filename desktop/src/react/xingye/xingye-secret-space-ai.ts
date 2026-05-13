@@ -1,13 +1,14 @@
 /**
- * 秘密空间「四类普通分类」JSON 生成功能（`generateSecretSpaceRecordWithAI`）。
+ * 秘密空间多分类 JSON 生成功能（`generateSecretSpaceRecordWithAI`）。
  *
  * 每类放入模型的上下文（与 Xingye AI 审计 §6–7 对齐；无 OpenHanako 聊天缓存时照常降级，不抛错）：
  * - **draft_reply**：`XingyeRoleProfile` + `collectRecentContextForAgent` / `describeRecentContextForPrompt` + lore `secret_space_draft_reply`（`buildSecretSpaceLoreRuntimeOptions`）
  * - **dream**：profile + 同上 recent（可空）+ lore `secret_space_dream`
  * - **saved_item**：profile + lore `secret_space_saved_item` + 用户可选 `seedText`（参与 lore queryText 与 prompt）
  * - **unsent_moment**：profile + 同上 recent（可空）+ lore `secret_space_unsent_moment`；**不**读朋友圈 / moments store
+ * - **state**：profile + 同上 recent（可空）+ lore `relationship_state`（与 RelationshipStatePanel 并存；可追加状态类 JSONL 短笔记）
  *
- * 不在此实现：`state`（已有 RelationshipStatePanel / `xingye-state-store`）、`memory_fragment`（`xingye-memory-candidate-store` 私藏回忆与候选流程）。
+ * 不在此实现：`memory_fragment`（`xingye-memory-candidate-store` 私藏回忆与候选流程）。
  * 不写入：pinned / memory.md / lore 文件；仅由调用方 `appendSecretSpaceRecord` 追加 `secret-space/*.jsonl`。
  */
 import { hanaFetch } from '../hooks/use-hana-fetch';
@@ -17,6 +18,7 @@ import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
 } from './xingye-recent-context';
+import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import {
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
@@ -28,6 +30,10 @@ import {
 } from './xingye-secret-space-prompts';
 
 export type { SecretSpaceAiGenerableCategory } from './xingye-secret-space-prompts';
+export {
+  isSecretSpaceAiGenerableCategory,
+  SECRET_SPACE_AI_GENERABLE_CATEGORIES,
+} from './xingye-secret-space-prompts';
 
 export function normalizeSecretSpaceAiResult(raw: unknown): { title: string; content: string } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -58,6 +64,7 @@ export async function generateSecretSpaceRecordWithAI(params: {
   const timeoutMs = params.timeoutMs ?? 90_000;
 
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  const userName = await resolveXingyeSpeakerUserName();
   const recentChatBlock = describeRecentContextForPrompt(recentContext);
 
   const loreSeed = category === 'saved_item' ? (params.seedText ?? '') : '';
@@ -68,6 +75,7 @@ export async function generateSecretSpaceRecordWithAI(params: {
   const prompt = buildSecretSpaceGenerationPrompt({
     category,
     agent,
+    userName,
     profile: ownerProfile,
     recentChatBlock,
     loreContextText: loreBlock,

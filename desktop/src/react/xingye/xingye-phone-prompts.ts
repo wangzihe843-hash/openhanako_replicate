@@ -7,6 +7,7 @@ import type {
 } from './xingye-phone-store';
 import type { XingyeRecentContext } from './xingye-recent-context';
 import { describeRecentContextForPrompt } from './xingye-recent-context';
+import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 /**
  * 渲染设定库 prompt 段落。
@@ -26,6 +27,17 @@ function renderLoreContextSection(loreContextText: string | null | undefined): s
     '- 只在生成联系人印象、短信风格、关系暗示时作为背景约束。',
     '- 如果设定与用户最近聊天冲突，以最近聊天和角色资料为准。',
   ].join('\n');
+}
+
+function speakerContextForPhonePrompt(args: {
+  ownerAgent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  userName?: string | null;
+}): string {
+  return formatXingyeSpeakerContextForPrompt({
+    userName: args.userName,
+    agentName: args.ownerProfile?.displayName ?? args.ownerAgent.name,
+  });
 }
 
 function contactShape(contact: XingyePhoneContactView) {
@@ -52,6 +64,7 @@ export function buildContactsEnrichmentPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -85,6 +98,7 @@ export function buildContactsEnrichmentPrompt(params: {
       yuan: ownerAgent.yuan,
       profile: ownerProfile ?? null,
     }, null, 2),
+    speakerContextForPhonePrompt(params),
     '联系人列表:',
     JSON.stringify(contacts.map(contactShape), null, 2),
   ];
@@ -116,6 +130,7 @@ export function buildSmsHistoryPrompt(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -152,6 +167,7 @@ export function buildSmsHistoryPrompt(params: {
       yuan: ownerAgent.yuan,
       profile: ownerProfile ?? null,
     }, null, 2),
+    speakerContextForPhonePrompt(params),
     '联系人列表:',
     JSON.stringify(contacts.slice(0, 12).map(contactShape), null, 2),
   ];
@@ -173,6 +189,7 @@ export function buildSmsIncrementalUpdatePrompt(params: {
     smsSummary: { latestContent?: string; messageCount: number };
   }>;
   recentContext: XingyeRecentContext | null;
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -228,6 +245,7 @@ export function buildSmsIncrementalUpdatePrompt(params: {
       yuan: ownerAgent.yuan,
       profile: ownerProfile ?? null,
     }, null, 2),
+    speakerContextForPhonePrompt(params),
     '变化联系人（含变更字段与原因、现有短信摘要）:',
     JSON.stringify(bundlesJson, null, 2),
     recentBlock,
@@ -328,6 +346,7 @@ export function buildVirtualContactGenerationPrompt(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   intent?: 'initial' | 'regenerate';
+  userName?: string;
   /** 默认由调用方 `collectRecentContextForAgent` 填入；缺省时 prompt 内仍会写明「无最近聊天则只看资料」。 */
   recentContext?: XingyeRecentContext | null;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
@@ -370,6 +389,7 @@ export function buildVirtualContactGenerationPrompt(params: {
     '你的任务：为当前角色的小手机生成新的、合理的、非重复联系人。',
     '主要输入：当前角色人设 / 身份 / 世界观、已有联系人、最近聊天摘要（如有）。',
     countBlock,
+    speakerContextForPhonePrompt(params),
   ];
   lines.push(SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION);
   lines.push(
@@ -406,6 +426,7 @@ export function buildContactRegenerateAllPrompt(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
   recentContext?: XingyeRecentContext | null;
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -456,6 +477,7 @@ export function buildContactIncrementalUpdatePrompt(params: {
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
   recentContext?: XingyeRecentContext | null;
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -473,6 +495,7 @@ export function buildContactIncrementalUpdatePrompt(params: {
     INCREMENTAL_VS_TAG_FACTION_RULES,
     '【字段边界】add 时的 contact 对象遵守与虚拟联系人生成相同规则：用户可见字段禁止写任务说明或编剧指令；只有 generatedReason 写生成依据；只有顶层 reason 写「为什么执行该 action」。',
     VISIBLE_FIELD_RULES,
+    speakerContextForPhonePrompt(params),
     RECENT_CONTEXT_GUIDE,
     USER_CONTACT_UPDATE_GUIDE,
     INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE,
@@ -526,6 +549,7 @@ export function buildContactRollbackAndUpdatePrompt(params: {
   contacts: XingyePhoneContactView[];
   smsSummary: Array<{ targetType: string; targetId: string; latest?: string; count: number }>;
   recentContext?: XingyeRecentContext | null;
+  userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
 }) {
@@ -542,6 +566,7 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     '【字段强制】add 或 patch 若含 tags/faction/status，须遵守固定词表与非空规则；tags 不得为空数组；不要求为凑分布而强行改全员 status。',
     '【字段边界】与增量更新相同：用户可见字段禁止开发说明；generatedReason 仅用于 add 的联系人；reason 仅解释 action。',
     VISIBLE_FIELD_RULES,
+    speakerContextForPhonePrompt(params),
     TAG_FACTION_STATUS_RULES,
     INCREMENTAL_VS_TAG_FACTION_RULES,
     RECENT_CONTEXT_GUIDE,
