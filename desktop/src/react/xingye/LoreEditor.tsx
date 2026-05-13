@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useConfig } from '../hooks/use-config';
+import { useStore } from '../stores';
 import {
   createLoreEntry,
   deleteLoreEntry,
@@ -12,10 +14,12 @@ import {
   type XingyeLoreInsertionMode,
   type XingyeLoreVisibility,
 } from './xingye-lore-store';
+import { buildXingyeRelationshipLoreTemplateContent } from './xingye-lore-relationship-template';
 import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
 } from './xingye-memory-candidate-store';
+import { resolveXingyeLoreTemplateUserNameSync } from './xingye-speaker-context';
 import { LoreEntryCard } from './LoreEntryCard';
 import styles from './XingyeShell.module.css';
 
@@ -28,6 +32,8 @@ function buildLoreCandidateContent(entry: XingyeLoreEntry): string {
 
 interface LoreEditorProps {
   agentId: string;
+  /** OpenHanako 当前 agent 名称；用于关系模板占位，缺省为「当前角色」。 */
+  agentName?: string | null;
 }
 
 const CATEGORY_OPTIONS: Array<{ value: XingyeLoreCategory; label: string }> = XINGYE_LORE_CATEGORIES.map(
@@ -46,29 +52,90 @@ const VISIBILITY_OPTIONS: Array<{ value: XingyeLoreVisibility; label: string }> 
   { value: 'draft', label: '草稿' },
 ];
 
-const emptyDraft = {
-  title: '',
-  content: '',
-  category: 'background' as XingyeLoreCategory,
-  keywords: '',
-  priority: 50,
-  insertionMode: 'manual' as XingyeLoreInsertionMode,
-  visibility: 'canonical' as XingyeLoreVisibility,
+type LoreDraft = {
+  title: string;
+  content: string;
+  category: XingyeLoreCategory;
+  keywords: string;
+  priority: number;
+  insertionMode: XingyeLoreInsertionMode;
+  visibility: XingyeLoreVisibility;
 };
 
-export function LoreEditor({ agentId }: LoreEditorProps) {
+function createEmptyDraft(): LoreDraft {
+  return {
+    title: '',
+    content: '',
+    category: 'background',
+    keywords: '',
+    priority: 50,
+    insertionMode: 'manual',
+    visibility: 'canonical',
+  };
+}
+
+function entryToDraft(entry: XingyeLoreEntry): LoreDraft {
+  return {
+    title: entry.title,
+    content: entry.content,
+    category: entry.category,
+    keywords: entry.keywords.join(', '),
+    priority: entry.priority,
+    insertionMode: entry.insertionMode,
+    visibility: entry.visibility,
+  };
+}
+
+function normalizeAgentNameForTemplate(value: string | null | undefined): string {
+  const text = value?.trim();
+  return text || '当前角色';
+}
+
+export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
   const entries = useXingyeLoreEntries(agentId);
+  const { config } = useConfig();
+  const storeUserName = useStore((s) => s.userName);
+  const userNameForTemplate = useMemo(
+    () => resolveXingyeLoreTemplateUserNameSync(config, storeUserName),
+    [config, storeUserName],
+  );
+  const agentNameForTemplate = useMemo(() => normalizeAgentNameForTemplate(agentName), [agentName]);
+
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState(emptyDraft);
+  const [draft, setDraft] = useState<LoreDraft>(() => createEmptyDraft());
   const [flash, setFlash] = useState<string | null>(null);
   const [savingCandidateId, setSavingCandidateId] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setEditingId(null);
-    setDraft(emptyDraft);
+    setDraft(createEmptyDraft());
     setFlash(null);
   }, [agentId]);
+
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+
+  /** editingId 切换时从 store 拉取该条真实字段，避免未保存草稿残留在上一表单引用上。 */
+  useLayoutEffect(() => {
+    if (editingId == null) return;
+    const entry = entriesRef.current.find((e) => e.id === editingId);
+    if (!entry) {
+      setEditingId(null);
+      setDraft(createEmptyDraft());
+      return;
+    }
+    setDraft(entryToDraft(entry));
+  }, [editingId]);
+
+  /** 正在编辑的条目被删除时退出编辑态。 */
+  useEffect(() => {
+    if (editingId == null) return;
+    if (!entries.some((e) => e.id === editingId)) {
+      setEditingId(null);
+      setDraft(createEmptyDraft());
+    }
+  }, [editingId, entries]);
 
   useEffect(() => {
     return () => {
@@ -111,23 +178,60 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
     [editingId, entries],
   );
 
+  const relationshipTemplateBody = useMemo(
+    () =>
+      buildXingyeRelationshipLoreTemplateContent({
+        userName: userNameForTemplate,
+        agentName: agentNameForTemplate,
+      }),
+    [userNameForTemplate, agentNameForTemplate],
+  );
+
+  const applyRelationshipTemplateDefaults = useCallback(
+    (base: LoreDraft): LoreDraft => {
+      const title = base.title.trim()
+        ? base.title
+        : `用户身份与关系（${agentNameForTemplate}）`;
+      return {
+        ...base,
+        category: 'relationship',
+        content: relationshipTemplateBody,
+        insertionMode: 'always',
+        visibility: 'canonical',
+        title,
+      };
+    },
+    [agentNameForTemplate, relationshipTemplateBody],
+  );
+
   const resetDraft = () => {
     setEditingId(null);
-    setDraft(emptyDraft);
+    setDraft(createEmptyDraft());
   };
 
-  const startEdit = (entry: XingyeLoreEntry) => {
+  /** 仅切换 editingId；正文等由 useLayoutEffect 从 store 注入，避免未保存草稿残留在切换后的表单。 */
+  const startEdit = useCallback((entry: XingyeLoreEntry) => {
     setEditingId(entry.id);
-    setDraft({
-      title: entry.title,
-      content: entry.content,
-      category: entry.category,
-      keywords: entry.keywords.join(', '),
-      priority: entry.priority,
-      insertionMode: entry.insertionMode,
-      visibility: entry.visibility,
+  }, []);
+
+  /** 仅在此按钮点击时写入模板正文；选「关系」分类或清空正文不会自动填充。 */
+  const handleInsertRelationshipTemplate = useCallback(() => {
+    setDraft((current) => {
+      if (current.category !== 'relationship') return current;
+      const block = buildXingyeRelationshipLoreTemplateContent({
+        userName: userNameForTemplate,
+        agentName: agentNameForTemplate,
+      });
+      if (!current.content.trim()) {
+        return applyRelationshipTemplateDefaults({ ...current, content: '', category: 'relationship' });
+      }
+      const message =
+        '将在正文末尾追加一段关系设定模板（不删除已有文字）。第三方 NPC 与称呼边界等说明会一并追加。\n\n确定继续？';
+      if (typeof window !== 'undefined' && !window.confirm(message)) return current;
+      const head = current.content.trimEnd();
+      return { ...current, content: `${head}\n\n${block}` };
     });
-  };
+  }, [agentNameForTemplate, applyRelationshipTemplateDefaults, userNameForTemplate]);
 
   const saveDraft = () => {
     const keywords = Array.from(
@@ -173,7 +277,7 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
         {editingEntry && <button type="button" onClick={resetDraft}>取消编辑</button>}
       </div>
 
-      <div className={styles.loreForm}>
+      <div className={styles.loreForm} key={editingId ?? '__create__'}>
         <label className={styles.profileField}>
           <span>标题</span>
           <input
@@ -198,7 +302,10 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
             <span>分类</span>
             <select
               value={draft.category}
-              onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value as XingyeLoreCategory }))}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                category: event.target.value as XingyeLoreCategory,
+              }))}
             >
               {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
@@ -243,6 +350,16 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
             onChange={(event) => setDraft((current) => ({ ...current, keywords: event.target.value }))}
           />
         </label>
+        {draft.category === 'relationship' ? (
+          <div className={styles.loreHintStack} data-testid="lore-relationship-template-panel">
+            <p className={styles.loreHint}>
+              关系类条目仅作用于当前 agent 的设定库与注入链路，<strong>不会</strong>写入 OpenHanako 全局用户配置；模板中的「{userNameForTemplate}」来自当前 OpenHanako 用户显示名（config / 会话侧），「{agentNameForTemplate}」为当前角色名。仅在下方的「插入用户身份/关系模板」写入模板正文，不会仅因切换分类而自动填充。
+            </p>
+            <button type="button" data-testid="lore-relationship-insert-template" onClick={handleInsertRelationshipTemplate}>
+              插入用户身份/关系模板…
+            </button>
+          </div>
+        ) : null}
         <button type="button" className={styles.primaryAction} onClick={saveDraft}>
           {editingEntry ? '保存设定条目' : '新增设定条目'}
         </button>

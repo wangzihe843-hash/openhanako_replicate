@@ -495,7 +495,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
       </section>
 
       <section className={styles.detailSection} aria-label="背景故事与设定库">
-        <LoreEditor agentId={agent.id} />
+        <LoreEditor agentId={agent.id} agentName={agent.name} />
       </section>
 
       <section className={styles.detailSection} aria-label="角色基础信息">

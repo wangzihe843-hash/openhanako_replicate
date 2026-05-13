@@ -32,7 +32,12 @@ export function LoreEntryCard({
   saveAsCandidateDisabled,
 }: LoreEntryCardProps) {
   return (
-    <article className={styles.loreCard} data-testid={`lore-entry-card-${entry.id}`}>
+    <article
+      className={styles.loreCard}
+      data-testid={`lore-entry-card-${entry.id}`}
+      title="点击卡片载入上方编辑区"
+      onClick={() => onEdit(entry)}
+    >
       <div className={styles.loreCardHeader}>
         <div className={styles.loreTitleBlock}>
           <h4>{entry.title}</h4>
@@ -40,7 +45,7 @@ export function LoreEntryCard({
             {XINGYE_LORE_CATEGORY_LABELS[entry.category]} · {LORE_VISIBILITY_LABEL[entry.visibility]} · {LORE_INSERTION_LABEL[entry.insertionMode]} · 优先级 {entry.priority}
           </p>
         </div>
-        <button type="button" onClick={() => onToggle(entry.id)}>
+        <button type="button" onClick={(event) => { event.stopPropagation(); onToggle(entry.id); }}>
           {entry.enabled ? '停用' : '启用'}
         </button>
       </div>
@@ -50,7 +55,7 @@ export function LoreEntryCard({
           {entry.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}
         </div>
       )}
-      <div className={styles.loreActions}>
+      <div className={styles.loreActions} onClick={(event) => event.stopPropagation()}>
         <button type="button" onClick={() => onEdit(entry)}>编辑</button>
         <button type="button" onClick={() => onDelete(entry.id)}>删除</button>
         {onSaveAsCandidate ? (
