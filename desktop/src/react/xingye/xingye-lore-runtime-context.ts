@@ -1,7 +1,7 @@
 /**
  * xingye-lore-runtime-context.ts — Runtime-only Xingye lore (设定库) context helper.
  *
- * 用途：在生成小手机 / 未来 SecretSpace 等 AI 输出时，按需把"星野设定库"里
+ * 用途：在生成小手机 / 秘密空间分类 AI 等输出时，按需把"星野设定库"里
  *      `enabled === true` && `visibility === "canonical"` 的条目挑选出来，
  *      作为 prompt 段落参考，不写入 identity/ishiki，不写入任何持久层。
  *
@@ -26,21 +26,22 @@ import {
 } from './xingye-lore-store';
 
 /**
- * Purpose 枚举：phone_* 现在已使用；secret_space_* 为「保留位」，由 SecretSpace AI 生成时复用。
- * 这里只保留枚举值；不在此文件实施 SecretSpace AI 生成逻辑。
+ * Purpose 枚举：`phone_*`、`relationship_state` 已用于对应链路；`secret_space_*` 由
+ * `xingye-secret-space-ai-context.buildSecretSpaceLoreRuntimeOptions` 传入，仅供调试/记录（不在 lore-store 内分支）。
+ * SecretSpace 文本生成的组装逻辑见 `xingye-secret-space-ai.ts`，不在本文件实现。
  */
 export type XingyeLoreRuntimeContextPurpose =
   | 'phone_contacts'
   | 'phone_sms'
-  /** 预留：将来生成 SecretSpace 角色梦境时使用 */
+  /** 梦境类秘密空间生成（lore 运行时 keyword 查询等） */
   | 'secret_space_dream'
-  /** 预留：将来生成 SecretSpace 草稿回复时使用 */
+  /** 草稿回复类秘密空间生成 */
   | 'secret_space_draft_reply'
-  /** 预留：将来生成 SecretSpace 未发出的朋友圈时使用 */
+  /** 未发送朋友圈草稿类秘密空间生成 */
   | 'secret_space_unsent_moment'
-  /** 预留：将来生成 SecretSpace 收藏 / 想留的内容时使用 */
+  /** 收藏摘录类秘密空间生成 */
   | 'secret_space_saved_item'
-  /** 预留：将来生成 SecretSpace 角色记忆碎片时使用 */
+  /** 记忆碎片 lore 用途（与普通 JSONL 生成分开；记忆候选见 memory-candidate-store） */
   | 'secret_space_memory_fragment'
   | 'relationship_state'
   | 'generic';

@@ -1,16 +1,16 @@
 /**
- * xingye-secret-space-ai-context.ts — Reservation-only helper for future SecretSpace AI generation.
+ * xingye-secret-space-ai-context.ts — SecretSpace lore runtime options（纯映射，无模型）。
  *
- * 本文件只是为未来的「秘密空间 AI 生成」预留稳定的 purpose + options 映射。
+ * 供 `xingye-secret-space-ai.ts` 调用 `collectXingyeLoreRuntimeContext` 时使用。
  *
  * 严格约束：
  * - 不调用任何模型。
  * - 不修改 SecretSpace records / UI / 短信 / 通讯录。
  * - 不写持久层。
- * - 不读取任何记忆候选 / openhanako 记忆。
+ * - 不经由本文件读取 OpenHanako 记忆候选内容（`memory_fragment` 的 purpose 仅作 lore keyword 查询用途，
+ *   实际「私藏回忆 → 记忆候选」仍在 `xingye-memory-candidate-store`）。
  *
- * 它仅把 SecretSpace 的 category 映射成 `XingyeLoreRuntimeContextPurpose`，
- * 并返回可以喂给 `collectXingyeLoreRuntimeContext` 的 options。
+ * 仅把分类映射到 `XingyeLoreRuntimeContextPurpose` 的 `secret_space_*`，并组装 options。
  */
 
 import {

@@ -9,6 +9,8 @@ import {
   type XingyeMemoryCandidateTarget,
 } from './xingye-memory-target-policy';
 
+/** 与秘密空间「私藏回忆 → 重要记忆候选」配套；不经由 `xingye-secret-space-ai` 四类普通 JSONL 生成混写。 */
+
 export type { XingyeMemoryCandidateCanonicalTarget, XingyeMemoryCandidateTarget } from './xingye-memory-target-policy';
 export type XingyeMemoryCandidateStatus = 'pending' | 'rejected' | 'written';
 

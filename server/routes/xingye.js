@@ -23,9 +23,14 @@ const ALLOWED_LORE_CATEGORIES = new Set([
   "character",
 ]);
 
+/**
+ * 仅决定响应 JSON 里的 `kind` 字段取值；未列入的 kind 会落回 contacts_enrichment，但请求仍以 prompt 为准。
+ * 短信/通讯录等客户端 kind 故意不全部列入；秘密空间与 TA 状态等列入以便日志区分。
+ */
 const PHONE_GENERATE_KINDS = new Set([
   "contacts_enrichment",
   "relationship_state",
+  "secret_space",
 ]);
 
 const FORBIDDEN_TERMS = [
