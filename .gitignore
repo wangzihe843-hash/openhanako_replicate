@@ -48,6 +48,7 @@ node_modules/
 CLAUDE.md
 
 # 临时文件
+scripts/launch.js.bak
 tmp/
 test-results/
 __pycache__/
