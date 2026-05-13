@@ -3,9 +3,9 @@
  */
 
 import { sanitizeAgentIdForPath } from './xingye-agent-path';
-import { postXingyeStorage } from './xingye-storage-api';
 
 export const XINGYE_LAYOUT_VERSION = 2;
+const WORKSPACE_V2_DISABLED_ERROR = 'workspace v2 storage is disabled; use agent-scoped Xingye storage under HANA_HOME/agents/{agentId}/xingye/';
 
 export type XingyeWorkspaceManifestV2 = {
   schemaVersion: 2;
@@ -340,19 +340,20 @@ function agentBase(agentId: string): string {
   return `agents/${sanitizeAgentIdForPath(agentId)}`;
 }
 
-async function writeFile(rel: string, content: string, encoding: 'utf8' | 'base64' = 'utf8'): Promise<void> {
-  await postXingyeStorage({
-    action: 'write',
-    relativePath: rel,
-    content,
-    encoding,
-  });
+function rejectWorkspaceV2Storage(): never {
+  throw new Error(WORKSPACE_V2_DISABLED_ERROR);
 }
 
-async function readFileText(rel: string): Promise<string | null> {
-  const data = await postXingyeStorage({ action: 'read', relativePath: rel });
-  if (data?.missing || data?.content == null) return null;
-  return typeof data.content === 'string' ? data.content : null;
+async function writeFile(_rel: string, _content: string, _encoding: 'utf8' | 'base64' = 'utf8'): Promise<void> {
+  rejectWorkspaceV2Storage();
+}
+
+async function readFileText(_rel: string): Promise<string | null> {
+  rejectWorkspaceV2Storage();
+}
+
+async function readFileBase64(_rel: string): Promise<string | null> {
+  rejectWorkspaceV2Storage();
 }
 
 async function readJsonObjectFile(rel: string): Promise<Record<string, unknown> | null> {
@@ -472,6 +473,7 @@ async function mergeAgentPhoneSmsThreadsPerThread(agentId: string, bucket: Recor
 }
 
 export async function readWorkspaceManifestV2(): Promise<XingyeWorkspaceManifestV2 | null> {
+  rejectWorkspaceV2Storage();
   const text = await readFileText('manifest.json');
   if (!text) return null;
   try {
@@ -538,6 +540,7 @@ export async function persistMemoryMapToWorkspaceV2(
     Pick<XingyeWorkspaceManifestV2, 'migratedFromLocalStorageAt' | 'migratedFromLayoutV1At' | 'createdAt'>
   >,
 ): Promise<void> {
+  rejectWorkspaceV2Storage();
   const agentIds = collectXingyeAgentIds(memory);
   const now = new Date().toISOString();
   const prevMan = await readWorkspaceManifestV2();
@@ -691,6 +694,7 @@ export async function persistMemoryMapToWorkspaceV2(
 }
 
 export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>): Promise<void> {
+  rejectWorkspaceV2Storage();
   const man = await readWorkspaceManifestV2();
   if (!man) return;
 
@@ -713,22 +717,22 @@ export async function loadWorkspaceV2IntoMemoryMap(memory: Map<string, string>):
     const avatarPath = prof.avatarMediaPath;
     if (typeof avatarPath === 'string' && !prof.avatarDataUrl) {
       try {
-        const r = await postXingyeStorage({ action: 'read', relativePath: avatarPath, binary: true });
-        if (r?.encoding === 'base64' && r?.content) {
+        const content = await readFileBase64(avatarPath);
+        if (content) {
           const ext = (avatarPath.split('.').pop() || 'png').toLowerCase();
           const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-          prof.avatarDataUrl = `data:${mime};base64,${r.content}`;
+          prof.avatarDataUrl = `data:${mime};base64,${content}`;
         }
       } catch { /* */ }
     }
     const bgPath = prof.chatBackgroundMediaPath;
     if (typeof bgPath === 'string' && !prof.chatBackgroundDataUrl) {
       try {
-        const r = await postXingyeStorage({ action: 'read', relativePath: bgPath, binary: true });
-        if (r?.encoding === 'base64' && r?.content) {
+        const content = await readFileBase64(bgPath);
+        if (content) {
           const ext = (bgPath.split('.').pop() || 'webp').toLowerCase();
           const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-          prof.chatBackgroundDataUrl = `data:${mime};base64,${r.content}`;
+          prof.chatBackgroundDataUrl = `data:${mime};base64,${content}`;
         }
       } catch { /* */ }
     }

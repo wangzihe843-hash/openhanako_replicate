@@ -86,20 +86,30 @@ export function createLocalStorageXingyeBackend(
 
 type PostFn = (body: Record<string, unknown>) => Promise<any>;
 
+function requireAgentId(agentId: string): void {
+  if (typeof agentId !== 'string' || !agentId.trim()) {
+    throw new Error('agentId is required');
+  }
+}
+
 export function createAgentXingyeStorageBackend(post: PostFn): XingyeStorageBackend {
   return {
     async readJson<T>(agentId: string, relativePath: string): Promise<T | null> {
+      requireAgentId(agentId);
       const data = await post({ action: 'readJson', agentId, relativePath });
       if (data?.missing || data?.data == null) return null;
       return data.data as T;
     },
     async writeJson<T>(agentId: string, relativePath: string, body: T): Promise<void> {
+      requireAgentId(agentId);
       await post({ action: 'writeJson', agentId, relativePath, data: body });
     },
     async appendJsonl<T>(agentId: string, relativePath: string, record: T): Promise<void> {
+      requireAgentId(agentId);
       await post({ action: 'appendJsonl', agentId, relativePath, data: record });
     },
     async listJsonl<T>(agentId: string, relativePath: string): Promise<T[]> {
+      requireAgentId(agentId);
       const data = await post({ action: 'listJsonl', agentId, relativePath });
       return Array.isArray(data?.records) ? data.records as T[] : [];
     },

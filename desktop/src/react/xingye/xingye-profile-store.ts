@@ -164,7 +164,16 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
   return profile;
 }
 
+function legacyProfileMigrationEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    (window as unknown as { __XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__?: boolean })
+      .__XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__,
+  );
+}
+
 function readLegacyRoleProfilesMap(): XingyeRoleProfileMap {
+  if (!legacyProfileMigrationEnabled()) return {};
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY);

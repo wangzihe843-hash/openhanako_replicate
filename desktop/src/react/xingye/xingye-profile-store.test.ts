@@ -70,6 +70,7 @@ describe('xingye-profile-store', () => {
   beforeEach(() => {
     hoisted.fileData.clear();
     window.localStorage.clear();
+    delete (window as unknown as { __XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__?: boolean }).__XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__;
     vi.mocked(postXingyeStorage).mockClear();
     vi.mocked(postXingyeStorage).mockImplementation(async (body: Record<string, unknown>) => {
       const agentId = String(body.agentId ?? '');
@@ -153,7 +154,25 @@ describe('xingye-profile-store', () => {
     await expect(readXingyeRoleProfile('agent-1')).resolves.toBeNull();
   });
 
-  it('migrates once from legacy localStorage map when profile.json is missing', async () => {
+  it('does not read legacy localStorage profile maps unless explicit migration flag is enabled', async () => {
+    window.localStorage.setItem(
+      XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        'agent-legacy': {
+          agentId: 'agent-legacy',
+          displayName: 'legacy profile',
+          shortBio: 'from legacy map',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+    );
+
+    await expect(readXingyeRoleProfile('agent-legacy')).resolves.toBeNull();
+    expect(hoisted.fileData.has(`agent-legacy:${XINGYE_PROFILE_JSON_RELATIVE_PATH}`)).toBe(false);
+  });
+
+  it('migrates once from legacy localStorage map only with explicit migration flag', async () => {
+    (window as unknown as { __XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__?: boolean }).__XINGYE_ALLOW_LEGACY_PROFILE_LOCAL_MIGRATE__ = true;
     window.localStorage.setItem(
       XINGYE_ROLE_PROFILES_LEGACY_STORAGE_KEY,
       JSON.stringify({
