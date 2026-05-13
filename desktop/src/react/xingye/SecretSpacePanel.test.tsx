@@ -8,6 +8,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { SecretSpacePanel } from './SecretSpacePanel';
+import { appendSecretSpaceRecord } from './xingye-secret-space-store';
+import { stableSecretSpaceRecordId } from './xingye-secret-space-record-id';
 
 type JsonlRow = Record<string, unknown>;
 
@@ -20,6 +22,22 @@ const jsonlStore = vi.hoisted(() => new Map<string, JsonlRow[]>());
 const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: RequestInit) => {
   if (typeof path === 'string' && path.includes('/pinned')) {
     return { ok: true, json: async () => ({ pins: [] }) } as Response;
+  }
+  if (typeof path === 'string' && path.includes('/api/xingye/phone-generate')) {
+    const raw = init?.body ? JSON.parse(String(init.body)) : {};
+    if (raw.kind === 'secret_space') {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          kind: 'secret_space',
+          result: {
+            title: 'AI generated title',
+            content: 'unique-ai-draft-body-991',
+          },
+        }),
+      } as Response;
+    }
   }
   if (typeof path === 'string' && path.includes('/api/xingye/storage')) {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -38,6 +56,18 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
     if (body.action === 'appendJsonl' && body.data && typeof body.data === 'object') {
       const next = [...(jsonlStore.get(key) ?? []), body.data as JsonlRow];
       jsonlStore.set(key, next);
+      return { ok: true, json: async () => ({ ok: true }) } as Response;
+    }
+
+    if (body.action === 'write') {
+      const content = typeof body.content === 'string' ? body.content : '';
+      if (!content.trim()) {
+        jsonlStore.set(key, []);
+      } else {
+        const lines = content.trim().split('\n').filter(Boolean);
+        const parsed = lines.map((line) => JSON.parse(line) as JsonlRow);
+        jsonlStore.set(key, parsed);
+      }
       return { ok: true, json: async () => ({ ok: true }) } as Response;
     }
 
@@ -181,6 +211,104 @@ describe('SecretSpacePanel secret space navigation', () => {
     expect(screen.getByTestId('secret-space-category-draft_reply')).toBeInTheDocument();
   });
 
+  it('opens detail, confirms delete, returns to list with one fewer record', async () => {
+    jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
+      {
+        key: 'row-a',
+        id: 'row-a',
+        title: 'first',
+        createdAt: '2026-05-12T12:00:00.000Z',
+        summary: 's1',
+        body: 'body-a',
+        kind: 'draft_reply',
+      },
+      {
+        key: 'row-b',
+        id: 'row-b',
+        title: 'second',
+        createdAt: '2026-05-11T12:00:00.000Z',
+        summary: 's2',
+        body: 'body-b',
+        kind: 'draft_reply',
+      },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-row-a')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('secret-space-record-row-row-a'));
+    fireEvent.click(screen.getByTestId('secret-space-delete-row-a'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-row-b')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('secret-space-record-row-row-a')).not.toBeInTheDocument();
+    const drKey = storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl');
+    expect(jsonlStore.get(drKey)?.some((r) => r.key === 'row-a')).toBe(false);
+    expect(jsonlStore.get(drKey)?.some((r) => r.key === 'row-b')).toBe(true);
+    confirmSpy.mockRestore();
+  });
+
+  it('does not remove another agent record that shares the same record key', async () => {
+    jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
+      {
+        key: 'shared-key',
+        id: 'shared-key',
+        title: 'Agent 1',
+        createdAt: '2026-05-12T12:00:00.000Z',
+        summary: 's',
+        body: 'b',
+        kind: 'draft_reply',
+      },
+    ]);
+    jsonlStore.set(storeKey('agent-secret-2', 'secret-space/draft_reply.jsonl'), [
+      {
+        key: 'shared-key',
+        id: 'shared-key',
+        title: 'Agent 2',
+        createdAt: '2026-05-12T12:00:00.000Z',
+        summary: 's',
+        body: 'b',
+        kind: 'draft_reply',
+      },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => screen.getByTestId('secret-space-record-row-shared-key'));
+    fireEvent.click(screen.getByTestId('secret-space-record-row-shared-key'));
+    fireEvent.click(screen.getByTestId('secret-space-delete-shared-key'));
+    await waitFor(() => expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument());
+    expect(jsonlStore.get(storeKey('agent-secret-2', 'secret-space/draft_reply.jsonl'))?.length).toBe(1);
+
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => expect(screen.getByTestId('secret-space-record-row-shared-key')).toBeInTheDocument());
+    confirmSpy.mockRestore();
+  });
+
+  it('deletes legacy JSONL row without key/id using deterministic legacy record id', async () => {
+    const legacyRow = {
+      body: 'legacy body without stable key',
+      summary: 'sum',
+      createdAt: '2026-05-12T12:00:00.000Z',
+      kind: 'draft_reply',
+    };
+    const legacyId = stableSecretSpaceRecordId('draft_reply', legacyRow);
+    jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [legacyRow]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => screen.getByTestId(`secret-space-record-row-${legacyId}`));
+    fireEvent.click(screen.getByTestId(`secret-space-record-row-${legacyId}`));
+    fireEvent.click(screen.getByTestId(`secret-space-delete-${legacyId}`));
+    await waitFor(() => expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument());
+    expect(jsonlStore.get(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'))?.length ?? 0).toBe(0);
+    confirmSpy.mockRestore();
+  });
+
   it('shows RelationshipStatePanel content after opening the TA 的状态 category', () => {
     render(<SecretSpacePanel agent={agent} />);
 
@@ -195,7 +323,14 @@ describe('SecretSpacePanel secret space navigation', () => {
   it('does not show manual add form on state category', () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-state'));
-    expect(screen.queryByTestId('secret-space-add-record')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('secret-space-manual-add-record')).not.toBeInTheDocument();
+  });
+
+  it('does not show manual append debug form in non-development environments', () => {
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    expect(screen.queryByTestId('secret-space-manual-add-record')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-category-record-actions')).toBeInTheDocument();
   });
 
   it('appends draft_reply record and reloads list', async () => {
@@ -206,13 +341,11 @@ describe('SecretSpacePanel secret space navigation', () => {
       expect(screen.getByTestId('secret-space-record-row-stored-dr1')).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByTestId('secret-space-add-record-body'), {
-      target: { value: 'new draft body text' },
+    await appendSecretSpaceRecord(agent.id, 'draft_reply', {
+      title: 'fresh title',
+      body: 'new draft body text',
+      summary: 'new draft body text',
     });
-    fireEvent.change(screen.getByTestId('secret-space-add-record-title'), {
-      target: { value: 'fresh title' },
-    });
-    fireEvent.click(screen.getByTestId('secret-space-add-record-submit'));
 
     await waitFor(() => {
       const rows = screen.getAllByTestId(/^secret-space-record-row-/);
@@ -221,17 +354,61 @@ describe('SecretSpacePanel secret space navigation', () => {
     expect(screen.getByText('fresh title')).toBeInTheDocument();
   });
 
+  it('shows AI generate on plain categories but not state or memory_fragment', () => {
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-state'));
+    expect(screen.queryByTestId('secret-space-ai-generate')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    expect(screen.queryByTestId('secret-space-ai-generate')).not.toBeInTheDocument();
+  });
+
+  it('AI generate on draft_reply appends source ai and does not appear in dream', async () => {
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-ai-generate')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('secret-space-ai-generate'));
+
+    await waitFor(() => {
+      expect(screen.getByText('AI generated title')).toBeInTheDocument();
+    });
+
+    const drKey = storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl');
+    const rows = jsonlStore.get(drKey) ?? [];
+    expect(rows.some((r) => r.source === 'ai' && r.body === 'unique-ai-draft-body-991')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-dream'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('AI generated title')).not.toBeInTheDocument();
+    expect(screen.queryByText('unique-ai-draft-body-991')).not.toBeInTheDocument();
+  });
+
   it('dream append does not appear in draft_reply list', async () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-dream'));
     await waitFor(() => {
-      expect(screen.getByTestId('secret-space-add-record')).toBeInTheDocument();
+      expect(screen.getByTestId('secret-space-category-record-actions')).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByTestId('secret-space-add-record-body'), {
-      target: { value: 'only in dream file' },
+    await appendSecretSpaceRecord(agent.id, 'dream', {
+      title: 'only in dream file',
+      body: 'only in dream file',
+      summary: 'only in dream file',
     });
-    fireEvent.click(screen.getByTestId('secret-space-add-record-submit'));
 
     await waitFor(() => {
       expect(jsonlStore.get(storeKey('agent-secret-1', 'secret-space/dream.jsonl'))?.length).toBe(1);
@@ -250,9 +427,12 @@ describe('SecretSpacePanel secret space navigation', () => {
     render(<SecretSpacePanel agent={agent} />);
 
     fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
-    await waitFor(() => expect(screen.getByTestId('secret-space-add-record')).toBeInTheDocument());
-    fireEvent.change(screen.getByTestId('secret-space-add-record-body'), { target: { value: 'bookmark note' } });
-    fireEvent.click(screen.getByTestId('secret-space-add-record-submit'));
+    await waitFor(() => expect(screen.getByTestId('secret-space-category-record-actions')).toBeInTheDocument());
+    await appendSecretSpaceRecord(agent.id, 'saved_item', {
+      title: 'bookmark note',
+      body: 'bookmark note',
+      summary: 'bookmark note',
+    });
 
     await waitFor(() => {
       expect(screen.queryAllByTestId(/^secret-space-record-row-/).length).toBeGreaterThan(0);
@@ -261,9 +441,12 @@ describe('SecretSpacePanel secret space navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '返回' }));
     fireEvent.click(screen.getByTestId('secret-space-entry-unsent_moment'));
 
-    await waitFor(() => expect(screen.getByTestId('secret-space-add-record')).toBeInTheDocument());
-    fireEvent.change(screen.getByTestId('secret-space-add-record-body'), { target: { value: 'moment draft' } });
-    fireEvent.click(screen.getByTestId('secret-space-add-record-submit'));
+    await waitFor(() => expect(screen.getByTestId('secret-space-category-record-actions')).toBeInTheDocument());
+    await appendSecretSpaceRecord(agent.id, 'unsent_moment', {
+      title: 'moment draft',
+      body: 'moment draft',
+      summary: 'moment draft',
+    });
 
     await waitFor(() => {
       expect(screen.queryAllByTestId(/^secret-space-record-row-/).length).toBeGreaterThan(0);
@@ -319,7 +502,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
-    expect(screen.queryByTestId('secret-space-add-record')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('secret-space-manual-add-record')).not.toBeInTheDocument();
 
     const contentInput = within(manualForm).getByPlaceholderText('输入一条你希望记住的要点');
 

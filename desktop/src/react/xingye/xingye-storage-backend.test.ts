@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createLocalStorageXingyeBackend,
   createMemoryXingyeStorageBackend,
@@ -15,6 +15,19 @@ describe('xingye-storage-backend', () => {
     await b.appendJsonl('a1', 'secret-space/dream.jsonl', { id: '2' });
     expect(await b.listJsonl<{ id: string }>('a1', 'secret-space/dream.jsonl')).toEqual([{ id: '1' }, { id: '2' }]);
     expect(await b.listJsonl<{ id: string }>('a2', 'secret-space/dream.jsonl')).toEqual([]);
+    expect(await b.deleteJsonlRecord('a1', 'secret-space/dream.jsonl', '1')).toBe(true);
+    expect(await b.listJsonl<{ id: string }>('a1', 'secret-space/dream.jsonl')).toEqual([{ id: '2' }]);
+    expect(await b.deleteJsonlRecord('a1', 'secret-space/dream.jsonl', 'ghost')).toBe(false);
+  });
+
+  it('memory backend deleteJsonlRecord matches synthetic draft_reply-1 when rows omit key/id', async () => {
+    const b = createMemoryXingyeStorageBackend();
+    await b.appendJsonl('a1', 'secret-space/draft_reply.jsonl', { body: 'a', summary: 'sa', kind: 'draft_reply' });
+    await b.appendJsonl('a1', 'secret-space/draft_reply.jsonl', { body: 'b', summary: 'sb', kind: 'draft_reply' });
+    expect(await b.deleteJsonlRecord('a1', 'secret-space/draft_reply.jsonl', 'draft_reply-1')).toBe(true);
+    expect(await b.listJsonl('a1', 'secret-space/draft_reply.jsonl')).toEqual([
+      { body: 'a', summary: 'sa', kind: 'draft_reply' },
+    ]);
   });
 
   it('localStorage backend uses key mapper', async () => {
@@ -71,5 +84,18 @@ describe('xingye-storage-backend', () => {
     await b.appendJsonl('ag', 'secret-space/dream.jsonl', { e: 2 });
     const rows = await b.listJsonl<{ e: number }>('ag', 'secret-space/dream.jsonl');
     expect(rows).toEqual([{ e: 1 }, { e: 2 }]);
+    expect(await b.deleteJsonlRecord('ag', 'secret-space/dream.jsonl', 'noop')).toBe(false);
+  });
+
+  it('agent backend forwards deleteJsonlRecord', async () => {
+    const post = vi.fn(async (body: Record<string, unknown>) => {
+      if (body.action === 'deleteJsonlRecord') {
+        return { ok: true, deleted: body.recordId === 'hit' };
+      }
+      return {};
+    });
+    const b = createAgentXingyeStorageBackend(post);
+    expect(await b.deleteJsonlRecord('ag', 'secret-space/draft_reply.jsonl', 'hit')).toBe(true);
+    expect(await b.deleteJsonlRecord('ag', 'secret-space/draft_reply.jsonl', 'miss')).toBe(false);
   });
 });

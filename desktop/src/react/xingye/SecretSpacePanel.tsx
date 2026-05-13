@@ -9,7 +9,12 @@ import {
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
-import { appendSecretSpaceRecord, listSecretSpaceRecords } from './xingye-secret-space-store';
+import { generateSecretSpaceRecordWithAI } from './xingye-secret-space-ai';
+import {
+  appendSecretSpaceRecord,
+  deleteSecretSpaceRecord,
+  listSecretSpaceRecords,
+} from './xingye-secret-space-store';
 import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
@@ -95,13 +100,20 @@ function metaById(id: SecretSpaceCategoryId): SecretSpaceCategoryMeta {
   return found;
 }
 
-/** Categories that allow appending a plain-text record via storage (not state / memory_fragment). */
+/**
+ * 允许在本面板追加纯文本 JSONL 的分类。
+ * `state` 使用上方 RelationshipStatePanel，不进此列表；`memory_fragment` 用手动记忆候选表单。
+ */
 const ADD_RECORD_CATEGORY_IDS = new Set<SecretSpaceCategoryId>([
   'draft_reply',
   'dream',
   'saved_item',
   'unsent_moment',
 ]);
+
+function isSecretSpaceManualAppendDebugEnabled(): boolean {
+  return typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
+}
 
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
@@ -121,6 +133,11 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [addRecordError, setAddRecordError] = useState<string | null>(null);
   const [addRecordSaving, setAddRecordSaving] = useState(false);
 
+  const [savedItemSeed, setSavedItemSeed] = useState('');
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [secretSpaceDeleteError, setSecretSpaceDeleteError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!agent?.id) {
       setManualContent('');
@@ -131,6 +148,10 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setAddRecordBody('');
       setAddRecordError(null);
       setAddRecordSaving(false);
+      setSavedItemSeed('');
+      setAiError(null);
+      setAiLoading(false);
+      setSecretSpaceDeleteError(null);
       setView('home');
       setActiveCategory(null);
       setRecordsByCategory(emptyRecords());
@@ -138,11 +159,18 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   }, [agent?.id]);
 
   useEffect(() => {
+    setSecretSpaceDeleteError(null);
+  }, [agent?.id, activeCategory]);
+
+  useEffect(() => {
     if (!activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
     setAddRecordTitle('');
     setAddRecordBody('');
     setAddRecordError(null);
     setAddRecordSaving(false);
+    setSavedItemSeed('');
+    setAiError(null);
+    setAiLoading(false);
   }, [activeCategory, agent?.id]);
 
   useEffect(() => {
@@ -193,6 +221,68 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setAddRecordError(e instanceof Error ? e.message : String(e));
     } finally {
       setAddRecordSaving(false);
+    }
+  };
+
+  const handleRequestDeleteSecretSpaceRecord = async (recordKey: string) => {
+    if (!agent?.id) {
+      setSecretSpaceDeleteError('删除失败：当前未绑定角色（缺少 agentId）。');
+      return false;
+    }
+    if (!activeCategory) {
+      setSecretSpaceDeleteError('删除失败：未选择分类（缺少 category）。');
+      return false;
+    }
+    if (!recordKey.trim()) {
+      setSecretSpaceDeleteError('删除失败：缺少 recordId。');
+      return false;
+    }
+    setSecretSpaceDeleteError(null);
+    try {
+      const ok = await deleteSecretSpaceRecord(agent.id, activeCategory, recordKey);
+      if (!ok) {
+        setSecretSpaceDeleteError('删除失败：存储中未找到该 recordId（可能已被删除）。');
+        return false;
+      }
+      const records = await listSecretSpaceRecords(agent.id, activeCategory);
+      setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('hanaFetch') && msg.includes('400')) {
+        setSecretSpaceDeleteError(`存储接口返回 400（请检查 agentId / 路径）。${msg}`);
+      } else {
+        setSecretSpaceDeleteError(msg);
+      }
+      return false;
+    }
+  };
+
+  const handleAiGenerate = async () => {
+    if (!agent?.id || !activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const { title, content } = await generateSecretSpaceRecordWithAI({
+        agent,
+        ownerProfile: profile,
+        category: activeCategory,
+        seedText: activeCategory === 'saved_item' ? savedItemSeed.trim() || undefined : undefined,
+      });
+      const summary = content.length > 120 ? `${content.slice(0, 120)}…` : content;
+      await appendSecretSpaceRecord(agent.id, activeCategory, {
+        title,
+        body: content,
+        summary,
+        source: 'ai',
+      });
+      const records = await listSecretSpaceRecords(agent.id, activeCategory);
+      setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
+      if (activeCategory === 'saved_item') setSavedItemSeed('');
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -303,43 +393,75 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
 
   const addRecordFooter =
     activeCategory && ADD_RECORD_CATEGORY_IDS.has(activeCategory) ? (
-      <div className={styles.profileForm} data-testid="secret-space-add-record">
+      <div className={styles.profileForm} data-testid="secret-space-category-record-actions">
+        {isSecretSpaceManualAppendDebugEnabled() ? (
+          <div data-testid="secret-space-manual-add-record">
+            <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
+              [调试] 在本分类追加一条纯文本记录；保存后写入当前角色的秘密空间存储。
+            </p>
+            <label className={styles.profileField}>
+              <span>标题（可选）</span>
+              <input
+                type="text"
+                value={addRecordTitle}
+                onChange={(e) => setAddRecordTitle(e.target.value)}
+                placeholder="简短标题"
+                aria-label="秘密空间记录标题"
+                disabled={addRecordSaving}
+                data-testid="secret-space-add-record-title"
+              />
+            </label>
+            <label className={styles.profileField}>
+              <span>正文</span>
+              <textarea
+                value={addRecordBody}
+                onChange={(e) => setAddRecordBody(e.target.value)}
+                rows={4}
+                placeholder="输入记录正文"
+                aria-label="秘密空间记录正文"
+                disabled={addRecordSaving}
+                data-testid="secret-space-add-record-body"
+              />
+            </label>
+            {addRecordError ? <p className={styles.saveStatus}>{addRecordError}</p> : null}
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => void handleAppendSecretSpaceRecord()}
+              disabled={addRecordSaving}
+              data-testid="secret-space-add-record-submit"
+            >
+              {addRecordSaving ? '保存中…' : '保存记录'}
+            </button>
+          </div>
+        ) : null}
+
         <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
-          在本分类追加一条纯文本记录；保存后写入当前角色的秘密空间存储。
+          使用 AI 根据角色资料与设定参考生成一条记录（失败时不会写入）。
         </p>
-        <label className={styles.profileField}>
-          <span>标题（可选）</span>
-          <input
-            type="text"
-            value={addRecordTitle}
-            onChange={(e) => setAddRecordTitle(e.target.value)}
-            placeholder="简短标题"
-            aria-label="秘密空间记录标题"
-            disabled={addRecordSaving}
-            data-testid="secret-space-add-record-title"
-          />
-        </label>
-        <label className={styles.profileField}>
-          <span>正文</span>
-          <textarea
-            value={addRecordBody}
-            onChange={(e) => setAddRecordBody(e.target.value)}
-            rows={4}
-            placeholder="输入记录正文"
-            aria-label="秘密空间记录正文"
-            disabled={addRecordSaving}
-            data-testid="secret-space-add-record-body"
-          />
-        </label>
-        {addRecordError ? <p className={styles.saveStatus}>{addRecordError}</p> : null}
+        {activeCategory === 'saved_item' ? (
+          <label className={styles.profileField}>
+            <span>收藏线索（可选）</span>
+            <textarea
+              value={savedItemSeed}
+              onChange={(e) => setSavedItemSeed(e.target.value)}
+              rows={2}
+              placeholder="想让收藏围绕的关键词或一句话"
+              aria-label="收藏线索种子"
+              disabled={aiLoading}
+              data-testid="secret-space-ai-seed"
+            />
+          </label>
+        ) : null}
+        {aiError ? <p className={styles.saveStatus}>{aiError}</p> : null}
         <button
           type="button"
           className={styles.secondaryButton}
-          onClick={() => void handleAppendSecretSpaceRecord()}
-          disabled={addRecordSaving}
-          data-testid="secret-space-add-record-submit"
+          onClick={() => void handleAiGenerate()}
+          disabled={aiLoading || addRecordSaving}
+          data-testid="secret-space-ai-generate"
         >
-          {addRecordSaving ? '保存中…' : '保存记录'}
+          {aiLoading ? 'AI 生成中…' : 'AI 生成'}
         </button>
       </div>
     ) : null;
@@ -365,6 +487,10 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
           stateSection={stateSection}
           records={activeSamples}
           footer={categoryFooter}
+          onRequestDeleteRecord={
+            agent?.id ? (key) => handleRequestDeleteSecretSpaceRecord(key) : undefined
+          }
+          deleteError={secretSpaceDeleteError}
         />
       ) : null}
     </div>

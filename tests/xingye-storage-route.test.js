@@ -428,6 +428,178 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("deleteJsonlRecord removes one JSONL row by key without reordering the rest", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          data: { key: "k1", id: "k1", body: "a" },
+        }),
+      });
+      await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          data: { key: "k2", id: "k2", body: "b" },
+        }),
+      });
+
+      const miss = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "deleteJsonlRecord",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          recordId: "nope",
+        }),
+      });
+      expect(miss.status).toBe(200);
+      expect(await miss.json()).toMatchObject({ ok: true, deleted: false });
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "secret-space", "draft_reply.jsonl");
+      const before = fs.readFileSync(abs, "utf8");
+
+      const hit = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "deleteJsonlRecord",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          recordId: "k1",
+        }),
+      });
+      expect(hit.status).toBe(200);
+      expect(await hit.json()).toMatchObject({ ok: true, deleted: true });
+
+      const list = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+        }),
+      });
+      const listJson = await list.json();
+      expect(listJson.records).toEqual([{ key: "k2", id: "k2", body: "b" }]);
+
+      const after = fs.readFileSync(abs, "utf8");
+      expect(after.trim()).toBe(JSON.stringify({ key: "k2", id: "k2", body: "b" }));
+      expect(before.split("\n").filter(Boolean).length).toBe(2);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("deleteJsonlRecord matches numeric ids and synthetic secret-space keys like draft_reply-1", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          data: { id: 9001, body: "num-id-body", summary: "num-id-sum", kind: "draft_reply" },
+        }),
+      });
+
+      const delNum = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "deleteJsonlRecord",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          recordId: "9001",
+        }),
+      });
+      expect(delNum.status).toBe(200);
+      expect(await delNum.json()).toMatchObject({ ok: true, deleted: true });
+
+      await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          data: { body: "anon-a", summary: "sa", kind: "draft_reply" },
+        }),
+      });
+      await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          data: { body: "anon-b", summary: "sb", kind: "draft_reply" },
+        }),
+      });
+
+      const delSynth = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "deleteJsonlRecord",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+          recordId: "draft_reply-1",
+        }),
+      });
+      expect(delSynth.status).toBe(200);
+      expect(await delSynth.json()).toMatchObject({ ok: true, deleted: true });
+
+      const list = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "agent-a",
+          relativePath: "secret-space/draft_reply.jsonl",
+        }),
+      });
+      const listJson = await list.json();
+      expect(listJson.records).toEqual([
+        { body: "anon-a", summary: "sa", kind: "draft_reply" },
+      ]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("returns an error for missing agentId or unknown agent", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {

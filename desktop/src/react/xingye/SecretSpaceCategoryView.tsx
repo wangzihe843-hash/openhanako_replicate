@@ -22,6 +22,9 @@ interface SecretSpaceCategoryViewProps {
   stateSection?: ReactNode;
   records: SecretSpaceSampleRecord[];
   footer?: ReactNode;
+  /** 删除当前详情记录：返回是否已从存储移除（未找到则为 false）。 */
+  onRequestDeleteRecord?: (recordKey: string) => Promise<boolean>;
+  deleteError?: string | null;
 }
 
 export function SecretSpaceCategoryView({
@@ -30,8 +33,11 @@ export function SecretSpaceCategoryView({
   stateSection,
   records,
   footer,
+  onRequestDeleteRecord,
+  deleteError,
 }: SecretSpaceCategoryViewProps) {
   const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     setSelectedRecordKey(null);
@@ -53,6 +59,21 @@ export function SecretSpaceCategoryView({
     onBack();
   };
 
+  const handleDeleteClick = () => {
+    const rec = selectedRecord;
+    if (!rec || !onRequestDeleteRecord || deleteBusy) return;
+    if (!window.confirm('确定删除这条记录？删除后无法恢复。')) return;
+    setDeleteBusy(true);
+    void (async () => {
+      try {
+        const ok = await onRequestDeleteRecord(rec.key);
+        if (ok) setSelectedRecordKey(null);
+      } finally {
+        setDeleteBusy(false);
+      }
+    })();
+  };
+
   return (
     <div className={styles.secretSpaceCategory} data-testid={`secret-space-category-${meta.id}`}>
       <header className={styles.secretSpaceCategoryHeader}>
@@ -64,6 +85,12 @@ export function SecretSpaceCategoryView({
           <p className={styles.secretSpaceCategoryDescription}>{meta.description}</p>
         </div>
       </header>
+
+      {deleteError ? (
+        <p className={styles.saveStatus} role="alert" data-testid="secret-space-delete-error">
+          {deleteError}
+        </p>
+      ) : null}
 
       {stateSection ? (
         <div className={styles.secretSpaceCategoryBlock} data-testid="secret-space-state-section">
@@ -80,6 +107,19 @@ export function SecretSpaceCategoryView({
         ) : inDetail && selectedRecord ? (
           <div className={styles.secretSpaceRecordDetailPane}>
             <SecretSpaceRecordCard record={selectedRecord} />
+            {onRequestDeleteRecord ? (
+              <div className={styles.secretSpaceRecordDetailActions}>
+                <button
+                  type="button"
+                  className={styles.momentDeleteButton}
+                  onClick={handleDeleteClick}
+                  disabled={deleteBusy}
+                  data-testid={`secret-space-delete-${selectedRecord.key}`}
+                >
+                  {deleteBusy ? '删除中…' : '删除此记录'}
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <ul className={styles.secretSpaceRecordIndexList} aria-label="记录索引">

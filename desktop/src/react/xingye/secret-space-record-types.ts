@@ -15,6 +15,8 @@ export const SECRET_SPACE_RECORD_KIND_LABEL: Record<SecretSpaceRecordKind, strin
 };
 
 export interface SecretSpaceSampleRecord {
+  /** 与 key 相同；删除与列表统一使用的稳定主键 */
+  recordId: string;
   key: string;
   title: string;
   /** 完整正文，仅在详情页展示 */

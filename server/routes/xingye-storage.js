@@ -22,6 +22,7 @@ const ACTIONS = new Set([
   "writeJson",
   "appendJsonl",
   "listJsonl",
+  "deleteJsonlRecord",
   "read",
   "write",
   "append",
@@ -121,6 +122,20 @@ async function atomicWrite(target, data) {
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
   await fs.promises.writeFile(tmp, data);
   await fs.promises.rename(tmp, target);
+}
+
+/** Align with desktop `normalizeRecord` / listJsonl: stable string ids for JSONL rows. */
+function jsonlRecordFieldAsString(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+/** `secret-space/dream.jsonl` → `dream` (forward slashes). */
+function secretSpaceCategoryFromJsonlRelativePath(relativePath) {
+  const norm = String(relativePath ?? "").replace(/\\/g, "/");
+  const m = /^secret-space\/([^/]+)\.jsonl$/.exec(norm);
+  return m ? m[1] : null;
 }
 
 function isAgentLoreEntriesJsonPath(relativePath) {
@@ -248,6 +263,53 @@ export function createXingyeStorageRoute(engine) {
             }
           }
           return c.json({ ok: true, records });
+        }
+        case "deleteJsonlRecord": {
+          const recordId = typeof body?.recordId === "string" ? body.recordId.trim() : "";
+          if (!recordId) {
+            return c.json({ error: "recordId is required" }, 400);
+          }
+          const { missing, content } = await readUtf8OrMissing(target);
+          if (missing) return c.json({ ok: true, deleted: false });
+          const lines = content.split(/\r?\n/);
+          const kept = [];
+          let deleted = false;
+          const catFromPath = secretSpaceCategoryFromJsonlRelativePath(relativePath);
+          /** Same ordering as listJsonl: only successfully parsed JSON lines get indices (0, 1, …). */
+          let parsedSuccessIndex = 0;
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              kept.push(line);
+              continue;
+            }
+            let obj;
+            try {
+              obj = JSON.parse(trimmed);
+            } catch {
+              kept.push(line);
+              continue;
+            }
+            const rowKey = jsonlRecordFieldAsString(obj?.key);
+            const rowId = jsonlRecordFieldAsString(obj?.id);
+            const idMatch = rowKey === recordId || rowId === recordId;
+            const syntheticEligible = !rowKey && !rowId;
+            const syntheticId = catFromPath ? `${catFromPath}-${parsedSuccessIndex}` : null;
+            const syntheticMatch = Boolean(
+              syntheticEligible && syntheticId != null && recordId === syntheticId,
+            );
+            const isMatch = !deleted && (idMatch || syntheticMatch);
+            if (isMatch) {
+              deleted = true;
+            } else {
+              kept.push(line);
+            }
+            parsedSuccessIndex += 1;
+          }
+          if (!deleted) return c.json({ ok: true, deleted: false });
+          const out = kept.join("\n");
+          await atomicWrite(target, Buffer.from(out === "" ? "" : `${out}\n`, "utf-8"));
+          return c.json({ ok: true, deleted: true });
         }
         case "list": {
           let stat;
