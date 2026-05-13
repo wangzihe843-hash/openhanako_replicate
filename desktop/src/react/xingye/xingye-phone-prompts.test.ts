@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Agent } from '../types';
 import {
   buildContactIncrementalUpdatePrompt,
+  buildContactRollbackAndUpdatePrompt,
   buildContactRegenerateAllPrompt,
   buildSmsHistoryPrompt,
   buildSmsIncrementalUpdatePrompt,
@@ -62,6 +63,13 @@ const activeView = makeContact({
   targetType: 'virtual_contact',
   targetId: 'vc-active',
   displayName: '老王',
+  status: 'active',
+});
+const userView = makeContact({
+  targetType: 'user',
+  targetId: '__user__',
+  displayName: '你',
+  remark: '你',
   status: 'active',
 });
 
@@ -438,5 +446,35 @@ describe('phone prompt builders — lore runtime context section', () => {
       recentContext: emptyRecent,
     });
     expectNoLeak(prompt);
+  });
+});
+
+describe('contact update prompts - user contact updates', () => {
+  it('tells incremental update to update the existing user contact with targetId __user__', () => {
+    const prompt = buildContactIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [userView, activeView],
+      smsSummary: [],
+      recentContext: emptyRecent,
+    });
+
+    expect(prompt).toContain('targetType=user');
+    expect(prompt).toContain('targetId="__user__"');
+    expect(prompt).toContain('update user impression');
+  });
+
+  it('tells rollback update to update the existing user contact with targetId __user__', () => {
+    const prompt = buildContactRollbackAndUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [userView, activeView],
+      smsSummary: [],
+      recentContext: emptyRecent,
+    });
+
+    expect(prompt).toContain('targetType=user');
+    expect(prompt).toContain('targetId="__user__"');
+    expect(prompt).toContain('update user impression');
   });
 });

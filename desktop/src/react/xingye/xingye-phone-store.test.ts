@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import {
   XINGYE_PHONE_CONTACTS_STORAGE_KEY,
+  XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY,
   XINGYE_PHONE_CONTACT_GENERATION_STATE_STORAGE_KEY,
   XINGYE_PHONE_SMS_THREADS_STORAGE_KEY,
   XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY,
@@ -208,6 +209,64 @@ describe('xingye-phone-store', () => {
     expect(pending[0].changedFields).toContain('impression');
     expect(pending[0].changedFields).toContain('tags');
     expect(pending[0].source).toBe('contacts_incremental_update');
+  });
+
+  it('applyAiContactUpdates updates the existing user contact without duplicating it', () => {
+    const ownerAgentId = 'agent-linwu';
+    const existingUserTargetId = '__user__';
+    savePhoneContactMeta(ownerAgentId, 'user', existingUserTargetId, {
+      remark: '你',
+      impression: '还没有形成明确印象。',
+      tags: [],
+      status: 'active',
+      source: 'system',
+    }, storage, { markManualFields: false });
+
+    applyAiContactUpdates(
+      ownerAgentId,
+      [{
+        action: 'update',
+        targetType: 'user',
+        targetId: existingUserTargetId,
+        patch: {
+          impression: '尊重边界，承诺受伤时主动说明情况并配合处理。',
+          relationshipHint: '可逐步信任的亲近联系人',
+          tags: ['尊重边界', '不逞强', '愿意配合'],
+        },
+        reason: 'recent chat showed user promised not to hide injuries',
+      }],
+      { storage, contactChangeSource: 'contacts_incremental_update' },
+    );
+
+    const user = getPhoneContacts(ownerAgentId, agents, {}, { includeDeleted: true }, storage)
+      .filter(contact => contact.targetType === 'user');
+    expect(user).toHaveLength(1);
+    expect(user[0]).toMatchObject({
+      targetType: 'user',
+      targetId: existingUserTargetId,
+      impression: '尊重边界，承诺受伤时主动说明情况并配合处理。',
+      relationshipHint: '可逐步信任的亲近联系人',
+      tags: ['尊重边界', '不逞强', '愿意配合'],
+    });
+
+    const metaMap = JSON.parse(storage.getItem(XINGYE_PHONE_CONTACTS_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+    const userKeys = Object.keys(metaMap).filter(key => key.startsWith(`${ownerAgentId}::user::`));
+    expect(userKeys).toEqual([`${ownerAgentId}::user::${existingUserTargetId}`]);
+
+    const changeLog = JSON.parse(storage.getItem(XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY) ?? '[]') as Array<{
+      targetType?: string;
+      targetId?: string;
+      action?: string;
+      changedFields?: string[];
+    }>;
+    expect(changeLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetType: 'user',
+        targetId: existingUserTargetId,
+        action: 'update',
+        changedFields: expect.arrayContaining(['impression', 'relationshipHint', 'tags']),
+      }),
+    ]));
   });
 
   it('applyAiContactUpdates without contactChangeSource does not write change log', () => {

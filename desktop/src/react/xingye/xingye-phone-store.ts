@@ -793,6 +793,14 @@ export function getPhoneContactMeta(
   return loadContactMetaMap(storage)[contactKey(ownerAgentId, targetType, targetId)] ?? null;
 }
 
+function resolveUserContactTargetId(ownerAgentId: string, storage: StorageLike | null): string {
+  const map = loadContactMetaMap(storage);
+  const canonical = map[contactKey(ownerAgentId, 'user', '__user__')];
+  if (canonical?.targetId) return canonical.targetId;
+  const existing = Object.values(map).find(meta => meta.ownerAgentId === ownerAgentId && meta.targetType === 'user');
+  return existing?.targetId ?? '__user__';
+}
+
 export function savePhoneContactMeta(
   ownerAgentId: string,
   targetType: XingyeContactTargetType,
@@ -993,6 +1001,15 @@ export function canonicalizeContactTags(tags: string[] | undefined): string[] {
   for (const raw of tags ?? []) {
     const c = tagSynonymToCanonical(typeof raw === 'string' ? raw : '');
     if (c && !out.includes(c)) out.push(c);
+  }
+  return out.slice(0, 3);
+}
+
+function normalizeUserContactTags(tags: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of tags ?? []) {
+    const tag = typeof raw === 'string' ? raw.trim() : '';
+    if (tag && !out.includes(tag)) out.push(tag);
   }
   return out.slice(0, 3);
 }
@@ -1357,7 +1374,9 @@ export function normalizeAiContactUpdate(update: XingyeAiContactUpdate): XingyeA
       else delete patch[key];
     });
     if (Array.isArray(patch.tags)) {
-      let t = canonicalizeContactTags(patch.tags);
+      let t = next.targetType === 'user'
+        ? normalizeUserContactTags(patch.tags)
+        : canonicalizeContactTags(patch.tags);
       if (!t.length && next.contact) t = inferTagsForContact(next.contact);
       patch.tags = t;
     }
@@ -2188,7 +2207,7 @@ export function applyAiContactUpdates(
     }
 
     if (update.targetType === 'user') {
-      resolvedTargetId = '__user__';
+      resolvedTargetId = resolveUserContactTargetId(ownerAgentId, storage);
     }
 
     if (!resolvedTargetId) {
@@ -2287,6 +2306,9 @@ export function applyAiContactUpdates(
       };
       if (update.targetType === 'user') {
         delete aiPayload.status;
+        delete aiPayload.faction;
+        delete aiPayload.linkedAgentId;
+        delete aiPayload.pendingNewFriend;
       }
       if (update.targetType === 'agent') {
         delete aiPayload.status;

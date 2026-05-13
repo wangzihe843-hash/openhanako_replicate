@@ -424,6 +424,14 @@ const RECENT_CONTEXT_GUIDE = [
   '- 如「最近聊天」标注为「（无）」，请不要凭空编造关系变化，仅在必要时基于角色资料做小幅 patch。',
 ].join('\n');
 
+const USER_CONTACT_UPDATE_GUIDE = [
+  '【user contact update】如果最近聊天体现了用户本人对当前角色的态度、承诺、边界、照顾方式或风险沟通变化，应更新现有 user 联系人。',
+  '- Use targetType=user and targetId="__user__" for the existing user contact. Do not add a second user contact.',
+  '- update user impression / relationshipHint / tags / remark only. Do not delete/block/restore user and do not set user status/faction/linkedAgentId.',
+  '- user 的 tags 可以是来自最近聊天的简短自然标签（例如「尊重边界」「不逞强」「愿意配合」），不需要压成 NPC 固定分类词。',
+  '- 如果最近聊天同时提到用户和其他联系人，请分别返回 user update 与其他联系人 update。',
+].join('\n');
+
 /** 增量 / 回滚后更新：仅 virtual_contact 可由 AI block/delete；真实 agent 须用户手动（与 store 行为一致）。 */
 const INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE = [
   '【拉黑 / 已删除 · 仅 virtual_contact（禁止 user；禁止对 agent 使用 block/delete）】',
@@ -466,6 +474,7 @@ export function buildContactIncrementalUpdatePrompt(params: {
     '【字段边界】add 时的 contact 对象遵守与虚拟联系人生成相同规则：用户可见字段禁止写任务说明或编剧指令；只有 generatedReason 写生成依据；只有顶层 reason 写「为什么执行该 action」。',
     VISIBLE_FIELD_RULES,
     RECENT_CONTEXT_GUIDE,
+    USER_CONTACT_UPDATE_GUIDE,
     INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE,
     '规则：不要 delete/block user。对 agent 仅 add/update（不得 block/delete/restore）；对 virtual_contact 可 add/update/delete/block/restore。',
     '未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
@@ -536,6 +545,7 @@ export function buildContactRollbackAndUpdatePrompt(params: {
     TAG_FACTION_STATUS_RULES,
     INCREMENTAL_VS_TAG_FACTION_RULES,
     RECENT_CONTEXT_GUIDE,
+    USER_CONTACT_UPDATE_GUIDE,
     INCREMENTAL_BLOCK_DELETE_ACTION_GUIDE,
     '【与本轮指令一致】不要 delete/block user；不要 delete agent；不要对 agent 使用 block/delete/restore；未在最近聊天或当前联系人中明确提到的联系人，保持原样不要返回它的 update。',
     '输出 schema:',
