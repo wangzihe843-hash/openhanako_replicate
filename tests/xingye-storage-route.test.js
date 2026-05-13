@@ -129,6 +129,148 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("smoke: phone/sms-threads.json writeJson readJson isolation and disk path", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      fs.mkdirSync(path.join(agentsDir, "agent-b"), { recursive: true });
+      const agents = new Map([
+        ["agent-a", { id: "agent-a", name: "A" }],
+        ["agent-b", { id: "agent-b", name: "B" }],
+      ]);
+      const engine = {
+        agentsDir,
+        getAgent: (id) => agents.get(id) || null,
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const threadsPayload = {
+        threads: {
+          "thread-1": { peerId: "peer-1", lastSnippet: "hello" },
+        },
+      };
+
+      const writeA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJson",
+          agentId: "agent-a",
+          relativePath: "phone/sms-threads.json",
+          data: threadsPayload,
+        }),
+      });
+      expect(writeA.status).toBe(200);
+
+      const readA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-a",
+          relativePath: "phone/sms-threads.json",
+        }),
+      });
+      expect(await readA.json()).toMatchObject({ ok: true, data: threadsPayload });
+
+      const readB = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-b",
+          relativePath: "phone/sms-threads.json",
+        }),
+      });
+      expect(await readB.json()).toMatchObject({ ok: true, data: null, missing: true });
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "phone", "sms-threads.json");
+      expect(fs.existsSync(abs)).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("smoke: lore/entries.json missing then writeJson readJson isolation and disk path", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      fs.mkdirSync(path.join(agentsDir, "agent-b"), { recursive: true });
+      const agents = new Map([
+        ["agent-a", { id: "agent-a", name: "A" }],
+        ["agent-b", { id: "agent-b", name: "B" }],
+      ]);
+      const engine = {
+        agentsDir,
+        getAgent: (id) => agents.get(id) || null,
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const readMissing = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+        }),
+      });
+      expect(readMissing.status).toBe(200);
+      expect(await readMissing.json()).toMatchObject({ ok: true, data: null, missing: true });
+
+      const entriesPayload = {
+        entries: {
+          "entry-1": { title: "note", body: "minimal" },
+        },
+      };
+
+      const writeA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+          data: entriesPayload,
+        }),
+      });
+      expect(writeA.status).toBe(200);
+
+      const readA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+        }),
+      });
+      expect(await readA.json()).toMatchObject({ ok: true, data: entriesPayload });
+
+      const readB = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-b",
+          relativePath: "lore/entries.json",
+        }),
+      });
+      expect(await readB.json()).toMatchObject({ ok: true, data: null, missing: true });
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "lore", "entries.json");
+      expect(fs.existsSync(abs)).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports jsonl append and list under agent scope", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {
