@@ -19,6 +19,32 @@ describe("desk route", () => {
     vi.clearAllMocks();
   });
 
+  it("desk/heartbeat triggers the existing scheduler heartbeat and reports cooldown", async () => {
+    const triggerNow = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    const hub = {
+      scheduler: {
+        getHeartbeat: vi.fn(() => ({ triggerNow })),
+      },
+    };
+
+    const { createDeskRoute } = await import("../server/routes/desk.js");
+    const app = new Hono();
+    app.route("/api", createDeskRoute({}, hub));
+
+    const first = await app.request("/api/desk/heartbeat?agentId=agent-a", { method: "POST" });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ ok: true, triggered: true, cooldown: false });
+
+    const second = await app.request("/api/desk/heartbeat?agentId=agent-a", { method: "POST" });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ ok: true, triggered: false, cooldown: true });
+
+    expect(hub.scheduler.getHeartbeat).toHaveBeenCalledWith("agent-a");
+    expect(triggerNow).toHaveBeenCalledTimes(2);
+  });
+
   it("desk/install-skill 对 zip/.skill 走 extractZip 抽象，并把解压结果安装到工作区技能目录", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
     try {

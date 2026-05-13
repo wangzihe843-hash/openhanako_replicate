@@ -307,8 +307,13 @@ export function createDeskRoute(engine, hub) {
     if (!agentId) return c.json({ error: "agentId is required" }, 400);
     const hb = hub?.scheduler?.getHeartbeat(agentId);
     if (!hb) return c.json({ error: "Heartbeat not initialized" });
-    hb.triggerNow();
-    return c.json({ ok: true, message: t("error.heartbeatTriggered") });
+    const triggered = hb.triggerNow();
+    return c.json({
+      ok: true,
+      triggered,
+      cooldown: !triggered,
+      message: triggered ? t("error.heartbeatTriggered") : "Heartbeat trigger cooldown",
+    });
   });
 
   // ════════════════════════════

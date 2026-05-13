@@ -1454,6 +1454,52 @@
   text-overflow: ellipsis;
 }
 
+.phoneHeartbeatRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 11px;
+}
+
+.phoneHeartbeatButton {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 6px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.phoneHeartbeatButton:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: rgba(107, 100, 150, 0.38);
+  background: var(--accent-light);
+}
+
+.phoneHeartbeatButton:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  background: rgba(248, 250, 252, 0.76);
+}
+
+.phoneHeartbeatStatus {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .phoneAppGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

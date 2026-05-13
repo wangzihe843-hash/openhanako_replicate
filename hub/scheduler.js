@@ -13,6 +13,7 @@ import { createHeartbeat, HEARTBEAT_ACTIVITY_DIR } from "../lib/desk/heartbeat.j
 import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { getLocale } from "../server/i18n.js";
+import { runXingyeHeartbeatConsumer } from "../lib/xingye/heartbeat-consumer.js";
 
 export class Scheduler {
   /**
@@ -129,7 +130,10 @@ export class Scheduler {
       // 巡检/笺巡检不传 withMemory：executeIsolated 默认走 agent.systemPrompt，
       // 而该 cache 始终按 master 开关构建，与 per-session 开关解耦。
       // 用户关 master 时自动不带记忆；只关某个 session 的开关不影响这里。
-      onBeat: (prompt) => this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {}),
+      onBeat: async (prompt) => {
+        await this._runXingyeHeartbeatConsumer(agentId, agent);
+        return this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {});
+      },
       onJianBeat: (prompt, cwd) => {
         const isZh = getLocale().startsWith("zh");
         this._executeActivityForAgent(agentId, prompt, "heartbeat", `${isZh ? "笺" : "jian"}:${path.basename(cwd)}`, { cwd });
@@ -315,6 +319,25 @@ export class Scheduler {
     }
 
     engine.emitDevLog(`活动记录: ${entry.summary}`, "heartbeat");
+  }
+
+  async _runXingyeHeartbeatConsumer(agentId, agent) {
+    try {
+      const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
+      const result = await runXingyeHeartbeatConsumer({ agentId, agentDir });
+      if (result?.consumed > 0) {
+        this._hub.eventBus.emit({
+          type: "xingye_heartbeat_consumed",
+          agentId,
+          consumerId: "xingye.heartbeat",
+          consumed: result.consumed,
+          result: result.result,
+        }, null);
+      }
+    } catch (err) {
+      console.error(`[xingye] heartbeat consumer failed (${agentId}): ${err.message}`);
+      this._engine.emitDevLog?.(`[xingye] heartbeat consumer failed: ${err.message}`, "error");
+    }
   }
 
 }

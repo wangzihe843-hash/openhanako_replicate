@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
+import { hanaFetch } from '../hooks/use-hana-fetch';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -116,6 +117,8 @@ export function PhoneHome({
   onOpenJournal,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
+  const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
+  const [heartbeatBusy, setHeartbeatBusy] = useState(false);
   useEffect(() => {
     setStatusTime(formatPhoneStatusTime(new Date()));
     const id = window.setInterval(() => {
@@ -143,6 +146,26 @@ export function PhoneHome({
     }
     if (action === 'journal') {
       onOpenJournal();
+    }
+  };
+
+  const handleHeartbeatTrigger = async () => {
+    if (!agent?.id || heartbeatBusy) return;
+    setHeartbeatBusy(true);
+    setHeartbeatStatus('巡检触发中...');
+    try {
+      const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agent.id)}`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        throw new Error(typeof data?.error === 'string' ? data.error : res.statusText || 'heartbeat failed');
+      }
+      setHeartbeatStatus(data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发');
+    } catch (error) {
+      setHeartbeatStatus(`巡检失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setHeartbeatBusy(false);
     }
   };
 
@@ -178,6 +201,19 @@ export function PhoneHome({
           <div className={styles.phoneTags}>
             <span>{display?.relationshipLabel ?? '关系未设置'}</span>
             <span>{display?.speakingStyle ?? '说话风格未设置'}</span>
+          </div>
+          <div className={styles.phoneHeartbeatRow}>
+            <button
+              className={styles.phoneHeartbeatButton}
+              type="button"
+              disabled={!agent?.id || heartbeatBusy}
+              onClick={handleHeartbeatTrigger}
+            >
+              {heartbeatBusy ? '巡检中...' : '立即巡检'}
+            </button>
+            <span className={styles.phoneHeartbeatStatus} role="status">
+              {heartbeatStatus}
+            </span>
           </div>
         </section>
 
