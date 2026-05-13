@@ -35,9 +35,9 @@ const CATEGORY_OPTIONS: Array<{ value: XingyeLoreCategory; label: string }> = XI
 );
 
 const INSERTION_OPTIONS: Array<{ value: XingyeLoreInsertionMode; label: string }> = [
-  { value: 'manual', label: '手动' },
-  { value: 'keyword', label: '关键词' },
-  { value: 'always', label: '始终' },
+  { value: 'manual', label: '手动（不自动注入）' },
+  { value: 'keyword', label: '关键词（命中后整段正文）' },
+  { value: 'always', label: '始终（默认可引用，宜短）' },
 ];
 
 const VISIBILITY_OPTIONS: Array<{ value: XingyeLoreVisibility; label: string }> = [
@@ -155,9 +155,20 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
       <div className={styles.loreEditorHeader}>
         <div>
           <h3 className={styles.detailSectionTitle}>背景故事 / 设定库</h3>
-          <p className={styles.loreHint}>
-            完整背景、世界观、事件、地点和组织保存在星野设定库。设定库条目仅保存在 workspace，不会自动写入 OpenHanako identity / ishiki。
-          </p>
+          <div className={styles.loreHintStack}>
+            <p className={styles.loreHint}>
+              完整背景、世界观、事件、地点和组织保存在星野设定库。每一条设定<strong>条目</strong>是自动注入时的<strong>最小单位</strong>：被选中后，该条目的正文会<strong>整块</strong>交给模型，不会只抽取其中某一句、某一行或某个列表项。设定库条目仅保存在 workspace，不会自动写入 OpenHanako identity / ishiki。
+            </p>
+            <p className={styles.loreHint}>
+              <strong>关键词</strong>模式：任一关键词命中时，会注入该条目的<strong>全部</strong>「条目正文」字段内容，而不是仅匹配到的那一句、那一段或某个要点。
+            </p>
+            <p className={styles.loreHint}>
+              <strong>始终</strong>模式：在「小手机」「秘密空间」等生成任务中，会<strong>默认引用</strong>已启用且设为「始终」的条目。请勿把过长的全文世界观「圣经」塞进「始终」；长文请拆成多条或改用关键词按需注入。
+            </p>
+            <p className={styles.loreHint}>
+              建议按主题拆条，例如：<strong>身份核心</strong>、<strong>关系核心</strong>、<strong>地点</strong>、<strong>组织</strong>、<strong>事件</strong>、<strong>规则</strong>，各写成一条或一组短条目，便于按需命中与阅读。
+            </p>
+          </div>
         </div>
         {editingEntry && <button type="button" onClick={resetDraft}>取消编辑</button>}
       </div>
@@ -168,16 +179,17 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
           <input
             type="text"
             value={draft.title}
-            placeholder="例如：旧王国崩塌"
+            placeholder="例如：灯塔誓约（单条围绕一个主题更易维护）"
             onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
           />
         </label>
         <label className={styles.profileField}>
-          <span>完整设定内容</span>
+          <span title="关键词命中或条目被选中时，本框全文会整块注入，不会只摘匹配片段。">条目正文（命中后整段注入）</span>
           <textarea
             value={draft.content}
-            placeholder="完整背景故事、世界观规则、重要事件等写在这里。"
+            placeholder="写入本条目的全部正文。需要拆分时，可把身份核心、关系核心、地点、组织、事件、规则等分到不同条目。"
             rows={5}
+            title="任一关键词命中时，会注入本框中的全部内容，而非仅含关键词的那一句。"
             onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))}
           />
         </label>
@@ -192,9 +204,10 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
             </select>
           </label>
           <label className={styles.profileField}>
-            <span>插入模式</span>
+            <span title="「始终」会在小手机、秘密空间等任务中默认引用；「关键词」命中后注入整条目正文；「手动」不自动注入。">插入模式</span>
             <select
               value={draft.insertionMode}
+              title="始终：默认可引用，条目宜短。关键词：命中后注入该条目全部正文。手动：不自动注入。"
               onChange={(event) => setDraft((current) => ({ ...current, insertionMode: event.target.value as XingyeLoreInsertionMode }))}
             >
               {INSERTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -221,11 +234,12 @@ export function LoreEditor({ agentId }: LoreEditorProps) {
           </label>
         </div>
         <label className={styles.profileField}>
-          <span>关键词</span>
+          <span title="仅在「关键词」模式下用于匹配；任一命中即注入本条目的全部「条目正文」，不是只摘命中句。">关键词</span>
           <input
             type="text"
             value={draft.keywords}
-            placeholder="用逗号分隔，例如：王国, 灯塔, 誓约"
+            placeholder="逗号或顿号分隔，例如：王国、灯塔、誓约（命中后整段正文都会注入）"
+            title="任一关键词命中时，注入本条目的全部正文。"
             onChange={(event) => setDraft((current) => ({ ...current, keywords: event.target.value }))}
           />
         </label>

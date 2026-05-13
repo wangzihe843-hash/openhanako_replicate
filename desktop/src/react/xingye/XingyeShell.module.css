@@ -1046,6 +1046,18 @@
   padding: 0;
 }
 
+.loreHintStack {
+  margin-top: 6px;
+}
+
+.loreHintStack .loreHint {
+  margin-top: 8px;
+}
+
+.loreHintStack .loreHint:first-child {
+  margin-top: 0;
+}
+
 .loreHint,
 .loreEmpty {
   margin: 6px 0 0;

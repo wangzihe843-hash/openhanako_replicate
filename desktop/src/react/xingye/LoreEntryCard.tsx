@@ -1,6 +1,18 @@
-import type { XingyeLoreEntry } from './xingye-lore-store';
+import type { XingyeLoreEntry, XingyeLoreInsertionMode, XingyeLoreVisibility } from './xingye-lore-store';
 import { XINGYE_LORE_CATEGORY_LABELS } from './xingye-lore-store';
 import styles from './XingyeShell.module.css';
+
+const LORE_INSERTION_LABEL: Record<XingyeLoreInsertionMode, string> = {
+  manual: '手动',
+  keyword: '关键词',
+  always: '始终',
+};
+
+const LORE_VISIBILITY_LABEL: Record<XingyeLoreVisibility, string> = {
+  canonical: '正式设定',
+  private: '私有备注',
+  draft: '草稿',
+};
 
 interface LoreEntryCardProps {
   entry: XingyeLoreEntry;
@@ -24,8 +36,8 @@ export function LoreEntryCard({
       <div className={styles.loreCardHeader}>
         <div className={styles.loreTitleBlock}>
           <h4>{entry.title}</h4>
-          <p>
-            {XINGYE_LORE_CATEGORY_LABELS[entry.category]} · {entry.visibility} · {entry.insertionMode} · priority {entry.priority}
+          <p title="每条目为注入最小单位；关键词命中时整段正文注入；「始终」宜短，小手机/秘密空间等会默认引用。">
+            {XINGYE_LORE_CATEGORY_LABELS[entry.category]} · {LORE_VISIBILITY_LABEL[entry.visibility]} · {LORE_INSERTION_LABEL[entry.insertionMode]} · 优先级 {entry.priority}
           </p>
         </div>
         <button type="button" onClick={() => onToggle(entry.id)}>
