@@ -44,10 +44,10 @@
     "dist": "npm run build:computer-use-helper && npm run build:server && npm run build:client && electron-builder --mac dmg",
     "dist:win": "npm run build:computer-use-helper && npm run build:windows-sandbox-helper && npm run generate:windows-icon && npm run build:server && npm run build:client && electron-builder --win nsis",
     "dist:linux": "npm run build:server && npm run build:client && electron-builder --linux AppImage deb",
-    "test": "vitest run --exclude '**/.claude/**' --exclude '**/.cache/**' --exclude '**/dist/**' --exclude '**/dist-server/**' --exclude '**/dist-computer-use/**' --exclude '**/dist-sandbox/**'",
+    "test": "vitest run --exclude '**/.codex_refs/**' --exclude '**/.claude/**' --exclude '**/.cache/**' --exclude '**/dist/**' --exclude '**/dist-server/**' --exclude '**/dist-computer-use/**' --exclude '**/dist-sandbox/**'",
     "build:server": "node scripts/build-server.mjs",
     "lint": "eslint .",
-    "test:watch": "vitest --exclude '**/.claude/**' --exclude '**/.cache/**' --exclude '**/dist/**' --exclude '**/dist-server/**' --exclude '**/dist-computer-use/**' --exclude '**/dist-sandbox/**'",
+    "test:watch": "vitest --exclude **/.codex_refs/** --exclude '**/.claude/**' --exclude '**/.cache/**' --exclude '**/dist/**' --exclude '**/dist-server/**' --exclude '**/dist-computer-use/**' --exclude '**/dist-sandbox/**'",
     "postinstall": "node scripts/patch-pi-sdk.cjs"
   },
   "dependencies": {
