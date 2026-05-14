@@ -177,20 +177,9 @@
 
 .themeField .sectionHeader {
   color: var(--field-green);
-  font-size: 0.68rem;
-  letter-spacing: 0.18em;
+  font-size: 0.96rem;
+  letter-spacing: 0.1em;
   font-weight: 700;
-  text-transform: uppercase;
-}
-
-.themeField .sectionHeader::before {
-  content: '[ ';
-  color: var(--field-orange);
-}
-
-.themeField .sectionHeader::after {
-  content: ' ]';
-  color: var(--field-orange);
 }
 
 .themeField .sectionBody {
@@ -246,11 +235,6 @@
   color: var(--field-orange);
 }
 
-.themeField .sectionAction .sectionHeader::before,
-.themeField .sectionAction .sectionHeader::after {
-  color: var(--field-orange);
-}
-
 .themeField .sectionAction .sectionBody {
   color: #6e3a13;
   font-weight: 600;
@@ -276,32 +260,972 @@
 }
 
 /* ==========================================================================
-   Empty stubs for the remaining 6 themes.
-   Class names are referenced from xingye-divination-themes.ts so they must
-   exist; visual styling is intentionally left blank for now and will be
-   filled in after the field_oracle prototype is approved.
+   iching_liuyao  六爻 — 「宣纸朱印」
    ========================================================================== */
 
-.themeIching { }
-.themeIchingBar { }
-.themeIchingChip { }
+.themeIching {
+  --iching-bg: #f5efe2;
+  --iching-bg-soft: #fbf6e9;
+  --iching-paper: #fff9eb;
+  --iching-ink: #2b2620;
+  --iching-ink-soft: #6a5e4c;
+  --iching-red: #a93324;
+  --iching-red-soft: rgba(169, 51, 36, 0.10);
+  --iching-line: rgba(43, 38, 32, 0.18);
+  --iching-serif:
+    'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', 'Source Han Serif SC', serif;
+}
 
-.themeTarot { }
-.themeTarotBar { }
-.themeTarotChip { }
+.themeIching.generationCard {
+  background: linear-gradient(180deg, var(--iching-bg-soft) 0%, var(--iching-bg) 100%);
+  border: 1px solid var(--iching-line);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  color: var(--iching-ink);
+  font-family: var(--iching-serif);
+}
 
-.themeCrystal { }
-.themeCrystalBar { }
-.themeCrystalChip { }
+.themeIching.generationCard::after {
+  content: '卦';
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  font-size: 1.6rem;
+  font-family: var(--iching-serif);
+  color: var(--iching-red);
+  opacity: 0.18;
+  pointer-events: none;
+}
 
-.themeRunes { }
-.themeRunesBar { }
-.themeRunesChip { }
+.themeIching.generationCard :global(.phoneAppTitle) {
+  font-family: var(--iching-serif);
+  color: var(--iching-red);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  margin-top: 6px;
+}
 
-.themeAstro { }
-.themeAstroBar { }
-.themeAstroChip { }
+.themeIching.generationCard :global(.phoneAppHint),
+.themeIching.generationCard :global(.phoneFormField) > span {
+  color: var(--iching-ink-soft);
+  font-family: var(--iching-serif);
+}
 
-.themeGeneric { }
-.themeGenericBar { }
-.themeGenericChip { }
+.themeIching.generationCard :global(.phoneFormField) select,
+.themeIching.generationCard :global(.phoneFormField) textarea {
+  background: var(--iching-paper);
+  border: 1px solid var(--iching-line);
+  color: var(--iching-ink);
+  font-family: var(--iching-serif);
+  border-radius: 6px;
+}
+
+.themeIching.generationCard :global(.phoneJournalPrimaryButton) {
+  background: var(--iching-red);
+  border: 1px solid var(--iching-red);
+  color: var(--iching-paper);
+  font-family: var(--iching-serif);
+  letter-spacing: 0.2em;
+  border-radius: 6px;
+}
+
+.themeIching.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: #8e2a1f;
+}
+
+.themeIching.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--iching-red);
+  color: var(--iching-red);
+  font-family: var(--iching-serif);
+  border-radius: 6px;
+}
+
+.themeIching .section {
+  background: linear-gradient(180deg, var(--iching-paper) 0%, var(--iching-bg-soft) 100%);
+  border: 1px solid var(--iching-line);
+  color: var(--iching-ink);
+  font-family: var(--iching-serif);
+}
+
+.themeIching .sectionHeader {
+  color: var(--iching-red);
+  font-size: 0.96rem;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+
+.themeIching .sectionBody {
+  font-family: var(--iching-serif);
+  font-size: 0.92rem;
+  line-height: 1.85;
+  color: var(--iching-ink);
+}
+
+.themeIching .sectionTitle {
+  border-bottom: 2px solid var(--iching-red);
+  background: var(--iching-paper);
+}
+
+.themeIching .sectionTitle .sectionBody {
+  font-size: 1.18rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+.themeIching .sectionSign {
+  border: 1px solid var(--iching-line);
+  background: rgba(255, 249, 235, 0.7);
+}
+
+.themeIching .sectionSign .sectionBody {
+  font-size: 1.04rem;
+  letter-spacing: 0.06em;
+}
+
+.themeIching .sectionAction {
+  border: 1px solid var(--iching-red);
+  background: var(--iching-red-soft);
+}
+
+.themeIching .sectionAction .sectionHeader {
+  color: var(--iching-red);
+}
+
+.themeIching .sectionAction .sectionBody {
+  color: #6e2218;
+  font-weight: 600;
+}
+
+.themeIchingBar {
+  background: var(--iching-red);
+}
+
+.themeIchingChip {
+  background: var(--iching-red-soft);
+  color: var(--iching-red);
+  border-color: rgba(169, 51, 36, 0.32);
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+
+/* ==========================================================================
+   tarot  塔罗 — 「深紫金线」
+   ========================================================================== */
+
+.themeTarot {
+  --tarot-bg: #1a0f29;
+  --tarot-bg-soft: #261642;
+  --tarot-bg-strong: #120a1f;
+  --tarot-gold: #d4af37;
+  --tarot-gold-soft: rgba(212, 175, 55, 0.16);
+  --tarot-cream: #f4e4c1;
+  --tarot-cream-soft: rgba(244, 228, 193, 0.7);
+  --tarot-line: rgba(212, 175, 55, 0.45);
+  --tarot-serif:
+    'Cormorant Garamond', 'Cormorant', 'EB Garamond', 'Cinzel',
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+}
+
+.themeTarot.generationCard {
+  background: linear-gradient(180deg, var(--tarot-bg-soft) 0%, var(--tarot-bg) 100%);
+  border: 1px solid var(--tarot-line);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  color: var(--tarot-cream);
+  font-family: var(--tarot-serif);
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.08);
+}
+
+.themeTarot.generationCard::after {
+  content: '✦  TAROT  ✦';
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  font-size: 0.62rem;
+  letter-spacing: 0.34em;
+  color: var(--tarot-gold);
+  opacity: 0.5;
+  font-family: var(--tarot-serif);
+  pointer-events: none;
+}
+
+.themeTarot.generationCard :global(.phoneAppTitle) {
+  font-family: var(--tarot-serif);
+  color: var(--tarot-gold);
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  font-size: 0.96rem;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.themeTarot.generationCard :global(.phoneAppHint),
+.themeTarot.generationCard :global(.phoneFormField) > span {
+  color: var(--tarot-cream-soft);
+  font-family: var(--tarot-serif);
+  letter-spacing: 0.04em;
+}
+
+.themeTarot.generationCard :global(.phoneFormField) select,
+.themeTarot.generationCard :global(.phoneFormField) textarea {
+  background: rgba(18, 10, 31, 0.6);
+  border: 1px solid var(--tarot-line);
+  color: var(--tarot-cream);
+  font-family: var(--tarot-serif);
+  border-radius: 4px;
+}
+
+.themeTarot.generationCard :global(.phoneFormField) select:focus,
+.themeTarot.generationCard :global(.phoneFormField) textarea:focus {
+  outline: none;
+  border-color: var(--tarot-gold);
+  box-shadow: 0 0 0 2px var(--tarot-gold-soft);
+}
+
+.themeTarot.generationCard :global(.phoneJournalPrimaryButton) {
+  background: transparent;
+  border: 1px solid var(--tarot-gold);
+  color: var(--tarot-gold);
+  font-family: var(--tarot-serif);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  border-radius: 4px;
+}
+
+.themeTarot.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: var(--tarot-gold-soft);
+}
+
+.themeTarot.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--tarot-line);
+  color: var(--tarot-gold);
+  font-family: var(--tarot-serif);
+  letter-spacing: 0.12em;
+  border-radius: 4px;
+}
+
+.themeTarot .section {
+  background: linear-gradient(180deg, var(--tarot-bg-soft) 0%, var(--tarot-bg) 100%);
+  border: 1px solid var(--tarot-line);
+  color: var(--tarot-cream);
+  font-family: var(--tarot-serif);
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.06);
+}
+
+.themeTarot .sectionHeader {
+  color: var(--tarot-gold);
+  font-size: 0.92rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.themeTarot .sectionBody {
+  font-family: var(--tarot-serif);
+  font-size: 0.92rem;
+  line-height: 1.75;
+  color: var(--tarot-cream);
+  letter-spacing: 0.02em;
+}
+
+.themeTarot .sectionTitle {
+  border: 1px solid var(--tarot-gold);
+  background: linear-gradient(180deg, var(--tarot-bg) 0%, var(--tarot-bg-strong) 100%);
+}
+
+.themeTarot .sectionTitle .sectionBody {
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-align: center;
+  color: var(--tarot-gold);
+}
+
+.themeTarot .sectionSign {
+  border: 1px solid var(--tarot-line);
+  background: var(--tarot-bg-strong);
+}
+
+.themeTarot .sectionSign .sectionBody {
+  font-style: italic;
+  color: var(--tarot-cream);
+}
+
+.themeTarot .sectionAction {
+  background: var(--tarot-gold-soft);
+  border: 1px solid var(--tarot-gold);
+}
+
+.themeTarot .sectionAction .sectionBody {
+  color: var(--tarot-gold);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.themeTarotBar {
+  background: var(--tarot-gold);
+}
+
+.themeTarotChip {
+  background: var(--tarot-gold-soft);
+  color: var(--tarot-gold);
+  border-color: var(--tarot-line);
+  font-family: 'Cormorant Garamond', 'Cormorant', 'EB Garamond', serif;
+  letter-spacing: 0.16em;
+}
+
+/* ==========================================================================
+   crystal_ball  水晶球 — 「蓝紫雾气」
+   ========================================================================== */
+
+.themeCrystal {
+  --crystal-bg: #0c1e3a;
+  --crystal-bg-soft: #19284a;
+  --crystal-bg-deep: #2a1652;
+  --crystal-silver: #cad8e9;
+  --crystal-silver-soft: rgba(202, 216, 233, 0.7);
+  --crystal-moon: #b7c8e0;
+  --crystal-violet: #6f5b97;
+  --crystal-violet-soft: rgba(111, 91, 151, 0.22);
+  --crystal-line: rgba(183, 200, 224, 0.32);
+  --crystal-serif:
+    'Cormorant Garamond', 'Cormorant', 'EB Garamond',
+    'Noto Serif SC', 'Source Han Serif SC', serif;
+}
+
+.themeCrystal.generationCard {
+  background:
+    radial-gradient(circle at 30% 25%, rgba(183, 200, 224, 0.18), transparent 55%),
+    radial-gradient(circle at 75% 80%, rgba(111, 91, 151, 0.32), transparent 60%),
+    linear-gradient(160deg, var(--crystal-bg) 0%, var(--crystal-bg-deep) 100%);
+  border: 1px solid var(--crystal-line);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  color: var(--crystal-silver);
+  font-family: var(--crystal-serif);
+}
+
+.themeCrystal.generationCard::after {
+  content: '☾';
+  position: absolute;
+  top: 6px;
+  right: 16px;
+  font-size: 1.4rem;
+  color: var(--crystal-moon);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.themeCrystal.generationCard :global(.phoneAppTitle) {
+  font-family: var(--crystal-serif);
+  color: var(--crystal-moon);
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  font-size: 1rem;
+  font-style: italic;
+  margin-top: 6px;
+}
+
+.themeCrystal.generationCard :global(.phoneAppHint),
+.themeCrystal.generationCard :global(.phoneFormField) > span {
+  color: var(--crystal-silver-soft);
+  font-family: var(--crystal-serif);
+}
+
+.themeCrystal.generationCard :global(.phoneFormField) select,
+.themeCrystal.generationCard :global(.phoneFormField) textarea {
+  background: rgba(12, 30, 58, 0.55);
+  border: 1px solid var(--crystal-line);
+  color: var(--crystal-silver);
+  font-family: var(--crystal-serif);
+  border-radius: 14px;
+}
+
+.themeCrystal.generationCard :global(.phoneFormField) select:focus,
+.themeCrystal.generationCard :global(.phoneFormField) textarea:focus {
+  outline: none;
+  border-color: var(--crystal-moon);
+  box-shadow: 0 0 0 3px var(--crystal-violet-soft);
+}
+
+.themeCrystal.generationCard :global(.phoneJournalPrimaryButton) {
+  background: var(--crystal-violet-soft);
+  border: 1px solid var(--crystal-moon);
+  color: var(--crystal-silver);
+  font-family: var(--crystal-serif);
+  letter-spacing: 0.24em;
+  border-radius: 999px;
+}
+
+.themeCrystal.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: rgba(111, 91, 151, 0.4);
+}
+
+.themeCrystal.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--crystal-line);
+  color: var(--crystal-moon);
+  font-family: var(--crystal-serif);
+  border-radius: 999px;
+}
+
+.themeCrystal .section {
+  background:
+    radial-gradient(circle at 80% 15%, rgba(183, 200, 224, 0.10), transparent 60%),
+    linear-gradient(160deg, var(--crystal-bg-soft) 0%, var(--crystal-bg) 100%);
+  border: 1px solid var(--crystal-line);
+  color: var(--crystal-silver);
+  font-family: var(--crystal-serif);
+}
+
+.themeCrystal .sectionHeader {
+  color: var(--crystal-moon);
+  font-size: 0.92rem;
+  letter-spacing: 0.24em;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.themeCrystal .sectionBody {
+  font-family: var(--crystal-serif);
+  font-size: 0.94rem;
+  line-height: 1.85;
+  color: var(--crystal-silver);
+}
+
+.themeCrystal .sectionTitle {
+  border-radius: 999px 999px 14px 14px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(183, 200, 224, 0.22), transparent 65%),
+    linear-gradient(160deg, var(--crystal-bg-soft) 0%, var(--crystal-bg-deep) 100%);
+}
+
+.themeCrystal .sectionTitle .sectionBody {
+  font-size: 1.18rem;
+  font-style: italic;
+  text-align: center;
+  color: var(--crystal-moon);
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 12px rgba(183, 200, 224, 0.4);
+}
+
+.themeCrystal .sectionSign {
+  border-style: dashed;
+  border-color: var(--crystal-line);
+}
+
+.themeCrystal .sectionSign .sectionBody {
+  font-style: italic;
+  color: var(--crystal-silver-soft);
+}
+
+.themeCrystal .sectionAction {
+  background: var(--crystal-violet-soft);
+  border: 1px solid var(--crystal-moon);
+}
+
+.themeCrystal .sectionAction .sectionHeader {
+  color: var(--crystal-moon);
+}
+
+.themeCrystal .sectionAction .sectionBody {
+  color: var(--crystal-moon);
+  font-weight: 500;
+}
+
+.themeCrystalBar {
+  background: var(--crystal-moon);
+}
+
+.themeCrystalChip {
+  background: var(--crystal-violet-soft);
+  color: var(--crystal-moon);
+  border-color: var(--crystal-line);
+  font-family: 'Cormorant Garamond', 'Cormorant', serif;
+  font-style: italic;
+}
+
+/* ==========================================================================
+   runes  卢恩 — 「石灰刻痕」
+   ========================================================================== */
+
+.themeRunes {
+  --runes-bg: #d9d3c7;
+  --runes-bg-soft: #e6e0d1;
+  --runes-stone: #c6bfae;
+  --runes-ink: #2c2a26;
+  --runes-ink-soft: #4f4a3f;
+  --runes-rust: #6e3a26;
+  --runes-rust-soft: rgba(110, 58, 38, 0.14);
+  --runes-moss: #5f6f3d;
+  --runes-line: rgba(44, 42, 38, 0.28);
+  --runes-serif:
+    'Fraunces', 'Cormorant Upright', 'IM Fell English',
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+}
+
+.themeRunes.generationCard {
+  background:
+    repeating-linear-gradient(135deg, rgba(44, 42, 38, 0.04) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, var(--runes-bg-soft) 0%, var(--runes-bg) 100%);
+  border: 1px solid var(--runes-line);
+  border-radius: 4px;
+  padding: 16px 16px 14px;
+  color: var(--runes-ink);
+  font-family: var(--runes-serif);
+}
+
+.themeRunes.generationCard::after {
+  content: 'ᚱᚢᚾᚨ';
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  font-size: 1rem;
+  letter-spacing: 0.2em;
+  color: var(--runes-rust);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.themeRunes.generationCard :global(.phoneAppTitle) {
+  font-family: var(--runes-serif);
+  color: var(--runes-rust);
+  font-weight: 700;
+  font-size: 1.04rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.themeRunes.generationCard :global(.phoneAppHint),
+.themeRunes.generationCard :global(.phoneFormField) > span {
+  color: var(--runes-ink-soft);
+  font-family: var(--runes-serif);
+}
+
+.themeRunes.generationCard :global(.phoneFormField) select,
+.themeRunes.generationCard :global(.phoneFormField) textarea {
+  background: var(--runes-bg-soft);
+  border: 1px solid var(--runes-line);
+  color: var(--runes-ink);
+  font-family: var(--runes-serif);
+  border-radius: 2px;
+}
+
+.themeRunes.generationCard :global(.phoneJournalPrimaryButton) {
+  background: var(--runes-rust);
+  border: 1px solid var(--runes-rust);
+  color: var(--runes-bg-soft);
+  font-family: var(--runes-serif);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+
+.themeRunes.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: #582c1d;
+}
+
+.themeRunes.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--runes-line);
+  color: var(--runes-rust);
+  font-family: var(--runes-serif);
+  border-radius: 2px;
+}
+
+.themeRunes .section {
+  background:
+    repeating-linear-gradient(135deg, rgba(44, 42, 38, 0.04) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, var(--runes-bg-soft) 0%, var(--runes-stone) 100%);
+  border: 1px solid var(--runes-line);
+  color: var(--runes-ink);
+  font-family: var(--runes-serif);
+  border-radius: 4px;
+}
+
+.themeRunes .sectionHeader {
+  color: var(--runes-rust);
+  font-size: 0.94rem;
+  letter-spacing: 0.24em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.themeRunes .sectionBody {
+  font-family: var(--runes-serif);
+  font-size: 0.92rem;
+  line-height: 1.8;
+  color: var(--runes-ink);
+}
+
+.themeRunes .sectionTitle {
+  border-top: 2px solid var(--runes-ink);
+  border-bottom: 2px solid var(--runes-ink);
+  background: var(--runes-bg-soft);
+}
+
+.themeRunes .sectionTitle .sectionBody {
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.themeRunes .sectionSign {
+  border: 1px solid var(--runes-line);
+  background: var(--runes-stone);
+}
+
+.themeRunes .sectionSign .sectionBody {
+  font-weight: 600;
+}
+
+.themeRunes .sectionAction {
+  background: var(--runes-rust-soft);
+  border: 1px solid var(--runes-rust);
+}
+
+.themeRunes .sectionAction .sectionHeader {
+  color: var(--runes-rust);
+}
+
+.themeRunes .sectionAction .sectionBody {
+  color: var(--runes-rust);
+  font-weight: 700;
+}
+
+.themeRunesBar {
+  background: var(--runes-rust);
+}
+
+.themeRunesChip {
+  background: var(--runes-rust-soft);
+  color: var(--runes-rust);
+  border-color: rgba(110, 58, 38, 0.34);
+  font-family: 'Fraunces', 'Cormorant Upright', serif;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+/* ==========================================================================
+   astrology  占星 — 「夜幕星点」
+   ========================================================================== */
+
+.themeAstro {
+  --astro-bg: #0a1228;
+  --astro-bg-soft: #131e3e;
+  --astro-bg-deep: #060a1a;
+  --astro-silver: #cad8e9;
+  --astro-silver-soft: rgba(202, 216, 233, 0.7);
+  --astro-gold: #e6c265;
+  --astro-gold-soft: rgba(230, 194, 101, 0.16);
+  --astro-violet: #6f5b97;
+  --astro-line: rgba(202, 216, 233, 0.28);
+  --astro-serif:
+    'Cormorant Garamond', 'Cormorant', 'EB Garamond',
+    'Noto Serif SC', 'Source Han Serif SC', serif;
+}
+
+.themeAstro.generationCard {
+  background:
+    radial-gradient(1px 1px at 22% 18%, var(--astro-silver), transparent 50%),
+    radial-gradient(1px 1px at 70% 32%, var(--astro-silver), transparent 50%),
+    radial-gradient(1px 1px at 38% 64%, var(--astro-gold), transparent 50%),
+    radial-gradient(1px 1px at 84% 72%, var(--astro-silver), transparent 50%),
+    radial-gradient(1px 1px at 12% 88%, var(--astro-silver), transparent 50%),
+    linear-gradient(165deg, var(--astro-bg) 0%, var(--astro-bg-deep) 100%);
+  border: 1px solid var(--astro-line);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  color: var(--astro-silver);
+  font-family: var(--astro-serif);
+}
+
+.themeAstro.generationCard::after {
+  content: '☿ · STELLA';
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  font-size: 0.62rem;
+  letter-spacing: 0.32em;
+  color: var(--astro-gold);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.themeAstro.generationCard :global(.phoneAppTitle) {
+  font-family: var(--astro-serif);
+  color: var(--astro-gold);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  font-size: 0.98rem;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.themeAstro.generationCard :global(.phoneAppHint),
+.themeAstro.generationCard :global(.phoneFormField) > span {
+  color: var(--astro-silver-soft);
+  font-family: var(--astro-serif);
+}
+
+.themeAstro.generationCard :global(.phoneFormField) select,
+.themeAstro.generationCard :global(.phoneFormField) textarea {
+  background: rgba(10, 18, 40, 0.55);
+  border: 1px solid var(--astro-line);
+  color: var(--astro-silver);
+  font-family: var(--astro-serif);
+  border-radius: 6px;
+}
+
+.themeAstro.generationCard :global(.phoneFormField) select:focus,
+.themeAstro.generationCard :global(.phoneFormField) textarea:focus {
+  outline: none;
+  border-color: var(--astro-gold);
+  box-shadow: 0 0 0 2px var(--astro-gold-soft);
+}
+
+.themeAstro.generationCard :global(.phoneJournalPrimaryButton) {
+  background: transparent;
+  border: 1px solid var(--astro-gold);
+  color: var(--astro-gold);
+  font-family: var(--astro-serif);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  border-radius: 6px;
+}
+
+.themeAstro.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: var(--astro-gold-soft);
+}
+
+.themeAstro.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--astro-line);
+  color: var(--astro-gold);
+  font-family: var(--astro-serif);
+  border-radius: 6px;
+}
+
+.themeAstro .section {
+  background:
+    radial-gradient(1px 1px at 80% 20%, var(--astro-silver), transparent 50%),
+    radial-gradient(1px 1px at 18% 70%, var(--astro-gold), transparent 50%),
+    linear-gradient(165deg, var(--astro-bg-soft) 0%, var(--astro-bg) 100%);
+  border: 1px solid var(--astro-line);
+  color: var(--astro-silver);
+  font-family: var(--astro-serif);
+}
+
+.themeAstro .sectionHeader {
+  color: var(--astro-gold);
+  font-size: 0.92rem;
+  letter-spacing: 0.3em;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.themeAstro .sectionBody {
+  font-family: var(--astro-serif);
+  font-size: 0.92rem;
+  line-height: 1.8;
+  color: var(--astro-silver);
+}
+
+.themeAstro .sectionTitle {
+  border-top: 1px solid var(--astro-gold);
+  border-bottom: 1px solid var(--astro-gold);
+}
+
+.themeAstro .sectionTitle .sectionBody {
+  font-size: 1.18rem;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.2em;
+  color: var(--astro-gold);
+  text-transform: uppercase;
+}
+
+.themeAstro .sectionSign {
+  border-style: dotted;
+  border-color: var(--astro-line);
+}
+
+.themeAstro .sectionSign .sectionBody {
+  color: var(--astro-silver-soft);
+}
+
+.themeAstro .sectionAction {
+  background: var(--astro-gold-soft);
+  border: 1px solid var(--astro-gold);
+}
+
+.themeAstro .sectionAction .sectionHeader {
+  color: var(--astro-gold);
+}
+
+.themeAstro .sectionAction .sectionBody {
+  color: var(--astro-gold);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.themeAstroBar {
+  background: var(--astro-gold);
+}
+
+.themeAstroChip {
+  background: var(--astro-gold-soft);
+  color: var(--astro-gold);
+  border-color: rgba(230, 194, 101, 0.45);
+  font-family: 'Cormorant Garamond', 'Cormorant', serif;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   oracle_generic  通用神谕 — 「素纸便签」
+   ========================================================================== */
+
+.themeGeneric {
+  --generic-bg: #faf7f0;
+  --generic-bg-soft: #fdfaf3;
+  --generic-paper: #ffffff;
+  --generic-ink: #2a2620;
+  --generic-ink-soft: #6a625a;
+  --generic-rose: #b5896b;
+  --generic-rose-soft: rgba(181, 137, 107, 0.14);
+  --generic-line: rgba(42, 38, 32, 0.14);
+  --generic-sans:
+    'Noto Sans SC', 'PingFang SC', 'Source Han Sans SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+}
+
+.themeGeneric.generationCard {
+  background: linear-gradient(180deg, var(--generic-bg-soft) 0%, var(--generic-bg) 100%);
+  border: 1px solid var(--generic-line);
+  border-left: 4px solid var(--generic-rose);
+  border-radius: 4px;
+  padding: 16px 16px 14px;
+  color: var(--generic-ink);
+  font-family: var(--generic-sans);
+}
+
+.themeGeneric.generationCard :global(.phoneAppTitle) {
+  font-family: var(--generic-sans);
+  color: var(--generic-ink);
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+}
+
+.themeGeneric.generationCard :global(.phoneAppHint),
+.themeGeneric.generationCard :global(.phoneFormField) > span {
+  color: var(--generic-ink-soft);
+  font-family: var(--generic-sans);
+}
+
+.themeGeneric.generationCard :global(.phoneFormField) select,
+.themeGeneric.generationCard :global(.phoneFormField) textarea {
+  background: var(--generic-paper);
+  border: 1px solid var(--generic-line);
+  color: var(--generic-ink);
+  font-family: var(--generic-sans);
+  border-radius: 4px;
+}
+
+.themeGeneric.generationCard :global(.phoneFormField) select:focus,
+.themeGeneric.generationCard :global(.phoneFormField) textarea:focus {
+  outline: none;
+  border-color: var(--generic-rose);
+  box-shadow: 0 0 0 2px var(--generic-rose-soft);
+}
+
+.themeGeneric.generationCard :global(.phoneJournalPrimaryButton) {
+  background: var(--generic-rose);
+  border: 1px solid var(--generic-rose);
+  color: var(--generic-paper);
+  font-family: var(--generic-sans);
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+}
+
+.themeGeneric.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: #97694c;
+}
+
+.themeGeneric.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px solid var(--generic-line);
+  color: var(--generic-rose);
+  font-family: var(--generic-sans);
+  border-radius: 4px;
+}
+
+.themeGeneric .section {
+  background: var(--generic-paper);
+  border: 1px solid var(--generic-line);
+  border-left: 3px solid var(--generic-rose);
+  color: var(--generic-ink);
+  font-family: var(--generic-sans);
+  border-radius: 4px;
+}
+
+.themeGeneric .sectionHeader {
+  color: var(--generic-rose);
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.themeGeneric .sectionBody {
+  font-family: var(--generic-sans);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--generic-ink);
+}
+
+.themeGeneric .sectionTitle .sectionBody {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.themeGeneric .sectionSign {
+  background: var(--generic-bg-soft);
+}
+
+.themeGeneric .sectionSign .sectionBody {
+  color: var(--generic-ink-soft);
+}
+
+.themeGeneric .sectionAction {
+  background: var(--generic-rose-soft);
+  border-left-color: var(--generic-rose);
+  border-bottom: 1px dashed var(--generic-rose);
+}
+
+.themeGeneric .sectionAction .sectionHeader {
+  color: var(--generic-rose);
+}
+
+.themeGeneric .sectionAction .sectionBody {
+  color: #6a4530;
+  font-weight: 600;
+}
+
+.themeGenericBar {
+  background: var(--generic-rose);
+}
+
+.themeGenericChip {
+  background: var(--generic-rose-soft);
+  color: var(--generic-rose);
+  border-color: rgba(181, 137, 107, 0.34);
+}
