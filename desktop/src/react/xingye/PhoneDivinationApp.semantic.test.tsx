@@ -9,13 +9,18 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { Agent } from '../types';
 import { PhoneDivinationApp } from './PhoneDivinationApp';
 
-const { buildCtx, appendDivinationEntryMock } = vi.hoisted(() => ({
+const { buildCtx, appendDivinationEntryMock, generateReadingMock } = vi.hoisted(() => ({
   buildCtx: vi.fn(),
   appendDivinationEntryMock: vi.fn(),
+  generateReadingMock: vi.fn(),
 }));
 
 vi.mock('./xingye-divination-resolver-context', () => ({
   buildDivinationResolverContext: (...args: unknown[]) => buildCtx(...args),
+}));
+
+vi.mock('./xingye-divination-ai', () => ({
+  generateDivinationReadingWithAI: (...args: unknown[]) => generateReadingMock(...args),
 }));
 
 vi.mock('./xingye-app-entry-store', async (importOriginal) => {
@@ -34,12 +39,28 @@ function generateButton(): HTMLElement {
   return all[0]!;
 }
 
-describe('PhoneDivinationApp — agent-owned divination semantics', () => {
+const AI_READING = {
+  title: '蓝线之外',
+  agentQuestion: '我想确认补给线还能不能撑过下一轮。',
+  content: [
+    '【标题】',
+    '蓝线之外',
+    '【行动签象】',
+    '我把哨声压在牙后，没让它冲出来。',
+    '【正文】',
+    '我看着掌心的影子，慢慢把急意压下去。',
+    '【行动签】',
+    '先确认风从哪边来。',
+  ].join('\n'),
+};
+
+describe('PhoneDivinationApp — agent-owned divination semantics (AI route)', () => {
   const agent: Agent = { id: 'ag-sem', name: '林雾', yuan: 'lin', isPrimary: true };
 
   beforeEach(() => {
     buildCtx.mockReset();
     appendDivinationEntryMock.mockReset();
+    generateReadingMock.mockReset();
     buildCtx.mockResolvedValue({
       agentLike: {
         name: '林雾',
@@ -55,6 +76,7 @@ describe('PhoneDivinationApp — agent-owned divination semantics', () => {
       enabledLoreTitlesInCorpus: ['战地'],
       profileOnlyNoEnabledLore: false,
     });
+    generateReadingMock.mockResolvedValue(AI_READING);
     appendDivinationEntryMock.mockImplementation(async (agentId, input) => ({
       id: 'new-entry',
       agentId,
@@ -94,7 +116,7 @@ describe('PhoneDivinationApp — agent-owned divination semantics', () => {
     expect(generateButton()).toBeInTheDocument();
   });
 
-  it('allows generate with empty theme; append receives agentQuestion and optional userProvidedTheme', async () => {
+  it('calls AI route and persists agentQuestion + AI content; userProvidedTheme remains optional', async () => {
     render(
       <PhoneDivinationApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={() => {}} />,
     );
@@ -103,36 +125,38 @@ describe('PhoneDivinationApp — agent-owned divination semantics', () => {
     });
     fireEvent.click(generateButton());
     await waitFor(() => {
+      expect(generateReadingMock).toHaveBeenCalled();
+    });
+    const aiArgs = generateReadingMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(aiArgs.methodId).toBe('field_oracle');
+    expect(aiArgs.methodLabel).toBeTruthy();
+    expect(Array.isArray(aiArgs.symbols)).toBe(true);
+    expect((aiArgs.agentLike as { displayName?: string }).displayName).toBe('林雾');
+    expect(aiArgs.userProvidedTheme).toBeUndefined();
+
+    await waitFor(() => {
       expect(appendDivinationEntryMock).toHaveBeenCalled();
     });
-    const call = appendDivinationEntryMock.mock.calls[0]!;
-    const payload = call[1] as { metadata: Record<string, unknown>; content: string };
-    expect(payload.metadata.agentQuestion).toBeTruthy();
-    expect(typeof payload.metadata.agentQuestion).toBe('string');
+    const payload = appendDivinationEntryMock.mock.calls[0]![1] as { metadata: Record<string, unknown>; content: string };
+    expect(payload.metadata.agentQuestion).toBe(AI_READING.agentQuestion);
+    expect(payload.metadata.question).toBe(AI_READING.agentQuestion);
     expect(payload.metadata.userProvidedTheme).toBeUndefined();
     expect(payload.metadata.method).toBe('field_oracle');
-    expect(payload.content).toMatch(/我/);
-    expect(payload.content).not.toMatch(/xingye\.profile\.json|xingye\.lore\.entries\.json|上下文摘要/);
-    expect(payload.content).not.toMatch(/你是当前角色本人|用户没有替你提问/);
-    expect(payload.content).not.toMatch(/\b(prompt|context|system|developer|instruction|source|debug)\b/i);
-    expect(payload.content).not.toMatch(/用户|如果用户|林雾会|她会|TA 会|该角色|这个角色|角色设定|根据人设|根据背景|从设定来看|建议用户/);
+    expect(payload.content).toBe(AI_READING.content);
     expect(payload.content).toMatch(/【正文】/);
     expect(payload.content).toMatch(/【行动签】/);
-    await waitFor(() => {
-      expect(screen.getByText(/我把这次/)).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/上下文摘要/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/xingye\.profile\.json/)).not.toBeInTheDocument();
   });
 
-  it('stores userProvidedTheme when optional field filled; agentQuestion is not the theme text', async () => {
+  it('stores userProvidedTheme when filled and forwards it to AI; agentQuestion comes from AI not theme', async () => {
     render(
       <PhoneDivinationApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={() => {}} />,
     );
     await waitFor(() => {
       expect(generateButton()).not.toBeDisabled();
     });
-    fireEvent.change(screen.queryAllByTestId('phone-divination-theme-hint')[0]!, { target: { value: '仅注脚：天气' } });
+    fireEvent.change(screen.queryAllByTestId('phone-divination-theme-hint')[0]!, {
+      target: { value: '仅注脚：天气' },
+    });
     await waitFor(
       () => {
         expect(generateButton()).not.toBeDisabled();
@@ -141,10 +165,32 @@ describe('PhoneDivinationApp — agent-owned divination semantics', () => {
     );
     fireEvent.click(generateButton());
     await waitFor(() => {
+      expect(generateReadingMock).toHaveBeenCalled();
+    });
+    const aiArgs = generateReadingMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(aiArgs.userProvidedTheme).toBe('仅注脚：天气');
+
+    await waitFor(() => {
       expect(appendDivinationEntryMock).toHaveBeenCalled();
     });
     const payload = appendDivinationEntryMock.mock.calls[0]![1] as { metadata: Record<string, unknown> };
     expect(payload.metadata.userProvidedTheme).toBe('仅注脚：天气');
     expect(String(payload.metadata.agentQuestion)).not.toBe('仅注脚：天气');
+    expect(payload.metadata.agentQuestion).toBe(AI_READING.agentQuestion);
+  });
+
+  it('surfaces AI errors in the UI without crashing', async () => {
+    generateReadingMock.mockRejectedValueOnce(new Error('占卜生成失败：utility boom'));
+    render(
+      <PhoneDivinationApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(generateButton()).not.toBeDisabled();
+    });
+    fireEvent.click(generateButton());
+    await waitFor(() => {
+      expect(screen.getByText(/占卜生成失败：utility boom/)).toBeInTheDocument();
+    });
+    expect(appendDivinationEntryMock).not.toHaveBeenCalled();
   });
 });

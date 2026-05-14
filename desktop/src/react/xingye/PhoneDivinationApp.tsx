@@ -23,12 +23,11 @@ import {
   type DivinationEntry,
 } from './xingye-app-entry-store';
 import {
-  buildDivinationReadingContent,
-  pickAgentDivinationQuestion,
   sanitizeDivinationReadingContent,
   summarizeDivinationContextSources,
   titleForDivinationEntry,
 } from './phone-divination-narrative';
+import { generateDivinationReadingWithAI } from './xingye-divination-ai';
 
 export interface PhoneDivinationAppProps {
   ownerAgent: Agent | null;
@@ -235,34 +234,33 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
   };
 
   const handleGenerate = async () => {
-    if (!ownerAgentId) return;
+    if (!ownerAgentId || !ownerAgent || !ctxAgentLike) return;
     const userTheme = themeHint.trim();
     setGenerateBusy(true);
     setGenerateError(null);
     try {
       const effectiveMethodId = manualMethodOverrideRef.current ? methodId : recommendation.method;
-      const agentQuestion = pickAgentDivinationQuestion(effectiveMethodId, ctxAgentLike);
       const contextSummary = summarizeDivinationContextSources(ctxHint.contextSources);
       const symbols = pickRandomSymbols(5);
       const methodLabel = getDivinationMethodLabel(effectiveMethodId);
-      const content = buildDivinationReadingContent({
-        displayName: ta,
+      const reading = await generateDivinationReadingWithAI({
+        agent: ownerAgent,
         methodId: effectiveMethodId,
         methodLabel,
-        agentQuestion,
-        userProvidedTheme: userTheme || undefined,
         symbols,
-        contextSummary,
-        agentContext: ctxAgentLike,
+        agentLike: ctxAgentLike,
+        userProvidedTheme: userTheme || undefined,
+        resolverReason: recommendation.resolverReason,
       });
+      const fallbackTitle = titleForDivinationEntry(effectiveMethodId, reading.agentQuestion);
       const row = await appendDivinationEntry(ownerAgentId, {
-        title: titleForDivinationEntry(effectiveMethodId, agentQuestion),
-        content,
+        title: reading.title || fallbackTitle,
+        content: reading.content,
         metadata: {
           method: effectiveMethodId,
           methodLabel,
-          question: agentQuestion,
-          agentQuestion,
+          question: reading.agentQuestion,
+          agentQuestion: reading.agentQuestion,
           userProvidedTheme: userTheme || undefined,
           symbols,
           autoSelected: effectiveMethodId === recommendation.method,
