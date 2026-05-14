@@ -40,6 +40,7 @@ import {
   defaultAgentPhoneGuardLimit,
   normalizeAgentPhoneModelOverride,
   positiveIntegerOrDefault,
+  readBoolean,
   resolveAgentPhoneGuardLimit,
 } from "../../lib/conversations/agent-phone-prompt.js";
 import {
@@ -77,6 +78,9 @@ function normalizePhoneSettingsPayload(body = {}) {
     "reminderIntervalMinutes",
   ) || DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes;
   const guardLimit = normalizeOptionalPositiveInt(body.guardLimit, "guardLimit");
+  const proactiveEnabled = body.proactiveEnabled === undefined
+    ? DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled
+    : readBoolean(body.proactiveEnabled);
   const override = normalizeAgentPhoneModelOverride({
     enabled: body.modelOverrideEnabled,
     id: body.modelOverrideModel?.id ?? body.modelOverrideId,
@@ -86,6 +90,7 @@ function normalizePhoneSettingsPayload(body = {}) {
     mode: normalizeAgentPhoneToolMode(body.mode),
     replyMinChars,
     replyMaxChars,
+    proactiveEnabled,
     reminderIntervalMinutes,
     guardLimit,
     modelOverrideEnabled: override.enabled,
@@ -104,6 +109,9 @@ function readChannelPhoneSettingsFromMeta(meta) {
     mode: normalizeAgentPhoneToolMode(meta.agentPhoneToolMode),
     replyMinChars: readOptionalPositiveInt(meta.agentPhoneReplyMinChars),
     replyMaxChars: readOptionalPositiveInt(meta.agentPhoneReplyMaxChars),
+    proactiveEnabled: meta.agentPhoneProactiveEnabled === undefined
+      ? DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled
+      : readBoolean(meta.agentPhoneProactiveEnabled),
     reminderIntervalMinutes: positiveIntegerOrDefault(
       meta.agentPhoneReminderIntervalMinutes,
       DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
@@ -172,6 +180,7 @@ export function createChannelsRoute(engine, hub) {
         mode: normalizeAgentPhoneToolMode(projection.meta.toolMode),
         replyMinChars: readOptionalPositiveInt(projection.meta.replyMinChars),
         replyMaxChars: readOptionalPositiveInt(projection.meta.replyMaxChars),
+        proactiveEnabled: DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled,
         reminderIntervalMinutes: DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
         guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
         modelOverrideEnabled: false,
@@ -214,6 +223,7 @@ export function createChannelsRoute(engine, hub) {
       });
       return {
         ...settings,
+        proactiveEnabled: DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled,
         guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
       };
     }
@@ -235,12 +245,18 @@ export function createChannelsRoute(engine, hub) {
       agentPhoneToolMode: settings.mode,
       agentPhoneReplyMinChars: settings.replyMinChars || "",
       agentPhoneReplyMaxChars: settings.replyMaxChars || "",
+      agentPhoneProactiveEnabled: settings.proactiveEnabled ? "true" : "false",
       agentPhoneReminderIntervalMinutes: settings.reminderIntervalMinutes,
       agentPhoneGuardLimit: guardLimit,
       agentPhoneModelOverrideEnabled: settings.modelOverrideEnabled ? "true" : "false",
       agentPhoneModelOverrideId: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.id : "",
       agentPhoneModelOverrideProvider: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.provider : "",
     });
+    if (hub?.refreshChannelProactiveSchedule) {
+      hub.refreshChannelProactiveSchedule();
+    } else {
+      hub?.channelRouter?.refreshProactiveSchedule?.();
+    }
     return { ...settings, guardLimit };
   }
 

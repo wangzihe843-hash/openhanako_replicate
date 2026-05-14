@@ -23,6 +23,8 @@ import { findModel } from "../shared/model-ref.js";
 import { resolveWorkspaceSkillPaths } from "../shared/workspace-skill-paths.js";
 import { resolveHanaPiAgentDir, resolveHanaPiProjectDir } from "../shared/hana-runtime-paths.js";
 import { PluginManager } from "./plugin-manager.js";
+import { PluginDevService } from "./plugin-dev-service.js";
+import { createPluginDevTools } from "./plugin-dev-tools.js";
 import { DefaultResourceLoader, SettingsManager } from "../lib/pi-sdk/index.js";
 import { loadLocale } from "../server/i18n.js";
 
@@ -264,6 +266,8 @@ export class HanaEngine {
 
     // ── Plugin Manager ──
     this._pluginManager = null;  // initialized async in initPlugins()
+    this._pluginDevService = null;
+    this._pluginDevEventBusCleanup = null;
 
     // Pi SDK resources（init 时填充）
     this._resourceLoader = null;
@@ -608,6 +612,8 @@ export class HanaEngine {
   setSessionThinkingLevel(sessionPath, level) { return this._sessionCoord.setSessionThinkingLevel(sessionPath, level); }
   getSandbox() { return this._prefs.getSandbox(); }
   setSandbox(v) { this._prefs.setSandbox(v); }
+  getSandboxNetwork() { return this._prefs.getSandboxNetwork(); }
+  setSandboxNetwork(v) { this._prefs.setSandboxNetwork(v); }
   getFileBackup() { return this._prefs.getFileBackup(); }
   setFileBackup(p) { this._prefs.setFileBackup(p); }
   listCheckpoints() { return this._checkpointStore.list(); }
@@ -639,6 +645,8 @@ export class HanaEngine {
   setWorkspaceUiState(workspaceRoot, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, state); }
   getPluginUiPrefs() { return this._prefs.getPluginUiPrefs(); }
   setPluginUiPrefs(partial) { return this._prefs.setPluginUiPrefs(partial); }
+  getPluginDevToolsEnabled() { return this._prefs.getPluginDevToolsEnabled(); }
+  setPluginDevToolsEnabled(value) { return this._prefs.setPluginDevToolsEnabled(value); }
   getTimezone() { return this._prefs.getTimezone(); }
   setTimezone(tz) { this._prefs.setTimezone(tz); }
   getUpdateChannel() { return this._prefs.getUpdateChannel(); }
@@ -1095,6 +1103,8 @@ export class HanaEngine {
         }
       }
     }
+    this._pluginDevEventBusCleanup?.();
+    this._pluginDevEventBusCleanup = null;
     this._skills?.unwatch();
     await this._agentMgr.disposeAll(this._sessionCoord);
     await this._sessionCoord.cleanupSession();
@@ -1111,7 +1121,11 @@ export class HanaEngine {
   async initPlugins(bus) {
     const builtinPluginsDir = path.join(this.productDir, "..", "plugins");
     const userPluginsDir = path.join(this.hanakoHome, "plugins");
+    const devPluginsDir = path.join(this.hanakoHome, "plugins-dev");
+    const pluginDevRunsDir = path.join(this.hanakoHome, "plugin-dev-runs");
+    const pluginDevSourcesDir = path.join(this.hanakoHome, "plugin-dev-sources");
     const pluginDataDir = path.join(this.hanakoHome, "plugin-data");
+    fs.mkdirSync(pluginDevSourcesDir, { recursive: true });
 
     // Read app version for plugin compatibility check
     let appVersion = "0.0.0";
@@ -1129,7 +1143,23 @@ export class HanaEngine {
       getSessionPath: () => this.currentSessionPath,
       registerSessionFile: (entry) => this.registerSessionFile(entry),
       slashRegistry: this._slashSystem?.registry ?? null,
+      logSink: (entry) => this._pluginDevService?.recordLog(entry),
     });
+    const allowedPluginDevSourceRoots = [
+      pluginDevSourcesDir,
+      this.homeCwd,
+      process.cwd(),
+      path.resolve(this.productDir, ".."),
+    ].filter((dir) => typeof dir === "string" && dir.trim());
+    this._pluginDevService = new PluginDevService({
+      pluginManager: this._pluginManager,
+      devPluginsDir,
+      runDataDir: pluginDevRunsDir,
+      allowedSourceRoots: allowedPluginDevSourceRoots,
+      syncPluginExtensions: () => this.syncPluginExtensions(),
+    });
+    this._pluginDevEventBusCleanup?.();
+    this._pluginDevEventBusCleanup = this._pluginDevService.registerEventBusHandlers(bus);
     this._pluginManager.scan();
     await this._pluginManager.loadAll();
 
@@ -1184,6 +1214,7 @@ export class HanaEngine {
   }
 
   get pluginManager() { return this._pluginManager; }
+  get pluginDevService() { return this._pluginDevService; }
 
   /** 插件热操作后调用，同步 extension factories 到 ResourceLoader */
   async syncPluginExtensions() {
@@ -1219,7 +1250,13 @@ export class HanaEngine {
       ...t,
       execute: (toolCallId, params, runtimeCtx) => t.execute(toolCallId, params, { ...runtimeCtx, agentId }),
     }));
-    const allTools = [...ct, ...wrappedPluginTools];
+    const pluginDevTools = this._pluginDevService && this._prefs.getPluginDevToolsEnabled?.() === true
+      ? createPluginDevTools({
+          pluginDevService: this._pluginDevService,
+          getAgentId: () => agentId,
+        })
+      : [];
+    const allTools = [...ct, ...wrappedPluginTools, ...pluginDevTools];
 
     const effectiveAgentDir = opts.agentDir || this.agent.agentDir;
     const effectiveWorkspace = opts.workspace !== undefined ? opts.workspace : this.homeCwd;
@@ -1254,6 +1291,7 @@ export class HanaEngine {
       workspaceFolders,
       hanakoHome: this.hanakoHome,
       getSandboxEnabled: () => this._readPreferences().sandbox !== false,
+      getSandboxNetworkEnabled: () => this._readPreferences().sandbox_network === true,
       getExternalReadPaths,
       getSessionPath,
       recordFileOperation: (entry) => this.registerSessionFile(entry),

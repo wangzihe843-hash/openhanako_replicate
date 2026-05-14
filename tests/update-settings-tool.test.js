@@ -14,6 +14,8 @@ function makeMockPrefs(initial = {}) {
     getPreferences: () => ({ ...store }),
     getSandbox: () => store.sandbox !== false,
     setSandbox(v) { store.sandbox = typeof v === "string" ? v === "true" : !!v; },
+    getSandboxNetwork: () => store.sandbox_network === true,
+    setSandboxNetwork(v) { store.sandbox_network = typeof v === "string" ? v === "true" : !!v; },
     getLocale: () => store.locale || "",
     setLocale(v) { store.locale = v; },
     getTimezone: () => store.timezone || "",
@@ -54,6 +56,7 @@ function makeMockEngine(overrides = {}) {
     getHomeFolder: vi.fn(() => overrides.homeFolder || "/home/test"),
     setHomeFolder: vi.fn(),
     setSandbox: vi.fn(function (v) { prefs.setSandbox(v); }),
+    setSandboxNetwork: vi.fn(function (v) { prefs.setSandboxNetwork(v); }),
     setFileBackup: vi.fn(function (v) { prefs.setFileBackup(v); }),
     setLocale: vi.fn(function (v) { prefs.setLocale(v); }),
     setTimezone: vi.fn(function (v) { prefs.setTimezone(v); }),
@@ -130,6 +133,15 @@ describe("update-settings-tool", () => {
       await tool.execute("c2", { action: "apply", key: "sandbox", value: "true" });
 
       expect(engine.setSandbox.mock.calls[0][0]).toBe(true);
+      expect(engine._prefs._store.sandbox).toBe(true);
+    });
+
+    it("apply sandbox_network=true 只开启沙盒联网子开关", async () => {
+      const { tool, engine } = buildTool({ prefsData: { sandbox: true, sandbox_network: false } });
+      await tool.execute("c-network", { action: "apply", key: "sandbox_network", value: "true" });
+
+      expect(engine.setSandboxNetwork).toHaveBeenCalledWith(true);
+      expect(engine._prefs._store.sandbox_network).toBe(true);
       expect(engine._prefs._store.sandbox).toBe(true);
     });
   });

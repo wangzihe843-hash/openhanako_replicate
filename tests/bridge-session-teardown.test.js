@@ -200,6 +200,43 @@ describe("BridgeSessionManager teardown", () => {
     );
   });
 
+  it("returns provider message_end errors to bridge adapters instead of swallowing them", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "error.jsonl");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const subscribers = [];
+    const session = {
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {
+        for (const fn of subscribers) {
+          fn({
+            type: "message_end",
+            message: {
+              stopReason: "error",
+              errorMessage: "400 Param Incorrect",
+            },
+          });
+        }
+      }),
+      subscribe: vi.fn((fn) => {
+        subscribers.push(fn);
+        return vi.fn();
+      }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await expect(
+      manager.executeExternalMessage("hello", "bridge-error", null, { agentId: "agent-a" }),
+    ).resolves.toEqual({
+      __bridgeError: true,
+      message: "400 Param Incorrect",
+    });
+  });
+
   it("registers bridge inbound image files after the bridge session path exists", async () => {
     const agent = makeAgent(rootDir);
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s-inbound.jsonl");

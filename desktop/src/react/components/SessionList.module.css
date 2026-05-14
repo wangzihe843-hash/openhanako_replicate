@@ -220,7 +220,22 @@
     height: 18px;
     color: var(--text-muted);
     opacity: 0.5;
+    cursor: pointer;
+    pointer-events: auto;
+    border-radius: 3px;
+    transition: color var(--duration-fast), background var(--duration-fast), opacity var(--duration-fast);
+}
+
+.sessionBrowserBadge svg {
     pointer-events: none;
+}
+
+.sessionBrowserBadge:hover,
+.sessionBrowserBadge:focus-visible {
+    opacity: 1;
+    color: var(--danger);
+    background: rgba(var(--danger-rgb), 0.08);
+    outline: none;
 }
 
 /* Agent badge */

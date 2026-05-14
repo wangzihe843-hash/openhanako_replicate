@@ -3,7 +3,7 @@
  */
 
 import { memo, useCallback, useMemo, useState } from 'react';
-import { MarkdownContent } from './MarkdownContent';
+import { StreamingMarkdownContent } from './StreamingMarkdownContent';
 import { MoodBlock } from './MoodBlock';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolGroupBlock } from './ToolGroupBlock';
@@ -113,6 +113,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             sessionPath={sessionPath}
             messageId={message.id}
             blockIdx={i}
+            isStreaming={isStreaming}
           />
         ))}
       </div>
@@ -132,7 +133,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
 // ── ContentBlock 分发 ──
 
-const ContentBlockView = memo(function ContentBlockView({ block, agentName, agentId, yuan: _yuan, sessionPath, messageId, blockIdx }: {
+const ContentBlockView = memo(function ContentBlockView({ block, agentName, agentId, yuan: _yuan, sessionPath, messageId, blockIdx, isStreaming }: {
   block: ContentBlock;
   agentName: string;
   agentId?: string | null;
@@ -140,6 +141,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
   sessionPath: string;
   messageId: string;
   blockIdx: number;
+  isStreaming: boolean;
 }) {
   switch (block.type) {
     case 'thinking':
@@ -149,7 +151,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
     case 'tool_group':
       return <ToolGroupBlock tools={block.tools} collapsed={block.collapsed} agentName={agentName} />;
     case 'text':
-      return <MarkdownContent html={block.html} />;
+      return <StreamingMarkdownContent html={block.html} source={block.source} active={isStreaming} />;
     case 'file':
       return (
         <FileBlock

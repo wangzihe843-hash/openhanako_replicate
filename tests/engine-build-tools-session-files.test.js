@@ -61,6 +61,39 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     expect(sandboxOpts.getExternalReadPaths()).toEqual([fs.realpathSync(externalFile)]);
   });
 
+  it("passes the sandbox network preference as a dynamic sandbox option", () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-sandbox-network-"));
+    const hanakoHome = path.join(tempRoot, "hana-home");
+    const agentDir = path.join(hanakoHome, "agents", "hana");
+    const workspace = path.join(tempRoot, "workspace");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = hanakoHome;
+    engine.getAgent = vi.fn(() => ({ id: "hana", agentDir, tools: [] }));
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    let prefs = { sandbox: true, sandbox_network: true };
+    engine._readPreferences = () => prefs;
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = { agent: { id: "hana", agentDir, tools: [] } };
+    engine.listSessionFiles = vi.fn(() => []);
+
+    engine.buildTools(workspace, [], {
+      agentDir,
+      workspace,
+      getSessionPath: () => path.join(agentDir, "sessions", "one.jsonl"),
+    });
+
+    const sandboxOpts = createSandboxedTools.mock.calls[0][2];
+    expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(true);
+    prefs = { sandbox: true, sandbox_network: false };
+    expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(false);
+  });
+
   it("includes inherited parent session files in read-only sandbox inputs", () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-sandbox-parent-files-"));
     const hanakoHome = path.join(tempRoot, "hana-home");

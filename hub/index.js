@@ -295,6 +295,10 @@ export class Hub {
     return this._channelRouter.toggle(enabled);
   }
 
+  refreshChannelProactiveSchedule() {
+    return this._channelRouter.refreshProactiveSchedule();
+  }
+
   // ──────────── 生命周期 ────────────
 
   async dispose() {
@@ -421,11 +425,14 @@ export class Hub {
     this._sessionHandlerCleanups.push(bus.handle("provider:media-providers", async ({ capability = "image_generation" } = {}) => {
       const providers = {};
       for (const provider of engine.providerRegistry.getMediaProviders(capability)) {
-        const creds = engine.providerRegistry.getCredentials(provider.providerId);
+        const credentialStatus = engine.providerRegistry.getMediaProviderCredentialStatus(provider.providerId, capability);
         providers[provider.providerId] = {
           ...provider,
-          hasCredentials: provider.authType === "none" || !!creds?.apiKey,
-          unavailableReason: provider.authType !== "none" && !creds?.apiKey ? "no_credentials" : null,
+          hasCredentials: credentialStatus.hasCredentials,
+          unavailableReason: credentialStatus.unavailableReason,
+          credentialLanes: credentialStatus.lanes,
+          activeCredentialLaneId: credentialStatus.activeLaneId || null,
+          activeCredentialProviderId: credentialStatus.activeProviderId || null,
           models: provider.models.map((model) => ({
             id: model.id,
             name: model.displayName || model.name || model.id,

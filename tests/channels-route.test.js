@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import fs from "fs";
 import os from "os";
@@ -13,6 +13,7 @@ function mktemp() {
 describe("channels route membership contract", () => {
   let tmpDir;
   let app;
+  let refreshChannelProactiveSchedule;
 
   beforeEach(() => {
     tmpDir = mktemp();
@@ -38,9 +39,11 @@ describe("channels route membership contract", () => {
       fs.mkdirSync(path.join(engine.agentsDir, id), { recursive: true });
     }
 
+    refreshChannelProactiveSchedule = vi.fn();
     app = new Hono();
     app.route("/api", createChannelsRoute(engine, {
       triggerChannelDelivery: () => Promise.resolve(),
+      refreshChannelProactiveSchedule,
       agentPhoneActivities: {
         snapshot: (conversationId) => conversationId === "ch_crew"
           ? [{ conversationId, agentId: "hana", state: "idle", summary: "已回复" }]
@@ -119,6 +122,7 @@ describe("channels route membership contract", () => {
         mode: "write",
         replyMinChars: 20,
         replyMaxChars: 80,
+        proactiveEnabled: false,
         reminderIntervalMinutes: 45,
         guardLimit: 9,
         modelOverrideEnabled: true,
@@ -132,6 +136,7 @@ describe("channels route membership contract", () => {
       mode: "write",
       replyMinChars: 20,
       replyMaxChars: 80,
+      proactiveEnabled: false,
       reminderIntervalMinutes: 45,
       guardLimit: 9,
       modelOverrideEnabled: true,
@@ -142,11 +147,13 @@ describe("channels route membership contract", () => {
     expect(meta.agentPhoneReplyInstructions).toBeUndefined();
     expect(meta.agentPhoneReplyMinChars).toBe("20");
     expect(meta.agentPhoneReplyMaxChars).toBe("80");
+    expect(meta.agentPhoneProactiveEnabled).toBe("false");
     expect(meta.agentPhoneReminderIntervalMinutes).toBe("45");
     expect(meta.agentPhoneGuardLimit).toBe("9");
     expect(meta.agentPhoneModelOverrideEnabled).toBe("true");
     expect(meta.agentPhoneModelOverrideId).toBe("deepseek-v4-flash");
     expect(meta.agentPhoneModelOverrideProvider).toBe("deepseek");
+    expect(refreshChannelProactiveSchedule).toHaveBeenCalledOnce();
 
     const getRes = await app.request("/api/conversations/ch_crew/agent-phone-settings");
     const getJson = await getRes.json();
@@ -154,6 +161,7 @@ describe("channels route membership contract", () => {
       mode: "write",
       replyMinChars: 20,
       replyMaxChars: 80,
+      proactiveEnabled: false,
       reminderIntervalMinutes: 45,
       guardLimit: 9,
       modelOverrideEnabled: true,
@@ -173,6 +181,7 @@ describe("channels route membership contract", () => {
     const res = await app.request("/api/conversations/ch_legacy/agent-phone-settings");
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
+      proactiveEnabled: true,
       reminderIntervalMinutes: 31,
       guardLimit: 24,
       modelOverrideEnabled: false,

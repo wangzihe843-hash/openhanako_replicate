@@ -350,6 +350,11 @@ export class ChannelRouter {
     return this._ticker?.triggerImmediate(channelName, opts) || Promise.resolve();
   }
 
+  refreshProactiveSchedule() {
+    if (!this.ensureStarted()) return;
+    this._ticker?.refreshSchedule?.();
+  }
+
   /**
    * 注入频道 post 回调到当前 agent
    * agent 用 channel tool 发消息后，触发其他 agent 的手机送达

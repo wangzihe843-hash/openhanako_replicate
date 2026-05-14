@@ -49,6 +49,11 @@ function buildPromptMediaOptions(opts) {
   };
 }
 
+function getProviderMessageEndError(event) {
+  if (event?.type !== "message_end" || event.message?.stopReason !== "error") return null;
+  return event.message.errorMessage || event.message.error?.message || "Unknown error";
+}
+
 function withVisionExtension(resourceLoader, getBridge, getSessionPath, isEnabled, warn, resolveSessionFile) {
   return Object.create(resourceLoader, {
     getExtensions: {
@@ -430,6 +435,7 @@ export class BridgeSessionManager {
 
       // 捕获文本输出
       let capturedText = "";
+      let providerErrorMessage = null;
       const unsub = session.subscribe((event) => {
         if (event.type === "message_update") {
           const sub = event.assistantMessageEvent;
@@ -445,6 +451,8 @@ export class BridgeSessionManager {
             capturedText += (capturedText ? "\n\n" : "") + card.description;
           }
         }
+        const messageEndError = getProviderMessageEndError(event);
+        if (messageEndError) providerErrorMessage = messageEndError;
         this._emitSessionEvent(event, activeSessionPath);
       });
 
@@ -498,6 +506,10 @@ export class BridgeSessionManager {
           }
           this.writeIndex(index, agent);
         }
+      }
+
+      if (providerErrorMessage) {
+        return { __bridgeError: true, message: providerErrorMessage };
       }
 
       const text = capturedText.trim() || null;

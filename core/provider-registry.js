@@ -132,6 +132,19 @@ function normalizeMediaModel(model, fallback = {}) {
   };
 }
 
+function normalizeCredentialLane(lane, fallbackProviderId) {
+  if (!isPlainObject(lane)) return null;
+  const providerId = lane.providerId || lane.provider_id || fallbackProviderId;
+  if (typeof providerId !== "string" || !providerId.trim()) return null;
+  const id = lane.id || providerId;
+  return {
+    ...lane,
+    id,
+    providerId: providerId.trim(),
+    label: lane.label || providerId,
+  };
+}
+
 function normalizeImageGenerationCapability(capability, entry) {
   if (!capability || typeof capability !== "object") return null;
   const models = [];
@@ -148,8 +161,20 @@ function normalizeImageGenerationCapability(capability, entry) {
     seen.add(normalized.id);
     models.push(normalized);
   }
+  const credentialLanes = [];
+  const laneSeen = new Set();
+  for (const rawLane of capability.credentialLanes || []) {
+    const lane = normalizeCredentialLane(rawLane, entry.id);
+    if (!lane) continue;
+    if (laneSeen.has(lane.id)) {
+      throw new Error(`Duplicate credential lane "${lane.id}" in provider "${entry.id}"`);
+    }
+    laneSeen.add(lane.id);
+    credentialLanes.push(lane);
+  }
   return {
     ...capability,
+    ...(credentialLanes.length > 0 ? { credentialLanes } : {}),
     models,
   };
 }
@@ -584,6 +609,66 @@ export class ProviderRegistry {
     return [...byId.values()];
   }
 
+  getMediaCredentialLanes(providerId, capability = "image_generation") {
+    if (this._entries.size === 0) this.reload();
+    const entry = this._entries.get(providerId) || this.get(providerId);
+    if (!entry) return [];
+    const key = capabilityKey(capability);
+    const mediaCapability = entry.capabilities?.media?.[key] || {};
+    const lanes = Array.isArray(mediaCapability.credentialLanes)
+      ? mediaCapability.credentialLanes
+        .map((lane) => normalizeCredentialLane(lane, providerId))
+        .filter(Boolean)
+      : [];
+    if (lanes.length > 0) return lanes;
+    return [{
+      id: providerId,
+      providerId,
+      label: entry.displayName || providerId,
+    }];
+  }
+
+  getMediaProviderCredentialStatus(providerId, capability = "image_generation") {
+    if (this._entries.size === 0) this.reload();
+    const entry = this._entries.get(providerId) || this.get(providerId);
+    if (!entry) {
+      return {
+        hasCredentials: false,
+        unavailableReason: "provider_not_found",
+        lanes: [],
+      };
+    }
+    const lanes = this.getMediaCredentialLanes(providerId, capability);
+    for (const lane of lanes) {
+      const laneProviderId = lane.providerId || providerId;
+      const authType = normalizeProviderAuthType(lane.authType || this.getAuthType(laneProviderId) || entry.authType);
+      if (authType === "none") {
+        return {
+          hasCredentials: true,
+          unavailableReason: null,
+          activeLaneId: lane.id,
+          activeProviderId: laneProviderId,
+          lanes,
+        };
+      }
+      const creds = this.getCredentials(laneProviderId);
+      if (creds?.apiKey) {
+        return {
+          hasCredentials: true,
+          unavailableReason: null,
+          activeLaneId: lane.id,
+          activeProviderId: laneProviderId,
+          lanes,
+        };
+      }
+    }
+    return {
+      hasCredentials: false,
+      unavailableReason: "no_credentials",
+      lanes,
+    };
+  }
+
   getMediaProviders(capability) {
     if (this._entries.size === 0) this.reload();
     const providers = [];
@@ -596,6 +681,7 @@ export class ProviderRegistry {
         authType: entry.authType,
         source: entry.source,
         runtime: entry.runtime || null,
+        credentialLanes: this.getMediaCredentialLanes(entry.id, capability),
         models,
       });
     }

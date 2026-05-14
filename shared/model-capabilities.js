@@ -18,6 +18,21 @@ function getBaseUrl(model, context = {}) {
   return lower(model?.baseUrl || model?.base_url || context.baseUrl || context.base_url);
 }
 
+function getBaseHost(model, context = {}) {
+  const raw = model?.baseUrl || model?.base_url || context.baseUrl || context.base_url;
+  if (typeof raw !== "string" || raw.length === 0) return "";
+  const text = raw.trim();
+  try {
+    return new URL(text).hostname.toLowerCase();
+  } catch {
+    try {
+      return new URL(`https://${text}`).hostname.toLowerCase();
+    } catch {
+      return lower(text).split(/[/?#]/)[0].replace(/:\d+$/, "");
+    }
+  }
+}
+
 function getModelId(model, context = {}) {
   return lower(model?.id || context.id || context.modelId || context.model);
 }
@@ -44,9 +59,22 @@ function isOfficialDeepSeekEndpoint(model, context = {}) {
     || getBaseUrl(model, context).includes("api.deepseek.com");
 }
 
-function isOfficialMimoEndpoint(model, context = {}) {
-  return getProvider(model, context) === "mimo"
-    || getBaseUrl(model, context).includes("api.xiaomimimo.com");
+const OFFICIAL_MIMO_PROVIDERS = new Set([
+  "mimo",
+  "xiaomi",
+  "xiaomi-token",
+  "xiaomi-token-plan-cn",
+  "xiaomi-token-plan-sgp",
+  "xiaomi-token-plan-cn-ams",
+  "xiaomi-token-plan-sgp-ams",
+]);
+
+export function isOfficialMimoEndpoint(model, context = {}) {
+  const provider = getProvider(model, context);
+  if (OFFICIAL_MIMO_PROVIDERS.has(provider)) return true;
+
+  const host = getBaseHost(model, context);
+  return host === "xiaomimimo.com" || host.endsWith(".xiaomimimo.com");
 }
 
 function isDeepSeekV4ModelId(id) {

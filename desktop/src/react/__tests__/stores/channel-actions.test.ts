@@ -25,6 +25,7 @@ const mockState: Record<string, unknown> = {
   channelAgentPhoneToolMode: 'read_only',
   channelAgentReplyMinChars: null,
   channelAgentReplyMaxChars: null,
+  channelAgentProactiveEnabled: true,
   channelAgentReminderIntervalMinutes: 31,
   channelAgentGuardLimit: 36,
   channelAgentModelOverrideEnabled: false,
@@ -62,6 +63,7 @@ describe('channel-actions', () => {
     mockState.channelAgentPhoneToolMode = 'read_only';
     mockState.channelAgentReplyMinChars = null;
     mockState.channelAgentReplyMaxChars = null;
+    mockState.channelAgentProactiveEnabled = true;
     mockState.channelAgentReminderIntervalMinutes = 31;
     mockState.channelAgentGuardLimit = 36;
     mockState.channelAgentModelOverrideEnabled = false;
@@ -157,6 +159,7 @@ describe('channel-actions', () => {
           mode: 'read_only',
           replyMinChars: 20,
           replyMaxChars: 80,
+          proactiveEnabled: false,
           reminderIntervalMinutes: 45,
           guardLimit: 9,
           modelOverrideEnabled: true,
@@ -168,6 +171,7 @@ describe('channel-actions', () => {
       await saveConversationAgentPhoneSettings({
         replyMinChars: 20,
         replyMaxChars: 80,
+        proactiveEnabled: false,
         reminderIntervalMinutes: 45,
         guardLimit: 9,
         modelOverrideEnabled: true,
@@ -180,6 +184,7 @@ describe('channel-actions', () => {
       expect(body).toMatchObject({
         replyMinChars: 20,
         replyMaxChars: 80,
+        proactiveEnabled: false,
         reminderIntervalMinutes: 45,
         guardLimit: 9,
         modelOverrideEnabled: true,
@@ -189,6 +194,7 @@ describe('channel-actions', () => {
       expect(body).not.toHaveProperty('maxTokens');
       expect(mockState.channelAgentReplyMinChars).toBe(20);
       expect(mockState.channelAgentReplyMaxChars).toBe(80);
+      expect(mockState.channelAgentProactiveEnabled).toBe(false);
       expect(mockState.channelAgentReminderIntervalMinutes).toBe(45);
       expect(mockState.channelAgentGuardLimit).toBe(9);
       expect(mockState.channelAgentModelOverrideEnabled).toBe(true);

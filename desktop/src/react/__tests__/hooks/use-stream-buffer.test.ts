@@ -138,6 +138,17 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(lastRole()).toBe('assistant');
   });
 
+  it('text block keeps source markdown for display-only streaming effects', () => {
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: '**你好**' });
+
+    const textBlock = getAssistantMessage()?.blocks?.find((block) => block.type === 'text');
+    expect(textBlock).toMatchObject({
+      type: 'text',
+      source: '**你好**',
+    });
+    expect(textBlock && 'html' in textBlock ? textBlock.html : '').toContain('<strong>');
+  });
+
   it('initSession 覆盖同 path 后，后续 tool 事件仍绑定回原 assistant 消息', () => {
     streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: 'first' });
     expect(getItems().length).toBe(2);

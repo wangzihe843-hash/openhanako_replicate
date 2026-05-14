@@ -131,6 +131,7 @@ export async function loadPluginSettings() {
     const tabs = await tabsRes.json();
     store.set({
       pluginAllowFullAccess: data.allow_full_access ?? false,
+      pluginDevToolsEnabled: data.plugin_dev_tools_enabled ?? false,
       pluginUserDir: data.plugins_dir || '',
       pluginSettingsTabs: Array.isArray(tabs) ? tabs : [],
     });

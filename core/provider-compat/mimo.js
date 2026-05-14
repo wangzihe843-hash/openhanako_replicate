@@ -3,7 +3,8 @@
  *
  * 处理 provider:
  *   - provider === "mimo"
- *   - baseUrl 包含 "api.xiaomimimo.com"
+ *   - provider === "xiaomi" / "xiaomi-token" / token-plan variants
+ *   - baseUrl hostname 属于 "xiaomimimo.com"
  *
  * 解决的协议问题：
  *   1. 思考模式开关通过 chat_template_kwargs.enable_thinking 控制
@@ -19,7 +20,7 @@
  * 接口契约：见 ./README.md
  */
 
-import { getReasoningProfile } from "../../shared/model-capabilities.js";
+import { getReasoningProfile, isOfficialMimoEndpoint } from "../../shared/model-capabilities.js";
 import {
   ensureAssistantContentForToolCalls,
   ensureReasoningContentForToolCalls,
@@ -28,20 +29,13 @@ import {
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
-function lower(value) {
-  return typeof value === "string" ? value.toLowerCase() : "";
-}
-
 function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
-  const provider = lower(model.provider);
-  const baseUrl = lower(model.baseUrl || model.base_url);
-  return provider === "mimo"
-    || baseUrl.includes("api.xiaomimimo.com")
+  return isOfficialMimoEndpoint(model)
     || getReasoningProfile(model) === "mimo-openai";
 }
 

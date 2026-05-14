@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createPluginContext } from "../core/plugin-context.js";
 
 async function makeBus() {
@@ -53,6 +53,26 @@ describe("createPluginContext", () => {
     });
     expect(typeof ctx.log.info).toBe("function");
     expect(typeof ctx.log.error).toBe("function");
+  });
+
+  it("forwards log entries to an optional log sink", () => {
+    const logSink = vi.fn();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const ctx = createPluginContext({
+        pluginId: "my-plug", pluginDir: "/tmp", dataDir: "/tmp",
+        bus: { emit() {}, subscribe() {}, request() {}, hasHandler() {} },
+        logSink,
+      });
+      ctx.log.info("hello", { token: "secret-token", count: 2 });
+      expect(logSink).toHaveBeenCalledWith(expect.objectContaining({
+        pluginId: "my-plug",
+        level: "info",
+        args: ["hello", { token: "secret-token", count: 2 }],
+      }));
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 });
 

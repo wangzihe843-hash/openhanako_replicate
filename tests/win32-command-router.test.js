@@ -20,9 +20,14 @@ describe("classifyWin32Command", () => {
     expect(classifyWin32Command("dir C:\\", { resolveNativePath }).runner).toBe("cmd");
   });
 
-  it("keeps explicit shells on the bash path", () => {
-    expect(classifyWin32Command("cmd /c dir", { resolveNativePath }).runner).toBe("bash");
-    expect(classifyWin32Command('powershell -Command "ipconfig /all"', { resolveNativePath }).runner).toBe("bash");
+  it("routes explicit Windows shells to cmd", () => {
+    expect(classifyWin32Command("cmd /c dir", { resolveNativePath }).runner).toBe("cmd");
+    expect(classifyWin32Command('powershell -Command "ipconfig /all"', { resolveNativePath }).runner).toBe("cmd");
+  });
+
+  it("keeps explicit POSIX shells on the bash path", () => {
+    expect(classifyWin32Command("bash -lc pwd", { resolveNativePath }).runner).toBe("bash");
+    expect(classifyWin32Command("sh -lc pwd", { resolveNativePath }).runner).toBe("bash");
   });
 
   it("routes simple Git commands to the structured git runner", () => {

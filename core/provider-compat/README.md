@@ -78,7 +78,7 @@ export function apply(payload, model, options) { ... }
 |---|---|---|
 | `anthropic` | `thinking: { type, budget_tokens }` | Anthropic、Kimi Coding、MiniMax Anthropic API |
 | `qwen` | `enable_thinking: boolean` | DashScope / SiliconFlow / ModelScope 上的 Qwen-style 模型 |
-| `qwen-chat-template` | `chat_template_kwargs: { enable_thinking, preserve_thinking }` | MiMo OpenAI-compatible API |
+| `qwen-chat-template` | `chat_template_kwargs: { enable_thinking, preserve_thinking }` | MiMo OpenAI-compatible API, including Xiaomi Token Plan `/v1` endpoints |
 | `deepseek` | DeepSeek 子模块统一转换 | DeepSeek V4 / reasoner |
 
 `compat.reasoningProfile` 表示同一 wire format 内部更细的协议契约，例如
@@ -126,7 +126,7 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 | 文件 | 处理 provider | 删除条件 |
 |---|---|---|
 | [`deepseek.js`](deepseek.js) | DeepSeek 思考模式协议（含 reasoning_content 恢复/校验） | DeepSeek 不再要求回传 reasoning_content；或 pi-ai 直接处理 reasoning_content 字段不再走 thinkingSignature 路标 |
-| [`mimo.js`](mimo.js) | MiMo OpenAI-compatible 思考模式协议（chat_template_kwargs + reasoning_content 回放） | MiMo 不再通过 chat_template_kwargs 控制 thinking；或 pi-ai 原生处理 MiMo replay |
+| [`mimo.js`](mimo.js) | MiMo OpenAI-compatible 思考模式协议（chat_template_kwargs + reasoning_content 回放），覆盖官网与 Xiaomi Token Plan `/v1` endpoint | MiMo 不再通过 chat_template_kwargs 控制 thinking；或 pi-ai 原生处理 MiMo replay |
 | [`qwen.js`](qwen.js) | Qwen-style 思考模型 `enable_thinking` quirk；DashScope 视频输入复用 `openai-video-url` 转换 | quirks 系统重构 / Qwen-style 协议改成 reasoning_effort；DashScope 和 Pi SDK 原生支持 video_url |
 | [`openai-video-url.js`](openai-video-url.js) | OpenAI-compatible 视频输入 `image_url data:video` → `video_url`，当前用于 Moonshot Kimi 与 DashScope Qwen | Pi SDK 原生按 video MIME 输出 `video_url`；或相关 provider 接受 `image_url data:video` |
 
@@ -134,4 +134,4 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 
 ## 历史背景
 
-本架构由 commit `2a9ea17`（README 奠基）至 `0d87520`（llm-client 收口）一系列 commit 引入，根因来自 issue [#468](https://github.com/liliMozi/openhanako/issues/468) 的 DeepSeek 思考模式 400。设计 spec（本地工作文档，不入仓）：[docs/superpowers/specs/2026-04-26-provider-compat-layer-design.md](../../docs/superpowers/specs/2026-04-26-provider-compat-layer-design.md)。
+本架构由 commit `2a9ea17`（README 奠基）至 `0d87520`（llm-client 收口）一系列 commit 引入，根因来自 issue [#468](https://github.com/liliMozi/openhanako/issues/468) 的 DeepSeek 思考模式 400。

@@ -33,7 +33,9 @@ vi.mock('../../settings/components/SettingsRow', () => ({
 }));
 
 vi.mock('../../settings/tabs/media/MediaProviderDetail', () => ({
-  MediaProviderDetail: () => <div data-testid="media-provider-detail" />,
+  MediaProviderDetail: ({ providerId }: { providerId: string }) => (
+    <div data-testid="media-provider-detail">{providerId}</div>
+  ),
 }));
 
 vi.mock('@/ui', () => ({
@@ -138,5 +140,36 @@ describe('MediaTab image-gen config', () => {
         body: JSON.stringify({ values: { defaultImageModel: null } }),
       }));
     });
+  });
+
+  it('auto-selects the first credentialed image provider instead of the first provider in transport order', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI',
+              hasCredentials: false,
+              models: [{ id: 'gpt-image-2', name: 'GPT Image 2' }],
+              availableModels: [],
+            },
+            volcengine: {
+              providerId: 'volcengine',
+              displayName: 'Volcengine',
+              hasCredentials: true,
+              models: [{ id: 'seedream-5', name: 'Seedream 5.0' }],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    expect(await screen.findByTestId('media-provider-detail')).toHaveTextContent('volcengine');
   });
 });

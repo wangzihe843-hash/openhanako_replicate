@@ -32,12 +32,14 @@ describe("createSandboxedTools on Windows", () => {
     const { createSandboxedTools } = await import("../lib/sandbox/index.js");
 
     const getExternalReadPaths = () => ["C:\\outside\\brief.md"];
+    const getSandboxNetworkEnabled = () => true;
     createSandboxedTools("C:\\work", [], {
       agentDir: "C:\\hana\\agents\\hana",
       workspace: "C:\\work",
       workspaceFolders: [],
       hanakoHome: "C:\\hana",
       getSandboxEnabled: () => true,
+      getSandboxNetworkEnabled,
       getExternalReadPaths,
     });
 
@@ -46,6 +48,7 @@ describe("createSandboxedTools on Windows", () => {
       sandbox: expect.objectContaining({
         policy: expect.objectContaining({ mode: "standard" }),
         getExternalReadPaths,
+        getSandboxNetworkEnabled,
       }),
     }));
   });

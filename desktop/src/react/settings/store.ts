@@ -89,6 +89,7 @@ export interface SettingsState {
 
   // plugins
   pluginAllowFullAccess: boolean;
+  pluginDevToolsEnabled: boolean;
   pluginUserDir: string;
   pluginSettingsTabs: PluginSettingsTab[];
 
@@ -143,6 +144,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 
   // plugins
   pluginAllowFullAccess: false,
+  pluginDevToolsEnabled: false,
   pluginUserDir: '',
   pluginSettingsTabs: [],
 

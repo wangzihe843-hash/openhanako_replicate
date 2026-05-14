@@ -206,6 +206,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   const [sessionConfirmationExiting, setSessionConfirmationExiting] = useState(false);
 
   const isComposing = useRef(false);
+  const pasteHandlerRef = useRef<(event: ClipboardEvent) => boolean>(() => false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const fileMenuRef = useRef<HTMLDivElement>(null);
   const slashBtnRef = useRef<HTMLButtonElement>(null);
@@ -267,6 +268,14 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     welcomeVisible ? pickRandomWelcomeTip() : '',
   );
 
+  // Zustand actions
+  const addAttachedFile = useStore(s => s.addAttachedFile);
+  const removeAttachedFile = useStore(s => s.removeAttachedFile);
+  const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
+  const setDocContextAttached = useStore(s => s.setDocContextAttached);
+  const setDraft = useStore(s => s.setDraft);
+  const clearDraft = useStore(s => s.clearDraft);
+
   const prevWelcomeVisibleRef = useRef(welcomeVisible);
   const prevLocaleRef = useRef(locale);
   useEffect(() => {
@@ -306,6 +315,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
         id: 'inputBox',
         spellcheck: 'false',
       },
+      handlePaste: (_view, event) => pasteHandlerRef.current(event),
     },
   });
 
@@ -319,14 +329,6 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   useEffect(() => {
     if (inputFocusTrigger > 0) editor?.commands.focus();
   }, [inputFocusTrigger, editor]);
-
-  // Zustand actions
-  const addAttachedFile = useStore(s => s.addAttachedFile);
-  const removeAttachedFile = useStore(s => s.removeAttachedFile);
-  const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
-  const setDocContextAttached = useStore(s => s.setDocContextAttached);
-  const setDraft = useStore(s => s.setDraft);
-  const clearDraft = useStore(s => s.clearDraft);
 
   // Doc context
   const currentDoc = useMemo(() => {
@@ -394,6 +396,10 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     if (!inputText.startsWith('/')) return slashCommands;
     return getSlashMatches(inputText, slashCommands);
   }, [inputText, slashCommands]);
+
+  useEffect(() => {
+    setSlashSelected(index => Math.min(index, Math.max(filteredCommands.length - 1, 0)));
+  }, [filteredCommands.length]);
 
   const fileMentionItems = useMemo(() => buildFileMentionItems({
     query: fileMentionQuery,
@@ -573,56 +579,61 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   // 与拖拽对齐：剪贴板图片同样落盘到 uploads 目录，入 store 的形态和拖拽完全一致
   // （只有 path/name/isDirectory，没有 base64Data）。是否走 vision 桥由发送阶段的
   // visionAuxiliary 标记统一决定，handlePaste 不再做能力判断。
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+  const handlePaste = useCallback((e: ClipboardEvent): boolean => {
     const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith('image/')) continue;
-      e.preventDefault();
-      const file = item.getAsFile();
-      if (!file) continue;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const dataUrl = reader.result as string;
-        const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
-        if (!match) return;
-        const [, mimeType, base64Data] = match;
-        const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : (mimeType.split('/')[1] || 'png');
-        const name = `${t('input.pastedImage')}.${ext}`;
-        try {
-          const res = await hanaFetch('/api/upload-blob', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name,
-              base64Data,
-              mimeType,
-              ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
-            }),
-          });
-          const data = await res.json();
-          const upload = data?.uploads?.[0];
-          if (upload?.dest) {
-            addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || name, isDirectory: false });
-          } else {
-            notifyPasteUploadFailure(t, upload?.error);
-            console.warn('[paste] upload-blob failed', upload?.error || data);
+    if (items) {
+      for (const item of items) {
+        if (!item.type.startsWith('image/')) continue;
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) return true;
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = reader.result as string;
+          const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+          if (!match) return;
+          const [, mimeType, base64Data] = match;
+          const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : (mimeType.split('/')[1] || 'png');
+          const name = `${t('input.pastedImage')}.${ext}`;
+          try {
+            const res = await hanaFetch('/api/upload-blob', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name,
+                base64Data,
+                mimeType,
+                ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
+              }),
+            });
+            const data = await res.json();
+            const upload = data?.uploads?.[0];
+            if (upload?.dest) {
+              addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || name, isDirectory: false });
+            } else {
+              notifyPasteUploadFailure(t, upload?.error);
+              console.warn('[paste] upload-blob failed', upload?.error || data);
+            }
+          } catch (err) {
+            notifyPasteUploadFailure(t, err);
+            console.warn('[paste] upload-blob error', err);
           }
-        } catch (err) {
-          notifyPasteUploadFailure(t, err);
-          console.warn('[paste] upload-blob error', err);
-        }
-      };
-      reader.readAsDataURL(file);
-      return;
+        };
+        reader.readAsDataURL(file);
+        return true;
+      }
     }
 
     const plainUrlPaste = extractPlainUrlPaste(e.clipboardData);
     if (plainUrlPaste && editor) {
       e.preventDefault();
       editor.commands.insertContent(plainUrlPaste);
+      return true;
     }
+    return false;
   }, [addAttachedFile, editor, t]);
+
+  pasteHandlerRef.current = handlePaste;
 
   // ── Load thinking level once server port is ready + listen for plan mode sync ──
   const activeServerConnection = useStore(s => s.activeServerConnection);
@@ -918,10 +929,10 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     if (slashMenuOpen && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSelected(i => (i + 1) % filteredCommands.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSelected(i => (i - 1 + filteredCommands.length) % filteredCommands.length); return; }
-      if (e.key === 'Tab') {
+      if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault();
-        const cmd = filteredCommands[slashSelected];
-        if (cmd) editor?.commands.setContent('/' + cmd.name);
+        const cmd = filteredCommands[slashSelected] || filteredCommands[0];
+        if (cmd) handleSlashSelect(cmd);
         return;
       }
       if (e.key === 'Escape') { e.preventDefault(); dismissSlashMenu(); return; }
@@ -940,6 +951,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     handleFileMentionSelect,
     handleSend,
     handleSteer,
+    handleSlashSelect,
     isStreaming,
     editor,
     slashMenuOpen,
@@ -1018,7 +1030,6 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
         <div className={styles['input-wrapper']} ref={cardRef}>
           <div
             onKeyDown={handleEditorKeyDown}
-            onPaste={handlePaste}
             onCompositionStart={() => { isComposing.current = true; }}
             onCompositionEnd={() => { isComposing.current = false; }}
           >

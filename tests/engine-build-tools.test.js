@@ -159,4 +159,88 @@ describe("HanaEngine.buildTools", () => {
       origin: "agent_edit",
     });
   });
+
+  it("keeps plugin dev Agent tools hidden until the global dev setting is enabled", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-dev-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => ({ id: "focus", agentDir, tools: [] }));
+    engine._pluginManager = null;
+    engine._pluginDevService = { getDiagnostics: vi.fn() };
+    engine._prefs = {
+      getFileBackup: () => ({ enabled: false }),
+      getPluginDevToolsEnabled: () => false,
+    };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = {
+      agent: {
+        id: "focus",
+        agentDir,
+        tools: [],
+      },
+    };
+
+    const { customTools } = engine.buildTools(tmpDir, [], {
+      agentDir,
+      workspace: tmpDir,
+      getPermissionMode: () => "operate",
+    });
+
+    expect(customTools.some((tool) => tool.name.startsWith("plugin_dev_"))).toBe(false);
+  });
+
+  it("adds plugin dev Agent tools when the user enables the dev setting", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-dev-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => ({ id: "focus", agentDir, tools: [] }));
+    engine._pluginManager = null;
+    engine._pluginDevService = {
+      installFromSource: vi.fn(),
+      reloadPlugin: vi.fn(),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      resetPlugin: vi.fn(),
+      uninstallPlugin: vi.fn(),
+      invokeTool: vi.fn(),
+      getDiagnostics: vi.fn(),
+      listSurfaces: vi.fn(),
+      describeSurfaceDebug: vi.fn(),
+      runScenario: vi.fn(),
+    };
+    engine._prefs = {
+      getFileBackup: () => ({ enabled: false }),
+      getPluginDevToolsEnabled: () => true,
+    };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = {
+      agent: {
+        id: "focus",
+        agentDir,
+        tools: [],
+      },
+    };
+
+    const { customTools } = engine.buildTools(tmpDir, [], {
+      agentDir,
+      workspace: tmpDir,
+      getPermissionMode: () => "operate",
+    });
+
+    expect(customTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "plugin_dev_install",
+      "plugin_dev_reload",
+      "plugin_dev_uninstall",
+      "plugin_dev_invoke_tool",
+      "plugin_dev_run_scenario",
+    ]));
+  });
 });
