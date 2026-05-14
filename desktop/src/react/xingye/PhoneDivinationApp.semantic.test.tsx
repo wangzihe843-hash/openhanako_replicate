@@ -145,6 +145,19 @@ describe('PhoneDivinationApp — agent-owned divination semantics (AI route)', (
     expect(payload.content).toBe(AI_READING.content);
     expect(payload.content).toMatch(/【正文】/);
     expect(payload.content).toMatch(/【行动签】/);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('phone-divination-sections')).toBeInTheDocument();
+    });
+    const sections = screen.getByTestId('phone-divination-sections');
+    expect(sections.querySelector('[data-divination-section="title"]')).not.toBeNull();
+    expect(sections.querySelector('[data-divination-section="sign"]')).not.toBeNull();
+    expect(sections.querySelector('[data-divination-section="body"]')).not.toBeNull();
+    expect(sections.querySelector('[data-divination-section="action"]')).not.toBeNull();
+    expect(sections.textContent).toContain('蓝线之外');
+    expect(sections.textContent).toContain('哨声');
+    expect(sections.textContent).toContain('掌心的影子');
+    expect(sections.textContent).toContain('先确认风从哪边来');
   });
 
   it('stores userProvidedTheme when filled and forwards it to AI; agentQuestion comes from AI not theme', async () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
+import divStyles from './PhoneDivinationApp.module.css';
 import {
   DIVINATION_METHODS,
   getDivinationMethodLabel,
@@ -28,6 +29,8 @@ import {
   titleForDivinationEntry,
 } from './phone-divination-narrative';
 import { generateDivinationReadingWithAI } from './xingye-divination-ai';
+import { parseDivinationReading } from './phone-divination-parse';
+import { getDivinationTheme } from './xingye-divination-themes';
 
 export interface PhoneDivinationAppProps {
   ownerAgent: Agent | null;
@@ -184,6 +187,11 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
     if (ctxBusy || !ctxAgentLike) return divinationRecommendationPlaceholder();
     return resolveRecommendedDivinationMethod(ctxAgentLike, ctxHint);
   }, [ownerAgentId, ctxBusy, ctxAgentLike, ctxHint]);
+
+  const generationMethodId: XingyeDivinationMethodId = manualMethodOverrideRef.current
+    ? methodId
+    : recommendation.method;
+  const generationTheme = getDivinationTheme(generationMethodId);
 
   useEffect(() => {
     manualMethodOverrideRef.current = false;
@@ -349,7 +357,11 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
 
         {!selected ? (
           <>
-            <section className={styles.phoneAppCard} aria-label="起卦">
+            <section
+              className={`${styles.phoneAppCard} ${divStyles.generationCard} ${generationTheme.className ?? ''}`.trim()}
+              aria-label="起卦"
+              data-divination-theme={generationMethodId}
+            >
               <h3 className={styles.phoneAppTitle} style={{ marginTop: 0 }}>
                 占一卦
               </h3>
@@ -425,11 +437,20 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                 const mid = methodFromEntry(e);
                 const sub = mid ? getDivinationMethodLabel(mid) : '占卜';
                 const topic = excerptReason(getDivinationEntryAgentTopic(e.metadata), 36);
+                const rowTheme = getDivinationTheme(mid);
                 return (
                   <div key={e.id} className={styles.phoneDivinationRow}>
+                    <span
+                      aria-hidden="true"
+                      className={`${divStyles.listBar} ${rowTheme.listBarClassName ?? ''}`.trim()}
+                      data-divination-theme={mid ?? 'unknown'}
+                    />
                     <button type="button" className={styles.phoneJournalCard} onClick={() => setSelectedId(e.id)}>
                       <p className={styles.phoneJournalCardTitle}>{e.title}</p>
                       <p className={styles.phoneJournalCardExcerpt}>
+                        <span className={`${divStyles.listChip} ${rowTheme.listChipClassName ?? ''}`.trim()}>
+                          {rowTheme.listChipLabel}
+                        </span>
                         {topic ? `TA：${topic} · ` : ''}
                         {sub} · {new Date(e.createdAt).toLocaleString('zh-CN')}
                       </p>
@@ -449,54 +470,115 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
             </div>
           </>
         ) : (
-          <div className={styles.phoneJournalDetail}>
-            <p className={styles.phoneJournalDetailMeta}>
-              {methodFromEntry(selected) ? getDivinationMethodLabel(methodFromEntry(selected)!) : '占卜'} ·{' '}
-              {new Date(selected.createdAt).toLocaleString('zh-CN')}
-            </p>
-            <h3 className={styles.phoneAppTitle} style={{ margin: 0 }}>
-              {selected.title}
-            </h3>
-            <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem', lineHeight: 1.55 }}>
-              {selected.metadata.autoSelected ? '起卦时采用推荐占法。' : '起卦时采用手动所选占法。'}
-            </p>
-            {(() => {
-              const agentTopic = getDivinationEntryAgentTopic(selected.metadata);
-              const userTh = getDivinationEntryUserThemeHint(selected.metadata);
-              return (
-                <>
-                  {agentTopic ? (
-                    <p className={styles.phoneAppHint}>
-                      TA 想确认的事：「{agentTopic}」
-                    </p>
-                  ) : null}
-                  {userTh ? (
-                    <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem' }}>
-                      记录中的可选关注方向：「{userTh}」（不等同于占问主体）
-                    </p>
-                  ) : null}
-                </>
-              );
-            })()}
-            {Array.isArray(selected.metadata?.symbols) && selected.metadata.symbols.length > 0 ? (
-              <p className={styles.phoneAppHint} style={{ letterSpacing: '0.15em' }}>
-                {selected.metadata.symbols.filter((x): x is string => typeof x === 'string').join(' ')}
-              </p>
-            ) : null}
-            <div className={styles.phoneJournalDetailBodyScroll}>
-              <pre className={styles.phoneJournalDetailBody}>{sanitizeDivinationReadingContent(selected.content)}</pre>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <button
-                type="button"
-                className={styles.phoneModalGhostButton}
-                onClick={() => void handleDelete(selected.id)}
-                disabled={deleteBusy}
+          (() => {
+            const selectedMethodId = methodFromEntry(selected);
+            const detailTheme = getDivinationTheme(selectedMethodId);
+            const agentTopic = getDivinationEntryAgentTopic(selected.metadata);
+            const userTh = getDivinationEntryUserThemeHint(selected.metadata);
+            const sanitized = sanitizeDivinationReadingContent(selected.content);
+            const parsed = parseDivinationReading(sanitized);
+            const signLabel = parsed.signLabel ?? detailTheme.signSectionLabel;
+            const symbols = Array.isArray(selected.metadata?.symbols)
+              ? selected.metadata.symbols.filter((x): x is string => typeof x === 'string')
+              : [];
+            const hasAnySection = Boolean(
+              parsed.title || parsed.signFlavor || parsed.body || parsed.actionSign,
+            );
+            return (
+              <div
+                className={`${styles.phoneJournalDetail} ${detailTheme.className ?? ''}`.trim()}
+                data-divination-theme={selectedMethodId ?? 'unknown'}
               >
-                {deleteBusy ? '删除中…' : '删除此条'}
-              </button>
-            </div>
-          </div>
+                <p className={styles.phoneJournalDetailMeta}>
+                  {selectedMethodId ? getDivinationMethodLabel(selectedMethodId) : '占卜'} ·{' '}
+                  {new Date(selected.createdAt).toLocaleString('zh-CN')}
+                </p>
+                <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem', lineHeight: 1.55 }}>
+                  {selected.metadata.autoSelected ? '起卦时采用推荐占法。' : '起卦时采用手动所选占法。'}
+                </p>
+                {agentTopic ? (
+                  <p className={styles.phoneAppHint}>
+                    TA 想确认的事：「{agentTopic}」
+                  </p>
+                ) : null}
+                {userTh ? (
+                  <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem' }}>
+                    记录中的可选关注方向：「{userTh}」（不等同于占问主体）
+                  </p>
+                ) : null}
+                {symbols.length > 0 ? (
+                  <p
+                    className={styles.phoneAppHint}
+                    style={{ letterSpacing: '0.15em' }}
+                    data-symbols
+                  >
+                    {symbols.join(' ')}
+                  </p>
+                ) : null}
+                {hasAnySection ? (
+                  <div className={divStyles.sectionList} data-testid="phone-divination-sections">
+                    <section
+                      className={`${divStyles.section} ${divStyles.sectionTitle}`}
+                      data-divination-section="title"
+                    >
+                      <p className={divStyles.sectionHeader}>标题</p>
+                      <p className={divStyles.sectionBody}>{parsed.title ?? selected.title}</p>
+                    </section>
+                    {parsed.signFlavor ? (
+                      <section
+                        className={`${divStyles.section} ${divStyles.sectionSign}`}
+                        data-divination-section="sign"
+                      >
+                        <p className={divStyles.sectionHeader}>{signLabel}</p>
+                        <p className={divStyles.sectionBody}>{parsed.signFlavor}</p>
+                      </section>
+                    ) : null}
+                    {parsed.body ? (
+                      <section
+                        className={`${divStyles.section} ${divStyles.sectionBodyText}`}
+                        data-divination-section="body"
+                      >
+                        <p className={divStyles.sectionHeader}>正文</p>
+                        <p className={divStyles.sectionBody}>{parsed.body}</p>
+                      </section>
+                    ) : null}
+                    {parsed.actionSign ? (
+                      <section
+                        className={`${divStyles.section} ${divStyles.sectionAction}`}
+                        data-divination-section="action"
+                      >
+                        <p className={divStyles.sectionHeader}>行动签</p>
+                        <p className={divStyles.sectionBody}>{parsed.actionSign}</p>
+                      </section>
+                    ) : null}
+                    {parsed.lead && !parsed.body ? (
+                      <section
+                        className={`${divStyles.section} ${divStyles.sectionBodyText}`}
+                        data-divination-section="lead"
+                      >
+                        <p className={divStyles.sectionHeader}>叙事</p>
+                        <p className={divStyles.sectionBody}>{parsed.lead}</p>
+                      </section>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className={styles.phoneJournalDetailBodyScroll}>
+                    <pre className={styles.phoneJournalDetailBody}>{sanitized}</pre>
+                  </div>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className={styles.phoneModalGhostButton}
+                    onClick={() => void handleDelete(selected.id)}
+                    disabled={deleteBusy}
+                  >
+                    {deleteBusy ? '删除中…' : '删除此条'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()
         )}
       </div>
     </div>

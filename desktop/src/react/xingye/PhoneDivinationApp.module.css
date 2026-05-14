@@ -1,0 +1,307 @@
+/* —— Divination detail/generation/list shared layout —— */
+
+.sectionList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.section {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sectionHeader {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sectionBody {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+
+/* List row chip + left color bar (shared markup; per-theme colors override) */
+.listBar {
+  flex: 0 0 4px;
+  align-self: stretch;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.listChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+.generationCard {
+  position: relative;
+}
+
+/* ==========================================================================
+   field_oracle  战地直觉 — 「军绿哨卡 / 档案打字机」
+   ========================================================================== */
+
+.themeField {
+  --field-bg: #ece7d8;
+  --field-bg-soft: #f3eee0;
+  --field-bg-strong: #ddd2b1;
+  --field-paper: #f8f3e3;
+  --field-ink: #1c1c1a;
+  --field-ink-soft: #4a4a44;
+  --field-green: #4a5a3a;
+  --field-green-soft: rgba(74, 90, 58, 0.18);
+  --field-orange: #c46a2f;
+  --field-orange-soft: rgba(196, 106, 47, 0.10);
+  --field-line: rgba(28, 28, 26, 0.16);
+  --field-mono:
+    'JetBrains Mono', 'DM Mono', 'Cascadia Mono', 'Cascadia Code',
+    'Consolas', 'Menlo', 'Source Han Mono SC', 'PingFang SC', monospace;
+}
+
+.themeField.generationCard {
+  background:
+    linear-gradient(180deg, var(--field-bg-soft) 0%, var(--field-bg) 100%);
+  border: 1px solid var(--field-line);
+  border-top: 3px solid var(--field-green);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  color: var(--field-ink);
+  font-family: var(--field-mono);
+}
+
+.themeField.generationCard::after {
+  content: 'CLASSIFIED · FIELD ORACLE';
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 0.6rem;
+  letter-spacing: 0.28em;
+  color: rgba(28, 28, 26, 0.22);
+  font-family: var(--field-mono);
+  pointer-events: none;
+}
+
+.themeField.generationCard :global(.phoneAppTitle) {
+  font-family: var(--field-mono);
+  color: var(--field-green);
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin-top: 6px;
+}
+
+.themeField.generationCard :global(.phoneAppTitle)::before {
+  content: '> ';
+  color: var(--field-orange);
+}
+
+.themeField.generationCard :global(.phoneAppHint),
+.themeField.generationCard :global(.phoneFormField) > span {
+  color: var(--field-ink-soft);
+  font-family: var(--field-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.themeField.generationCard :global(.phoneFormField) select,
+.themeField.generationCard :global(.phoneFormField) textarea {
+  background: var(--field-paper);
+  border: 1px solid var(--field-line);
+  color: var(--field-ink);
+  font-family: var(--field-mono);
+  border-radius: 8px;
+}
+
+.themeField.generationCard :global(.phoneFormField) select:focus,
+.themeField.generationCard :global(.phoneFormField) textarea:focus {
+  outline: none;
+  border-color: var(--field-green);
+  box-shadow: 0 0 0 2px var(--field-green-soft);
+}
+
+.themeField.generationCard :global(.phoneJournalPrimaryButton) {
+  background: var(--field-green);
+  color: var(--field-paper);
+  border: 1px solid var(--field-green);
+  border-radius: 8px;
+  font-family: var(--field-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.themeField.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+  background: #3c4a2f;
+}
+
+.themeField.generationCard :global(.phoneModalGhostButton) {
+  background: transparent;
+  border: 1px dashed var(--field-green);
+  color: var(--field-green);
+  border-radius: 8px;
+  font-family: var(--field-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+/* Detail view section cards */
+.themeField .section {
+  background: linear-gradient(180deg, var(--field-paper) 0%, var(--field-bg-soft) 100%);
+  border: 1px solid var(--field-line);
+  color: var(--field-ink);
+  font-family: var(--field-mono);
+}
+
+.themeField .sectionHeader {
+  color: var(--field-green);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.themeField .sectionHeader::before {
+  content: '[ ';
+  color: var(--field-orange);
+}
+
+.themeField .sectionHeader::after {
+  content: ' ]';
+  color: var(--field-orange);
+}
+
+.themeField .sectionBody {
+  font-family: var(--field-mono);
+  font-size: 0.86rem;
+  line-height: 1.7;
+  color: var(--field-ink);
+}
+
+/* Title section: heavier top bar, larger type */
+.themeField .sectionTitle {
+  border-top: 3px solid var(--field-green);
+  border-radius: 10px 10px 14px 14px;
+}
+
+.themeField .sectionTitle .sectionBody {
+  font-size: 1.04rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--field-ink);
+}
+
+/* Sign-flavor section: dashed form-like box */
+.themeField .sectionSign {
+  border: 1px dashed var(--field-green);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.themeField .sectionSign .sectionBody {
+  font-size: 0.82rem;
+  color: var(--field-ink-soft);
+  font-style: italic;
+}
+
+/* Body: faint typewriter rule lines */
+.themeField .sectionBodyText {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(28, 28, 26, 0) 0,
+    rgba(28, 28, 26, 0) 1.6em,
+    rgba(28, 28, 26, 0.06) 1.6em,
+    rgba(28, 28, 26, 0.06) calc(1.6em + 1px)
+  );
+}
+
+/* Action sign: warning-orange callout */
+.themeField .sectionAction {
+  background: var(--field-orange-soft);
+  border: 1px solid var(--field-orange);
+}
+
+.themeField .sectionAction .sectionHeader {
+  color: var(--field-orange);
+}
+
+.themeField .sectionAction .sectionHeader::before,
+.themeField .sectionAction .sectionHeader::after {
+  color: var(--field-orange);
+}
+
+.themeField .sectionAction .sectionBody {
+  color: #6e3a13;
+  font-weight: 600;
+}
+
+/* Symbols line override */
+.themeField :global(.phoneAppHint)[data-symbols] {
+  font-family: var(--field-mono);
+  color: var(--field-green);
+}
+
+/* List row visuals */
+.themeFieldBar {
+  background: var(--field-green);
+}
+
+.themeFieldChip {
+  background: var(--field-green-soft);
+  color: var(--field-green);
+  border-color: rgba(74, 90, 58, 0.32);
+  font-family:
+    'JetBrains Mono', 'DM Mono', 'Cascadia Code', 'Consolas', 'Menlo', monospace;
+}
+
+/* ==========================================================================
+   Empty stubs for the remaining 6 themes.
+   Class names are referenced from xingye-divination-themes.ts so they must
+   exist; visual styling is intentionally left blank for now and will be
+   filled in after the field_oracle prototype is approved.
+   ========================================================================== */
+
+.themeIching { }
+.themeIchingBar { }
+.themeIchingChip { }
+
+.themeTarot { }
+.themeTarotBar { }
+.themeTarotChip { }
+
+.themeCrystal { }
+.themeCrystalBar { }
+.themeCrystalChip { }
+
+.themeRunes { }
+.themeRunesBar { }
+.themeRunesChip { }
+
+.themeAstro { }
+.themeAstroBar { }
+.themeAstroChip { }
+
+.themeGeneric { }
+.themeGenericBar { }
+.themeGenericChip { }
