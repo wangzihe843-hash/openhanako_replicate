@@ -23,6 +23,7 @@ export const CONFIG_SCHEMA = {
   locale:                       { scope: 'global', setter: 'setLocale',         getter: 'getLocale', defaultValue: '' },
   timezone:                     { scope: 'global', setter: 'setTimezone',       getter: 'getTimezone', defaultValue: '' },
   sandbox:                      { scope: 'global', setter: 'setSandbox',        getter: 'getSandbox', defaultValue: true },
+  sandbox_network:              { scope: 'global', setter: 'setSandboxNetwork', getter: 'getSandboxNetwork', defaultValue: false },
   file_backup:                  { scope: 'global', setter: 'setFileBackup',    getter: 'getFileBackup' },
   update_channel:               { scope: 'global', setter: 'setUpdateChannel',  getter: 'getUpdateChannel', defaultValue: 'stable' },
   auto_check_updates:           { scope: 'global', setter: 'setAutoCheckUpdates', getter: 'getAutoCheckUpdates', defaultValue: true },

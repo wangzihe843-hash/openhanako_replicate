@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
 
@@ -27,10 +27,32 @@ vi.mock('../../services/stream-key-dispatcher', () => ({
 
 import { AgentPhoneSessionPreview } from '../../components/ChannelsPanel';
 
+function setScrollMetrics(
+  el: HTMLElement,
+  metrics: { scrollHeight: number; clientHeight: number; scrollTop: number },
+) {
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => metrics.scrollHeight });
+  Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => metrics.clientHeight });
+  Object.defineProperty(el, 'scrollTop', {
+    configurable: true,
+    get: () => metrics.scrollTop,
+    set: (value) => { metrics.scrollTop = value; },
+  });
+}
+
 describe('AgentPhoneSessionPreview', () => {
   beforeEach(() => {
     streamSubscriber = null;
     window.t = ((key: string) => key) as typeof window.t;
+    window.ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      cb(16);
+      return 1;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = (() => {}) as typeof window.cancelAnimationFrame;
     useStore.setState({
       locale: 'zh',
       chatSessions: {},
@@ -69,5 +91,25 @@ describe('AgentPhoneSessionPreview', () => {
       yuan: 'butter',
       text: 'PULSE text',
     });
+  });
+
+  it('does not force bottom after the user scrolls up during a phone stream', () => {
+    const { container } = render(
+      <AgentPhoneSessionPreview
+        sessionPath="/tmp/butter-phone.jsonl"
+        agentId="butter-agent"
+        agentYuan="butter"
+      />,
+    );
+    const scroller = container.querySelector('[class*="agentActivityTranscriptScroll"]') as HTMLElement;
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 180 };
+    setScrollMetrics(scroller, metrics);
+
+    act(() => {
+      fireEvent.scroll(scroller);
+      streamSubscriber?.({ type: 'text_delta', delta: '工具前的文字' });
+    });
+
+    expect(metrics.scrollTop).toBe(180);
   });
 });

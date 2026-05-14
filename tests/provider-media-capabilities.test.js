@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import YAML from "js-yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProviderRegistry } from "../core/provider-registry.js";
 
@@ -36,6 +37,29 @@ describe("ProviderRegistry media capabilities", () => {
       originalProviderId: "openai-codex-oauth",
       providerId: "openai-codex",
       projection: "sdk-auth-alias",
+    });
+  });
+
+  it("treats a configured Volcengine Coding Plan credential lane as usable for Volcengine image generation", () => {
+    fs.writeFileSync(path.join(tmpHome, "added-models.yaml"), YAML.dump({
+      providers: {
+        "volcengine-coding": {
+          api_key: "coding-plan-key",
+          base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
+          api: "openai-completions",
+        },
+      },
+    }), "utf-8");
+
+    const registry = new ProviderRegistry(tmpHome);
+    registry.reload();
+
+    const status = registry.getMediaProviderCredentialStatus("volcengine", "image_generation");
+
+    expect(status).toMatchObject({
+      hasCredentials: true,
+      activeLaneId: "volcengine-coding",
+      activeProviderId: "volcengine-coding",
     });
   });
 

@@ -12,6 +12,7 @@ interface MediaProvider {
   providerId: string;
   displayName?: string;
   hasCredentials: boolean;
+  unavailableReason?: string | null;
   models: { id: string; name: string }[];
   availableModels: { id: string; name: string }[];
 }
@@ -46,15 +47,16 @@ export function MediaTab() {
     try {
       const res = await hanaFetch('/api/plugins/image-gen/providers');
       const data = await res.json();
-      setProviders(data.providers || {});
+      const nextProviders = data.providers || {};
+      setProviders(nextProviders);
       setConfig(data.config || {});
-      // Auto-select first provider
-      if (!selected) {
-        const ids = Object.keys(data.providers || {});
-        if (ids.length > 0) setSelected(ids[0]);
-      }
+      setSelected(current => {
+        if (current && nextProviders[current]) return current;
+        const ids = Object.keys(nextProviders);
+        return ids.find(id => nextProviders[id]?.hasCredentials) || ids[0] || null;
+      });
     } catch { /* plugin not loaded yet */ }
-  }, [selected]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -162,10 +164,15 @@ export function MediaTab() {
               }}
               options={[
                 { value: '', label: '—' },
-                ...allImageModels.map(m => ({
-                  value: `${m.provider}/${m.id}`,
-                  label: `${m.provider} / ${m.name || m.id}`,
-                })),
+                ...allImageModels.map(m => {
+                  const providerHasCredentials = providers[m.provider]?.hasCredentials === true;
+                  const label = `${m.provider} / ${m.name || m.id}`;
+                  return {
+                    value: `${m.provider}/${m.id}`,
+                    label: providerHasCredentials ? label : `${label} (${t('settings.media.credentialMissing')})`,
+                    disabled: !providerHasCredentials,
+                  };
+                }),
               ]}
             />
           }

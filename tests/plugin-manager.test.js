@@ -899,6 +899,72 @@ describe("hot operations", () => {
     expect(pm.getAllTools().some(t => t.name === "hot-plug_greet")).toBe(true);
   });
 
+  it("installPlugin loads a full-access dev plugin only with explicit dev permission", async () => {
+    const dir = path.join(pluginsDir, "dev-full");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+      id: "dev-full",
+      name: "Dev Full",
+      version: "0.1.0",
+      trust: "full-access",
+    }));
+    fs.writeFileSync(path.join(dir, "index.js"), `
+      export default class DevFull {
+        async onload() { globalThis.__devFullLoaded = true; }
+      }
+    `);
+
+    const pm = new PluginManager({
+      pluginsDir,
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager: {
+        getDisabledPlugins: () => [],
+        getAllowFullAccessPlugins: () => false,
+      },
+    });
+
+    const entry = await pm.installPlugin(dir, { source: "dev", allowFullAccess: true });
+
+    expect(entry.source).toBe("dev");
+    expect(entry.status).toBe("loaded");
+    expect(entry.accessLevel).toBe("full-access");
+    expect(globalThis.__devFullLoaded).toBe(true);
+    delete globalThis.__devFullLoaded;
+  });
+
+  it("installPlugin keeps full-access dev plugin restricted without explicit dev permission", async () => {
+    const dir = path.join(pluginsDir, "dev-denied");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+      id: "dev-denied",
+      name: "Dev Denied",
+      version: "0.1.0",
+      trust: "full-access",
+    }));
+    fs.writeFileSync(path.join(dir, "index.js"), `
+      export default class DevDenied {
+        async onload() { globalThis.__devDeniedLoaded = true; }
+      }
+    `);
+
+    const pm = new PluginManager({
+      pluginsDir,
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager: {
+        getDisabledPlugins: () => [],
+        getAllowFullAccessPlugins: () => true,
+      },
+    });
+
+    const entry = await pm.installPlugin(dir, { source: "dev", allowFullAccess: false });
+
+    expect(entry.source).toBe("dev");
+    expect(entry.status).toBe("restricted");
+    expect(globalThis.__devDeniedLoaded).toBeUndefined();
+  });
+
   it("installPlugin upgrades an existing plugin (same dirName)", async () => {
     const dir = path.join(pluginsDir, "upgradeable");
     fs.mkdirSync(path.join(dir, "tools"), { recursive: true });

@@ -63,8 +63,22 @@ Current boundaries: iframe UI is the stable extension surface. Native renderer c
    - Example or template plugin: `examples/plugins/<plugin-id>`.
    - User-installed plugin: the directory reported by `/api/plugins/settings` or `${HANA_HOME}/plugins`.
 6. Generate the scaffold with the bundled script, then adjust names, descriptions, tools, routes, capabilities, and UI to the user's request.
-7. If the user wants marketplace publication, add or update the `OH-Plugins/plugins/<plugin-id>.json` entry and README source after the plugin works locally.
-8. Run focused verification. When editing this skill, at minimum validate the skill and run the scaffold script against a temp directory.
+7. Use the Plugin Dev Loop when available:
+   - confirm the user has enabled Settings -> Plugins -> "Allow Agent plugin dev tools";
+   - install source with `plugin.dev.install`;
+   - reload with `plugin.dev.reload` after edits;
+   - keep the returned `devRunId` and pass it to lifecycle controls when available;
+   - enable, disable, reset, or uninstall only through `plugin.dev.enable`, `plugin.dev.disable`, `plugin.dev.reset`, and `plugin.dev.uninstall`;
+   - inspect `plugin.dev.diagnostics`;
+   - smoke-test tools with `plugin.dev.invokeTool`;
+   - list UI surfaces with `plugin.dev.listSurfaces`;
+   - run `manifest.dev.scenarios` with `plugin.dev.runScenario`.
+8. For UI debugging, prefer element-first inspection: read accessible elements, role, label, text, and stable locators before screenshots. Use screenshots for visual polish, clipping, theme fit, or fallback.
+9. If the user wants publication, choose one channel:
+   - local debug: keep source local and install through the dev loop;
+   - human review bundle: create zip, README, manifest, screenshots, and sha256 for email/group/issue review;
+   - official OH-Plugins release: prepare catalog entry and release zip, then run privacy-push before any remote push.
+10. Run focused verification. When editing this skill, at minimum validate the skill and run the scaffold script against a temp directory.
 
 ## Scaffold Commands
 
@@ -88,6 +102,7 @@ Useful options:
 - `--kind provider`: full-access provider contribution with a media-capability provider declaration.
 - `--sdk-mode workspace`: use repo-local SDK packages.
 - `--sdk-mode bundled`: copy SDK tarballs from this skill into the generated plugin.
+- `--dev-scenario`: add a first-phase `manifest.dev.scenarios` smoke test.
 - `--force`: replace an existing generated directory only when the user explicitly wants overwrite.
 
 Provider contribution starter:
@@ -100,6 +115,7 @@ python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "Jimeng Pro
 
 - Static `tools/*.js` must export `name`, `description`, `parameters`, and `execute`.
 - React templates may use `@hana/plugin-runtime`, `@hana/plugin-sdk`, and `@hana/plugin-components`.
+- Dev authority is not a manifest permission. Hana grants it from the remembered dev install slot under `${HANA_HOME}/plugins-dev/`, and Agent dev tools are hidden until the user enables the dev tools setting.
 - Local files returned to users must go through `toolCtx.stageFile({ sessionPath, filePath, label })`, then media details. Do not hand-build local `MEDIA:` or `file://` output.
 - Page and widget contributions require `"trust": "full-access"` and route-backed iframe UI.
 - Declare only the iframe host capabilities actually used.
@@ -115,7 +131,7 @@ python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "Jimeng Pro
 - Official source plugins may live in `OH-Plugins/official-plugins/<plugin-id>/` with a matching `plugins/<plugin-id>.json`.
 - Each marketplace entry needs one README source: `readme`, `readmePath`, or `readmeUrl`. Use `readmePath` only for local file marketplaces; use inline `readme` or HTTPS `readmeUrl` for URL marketplaces.
 - Local file marketplaces can install `distribution.kind = "source"` entries because paths resolve on disk.
-- URL marketplaces currently browse entries and show README content. Remote release package download, sha256 verification, and one-click install are future app work.
+- URL marketplaces browse entries, show README content, and install release packages by downloading the zip and verifying `sha256`.
 - Before pushing `OH-Plugins`, run privacy-push and wait for explicit user confirmation.
 
 ## UI Rules

@@ -3,9 +3,11 @@ import path from "path";
 import { __testing } from "../lib/sandbox/win32-exec.js";
 
 describe("win32 bundled shell candidates", () => {
-  it("discovers MinGit ash.exe and busybox.exe when bash/sh.exe are absent", () => {
+  it("discovers PortableGit Bash before legacy MinGit fallbacks", () => {
     const gitRoot = "C:\\Program Files\\Hanako\\resources\\git";
     const existing = new Set([
+      path.win32.join(gitRoot, "bin", "bash.exe"),
+      path.win32.join(gitRoot, "usr", "bin", "bash.exe"),
       path.win32.join(gitRoot, "mingw64", "bin", "ash.exe"),
       path.win32.join(gitRoot, "mingw64", "bin", "busybox.exe"),
     ]);
@@ -19,24 +21,29 @@ describe("win32 bundled shell candidates", () => {
       },
     );
 
-    expect(candidates.map((candidate) => path.win32.basename(candidate.shell))).toEqual([
-      "ash.exe",
-      "busybox.exe",
+    expect(candidates.map((candidate) => path.win32.relative(gitRoot, candidate.shell))).toEqual([
+      path.win32.join("bin", "bash.exe"),
+      path.win32.join("usr", "bin", "bash.exe"),
+      path.win32.join("mingw64", "bin", "ash.exe"),
+      path.win32.join("mingw64", "bin", "busybox.exe"),
     ]);
-    expect(candidates.find((candidate) => candidate.shell.endsWith("ash.exe"))?.args).toEqual(["-c"]);
-    expect(candidates.find((candidate) => candidate.shell.endsWith("busybox.exe"))?.args).toEqual(["sh", "-c"]);
+    expect(candidates[0].args).toEqual(["-lc"]);
+    expect(candidates.find((candidate) => path.win32.basename(candidate.shell) === "ash.exe")?.args).toEqual(["-c"]);
+    expect(candidates.find((candidate) => path.win32.basename(candidate.shell) === "busybox.exe")?.args).toEqual(["sh", "-c"]);
   });
 
-  it("prepends bundled MinGit runtime directories to the shell PATH", () => {
+  it("prepends bundled PortableGit runtime directories to the shell PATH", () => {
     const gitRoot = "C:\\Program Files\\Hanako\\resources\\git";
-    const shell = path.win32.join(gitRoot, "mingw64", "bin", "ash.exe");
+    const shell = path.win32.join(gitRoot, "bin", "bash.exe");
     const env = __testing.getShellEnvForCandidate(
       { Path: "C:\\Windows\\System32" },
-      { shell, args: ["-c"], bundledRoot: gitRoot },
+      { shell, args: ["-lc"], bundledRoot: gitRoot },
     );
 
     const segments = env.Path.split(";");
-    expect(segments.slice(0, 2)).toEqual([
+    expect(segments.slice(0, 4)).toEqual([
+      path.win32.join(gitRoot, "bin"),
+      path.win32.join(gitRoot, "usr", "bin"),
       path.win32.join(gitRoot, "mingw64", "bin"),
       path.win32.join(gitRoot, "cmd"),
     ]);

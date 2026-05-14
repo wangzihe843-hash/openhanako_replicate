@@ -4,9 +4,9 @@ import { createPluginConfigStore } from "./plugin-config.js";
 
 /**
  * Create a PluginContext for a plugin.
- * @param {{ pluginId: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object }} opts
+ * @param {{ pluginId: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function }} opts
  */
-export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema }) {
+export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink }) {
   const config = createPluginConfigStore({ dataDir, schema: configSchema });
 
   const resolvedAccess = accessLevel || "restricted";
@@ -22,11 +22,19 @@ export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessL
       });
 
   const prefix = `[plugin:${pluginId}]`;
+  const recordLog = (level, args) => {
+    if (typeof logSink !== "function") return;
+    try {
+      logSink({ pluginId, level, args, ts: new Date().toISOString() });
+    } catch {
+      // Logging must never break plugin execution.
+    }
+  };
   const log = {
-    info: (...args) => console.log(prefix, ...args),
-    warn: (...args) => console.warn(prefix, ...args),
-    error: (...args) => console.error(prefix, ...args),
-    debug: (...args) => console.debug(prefix, ...args),
+    info: (...args) => { recordLog("info", args); console.log(prefix, ...args); },
+    warn: (...args) => { recordLog("warn", args); console.warn(prefix, ...args); },
+    error: (...args) => { recordLog("error", args); console.error(prefix, ...args); },
+    debug: (...args) => { recordLog("debug", args); console.debug(prefix, ...args); },
   };
 
   function registerSessionFile(entry = {}) {

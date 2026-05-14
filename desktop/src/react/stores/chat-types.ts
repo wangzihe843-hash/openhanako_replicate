@@ -83,7 +83,7 @@ export type TextDecorator =
   | { type: 'thinking'; content: string; sealed: boolean }
   | { type: 'mood'; yuan: string; text: string }
   | { type: 'tool_group'; tools: ToolCall[]; collapsed: boolean }
-  | { type: 'text'; html: string };
+  | { type: 'text'; html: string; source?: string };
 
 // 物种 B：富内容块（通过 content_block 事件 push，不 upsert）
 export type RichBlock =

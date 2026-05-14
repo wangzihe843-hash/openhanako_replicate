@@ -21,7 +21,7 @@ describe("getPlatformPromptNote", () => {
       "Shell: platform-adaptive\n" +
       "OS Version: TestOS 1.2.3\n" +
       "Host OS is Windows. Simple git commands run through Hanako's bundled git.exe when available.\n" +
-      "Simple Windows-native commands may run through cmd.exe; POSIX shell commands run through Hanako's bundled POSIX compatibility layer in sandbox mode.\n" +
+      "Simple Windows-native commands may run through cmd.exe; POSIX shell commands run through Hanako's bundled PortableGit Bash runtime.\n" +
       "Use POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.\n" +
       "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native shell.\n" +
       "Discard POSIX command output with /dev/null; use CMD's nul device only inside an explicit cmd.exe command."

@@ -54,4 +54,17 @@ describe("Linux bwrap sandbox policy projection", () => {
     expect(hasMount(args, "--ro-bind", sessionFiles, sessionFiles)).toBe(true);
     expect(hasMount(args, "--ro-bind", externalFile, externalFile)).toBe(true);
   });
+
+  it("keeps network isolated by default and omits net namespace isolation when sandbox network is allowed", () => {
+    const policy = {
+      mode: "standard",
+      writablePaths: [],
+      readablePaths: [],
+      protectedPaths: [],
+      denyReadPaths: [],
+    };
+
+    expect(buildBwrapArgs(policy)).toContain("--unshare-net");
+    expect(buildBwrapArgs(policy, { allowNetwork: true })).not.toContain("--unshare-net");
+  });
 });

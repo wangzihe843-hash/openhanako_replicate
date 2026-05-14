@@ -120,11 +120,14 @@
 .settings-nav {
     width: var(--settings-nav-width, 160px);
     flex-shrink: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
     padding: var(--space-xs) var(--space-sm);
     border-right: 1px solid var(--overlay-light);
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 .settings-nav-item {

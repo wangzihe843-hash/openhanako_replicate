@@ -16,6 +16,7 @@ import {
 } from '../stores/channel-actions';
 import { loadMessages } from '../stores/session-actions';
 import { subscribeStreamKey } from '../services/stream-key-dispatcher';
+import { useContinuousBottomScroll } from '../hooks/use-continuous-bottom-scroll';
 import { resolveChannelMember, buildAgentMap, formatChannelTime, MemberAvatar } from './channels/ChannelList';
 import type { MemberInfo } from './channels/ChannelList';
 import { ChatTranscript } from './chat/ChatTranscript';
@@ -359,13 +360,21 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
   const [streamRevision, setStreamRevision] = useState(0);
   const streamTurnRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const bottomScroll = useContinuousBottomScroll({
+    scrollRef,
+    contentRef,
+    active: !!sessionPath,
+    stickyThreshold: 32,
+  });
   const moodYuan = agentYuan || 'hanako';
 
   useEffect(() => {
+    bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
     streamTurnRef.current = 0;
     setStreamMessage(null);
     setStreamRevision(0);
-  }, [sessionPath]);
+  }, [bottomScroll, sessionPath]);
 
   useEffect(() => {
     if (!sessionPath || items.length > 0 || loading) return;
@@ -380,13 +389,8 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
   }, [items.length, loading, sessionPath]);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const raf = window.requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(raf);
-  }, [items.length, streamRevision]);
+    bottomScroll.followBottom();
+  }, [bottomScroll, items.length, loading, streamRevision]);
 
   useEffect(() => {
     if (!sessionPath) return;
@@ -472,13 +476,14 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
           updateStreamMessage((message) => {
             const blocks = message.blocks || [];
             const textBlock = blocks.find((block) => block.type === 'text') as (Extract<ContentBlock, { type: 'text' }> & { _raw?: string }) | undefined;
-            const nextText = `${textBlock?._raw || ''}${event.delta || ''}`;
+            const prevText = textBlock?.source ?? textBlock?._raw ?? '';
+            const nextText = `${prevText}${event.delta || ''}`;
             return {
               ...message,
               blocks: upsertPhoneBlock(
                 blocks,
                 (block) => block.type === 'text',
-                { type: 'text', html: renderMarkdown(nextText), _raw: nextText } as any,
+                { type: 'text', html: renderMarkdown(nextText), source: nextText },
               ),
             };
           });
@@ -559,21 +564,23 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
 
   return (
     <div ref={scrollRef} className={`${styles.agentActivityTranscriptScroll} ${chatStyles.subagentPreviewTranscript}`}>
-      {!sessionPath ? (
-        <div className={styles.agentActivityEmpty}>{t('channel.agentIdle')}</div>
-      ) : loading && displayItems.length === 0 ? (
-        <div className={styles.agentActivityEmpty}>{t('common.loading')}</div>
-      ) : displayItems.length === 0 ? (
-        <div className={styles.agentActivityEmpty}>{t('channel.agentIdle')}</div>
-      ) : (
-        <ChatTranscript
-          items={displayItems}
-          sessionPath={sessionPath}
-          agentId={agentId}
-          readOnly
-          hideUserIdentity
-        />
-      )}
+      <div ref={contentRef}>
+        {!sessionPath ? (
+          <div className={styles.agentActivityEmpty}>{t('channel.agentIdle')}</div>
+        ) : loading && displayItems.length === 0 ? (
+          <div className={styles.agentActivityEmpty}>{t('common.loading')}</div>
+        ) : displayItems.length === 0 ? (
+          <div className={styles.agentActivityEmpty}>{t('channel.agentIdle')}</div>
+        ) : (
+          <ChatTranscript
+            items={displayItems}
+            sessionPath={sessionPath}
+            agentId={agentId}
+            readOnly
+            hideUserIdentity
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -670,6 +677,7 @@ export function ChannelAgentSettingsPanel() {
   const toolMode = useStore(s => s.channelAgentPhoneToolMode);
   const replyMinChars = useStore(s => s.channelAgentReplyMinChars);
   const replyMaxChars = useStore(s => s.channelAgentReplyMaxChars);
+  const proactiveEnabled = useStore(s => s.channelAgentProactiveEnabled);
   const reminderIntervalMinutes = useStore(s => s.channelAgentReminderIntervalMinutes);
   const guardLimit = useStore(s => s.channelAgentGuardLimit);
   const modelOverrideEnabled = useStore(s => s.channelAgentModelOverrideEnabled);
@@ -745,6 +753,11 @@ export function ChannelAgentSettingsPanel() {
     void saveSettings({ mode });
   };
 
+  const changeProactiveEnabled = (enabled: boolean) => {
+    if (saving || enabled === proactiveEnabled) return;
+    void saveSettings({ proactiveEnabled: enabled });
+  };
+
   const changeModelOverrideEnabled = (enabled: boolean) => {
     if (saving || enabled === modelOverrideEnabled) return;
     if (!enabled) {
@@ -813,20 +826,6 @@ export function ChannelAgentSettingsPanel() {
           </div>
           {!isDM && (
             <div className={styles.agentSettingsField}>
-              <div className={styles.agentSettingsLabel}>{t('channel.reminderInterval')}</div>
-              <input
-                className={styles.agentReplyRangeInput}
-                inputMode="numeric"
-                placeholder="31"
-                value={draftReminder}
-                onChange={(event) => setDraftReminder(event.target.value.replace(/[^\d]/g, ''))}
-                onBlur={commitTextSettings}
-                disabled={saving}
-              />
-            </div>
-          )}
-          {!isDM && (
-            <div className={styles.agentSettingsField}>
               <div className={styles.agentSettingsLabel}>{t('channel.guardLimit')}</div>
               <input
                 className={styles.agentReplyRangeInput}
@@ -840,6 +839,43 @@ export function ChannelAgentSettingsPanel() {
             </div>
           )}
         </div>
+        {!isDM && (
+          <div className={`${styles.agentSettingsInlineGrid} ${styles.agentSettingsInlineGridSpaced}`}>
+            <div className={styles.agentSettingsField}>
+              <div className={styles.agentSettingsLabel}>{t('channel.proactiveInitiation')}</div>
+              <div className={`${styles.agentToolModeToggle} ${styles.agentToolModeToggleFill}`}>
+                <button
+                  type="button"
+                  className={`${styles.agentToolModeButton}${!proactiveEnabled ? ` ${styles.agentToolModeButtonActive}` : ''}`}
+                  disabled={saving}
+                  onClick={() => changeProactiveEnabled(false)}
+                >
+                  {t('channel.proactiveOff')}
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.agentToolModeButton}${proactiveEnabled ? ` ${styles.agentToolModeButtonActive}` : ''}`}
+                  disabled={saving}
+                  onClick={() => changeProactiveEnabled(true)}
+                >
+                  {t('channel.proactiveOn')}
+                </button>
+              </div>
+            </div>
+            <div className={styles.agentSettingsField}>
+              <div className={styles.agentSettingsLabel}>{t('channel.proactiveInterval')}</div>
+              <input
+                className={styles.agentReplyRangeInput}
+                inputMode="numeric"
+                placeholder="31"
+                value={draftReminder}
+                onChange={(event) => setDraftReminder(event.target.value.replace(/[^\d]/g, ''))}
+                onBlur={commitTextSettings}
+                disabled={saving || !proactiveEnabled}
+              />
+            </div>
+          </div>
+        )}
         <div className={styles.agentSettingsField}>
           <div className={styles.agentSettingsLabel}>{t('channel.replyRange')}</div>
           <div className={styles.agentReplyRangeRow}>

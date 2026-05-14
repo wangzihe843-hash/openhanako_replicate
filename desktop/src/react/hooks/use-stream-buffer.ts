@@ -210,9 +210,9 @@ class StreamBufferManager {
         const html = renderMarkdown(displayText);
         const idx = blocks.findIndex(b => b.type === 'text');
         if (idx >= 0) {
-          blocks[idx] = { type: 'text', html };
+          blocks[idx] = { type: 'text', html, source: displayText };
         } else {
-          blocks.push({ type: 'text', html });
+          blocks.push({ type: 'text', html, source: displayText });
         }
       }
 

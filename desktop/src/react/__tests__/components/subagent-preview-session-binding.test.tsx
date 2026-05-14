@@ -28,6 +28,18 @@ function makeScrollContainerRef() {
   return { current: el };
 }
 
+function makeScrollContainerRefWithMetrics(metrics: { scrollHeight: number; clientHeight: number; scrollTop: number }) {
+  const el = document.createElement('div');
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => metrics.scrollHeight });
+  Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => metrics.clientHeight });
+  Object.defineProperty(el, 'scrollTop', {
+    configurable: true,
+    get: () => metrics.scrollTop,
+    set: (value) => { metrics.scrollTop = value; },
+  });
+  return { current: el };
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -266,6 +278,51 @@ describe('SubagentSessionPreview session binding', () => {
     });
 
     expect(screen.getByText('第一句 已经来了')).toBeTruthy();
+  });
+
+  it('用户在 subagent preview 里上滑后，新的流式增量不会强制回到底部', async () => {
+    useStore.setState({
+      chatSessions: {
+        '/session/subagent': {
+          items: [
+            {
+              type: 'message',
+              data: {
+                id: 'u-1',
+                role: 'user',
+                text: 'synthetic prompt',
+                textHtml: '<p>synthetic prompt</p>',
+              },
+            },
+          ],
+          hasMore: false,
+          loadingMore: false,
+        },
+      },
+    } as never);
+    mockedLoadMessages.mockImplementation(async () => {});
+
+    const metrics = { scrollHeight: 1000, clientHeight: 260, scrollTop: 160 };
+    const scrollContainerRef = makeScrollContainerRefWithMetrics(metrics);
+    render(
+      <SubagentSessionPreview
+        taskId="task-a"
+        sessionPath="/session/subagent"
+        streamStatus="running"
+        scrollContainerRef={scrollContainerRef}
+      />,
+    );
+
+    await act(async () => {});
+
+    act(() => {
+      metrics.scrollTop = 160;
+      scrollContainerRef.current.dispatchEvent(new Event('scroll'));
+      dispatchStreamKey('/session/subagent', { type: 'text_delta', sessionPath: '/session/subagent', delta: '新的正文' });
+    });
+
+    expect(screen.getByText('新的正文')).toBeTruthy();
+    expect(metrics.scrollTop).toBe(160);
   });
 
   it('多轮 turn 场景下：items 里已有上一轮 assistant 时，新一轮的 streamMessage 不会被误清', async () => {

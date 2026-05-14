@@ -1041,6 +1041,10 @@
     margin-top: 0;
 }
 
+.agentSettingsInlineGridSpaced {
+    margin-top: 10px;
+}
+
 .agentSettingsField {
     display: flex;
     flex-direction: column;

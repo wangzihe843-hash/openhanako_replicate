@@ -80,6 +80,18 @@ export class PreferencesManager {
     this.savePreferences(prefs);
   }
 
+  /** 读取沙盒内命令是否允许出站联网。默认关闭。 */
+  getSandboxNetwork() {
+    return this._cache.sandbox_network === true;
+  }
+
+  /** 保存沙盒内命令出站联网偏好。 */
+  setSandboxNetwork(enabled) {
+    const prefs = this._mutableCopy();
+    prefs.sandbox_network = typeof enabled === "string" ? enabled === "true" : !!enabled;
+    this.savePreferences(prefs);
+  }
+
   /** 读取新会话默认权限模式。首次安装没有该字段时默认 ask。 */
   getSessionPermissionModeDefault() {
     return normalizeSessionPermissionMode({ permissionMode: this._cache.session_permission_mode_default });
@@ -337,6 +349,22 @@ export class PreferencesManager {
     const prefs = this._mutableCopy();
     prefs.allow_full_access_plugins = !!value;
     this.savePreferences(prefs);
+  }
+
+  /** 读取 Agent 插件开发工具开关（全局，默认关闭） */
+  getPluginDevToolsEnabled() {
+    return this._cache.plugin_dev_tools?.enabled === true;
+  }
+
+  /** 保存 Agent 插件开发工具开关 */
+  setPluginDevToolsEnabled(value) {
+    const prefs = this._mutableCopy();
+    prefs.plugin_dev_tools = {
+      ...(prefs.plugin_dev_tools || {}),
+      enabled: value === true,
+    };
+    this.savePreferences(prefs);
+    return prefs.plugin_dev_tools.enabled;
   }
 
   /** 读取用户手动禁用的插件 ID 列表 */

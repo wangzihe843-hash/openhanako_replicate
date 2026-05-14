@@ -12,12 +12,45 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { formatSessionDate } from '../utils/format';
 import { switchSession, archiveSession, renameSession, pinSession } from '../stores/session-actions';
+import { updateKeyed } from '../stores/create-keyed-slice';
 import type { Session, Agent } from '../types';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { buildSessionSections } from './session-sections';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
 import styles from './SessionList.module.css';
+
+interface BrowserSessionState {
+  url: string | null;
+  running: boolean;
+  resumable: boolean;
+  unavailableReason: string | null;
+}
+
+function normalizeBrowserSessionStates(data: unknown): Record<string, BrowserSessionState> {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  const result: Record<string, BrowserSessionState> = {};
+  for (const [sessionPath, rawState] of Object.entries(data as Record<string, unknown>)) {
+    if (typeof rawState === 'string') {
+      result[sessionPath] = {
+        url: rawState,
+        running: false,
+        resumable: true,
+        unavailableReason: null,
+      };
+      continue;
+    }
+    if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)) continue;
+    const state = rawState as Partial<BrowserSessionState>;
+    result[sessionPath] = {
+      url: typeof state.url === 'string' ? state.url : null,
+      running: state.running === true,
+      resumable: state.resumable !== false,
+      unavailableReason: typeof state.unavailableReason === 'string' ? state.unavailableReason : null,
+    };
+  }
+  return result;
+}
 
 
 // ── 主组件 ──
@@ -38,16 +71,59 @@ function SessionListInner() {
   const streamingSessions = useStore(s => s.streamingSessions);
   const browserBySession = useStore(s => s.browserBySession);
 
-  const [browserSessions, setBrowserSessions] = useState<Record<string, string>>({});
+  const [browserSessions, setBrowserSessions] = useState<Record<string, BrowserSessionState>>({});
+  const closingBrowserSessionsRef = useRef(new Set<string>());
+
+  const setVisibleBrowserSessions = useCallback((data: unknown) => {
+    const states = normalizeBrowserSessionStates(data);
+    for (const sessionPath of closingBrowserSessionsRef.current) {
+      delete states[sessionPath];
+    }
+    setBrowserSessions(states);
+  }, []);
 
   // Fetch browser sessions (re-fetch when browser state changes)
   useEffect(() => {
-    if (sessions.length === 0) return;
-    hanaFetch('/api/browser/sessions')
+    let cancelled = false;
+    if (sessions.length === 0) {
+      setBrowserSessions({});
+      return;
+    }
+    hanaFetch('/api/browser/session-states')
       .then(r => r.json())
-      .then(data => setBrowserSessions(data || {}))
+      .then(data => {
+        if (!cancelled) setVisibleBrowserSessions(data);
+      })
       .catch(err => console.warn('[sessions] fetch browser sessions failed:', err));
-  }, [sessions, browserBySession]);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessions, browserBySession, setVisibleBrowserSessions]);
+
+  const handleCloseBrowserSession = useCallback(async (sessionPath: string) => {
+    closingBrowserSessionsRef.current.add(sessionPath);
+    setBrowserSessions(prev => {
+      const next = { ...prev };
+      delete next[sessionPath];
+      return next;
+    });
+    try {
+      const res = await hanaFetch('/api/browser/close-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionPath }),
+      });
+      const data = await res.json();
+      updateKeyed('browserBySession', sessionPath, { running: false, url: null, thumbnail: null });
+      closingBrowserSessionsRef.current.delete(sessionPath);
+      if (data?.sessions) {
+        setBrowserSessions(normalizeBrowserSessionStates(data.sessions));
+      }
+    } catch (err) {
+      closingBrowserSessionsRef.current.delete(sessionPath);
+      console.warn('[sessions] close browser session failed:', err);
+    }
+  }, []);
 
   if (sessions.length === 0) {
     return <div className={styles.sessionEmpty}>{t('sidebar.empty')}</div>;
@@ -67,7 +143,8 @@ function SessionListInner() {
             isStreaming={streamingSessions.includes(s.path)}
             isPinned={!!s.pinnedAt}
             agents={agents}
-            browserUrl={browserSessions[s.path] || null}
+            browserState={browserSessions[s.path] || null}
+            onCloseBrowser={handleCloseBrowserSession}
           />
         ));
 
@@ -101,13 +178,14 @@ function SessionListInner() {
 
 // ── Session Item ──
 
-const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, agents, browserUrl }: {
+const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, agents, browserState, onCloseBrowser }: {
   session: Session;
   isActive: boolean;
   isStreaming: boolean;
   isPinned: boolean;
   agents: Agent[];
-  browserUrl: string | null;
+  browserState: BrowserSessionState | null;
+  onCloseBrowser: (sessionPath: string) => void;
 }) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
@@ -183,6 +261,23 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   }
   if (s.modified) parts.push(formatSessionDate(s.modified));
   const rcLabel = s.rcAttachment ? `${formatRcPlatform(s.rcAttachment.platform)} 接管中` : null;
+  const browserUrl = browserState?.url || null;
+  const browserTitle = [
+    browserUrl,
+    browserState?.unavailableReason,
+    t('browser.close'),
+  ].filter(Boolean).join('\n');
+
+  const handleBrowserClose = useCallback((e: React.MouseEvent | React.KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onCloseBrowser(s.path);
+  }, [onCloseBrowser, s.path]);
+
+  const handleBrowserKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    handleBrowserClose(e);
+  }, [handleBrowserClose]);
 
   return (
     <>
@@ -252,7 +347,17 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
         )}
 
         {browserUrl && (
-          <span className={styles.sessionBrowserBadge} title={browserUrl}>
+          <span
+            className={styles.sessionBrowserBadge}
+            title={browserTitle}
+            role="button"
+            tabIndex={0}
+            aria-label={t('browser.close')}
+            data-running={browserState?.running ? 'true' : 'false'}
+            data-resumable={browserState?.resumable ? 'true' : 'false'}
+            onClick={handleBrowserClose}
+            onKeyDown={handleBrowserKeyDown}
+          >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" />
               <line x1="2" y1="12" x2="22" y2="12" />

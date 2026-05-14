@@ -227,6 +227,26 @@ function isMarketplacePluginInstallable(plugin, marketplace) {
   return false;
 }
 
+function pluginDevServiceOrError(engine, c) {
+  const service = engine.pluginDevService;
+  if (!service) {
+    return {
+      errorResponse: c.json({
+        error: "Plugin dev service not available",
+        code: "PLUGIN_DEV_SERVICE_UNAVAILABLE",
+      }, 500),
+    };
+  }
+  return { service };
+}
+
+function pluginDevErrorResponse(c, err) {
+  return c.json({
+    error: err?.message || String(err),
+    ...(err?.code ? { code: err.code } : {}),
+  }, err?.status || 500);
+}
+
 function sanitizeMarketplacePluginForClient(plugin) {
   const {
     readme: _readme,
@@ -307,6 +327,151 @@ export function createPluginsRoute(engine) {
       tasks: typeof engine.taskRegistry?.listAll === "function" ? engine.taskRegistry.listAll() : [],
       schedules: typeof engine.taskRegistry?.listSchedules === "function" ? engine.taskRegistry.listSchedules() : [],
     });
+  });
+
+  // ── Plugin dev loop endpoints ──
+
+  route.post("/plugins/dev/install", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    const sourcePath = body.sourcePath || body.path;
+    try {
+      return c.json(await service.installFromSource({
+        sourcePath,
+        pluginId: body.pluginId,
+        allowFullAccess: !!body.allowFullAccess,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.post("/plugins/dev/:id/reload", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await service.reloadPlugin(c.req.param("id"), {
+        devRunId: body.devRunId,
+        allowFullAccess: body.allowFullAccess,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.put("/plugins/dev/:id/enabled", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const result = body.enabled === false
+        ? await service.disablePlugin(c.req.param("id"), { devRunId: body.devRunId })
+        : await service.enablePlugin(c.req.param("id"), {
+            devRunId: body.devRunId,
+            allowFullAccess: body.allowFullAccess,
+          });
+      return c.json(result);
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.post("/plugins/dev/:id/reset", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await service.resetPlugin(c.req.param("id"), {
+        devRunId: body.devRunId,
+        allowFullAccess: body.allowFullAccess,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.delete("/plugins/dev/:id", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await service.uninstallPlugin(c.req.param("id"), {
+        devRunId: body.devRunId,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.get("/plugins/dev/:id/scenarios", (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const pluginId = c.req.param("id");
+    try {
+      return c.json({
+        pluginId,
+        scenarios: service.getScenarios({ pluginId }),
+      });
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.post("/plugins/dev/:id/scenarios/:scenarioId/run", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await service.runScenario({
+        pluginId: c.req.param("id"),
+        scenarioId: c.req.param("scenarioId"),
+        allowDestructive: body.allowDestructive === true,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.post("/plugins/dev/:id/tools/:toolName/invoke", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await service.invokeTool({
+        pluginId: c.req.param("id"),
+        toolName: c.req.param("toolName"),
+        input: body.input || {},
+        sessionPath: body.sessionPath,
+        agentId: body.agentId,
+      }));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
+  });
+
+  route.get("/plugins/dev/diagnostics", (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    return c.json(service.getDiagnostics(c.req.query("pluginId") || undefined));
+  });
+
+  route.get("/plugins/dev/surfaces", (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    return c.json(service.listSurfaces(c.req.query("pluginId") || undefined));
+  });
+
+  route.post("/plugins/dev/surfaces/describe", async (c) => {
+    const { service, errorResponse } = pluginDevServiceOrError(engine, c);
+    if (errorResponse) return errorResponse;
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(service.describeSurfaceDebug(body));
+    } catch (err) {
+      return pluginDevErrorResponse(c, err);
+    }
   });
 
   function getMarketplace() {
@@ -457,6 +622,9 @@ export function createPluginsRoute(engine) {
     const pm = engine.pluginManager;
     return c.json({
       allow_full_access: pm?.getAllowFullAccess() || false,
+      plugin_dev_tools_enabled: typeof engine.getPluginDevToolsEnabled === "function"
+        ? engine.getPluginDevToolsEnabled()
+        : false,
       plugins_dir: pm?.getUserPluginsDir() || "",
     });
   });
@@ -464,10 +632,13 @@ export function createPluginsRoute(engine) {
   route.put("/plugins/settings", async (c) => {
     const pm = engine.pluginManager;
     if (!pm) return c.json({ error: "Plugin manager not available" }, 500);
-    const { allow_full_access } = await c.req.json();
+    const { allow_full_access, plugin_dev_tools_enabled } = await c.req.json();
     if (typeof allow_full_access === "boolean") {
       await pm.setFullAccess(allow_full_access);
       await engine.syncPluginExtensions();
+    }
+    if (typeof plugin_dev_tools_enabled === "boolean" && typeof engine.setPluginDevToolsEnabled === "function") {
+      engine.setPluginDevToolsEnabled(plugin_dev_tools_enabled);
     }
     return c.json(visiblePlugins(pm, { source: "community" }));
   });

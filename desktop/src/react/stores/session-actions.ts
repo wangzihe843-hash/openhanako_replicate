@@ -183,7 +183,7 @@ function buildInflightAssistantMessage(snap: StreamBufferSnapshot): ChatMessage 
   }
   if (snap.text) {
     const displayText = snap.text.replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
-    blocks.push({ type: 'text', html: renderMarkdown(displayText) });
+    blocks.push({ type: 'text', html: renderMarkdown(displayText), source: displayText });
   }
   return { id: snap.messageId || `inflight-${Date.now()}`, role: 'assistant', blocks, timestamp: Date.now() };
 }

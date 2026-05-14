@@ -29,6 +29,15 @@ describe("screenshot pipeline", () => {
     expect(mainSource).toContain("capturePage({ x: 0, y: 0, width, height: segH }");
   });
 
+  it("does not treat Windows display-surface capture failures as fatal browser host errors", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const fatalList = mainSource.match(/const FATAL_BROWSER_HOST_ERROR_PATTERNS = \[[\s\S]*?\];/)?.[0];
+
+    expect(fatalList).toBeTruthy();
+    expect(fatalList).not.toMatch(/current display surface not available/i);
+    expect(fatalList).not.toMatch(/display surface .*not available/i);
+  });
+
   it("keeps long screenshot bitmap stitching scale-aware", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
 

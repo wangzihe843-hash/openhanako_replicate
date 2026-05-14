@@ -11,7 +11,7 @@ import { getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-pr
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 24;
+const LATEST_DATA_VERSION = 25;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -1888,6 +1888,7 @@ describe("migration #22 — migrateChannelPhoneSettingsDefaults", () => {
 
     const raw = fs.readFileSync(path.join(channelsDir, "ch_legacy.md"), "utf-8");
     expect(raw).toContain("agentPhoneReminderIntervalMinutes: 31");
+    expect(raw).toContain("agentPhoneProactiveEnabled: true");
     expect(raw).toContain("agentPhoneModelOverrideEnabled: false");
     expect(raw).toContain("### user | 2026-05-12 12:00:00");
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
@@ -2021,6 +2022,86 @@ describe("migration #24 — migrateChannelPhoneGuardLimitDefaults", () => {
     expect(raw).toContain("agentPhoneGuardLimit: 36");
     expect(raw).toContain("### user | 2026-05-12 12:00:00");
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #25 — migrateChannelPhoneProactiveDefaults", () => {
+  let tmpDir, userDir, agentsDir, channelsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    userDir = path.join(tmpDir, "user");
+    agentsDir = path.join(tmpDir, "agents");
+    channelsDir = path.join(tmpDir, "channels");
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("adds an enabled proactive initiation flag to existing channel metadata", () => {
+    fs.writeFileSync(
+      path.join(channelsDir, "ch_crew.md"),
+      [
+        "---",
+        "id: ch_crew",
+        "members: [hana, butter, ming]",
+        "agentPhoneReminderIntervalMinutes: 31",
+        "agentPhoneGuardLimit: 36",
+        "---",
+        "",
+        "### user | 2026-05-12 12:00:00",
+        "",
+        "hello",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 24 });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const raw = fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8");
+    expect(raw).toContain("agentPhoneProactiveEnabled: true");
+    expect(raw).toContain("### user | 2026-05-12 12:00:00");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("preserves channels where proactive initiation was explicitly disabled", () => {
+    fs.writeFileSync(
+      path.join(channelsDir, "ch_quiet.md"),
+      [
+        "---",
+        "id: ch_quiet",
+        "members: [hana, butter, ming]",
+        "agentPhoneProactiveEnabled: false",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 24 });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const raw = fs.readFileSync(path.join(channelsDir, "ch_quiet.md"), "utf-8");
+    expect(raw).toContain("agentPhoneProactiveEnabled: false");
+    expect(raw.match(/agentPhoneProactiveEnabled/g)).toHaveLength(1);
   });
 });
 

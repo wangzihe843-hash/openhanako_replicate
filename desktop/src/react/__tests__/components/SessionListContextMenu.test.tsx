@@ -91,6 +91,7 @@ describe('SessionList context menu', () => {
       return key;
     }) as typeof globalThis.t;
     hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
       if (url === '/api/browser/sessions') return jsonResponse({});
       if (url.startsWith('/api/sessions/summary')) {
         return jsonResponse({
@@ -174,6 +175,42 @@ describe('SessionList context menu', () => {
     fireEvent.contextMenu(sessionButton('Has summary'), { clientX: 24, clientY: 32 });
     fireEvent.click(await screen.findByText('session.archive'));
     expect(archiveSessionMock).toHaveBeenCalledWith('/tmp/agents/hana/sessions/with-summary.jsonl');
+  });
+
+  it('closes a sidebar browser badge without switching the session row', async () => {
+    const browserStates = {
+      '/tmp/agents/hana/sessions/with-summary.jsonl': {
+        url: 'https://example.com',
+        running: false,
+        resumable: true,
+        unavailableReason: null,
+      },
+    };
+    let closed = false;
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse(closed ? {} : browserStates);
+      if (url === '/api/browser/close-session') {
+        closed = true;
+        return jsonResponse({ ok: true, sessions: {} });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+
+    const closeBadge = await screen.findByRole('button', { name: 'browser.close' });
+    fireEvent.click(closeBadge);
+
+    await waitFor(() => {
+      expect(hanaFetchMock).toHaveBeenCalledWith('/api/browser/close-session', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionPath: '/tmp/agents/hana/sessions/with-summary.jsonl' }),
+      }));
+    });
+    expect(switchSessionMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'browser.close' })).not.toBeInTheDocument();
+    });
   });
 
   it('uses the session meta font size for the summary body', () => {

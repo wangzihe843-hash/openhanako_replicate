@@ -142,8 +142,12 @@ function count(value: unknown[] | undefined): number {
 /* ── Main tab ── */
 
 export function PluginsTab() {
-  const { pluginAllowFullAccess, pluginUserDir } = useSettingsStore(
-    useShallow(s => ({ pluginAllowFullAccess: s.pluginAllowFullAccess, pluginUserDir: s.pluginUserDir }))
+  const { pluginAllowFullAccess, pluginDevToolsEnabled, pluginUserDir } = useSettingsStore(
+    useShallow(s => ({
+      pluginAllowFullAccess: s.pluginAllowFullAccess,
+      pluginDevToolsEnabled: s.pluginDevToolsEnabled,
+      pluginUserDir: s.pluginUserDir,
+    }))
   );
   const showToast = useSettingsStore(s => s.showToast);
   const set = useSettingsStore(s => s.set);
@@ -229,6 +233,24 @@ export function PluginsTab() {
       showToast(t('settings.autoSaved'), 'success');
     } catch (err: unknown) {
       set({ pluginAllowFullAccess: !next });
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
+  const togglePluginDevTools = async () => {
+    const next = !pluginDevToolsEnabled;
+    set({ pluginDevToolsEnabled: next });
+    try {
+      const res = await hanaFetch('/api/plugins/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_dev_tools_enabled: next }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      showToast(t('settings.autoSaved'), 'success');
+    } catch (err: unknown) {
+      set({ pluginDevToolsEnabled: !next });
       showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
     }
   };
@@ -670,6 +692,16 @@ export function PluginsTab() {
             <button
               className={`hana-toggle${pluginAllowFullAccess ? ' on' : ''}`}
               onClick={toggleFullAccess}
+            />
+          }
+        />
+        <SettingsRow
+          label={t('settings.plugins.devToolsToggle')}
+          hint={t('settings.plugins.devToolsDesc')}
+          control={
+            <button
+              className={`hana-toggle${pluginDevToolsEnabled ? ' on' : ''}`}
+              onClick={togglePluginDevTools}
             />
           }
         />

@@ -628,6 +628,41 @@ describe("syncModels", () => {
     });
   });
 
+  it("projects Xiaomi Token Plan MiMo models with MiMo thinking compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "xiaomi-token": {
+        base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [{
+          id: "mimo-v2.5-pro",
+          context: 1048576,
+          maxOutput: 65536,
+          reasoning: true,
+        }],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers["xiaomi-token"].models[0];
+    expect(model).toMatchObject({
+      id: "mimo-v2.5-pro",
+      input: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      reasoning: true,
+    });
+    expect(model.compat).toMatchObject({
+      supportsDeveloperRole: false,
+      thinkingFormat: "qwen-chat-template",
+      reasoningProfile: "mimo-openai",
+    });
+  });
+
   it("writes Pi-loadable models when Hana video capability is enabled", async () => {
     const syncModels = await loadSync();
     const { AuthStorage, createModelRegistry } = await import("../lib/pi-sdk/index.js");

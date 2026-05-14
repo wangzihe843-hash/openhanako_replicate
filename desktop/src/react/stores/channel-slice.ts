@@ -15,6 +15,7 @@ export interface ChannelSlice {
   channelAgentPhoneToolMode: AgentPhoneToolMode;
   channelAgentReplyMinChars: number | null;
   channelAgentReplyMaxChars: number | null;
+  channelAgentProactiveEnabled: boolean;
   channelAgentReminderIntervalMinutes: number;
   channelAgentGuardLimit: number;
   channelAgentModelOverrideEnabled: boolean;
@@ -43,6 +44,7 @@ export const createChannelSlice = (
   channelAgentPhoneToolMode: 'read_only',
   channelAgentReplyMinChars: null,
   channelAgentReplyMaxChars: null,
+  channelAgentProactiveEnabled: true,
   channelAgentReminderIntervalMinutes: 31,
   channelAgentGuardLimit: 36,
   channelAgentModelOverrideEnabled: false,

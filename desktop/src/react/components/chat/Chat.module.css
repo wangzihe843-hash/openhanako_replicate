@@ -164,7 +164,7 @@
 
 .msgActions {
     position: absolute;
-    top: 4px;
+    bottom: 4px;
     right: 4px;
     opacity: 0;
     transition: opacity var(--duration-fast);
@@ -242,6 +242,27 @@
 
 .msgActionBtnCopied {
     color: var(--accent) !important;
+}
+
+.streamTailChar {
+    animation: stream-tail-fade 180ms var(--ease-out) both;
+    animation-delay: calc(var(--stream-tail-index, 0) * 14ms);
+    will-change: opacity;
+}
+
+@keyframes stream-tail-fade {
+    from {
+        opacity: 0.15;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .streamTailChar {
+        animation: none;
+    }
 }
 
 .msgActionBadge {

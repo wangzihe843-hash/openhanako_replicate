@@ -612,11 +612,13 @@ async function _spawnServerOnce(serverInfoPath) {
 
   const serverEnv = { ...withHanaPiSdkEnv(process.env, hanakoHome), HANA_HOME: hanakoHome };
 
-  // Windows: 注入 MinGit 路径
+  // Windows: 注入 PortableGit 路径
   if (process.platform === "win32") {
-    // MinGit-busybox 结构：cmd/git.exe, mingw64/bin/git.exe + ash/busybox
+    // PortableGit 结构：cmd/git.exe, bin/bash.exe, usr/bin/*, mingw64/bin/*
     const gitRoot = path.join(process.resourcesPath || "", "git");
     const gitPaths = [
+      path.join(gitRoot, "bin"),
+      path.join(gitRoot, "usr", "bin"),
       path.join(gitRoot, "mingw64", "bin"),
       path.join(gitRoot, "cmd"),
     ].filter(p => fs.existsSync(p));
@@ -862,14 +864,14 @@ function buildServerCrashDiagnostics() {
     if (_lastServerSpawn.error) items.push(`Server spawn error: ${_lastServerSpawn.error}`);
   }
 
-  // Windows: 检查 server 二进制、手动调试 wrapper 和 MinGit
+  // Windows: 检查 server 二进制、手动调试 wrapper 和 PortableGit
   if (process.platform === "win32" && isPackaged) {
     const exePath = path.join(serverDir, "hana-server.exe");
     const cmdPath = path.join(serverDir, "hana-server.cmd");
     const gitRoot = path.join(process.resourcesPath, "git");
     items.push(`hana-server.exe exists: ${fs.existsSync(exePath)}`);
     items.push(`hana-server.cmd exists (manual debug): ${fs.existsSync(cmdPath)}`);
-    items.push(`MinGit dir exists: ${fs.existsSync(gitRoot)}`);
+    items.push(`PortableGit dir exists: ${fs.existsSync(gitRoot)}`);
     items.push(``);
     items.push(`Manual debug: open cmd.exe, cd to "${serverDir}", run hana-server.cmd`);
   }
@@ -1517,8 +1519,6 @@ function _ensureBrowser() {
 }
 
 const FATAL_BROWSER_HOST_ERROR_PATTERNS = [
-  /current display surface not available/i,
-  /display surface .*not available/i,
   /object has been destroyed/i,
   /no browser instance/i,
   /render process gone/i,

@@ -73,6 +73,9 @@ function mockEngine(overrides = {}) {
     fetch: overrides.fetch,
     hanakoHome: overrides.hanakoHome,
     getEventBus: overrides.getEventBus || (() => overrides.eventBus || null),
+    pluginDevService: overrides.pluginDevService,
+    getPluginDevToolsEnabled: overrides.getPluginDevToolsEnabled || (() => overrides.pluginDevToolsEnabled === true),
+    setPluginDevToolsEnabled: overrides.setPluginDevToolsEnabled || vi.fn(),
   };
 }
 
@@ -293,6 +296,14 @@ describe("plugin management API", () => {
       const res = await app.request("/api/plugins/settings");
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ allow_full_access: false });
+    });
+
+    it("returns plugin dev tools as disabled by default", async () => {
+      const engine = mockEngine();
+      const app = createApp(engine);
+      const res = await app.request("/api/plugins/settings");
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ plugin_dev_tools_enabled: false });
     });
   });
 
@@ -639,6 +650,21 @@ describe("plugin management API", () => {
       expect(body[0].trust).toBe("restricted");
       expect(setFn).toHaveBeenCalledWith(true);
     });
+
+    it("persists the Agent plugin dev tools setting", async () => {
+      const setPluginDevToolsEnabled = vi.fn();
+      const engine = mockEngine({ setPluginDevToolsEnabled });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plugin_dev_tools_enabled: true }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(setPluginDevToolsEnabled).toHaveBeenCalledWith(true);
+    });
   });
 
   describe("plugin config routes", () => {
@@ -829,6 +855,221 @@ describe("plugin management API", () => {
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe("plugin dev routes", () => {
+    it("installs a dev plugin through PluginDevService", async () => {
+      const installFromSource = vi.fn(async () => ({
+        ok: true,
+        devRunId: "dev_1",
+        plugin: { id: "demo", status: "loaded", source: "dev" },
+      }));
+      const engine = mockEngine({
+        pluginDevService: { installFromSource },
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/dev/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "/workspace/demo", allowFullAccess: true }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ devRunId: "dev_1" });
+      expect(installFromSource).toHaveBeenCalledWith({
+        sourcePath: "/workspace/demo",
+        allowFullAccess: true,
+        pluginId: undefined,
+      });
+    });
+
+    it("invokes a dev plugin tool through PluginDevService", async () => {
+      const invokeTool = vi.fn(async () => ({
+        pluginId: "demo",
+        toolName: "demo_echo",
+        result: { content: [{ type: "text", text: "ok" }] },
+      }));
+      const engine = mockEngine({
+        pluginDevService: { invokeTool },
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/dev/demo/tools/echo/invoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: { text: "hi" }, sessionPath: "/tmp/s.jsonl" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ toolName: "demo_echo" });
+      expect(invokeTool).toHaveBeenCalledWith({
+        pluginId: "demo",
+        toolName: "echo",
+        input: { text: "hi" },
+        sessionPath: "/tmp/s.jsonl",
+        agentId: undefined,
+      });
+    });
+
+    it("enables and disables a dev plugin through PluginDevService", async () => {
+      const enablePlugin = vi.fn(async () => ({
+        ok: true,
+        plugin: { id: "demo", status: "loaded", source: "dev" },
+      }));
+      const disablePlugin = vi.fn(async () => ({
+        ok: true,
+        plugin: { id: "demo", status: "disabled", source: "dev" },
+      }));
+      const engine = mockEngine({
+        pluginDevService: { enablePlugin, disablePlugin },
+      });
+      const app = createApp(engine);
+
+      const disableRes = await app.request("/api/plugins/dev/demo/enabled", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false, devRunId: "dev_1" }),
+      });
+      const enableRes = await app.request("/api/plugins/dev/demo/enabled", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, devRunId: "dev_1", allowFullAccess: true }),
+      });
+
+      expect(disableRes.status).toBe(200);
+      expect(await disableRes.json()).toMatchObject({ plugin: { status: "disabled" } });
+      expect(enableRes.status).toBe(200);
+      expect(await enableRes.json()).toMatchObject({ plugin: { status: "loaded" } });
+      expect(disablePlugin).toHaveBeenCalledWith("demo", { devRunId: "dev_1" });
+      expect(enablePlugin).toHaveBeenCalledWith("demo", {
+        devRunId: "dev_1",
+        allowFullAccess: true,
+      });
+    });
+
+    it("resets and uninstalls a dev plugin through PluginDevService", async () => {
+      const resetPlugin = vi.fn(async () => ({
+        ok: true,
+        devRunId: "dev_2",
+        plugin: { id: "demo", status: "loaded", source: "dev" },
+      }));
+      const uninstallPlugin = vi.fn(async () => ({
+        ok: true,
+        pluginId: "demo",
+        removedDir: "/hana/plugins-dev/demo",
+      }));
+      const engine = mockEngine({
+        pluginDevService: { resetPlugin, uninstallPlugin },
+      });
+      const app = createApp(engine);
+
+      const resetRes = await app.request("/api/plugins/dev/demo/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ devRunId: "dev_1", allowFullAccess: true }),
+      });
+      const uninstallRes = await app.request("/api/plugins/dev/demo", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ devRunId: "dev_2" }),
+      });
+
+      expect(resetRes.status).toBe(200);
+      expect(await resetRes.json()).toMatchObject({ devRunId: "dev_2" });
+      expect(uninstallRes.status).toBe(200);
+      expect(await uninstallRes.json()).toMatchObject({ ok: true, pluginId: "demo" });
+      expect(resetPlugin).toHaveBeenCalledWith("demo", {
+        devRunId: "dev_1",
+        allowFullAccess: true,
+      });
+      expect(uninstallPlugin).toHaveBeenCalledWith("demo", { devRunId: "dev_2" });
+    });
+
+    it("maps PluginDevService errors to their status code", async () => {
+      const err = new Error("outside allowed roots");
+      err.status = 403;
+      err.code = "PLUGIN_DEV_SOURCE_OUTSIDE_ALLOWED_ROOTS";
+      const engine = mockEngine({
+        pluginDevService: {
+          installFromSource: vi.fn(async () => { throw err; }),
+        },
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/dev/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "/etc/demo" }),
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "outside allowed roots",
+        code: "PLUGIN_DEV_SOURCE_OUTSIDE_ALLOWED_ROOTS",
+      });
+    });
+
+    it("exposes element-first UI surface debug descriptors", async () => {
+      const describeSurfaceDebug = vi.fn(() => ({
+        strategy: "element-first",
+        surface: { pluginId: "demo", kind: "page", routeUrl: "/api/plugins/demo/page" },
+        elementBridge: { preferred: true, operations: ["describeElements", "clickElement"] },
+        screenshot: { role: "visual confirmation and fallback" },
+      }));
+      const engine = mockEngine({
+        pluginDevService: { describeSurfaceDebug },
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/dev/surfaces/describe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pluginId: "demo", kind: "page" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        strategy: "element-first",
+        elementBridge: { preferred: true },
+      });
+      expect(describeSurfaceDebug).toHaveBeenCalledWith({ pluginId: "demo", kind: "page" });
+    });
+
+    it("lists and runs dev scenarios through PluginDevService", async () => {
+      const getScenarios = vi.fn(() => [{ id: "smoke", title: "Smoke", steps: [] }]);
+      const runScenario = vi.fn(async () => ({
+        pluginId: "demo",
+        scenarioId: "smoke",
+        status: "passed",
+        steps: [],
+      }));
+      const engine = mockEngine({
+        pluginDevService: { getScenarios, runScenario },
+      });
+      const app = createApp(engine);
+
+      const listRes = await app.request("/api/plugins/dev/demo/scenarios");
+      const runRes = await app.request("/api/plugins/dev/demo/scenarios/smoke/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowDestructive: true }),
+      });
+
+      expect(listRes.status).toBe(200);
+      expect(await listRes.json()).toEqual({
+        pluginId: "demo",
+        scenarios: [{ id: "smoke", title: "Smoke", steps: [] }],
+      });
+      expect(runRes.status).toBe(200);
+      expect(await runRes.json()).toMatchObject({ status: "passed" });
+      expect(getScenarios).toHaveBeenCalledWith({ pluginId: "demo" });
+      expect(runScenario).toHaveBeenCalledWith({
+        pluginId: "demo",
+        scenarioId: "smoke",
+        allowDestructive: true,
+      });
     });
   });
 });

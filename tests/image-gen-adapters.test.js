@@ -133,6 +133,32 @@ describe("volcengine adapter", () => {
       prompt: "test", model: "test",
     }, ctx)).rejects.toThrow();
   });
+
+  it("accepts Volcengine Coding Plan credentials in the same auth path used by submit", async () => {
+    const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
+
+    const request = vi.fn(async (type, payload) => {
+      if (type === "provider:credentials" && payload.providerId === "volcengine") {
+        return { error: "no_credentials" };
+      }
+      if (type === "provider:credentials" && payload.providerId === "volcengine-coding") {
+        return {
+          apiKey: "coding-plan-key",
+          baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+          api: "openai-completions",
+        };
+      }
+      return { error: "not_found" };
+    });
+
+    const result = await volcengineImageAdapter.checkAuth({
+      bus: { request },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(request).toHaveBeenCalledWith("provider:credentials", { providerId: "volcengine" });
+    expect(request).toHaveBeenCalledWith("provider:credentials", { providerId: "volcengine-coding" });
+  });
 });
 
 describe("openai adapter", () => {

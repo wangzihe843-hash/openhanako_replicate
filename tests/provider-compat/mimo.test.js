@@ -15,6 +15,34 @@ const mimoModel = {
 };
 
 describe("provider-compat/mimo", () => {
+  it("treats Xiaomi Token Plan OpenAI-compatible endpoints as MiMo", () => {
+    const tokenPlanModel = {
+      id: "mimo-v2.5-pro",
+      provider: "xiaomi-token",
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      api: "openai-completions",
+      reasoning: true,
+      maxTokens: 65536,
+      compat: { supportsDeveloperRole: false },
+    };
+    const payload = {
+      model: "mimo-v2.5-pro",
+      messages: [{ role: "user", content: "hello" }],
+      reasoning_effort: "high",
+    };
+
+    const result = normalizeProviderPayload(payload, tokenPlanModel, {
+      mode: "chat",
+      reasoningLevel: "high",
+    });
+
+    expect(result.chat_template_kwargs).toEqual({
+      enable_thinking: true,
+      preserve_thinking: true,
+    });
+    expect(result).not.toHaveProperty("reasoning_effort");
+  });
+
   it("chat mode enables MiMo thinking through chat_template_kwargs and removes OpenAI reasoning_effort", () => {
     const payload = {
       model: "mimo-v2-flash",

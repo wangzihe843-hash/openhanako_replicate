@@ -607,6 +607,12 @@ export function createSessionsRoute(engine) {
     return c.json(bm.getBrowserSessions());
   });
 
+  // 获取所有有浏览器痕迹的 session 状态（活跃 / 可恢复 / 不可用）
+  route.get("/browser/session-states", async (c) => {
+    const bm = BrowserManager.instance();
+    return c.json(bm.getBrowserSessionStates());
+  });
+
   // 关闭指定 session 的浏览器
   route.post("/browser/close-session", async (c) => {
     const body = await safeJson(c);
@@ -614,7 +620,7 @@ export function createSessionsRoute(engine) {
     if (!sessionPath) return c.json({ error: "missing sessionPath" });
     const bm = BrowserManager.instance();
     await bm.closeBrowserForSession(sessionPath);
-    return c.json({ ok: true });
+    return c.json({ ok: true, sessions: bm.getBrowserSessionStates() });
   });
 
   // 重命名 session

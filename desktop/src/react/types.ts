@@ -107,6 +107,7 @@ export interface AgentPhoneSettings {
   mode: AgentPhoneToolMode;
   replyMinChars: number | null;
   replyMaxChars: number | null;
+  proactiveEnabled: boolean;
   reminderIntervalMinutes: number;
   guardLimit: number;
   modelOverrideEnabled: boolean;

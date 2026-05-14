@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useSettingsStore } from '../store';
 import { t, VALID_THEMES, autoSaveConfig } from '../helpers';
 import { SelectWidget } from '@/ui';
@@ -34,6 +34,25 @@ const THEME_MODE_KEYS: Record<string, string> = Object.fromEntries([
 
 type MarkdownTypographyKey = keyof EditorMarkdownTypography;
 
+interface AppearancePrefs {
+  currentTheme: string;
+  serifEnabled: boolean;
+  paperTextureEnabled: boolean;
+  paperTextureBlocked: boolean;
+  leavesOverlayEnabled: boolean;
+}
+
+function readAppearancePrefs(): AppearancePrefs {
+  const concreteTheme = document.documentElement.getAttribute('data-theme');
+  return {
+    currentTheme: registry.migrateSavedTheme(localStorage.getItem(registry.STORAGE_KEY)),
+    serifEnabled: localStorage.getItem('hana-font-serif') !== '0',
+    paperTextureEnabled: isPaperTextureEnabled(localStorage),
+    paperTextureBlocked: isPaperTextureBlockedTheme(concreteTheme),
+    leavesOverlayEnabled: localStorage.getItem('hana-leaves-overlay') === '1',
+  };
+}
+
 const EDITOR_FONT_SIZE_ROWS: Array<{
   key: MarkdownTypographyKey;
   label: string;
@@ -52,11 +71,17 @@ const EDITOR_FONT_SIZE_ROWS: Array<{
 
 export function InterfaceTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
-  const currentTheme = registry.migrateSavedTheme(localStorage.getItem(registry.STORAGE_KEY));
-  const serifEnabled = localStorage.getItem('hana-font-serif') !== '0';
-  const paperTextureEnabled = isPaperTextureEnabled(localStorage);
-  const paperTextureBlocked = isPaperTextureBlockedTheme(document.documentElement.getAttribute('data-theme'));
-  const leavesOverlayEnabled = localStorage.getItem('hana-leaves-overlay') === '1';
+  const [appearancePrefs, setAppearancePrefs] = useState<AppearancePrefs>(() => readAppearancePrefs());
+  const refreshAppearancePrefs = useCallback(() => {
+    setAppearancePrefs(readAppearancePrefs());
+  }, []);
+  const {
+    currentTheme,
+    serifEnabled,
+    paperTextureEnabled,
+    paperTextureBlocked,
+    leavesOverlayEnabled,
+  } = appearancePrefs;
   const editorTypography = useMemo(
     () => normalizeEditorTypography(settingsConfig?.editor),
     [settingsConfig?.editor],
@@ -120,10 +145,9 @@ export function InterfaceTab() {
               className={`${styles['theme-card']}${currentTheme === theme ? ' ' + styles['active'] : ''}`}
               data-theme={theme}
               onClick={() => {
-                setTheme?.(theme);
-                localStorage.setItem(registry.STORAGE_KEY, theme);
+                window.setTheme?.(theme);
                 platform?.settingsChanged?.('theme-changed', { theme });
-                useSettingsStore.setState({});
+                refreshAppearancePrefs();
               }}
             >
               <div className={styles['theme-card-name']}>{t(THEME_NAME_KEYS[theme])}</div>
@@ -141,9 +165,9 @@ export function InterfaceTab() {
             <Toggle
               on={serifEnabled}
               onChange={(next) => {
-                setSerifFont?.(next);
+                window.setSerifFont?.(next);
                 platform?.settingsChanged?.('font-changed', { serif: next });
-                useSettingsStore.setState({});
+                refreshAppearancePrefs();
               }}
             />
           }
@@ -160,7 +184,7 @@ export function InterfaceTab() {
               onChange={(next) => {
                 window.setPaperTexture?.(next);
                 platform?.settingsChanged?.('paper-texture-changed', { enabled: next });
-                useSettingsStore.setState({});
+                refreshAppearancePrefs();
               }}
             />
           }
@@ -177,7 +201,7 @@ export function InterfaceTab() {
                   detail: { type: 'leaves-overlay-changed', enabled: next },
                 }));
                 platform?.settingsChanged?.('leaves-overlay-changed', { enabled: next });
-                useSettingsStore.setState({});
+                refreshAppearancePrefs();
               }}
             />
           }

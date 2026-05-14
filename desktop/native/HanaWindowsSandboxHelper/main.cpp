@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <userenv.h>
 #include <aclapi.h>
+#include <sddl.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -23,6 +24,7 @@ struct Grant {
 
 struct Options {
     std::wstring cwd;
+    bool internetClient = false;
     std::vector<Grant> grants;
     std::wstring executable;
     std::vector<std::wstring> args;
@@ -84,6 +86,14 @@ static Options parseArgs(int argc, wchar_t** argv) {
         if (arg == L"--cwd" && i + 1 < argc) {
             opts.cwd = argv[++i];
             continue;
+        }
+        if (arg == L"--network" && i + 1 < argc) {
+            std::wstring value = argv[++i];
+            if (value == L"internet-client") {
+                opts.internetClient = true;
+                continue;
+            }
+            throw std::runtime_error("unknown network capability");
         }
         if ((arg == L"--grant-read" || arg == L"--grant-read-optional" ||
              arg == L"--grant-write" || arg == L"--grant-write-optional" ||
@@ -260,6 +270,31 @@ static bool createProfile(const std::wstring& moniker, PSID* appSid) {
     return false;
 }
 
+static bool addCapabilitySid(
+    const wchar_t* sidString,
+    std::vector<PSID>& ownedSids,
+    std::vector<SID_AND_ATTRIBUTES>& capabilities
+) {
+    PSID sid = nullptr;
+    if (!ConvertStringSidToSidW(sidString, &sid)) {
+        fail(L"cannot create capability SID: " + win32Message(GetLastError()));
+        return false;
+    }
+    ownedSids.push_back(sid);
+    SID_AND_ATTRIBUTES attr = {};
+    attr.Sid = sid;
+    attr.Attributes = SE_GROUP_ENABLED;
+    capabilities.push_back(attr);
+    return true;
+}
+
+static void freeOwnedSids(std::vector<PSID>& sids) {
+    for (PSID sid : sids) {
+        if (sid) LocalFree(sid);
+    }
+    sids.clear();
+}
+
 static HANDLE createKillOnCloseJob() {
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
     if (!job) return nullptr;
@@ -273,10 +308,20 @@ static HANDLE createKillOnCloseJob() {
 }
 
 static int runSandboxed(const Options& opts, PSID appSid) {
+    std::vector<PSID> capabilitySids;
+    std::vector<SID_AND_ATTRIBUTES> capabilityAttrs;
+    if (opts.internetClient) {
+        // Well-known AppContainer capability SID for internetClient.
+        if (!addCapabilitySid(L"S-1-15-3-1", capabilitySids, capabilityAttrs)) {
+            freeOwnedSids(capabilitySids);
+            return 1;
+        }
+    }
+
     SECURITY_CAPABILITIES capabilities = {};
     capabilities.AppContainerSid = appSid;
-    capabilities.Capabilities = nullptr;
-    capabilities.CapabilityCount = 0;
+    capabilities.Capabilities = capabilityAttrs.empty() ? nullptr : capabilityAttrs.data();
+    capabilities.CapabilityCount = static_cast<DWORD>(capabilityAttrs.size());
     capabilities.Reserved = 0;
 
     SIZE_T attrSize = 0;
@@ -293,6 +338,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
 
     if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attrSize)) {
         fail(L"InitializeProcThreadAttributeList failed: " + win32Message(GetLastError()));
+        freeOwnedSids(capabilitySids);
         return 1;
     }
 
@@ -307,6 +353,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
     )) {
         fail(L"UpdateProcThreadAttribute failed: " + win32Message(GetLastError()));
         DeleteProcThreadAttributeList(startup.lpAttributeList);
+        freeOwnedSids(capabilitySids);
         return 1;
     }
 
@@ -330,6 +377,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
 
     if (!ok) {
         fail(L"CreateProcessW failed: " + win32Message(GetLastError()));
+        freeOwnedSids(capabilitySids);
         return 1;
     }
 
@@ -339,6 +387,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
         TerminateProcess(process.hProcess, 1);
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
+        freeOwnedSids(capabilitySids);
         return 1;
     }
     if (!AssignProcessToJobObject(job, process.hProcess)) {
@@ -347,6 +396,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
         CloseHandle(job);
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
+        freeOwnedSids(capabilitySids);
         return 1;
     }
 
@@ -358,6 +408,7 @@ static int runSandboxed(const Options& opts, PSID appSid) {
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     CloseHandle(job);
+    freeOwnedSids(capabilitySids);
     return static_cast<int>(exitCode);
 }
 

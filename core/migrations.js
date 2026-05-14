@@ -81,6 +81,8 @@ const migrations = {
   23: removeAgentPhoneReplyInstructions,
   // 频道 phone 轮次 guard limit 显式化，默认按成员数 × 12
   24: migrateChannelPhoneGuardLimitDefaults,
+  // 频道主动发起开关显式化，旧频道保持开启
+  25: migrateChannelPhoneProactiveDefaults,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -2130,6 +2132,30 @@ function migrateChannelPhoneGuardLimitDefaults(ctx) {
   log?.(`[migrations] #24: channel phone guard limits patched (${patched})`);
 }
 
+function migrateChannelPhoneProactiveDefaults(ctx) {
+  const { hanakoHome, log } = ctx;
+  const channelsDir = path.join(hanakoHome, "channels");
+  if (!fs.existsSync(channelsDir)) {
+    log?.("[migrations] #25: no channels dir");
+    return;
+  }
+
+  let patched = 0;
+  for (const entry of fs.readdirSync(channelsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = path.join(channelsDir, entry.name);
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const next = patchChannelProactiveFrontmatter(raw);
+    if (next === raw) continue;
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, next, "utf-8");
+    fs.renameSync(tmp, filePath);
+    patched++;
+  }
+
+  log?.(`[migrations] #25: channel phone proactive defaults patched (${patched})`);
+}
+
 function removeFrontmatterKeys(raw, keys) {
   const lines = raw.split("\n");
   if (lines[0]?.trim() !== "---") return raw;
@@ -2197,6 +2223,44 @@ function patchChannelGuardLimitFrontmatter(raw) {
   return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
 }
 
+function patchChannelProactiveFrontmatter(raw) {
+  const lines = raw.split("\n");
+  if (lines[0]?.trim() !== "---") return raw;
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return raw;
+
+  const fmLines = lines.slice(1, end);
+  const meta = new Map();
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    meta.set(line.slice(0, idx).trim(), line.slice(idx + 1).trim());
+  }
+
+  const current = meta.get("agentPhoneProactiveEnabled");
+  if (current === "true" || current === "false") return raw;
+  meta.set("agentPhoneProactiveEnabled", "true");
+
+  const originalKeys = [];
+  for (const line of fmLines) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    originalKeys.push(line.slice(0, idx).trim());
+  }
+  const orderedKeys = [
+    ...originalKeys,
+    ...[...meta.keys()].filter((key) => !originalKeys.includes(key)),
+  ];
+  const nextFm = orderedKeys.map((key) => `${key}: ${meta.get(key)}`);
+  return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
+}
+
 function parseFrontmatterMemberCount(value) {
   if (typeof value !== "string") return 3;
   const trimmed = value.trim();
@@ -2241,6 +2305,9 @@ function patchChannelPhoneSettingsFrontmatter(raw) {
   const interval = Number(meta.get("agentPhoneReminderIntervalMinutes"));
   if (!Number.isFinite(interval) || interval <= 0) {
     setKey("agentPhoneReminderIntervalMinutes", "31");
+  }
+  if (!["true", "false"].includes(meta.get("agentPhoneProactiveEnabled"))) {
+    setKey("agentPhoneProactiveEnabled", "true");
   }
 
   const overrideEnabled = meta.get("agentPhoneModelOverrideEnabled") === "true";

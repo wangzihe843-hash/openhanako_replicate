@@ -35,6 +35,7 @@ export function SecurityTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
   const showToast = useSettingsStore(s => s.showToast);
   const sandboxEnabled = settingsConfig?.sandbox !== false;
+  const sandboxNetworkEnabled = settingsConfig?.sandbox_network === true;
   const fileBackup = settingsConfig?.file_backup || { enabled: false, retention_days: 1, max_file_size_kb: 1024 };
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
@@ -42,6 +43,11 @@ export function SecurityTab() {
 
   const handleSandboxToggle = useCallback(async (on: boolean) => {
     await autoSaveConfig({ sandbox: on }, { silent: true });
+    await loadSettingsConfig();
+  }, []);
+
+  const handleSandboxNetworkToggle = useCallback(async (on: boolean) => {
+    await autoSaveConfig({ sandbox_network: on }, { silent: true });
     await loadSettingsConfig();
   }, []);
 
@@ -110,6 +116,19 @@ export function SecurityTab() {
           label={t('settings.security.sandbox')}
           hint={t('settings.security.sandboxDesc')}
           control={<Toggle on={sandboxEnabled} onChange={handleSandboxToggle} />}
+        />
+        <SettingsRow
+          label={t('settings.security.sandboxNetwork')}
+          hint={sandboxEnabled
+            ? t('settings.security.sandboxNetworkDesc')
+            : t('settings.security.sandboxNetworkDisabledDesc')}
+          control={
+            <Toggle
+              on={sandboxNetworkEnabled}
+              onChange={handleSandboxNetworkToggle}
+              disabled={!sandboxEnabled}
+            />
+          }
         />
         {!sandboxEnabled && (
           <SettingsSection.Warning>

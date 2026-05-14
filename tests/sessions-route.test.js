@@ -18,6 +18,7 @@ const browserManagerMock = {
   }),
   closeBrowserForSession: vi.fn(),
   getBrowserSessions: vi.fn(() => ({})),
+  getBrowserSessionStates: vi.fn(() => ({})),
 };
 
 vi.mock("../lib/browser/browser-manager.js", () => ({
@@ -45,6 +46,10 @@ describe("sessions route", () => {
     browserManagerMock.suspendForSession.mockClear();
     browserManagerMock.resumeForSession.mockClear();
     browserManagerMock.closeBrowserForSession.mockClear();
+    browserManagerMock.getBrowserSessions.mockReset();
+    browserManagerMock.getBrowserSessions.mockReturnValue({});
+    browserManagerMock.getBrowserSessionStates.mockReset();
+    browserManagerMock.getBrowserSessionStates.mockReturnValue({});
   });
 
   it("restores browser state for the target session after switch", async () => {
@@ -916,5 +921,35 @@ describe("sessions route", () => {
       streamStatus: "done",
       summary: "child finished",
     });
+  });
+
+  it("exposes structured browser session states and returns refreshed states after close", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/browser.jsonl";
+    const states = {
+      [sessionPath]: {
+        url: "https://example.com",
+        running: false,
+        resumable: true,
+        unavailableReason: null,
+      },
+    };
+    browserManagerMock.getBrowserSessionStates.mockReturnValue(states);
+
+    app.route("/api", createSessionsRoute({ agentsDir: "/tmp/agents" }));
+
+    const listRes = await app.request("/api/browser/session-states");
+    expect(listRes.status).toBe(200);
+    expect(await listRes.json()).toEqual(states);
+
+    const closeRes = await app.request("/api/browser/close-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionPath }),
+    });
+    expect(closeRes.status).toBe(200);
+    expect(browserManagerMock.closeBrowserForSession).toHaveBeenCalledWith(sessionPath);
+    expect(await closeRes.json()).toEqual({ ok: true, sessions: states });
   });
 });

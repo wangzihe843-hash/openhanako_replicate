@@ -36,6 +36,18 @@ function resolveSize(size, aspectRatio, providerDefaults) {
   return effectiveSize;
 }
 
+async function resolveVolcengineCredentials(ctx) {
+  const primary = await ctx.bus.request("provider:credentials", { providerId: "volcengine" });
+  if (!primary.error && primary.apiKey) return primary;
+
+  const coding = await ctx.bus.request("provider:credentials", { providerId: "volcengine-coding" });
+  if (!coding.error && coding.apiKey) return coding;
+
+  return {
+    error: primary.error || coding.error || "no_credentials",
+  };
+}
+
 export const volcengineImageAdapter = {
   id: "volcengine",
   name: "火山引擎 Seedream",
@@ -47,7 +59,7 @@ export const volcengineImageAdapter = {
 
   async checkAuth(ctx) {
     try {
-      const creds = await ctx.bus.request("provider:credentials", { providerId: "volcengine" });
+      const creds = await resolveVolcengineCredentials(ctx);
       if (creds.error || !creds.apiKey) {
         return { ok: false, message: creds.error || "未配置 API Key" };
       }
@@ -59,14 +71,9 @@ export const volcengineImageAdapter = {
 
   async submit(params, ctx) {
     // 1. Fetch credentials — try volcengine first, fall back to volcengine-coding
-    let creds = await ctx.bus.request("provider:credentials", { providerId: "volcengine" });
+    const creds = await resolveVolcengineCredentials(ctx);
     if (creds.error || !creds.apiKey) {
-      const fallback = await ctx.bus.request("provider:credentials", { providerId: "volcengine-coding" });
-      if (!fallback.error && fallback.apiKey) {
-        creds = fallback;
-      } else {
-        throw new Error(`Provider "volcengine" 未配置 API Key。请在设置 → Providers 中配置。`);
-      }
+      throw new Error(`Provider "volcengine" 未配置 API Key。请在设置 → Providers 中配置。`);
     }
 
     const { apiKey, baseUrl } = creds;
