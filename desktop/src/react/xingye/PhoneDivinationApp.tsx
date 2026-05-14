@@ -31,6 +31,7 @@ import {
 import { generateDivinationReadingWithAI } from './xingye-divination-ai';
 import { parseDivinationReading } from './phone-divination-parse';
 import { getDivinationTheme } from './xingye-divination-themes';
+import './xingye-divination-fonts';
 
 export interface PhoneDivinationAppProps {
   ownerAgent: Agent | null;
