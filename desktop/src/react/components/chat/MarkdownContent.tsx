@@ -64,6 +64,7 @@ function applyTailFade(root: HTMLElement, count: number): void {
     const fragment = document.createDocumentFragment();
     if (before) fragment.appendChild(document.createTextNode(before));
     for (const segment of tail) {
+      // eslint-disable-next-line no-restricted-syntax -- 流式 tail-fade 需在 dangerouslySetInnerHTML 渲染后的 DOM 上拆分文本节点，无法用 JSX
       const span = document.createElement('span');
       span.className = styles.streamTailChar;
       span.dataset.streamTailChar = 'true';
