@@ -2678,6 +2678,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1;
   min-height: 320px;
   max-height: min(62vh, 520px);
   min-width: 0;
@@ -2721,9 +2722,62 @@
   filter: brightness(0.97);
 }
 
-.mmChatDetailRoot > .mmChatThread {
+.mmChatDetailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   flex: 1;
   min-height: 0;
+}
+
+.mmChatDetailThreadScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.mmChatDetailFollowup {
+  display: grid;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.mmChatDetailFollowupLabel {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.mmChatDetailFollowupActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mmChatFollowupButton {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #6b5f8a, #9b86b8);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(91, 79, 120, 0.2);
+}
+
+.mmChatFollowupButton:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+.mmChatFollowupButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* —— 秘密空间：文本记录卡片 —— */

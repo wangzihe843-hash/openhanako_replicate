@@ -11,11 +11,17 @@ const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
 export type XingyeMmChatRole = 'ta' | 'ai';
 
+/** 追问轮次可选：保留用户填写的「追问方向」短提示，不展示为角色提问正文。 */
+export type XingyeMmChatTurnMeta = {
+  followUpUserHint?: string;
+};
+
 export type XingyeMmChatTurn = {
   id: string;
   role: XingyeMmChatRole;
   text: string;
   createdAt?: string;
+  meta?: XingyeMmChatTurnMeta;
 };
 
 export type XingyeMmChatSession = {
@@ -62,6 +68,14 @@ function normalizeRole(value: unknown): XingyeMmChatRole | null {
   return null;
 }
 
+function normalizeTurnMeta(value: unknown): XingyeMmChatTurnMeta | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const hint = raw.followUpUserHint;
+  if (typeof hint !== 'string' || !hint.trim()) return undefined;
+  return { followUpUserHint: hint.trim().slice(0, 800) };
+}
+
 function normalizeTurn(value: unknown): XingyeMmChatTurn | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -73,7 +87,8 @@ function normalizeTurn(value: unknown): XingyeMmChatTurn | null {
   const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim() && isIsoLike(raw.createdAt.trim())
     ? raw.createdAt.trim()
     : undefined;
-  return { id, role, text, createdAt };
+  const meta = normalizeTurnMeta(raw.meta);
+  return { id, role, text, createdAt, ...(meta ? { meta } : {}) };
 }
 
 function fillSessionDefaults(sess: XingyeMmChatSession): XingyeMmChatSession {
@@ -231,6 +246,61 @@ export async function deleteMmChatSession(agentId: string, sessionId: string): P
   const ids = new Set(sessions.map((s) => s.id));
   if (activeSessionId && !ids.has(activeSessionId)) activeSessionId = '';
   await saveMmChatPersistence(aid, { version: 1, activeSessionId, sessions });
+}
+
+/**
+ * 向既有会话追加若干条消息并更新 `updatedAt` / 列表预览。
+ */
+export async function appendMmChatTurnsToSession(
+  agentId: string,
+  sessionId: string,
+  newTurns: XingyeMmChatTurn[],
+  opts?: { preview?: string },
+): Promise<XingyeMmChatSession | null> {
+  const aid = agentId.trim();
+  const sid = sessionId.trim();
+  if (!aid || !sid || !SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('追加失败：参数无效。');
+  }
+  if (!newTurns.length) {
+    throw new Error('追加失败：没有新消息。');
+  }
+  const row = await readMmChatPersistence(aid);
+  if (!row) return null;
+  const idx = row.sessions.findIndex((s) => s.id === sid);
+  if (idx < 0) return null;
+  const now = new Date().toISOString();
+  const sess = row.sessions[idx];
+  const normalized = newTurns.map((m) => ({
+    ...m,
+    createdAt: m.createdAt && isIsoLike(m.createdAt) ? m.createdAt : now,
+  }));
+  const mergedMessages = [...sess.messages, ...normalized];
+  let preview = opts?.preview?.trim();
+  if (!preview) {
+    for (let i = mergedMessages.length - 1; i >= 0; i -= 1) {
+      const t = String(mergedMessages[i]?.text ?? '').replace(/\s+/g, ' ').trim();
+      if (t) {
+        preview = t.length > 48 ? `${t.slice(0, 47)}…` : t;
+        break;
+      }
+    }
+  }
+  if (!preview) preview = '尚无消息';
+  const updated: XingyeMmChatSession = {
+    ...sess,
+    messages: mergedMessages,
+    preview,
+    updatedAt: now,
+  };
+  const sessions = [...row.sessions];
+  sessions[idx] = updated;
+  await saveMmChatPersistence(aid, {
+    version: 1,
+    activeSessionId: row.activeSessionId,
+    sessions,
+  });
+  return updated;
 }
 
 /** 别名：与需求文档 `listSessions` / `getSession` / `createSession` / `deleteSession` 对齐 */

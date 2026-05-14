@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import { generateMmChatRoundWithAI } from './xingye-mm-chat-ai';
 import {
+  appendMmChatTurnsToSession,
   createEmptyMmChatPersisted,
   createMmChatSession,
   deleteMmChatSession,
@@ -52,16 +53,21 @@ function formatSessionTime(iso: string | undefined): string {
 
 type MmChatView = 'list' | 'detail';
 
+type MmChatGeneratePhase = 'idle' | 'new_chat' | 'followup';
+
 export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => createEmptyMmChatPersisted().sessions);
   const [sessionId, setSessionId] = useState('');
   const [view, setView] = useState<MmChatView>('list');
   const [persistReady, setPersistReady] = useState(!ownerAgentId);
-  const [generateRunning, setGenerateRunning] = useState(false);
+  const [generatePhase, setGeneratePhase] = useState<MmChatGeneratePhase>('idle');
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [followUpDraft, setFollowUpDraft] = useState('');
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  const generateRunning = generatePhase !== 'idle';
 
   useEffect(() => {
     if (!ownerAgentId) {
@@ -135,7 +141,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   const handleNewChat = async () => {
     if (!ownerAgent || !ownerAgentId || !persistReady || generateRunning) return;
     setGenerateError(null);
-    setGenerateRunning(true);
+    setGeneratePhase('new_chat');
     try {
       await flushPersist();
       const round = await generateMmChatRoundWithAI({ agent: ownerAgent, ownerProfile });
@@ -156,18 +162,74 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : String(err));
     } finally {
-      setGenerateRunning(false);
+      setGeneratePhase('idle');
+    }
+  };
+
+  const lastTurn = session?.messages.length ? session.messages[session.messages.length - 1] : null;
+  const canFollowUpBase = Boolean(
+    session && session.messages.length > 0 && lastTurn?.role === 'ai' && String(lastTurn.text ?? '').trim(),
+  );
+  const canFollowUpSend = Boolean(
+    ownerAgent && ownerAgentId && persistReady && session && canFollowUpBase && !generateRunning,
+  );
+
+  const handleFollowUp = async () => {
+    if (!ownerAgent || !ownerAgentId || !persistReady || !session || generateRunning) return;
+    if (!canFollowUpBase) {
+      setGenerateError('追问须接在助手回复之后。');
+      return;
+    }
+    const directionHint = followUpDraft.trim() || undefined;
+    setGenerateError(null);
+    setGeneratePhase('followup');
+    try {
+      await flushPersist();
+      const round = await generateMmChatRoundWithAI({
+        agent: ownerAgent,
+        ownerProfile,
+        mode: 'followup',
+        followUp: {
+          sessionTitle: session.title,
+          sessionMessages: session.messages,
+          directionHint,
+        },
+      });
+      const now = new Date().toISOString();
+      const taMeta = directionHint ? { followUpUserHint: directionHint } : undefined;
+      const turns: XingyeMmChatTurn[] = [
+        {
+          id: newLocalMessageId(),
+          role: 'ta',
+          text: round.question,
+          createdAt: now,
+          ...(taMeta ? { meta: taMeta } : {}),
+        },
+        { id: newLocalMessageId(), role: 'ai', text: round.answer, createdAt: now },
+      ];
+      await appendMmChatTurnsToSession(ownerAgentId, session.id, turns, {
+        preview: previewFromUserText(round.answer),
+      });
+      const row = await readMmChatPersistence(ownerAgentId);
+      setSessions(row?.sessions ?? []);
+      setFollowUpDraft('');
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGeneratePhase('idle');
     }
   };
 
   const openSession = (id: string) => {
     setGenerateError(null);
+    setFollowUpDraft('');
     setSessionId(id);
     setView('detail');
   };
 
   const backToList = () => {
     setGenerateError(null);
+    setFollowUpDraft('');
     setView('list');
     setSessionId('');
   };
@@ -209,7 +271,11 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
               disabled={!canNewChat}
               onClick={() => void handleNewChat()}
             >
-              {generateRunning ? '正在生成新会话…' : '+ 新聊天'}
+              {generatePhase === 'new_chat'
+                ? '正在生成新会话…'
+                : generatePhase === 'followup'
+                  ? '其它生成任务进行中…'
+                  : '+ 新聊天'}
             </button>
             {generateError ? (
               <p className={styles.mmChatComposerHint} role="alert">
@@ -270,28 +336,89 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
                 <p className={styles.mmChatEmptyBody}>可返回列表删除此条，或重新「新聊天」生成。</p>
               </div>
             ) : (
-              <div className={styles.mmChatThread} aria-live="polite">
-                {session.messages.map((turn) => (
-                  <div
-                    key={turn.id}
-                    className={`${styles.mmChatBubbleRow} ${
-                      turn.role === 'ta' ? styles.mmChatBubbleRowTa : styles.mmChatBubbleRowAi
-                    }`}
-                  >
-                    <div
-                      className={`${styles.mmChatBubble} ${
-                        turn.role === 'ta' ? styles.mmChatBubbleTa : styles.mmChatBubbleAi
-                      }`}
-                    >
-                      {turn.role === 'ta' ? (
-                        <span className={styles.mmChatBubbleLabel}>{taLabel} · 提问</span>
-                      ) : (
-                        <span className={styles.mmChatBubbleLabel}>AI 助手 · 回复</span>
-                      )}
-                      {turn.text}
-                    </div>
+              <div className={styles.mmChatDetailBody}>
+                <div className={styles.mmChatDetailThreadScroll}>
+                  <div className={styles.mmChatThread} aria-live="polite">
+                    {session.messages.map((turn) => (
+                      <div
+                        key={turn.id}
+                        className={`${styles.mmChatBubbleRow} ${
+                          turn.role === 'ta' ? styles.mmChatBubbleRowTa : styles.mmChatBubbleRowAi
+                        }`}
+                      >
+                        <div
+                          className={`${styles.mmChatBubble} ${
+                            turn.role === 'ta' ? styles.mmChatBubbleTa : styles.mmChatBubbleAi
+                          }`}
+                        >
+                          {turn.role === 'ta' ? (
+                            <span className={styles.mmChatBubbleLabel}>{taLabel} · 提问</span>
+                          ) : (
+                            <span className={styles.mmChatBubbleLabel}>AI 助手 · 回复</span>
+                          )}
+                          {turn.text}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+                <div className={styles.mmChatDetailFollowup}>
+                  <p className={styles.mmChatDetailFollowupLabel}>继续追问（同一会话）</p>
+                  <p className={styles.mmChatComposerHint}>
+                    选择或填写<strong>追问方向</strong>（可选）；系统会代入当前角色自己继续向助手提问，并生成助手回复。
+                  </p>
+                  <div className={styles.mmChatChipsRow} aria-label="追问方向快捷填入">
+                    {(
+                      [
+                        '想要更具体的话术',
+                        '担心这样显得太低姿态',
+                        '没理解第二步',
+                        '希望更像当前角色会说的话',
+                      ] as const
+                    ).map((label) => (
+                      <button
+                        key={label}
+                        type="button"
+                        className={styles.mmChatChip}
+                        disabled={!canFollowUpBase || generateRunning}
+                        onClick={() => setFollowUpDraft(label)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className={styles.mmChatComposer}>
+                    <textarea
+                      data-testid="mm-chat-followup-input"
+                      value={followUpDraft}
+                      onChange={(e) => setFollowUpDraft(e.target.value)}
+                      placeholder={
+                        canFollowUpBase
+                          ? '例如：想要更具体的话术 / 担心这样显得太低姿态 / 没理解第二步 / 希望更像当前角色会说的话（可留空直接追问）'
+                          : '请等待上一条为助手回复后再追问。'
+                      }
+                      disabled={!canFollowUpBase || generateRunning}
+                      rows={3}
+                      aria-label="追问方向提示（可选）"
+                    />
+                  </div>
+                  <div className={styles.mmChatDetailFollowupActions}>
+                    <button
+                      type="button"
+                      className={canFollowUpSend ? styles.mmChatFollowupButton : styles.mmChatSendDisabled}
+                      disabled={!canFollowUpSend}
+                      data-testid="mm-chat-followup-send"
+                      onClick={() => void handleFollowUp()}
+                    >
+                      {generatePhase === 'followup' ? '正在生成追问…' : '继续追问'}
+                    </button>
+                  </div>
+                  {generateError ? (
+                    <p className={styles.mmChatComposerHint} role="alert">
+                      {generateError}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             )}
           </div>

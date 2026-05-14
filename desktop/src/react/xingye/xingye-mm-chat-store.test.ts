@@ -11,6 +11,7 @@ vi.mock('./xingye-storage-api', () => ({
 }));
 
 import {
+  appendMmChatTurnsToSession,
   createMmChatSession,
   readMmChatPersistence,
   saveMmChatPersistence,
@@ -21,6 +22,33 @@ import {
 describe('xingye-mm-chat-store', () => {
   beforeEach(() => {
     postMock.mockReset();
+  });
+
+  it('readMmChatPersistence preserves turn meta.followUpUserHint', async () => {
+    postMock.mockResolvedValueOnce({
+      data: {
+        version: 1,
+        activeSessionId: '',
+        sessions: [
+          {
+            id: 's1',
+            title: 'T',
+            preview: 'P',
+            messages: [
+              {
+                id: 'm1',
+                role: 'ta',
+                text: '角色生成的完整追问句',
+                meta: { followUpUserHint: '想要更委婉' },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const row = await readMmChatPersistence('agent-x');
+    expect(row?.sessions[0]?.messages[0]?.text).toBe('角色生成的完整追问句');
+    expect(row?.sessions[0]?.messages[0]?.meta?.followUpUserHint).toBe('想要更委婉');
   });
 
   it('readMmChatPersistence uses readJson', async () => {
@@ -140,5 +168,55 @@ describe('xingye-mm-chat-store', () => {
       updatedAt: '2025-01-03T00:00:00.000Z',
     };
     expect(sortMmChatSessionsByUpdatedAtDesc([a, b]).map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('appendMmChatTurnsToSession merges messages and writes', async () => {
+    const sid = 'sess-1';
+    postMock
+      .mockResolvedValueOnce({
+        data: {
+          version: 1,
+          activeSessionId: '',
+          sessions: [
+            {
+              id: sid,
+              title: '睡眠',
+              preview: '旧摘要',
+              messages: [
+                { id: 'm1', role: 'ta', text: 'Q1', createdAt: '2026-01-01T00:00:00.000Z' },
+                { id: 'm2', role: 'ai', text: 'A1', createdAt: '2026-01-01T00:00:00.000Z' },
+              ],
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const out = await appendMmChatTurnsToSession(
+      'agent-x',
+      sid,
+      [
+        { id: 'm3', role: 'ta', text: 'Q2' },
+        { id: 'm4', role: 'ai', text: '新的助手回答若干字' },
+      ],
+      { preview: '自定义预览' },
+    );
+    expect(out?.messages).toHaveLength(4);
+    expect(out?.preview).toBe('自定义预览');
+    const writeCall = postMock.mock.calls.find((c) => (c[0] as { action?: string }).action === 'writeJson');
+    expect(writeCall).toBeDefined();
+    const payload = (writeCall![0] as { data: { sessions: { id: string; messages: unknown[] }[] } }).data;
+    expect(payload.sessions[0]!.id).toBe(sid);
+    expect(payload.sessions[0]!.messages).toHaveLength(4);
+  });
+
+  it('appendMmChatTurnsToSession returns null when session id not found', async () => {
+    postMock.mockResolvedValueOnce({
+      data: { version: 1, activeSessionId: '', sessions: [] },
+    });
+    await expect(
+      appendMmChatTurnsToSession('agent-x', 'missing', [{ id: 'x', role: 'ta', text: 'a' }]),
+    ).resolves.toBeNull();
   });
 });
