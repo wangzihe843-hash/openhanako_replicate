@@ -1,5 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef } from 'react';
-import { splitGraphemes, useTypewriterText } from '../../hooks/use-typewriter-text';
+import { useTypewriterText } from '../../hooks/use-typewriter-text';
+import { splitGraphemes } from '../../utils/grapheme';
 import { renderMarkdown } from '../../utils/markdown';
 import { MarkdownContent } from './MarkdownContent';
 

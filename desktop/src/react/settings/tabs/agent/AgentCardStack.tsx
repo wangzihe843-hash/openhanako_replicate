@@ -38,7 +38,18 @@ export function calculateAgentCardGeometry(totalCards: number): AgentCardGeometr
   };
 }
 
-export function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatarClick, onSetActive, onDelete, onAdd }: {
+export function AgentCardStack({
+  agents,
+  selectedId,
+  currentAgentId,
+  onSelect,
+  onAvatarClick,
+  onSetActive,
+  onDelete,
+  onExport,
+  onAdd,
+  exportingAgentId = null,
+}: {
   agents: Agent[];
   selectedId: string | null;
   currentAgentId: string | null;
@@ -46,7 +57,9 @@ export function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, o
   onAvatarClick: () => void;
   onSetActive: (id: string) => void;
   onDelete: (id: string) => void;
+  onExport: (id: string) => void;
   onAdd: () => void;
+  exportingAgentId?: string | null;
 }) {
   const cardsRef = useRef<HTMLDivElement>(null);
   const agentsRef = useRef(agents);
@@ -205,6 +218,7 @@ export function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, o
   const isSelectedCurrent = selectedAgent?.id === currentAgentId;
   const canSetPrimary = !!selectedAgent && !selectedAgent.isPrimary;
   const canDeleteSelected = !!selectedAgent && agents.length >= 2 && !selectedAgent.isPrimary && !isSelectedCurrent;
+  const isExportingSelected = !!selectedAgent && exportingAgentId === selectedAgent.id;
 
   return (
     <div
@@ -295,6 +309,14 @@ export function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, o
               {t('settings.agent.setActive')}
             </button>
           )}
+          <button
+            type="button"
+            className={styles['agent-card-action']}
+            onClick={() => onExport(selectedAgent.id)}
+            disabled={!!exportingAgentId}
+          >
+            {isExportingSelected ? '正在生成预览' : '导出助手'}
+          </button>
           {canDeleteSelected && (
             <button
               type="button"

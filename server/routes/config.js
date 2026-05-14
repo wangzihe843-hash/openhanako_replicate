@@ -256,7 +256,7 @@ export function createConfigRoute(engine) {
       await fs.writeFile(ishikiPath, content, "utf-8");
       debugLog()?.log("api", `PUT /api/ishiki (saved, ${content.length} chars)`);
       // 触发 system prompt 重建（updateConfig 内部会重新读取 ishiki.md）
-      await engine.updateConfig({}, { agentId: agent.id });
+      await engine.updateConfig({}, { agentId: agent.id, refreshDescription: true });
       return c.json({ ok: true });
     } catch (err) {
       if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
@@ -289,7 +289,7 @@ export function createConfigRoute(engine) {
       const identityPath = path.join(agent.agentDir, "identity.md");
       await fs.writeFile(identityPath, content, "utf-8");
       debugLog()?.log("api", `PUT /api/identity (saved, ${content.length} chars)`);
-      await engine.updateConfig({}, { agentId: agent.id });
+      await engine.updateConfig({}, { agentId: agent.id, refreshDescription: true });
       return c.json({ ok: true });
     } catch (err) {
       if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);

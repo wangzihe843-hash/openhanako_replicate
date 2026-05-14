@@ -223,6 +223,48 @@ describe("AgentManager.createAgent default skills.enabled", () => {
     expect(cfg.memory.enabled).toBe(true);
   });
 
+  it("uses an explicit skills.enabled override for imported character-card agents", async () => {
+    skillsMock._allSkills = [
+      { name: "global-one", source: "user" },
+      { name: "global-two", source: "user" },
+    ];
+
+    const { id: newId } = await mgr.createAgent({
+      name: "ImportedAgent",
+      yuan: "ming",
+      enabledSkills: ["card-skill"],
+      initialFiles: {
+        identity: "Imported identity",
+        ishiki: "Imported ishiki",
+        publicIshiki: "Imported public ishiki",
+      },
+      initialMemory: {
+        compiled: {
+          facts: "用户喜欢短句。",
+          today: "今天迁移角色卡。",
+          week: "本周迁移 Project Hana。",
+          longterm: "用户长期关注本地优先迁移。",
+        },
+        sourceId: "character-card-import-test",
+        sourcePackage: "imported-package.zip",
+      },
+    });
+
+    const cfgPath = path.join(agentsDir, newId, "config.yaml");
+    const memoryDir = path.join(agentsDir, newId, "memory");
+    const seed = JSON.parse(fs.readFileSync(path.join(memoryDir, "summaries", "character-card-import-test.json"), "utf-8"));
+    const cfg = YAML.load(fs.readFileSync(cfgPath, "utf-8"));
+    expect(cfg.skills.enabled).toEqual(["card-skill"]);
+    expect(fs.readFileSync(path.join(agentsDir, newId, "identity.md"), "utf-8")).toBe("Imported identity");
+    expect(fs.readFileSync(path.join(agentsDir, newId, "ishiki.md"), "utf-8")).toBe("Imported ishiki");
+    expect(fs.readFileSync(path.join(agentsDir, newId, "public-ishiki.md"), "utf-8")).toBe("Imported public ishiki");
+    expect(fs.readFileSync(path.join(memoryDir, "today.md"), "utf-8")).toBe("今天迁移角色卡。");
+    expect(fs.readFileSync(path.join(memoryDir, "memory.md"), "utf-8")).toContain("用户长期关注本地优先迁移。");
+    expect(seed.imported.packageName).toBe("imported-package.zip");
+    expect(seed.snapshot).toBe(seed.summary);
+    expect(skillsMock.syncAgentSkills).toHaveBeenCalled();
+  });
+
   it("includes each agent memory master state in the agent list", async () => {
     fs.mkdirSync(path.join(agentsDir, "memory-off"), { recursive: true });
     fs.writeFileSync(

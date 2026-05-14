@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { describe, expect, it, vi } from "vitest";
 import { generateDescription } from "../core/llm-utils.js";
+import { callText } from "../core/llm-client.js";
 
 vi.mock("../core/llm-client.js", () => ({
   callText: vi.fn().mockResolvedValue("温柔细腻的文学型助手，擅长写作、翻译和情感分析，沟通风格亲切自然。"),
@@ -27,6 +28,33 @@ describe("generateDescription", () => {
       "en",
     );
     expect(result).toBeNull();
+  });
+
+  it("strips internal mood tags from generated descriptions", async () => {
+    callText.mockResolvedValueOnce("<mood>\nVibe: 平静专注\nSparks: 纸页、灯光、长句\n</mood>\n沉静细腻的写作型助手，适合文本整理和创意协作。");
+
+    const result = await generateDescription(
+      { utility: "test-model", api_key: "key", base_url: "http://test", api: "openai" },
+      "你是 Hanako，一个温柔的助手...",
+      "zh",
+    );
+
+    expect(result).toBe("沉静细腻的写作型助手，适合文本整理和创意协作。");
+  });
+
+  it("asks for a third-person roster description without internal tags", async () => {
+    await generateDescription(
+      { utility: "test-model", api_key: "key", base_url: "http://test", api: "openai" },
+      "identity and ishiki",
+      "zh",
+    );
+
+    const call = callText.mock.calls.at(-1)?.[0];
+    const prompt = call?.messages?.[0]?.content || "";
+    expect(prompt).toContain("第三方编辑");
+    expect(prompt).toContain("第三人称简介");
+    expect(prompt).toContain("不要输出 <mood>");
+    expect(call?.messages?.[1]?.content).toBe("identity and ishiki");
   });
 });
 

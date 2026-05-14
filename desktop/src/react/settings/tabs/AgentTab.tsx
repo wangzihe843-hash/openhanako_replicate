@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
@@ -9,6 +10,7 @@ import { AgentCardStack } from './agent/AgentCardStack';
 import { YuanSelector } from './agent/YuanSelector';
 import { MemorySection } from './agent/AgentMemory';
 import { AgentToolsSection } from './agent/AgentToolsSection';
+import { CharacterCardPreviewOverlay, type CharacterCardPlan } from '../overlays/CharacterCardPreviewOverlay';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { Toggle } from '../widgets/Toggle';
@@ -43,6 +45,10 @@ export function AgentTab() {
   const [identity, setIdentity] = useState('');
   const [ishiki, setIshiki] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
+  const [exportPlanningAgentId, setExportPlanningAgentId] = useState<string | null>(null);
+  const [exportingCharacterCard, setExportingCharacterCard] = useState(false);
+  const [exportPlan, setExportPlan] = useState<CharacterCardPlan | null>(null);
+  const [exportMemory, setExportMemory] = useState(false);
 
   useEffect(() => {
     if (settingsConfig) {
@@ -155,6 +161,57 @@ export function AgentTab() {
     }
   };
 
+  const openAgentExportPreview = async (agentId: string) => {
+    if (exportPlanningAgentId || exportingCharacterCard) return;
+    setExportPlanningAgentId(agentId);
+    try {
+      const res = await hanaFetch('/api/character-cards/export/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+        timeout: 90_000,
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setExportPlan(data.plan);
+      setExportMemory(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(t('settings.saveFailed') + ': ' + msg, 'error');
+    } finally {
+      setExportPlanningAgentId(null);
+    }
+  };
+
+  const confirmAgentExport = async () => {
+    if (!exportPlan?.agentId || exportingCharacterCard) return;
+    setExportingCharacterCard(true);
+    try {
+      const res = await hanaFetch('/api/character-cards/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: exportPlan.agentId,
+          exportMemory: exportMemory && exportPlan.memory.available,
+        }),
+        timeout: 90_000,
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setExportPlan(null);
+      setExportMemory(false);
+      if (typeof data.filePath === 'string' && data.filePath) {
+        window.platform?.showInFinder?.(data.filePath);
+      }
+      showToast(`已导出到 ${data.filePath}`, 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(t('settings.saveFailed') + ': ' + msg, 'error');
+    } finally {
+      setExportingCharacterCard(false);
+    }
+  };
+
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="agent">
       {/* Agent 卡片堆叠 */}
@@ -183,7 +240,9 @@ export function AgentTab() {
           onDelete={(id) => window.dispatchEvent(new CustomEvent('hana-show-agent-delete', {
             detail: { agentId: id },
           }))}
+          onExport={openAgentExportPreview}
           onAdd={() => window.dispatchEvent(new Event('hana-show-agent-create'))}
+          exportingAgentId={exportPlanningAgentId}
         />
 
         <div className={`${styles['settings-form-field']} ${styles['settings-form-field-center']}`}>
@@ -334,6 +393,28 @@ export function AgentTab() {
         availableTools={availableTools}
         disabled={settingsConfig?.tools?.disabled ?? ["update_settings", "dm"]}
       />
+
+      {exportPlanningAgentId && createPortal((
+        <div className={styles['character-card-preview-overlay']} role="dialog" aria-modal="true">
+          <div className={styles['character-card-loading-card']}>正在生成角色卡预览</div>
+        </div>
+      ), document.body)}
+      {exportPlan && (
+        <CharacterCardPreviewOverlay
+          plan={exportPlan}
+          mode="export"
+          memoryChecked={exportMemory}
+          processing={exportingCharacterCard}
+          onMemoryChange={(checked) => {
+            if (exportPlan.memory.available) setExportMemory(checked);
+          }}
+          onConfirm={confirmAgentExport}
+          onCancel={() => {
+            setExportPlan(null);
+            setExportMemory(false);
+          }}
+        />
+      )}
 
     </div>
   );

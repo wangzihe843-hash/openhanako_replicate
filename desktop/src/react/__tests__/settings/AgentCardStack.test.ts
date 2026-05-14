@@ -73,6 +73,7 @@ describe('AgentCardStack actions', () => {
   it('shows quiet actions below the selected non-primary agent and calls explicit targets', () => {
     const onSetActive = vi.fn();
     const onDelete = vi.fn();
+    const onExport = vi.fn();
 
     render(React.createElement(AgentCardStack, {
       agents,
@@ -82,13 +83,16 @@ describe('AgentCardStack actions', () => {
       onAvatarClick: vi.fn(),
       onSetActive,
       onDelete,
+      onExport,
       onAdd: vi.fn(),
     }));
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agent.setActive' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出助手' }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.agent.deleteBtn' }));
 
     expect(onSetActive).toHaveBeenCalledWith('deepseek');
+    expect(onExport).toHaveBeenCalledWith('deepseek');
     expect(onDelete).toHaveBeenCalledWith('deepseek');
   });
 
@@ -101,10 +105,12 @@ describe('AgentCardStack actions', () => {
       onAvatarClick: vi.fn(),
       onSetActive: vi.fn(),
       onDelete: vi.fn(),
+      onExport: vi.fn(),
       onAdd: vi.fn(),
     }));
 
     expect(screen.queryByRole('button', { name: 'settings.agent.setActive' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出助手' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'settings.agent.deleteBtn' })).not.toBeInTheDocument();
   });
 
@@ -117,6 +123,7 @@ describe('AgentCardStack actions', () => {
       onAvatarClick: vi.fn(),
       onSetActive: vi.fn(),
       onDelete: vi.fn(),
+      onExport: vi.fn(),
       onAdd: vi.fn(),
     }));
 

@@ -281,6 +281,36 @@ describe("agents route", () => {
     expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes generated description after identity changes", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n", "utf-8");
+
+    const { createAgentsRoute } = await import("../server/routes/agents.js");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      updateConfig: vi.fn().mockResolvedValue(undefined),
+      invalidateAgentListCache: vi.fn(),
+      emitEvent: vi.fn(),
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const res = await app.request(`/api/agents/${agentId}/identity`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "新的公开身份材料" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fs.readFileSync(path.join(agentDir, "identity.md"), "utf-8")).toBe("新的公开身份材料");
+    expect(engine.updateConfig).toHaveBeenCalledWith({}, { agentId, refreshDescription: true });
+    expect(engine.invalidateAgentListCache).toHaveBeenCalledTimes(1);
+    expectAppEvent(engine.emitEvent, "agent-updated", { agentId });
+  });
+
   it("rejects dangerous experience headings without overwriting agent files", async () => {
     const agentId = "hana";
     const agentDir = path.join(tempRoot, agentId);

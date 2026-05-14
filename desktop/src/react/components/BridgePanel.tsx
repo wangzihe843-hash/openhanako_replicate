@@ -4,6 +4,7 @@ import { usePanel } from '../hooks/use-panel';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { formatSessionDate } from '../utils/format';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
+import { displayInitial } from '../utils/grapheme';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import { loadMessages } from '../stores/session-actions';
 import { useContinuousBottomScroll } from '../hooks/use-continuous-bottom-scroll';
@@ -454,7 +455,7 @@ function ContactAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }
           onError={() => setShowImg(false)}
         />
       ) : (
-        name.slice(0, 1).toUpperCase()
+        displayInitial(name, '?')
       )}
     </div>
   );

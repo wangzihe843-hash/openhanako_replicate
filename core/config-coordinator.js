@@ -399,7 +399,7 @@ export class ConfigCoordinator {
 
   // ── updateConfig ──
 
-  async updateConfig(partial, { agentId } = {}) {
+  async updateConfig(partial, { agentId, refreshDescription = false } = {}) {
     const keys = Object.keys(partial);
     if (keys.length) log.log(`updateConfig: keys=[${keys.join(",")}]${agentId ? ` agentId=${agentId}` : ""}`);
 
@@ -409,7 +409,8 @@ export class ConfigCoordinator {
     const isFocusAgent = !agentId || agentId === this._d.getActiveAgentId?.();
 
     // agent 负责：写磁盘、刷新身份、刷新模块、重建 prompt
-    agent.updateConfig(partial);
+    if (refreshDescription) agent.updateConfig(partial, { refreshDescription: true });
+    else agent.updateConfig(partial);
 
     // 模型切换只在焦点 agent 时生效。migration #5 之后 models.chat 必为
     // {id, provider} 对象；缺 provider 直接忽略并告警（调用方应传完整复合键）。

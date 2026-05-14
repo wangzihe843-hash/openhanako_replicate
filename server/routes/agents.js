@@ -552,7 +552,7 @@ export function createAgentsRoute(engine) {
       }
       await fs.writeFile(path.join(agentDir(engine, id), "identity.md"), content, "utf-8");
       engine.invalidateAgentListCache();
-      await engine.updateConfig({}, { agentId: id });
+      await engine.updateConfig({}, { agentId: id, refreshDescription: true });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       return c.json({ ok: true });
     } catch (err) {
@@ -590,7 +590,7 @@ export function createAgentsRoute(engine) {
         return c.json({ error: "content must be a string" }, 400);
       }
       await fs.writeFile(path.join(agentDir(engine, id), "ishiki.md"), content, "utf-8");
-      await engine.updateConfig({}, { agentId: id });
+      await engine.updateConfig({}, { agentId: id, refreshDescription: true });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       return c.json({ ok: true });
     } catch (err) {

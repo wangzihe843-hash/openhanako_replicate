@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSettingsStore, type SkillInfo } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
-import { SkillRow } from './skills/SkillRow';
+import { SkillBundleTree, type SkillBundleInfo } from './skills/SkillBundleTree';
 import { SkillCapabilities } from './skills/SkillCapabilities';
 import { CompatPathDrawer } from './skills/CompatPathDrawer';
 import { LearnedSkillsBlock } from './skills/LearnedSkillsBlock';
@@ -11,6 +11,11 @@ import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
 
 const platform = window.platform;
+
+type BundleDialogState =
+  | { type: 'create'; name: string }
+  | { type: 'rename'; bundle: SkillBundleInfo; name: string }
+  | { type: 'delete'; bundle: SkillBundleInfo };
 
 interface ExternalPathsData {
   configured: string[];
@@ -28,6 +33,8 @@ export function SkillsTab() {
   skillsViewAgentIdRef.current = skillsViewAgentId;
 
   const [skillsList, setSkillsList] = useState<SkillInfo[]>([]);
+  const [skillBundles, setSkillBundles] = useState<SkillBundleInfo[]>([]);
+  const [bundleDialog, setBundleDialog] = useState<BundleDialogState | null>(null);
 
   useEffect(() => {
     if (skillsViewAgentId) return;
@@ -44,10 +51,17 @@ export function SkillsTab() {
     if (!agentId) return;
     try {
       const snapshotAgentId = agentId;
-      const res = await hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`);
-      const data = await res.json();
+      const [skillsRes, bundlesRes] = await Promise.all([
+        hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`),
+        hanaFetch(`/api/skills/bundles?agentId=${encodeURIComponent(agentId)}`),
+      ]);
+      const data = await skillsRes.json();
+      const bundleData = await bundlesRes.json();
+      if (data.error) throw new Error(data.error);
+      if (bundleData.error) throw new Error(bundleData.error);
       if (skillsViewAgentIdRef.current !== snapshotAgentId) return;
       setSkillsList(data.skills || []);
+      setSkillBundles(bundleData.bundles || []);
     } catch (err) {
       console.error('[skills] load failed:', err);
     }
@@ -141,6 +155,164 @@ export function SkillsTab() {
     }
   };
 
+  const createBundle = () => {
+    setBundleDialog({ type: 'create', name: 'New Bundle' });
+  };
+
+  const submitCreateBundle = async (name: string) => {
+    const agentId = skillsViewAgentIdRef.current;
+    if (!agentId) return;
+    try {
+      const res = await hanaFetch(`/api/skills/bundles?agentId=${encodeURIComponent(agentId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, skillNames: [] }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setBundleDialog(null);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
+  const renameBundle = (bundle: SkillBundleInfo) => {
+    setBundleDialog({ type: 'rename', bundle, name: bundle.name });
+  };
+
+  const submitRenameBundle = async (bundle: SkillBundleInfo, name: string) => {
+    const agentId = skillsViewAgentIdRef.current;
+    if (!agentId) return;
+    if (!name || name === bundle.name) return;
+    try {
+      const res = await hanaFetch(`/api/skills/bundles/${encodeURIComponent(bundle.id)}?agentId=${encodeURIComponent(agentId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setBundleDialog(null);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
+  const deleteBundle = (bundle: SkillBundleInfo) => {
+    setBundleDialog({ type: 'delete', bundle });
+  };
+
+  const submitDeleteBundle = async (bundle: SkillBundleInfo) => {
+    try {
+      const res = await hanaFetch(`/api/skills/bundles/${encodeURIComponent(bundle.id)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setBundleDialog(null);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
+  const updateBundleSkillNames = async (bundle: SkillBundleInfo, skillNames: string[]) => {
+    const agentId = skillsViewAgentIdRef.current;
+    if (!agentId) return;
+    const res = await hanaFetch(`/api/skills/bundles/${encodeURIComponent(bundle.id)}?agentId=${encodeURIComponent(agentId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skillNames }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+  };
+
+  const reorderBundles = async (bundleIds: string[]) => {
+    const agentId = skillsViewAgentIdRef.current;
+    if (!agentId) return;
+    try {
+      const res = await hanaFetch(`/api/skills/bundles/order?agentId=${encodeURIComponent(agentId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bundleIds }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setSkillBundles(data.bundles || []);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+      await loadSkills();
+    }
+  };
+
+  const moveSkillToBundle = async (skillName: string, targetBundle: SkillBundleInfo, targetIndex?: number) => {
+    try {
+      const updates: Promise<void>[] = [];
+      for (const bundle of skillBundles) {
+        const hasSkill = bundle.skillNames.includes(skillName);
+        const withoutSkill = bundle.skillNames.filter(name => name !== skillName);
+        let nextSkillNames = withoutSkill;
+        if (bundle.id === targetBundle.id) {
+          const insertAt = typeof targetIndex === 'number'
+            ? Math.max(0, Math.min(targetIndex, withoutSkill.length))
+            : withoutSkill.length;
+          nextSkillNames = [
+            ...withoutSkill.slice(0, insertAt),
+            skillName,
+            ...withoutSkill.slice(insertAt),
+          ];
+        }
+        if (hasSkill || bundle.id === targetBundle.id) {
+          const changed = nextSkillNames.length !== bundle.skillNames.length
+            || nextSkillNames.some((name, index) => name !== bundle.skillNames[index]);
+          if (changed) updates.push(updateBundleSkillNames(bundle, nextSkillNames));
+        }
+      }
+      await Promise.all(updates);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
+  const submitBundleDialog = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!bundleDialog) return;
+    if (bundleDialog.type === 'delete') {
+      await submitDeleteBundle(bundleDialog.bundle);
+      return;
+    }
+    const name = bundleDialog.name.trim();
+    if (!name) return;
+    if (bundleDialog.type === 'create') {
+      await submitCreateBundle(name);
+      return;
+    }
+    await submitRenameBundle(bundleDialog.bundle, name);
+  };
+
+  const removeSkillFromBundles = async (skillName: string) => {
+    try {
+      const updates = skillBundles
+        .filter(bundle => bundle.skillNames.includes(skillName))
+        .map(bundle => updateBundleSkillNames(bundle, bundle.skillNames.filter(name => name !== skillName)));
+      await Promise.all(updates);
+      showToast(t('settings.autoSaved'), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
   const toggleSkill = async (name: string, enable: boolean) => {
     const agentId = skillsViewAgentIdRef.current;
     if (!agentId) return;
@@ -169,12 +341,59 @@ export function SkillsTab() {
       if (data.error) throw new Error(data.error);
       if (skillsViewAgentIdRef.current === snapshotAgentId) {
         showToast(t('settings.autoSaved'), 'success');
+        await loadSkills();
       }
     } catch (err: unknown) {
       if (skillsViewAgentIdRef.current === snapshotAgentId) {
         const reverted = skillsList.map(s => s.name === name ? { ...s, enabled: !enable } : s);
         setSkillsList(reverted);
         showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+      }
+    }
+  };
+
+  const toggleBundle = async (bundle: SkillBundleInfo, enable: boolean) => {
+    const agentId = skillsViewAgentIdRef.current;
+    if (!agentId) return;
+    const snapshotAgentId = agentId;
+    const bundleSkillNames = new Set(bundle.skillNames);
+    const updated = skillsList.map(s => bundleSkillNames.has(s.name) ? { ...s, enabled: enable } : s);
+    setSkillsList(updated);
+    setSkillBundles(prev => prev.map(item => item.id === bundle.id
+      ? {
+          ...item,
+          skills: item.skills?.map(skill => bundleSkillNames.has(skill.name)
+            ? { ...skill, enabled: enable }
+            : skill),
+        }
+      : item));
+
+    try {
+      const freshRes = await hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`);
+      const freshData = await freshRes.json();
+      if (freshData.error) throw new Error(freshData.error);
+      if (skillsViewAgentIdRef.current !== snapshotAgentId) return;
+      const enabledList = ((freshData.skills || []) as Array<{ name: string; enabled: boolean }>)
+        .map(s => bundleSkillNames.has(s.name) ? { ...s, enabled: enable } : s)
+        .filter(s => s.enabled)
+        .map(s => s.name);
+
+      const res = await hanaFetch(`/api/agents/${agentId}/skills`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enabledList }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (skillsViewAgentIdRef.current === snapshotAgentId) {
+        showToast(t('settings.autoSaved'), 'success');
+        await loadSkills();
+      }
+    } catch (err: unknown) {
+      if (skillsViewAgentIdRef.current === snapshotAgentId) {
+        setSkillsList(skillsList);
+        showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+        await loadSkills();
       }
     }
   };
@@ -248,19 +467,23 @@ export function SkillsTab() {
           <span>{t('settings.skills.dropzone')}</span>
         </div>
 
-        {userSkills.length === 0 ? (
+        {userSkills.length === 0 && skillBundles.length === 0 ? (
           <p className={`${styles['settings-muted-note']} ${styles['skills-empty']}`}>{t('settings.skills.noUser')}</p>
         ) : (
-          <div className={styles['skills-list-block']}>
-            {userSkills.map(skill => (
-              <SkillRow
-                key={skill.name}
-                skill={skill}
-                nameHint={nameHints[skill.name]}
-                onDelete={deleteSkill}
-              />
-            ))}
-          </div>
+          <SkillBundleTree
+            mode="manage"
+            bundles={skillBundles}
+            skills={userSkills}
+            nameHints={nameHints}
+            emptyText={t('settings.skills.noUser')}
+            onDeleteSkill={deleteSkill}
+            onCreateBundle={createBundle}
+            onRenameBundle={renameBundle}
+            onDeleteBundle={deleteBundle}
+            onReorderBundles={reorderBundles}
+            onMoveSkillToBundle={moveSkillToBundle}
+            onRemoveSkillFromBundles={removeSkillFromBundles}
+          />
         )}
       </SettingsSection>
 
@@ -279,19 +502,20 @@ export function SkillsTab() {
           />
         }
       >
-        {userSkills.length === 0 ? (
+        {userSkills.length === 0 && skillBundles.length === 0 ? (
           <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
             {t('settings.skills.noUser')}
           </p>
         ) : (
-          userSkills.map(skill => (
-            <SkillRow
-              key={skill.name}
-              skill={skill}
-              nameHint={nameHints[skill.name]}
-              onToggle={toggleSkill}
-            />
-          ))
+          <SkillBundleTree
+            mode="agent"
+            bundles={skillBundles}
+            skills={userSkills}
+            nameHints={nameHints}
+            emptyText={t('settings.skills.noUser')}
+            onToggleSkill={toggleSkill}
+            onToggleBundle={toggleBundle}
+          />
         )}
       </SettingsSection>
 
@@ -351,6 +575,76 @@ export function SkillsTab() {
           </button>
         </div>
       </SettingsSection>
+
+      {bundleDialog ? (
+        <div
+          className={styles['skill-bundle-dialog-backdrop']}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setBundleDialog(null);
+          }}
+        >
+          <form
+            className={styles['skill-bundle-dialog']}
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              bundleDialog.type === 'create'
+                ? '新建 Bundle'
+                : bundleDialog.type === 'rename'
+                  ? '重命名 Bundle'
+                  : '打散 Bundle'
+            }
+            onSubmit={submitBundleDialog}
+          >
+            <div className={styles['skill-bundle-dialog-header']}>
+              <h3>
+                {bundleDialog.type === 'create'
+                  ? '新建 Bundle'
+                  : bundleDialog.type === 'rename'
+                    ? '重命名 Bundle'
+                    : '打散 Bundle'}
+              </h3>
+              <button
+                type="button"
+                title="取消"
+                aria-label="取消"
+                onClick={() => setBundleDialog(null)}
+              >
+                ×
+              </button>
+            </div>
+            {bundleDialog.type === 'delete' ? (
+              <p className={styles['skill-bundle-dialog-text']}>
+                打散 {bundleDialog.bundle.name}？Skill 会保留在公共库里，并显示为散装 Skill。
+              </p>
+            ) : (
+              <label className={styles['skill-bundle-dialog-field']}>
+                <span>Bundle 名字</span>
+                <input
+                  value={bundleDialog.name}
+                  autoFocus
+                  onChange={(event) => setBundleDialog(prev => {
+                    if (!prev || prev.type === 'delete') return prev;
+                    return { ...prev, name: event.target.value };
+                  })}
+                />
+              </label>
+            )}
+            <div className={styles['skill-bundle-dialog-actions']}>
+              <button type="button" onClick={() => setBundleDialog(null)}>
+                取消
+              </button>
+              <button type="submit" className={styles['skill-bundle-dialog-primary']}>
+                {bundleDialog.type === 'create'
+                  ? '创建'
+                  : bundleDialog.type === 'rename'
+                    ? '保存'
+                    : '打散'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
     </div>
   );

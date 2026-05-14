@@ -162,6 +162,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   const isStreaming = useStore(s => s.streamingSessions.includes(s.currentSessionPath || ''));
   const connected = useStore(s => s.connected);
   const pendingNewSession = useStore(s => s.pendingNewSession);
+  const pendingSessionSwitchPath = useStore(s => s.pendingSessionSwitchPath);
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const compacting = useStore(s => currentSessionPath ? s.compactingSessions.includes(currentSessionPath) : false);
   const inlineError = useStore(s => s.inlineErrors[s.currentSessionPath || ''] ?? null);
@@ -351,6 +352,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     const _s = useStore.getState();
     if (_s.streamingSessions.includes(_s.currentSessionPath || '')) return false;
+    if (_s.pendingSessionSwitchPath) return false;
 
     if (pendingNewSession) {
       const ok = await ensureSession();
@@ -564,7 +566,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached || !!quotedSelection
     || editorHasInlineNode(editor, 'skillBadge')
     || editorHasInlineNode(editor, 'fileBadge');
-  const canSend = hasContent && connected && !isStreaming && !modelSwitching;
+  const canSend = hasContent && connected && !isStreaming && !modelSwitching && !pendingSessionSwitchPath;
 
   const loadVisionAuxiliaryConfig = useCallback(async () => {
     const res = await hanaFetch('/api/preferences/models');
@@ -716,6 +718,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
     if (isStreaming) return;
     if (sending) return;
     if (modelSwitching) return;
+    if (useStore.getState().pendingSessionSwitchPath) return;
     setSending(true);
 
     try {

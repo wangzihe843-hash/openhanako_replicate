@@ -20,6 +20,8 @@
     /* 主题可覆盖的抽象 token（默认值和现有视觉一致；主题 CSS 可 override） */
     --radius-input: 4px;        /* input / select widget / textarea / ghost button / media dropdown */
     --radius-card: 10px;        /* SettingsSection body / skill-list-item 首尾 / tool-caps 首尾 */
+    --radius-chat-card: var(--radius-input, 4px); /* in-message chat cards */
+    --radius-chat-card-inner: max(2px, calc(var(--radius-chat-card) - 2px));
     --border-width: 1px;        /* 表单控件 / section body 边框粗细 */
     --link: var(--accent, #537D96);
     --link-hover: var(--accent-hover, var(--link));

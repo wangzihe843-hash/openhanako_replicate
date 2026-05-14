@@ -140,6 +140,7 @@ export class HanaEngine {
 
     // ── Agent Manager ──
     this._agentMgr = new AgentManager({
+      hanakoHome: this.hanakoHome,
       agentsDir: this.agentsDir,
       productDir: this.productDir,
       userDir: this.userDir,

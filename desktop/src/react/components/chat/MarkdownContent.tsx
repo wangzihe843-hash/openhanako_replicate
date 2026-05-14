@@ -8,7 +8,7 @@
 import { memo, useRef, useEffect, useLayoutEffect } from 'react';
 import { injectCopyButtons } from '../../utils/format';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
-import { splitGraphemes } from '../../hooks/use-typewriter-text';
+import { splitGraphemes } from '../../utils/grapheme';
 import styles from './Chat.module.css';
 
 interface Props {

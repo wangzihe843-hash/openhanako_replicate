@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { splitGraphemes } from '../utils/grapheme';
 
 export interface TypewriterTextOptions {
   active?: boolean;
@@ -12,25 +13,6 @@ const DEFAULT_DISPLAY_FPS = 30;
 const DEFAULT_MIN_BATCH = 1;
 const DEFAULT_MAX_BATCH = 24;
 const DEFAULT_CATCH_UP_THRESHOLD = 24;
-
-let graphemeSegmenter: Intl.Segmenter | null | undefined;
-
-function getGraphemeSegmenter(): Intl.Segmenter | null {
-  if (graphemeSegmenter !== undefined) return graphemeSegmenter;
-  if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
-    graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  } else {
-    graphemeSegmenter = null;
-  }
-  return graphemeSegmenter;
-}
-
-export function splitGraphemes(text: string): string[] {
-  if (!text) return [];
-  const segmenter = getGraphemeSegmenter();
-  if (!segmenter) return Array.from(text);
-  return Array.from(segmenter.segment(text), (entry) => entry.segment);
-}
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined'

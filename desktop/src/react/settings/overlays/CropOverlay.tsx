@@ -7,7 +7,7 @@ import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 
 const CROP_SIZE = 256;
-const OUTPUT_SIZE = 512;
+const OUTPUT_SIZE = 1024;
 
 interface CropState {
   role: string;
@@ -109,6 +109,8 @@ export function CropOverlay() {
     canvas.width = OUTPUT_SIZE;
     canvas.height = OUTPUT_SIZE;
     const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     const srcX = -s.ox / s.scale;
     const srcY = -s.oy / s.scale;
     const srcSize = CROP_SIZE / s.scale;

@@ -84,7 +84,7 @@
 .messageUser {
     background: rgba(0, 0, 0, 0.045);
     padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
+    border-radius: var(--radius-chat-card) var(--radius-chat-card) var(--radius-chat-card-inner) var(--radius-chat-card);
     color: var(--text);
     font-size: 0.95rem;
     word-break: break-word;
@@ -107,7 +107,7 @@
 }
 
 .attachCard {
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-chat-card);
     overflow: hidden;
     cursor: pointer;
 }
@@ -120,7 +120,7 @@
     max-width: 200px;
     max-height: 150px;
     background: var(--attach-bg, rgba(0, 0, 0, 0.04));
-    border-radius: 8px;
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
     object-fit: contain;
 }
@@ -343,7 +343,7 @@
     margin: var(--space-sm) 0;
     padding: var(--space-md);
     background: var(--bg-card, #fff);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
     font-size: 0.82rem;
     width: fit-content;
@@ -413,7 +413,7 @@
     margin: var(--space-md) 0;
     padding: var(--space-lg) var(--space-lg) var(--space-md);
     background: var(--bg-card, #fff);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
     font-size: 0.88rem;
     min-width: 320px;
@@ -459,7 +459,7 @@
     flex-direction: column;
     gap: 0;
     background: var(--overlay-light, rgba(0,0,0,0.03));
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-chat-card);
     overflow: hidden;
     max-height: 240px;
     overflow-y: auto;
@@ -766,7 +766,7 @@
     padding: 0.7rem 0.9rem;
     background: var(--bg-card, var(--bg));
     border: 1px solid var(--border, rgba(0,0,0,0.1));
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
     overflow: hidden;
     transition: background var(--duration-fast), border-color var(--duration-fast);
@@ -792,7 +792,7 @@
     align-items: center;
     justify-content: center;
     background: var(--overlay-subtle, rgba(0,0,0,0.03));
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-chat-card);
 }
 
 .fileOutputInfo {
@@ -823,7 +823,7 @@
     align-items: center;
     margin-left: auto;
     border: 1px solid var(--border, rgba(0,0,0,0.1));
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-chat-card);
     overflow: hidden;
     background: var(--bg-card, var(--bg));
 }
@@ -865,7 +865,7 @@
     padding: 5px 0;
     background: var(--bg-card, var(--bg));
     border: 1px solid var(--overlay-light);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.07);
     animation: hana-fade-up var(--duration-fast) var(--ease-out);
 }
@@ -903,7 +903,7 @@
     padding: 0.3rem;
     background: var(--bg-card, var(--bg));
     border: 0.5px solid var(--border, rgba(0,0,0,0.08));
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
     transition: border-color var(--duration-fast);
 }
@@ -917,7 +917,7 @@
     max-width: 100%;
     max-height: 450px;
     object-fit: contain;
-    border-radius: calc(var(--radius-lg) - 0.35rem);
+    border-radius: var(--radius-chat-card-inner);
 }
 
 .imageOutputName {
@@ -940,7 +940,7 @@
     padding: 0.55rem 0.85rem;
     background: var(--tool-bg);
     border: 1px solid var(--accent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     max-width: 100%;
     cursor: pointer;
     transition: background var(--duration-fast), box-shadow var(--duration-fast);
@@ -1000,7 +1000,7 @@
 
 .browserScreenshot img {
     max-width: 100%;
-    border-radius: 8px;
+    border-radius: var(--radius-chat-card);
     border: 1px solid var(--border);
     cursor: pointer;
     transition: opacity var(--duration-fast);
@@ -1020,7 +1020,7 @@
     padding: 0.55rem 0.85rem;
     background: var(--tool-bg);
     border: 1px solid var(--accent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     max-width: 100%;
     cursor: pointer;
     transition: background var(--duration-fast), box-shadow var(--duration-fast);
@@ -1122,7 +1122,7 @@
     height: calc(var(--timeline-visible-rows) * var(--timeline-row-height) + 2 * var(--timeline-card-pad-y));
     max-height: calc(10 * var(--timeline-row-height) + 2 * var(--timeline-card-pad-y));
     transform: translateY(-50%);
-    border-radius: var(--radius-card);
+    border-radius: var(--radius-chat-card);
     pointer-events: none;
     overflow: visible;
 }
@@ -1324,7 +1324,7 @@
     --subagent-preview-height: 260px;
     margin: var(--space-sm) 0;
     background: var(--bg-card, #fff);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
     width: 420px;
     max-width: 90%;

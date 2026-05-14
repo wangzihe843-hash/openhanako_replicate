@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { hanaUrl } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import { yuanFallbackAvatar } from './agent-helpers';
+import { displayInitial } from './grapheme';
 
 let agentAvatarVersion = Date.now();
 
 function userFallbackAvatar(displayName: string): string {
-  const initial = (displayName || 'User').trim().slice(0, 1).toUpperCase() || 'U';
+  const initial = displayInitial(displayName || 'User', 'U');
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
     '<rect width="40" height="40" rx="20" fill="#f0eee9"/>',
@@ -158,7 +159,7 @@ export function AgentAvatar({
       aria-label={alt ?? info.displayName}
       onClick={onClick}
     >
-      {(info.displayName || '?').charAt(0).toUpperCase()}
+      {displayInitial(info.displayName, '?')}
     </span>
   );
 }

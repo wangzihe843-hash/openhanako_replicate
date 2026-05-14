@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { callText } from "./llm-client.js";
 import { getLocale } from "../server/i18n.js";
+import { normalizePlainDescription } from "../lib/text/internal-narration.js";
 
 /** Pi SDK content block 是否为工具调用（兼容 tool_use / toolCall 两种格式） */
 export const isToolCallBlock = (b) => (b.type === "tool_use" || b.type === "toolCall") && !!b.name;
@@ -423,7 +424,7 @@ Examples:
 /**
  * 为 agent 生成能力描述摘要
  * @param {object} utilConfig - resolveUtilityConfig() 返回值
- * @param {string} personality - Agent.personality 全文
+ * @param {string} personality - Agent.descriptionSource 全文（identity + ishiki，不含 yuan 运行协议）
  * @param {string} locale - agent 的 config.locale（"zh" / "en" 等）
  * @returns {Promise<string|null>}
  */
@@ -434,8 +435,8 @@ export async function generateDescription(utilConfig, personality, locale) {
 
     const isZh = String(locale || "").startsWith("zh");
     const systemContent = isZh
-      ? "根据以下 AI agent 的人格设定，写一段 100 字以内的能力描述。要求：涵盖人格特征、专长领域、沟通风格、适合的任务类型。纯文本，不要用 markdown 格式。直接输出描述，不要解释。"
-      : "Based on the following AI agent persona, write a capability description in under 100 characters. Cover: personality traits, expertise, communication style, suitable tasks. Plain text, no markdown. Output the description directly, no explanation.";
+      ? "你是产品花名册的第三方编辑。根据以下 AI agent 的公开人格材料，写一段 100 字以内的第三人称简介。要求：像介绍一位助手，而不是替助手自述；涵盖人格特征、专长领域、沟通风格、适合的任务类型；不要使用第一人称；不要输出 <mood>、Vibe、Sparks、Pulse、Reflect 或任何内部标签。纯文本，不要用 markdown 格式。直接输出简介，不要解释。"
+      : "You are a third-person product roster editor. Based on the public persona material below, write a public-facing description of this AI agent in under 100 characters. Describe the assistant from the outside, not in first person. Cover personality traits, expertise, communication style, and suitable tasks. Do not output <mood>, Vibe, Sparks, Pulse, Reflect, or any internal tags. Plain text, no markdown. Output the description directly, no explanation.";
 
     const raw = await callLlm({
       model, api, api_key, base_url,
@@ -448,13 +449,8 @@ export async function generateDescription(utilConfig, personality, locale) {
     });
     if (!raw) return null;
 
-    const text = raw.trim();
-    if (text.length <= 100) return text;
-    const cutIdx = Math.max(
-      text.lastIndexOf("。", 100),
-      text.lastIndexOf(".", 100),
-    );
-    return cutIdx > 20 ? text.slice(0, cutIdx + 1) : text.slice(0, 100);
+    const text = normalizePlainDescription(raw, 100);
+    return text || null;
   } catch (err) {
     console.error("[llm-utils] generateDescription failed:", err.message);
     return null;

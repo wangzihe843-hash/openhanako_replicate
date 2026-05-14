@@ -205,4 +205,18 @@ describe('InputArea media send', () => {
       visionAuxiliary: true,
     });
   });
+
+  it('does not send while an agent switch session is still pending', async () => {
+    useStore.setState({ pendingSessionSwitchPath: '/session/new-agent.jsonl' } as never);
+
+    render(React.createElement(InputArea));
+
+    const send = screen.getByTestId('send') as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    fireEvent.click(send);
+
+    await waitFor(() => {
+      expect(mocks.wsSend).not.toHaveBeenCalled();
+    });
+  });
 });

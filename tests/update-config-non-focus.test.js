@@ -83,6 +83,16 @@ describe("updateConfig with agentId", () => {
     expect(focusAgent.updateConfig).not.toHaveBeenCalled();
   });
 
+  it("显式刷新 description 时只把刷新意图传给目标 agent", async () => {
+    const { focusAgent, targetAgent, deps } = makeDeps();
+    const coord = new ConfigCoordinator(deps);
+
+    await coord.updateConfig({}, { agentId: "target", refreshDescription: true });
+
+    expect(targetAgent.updateConfig).toHaveBeenCalledWith({}, { refreshDescription: true });
+    expect(focusAgent.updateConfig).not.toHaveBeenCalled();
+  });
+
   it("不传 agentId 时刷新焦点 agent", async () => {
     const { focusAgent, targetAgent, deps } = makeDeps();
     const coord = new ConfigCoordinator(deps);

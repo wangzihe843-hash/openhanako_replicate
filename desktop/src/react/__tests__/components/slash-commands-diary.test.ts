@@ -37,8 +37,28 @@ describe('executeDiary', () => {
       dedupeKey: 'slash-diary-progress',
     });
 
-    await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', { method: 'POST' }));
+    await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', {
+      method: 'POST',
+      timeout: 150_000,
+    }));
     await vi.waitFor(() => expect(removeToast).toHaveBeenCalledWith(42));
     expect(addToast).toHaveBeenLastCalledWith('slash.diaryDone', 'success', 5000);
+  });
+
+  it('keeps the progress toast cleanup and failure toast when diary writing fails', async () => {
+    vi.mocked(hanaFetch).mockRejectedValue(new Error('request aborted'));
+    const addToast = vi.fn().mockReturnValue(42);
+    const removeToast = vi.fn();
+    const setInput = vi.fn();
+    const setMenuOpen = vi.fn();
+
+    executeDiary(t, addToast, removeToast, setInput, setMenuOpen)();
+
+    await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', {
+      method: 'POST',
+      timeout: 150_000,
+    }));
+    await vi.waitFor(() => expect(removeToast).toHaveBeenCalledWith(42));
+    expect(addToast).toHaveBeenLastCalledWith('slash.diaryFailed', 'error', 6000);
   });
 });

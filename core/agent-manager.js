@@ -12,6 +12,7 @@ import { Agent } from "./agent.js";
 import { safeReadYAMLSync } from "../shared/safe-fs.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { clearConfigCache } from "../lib/memory/config-loader.js";
+import { hasCompiledMemory, writeCompiledMemorySnapshot } from "../lib/memory/compiled-memory-snapshot.js";
 import { t } from "../server/i18n.js";
 import { ActivityStore } from "../lib/desk/activity-store.js";
 import { createHash } from "crypto";
@@ -22,6 +23,7 @@ import {
 import { findModel, parseModelRef } from "../shared/model-ref.js";
 import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from "../shared/default-workspace.js";
 import { relativePathInsideBase } from "./message-utils.js";
+import { detachAgentFromBundles } from "../lib/skill-bundles/store.js";
 
 const log = createModuleLogger("agent-mgr");
 
@@ -231,16 +233,16 @@ export class AgentManager {
 
   /**
    * 异步刷新 agent 的 description.md
-   * 通过 hash 比对 personality + yuan 类型，变化时调用 LLM 重新生成。
+   * 通过 hash 比对 descriptionSource + yuan 类型，变化时调用 LLM 重新生成。
    */
   async _refreshDescription(agentId) {
     try {
       const ag = this._agents.get(agentId);
       if (!ag) return;
 
-      const personality = ag.personality;
+      const source = ag.descriptionSource || ag.personality;
       const yuan = ag.config?.agent?.yuan || "hanako";
-      const hash = createHash("sha256").update(personality + "\n" + yuan).digest("hex");
+      const hash = createHash("sha256").update(source + "\n" + yuan).digest("hex");
 
       const descPath = path.join(this._d.agentsDir, agentId, "description.md");
 
@@ -253,7 +255,7 @@ export class AgentManager {
 
       const utilConfig = this._d.resolveUtilityConfig({ agentId });
       const locale = ag.config?.locale || "zh";
-      const desc = await generateDescription(utilConfig, personality, locale);
+      const desc = await generateDescription(utilConfig, source, locale);
       if (!desc) {
         log.log(`[description] ${agentId}: 生成跳过（LLM 不可用或返回空）`);
         return;
@@ -279,7 +281,7 @@ export class AgentManager {
     try { await this._d.getChannelManager().cleanupAgentFromChannels(agentId); } catch {}
   }
 
-  async createAgent({ name, id, yuan }) {
+  async createAgent({ name, id, yuan, enabledSkills, initialFiles, avatarPath, initialMemory }) {
     if (!name?.trim()) throw new Error(t("error.agentNameEmpty"));
 
     const agentId = id?.trim() || await this._generateAgentId(name);
@@ -378,9 +380,50 @@ export class AgentManager {
       fs.copyFileSync(publicIshikiSrc, path.join(agentDir, "public-ishiki.md"));
     }
 
+    if (initialFiles && typeof initialFiles === "object") {
+      const fileMap = {
+        identity: "identity.md",
+        ishiki: "ishiki.md",
+        publicIshiki: "public-ishiki.md",
+      };
+      for (const [key, fileName] of Object.entries(fileMap)) {
+        if (typeof initialFiles[key] === "string") {
+          fs.writeFileSync(path.join(agentDir, fileName), initialFiles[key], "utf-8");
+        }
+      }
+    }
+
+    if (avatarPath) {
+      const ext = path.extname(avatarPath).toLowerCase();
+      const avatarExt = ext === ".jpeg" ? ".jpg" : ext;
+      if (![".png", ".jpg", ".webp"].includes(avatarExt)) {
+        await this._rollbackAgentCreation(agentDir, agentId);
+        throw new Error("Unsupported avatar image type");
+      }
+      try {
+        fs.copyFileSync(avatarPath, path.join(agentDir, "avatars", `agent${avatarExt}`));
+      } catch (err) {
+        await this._rollbackAgentCreation(agentDir, agentId);
+        throw err;
+      }
+    }
+
     // 可选文件：确保存在（即使为空），避免运行时 ENOENT
     const touchIfMissing = (p) => { if (!fs.existsSync(p)) fs.writeFileSync(p, '', 'utf-8'); };
     touchIfMissing(path.join(agentDir, 'pinned.md'));
+
+    if (initialMemory?.compiled && hasCompiledMemory(initialMemory.compiled)) {
+      try {
+        writeCompiledMemorySnapshot(path.join(agentDir, "memory"), initialMemory.compiled, {
+          source: initialMemory.source || "character-card",
+          sourceId: initialMemory.sourceId || `agent-create-${agentId}`,
+          sourcePackage: initialMemory.sourcePackage || null,
+        });
+      } catch (err) {
+        await this._rollbackAgentCreation(agentDir, agentId);
+        throw err;
+      }
+    }
 
     // 频道系统
     try {
@@ -402,11 +445,15 @@ export class AgentManager {
       await this._rollbackAgentCreation(agentDir, agentId);
       throw err;
     }
-    // #419: 新建 agent 继承当前已装 user/SDK skill 快照;空快照时保留 template 默认
-    const defaultEnabled = this._d.getSkills().computeDefaultEnabledForNewAgent();
-    if (defaultEnabled.length > 0) {
+    // #419: 普通新建 agent 继承当前已装 user/SDK skill 快照;空快照时保留 template 默认。
+    // 角色卡导入会传入显式 enabledSkills,此时必须只启用包内技能。
+    const hasEnabledOverride = Array.isArray(enabledSkills);
+    const nextEnabled = hasEnabledOverride
+      ? enabledSkills
+      : this._d.getSkills().computeDefaultEnabledForNewAgent();
+    if (hasEnabledOverride || nextEnabled.length > 0) {
       try {
-        ag.updateConfig({ skills: { enabled: defaultEnabled } });
+        ag.updateConfig({ skills: { enabled: nextEnabled } });
         this._d.getSkills().syncAgentSkills(ag);
       } catch (err) {
         await this._rollbackAgentCreation(agentDir, agentId);
@@ -557,6 +604,14 @@ export class AgentManager {
     }
 
     await fsp.rm(agentDir, { recursive: true, force: true });
+
+    if (this._d.hanakoHome) {
+      try {
+        detachAgentFromBundles({ hanakoHome: this._d.hanakoHome }, agentId);
+      } catch (err) {
+        log.error(`Skill Bundle 解耦失败 (${agentId}): ${err.message}`);
+      }
+    }
 
     const prefs = this._d.getPrefs();
     const primaryId = prefs.getPrimaryAgent();

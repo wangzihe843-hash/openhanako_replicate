@@ -336,7 +336,7 @@ describe('computer app approval prompt', () => {
     expect(stackBlock).toMatch(/width:\s*100%/);
     expect(promptBlock).toMatch(/width:\s*calc\(100%\s*-\s*4rem\)/);
     expect(promptBlock).toMatch(/background:\s*var\(--bg-card\)/);
-    expect(promptBlock).toMatch(/border-radius:\s*var\(--radius-lg\)/);
+    expect(promptBlock).toMatch(/border-radius:\s*var\(--radius-chat-card\)/);
     expect(promptBlock).toMatch(/margin:\s*0 auto -2rem/);
     expect(promptBlock).not.toContain('color-mix');
     expect(promptBlock).not.toContain('border-bottom-color: transparent');

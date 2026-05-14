@@ -84,6 +84,8 @@ type AddToast = (
 ) => number | null;
 type RemoveToast = (id: number) => void;
 
+const DIARY_WRITE_TIMEOUT_MS = 150_000;
+
 export function executeDiary(
   t: (key: string) => string,
   addToast: AddToast,
@@ -101,7 +103,10 @@ export function executeDiary(
 
     void (async () => {
       try {
-        const res = await hanaFetch('/api/diary/write', { method: 'POST' });
+        const res = await hanaFetch('/api/diary/write', {
+          method: 'POST',
+          timeout: DIARY_WRITE_TIMEOUT_MS,
+        });
         const data = await res.json();
         if (progressToastId !== null) removeToast(progressToastId);
         if (!res.ok || data.error) {

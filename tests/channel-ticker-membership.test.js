@@ -61,7 +61,9 @@ describe("channel-ticker membership source", () => {
     expect(onMemorySummarize).toHaveBeenCalledWith(
       "hana",
       channelId,
-      expect.stringContaining("@Hana hello"),
+      expect.objectContaining({
+        messages: [expect.objectContaining({ sender: "user", body: "@Hana hello" })],
+      }),
     );
   });
 

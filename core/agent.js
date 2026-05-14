@@ -687,7 +687,7 @@ export class Agent {
    * 更新配置（写入 config.yaml 并刷新受影响的模块）
    * @param {object} partial - 要合并的配置片段
    */
-  updateConfig(partial) {
+  updateConfig(partial, options = {}) {
     // 写入磁盘 + 重新加载
     saveConfig(this.configPath, partial);
     this._config = loadConfig(this.configPath);
@@ -721,8 +721,8 @@ export class Agent {
     // 重建 system prompt（按 master 构建，与 per-session 开关解耦）
     this._systemPrompt = this.buildSystemPrompt({ forceMemoryEnabled: this._memoryMasterEnabled });
 
-    // identity / ishiki / yuan 变化时刷新 description
-    if (partial.agent?.yuan) {
+    // identity / ishiki 文件变化由调用方显式传入 refreshDescription；yuan 变化来自 config patch。
+    if (options.refreshDescription || partial.agent?.yuan) {
       this._descriptionRefreshHandler?.();
     }
   }
@@ -751,6 +751,27 @@ export class Agent {
       || readFile(path.join(this.productDir, "ishiki-templates", `${yuanType}.md`))
       || readFile(path.join(this.productDir, "ishiki.example.md"));
     return fill(identityMd) + "\n\n" + fill(yuanMd || "") + "\n\n" + fill(ishikiMd);
+  }
+
+  /** 返回花名册描述生成用的人格来源，不包含 yuan 输出协议。 */
+  get descriptionSource() {
+    const isZh = String(this._config.locale || "").startsWith("zh");
+    const fill = (text) => text
+      .replace(/\{\{userName\}\}/g, this.userName)
+      .replace(/\{\{agentName\}\}/g, this.agentName)
+      .replace(/\{\{agentId\}\}/g, this.id);
+    const readFile = (p) => safeReadFile(p, "");
+    const langDir = isZh ? "" : "en/";
+    const yuanType = this._config?.agent?.yuan || "hanako";
+    const identityMd = readFile(path.join(this.agentDir, "identity.md"))
+      || readFile(path.join(this.productDir, "identity-templates", `${langDir}${yuanType}.md`))
+      || readFile(path.join(this.productDir, "identity-templates", `${yuanType}.md`))
+      || readFile(path.join(this.productDir, "identity.example.md"));
+    const ishikiMd = readFile(path.join(this.agentDir, "ishiki.md"))
+      || readFile(path.join(this.productDir, "ishiki-templates", `${langDir}${yuanType}.md`))
+      || readFile(path.join(this.productDir, "ishiki-templates", `${yuanType}.md`))
+      || readFile(path.join(this.productDir, "ishiki.example.md"));
+    return fill(identityMd) + "\n\n" + fill(ishikiMd);
   }
 
   /** 读取 yuan 模板（能力定义） */
