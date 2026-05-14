@@ -1589,6 +1589,10 @@
   background: linear-gradient(135deg, #7d5f5f, #c28f86);
 }
 
+.phoneAppGlyph_divination {
+  background: linear-gradient(135deg, #4d5a7a, #8b7ab8);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;
@@ -3179,6 +3183,43 @@
   font-size: 0.8rem;
   line-height: 1.55;
   background: rgba(255, 255, 255, 0.62);
+}
+
+.phoneDivinationRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phoneDivinationRow .phoneJournalCard {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.phoneDivinationRowDelete {
+  flex: 0 0 auto;
+  align-self: center;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.phoneDivinationRowDelete:hover:not(:disabled) {
+  border-color: rgba(220, 100, 100, 0.45);
+  color: #b42318;
+}
+
+.phoneDivinationRowDelete:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* —— 小手机日程 —— */

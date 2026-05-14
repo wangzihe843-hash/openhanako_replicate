@@ -22,6 +22,7 @@ const ACTIONS = new Set([
   "writeJson",
   "appendJsonl",
   "listJsonl",
+  "writeJsonl",
   "deleteJsonlRecord",
   "read",
   "write",
@@ -263,6 +264,16 @@ export function createXingyeStorageRoute(engine) {
             }
           }
           return c.json({ ok: true, records });
+        }
+        case "writeJsonl": {
+          if (!Array.isArray(body?.records)) {
+            return c.json({ error: "records required" }, 400);
+          }
+          const content = body.records.length
+            ? `${body.records.map((record) => JSON.stringify(record)).join("\n")}\n`
+            : "";
+          await atomicWrite(target, Buffer.from(content, "utf-8"));
+          return c.json({ ok: true });
         }
         case "deleteJsonlRecord": {
           const recordId = typeof body?.recordId === "string" ? body.recordId.trim() : "";

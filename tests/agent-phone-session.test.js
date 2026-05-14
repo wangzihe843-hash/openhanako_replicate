@@ -10,8 +10,9 @@ import {
 describe("agent phone session policy", () => {
   it("uses a stable safe session directory per conversation", () => {
     const dir = getAgentPhoneSessionDir("/agents/hana", "dm:yui");
-    expect(dir).toContain("/agents/hana/phone/sessions/");
-    expect(dir.split("/").at(-1)).not.toContain(":");
+    const posix = dir.replace(/\\/g, "/");
+    expect(posix).toContain("/agents/hana/phone/sessions/");
+    expect(dir.split(/[/\\]/).filter(Boolean).at(-1)).not.toContain(":");
   });
 
   it("recognizes phone sessions so memory pipelines can exclude them", () => {

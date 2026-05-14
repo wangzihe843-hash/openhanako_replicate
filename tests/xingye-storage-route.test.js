@@ -511,6 +511,65 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("writeJsonl replaces one app entries file under the selected agent only", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      fs.mkdirSync(path.join(agentsDir, "agent-b"), { recursive: true });
+      const agents = new Map([
+        ["agent-a", { id: "agent-a", name: "A" }],
+        ["agent-b", { id: "agent-b", name: "B" }],
+      ]);
+      const engine = {
+        agentsDir,
+        getAgent: (id) => agents.get(id) || null,
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const writeA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJsonl",
+          agentId: "agent-a",
+          relativePath: "apps/divination/entries.jsonl",
+          records: [{ id: "entry-2", title: "second" }],
+        }),
+      });
+      expect(writeA.status).toBe(200);
+
+      const listA = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "agent-a",
+          relativePath: "apps/divination/entries.jsonl",
+        }),
+      });
+      expect(await listA.json()).toMatchObject({ ok: true, records: [{ id: "entry-2", title: "second" }] });
+
+      const listB = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "agent-b",
+          relativePath: "apps/divination/entries.jsonl",
+        }),
+      });
+      expect(await listB.json()).toMatchObject({ ok: true, records: [] });
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "apps", "divination", "entries.jsonl");
+      expect(fs.existsSync(abs)).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("deleteJsonlRecord matches numeric ids and synthetic secret-space keys like draft_reply-1", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {

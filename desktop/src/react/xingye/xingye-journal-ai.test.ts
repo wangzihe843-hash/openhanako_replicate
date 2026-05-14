@@ -53,7 +53,8 @@ describe('generateJournalDraftWithAI', () => {
         method: 'POST',
       }),
     );
-    const bodyStr = String(vi.mocked(hanaFetch).mock.calls[0]?.[1]?.body ?? '');
+    const generateCall = vi.mocked(hanaFetch).mock.calls.find((call) => call[0] === '/api/xingye/phone-generate');
+    const bodyStr = String(generateCall?.[1]?.body ?? '');
     const body = JSON.parse(bodyStr) as { kind?: string; prompt?: string };
     expect(body.kind).toBe('journal_draft');
     expect(body.prompt).toContain('私人日记');

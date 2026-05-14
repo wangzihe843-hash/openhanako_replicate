@@ -17,6 +17,7 @@ interface PhoneHomeProps {
   onOpenMmChat: () => void;
   onOpenJournal: () => void;
   onOpenSchedule: () => void;
+  onOpenDivination: () => void;
 }
 
 const phoneIcons = {
@@ -88,6 +89,13 @@ const phoneIcons = {
       <path d="m19 3 1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" />
     </svg>
   ),
+  moon: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3a8.5 8.5 0 0 0 11.5 11.5Z" />
+      <path d="M6 18h2" />
+      <path d="M8 20v2" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -95,6 +103,7 @@ const appShortcuts = [
   { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
   { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
   { label: '日程', subtitle: '安排与约定记录', tone: 'schedule', icon: phoneIcons.calendar, action: 'schedule' },
+  { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
@@ -130,6 +139,7 @@ export function PhoneHome({
   onOpenMmChat,
   onOpenJournal,
   onOpenSchedule,
+  onOpenDivination,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -165,6 +175,11 @@ export function PhoneHome({
     }
     if (action === 'schedule') {
       onOpenSchedule();
+      return;
+    }
+    if (action === 'divination') {
+      onOpenDivination();
+      return;
     }
   };
 
@@ -272,7 +287,7 @@ export function PhoneHome({
         </section>
 
         <section className={styles.phoneEmptyStateCard}>
-          日记与 MM Chat 会话列表为按角色本地持久化；MM Chat 仍未接模型。相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
+          日记、占卜与 MM Chat 会话列表为按角色本地持久化；MM Chat 仍未接模型。相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
         </section>
       </div>
     </div>

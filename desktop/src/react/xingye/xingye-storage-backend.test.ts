@@ -17,6 +17,8 @@ describe('xingye-storage-backend', () => {
     expect(await b.listJsonl<{ id: string }>('a2', 'secret-space/dream.jsonl')).toEqual([]);
     expect(await b.deleteJsonlRecord('a1', 'secret-space/dream.jsonl', '1')).toBe(true);
     expect(await b.listJsonl<{ id: string }>('a1', 'secret-space/dream.jsonl')).toEqual([{ id: '2' }]);
+    await b.writeJsonl('a1', 'secret-space/dream.jsonl', [{ id: '3' }, { id: '4' }]);
+    expect(await b.listJsonl<{ id: string }>('a1', 'secret-space/dream.jsonl')).toEqual([{ id: '3' }, { id: '4' }]);
     expect(await b.deleteJsonlRecord('a1', 'secret-space/dream.jsonl', 'ghost')).toBe(false);
   });
 
@@ -74,6 +76,16 @@ describe('xingye-storage-backend', () => {
             .map(line => JSON.parse(line)),
         };
       }
+      if (body.action === 'writeJsonl') {
+        const rel = String(body.relativePath);
+        const content = Array.isArray(body.records)
+          ? `${body.records.map((record) => JSON.stringify(record)).join('\n')}\n`
+          : '';
+        const prev = writes.find((w) => w.rel === rel);
+        if (prev) writes.splice(writes.indexOf(prev), 1);
+        writes.push({ rel, content });
+        return { ok: true };
+      }
       return {};
     };
     const b = createAgentXingyeStorageBackend(post);
@@ -84,6 +96,8 @@ describe('xingye-storage-backend', () => {
     await b.appendJsonl('ag', 'secret-space/dream.jsonl', { e: 2 });
     const rows = await b.listJsonl<{ e: number }>('ag', 'secret-space/dream.jsonl');
     expect(rows).toEqual([{ e: 1 }, { e: 2 }]);
+    await b.writeJsonl('ag', 'secret-space/dream.jsonl', [{ e: 3 }]);
+    expect(await b.listJsonl<{ e: number }>('ag', 'secret-space/dream.jsonl')).toEqual([{ e: 3 }]);
     expect(await b.deleteJsonlRecord('ag', 'secret-space/dream.jsonl', 'noop')).toBe(false);
   });
 

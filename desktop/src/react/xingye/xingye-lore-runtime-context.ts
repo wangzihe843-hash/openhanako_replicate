@@ -95,7 +95,7 @@ function normalizeKeyword(value: unknown): string | null {
   return trimmed.toLowerCase();
 }
 
-function collectMatchedKeywords(
+export function collectMatchedKeywords(
   entryKeywords: ReadonlyArray<string>,
   queryText: string,
   explicitKeywords: ReadonlyArray<string>,

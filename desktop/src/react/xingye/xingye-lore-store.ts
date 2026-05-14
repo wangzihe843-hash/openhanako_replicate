@@ -63,7 +63,7 @@ export const XINGYE_LORE_CATEGORY_LABELS: Record<XingyeLoreCategory, string> = {
   rule: '规则',
 };
 
-const XINGYE_LORE_ENTRIES_CHANGED_EVENT = 'xingye-lore-entries-changed';
+export const XINGYE_LORE_ENTRIES_CHANGED_EVENT = 'xingye-lore-entries-changed';
 const LEGACY_LORE_CATEGORY: Record<string, XingyeLoreCategory> = {
   world: 'worldview',
   memory: 'background',
@@ -188,6 +188,23 @@ function saveLoreEntryMap(entries: XingyeLoreEntryMap, storage: StorageLike | nu
 function notifyLoreEntriesChanged() {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new Event(XINGYE_LORE_ENTRIES_CHANGED_EVENT));
+}
+
+export function loreEntriesFromAgentLoreJsonBody(data: unknown, defaultAgentId: string): XingyeLoreEntry[] {
+  if (!isRecord(data)) return [];
+  const aid = typeof defaultAgentId === 'string' ? defaultAgentId.trim() : '';
+  if (!aid) return [];
+  const out: XingyeLoreEntry[] = [];
+  for (const [id, value] of Object.entries(data)) {
+    if (!isRecord(value)) continue;
+    const merged = {
+      ...value,
+      agentId: typeof value.agentId === 'string' && value.agentId.trim() ? value.agentId : aid,
+    };
+    const n = normalizeLoreEntry(merged, id);
+    if (n) out.push(n);
+  }
+  return out.sort((a, b) => b.priority - a.priority || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function listLoreEntries(agentId: string | null | undefined, storage: StorageLike | null = getLocalStorage()): XingyeLoreEntry[] {

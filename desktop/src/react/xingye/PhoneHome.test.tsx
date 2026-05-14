@@ -49,6 +49,7 @@ function renderPhoneHome() {
       onOpenMmChat={vi.fn()}
       onOpenJournal={vi.fn()}
       onOpenSchedule={onOpenSchedule}
+      onOpenDivination={vi.fn()}
     />,
   );
 }
@@ -110,11 +111,33 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenMmChat={vi.fn()}
         onOpenJournal={vi.fn()}
         onOpenSchedule={onOpenSchedule}
+        onOpenDivination={vi.fn()}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /日程/ }));
 
     expect(onOpenSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the divination app from the phone home grid', () => {
+    const onOpenDivination = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={vi.fn()}
+        onOpenDivination={onOpenDivination}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /占卜/ }));
+
+    expect(onOpenDivination).toHaveBeenCalledTimes(1);
   });
 });

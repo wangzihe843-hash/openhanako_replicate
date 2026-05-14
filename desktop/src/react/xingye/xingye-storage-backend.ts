@@ -3,6 +3,7 @@ export type XingyeStorageBackend = {
   writeJson<T>(agentId: string, relativePath: string, data: T): Promise<void>;
   appendJsonl<T>(agentId: string, relativePath: string, record: T): Promise<void>;
   listJsonl<T>(agentId: string, relativePath: string): Promise<T[]>;
+  writeJsonl<T>(agentId: string, relativePath: string, records: T[]): Promise<void>;
   /** Removes the first JSONL row whose `key` or `id` equals `recordId`; preserves order of remaining rows/lines. */
   deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean>;
 };
@@ -70,6 +71,9 @@ export function createMemoryXingyeStorageBackend(): XingyeStorageBackend {
       }
       return out;
     },
+    async writeJsonl<T>(agentId: string, relativePath: string, records: T[]): Promise<void> {
+      jsonl.set(key(agentId, relativePath), records.map((record) => JSON.stringify(record)));
+    },
     async deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean> {
       const k = key(agentId, relativePath);
       const lines = jsonl.get(k) ?? [];
@@ -136,6 +140,10 @@ export function createLocalStorageXingyeBackend(
       }
       return out;
     },
+    async writeJsonl<T>(agentId: string, relativePath: string, records: T[]): Promise<void> {
+      const kp = keyForPath(agentId, relativePath);
+      storage.setItem(kp, records.length ? `${records.map((record) => JSON.stringify(record)).join('\n')}\n` : '');
+    },
     async deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean> {
       const kp = keyForPath(agentId, relativePath);
       const raw = storage.getItem(kp);
@@ -197,6 +205,10 @@ export function createAgentXingyeStorageBackend(post: PostFn): XingyeStorageBack
       requireAgentId(agentId);
       const data = await post({ action: 'listJsonl', agentId, relativePath });
       return Array.isArray(data?.records) ? data.records as T[] : [];
+    },
+    async writeJsonl<T>(agentId: string, relativePath: string, records: T[]): Promise<void> {
+      requireAgentId(agentId);
+      await post({ action: 'writeJsonl', agentId, relativePath, records });
     },
     async deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean> {
       requireAgentId(agentId);
