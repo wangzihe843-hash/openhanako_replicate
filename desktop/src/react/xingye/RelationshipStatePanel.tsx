@@ -242,6 +242,19 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
       </div>
 
       <div className={styles.relationshipStateBody}>
+        <div className={styles.relationshipMoodHero} aria-label="此刻心情">
+          <span aria-hidden className={styles.relationshipMoodHeroBloom} />
+          <div className={styles.relationshipMoodHeroKicker}>NOW · 此刻 / 心情</div>
+          <div className={styles.relationshipMoodHeroMood}>
+            {relationshipState.mood || '——'}
+          </div>
+          {relationshipState.stateSummary ? (
+            <div className={styles.relationshipMoodHeroSummary}>
+              —— {relationshipState.stateSummary}
+            </div>
+          ) : null}
+        </div>
+
         <div className={styles.relationshipStageCard}>
           <span>关系阶段</span>
           <strong>{relationshipState.relationshipLabel}</strong>
@@ -266,10 +279,6 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
         </div>
 
         <div className={styles.relationshipInfoGrid}>
-          <div className={styles.relationshipInfoItem}>
-            <span>当前心情</span>
-            <strong>{relationshipState.mood}</strong>
-          </div>
           <div className={styles.relationshipInfoItem}>
             <span>更新时间</span>
             <strong>{formatUpdatedAt(relationshipState.updatedAt)}</strong>

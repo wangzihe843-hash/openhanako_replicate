@@ -35,7 +35,9 @@ export {
   SECRET_SPACE_AI_GENERABLE_CATEGORIES,
 } from './xingye-secret-space-prompts';
 
-export function normalizeSecretSpaceAiResult(raw: unknown): { title: string; content: string } | null {
+export function normalizeSecretSpaceAiResult(
+  raw: unknown,
+): { title: string; content: string; meta?: string; tags?: string[] } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const contentRaw = record.content;
@@ -45,7 +47,29 @@ export function normalizeSecretSpaceAiResult(raw: unknown): { title: string; con
   const title = typeof titleRaw === 'string' && titleRaw.trim()
     ? titleRaw.trim().slice(0, 200)
     : content.slice(0, 48);
-  return { title, content };
+
+  // Optional meta (used for draft recipient, saved-item kind/source, unsent reason)
+  const metaRaw = record.meta;
+  let meta = typeof metaRaw === 'string' && metaRaw.trim() ? metaRaw.trim().slice(0, 160) : undefined;
+  // Append source as suffix to meta if provided (saved_item style)
+  const sourceRaw = record.source;
+  if (typeof sourceRaw === 'string' && sourceRaw.trim()) {
+    const sourceText = sourceRaw.trim().slice(0, 120);
+    meta = meta ? `${meta} · ${sourceText}` : sourceText;
+  }
+
+  // Optional tags (used for dream imagery keywords)
+  const tagsRaw = record.tags;
+  const tags = Array.isArray(tagsRaw)
+    ? tagsRaw
+        .filter((t): t is string => typeof t === 'string')
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((t) => t.slice(0, 12))
+    : undefined;
+
+  return { title, content, meta, tags: tags && tags.length ? tags : undefined };
 }
 
 /**
@@ -59,7 +83,7 @@ export async function generateSecretSpaceRecordWithAI(params: {
   /** 仅 saved_item：可选种子 */
   seedText?: string | null;
   timeoutMs?: number;
-}): Promise<{ title: string; content: string }> {
+}): Promise<{ title: string; content: string; meta?: string; tags?: string[] }> {
   const { agent, ownerProfile, category } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
 

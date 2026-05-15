@@ -14,6 +14,8 @@ export interface SecretSpaceCategoryMeta {
   description: string;
   recordsEmptyTitle: string;
   recordsEmptyBody: string;
+  /** 设计稿统一的小写英文 kicker，e.g. "DRAFT · 没说出口的话"；可选 */
+  kicker?: string;
 }
 
 interface SecretSpaceCategoryViewProps {
@@ -25,6 +27,15 @@ interface SecretSpaceCategoryViewProps {
   /** 删除当前详情记录：返回是否已从存储移除（未找到则为 false）。 */
   onRequestDeleteRecord?: (recordKey: string) => Promise<boolean>;
   deleteError?: string | null;
+  /**
+   * 自定义"记录列表"渲染（分类特有的便签 / 书签 / 朋友圈 / 标本 / 梦记 布局）。
+   * 未提供时回退到默认 SecretSpaceRecordListItem 列表。`onOpen` 与默认列表共用，
+   * 调用后会进入详情视图。
+   */
+  renderRecordList?: (args: {
+    records: SecretSpaceSampleRecord[];
+    onOpen: (recordKey: string) => void;
+  }) => ReactNode;
 }
 
 export function SecretSpaceCategoryView({
@@ -35,6 +46,7 @@ export function SecretSpaceCategoryView({
   footer,
   onRequestDeleteRecord,
   deleteError,
+  renderRecordList,
 }: SecretSpaceCategoryViewProps) {
   const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -76,12 +88,19 @@ export function SecretSpaceCategoryView({
   };
 
   return (
-    <div className={styles.secretSpaceCategory} data-testid={`secret-space-category-${meta.id}`}>
+    <div
+      className={styles.secretSpaceCategory}
+      data-testid={`secret-space-category-${meta.id}`}
+      data-category={meta.id}
+    >
       <header className={styles.secretSpaceCategoryHeader}>
         <button type="button" className={styles.secretSpaceBackButton} onClick={handleBack}>
           {inDetail ? '返回记录列表' : '返回'}
         </button>
         <div className={styles.secretSpaceCategoryHeading}>
+          {meta.kicker ? (
+            <div className={styles.secretSpaceCategoryKicker}>{meta.kicker}</div>
+          ) : null}
           <h3 className={styles.secretSpaceCategoryTitle}>{meta.title}</h3>
           <p className={styles.secretSpaceCategoryDescription}>{meta.description}</p>
         </div>
@@ -122,6 +141,8 @@ export function SecretSpaceCategoryView({
               </div>
             ) : null}
           </div>
+        ) : renderRecordList ? (
+          renderRecordList({ records, onOpen: setSelectedRecordKey })
         ) : (
           <ul className={styles.secretSpaceRecordIndexList} aria-label="记录索引">
             {records.map((rec) => (

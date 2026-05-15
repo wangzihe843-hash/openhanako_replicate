@@ -50,6 +50,22 @@ const CATEGORY_TASK: Record<SecretSpaceAiGenerableCategory, string> = {
 };
 
 /**
+ * 各分类可选的元信息说明，追加到 JSON schema 描述里。模型可选填，不写就省略。
+ * 注意：source / meta / tags 都是已有字段，客户端会把这些塞进 meta 或 tags 显示。
+ */
+const CATEGORY_META_GUIDE: Record<SecretSpaceAiGenerableCategory, string | null> = {
+  state: null,
+  draft_reply:
+    'meta 字段：收件人，如「给 你」/「给 妈妈」/「给 自己」，一句话指明对象；不确定可省略。',
+  dream:
+    'tags 字段：2–6 个梦中意象关键词（每个 ≤ 12 字符），如 ["水","回不去的车","听到歌"]；意象不清晰可省略。',
+  saved_item:
+    'meta 字段：分类，从「句子 / 对话 / 瞬间 / 片段」四选一（可省略）。source 字段：出处（可虚构），如「—— Camus《西西弗神话》」或「—— 周二夜，与你」（可省略）。',
+  unsent_moment:
+    'meta 字段：为什么没发出去（一句话，从 TA 的视角，可省略），如「—— 太琐碎，没发」。',
+};
+
+/**
  * 构造秘密空间 AI 生成 prompt（仅 JSON 输出说明 + 结构化输入）。
  * `recentChatBlock` 已由 `describeRecentContextForPrompt` 生成，可为「无聊天」降级文案。
  */
@@ -71,14 +87,26 @@ export function buildSecretSpaceGenerationPrompt(args: {
   });
   const seedTrimmed = typeof seedText === 'string' ? seedText.replace(/\s+/g, ' ').trim() : '';
 
+  const metaGuide = CATEGORY_META_GUIDE[category];
   const parts: string[] = [
     '你是星野模式「秘密空间」文本生成器。只返回严格 JSON，不要 Markdown，不要解释。',
     `任务：${CATEGORY_TASK[category]}`,
     '长度建议：正文 content 控制在约 800 字以内；标题 title 简短。',
     '禁止写入 OpenHanako memory、不要把本输出当作已同步设定；不要生成通讯录或短信任务说明。',
+    ...(metaGuide ? [metaGuide] : []),
     '',
-    '输出 JSON schema（仅此结构）：',
-    JSON.stringify({ title: 'string', content: 'string' }, null, 2),
+    '输出 JSON schema（仅此结构；除 title/content 外其余字段均可选，模型不确定时直接省略字段名，不要输出空字符串占位）：',
+    JSON.stringify(
+      category === 'dream'
+        ? { title: 'string', content: 'string', tags: ['string'] }
+        : category === 'saved_item'
+        ? { title: 'string', content: 'string', meta: 'string', source: 'string' }
+        : category === 'draft_reply' || category === 'unsent_moment'
+        ? { title: 'string', content: 'string', meta: 'string' }
+        : { title: 'string', content: 'string' },
+      null,
+      2,
+    ),
     '',
     '当前角色:',
     JSON.stringify({

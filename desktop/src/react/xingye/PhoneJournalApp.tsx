@@ -16,20 +16,65 @@ export interface PhoneJournalAppProps {
   onBack: () => void;
 }
 
+const CN_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+const CN_WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+
+function chineseDay(d: number): string {
+  if (d <= 10) return CN_NUMERALS[d - 1];
+  if (d < 20) return `十${CN_NUMERALS[d - 11]}`;
+  if (d === 20) return '二十';
+  if (d < 30) return `二十${CN_NUMERALS[d - 21]}`;
+  if (d === 30) return '三十';
+  return `三十${CN_NUMERALS[d - 31]}`;
+}
+
+function chineseMonth(m: number): string {
+  if (m === 1) return '一月';
+  if (m === 2) return '二月';
+  if (m === 3) return '三月';
+  if (m === 4) return '四月';
+  if (m === 5) return '五月';
+  if (m === 6) return '六月';
+  if (m === 7) return '七月';
+  if (m === 8) return '八月';
+  if (m === 9) return '九月';
+  if (m === 10) return '十月';
+  if (m === 11) return '十一月';
+  return '十二月';
+}
+
+/**
+ * 设计稿风格的日组标题："今天 · 五月十四  星期四" / "五月十二  星期二"。
+ */
 function formatGroupHeading(dayKey: string): string {
   const [y, m, d] = dayKey.split('-').map(Number);
   const date = new Date(y, m - 1, d);
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-  }).format(date);
+  const today = new Date();
+  const isToday =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate();
+  const cnDate = `${chineseMonth(m)}${chineseDay(d)}`;
+  const weekday = `星期${CN_WEEKDAYS[date.getDay()]}`;
+  return isToday ? `今天 · ${cnDate}  ${weekday}` : `${cnDate}  ${weekday}`;
 }
 
+/**
+ * 详情页 meta 行的日期格式："2026 · 05 · 14 · THU"。
+ */
 function dayLabelForDetail(dayKey: string): string {
-  return formatGroupHeading(dayKey);
+  const [y, m, d] = dayKey.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getDay()];
+  const mm = String(m).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  return `${y} · ${mm} · ${dd} · ${weekday}`;
 }
+
+/**
+ * 不同日记卡的 washi tape 颜色（按 entry index 循环）。
+ */
+const WASHI_TAPE_COLORS = ['#fbe3a8', '#f4b5b5', '#c5e4d0', '#d6c7f0', '#b8d4ec'];
 
 /** 列表索引用：不展示全文，避免长日记占满列表 */
 function excerptForJournalList(body: string, maxChars = 96): string {
@@ -49,6 +94,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [composeOpen, setComposeOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftBody, setDraftBody] = useState('');
+  const [draftMood, setDraftMood] = useState('');
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -104,6 +150,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const openCompose = () => {
     setDraftTitle('');
     setDraftBody('');
+    setDraftMood('');
     setSaveError(null);
     setDraftAiError(null);
     setComposeOpen(true);
@@ -117,6 +164,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       const r = await generateJournalDraftWithAI({ agent: ownerAgent, ownerProfile });
       setDraftTitle(r.title);
       setDraftBody(r.body);
+      if (r.mood) setDraftMood(r.mood);
     } catch (e) {
       setDraftAiError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -133,7 +181,8 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setSaveBusy(true);
     setSaveError(null);
     try {
-      const row = await appendJournalEntry(ownerAgentId, { title, body });
+      const mood = draftMood.trim() || undefined;
+      const row = await appendJournalEntry(ownerAgentId, { title, body, mood });
       setEntries((prev) => {
         const next = [row, ...prev.filter((p) => p.id !== row.id)];
         next.sort((a, b) => {
@@ -208,11 +257,6 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       </div>
 
       <div className={styles.phoneBody}>
-        <p className={styles.mmChatIntro}>
-          <strong>{ta} 的日记本</strong>：纯文本，按角色保存在本机{' '}
-          <code className={styles.inlineCode}>agents/&lt;agentId&gt;/xingye/journal/entries.jsonl</code>
-          ；换角色互不串数据。需已连接服务且星野存储可用。
-        </p>
         {listError ? (
           <p className={styles.phoneAppHint} role="alert">
             加载失败：{listError}
@@ -222,47 +266,83 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
 
         {!selected ? (
           <div className={styles.phoneJournalLayout}>
-            <div className={styles.phoneJournalToolbar}>
-              <p className={styles.phoneSectionTitle} style={{ margin: 0 }}>
-                按日期分组
-              </p>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openCompose} disabled={listLoading}>
-                写日记
-              </button>
-            </div>
+            <div aria-hidden className={styles.phoneJournalPaperTexture} />
+            <header className={styles.phoneJournalPageHeader}>
+              <div className={styles.phoneJournalKicker}>JOURNAL · 日记本</div>
+              <h2 className={styles.phoneJournalPageTitle}>{ta} 的日记</h2>
+            </header>
 
             {grouped.length === 0 && !listLoading ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-journal-empty">
-                还没有日记。点「写日记」添加一条记录（写入当前角色目录，刷新或重启后仍在）。
+                还没有日记。点右下角「记」添加一条记录（写入当前角色目录，刷新或重启后仍在）。
               </p>
             ) : null}
             {grouped.length > 0
               ? grouped.map(([dayKey, list]) => (
                   <div key={dayKey} className={styles.phoneJournalGroup}>
-                    <p className={styles.phoneJournalGroupLabel}>{formatGroupHeading(dayKey)}</p>
-                    {list.map((e) => (
-                      <button
-                        key={e.id}
-                        type="button"
-                        className={styles.phoneJournalCard}
-                        onClick={() => setSelectedId(e.id)}
-                      >
-                        <p className={styles.phoneJournalCardTitle}>{e.title}</p>
-                        <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
-                      </button>
-                    ))}
+                    <div className={styles.phoneJournalGroupLabel}>
+                      <span aria-hidden className={styles.phoneJournalGroupDash} />
+                      <span>{formatGroupHeading(dayKey)}</span>
+                    </div>
+                    <div className={styles.phoneJournalGroupCards}>
+                      {list.map((e, idx) => {
+                        const tapeColor = WASHI_TAPE_COLORS[idx % WASHI_TAPE_COLORS.length];
+                        const slant = idx % 2 === 0 ? styles.phoneJournalCardSlant0 : styles.phoneJournalCardSlant1;
+                        return (
+                          <button
+                            key={e.id}
+                            type="button"
+                            className={`${styles.phoneJournalCard} ${slant}`}
+                            onClick={() => setSelectedId(e.id)}
+                          >
+                            <span aria-hidden className={styles.phoneJournalTape} style={{ background: tapeColor }} />
+                            <div className={styles.phoneJournalCardHead}>
+                              <h4 className={styles.phoneJournalCardTitle}>{e.title}</h4>
+                              {e.mood ? (
+                                <span
+                                  className={styles.phoneJournalMoodChip}
+                                  data-testid={`phone-journal-mood-${e.id}`}
+                                >
+                                  「{e.mood}」
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 ))
               : null}
+
+            <button
+              type="button"
+              className={styles.phoneJournalWaxSealButton}
+              onClick={openCompose}
+              disabled={listLoading}
+              aria-label="写日记"
+            >
+              记
+            </button>
           </div>
         ) : (
           <div className={styles.phoneJournalDetail}>
+            <div aria-hidden className={styles.phoneJournalDetailRules} />
             <p className={styles.phoneJournalDetailMeta}>{dayLabelForDetail(selected.dayKey)}</p>
-            <h3 className={styles.phoneAppTitle} style={{ margin: 0 }}>
-              {selected.title}
-            </h3>
+            <h2 className={styles.phoneJournalDetailTitle}>{selected.title}</h2>
+            {selected.mood ? (
+              <p className={styles.phoneJournalMoodChip} data-testid="phone-journal-detail-mood">
+                「{selected.mood}」
+              </p>
+            ) : null}
             <div className={styles.phoneJournalDetailBodyScroll}>
               <pre className={styles.phoneJournalDetailBody}>{selected.body}</pre>
+            </div>
+            <div aria-hidden className={styles.phoneJournalInkStamp}>
+              {ta}
+              <br />
+              之印
             </div>
             <div style={{ marginTop: 12 }}>
               <button
@@ -298,6 +378,16 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <label className={styles.phoneFormField}>
                 <span>正文</span>
                 <textarea value={draftBody} onChange={(e) => setDraftBody(e.target.value)} rows={6} placeholder="写点什么…" />
+              </label>
+              <label className={styles.phoneFormField}>
+                <span>心情</span>
+                <input
+                  value={draftMood}
+                  onChange={(e) => setDraftMood(e.target.value)}
+                  placeholder="2–6 字短语，如「平淡 / 想他 / 安静」（可选）"
+                  maxLength={24}
+                  data-testid="phone-journal-mood-input"
+                />
               </label>
               <div style={{ marginTop: 8 }}>
                 <button

@@ -32,6 +32,7 @@ export type XingyeScheduleAiDraft = {
   content: string;
   note?: string;
   status: XingyeScheduleStatus;
+  category?: string;
 };
 
 function truncateChars(text: string, max: number): string {
@@ -153,6 +154,7 @@ export function normalizeScheduleDraftResult(raw: unknown): XingyeScheduleAiDraf
     content: truncateChars(content, 1200),
     note: normalizeOptional(record.note, 500),
     status,
+    category: normalizeOptional(record.category, 24),
   };
 }
 

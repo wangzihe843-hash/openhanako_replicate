@@ -69,7 +69,7 @@ describe('PhoneScheduleApp', () => {
     renderScheduleApp();
 
     expect(await screen.findByText('这一天还没有安排')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建日程' }));
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '睡前发消息' } });
     fireEvent.change(screen.getByLabelText('日期'), { target: { value: '今晚睡前' } });
     fireEvent.change(screen.getByLabelText('时间'), { target: { value: '睡前' } });
@@ -103,7 +103,7 @@ describe('PhoneScheduleApp', () => {
     renderScheduleApp();
 
     await screen.findByText('这一天还没有安排');
-    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建日程' }));
     fireEvent.change(screen.getByLabelText('日程意图'), { target: { value: '诊所前' } });
     fireEvent.click(screen.getByRole('button', { name: '根据最近聊天生成' }));
 

@@ -3585,3 +3585,1615 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Xingye / 秘密空间 设计稿样式追加
+   --------------------------------------------------------------------------
+   - Font tokens: 复用已安装的 @fontsource (noto-serif-sc / jetbrains-mono)
+     + 系统中文字体回退（Songti/STKaiti/Kaiti），无需 CSP 改动。
+   - SecretSpaceHome: 6 个抽屉卡（不同色质感 + 抽屉把手）
+   - PhoneJournalApp: 纸感 + 心情短语 chip
+   - SecretSpaceCategoryView[data-category="dream"]: 墨晕夜色主题
+   ========================================================================== */
+
+:root,
+.shell,
+.panel,
+.phoneShell {
+  /* Sans: bundled by host app */
+  --xingye-font-sans: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* Serif: Noto Serif SC (via @fontsource, already imported by divination-fonts) */
+  --xingye-font-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+  /* Brush / 毛笔 calligraphy: Ma Shan Zheng (via @fontsource).
+     Windows fallback chain: STKaiti (macOS), KaiTi (Windows),
+     楷体 (Windows Chinese-name alias), Songti SC. */
+  --xingye-font-brush: 'Ma Shan Zheng', 'STKaiti', 'KaiTi', '楷体', 'Songti SC', 'Noto Serif SC', serif;
+  /* Hand / 行书 semi-cursive for diary bodies: Zhi Mang Xing (via @fontsource).
+     Falls back to system kai on Windows. */
+  --xingye-font-hand: 'Zhi Mang Xing', 'STKaiti', 'KaiTi', '楷体', 'Kaiti SC', 'Kaiti', cursive;
+  /* Script — short cursive accents (mood pills, signatures) */
+  --xingye-font-script: 'Zhi Mang Xing', 'Ma Shan Zheng', 'STKaiti', 'KaiTi', '楷体', cursive;
+  --xingye-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+
+/* === 秘密空间首页 · 抽屉柜风 ================================================ */
+
+.secretSpaceHome {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.04), transparent 40px),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 18px,
+      rgba(120, 90, 60, 0.04) 18px,
+      rgba(120, 90, 60, 0.04) 19px
+    ),
+    #e2d8c2;
+  margin-top: 0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.secretSpaceHomeCabinetHeader {
+  position: relative;
+  padding: 14px 22px 16px;
+  background: linear-gradient(180deg, #ece4d3 0%, #e2d8c2 100%);
+  border-bottom: 1px solid rgba(120, 90, 60, 0.2);
+}
+
+.secretSpaceHomeCabinetKicker {
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  color: #a17a47;
+  text-transform: uppercase;
+}
+
+.secretSpaceHomeCabinetTitle {
+  margin: 4px 0 0;
+  font-family: var(--xingye-font-serif);
+  font-size: 22px;
+  font-weight: 600;
+  color: #3a2a1a;
+  letter-spacing: 0.04em;
+}
+
+.secretSpaceHomeCabinetSub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #7a5b34;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+}
+
+.secretSpaceHomeCabinetBody {
+  padding: 14px 16px 24px;
+}
+
+.secretSpaceHomeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.secretSpaceHomeCard {
+  position: relative;
+  appearance: none;
+  padding: 0;
+  border: 1px solid rgba(80, 60, 40, 0.25);
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow:
+    0 2px 6px rgba(80, 60, 40, 0.18),
+    inset 0 1px 0 rgba(255, 250, 238, 0.4);
+  aspect-ratio: 0.82;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.secretSpaceHomeCard:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px rgba(80, 60, 40, 0.22),
+    inset 0 1px 0 rgba(255, 250, 238, 0.5);
+}
+
+.secretSpaceHomeCardHandle {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  z-index: 1;
+}
+
+/* peek 容器：占满抽屉上半部分，背景由 tone class 提供 */
+.secretSpaceHomeCardPeek {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.secretSpaceHomeCardFooter {
+  position: relative;
+  padding: 8px 10px 9px;
+  background: rgba(0, 0, 0, 0.05);
+  backdrop-filter: blur(2px);
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.secretSpaceHomeCardTitle {
+  font-family: var(--xingye-font-serif);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--xingye-drawer-fg, #2a241b);
+}
+
+.secretSpaceHomeCardHint {
+  margin-top: 3px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--xingye-drawer-fg2, rgba(40, 30, 20, 0.55));
+}
+
+/* 6 个 tone 变体 —— 背景 + drawer-fg/-fg2 CSS 变量 */
+.secretSpaceHomeCard_state {
+  background: radial-gradient(circle at 30% 30%, #ffe3e0, #fbd4cf 50%, #f0bcb5 100%);
+  --xingye-drawer-fg: #7a3a3e;
+  --xingye-drawer-fg2: rgba(122, 58, 62, 0.6);
+}
+
+.secretSpaceHomeCard_draft {
+  background: linear-gradient(135deg, #fff3a0 0%, #fde98a 100%);
+  --xingye-drawer-fg: #6a4e1a;
+  --xingye-drawer-fg2: rgba(106, 78, 26, 0.6);
+}
+
+.secretSpaceHomeCard_dream {
+  background: radial-gradient(ellipse at 70% 30%, #2e3658 0%, #1a1d2b 75%);
+  --xingye-drawer-fg: #e6e1d4;
+  --xingye-drawer-fg2: rgba(230, 225, 212, 0.55);
+  border-color: rgba(204, 196, 176, 0.2);
+}
+
+.secretSpaceHomeCard_saved {
+  background: linear-gradient(180deg, #c89a6a 0%, #a3754a 100%);
+  --xingye-drawer-fg: #3a2510;
+  --xingye-drawer-fg2: rgba(58, 37, 16, 0.65);
+}
+
+.secretSpaceHomeCard_moment {
+  background: #ededef;
+  --xingye-drawer-fg: #2a2a30;
+  --xingye-drawer-fg2: rgba(42, 42, 48, 0.55);
+}
+
+.secretSpaceHomeCard_memory {
+  background: linear-gradient(180deg, #e8d8d0 0%, #d9c4ba 100%);
+  --xingye-drawer-fg: #5a3a3a;
+  --xingye-drawer-fg2: rgba(90, 58, 58, 0.6);
+}
+
+/* === Peek 内容样式 ==================================================== */
+
+.secretSpaceHomePeek_state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.secretSpaceHomePeek_state svg {
+  width: 80px;
+  height: 80px;
+  opacity: 0.9;
+  filter: drop-shadow(0 2px 4px rgba(170, 55, 60, 0.18));
+}
+
+.secretSpaceHomePeekCaption_state {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--xingye-font-script);
+  font-size: 13px;
+  color: #b15259;
+}
+
+.secretSpaceHomePeek_draft {
+  flex: 1;
+  padding: 12px;
+  font-family: var(--xingye-font-hand);
+  font-size: 14px;
+  color: #7a5e2a;
+  line-height: 1.5;
+  position: relative;
+}
+
+.secretSpaceHomePeekFade {
+  opacity: 0.4;
+}
+
+.secretSpaceHomePeekCurl {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.12) 50%);
+}
+
+.secretSpaceHomePeek_dream {
+  flex: 1;
+  position: relative;
+}
+
+.secretSpaceHomePeek_dream svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.secretSpaceHomePeekCaption_dream {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--xingye-font-brush);
+  font-size: 18px;
+  color: #cbc6b8;
+  letter-spacing: 0.2em;
+}
+
+.secretSpaceHomePeek_saved {
+  flex: 1;
+  position: relative;
+  padding: 10px 12px;
+}
+
+.secretSpaceHomePeekWoodgrain {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.04) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 11px);
+}
+
+.secretSpaceHomePeekCard {
+  position: relative;
+  background: #f8efd9;
+  padding: 10px 10px 10px 14px;
+  border-radius: 3px;
+  font-family: var(--xingye-font-serif);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4a3520;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  margin-top: 4px;
+}
+
+.secretSpaceHomePeekRibbon {
+  position: absolute;
+  top: -2px;
+  right: 18px;
+  width: 14px;
+  height: 70%;
+  background: #9b1c2e;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.secretSpaceHomePeek_moment {
+  flex: 1;
+  padding: 10px 8px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.secretSpaceHomePeekPhoto {
+  height: 50px;
+  background: linear-gradient(135deg, #b8c8d8 0%, #98aac0 60%, #607a92 100%);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+
+.secretSpaceHomePeekPhotoShade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  background: linear-gradient(180deg, transparent, rgba(96, 122, 146, 0.7));
+}
+
+.secretSpaceHomePeekPhotoSun {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff0c5;
+  box-shadow: 0 0 8px rgba(255, 240, 197, 0.7);
+}
+
+.secretSpaceHomePeekMomentBody {
+  font-family: var(--xingye-font-serif);
+  font-size: 11px;
+  color: #3a3a40;
+  line-height: 1.45;
+}
+
+.secretSpaceHomePeek_memory {
+  flex: 1;
+  position: relative;
+  padding: 10px;
+}
+
+.secretSpaceHomePeek_memory svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.secretSpaceHomePeekStamp {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  font-family: var(--xingye-font-mono);
+  font-size: 8px;
+  color: rgba(90, 58, 58, 0.5);
+  letter-spacing: 0.1em;
+  text-align: right;
+  line-height: 1.3;
+}
+
+/* === 日记 · 纸感升级 ======================================================= */
+
+.phoneJournalLayout {
+  position: relative;
+  font-family: var(--xingye-font-hand);
+  background: #f4ecd8;
+  border-radius: 12px;
+  padding: 14px 18px 90px;
+  overflow: hidden;
+  min-height: 100%;
+}
+
+.phoneJournalPaperTexture {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(146, 114, 68, 0.05), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(146, 114, 68, 0.04), transparent 50%),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 27px,
+      rgba(120, 90, 60, 0.08) 27px,
+      rgba(120, 90, 60, 0.08) 28px
+    );
+}
+
+.phoneJournalPageHeader {
+  position: relative;
+  padding: 4px 4px 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px dashed rgba(120, 90, 60, 0.35);
+}
+
+.phoneJournalKicker {
+  font-family: var(--xingye-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: #a17a47;
+  text-transform: uppercase;
+}
+
+.phoneJournalPageTitle {
+  margin: 6px 0 0;
+  font-family: var(--xingye-font-brush);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.1;
+  color: #3a2a1a;
+}
+
+.phoneJournalGroup {
+  position: relative;
+  margin-bottom: 18px;
+}
+
+.phoneJournalGroupLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: #a17a47;
+  margin: 0 0 8px;
+}
+
+.phoneJournalGroupDash {
+  flex: 0 0 8px;
+  height: 1px;
+  background: rgba(120, 90, 60, 0.4);
+}
+
+.phoneJournalGroupCards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.phoneJournalCard {
+  position: relative;
+  appearance: none;
+  background: linear-gradient(180deg, #fdf7e6 0%, #f7eed5 100%);
+  border: 1px solid rgba(120, 90, 60, 0.18);
+  border-radius: 6px;
+  padding: 14px 16px 14px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 4px 10px rgba(91, 79, 58, 0.08),
+    0 1px 2px rgba(91, 79, 58, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transform-origin: top left;
+}
+
+.phoneJournalCardSlant0 {
+  transform: rotate(0.2deg);
+}
+
+.phoneJournalCardSlant1 {
+  transform: rotate(-0.4deg);
+}
+
+.phoneJournalCard:hover {
+  box-shadow:
+    0 6px 14px rgba(91, 79, 58, 0.12),
+    0 1px 2px rgba(91, 79, 58, 0.08);
+}
+
+.phoneJournalTape {
+  position: absolute;
+  top: -6px;
+  left: 22px;
+  width: 48px;
+  height: 14px;
+  opacity: 0.85;
+  border-radius: 1px;
+  transform: rotate(-3deg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.phoneJournalCardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phoneJournalCardTitle {
+  margin: 0;
+  font-family: var(--xingye-font-brush);
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: #3a2a1a;
+}
+
+.phoneJournalCardExcerpt {
+  margin: 6px 0 0;
+  font-family: var(--xingye-font-hand);
+  font-size: 15px;
+  line-height: 1.65;
+  color: #5a4530;
+  letter-spacing: 0.02em;
+}
+
+.phoneJournalMoodChip {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-family: var(--xingye-font-script);
+  font-size: 14px;
+  color: #a17a47;
+  letter-spacing: 0.02em;
+}
+
+.phoneJournalWaxSealButton {
+  position: absolute;
+  right: 18px;
+  bottom: 22px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at 30% 25%, #c44b3a 0%, #962b1f 70%, #6b1813 100%);
+  color: #fbe3a8;
+  font-family: var(--xingye-font-brush);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 6px 18px rgba(91, 21, 15, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -3px 4px rgba(0, 0, 0, 0.2);
+  z-index: 2;
+}
+
+.phoneJournalWaxSealButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.phoneJournalDetail {
+  position: relative;
+  background: #f6eedd;
+  border-radius: 6px;
+  padding: 18px 26px 30px 50px;
+  overflow: hidden;
+}
+
+.phoneJournalDetailRules {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 27px,
+      rgba(120, 90, 60, 0.1) 27px,
+      rgba(120, 90, 60, 0.1) 28px
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0 38px,
+      rgba(184, 80, 80, 0.35) 38px,
+      rgba(184, 80, 80, 0.35) 39px,
+      transparent 39px
+    );
+}
+
+.phoneJournalDetailMeta {
+  position: relative;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #a17a47;
+  margin: 0;
+}
+
+.phoneJournalDetailTitle {
+  position: relative;
+  margin: 6px 0 0;
+  font-family: var(--xingye-font-brush);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.1;
+  color: #3a2a1a;
+}
+
+.phoneJournalDetailBody {
+  position: relative;
+  font-family: var(--xingye-font-hand);
+  font-size: 17px;
+  line-height: 1.95;
+  color: #3d2f1f;
+  letter-spacing: 0.02em;
+  white-space: pre-wrap;
+}
+
+.phoneJournalInkStamp {
+  position: absolute;
+  right: 22px;
+  bottom: 70px;
+  width: 64px;
+  height: 64px;
+  border: 2px solid rgba(155, 42, 62, 0.5);
+  border-radius: 4px;
+  background: rgba(255, 250, 238, 0.4);
+  display: grid;
+  place-items: center;
+  font-family: var(--xingye-font-brush);
+  color: rgba(155, 42, 62, 0.55);
+  font-size: 18px;
+  line-height: 1.05;
+  padding: 6px;
+  transform: rotate(-6deg);
+  pointer-events: none;
+  text-align: center;
+}
+
+/* === 秘密空间分类内页 · 统一 kicker / header ============================== */
+
+.secretSpaceCategoryKicker {
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: #a17a47;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.secretSpaceCategory[data-category='dream'] .secretSpaceCategoryKicker {
+  color: rgba(204, 196, 176, 0.6);
+}
+
+/* === 秘密空间分类内页 · dream 墨晕夜色主题 ================================ */
+
+.secretSpaceCategory[data-category='dream'] {
+  background: #10131f;
+  color: #e6e1d4;
+  border-radius: 12px;
+  padding: 4px 6px 8px;
+}
+
+.secretSpaceCategory[data-category='dream'] .secretSpaceCategoryTitle {
+  font-family: var(--xingye-font-serif);
+  color: #e6e1d4;
+  letter-spacing: 0.03em;
+}
+
+.secretSpaceCategory[data-category='dream'] .secretSpaceCategoryDescription {
+  color: rgba(204, 196, 176, 0.7);
+  font-style: italic;
+}
+
+.secretSpaceCategory[data-category='dream'] .secretSpaceBackButton {
+  background: transparent;
+  border-color: rgba(204, 196, 176, 0.25);
+  color: rgba(230, 225, 212, 0.85);
+}
+
+.secretSpaceDreamRoot {
+  position: relative;
+  min-height: 320px;
+}
+
+.secretSpaceDreamInkLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.secretSpaceDreamFeed {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 2px 16px;
+}
+
+.secretSpaceDreamCard {
+  appearance: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 18px 18px 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  border: 1px solid rgba(204, 196, 176, 0.18);
+  border-radius: 4px;
+  backdrop-filter: blur(2px);
+  color: inherit;
+}
+
+.secretSpaceDreamCard:hover {
+  border-color: rgba(204, 196, 176, 0.3);
+}
+
+.secretSpaceDreamCardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.secretSpaceDreamCardKicker {
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(204, 196, 176, 0.5);
+}
+
+.secretSpaceDreamCardDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(204, 196, 176, 0.4);
+}
+
+.secretSpaceDreamCardTitle {
+  margin: 0 0 10px;
+  font-family: var(--xingye-font-brush);
+  font-size: 26px;
+  font-weight: 400;
+  color: #e6e1d4;
+  letter-spacing: 0.1em;
+  line-height: 1;
+}
+
+.secretSpaceDreamCardBody {
+  font-family: var(--xingye-font-serif);
+  font-size: 13.5px;
+  font-style: italic;
+  color: rgba(230, 225, 212, 0.78);
+  line-height: 1.85;
+  white-space: pre-line;
+  letter-spacing: 0.02em;
+}
+
+.secretSpaceDreamCardTags {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.secretSpaceDreamCardTag {
+  font-family: var(--xingye-font-serif);
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(204, 196, 176, 0.25);
+  color: rgba(230, 225, 212, 0.65);
+  letter-spacing: 0.04em;
+}
+
+/* === 秘密空间分类内页 · draft_reply 便签纸板 ============================= */
+
+.secretSpaceCategory[data-category='draft_reply'] {
+  background: #f0e6cf;
+  border-radius: 12px;
+  padding: 4px 6px 8px;
+}
+
+.secretSpaceDraftGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  padding: 12px 4px 8px;
+}
+
+.secretSpaceDraftSticky {
+  appearance: none;
+  position: relative;
+  border: 0;
+  padding: 14px 14px 16px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 2px;
+  min-height: 130px;
+  box-shadow:
+    0 4px 10px rgba(60, 40, 10, 0.18),
+    0 1px 2px rgba(60, 40, 10, 0.1);
+  font-family: var(--xingye-font-hand);
+  color: #5a4318;
+}
+
+.secretSpaceDraftStickySmall {
+  padding: 10px 11px 11px;
+  min-height: 90px;
+}
+
+.secretSpaceDraftStickyPin {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #e85d5d, #9b2424);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.4);
+  z-index: 1;
+}
+
+.secretSpaceDraftStickyCurl {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.1) 50%);
+}
+
+.secretSpaceDraftStickyMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-family: var(--xingye-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: rgba(70, 50, 20, 0.6);
+}
+
+.secretSpaceDraftStickyTitle {
+  font-family: var(--xingye-font-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a3818;
+  margin-bottom: 4px;
+  line-height: 1.25;
+}
+
+.secretSpaceDraftStickyBody {
+  font-family: var(--xingye-font-hand);
+  font-size: 15px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: #5a4318;
+}
+
+.secretSpaceDraftStickyBodySmall {
+  font-size: 14px;
+}
+
+/* === 秘密空间分类内页 · saved_item 书签 + 丝带 =========================== */
+
+.secretSpaceCategory[data-category='saved_item'] {
+  background: #f3e9d5;
+  border-radius: 12px;
+  padding: 4px 6px 8px;
+}
+
+.secretSpaceSavedList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 4px 8px;
+}
+
+.secretSpaceSavedCard {
+  appearance: none;
+  position: relative;
+  margin: 0;
+  border: 1px solid rgba(120, 90, 60, 0.22);
+  border-left: 4px solid #9b1c2e;
+  border-radius: 2px 4px 4px 2px;
+  padding: 14px 18px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 4px 10px rgba(91, 79, 58, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  overflow: visible;
+}
+
+.secretSpaceSavedRibbon {
+  position: absolute;
+  top: -3px;
+  right: 22px;
+  width: 16px;
+  height: 56px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18);
+  filter: brightness(0.95);
+}
+
+.secretSpaceSavedRibbonShort {
+  height: 44px;
+}
+
+.secretSpaceSavedKind {
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.secretSpaceSavedExcerpt {
+  margin: 6px 0 0;
+  padding: 0;
+  font-family: var(--xingye-font-serif);
+  font-size: 15px;
+  line-height: 1.75;
+  color: #3a2a1a;
+  white-space: pre-line;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
+.secretSpaceSavedSource {
+  margin-top: 10px;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  font-size: 11.5px;
+  color: #8a6a4a;
+  text-align: right;
+}
+
+/* === 秘密空间分类内页 · unsent_moment Moments-app timeline =============== */
+
+.secretSpaceCategory[data-category='unsent_moment'] {
+  background: #ededee;
+  border-radius: 12px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.secretSpaceCategory[data-category='unsent_moment'] .secretSpaceCategoryHeader {
+  padding: 14px 22px 12px;
+  background: #ededee;
+}
+
+.secretSpaceMomentsRoot {
+  background: #fff;
+}
+
+.secretSpaceMomentsCover {
+  position: relative;
+  height: 168px;
+  background: linear-gradient(135deg, #2a2f3a 0%, #4b4d57 55%, #6d6664 100%);
+  overflow: hidden;
+}
+
+.secretSpaceMomentsCoverGlow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 80% 20%, rgba(255, 212, 154, 0.35), transparent 50%);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.secretSpaceMomentsCoverIdentity {
+  position: absolute;
+  bottom: 14px;
+  right: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.secretSpaceMomentsCoverName {
+  color: rgba(255, 255, 255, 0.9);
+  font-family: var(--xingye-font-serif);
+  font-weight: 600;
+  font-size: 16px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  text-align: right;
+}
+
+.secretSpaceMomentsCoverAvatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f5d4be, #e0a890);
+  border: 2px solid #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 30px;
+  font-family: var(--xingye-font-brush);
+}
+
+.secretSpaceMomentsCaption {
+  background: #fff;
+  padding: 12px 18px 8px;
+  border-bottom: 1px solid #e5e5e8;
+}
+
+.secretSpaceMomentsCaptionTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1a1a1c;
+}
+
+.secretSpaceMomentsCaptionSub {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.secretSpaceMomentsFeed {
+  background: #fff;
+}
+
+.secretSpaceMomentPost {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 0;
+  border-bottom: 0.5px solid #ececef;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 12px;
+  background: #fff;
+}
+
+.secretSpaceMomentPost:hover {
+  background: #fafafa;
+}
+
+.secretSpaceMomentAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #f5d4be, #e0a890);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-family: var(--xingye-font-brush);
+  font-size: 22px;
+}
+
+.secretSpaceMomentBody {
+  min-width: 0;
+}
+
+.secretSpaceMomentAuthor {
+  font-size: 13.5px;
+  color: #5a76a6;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.secretSpaceMomentText {
+  font-size: 14px;
+  color: #1a1a1c;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  white-space: pre-wrap;
+}
+
+.secretSpaceMomentFooter {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #999;
+}
+
+.secretSpaceMomentBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(214, 90, 90, 0.4);
+  color: #c25050;
+  font-size: 10px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  background: rgba(214, 90, 90, 0.06);
+  font-family: var(--xingye-font-mono);
+}
+
+.secretSpaceMomentWhy {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: #f7f3ed;
+  border-left: 2px solid #c2a878;
+  font-size: 11.5px;
+  color: #7a5b34;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  border-radius: 0 4px 4px 0;
+}
+
+/* === 秘密空间分类内页 · state 奶油 hero ================================= */
+
+.secretSpaceCategory[data-category='state'] {
+  background: #fbf2ed;
+  border-radius: 12px;
+  padding: 4px 6px 8px;
+}
+
+.relationshipMoodHero {
+  position: relative;
+  background: radial-gradient(120% 90% at 20% 20%, #ffd9d2, #ffeae3 60%, #fce8e3 100%);
+  border-radius: 22px;
+  padding: 20px 20px 22px;
+  box-shadow:
+    0 12px 30px rgba(212, 150, 140, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.relationshipMoodHeroBloom {
+  position: absolute;
+  right: -8px;
+  top: -10px;
+  width: 110px;
+  height: 110px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 36% 36%, #ffc4b6 0%, #ffc4b6 25%, transparent 50%),
+    radial-gradient(circle at 60% 56%, rgba(255, 214, 204, 0.8) 0%, rgba(255, 214, 204, 0.8) 18%, transparent 38%);
+  opacity: 0.45;
+}
+
+.relationshipMoodHeroKicker {
+  position: relative;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #b8615a;
+}
+
+.relationshipMoodHeroMood {
+  position: relative;
+  margin-top: 4px;
+  font-family: var(--xingye-font-serif);
+  font-weight: 600;
+  font-size: 22px;
+  color: #7a3a3a;
+  letter-spacing: 0.02em;
+}
+
+.relationshipMoodHeroSummary {
+  position: relative;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: #a05650;
+  font-style: italic;
+  font-family: var(--xingye-font-serif);
+  line-height: 1.5;
+}
+
+/* === 日程 · iOS Calendar 风 ================================================ */
+
+.scheduleLayout {
+  position: relative;
+  font-family: var(--xingye-font-sans);
+  background: #f5f5f7;
+  border-radius: 12px;
+  overflow: hidden;
+  padding-bottom: 90px;
+}
+
+.scheduleMonthHeader {
+  padding: 14px 22px 8px;
+  background: #fff;
+}
+
+.scheduleMonthDate {
+  font-family: var(--xingye-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ff3b30;
+  letter-spacing: 0.04em;
+}
+
+.scheduleMonthTitle {
+  margin: 2px 0 0;
+  font-family: var(--xingye-font-sans);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #111;
+}
+
+.scheduleCalendarStrip {
+  display: flex;
+  gap: 0;
+  padding: 6px 14px 14px;
+  border-bottom: 0.5px solid #d8d8dd;
+  background: #fff;
+}
+
+.scheduleCalendarDay {
+  flex: 1 0 0;
+  min-width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.scheduleCalendarDayLabel {
+  font-family: var(--xingye-font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: #999;
+}
+
+.scheduleCalendarDayNumber {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--xingye-font-sans);
+  font-size: 17px;
+  font-weight: 500;
+  color: #111;
+}
+
+.scheduleCalendarDayToday .scheduleCalendarDayLabel {
+  color: #ff3b30;
+}
+
+.scheduleCalendarDayToday .scheduleCalendarDayNumber {
+  background: #ff3b30;
+  color: #fff;
+  font-weight: 700;
+}
+
+.scheduleCalendarDayDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+  margin-top: 2px;
+}
+
+.scheduleCalendarDayDotActive {
+  background: #ff3b30;
+}
+
+.scheduleScrollArea {
+  max-height: 520px;
+  overflow-y: auto;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.scheduleDateChipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 18px 6px;
+  background: #fff;
+  border-bottom: 0.5px solid #ecebef;
+  align-items: center;
+}
+
+.scheduleDateChip {
+  appearance: none;
+  border: 1px solid #d8d8dd;
+  background: #fff;
+  color: #333;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--xingye-font-sans);
+  cursor: pointer;
+}
+
+.scheduleDateChipActive {
+  background: #ff3b30;
+  border-color: #ff3b30;
+  color: #fff;
+  font-weight: 600;
+}
+
+.scheduleNewInlineButton {
+  appearance: none;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #ff3b30;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--xingye-font-sans);
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.scheduleNewInlineButton:disabled {
+  color: #d0cfd5;
+  cursor: not-allowed;
+}
+
+.scheduleDayEmpty {
+  margin: 4px 22px 14px;
+  font-family: var(--xingye-font-sans);
+  font-size: 13px;
+  color: #888;
+}
+
+.scheduleDaySection {
+  padding: 14px 0 0;
+  background: #fff;
+}
+
+.scheduleDaySectionLabel {
+  padding: 0 22px 6px;
+  font-family: var(--xingye-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: #666;
+}
+
+.scheduleEventRow {
+  display: grid;
+  grid-template-columns: 60px 4px 1fr 22px;
+  gap: 10px;
+  padding: 10px 22px;
+  border-bottom: 0.5px solid #ecebef;
+  align-items: flex-start;
+  width: 100%;
+  appearance: none;
+  background: #fff;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--xingye-font-sans);
+}
+
+.scheduleEventRow:hover {
+  background: #fafafa;
+}
+
+.scheduleEventRowDone {
+  opacity: 0.55;
+}
+
+.scheduleEventRowDone .scheduleEventTitle {
+  text-decoration: line-through;
+  color: #999;
+}
+
+.scheduleEventRowSkipped {
+  opacity: 0.55;
+}
+
+.scheduleEventRowSkipped .scheduleEventTitle,
+.scheduleEventRowSkipped .scheduleEventTime,
+.scheduleEventRowSkipped .scheduleEventTag {
+  text-decoration: line-through;
+  color: #999;
+}
+
+.scheduleEventTimeBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.scheduleEventTime {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111;
+  font-family: var(--xingye-font-sans);
+}
+
+.scheduleEventDuration {
+  font-size: 11px;
+  color: #888;
+  margin-top: 1px;
+}
+
+.scheduleEventBar {
+  border-radius: 2px;
+  align-self: stretch;
+  min-height: 28px;
+}
+
+.scheduleEventBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.scheduleEventTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #111;
+  font-family: var(--xingye-font-sans);
+}
+
+.scheduleEventTag {
+  font-size: 11px;
+  color: #888;
+}
+
+.scheduleEventCheck {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid #d0cfd5;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: transparent;
+}
+
+.scheduleEventCheckDone {
+  background: #34c759;
+  border-color: #34c759;
+  color: #fff;
+}
+
+.scheduleFab {
+  position: absolute;
+  right: 18px;
+  bottom: 22px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 300;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(255, 59, 48, 0.4);
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  padding-bottom: 3px;
+  z-index: 2;
+}
+
+.scheduleFab:hover {
+  background: #e8332a;
+}
+
+/* === 秘密空间分类内页 · memory_fragment 标本卡 =========================== */
+
+.secretSpaceCategory[data-category='memory_fragment'] {
+  background: #ece1d3;
+  border-radius: 12px;
+  padding: 4px 6px 8px;
+}
+
+.secretSpaceMemoryRoot {
+  padding: 8px 4px 4px;
+}
+
+.secretSpaceMemoryFeatured {
+  appearance: none;
+  width: 100%;
+  position: relative;
+  background: linear-gradient(180deg, #fbf3df 0%, #f5ead2 100%);
+  background-blend-mode: multiply;
+  border: 1px solid rgba(120, 90, 60, 0.3);
+  border-radius: 3px;
+  padding: 14px 16px 14px;
+  margin-bottom: 14px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 4px 10px rgba(91, 79, 58, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+}
+
+.secretSpaceMemoryStamp {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-family: var(--xingye-font-mono);
+  font-size: 9px;
+  color: rgba(91, 71, 40, 0.55);
+  letter-spacing: 0.1em;
+  text-align: right;
+  line-height: 1.3;
+}
+
+.secretSpaceMemoryFeaturedRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding-right: 80px;
+}
+
+.secretSpaceMemoryFeaturedHead {
+  flex: 1;
+  min-width: 0;
+}
+
+.secretSpaceMemoryWhere {
+  font-family: var(--xingye-font-mono);
+  font-size: 9px;
+  color: rgba(91, 71, 40, 0.55);
+  letter-spacing: 0.08em;
+}
+
+.secretSpaceMemoryFeaturedTitle {
+  font-family: var(--xingye-font-brush);
+  font-size: 22px;
+  color: #3a2a1a;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.secretSpaceMemoryFeaturedBody {
+  margin: 0;
+  font-family: var(--xingye-font-serif);
+  font-size: 13px;
+  line-height: 1.65;
+  color: #5a4530;
+  letter-spacing: 0.02em;
+}
+
+.secretSpaceMemoryGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.secretSpaceMemoryCard {
+  appearance: none;
+  position: relative;
+  background: linear-gradient(180deg, #fbf3df 0%, #f5ead2 100%);
+  background-blend-mode: multiply;
+  border: 1px solid rgba(120, 90, 60, 0.3);
+  border-radius: 3px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 4px 10px rgba(91, 79, 58, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+}
+
+.secretSpaceMemoryCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.secretSpaceMemoryNo {
+  font-family: var(--xingye-font-mono);
+  font-size: 9px;
+  color: rgba(91, 71, 40, 0.5);
+  letter-spacing: 0.1em;
+}
+
+.secretSpaceMemoryCardTitle {
+  font-family: var(--xingye-font-brush);
+  font-size: 15px;
+  color: #3a2a1a;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+
+.secretSpaceMemoryCardBody {
+  margin: 0 0 8px;
+  font-family: var(--xingye-font-serif);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #5a4530;
+}
+
+.secretSpaceMemoryCardFooter {
+  font-family: var(--xingye-font-mono);
+  font-size: 9px;
+  color: rgba(91, 71, 40, 0.5);
+  letter-spacing: 0.08em;
+  border-top: 1px solid rgba(120, 90, 60, 0.18);
+  padding-top: 6px;
+  display: flex;
+  justify-content: space-between;
+}

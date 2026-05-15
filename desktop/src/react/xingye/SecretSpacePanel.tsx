@@ -15,6 +15,13 @@ import {
   type SecretSpaceCategoryMeta,
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
+import {
+  SecretSpaceDraftGrid,
+  SecretSpaceSavedList,
+  SecretSpaceMomentsFeed,
+  SecretSpaceMemoryGrid,
+  SecretSpaceDreamFeed,
+} from './SecretSpaceCategoryRenderers';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { generateSecretSpaceRecordWithAI, isSecretSpaceAiGenerableCategory } from './xingye-secret-space-ai';
 import {
@@ -46,43 +53,49 @@ const EMPTY_RECORDS: Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]> = 
 const CATEGORY_META: SecretSpaceCategoryMeta[] = [
   {
     id: 'state',
+    kicker: 'STATE · 此刻 / 心情',
     title: 'TA 的状态',
-    description: '与情绪、关系快照相关的视图；在「角色」页编辑资料与关系标签。',
+    description: 'TA 现在是什么样子，最近又在想些什么',
     recordsEmptyTitle: '尚无额外的文字记录',
     recordsEmptyBody: '这里预留展示与「状态」相关的短笔记。当前上方为关系与标签面板。',
   },
   {
     id: 'draft_reply',
+    kicker: 'DRAFT · 没发出去的话',
     title: 'TA 的草稿箱',
-    description: '尚未发送的回复草稿，仅保存纯文本。',
+    description: '写了一半，又删掉的那些回复',
     recordsEmptyTitle: '草稿箱是空的',
     recordsEmptyBody: '还没有未发出的回复草稿。',
   },
   {
     id: 'dream',
+    kicker: 'DREAM · 梦的残片',
     title: 'TA 的梦境',
-    description: '象征化、片段化的梦记，仅保存纯文本。',
+    description: 'TA 记得的，比 TA 能说出来的少得多',
     recordsEmptyTitle: '还没有梦境记录',
     recordsEmptyBody: '梦记只以文字呈现，不接图片或语音解梦。',
   },
   {
     id: 'saved_item',
+    kicker: 'SAVED · 摘抄 / 收藏',
     title: 'TA 收藏的东西',
-    description: '仅展示收藏的文字摘录、事件摘要与对话片段。',
+    description: '句子、对话、和被 TA 抄下来的瞬间',
     recordsEmptyTitle: '收藏夹是空的',
     recordsEmptyBody: '此分类只表现纯文本收藏，不做相册式或附件式收藏 UI。',
   },
   {
     id: 'unsent_moment',
+    kicker: 'UNSENT · 草稿动态',
     title: 'TA 未发送的朋友圈',
-    description: '未发送的朋友圈动态草稿，仅纯文字。',
+    description: '只有 TA 自己能看见的朋友圈草稿',
     recordsEmptyTitle: '没有未发送草稿',
     recordsEmptyBody: '朋友圈草稿在此仅以文字呈现。',
   },
   {
     id: 'memory_fragment',
+    kicker: 'MEMORY · 标本 / 碎片',
     title: '私藏回忆',
-    description: '短回忆与碎片入口；底部可手动写入「重要记忆候选」。',
+    description: '一句话、一个气味、一段对话的残角',
     recordsEmptyTitle: '还没有回忆片段',
     recordsEmptyBody: '可记录一句场景、气味或对话残片。',
   },
@@ -370,7 +383,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     setAiError(null);
     setAiLoading(true);
     try {
-      const { title, content } = await generateSecretSpaceRecordWithAI({
+      const { title, content, meta, tags } = await generateSecretSpaceRecordWithAI({
         agent,
         ownerProfile: profile,
         category: activeCategory,
@@ -382,6 +395,8 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         body: content,
         summary,
         source: 'ai',
+        ...(meta ? { meta } : {}),
+        ...(tags && tags.length ? { tags } : {}),
       });
       const records = await listSecretSpaceRecords(agent.id, activeCategory);
       setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
@@ -584,12 +599,51 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       ? memoryFragmentFooter
       : addRecordFooter;
 
+  /**
+   * 分类内页的"列表渲染器"：每个分类用各自的标志性版式（便签 / 书签卡 / 朋友圈
+   * timeline / 标本卡 / 墨晕梦记）。`state` 走 stateSection 单卡视图，没有列表。
+   */
+  const momentsDisplayName = displayProfile?.displayName || agent?.name || 'TA';
+  const momentsAvatarChar = momentsDisplayName.slice(0, 1) || '星';
+  const renderRecordListForCategory = activeCategory
+    ? activeCategory === 'draft_reply'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceDraftGrid records={records} onOpen={onOpen} />
+        )
+      : activeCategory === 'saved_item'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceSavedList records={records} onOpen={onOpen} />
+        )
+      : activeCategory === 'unsent_moment'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceMomentsFeed
+            records={records}
+            onOpen={onOpen}
+            displayName={momentsDisplayName}
+            avatarChar={momentsAvatarChar}
+          />
+        )
+      : activeCategory === 'memory_fragment'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceMemoryGrid records={records} onOpen={onOpen} />
+        )
+      : activeCategory === 'dream'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceDreamFeed records={records} onOpen={onOpen} />
+        )
+      : undefined
+    : undefined;
+
   return (
     <div className={styles.panelInner}>
-      <h2 className={styles.panelTitle}>秘密空间</h2>
-      <p className={styles.panelDescription}>
-        角色侧隐藏内容的分类入口；记录从当前 agent 的 Xingye storage 读取。
-      </p>
+      {view !== 'home' ? (
+        <>
+          <h2 className={styles.panelTitle}>秘密空间</h2>
+          <p className={styles.panelDescription}>
+            角色侧隐藏内容的分类入口；记录从当前 agent 的 Xingye storage 读取。
+          </p>
+        </>
+      ) : null}
 
       {view === 'home' ? (
         <SecretSpaceHome onSelectCategory={openCategory} />
@@ -600,6 +654,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
           stateSection={stateSection}
           records={activeSamples}
           footer={categoryFooter}
+          renderRecordList={renderRecordListForCategory}
           onRequestDeleteRecord={
             agent?.id
               ? (key) =>

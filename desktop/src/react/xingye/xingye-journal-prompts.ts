@@ -29,7 +29,9 @@ export function buildJournalDraftPrompt(args: {
     '长度：正文 body 约 150–500 个汉字（宁短勿滥）；标题 title 一行、简短，不要书名号堆叠。',
     '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
-    JSON.stringify({ title: 'string', body: 'string' }, null, 2),
+    JSON.stringify({ title: 'string', body: 'string', mood: 'string' }, null, 2),
+    '',
+    'mood 字段：2–6 字的心情短语（如「平淡 / 想他 / 温柔 / 安静 / 低落 / 烦躁」），不超过 24 字符。心情不清晰时可省略该字段；不要写完整句子。',
     '',
     '当前角色（基础身份）：',
     JSON.stringify(

@@ -26,21 +26,106 @@ const STATUS_LABELS: Record<XingyeScheduleStatus, string> = {
   skipped: '已跳过',
 };
 
+const WEEKDAYS_CN = ['日', '一', '二', '三', '四', '五', '六'];
+const MONTHS_CN = [
+  '一月', '二月', '三月', '四月', '五月', '六月',
+  '七月', '八月', '九月', '十月', '十一月', '十二月',
+];
+
+/**
+ * 客户端把 category 字符串映射到 iOS 系统色调色板。category 缺失时回退到红色，
+ * 表示「未分类」，与设计稿一致。
+ */
+const CATEGORY_BAR_COLOR: Record<string, string> = {
+  约定: '#ff9500',
+  提醒: '#34c759',
+  自己定的: '#007aff',
+  也许吧: '#af52de',
+  平常: '#8e8e93',
+};
+const CATEGORY_BAR_FALLBACK = '#ff3b30';
+
 function todayDateLabel(): string {
   return '今天';
 }
 
-function uniqueDateLabels(entries: XingyeScheduleEntry[]): string[] {
-  const seen = new Set<string>();
-  const labels = [todayDateLabel()];
-  seen.add(todayDateLabel());
-  for (const entry of entries) {
-    if (!seen.has(entry.dateLabel)) {
-      labels.push(entry.dateLabel);
-      seen.add(entry.dateLabel);
-    }
+function buildDateStrip(today: Date, daysBefore = 2, daysAfter = 4): Date[] {
+  const out: Date[] = [];
+  for (let i = -daysBefore; i <= daysAfter; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    out.push(d);
   }
-  return labels;
+  return out;
+}
+
+function sameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function shortDateLabel(d: Date): string {
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function fullMonthHeader(d: Date): string {
+  return `${d.getFullYear()}年 ${MONTHS_CN[d.getMonth()]}`;
+}
+
+function dateKickerLine(d: Date): string {
+  return `${shortDateLabel(d)} · 周${WEEKDAYS_CN[d.getDay()]}`;
+}
+
+function startOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = startOfDay(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+function ymdKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 把自由格式的 dateLabel（"今天"/"明早"/"5月14日"/"2026年5月14日"/...）尽力解析成一个真实日期。
+ * 解析不出来的（例如"下次去诊所前"）返回 null，渲染时会保留原文并归到末尾分组。
+ */
+function parseDateLabel(label: string, today: Date): Date | null {
+  const trimmed = label.trim();
+  if (!trimmed) return null;
+  if (/^(今天|今早|今晚|今夜|今日|今儿)/.test(trimmed)) return startOfDay(today);
+  if (/^(明天|明早|明晚|明日)/.test(trimmed)) return addDays(today, 1);
+  if (/^后天/.test(trimmed)) return addDays(today, 2);
+  if (/^(昨天|昨晚|昨日)/.test(trimmed)) return addDays(today, -1);
+  if (/^前天/.test(trimmed)) return addDays(today, -2);
+  const m = trimmed.match(/(?:(\d{4})年\s*)?(\d{1,2})月(\d{1,2})日/);
+  if (m) {
+    const y = m[1] ? Number(m[1]) : today.getFullYear();
+    return new Date(y, Number(m[2]) - 1, Number(m[3]));
+  }
+  return null;
+}
+
+function relativeGroupHeader(parsed: Date, today: Date): string {
+  const t0 = startOfDay(today).getTime();
+  const diff = Math.round((startOfDay(parsed).getTime() - t0) / 86400000);
+  const md = shortDateLabel(parsed);
+  if (diff === 0) return `今天 · ${md}`;
+  if (diff === 1) return `明天 · ${md}`;
+  if (diff === -1) return `昨天 · ${md}`;
+  if (diff === 2) return `后天 · ${md}`;
+  if (diff === -2) return `前天 · ${md}`;
+  if (diff > 0 && diff <= 6) return `周${WEEKDAYS_CN[parsed.getDay()]} · ${md}`;
+  return md;
 }
 
 function excerpt(text: string, max = 64): string {
@@ -64,7 +149,6 @@ function emptyDraft(dateLabel: string) {
 export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneScheduleAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [entries, setEntries] = useState<XingyeScheduleEntry[]>([]);
-  const [selectedDateLabel, setSelectedDateLabel] = useState(todayDateLabel());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -100,32 +184,67 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
     setComposeOpen(false);
     setSaveError(null);
     setAiError(null);
-    setSelectedDateLabel(todayDateLabel());
   }, [ownerAgentId]);
 
   useEffect(() => {
     void reloadEntries();
   }, [reloadEntries]);
 
-  useEffect(() => {
-    if (entries.length === 0) return;
-    if (entries.some((entry) => entry.dateLabel === selectedDateLabel)) return;
-    setSelectedDateLabel(entries[0].dateLabel);
-  }, [entries, selectedDateLabel]);
-
-  const dateLabels = useMemo(() => uniqueDateLabels(entries), [entries]);
   const selected = useMemo(
     () => (selectedId ? entries.find((entry) => entry.id === selectedId) ?? null : null),
     [entries, selectedId],
   );
-  const entriesForSelectedDate = useMemo(
-    () => entries.filter((entry) => entry.dateLabel === selectedDateLabel),
-    [entries, selectedDateLabel],
-  );
-  const ta = displayName || ownerAgent?.name || 'TA';
+
+  /**
+   * 把 entries 按 dateLabel 原文聚合成分组，并解析出参考日期，用于排序与红点指示。
+   * - 解析成功：按真实日期升序（过去 → 今天 → 未来）
+   * - 解析失败（"下次去诊所前" 这类自由文本）：放到末尾，保留原文标题
+   * - 即使今天没有 entry，也保留一个"今天"空分组以呈现"这一天还没有安排"提示
+   */
+  const today = useMemo(() => new Date(), []);
+  const todayKey = useMemo(() => ymdKey(today), [today]);
+  const dayGroups = useMemo(() => {
+    const map = new Map<
+      string,
+      { dateLabel: string; entries: XingyeScheduleEntry[]; parsed: Date | null }
+    >();
+    for (const entry of entries) {
+      const existing = map.get(entry.dateLabel);
+      if (existing) {
+        existing.entries.push(entry);
+      } else {
+        map.set(entry.dateLabel, {
+          dateLabel: entry.dateLabel,
+          entries: [entry],
+          parsed: parseDateLabel(entry.dateLabel, today),
+        });
+      }
+    }
+    const hasTodayGroup = Array.from(map.values()).some(
+      (g) => g.parsed && ymdKey(g.parsed) === todayKey,
+    );
+    if (!hasTodayGroup) {
+      map.set('__today__', { dateLabel: todayDateLabel(), entries: [], parsed: startOfDay(today) });
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.parsed && b.parsed) return a.parsed.getTime() - b.parsed.getTime();
+      if (a.parsed) return -1;
+      if (b.parsed) return 1;
+      return a.dateLabel.localeCompare(b.dateLabel);
+    });
+  }, [entries, today, todayKey]);
+
+  // 顶部日期条上有 entry 的日期需要显示红点；按真实日期 ymd key 匹配。
+  const stripDotKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const group of dayGroups) {
+      if (group.parsed && group.entries.length > 0) set.add(ymdKey(group.parsed));
+    }
+    return set;
+  }, [dayGroups]);
 
   const openCompose = () => {
-    setDraft(emptyDraft(selectedDateLabel));
+    setDraft(emptyDraft(todayDateLabel()));
     setUserIntent('');
     setSaveError(null);
     setAiError(null);
@@ -155,7 +274,6 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
         source: 'ai',
         status: result.status,
       });
-      setSelectedDateLabel(result.dateLabel);
     } catch (err) {
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -178,7 +296,6 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
         status: draft.status,
       });
       setEntries((prev) => [row, ...prev.filter((item) => item.id !== row.id)]);
-      setSelectedDateLabel(row.dateLabel);
       setSelectedId(row.id);
       setComposeOpen(false);
     } catch (err) {
@@ -255,10 +372,6 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
       </div>
 
       <div className={styles.phoneBody}>
-        <p className={styles.mmChatIntro}>
-          <strong>{ta} 的日程</strong>：普通手机安排记录，保存在{' '}
-          <code className={styles.inlineCode}>xingye/schedule/entries.jsonl</code>；不触发提醒、通知或后台任务。
-        </p>
         {listError ? (
           <p className={styles.phoneAppHint} role="alert">
             加载失败：{listError}
@@ -268,55 +381,101 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
 
         {!selected ? (
           <div className={styles.scheduleLayout}>
-            <div className={styles.scheduleToolbar}>
-              <div className={styles.scheduleTodayBlock}>
-                <span className={styles.scheduleTodayKicker}>今天</span>
-                <strong>{selectedDateLabel}</strong>
-              </div>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openCompose} disabled={loading}>
-                新建
-              </button>
+            <div className={styles.scheduleMonthHeader}>
+              <div className={styles.scheduleMonthDate}>{dateKickerLine(today)}</div>
+              <h1 className={styles.scheduleMonthTitle}>{fullMonthHeader(today)}</h1>
             </div>
 
-            <div className={styles.scheduleDateStrip} aria-label="日期条">
-              {dateLabels.map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  className={`${styles.scheduleDateChip}${label === selectedDateLabel ? ` ${styles.scheduleDateChipActive}` : ''}`}
-                  onClick={() => setSelectedDateLabel(label)}
-                >
-                  {label === todayDateLabel() ? <span>今天</span> : null}
-                  <strong>{label}</strong>
-                </button>
-              ))}
+            <div className={styles.scheduleCalendarStrip} aria-label="日期条">
+              {buildDateStrip(today).map((d) => {
+                const isToday = sameDay(d, today);
+                const hasDot = stripDotKeys.has(ymdKey(d));
+                const klass = `${styles.scheduleCalendarDay}${isToday ? ` ${styles.scheduleCalendarDayToday}` : ''}`;
+                return (
+                  <div key={d.toISOString()} className={klass}>
+                    <span className={styles.scheduleCalendarDayLabel}>{WEEKDAYS_CN[d.getDay()]}</span>
+                    <span className={styles.scheduleCalendarDayNumber}>{d.getDate()}</span>
+                    <span
+                      className={`${styles.scheduleCalendarDayDot}${hasDot ? ` ${styles.scheduleCalendarDayDotActive}` : ''}`}
+                      aria-hidden
+                    />
+                  </div>
+                );
+              })}
             </div>
 
-            <div className={styles.scheduleGroup} role="list" aria-label={`${selectedDateLabel} 日程`}>
-              {entriesForSelectedDate.length === 0 && !loading ? (
-                <p className={styles.phoneJournalEmpty} data-testid="phone-schedule-empty">
-                  这一天还没有安排
-                </p>
-              ) : null}
-              {entriesForSelectedDate.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className={styles.scheduleCard}
-                  aria-label={`${entry.title}，${STATUS_LABELS[entry.status]}`}
-                  onClick={() => setSelectedId(entry.id)}
-                >
-                  <span className={styles.scheduleCardTime}>{entry.timeText || entry.dateLabel}</span>
-                  <span className={styles.scheduleCardMain}>
-                    <strong>{entry.title}</strong>
-                    <span>{entry.note ? excerpt(entry.note, 72) : excerpt(entry.content, 72)}</span>
-                  </span>
-                  <span className={`${styles.scheduleStatusPill} ${styles[`scheduleStatus_${entry.status}`]}`}>
-                    {STATUS_LABELS[entry.status]}
-                  </span>
-                </button>
-              ))}
+            <div className={styles.scheduleScrollArea}>
+              {dayGroups.map((group) => {
+                const headerText = group.parsed ? relativeGroupHeader(group.parsed, today) : group.dateLabel;
+                const isTodayGroup = Boolean(group.parsed && ymdKey(group.parsed) === todayKey);
+                return (
+                  <div
+                    key={group.parsed ? ymdKey(group.parsed) : `lbl:${group.dateLabel}`}
+                    className={styles.scheduleDaySection}
+                    aria-label={`${group.dateLabel} 日程`}
+                  >
+                    <div className={styles.scheduleDaySectionLabel}>{headerText}</div>
+                    {group.entries.length === 0 && !loading ? (
+                      <p
+                        className={styles.scheduleDayEmpty}
+                        data-testid={isTodayGroup ? 'phone-schedule-empty' : undefined}
+                      >
+                        这一天还没有安排
+                      </p>
+                    ) : null}
+                    {group.entries.map((entry) => {
+                      const isDone = entry.status === 'done';
+                      const isSkipped = entry.status === 'skipped';
+                      const barColor = (entry.category && CATEGORY_BAR_COLOR[entry.category]) || CATEGORY_BAR_FALLBACK;
+                      const timeText = entry.timeText?.trim() || '全天';
+                      const tagText = entry.category || STATUS_LABELS[entry.status];
+                      const rowClass = [
+                        styles.scheduleEventRow,
+                        isDone ? styles.scheduleEventRowDone : '',
+                        isSkipped ? styles.scheduleEventRowSkipped : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ');
+                      return (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          className={rowClass}
+                          aria-label={`${entry.title}，${STATUS_LABELS[entry.status]}`}
+                          onClick={() => setSelectedId(entry.id)}
+                        >
+                          <span className={styles.scheduleEventTimeBlock}>
+                            <span className={styles.scheduleEventTime}>{timeText}</span>
+                            {entry.note ? <span className={styles.scheduleEventDuration}>{excerpt(entry.note, 16)}</span> : null}
+                          </span>
+                          <span className={styles.scheduleEventBar} style={{ background: barColor }} />
+                          <span className={styles.scheduleEventBody}>
+                            <span className={styles.scheduleEventTitle}>{entry.title}</span>
+                            <span className={styles.scheduleEventTag}>{tagText}</span>
+                          </span>
+                          <span
+                            className={`${styles.scheduleEventCheck}${isDone ? ` ${styles.scheduleEventCheckDone}` : ''}`}
+                            aria-hidden
+                          >
+                            {isDone ? '✓' : ''}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
             </div>
+
+            <button
+              type="button"
+              className={styles.scheduleFab}
+              onClick={openCompose}
+              disabled={loading}
+              aria-label="新建日程"
+            >
+              +
+            </button>
           </div>
         ) : (
           <div className={styles.phoneJournalDetail}>

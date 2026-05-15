@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import './xingye-shell-fonts';
 import { useStore } from '../stores';
 import { AgentPhonePanel } from './AgentPhonePanel';
 import { ChatEntryPanel } from './ChatEntryPanel';

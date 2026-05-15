@@ -22,6 +22,8 @@ export type XingyeScheduleEntry = {
   status: XingyeScheduleStatus;
   createdAt: string;
   updatedAt: string;
+  /** 事件类别：约定 / 提醒 / 自己定的 / 也许吧 / 平常；用于客户端配色，可选 */
+  category?: string;
 };
 
 export type XingyeScheduleDraft = {
@@ -32,6 +34,7 @@ export type XingyeScheduleDraft = {
   note?: string;
   source: XingyeScheduleSource;
   status?: XingyeScheduleStatus;
+  category?: string;
 };
 
 function newScheduleId(): string {
@@ -89,6 +92,7 @@ function normalizeRow(value: unknown, expectedAgentId: string): XingyeScheduleEn
     status: normalizeStatus(raw.status),
     createdAt,
     updatedAt,
+    category: normalizeOptionalText(raw.category, 24),
   };
 }
 
@@ -128,6 +132,7 @@ function buildEntry(agentId: string, input: XingyeScheduleDraft, nowIso: string,
     status: normalizeStatus(input.status),
     createdAt: nowIso,
     updatedAt: nowIso,
+    category: normalizeOptionalText(input.category, 24),
   };
 }
 

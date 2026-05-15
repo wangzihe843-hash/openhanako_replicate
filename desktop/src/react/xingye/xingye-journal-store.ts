@@ -16,6 +16,8 @@ export type XingyeJournalEntry = {
   title: string;
   body: string;
   createdAt: string;
+  /** 心情短语（2–6 字），如「平淡 / 想他 / 安静」；可选 */
+  mood?: string;
 };
 
 function newJournalId(): string {
@@ -39,7 +41,9 @@ function normalizeRow(value: unknown): XingyeJournalEntry | null {
   const title = typeof raw.title === 'string' ? raw.title : '无标题';
   const body = typeof raw.body === 'string' ? raw.body : '';
   const createdAt = typeof raw.createdAt === 'string' && raw.createdAt ? raw.createdAt : new Date(0).toISOString();
-  return { id, dayKey, title, body, createdAt };
+  const moodRaw = raw.mood;
+  const mood = typeof moodRaw === 'string' && moodRaw.trim() ? moodRaw.trim().slice(0, 24) : undefined;
+  return { id, dayKey, title, body, createdAt, mood };
 }
 
 function sortJournalEntries(a: XingyeJournalEntry, b: XingyeJournalEntry): number {
@@ -66,7 +70,7 @@ export async function listJournalEntries(agentId: string): Promise<XingyeJournal
 
 export async function appendJournalEntry(
   agentId: string,
-  input: { title: string; body: string; dayKey?: string },
+  input: { title: string; body: string; dayKey?: string; mood?: string },
 ): Promise<XingyeJournalEntry> {
   const aid = agentId.trim();
   if (!aid) {
@@ -84,9 +88,10 @@ export async function appendJournalEntry(
   const title = input.title.trim() || '无标题';
   const id = newJournalId();
   const createdAt = now.toISOString();
-  const row: XingyeJournalEntry & { key: string } = { id, key: id, dayKey, title, body, createdAt };
+  const mood = typeof input.mood === 'string' && input.mood.trim() ? input.mood.trim().slice(0, 24) : undefined;
+  const row: XingyeJournalEntry & { key: string } = { id, key: id, dayKey, title, body, createdAt, mood };
   await backend.appendJsonl(aid, XINGYE_JOURNAL_ENTRIES_JSONL, row);
-  return { id, dayKey, title, body, createdAt };
+  return { id, dayKey, title, body, createdAt, mood };
 }
 
 export async function deleteJournalEntry(agentId: string, entryId: string): Promise<boolean> {

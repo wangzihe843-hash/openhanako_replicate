@@ -115,7 +115,7 @@ function clampDiaryBody(s: string, maxCodePoints: number): string {
   return `${chars.slice(0, maxCodePoints).join('')}…`;
 }
 
-export function normalizeJournalDraftResult(raw: unknown): { title: string; body: string } | null {
+export function normalizeJournalDraftResult(raw: unknown): { title: string; body: string; mood?: string } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const bodyRaw = record.body;
@@ -128,7 +128,9 @@ export function normalizeJournalDraftResult(raw: unknown): { title: string; body
   const title = typeof titleRaw === 'string' && titleRaw.trim()
     ? titleRaw.trim().slice(0, 200)
     : body.slice(0, 48);
-  return { title, body: clampDiaryBody(body, 520) };
+  const moodRaw = record.mood;
+  const mood = typeof moodRaw === 'string' && moodRaw.trim() ? moodRaw.trim().slice(0, 24) : undefined;
+  return { title, body: clampDiaryBody(body, 520), mood };
 }
 
 /**
@@ -139,7 +141,7 @@ export async function generateJournalDraftWithAI(params: {
   agent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
   timeoutMs?: number;
-}): Promise<{ title: string; body: string }> {
+}): Promise<{ title: string; body: string; mood?: string }> {
   const { agent, ownerProfile } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
 
