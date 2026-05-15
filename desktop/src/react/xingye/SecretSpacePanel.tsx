@@ -675,6 +675,8 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             onOpen={onOpen}
             displayName={momentsDisplayName}
             avatarChar={momentsAvatarChar}
+            agent={agent}
+            coverBackgroundUrl={displayProfile?.chatBackgroundDataUrl}
           />
         )
       : activeCategory === 'memory_fragment'

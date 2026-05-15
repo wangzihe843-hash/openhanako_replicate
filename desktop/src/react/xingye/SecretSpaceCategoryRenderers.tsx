@@ -7,7 +7,9 @@
  */
 
 import type { ReactNode } from 'react';
+import type { Agent } from '../types';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 export interface CategoryRendererProps {
@@ -201,16 +203,30 @@ function formatMomentTime(iso: string): string {
 export interface MomentsFeedProps extends CategoryRendererProps {
   displayName: string;
   avatarChar: string;
+  agent?: Agent | null;
+  coverBackgroundUrl?: string;
 }
 
-export function SecretSpaceMomentsFeed({ records, onOpen, displayName, avatarChar }: MomentsFeedProps): ReactNode {
+export function SecretSpaceMomentsFeed({
+  records,
+  onOpen,
+  displayName,
+  avatarChar,
+  agent,
+  coverBackgroundUrl,
+}: MomentsFeedProps): ReactNode {
+  const coverStyle = coverBackgroundUrl
+    ? { backgroundImage: `url("${coverBackgroundUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
+    : undefined;
   return (
     <div className={styles.secretSpaceMomentsRoot}>
-      <div className={styles.secretSpaceMomentsCover}>
+      <div className={styles.secretSpaceMomentsCover} style={coverStyle}>
         <div className={styles.secretSpaceMomentsCoverGlow} />
         <div className={styles.secretSpaceMomentsCoverIdentity}>
           <div className={styles.secretSpaceMomentsCoverName}>{displayName}</div>
-          <div className={styles.secretSpaceMomentsCoverAvatar}>{avatarChar}</div>
+          <div className={styles.secretSpaceMomentsCoverAvatar}>
+            {agent ? <XingyeAgentAvatar agent={agent} alt={displayName} /> : avatarChar}
+          </div>
         </div>
       </div>
       <div className={styles.secretSpaceMomentsCaption}>
@@ -231,7 +247,9 @@ export function SecretSpaceMomentsFeed({ records, onOpen, displayName, avatarCha
               onClick={() => onOpen(rec.key)}
               data-testid={`secret-space-record-row-${rec.key}`}
             >
-              <div className={styles.secretSpaceMomentAvatar}>{avatarChar}</div>
+              <div className={styles.secretSpaceMomentAvatar}>
+                {agent ? <XingyeAgentAvatar agent={agent} alt={displayName} /> : avatarChar}
+              </div>
               <div className={styles.secretSpaceMomentBody}>
                 <div className={styles.secretSpaceMomentAuthor}>{displayName}</div>
                 <div className={styles.secretSpaceMomentText}>{rec.body || rec.summary || rec.title}</div>
