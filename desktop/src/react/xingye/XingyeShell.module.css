@@ -3911,12 +3911,15 @@
 
 .secretSpaceHomePeek_draft {
   flex: 1;
-  padding: 14px 12px;
+  padding: 16px 16px 18px;
   font-family: var(--xingye-font-hand);
   font-size: 14px;
   color: #7a5e2a;
   line-height: 1.55;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .secretSpaceHomePeekDraftLines {
@@ -3953,13 +3956,17 @@
 .secretSpaceHomePeek_dream {
   flex: 1;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px 22px;
+  overflow: hidden;
 }
 
 .secretSpaceHomePeek_dream svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 86%;
+  height: auto;
+  max-height: 100%;
 }
 
 .secretSpaceHomePeekCaption_dream {
@@ -3979,7 +3986,10 @@
 .secretSpaceHomePeek_saved {
   flex: 1;
   position: relative;
-  padding: 10px 12px;
+  padding: 10px 32px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .secretSpaceHomePeekWoodgrain {
@@ -4003,7 +4013,6 @@
   box-shadow:
     0 2px 6px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px rgba(120, 90, 60, 0.15);
-  margin-top: 14px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -4012,9 +4021,9 @@
 .secretSpaceHomePeekRibbon {
   position: absolute;
   top: 0;
-  right: 16px;
-  width: 13px;
-  height: 78%;
+  right: 14px;
+  width: 12px;
+  height: 70%;
   background: linear-gradient(180deg, #b32334 0%, #8c1626 100%);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%);
   box-shadow: -1px 2px 4px rgba(0, 0, 0, 0.35);
@@ -4048,13 +4057,13 @@
 
 .secretSpaceHomePeekPhotoCloud {
   position: absolute;
-  top: 32%;
-  left: 12%;
+  top: 38%;
+  left: 22%;
   width: 42%;
-  height: 8%;
+  height: 16%;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.4);
-  filter: blur(3px);
+  background: rgba(255, 255, 255, 0.45);
+  filter: blur(4px);
 }
 
 .secretSpaceHomePeekPhotoSun {
@@ -4076,19 +4085,23 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
+  padding: 0 2px;
 }
 
 .secretSpaceHomePeek_memory {
   flex: 1;
   position: relative;
-  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px 22px;
+  overflow: hidden;
 }
 
 .secretSpaceHomePeek_memory svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 60%;
+  height: auto;
+  max-height: 100%;
 }
 
 .secretSpaceHomePeekStamp {

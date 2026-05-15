@@ -67,7 +67,7 @@ function DraftPeek() {
 function DreamPeek() {
   return (
     <div className={styles.secretSpaceHomePeek_dream}>
-      <svg viewBox="0 0 100 130" preserveAspectRatio="xMidYMid slice" aria-hidden focusable="false">
+      <svg viewBox="0 0 100 130" preserveAspectRatio="xMidYMid meet" aria-hidden focusable="false">
         <defs>
           <radialGradient id="xingye-ink-a" cx="0.4" cy="0.45" r="0.55">
             <stop offset="0%" stopColor="#000" stopOpacity="0.78" />
