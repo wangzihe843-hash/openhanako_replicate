@@ -36,9 +36,14 @@ function StatePeek() {
       <svg viewBox="0 0 100 100" aria-hidden focusable="false">
         <path
           fill="#e58e8e"
-          d="M50 82 L18 50 a18 18 0 1 1 32-22 a18 18 0 1 1 32 22 z"
+          d="M50 82 C 24 62 12 46 12 32 C 12 22 20 16 30 16 C 40 16 47 22 50 32 C 53 22 60 16 70 16 C 80 16 88 22 88 32 C 88 46 76 62 50 82 Z"
         />
-        <path fill="#fff" opacity="0.5" d="M40 38 a8 8 0 0 1 8-8" stroke="none" />
+        <path
+          fill="#fff"
+          opacity="0.45"
+          d="M30 26 C 26 30 26 36 28 40"
+          stroke="none"
+        />
       </svg>
       <div className={styles.secretSpaceHomePeekCaption_state}>「想着你」</div>
     </div>
@@ -48,11 +53,13 @@ function StatePeek() {
 function DraftPeek() {
   return (
     <div className={styles.secretSpaceHomePeek_draft}>
-      <span>
-        其实那天<br />我也很想说……<br />
+      <span className={styles.secretSpaceHomePeekDraftLines}>
+        <span>其实那天</span>
+        <span>我也很想说……</span>
         <span className={styles.secretSpaceHomePeekFade}>（写到一半的话）</span>
       </span>
       <span aria-hidden className={styles.secretSpaceHomePeekCurl} />
+      <span aria-hidden className={styles.secretSpaceHomePeekCurlShadow} />
     </div>
   );
 }
@@ -60,22 +67,32 @@ function DraftPeek() {
 function DreamPeek() {
   return (
     <div className={styles.secretSpaceHomePeek_dream}>
-      <svg viewBox="0 0 100 100" aria-hidden focusable="false">
+      <svg viewBox="0 0 100 130" preserveAspectRatio="xMidYMid slice" aria-hidden focusable="false">
         <defs>
-          <radialGradient id="xingye-ink-a" cx="0.35" cy="0.4" r="0.5">
-            <stop offset="0%" stopColor="#000" stopOpacity="0.7" />
+          <radialGradient id="xingye-ink-a" cx="0.4" cy="0.45" r="0.55">
+            <stop offset="0%" stopColor="#000" stopOpacity="0.78" />
+            <stop offset="70%" stopColor="#000" stopOpacity="0.15" />
             <stop offset="100%" stopColor="#000" stopOpacity="0" />
           </radialGradient>
-          <radialGradient id="xingye-ink-b" cx="0.7" cy="0.65" r="0.4">
-            <stop offset="0%" stopColor="#0a0d1a" stopOpacity="0.85" />
-            <stop offset="100%" stopColor="#0a0d1a" stopOpacity="0" />
+          <radialGradient id="xingye-ink-b" cx="0.55" cy="0.55" r="0.5">
+            <stop offset="0%" stopColor="#05070f" stopOpacity="0.9" />
+            <stop offset="65%" stopColor="#05070f" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#05070f" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="xingye-ink-c" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0%" stopColor="#000" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#000" stopOpacity="0" />
           </radialGradient>
         </defs>
-        <ellipse cx="38" cy="46" rx="28" ry="22" fill="url(#xingye-ink-a)" />
-        <ellipse cx="68" cy="62" rx="20" ry="14" fill="url(#xingye-ink-b)" />
-        <circle cx="78" cy="22" r="2" fill="#fff" opacity="0.7" />
-        <circle cx="22" cy="20" r="1.5" fill="#fff" opacity="0.5" />
-        <circle cx="86" cy="40" r="1" fill="#fff" opacity="0.4" />
+        <ellipse cx="34" cy="52" rx="30" ry="24" fill="url(#xingye-ink-a)" />
+        <ellipse cx="66" cy="80" rx="24" ry="18" fill="url(#xingye-ink-b)" />
+        <ellipse cx="80" cy="40" rx="14" ry="10" fill="url(#xingye-ink-c)" />
+        <circle cx="78" cy="22" r="1.8" fill="#fff" opacity="0.85" />
+        <circle cx="22" cy="18" r="1.3" fill="#fff" opacity="0.7" />
+        <circle cx="62" cy="28" r="1.0" fill="#fff" opacity="0.7" />
+        <circle cx="88" cy="54" r="1.0" fill="#fff" opacity="0.55" />
+        <circle cx="14" cy="42" r="0.8" fill="#fff" opacity="0.55" />
+        <circle cx="48" cy="14" r="0.8" fill="#fff" opacity="0.5" />
       </svg>
       <div className={styles.secretSpaceHomePeekCaption_dream}>梦</div>
     </div>
@@ -87,8 +104,8 @@ function SavedPeek() {
     <div className={styles.secretSpaceHomePeek_saved}>
       <div aria-hidden className={styles.secretSpaceHomePeekWoodgrain} />
       <div className={styles.secretSpaceHomePeekCard}>
-        「世间的好物
-        不坚牢，<br />彩云易散琉璃脆。」
+        <span>「世间的好物 不坚牢，</span>
+        <span>彩云易散琉璃脆。」</span>
       </div>
       <div aria-hidden className={styles.secretSpaceHomePeekRibbon} />
     </div>
@@ -100,10 +117,11 @@ function MomentPeek() {
     <div className={styles.secretSpaceHomePeek_moment}>
       <div className={styles.secretSpaceHomePeekPhoto}>
         <div className={styles.secretSpaceHomePeekPhotoShade} />
+        <div className={styles.secretSpaceHomePeekPhotoCloud} />
         <div className={styles.secretSpaceHomePeekPhotoSun} />
       </div>
       <div className={styles.secretSpaceHomePeekMomentBody}>
-        今天天气很好。<br />
+        <span>今天天气很好。</span>
         <span className={styles.secretSpaceHomePeekFade}>（最终没发出去）</span>
       </div>
     </div>
@@ -113,26 +131,28 @@ function MomentPeek() {
 function MemoryPeek() {
   return (
     <div className={styles.secretSpaceHomePeek_memory}>
-      <svg viewBox="0 0 100 100" aria-hidden focusable="false">
-        <g stroke="#7a5b48" strokeWidth="1.2" fill="none" opacity="0.7">
-          <path d="M50 90 Q 50 60 50 20" />
-          <path d="M50 70 Q 38 64 30 56" />
-          <path d="M50 60 Q 62 56 70 48" />
-          <path d="M50 50 Q 38 46 32 38" />
-          <path d="M50 40 Q 62 38 68 30" />
+      <svg viewBox="0 0 100 130" preserveAspectRatio="xMidYMid meet" aria-hidden focusable="false">
+        <g stroke="#8a6a52" strokeWidth="1.6" fill="none" opacity="0.9" strokeLinecap="round">
+          <path d="M50 124 L 50 36" />
+          <path d="M50 78 Q 38 76 28 64" />
+          <path d="M50 78 Q 62 76 72 64" />
+          <path d="M50 58 Q 40 54 32 46" />
+          <path d="M50 58 Q 60 54 68 46" />
         </g>
-        <g fill="#c08294" opacity="0.85">
-          <circle cx="50" cy="20" r="5" />
-          <circle cx="46" cy="16" r="3.5" />
-          <circle cx="54" cy="16" r="3.5" />
-          <circle cx="50" cy="14" r="3" />
+        <g fill="#c6a489" opacity="0.95">
+          <ellipse cx="26" cy="62" rx="6" ry="3.8" transform="rotate(-22 26 62)" />
+          <ellipse cx="74" cy="62" rx="6" ry="3.8" transform="rotate(22 74 62)" />
+          <ellipse cx="30" cy="44" rx="5" ry="3.2" transform="rotate(-18 30 44)" />
+          <ellipse cx="70" cy="44" rx="5" ry="3.2" transform="rotate(18 70 44)" />
         </g>
-        <g fill="#b89b6e" opacity="0.5">
-          <ellipse cx="30" cy="56" rx="6" ry="3" transform="rotate(-30 30 56)" />
-          <ellipse cx="70" cy="48" rx="6" ry="3" transform="rotate(30 70 48)" />
-          <ellipse cx="32" cy="38" rx="5" ry="2.5" transform="rotate(-25 32 38)" />
-          <ellipse cx="68" cy="30" rx="5" ry="2.5" transform="rotate(25 68 30)" />
+        <g fill="#c97e98">
+          <ellipse cx="50" cy="22" rx="7" ry="8.5" />
+          <ellipse cx="40" cy="26" rx="6" ry="7" transform="rotate(-32 40 26)" />
+          <ellipse cx="60" cy="26" rx="6" ry="7" transform="rotate(32 60 26)" />
+          <ellipse cx="44" cy="16" rx="5.5" ry="6.5" transform="rotate(-15 44 16)" />
+          <ellipse cx="56" cy="16" rx="5.5" ry="6.5" transform="rotate(15 56 16)" />
         </g>
+        <circle cx="50" cy="24" r="2.4" fill="#a45a72" />
       </svg>
       <div className={styles.secretSpaceHomePeekStamp}>
         NO.07
