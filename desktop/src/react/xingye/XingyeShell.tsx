@@ -144,7 +144,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               onExit={onExit}
             />
           ) : activeTab.id === 'group-chat' ? (
-            <GroupChatPanel />
+            <GroupChatPanel selectedAgent={selectedAgent} />
           ) : activeTab.id === 'moments' ? (
             <MomentsPanel
               agents={agents}

@@ -4749,9 +4749,17 @@
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
   display: grid;
   place-items: center;
+  overflow: hidden;
   color: #fff;
   font-size: 30px;
   font-family: var(--xingye-font-brush);
+}
+
+.secretSpaceMomentsCoverAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .secretSpaceMomentsCaption {
@@ -4801,9 +4809,17 @@
   background: linear-gradient(135deg, #f5d4be, #e0a890);
   display: grid;
   place-items: center;
+  overflow: hidden;
   color: #fff;
   font-family: var(--xingye-font-brush);
   font-size: 22px;
+}
+
+.secretSpaceMomentAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .secretSpaceMomentBody {
@@ -5768,4 +5784,257 @@
 .phoneShoppingBody {
   color: var(--text);
   white-space: pre-wrap;
+}
+
+/* ═══════════════════════════════════════════
+   Xingye Group Chat MVP
+   ═══════════════════════════════════════════ */
+
+.xyGroupChat {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, var(--overlay-subtle));
+  min-height: 360px;
+}
+
+.xyGroupChatList {
+  border-right: 1px solid var(--overlay-light);
+  padding: var(--space-md) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.xyGroupChatListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: var(--space-sm);
+}
+
+.xyGroupChatListTitle {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.xyGroupChatRefreshButton {
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.xyGroupChatRefreshButton:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.xyGroupChatRefreshButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.xyGroupChatChannelList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.xyGroupChatChannelButton {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.xyGroupChatChannelButton:hover {
+  background: var(--accent-light);
+}
+
+.xyGroupChatChannelButtonActive {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.xyGroupChatChannelName {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.xyGroupChatChannelMeta {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.xyGroupChatDetail {
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.xyGroupChatDetailHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-sm);
+}
+
+.xyGroupChatDetailTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.xyGroupChatDetailMeta {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.xyGroupChatDetailDesc {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.xyGroupChatDetailActions {
+  display: flex;
+  gap: 8px;
+}
+
+.xyGroupChatTriggerButton {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.xyGroupChatTriggerButton:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.xyGroupChatTriggerButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.xyGroupChatResult {
+  margin-bottom: var(--space-sm);
+  padding: 8px 10px;
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.xyGroupChatResultReplied {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.xyGroupChatResultSkipped {
+  color: var(--text-muted);
+}
+
+.xyGroupChatResultError {
+  border-color: var(--color-danger, #c0392b);
+  color: var(--color-danger, #c0392b);
+}
+
+.xyGroupChatMessageList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.xyGroupChatMessage {
+  border: 1px solid var(--overlay-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--bg-elevated, var(--overlay-subtle));
+}
+
+.xyGroupChatMessageUser {
+  background: var(--accent-light);
+  border-color: transparent;
+}
+
+.xyGroupChatMessageSelfAgent {
+  border-color: var(--accent);
+}
+
+.xyGroupChatMessageSystem {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.xyGroupChatMessageHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.xyGroupChatMessageSender {
+  font-weight: 600;
+}
+
+.xyGroupChatMessageTimestamp {
+  font-variant-numeric: tabular-nums;
+}
+
+.xyGroupChatMessageBody {
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 0.88rem;
+}
+
+.xyGroupChatHint {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  margin: 0;
 }

@@ -1,7 +1,14 @@
+import fs from "fs";
+import path from "path";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
 import { callText } from "../../core/llm-client.js";
 import { isLocalBaseUrl } from "../../shared/net-utils.js";
+import {
+  appendMessage as appendChannelMessage,
+  getChannelMembers,
+  getChannelMeta,
+} from "../../lib/channels/channel-store.js";
 
 const PROFILE_FIELDS = [
   "shortBio",
@@ -398,6 +405,73 @@ export function createXingyeRoute(engine) {
         } catch {}
       }
       return c.json({ ok: false, error: message }, 502);
+    }
+  });
+
+  /**
+   * 星野群聊「手动提醒直接回复」MVP 专用：
+   * 允许由当前 agent 身份向已存在的 OpenHanako Channel 写入一条群聊消息。
+   *
+   * 校验：
+   *  - channelId / agentId / body 非空，agentId 形如 SAFE_AGENT_ID
+   *  - channel 文件存在
+   *  - agent 是该频道成员
+   *  - body 长度受限，去除空白后非空
+   *
+   * 与 POST /api/channels/:id/messages 的区别：
+   *  - 写入身份是当前 agent，不是 user
+   *  - 不调用 hub.triggerChannelDelivery —— 避免触发 channel router 的自动回复链路，
+   *    本 MVP 仅响应当前用户的手动触发
+   */
+  route.post("/xingye/group-chat/post-as-agent", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const channelId = cleanString(body?.channelId, 120);
+      const agentId = cleanString(body?.agentId, 120);
+      const messageBody = typeof body?.body === "string" ? body.body : "";
+      if (!channelId) return c.json({ error: "channelId is required" }, 400);
+      if (!agentId) return c.json({ error: "agentId is required" }, 400);
+      if (!/^[A-Za-z0-9_-]{1,120}$/.test(agentId)) {
+        return c.json({ error: "agentId is invalid" }, 400);
+      }
+      if (!/^ch_[A-Za-z0-9_-]{1,120}$/.test(channelId)) {
+        return c.json({ error: "channelId is invalid" }, 400);
+      }
+      const trimmedBody = messageBody.trim();
+      if (!trimmedBody) return c.json({ error: "body is required" }, 400);
+      if (trimmedBody.length > 2000) {
+        return c.json({ error: "body too long" }, 400);
+      }
+
+      const channelsDir = engine.channelsDir;
+      if (!channelsDir) return c.json({ error: "channels not configured" }, 500);
+      const filePath = path.join(channelsDir, `${channelId}.md`);
+      const resolved = path.resolve(filePath);
+      const base = path.resolve(channelsDir);
+      if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+        return c.json({ error: "invalid channelId" }, 400);
+      }
+      if (!fs.existsSync(filePath)) {
+        return c.json({ error: "channel not found" }, 404);
+      }
+
+      const members = getChannelMembers(filePath);
+      if (!Array.isArray(members) || !members.includes(agentId)) {
+        return c.json({ error: "agent is not a channel member" }, 403);
+      }
+
+      const result = await appendChannelMessage(filePath, agentId, trimmedBody);
+
+      const meta = getChannelMeta(filePath);
+      return c.json({
+        ok: true,
+        timestamp: result.timestamp,
+        channelId,
+        agentId,
+        channelName: meta?.name || channelId,
+      });
+    } catch (err) {
+      return c.json({ ok: false, error: errorDetail(err) }, 500);
     }
   });
 
