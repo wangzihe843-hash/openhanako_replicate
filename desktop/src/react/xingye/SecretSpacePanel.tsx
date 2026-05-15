@@ -170,6 +170,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [manualReason, setManualReason] = useState(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
   const [manualLevel, setManualLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [manualError, setManualError] = useState<string | null>(null);
+  const [memoryCreateOpen, setMemoryCreateOpen] = useState(false);
 
   const [addRecordTitle, setAddRecordTitle] = useState('');
   const [addRecordBody, setAddRecordBody] = useState('');
@@ -187,6 +188,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setManualReason(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
       setManualLevel('medium');
       setManualError(null);
+      setMemoryCreateOpen(false);
       setAddRecordTitle('');
       setAddRecordBody('');
       setAddRecordError(null);
@@ -428,63 +430,115 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setManualContent('');
       setManualReason(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
       setManualLevel('medium');
+      setMemoryCreateOpen(false);
     } catch (e) {
       setManualError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const closeMemoryCreate = () => {
+    setMemoryCreateOpen(false);
+    setManualError(null);
   };
 
   const displayProfile = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
 
   const memoryFragmentFooter =
     agent?.id ? (
-      <div className={styles.profileForm} data-testid="secret-space-manual-candidate">
-        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
-          手动保存为「重要记忆候选」；确认后写入 OpenHanako <code className={styles.inlineCode}>pinned.md</code>。
-        </p>
-        <label className={styles.profileField}>
-          <span>候选记忆内容</span>
-          <textarea
-            value={manualContent}
-            onChange={(e) => setManualContent(e.target.value)}
-            rows={3}
-            placeholder="输入一条你希望记住的要点"
-            aria-label="候选记忆内容"
-            data-testid="secret-space-memory-candidate-content"
-          />
-        </label>
-        <label className={styles.profileField}>
-          <span>重要度</span>
-          <select
-            value={manualLevel}
-            onChange={(e) => setManualLevel(e.target.value as 'low' | 'medium' | 'high')}
-            aria-label="候选记忆重要度"
-          >
-            {XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS.map((opt) => (
-              <option key={opt.level} value={opt.level}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={styles.profileField}>
-          <span>理由</span>
-          <textarea
-            value={manualReason}
-            onChange={(e) => setManualReason(e.target.value)}
-            rows={2}
-            aria-label="候选记忆理由"
-          />
-        </label>
-        {manualError ? <p className={styles.saveStatus}>{manualError}</p> : null}
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={handleCreateManualCandidate}
-          data-testid="secret-space-create-memory-candidate"
-        >
-          创建候选记忆
-        </button>
+      <div className={styles.secretSpaceMemoryFooter}>
         <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} />
+      </div>
+    ) : null;
+
+  const memoryCreateModal =
+    agent?.id && memoryCreateOpen ? (
+      <div
+        className={styles.secretSpaceMemoryCreateOverlay}
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeMemoryCreate();
+        }}
+      >
+        <div
+          className={styles.secretSpaceMemoryCreateSheet}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="secret-space-memory-create-title"
+          data-testid="secret-space-manual-candidate"
+        >
+          <div className={styles.secretSpaceMemoryCreateHeader}>
+            <h3
+              id="secret-space-memory-create-title"
+              className={styles.secretSpaceMemoryCreateTitle}
+            >
+              新建私藏回忆
+            </h3>
+            <button
+              type="button"
+              className={styles.secretSpaceMemoryCreateClose}
+              onClick={closeMemoryCreate}
+              aria-label="关闭"
+            >
+              ×
+            </button>
+          </div>
+          <p className={styles.secretSpaceMemoryCreateHint}>
+            手动保存为「重要记忆候选」；确认后写入 OpenHanako{' '}
+            <code className={styles.inlineCode}>pinned.md</code>。
+          </p>
+          <label className={styles.profileField}>
+            <span>候选记忆内容</span>
+            <textarea
+              value={manualContent}
+              onChange={(e) => setManualContent(e.target.value)}
+              rows={3}
+              placeholder="输入一条你希望记住的要点"
+              aria-label="候选记忆内容"
+              data-testid="secret-space-memory-candidate-content"
+            />
+          </label>
+          <label className={styles.profileField}>
+            <span>重要度</span>
+            <select
+              value={manualLevel}
+              onChange={(e) => setManualLevel(e.target.value as 'low' | 'medium' | 'high')}
+              aria-label="候选记忆重要度"
+            >
+              {XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS.map((opt) => (
+                <option key={opt.level} value={opt.level}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.profileField}>
+            <span>理由</span>
+            <textarea
+              value={manualReason}
+              onChange={(e) => setManualReason(e.target.value)}
+              rows={2}
+              aria-label="候选记忆理由"
+            />
+          </label>
+          {manualError ? <p className={styles.saveStatus}>{manualError}</p> : null}
+          <div className={styles.secretSpaceMemoryCreateActions}>
+            <button
+              type="button"
+              className={styles.secretSpaceMemoryCreateGhost}
+              onClick={closeMemoryCreate}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className={styles.secretSpaceMemoryCreatePrimary}
+              onClick={handleCreateManualCandidate}
+              data-testid="secret-space-create-memory-candidate"
+            >
+              创建候选记忆
+            </button>
+          </div>
+        </div>
       </div>
     ) : null;
 
@@ -648,23 +702,47 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       {view === 'home' ? (
         <SecretSpaceHome onSelectCategory={openCategory} />
       ) : activeMeta ? (
-        <SecretSpaceCategoryView
-          meta={activeMeta}
-          onBack={goHome}
-          stateSection={stateSection}
-          records={activeSamples}
-          footer={categoryFooter}
-          renderRecordList={renderRecordListForCategory}
-          onRequestDeleteRecord={
-            agent?.id
-              ? (key) =>
-                  activeCategory === 'memory_fragment'
-                    ? handleDeletePinnedMemoryFragment(key)
-                    : handleRequestDeleteSecretSpaceRecord(key)
-              : undefined
-          }
-          deleteError={secretSpaceDeleteError}
-        />
+        activeCategory === 'memory_fragment' ? (
+          <div className={styles.secretSpaceMemoryWrapper}>
+            <SecretSpaceCategoryView
+              meta={activeMeta}
+              onBack={goHome}
+              stateSection={stateSection}
+              records={activeSamples}
+              footer={categoryFooter}
+              renderRecordList={renderRecordListForCategory}
+              onRequestDeleteRecord={
+                agent?.id ? (key) => handleDeletePinnedMemoryFragment(key) : undefined
+              }
+              deleteError={secretSpaceDeleteError}
+            />
+            {agent?.id ? (
+              <button
+                type="button"
+                className={styles.secretSpaceMemoryCreateFab}
+                onClick={() => setMemoryCreateOpen(true)}
+                aria-label="新建回忆"
+                data-testid="secret-space-open-memory-create"
+              >
+                +
+              </button>
+            ) : null}
+            {memoryCreateModal}
+          </div>
+        ) : (
+          <SecretSpaceCategoryView
+            meta={activeMeta}
+            onBack={goHome}
+            stateSection={stateSection}
+            records={activeSamples}
+            footer={categoryFooter}
+            renderRecordList={renderRecordListForCategory}
+            onRequestDeleteRecord={
+              agent?.id ? (key) => handleRequestDeleteSecretSpaceRecord(key) : undefined
+            }
+            deleteError={secretSpaceDeleteError}
+          />
+        )
       ) : null}
     </div>
   );

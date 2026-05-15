@@ -599,10 +599,10 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     render(<SecretSpacePanel agent={agent} />);
 
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    expect(screen.queryByTestId('secret-space-manual-add-record')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
-    expect(screen.queryByTestId('secret-space-manual-add-record')).not.toBeInTheDocument();
-
     const contentInput = within(manualForm).getByPlaceholderText('输入一条你希望记住的要点');
 
     fireEvent.change(contentInput, {
@@ -611,7 +611,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     fireEvent.click(within(manualForm).getByRole('button', { name: '创建候选记忆' }));
 
     await waitFor(() => {
-      expect(contentInput).toHaveValue('');
+      expect(screen.queryByTestId('secret-space-manual-candidate')).not.toBeInTheDocument();
     });
   });
 
@@ -649,6 +649,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
   it('manual memory input creates a pending candidate in the candidate area', async () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
     fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
@@ -667,6 +668,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
   it('refreshes the memory_fragment main list after confirming a pending candidate to pinned', async () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
     fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
