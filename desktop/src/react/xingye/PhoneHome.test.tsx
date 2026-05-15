@@ -52,6 +52,7 @@ function renderPhoneHome() {
       onOpenDivination={vi.fn()}
       onOpenFiles={vi.fn()}
       onOpenShopping={vi.fn()}
+      onOpenMail={vi.fn()}
     />,
   );
 }
@@ -116,6 +117,7 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenDivination={vi.fn()}
         onOpenFiles={vi.fn()}
         onOpenShopping={vi.fn()}
+        onOpenMail={vi.fn()}
       />,
     );
 
@@ -139,6 +141,7 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenDivination={onOpenDivination}
         onOpenFiles={vi.fn()}
         onOpenShopping={vi.fn()}
+        onOpenMail={vi.fn()}
       />,
     );
 
@@ -162,6 +165,7 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenDivination={vi.fn()}
         onOpenFiles={onOpenFiles}
         onOpenShopping={vi.fn()}
+        onOpenMail={vi.fn()}
       />,
     );
 
@@ -185,11 +189,36 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenDivination={vi.fn()}
         onOpenFiles={vi.fn()}
         onOpenShopping={onOpenShopping}
+        onOpenMail={vi.fn()}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /购物/ }));
 
     expect(onOpenShopping).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the mail app from the phone home grid', () => {
+    const onOpenMail = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={vi.fn()}
+        onOpenDivination={vi.fn()}
+        onOpenFiles={vi.fn()}
+        onOpenShopping={vi.fn()}
+        onOpenMail={onOpenMail}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^邮箱，TA 的私人邮箱$/ }));
+
+    expect(onOpenMail).toHaveBeenCalledTimes(1);
   });
 });

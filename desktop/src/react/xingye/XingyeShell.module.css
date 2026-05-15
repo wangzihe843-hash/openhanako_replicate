@@ -1692,6 +1692,10 @@
   background: linear-gradient(135deg, #805f4f, #c48b69);
 }
 
+.phoneAppGlyph_mail {
+  background: linear-gradient(135deg, #4a6585, #8aa7c4);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;

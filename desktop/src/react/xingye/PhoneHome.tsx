@@ -20,6 +20,7 @@ interface PhoneHomeProps {
   onOpenDivination: () => void;
   onOpenFiles: () => void;
   onOpenShopping: () => void;
+  onOpenMail: () => void;
 }
 
 const phoneIcons = {
@@ -112,6 +113,12 @@ const phoneIcons = {
       <path d="M9.5 16h3" />
     </svg>
   ),
+  mail: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />
+      <path d="m4 7 8 6 8-6" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -122,6 +129,7 @@ const appShortcuts = [
   { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
   { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
+  { label: '邮箱', subtitle: 'TA 的私人邮箱', tone: 'mail', icon: phoneIcons.mail, action: 'mail' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
@@ -160,6 +168,7 @@ export function PhoneHome({
   onOpenDivination,
   onOpenFiles,
   onOpenShopping,
+  onOpenMail,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -207,6 +216,10 @@ export function PhoneHome({
     }
     if (action === 'shopping') {
       onOpenShopping();
+      return;
+    }
+    if (action === 'mail') {
+      onOpenMail();
       return;
     }
   };
