@@ -9,7 +9,6 @@ import path from "path";
 import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.js";
 import { createDefaultSettings } from "./session-defaults.js";
 import { debugLog } from "../lib/debug-log.js";
-import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
 import { t, getLocale } from "../server/i18n.js";
 import { safeReadJSON } from "../shared/safe-fs.js";
 import { findModel } from "../shared/model-ref.js";
@@ -20,6 +19,11 @@ import { SESSION_PERMISSION_MODES } from "./session-permission-mode.js";
 import { collectMediaItems } from "../lib/tools/media-details.js";
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.js";
 import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import {
+  buildFreshCompactMetaPatch,
+  buildFreshCompactSnapshot,
+  shouldRunFreshCompact,
+} from "../lib/fresh-compact/policy.js";
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
@@ -52,6 +56,23 @@ function buildPromptMediaOptions(opts) {
 function getProviderMessageEndError(event) {
   if (event?.type !== "message_end" || event.message?.stopReason !== "error") return null;
   return event.message.errorMessage || event.message.error?.message || "Unknown error";
+}
+
+function zeroUsage() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
 }
 
 function withVisionExtension(resourceLoader, getBridge, getSessionPath, isEnabled, warn, resolveSessionFile) {
@@ -287,6 +308,59 @@ export class BridgeSessionManager {
     return { changed: true, file: entry.file };
   }
 
+  _buildOwnerFreshCompactContext(agent, homeCwd) {
+    const prefs = this._deps.getPreferences();
+    const systemPrompt = agent.buildSystemPrompt({
+      cwdOverride: homeCwd,
+      forceMemoryEnabled: agent.memoryMasterEnabled,
+      ...(typeof agent.experienceEnabled === "boolean"
+        ? { forceExperienceEnabled: agent.experienceEnabled === true }
+        : {}),
+    });
+    const state = {
+      bridgeReadOnly: prefs?.bridge?.readOnly === true,
+      experienceEnabled: agent.experienceEnabled === true,
+      memoryMasterEnabled: agent.memoryMasterEnabled !== false,
+      model: agent.config?.models?.chat || null,
+      thinkingLevel: prefs?.thinking_level || "auto",
+    };
+    return {
+      systemPrompt,
+      snapshot: buildFreshCompactSnapshot({ systemPrompt, state }),
+    };
+  }
+
+  _writeFreshCompactIndexMeta(agent, sessionKey, patch) {
+    const index = this.readIndex(agent);
+    const raw = index[sessionKey];
+    const entry = this._normalizeIndexEntry(raw);
+    if (!entry.file) return false;
+    entry.freshCompact = patch;
+    index[sessionKey] = this._serializeIndexEntry(raw, entry);
+    this.writeIndex(index, agent);
+    return true;
+  }
+
+  listDailyFreshCompactTargets(agent, { now = new Date() } = {}) {
+    const index = this.readIndex(agent);
+    const bridgeDir = path.join(agent.sessionDir, "bridge");
+    const targets = [];
+    for (const [sessionKey, raw] of Object.entries(index)) {
+      const entry = this._normalizeIndexEntry(raw);
+      if (!entry.file) continue;
+      const root = String(entry.file).split(/[\\/]/)[0];
+      if (root !== "owner") continue;
+      const sessionPath = path.join(bridgeDir, entry.file);
+      if (!fs.existsSync(sessionPath)) continue;
+      if (this.isSessionStreaming(sessionKey)) continue;
+      const decision = shouldRunFreshCompact({ meta: entry, now });
+      if (decision.run) {
+        targets.push({ sessionKey, reason: decision.reason || "daily" });
+      }
+    }
+    return targets;
+  }
+
   /**
    * 执行外部平台消息：找到或创建持久 session，prompt 并捕获回复文本
    * @param {string} prompt - 格式化后的用户消息
@@ -298,6 +372,7 @@ export class BridgeSessionManager {
   async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
     try {
       let promptText = prompt;
+      const isGuest = opts.guest === true;
       const agent = this._resolveAgent(opts, "executeExternalMessage");
       const mm = this._deps.getModelManager();
       const bridgeDir = path.join(agent.sessionDir, "bridge");
@@ -331,9 +406,9 @@ export class BridgeSessionManager {
       let sessionOpts;
       const sessionPathRef = { current: null };
       // 工具 details.media 收集器（被动提取 tool_execution_end 事件）
-      let toolMediaUrls = [];
+      const toolMediaUrls = [];
 
-      if (opts.guest) {
+      if (isGuest) {
         // guest 模式：yuan + public-ishiki + contextTag，主模型，无工具
         const yuanBase = agent.yuanPrompt;
         const pubIshiki = agent.publicIshiki;
@@ -507,7 +582,6 @@ export class BridgeSessionManager {
           this.writeIndex(index, agent);
         }
       }
-
       if (providerErrorMessage) {
         return { __bridgeError: true, message: providerErrorMessage };
       }
@@ -582,10 +656,7 @@ export class BridgeSessionManager {
         }
       }
 
-      mgr.appendMessage({
-        role: "assistant",
-        content: [{ type: "text", text }],
-      });
+      mgr.appendMessage(this._buildRecordedAssistantMessage(agent, text));
 
       if (sessionPath) {
         const { changed } = this._syncIndexEntry(index, sessionKey, raw, {
@@ -611,6 +682,29 @@ export class BridgeSessionManager {
     return this.recordAssistantMessage(sessionKey, text, { ...opts, createIfMissing: false });
   }
 
+  _buildRecordedAssistantMessage(agent, text) {
+    const mm = this._deps.getModelManager();
+    const chatRef = agent.config?.models?.chat;
+    const ref = (typeof chatRef === "object" && chatRef?.id && chatRef?.provider) ? chatRef : null;
+    if (!ref) {
+      throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
+    }
+    const chatModel = findModel(mm.availableModels, ref.id, ref.provider);
+    if (!chatModel) {
+      throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: `${ref.provider}/${ref.id}` }));
+    }
+    return {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: chatModel.api || "openai-completions",
+      provider: chatModel.provider,
+      model: chatModel.id,
+      usage: zeroUsage(),
+      stopReason: "stop",
+      timestamp: Date.now(),
+    };
+  }
+
   /**
    * 构造 owner 模式 bridge session 的 createAgentSession opts。
    * 从 executeExternalMessage 的 owner 分支抽出，以便 compactSession 复用同一配置。
@@ -622,7 +716,7 @@ export class BridgeSessionManager {
    * @param {string} homeCwd
    * @returns {object} sessionOpts for createAgentSession
    */
-  _buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef = { current: null }) {
+  _buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef = { current: null }, opts = {}) {
     const prefs = this._deps.getPreferences();
     const bridgeReadOnly = prefs?.bridge?.readOnly === true;
     const bridgePermissionMode = bridgeReadOnly
@@ -645,14 +739,6 @@ export class BridgeSessionManager {
       },
     );
 
-    const bridgeTools = bridgeReadOnly
-      ? baseTools.filter(t => READ_ONLY_BUILTIN_TOOLS.includes(t.name))
-      : baseTools;
-    const safeCustomNames = ["search_memory", "web_search", "web_fetch", "stage_files"];
-    const bridgeCustomTools = bridgeReadOnly
-      ? (baseCustomTools || []).filter(t => safeCustomNames.includes(t.name))
-      : baseCustomTools;
-
     // 使用 agent 配置的模型（必须是带 provider 的复合键对象）
     const ownerRef = agent.config?.models?.chat;
     const ref = (typeof ownerRef === "object" && ownerRef?.id && ownerRef?.provider) ? ownerRef : null;
@@ -667,7 +753,7 @@ export class BridgeSessionManager {
     // 快照 prompt，隔离于其他 session 的 prompt 变更（与 SessionCoordinator.createSession 一致）。
     // 显式按 master 开关构建：bridge owner 是独立链路，不应受桌面端某个 session
     // 的 per-session 开关污染。用户在桌面关掉某个 session 的记忆，不影响这里。
-    const ownerPromptSnapshot = agent.buildSystemPrompt({
+    const ownerPromptSnapshot = opts.ownerPromptSnapshot || agent.buildSystemPrompt({
       cwdOverride: homeCwd,
       forceMemoryEnabled: agent.memoryMasterEnabled,
       ...(typeof agent.experienceEnabled === "boolean"
@@ -695,8 +781,8 @@ export class BridgeSessionManager {
       model: ownerModel,
       thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
       resourceLoader: visionResourceLoader,
-      tools: bridgeTools,
-      customTools: bridgeCustomTools,
+      tools: baseTools,
+      customTools: baseCustomTools,
       settingsManager: this._createSettings(ownerModel),
     };
   }
@@ -745,7 +831,12 @@ export class BridgeSessionManager {
     const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
     const sessionDir = path.dirname(sessionFilePath);
     const mgr = SessionManager.open(sessionFilePath, sessionDir);
-    const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd);
+    const freshContext = opts.fresh === true
+      ? this._buildOwnerFreshCompactContext(agent, homeCwd)
+      : null;
+    const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, { current: sessionFilePath }, {
+      ownerPromptSnapshot: freshContext?.systemPrompt,
+    });
 
     const { session } = await createAgentSession({
       cwd: homeCwd,
@@ -764,11 +855,25 @@ export class BridgeSessionManager {
       await session.compact();
       const after = session.getContextUsage?.() ?? null;
 
-      return {
+      const result = {
         tokensBefore: before?.tokens ?? null,
         tokensAfter: after?.tokens ?? null,
         contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
       };
+
+      if (freshContext) {
+        const reason = opts.reason || "manual";
+        const patch = buildFreshCompactMetaPatch({
+          snapshot: freshContext.snapshot,
+          reason,
+          now: opts.now || new Date(),
+          usage: result,
+        });
+        this._writeFreshCompactIndexMeta(agent, sessionKey, patch);
+        return { ...result, fresh: true, reason };
+      }
+
+      return result;
     } finally {
       await teardownSessionResources({
         session,
@@ -778,14 +883,22 @@ export class BridgeSessionManager {
     }
   }
 
+  async freshCompactSession(sessionKey, opts = {}) {
+    return this.compactSession(sessionKey, {
+      ...opts,
+      fresh: true,
+      reason: opts.reason || "manual",
+    });
+  }
+
   /** 创建 bridge 专用 settings：compaction 由 SDK 默认触发（contextWindow - 16384） */
-  _createSettings(model) {
+  _createSettings(_model) {
     return createDefaultSettings();
   }
 }
 
 function addAttachedImageMarkers(text, imageAttachmentPaths) {
-  let promptText = text || "";
+  const promptText = text || "";
   const missing = Array.from(new Set(imageAttachmentPaths || []))
     .filter((filePath) => filePath && !promptText.includes(`[attached_image: ${filePath}]`));
   if (!missing.length) return promptText;

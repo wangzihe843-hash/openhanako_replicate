@@ -115,9 +115,9 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 是否可移除隐式 SDK 默认值收敛成一个可测试的策略对象，避免把 provider 规则散落在调用点。
 
 1. chat 请求中，如果 payload 的 output cap 等于 Pi SDK 从 `model.maxTokens` 推导出的隐式默认值，则移除该字段，让供应商默认生效。
-2. utility 请求不移除 output cap，因为 `callText` 默认把短输出上限标记为 `outputBudgetSource: "system"`。
-3. Anthropic / Bedrock / `anthropic-messages` 这类协议必填 output cap 的 provider 不移除。
-4. 官方 DeepSeek endpoint 不移除，继续交给 `deepseek.js` 统一转换字段并确保 thinking 输出预算合法。
+2. utility 请求由具体消费任务决定预算。`callText` 不从 `model.maxTokens` 合成默认 output cap；标题、健康检查、记忆摘要等任务需要限制长度时必须显式传 `maxTokens`。
+3. Anthropic / Bedrock / `anthropic-messages` 这类协议必填 output cap 的 provider 不移除调用方显式传入的 cap；如果调用方未声明预算，通用层不替它推导。
+4. 官方 DeepSeek endpoint 不移除显式 cap，继续交给 `deepseek.js` 统一转换字段并确保 thinking 输出预算合法。
 5. 真正的用户级或系统级单次输出上限，调用方必须通过 `options.outputBudgetSource = "user" | "system"` 或等价显式 source 传入，通用层不得静默移除显式意图。
 6. chat hook 拿不到 Pi SDK `maxTokens` 的来源，保持 source 为 `unspecified`；兼容层只在字段值等于 Pi SDK 隐式默认时移除，避免误删未来真实的非默认上限。
 

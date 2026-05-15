@@ -13,14 +13,15 @@ import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.js";
 import { debugLog } from "../lib/debug-log.js";
 import { t } from "../server/i18n.js";
 import { createDefaultSettings } from "../core/session-defaults.js";
-import { READ_ONLY_BUILTIN_TOOLS } from "../core/config-coordinator.js";
+import { SESSION_PERMISSION_MODES } from "../core/session-permission-mode.js";
 import { teardownSessionResources } from "../core/session-teardown.js";
 import {
   filterAgentPhoneTools,
+  getAgentPhoneActiveToolNames,
+  getAgentPhonePermissionMode,
   getAgentPhoneSessionDir,
   getAgentPhoneRefreshDate,
   shouldCompactAgentPhoneSession,
-  shouldRefreshAgentPhoneSession,
 } from "../lib/conversations/agent-phone-session.js";
 import {
   ensureAgentPhoneProjection,
@@ -28,6 +29,11 @@ import {
   updateAgentPhoneProjectionMeta,
 } from "../lib/conversations/agent-phone-projection.js";
 import { findModel, requireModelRef } from "../shared/model-ref.js";
+import {
+  buildFreshCompactMetaPatch,
+  buildFreshCompactSnapshot,
+  shouldRunFreshCompact,
+} from "../lib/fresh-compact/policy.js";
 
 function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
   if (!modelOverride) return ctx.resolveModel(agentConfig);
@@ -52,7 +58,7 @@ function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
  * @param {boolean} [opts.keepSession=false] - 是否保留 session 文件
  * @param {boolean} [opts.noMemory=false] - 不注入记忆，只用 personality
  * @param {boolean} [opts.noTools=false] - 不注入工具
- * @param {boolean} [opts.readOnly=false] - 只读模式（只保留读取类工具，排除写/编辑/ask_agent/dm 等）
+ * @param {boolean} [opts.readOnly=false] - 只读执行权限（保留工具 schema，调用时拦截副作用工具）
  * @returns {Promise<string>}  capture 轮的输出（已去掉 MOOD 块）
  */
 export async function runAgentSession(agentId, rounds, { engine, signal, sessionSuffix = "temp", ephemeralDir, systemAppend, keepSession = false, noMemory = false, noTools = false, readOnly = false } = {}) {
@@ -79,7 +85,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   fs.mkdirSync(sessionDir, { recursive: true });
   const tempSessionMgr = SessionManager.create(cwd, sessionDir);
 
-  // 工具模式：noTools = 无工具，readOnly = 只读工具，默认 = 全部
+  // 工具模式：noTools = 无工具；readOnly 只影响执行权限，不裁剪 schema。
   let tools, customTools;
   if (noTools) {
     tools = [];
@@ -93,15 +99,17 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
           : {}),
       })
       : agent.tools;
-    const built = ctx.buildTools(cwd, agentToolsSnapshot, { agentDir, workspace: engine.getHomeCwd(agentId) });
-    if (readOnly) {
-      const READ_ONLY_CUSTOM = ["search_memory", "recall_experience", "web_search", "web_fetch"];
-      tools = built.tools.filter(t => READ_ONLY_BUILTIN_TOOLS.includes(t.name));
-      customTools = (built.customTools || []).filter(t => READ_ONLY_CUSTOM.includes(t.name));
-    } else {
-      tools = built.tools;
-      customTools = built.customTools;
-    }
+    const permissionMode = readOnly
+      ? SESSION_PERMISSION_MODES.READ_ONLY
+      : SESSION_PERMISSION_MODES.OPERATE;
+    const built = ctx.buildTools(cwd, agentToolsSnapshot, {
+      agentDir,
+      workspace: engine.getHomeCwd(agentId),
+      getSessionPath: () => tempSessionMgr?.getSessionFile?.() || null,
+      getPermissionMode: () => permissionMode,
+    });
+    tools = built.tools;
+    customTools = built.customTools;
   }
   const model = ctx.resolveModel(agent.config);
   const { session } = await createAgentSession({
@@ -216,6 +224,170 @@ async function maybeCompactPhoneSession(session, { isActive = false, onActivity 
   return { reason, before: usage, after };
 }
 
+async function maybeFreshCompactPhoneSession(session, {
+  agentDir,
+  agentId,
+  conversationId,
+  conversationType,
+  projectionMeta = {},
+  snapshot,
+  now = new Date(),
+  reason: explicitReason = null,
+  onActivity,
+} = {}) {
+  const decision = shouldRunFreshCompact({
+    meta: projectionMeta,
+    snapshot,
+    now,
+    force: explicitReason === "manual",
+  });
+  if (!decision.run) return null;
+  if (session.isCompacting) return null;
+
+  const reason = explicitReason || decision.reason;
+  const before = session.getContextUsage?.() ?? null;
+  await onActivity?.(
+    "compacting",
+    reason === "daily" ? "正在按日刷新压缩手机会话" : "正在刷新压缩手机会话",
+    {
+      reason,
+      tokensBefore: before?.tokens ?? null,
+      contextWindow: before?.contextWindow ?? null,
+    },
+  );
+  await session.compact();
+  const after = session.getContextUsage?.() ?? null;
+  const usage = {
+    tokensBefore: before?.tokens ?? null,
+    tokensAfter: after?.tokens ?? null,
+    contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
+  };
+  const patch = buildFreshCompactMetaPatch({
+    snapshot,
+    reason,
+    now,
+    usage,
+  });
+  await updateAgentPhoneProjectionMeta({
+    agentDir,
+    agentId,
+    conversationId,
+    conversationType,
+    patch,
+  });
+  await onActivity?.(
+    "idle",
+    "手机会话刷新压缩完成",
+    {
+      reason,
+      ...usage,
+    },
+  );
+  return { reason, ...usage };
+}
+
+export async function freshCompactAgentPhoneSession(agentId, {
+  engine,
+  conversationId,
+  conversationType = "channel",
+  toolMode = "read_only",
+  modelOverride = null,
+  now = new Date(),
+  reason = "daily",
+  onActivity,
+} = {}) {
+  if (!conversationId) throw new Error("conversationId is required for agent phone fresh compact");
+
+  const agent = engine.getAgent(agentId);
+  if (!agent) {
+    throw new Error(t("error.agentExecNotInit", { id: agentId }));
+  }
+  const agentDir = agent.agentDir;
+  const projectionPath = await ensureAgentPhoneProjection({
+    agentDir,
+    agentId,
+    conversationId,
+    conversationType,
+  });
+  const projection = readAgentPhoneProjection(projectionPath);
+  const existingSessionPath = resolveStoredSessionPath(agentDir, projection.meta.phoneSessionFile);
+  if (!existingSessionPath || !fs.existsSync(existingSessionPath)) {
+    throw new Error(`agent phone fresh compact: session file missing for ${conversationId}`);
+  }
+
+  const ctx = engine.createSessionContext();
+  const tempResourceLoader = Object.create(ctx.resourceLoader);
+  const basePrompt = agent.systemPrompt;
+  tempResourceLoader.getSystemPrompt = () => basePrompt;
+  tempResourceLoader.getSkills = () => ctx.getSkillsForAgent(agent);
+
+  const cwd = engine.getHomeCwd(agentId) || process.cwd();
+  const sessionDir = getAgentPhoneSessionDir(agentDir, conversationId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const sessionManager = SessionManager.open(existingSessionPath, sessionDir);
+
+  const agentToolsSnapshot = typeof agent.getToolsSnapshot === "function"
+    ? agent.getToolsSnapshot({
+      forceMemoryEnabled: agent.memoryMasterEnabled !== false,
+      ...(typeof agent.experienceEnabled === "boolean"
+        ? { forceExperienceEnabled: agent.experienceEnabled === true }
+        : {}),
+    })
+    : agent.tools;
+  const phonePermissionMode = getAgentPhonePermissionMode(toolMode);
+  const built = ctx.buildTools(cwd, agentToolsSnapshot, {
+    agentDir,
+    workspace: engine.getHomeCwd(agentId),
+    getSessionPath: () => sessionManager?.getSessionFile?.() || null,
+    getPermissionMode: () => phonePermissionMode,
+  });
+  const { tools, customTools } = filterAgentPhoneTools(built);
+  const model = resolveAgentPhoneModel(engine, ctx, agent.config, modelOverride);
+  const { session } = await createAgentSession({
+    cwd,
+    sessionManager,
+    settingsManager: createDefaultSettings(),
+    authStorage: ctx.authStorage,
+    modelRegistry: ctx.modelRegistry,
+    model,
+    thinkingLevel: "medium",
+    resourceLoader: tempResourceLoader,
+    tools,
+    customTools,
+  });
+  session.setActiveToolsByName?.(getAgentPhoneActiveToolNames({ tools, customTools }));
+
+  const snapshot = buildFreshCompactSnapshot({
+    systemPrompt: basePrompt,
+    state: {
+      conversationType,
+      memoryEnabled: agent.memoryMasterEnabled !== false,
+      model: modelOverride || agent.config?.models?.chat || null,
+      toolMode,
+    },
+  });
+
+  try {
+    return await maybeFreshCompactPhoneSession(session, {
+      agentDir,
+      agentId,
+      conversationId,
+      conversationType,
+      projectionMeta: projection.meta,
+      snapshot,
+      now,
+      reason,
+      onActivity,
+    });
+  } finally {
+    await teardownSessionResources({
+      session,
+      label: `hub.freshCompactAgentPhoneSession[${agentId}:${conversationId}]`,
+      warn: (msg) => debugLog()?.warn("agent-executor", msg),
+    });
+  }
+}
+
 /**
  * 以 Agent Phone 方式运行可复用会话。
  *
@@ -271,8 +443,8 @@ export async function runAgentPhoneSession(agentId, rounds, {
   const existingSessionPath = resolveStoredSessionPath(agentDir, projection.meta.phoneSessionFile);
   const refreshNow = new Date();
   const refreshDate = getAgentPhoneRefreshDate(refreshNow);
-  const shouldRefresh = shouldRefreshAgentPhoneSession(projection.meta, refreshNow);
-  const sessionManager = !shouldRefresh && existingSessionPath && fs.existsSync(existingSessionPath)
+  const openedExistingSession = existingSessionPath && fs.existsSync(existingSessionPath);
+  const sessionManager = openedExistingSession
     ? SessionManager.open(existingSessionPath, sessionDir)
     : SessionManager.create(cwd, sessionDir);
 
@@ -284,11 +456,18 @@ export async function runAgentPhoneSession(agentId, rounds, {
         : {}),
     })
     : agent.tools;
+  const phonePermissionMode = getAgentPhonePermissionMode(toolMode);
   const built = ctx.buildTools(cwd, agentToolsSnapshot, {
     agentDir,
     workspace: engine.getHomeCwd(agentId),
+    getSessionPath: () => sessionManager?.getSessionFile?.() || null,
+    getPermissionMode: () => phonePermissionMode,
   });
   const { tools, customTools } = filterAgentPhoneTools(built, { toolMode });
+  const sessionCustomTools = [
+    ...customTools,
+    ...(Array.isArray(extraCustomTools) ? extraCustomTools : []),
+  ];
   const model = resolveAgentPhoneModel(engine, ctx, agent.config, modelOverride);
   const { session } = await createAgentSession({
     cwd,
@@ -300,11 +479,12 @@ export async function runAgentPhoneSession(agentId, rounds, {
     thinkingLevel: "medium",
     resourceLoader: tempResourceLoader,
     tools,
-    customTools: [
-      ...customTools,
-      ...(Array.isArray(extraCustomTools) ? extraCustomTools : []),
-    ],
+    customTools: sessionCustomTools,
   });
+  session.setActiveToolsByName?.(getAgentPhoneActiveToolNames({
+    tools,
+    customTools: sessionCustomTools,
+  }));
 
   const sessionPath = session.sessionManager?.getSessionFile?.();
   if (sessionPath) {

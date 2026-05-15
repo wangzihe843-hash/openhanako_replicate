@@ -6,6 +6,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { isToolCallBlock, getToolArgs } from "./llm-utils.js";
+import { SessionManager } from "../lib/pi-sdk/index.js";
 
 /**
  * 工具调用参数摘要键列表
@@ -81,6 +82,24 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
   if (!sessionPath) return [];
 
   try {
+    if (await looksLikePiSessionFile(sessionPath)) {
+      const manager = SessionManager.open(sessionPath, path.dirname(sessionPath));
+      const branch = manager.getBranch();
+      const messages = [];
+      for (const entry of branch) {
+        if (entry.type !== "message" || !entry.message) continue;
+        const message = { ...entry.message };
+        if (entry.id) message.id = entry.id;
+        if (entry.timestamp) message.timestamp = entry.timestamp;
+        messages.push(message);
+      }
+      if (messages.length > 0) return messages;
+    }
+  } catch {
+    // 旧文件或损坏文件继续走兼容读取，不让历史页直接空白。
+  }
+
+  try {
     const raw = await fs.readFile(sessionPath, "utf-8");
     const messages = [];
 
@@ -90,6 +109,7 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
         const entry = JSON.parse(line);
         if (entry.type === "message" && entry.message) {
           const message = { ...entry.message };
+          if (entry.id) message.id = entry.id;
           if (entry.timestamp) message.timestamp = entry.timestamp;
           messages.push(message);
         }
@@ -104,6 +124,20 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
   }
 
   return [];
+}
+
+async function looksLikePiSessionFile(sessionPath) {
+  const fh = await fs.open(sessionPath, "r");
+  try {
+    const buffer = Buffer.alloc(512);
+    const { bytesRead } = await fh.read(buffer, 0, buffer.length, 0);
+    const firstLine = buffer.toString("utf-8", 0, bytesRead).split("\n")[0]?.trim();
+    if (!firstLine) return false;
+    const header = JSON.parse(firstLine);
+    return header?.type === "session" && typeof header.id === "string";
+  } finally {
+    await fh.close();
+  }
 }
 
 async function readSessionTailUtf8(filePath, maxBytes = SESSION_TAIL_READ_THRESHOLD) {

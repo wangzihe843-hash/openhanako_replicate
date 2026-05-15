@@ -163,6 +163,33 @@ export const bridgeCommands = [
       return { silent: true };
     },
   },
+  {
+    name: "fresh-compact",
+    aliases: ["freshcompact"],
+    description: "使用最新提示词和记忆状态压缩当前会话上下文",
+    scope: "session",
+    permission: "owner",
+    source: "core",
+    handler: async (ctx) => {
+      if (_isAttached(ctx)) {
+        return { reply: "接管桌面会话期间暂不支持 /fresh-compact，请先 /exitrc 退出接管" };
+      }
+      try { await ctx.reply("（正在 fresh-compact：刷新提示词与记忆状态后压缩上下文，请稍候...）"); } catch { /* best-effort */ }
+      try {
+        const result = await ctx.sessionOps.freshCompact(ctx.sessionRef);
+        const before = result?.tokensBefore;
+        const after = result?.tokensAfter;
+        const reason = result?.reason ? `，原因：${result.reason}` : "";
+        const msg = (typeof before === "number" && typeof after === "number")
+          ? `（fresh-compact 已完成：${before} → ${after} tokens${reason}）`
+          : `（fresh-compact 已完成${reason}）`;
+        try { await ctx.reply(msg); } catch { /* best-effort */ }
+      } catch (err) {
+        try { await ctx.reply(`（fresh-compact 失败：${err?.message || String(err)}）`); } catch { /* best-effort */ }
+      }
+      return { silent: true };
+    },
+  },
 ];
 
 /**

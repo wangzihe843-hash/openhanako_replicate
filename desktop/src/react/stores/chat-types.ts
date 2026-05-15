@@ -118,6 +118,7 @@ export type ContentBlock = TextDecorator | RichBlock;
 
 export interface ChatMessage {
   id: string;              // 服务端返回的稳定 ID（JSONL 行号）
+  sourceEntryId?: string;  // Pi SDK session entry id，用于 branch-aware 的重新生成/编辑
   role: 'user' | 'assistant';
   // User
   text?: string;

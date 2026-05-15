@@ -58,22 +58,28 @@ describe("agent phone session policy", () => {
     expect(filtered.customTools.map((tool) => tool.name)).toEqual(["search_memory", "web_search"]);
   });
 
-  it("keeps phone read-only mode to information tools", () => {
+  it("keeps phone read-only mode schema stable while excluding structural phone blockers", () => {
     const built = {
       tools: [
         { name: "read" },
         { name: "write" },
         { name: "grep" },
+        { name: "browser" },
       ],
       customTools: [
         { name: "search_memory" },
         { name: "record_experience" },
+        { name: "dm" },
         { name: "web_fetch" },
       ],
     };
 
     const filtered = filterAgentPhoneTools(built, { toolMode: "read_only" });
-    expect(filtered.tools.map((tool) => tool.name)).toEqual(["read", "grep"]);
-    expect(filtered.customTools.map((tool) => tool.name)).toEqual(["search_memory", "web_fetch"]);
+    expect(filtered.tools.map((tool) => tool.name)).toEqual(["read", "write", "grep"]);
+    expect(filtered.customTools.map((tool) => tool.name)).toEqual([
+      "search_memory",
+      "record_experience",
+      "web_fetch",
+    ]);
   });
 });

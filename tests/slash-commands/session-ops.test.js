@@ -186,6 +186,28 @@ describe("SessionOps bridge kind", () => {
     await expect(ops.compact({ kind: "bridge", sessionKey: "k@a1", agentId: "a1" }))
       .rejects.toThrow(/streaming/);
   });
+
+  it("freshCompact delegates to engine.freshCompactBridgeSession and returns usage", async () => {
+    engine.freshCompactBridgeSession = vi.fn(async () => ({
+      tokensBefore: 11000,
+      tokensAfter: 5000,
+      contextWindow: 128000,
+      fresh: true,
+      reason: "manual",
+    }));
+    const ops = createSessionOps({ engine });
+
+    const r = await ops.freshCompact({ kind: "bridge", sessionKey: "tg_dm_w@a1", agentId: "a1" });
+
+    expect(engine.freshCompactBridgeSession).toHaveBeenCalledWith("tg_dm_w@a1", { agentId: "a1", reason: "manual" });
+    expect(r).toMatchObject({ tokensBefore: 11000, tokensAfter: 5000, fresh: true });
+  });
+
+  it("freshCompact rejects desktop refs until desktop freshness is explicitly implemented", async () => {
+    const ops = createSessionOps({ engine });
+    await expect(ops.freshCompact({ kind: "desktop", agentId: "a1", sessionPath: "/x" }))
+      .rejects.toThrow(/desktop.*not supported/);
+  });
 });
 
 describe("SessionOps desktop kind", () => {

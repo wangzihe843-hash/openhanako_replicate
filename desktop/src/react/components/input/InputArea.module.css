@@ -848,6 +848,36 @@
     animation: hana-pulse 1.2s ease-in-out infinite;
 }
 
+.screenshot-busy-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.screenshot-busy-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.screenshot-progress-track {
+    position: relative;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.14);
+}
+
+.screenshot-progress-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: inherit;
+    background: var(--accent);
+    transition: width var(--duration-slow) var(--ease-out);
+}
+
 .slash-error-dot {
     width: 6px;
     height: 6px;
@@ -901,13 +931,13 @@
     justify-content: space-between;
     gap: 0.85rem;
     box-sizing: border-box;
-    width: calc(100% - 4rem);
-    max-width: calc(100% - 4rem);
-    margin: 0 auto -2rem;
-    padding: 0.64rem 1rem 2.12rem;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 -2rem;
+    padding: 1rem 1rem 2.24rem;
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-chat-card);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.055);
     animation: hana-rise var(--duration-slow) cubic-bezier(0.25, 0.46, 0.45, 0.94);
     transform-origin: bottom center;
@@ -933,6 +963,13 @@
     flex: 1;
     flex-direction: column;
     gap: 0.16rem;
+    border-radius: var(--radius-sm);
+    -webkit-app-region: no-drag;
+}
+
+.session-confirmation-body:focus-visible {
+    outline: 1px solid rgba(var(--accent-rgb), 0.28);
+    outline-offset: 2px;
 }
 
 .session-confirmation-title {
@@ -1075,6 +1112,26 @@
     color: var(--accent);
 }
 
+.session-confirmation-tooltip {
+    position: fixed;
+    z-index: 10001;
+    max-width: min(34rem, calc(100vw - 16px));
+    max-height: min(22rem, calc(100vh - 16px));
+    overflow: auto;
+    padding: 0.62rem 0.72rem;
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 22px var(--shadow);
+    white-space: pre-wrap;
+    word-break: break-word;
+    animation: hana-fade-up var(--duration-fast) var(--ease-out);
+    -webkit-app-region: no-drag;
+}
+
 .session-confirmation-button-reject {
     color: var(--text-muted);
 }
@@ -1088,8 +1145,6 @@
 
 @media (max-width: 640px) {
     .session-confirmation-prompt {
-        width: calc(100% - 1rem);
-        max-width: calc(100% - 1rem);
         flex-direction: column;
         gap: var(--space-sm);
     }
@@ -1109,7 +1164,7 @@
     background: var(--bg-card);
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-lg);
-    padding: var(--space-md) var(--space-sm) var(--space-sm) var(--space-md);
+    padding: var(--space-md) var(--space-md) var(--space-sm);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     transition: border-color 0.3s var(--ease-out),
                 box-shadow 0.3s var(--ease-out);

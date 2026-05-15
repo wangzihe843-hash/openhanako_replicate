@@ -39,7 +39,7 @@ export function SkillsTab() {
   useEffect(() => {
     if (skillsViewAgentId) return;
     if (currentAgentId) setSkillsViewAgentId(currentAgentId);
-  }, [currentAgentId]);
+  }, [currentAgentId]); // eslint-disable-line react-hooks/exhaustive-deps -- sticky selector only hydrates from currentAgentId while empty
 
   const [externalPathsData, setExternalPathsData] = useState<ExternalPathsData>({
     configured: [],
@@ -204,6 +204,24 @@ export function SkillsTab() {
 
   const deleteBundle = (bundle: SkillBundleInfo) => {
     setBundleDialog({ type: 'delete', bundle });
+  };
+
+  const exportBundle = async (bundle: SkillBundleInfo) => {
+    try {
+      const res = await hanaFetch(`/api/skills/bundles/${encodeURIComponent(bundle.id)}/export`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const skipped = Array.isArray(data.warnings) ? data.warnings.length : 0;
+      const suffix = skipped > 0 ? `，跳过 ${skipped} 个缺失 Skill` : '';
+      showToast(`已导出 ${data.fileName || bundle.name}${suffix}`, 'success');
+      if (data.filePath) {
+        window.platform?.showInFinder?.(data.filePath);
+      }
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
   };
 
   const submitDeleteBundle = async (bundle: SkillBundleInfo) => {
@@ -479,6 +497,7 @@ export function SkillsTab() {
             onDeleteSkill={deleteSkill}
             onCreateBundle={createBundle}
             onRenameBundle={renameBundle}
+            onExportBundle={exportBundle}
             onDeleteBundle={deleteBundle}
             onReorderBundles={reorderBundles}
             onMoveSkillToBundle={moveSkillToBundle}

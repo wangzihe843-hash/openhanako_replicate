@@ -3,6 +3,7 @@ import path from "path";
 import { createPluginContext } from "./plugin-context.js";
 import { freshImport } from "./fresh-import.js";
 import { normalizePluginConfigSchema } from "./plugin-config.js";
+import { semverGte } from "../lib/plugin-versioning.js";
 
 const KNOWN_CONTRIBUTION_DIRS = [
   "tools", "routes", "skills", "agents", "commands", "providers",
@@ -22,17 +23,6 @@ class PluginLoadTimeoutError extends Error {
     this.stage = stage;
     this.timeoutMs = ms;
   }
-}
-
-/** Semver compare: returns true if a >= b */
-function semverGte(a, b) {
-  const pa = (a || "0.0.0").split(".").map(Number);
-  const pb = (b || "0.0.0").split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return true;
-    if ((pa[i] || 0) < (pb[i] || 0)) return false;
-  }
-  return true;
 }
 
 function normalizeUiHostCapabilities(raw, pluginId) {
@@ -861,6 +851,14 @@ export class PluginManager {
 
       if (desc.trust === "full-access" && !this._isFullAccessAllowed(entry, options)) {
         entry.status = "restricted";
+        return entry;
+      }
+
+      const minVer = desc.manifest?.minAppVersion;
+      if (minVer && !semverGte(this._appVersion, minVer)) {
+        entry.status = "incompatible";
+        entry.error = `requires app v${minVer}+, current v${this._appVersion}`;
+        this._bus?.emit({ type: "plugin_ui_changed" });
         return entry;
       }
 

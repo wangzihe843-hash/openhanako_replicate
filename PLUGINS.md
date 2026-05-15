@@ -964,12 +964,27 @@ https://raw.githubusercontent.com/liliMozi/OH-Plugins/main/marketplace.json
       "packageUrl": "https://github.com/liliMozi/OH-Plugins/releases/download/demo-v1.0.0/demo.zip",
       "sha256": "..."
     },
+    "versions": [
+      {
+        "version": "1.0.0",
+        "compatibility": { "minAppVersion": "0.170.0" },
+        "distribution": {
+          "kind": "release",
+          "packageUrl": "https://github.com/liliMozi/OH-Plugins/releases/download/demo-v1.0.0/demo.zip",
+          "sha256": "..."
+        }
+      }
+    ],
     "readmePath": "plugins/demo/README.md"
   }]
 }
 ```
 
 市场 UI 会在设置主区域内展示更宽的插件列表和 README 单页视图，点击插件后读取 `/api/plugins/marketplace/:id/readme` 展示 README。`distribution.kind: "release"` 会下载 zip、校验 `sha256`，再安装到用户插件目录。`distribution.kind: "source"` 仅用于本地开发文件市场，因为 source path 必须能在本机解析成目录。
+
+市场版本管理以 `versions[]` 为长期契约：每一项声明 `version`、该版本的 `compatibility.minAppVersion` 和对应的 `distribution`。没有 `versions[]` 时，Hana 会把根级 `version` / `compatibility` / `distribution` 视为单版本条目。客户端会按 SemVer 选择“当前 app 能运行的最高版本”，同时保留 `latestVersion`、`selectedVersion`、`installedVersion`、`updateAvailable`、`downgrade`、`reinstall`、`compatible`、`installAction` 和 `canInstall` 给 UI 展示。
+
+如果已安装版本高于当前 app 可兼容的最高市场版本，安装动作会被标记为 `downgrade`，必须显式传 `allowDowngrade: true` 才能继续。拖拽 / 本地路径安装同样会阻止隐式降级。更新安装会先备份旧目录到 `${HANA_HOME}/plugin-backups/<pluginId>/`，新版本加载失败时恢复旧目录并重新加载；成功后 `${HANA_HOME}/plugin-installs.json` 会记录来源、版本、release URL 和 sha256，供后续市场状态判断。
 
 ## 前向兼容
 

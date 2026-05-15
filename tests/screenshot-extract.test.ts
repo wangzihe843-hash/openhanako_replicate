@@ -84,6 +84,57 @@ describe('extractScreenshotPayload', () => {
     expect(result.messages![0].blocks[1]).toEqual({ type: 'image', content: '/tmp/img.png' });
   });
 
+  it('keeps assistant screenshot image blocks as data URLs', () => {
+    const messages = [
+      {
+        id: '1', role: 'assistant' as const, blocks: [
+          { type: 'screenshot' as const, base64: 'ABC123', mimeType: 'image/png' },
+        ],
+      },
+    ];
+    const result = extractScreenshotPayload(messages, 'solarized-light');
+    expect(result.messages![0].blocks).toEqual([
+      { type: 'image', content: 'data:image/png;base64,ABC123' },
+    ]);
+  });
+
+  it('keeps user image attachments even when they are auxiliary vision images', () => {
+    const messages = [
+      {
+        id: '1',
+        role: 'user' as const,
+        text: '看这张图',
+        attachments: [
+          { path: '/tmp/aux.png', name: 'aux.png', isDir: false, visionAuxiliary: true },
+          { path: '/tmp/native.png', name: 'native.png', isDir: false, visionAuxiliary: false },
+          { path: '/tmp/readme.md', name: 'readme.md', isDir: false },
+        ],
+      },
+    ];
+    const result = extractScreenshotPayload(messages, 'solarized-light');
+    expect(result.messages![0].blocks).toEqual([
+      { type: 'markdown', content: '看这张图' },
+      { type: 'image', content: '/tmp/aux.png' },
+      { type: 'image', content: '/tmp/native.png' },
+    ]);
+  });
+
+  it('keeps user inline base64 image attachments as data URLs', () => {
+    const messages = [
+      {
+        id: '1',
+        role: 'user' as const,
+        attachments: [
+          { path: '/tmp/inline.png', name: 'inline.png', isDir: false, base64Data: 'INLINE', mimeType: 'image/webp' },
+        ],
+      },
+    ];
+    const result = extractScreenshotPayload(messages, 'solarized-light');
+    expect(result.messages![0].blocks).toEqual([
+      { type: 'image', content: 'data:image/webp;base64,INLINE' },
+    ]);
+  });
+
   it('drops non-image file_output', () => {
     const messages = [
       {

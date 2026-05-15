@@ -24,7 +24,7 @@ export const getToolArgs = (b) => b.input || b.arguments;
  * @param {string} opts.base_url
  * @param {Array} opts.messages
  * @param {number} [opts.temperature=0.3]
- * @param {number} [opts.max_tokens=100]
+ * @param {number} [opts.max_tokens] 任务级输出预算；未传时不写 output cap
  * @param {"user"|"system"|"sdk-default"} [opts.outputBudgetSource=system]
  * @returns {Promise<string|null>} 回复文本
  */
@@ -35,7 +35,7 @@ async function callLlm({
   base_url,
   messages,
   temperature = 0.3,
-  max_tokens = 100,
+  max_tokens,
   outputBudgetSource = "system",
   timeoutMs,
   signal,
@@ -46,8 +46,7 @@ async function callLlm({
     apiKey: api_key,
     baseUrl: base_url,
     messages, temperature,
-    maxTokens: max_tokens,
-    outputBudgetSource,
+    ...(max_tokens != null && { maxTokens: max_tokens, outputBudgetSource }),
     ...(timeoutMs != null && { timeoutMs }),
     ...(signal != null && { signal }),
     ...(quirks != null && { quirks }),

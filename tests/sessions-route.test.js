@@ -4,6 +4,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+const { replayLatestUserTurnMock } = vi.hoisted(() => ({
+  replayLatestUserTurnMock: vi.fn(async () => ({ text: null, toolMedia: [] })),
+}));
+
 const browserManagerMock = {
   _sessions: new Map(), // sessionPath → { running, url }
   isRunning(sp) { return this._sessions.get(sp)?.running ?? false; },
@@ -35,6 +39,10 @@ vi.mock("../core/message-utils.js", () => ({
   isActiveSessionPath: vi.fn(() => true),
 }));
 
+vi.mock("../core/session-turn-actions.js", () => ({
+  replayLatestUserTurn: replayLatestUserTurnMock,
+}));
+
 describe("sessions route", () => {
   let tmpDir;
 
@@ -50,6 +58,8 @@ describe("sessions route", () => {
     browserManagerMock.getBrowserSessions.mockReturnValue({});
     browserManagerMock.getBrowserSessionStates.mockReset();
     browserManagerMock.getBrowserSessionStates.mockReturnValue({});
+    replayLatestUserTurnMock.mockClear();
+    replayLatestUserTurnMock.mockResolvedValue({ text: null, toolMedia: [] });
   });
 
   it("restores browser state for the target session after switch", async () => {
@@ -217,6 +227,45 @@ describe("sessions route", () => {
     ]);
     expect(summaryManager.getSummary).toHaveBeenCalledWith("has-summary");
     expect(summaryManager.getSummary).toHaveBeenCalledWith("no-summary");
+  });
+
+  it("replays the latest user message through the branch-aware action", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "a.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, "x\n");
+
+    const engine = {
+      agentsDir: path.join(tmpDir, "agents"),
+      isSessionStreaming: vi.fn(() => false),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/latest-user-message/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: sessionPath,
+        sourceEntryId: "entry-u1",
+        clientMessageId: "client-u1",
+        text: "edited",
+        displayMessage: { text: "edited" },
+        uiContext: { currentViewed: "/tmp/work", activeFile: null, activePreview: null, pinnedFiles: [] },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true });
+    expect(replayLatestUserTurnMock).toHaveBeenCalledWith(engine, {
+      sessionPath,
+      sourceEntryId: "entry-u1",
+      clientMessageId: "client-u1",
+      replacementText: "edited",
+      displayMessage: { text: "edited" },
+      uiContext: { currentViewed: "/tmp/work", activeFile: null, activePreview: null, pinnedFiles: [] },
+    });
   });
 
   it("returns a session summary through an explicit route", async () => {

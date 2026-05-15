@@ -111,7 +111,6 @@
     50%      { opacity: var(--pulse-hi, 1); }
 }
 
-
 /* ── Expand（手风琴展开）──
    旧名：compat-expand                             */
 @keyframes hana-expand {

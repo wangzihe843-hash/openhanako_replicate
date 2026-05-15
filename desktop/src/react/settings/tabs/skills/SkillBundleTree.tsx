@@ -31,6 +31,7 @@ interface SkillBundleTreeProps {
   onToggleBundle?: (bundle: SkillBundleInfo, enabled: boolean) => void;
   onCreateBundle?: () => void;
   onRenameBundle?: (bundle: SkillBundleInfo) => void;
+  onExportBundle?: (bundle: SkillBundleInfo) => void;
   onDeleteBundle?: (bundle: SkillBundleInfo) => void;
   onReorderBundles?: (bundleIds: string[]) => void;
   onMoveSkillToBundle?: (skillName: string, bundle: SkillBundleInfo, index?: number) => void;
@@ -85,6 +86,7 @@ export function SkillBundleTree({
   onToggleBundle,
   onCreateBundle,
   onRenameBundle,
+  onExportBundle,
   onDeleteBundle,
   onReorderBundles,
   onMoveSkillToBundle,
@@ -232,6 +234,21 @@ export function SkillBundleTree({
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M12 20h9" />
                         <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                  ) : null}
+                  {canManage && onExportBundle ? (
+                    <button
+                      className={styles['skill-bundle-icon-button']}
+                      type="button"
+                      title="导出 Skill Bundle"
+                      aria-label={`导出 ${bundle.name}`}
+                      onClick={() => onExportBundle(bundle)}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
                       </svg>
                     </button>
                   ) : null}

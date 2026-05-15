@@ -25,6 +25,8 @@ struct Grant {
 struct Options {
     std::wstring cwd;
     bool internetClient = false;
+    bool internetClientServer = false;
+    bool privateNetworkClientServer = false;
     std::vector<Grant> grants;
     std::wstring executable;
     std::vector<std::wstring> args;
@@ -91,6 +93,14 @@ static Options parseArgs(int argc, wchar_t** argv) {
             std::wstring value = argv[++i];
             if (value == L"internet-client") {
                 opts.internetClient = true;
+                continue;
+            }
+            if (value == L"internet-client-server") {
+                opts.internetClientServer = true;
+                continue;
+            }
+            if (value == L"private-network-client-server") {
+                opts.privateNetworkClientServer = true;
                 continue;
             }
             throw std::runtime_error("unknown network capability");
@@ -313,6 +323,20 @@ static int runSandboxed(const Options& opts, PSID appSid) {
     if (opts.internetClient) {
         // Well-known AppContainer capability SID for internetClient.
         if (!addCapabilitySid(L"S-1-15-3-1", capabilitySids, capabilityAttrs)) {
+            freeOwnedSids(capabilitySids);
+            return 1;
+        }
+    }
+    if (opts.internetClientServer) {
+        // Well-known AppContainer capability SID for internetClientServer.
+        if (!addCapabilitySid(L"S-1-15-3-2", capabilitySids, capabilityAttrs)) {
+            freeOwnedSids(capabilitySids);
+            return 1;
+        }
+    }
+    if (opts.privateNetworkClientServer) {
+        // Well-known AppContainer capability SID for privateNetworkClientServer.
+        if (!addCapabilitySid(L"S-1-15-3-3", capabilitySids, capabilityAttrs)) {
             freeOwnedSids(capabilitySids);
             return 1;
         }

@@ -94,6 +94,96 @@
     margin-bottom: 0;
 }
 
+.messageUserEditing {
+    width: min(520px, 78vw);
+    max-width: 92%;
+    padding: 0;
+    overflow: hidden;
+}
+
+.userEditTextarea {
+    display: block;
+    width: 100%;
+    min-height: 78px;
+    max-height: 240px;
+    resize: vertical;
+    box-sizing: border-box;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    line-height: 1.65;
+    padding: var(--space-sm) var(--space-md);
+}
+
+.userActionRow {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    min-height: 20px;
+    margin-top: 2px;
+    padding-right: 5px;
+    color: var(--text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.messageGroupUser:hover .userActionRow,
+.userActionRow:focus-within,
+.userActionRowVisible {
+    opacity: 0.72;
+    pointer-events: auto;
+}
+
+.userActionRow:hover {
+    opacity: 1;
+}
+
+.userMessageTime {
+    font-size: 0.64rem;
+    line-height: 1;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.userActionBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--duration-instant), background var(--duration-instant), opacity var(--duration-instant);
+}
+
+.userActionBtn svg {
+    width: 12px;
+    height: 12px;
+}
+
+.userActionBtn:hover {
+    color: var(--text);
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.userActionBtn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.userActionBtnActive {
+    color: var(--accent);
+    background: transparent;
+}
+
 /* 用户附件 */
 .userAttachments {
     display: flex;
@@ -238,6 +328,11 @@
     color: var(--accent) !important;
     background: rgba(var(--accent-rgb), 0.10);
     opacity: 1;
+}
+
+.msgActionBtnActive:hover {
+    color: var(--accent) !important;
+    background: rgba(var(--accent-rgb), 0.16);
 }
 
 .msgActionBtnCopied {
@@ -757,7 +852,7 @@
 /* ── 文件输出卡片 ── */
 
 .fileOutputCard {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: var(--space-md);
     min-width: 300px;
@@ -1089,7 +1184,7 @@
 }
 
 .sessionMessages {
-    max-width: 800px;
+    max-width: var(--chat-column-width);
     margin: 0 auto;
     display: flex;
     flex-direction: column;

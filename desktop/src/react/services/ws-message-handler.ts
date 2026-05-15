@@ -261,6 +261,18 @@ export function handleServerMessage(msg: any): void {
 
   // 非聊天渲染事件走传统 switch
   switch (msg.type) {
+    case 'session_branch_reset': {
+      const sp = msg.sessionPath;
+      const targetId = msg.clientMessageId || msg.messageId;
+      if (!sp || !targetId) { console.warn('[ws] session_branch_reset missing sessionPath or message id'); break; }
+      const truncated = useStore.getState().truncateSessionFromMessage(sp, targetId);
+      bumpMessageLiveVersion(sp);
+      if (!truncated) {
+        console.warn('[ws] session_branch_reset target message not found:', sp, targetId);
+      }
+      break;
+    }
+
     case 'stream_resume':
       replayStreamResume(msg);
       break;

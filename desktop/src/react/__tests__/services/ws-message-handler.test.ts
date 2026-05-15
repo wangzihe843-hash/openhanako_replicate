@@ -43,6 +43,7 @@ import { useStore } from '../../stores';
 import { applyStreamingStatus, configureWsMessageHandler, handleServerMessage } from '../../services/ws-message-handler';
 import { dispatchStreamKey } from '../../services/stream-key-dispatcher';
 import { handleAppEvent } from '../../services/app-event-actions';
+import { clearMessageLiveVersion, readMessageLiveVersion } from '../../stores/message-live-version';
 
 describe('ws-message-handler applyStreamingStatus', () => {
   beforeEach(() => {
@@ -104,6 +105,7 @@ describe('ws-message-handler session-scoped desktop events', () => {
       streamingSessions: [],
       computerOverlayBySession: {},
     } as never);
+    clearMessageLiveVersion('/session/a.jsonl');
     useStore.getState().clearSession('/session/a.jsonl');
     useStore.getState().initSession('/session/a.jsonl', [], false);
   });
@@ -156,6 +158,36 @@ describe('ws-message-handler session-scoped desktop events', () => {
 
     const items = useStore.getState().chatSessions['/session/a.jsonl']?.items || [];
     expect(items).toHaveLength(1);
+  });
+
+  it('session_branch_reset 只截断目标会话尾部并提升 message live version', () => {
+    useStore.getState().appendItem('/session/a.jsonl', {
+      type: 'message',
+      data: { id: 'u1', role: 'user', text: 'old' },
+    });
+    useStore.getState().appendItem('/session/a.jsonl', {
+      type: 'message',
+      data: { id: 'a1', role: 'assistant', blocks: [] },
+    });
+    useStore.getState().appendItem('/session/a.jsonl', {
+      type: 'message',
+      data: { id: 'client-u2', sourceEntryId: 'entry-u2', role: 'user', text: 'retry' },
+    });
+    useStore.getState().appendItem('/session/a.jsonl', {
+      type: 'message',
+      data: { id: 'a2', role: 'assistant', blocks: [] },
+    });
+
+    handleServerMessage({
+      type: 'session_branch_reset',
+      sessionPath: '/session/a.jsonl',
+      messageId: 'entry-u2',
+      clientMessageId: 'client-u2',
+    });
+
+    const items = useStore.getState().chatSessions['/session/a.jsonl']?.items || [];
+    expect(items.map(item => item.type === 'message' ? item.data.id : item.id)).toEqual(['u1', 'a1']);
+    expect(readMessageLiveVersion('/session/a.jsonl')).toBe(1);
   });
 
   it('computer_overlay 写入当前 session 的 overlay keyed 状态并支持 clear', () => {

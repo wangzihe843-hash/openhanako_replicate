@@ -12,6 +12,12 @@
     --space-lg: 1.5rem;
     --space-xl: 2.5rem;
 
+    /* 对话列宽 */
+    --chat-column-width: 45rem;
+    --chat-input-column-extra: 1.25rem;
+    --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
+    --welcome-chat-input-column-width: 40rem;
+
     /* 圆角 */
     --radius-sm: 6px;
     --radius-md: 10px;
@@ -20,7 +26,7 @@
     /* 主题可覆盖的抽象 token（默认值和现有视觉一致；主题 CSS 可 override） */
     --radius-input: 4px;        /* input / select widget / textarea / ghost button / media dropdown */
     --radius-card: 10px;        /* SettingsSection body / skill-list-item 首尾 / tool-caps 首尾 */
-    --radius-chat-card: var(--radius-input, 4px); /* in-message chat cards */
+    --radius-chat-card: 4px; /* in-message chat cards */
     --radius-chat-card-inner: max(2px, calc(var(--radius-chat-card) - 2px));
     --border-width: 1px;        /* 表单控件 / section body 边框粗细 */
     --link: var(--accent, #537D96);
@@ -2079,7 +2085,7 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 .input-area > * {
-    max-width: 646px;
+    max-width: var(--chat-input-column-width);
     margin-left: auto;
     margin-right: auto;
     pointer-events: auto;
@@ -2097,6 +2103,10 @@ html[data-platform="linux"] .tb-toggle-right {
     position: relative;
     bottom: auto;
     flex: 0 0 auto;
+}
+
+.main-content.welcome-mode .input-area > * {
+    max-width: var(--welcome-chat-input-column-width);
 }
 
 /* 覆盖 Welcome.module.css 的 min-height: 60vh，让内容自然紧凑 */

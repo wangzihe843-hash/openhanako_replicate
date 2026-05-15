@@ -71,4 +71,11 @@ describe("screenshot pipeline", () => {
     expect(mainSource).toContain('path.join(__dirname, "src", "icon.png")');
     expect(mainSource).not.toContain('path.join(__dirname, "src", "assets", "Hanako.png")');
   });
+
+  it("pins screenshot image width by layout", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain('.chat-image { width: ${themeName.endsWith("-desktop") ? "66.666%" : "100%"};');
+    expect(mainSource).toContain("height: auto; border-radius: 6px;");
+  });
 });

@@ -153,4 +153,32 @@ describe('chat-slice', () => {
       expect(slice.scrollPositions['/s0']).toBeUndefined();
     });
   });
+
+  describe('truncateSessionFromMessage', () => {
+    it('只截断目标 session 从指定消息开始的尾部，其它 session 不动', () => {
+      slice.initSession('/a', [
+        { type: 'message', data: { id: 'u1', role: 'user', text: 'old' } },
+        { type: 'message', data: { id: 'a1', role: 'assistant', blocks: [] } },
+        { type: 'message', data: { id: 'u2', role: 'user', text: 'retry' } },
+        { type: 'message', data: { id: 'a2', role: 'assistant', blocks: [] } },
+      ], false);
+      slice.initSession('/b', [
+        { type: 'message', data: { id: 'b1', role: 'user', text: 'keep' } },
+      ], false);
+
+      expect(slice.truncateSessionFromMessage('/a', 'u2')).toBe(true);
+
+      expect(slice.chatSessions['/a']?.items.map(item => item.type === 'message' ? item.data.id : item.id)).toEqual(['u1', 'a1']);
+      expect(slice.chatSessions['/b']?.items.map(item => item.type === 'message' ? item.data.id : item.id)).toEqual(['b1']);
+    });
+
+    it('找不到消息时保持原状态并返回 false', () => {
+      slice.initSession('/a', [
+        { type: 'message', data: { id: 'u1', role: 'user', text: 'old' } },
+      ], false);
+
+      expect(slice.truncateSessionFromMessage('/a', 'missing')).toBe(false);
+      expect(slice.chatSessions['/a']?.items).toHaveLength(1);
+    });
+  });
 });

@@ -14,9 +14,12 @@ describe("channels route membership contract", () => {
   let tmpDir;
   let app;
   let refreshChannelProactiveSchedule;
+  let triggerChannelDelivery;
+  let agentList;
 
   beforeEach(() => {
     tmpDir = mktemp();
+    agentList = [];
     const engine = {
       channelsDir: path.join(tmpDir, "channels"),
       agentsDir: path.join(tmpDir, "agents"),
@@ -27,7 +30,7 @@ describe("channels route membership contract", () => {
       availableModels: [
         { id: "deepseek-v4-flash", provider: "deepseek", name: "DeepSeek V4 Flash" },
       ],
-      listAgents: () => [],
+      listAgents: () => agentList,
       getAgent: (id) => ["alice", "bob", "carol"].includes(id)
         ? { id, agentDir: path.join(tmpDir, "agents", id) }
         : null,
@@ -40,9 +43,10 @@ describe("channels route membership contract", () => {
     }
 
     refreshChannelProactiveSchedule = vi.fn();
+    triggerChannelDelivery = vi.fn(() => Promise.resolve());
     app = new Hono();
     app.route("/api", createChannelsRoute(engine, {
-      triggerChannelDelivery: () => Promise.resolve(),
+      triggerChannelDelivery,
       refreshChannelProactiveSchedule,
       agentPhoneActivities: {
         snapshot: (conversationId) => conversationId === "ch_crew"
@@ -230,6 +234,29 @@ describe("channels route membership contract", () => {
     expect(removeBob.status).toBe(400);
     expect((await removeBob.json()).error).toMatch(/at least 2/i);
     expect(getChannelMeta(path.join(channelsDir, "ch_crew.md")).members).toEqual(["alice", "bob"]);
+  });
+
+  it("passes resolved @mentions as scheduling hints when the user posts a channel message", async () => {
+    const channelsDir = path.join(tmpDir, "channels");
+    agentList = [
+      { id: "alice", name: "Alice" },
+      { id: "bob", name: "Bob Ray" },
+      { id: "carol", name: "Carol" },
+    ];
+    await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["alice", "bob", "carol"],
+    });
+
+    const res = await app.request("/api/channels/ch_crew/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "@Bob Ray 可以看一下吗？" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(triggerChannelDelivery).toHaveBeenCalledWith("ch_crew", { mentionedAgents: ["bob"] });
   });
 
   it("persists DM agent phone tool mode in the current agent projection", async () => {

@@ -122,6 +122,55 @@ describe("channel-ticker membership source", () => {
     ]);
   });
 
+  it("prioritizes mentioned agents while still delivering mention context to other members", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    for (const agentId of ["hana", "yui", "ming"]) {
+      const agentDir = path.join(agentsDir, agentId);
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n", "utf-8");
+    }
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui", "ming"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    await appendMessage(channelFile, "user", "@Yui 可以先看一下吗？");
+
+    const seen = [];
+    const executeCheck = vi.fn(async (agentId, _channelName, _newMessages, _allUpdates, opts) => {
+      seen.push({
+        agentId,
+        mentionedAgents: opts?.mentionedAgents,
+        mentionTargeted: opts?.mentionTargeted,
+      });
+      return { replied: false, passed: true };
+    });
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana", "yui", "ming"],
+      executeCheck,
+      onMemorySummarize: vi.fn(),
+    });
+
+    ticker.start();
+    try {
+      await ticker.triggerImmediate(channelId, { mentionedAgents: ["yui"] });
+    } finally {
+      await ticker.stop();
+    }
+
+    expect(seen).toEqual([
+      { agentId: "yui", mentionedAgents: ["yui"], mentionTargeted: true },
+      { agentId: "hana", mentionedAgents: ["yui"], mentionTargeted: false },
+      { agentId: "ming", mentionedAgents: ["yui"], mentionTargeted: false },
+    ]);
+  });
+
   it("proactively reminds one random channel member with recent channel truth", async () => {
     tmpDir = mktemp();
     const channelsDir = path.join(tmpDir, "channels");

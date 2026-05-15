@@ -20,6 +20,7 @@ import { createPluginUiSlice, type PluginUiSlice } from './plugin-ui-slice';
 import { createSelectionSlice, type SelectionSlice } from './selection-slice';
 import { createSubagentPreviewSlice, type SubagentPreviewSlice } from './subagent-preview-slice';
 import { createComputerOverlaySlice, type ComputerOverlaySlice } from './computer-overlay-slice';
+import { createScreenshotSlice, type ScreenshotSlice } from './screenshot-slice';
 
 export type StoreState = ConnectionSlice &
   SessionSlice &
@@ -41,7 +42,8 @@ export type StoreState = ConnectionSlice &
   PluginUiSlice &
   SelectionSlice &
   SubagentPreviewSlice &
-  ComputerOverlaySlice;
+  ComputerOverlaySlice &
+  ScreenshotSlice;
 
 export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createConnectionSlice(set, _get),
@@ -65,6 +67,7 @@ export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createSelectionSlice(set),
   ...createSubagentPreviewSlice(set),
   ...createComputerOverlaySlice(set),
+  ...createScreenshotSlice(set),
 }));
 
 // Re-export slice types
@@ -90,4 +93,5 @@ export type {
   SelectionSlice,
   SubagentPreviewSlice,
   ComputerOverlaySlice,
+  ScreenshotSlice,
 };

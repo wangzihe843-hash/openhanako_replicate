@@ -16,6 +16,7 @@ import { renderMarkdown } from './markdown';
 export interface HistoryApiResponse {
   messages: Array<{
     id?: string;
+    entryId?: string;
     role: string;
     content: string;
     thinking?: string;
@@ -190,6 +191,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
       const allAtts = [...fileAtts, ...markerImageAtts, ...markerVideoAtts, ...imageAtts];
       const msg: ChatMessage = {
         id,
+        sourceEntryId: m.entryId,
         role: 'user',
         text,
         textHtml: text ? renderMarkdown(text) : undefined,
@@ -244,7 +246,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         for (const b of msgBlocks) blocks.push(b);
       }
 
-      const msg: ChatMessage = { id, role: 'assistant', blocks };
+      const msg: ChatMessage = { id, sourceEntryId: m.entryId, role: 'assistant', blocks };
       if (timestamp !== undefined) msg.timestamp = timestamp;
       items.push({ type: 'message', data: msg });
     }

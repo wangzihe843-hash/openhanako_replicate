@@ -85,6 +85,43 @@ describe("HanaEngine.buildTools", () => {
     expect(result.details.executed).toBe(true);
   });
 
+  it("hides stable availability-disabled tools before building the model schema", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-availability-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const agent = {
+      id: "focus",
+      agentDir,
+      config: { tools: { disabled: ["browser"] } },
+      tools: [],
+    };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine.isChannelsEnabled = vi.fn(() => false);
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = {
+      agent,
+    };
+
+    const { customTools } = engine.buildTools(tmpDir, [
+      { name: "browser", execute: vi.fn() },
+      { name: "channel", execute: vi.fn() },
+      { name: "cron", execute: vi.fn() },
+    ], {
+      agentDir,
+      workspace: tmpDir,
+      getPermissionMode: () => "operate",
+    });
+
+    expect(customTools.map((tool) => tool.name)).toEqual(["cron"]);
+  });
+
   it("registers files created or modified by write and edit tools in the active session", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-touch-"));
     const agentDir = path.join(tmpDir, "agents", "focus");

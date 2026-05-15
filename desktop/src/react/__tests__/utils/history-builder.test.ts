@@ -18,6 +18,23 @@ describe('buildItemsFromHistory user image restoration', () => {
     expect(first.data.timestamp).toBe(Date.parse('2026-05-07T05:42:00.000Z'));
   });
 
+  it('保留后端 session entry id 作为分支操作来源', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: '0',
+        entryId: 'entry-user-1',
+        role: 'user',
+        content: 'hello',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.id).toBe('0');
+    expect(first.data.sourceEntryId).toBe('entry-user-1');
+  });
+
   it('隐藏 bridge 写入用户消息里的内部时间标签', () => {
     const items = buildItemsFromHistory({
       messages: [{

@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import type { ChatListItem } from '../../stores/chat-types';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
@@ -22,6 +22,14 @@ export const ChatTranscript = memo(function ChatTranscript({
   userIdentity,
   registerMessageElement,
 }: Props) {
+  const latestUserIndex = useMemo(() => {
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const item = items[i];
+      if (item.type === 'message' && item.data.role === 'user') return i;
+    }
+    return -1;
+  }, [items]);
+
   return (
     <>
       {items.map((item, index) => (
@@ -34,6 +42,7 @@ export const ChatTranscript = memo(function ChatTranscript({
           readOnly={readOnly}
           hideUserIdentity={hideUserIdentity}
           userIdentity={userIdentity}
+          isLatestUserMessage={index === latestUserIndex}
           registerMessageElement={registerMessageElement}
         />
       ))}
@@ -49,6 +58,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   readOnly,
   hideUserIdentity,
   userIdentity,
+  isLatestUserMessage,
   registerMessageElement,
 }: {
   item: ChatListItem;
@@ -58,6 +68,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   readOnly: boolean;
   hideUserIdentity: boolean;
   userIdentity?: { name?: string | null; avatarUrl?: string | null };
+  isLatestUserMessage: boolean;
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const messageId = item.type === 'message' ? item.data.id : null;
@@ -80,6 +91,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
         readOnly={readOnly}
         hideIdentity={hideUserIdentity}
         userIdentity={userIdentity}
+        isLatestUserMessage={isLatestUserMessage}
         messageRef={messageRef}
       />
     );

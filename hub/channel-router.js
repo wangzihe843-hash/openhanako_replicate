@@ -18,6 +18,7 @@ import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.js";
 import { Type } from "../lib/pi-sdk/index.js";
 import { appendMessage, formatMessagesForLLM, getChannelMeta, getRecentMessages } from "../lib/channels/channel-store.js";
+import { extractMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { callText } from "../core/llm-client.js";
 import { runAgentPhoneSession } from "./agent-executor.js";
@@ -355,6 +356,33 @@ export class ChannelRouter {
     this._ticker?.refreshSchedule?.();
   }
 
+  _listMentionableAgents() {
+    if (typeof this._engine.listAgents === "function") {
+      return this._engine.listAgents();
+    }
+    return this.getAgentOrder().map((id) => {
+      const agent = this._getAgentInstance(id);
+      if (agent?.agentName) return { id, name: agent.agentName, agentName: agent.agentName };
+      try {
+        const cfg = loadConfig(path.join(this._engine.agentsDir, id, "config.yaml"));
+        return { id, name: cfg?.agent?.name || id };
+      } catch {
+        return { id, name: id };
+      }
+    });
+  }
+
+  _extractMentionedAgents(channelName, message) {
+    const text = typeof message === "string" ? message : message?.body;
+    if (!text) return [];
+    const channelFile = path.join(this._engine.channelsDir || "", `${channelName}.md`);
+    const meta = getChannelMeta(channelFile);
+    return extractMentionedAgentIds(text, {
+      channelMembers: Array.isArray(meta.members) ? meta.members : [],
+      agents: this._listMentionableAgents(),
+    });
+  }
+
   /**
    * 注入频道 post 回调到当前 agent
    * agent 用 channel tool 发消息后，触发其他 agent 的手机送达
@@ -371,7 +399,9 @@ export class ChannelRouter {
             message,
           }, null);
         }
-        this.triggerImmediate(channelName)?.catch(err =>
+        const mentionedAgents = this._extractMentionedAgents(channelName, message);
+        const opts = mentionedAgents.length > 0 ? { mentionedAgents } : undefined;
+        this.triggerImmediate(channelName, opts)?.catch(err =>
           console.error(`[channel] agent post delivery 失败: ${err.message}`)
         );
       });
@@ -408,7 +438,12 @@ export class ChannelRouter {
    * 频道检查回调：未读消息送达 → Agent Phone Session → 频道工具写入或 pass
    * 从 engine._executeChannelCheck 搬入
    */
-  async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal, proactive = false } = {}) {
+  async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, {
+    signal,
+    proactive = false,
+    mentionedAgents = [],
+    mentionTargeted = false,
+  } = {}) {
     const engine = this._engine;
     const msgText = formatMessagesForLLM(newMessages);
     const isZh = getLocale().startsWith("zh");
@@ -439,6 +474,8 @@ export class ChannelRouter {
         signal,
         messageCount: newMessages.length,
         proactive,
+        mentionedAgents,
+        mentionTargeted,
       });
 
       if (decision?.replied) {
@@ -508,10 +545,66 @@ export class ChannelRouter {
   /**
    * 将未读群聊消息送入 Agent Phone session。频道写入只能由 channel_reply 工具完成。
    */
-  async _executeReply(agentId, channelName, msgText, { signal, messageCount = null, proactive = false } = {}) {
+  _formatMentionGuidance(agentId, mentionedAgents, mentionTargeted, isZh) {
+    const ids = Array.from(new Set(
+      Array.isArray(mentionedAgents)
+        ? mentionedAgents.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())
+        : [],
+    ));
+    if (ids.length === 0) return "";
+
+    const names = ids
+      .map((id) => this._resolveChannelMemorySenderName(id, isZh))
+      .filter(Boolean)
+      .join(isZh ? "、" : ", ");
+    if (mentionTargeted || ids.includes(agentId)) {
+      return isZh
+        ? [
+          `- 这轮消息明确 @ 了你（${names || agentId}），你是本轮优先被提醒的成员`,
+          "- 请判断是否需要回应；如果只是确认收到或暂时不需要发言，也可以调用 channel_pass",
+        ].join("\n")
+        : [
+          `- This turn explicitly @mentioned you (${names || agentId}); you were prioritized for this phone check`,
+          "- Decide whether a reply is useful; if there is nothing to add, call channel_pass",
+        ].join("\n");
+    }
+
+    return isZh
+      ? [
+        `- 这轮消息明确 @ 了 ${names || ids.join("、")}，你也能看到这段频道 Truth，但不要抢答`,
+        "- 除非你确实需要补充、纠错或推进话题，否则调用 channel_pass",
+      ].join("\n")
+      : [
+        `- This turn explicitly @mentioned ${names || ids.join(", ")}. You can still see this channel Truth, but do not steal the reply`,
+        "- Unless you truly need to add context, correct something, or move the topic forward, call channel_pass",
+      ].join("\n");
+  }
+
+  _formatChannelBehaviorGuidance(agentId, mentionedAgents, mentionTargeted, isZh) {
+    const mentionGuidance = this._formatMentionGuidance(agentId, mentionedAgents, mentionTargeted, isZh);
+    if (mentionGuidance) return mentionGuidance;
+    return isZh
+      ? [
+        "- 你可以因为被问到、被提到、想补充、想推动话题、表达情绪、主动开启话题或觉得有价值而发言",
+        "- 不需要只在事情与你直接相关时才发言",
+      ].join("\n")
+      : [
+        "- You may post because you were asked, mentioned, have something useful to add, want to move the topic, want to start a topic, or feel it is worth saying",
+        "- You do not need the topic to be directly about you",
+      ].join("\n");
+  }
+
+  async _executeReply(agentId, channelName, msgText, {
+    signal,
+    messageCount = null,
+    proactive = false,
+    mentionedAgents = [],
+    mentionTargeted = false,
+  } = {}) {
     const isZh = getLocale().startsWith("zh");
     const phoneSettings = this._resolveChannelPhoneSettings(channelName);
     const promptGuidance = this._formatPhonePromptGuidance(agentId, phoneSettings, isZh);
+    const behaviorGuidance = this._formatChannelBehaviorGuidance(agentId, mentionedAgents, mentionTargeted, isZh);
     const zhIntro = proactive
       ? `你的手机收到了 #${channelName} 的频道提醒。\n\n`
         + `以下是最近的频道内容，来源是频道聊天记录 Truth，不是用户单独发给你的请求，也不一定是新消息：\n\n`
@@ -532,8 +625,7 @@ export class ChannelRouter {
             ? zhIntro
               + `${msgText || "（没有新消息）"}\n\n`
               + `请像群聊成员一样阅读并行动：\n`
-              + `- 你可以因为被问到、被提到、想补充、想推动话题、表达情绪、主动开启话题或觉得有价值而发言\n`
-              + `- 不需要只在事情与你直接相关时才发言\n`
+              + `${behaviorGuidance}\n`
               + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
               + `${promptGuidance}\n`
               + `- 本轮最后必须调用 channel_reply 或 channel_pass 之一完成动作\n`
@@ -541,8 +633,7 @@ export class ChannelRouter {
             : enIntro
               + `${msgText || "(No new messages)"}\n\n`
               + `Read and act like a group chat member:\n`
-              + `- You may post because you were asked, mentioned, have something useful to add, want to move the topic, want to start a topic, or feel it is worth saying\n`
-              + `- You do not need the topic to be directly about you\n`
+              + `${behaviorGuidance}\n`
               + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
               + `${promptGuidance}\n`
               + `- End this turn by calling exactly one of channel_reply or channel_pass\n`

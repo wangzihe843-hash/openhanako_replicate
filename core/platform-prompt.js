@@ -1,9 +1,9 @@
 import os from "node:os";
 
-// Hana 在 macOS/Linux 上执行 AI 命令时，真实使用 bash。
-// Windows 由 win32-exec 在 Git/cmd/POSIX compatibility 三条 runtime 之间显式分派。
-function getExecShellLabel(platform) {
-  return platform === "win32" ? "platform-adaptive" : "bash";
+// 模型侧看到稳定的 bash 工具契约；Windows 的 Git/cmd/POSIX runtime
+// 分派属于 win32-exec 的执行层细节，避免泄漏到 prompt 里干扰规划。
+function getExecShellLabel() {
+  return "bash";
 }
 
 export function getPlatformPromptNote({
@@ -18,9 +18,9 @@ export function getPlatformPromptNote({
   ];
   if (platform === "win32") {
     lines.push(
-      "Host OS is Windows. Simple git commands run through Hanako's bundled git.exe when available.",
-      "Simple Windows-native commands may run through cmd.exe; POSIX shell commands run through Hanako's bundled PortableGit Bash runtime.",
-      "Use POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.",
+      "Host OS is Windows, but the bash tool accepts POSIX shell-style commands.",
+      "Hanako may internally route simple git commands through bundled git.exe and explicit cmd.exe/powershell.exe commands through Windows-native runners.",
+      "Prefer POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.",
       "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native shell.",
       "Discard POSIX command output with /dev/null; use CMD's nul device only inside an explicit cmd.exe command.",
     );

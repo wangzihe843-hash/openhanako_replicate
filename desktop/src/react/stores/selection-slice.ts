@@ -1,6 +1,7 @@
 export interface SelectionSlice {
   selectedIdsBySession: Record<string, string[]>;
   toggleMessageSelection: (sessionPath: string, messageId: string) => void;
+  setMessageSelection: (sessionPath: string, messageIds: string[]) => void;
   clearSelection: (sessionPath: string) => void;
 }
 
@@ -14,9 +15,20 @@ export const createSelectionSlice = (
     const next = current.includes(messageId)
       ? current.filter(id => id !== messageId)
       : [...current, messageId];
+    const copy = { ...s.selectedIdsBySession };
+    if (next.length === 0) delete copy[sessionPath];
+    else copy[sessionPath] = next;
     return {
-      selectedIdsBySession: { ...s.selectedIdsBySession, [sessionPath]: next },
+      selectedIdsBySession: copy,
     };
+  }),
+
+  setMessageSelection: (sessionPath, messageIds) => set((s) => {
+    const next = Array.from(new Set(messageIds.filter(Boolean)));
+    const copy = { ...s.selectedIdsBySession };
+    if (next.length === 0) delete copy[sessionPath];
+    else copy[sessionPath] = next;
+    return { selectedIdsBySession: copy };
   }),
 
   clearSelection: (sessionPath) => set((s) => {

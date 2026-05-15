@@ -42,6 +42,7 @@ import {
   modelSupportsVideoInput,
   resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.js";
+import { replayLatestUserTurn } from "../../core/session-turn-actions.js";
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -298,24 +299,28 @@ export function createSessionsRoute(engine) {
           const { text, images } = extractTextContent(m.content);
           if (text || images.length) {
             allMessages.push({
-              id: String(globalIdx++),
+              id: String(globalIdx),
+              ...(m.id ? { entryId: m.id } : {}),
               role: "user",
               content: text,
               images: images.length ? images : undefined,
               ...(m.timestamp ? { timestamp: m.timestamp } : {}),
             });
+            globalIdx++;
           }
         } else if (m.role === "assistant") {
           const { text, thinking, toolUses } = extractTextContent(m.content, { stripThink: true });
           if (text || toolUses.length) {
             allMessages.push({
-              id: String(globalIdx++),
+              id: String(globalIdx),
+              ...(m.id ? { entryId: m.id } : {}),
               role: "assistant",
               content: text,
               thinking: thinking || undefined,
               toolCalls: toolUses.length ? toolUses : undefined,
               ...(m.timestamp ? { timestamp: m.timestamp } : {}),
             });
+            globalIdx++;
           }
         } else if (m.role === "toolResult") {
           const extracted = extractBlocks(m.toolName, m.details, m);
@@ -413,6 +418,38 @@ export function createSessionsRoute(engine) {
       return c.json({ messages, blocks: slicedBlocks, todos, hasMore, sessionFiles });
     } catch (err) {
       return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.post("/sessions/latest-user-message/replay", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const sessionPath = body?.path || body?.sessionPath || null;
+      if (!sessionPath) {
+        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+      }
+      if (!isValidSessionPath(sessionPath, engine.agentsDir) || !isActiveSessionPath(sessionPath, engine.agentsDir)) {
+        return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (!(await pathExists(sessionPath))) {
+        return c.json({ error: "session not found" }, 404);
+      }
+      if (engine.isSessionStreaming?.(sessionPath)) {
+        return c.json({ error: "session_busy" }, 409);
+      }
+
+      const result = await replayLatestUserTurn(engine, {
+        sessionPath,
+        sourceEntryId: body.sourceEntryId || null,
+        clientMessageId: body.clientMessageId || null,
+        replacementText: typeof body.text === "string" ? body.text : undefined,
+        displayMessage: body.displayMessage || null,
+        uiContext: body.uiContext ?? null,
+      });
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      const status = err.message === "session_busy" ? 409 : 400;
+      return c.json({ error: err.message }, status);
     }
   });
 

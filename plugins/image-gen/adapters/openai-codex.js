@@ -56,6 +56,13 @@ function normalizeImages(image) {
 
 function collectImageResults(data) {
   const results = [];
+  const seen = new Set();
+  const visited = new WeakSet();
+  const pushResult = (value) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    results.push(value);
+  };
   const visit = (value) => {
     if (!value) return;
     if (Array.isArray(value)) {
@@ -63,19 +70,68 @@ function collectImageResults(data) {
       return;
     }
     if (typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
     if (value.type === "image_generation_call" && typeof value.result === "string") {
-      results.push(value.result);
+      pushResult(value.result);
       return;
     }
     if (typeof value.b64_json === "string") {
-      results.push(value.b64_json);
+      pushResult(value.b64_json);
       return;
     }
-    visit(value.output);
-    visit(value.content);
+    for (const child of Object.values(value)) visit(child);
   };
   visit(data?.output || data?.response?.output || data);
   return results;
+}
+
+async function readResponsePayload(res) {
+  if (res.body && typeof res.body.getReader === "function") {
+    return readStreamingPayload(res.body);
+  }
+  if (typeof res.json === "function") return res.json();
+  if (typeof res.text === "function") {
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  }
+  return {};
+}
+
+async function readStreamingPayload(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const events = [];
+  let buffer = "";
+
+  const consumeBlock = (block) => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      events.push(JSON.parse(data));
+    } catch {}
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: !done });
+    let sep;
+    while ((sep = buffer.search(/\r?\n\r?\n/)) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(buffer[sep] === "\r" ? sep + 4 : sep + 2);
+      consumeBlock(block);
+    }
+    if (done) break;
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+
+  return { output: events };
 }
 
 function extractAccountIdFromToken(token) {
@@ -158,7 +214,7 @@ export const openaiCodexImageAdapter = {
     const body = {
       model: resolveResponsesModel(params, providerDefaults),
       store: false,
-      stream: false,
+      stream: true,
       instructions: "Generate or edit the requested image and return the image result.",
       input: [{ role: "user", content }],
       tools: [tool],
@@ -188,7 +244,7 @@ export const openaiCodexImageAdapter = {
       throw new Error(msg);
     }
 
-    const data = await res.json();
+    const data = await readResponsePayload(res);
     const images = collectImageResults(data);
     if (images.length === 0) {
       throw new Error("API returned no images");

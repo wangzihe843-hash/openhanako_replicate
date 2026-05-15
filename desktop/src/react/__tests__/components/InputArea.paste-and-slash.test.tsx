@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   insertContent: vi.fn(),
   setContent: vi.fn(),
   chainInserted: [] as unknown[],
+  ensureSession: vi.fn(async () => true),
+  loadSessions: vi.fn(),
   hanaFetch: vi.fn(),
   wsSend: vi.fn(),
 }));
@@ -48,7 +50,7 @@ vi.mock('@tiptap/react', () => ({
       },
       chain: () => chain,
       getText: () => mocks.editorText,
-      getJSON: () => editorJsonForText(''),
+      getJSON: () => editorJsonForText(mocks.editorText),
       isDestroyed: false,
       state: { tr: { setMeta: vi.fn(() => ({})) } },
       view: { dispatch: vi.fn() },
@@ -95,8 +97,8 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 }));
 
 vi.mock('../../stores/session-actions', () => ({
-  ensureSession: vi.fn(async () => true),
-  loadSessions: vi.fn(),
+  ensureSession: mocks.ensureSession,
+  loadSessions: mocks.loadSessions,
 }));
 
 vi.mock('../../stores/desk-actions', () => ({
@@ -174,7 +176,7 @@ vi.mock('../../services/stream-resume', () => ({
   updateSessionStreamMeta: vi.fn(),
 }));
 
-function seedInputState() {
+function seedInputState(overrides: Partial<ReturnType<typeof useStore.getState>> = {}) {
   useStore.setState({
     currentSessionPath: '/session/input.jsonl',
     connected: true,
@@ -203,12 +205,18 @@ function seedInputState() {
     modelSwitching: false,
     welcomeVisible: false,
     agentYuan: 'hanako',
+    ...overrides,
   } as never);
 }
 
 function tiptapPasteHandler(): ((view: unknown, event: ClipboardEvent) => boolean | void) | undefined {
   const editorProps = mocks.editorOptions?.editorProps as Record<string, unknown> | undefined;
   return editorProps?.handlePaste as ((view: unknown, event: ClipboardEvent) => boolean | void) | undefined;
+}
+
+function tiptapKeyDownHandler(): ((view: unknown, event: KeyboardEvent) => boolean | void) | undefined {
+  const editorProps = mocks.editorOptions?.editorProps as Record<string, unknown> | undefined;
+  return editorProps?.handleKeyDown as ((view: unknown, event: KeyboardEvent) => boolean | void) | undefined;
 }
 
 describe('InputArea paste and slash menu behavior', () => {
@@ -271,5 +279,29 @@ describe('InputArea paste and slash menu behavior', () => {
       attrs: { name: 'zz-second' },
     });
     expect(mocks.wsSend).not.toHaveBeenCalled();
+  });
+
+  it('handles welcome Enter inside TipTap before the editor inserts a newline', async () => {
+    seedInputState({
+      currentSessionPath: null,
+      pendingNewSession: true,
+      welcomeVisible: true,
+    });
+    mocks.editorText = '你好 Hana';
+    render(React.createElement(InputArea));
+
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(event, 'preventDefault', { value: preventDefault });
+
+    const handled = tiptapKeyDownHandler()?.(null, event);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.ensureSession).toHaveBeenCalledTimes(1);
+      expect(mocks.loadSessions).toHaveBeenCalledTimes(1);
+      expect(mocks.wsSend).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -2335,7 +2335,7 @@ function buildScreenshotHTML(payload) {
     .chat-name { font-size: 0.9em; font-weight: 600; opacity: 0.7; }
     .chat-body { padding-left: 0; }
     .chat-body p:last-child { margin-bottom: 0; }
-    .chat-image { max-width: 100%; border-radius: 6px; margin: 0.8em 0; }
+    .chat-image { width: ${themeName.endsWith("-desktop") ? "66.666%" : "100%"}; max-width: 100%; height: auto; border-radius: 6px; margin: 0.8em 0; display: block; }
     .watermark {
       display: flex; align-items: center; justify-content: center;
       gap: 0.5em; padding: 1.5em 0 1em; opacity: 0.5;
@@ -2879,7 +2879,12 @@ wrapIpcHandler("screenshot-render", (_event, payload) => {
       const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
       const base = payload.saveDir || path.join(os.homedir(), "Desktop");
       const dir = path.join(base, "截图");
-      const filePath = path.join(dir, `hanako-${timestamp}.png`);
+      const segmentTotal = Number(payload.segmentTotal);
+      const segmentIndex = Number(payload.segmentIndex);
+      const segmentSuffix = Number.isInteger(segmentTotal) && segmentTotal > 1 && Number.isInteger(segmentIndex) && segmentIndex > 0
+        ? `-${String(segmentIndex).padStart(2, "0")}-of-${String(segmentTotal).padStart(2, "0")}`
+        : "";
+      const filePath = path.join(dir, `hanako-${timestamp}${segmentSuffix}.png`);
 
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(filePath, pngBuffer);

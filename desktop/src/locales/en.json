@@ -128,6 +128,7 @@
     "copy": "Copy",
     "copied": "Copied",
     "copyText": "Copy text",
+    "regenerate": "Regenerate",
     "confirm": "Confirm",
     "cancel": "Cancel",
     "approve": "Approve",
@@ -147,7 +148,11 @@
     "edit": "Edit",
     "screenshot": "Screenshot",
     "selectMessage": "Select message",
+    "selectAllMessages": "Select all messages",
+    "screenshotInProgress": "Taking screenshot",
+    "screenshotProgressPage": "Taking screenshot, page {current}/{total}",
     "screenshotSaved": "Screenshot saved to the \"截图\" folder in your working directory",
+    "screenshotSavedMultiple": "Saved {count} screenshot segments to the \"截图\" folder in your working directory",
     "screenshotFailed": "Screenshot save failed",
     "selectedCount": "{count} selected",
     "allDone": "All done",
@@ -743,7 +748,7 @@
       "yuanHint": "\"Yuan\" is the agent's subconscious. Build your unique companion from this foundation.",
       "tools": {
         "title": "Tools",
-        "description": "Changes apply to new conversations only. Active conversations continue using the tool set they started with.",
+        "description": "Tool switches take effect after restarting or starting a conversation. Active conversations keep using the tool set they started with.",
         "items": {
           "browser": { "label": "Browser", "summary": "Control a headless browser to navigate web pages" },
           "computer": { "label": "Computer Use", "summary": "Control approved desktop apps with a visible action overlay" },
@@ -1180,6 +1185,14 @@
       "marketInstalled": "Installed",
       "marketInstall": "Install",
       "marketUpdate": "Update",
+      "marketReinstall": "Reinstall",
+      "marketDowngrade": "Downgrade",
+      "marketIncompatible": "Incompatible",
+      "marketUpdateAvailable": "Update available",
+      "marketInstalledVersion": "Installed v{version}",
+      "marketUpdateFrom": "Installed v{from}, update to v{to}",
+      "marketDowngradeTo": "Only compatible version v{version} can be installed",
+      "marketDowngradeConfirm": "Installed version is v{from}. Downgrade to v{to}?",
       "marketReadmeLoading": "Loading README…",
       "marketSelectPlugin": "Select a plugin to view its README"
     },
@@ -1251,7 +1264,11 @@
       "mobileTitle": "Mobile Layout",
       "mobileDesc": "Tall image, ideal for phone sharing",
       "desktopTitle": "Desktop Layout",
-      "desktopDesc": "Wider, for desktop saving & sharing"
+      "desktopDesc": "Wider, for desktop saving & sharing",
+      "segmentTitle": "Auto Segmentation",
+      "segmentLimitLabel": "Characters per page",
+      "segmentLimitHint": "When visible text exceeds this limit, the next screenshot starts at a full conversation-round boundary. Default is 10000 characters.",
+      "segmentLimitUnit": "chars"
     },
     "bridge": {
       "agent": "Agent",

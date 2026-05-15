@@ -14,6 +14,8 @@ import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { getLocale } from "../server/i18n.js";
 import { runXingyeHeartbeatConsumer } from "../lib/xingye/heartbeat-consumer.js";
+import { createFreshCompactDailyScheduler } from "../lib/fresh-compact/daily-scheduler.js";
+import { FreshCompactMaintainer } from "./fresh-compact-maintainer.js";
 
 export class Scheduler {
   /**
@@ -25,6 +27,11 @@ export class Scheduler {
     this._heartbeats = new Map(); // agentId → heartbeat instance
     this._agentCrons = new Map(); // agentId → CronScheduler
     this._executingJobs = new Map(); // jobId → AbortController（per-job 锁 + abort 控制）
+    this._freshCompactMaintainer = new FreshCompactMaintainer({ hub });
+    this._freshCompactScheduler = createFreshCompactDailyScheduler({
+      runDaily: (opts) => this._freshCompactMaintainer.runDaily(opts),
+      warn: (msg) => console.warn(msg),
+    });
   }
 
   /** @returns {import('../core/engine.js').HanaEngine} */
@@ -47,9 +54,11 @@ export class Scheduler {
   start() {
     this.startHeartbeat();
     this._startAllCrons();
+    this._freshCompactScheduler.start();
   }
 
   async stop() {
+    this._freshCompactScheduler.stop();
     await this.stopHeartbeat();
     for (const sched of this._agentCrons.values()) {
       await sched.stop();

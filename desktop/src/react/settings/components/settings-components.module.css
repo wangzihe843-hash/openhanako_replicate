@@ -283,6 +283,10 @@
     transition: border-color var(--duration-slow) var(--ease-out);
 }
 
+.numberInputFieldWide {
+    width: 128px;
+}
+
 .numberInputField:focus {
     outline: none;
     border-color: var(--accent);

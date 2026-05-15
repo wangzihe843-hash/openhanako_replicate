@@ -1,7 +1,8 @@
 // desktop/src/react/utils/screenshot.ts
 import { useStore } from '../stores';
 import { selectSelectedIdsBySession } from '../stores/session-selectors';
-import { extractScreenshotPayload, buildThemeName } from './screenshot-extract';
+import { extractScreenshotPayload, buildThemeName, type ScreenshotPayload } from './screenshot-extract';
+import { readScreenshotSegmentVisibleCharLimit, splitScreenshotMessages } from './screenshot-segments';
 import type { ChatMessage } from '../stores/chat-types';
 import {
   appendConnectionAuth,
@@ -17,6 +18,120 @@ function dispatchInlineNotice(text: string, type: 'success' | 'error', deskDir?:
   window.dispatchEvent(new CustomEvent('hana-inline-notice', {
     detail: { text, type, deskDir },
   }));
+}
+
+type StoreSnapshot = ReturnType<typeof useStore.getState>;
+type ScreenshotRenderPayload = ScreenshotPayload & {
+  saveDir?: string | null;
+  segmentIndex?: number;
+  segmentTotal?: number;
+};
+
+interface ScreenshotRenderResult {
+  success: boolean;
+  error?: string;
+  dir?: string;
+}
+
+interface AvatarCache {
+  assistant: string | null;
+  user: string | null;
+}
+
+function beginScreenshotProgress(totalBlocks: number, totalPages: number): () => void {
+  const state = useStore.getState() as StoreSnapshot & {
+    beginScreenshotTask?: (progress: {
+      completedBlocks: number;
+      totalBlocks: number;
+      currentPage: number;
+      totalPages: number;
+    }) => void;
+    endScreenshotTask?: () => void;
+  };
+  state.beginScreenshotTask?.({
+    completedBlocks: 0,
+    totalBlocks,
+    currentPage: totalPages > 0 ? 1 : 0,
+    totalPages,
+  });
+
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    const latest = useStore.getState() as StoreSnapshot & { endScreenshotTask?: () => void };
+    latest.endScreenshotTask?.();
+  };
+}
+
+function updateScreenshotProgress(progress: {
+  completedBlocks?: number;
+  currentPage?: number;
+}) {
+  const state = useStore.getState() as StoreSnapshot & {
+    updateScreenshotProgress?: (progress: {
+      completedBlocks?: number;
+      currentPage?: number;
+    }) => void;
+  };
+  state.updateScreenshotProgress?.(progress);
+}
+
+async function resolveAvatarCache(state: StoreSnapshot): Promise<AvatarCache> {
+  const [assistant, user] = await Promise.all([
+    state.currentAgentId
+      ? fetchAvatarAsDataUrl('assistant', state.currentAgentId).catch(() => null)
+      : Promise.resolve(null),
+    fetchAvatarAsDataUrl('user', null).catch(() => null),
+  ]);
+  return { assistant, user };
+}
+
+async function buildScreenshotPayloadForMessages(
+  messages: ChatMessage[],
+  theme: string,
+  state: StoreSnapshot,
+  avatars: AvatarCache,
+  imageCache: Map<string, string>,
+  segment: { index: number; total: number },
+): Promise<ScreenshotRenderPayload> {
+  const payload = extractScreenshotPayload(messages, theme) as ScreenshotRenderPayload;
+  payload.saveDir = state.homeFolder || null;
+  if (segment.total > 1) {
+    payload.segmentIndex = segment.index;
+    payload.segmentTotal = segment.total;
+  }
+
+  if (!payload.messages) return payload;
+
+  const assistantName = state.agentName || 'Hanako';
+  const userName = state.userName || '我';
+
+  for (const msg of payload.messages) {
+    if (msg.role === 'assistant') {
+      msg.name = assistantName;
+      msg.avatarDataUrl = avatars.assistant;
+    } else {
+      msg.name = userName;
+      msg.avatarDataUrl = avatars.user;
+    }
+
+    for (const block of msg.blocks) {
+      if (block.type !== 'image' || !block.content || block.content.startsWith('data:')) continue;
+      const cached = imageCache.get(block.content);
+      if (cached) {
+        block.content = cached;
+        continue;
+      }
+      try {
+        const dataUrl = await fetchImageAsDataUrl(block.content);
+        imageCache.set(block.content, dataUrl);
+        block.content = dataUrl;
+      } catch { /* keep original content; broken image is preferable to failing the whole screenshot */ }
+    }
+  }
+
+  return payload;
 }
 
 /**
@@ -45,41 +160,6 @@ export async function takeScreenshot(targetMessageId: string, sessionPath: strin
   const width = localStorage.getItem('hana-screenshot-width') || 'mobile';
   const theme = buildThemeName(color, width);
 
-  // 3. 提取 payload
-  const payload = extractScreenshotPayload(messages, theme) as any;
-  payload.saveDir = state.homeFolder || null;
-
-  // 4. 填充角色名和头像（conversation 模式）
-  if (payload.messages) {
-    const globalAgentName = state.agentName || 'Hanako';
-    const userName = state.userName || '';
-    const agentId = state.currentAgentId;
-
-    for (const msg of payload.messages) {
-      if (msg.role === 'assistant') {
-        msg.name = globalAgentName;
-        try {
-          msg.avatarDataUrl = await fetchAvatarAsDataUrl('assistant', agentId);
-        } catch { /* fallback null */ }
-      } else {
-        msg.name = userName || '我';
-        try {
-          msg.avatarDataUrl = await fetchAvatarAsDataUrl('user', null);
-        } catch { /* fallback null */ }
-      }
-
-      // 图片 filePath → base64 data URL
-      for (const block of msg.blocks) {
-        if (block.type === 'image' && block.content && !block.content.startsWith('data:')) {
-          try {
-            block.content = await fetchImageAsDataUrl(block.content);
-          } catch { /* 图片加载失败跳过 */ }
-        }
-      }
-    }
-  }
-
-  // 5. IPC 调用
   const t = window.t ?? ((p: string) => p);
   const hana = (window as any).hana;
   if (!hana?.screenshotRender) {
@@ -87,15 +167,43 @@ export async function takeScreenshot(targetMessageId: string, sessionPath: strin
     return;
   }
 
+  const segmentLimit = readScreenshotSegmentVisibleCharLimit();
+  const chunks = splitScreenshotMessages(messages, segmentLimit);
+  const endProgress = beginScreenshotProgress(messages.length, chunks.length);
   try {
-    const result = await hana.screenshotRender(payload);
-    if (result.success) {
-      dispatchInlineNotice(t('common.screenshotSaved'), 'success', result.dir);
-    } else {
-      dispatchInlineNotice(`${t('common.screenshotFailed')}: ${result.error}`, 'error');
+    const avatars = await resolveAvatarCache(state);
+    const imageCache = new Map<string, string>();
+    const results: ScreenshotRenderResult[] = [];
+    let completedBlocks = 0;
+
+    for (let i = 0; i < chunks.length; i += 1) {
+      updateScreenshotProgress({ currentPage: i + 1 });
+      const payload = await buildScreenshotPayloadForMessages(
+        chunks[i],
+        theme,
+        state,
+        avatars,
+        imageCache,
+        { index: i + 1, total: chunks.length },
+      );
+      const result = await hana.screenshotRender(payload) as ScreenshotRenderResult;
+      if (!result.success) {
+        throw new Error(result.error || t('common.screenshotFailed'));
+      }
+      results.push(result);
+      completedBlocks += chunks[i].length;
+      updateScreenshotProgress({ completedBlocks });
     }
+
+    const saveDir = results.find(result => result.dir)?.dir;
+    const savedText = chunks.length > 1
+      ? t('common.screenshotSavedMultiple', { count: chunks.length })
+      : t('common.screenshotSaved');
+    dispatchInlineNotice(savedText, 'success', saveDir);
   } catch (err) {
     dispatchInlineNotice(`${t('common.screenshotFailed')}: ${getErrorMessage(err)}`, 'error');
+  } finally {
+    endProgress();
   }
 }
 
@@ -115,6 +223,7 @@ export async function takeArticleScreenshot(markdown: string): Promise<void> {
   }
 
   const homeFolder = useStore.getState().homeFolder || null;
+  const endProgress = beginScreenshotProgress(1, 1);
   try {
     const result = await hana.screenshotRender({
       mode: 'article',
@@ -124,12 +233,15 @@ export async function takeArticleScreenshot(markdown: string): Promise<void> {
     });
 
     if (result.success) {
+      updateScreenshotProgress({ completedBlocks: 1 });
       dispatchInlineNotice(t('common.screenshotSaved'), 'success', result.dir);
     } else {
       dispatchInlineNotice(`${t('common.screenshotFailed')}: ${result.error}`, 'error');
     }
   } catch (err) {
     dispatchInlineNotice(`${t('common.screenshotFailed')}: ${getErrorMessage(err)}`, 'error');
+  } finally {
+    endProgress();
   }
 }
 

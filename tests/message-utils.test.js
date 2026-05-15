@@ -17,6 +17,7 @@ import {
   loadLatestAssistantSummaryFromSessionFile,
   isValidSessionPath,
 } from "../core/message-utils.js";
+import { SessionManager } from "../lib/pi-sdk/index.js";
 
 let tmpDir;
 
@@ -200,6 +201,28 @@ describe("loadSessionHistoryMessages", () => {
         content: [{ type: "text", text: "hello" }],
         timestamp: "2026-05-07T05:43:00.000Z",
       },
+    ]);
+  });
+
+  it("只恢复当前 leaf 所在分支上的消息", async () => {
+    const sessionDir = path.join(tmpDir, "sessions");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    const userA = manager.appendMessage({ role: "user", content: [{ type: "text", text: "old prompt" }] });
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "old answer" }] });
+    manager.branch(userA);
+    manager.appendMessage({ role: "user", content: [{ type: "text", text: "new prompt" }] });
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "new answer" }] });
+
+    const result = await loadSessionHistoryMessages({}, manager.getSessionFile());
+
+    expect(result.map(message => ({
+      id: message.id,
+      role: message.role,
+      text: message.content?.[0]?.text,
+    }))).toEqual([
+      { id: userA, role: "user", text: "old prompt" },
+      { id: expect.any(String), role: "user", text: "new prompt" },
+      { id: expect.any(String), role: "assistant", text: "new answer" },
     ]);
   });
 });

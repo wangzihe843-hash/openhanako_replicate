@@ -33,6 +33,7 @@
  *       ishiki-templates/
  *       public-ishiki-templates/
  *       yuan/
+ *     desktop/src/assets/     ← server 运行时读取的默认头像、角色卡背、Yuan 图标
  *     desktop/src/locales/    ← i18n 资源
  *     skills2set/             ← 技能包
  *     package.json            ← external deps + version（node_modules 解析 + 运行时版本读取）
@@ -48,6 +49,7 @@ import {
   buildExternalPackage,
   verifyExternalEntrypoints,
 } from "./build-server-deps.mjs";
+import { copyServerRuntimeAssets } from "./build-server-runtime-assets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -216,6 +218,12 @@ if (fs.existsSync(themesSrc)) {
   fs.mkdirSync(path.join(outDir, "desktop", "src", "themes"), { recursive: true });
   fs.cpSync(themesSrc, path.join(outDir, "desktop", "src", "themes"), { recursive: true });
   console.log("[build-server]   desktop/src/themes/");
+}
+
+// 角色卡导入/导出预览由 server 读取默认头像、卡背和 Yuan 图标。
+// 打包模式下 HANA_ROOT 指向 resources/server，不能依赖 renderer asar 里的 assets。
+for (const copiedAsset of copyServerRuntimeAssets({ rootDir: ROOT, outDir })) {
+  console.log(`[build-server]   ${copiedAsset}`);
 }
 
 // 系统插件（内嵌到 app，运行时 fromRoot("plugins") 读取）

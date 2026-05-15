@@ -25,6 +25,11 @@ import {
 } from "./session-permission-mode.js";
 import { findModel } from "../shared/model-ref.js";
 import { computeToolSnapshot, DEFAULT_DISABLED_TOOL_NAMES, uniqueToolNames } from "../shared/tool-categories.js";
+import {
+  computeRuntimeDisabledToolNames,
+  getStableFeatureDisabledToolNames,
+  toolNamesFromObjects,
+} from "./tool-availability.js";
 import { extractTextContent, isActiveSessionPath } from "./message-utils.js";
 import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/workspace-scope.js";
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
@@ -104,28 +109,6 @@ function recentSessionMessageTexts(messages, limit = 8) {
     .filter(Boolean);
 }
 
-function computeRuntimeDisabledToolNames(tools, agentConfig, context = {}) {
-  const disabled = [];
-  for (const tool of tools || []) {
-    if (!tool?.name || typeof tool.isEnabledForAgentConfig !== "function") continue;
-    try {
-      if (!tool.isEnabledForAgentConfig(agentConfig, context)) {
-        disabled.push(tool.name);
-      }
-    } catch (err) {
-      log.warn(`tool "${tool.name}" runtime enablement check failed, disabling for fresh session: ${err.message}`);
-      disabled.push(tool.name);
-    }
-  }
-  return disabled;
-}
-
-function toolNamesFromObjects(tools, { includePluginTools = true } = {}) {
-  return (tools || [])
-    .filter((tool) => includePluginTools || !tool?._pluginId)
-    .map((tool) => tool?.name)
-    .filter(Boolean);
-}
 
 function freezeSkillsResult(value) {
   const next = {
@@ -623,11 +606,20 @@ export class SessionCoordinator {
     const stableRestoreToolNames = toolNamesFromObjects(allToolObjects, {
       includePluginTools: false,
     });
+    const channelsEnabled = this._d.getPrefs?.()?.getChannelsEnabled?.();
+    const stableFeatureDisabledToolNames = getStableFeatureDisabledToolNames({
+      channelsEnabled,
+    });
     const runtimeDisabledToolNames = computeRuntimeDisabledToolNames(
       allToolObjects,
       agent.config,
-      { agentId: creatingAgentId, restore },
+      { agentId: creatingAgentId, restore, channelsEnabled },
+      { warn: (msg) => log.warn(msg) },
     );
+    const extraDisabledToolNames = [
+      ...stableFeatureDisabledToolNames,
+      ...runtimeDisabledToolNames,
+    ];
     let snapshotToolNames = null;  // null signals "do not call setActiveToolsByName"
     let shouldPersistRestoredToolNames = false;
 
@@ -655,7 +647,7 @@ export class SessionCoordinator {
           // or dynamic tool registrations only affect newly created sessions.
           const disabled = agent.config?.tools?.disabled ?? DEFAULT_DISABLED_TOOL_NAMES;
           snapshotToolNames = computeToolSnapshot(stableRestoreToolNames, disabled, {
-            extraDisabled: runtimeDisabledToolNames,
+            extraDisabled: extraDisabledToolNames,
           });
           shouldPersistRestoredToolNames = true;
         }
@@ -667,7 +659,7 @@ export class SessionCoordinator {
       // and is preserved via nullish-coalescing rather than `||`.
       const disabled = agent.config?.tools?.disabled ?? DEFAULT_DISABLED_TOOL_NAMES;
       snapshotToolNames = computeToolSnapshot(allToolNames, disabled, {
-        extraDisabled: runtimeDisabledToolNames,
+        extraDisabled: extraDisabledToolNames,
       });
     }
 

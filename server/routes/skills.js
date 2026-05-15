@@ -13,7 +13,7 @@ import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
 import { extractZip } from "../../lib/extract-zip.js";
 import { saveConfig } from "../../lib/memory/config-loader.js";
-import { sanitizeSkillName, safetyReview } from "../../lib/tools/install-skill.js";
+import { sanitizeSkillName } from "../../lib/tools/install-skill.js";
 import { t } from "../i18n.js";
 import { safeCopyDir } from "../../shared/safe-fs.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
@@ -28,6 +28,7 @@ import {
   reorderSkillBundles,
   updateSkillBundle,
 } from "../../lib/skill-bundles/store.js";
+import { exportSkillBundlePackage } from "../../lib/skill-bundles/package-service.js";
 
 /** 从 SKILL.md frontmatter 解析 name */
 function parseSkillName(skillMdPath) {
@@ -189,6 +190,15 @@ export function createSkillsRoute(engine) {
     }
   });
 
+  route.post("/skills/bundles/:id/export", async (c) => {
+    try {
+      const result = await exportSkillBundlePackage(engine, c.req.param("id"));
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
+    }
+  });
+
   route.get("/skills", async (c) => {
     try {
       const agentId = c.req.query("agentId");
@@ -338,10 +348,6 @@ export function createSkillsRoute(engine) {
         // zip 解压模式：移动（从临时目录）
         if (fs.existsSync(dstDir)) rmDirSync(dstDir);
         fs.renameSync(skillDir, dstDir);
-        // 清理临时目录残留
-        const tmpParent = skillDir.includes(".tmp-install-")
-          ? (path.dirname(skillDir).includes(".tmp-install-") ? path.dirname(skillDir) : null)
-          : path.dirname(skillDir);
         // 简单处理：找到 .tmp-install- 前缀的目录并清理
         for (const entry of fs.readdirSync(userDir)) {
           if (entry.startsWith(".tmp-install-")) {

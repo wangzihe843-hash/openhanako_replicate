@@ -128,6 +128,7 @@
     "copy": "复制",
     "copied": "已复制",
     "copyText": "复制文本",
+    "regenerate": "重新生成",
     "confirm": "确认",
     "cancel": "取消",
     "approve": "批准",
@@ -147,7 +148,11 @@
     "edit": "编辑",
     "screenshot": "截图",
     "selectMessage": "选择消息",
+    "selectAllMessages": "全选消息",
+    "screenshotInProgress": "正在截图",
+    "screenshotProgressPage": "正在截图，第 {current}/{total} 页",
     "screenshotSaved": "截图已保存到工作目录下的「截图」文件夹",
+    "screenshotSavedMultiple": "截图已分成 {count} 张保存到工作目录下的「截图」文件夹",
     "screenshotFailed": "截图保存失败",
     "selectedCount": "已选 {count} 条",
     "allDone": "全部完成",
@@ -748,7 +753,7 @@
       "yuanHint": "「元」是助手的潜意识，以此为基础搭建你独一无二的伙伴",
       "tools": {
         "title": "工具",
-        "description": "修改将在新会话时生效。当前进行中的会话使用的是创建时的工具集。",
+        "description": "这些工具开关会在重启对话或新建对话后生效。当前进行中的会话继续使用创建时的工具集。",
         "items": {
           "browser": { "label": "浏览器", "summary": "控制无头浏览器浏览网页" },
           "computer": { "label": "电脑控制", "summary": "控制已批准的桌面应用，并显示实时动作光标" },
@@ -1185,6 +1190,14 @@
       "marketInstalled": "已安装",
       "marketInstall": "安装",
       "marketUpdate": "更新",
+      "marketReinstall": "重新安装",
+      "marketDowngrade": "降级",
+      "marketIncompatible": "不兼容",
+      "marketUpdateAvailable": "可更新",
+      "marketInstalledVersion": "已安装 v{version}",
+      "marketUpdateFrom": "已安装 v{from}，可更新到 v{to}",
+      "marketDowngradeTo": "当前只能安装兼容版本 v{version}",
+      "marketDowngradeConfirm": "当前版本是 v{from}，将降级到 v{to}。继续吗？",
       "marketReadmeLoading": "正在读取 README…",
       "marketSelectPlugin": "选择一个插件查看 README"
     },
@@ -1256,7 +1269,11 @@
       "mobileTitle": "手机排版",
       "mobileDesc": "长图，适合手机分享",
       "desktopTitle": "电脑排版",
-      "desktopDesc": "更宽，适合电脑保存与分享"
+      "desktopDesc": "更宽，适合电脑保存与分享",
+      "segmentTitle": "自动分段",
+      "segmentLimitLabel": "单页字数上限",
+      "segmentLimitHint": "超过这个可见字数后会在完整轮次边界切到下一张截图；默认 10000 字。",
+      "segmentLimitUnit": "字"
     },
     "bridge": {
       "agent": "Agent",

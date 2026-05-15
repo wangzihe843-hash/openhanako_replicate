@@ -34,6 +34,7 @@ import {
   removeChannelMember,
   updateChannelMeta,
 } from "../../lib/channels/channel-store.js";
+import { extractMentionedAgentIds } from "../../lib/channels/channel-mentions.js";
 import { normalizeAgentPhoneToolMode } from "../../lib/conversations/agent-phone-session.js";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
@@ -525,23 +526,10 @@ export function createChannelsRoute(engine, hub) {
 
       debugLog()?.log("api", `POST /channels/${name}/messages`);
 
-      // 提取 @ 提及
-      const atMatches = body.match(/@(\S+)/g) || [];
-      const mentionedAgents = [];
-      if (atMatches.length > 0) {
-        const meta = getChannelMeta(filePath);
-        const channelMembers = Array.isArray(meta.members) ? meta.members : [];
-        const allAgents = engine.listAgents?.() || [];
-        for (const at of atMatches) {
-          const atName = at.slice(1);
-          const matched = allAgents.find(a =>
-            a.name === atName || a.id === atName
-          );
-          if (matched && channelMembers.includes(matched.id)) {
-            mentionedAgents.push(matched.id);
-          }
-        }
-      }
+      const mentionedAgents = extractMentionedAgentIds(body, {
+        channelMembers: getChannelMembers(filePath),
+        agents: engine.listAgents?.() || [],
+      });
 
       const triggerDelivery = hub.triggerChannelDelivery || hub.triggerChannelTriage;
       triggerDelivery.call(hub, name, { mentionedAgents })?.catch(err =>

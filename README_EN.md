@@ -13,7 +13,7 @@
 <p align="center"><a href="README.md">中文版</a></p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/liliMozi/openhanako/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/liliMozi/openhanako/releases)
 
 ---
 
@@ -33,6 +33,8 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 **Tools** — Read/write files, run terminal commands, browse the web, search the internet through browser-backed or API providers, take screenshots, preview media, and inspect pages. Covers the vast majority of daily work scenarios.
 
 **Skills** — Built-in compatibility with the community Skills ecosystem. Agents can also install skills from GitHub or write their own. Strict safety review enabled by default.
+
+**Character Cards & Skill Bundles** — Export and import agents as local-first character-card zip packages with allowlisted identity, avatar, optional memory, and skills. Skill Bundles are separate skill-pack infrastructure: group skills, drag them between bundles, toggle a whole bundle for an agent, and export a bundle as a standalone zip for migration or sharing.
 
 **Multi-Agent** — Create multiple agents, each with independent memory, personality, and scheduled tasks. Agents can collaborate via channel group chats or delegate tasks to each other.
 
@@ -68,7 +70,7 @@ The app is signed and notarized with an Apple Developer ID. macOS should allow i
 
 > **Windows SmartScreen notice:** The installer is not yet code-signed. Windows Defender SmartScreen may show a warning on first run. Click **More info** → **Run anyway**. This is expected for unsigned builds.
 
-Linux builds are planned.
+**Linux:** download the latest `.AppImage` or `.deb` from [Releases](https://github.com/liliMozi/openhanako/releases).
 
 ### First Run
 
@@ -114,7 +116,7 @@ User data is rooted at `HANA_HOME` (`~/.hanako` in production, `~/.hanako-dev` i
 | macOS (Apple Silicon) | Supported (signed & notarized) |
 | macOS (Intel) | Supported |
 | Windows | Beta |
-| Linux | Planned |
+| Linux | Supported (AppImage / deb) |
 | Mobile (PWA) | Planned |
 
 ## Development

@@ -15,8 +15,9 @@ import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.js';
  *   - anthropic-messages:  baseUrl + "/v1/messages"
  *   - openai-responses:    baseUrl + "/responses"
  *
- * Provider 兼容化：fetch 前统一调 normalizeProviderPayload(body, model, { mode: "utility", outputBudgetSource: "system" })，
- * 与 chat 路径（engine.js 的 Pi SDK extension）共享同一个 provider-compat 模块。
+ * Provider 兼容化：fetch 前统一调 normalizeProviderPayload(body, model, { mode: "utility", ... })，
+ * 与 chat 路径（engine.js 的 Pi SDK extension）共享同一个 provider-compat 模块。callText
+ * 不从模型能力元数据合成输出预算；需要限制输出长度的具体任务必须显式传 maxTokens。
  */
 
 function toDataUrl(block) {
@@ -49,6 +50,38 @@ function stripTaggedThinking(text) {
     text: stripped.trim(),
     removedThinking: stripped !== text,
   };
+}
+
+function positiveInteger(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function isThinkingBlock(block) {
+  if (!block || typeof block !== "object") return false;
+  if (block.type === "thinking" || block.type === "redacted_thinking" || block.type === "reasoning") return true;
+  if (typeof block.thinking === "string" || typeof block.reasoning_content === "string") return true;
+  return false;
+}
+
+function extractAnthropicText(content) {
+  if (!Array.isArray(content)) return { text: "", removedThinking: false };
+  return {
+    text: content
+      .filter(c => c?.type === "text" && typeof c.text === "string")
+      .map(c => c.text)
+      .join("\n")
+      .trim(),
+    removedThinking: content.some(isThinkingBlock),
+  };
+}
+
+function outputContainsReasoning(output) {
+  if (!Array.isArray(output)) return false;
+  return output.some((item) => {
+    if (isThinkingBlock(item)) return true;
+    return Array.isArray(item?.content) && item.content.some(isThinkingBlock);
+  });
 }
 
 function throwAbortOrTimeout(err, signal, modelId) {
@@ -111,8 +144,8 @@ function convertContentForApi(content, api) {
  * @param {string} [opts.systemPrompt] System prompt
  * @param {Array}  [opts.messages]     消息数组 [{ role, content }]
  * @param {number} [opts.temperature]  温度。未传时不写入请求体，使用 provider 默认值
- * @param {number} [opts.maxTokens]    最大输出 token (default 512)
- * @param {"user"|"system"|"sdk-default"} [opts.outputBudgetSource] 输出上限来源。utility 默认为 system
+ * @param {number} [opts.maxTokens]    最大输出 token。未传时不写 output cap，让具体任务决定预算
+ * @param {"user"|"system"|"sdk-default"} [opts.outputBudgetSource] 输出上限来源。仅在 maxTokens 显式传入时生效
  * @param {number} [opts.timeoutMs]    超时毫秒 (default 60000)
  * @param {AbortSignal} [opts.signal]  外部取消信号
  * @param {boolean} [opts.returnUsage] 返回 { text, usage }，默认保持旧接口返回纯文本
@@ -127,7 +160,7 @@ export async function callText({
   systemPrompt = "",
   messages = [],
   temperature,
-  maxTokens = 512,
+  maxTokens,
   outputBudgetSource = "system",
   timeoutMs = 60_000,
   signal,
@@ -137,6 +170,7 @@ export async function callText({
   const modelObj = typeof model === "object" && model !== null ? model : null;
   const modelId = modelObj ? modelObj.id : String(model || "");
   const provider = modelObj?.provider || "custom";
+  const explicitMaxTokens = positiveInteger(maxTokens);
   // ── 1. 消息归一化：提取 system 消息合并到 systemPrompt ──
   let mergedSystem = systemPrompt || "";
   const normalizedMessages = [];
@@ -172,7 +206,8 @@ export async function callText({
     const anthropicMessages = normalizedMessages.filter(m => m.role === "user" || m.role === "assistant");
     if (anthropicMessages.length === 0) anthropicMessages.push({ role: "user", content: "" });
     body = {
-      model: modelId, max_tokens: maxTokens,
+      model: modelId,
+      ...(explicitMaxTokens !== null && { max_tokens: explicitMaxTokens }),
       ...(temperature !== undefined && { temperature }),
       ...(mergedSystem && { system: mergedSystem }),
       messages: anthropicMessages,
@@ -183,7 +218,8 @@ export async function callText({
     headers = { "Content-Type": "application/json" };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     body = {
-      model: modelId, max_output_tokens: maxTokens,
+      model: modelId,
+      ...(explicitMaxTokens !== null && { max_output_tokens: explicitMaxTokens }),
       ...(temperature !== undefined && { temperature }),
       ...(mergedSystem && { instructions: mergedSystem }),
       input: normalizedMessages,
@@ -198,7 +234,8 @@ export async function callText({
     if (mergedSystem) allMessages.push({ role: "system", content: mergedSystem });
     allMessages.push(...normalizedMessages);
     body = {
-      model: modelId, max_tokens: maxTokens,
+      model: modelId,
+      ...(explicitMaxTokens !== null && { max_tokens: explicitMaxTokens }),
       ...(temperature !== undefined && { temperature }),
       messages: allMessages,
     };
@@ -222,7 +259,10 @@ export async function callText({
         ? { id: modelId, provider, api, baseUrl, quirks }
         : null
     );
-  body = normalizeProviderPayload(body, modelForCompat, { mode: "utility", outputBudgetSource });
+  body = normalizeProviderPayload(body, modelForCompat, {
+    mode: "utility",
+    ...(explicitMaxTokens !== null && { outputBudgetSource }),
+  });
 
   // ── 4. 发送请求 ──
   const SLOW_THRESHOLD_MS = 15_000;
@@ -271,10 +311,11 @@ export async function callText({
 
   // ── 6. 提取文本 ──
   let text = "";
+  let removedStructuredThinking = false;
   if (api === "anthropic-messages") {
-    text = (data?.content || [])
-      .filter(c => c?.type === "text" && typeof c.text === "string")
-      .map(c => c.text).join("\n").trim();
+    const extracted = extractAnthropicText(data?.content || []);
+    text = extracted.text;
+    removedStructuredThinking = extracted.removedThinking;
   } else if (api === "openai-responses" || api === "openai-codex-responses") {
     if (typeof data?.output_text === "string") {
       text = data.output_text.trim();
@@ -284,16 +325,24 @@ export async function callText({
         .flatMap(item => (item.content || []).filter(c => typeof c?.text === "string").map(c => c.text.trim()))
         .join("\n").trim();
     }
+    removedStructuredThinking = outputContainsReasoning(data?.output);
   } else {
-    text = (typeof data?.choices?.[0]?.message?.content === "string")
-      ? data.choices[0].message.content.trim()
+    const message = data?.choices?.[0]?.message;
+    text = (typeof message?.content === "string")
+      ? message.content.trim()
       : "";
+    removedStructuredThinking = typeof message?.reasoning_content === "string"
+      || typeof message?.thinking === "string";
   }
 
   // 清理 <think> 标签（部分 provider 用标签而非 content block 包裹思考内容）
   const rawTextBeforeThinkingStrip = text;
   const thinkingStripped = stripTaggedThinking(text);
   text = thinkingStripped.text;
+  const emptyAfterThinking = !text && (
+    removedStructuredThinking
+    || (thinkingStripped.removedThinking && rawTextBeforeThinkingStrip.trim())
+  );
 
   if (!text) {
     if (signal?.aborted) {
@@ -303,14 +352,12 @@ export async function callText({
       throw new AppError('LLM_TIMEOUT', { context: { model: modelId } });
     }
     throw new AppError('LLM_EMPTY_RESPONSE', {
-      message: thinkingStripped.removedThinking && rawTextBeforeThinkingStrip.trim()
+      message: emptyAfterThinking
         ? "LLM returned only thinking content without visible text"
         : undefined,
       context: {
         model: modelId,
-        ...(thinkingStripped.removedThinking && rawTextBeforeThinkingStrip.trim()
-          ? { reason: "empty_after_thinking" }
-          : {}),
+        ...(emptyAfterThinking ? { reason: "empty_after_thinking" } : {}),
       },
     });
   }

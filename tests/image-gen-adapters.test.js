@@ -44,7 +44,7 @@ function makeCodexJwt(accountId) {
 describe("volcengine adapter", () => {
   beforeEach(() => mockFetch.mockReset());
 
-  it("sends correct request and returns files from b64_json", async () => {
+  it("does not send Seedream 5-only output_format to Seedream 4.0", async () => {
     const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
 
     const fakeB64 = Buffer.from("fake-image").toString("base64");
@@ -73,14 +73,34 @@ describe("volcengine adapter", () => {
     expect(body.prompt).toBe("a cat");
     expect(body.response_format).toBe("b64_json");
     expect(body.size).toBe("2K");
-    expect(body.output_format).toBe("png");
+    expect(body).not.toHaveProperty("output_format");
 
     expect(result.files).toHaveLength(1);
     expect(typeof result.taskId).toBe("string");
     expect(result.taskId.length).toBeGreaterThan(0);
   });
 
-  it("applies providerDefaults (watermark, guidance_scale)", async () => {
+  it("sends output_format only for Seedream 5 models", async () => {
+    const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
+
+    const fakeB64 = Buffer.from("fake-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    const ctx = makeBusCtx("test-key", "https://ark.cn-beijing.volces.com/api/v3");
+    await volcengineImageAdapter.submit({
+      prompt: "a cat",
+      model: "doubao-seedream-5-0-lite-260128",
+      format: "png",
+    }, ctx);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.output_format).toBe("png");
+  });
+
+  it("applies Seedream 3-only providerDefaults without leaking them to newer models", async () => {
     const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
 
     const fakeB64 = Buffer.from("img").toString("base64");
@@ -91,18 +111,35 @@ describe("volcengine adapter", () => {
 
     const ctx = makeBusCtx("key", "https://test.com");
     ctx.config.get = vi.fn((key) => {
-      if (key === "providerDefaults") return { volcengine: { watermark: true, guidance_scale: 7.5 } };
+      if (key === "providerDefaults") return { volcengine: { watermark: true, guidance_scale: 7.5, seed: 42 } };
       return null;
     });
 
     await volcengineImageAdapter.submit({
       prompt: "test",
-      model: "test-model",
+      model: "doubao-seedream-3-0-t2i",
     }, ctx);
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.watermark).toBe(true);
     expect(body.guidance_scale).toBe(7.5);
+    expect(body.seed).toBe(42);
+
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    await volcengineImageAdapter.submit({
+      prompt: "test",
+      model: "doubao-seedream-4-0-250828",
+    }, ctx);
+
+    const seedream4Body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(seedream4Body.watermark).toBe(true);
+    expect(seedream4Body).not.toHaveProperty("guidance_scale");
+    expect(seedream4Body).not.toHaveProperty("seed");
   });
 
   it("throws on API error with status and message", async () => {
@@ -283,7 +320,7 @@ describe("openai codex oauth adapter", () => {
 
     const body = JSON.parse(opts.body);
     expect(body.model).toBe("gpt-5.5");
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
     expect(body.store).toBe(false);
     expect(body.input[0].content[0]).toEqual({
       type: "input_text",
@@ -323,6 +360,48 @@ describe("openai codex oauth adapter", () => {
 
     const [, opts] = mockFetch.mock.calls[0];
     expect(opts.headers["chatgpt-account-id"]).toBe("acct_from_token");
+  });
+
+  it("parses Codex streaming image_generation_call results", async () => {
+    const { openaiCodexImageAdapter } = await import("../plugins/image-gen/adapters/openai-codex.js");
+
+    const fakeB64 = Buffer.from("fake-codex-stream-image").toString("base64");
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: "response.output_item.done",
+            item: { type: "image_generation_call", result: fakeB64 },
+          })}\n\n`));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      }),
+    });
+
+    const ctx = makeBusCtx("oauth-token", "https://chatgpt.com/backend-api", "openai-codex-oauth");
+    ctx.bus.request = vi.fn(async (type, payload) => {
+      if (type === "provider:credentials" && payload.providerId === "openai-codex-oauth") {
+        return {
+          apiKey: "oauth-token",
+          baseUrl: "https://chatgpt.com/backend-api",
+          api: "openai-codex-responses",
+          accountId: "acct_123",
+        };
+      }
+      return { error: "not_found" };
+    });
+
+    const result = await openaiCodexImageAdapter.submit({
+      prompt: "a quiet notebook",
+      format: "png",
+    }, ctx);
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body).stream).toBe(true);
+    expect(result.files).toHaveLength(1);
   });
 
   it("requires a decodable Codex account id for ChatGPT backend requests", async () => {

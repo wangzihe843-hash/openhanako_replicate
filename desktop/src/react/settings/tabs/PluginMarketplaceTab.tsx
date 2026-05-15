@@ -20,13 +20,47 @@ interface MarketplacePlugin {
   distribution?: { kind?: 'source' | 'release'; path?: string; packageUrl?: string; sha256?: string } | null;
   installed?: boolean;
   installedVersion?: string | null;
+  latestVersion?: string | null;
+  selectedVersion?: string | null;
+  updateAvailable?: boolean;
+  downgrade?: boolean;
+  reinstall?: boolean;
+  compatible?: boolean;
   canInstall?: boolean;
+  installAction?: 'install' | 'update' | 'downgrade' | 'reinstall' | 'incompatible';
 }
 
 interface MarketplaceResponse {
   source?: { kind?: string; configured?: boolean; path?: string; url?: string };
   plugins: MarketplacePlugin[];
   warnings?: string[];
+}
+
+function marketVersion(plugin: MarketplacePlugin): string {
+  return plugin.selectedVersion || plugin.latestVersion || plugin.version || '0.0.0';
+}
+
+function marketInstallLabel(plugin: MarketplacePlugin): string {
+  if (plugin.compatible === false || plugin.installAction === 'incompatible') return t('settings.plugins.marketIncompatible');
+  if (plugin.installAction === 'downgrade') return t('settings.plugins.marketDowngrade');
+  if (plugin.installAction === 'reinstall') return t('settings.plugins.marketReinstall');
+  if (plugin.installAction === 'update' || plugin.updateAvailable) return t('settings.plugins.marketUpdate');
+  return t('settings.plugins.marketInstall');
+}
+
+function marketVersionStatus(plugin: MarketplacePlugin): string | null {
+  if (plugin.compatible === false || plugin.installAction === 'incompatible') return t('settings.plugins.marketIncompatible');
+  if (plugin.installAction === 'downgrade') {
+    return t('settings.plugins.marketDowngradeTo', { version: marketVersion(plugin) });
+  }
+  if (plugin.updateAvailable && plugin.installedVersion) {
+    return t('settings.plugins.marketUpdateFrom', {
+      from: plugin.installedVersion,
+      to: marketVersion(plugin),
+    });
+  }
+  if (plugin.installedVersion) return t('settings.plugins.marketInstalledVersion', { version: plugin.installedVersion });
+  return null;
 }
 
 export function PluginMarketplaceTab() {
@@ -86,12 +120,23 @@ export function PluginMarketplaceTab() {
   }, [loadMarketplace]);
 
   const installPlugin = async (plugin: MarketplacePlugin) => {
+    const allowDowngrade = plugin.installAction === 'downgrade'
+      ? window.confirm(t('settings.plugins.marketDowngradeConfirm', {
+          from: plugin.installedVersion || '',
+          to: marketVersion(plugin),
+        }))
+      : false;
+    if (plugin.installAction === 'downgrade' && !allowDowngrade) return;
+
     setInstallingPluginId(plugin.id);
     try {
       const res = await hanaFetch(`/api/plugins/marketplace/${encodeURIComponent(plugin.id)}/install`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          version: plugin.selectedVersion || undefined,
+          allowDowngrade,
+        }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -177,10 +222,15 @@ export function PluginMarketplaceTab() {
                       <div className={styles['skills-list-info']}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                           <span className={styles['skills-list-name']}>{plugin.name}</span>
-                          {plugin.version && <span className={styles['skills-list-name-hint']}>v{plugin.version}</span>}
+                          <span className={styles['skills-list-name-hint']}>v{marketVersion(plugin)}</span>
                           {plugin.installed && (
                             <span className={styles['skills-source-badge']} style={{ marginRight: 0 }}>
                               {t('settings.plugins.marketInstalled')}
+                            </span>
+                          )}
+                          {plugin.updateAvailable && (
+                            <span className={styles['skills-source-badge']} style={{ marginRight: 0 }}>
+                              {t('settings.plugins.marketUpdateAvailable')}
                             </span>
                           )}
                         </div>
@@ -202,8 +252,13 @@ export function PluginMarketplaceTab() {
                             <div style={{ minWidth: 0 }}>
                               <div className={styles['skills-list-name']}>{selectedPlugin.name}</div>
                               <div className={styles['skills-list-desc']}>
-                                {(selectedPlugin.publisher || 'unknown') + ' · v' + (selectedPlugin.version || '0.0.0')}
+                                {(selectedPlugin.publisher || 'unknown') + ' · v' + marketVersion(selectedPlugin)}
                               </div>
+                              {marketVersionStatus(selectedPlugin) && (
+                                <div className={styles['skills-list-desc']}>
+                                  {marketVersionStatus(selectedPlugin)}
+                                </div>
+                              )}
                             </div>
                             <button
                               className={styles['settings-save-btn-sm']}
@@ -213,9 +268,7 @@ export function PluginMarketplaceTab() {
                                 installPlugin(selectedPlugin);
                               }}
                             >
-                              {selectedPlugin.installed
-                                ? t('settings.plugins.marketUpdate')
-                                : t('settings.plugins.marketInstall')}
+                              {marketInstallLabel(selectedPlugin)}
                             </button>
                           </div>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>

@@ -7,8 +7,9 @@ import { resolveModelId } from "../lib/model-catalog.js";
 const FORMAT_TO_MIME = {
   png: "image/png",
   jpeg: "image/jpeg",
-  webp: "image/webp",
 };
+
+const OUTPUT_FORMATS = new Set(["jpeg", "png"]);
 
 // 分辨率档位 + 长宽比 → 具体像素值查表
 const SIZE_TABLE = {
@@ -25,8 +26,8 @@ const SIZE_TABLE = {
 };
 
 function resolveSize(size, aspectRatio, providerDefaults) {
-  const effectiveRatio = aspectRatio || providerDefaults?.aspect_ratio;
-  const effectiveSize = size || providerDefaults?.size || "2K";
+  const effectiveRatio = aspectRatio || providerDefaults?.aspect_ratio || providerDefaults?.ratio;
+  const effectiveSize = size || providerDefaults?.size || providerDefaults?.resolution || "2K";
 
   if (effectiveRatio) {
     // 查表：分辨率档位 + 比例 → 像素值
@@ -34,6 +35,27 @@ function resolveSize(size, aspectRatio, providerDefaults) {
     return tier[effectiveRatio] || effectiveSize;
   }
   return effectiveSize;
+}
+
+function resolveOutputFormat(format) {
+  const normalized = String(format || "jpeg").trim().toLowerCase();
+  const value = normalized === "jpg" ? "jpeg" : normalized;
+  if (!OUTPUT_FORMATS.has(value)) {
+    throw new Error(`Volcengine Seedream 仅支持 png/jpeg 输出格式，不支持 "${format}"`);
+  }
+  return value;
+}
+
+function getModelCapabilities(modelId) {
+  const id = String(modelId || "").toLowerCase();
+  const isSeedream5 = id.includes("seedream-5-0") || id.includes("seedream5.0");
+  const isSeedream3 = id.includes("seedream-3-0") || id.includes("seedream3.0");
+
+  return {
+    supportsOutputFormat: isSeedream5,
+    supportsGuidanceScale: isSeedream3,
+    supportsSeed: isSeedream3,
+  };
 }
 
 async function resolveVolcengineCredentials(ctx) {
@@ -87,14 +109,24 @@ export const volcengineImageAdapter = {
     const providerDefaults = allDefaults["volcengine"] || {};
 
     // 4. Translate params → API body
-    const outputFormat = params.format || providerDefaults?.format || "jpeg";
+    const modelCapabilities = getModelCapabilities(modelId);
     const body = {
       model: modelId,
       prompt: params.prompt,
       response_format: "b64_json",
-      output_format: outputFormat,
-      size: resolveSize(params.size, params.aspect_ratio || params.aspectRatio, providerDefaults),
+      size: resolveSize(
+        params.size || params.resolution,
+        params.aspect_ratio || params.aspectRatio || params.ratio,
+        providerDefaults,
+      ),
     };
+
+    let mimeType = "image/jpeg";
+    if (modelCapabilities.supportsOutputFormat) {
+      const outputFormat = resolveOutputFormat(params.format || providerDefaults?.format || "jpeg");
+      body.output_format = outputFormat;
+      mimeType = FORMAT_TO_MIME[outputFormat] || mimeType;
+    }
 
     // 5. Handle reference image (local path → base64 data URL)
     if (params.image) {
@@ -113,8 +145,12 @@ export const volcengineImageAdapter = {
     // Apply provider-specific defaults (watermark defaults to false)
     body.watermark = providerDefaults?.watermark ?? false;
     if (providerDefaults) {
-      if (providerDefaults.guidance_scale !== undefined) body.guidance_scale = providerDefaults.guidance_scale;
-      if (providerDefaults.seed !== undefined) body.seed = providerDefaults.seed;
+      if (modelCapabilities.supportsGuidanceScale && providerDefaults.guidance_scale !== undefined) {
+        body.guidance_scale = providerDefaults.guidance_scale;
+      }
+      if (modelCapabilities.supportsSeed && providerDefaults.seed !== undefined) {
+        body.seed = providerDefaults.seed;
+      }
     }
 
     // 6. Call HTTP API
@@ -142,8 +178,6 @@ export const volcengineImageAdapter = {
     if (responseImages.length === 0) {
       throw new Error("API returned no images");
     }
-
-    const mimeType = FORMAT_TO_MIME[outputFormat] || "image/png";
 
     // 7. Save files using saveImage() — it appends /generated/ internally, so pass ctx.dataDir
     const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

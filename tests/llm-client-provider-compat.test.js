@@ -94,7 +94,7 @@ describe("callText provider-compat routing", () => {
     expect(body.temperature).toBe(0);
   });
 
-  it("keeps utility output caps as system-owned request budgets", async () => {
+  it("does not synthesize utility output caps from model capability metadata", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
@@ -118,7 +118,35 @@ describe("callText provider-compat routing", () => {
 
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.max_tokens).toBe(512);
+    expect(body).not.toHaveProperty("max_tokens");
+  });
+
+  it("keeps explicit utility output caps as task-owned request budgets", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: {
+        id: "custom-small-output",
+        provider: "openai-compatible",
+        api: "openai-completions",
+        maxTokens: 512,
+      },
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 80,
+      timeoutMs: 5_000,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.max_tokens).toBe(80);
   });
 
   it("serializes image content for openai-compatible chat completions", async () => {
@@ -344,6 +372,59 @@ describe("callText provider-compat routing", () => {
       api: "openai-completions",
       baseUrl: "https://example.test/v1",
       model: { id: "MiniMax-M2.7", provider: "minimax", reasoning: true },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("OK");
+  });
+
+  it("classifies anthropic thinking-only content blocks as empty-after-thinking", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        content: [{ type: "thinking", thinking: "The answer is OK." }],
+      }),
+    });
+
+    await expect(callText({
+      api: "anthropic-messages",
+      baseUrl: "https://example.test",
+      model: {
+        id: "MiniMax-M2.7",
+        provider: "minimax",
+        api: "anthropic-messages",
+        reasoning: true,
+      },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).rejects.toMatchObject({
+      code: "LLM_EMPTY_RESPONSE",
+      message: "LLM returned only thinking content without visible text",
+      context: expect.objectContaining({ reason: "empty_after_thinking" }),
+    });
+  });
+
+  it("returns anthropic visible text while ignoring thinking content blocks", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        content: [
+          { type: "thinking", thinking: "Need to answer briefly." },
+          { type: "text", text: "OK" },
+        ],
+      }),
+    });
+
+    await expect(callText({
+      api: "anthropic-messages",
+      baseUrl: "https://example.test",
+      model: {
+        id: "MiniMax-M2.7",
+        provider: "minimax",
+        api: "anthropic-messages",
+        reasoning: true,
+      },
       messages: [{ role: "user", content: "Reply OK." }],
       timeoutMs: 5_000,
     })).resolves.toBe("OK");

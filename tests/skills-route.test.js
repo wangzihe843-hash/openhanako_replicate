@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { extractZip } from "../lib/extract-zip.js";
 
 function expectAppEvent(emitEvent, type, payload) {
   expect(emitEvent).toHaveBeenCalledWith({
@@ -354,6 +355,91 @@ describe("skills route", () => {
     const store = JSON.parse(fs.readFileSync(path.join(tempRoot, "skill-bundles.json"), "utf-8"));
     expect(store.bundles.map(bundle => bundle.id)).toEqual(["second-bundle", "first-bundle"]);
     expectAppEvent(engine.emitEvent, "skills-changed", { agentId: null });
+  });
+
+  it("exports a skill bundle as a zip with only resolvable public skills", async () => {
+    const { createSkillsRoute } = await import("../server/routes/skills.js");
+    const app = new Hono();
+    const userSkillsDir = path.join(tempRoot, "user-skills");
+    const exportsDir = path.join(tempRoot, "exports");
+    fs.mkdirSync(path.join(userSkillsDir, "writer"), { recursive: true });
+    fs.writeFileSync(
+      path.join(userSkillsDir, "writer", "SKILL.md"),
+      "---\nname: writer\n---\n# Writer\n",
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(userSkillsDir, "writer", "notes.txt"), "public skill asset\n", "utf-8");
+    fs.writeFileSync(path.join(tempRoot, "skill-bundles.json"), JSON.stringify({
+      schemaVersion: 1,
+      bundles: [
+        {
+          id: "writing-bundle",
+          name: "Writing Bundle",
+          skillNames: ["writer", "missing-skill"],
+          source: "user",
+          agentId: null,
+          sourcePackage: null,
+          createdAt: "2026-05-14T00:00:00.000Z",
+          updatedAt: "2026-05-14T00:00:00.000Z",
+        },
+      ],
+    }), "utf-8");
+    const engine = {
+      hanakoHome: tempRoot,
+      userSkillsDir,
+      skillsDir: userSkillsDir,
+      cwd: exportsDir,
+      agentsDir: tempRoot,
+      getAllSkills: vi.fn(() => [
+        {
+          name: "writer",
+          source: "user",
+          enabled: false,
+          baseDir: path.join(userSkillsDir, "writer"),
+          filePath: path.join(userSkillsDir, "writer", "SKILL.md"),
+        },
+      ]),
+    };
+
+    app.route("/api", createSkillsRoute(engine));
+
+    const res = await app.request("/api/skills/bundles/writing-bundle/export", { method: "POST" });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({
+      ok: true,
+      fileName: "writing-bundle-skillbundle.zip",
+      warnings: [{ type: "missing-skill", name: "missing-skill" }],
+    });
+    expect(data.filePath).toBe(path.join(exportsDir, "writing-bundle-skillbundle.zip"));
+
+    const outDir = path.join(tempRoot, "unzipped-skill-bundle");
+    fs.mkdirSync(outDir);
+    await extractZip(data.filePath, outDir);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, "bundle.json"), "utf-8"));
+    expect(manifest).toMatchObject({
+      kind: "SkillBundle",
+      schemaVersion: 1,
+      package: {
+        name: data.fileName,
+      },
+      bundle: {
+        name: "Writing Bundle",
+        source: "user",
+      },
+      skills: {
+        bundles: [
+          {
+            name: "Writing Bundle",
+            skills: [{ name: "writer", path: "skills/writer" }],
+          },
+        ],
+      },
+    });
+    expect(fs.readFileSync(path.join(outDir, "skills", "writer", "SKILL.md"), "utf-8")).toContain("name: writer");
+    expect(fs.readFileSync(path.join(outDir, "skills", "writer", "notes.txt"), "utf-8")).toBe("public skill asset\n");
+    expect(fs.existsSync(path.join(outDir, "skills", "missing-skill"))).toBe(false);
   });
 
   it("rejects bundle membership for skills that are not installed", async () => {

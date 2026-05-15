@@ -232,6 +232,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete (window as unknown as { i18n?: unknown }).i18n;
+  delete (window as unknown as { platform?: unknown }).platform;
 });
 
 describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () => {
@@ -588,7 +589,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     const promptSpy = vi.spyOn(window, 'prompt');
     const confirmSpy = vi.spyOn(window, 'confirm');
 
-    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+    fetchMock.mockImplementation((url: string) => {
       if (url.includes('/api/skills/external-paths')) {
         return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
       }
@@ -659,10 +660,65 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     confirmSpy.mockRestore();
   });
 
+  it('exports a skill bundle from the manage tree', async () => {
+    seedStore({ currentAgentId: 'agent-a' });
+    const showInFinder = vi.fn();
+    (window as unknown as { platform: unknown }).platform = { showInFinder };
+
+    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.includes('/api/skills/external-paths')) {
+        return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
+      }
+      if (url.includes('/api/skills/bundles/writing-bundle/export')) {
+        expect(opts).toMatchObject({ method: 'POST' });
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          filePath: '/tmp/Writing Bundle-skillbundle.zip',
+          fileName: 'Writing Bundle-skillbundle.zip',
+          warnings: [],
+        }));
+      }
+      if (url.includes('/api/skills/bundles')) {
+        return Promise.resolve(jsonResponse({
+          bundles: [
+            {
+              id: 'writing-bundle',
+              name: 'Writing Bundle',
+              skillNames: ['writer'],
+              source: 'user',
+              agentId: null,
+              sourcePackage: null,
+              skills: [{ name: 'writer', enabled: false, source: 'user', missing: false }],
+            },
+          ],
+        }));
+      }
+      if (url.includes('/api/skills?agentId=agent-a')) {
+        return Promise.resolve(jsonResponse({
+          skills: [{ name: 'writer', enabled: false, source: 'user' }],
+        }));
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+
+    render(<SkillsTab />);
+    await flushMicrotasks(6);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 Writing Bundle' }));
+    await flushMicrotasks(6);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/skills/bundles/writing-bundle/export'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(showInFinder).toHaveBeenCalledWith('/tmp/Writing Bundle-skillbundle.zip');
+    expect(useSettingsStore.getState().toastMessage).toContain('Writing Bundle-skillbundle.zip');
+  });
+
   it('persists bundle and bundled-skill order after drag and drop', async () => {
     seedStore({ currentAgentId: 'agent-a' });
 
-    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+    fetchMock.mockImplementation((url: string) => {
       if (url.includes('/api/skills/external-paths')) {
         return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
       }

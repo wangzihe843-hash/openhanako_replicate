@@ -76,6 +76,9 @@ function mockEngine(overrides = {}) {
     pluginDevService: overrides.pluginDevService,
     getPluginDevToolsEnabled: overrides.getPluginDevToolsEnabled || (() => overrides.pluginDevToolsEnabled === true),
     setPluginDevToolsEnabled: overrides.setPluginDevToolsEnabled || vi.fn(),
+    appVersion: overrides.appVersion || "0.190.2",
+    recordPluginInstall: overrides.recordPluginInstall || vi.fn(),
+    getPluginInstallRecord: overrides.getPluginInstallRecord || vi.fn(() => null),
   };
 }
 
@@ -489,6 +492,10 @@ describe("plugin management API", () => {
           id: "demo",
           installed: true,
           installedVersion: "0.9.0",
+          selectedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          updateAvailable: true,
+          installAction: "update",
           canInstall: true,
           distribution: { kind: "source", path: "plugins/demo" },
         }],
@@ -564,6 +571,172 @@ describe("plugin management API", () => {
           installedManifestExists: true,
         });
         expect(installPlugin).toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it("selects the newest compatible marketplace version and rejects downgrades without confirmation", async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hana-marketplace-version-select-"));
+      try {
+        const zip = makeStoredZip({
+          "demo/manifest.json": JSON.stringify({
+            id: "demo",
+            name: "Demo",
+            version: "1.0.0",
+            trust: "restricted",
+          }),
+        });
+        const sha256 = crypto.createHash("sha256").update(zip).digest("hex");
+        const plugin = {
+          id: "demo",
+          name: "Demo",
+          publisher: "Hana",
+          version: "2.0.0",
+          description: "Demo plugin",
+          trust: "restricted",
+          permissions: [],
+          contributions: ["tools"],
+          versions: [
+            {
+              version: "2.0.0",
+              compatibility: { minAppVersion: "99.0.0" },
+              distribution: {
+                kind: "release",
+                packageUrl: "https://example.com/demo-2.zip",
+                sha256: "2".repeat(64),
+              },
+            },
+            {
+              version: "1.0.0",
+              compatibility: { minAppVersion: "0.170.0" },
+              distribution: {
+                kind: "release",
+                packageUrl: "https://example.com/demo-1.zip",
+                sha256,
+              },
+            },
+          ],
+          readme: "# Demo",
+        };
+        const installPlugin = vi.fn(async () => ({
+          id: "demo",
+          name: "Demo",
+          version: "1.0.0",
+          status: "loaded",
+        }));
+        const recordPluginInstall = vi.fn();
+        const engine = mockEngine({
+          appVersion: "0.190.2",
+          hanakoHome: tmp,
+          fetch: vi.fn(async () => new Response(zip)),
+          plugins: [{ id: "demo", name: "Demo", version: "1.5.0", status: "loaded" }],
+          recordPluginInstall,
+          pm: {
+            getUserPluginsDir: () => path.join(tmp, "plugins"),
+            installPlugin,
+            listPlugins: () => [{ id: "demo", name: "Demo", version: "1.5.0", status: "loaded" }],
+          },
+        });
+        engine.pluginMarketplace = {
+          load: async () => ({ source: { kind: "url", configured: true }, schemaVersion: 1, plugins: [plugin], warnings: [] }),
+          getReadme: async () => "# Demo",
+          getPlugin: async () => plugin,
+          resolveSourceDistribution: () => null,
+        };
+        const app = createApp(engine);
+
+        const listRes = await app.request("/api/plugins/marketplace");
+        expect(await listRes.json()).toMatchObject({
+          plugins: [{
+            id: "demo",
+            latestVersion: "2.0.0",
+            selectedVersion: "1.0.0",
+            installedVersion: "1.5.0",
+            downgrade: true,
+            installAction: "downgrade",
+            canInstall: true,
+          }],
+        });
+
+        const rejected = await app.request("/api/plugins/marketplace/demo/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        expect(rejected.status).toBe(409);
+        expect(await rejected.json()).toMatchObject({ code: "PLUGIN_VERSION_DOWNGRADE" });
+        expect(installPlugin).not.toHaveBeenCalled();
+
+        const allowed = await app.request("/api/plugins/marketplace/demo/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ allowDowngrade: true }),
+        });
+
+        expect(allowed.status).toBe(200);
+        expect(await allowed.json()).toMatchObject({ id: "demo", version: "1.0.0" });
+        expect(recordPluginInstall).toHaveBeenCalledWith(expect.objectContaining({
+          pluginId: "demo",
+          installedVersion: "1.0.0",
+          source: "marketplace",
+          packageUrl: "https://example.com/demo-1.zip",
+          sha256,
+        }));
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it("restores the previous plugin directory when replacement install fails", async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-rollback-"));
+      try {
+        const userPluginsDir = path.join(tmp, "plugins");
+        const existingDir = path.join(userPluginsDir, "demo");
+        fs.mkdirSync(existingDir, { recursive: true });
+        fs.writeFileSync(path.join(existingDir, "manifest.json"), JSON.stringify({
+          id: "demo",
+          name: "Demo",
+          version: "1.0.0",
+          trust: "restricted",
+        }), "utf8");
+        fs.writeFileSync(path.join(existingDir, "old.txt"), "old version", "utf8");
+        const zip = makeStoredZip({
+          "demo/manifest.json": JSON.stringify({
+            id: "demo",
+            name: "Demo",
+            version: "2.0.0",
+            trust: "restricted",
+          }),
+          "demo/new.txt": "new version",
+        });
+        const installPlugin = vi.fn()
+          .mockRejectedValueOnce(new Error("load exploded"))
+          .mockResolvedValueOnce({ id: "demo", name: "Demo", version: "1.0.0", status: "loaded" });
+        const engine = mockEngine({
+          hanakoHome: tmp,
+          pm: {
+            getUserPluginsDir: () => userPluginsDir,
+            listPlugins: () => [{ id: "demo", name: "Demo", version: "1.0.0", status: "loaded", pluginDir: existingDir }],
+            installPlugin,
+            isValidPluginDir: (dir) => fs.existsSync(path.join(dir, "manifest.json")),
+          },
+        });
+        const app = createApp(engine);
+        const sourcePath = path.join(tmp, "demo.zip");
+        fs.writeFileSync(sourcePath, zip);
+
+        const res = await app.request("/api/plugins/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: sourcePath }),
+        });
+
+        expect(res.status).toBe(500);
+        expect(await res.json()).toMatchObject({ error: "load exploded" });
+        expect(fs.existsSync(path.join(existingDir, "old.txt"))).toBe(true);
+        expect(fs.existsSync(path.join(existingDir, "new.txt"))).toBe(false);
+        expect(installPlugin).toHaveBeenCalledTimes(2);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

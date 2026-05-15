@@ -23,6 +23,7 @@ import {
 } from "../session-stream-store.js";
 import { AppError } from "../../shared/errors.js";
 import { errorBus } from "../../shared/error-bus.js";
+import { waitTimingDetails } from "../../lib/tools/wait-contract.js";
 import { MAX_CHAT_IMAGE_BASE64_CHARS, isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.js";
 import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shared/video-mime.js";
 import fs from "fs";
@@ -31,6 +32,18 @@ import crypto from "crypto";
 
 /** tool_start 事件只广播这些 arg 字段，避免传输完整文件内容（同步维护：chat-render-shim.ts extractToolDetail） */
 const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
+
+export function summarizeToolStartArgs(toolName, rawArgs, startedAt = Date.now()) {
+  if (!rawArgs || typeof rawArgs !== "object") return undefined;
+  const args = {};
+  for (const k of TOOL_ARG_SUMMARY_KEYS) {
+    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
+  }
+  if (toolName === "wait" && rawArgs.seconds !== undefined) {
+    Object.assign(args, waitTimingDetails(rawArgs.seconds, startedAt));
+  }
+  return Object.keys(args).length ? args : undefined;
+}
 
 /**
  * 从 Pi SDK 的 content 块中提取纯文本
@@ -343,12 +356,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
       }
       // 只保留前端 extractToolDetail 需要的字段，避免广播完整文件内容
-      const rawArgs = event.args;
-      let args;
-      if (rawArgs && typeof rawArgs === "object") {
-        args = {};
-        for (const k of TOOL_ARG_SUMMARY_KEYS) { if (rawArgs[k] !== undefined) args[k] = rawArgs[k]; }
-      }
+      const args = summarizeToolStartArgs(event.toolName || "", event.args);
       emitStreamEvent(sessionPath, ss, { type: "tool_start", name: event.toolName || "", args });
     } else if (event.type === "tool_execution_end") {
       if (!ss) return;
@@ -448,6 +456,13 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       broadcast({ type: "bridge_message", message: event.message });
     } else if (event.type === "bridge_status") {
       broadcast({ type: "bridge_status", platform: event.platform, status: event.status, error: event.error, agentId: event.agentId || null });
+    } else if (event.type === "session_branch_reset") {
+      if (!ss) return;
+      emitStreamEvent(sessionPath, ss, {
+        type: "session_branch_reset",
+        messageId: event.messageId || null,
+        clientMessageId: event.clientMessageId || null,
+      });
     } else if (event.type === "session_user_message") {
       if (!ss) return;
       emitStreamEvent(sessionPath, ss, { type: "session_user_message", message: event.message });

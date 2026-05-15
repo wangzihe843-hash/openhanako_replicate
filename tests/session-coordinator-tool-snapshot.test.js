@@ -73,7 +73,7 @@ function defaultBaselineNames() {
 }
 
 describe("session-coordinator tool snapshot (createSession)", () => {
-  let tmpDir, agentDir, sessionDir, coord, fakeSessionPath, activeToolsSpy, currentAgentConfig, defaultModeSaveSpy, storedDefaultMode, storedThinkingLevel, lastSessionOptions, fakeEngine;
+  let tmpDir, agentDir, sessionDir, coord, fakeSessionPath, activeToolsSpy, currentAgentConfig, channelsEnabled, defaultModeSaveSpy, storedDefaultMode, storedThinkingLevel, lastSessionOptions, fakeEngine;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,6 +84,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     fakeSessionPath = path.join(sessionDir, "test-session.jsonl");
 
     currentAgentConfig = {}; // tests mutate this before calling createSession
+    channelsEnabled = true;
 
     activeToolsSpy = vi.fn();
     defaultModeSaveSpy = vi.fn();
@@ -145,6 +146,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       getConfig: () => ({}),
       getPrefs: () => ({
         getThinkingLevel: () => storedThinkingLevel,
+        getChannelsEnabled: () => channelsEnabled,
         getSessionPermissionModeDefault: () => storedDefaultMode,
         setSessionPermissionModeDefault: defaultModeSaveSpy,
       }),
@@ -361,6 +363,21 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     // Persisted to meta
     const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
     expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(allNames());
+  });
+
+  it("Case C: fresh session hides channel when the global channel feature is disabled", async () => {
+    channelsEnabled = false;
+    currentAgentConfig = { tools: { disabled: [] } };
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true);
+
+    const appliedList = activeToolsSpy.mock.calls[0][0];
+    expect(appliedList).not.toContain("channel");
+    expect(appliedList).toContain("dm");
+    expect(appliedList).toContain("browser");
+
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).not.toContain("channel");
   });
 
   it("Case C: snapshot includes Pi SDK built-ins (regression for P1 — bundle must carry read/bash/etc)", async () => {

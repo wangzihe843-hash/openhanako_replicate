@@ -60,6 +60,19 @@ export function createSessionOps({ engine }) {
       await session.compact();
       return null;
     },
+
+    async freshCompact(ref) {
+      if (ref.kind !== "bridge") {
+        throw new Error("freshCompact for desktop kind not supported in phase 1");
+      }
+      if (typeof engine.freshCompactBridgeSession !== "function") {
+        throw new Error("freshCompact: engine.freshCompactBridgeSession not available");
+      }
+      return await engine.freshCompactBridgeSession(ref.sessionKey, {
+        agentId: ref.agentId,
+        reason: "manual",
+      });
+    },
   };
 }
 

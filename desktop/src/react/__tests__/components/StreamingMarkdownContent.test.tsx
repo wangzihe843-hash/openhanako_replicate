@@ -5,7 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StreamingMarkdownContent } from '../../components/chat/StreamingMarkdownContent';
+import {
+  StreamingMarkdownContent,
+  isTypewriterEligibleMarkdownSource,
+} from '../../components/chat/StreamingMarkdownContent';
 
 let rafCallbacks: FrameRequestCallback[] = [];
 
@@ -89,6 +92,20 @@ describe('StreamingMarkdownContent', () => {
     );
 
     expect(container.textContent).toContain('const x = 1;');
+    expect(container.querySelector('[data-stream-tail-char="true"]')).toBeNull();
+  });
+
+  it('does not typewriter backtick-sensitive inline markdown while streaming', () => {
+    const source = '这里有 `inline code`，后续文字也要稳定显示。';
+    const html = '<p>这里有 <code>inline code</code>，后续文字也要稳定显示。</p>';
+
+    expect(isTypewriterEligibleMarkdownSource(source)).toBe(false);
+
+    const { container } = render(
+      <StreamingMarkdownContent source={source} html={html} active />,
+    );
+
+    expect(container.textContent).toContain('后续文字也要稳定显示。');
     expect(container.querySelector('[data-stream-tail-char="true"]')).toBeNull();
   });
 

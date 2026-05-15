@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { bridgeCommands } from "../../core/slash-commands/bridge-commands.js";
 import { SlashCommandRegistry } from "../../core/slash-command-registry.js";
 import { SlashCommandDispatcher } from "../../core/slash-command-dispatcher.js";
@@ -12,6 +12,7 @@ function makeCtx(overrides = {}) {
       rotate: vi.fn(async () => ({ status: "rotated" })),
       delete: vi.fn(async () => ({ status: "deleted" })),
       compact: vi.fn(async () => {}),
+      freshCompact: vi.fn(async () => {}),
     },
     reply: vi.fn(async () => {}),
     ...overrides,
@@ -144,5 +145,45 @@ describe("/compact", () => {
     expect(ctx.reply).toHaveBeenCalledTimes(2);
     expect(ctx.reply.mock.calls[1][0]).toMatch(/压缩失败.*inject failed/);
     expect(r?.silent).toBe(true);
+  });
+});
+
+describe("/fresh-compact", () => {
+  const cmd = bridgeCommands.find(c => c.name === "fresh-compact");
+
+  it("declares owner permission and calls sessionOps.freshCompact", async () => {
+    expect(cmd.permission).toBe("owner");
+    const ctx = makeCtx({
+      sessionOps: {
+        freshCompact: vi.fn(async () => ({
+          tokensBefore: 10000,
+          tokensAfter: 4200,
+          contextWindow: 128000,
+          fresh: true,
+          reason: "manual",
+        })),
+      },
+    });
+
+    const r = await cmd.handler(ctx);
+
+    expect(ctx.sessionOps.freshCompact).toHaveBeenCalledWith(ctx.sessionRef);
+    expect(ctx.reply).toHaveBeenCalledTimes(2);
+    expect(ctx.reply.mock.calls[0][0]).toMatch(/fresh-compact/);
+    expect(ctx.reply.mock.calls[1][0]).toMatch(/10000.*4200.*tokens/);
+    expect(r?.silent).toBe(true);
+  });
+
+  it("rejects fresh-compact while bridge is attached to a desktop session", async () => {
+    const rcState = {
+      getAttachment: vi.fn(() => ({ desktopSessionPath: "/desktop/session.jsonl" })),
+      isAttached: vi.fn(() => true),
+    };
+    const ctx = makeCtx({ engine: { rcState } });
+
+    const r = await cmd.handler(ctx);
+
+    expect(r.reply).toMatch(/接管桌面会话期间/);
+    expect(ctx.sessionOps.freshCompact).not.toHaveBeenCalled();
   });
 });

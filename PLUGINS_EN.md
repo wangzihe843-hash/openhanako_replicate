@@ -793,12 +793,27 @@ Without either environment variable, Hana first tries `${HANA_HOME}/plugin-marke
       "packageUrl": "https://github.com/liliMozi/OH-Plugins/releases/download/demo-v1.0.0/demo.zip",
       "sha256": "..."
     },
+    "versions": [
+      {
+        "version": "1.0.0",
+        "compatibility": { "minAppVersion": "0.170.0" },
+        "distribution": {
+          "kind": "release",
+          "packageUrl": "https://github.com/liliMozi/OH-Plugins/releases/download/demo-v1.0.0/demo.zip",
+          "sha256": "..."
+        }
+      }
+    ],
     "readmePath": "plugins/demo/README.md"
   }]
 }
 ```
 
 The marketplace UI shows the plugin list and README in a wider settings subpage. Selecting a plugin reads `/api/plugins/marketplace/:id/readme`. `distribution.kind: "release"` downloads the zip package, verifies `sha256`, then installs it into the user's plugin directory. `distribution.kind: "source"` is only for local file marketplace development because the source path must resolve to a directory on the user's machine.
+
+Marketplace version management uses `versions[]` as the long-term contract: each item declares `version`, that version's `compatibility.minAppVersion`, and its own `distribution`. If `versions[]` is absent, Hana treats the root-level `version` / `compatibility` / `distribution` as a single version entry. The client chooses the highest SemVer version compatible with the current app, while exposing `latestVersion`, `selectedVersion`, `installedVersion`, `updateAvailable`, `downgrade`, `reinstall`, `compatible`, `installAction`, and `canInstall` for UI state.
+
+If the installed version is newer than the highest compatible marketplace version, the action is marked as `downgrade` and install requires explicit `allowDowngrade: true`. Drag-and-drop / local path installs also reject implicit downgrades. Updates back up the previous plugin directory under `${HANA_HOME}/plugin-backups/<pluginId>/`; if the new version fails to load, Hana restores and reloads the old directory. Successful installs are recorded in `${HANA_HOME}/plugin-installs.json` with source, version, release URL, and sha256 so later marketplace state is explicit.
 
 ## Forward Compatibility
 

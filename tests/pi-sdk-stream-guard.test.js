@@ -72,6 +72,41 @@ describe("Pi SDK stream guard", () => {
     ]);
   });
 
+  it("recovers backtick text streamed through empty-name tool call deltas", async () => {
+    const startTool = {
+      type: "toolCall",
+      id: "call_empty_backtick",
+      name: "",
+      arguments: {},
+      partialArgs: "`",
+    };
+    const deltaTool = {
+      ...startTool,
+      partialArgs: "`inline code` 后续文字",
+    };
+    const endTool = {
+      ...startTool,
+      partialArgs: "",
+    };
+    const finalMessage = assistantMessage([endTool]);
+    const inner = makeStream([
+      { type: "start", partial: assistantMessage([]) },
+      { type: "toolcall_start", contentIndex: 0, partial: assistantMessage([startTool]) },
+      { type: "toolcall_delta", contentIndex: 0, delta: "inline code", partial: assistantMessage([deltaTool]) },
+      { type: "toolcall_delta", contentIndex: 0, delta: "` 后续文字", partial: assistantMessage([deltaTool]) },
+      { type: "toolcall_end", contentIndex: 0, toolCall: endTool, partial: assistantMessage([endTool]) },
+      { type: "done", reason: "stop", message: finalMessage },
+    ], finalMessage);
+
+    const { events, result } = await collect(guardAssistantMessageStream(inner));
+
+    expect(events.map((event) => event.type)).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
+    expect(events.find((event) => event.type === "text_delta")?.delta).toBe("`inline code` 后续文字");
+    expect(result.content).toEqual([
+      { type: "text", text: "`inline code` 后续文字" },
+    ]);
+  });
+
   it("leaves valid tool calls untouched", async () => {
     const validTool = { type: "toolCall", id: "call_read", name: "read", arguments: { path: "a.txt" }, partialArgs: "{\"path\":\"a.txt\"}" };
     const finalMessage = assistantMessage([validTool]);

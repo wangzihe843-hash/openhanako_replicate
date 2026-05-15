@@ -13,7 +13,7 @@
 <p align="center"><a href="README_EN.md">English</a></p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/liliMozi/openhanako/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/liliMozi/openhanako/releases)
 
 ---
 
@@ -39,6 +39,8 @@ OpenHanako 是一个更加易用的 AI agent，有记忆，有性格，会主动
 
 **SKILLS 支持** — 内置兼容庞大 SKILLS 社区生态，之外，我也做了一些主动的优化：有时候干活之前，Agent 会从 GitHub 安装社区技能，Agent 也可以自己编写并学会新技能，有比较不错的主动性。当然，默认情况给 Agent 做了比较严格的 SKILLS 审核，如果发现 SKILLS 装不上可以自行关闭。
 
+**角色卡与技能包** — Agent 可以导入 / 导出为本地优先的角色卡 zip，按白名单携带人格、头像、可选记忆和 Skills。Skill Bundle 是独立的技能包基础设施，可以在技能管理页分组、拖拽、成组启用，并单独导出为 zip，方便迁移和分享。
+
 **多 Agent** — 创建多个 Agent，各自有独立的记忆、人格和定时任务。Agent 之间可以通过频道群聊协作，也可以互相委派任务。
 
 **书桌** — 每个 Agent 都有自己的书桌，可以放文件、写笺（类似便签，Agent 会主动读取并执行）。支持拖拽操作，文件预览，是你和 Agent 之间的异步协作空间。
@@ -47,7 +49,7 @@ OpenHanako 是一个更加易用的 AI agent，有记忆，有性格，会主动
 
 **定时任务与心跳** — Agent 可以设置定时任务（Cron），也会定期巡检书桌上的文件变化。你不在的时候，Ta 也能按计划自主工作。
 
-**安全沙盒** — 双层隔离：应用层 PathGuard 四级访问控制 + 操作系统级沙盒（macOS Seatbelt / Linux Bubblewrap）。Agent 的权限在你的掌控之中。平时只能访问工作目录和一些用户文件，如果你想调整权限，可以在设置 → 安全页面修改沙盒级别。
+**安全沙盒** — 双层隔离：应用层 PathGuard 四级访问控制 + 操作系统级沙盒（macOS Seatbelt / Linux Bubblewrap / Windows AppContainer）。Agent 的权限在你的掌控之中。平时只能访问工作目录和一些用户文件，如果你想调整权限，可以在设置 → 安全页面修改沙盒级别。
 
 **插件系统** — 约定优先的可扩展插件架构。拖拽安装社区插件，插件可以贡献工具、技能、命令、Agent 模板、HTTP 路由、事件钩子、LLM Provider、页面、侧栏 Widget、配置 schema 和后台任务。路由可直接访问核心服务（PluginContext 注入），通过 Session Bus 与 Agent 对话、获取历史、管理 session。两级权限模型（restricted / full-access）保障安全。
 
@@ -73,7 +75,7 @@ OpenHanako 是一个更加易用的 AI agent，有记忆，有性格，会主动
 
 > **Windows SmartScreen 提示：** 安装包暂未经过代码签名，首次运行时 Windows Defender SmartScreen 可能会拦截，点击**更多信息** → **仍要运行**即可，未签名版本的正常现象。
 
-Linux 版本计划中。
+**Linux**：从 [Releases](https://github.com/liliMozi/openhanako/releases) 下载最新 `.AppImage` 或 `.deb`。
 
 ### 首次运行
 
@@ -124,7 +126,7 @@ Server 以独立 Node.js 进程运行（由 Electron spawn 或独立启动），
 | macOS (Apple Silicon) | 已支持（已签名公证） |
 | macOS (Intel) | 已支持 |
 | Windows | Beta |
-| Linux | 计划中 |
+| Linux | 已支持（AppImage / deb） |
 | 移动端 (PWA) | 计划中 |
 
 ## 开发

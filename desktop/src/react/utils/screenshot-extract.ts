@@ -1,7 +1,7 @@
 // desktop/src/react/utils/screenshot-extract.ts
 
-import type { ChatMessage, ContentBlock } from '../stores/chat-types';
-import { isImageOrSvgExt } from './file-kind';
+import type { ChatMessage, ContentBlock, UserAttachment } from '../stores/chat-types';
+import { extOfName, isImageOrSvgExt } from './file-kind';
 
 export interface ScreenshotBlock {
   type: 'html' | 'markdown' | 'image';
@@ -38,14 +38,35 @@ function extractBlocks(blocks: ContentBlock[]): ScreenshotBlock[] {
       result.push({ type: 'html', content: block.html });
     } else if (block.type === 'file' && isImageOrSvgExt(block.ext)) {
       result.push({ type: 'image', content: block.filePath });
+    } else if (block.type === 'screenshot') {
+      result.push({ type: 'image', content: `data:${block.mimeType};base64,${block.base64}` });
     }
   }
   return result;
 }
 
+function isImageAttachment(attachment: UserAttachment): boolean {
+  if (attachment.mimeType?.startsWith('image/')) return true;
+  return isImageOrSvgExt(extOfName(attachment.name || attachment.path));
+}
+
 function extractUserBlocks(msg: ChatMessage): ScreenshotBlock[] {
-  if (!msg.text) return [];
-  return [{ type: 'markdown', content: msg.text }];
+  const result: ScreenshotBlock[] = [];
+  if (msg.text) result.push({ type: 'markdown', content: msg.text });
+
+  for (const attachment of msg.attachments || []) {
+    if (attachment.isDir || attachment.status === 'expired' || !isImageAttachment(attachment)) continue;
+    if (attachment.base64Data) {
+      result.push({
+        type: 'image',
+        content: `data:${attachment.mimeType || 'image/png'};base64,${attachment.base64Data}`,
+      });
+    } else if (attachment.path) {
+      result.push({ type: 'image', content: attachment.path });
+    }
+  }
+
+  return result;
 }
 
 export function extractScreenshotPayload(

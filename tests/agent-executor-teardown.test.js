@@ -30,7 +30,7 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
 });
 
 import { runAgentSession } from "../hub/agent-executor.js";
-import { runAgentPhoneSession } from "../hub/agent-executor.js";
+import { freshCompactAgentPhoneSession, runAgentPhoneSession } from "../hub/agent-executor.js";
 import { getAgentPhoneProjectionPath, readAgentPhoneProjection, updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
 import { getAgentPhoneSessionDir } from "../lib/conversations/agent-phone-session.js";
 
@@ -160,6 +160,55 @@ describe("runAgentSession teardown", () => {
     expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toContain("search_memory");
   });
 
+  it("hub read-only temp sessions keep full schema and enforce read-only at execution time", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    agent.tools = [{ name: "search_memory" }, { name: "record_experience" }];
+
+    const buildTools = vi.fn((_cwd, customTools) => ({
+      tools: [{ name: "read" }, { name: "write" }],
+      customTools,
+    }));
+    const engine = {
+      ...makeEngine(agent, cwd),
+      createSessionContext: () => ({
+        resourceLoader: {},
+        getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
+        buildTools,
+        resolveModel: () => ({ id: "gpt-4o", provider: "openai", name: "GPT-4o" }),
+        authStorage: {},
+        modelRegistry: {},
+      }),
+    };
+    const sessionFile = path.join(agent.agentDir, "sessions", "temp", "s-read-only-tools.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => sessionFile },
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await runAgentSession("agent-a", [{ text: "hello", capture: true }], { engine, readOnly: true });
+
+    const buildOpts = buildTools.mock.calls[0][2];
+    expect(buildOpts.getPermissionMode()).toBe("read_only");
+    expect(createAgentSessionMock.mock.calls[0][0].tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+    ]);
+    expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toEqual([
+      "search_memory",
+      "record_experience",
+    ]);
+  });
+
   it("phone session exposes its session path and mirrors live stream events", async () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });
@@ -223,11 +272,11 @@ describe("runAgentSession teardown", () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });
     const agent = makeAgent(rootDir);
-    agent.tools = [{ name: "channel" }, { name: "search_memory" }];
+    agent.tools = [{ name: "channel" }, { name: "search_memory" }, { name: "record_experience" }];
     agent.getToolsSnapshot = vi.fn(() => agent.tools);
 
     const buildTools = vi.fn((_cwd, customTools) => ({
-      tools: [],
+      tools: [{ name: "read" }, { name: "write" }],
       customTools,
     }));
     const engine = {
@@ -245,11 +294,13 @@ describe("runAgentSession teardown", () => {
     fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
     fs.writeFileSync(sessionFile, "", "utf-8");
     sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    const setActiveToolsByName = vi.fn();
     createAgentSessionMock.mockResolvedValue({
       session: {
         prompt: vi.fn(async () => {}),
         subscribe: vi.fn(() => () => {}),
         dispose: vi.fn(),
+        setActiveToolsByName,
         sessionManager: { getSessionFile: () => sessionFile },
         getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
         extensionRunner: { hasHandlers: vi.fn(() => false) },
@@ -267,8 +318,23 @@ describe("runAgentSession teardown", () => {
       ],
     });
 
+    const buildOpts = buildTools.mock.calls[0][2];
+    expect(buildOpts.getPermissionMode()).toBe("read_only");
+    expect(createAgentSessionMock.mock.calls[0][0].tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+    ]);
     expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toEqual([
       "search_memory",
+      "record_experience",
+      "channel_reply",
+      "channel_pass",
+    ]);
+    expect(setActiveToolsByName).toHaveBeenCalledWith([
+      "read",
+      "write",
+      "search_memory",
+      "record_experience",
       "channel_reply",
       "channel_pass",
     ]);
@@ -320,7 +386,7 @@ describe("runAgentSession teardown", () => {
     expect(resolveModel).not.toHaveBeenCalled();
   });
 
-  it("refreshes a reused phone session once per local day", async () => {
+  it("keeps phone replies non-blocking and leaves daily fresh-compact to the background path", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-12T10:00:00"));
     const cwd = path.join(rootDir, "cwd");
@@ -345,16 +411,23 @@ describe("runAgentSession teardown", () => {
     });
 
     const oldManager = { getSessionFile: () => oldSessionFile };
-    const newManager = { getSessionFile: () => newSessionFile };
     sessionManagerOpenMock.mockReturnValue(oldManager);
-    sessionManagerCreateMock.mockReturnValue(newManager);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => newSessionFile });
+    const compact = vi.fn(async () => {});
+    const getContextUsage = vi.fn()
+      .mockReturnValueOnce({ tokens: 10, contextWindow: 200000 })
+      .mockReturnValueOnce({ tokens: 10, contextWindow: 200000 })
+      .mockReturnValueOnce({ tokens: 130000, contextWindow: 200000 })
+      .mockReturnValueOnce({ tokens: 48000, contextWindow: 200000 })
+      .mockReturnValue({ tokens: 10, contextWindow: 200000 });
     createAgentSessionMock.mockImplementation(async (options) => ({
       session: {
         prompt: vi.fn(async () => {}),
         subscribe: vi.fn(() => () => {}),
         dispose: vi.fn(),
         sessionManager: options.sessionManager,
-        getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+        getContextUsage,
+        compact,
         extensionRunner: { hasHandlers: vi.fn(() => false) },
       },
     }));
@@ -365,27 +438,42 @@ describe("runAgentSession teardown", () => {
       conversationType: "channel",
     });
 
-    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
-    expect(sessionManagerCreateMock).toHaveBeenCalledOnce();
+    expect(sessionManagerOpenMock).toHaveBeenCalledWith(oldSessionFile, path.dirname(oldSessionFile));
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(compact).not.toHaveBeenCalled();
     const projectionPath = getAgentPhoneProjectionPath(agent.agentDir, "ch_crew");
     let projection = readAgentPhoneProjection(projectionPath);
-    expect(projection.meta).toMatchObject({
-      phoneSessionFile: path.relative(agent.agentDir, newSessionFile).split(path.sep).join("/"),
-      lastRefreshedDate: "2026-05-12",
+    expect(projection.meta.phoneSessionFile).toBe(path.relative(agent.agentDir, oldSessionFile).split(path.sep).join("/"));
+    expect(projection.meta.lastFreshCompactDate).toBeUndefined();
+
+    await freshCompactAgentPhoneSession("agent-a", {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      now: new Date("2026-05-12T10:00:00"),
+      reason: "daily",
     });
+
+    expect(compact).toHaveBeenCalledOnce();
+    projection = readAgentPhoneProjection(projectionPath);
+    expect(projection.meta.lastFreshCompactDate).toBe("2026-05-12");
+    expect(projection.meta.freshCompactTokensBefore).toBe("130000");
+    expect(projection.meta.freshCompactTokensAfter).toBe("48000");
 
     fs.writeFileSync(newSessionFile, "new", "utf-8");
     sessionManagerOpenMock.mockClear();
     sessionManagerCreateMock.mockClear();
+    compact.mockClear();
     await runAgentPhoneSession("agent-a", [{ text: "hello again", capture: true }], {
       engine,
       conversationId: "ch_crew",
       conversationType: "channel",
     });
 
-    expect(sessionManagerOpenMock).toHaveBeenCalledWith(newSessionFile, path.dirname(newSessionFile));
+    expect(sessionManagerOpenMock).toHaveBeenCalledWith(oldSessionFile, path.dirname(oldSessionFile));
     expect(sessionManagerCreateMock).not.toHaveBeenCalled();
     projection = readAgentPhoneProjection(projectionPath);
-    expect(projection.meta.lastRefreshedDate).toBe("2026-05-12");
+    expect(projection.meta.lastFreshCompactDate).toBe("2026-05-12");
+    expect(compact).not.toHaveBeenCalled();
   });
 });

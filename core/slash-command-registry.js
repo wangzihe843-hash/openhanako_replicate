@@ -28,7 +28,7 @@ function normalize(raw) {
 
 export class SlashCommandRegistry {
   // 纪律 #3：内核保留名，plugin/skill 来源禁止注册同名（防内核命令被覆盖）
-  static CORE_RESERVED_NAMES = new Set(["stop", "new", "reset", "compact", "help", "status", "rc", "exitrc"]);
+  static CORE_RESERVED_NAMES = new Set(["stop", "new", "reset", "compact", "fresh_compact", "help", "status", "rc", "exitrc"]);
 
   constructor() {
     this._byName = new Map();   // normalized name → def

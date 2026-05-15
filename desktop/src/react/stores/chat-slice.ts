@@ -27,6 +27,7 @@ export interface ChatSlice {
   appendItem: (path: string, item: ChatListItem) => void;
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (path: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => boolean;
+  truncateSessionFromMessage: (path: string, messageId: string) => boolean;
   patchBlockByTaskId: (sessionPath: string, taskId: string, patch: Record<string, any>) => void;
   _pendingBlockPatches: Record<string, Record<string, any>>;
   setSessionRegistryFiles: (path: string, files: SessionRegistryFile[]) => void;
@@ -150,6 +151,41 @@ export const createChatSlice = (
         chatSessions: {
           ...s.chatSessions,
           [path]: { ...latest, items },
+        },
+      };
+    });
+    return true;
+  },
+
+  truncateSessionFromMessage: (path, messageId) => {
+    const session = get().chatSessions[path];
+    if (!session) return false;
+
+    const targetIdx = session.items.findIndex((item) =>
+      item.type === 'message' &&
+      (item.data.id === messageId || item.data.sourceEntryId === messageId),
+    );
+    if (targetIdx < 0) return false;
+
+    set((s) => {
+      const latest = s.chatSessions[path];
+      if (!latest) return {};
+      const latestIdx = latest.items.findIndex((item) =>
+        item.type === 'message' &&
+        (item.data.id === messageId || item.data.sourceEntryId === messageId),
+      );
+      if (latestIdx < 0) return {};
+      const items = latest.items.slice(0, latestIdx);
+      invalidateSessionCache(path);
+      invalidateStreamBuffer(path);
+      return {
+        chatSessions: {
+          ...s.chatSessions,
+          [path]: {
+            ...latest,
+            items,
+            oldestId: items[0]?.type === 'message' ? items[0].data.id : undefined,
+          },
         },
       };
     });
