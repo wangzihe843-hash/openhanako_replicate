@@ -18,6 +18,8 @@ interface PhoneHomeProps {
   onOpenJournal: () => void;
   onOpenSchedule: () => void;
   onOpenDivination: () => void;
+  onOpenFiles: () => void;
+  onOpenShopping: () => void;
 }
 
 const phoneIcons = {
@@ -96,6 +98,20 @@ const phoneIcons = {
       <path d="M8 20v2" />
     </svg>
   ),
+  folder: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" />
+      <path d="M3 10.5h18" />
+    </svg>
+  ),
+  bag: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 8.5h12l-1 11H7L6 8.5Z" />
+      <path d="M9 8.5a3 3 0 0 1 6 0" />
+      <path d="M9.5 13h5" />
+      <path d="M9.5 16h3" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -104,6 +120,8 @@ const appShortcuts = [
   { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
   { label: '日程', subtitle: '安排与约定记录', tone: 'schedule', icon: phoneIcons.calendar, action: 'schedule' },
   { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
+  { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
+  { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
@@ -140,6 +158,8 @@ export function PhoneHome({
   onOpenJournal,
   onOpenSchedule,
   onOpenDivination,
+  onOpenFiles,
+  onOpenShopping,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -179,6 +199,14 @@ export function PhoneHome({
     }
     if (action === 'divination') {
       onOpenDivination();
+      return;
+    }
+    if (action === 'files') {
+      onOpenFiles();
+      return;
+    }
+    if (action === 'shopping') {
+      onOpenShopping();
       return;
     }
   };

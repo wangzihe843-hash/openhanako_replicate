@@ -1684,6 +1684,14 @@
   background: linear-gradient(135deg, #4d5a7a, #8b7ab8);
 }
 
+.phoneAppGlyph_files {
+  background: linear-gradient(135deg, #6f8366, #b6a872);
+}
+
+.phoneAppGlyph_shopping {
+  background: linear-gradient(135deg, #805f4f, #c48b69);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;
@@ -5209,51 +5217,48 @@
 /* === 秘密空间分类内页 · memory_fragment 标本卡 =========================== */
 
 .secretSpaceCategory[data-category='memory_fragment'] {
-  background: #ece1d3;
-  border-radius: 12px;
-  padding: 4px 6px 8px;
+  background: #e3d6bb;
+  border-radius: 14px;
+  padding: 8px 10px 12px;
 }
 
 .secretSpaceMemoryRoot {
-  padding: 8px 4px 4px;
+  padding: 10px 4px 4px;
 }
 
 .secretSpaceMemoryFeatured {
   appearance: none;
   width: 100%;
   position: relative;
-  background: linear-gradient(180deg, #fbf3df 0%, #f5ead2 100%);
-  background-blend-mode: multiply;
-  border: 1px solid rgba(120, 90, 60, 0.3);
-  border-radius: 3px;
-  padding: 14px 16px 14px;
-  margin-bottom: 14px;
+  background: #ede1c6;
+  border: 1px solid rgba(120, 90, 60, 0.08);
+  border-radius: 14px;
+  padding: 22px 22px 22px;
+  margin-bottom: 18px;
   text-align: left;
   cursor: pointer;
-  box-shadow:
-    0 4px 10px rgba(91, 79, 58, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 1px 2px rgba(91, 79, 58, 0.05);
   overflow: hidden;
 }
 
 .secretSpaceMemoryStamp {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 18px;
+  right: 22px;
   font-family: var(--xingye-font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: rgba(91, 71, 40, 0.55);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.18em;
   text-align: right;
-  line-height: 1.3;
+  line-height: 1.7;
 }
 
 .secretSpaceMemoryFeaturedRow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding-right: 80px;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding-right: 100px;
 }
 
 .secretSpaceMemoryFeaturedHead {
@@ -5263,24 +5268,25 @@
 
 .secretSpaceMemoryWhere {
   font-family: var(--xingye-font-mono);
-  font-size: 9px;
-  color: rgba(91, 71, 40, 0.55);
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: rgba(91, 71, 40, 0.5);
+  letter-spacing: 0.1em;
 }
 
 .secretSpaceMemoryFeaturedTitle {
   font-family: var(--xingye-font-brush);
-  font-size: 22px;
-  color: #3a2a1a;
-  line-height: 1.1;
-  margin-top: 2px;
+  font-size: 30px;
+  color: #2f2114;
+  line-height: 1.05;
+  margin-top: 4px;
+  letter-spacing: 0.04em;
 }
 
 .secretSpaceMemoryFeaturedBody {
   margin: 0;
   font-family: var(--xingye-font-serif);
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.75;
   color: #5a4530;
   letter-spacing: 0.02em;
 }
@@ -5288,22 +5294,19 @@
 .secretSpaceMemoryGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 14px;
 }
 
 .secretSpaceMemoryCard {
   appearance: none;
   position: relative;
-  background: linear-gradient(180deg, #fbf3df 0%, #f5ead2 100%);
-  background-blend-mode: multiply;
-  border: 1px solid rgba(120, 90, 60, 0.3);
-  border-radius: 3px;
-  padding: 10px 12px;
+  background: #ede1c6;
+  border: 1px solid rgba(120, 90, 60, 0.08);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
   text-align: left;
   cursor: pointer;
-  box-shadow:
-    0 4px 10px rgba(91, 79, 58, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 1px 2px rgba(91, 79, 58, 0.05);
   overflow: hidden;
 }
 
@@ -5311,39 +5314,454 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
 }
 
 .secretSpaceMemoryNo {
   font-family: var(--xingye-font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: rgba(91, 71, 40, 0.5);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.18em;
 }
 
 .secretSpaceMemoryCardTitle {
   font-family: var(--xingye-font-brush);
-  font-size: 15px;
-  color: #3a2a1a;
+  font-size: 19px;
+  color: #2f2114;
   line-height: 1.2;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  letter-spacing: 0.04em;
 }
 
 .secretSpaceMemoryCardBody {
-  margin: 0 0 8px;
+  margin: 0 0 14px;
   font-family: var(--xingye-font-serif);
-  font-size: 11.5px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.7;
   color: #5a4530;
 }
 
 .secretSpaceMemoryCardFooter {
   font-family: var(--xingye-font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: rgba(91, 71, 40, 0.5);
   letter-spacing: 0.08em;
-  border-top: 1px solid rgba(120, 90, 60, 0.18);
-  padding-top: 6px;
+  border-top: 1px solid rgba(120, 90, 60, 0.14);
+  padding-top: 8px;
   display: flex;
   justify-content: space-between;
+}
+
+/* === 私藏回忆 · 新建入口（FAB + 弹层） ================================ */
+
+.secretSpaceMemoryWrapper {
+  position: relative;
+}
+
+.secretSpaceMemoryFooter {
+  margin-top: 16px;
+}
+
+.secretSpaceMemoryCreateFab {
+  position: sticky;
+  bottom: 20px;
+  margin-left: auto;
+  margin-right: 12px;
+  margin-top: -56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 90, 60, 0.18);
+  background: linear-gradient(180deg, #c9a36a 0%, #a07843 100%);
+  color: #fbf3df;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  padding-bottom: 3px;
+  cursor: pointer;
+  box-shadow:
+    0 6px 16px rgba(120, 80, 30, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  z-index: 3;
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.secretSpaceMemoryCreateFab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(120, 80, 30, 0.34);
+}
+
+.secretSpaceMemoryCreateFab:active {
+  transform: translateY(0);
+}
+
+.secretSpaceMemoryCreateOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(58, 42, 26, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.secretSpaceMemoryCreateSheet {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px 22px 18px;
+  border-radius: 16px;
+  background: #ede1c6;
+  border: 1px solid rgba(120, 90, 60, 0.18);
+  box-shadow: 0 18px 48px rgba(58, 42, 26, 0.3);
+}
+
+.secretSpaceMemoryCreateHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.secretSpaceMemoryCreateTitle {
+  margin: 0;
+  font-family: var(--xingye-font-brush);
+  font-size: 22px;
+  color: #2f2114;
+  letter-spacing: 0.04em;
+}
+
+.secretSpaceMemoryCreateClose {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(120, 90, 60, 0.12);
+  color: #5a4530;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.secretSpaceMemoryCreateClose:hover {
+  background: rgba(120, 90, 60, 0.22);
+}
+
+.secretSpaceMemoryCreateHint {
+  margin: 0 0 4px;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: rgba(91, 71, 40, 0.78);
+}
+
+.secretSpaceMemoryCreateActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.secretSpaceMemoryCreateGhost {
+  appearance: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 90, 60, 0.25);
+  background: transparent;
+  color: #5a4530;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.secretSpaceMemoryCreateGhost:hover {
+  background: rgba(120, 90, 60, 0.08);
+}
+
+.secretSpaceMemoryCreatePrimary {
+  appearance: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 90, 60, 0.3);
+  background: linear-gradient(180deg, #c9a36a 0%, #a07843 100%);
+  color: #fbf3df;
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(120, 80, 30, 0.22);
+}
+
+.secretSpaceMemoryCreatePrimary:hover {
+  filter: brightness(1.04);
+}
+
+.phoneFilesFolderList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.phoneFilesFolderItem {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name meta" "hint hint";
+  row-gap: 4px;
+  column-gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 130, 100, 0.22);
+  background: rgba(255, 253, 247, 0.85);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.phoneFilesFolderItem:hover {
+  border-color: rgba(120, 130, 100, 0.42);
+  background: rgba(255, 253, 247, 0.95);
+  transform: translateY(-1px);
+}
+
+.phoneFilesFolderName {
+  grid-area: name;
+  font-weight: 600;
+  font-size: 0.96rem;
+}
+
+.phoneFilesFolderMeta {
+  grid-area: meta;
+  align-self: center;
+  font-size: 0.78rem;
+  color: rgba(80, 80, 70, 0.72);
+}
+
+.phoneFilesFolderHint {
+  grid-area: hint;
+  font-size: 0.8rem;
+  color: rgba(80, 80, 70, 0.78);
+}
+
+.phoneFilesEntryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.phoneFilesEntryItem {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 150, 140, 0.22);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.phoneFilesEntryItem:hover {
+  border-color: rgba(120, 130, 100, 0.42);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.phoneFilesEntryTitle {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.phoneFilesEntryExcerpt {
+  font-size: 0.82rem;
+  color: rgba(80, 80, 70, 0.78);
+  line-height: 1.4;
+}
+
+.phoneFilesEntryTags {
+  font-size: 0.76rem;
+  color: rgba(95, 110, 80, 0.86);
+}
+
+.phoneFilesHomeActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+/* 小手机购物记录 */
+.phoneShoppingLayout,
+.phoneShoppingEditor,
+.phoneShoppingDetail {
+  display: grid;
+  gap: 12px;
+}
+
+.phoneShoppingHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.phoneShoppingKicker {
+  margin: 0;
+  color: #8f6f53;
+  font-family: var(--xingye-font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+}
+
+.phoneShoppingTitle,
+.phoneShoppingDetailTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.15rem;
+  line-height: 1.25;
+}
+
+.phoneShoppingSafeNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.phoneShoppingFilterRow {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.phoneShoppingFilterButton {
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.phoneShoppingFilterButtonActive {
+  color: #6f3f2b;
+  border-color: rgba(196, 139, 105, 0.48);
+  background: #fff2e8;
+}
+
+.phoneShoppingList {
+  display: grid;
+  gap: 9px;
+}
+
+.phoneShoppingCard {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: start;
+  border: 1px solid rgba(196, 139, 105, 0.25);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 250, 245, 0.96), rgba(255, 255, 255, 0.9));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phoneShoppingCardMain {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.phoneShoppingCardMain strong {
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
+.phoneShoppingCardMain span,
+.phoneShoppingMeta,
+.phoneShoppingReason,
+.phoneShoppingBody {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.phoneShoppingPrice {
+  grid-column: 2;
+  color: #8f5b3d;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.phoneShoppingStatusChip,
+.phoneShoppingPlatformChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #7d4b35;
+  background: #fff2e8;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.phoneShoppingPlatformChip {
+  color: #59606b;
+  background: rgba(241, 245, 249, 0.95);
+}
+
+.phoneShoppingDetail {
+  border: 1px solid rgba(196, 139, 105, 0.28);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(255, 250, 245, 0.92);
+}
+
+.phoneShoppingDetailHead,
+.phoneShoppingActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.phoneShoppingBody {
+  color: var(--text);
+  white-space: pre-wrap;
 }

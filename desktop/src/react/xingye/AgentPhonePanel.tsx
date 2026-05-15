@@ -13,6 +13,8 @@ import { PhoneMmChatApp } from './PhoneMmChatApp';
 import { PhoneHome } from './PhoneHome';
 import { PhoneScheduleApp } from './PhoneScheduleApp';
 import { PhoneDivinationApp } from './PhoneDivinationApp';
+import { PhoneFilesApp } from './PhoneFilesApp';
+import { PhoneShoppingApp } from './PhoneShoppingApp';
 import { PhoneSmsApp } from './PhoneSmsApp';
 import styles from './XingyeShell.module.css';
 
@@ -23,7 +25,7 @@ interface AgentPhonePanelProps {
   onOpenGroupChatTab?: () => void;
 }
 
-type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination';
+type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination' | 'files' | 'shopping';
 
 export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
   const channels = useStore(state => state.channels);
@@ -55,6 +57,8 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           onOpenJournal={() => setPhonePage('journal')}
           onOpenSchedule={() => setPhonePage('schedule')}
           onOpenDivination={() => setPhonePage('divination')}
+          onOpenFiles={() => setPhonePage('files')}
+          onOpenShopping={() => setPhonePage('shopping')}
         />
       ) : null}
 
@@ -108,6 +112,24 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
 
       {phonePage === 'divination' ? (
         <PhoneDivinationApp
+          ownerAgent={agent}
+          ownerProfile={profile}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'files' ? (
+        <PhoneFilesApp
+          ownerAgent={agent}
+          ownerProfile={profile}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'shopping' ? (
+        <PhoneShoppingApp
           ownerAgent={agent}
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}

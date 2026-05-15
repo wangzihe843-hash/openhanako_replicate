@@ -6,7 +6,7 @@ interface PhoneAppIconProps {
   label: string;
   subtitle?: string;
   onClick: () => void;
-  tone: 'journal' | 'album' | 'message' | 'audio' | 'contacts' | 'mmchat' | 'schedule' | 'divination';
+  tone: 'journal' | 'album' | 'message' | 'audio' | 'contacts' | 'mmchat' | 'schedule' | 'divination' | 'files' | 'shopping';
 }
 
 export function PhoneAppIcon({ icon, label, subtitle, onClick, tone }: PhoneAppIconProps) {

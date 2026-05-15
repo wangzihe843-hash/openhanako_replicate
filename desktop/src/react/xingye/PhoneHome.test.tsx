@@ -50,6 +50,8 @@ function renderPhoneHome() {
       onOpenJournal={vi.fn()}
       onOpenSchedule={onOpenSchedule}
       onOpenDivination={vi.fn()}
+      onOpenFiles={vi.fn()}
+      onOpenShopping={vi.fn()}
     />,
   );
 }
@@ -112,6 +114,8 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenJournal={vi.fn()}
         onOpenSchedule={onOpenSchedule}
         onOpenDivination={vi.fn()}
+        onOpenFiles={vi.fn()}
+        onOpenShopping={vi.fn()}
       />,
     );
 
@@ -133,11 +137,59 @@ describe('PhoneHome heartbeat trigger', () => {
         onOpenJournal={vi.fn()}
         onOpenSchedule={vi.fn()}
         onOpenDivination={onOpenDivination}
+        onOpenFiles={vi.fn()}
+        onOpenShopping={vi.fn()}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /占卜/ }));
 
     expect(onOpenDivination).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the files app from the phone home grid', () => {
+    const onOpenFiles = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={vi.fn()}
+        onOpenDivination={vi.fn()}
+        onOpenFiles={onOpenFiles}
+        onOpenShopping={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^文件，资料柜与发现记录$/ }));
+
+    expect(onOpenFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the shopping app from the phone home grid', () => {
+    const onOpenShopping = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={vi.fn()}
+        onOpenDivination={vi.fn()}
+        onOpenFiles={vi.fn()}
+        onOpenShopping={onOpenShopping}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /购物/ }));
+
+    expect(onOpenShopping).toHaveBeenCalledTimes(1);
   });
 });
