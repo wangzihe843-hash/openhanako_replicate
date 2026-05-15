@@ -101,6 +101,7 @@ function jsonResponse(body: unknown): Response {
 
 function serverIdentityResponse(partial: Record<string, unknown> = {}): Response {
   return jsonResponse({
+    connectionKind: 'local',
     serverId: 'server_test',
     userId: 'user_test',
     spaceId: 'space_test',
@@ -109,6 +110,9 @@ function serverIdentityResponse(partial: Record<string, unknown> = {}): Response
     spaceLabel: 'Test Space',
     trustState: 'local',
     authState: 'paired',
+    credentialKind: 'loopback_token',
+    platformAccountId: null,
+    officialServiceKind: null,
     capabilities: ['chat', 'resources', 'tools'],
     version: '0.test',
     ...partial,
@@ -186,6 +190,7 @@ describe('initApp bridge indicator', () => {
     await initApp();
 
     expect(mockState.activeServerConnection).toEqual({
+      kind: 'local',
       serverId: 'server_test',
       userId: 'user_test',
       spaceId: 'space_test',
@@ -198,6 +203,9 @@ describe('initApp bridge indicator', () => {
       token: 'token',
       authState: 'paired',
       trustState: 'local',
+      credentialKind: 'loopback_token',
+      platformAccountId: null,
+      officialServiceKind: null,
       capabilities: ['chat', 'resources', 'tools'],
     });
     expect(mockState.bridgeDotConnected).toBe(true);

@@ -1,7 +1,11 @@
+export type SpaceConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
 export type ServerTrustState = 'local' | 'lan' | 'tunnel' | 'cloud';
 export type ServerAuthState = 'anonymous' | 'paired' | 'user' | 'expired';
+export type ConnectionCredentialKind = 'none' | 'loopback_token' | 'device_credential' | 'user_session';
+export type OfficialServiceKind = 'relay' | 'cloud_space' | 'inference' | 'billing';
 
 export interface ServerConnection {
+  kind: SpaceConnectionKind;
   serverId: string;
   userId?: string;
   spaceId: string;
@@ -14,10 +18,14 @@ export interface ServerConnection {
   token: string | null;
   authState: ServerAuthState;
   trustState: ServerTrustState;
+  credentialKind: ConnectionCredentialKind;
+  platformAccountId?: string | null;
+  officialServiceKind?: OfficialServiceKind | null;
   capabilities: string[];
 }
 
 export interface ServerIdentity {
+  connectionKind?: SpaceConnectionKind;
   serverId: string;
   userId?: string;
   spaceId: string;
@@ -26,6 +34,9 @@ export interface ServerIdentity {
   spaceLabel?: string;
   authState?: ServerAuthState;
   trustState?: ServerTrustState;
+  credentialKind?: ConnectionCredentialKind;
+  platformAccountId?: string | null;
+  officialServiceKind?: OfficialServiceKind | null;
   capabilities?: string[];
   version?: string;
 }
@@ -99,6 +110,7 @@ export function createLocalServerConnection({
   if (!port) return null;
 
   return {
+    kind: 'local',
     serverId: 'local',
     spaceId: 'local',
     label: 'Local Hana',
@@ -107,7 +119,40 @@ export function createLocalServerConnection({
     token: normalizeToken(serverToken),
     authState: 'paired',
     trustState: 'local',
+    credentialKind: 'loopback_token',
+    platformAccountId: null,
+    officialServiceKind: null,
     capabilities: [...LOCAL_CAPABILITIES],
+  };
+}
+
+export function refreshLocalServerConnection({
+  existingConnection,
+  serverPort,
+  serverToken,
+}: {
+  existingConnection?: ServerConnection | null;
+  serverPort: string | number | null | undefined;
+  serverToken?: string | null;
+}): ServerConnection | null {
+  const nextTransport = createLocalServerConnection({ serverPort, serverToken });
+  if (!nextTransport) return null;
+  if (!existingConnection) return nextTransport;
+
+  return {
+    ...existingConnection,
+    kind: 'local',
+    baseUrl: nextTransport.baseUrl,
+    wsUrl: nextTransport.wsUrl,
+    token: nextTransport.token,
+    authState: 'paired',
+    trustState: 'local',
+    credentialKind: 'loopback_token',
+    platformAccountId: null,
+    officialServiceKind: null,
+    capabilities: existingConnection.capabilities.length
+      ? [...existingConnection.capabilities]
+      : [...nextTransport.capabilities],
   };
 }
 
@@ -138,6 +183,7 @@ export function mergeServerIdentity(
 ): ServerConnection {
   return {
     ...connection,
+    kind: identity.connectionKind || connection.kind,
     serverId: identity.serverId,
     userId: identity.userId,
     spaceId: identity.spaceId,
@@ -147,6 +193,9 @@ export function mergeServerIdentity(
     serverVersion: identity.version,
     authState: identity.authState || connection.authState,
     trustState: identity.trustState || connection.trustState,
+    credentialKind: identity.credentialKind || connection.credentialKind,
+    platformAccountId: identity.platformAccountId ?? connection.platformAccountId ?? null,
+    officialServiceKind: identity.officialServiceKind ?? connection.officialServiceKind ?? null,
     capabilities: identity.capabilities ? [...identity.capabilities] : [...connection.capabilities],
   };
 }

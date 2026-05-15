@@ -10,6 +10,7 @@ export function createServerIdentityRoute({ hanakoHome, appVersion = "?" }) {
     try {
       const identity = loadServerIdentity(hanakoHome);
       return c.json({
+        connectionKind: "local",
         serverId: identity.serverId,
         userId: identity.userId,
         spaceId: identity.spaceId,
@@ -18,6 +19,9 @@ export function createServerIdentityRoute({ hanakoHome, appVersion = "?" }) {
         spaceLabel: identity.spaceLabel,
         trustState: "local",
         authState: "paired",
+        credentialKind: "loopback_token",
+        platformAccountId: null,
+        officialServiceKind: null,
         capabilities: [...LOCAL_CAPABILITIES],
         version: appVersion,
       });

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
-import { createLocalServerConnection } from '../services/server-connection';
+import { createLocalServerConnection, refreshLocalServerConnection } from '../services/server-connection';
 import { t } from './helpers';
 import { loadAgents, loadAvatars, loadSettingsConfig, loadPluginSettings } from './actions';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -132,7 +132,8 @@ export function SettingsContent({
       console.log('[settings] server restarted, new port:', data.port);
       store.set({
         serverPort: data.port,
-        activeServerConnection: createLocalServerConnection({
+        activeServerConnection: refreshLocalServerConnection({
+          existingConnection: store.activeServerConnection,
           serverPort: data.port,
           serverToken: store.serverToken,
         }),

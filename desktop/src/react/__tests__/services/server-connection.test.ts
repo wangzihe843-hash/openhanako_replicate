@@ -7,6 +7,7 @@ import {
   createLocalServerConnection,
   hasServerConnection,
   mergeServerIdentity,
+  refreshLocalServerConnection,
   resolveServerConnection,
 } from '../../services/server-connection';
 
@@ -16,6 +17,7 @@ describe('server connection helpers', () => {
       serverPort: 3210,
       serverToken: 'test-token-123',
     })).toEqual({
+      kind: 'local',
       serverId: 'local',
       spaceId: 'local',
       label: 'Local Hana',
@@ -24,6 +26,9 @@ describe('server connection helpers', () => {
       token: 'test-token-123',
       authState: 'paired',
       trustState: 'local',
+      credentialKind: 'loopback_token',
+      platformAccountId: null,
+      officialServiceKind: null,
       capabilities: ['chat', 'resources', 'tools'],
     });
   });
@@ -113,6 +118,7 @@ describe('server connection helpers', () => {
     expect(connection).not.toBeNull();
 
     expect(mergeServerIdentity(connection!, {
+      connectionKind: 'local',
       serverId: 'server_stable',
       userId: 'user_stable',
       spaceId: 'space_stable',
@@ -131,12 +137,47 @@ describe('server connection helpers', () => {
       userLabel: 'Stable User',
       spaceLabel: 'Stable Space',
       serverVersion: '1.2.3',
+      kind: 'local',
       baseUrl: 'http://127.0.0.1:3210',
       wsUrl: 'ws://127.0.0.1:3210',
       token: 'test-token-123',
       authState: 'paired',
       trustState: 'local',
+      credentialKind: 'loopback_token',
+      platformAccountId: null,
+      officialServiceKind: null,
       capabilities: ['chat', 'resources', 'tools', 'identity'],
+    });
+  });
+
+  it('refreshes local transport without drifting stable server/user/space identity', () => {
+    const connection = mergeServerIdentity(createLocalServerConnection({
+      serverPort: '3210',
+      serverToken: 'old-token',
+    })!, {
+      serverId: 'server_stable',
+      userId: 'user_stable',
+      spaceId: 'space_stable',
+      label: 'Stable Server',
+      userLabel: 'Stable User',
+      spaceLabel: 'Stable Space',
+      capabilities: ['chat', 'resources', 'tools', 'identity'],
+    });
+
+    expect(refreshLocalServerConnection({
+      existingConnection: connection,
+      serverPort: '4222',
+      serverToken: 'new-token',
+    })).toEqual({
+      ...connection,
+      baseUrl: 'http://127.0.0.1:4222',
+      wsUrl: 'ws://127.0.0.1:4222',
+      token: 'new-token',
+      authState: 'paired',
+      trustState: 'local',
+      credentialKind: 'loopback_token',
+      platformAccountId: null,
+      officialServiceKind: null,
     });
   });
 });

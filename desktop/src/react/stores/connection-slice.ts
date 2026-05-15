@@ -1,5 +1,5 @@
 import type { ServerConnection } from '../services/server-connection';
-import { createLocalServerConnection } from '../services/server-connection';
+import { refreshLocalServerConnection } from '../services/server-connection';
 
 export interface ConnectionSlice {
   serverPort: string | null;
@@ -23,7 +23,7 @@ export interface ConnectionSlice {
 
 export const createConnectionSlice = (
   set: (partial: Partial<ConnectionSlice>) => void,
-  get?: () => Pick<ConnectionSlice, 'serverPort' | 'serverToken'>,
+  get?: () => Pick<ConnectionSlice, 'serverPort' | 'serverToken' | 'activeServerConnection'>,
 ): ConnectionSlice => ({
   serverPort: null,
   serverToken: null,
@@ -40,14 +40,22 @@ export const createConnectionSlice = (
     const serverToken = get?.().serverToken ?? null;
     set({
       serverPort,
-      activeServerConnection: createLocalServerConnection({ serverPort, serverToken }),
+      activeServerConnection: refreshLocalServerConnection({
+        existingConnection: get?.().activeServerConnection,
+        serverPort,
+        serverToken,
+      }),
     });
   },
   setServerToken: (token) => {
     const serverPort = get?.().serverPort ?? null;
     set({
       serverToken: token,
-      activeServerConnection: createLocalServerConnection({ serverPort, serverToken: token }),
+      activeServerConnection: refreshLocalServerConnection({
+        existingConnection: get?.().activeServerConnection,
+        serverPort,
+        serverToken: token,
+      }),
     });
   },
   setActiveServerConnection: (connection) => set({ activeServerConnection: connection }),
@@ -56,7 +64,11 @@ export const createConnectionSlice = (
     set({
       serverPort,
       serverToken: token,
-      activeServerConnection: createLocalServerConnection({ serverPort, serverToken: token }),
+      activeServerConnection: refreshLocalServerConnection({
+        existingConnection: get?.().activeServerConnection,
+        serverPort,
+        serverToken: token,
+      }),
     });
   },
   setConnected: (connected) => set({ connected }),

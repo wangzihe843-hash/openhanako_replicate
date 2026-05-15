@@ -72,6 +72,7 @@ describe("server identity route", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
+      connectionKind: "local",
       serverId: "server_route",
       userId: "user_route",
       spaceId: "space_route",
@@ -80,6 +81,9 @@ describe("server identity route", () => {
       spaceLabel: "Route Space",
       trustState: "local",
       authState: "paired",
+      credentialKind: "loopback_token",
+      platformAccountId: null,
+      officialServiceKind: null,
       capabilities: ["chat", "resources", "tools"],
       version: "1.2.3",
     });
