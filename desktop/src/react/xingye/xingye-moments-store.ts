@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { getXingyePersistenceStorage } from './xingye-persistence';
+import type { XingyeStorageBackend } from './xingye-storage-backend';
+import {
+  createXingyeStore,
+  generateXingyeId,
+  nowIso,
+  requireSafeXingyeAgentId,
+  resolveAgentScopedXingyePath,
+} from './xingye-store-utils';
 
 export type XingyeMomentPost = {
   id: string;
@@ -16,17 +23,14 @@ export type XingyeMomentPost = {
   }[];
 };
 
-export type XingyeMomentPostMap = Record<string, XingyeMomentPost>;
-
-export const XINGYE_MOMENTS_STORAGE_KEY = 'xingye.moments';
+export const XINGYE_MOMENTS_POSTS_JSONL = 'apps/moments/posts.jsonl';
 
 const XINGYE_MOMENTS_CHANGED_EVENT = 'xingye-moments-changed';
 
-type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
-
-function getLocalStorage(): StorageLike | null {
-  return getXingyePersistenceStorage();
-}
+type XingyeMomentStoreOptions = {
+  idFactory?: (prefix: string) => string;
+  now?: () => string;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -66,10 +70,10 @@ function normalizeComment(value: unknown): XingyeMomentPost['comments'][number] 
   };
 }
 
-function normalizePost(value: unknown, fallbackId?: string): XingyeMomentPost | null {
+function normalizePost(value: unknown): XingyeMomentPost | null {
   if (!isRecord(value)) return null;
 
-  const id = normalizeOptionalString(value.id) ?? fallbackId;
+  const id = normalizeOptionalString(value.id);
   const authorAgentId = normalizeOptionalString(value.authorAgentId);
   const content = normalizeOptionalString(value.content);
   const createdAt = normalizeOptionalString(value.createdAt);
@@ -88,155 +92,176 @@ function normalizePost(value: unknown, fallbackId?: string): XingyeMomentPost | 
   };
 }
 
-function createId(prefix: string): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function notifyXingyeMomentsChanged() {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event(XINGYE_MOMENTS_CHANGED_EVENT));
-}
-
-function saveMomentMap(posts: XingyeMomentPostMap, storage: StorageLike | null) {
-  storage?.setItem(XINGYE_MOMENTS_STORAGE_KEY, JSON.stringify(posts));
-  notifyXingyeMomentsChanged();
-}
-
-export function loadXingyeMomentPosts(storage: StorageLike | null = getLocalStorage()): XingyeMomentPostMap {
-  if (!storage) return {};
-
-  try {
-    const raw = storage.getItem(XINGYE_MOMENTS_STORAGE_KEY);
-    if (!raw) return {};
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return {};
-
-    const posts: XingyeMomentPostMap = {};
-    for (const [id, value] of Object.entries(parsed)) {
-      const normalized = normalizePost(value, id);
-      if (normalized) posts[normalized.id] = normalized;
-    }
-    return posts;
-  } catch (error) {
-    console.warn('[xingye-moments-store] failed to load moments:', error);
-    return {};
-  }
-}
-
-export function listXingyeMomentPosts(storage: StorageLike | null = getLocalStorage()): XingyeMomentPost[] {
-  return Object.values(loadXingyeMomentPosts(storage)).sort((a, b) => {
+function sortMomentPosts(posts: XingyeMomentPost[]): XingyeMomentPost[] {
+  return [...posts].sort((a, b) => {
     const timeDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
     return timeDiff || b.id.localeCompare(a.id);
   });
 }
 
-export function createXingyeMomentPost(
-  authorAgentId: string,
-  content: string,
-  storage: StorageLike | null = getLocalStorage(),
-): XingyeMomentPost | null {
-  const normalizedContent = content.trim();
-  if (!authorAgentId || !normalizedContent) return null;
-
-  const posts = loadXingyeMomentPosts(storage);
-  const post: XingyeMomentPost = {
-    id: createId('moment'),
-    authorAgentId,
-    content: normalizedContent,
-    imageUrls: [],
-    createdAt: new Date().toISOString(),
-    likes: [],
-    comments: [],
-  };
-  posts[post.id] = post;
-  saveMomentMap(posts, storage);
-  return post;
+function notifyXingyeMomentsChanged(agentId: string) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(XINGYE_MOMENTS_CHANGED_EVENT, { detail: { agentId } }));
 }
 
-export function toggleXingyeMomentLike(
-  postId: string,
-  authorId: string,
-  storage: StorageLike | null = getLocalStorage(),
-): XingyeMomentPost | null {
-  const posts = loadXingyeMomentPosts(storage);
-  const post = posts[postId];
-  if (!post || !authorId) return null;
-
-  const liked = post.likes.includes(authorId);
-  const nextPost: XingyeMomentPost = {
-    ...post,
-    likes: liked ? post.likes.filter(id => id !== authorId) : [...post.likes, authorId],
-  };
-  posts[postId] = nextPost;
-  saveMomentMap(posts, storage);
-  return nextPost;
+export function resolveMomentsPostsScopedPath(agentId: string) {
+  return resolveAgentScopedXingyePath(agentId, XINGYE_MOMENTS_POSTS_JSONL);
 }
 
-export function addXingyeMomentComment(
-  postId: string,
-  authorId: string,
-  content: string,
-  storage: StorageLike | null = getLocalStorage(),
-): XingyeMomentPost | null {
-  const normalizedContent = content.trim();
-  const posts = loadXingyeMomentPosts(storage);
-  const post = posts[postId];
-  if (!post || !authorId || !normalizedContent) return null;
+export function createXingyeMomentStore(
+  backend?: XingyeStorageBackend,
+  options: XingyeMomentStoreOptions = {},
+) {
+  const store = createXingyeStore(backend);
+  const idFactory = options.idFactory ?? ((prefix: string) => generateXingyeId(prefix));
+  const getNow = options.now ?? nowIso;
 
-  const nextPost: XingyeMomentPost = {
-    ...post,
-    comments: [
-      ...post.comments,
-      {
-        id: createId('comment'),
-        authorId,
+  async function listPosts(agentId: string): Promise<XingyeMomentPost[]> {
+    const aid = requireSafeXingyeAgentId(agentId);
+    const rows = await store.listJsonl<unknown>(aid, XINGYE_MOMENTS_POSTS_JSONL);
+    return sortMomentPosts(
+      rows.map(normalizePost).filter((post): post is XingyeMomentPost => Boolean(post)),
+    );
+  }
+
+  async function writePosts(agentId: string, posts: XingyeMomentPost[]): Promise<void> {
+    const aid = requireSafeXingyeAgentId(agentId);
+    await store.writeJsonl<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, posts);
+    notifyXingyeMomentsChanged(aid);
+  }
+
+  return {
+    listPosts,
+
+    async createPost(authorAgentId: string, content: string, imageUrls: unknown = []): Promise<XingyeMomentPost | null> {
+      const aid = requireSafeXingyeAgentId(authorAgentId);
+      const normalizedContent = content.trim();
+      if (!normalizedContent) return null;
+
+      const post: XingyeMomentPost = {
+        id: idFactory('moment'),
+        authorAgentId: aid,
         content: normalizedContent,
-        createdAt: new Date().toISOString(),
-      },
-    ],
+        imageUrls: uniqueStrings(imageUrls),
+        createdAt: getNow(),
+        likes: [],
+        comments: [],
+      };
+      await store.appendJsonl<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, post);
+      notifyXingyeMomentsChanged(aid);
+      return post;
+    },
+
+    async toggleLike(agentId: string, postId: string, authorId: string): Promise<XingyeMomentPost | null> {
+      const aid = requireSafeXingyeAgentId(agentId);
+      const likerId = normalizeOptionalString(authorId);
+      const pid = normalizeOptionalString(postId);
+      if (!pid || !likerId) return null;
+
+      const posts = await listPosts(aid);
+      const index = posts.findIndex(post => post.id === pid);
+      if (index < 0) return null;
+
+      const post = posts[index];
+      const liked = post.likes.includes(likerId);
+      const nextPost: XingyeMomentPost = {
+        ...post,
+        likes: liked ? post.likes.filter(id => id !== likerId) : [...post.likes, likerId],
+      };
+      posts[index] = nextPost;
+      await writePosts(aid, posts);
+      return nextPost;
+    },
+
+    async addComment(agentId: string, postId: string, authorId: string, content: string): Promise<XingyeMomentPost | null> {
+      const aid = requireSafeXingyeAgentId(agentId);
+      const pid = normalizeOptionalString(postId);
+      const commenterId = normalizeOptionalString(authorId);
+      const normalizedContent = content.trim();
+      if (!pid || !commenterId || !normalizedContent) return null;
+
+      const posts = await listPosts(aid);
+      const index = posts.findIndex(post => post.id === pid);
+      if (index < 0) return null;
+
+      const post = posts[index];
+      const nextPost: XingyeMomentPost = {
+        ...post,
+        comments: [
+          ...post.comments,
+          {
+            id: idFactory('comment'),
+            authorId: commenterId,
+            content: normalizedContent,
+            createdAt: getNow(),
+          },
+        ],
+      };
+      posts[index] = nextPost;
+      await writePosts(aid, posts);
+      return nextPost;
+    },
+
+    async deletePost(agentId: string, postId: string): Promise<boolean> {
+      const aid = requireSafeXingyeAgentId(agentId);
+      const pid = normalizeOptionalString(postId);
+      if (!pid) return false;
+
+      const deleted = await store.deleteJsonlRecord(aid, XINGYE_MOMENTS_POSTS_JSONL, pid);
+      if (deleted) notifyXingyeMomentsChanged(aid);
+      return deleted;
+    },
   };
-  posts[postId] = nextPost;
-  saveMomentMap(posts, storage);
-  return nextPost;
 }
 
-export function deleteXingyeMomentPost(
-  postId: string,
-  storage: StorageLike | null = getLocalStorage(),
-): boolean {
-  const posts = loadXingyeMomentPosts(storage);
-  if (!posts[postId]) return false;
+const defaultMomentStore = createXingyeMomentStore();
 
-  delete posts[postId];
-  saveMomentMap(posts, storage);
-  return true;
-}
+export const listXingyeMomentPosts = defaultMomentStore.listPosts;
+export const createXingyeMomentPost = defaultMomentStore.createPost;
+export const toggleXingyeMomentLike = defaultMomentStore.toggleLike;
+export const addXingyeMomentComment = defaultMomentStore.addComment;
+export const deleteXingyeMomentPost = defaultMomentStore.deletePost;
 
-export function useXingyeMomentPosts(): XingyeMomentPost[] {
-  const [posts, setPosts] = useState<XingyeMomentPost[]>(() => listXingyeMomentPosts());
+export function useXingyeMomentPosts(agentId: string | null | undefined): XingyeMomentPost[] {
+  const [posts, setPosts] = useState<XingyeMomentPost[]>([]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
+    const aid = agentId?.trim();
+    if (!aid) {
+      setPosts([]);
+      return undefined;
+    }
 
-    const refresh = () => setPosts(listXingyeMomentPosts());
-    const refreshFromStorage = (event: StorageEvent) => {
-      if (event.key === XINGYE_MOMENTS_STORAGE_KEY) refresh();
+    let cancelled = false;
+    const refresh = () => {
+      void listXingyeMomentPosts(aid)
+        .then(nextPosts => {
+          if (!cancelled) setPosts(nextPosts);
+        })
+        .catch(error => {
+          console.warn('[xingye-moments-store] failed to load moments:', error);
+          if (!cancelled) setPosts([]);
+        });
     };
 
+    refresh();
+    if (typeof window === 'undefined') return () => {
+      cancelled = true;
+    };
+
+    const onMomentsChanged = (event: Event) => {
+      const changedAgentId = (event as CustomEvent<{ agentId?: string }>).detail?.agentId;
+      if (!changedAgentId || changedAgentId === aid) refresh();
+    };
     const onPersistence = () => refresh();
-    window.addEventListener(XINGYE_MOMENTS_CHANGED_EVENT, refresh);
-    window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener(XINGYE_MOMENTS_CHANGED_EVENT, onMomentsChanged);
     window.addEventListener('xingye-persistence-changed', onPersistence);
     return () => {
-      window.removeEventListener(XINGYE_MOMENTS_CHANGED_EVENT, refresh);
-      window.removeEventListener('storage', refreshFromStorage);
+      cancelled = true;
+      window.removeEventListener(XINGYE_MOMENTS_CHANGED_EVENT, onMomentsChanged);
       window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
-  }, []);
+  }, [agentId]);
 
   return posts;
 }

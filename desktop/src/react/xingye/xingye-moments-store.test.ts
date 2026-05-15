@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
 import {
-  XINGYE_MOMENTS_STORAGE_KEY,
-  addXingyeMomentComment,
-  createXingyeMomentPost,
-  deleteXingyeMomentPost,
-  listXingyeMomentPosts,
-  toggleXingyeMomentLike,
+  XINGYE_MOMENTS_POSTS_JSONL,
+  createXingyeMomentStore,
+  resolveMomentsPostsScopedPath,
   type XingyeMomentPost,
 } from './xingye-moments-store';
 
@@ -14,121 +12,145 @@ function requireMomentPost(post: XingyeMomentPost | null | undefined): XingyeMom
   return post;
 }
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>();
-
-  get length() {
-    return this.values.size;
-  }
-
-  clear() {
-    this.values.clear();
-  }
-
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-
-  key(index: number) {
-    return Array.from(this.values.keys())[index] ?? null;
-  }
-
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-}
-
 describe('xingye-moments-store', () => {
-  let storage: MemoryStorage;
+  let backend: ReturnType<typeof createMemoryXingyeStorageBackend>;
+  let store: ReturnType<typeof createXingyeMomentStore>;
 
   beforeEach(() => {
-    storage = new MemoryStorage();
+    backend = createMemoryXingyeStorageBackend();
+    store = createXingyeMomentStore(backend, {
+      idFactory: (() => {
+        const counts = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counts.get(prefix) ?? 0) + 1;
+          counts.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: (() => {
+        const times = [
+          '2026-05-11T02:00:00.000Z',
+          '2026-05-11T03:00:00.000Z',
+          '2026-05-11T04:00:00.000Z',
+        ];
+        return () => times.shift() ?? '2026-05-11T05:00:00.000Z';
+      })(),
+    });
   });
 
-  it('creates text-only posts, stores imageUrls, and lists newest first', () => {
-    vi.setSystemTime(new Date('2026-05-11T02:00:00.000Z'));
-    const first = requireMomentPost(createXingyeMomentPost('agent-1', '第一条动态', storage));
+  it('creates posts under apps/moments/posts.jsonl and lists newest first', async () => {
+    const first = requireMomentPost(await store.createPost('linwu', 'first post'));
+    const second = requireMomentPost(await store.createPost('linwu', 'second post'));
 
-    vi.setSystemTime(new Date('2026-05-11T03:00:00.000Z'));
-    const second = requireMomentPost(createXingyeMomentPost('agent-2', '第二条动态', storage));
-
+    expect(resolveMomentsPostsScopedPath('linwu')).toEqual({
+      agentId: 'linwu',
+      relativePath: XINGYE_MOMENTS_POSTS_JSONL,
+      scopedPath: 'HANA_HOME/agents/linwu/xingye/apps/moments/posts.jsonl',
+    });
     expect(first).toMatchObject({
-      authorAgentId: 'agent-1',
-      content: '第一条动态',
+      id: 'moment-1',
+      authorAgentId: 'linwu',
+      content: 'first post',
       imageUrls: [],
       likes: [],
       comments: [],
       createdAt: '2026-05-11T02:00:00.000Z',
     });
-    expect(second.createdAt).toBe('2026-05-11T03:00:00.000Z');
-    expect(listXingyeMomentPosts(storage).map(post => post.id)).toEqual([second.id, first.id]);
-    expect(storage.getItem(XINGYE_MOMENTS_STORAGE_KEY)).toContain('第一条动态');
-
-    vi.useRealTimers();
-  });
-
-  it('toggles likes, adds comments, and deletes posts', () => {
-    const post = requireMomentPost(createXingyeMomentPost('agent-1', '可以互动的动态', storage));
-
-    expect(toggleXingyeMomentLike(post.id, 'agent-2', storage)?.likes).toEqual(['agent-2']);
-    expect(toggleXingyeMomentLike(post.id, 'agent-2', storage)?.likes).toEqual([]);
-
-    const commented = addXingyeMomentComment(post.id, 'agent-2', '写一条评论', storage);
-    expect(commented?.comments).toMatchObject([
-      {
-        authorId: 'agent-2',
-        content: '写一条评论',
-      },
+    await expect(backend.listJsonl<XingyeMomentPost>('linwu', XINGYE_MOMENTS_POSTS_JSONL)).resolves.toEqual([
+      first,
+      second,
     ]);
-
-    expect(deleteXingyeMomentPost(post.id, storage)).toBe(true);
-    expect(listXingyeMomentPosts(storage)).toEqual([]);
+    await expect(store.listPosts('linwu')).resolves.toEqual([second, first]);
   });
 
-  it('ignores empty content and normalizes malformed stored posts', () => {
+  it('keeps agent moment paths isolated', async () => {
+    await store.createPost('linwu', 'linwu private post');
+
+    await expect(store.listPosts('linwu')).resolves.toHaveLength(1);
+    await expect(store.listPosts('hanako')).resolves.toEqual([]);
+  });
+
+  it('toggles likes and adds comments durably', async () => {
+    const post = requireMomentPost(await store.createPost('linwu', 'interactive post'));
+
+    await expect(store.toggleLike('linwu', post.id, 'hanako')).resolves.toMatchObject({
+      likes: ['hanako'],
+    });
+    await expect(store.toggleLike('linwu', post.id, 'hanako')).resolves.toMatchObject({
+      likes: [],
+    });
+
+    await expect(store.addComment('linwu', post.id, 'hanako', 'hello')).resolves.toMatchObject({
+      comments: [
+        {
+          id: 'comment-1',
+          authorId: 'hanako',
+          content: 'hello',
+          createdAt: '2026-05-11T03:00:00.000Z',
+        },
+      ],
+    });
+    await expect(store.listPosts('linwu')).resolves.toEqual([
+      expect.objectContaining({
+        id: post.id,
+        comments: [expect.objectContaining({ content: 'hello' })],
+      }),
+    ]);
+  });
+
+  it('deletes only the selected post', async () => {
+    const first = requireMomentPost(await store.createPost('linwu', 'keep?'));
+    const second = requireMomentPost(await store.createPost('linwu', 'keep'));
+
+    await expect(store.deletePost('linwu', first.id)).resolves.toBe(true);
+    await expect(store.listPosts('linwu')).resolves.toEqual([
+      expect.objectContaining({ id: second.id, content: 'keep' }),
+    ]);
+  });
+
+  it('ignores empty content and normalizes malformed JSONL rows', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(createXingyeMomentPost('agent-1', '   ', storage)).toBeNull();
+    await expect(store.createPost('linwu', '   ')).resolves.toBeNull();
+    await backend.appendJsonl('linwu', XINGYE_MOMENTS_POSTS_JSONL, { id: 'bad', content: 'missing author' });
+    await backend.appendJsonl('linwu', XINGYE_MOMENTS_POSTS_JSONL, {
+      id: 'good',
+      authorAgentId: 'linwu',
+      content: 'kept post',
+      imageUrls: ['https://example.com/a.png', 123, 'https://example.com/a.png'],
+      likes: ['hanako', '', 'hanako'],
+      comments: [
+        {
+          id: 'comment-1',
+          authorId: 'hanako',
+          content: 'nice',
+          createdAt: '2026-05-11T00:00:00.000Z',
+        },
+        { id: 'bad-comment', authorId: '', content: 'bad' },
+      ],
+      createdAt: '2026-05-11T00:00:00.000Z',
+    });
 
-    storage.setItem(XINGYE_MOMENTS_STORAGE_KEY, JSON.stringify({
-      bad: { id: 'bad', content: 'missing author' },
-      good: {
-        id: 'good',
-        authorAgentId: 'agent-1',
-        content: '保留下来的动态',
-        imageUrls: ['https://example.com/a.png', 123],
-        likes: ['agent-2', '', 'agent-2'],
-        comments: [
-          {
-            id: 'comment-1',
-            authorId: 'agent-3',
-            content: '评论',
-            createdAt: '2026-05-11T00:00:00.000Z',
-          },
-          { id: 'bad-comment', authorId: '', content: 'bad' },
-        ],
-        createdAt: '2026-05-11T00:00:00.000Z',
-      },
-    }));
-
-    expect(listXingyeMomentPosts(storage)).toMatchObject([
+    await expect(store.listPosts('linwu')).resolves.toMatchObject([
       {
         id: 'good',
-        authorAgentId: 'agent-1',
-        content: '保留下来的动态',
+        authorAgentId: 'linwu',
+        content: 'kept post',
         imageUrls: ['https://example.com/a.png'],
-        likes: ['agent-2'],
+        likes: ['hanako'],
         comments: [
           {
             id: 'comment-1',
-            authorId: 'agent-3',
-            content: '评论',
+            authorId: 'hanako',
+            content: 'nice',
           },
         ],
       },
     ]);
+  });
+
+  it('rejects unsafe implicit or malformed agent scope', async () => {
+    await expect(store.listPosts('bad agent')).rejects.toThrow(/agentId/);
+    await expect(store.createPost('', 'missing agent')).rejects.toThrow(/agentId/);
+    await expect(store.toggleLike('linwu/other', 'post-1', 'hanako')).rejects.toThrow(/agentId/);
   });
 });

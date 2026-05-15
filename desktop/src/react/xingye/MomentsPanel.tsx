@@ -19,7 +19,6 @@ interface MomentsPanelProps {
 }
 
 export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: MomentsPanelProps) {
-  const posts = useXingyeMomentPosts();
   const profiles = useXingyeRoleProfiles();
   const agentsById = useMemo(
     () => new Map(agents.map(agent => [agent.id, agent] as const)),
@@ -39,6 +38,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
   const actorDisplay = actorAgent
     ? getXingyeRoleProfileDisplay(actorAgent, profiles[actorAgent.id] ?? null)
     : null;
+  const posts = useXingyeMomentPosts(actorAgent?.id ?? null);
 
   const getAgentDisplay = (agent: Agent | null) => (
     agent ? getXingyeRoleProfileDisplay(agent, profiles[agent.id] ?? null) : null
@@ -52,17 +52,22 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   const handleCreate = (content: string) => {
     if (!actorAgent) return;
-    createXingyeMomentPost(actorAgent.id, content);
+    void createXingyeMomentPost(actorAgent.id, content);
   };
 
   const handleToggleLike = (postId: string) => {
     if (!actorAgent) return;
-    toggleXingyeMomentLike(postId, actorAgent.id);
+    void toggleXingyeMomentLike(actorAgent.id, postId, actorAgent.id);
   };
 
   const handleComment = (postId: string, content: string) => {
     if (!actorAgent) return;
-    addXingyeMomentComment(postId, actorAgent.id, content);
+    void addXingyeMomentComment(actorAgent.id, postId, actorAgent.id, content);
+  };
+
+  const handleDelete = (postId: string) => {
+    if (!actorAgent) return;
+    void deleteXingyeMomentPost(actorAgent.id, postId);
   };
 
   return (
@@ -72,7 +77,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
           <p className={styles.eyebrow}>Xingye Moments</p>
           <h2 className={styles.panelTitle}>朋友圈</h2>
           <p className={styles.panelDescription}>
-            静态本地动态流，只保存到 localStorage，不接入 AI 自动生成。
+            静态本地动态流，只保存到 agent-scoped store，不接入 AI 自动生成。
           </p>
         </div>
       </div>
@@ -92,7 +97,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
                 commentAuthorDisplayName={getCommentAuthorDisplayName}
                 post={post}
                 onComment={handleComment}
-                onDelete={deleteXingyeMomentPost}
+                onDelete={handleDelete}
                 onToggleLike={handleToggleLike}
               />
             );
