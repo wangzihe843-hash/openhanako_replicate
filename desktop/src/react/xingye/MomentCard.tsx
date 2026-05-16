@@ -121,10 +121,21 @@ export function MomentCard({
         <div className={styles.momentActions}>
           <button
             type="button"
-            className={liked ? styles.momentActionActive : ''}
+            className={`${styles.momentActionPill} ${liked ? styles.momentActionActive : ''}`}
             onClick={() => onToggleLike(post.id)}
+            aria-pressed={liked}
+            aria-label={liked ? '取消点赞' : '点赞'}
           >
-            {liked ? '已赞' : '赞'} {post.likes.length ? post.likes.length : ''}
+            <svg viewBox="0 0 24 24" aria-hidden focusable="false" className={styles.momentActionIcon}>
+              <path
+                d="M12 20.5s-7-4.5-9.2-9A4.8 4.8 0 0 1 12 6.4a4.8 4.8 0 0 1 9.2 5.1c-2.2 4.5-9.2 9-9.2 9z"
+                fill={liked ? 'currentColor' : 'none'}
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span>{liked ? '已赞' : '赞'}</span>
           </button>
         </div>
 
@@ -132,11 +143,16 @@ export function MomentCard({
           <div className={styles.momentSocialBlock}>
             {post.likes.length > 0 ? (
               <div className={styles.momentLikes}>
-                <span>♥</span>
+                <svg viewBox="0 0 24 24" aria-hidden focusable="false" className={styles.momentLikesIcon}>
+                  <path
+                    d="M12 20.5s-7-4.5-9.2-9A4.8 4.8 0 0 1 12 6.4a4.8 4.8 0 0 1 9.2 5.1c-2.2 4.5-9.2 9-9.2 9z"
+                    fill="currentColor"
+                  />
+                </svg>
                 <p>
                   {post.likes
                     .map((like) => resolveLikeDisplayName(like, getAgentDisplayName))
-                    .join('、')}
+                    .join('，')}
                 </p>
               </div>
             ) : null}
@@ -150,7 +166,8 @@ export function MomentCard({
                 {post.comments.map((comment) => (
                   <p key={comment.id}>
                     <strong>{resolveCommentDisplayName(comment, getAgentDisplayName)}</strong>
-                    <span>：{comment.body}</span>
+                    <span className={styles.momentCommentColon}>：</span>
+                    <span>{comment.body}</span>
                   </p>
                 ))}
               </div>

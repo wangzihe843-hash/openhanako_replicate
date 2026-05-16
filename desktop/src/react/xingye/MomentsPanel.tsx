@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent } from '../types';
 import { MomentCard } from './MomentCard';
 import { MomentComposer } from './MomentComposer';
+import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import {
   addXingyeMomentComment,
   createXingyeMomentPost,
@@ -31,6 +32,7 @@ function resolveUserActorName(storeUserName: string | null | undefined): string 
 export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: MomentsPanelProps) {
   const profiles = useXingyeRoleProfiles();
   const storeUserName = useStore((state) => state.userName);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent] as const)),
@@ -73,6 +75,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
       content,
       source: { kind: 'manual' },
     });
+    setComposerOpen(false);
   };
 
   const handleToggleLike = (authorAgentId: string, postId: string) => {
@@ -89,17 +92,62 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   return (
     <div className={styles.momentsPanel}>
-      <div className={styles.momentsHeader}>
-        <div>
-          <p className={styles.eyebrow}>Xingye Moments</p>
-          <h2 className={styles.panelTitle}>朋友圈</h2>
-          <p className={styles.panelDescription}>
-            聚合所有角色的本地动态流，按时间倒序展示；点赞和评论以「{userName}」的身份发送，仅本地保存。
-          </p>
-        </div>
+      {(() => {
+        const coverBgUrl = composerDisplay?.chatBackgroundDataUrl;
+        const coverDisplayName =
+          composerDisplay?.displayName || composerAgent?.name || 'TA';
+        const coverStyle = coverBgUrl
+          ? {
+              backgroundImage: `url("${coverBgUrl}")`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }
+          : undefined;
+        return (
+          <div className={styles.momentsCover} style={coverStyle}>
+            <div className={styles.momentsCoverGlow} />
+            <button
+              type="button"
+              className={styles.momentsAddButton}
+              aria-label={composerOpen ? '收起发布' : '发表新动态'}
+              aria-expanded={composerOpen}
+              onClick={() => setComposerOpen((prev) => !prev)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <path
+                  d="M12 5v14M5 12h14"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </svg>
+            </button>
+            <div className={styles.momentsCoverIdentity}>
+              <div className={styles.momentsCoverName}>{coverDisplayName}</div>
+              <div className={styles.momentsCoverAvatar} aria-hidden>
+                {composerAgent ? (
+                  <XingyeAgentAvatar agent={composerAgent} alt={coverDisplayName} />
+                ) : (
+                  coverDisplayName.slice(0, 1)
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className={styles.momentsCaption}>
+        <p className={styles.eyebrow}>Xingye Moments</p>
+        <h2 className={styles.panelTitle}>朋友圈</h2>
+        <p className={styles.panelDescription}>
+          聚合所有角色的本地动态流，按时间倒序展示；点赞和评论以「{userName}」的身份发送，仅本地保存。
+        </p>
       </div>
 
-      <MomentComposer agent={composerAgent} display={composerDisplay} onSubmit={handleCreate} />
+      {composerOpen ? (
+        <MomentComposer agent={composerAgent} display={composerDisplay} onSubmit={handleCreate} />
+      ) : null}
 
       <section className={styles.momentFeed} aria-label="朋友圈动态列表">
         {posts.length > 0 ? (
