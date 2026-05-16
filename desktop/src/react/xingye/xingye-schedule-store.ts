@@ -1,7 +1,19 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+async function appendScheduleEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-schedule-store] event log append failed:', error);
+  }
+}
 
 export const XINGYE_SCHEDULE_ENTRIES_JSONL = 'schedule/entries.jsonl';
 
@@ -155,6 +167,17 @@ export async function appendScheduleEntry(agentId: string, input: XingyeSchedule
   const nowIso = new Date().toISOString();
   const entry = buildEntry(aid, input, nowIso);
   await backend.appendJsonl(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, { ...entry, key: entry.id });
+  await appendScheduleEventBestEffort(aid, {
+    type: 'schedule.entry_appended',
+    source: 'xingye-schedule-store',
+    subjectId: entry.id,
+    payload: {
+      entryId: entry.id,
+      title: entry.title,
+      dateLabel: entry.dateLabel,
+      entrySource: entry.source,
+    },
+  });
   return entry;
 }
 
@@ -162,7 +185,16 @@ export async function deleteScheduleEntry(agentId: string, entryId: string): Pro
   const aid = assertAgentId(agentId, '删除');
   const eid = entryId.trim();
   if (!eid) throw new Error('删除失败：缺少日程 id。');
-  return backend.deleteJsonlRecord(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, eid);
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, eid);
+  if (deleted) {
+    await appendScheduleEventBestEffort(aid, {
+      type: 'schedule.entry_deleted',
+      source: 'xingye-schedule-store',
+      subjectId: eid,
+      payload: { entryId: eid },
+    });
+  }
+  return deleted;
 }
 
 export async function updateScheduleEntryStatus(

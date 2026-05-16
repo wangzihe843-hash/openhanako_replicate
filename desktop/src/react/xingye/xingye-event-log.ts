@@ -16,6 +16,21 @@ export const XINGYE_EVENT_TYPES = [
   'relationship_state.applied',
   'moment.created',
   'moment.deleted',
+  'mm_chat.turns_appended',
+  'journal.entry_appended',
+  'journal.entry_deleted',
+  'schedule.entry_appended',
+  'schedule.entry_deleted',
+  'mail.messages_appended',
+  'mail.message_deleted',
+  'file.entry_appended',
+  'file.entry_deleted',
+  'divination.entry_appended',
+  'divination.entry_deleted',
+  'shopping.entry_appended',
+  'shopping.entry_deleted',
+  'reading_notes.entry_appended',
+  'reading_notes.entry_deleted',
 ] as const;
 
 export type XingyeEventType = typeof XINGYE_EVENT_TYPES[number];

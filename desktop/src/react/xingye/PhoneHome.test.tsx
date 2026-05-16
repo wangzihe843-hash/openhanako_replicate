@@ -10,9 +10,16 @@ import type { Agent } from '../types';
 import { PhoneHome } from './PhoneHome';
 
 const fetchMock = vi.hoisted(() => vi.fn());
+const consumeEventLogMock = vi.hoisted(() =>
+  vi.fn(async () => ({ summary: '', consumedCount: 0 })),
+);
 
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaFetch: fetchMock,
+}));
+
+vi.mock('./xingye-heartbeat-event-consumer', () => ({
+  consumeXingyeEventLogForHeartbeat: consumeEventLogMock,
 }));
 
 vi.mock('./XingyeAgentAvatar', () => ({
@@ -60,6 +67,8 @@ function renderPhoneHome() {
 describe('PhoneHome heartbeat trigger', () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    consumeEventLogMock.mockReset();
+    consumeEventLogMock.mockResolvedValue({ summary: '', consumedCount: 0 });
   });
 
   afterEach(() => {
@@ -100,6 +109,41 @@ describe('PhoneHome heartbeat trigger', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检失败：Heartbeat not initialized');
     });
+  });
+
+  it('shows the event-log summary in the heartbeat status line on a real trigger', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, triggered: true, cooldown: false }),
+    } as Response);
+    consumeEventLogMock.mockResolvedValueOnce({
+      summary: '自上次巡检以来：通讯录变更×1、短信×2（共 3 条）',
+      consumedCount: 3,
+    });
+
+    renderPhoneHome();
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('巡检已触发');
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：通讯录变更×1、短信×2（共 3 条）');
+    expect(consumeEventLogMock).toHaveBeenCalledWith('agent-a');
+  });
+
+  it('does not consume the event log when the heartbeat is on cooldown', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, triggered: false, cooldown: true }),
+    } as Response);
+
+    renderPhoneHome();
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('冷却中');
+    });
+    expect(consumeEventLogMock).not.toHaveBeenCalled();
   });
 
   it('opens the schedule app from the phone home grid', () => {

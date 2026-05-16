@@ -1,7 +1,19 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+async function appendMailEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-mail-store] event log append failed:', error);
+  }
+}
 
 /** 相对路径位于 HANA_HOME/agents/{agentId}/xingye/ 下 */
 export const XINGYE_MAIL_PROFILE_JSON = 'apps/mail/profile.json';
@@ -396,6 +408,17 @@ export async function appendMailMessage(
   const nowIso = new Date().toISOString();
   const message = buildMessage(aid, draft, nowIso);
   await backend.appendJsonl(aid, XINGYE_MAIL_MESSAGES_JSONL, message);
+  await appendMailEventBestEffort(aid, {
+    type: 'mail.messages_appended',
+    source: 'xingye-mail-store',
+    subjectId: message.id,
+    payload: {
+      count: 1,
+      mailbox: message.mailbox,
+      firstMessageId: message.id,
+      fromKind: message.from.kind,
+    },
+  });
   return message;
 }
 
@@ -414,6 +437,17 @@ export async function appendMailMessages(
     await backend.appendJsonl(aid, XINGYE_MAIL_MESSAGES_JSONL, message);
     out.push(message);
   }
+  await appendMailEventBestEffort(aid, {
+    type: 'mail.messages_appended',
+    source: 'xingye-mail-store',
+    subjectId: out[0].id,
+    payload: {
+      count: out.length,
+      mailbox: out[0].mailbox,
+      firstMessageId: out[0].id,
+      fromKind: out[0].from.kind,
+    },
+  });
   return out;
 }
 
@@ -473,5 +507,14 @@ export async function deleteMailMessage(agentId: string, messageId: string): Pro
   const aid = assertAgentId(agentId, '删除邮件');
   const mid = messageId.trim();
   if (!mid) throw new Error('删除失败：缺少邮件 id。');
-  return backend.deleteJsonlRecord(aid, XINGYE_MAIL_MESSAGES_JSONL, mid);
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_MAIL_MESSAGES_JSONL, mid);
+  if (deleted) {
+    await appendMailEventBestEffort(aid, {
+      type: 'mail.message_deleted',
+      source: 'xingye-mail-store',
+      subjectId: mid,
+      payload: { messageId: mid },
+    });
+  }
+  return deleted;
 }

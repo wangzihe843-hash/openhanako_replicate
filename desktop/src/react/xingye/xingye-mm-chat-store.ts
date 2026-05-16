@@ -1,7 +1,19 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+async function appendMmChatEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-mm-chat-store] event log append failed:', error);
+  }
+}
 
 /** 相对路径位于 HANA_HOME/agents/{agentId}/xingye/ 下 */
 export const XINGYE_MM_CHAT_SESSIONS_JSON = 'mm-chat/sessions.json';
@@ -299,6 +311,16 @@ export async function appendMmChatTurnsToSession(
     version: 1,
     activeSessionId: row.activeSessionId,
     sessions,
+  });
+  await appendMmChatEventBestEffort(aid, {
+    type: 'mm_chat.turns_appended',
+    source: 'xingye-mm-chat-store',
+    subjectId: sid,
+    payload: {
+      sessionId: sid,
+      count: normalized.length,
+      lastRole: normalized[normalized.length - 1]?.role,
+    },
   });
   return updated;
 }

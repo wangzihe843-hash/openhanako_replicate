@@ -1,7 +1,19 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+async function appendJournalEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-journal-store] event log append failed:', error);
+  }
+}
 
 /** 相对路径位于 HANA_HOME/agents/{agentId}/xingye/ 下 */
 export const XINGYE_JOURNAL_ENTRIES_JSONL = 'journal/entries.jsonl';
@@ -91,6 +103,12 @@ export async function appendJournalEntry(
   const mood = typeof input.mood === 'string' && input.mood.trim() ? input.mood.trim().slice(0, 24) : undefined;
   const row: XingyeJournalEntry & { key: string } = { id, key: id, dayKey, title, body, createdAt, mood };
   await backend.appendJsonl(aid, XINGYE_JOURNAL_ENTRIES_JSONL, row);
+  await appendJournalEventBestEffort(aid, {
+    type: 'journal.entry_appended',
+    source: 'xingye-journal-store',
+    subjectId: id,
+    payload: { entryId: id, dayKey, title, hasMood: Boolean(mood) },
+  });
   return { id, dayKey, title, body, createdAt, mood };
 }
 
@@ -106,5 +124,14 @@ export async function deleteJournalEntry(agentId: string, entryId: string): Prom
   if (!eid) {
     throw new Error('删除失败：缺少日记 id。');
   }
-  return backend.deleteJsonlRecord(aid, XINGYE_JOURNAL_ENTRIES_JSONL, eid);
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_JOURNAL_ENTRIES_JSONL, eid);
+  if (deleted) {
+    await appendJournalEventBestEffort(aid, {
+      type: 'journal.entry_deleted',
+      source: 'xingye-journal-store',
+      subjectId: eid,
+      payload: { entryId: eid },
+    });
+  }
+  return deleted;
 }

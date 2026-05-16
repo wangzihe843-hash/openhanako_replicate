@@ -4,6 +4,7 @@ import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import { consumeXingyeEventLogForHeartbeat } from './xingye-heartbeat-event-consumer';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -244,9 +245,19 @@ export function PhoneHome({
         throw new Error(typeof data?.error === 'string' ? data.error : res.statusText || 'heartbeat failed');
       }
       const statusLine = data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发';
-      setHeartbeatStatus(statusLine);
       const detail = typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : '';
-      rememberDeskHeartbeatUiOutcome(agent.id, detail ? `${statusLine} · ${detail}` : statusLine);
+      let eventsSummary = '';
+      if (data?.cooldown !== true) {
+        try {
+          const consumed = await consumeXingyeEventLogForHeartbeat(agent.id);
+          eventsSummary = consumed.summary;
+        } catch (err) {
+          console.warn('[PhoneHome] failed to consume event log for heartbeat:', err);
+        }
+      }
+      const composed = [statusLine, detail, eventsSummary].filter(Boolean).join(' · ');
+      setHeartbeatStatus(composed);
+      rememberDeskHeartbeatUiOutcome(agent.id, composed);
     } catch (error) {
       const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
       setHeartbeatStatus(fail);

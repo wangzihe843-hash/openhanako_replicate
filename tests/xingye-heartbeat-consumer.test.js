@@ -183,4 +183,66 @@ describe("Xingye heartbeat event consumer", () => {
       /^\d{4}-\d{2}-\d{2}T/,
     );
   });
+
+  /**
+   * 回归：renderer 端在 desktop/src/react/xingye/xingye-event-log.ts 已新增 15 种事件类型
+   * （journal/schedule/mail/file/mm_chat/divination/shopping/reading_notes/moments 各 1-2 种），
+   * 同时 renderer 端的 heartbeat consumer 用 consumerName='heartbeat'，与服务端 'xingye.heartbeat'
+   * 互不覆盖。这条用例固定下面两个跨端契约：
+   *   1. 服务端 SUGGESTION_BY_TYPE 没覆盖的新类型会落回兜底建议、不被丢弃；
+   *   2. 服务端写回 consumedBy 时保留 renderer 端已写的 'heartbeat' 键。
+   */
+  it("server-side consumer tolerates new renderer event types and preserves the renderer's consumedBy key", async () => {
+    const newTypeEvent = {
+      id: "evt-new-1",
+      agentId: "agent-a",
+      type: "journal.entry_appended", // renderer 端 2026-05 新增类型，未在 SUGGESTION_BY_TYPE 中
+      source: "xingye-journal-store",
+      subjectId: "j-1",
+      createdAt: "2026-05-16T00:00:00.000Z",
+      payload: { entryId: "j-1", dayKey: "2026-05-16", title: "今天" },
+      // 模拟 renderer 端 heartbeat consumer 已先消费过：
+      consumedBy: { heartbeat: "2026-05-16T00:00:01.000Z" },
+    };
+    const moodEvent = {
+      id: "evt-new-2",
+      agentId: "agent-a",
+      type: "mm_chat.turns_appended",
+      source: "xingye-mm-chat-store",
+      subjectId: "sess-1",
+      createdAt: "2026-05-16T00:00:02.000Z",
+      payload: { sessionId: "sess-1", count: 3, lastRole: "ai" },
+    };
+    const logPath = writeEventLog(fixture.agentsDir, "agent-a", [newTypeEvent, moodEvent]);
+
+    const heartbeat = fixture.scheduler.getHeartbeat("agent-a");
+    expect(heartbeat.triggerNow()).toBe(true);
+
+    const resultPath = path.join(fixture.agentsDir, "agent-a", "xingye", "heartbeat", "result.json");
+    await waitFor(() => fs.existsSync(resultPath));
+
+    const result = readJson(resultPath);
+    // 服务端 consumer 用 'xingye.heartbeat'，仍把这两条视为未消费（独立追踪）。
+    expect(result.eventCount).toBe(2);
+    expect(result.consumedEventIds).toEqual(["evt-new-1", "evt-new-2"]);
+    expect(result.eventTypes).toEqual(
+      expect.arrayContaining(["journal.entry_appended", "mm_chat.turns_appended"]),
+    );
+    // 兜底建议出现一次（去重后），新类型没引发崩溃。
+    expect(result.suggestedActions).toEqual(
+      expect.arrayContaining([
+        "Review the Xingye event and decide whether a future suggestion is needed.",
+      ]),
+    );
+
+    await waitFor(() => readJson(logPath).events.every((event) => event.consumedBy?.["xingye.heartbeat"]));
+    const persisted = readJson(logPath).events;
+    const j = persisted.find((event) => event.id === "evt-new-1");
+    // 服务端写回时既加上自己的 key，也保留 renderer 已写的 'heartbeat' 键。
+    expect(j.consumedBy["xingye.heartbeat"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(j.consumedBy.heartbeat).toBe("2026-05-16T00:00:01.000Z");
+    const m = persisted.find((event) => event.id === "evt-new-2");
+    expect(m.consumedBy["xingye.heartbeat"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(m.consumedBy.heartbeat).toBeUndefined();
+  });
 });

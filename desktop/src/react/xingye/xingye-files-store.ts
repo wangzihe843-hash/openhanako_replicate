@@ -1,7 +1,19 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+async function appendFileEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-files-store] event log append failed:', error);
+  }
+}
 
 /** 相对路径位于 HANA_HOME/agents/{agentId}/xingye/ 下 */
 export const XINGYE_FILES_FOLDERS_JSON = 'files/folders.json';
@@ -274,6 +286,17 @@ export async function appendFileEntry(
   const nowIso = new Date().toISOString();
   const entry = buildEntry(aid, input, nowIso);
   await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, entry);
+  await appendFileEventBestEffort(aid, {
+    type: 'file.entry_appended',
+    source: 'xingye-files-store',
+    subjectId: entry.id,
+    payload: {
+      entryId: entry.id,
+      folderId: entry.folderId,
+      title: entry.title,
+      entrySource: entry.source,
+    },
+  });
   return entry;
 }
 
@@ -281,7 +304,16 @@ export async function deleteFileEntry(agentId: string, entryId: string): Promise
   const aid = assertAgentId(agentId, '删除');
   const eid = entryId.trim();
   if (!eid) throw new Error('删除失败：缺少文件 id。');
-  return backend.deleteJsonlRecord(aid, XINGYE_FILES_ENTRIES_JSONL, eid);
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_FILES_ENTRIES_JSONL, eid);
+  if (deleted) {
+    await appendFileEventBestEffort(aid, {
+      type: 'file.entry_deleted',
+      source: 'xingye-files-store',
+      subjectId: eid,
+      payload: { entryId: eid },
+    });
+  }
+  return deleted;
 }
 
 export async function updateFileEntry(

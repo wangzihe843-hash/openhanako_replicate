@@ -1,4 +1,5 @@
 import type { XingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput, type XingyeEventType } from './xingye-event-log';
 import {
   createXingyeStore,
   generateXingyeId,
@@ -6,6 +7,17 @@ import {
   requireSafeXingyeAgentId,
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
+
+async function appendAppEntryEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-app-entry-store] event log append failed:', error);
+  }
+}
 
 export const XINGYE_APP_ENTRY_APP_IDS = [
   'diary',
@@ -77,6 +89,28 @@ export type DivinationEntryAppendInput = {
 };
 
 const SIMPLE_APP_ENTRY_IDS = new Set<string>(XINGYE_APP_ENTRY_APP_IDS);
+
+/**
+ * 仅把 divination / shopping / reading_notes 三个对外可见的 app 暴露给 event log。
+ * diary 没有对应 Phone*App 调用方，暂时不打事件。
+ */
+const APP_ENTRY_EVENT_TYPES: Partial<Record<XingyeAppEntryAppId, {
+  appended: XingyeEventType;
+  deleted: XingyeEventType;
+}>> = {
+  divination: {
+    appended: 'divination.entry_appended',
+    deleted: 'divination.entry_deleted',
+  },
+  shopping: {
+    appended: 'shopping.entry_appended',
+    deleted: 'shopping.entry_deleted',
+  },
+  reading_notes: {
+    appended: 'reading_notes.entry_appended',
+    deleted: 'reading_notes.entry_deleted',
+  },
+};
 
 function requireSimpleAppId(appId: string): XingyeAppEntryAppId {
   const id = String(appId ?? '').trim();
@@ -158,6 +192,20 @@ export function createXingyeAppEntryStore(
         updatedAt: timestamp,
       };
       await store.appendJsonl<AppEntry>(aid, xingyeAppEntriesPath(simpleAppId), entry);
+      const eventTypes = APP_ENTRY_EVENT_TYPES[simpleAppId];
+      if (eventTypes) {
+        await appendAppEntryEventBestEffort(aid, {
+          type: eventTypes.appended,
+          source: 'xingye-app-entry-store',
+          subjectId: entry.id,
+          payload: {
+            appId: simpleAppId,
+            entryId: entry.id,
+            title: entry.title,
+            entrySource: entry.source,
+          },
+        });
+      }
       return entry;
     },
 
@@ -185,10 +233,26 @@ export function createXingyeAppEntryStore(
       );
     },
 
-    deleteEntry(agentId: string, appId: XingyeAppEntryAppId | string, entryId: string): Promise<boolean> {
+    async deleteEntry(
+      agentId: string,
+      appId: XingyeAppEntryAppId | string,
+      entryId: string,
+    ): Promise<boolean> {
       const aid = requireSafeXingyeAgentId(agentId);
       const simpleAppId = requireSimpleAppId(appId);
-      return store.deleteJsonlRecord(aid, xingyeAppEntriesPath(simpleAppId), entryId);
+      const deleted = await store.deleteJsonlRecord(aid, xingyeAppEntriesPath(simpleAppId), entryId);
+      if (deleted) {
+        const eventTypes = APP_ENTRY_EVENT_TYPES[simpleAppId];
+        if (eventTypes) {
+          await appendAppEntryEventBestEffort(aid, {
+            type: eventTypes.deleted,
+            source: 'xingye-app-entry-store',
+            subjectId: entryId,
+            payload: { appId: simpleAppId, entryId },
+          });
+        }
+      }
+      return deleted;
     },
   };
 }

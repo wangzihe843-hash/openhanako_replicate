@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { XingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import {
   createXingyeStore,
   generateXingyeId,
@@ -7,6 +8,17 @@ import {
   requireSafeXingyeAgentId,
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
+
+async function appendMomentEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-moments-store] event log append failed:', error);
+  }
+}
 
 export type XingyeMomentActorType = 'user' | 'agent' | 'virtual_contact';
 
@@ -340,6 +352,20 @@ export function createXingyeMomentStore(
       }
       await store.appendJsonl<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, post);
       notifyXingyeMomentsChanged(aid);
+      await appendMomentEventBestEffort(aid, {
+        type: 'moment.created',
+        source: 'xingye-moments-store',
+        subjectId: post.id,
+        payload: {
+          postId: post.id,
+          authorAgentId: post.authorAgentId,
+          hasImages: post.imageUrls.length > 0,
+          imageCount: post.imageUrls.length,
+          sourceKind: post.source?.kind,
+          seedLikeCount: post.likes.length,
+          seedCommentCount: post.comments.length,
+        },
+      });
       return post;
     },
 
@@ -430,7 +456,15 @@ export function createXingyeMomentStore(
       if (!pid) return false;
 
       const deleted = await store.deleteJsonlRecord(aid, XINGYE_MOMENTS_POSTS_JSONL, pid);
-      if (deleted) notifyXingyeMomentsChanged(aid);
+      if (deleted) {
+        notifyXingyeMomentsChanged(aid);
+        await appendMomentEventBestEffort(aid, {
+          type: 'moment.deleted',
+          source: 'xingye-moments-store',
+          subjectId: pid,
+          payload: { postId: pid },
+        });
+      }
       return deleted;
     },
   };
