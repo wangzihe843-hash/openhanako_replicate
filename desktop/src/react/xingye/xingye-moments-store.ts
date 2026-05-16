@@ -8,7 +8,7 @@ import {
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
 
-export type XingyeMomentActorType = 'user' | 'agent';
+export type XingyeMomentActorType = 'user' | 'agent' | 'virtual_contact';
 
 export type XingyeMomentActor = {
   actorType: XingyeMomentActorType;
@@ -86,7 +86,9 @@ function uniqueStrings(values: unknown): string[] {
 }
 
 function normalizeActorType(value: unknown): XingyeMomentActorType {
-  return value === 'user' ? 'user' : 'agent';
+  if (value === 'user') return 'user';
+  if (value === 'virtual_contact') return 'virtual_contact';
+  return 'agent';
 }
 
 function normalizeLike(value: unknown, idFactory: (prefix: string) => string): XingyeMomentLike | null {
@@ -214,12 +216,33 @@ export function resolveMomentsPostsScopedPath(agentId: string) {
   return resolveAgentScopedXingyePath(agentId, XINGYE_MOMENTS_POSTS_JSONL);
 }
 
+export type XingyeMomentSeedLike = {
+  actorType: XingyeMomentActorType;
+  actorId: string;
+  actorName: string;
+  createdAt?: string;
+};
+
+export type XingyeMomentSeedComment = {
+  actorType: XingyeMomentActorType;
+  actorId: string;
+  actorName: string;
+  body: string;
+  createdAt?: string;
+};
+
 export type CreateXingyeMomentPostInput = {
   authorAgentId: string;
   authorName: string;
   content: string;
   imageUrls?: unknown;
   source?: XingyeMomentPostSource;
+  /**
+   * 朋友圈生成时一并写入的初始点赞 / 评论种子（virtual_contact / 其他 agent）。
+   * 不影响后续 user / agent 的 toggleLike / addComment 行为。
+   */
+  seedLikes?: ReadonlyArray<XingyeMomentSeedLike>;
+  seedComments?: ReadonlyArray<XingyeMomentSeedComment>;
 };
 
 export function createXingyeMomentStore(
@@ -267,6 +290,39 @@ export function createXingyeMomentStore(
       if (!normalizedContent) return null;
 
       const now = getNow();
+      const seedLikes = dedupeLikes(
+        (input.seedLikes ?? [])
+          .map((seed) => {
+            const normalizedActor = normalizeActor(seed);
+            if (!normalizedActor) return null;
+            const like: XingyeMomentLike = {
+              id: idFactory('like'),
+              actorType: normalizedActor.actorType,
+              actorId: normalizedActor.actorId,
+              actorName: normalizedActor.actorName,
+              createdAt: normalizeOptionalString(seed.createdAt) ?? now,
+            };
+            return like;
+          })
+          .filter((like): like is XingyeMomentLike => Boolean(like)),
+      );
+      const seedComments: XingyeMomentComment[] = (input.seedComments ?? [])
+        .map((seed) => {
+          const normalizedActor = normalizeActor(seed);
+          const body = normalizeOptionalString(seed.body);
+          if (!normalizedActor || !body) return null;
+          const comment: XingyeMomentComment = {
+            id: idFactory('comment'),
+            actorType: normalizedActor.actorType,
+            actorId: normalizedActor.actorId,
+            actorName: normalizedActor.actorName,
+            body,
+            createdAt: normalizeOptionalString(seed.createdAt) ?? now,
+          };
+          return comment;
+        })
+        .filter((comment): comment is XingyeMomentComment => Boolean(comment));
+
       const post: XingyeMomentPost = {
         id: idFactory('moment'),
         authorAgentId: aid,
@@ -275,8 +331,8 @@ export function createXingyeMomentStore(
         imageUrls: uniqueStrings(input.imageUrls),
         createdAt: now,
         updatedAt: now,
-        likes: [],
-        comments: [],
+        likes: seedLikes,
+        comments: seedComments,
       };
       if (input.source) {
         const source = normalizeSource(input.source);

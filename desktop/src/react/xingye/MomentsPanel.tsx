@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent } from '../types';
 import { MomentCard } from './MomentCard';
@@ -12,6 +12,8 @@ import {
   type XingyeMomentActor,
 } from './xingye-moments-store';
 import { useAggregatedXingyeMoments } from './xingye-moments-feed';
+import { generateXingyeMomentDraftWithAI } from './xingye-moments-ai';
+import type { MomentComposerSubmitInput } from './MomentComposer';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfiles } from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
 
@@ -58,7 +60,9 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     [userName],
   );
 
-  const posts = useAggregatedXingyeMoments(agentIds);
+  // viewer === 当前 xingye 视角的 agent（用于隐藏其他 agent 的 virtual_contact 互动）。
+  const viewerAgentId = composerAgent?.id ?? null;
+  const { posts, loading, error, retry } = useAggregatedXingyeMoments(agentIds, viewerAgentId);
 
   const getAgentDisplayName = (agentId: string): string => {
     const agent = agentsById.get(agentId);
@@ -66,29 +70,67 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     return getXingyeRoleProfileDisplay(agent, profiles[agent.id] ?? null).displayName;
   };
 
-  const handleCreate = (content: string) => {
-    if (!composerAgent) return;
-    const authorName = composerDisplay?.displayName ?? composerAgent.name;
-    void createXingyeMomentPost({
-      authorAgentId: composerAgent.id,
-      authorName,
-      content,
-      source: { kind: 'manual' },
+  const handleCreate = useCallback(
+    async ({ content, seedLikes, seedComments }: MomentComposerSubmitInput) => {
+      if (!composerAgent) throw new Error('请先选择一个星野角色');
+      const authorName = composerDisplay?.displayName ?? composerAgent.name;
+      const created = await createXingyeMomentPost({
+        authorAgentId: composerAgent.id,
+        authorName,
+        content,
+        source: { kind: 'manual' },
+        seedLikes,
+        seedComments,
+      });
+      if (!created) throw new Error('发表失败：内容无效');
+      setComposerOpen(false);
+    },
+    [composerAgent, composerDisplay?.displayName],
+  );
+
+  const handleToggleLike = useCallback(
+    async (authorAgentId: string, postId: string) => {
+      await toggleXingyeMomentLike(authorAgentId, postId, userActor);
+    },
+    [userActor],
+  );
+
+  const handleComment = useCallback(
+    async (authorAgentId: string, postId: string, body: string) => {
+      const updated = await addXingyeMomentComment(authorAgentId, postId, userActor, body);
+      if (!updated) throw new Error('评论失败：内容无效');
+    },
+    [userActor],
+  );
+
+  const handleDelete = useCallback(async (authorAgentId: string, postId: string) => {
+    await deleteXingyeMomentPost(authorAgentId, postId);
+  }, []);
+
+  const composerProfile = composerAgent ? profiles[composerAgent.id] ?? null : null;
+  // roster 里除当前发帖 agent 外的其他角色，作为「其他 agent」可选互动者池。
+  const peerAgentHints = useMemo(() => {
+    if (!composerAgent) return [];
+    return agents
+      .filter((a) => a.id !== composerAgent.id)
+      .map((a) => {
+        const display = getXingyeRoleProfileDisplay(a, profiles[a.id] ?? null);
+        return {
+          id: a.id,
+          displayName: display.displayName || a.name || a.id,
+          relationshipLabel: display.relationshipLabel,
+        };
+      });
+  }, [agents, composerAgent, profiles]);
+
+  const handleGenerateAiDraft = useCallback(async () => {
+    if (!composerAgent) throw new Error('请先选择一个星野角色');
+    return generateXingyeMomentDraftWithAI({
+      agent: composerAgent,
+      ownerProfile: composerProfile,
+      peerAgents: peerAgentHints,
     });
-    setComposerOpen(false);
-  };
-
-  const handleToggleLike = (authorAgentId: string, postId: string) => {
-    void toggleXingyeMomentLike(authorAgentId, postId, userActor);
-  };
-
-  const handleComment = (authorAgentId: string, postId: string, body: string) => {
-    void addXingyeMomentComment(authorAgentId, postId, userActor, body);
-  };
-
-  const handleDelete = (authorAgentId: string, postId: string) => {
-    void deleteXingyeMomentPost(authorAgentId, postId);
-  };
+  }, [composerAgent, composerProfile, peerAgentHints]);
 
   return (
     <div className={styles.momentsPanel}>
@@ -146,11 +188,27 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
       </div>
 
       {composerOpen ? (
-        <MomentComposer agent={composerAgent} display={composerDisplay} onSubmit={handleCreate} />
+        <MomentComposer
+          agent={composerAgent}
+          display={composerDisplay}
+          onSubmit={handleCreate}
+          onGenerateAiDraft={composerAgent ? handleGenerateAiDraft : undefined}
+        />
       ) : null}
 
       <section className={styles.momentFeed} aria-label="朋友圈动态列表">
-        {posts.length > 0 ? (
+        {error ? (
+          <div className={styles.momentEmptyState} role="alert">
+            <p>朋友圈加载失败：{error}</p>
+            <button type="button" onClick={retry}>
+              重试
+            </button>
+          </div>
+        ) : loading && posts.length === 0 ? (
+          <div className={styles.momentEmptyState} aria-busy="true">
+            正在加载朋友圈…
+          </div>
+        ) : posts.length > 0 ? (
           posts.map((post) => {
             const authorAgent = agentsById.get(post.authorAgentId) ?? null;
             const fallbackName = post.authorName || authorAgent?.name || post.authorAgentId;

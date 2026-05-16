@@ -7,7 +7,9 @@ import {
   type BookSearchResult,
 } from './xingye-reading-book-catalog';
 
-const book = (patch: Partial<BookSearchResult> = {}): BookSearchResult => ({
+const book = (
+  patch: Partial<BookSearchResult> & Record<string, unknown> = {},
+): BookSearchResult => ({
   key: '/works/OL1W',
   title: 'The Left Hand of Darkness',
   authors: ['Ursula K. Le Guin'],
@@ -139,7 +141,7 @@ describe('xingye-reading-book-catalog', () => {
     await store.importBooksForAgent('test01', [book({
       firstSentence: 'Do not use as a real quote.',
       excerpt: 'Do not use either.',
-    } as BookSearchResult)], {
+    })], {
       reason: 'metadata only',
       interests: ['questions'],
     });

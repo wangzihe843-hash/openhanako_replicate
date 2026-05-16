@@ -41,6 +41,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "journal_draft",
   "mm_chat",
   "divination_reading",
+  "moments",
 ]);
 
 const FORBIDDEN_TERMS = [

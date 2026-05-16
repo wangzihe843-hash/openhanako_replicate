@@ -252,7 +252,7 @@ export function createXingyeBookCatalogStore(
       return rows
         .map(normalizeCatalogEntry)
         .filter((entry): entry is XingyeBookCatalogEntry => (
-          Boolean(entry) && entry.agentTags.some((tag) => tag.agentId === aid)
+          entry !== null && entry.agentTags.some((tag) => tag.agentId === aid)
         ));
     },
 

@@ -73,4 +73,87 @@ describe('listAggregatedXingyeMoments', () => {
     const calledWith = listForAgent.mock.calls.map((args) => args[0]);
     expect(calledWith).toEqual(['linwu', 'hanako']);
   });
+
+  it('hides virtual_contact likes/comments from viewers that are not the post author', async () => {
+    await store.createPost({
+      authorAgentId: 'linwu',
+      authorName: '林雾',
+      content: 'linwu private contacts',
+      seedLikes: [
+        { actorType: 'virtual_contact', actorId: 'linwu:vc-1', actorName: '北门旧巷' },
+        { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako' },
+      ],
+      seedComments: [
+        {
+          actorType: 'virtual_contact',
+          actorId: 'linwu:vc-1',
+          actorName: '北门旧巷',
+          body: '保重',
+        },
+        { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako', body: '听见了' },
+      ],
+    });
+
+    // viewer = author（林雾本人）→ 看得到 virtual_contact 互动
+    const asAuthor = await listAggregatedXingyeMoments(['linwu', 'hanako'], {
+      listForAgent: store.listPosts,
+      viewerAgentId: 'linwu',
+    });
+    expect(asAuthor[0].likes.map((l) => l.actorType).sort()).toEqual(['agent', 'virtual_contact']);
+    expect(asAuthor[0].comments.map((c) => c.actorType).sort()).toEqual([
+      'agent',
+      'virtual_contact',
+    ]);
+
+    // viewer = 其他 agent（Hanako）→ 看不到 virtual_contact 互动，但仍看到 agent 互动
+    const asOther = await listAggregatedXingyeMoments(['linwu', 'hanako'], {
+      listForAgent: store.listPosts,
+      viewerAgentId: 'hanako',
+    });
+    expect(asOther[0].likes.map((l) => l.actorType)).toEqual(['agent']);
+    expect(asOther[0].comments.map((c) => c.actorType)).toEqual(['agent']);
+    expect(asOther[0].likes[0]).toMatchObject({ actorId: 'hanako' });
+
+    // viewer 未指定 → 等同于无视角，virtual_contact 一律不可见
+    const asNoViewer = await listAggregatedXingyeMoments(['linwu', 'hanako'], {
+      listForAgent: store.listPosts,
+    });
+    expect(asNoViewer[0].likes.every((l) => l.actorType !== 'virtual_contact')).toBe(true);
+    expect(asNoViewer[0].comments.every((c) => c.actorType !== 'virtual_contact')).toBe(true);
+  });
+
+  it('keeps user likes/comments visible regardless of viewer', async () => {
+    const post = await store.createPost({
+      authorAgentId: 'linwu',
+      authorName: '林雾',
+      content: 'with user interaction',
+      seedLikes: [
+        { actorType: 'virtual_contact', actorId: 'linwu:vc-1', actorName: '北门旧巷' },
+      ],
+    });
+    if (!post) throw new Error('expected post');
+    await store.toggleLike('linwu', post.id, {
+      actorType: 'user',
+      actorId: 'user',
+      actorName: '莉莉丝',
+    });
+    await store.addComment(
+      'linwu',
+      post.id,
+      { actorType: 'user', actorId: 'user', actorName: '莉莉丝' },
+      'oi',
+    );
+
+    for (const viewerAgentId of ['linwu', 'hanako', null] as const) {
+      const feed = await listAggregatedXingyeMoments(['linwu'], {
+        listForAgent: store.listPosts,
+        viewerAgentId,
+      });
+      // user actor 始终保留
+      expect(feed[0].likes.some((l) => l.actorType === 'user' && l.actorId === 'user')).toBe(true);
+      expect(feed[0].comments.some((c) => c.actorType === 'user' && c.actorId === 'user')).toBe(
+        true,
+      );
+    }
+  });
 });

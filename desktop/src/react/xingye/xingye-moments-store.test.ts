@@ -163,6 +163,95 @@ describe('xingye-moments-store', () => {
     expect(bothLiked.authorAgentId).toBe('linwu');
   });
 
+  it('writes seedLikes / seedComments (virtual_contact + agent) when creating a post', async () => {
+    const created = requireMomentPost(
+      await store.createPost({
+        authorAgentId: 'linwu',
+        authorName: '林雾',
+        content: 'with seed social',
+        seedLikes: [
+          { actorType: 'virtual_contact', actorId: 'linwu:vc-1', actorName: '北门旧巷' },
+          { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako' },
+          // duplicate of the first: must be deduped
+          { actorType: 'virtual_contact', actorId: 'linwu:vc-1', actorName: '北门旧巷' },
+        ],
+        seedComments: [
+          {
+            actorType: 'virtual_contact',
+            actorId: 'linwu:vc-2',
+            actorName: '岑姨',
+            body: '保重身体',
+          },
+          { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako', body: '注意休息' },
+          // missing body must be dropped
+          { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako', body: '   ' },
+        ],
+      }),
+    );
+
+    expect(created.likes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'virtual_contact:linwu:vc-1',
+      'agent:hanako',
+    ]);
+    expect(created.comments.map((c) => `${c.actorType}:${c.actorId}:${c.body}`)).toEqual([
+      'virtual_contact:linwu:vc-2:保重身体',
+      'agent:hanako:注意休息',
+    ]);
+    // 默认 createdAt 用 store now()
+    expect(created.likes[0].createdAt).toBe('2026-05-11T02:00:00.000Z');
+    expect(created.comments[0].createdAt).toBe('2026-05-11T02:00:00.000Z');
+
+    // 后续 user toggle 必须只动 user 自己的 like，不影响 seed 的 virtual_contact / agent likes
+    const afterUserLike = requireMomentPost(
+      await store.toggleLike('linwu', created.id, userActor),
+    );
+    expect(afterUserLike.likes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'virtual_contact:linwu:vc-1',
+      'agent:hanako',
+      'user:user',
+    ]);
+    const afterUserUnlike = requireMomentPost(
+      await store.toggleLike('linwu', created.id, userActor),
+    );
+    expect(afterUserUnlike.likes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'virtual_contact:linwu:vc-1',
+      'agent:hanako',
+    ]);
+  });
+
+  it('round-trips virtual_contact actorType through JSONL normalize on read', async () => {
+    await backend.appendJsonl('linwu', XINGYE_MOMENTS_POSTS_JSONL, {
+      id: 'persisted',
+      authorAgentId: 'linwu',
+      authorName: '林雾',
+      content: 'persisted post',
+      imageUrls: [],
+      likes: [
+        {
+          id: 'like-vc',
+          actorType: 'virtual_contact',
+          actorId: 'linwu:vc-9',
+          actorName: '蓝线风铃',
+          createdAt: '2026-05-11T00:00:00.000Z',
+        },
+      ],
+      comments: [
+        {
+          id: 'comment-vc',
+          actorType: 'virtual_contact',
+          actorId: 'linwu:vc-9',
+          actorName: '蓝线风铃',
+          body: '听见了',
+          createdAt: '2026-05-11T00:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-05-11T00:00:00.000Z',
+    });
+    const [post] = await store.listPosts('linwu');
+    expect(post.likes[0]).toMatchObject({ actorType: 'virtual_contact', actorName: '蓝线风铃' });
+    expect(post.comments[0]).toMatchObject({ actorType: 'virtual_contact', body: '听见了' });
+  });
+
   it('deletes only the selected post', async () => {
     const first = requireMomentPost(
       await store.createPost({ authorAgentId: 'linwu', authorName: '林雾', content: 'keep?' }),

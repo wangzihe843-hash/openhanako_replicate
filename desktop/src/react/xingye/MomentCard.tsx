@@ -12,9 +12,9 @@ interface MomentCardProps {
   getAgentDisplayName: (agentId: string) => string;
   post: XingyeMomentPost;
   userActor: XingyeMomentActor;
-  onComment: (postId: string, body: string) => void;
-  onDelete: (postId: string) => void;
-  onToggleLike: (postId: string) => void;
+  onComment: (postId: string, body: string) => Promise<void>;
+  onDelete: (postId: string) => Promise<void>;
+  onToggleLike: (postId: string) => Promise<void>;
 }
 
 function formatMomentTime(iso: string): string {
@@ -70,16 +70,52 @@ export function MomentCard({
   onToggleLike,
 }: MomentCardProps) {
   const [commentDraft, setCommentDraft] = useState('');
+  const [commentPending, setCommentPending] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [likePending, setLikePending] = useState(false);
+  const [likeError, setLikeError] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const liked = post.likes.some(
     (like) => like.actorType === userActor.actorType && like.actorId === userActor.actorId,
   );
   const relationshipLabel = authorRelationshipLabel ?? '关系未设置';
 
-  const handleCommentSubmit = () => {
+  const handleCommentSubmit = async () => {
     const body = commentDraft.trim();
-    if (!body) return;
-    onComment(post.id, body);
-    setCommentDraft('');
+    if (!body || commentPending) return;
+    setCommentPending(true);
+    setCommentError(null);
+    try {
+      await onComment(post.id, body);
+      setCommentDraft('');
+    } catch (e) {
+      setCommentError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCommentPending(false);
+    }
+  };
+
+  const handleToggleLikeClick = async () => {
+    if (likePending) return;
+    setLikePending(true);
+    setLikeError(null);
+    try {
+      await onToggleLike(post.id);
+    } catch (e) {
+      setLikeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLikePending(false);
+    }
+  };
+
+  const handleDeleteClick = async () => {
+    if (deletePending) return;
+    setDeletePending(true);
+    try {
+      await onDelete(post.id);
+    } finally {
+      setDeletePending(false);
+    }
   };
 
   return (
@@ -102,8 +138,13 @@ export function MomentCard({
             <time dateTime={post.createdAt}>{formatMomentTime(post.createdAt)}</time>
           </div>
           {canDelete ? (
-            <button className={styles.momentDeleteButton} type="button" onClick={() => onDelete(post.id)}>
-              删除
+            <button
+              className={styles.momentDeleteButton}
+              type="button"
+              disabled={deletePending}
+              onClick={() => { void handleDeleteClick(); }}
+            >
+              {deletePending ? '删除中…' : '删除'}
             </button>
           ) : null}
         </header>
@@ -122,8 +163,10 @@ export function MomentCard({
           <button
             type="button"
             className={`${styles.momentActionPill} ${liked ? styles.momentActionActive : ''}`}
-            onClick={() => onToggleLike(post.id)}
+            onClick={() => { void handleToggleLikeClick(); }}
+            disabled={likePending}
             aria-pressed={liked}
+            aria-busy={likePending}
             aria-label={liked ? '取消点赞' : '点赞'}
           >
             <svg viewBox="0 0 24 24" aria-hidden focusable="false" className={styles.momentActionIcon}>
@@ -135,8 +178,13 @@ export function MomentCard({
                 strokeLinejoin="round"
               />
             </svg>
-            <span>{liked ? '已赞' : '赞'}</span>
+            <span>{likePending ? '处理中…' : liked ? '已赞' : '赞'}</span>
           </button>
+          {likeError ? (
+            <span className={styles.momentActionError} role="alert">
+              {likeError}
+            </span>
+          ) : null}
         </div>
 
         {(post.likes.length > 0 || post.comments.length > 0) ? (
@@ -181,14 +229,24 @@ export function MomentCard({
             value={commentDraft}
             onChange={(event) => setCommentDraft(event.target.value)}
             placeholder={`以 ${userActor.actorName} 的身份评论...`}
+            disabled={commentPending}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') handleCommentSubmit();
+              if (event.key === 'Enter') void handleCommentSubmit();
             }}
           />
-          <button type="button" disabled={!commentDraft.trim()} onClick={handleCommentSubmit}>
-            评论
+          <button
+            type="button"
+            disabled={!commentDraft.trim() || commentPending}
+            onClick={() => { void handleCommentSubmit(); }}
+          >
+            {commentPending ? '评论中…' : '评论'}
           </button>
         </div>
+        {commentError ? (
+          <p className={styles.momentCommentError} role="alert">
+            {commentError}
+          </p>
+        ) : null}
       </div>
     </article>
   );

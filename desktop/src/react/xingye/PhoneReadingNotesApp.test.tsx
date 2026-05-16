@@ -7,6 +7,10 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+import type {
+  AgentBookTagContext,
+  BookSearchResult,
+} from './xingye-reading-book-catalog';
 
 const catalogMock = vi.hoisted(() => ({
   deleteBookForAgent: vi.fn(),
@@ -54,7 +58,11 @@ describe('PhoneReadingNotesApp', () => {
 
     catalogMock.listBooksForAgent.mockResolvedValue([]);
     appEntryStoreMock.listAppEntries.mockResolvedValue([]);
-    catalogMock.importBooksForAgent.mockImplementation(async (agentId, books, tagContext) => books.map((book, index) => ({
+    catalogMock.importBooksForAgent.mockImplementation(async (
+      agentId: string,
+      books: BookSearchResult[],
+      tagContext: AgentBookTagContext,
+    ) => books.map((book, index) => ({
       ...book,
       id: `book-${index + 1}`,
       dedupeKey: book.key,
