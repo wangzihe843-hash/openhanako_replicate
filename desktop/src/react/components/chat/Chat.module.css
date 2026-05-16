@@ -1129,12 +1129,12 @@
 /* ── Session Panel ── */
 
 .sessionShell {
-    --chat-scrollbar-bottom-inset: calc(var(--input-card-h, 0px) / 2);
+    --chat-scrollbar-bottom-inset: var(--input-card-bottom-inset, calc(var(--input-card-h, 0px) / 2));
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    bottom: calc(var(--input-card-h, 0px) / 2 + var(--space-lg));
+    bottom: calc(var(--chat-scrollbar-bottom-inset) + var(--space-lg));
     overflow: hidden;
 }
 
@@ -1357,7 +1357,7 @@
 
 .sessionFooter {
     /* 和 sessionPanel 的切点对齐：遮挡发生在输入卡片中部，同时在滚到底时额外多留约三行呼吸空间。 */
-    height: calc(var(--input-card-h, 0px) / 2 + var(--space-lg) + 8rem);
+    height: calc(var(--chat-scrollbar-bottom-inset) + var(--space-lg) + 8rem);
     flex-shrink: 0;
 }
 

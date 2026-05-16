@@ -5,7 +5,7 @@
  * 斜杠命令逻辑在 ./input/slash-commands.ts。
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, type Ref } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import { useStore } from '../stores';
@@ -44,6 +44,7 @@ import {
   notifyTextModelVideoBlocked,
 } from '../utils/chat-image-send-preflight';
 import { openProviderModelSettings } from '../utils/model-settings-navigation';
+import { calculateInputCardBottomInset, parseCssPixels } from '../utils/input-card-layout';
 import {
   XING_PROMPT, executeDiary, executeCompact, buildSlashCommands, getSlashMatches,
   resolveSlashSubmitSelection,
@@ -149,21 +150,13 @@ function editorHasInlineNode(editor: Editor | null, nodeType: string): boolean {
 
 export type { SlashItem };
 
-interface InputAreaProps {
-  cardRef?: Ref<HTMLDivElement>;
-}
-
 // ── 主组件 ──
 
-export function InputArea({ cardRef }: InputAreaProps) {
-  return <InputAreaInner cardRef={cardRef} />;
+export function InputArea() {
+  return <InputAreaInner />;
 }
 
-interface InputAreaInnerProps {
-  cardRef?: Ref<HTMLDivElement>;
-}
-
-function InputAreaInner({ cardRef }: InputAreaInnerProps) {
+function InputAreaInner() {
   const { t, locale } = useI18n();
 
   // Zustand state
@@ -224,6 +217,8 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   const slashBtnRef = useRef<HTMLButtonElement>(null);
   const slashDismissedTextRef = useRef<string | null>(null);
   const fileMentionSearchSeqRef = useRef(0);
+  const inputSurfaceRef = useRef<HTMLDivElement>(null);
+  const inputCardRef = useRef<HTMLDivElement>(null);
   const [inputText, setInputText] = useState('');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [fileSelected, setFileSelected] = useState(0);
@@ -331,6 +326,54 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
       handleKeyDown: (_view, event) => keyDownHandlerRef.current(event),
     },
   });
+
+  useEffect(() => {
+    const surface = inputSurfaceRef.current;
+    const card = inputCardRef.current;
+    const editorElement = editor?.view.dom;
+    const parent = card?.closest('.main-content') as HTMLElement | null;
+    if (!surface || !card || !editorElement || !parent) return;
+
+    const updateMetrics = () => {
+      const editorStyle = window.getComputedStyle(editorElement);
+      const editorFontSize = parseCssPixels(editorStyle.fontSize, 16);
+      const editorLineHeight = parseCssPixels(editorStyle.lineHeight, editorFontSize * 1.6);
+      const cardRect = card.getBoundingClientRect();
+      const surfaceRect = surface.getBoundingClientRect();
+      const cardHeight = cardRect.height || card.offsetHeight;
+      const editorHeight = editorElement.getBoundingClientRect().height || editorElement.offsetHeight;
+      const upperChromeHeight = Math.max(0, cardRect.top - surfaceRect.top);
+      const bottomInset = calculateInputCardBottomInset({
+        cardHeight,
+        editorHeight,
+        editorLineHeight,
+        upperChromeHeight,
+      });
+
+      parent.style.setProperty('--input-card-h', `${cardHeight}px`);
+      parent.style.setProperty('--input-card-bottom-inset', `${bottomInset}px`);
+    };
+
+    updateMetrics();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => {
+        parent.style.removeProperty('--input-card-h');
+        parent.style.removeProperty('--input-card-bottom-inset');
+      };
+    }
+
+    const observer = new ResizeObserver(updateMetrics);
+    observer.observe(surface);
+    observer.observe(card);
+    observer.observe(editorElement);
+
+    return () => {
+      observer.disconnect();
+      parent.style.removeProperty('--input-card-h');
+      parent.style.removeProperty('--input-card-bottom-inset');
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -1005,7 +1048,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
   }, [addToast, completingTodos, currentSessionPath, sessionTodos.length]);
 
   return (
-    <>
+    <div className={styles['input-surface']} ref={inputSurfaceRef}>
       <InputStatusBars
         slashBusy={slashBusy}
         slashBusyLabel={slashCommands.find(c => c.name === slashBusy)?.busyLabel || t('common.executing')}
@@ -1056,7 +1099,7 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
             exiting={sessionConfirmationExiting}
           />
         )}
-        <div className={styles['input-wrapper']} ref={cardRef}>
+        <div className={styles['input-wrapper']} ref={inputCardRef}>
           <div
             onKeyDown={(event) => {
               if (!event.defaultPrevented) handleEditorKeyDown(event);
@@ -1089,6 +1132,6 @@ function InputAreaInner({ cardRef }: InputAreaInnerProps) {
           />
         </div>
       </div>
-    </>
+    </div>
   );
 }

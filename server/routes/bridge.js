@@ -14,6 +14,7 @@ import { isBridgeOwner, resolveBridgeOwnerUserId } from "../../lib/bridge/owner-
 import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../lib/bridge/media-roots.js";
 import { t } from "../i18n.js";
 import { resolveAgent, resolveAgentStrict } from "../utils/resolve-agent.js";
+import { telegramBotOptions } from "../../lib/net/outbound-proxy.js";
 
 const MAX_BRIDGE_MEDIA_SIZE = 50 * 1024 * 1024;
 
@@ -449,7 +450,7 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     try {
       if (platform === "telegram") {
         const TelegramBot = (await import("node-telegram-bot-api")).default;
-        const bot = new TelegramBot(credentials.token);
+        const bot = new TelegramBot(credentials.token, telegramBotOptions());
         const me = await bot.getMe();
         return c.json({ ok: true, info: { username: me.username, name: me.first_name } });
       } else if (platform === "feishu") {

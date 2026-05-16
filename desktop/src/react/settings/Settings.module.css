@@ -1624,6 +1624,16 @@
     min-width: 0;
 }
 
+.settings-proxy-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-sm);
+}
+
+.settings-proxy-wide {
+    grid-column: 1 / -1;
+}
+
 /* Text input */
 .settings-input {
     font-family: inherit;

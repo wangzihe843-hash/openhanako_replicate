@@ -1,10 +1,11 @@
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 import { useStore } from '../../stores';
 import { ActivityPanel } from '../ActivityPanel';
 import { AutomationPanel } from '../AutomationPanel';
 import { BridgePanel } from '../BridgePanel';
 import { PreviewPanel } from '../PreviewPanel';
 import { RightWorkspacePanel } from '../right-workspace/RightWorkspacePanel';
+import { WorkspaceFileWatchBridge } from '../right-workspace/WorkspaceFileWatchBridge';
 import { PluginPageView } from '../plugin/PluginPageView';
 import { InputArea } from '../InputArea';
 import { WelcomeScreen } from '../WelcomeScreen';
@@ -25,7 +26,7 @@ function WelcomeContainer() {
   );
 }
 
-function ChatPage({ inputCardRef }: { inputCardRef: RefObject<HTMLDivElement | null> }) {
+function ChatPage() {
   const welcomeVisible = useStore(s => s.welcomeVisible);
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const hasPanels = !welcomeVisible && !!currentSessionPath;
@@ -40,7 +41,7 @@ function ChatPage({ inputCardRef }: { inputCardRef: RefObject<HTMLDivElement | n
       </div>
       <div className="input-area">
         <RegionalErrorBoundary region="input" resetKeys={[currentSessionPath]}>
-          <InputArea key={currentSessionPath || '__new'} cardRef={inputCardRef} />
+          <InputArea key={currentSessionPath || '__new'} />
         </RegionalErrorBoundary>
       </div>
     </>
@@ -162,25 +163,28 @@ export function WorkspaceCompanionRail() {
   const jianOpen = useStore(s => s.jianOpen);
 
   return (
-    <aside className={`jian-sidebar${jianOpen ? '' : ' collapsed'}`} id="jianSidebar">
-      <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
-      <div className="jian-sidebar-inner">
-        <RegionalErrorBoundary region="right-workspace">
-          <RightWorkspacePanel />
-        </RegionalErrorBoundary>
-      </div>
-    </aside>
+    <>
+      <WorkspaceFileWatchBridge />
+      <aside className={`jian-sidebar${jianOpen ? '' : ' collapsed'}`} id="jianSidebar">
+        <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
+        <div className="jian-sidebar-inner">
+          <RegionalErrorBoundary region="right-workspace">
+            <RightWorkspacePanel />
+          </RegionalErrorBoundary>
+        </div>
+      </aside>
+    </>
   );
 }
 
-export function AppPages({ inputCardRef }: { inputCardRef: RefObject<HTMLDivElement | null> }) {
+export function AppPages() {
   const currentTab = useStore(s => s.currentTab);
   const isPluginTab = typeof currentTab === 'string' && currentTab.startsWith('plugin:');
 
   return (
     <>
       <MainContent>
-        {currentTab === 'chat' && <ChatPage inputCardRef={inputCardRef} />}
+        {currentTab === 'chat' && <ChatPage />}
         {currentTab === 'channels' && <ChannelPage />}
         {isPluginTab && <PluginPage pluginId={currentTab.slice(7)} />}
         <ActivityPanel />

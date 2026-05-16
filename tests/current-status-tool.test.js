@@ -41,6 +41,7 @@ describe("current_status tool", () => {
       "model",
       "ui_context",
       "session_files",
+      "bridge_context",
     ]);
     expect(payload.usage).toContain("list");
     expect(payload.usage).toContain("get");
@@ -256,6 +257,61 @@ describe("current_status tool", () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain("internalOnly");
+  });
+
+  it("returns bridge context for the current session when available", async () => {
+    const tool = createCurrentStatusTool({
+      getBridgeContext: (sessionPath) => sessionPath.endsWith("s1.jsonl")
+        ? {
+            isBridgeSession: true,
+            platform: "wechat",
+            platformLabel: "微信",
+            chatType: "dm",
+            role: "owner",
+            sessionKey: "wx_dm_owner@hana",
+            notificationHint: {
+              channels: ["bridge_owner"],
+              bridgePlatforms: ["wechat"],
+              contextPolicy: "record_when_delivered",
+            },
+          }
+        : null,
+    });
+
+    const payload = textPayload(await tool.execute("call_1", { action: "get", key: "bridge_context" }, null, null, makeCtx()));
+
+    expect(payload).toEqual({
+      bridge_context: {
+        isBridgeSession: true,
+        platform: "wechat",
+        platformLabel: "微信",
+        chatType: "dm",
+        role: "owner",
+        sessionKey: "wx_dm_owner@hana",
+        agentId: null,
+        userId: null,
+        chatId: null,
+        notificationHint: {
+          channels: ["bridge_owner"],
+          bridgePlatforms: ["wechat"],
+          contextPolicy: "record_when_delivered",
+        },
+      },
+    });
+  });
+
+  it("returns an explicit non-bridge shape outside Bridge sessions", async () => {
+    const tool = createCurrentStatusTool({
+      getBridgeContext: () => null,
+    });
+
+    const payload = textPayload(await tool.execute("call_1", { action: "get", key: "bridge_context" }, null, null, makeCtx()));
+
+    expect(payload).toEqual({
+      bridge_context: {
+        isBridgeSession: false,
+      },
+    });
   });
 
   it("returns a clear error for unknown keys", async () => {

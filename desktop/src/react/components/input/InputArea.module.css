@@ -916,6 +916,12 @@
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
+/* 输入区内所有浮层共享同一个测量与宽度上下文 */
+.input-surface {
+    position: relative;
+    width: 100%;
+}
+
 /* 输入框与确认卡共享同一个宽度上下文 */
 .input-stack {
     position: relative;

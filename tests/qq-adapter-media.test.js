@@ -183,7 +183,7 @@ describe("createQQAdapter media delivery", () => {
     adapter.stop();
   });
 
-  it("sends QQ group text replies as passive replies with msg_id and distinct msg_seq values", async () => {
+  it("sends QQ group replies as markdown passive replies with msg_id and distinct msg_seq values", async () => {
     const adapter = createQQAdapter({
       appID: "app-id",
       appSecret: "app-secret",
@@ -205,16 +205,69 @@ describe("createQQAdapter media delivery", () => {
     const messageCalls = fetch.mock.calls.filter(([url]) => String(url).includes("/v2/groups/group-openid/messages"));
     expect(messageCalls).toHaveLength(2);
     expect(JSON.parse(messageCalls[0][1].body)).toMatchObject({
-      content: "first",
+      content: " ",
+      msg_type: 2,
+      markdown: { content: "first" },
       msg_id: "qq-mid-1",
       msg_seq: 1,
     });
     expect(JSON.parse(messageCalls[1][1].body)).toMatchObject({
-      content: "second",
+      content: " ",
+      msg_type: 2,
+      markdown: { content: "second" },
       msg_id: "qq-mid-1",
       msg_seq: 2,
     });
     expect(fetch.mock.calls.some(([url]) => String(url).includes("/v2/users/group-openid/messages"))).toBe(false);
+    adapter.stop();
+  });
+
+  it("sends QQ C2C replies as official markdown messages", async () => {
+    const adapter = createQQAdapter({
+      appID: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    await adapter.sendReply("user-openid", "**bold**\n- item", {
+      messageId: "qq-dm-1",
+      targetType: "user",
+      isGroup: false,
+    });
+
+    const messageCall = fetch.mock.calls.find(([url]) => String(url).includes("/v2/users/user-openid/messages"));
+    expect(JSON.parse(messageCall[1].body)).toMatchObject({
+      content: " ",
+      msg_type: 2,
+      markdown: { content: "**bold**\n- item" },
+      msg_id: "qq-dm-1",
+      msg_seq: 1,
+    });
+    adapter.stop();
+  });
+
+  it("sends legacy QQ channel replies with the channel markdown object", async () => {
+    const adapter = createQQAdapter({
+      appID: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    await adapter.sendReply("channel-id", "# Title", {
+      messageId: "qq-channel-mid-1",
+      targetType: "channel",
+      isGroup: true,
+    });
+
+    const messageCall = fetch.mock.calls.find(([url]) => String(url).includes("/channels/channel-id/messages"));
+    expect(JSON.parse(messageCall[1].body)).toMatchObject({
+      markdown: { content: "# Title" },
+      msg_id: "qq-channel-mid-1",
+      msg_seq: 1,
+    });
+    expect(JSON.parse(messageCall[1].body)).not.toHaveProperty("msg_type");
     adapter.stop();
   });
 

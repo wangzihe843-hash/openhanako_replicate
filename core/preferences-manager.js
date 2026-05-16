@@ -21,6 +21,7 @@ import {
   upsertWorkspaceUiState,
 } from "../shared/workspace-ui-state.js";
 import { normalizeWorkspacePath } from "../shared/workspace-history.js";
+import { normalizeNetworkProxyConfig } from "../shared/network-proxy.js";
 
 export class PreferencesManager {
   /**
@@ -165,6 +166,19 @@ export class PreferencesManager {
     if (Object.keys(bridge).length === 0) delete prefs.bridge;
     else prefs.bridge = bridge;
     this.savePreferences(prefs);
+  }
+
+  /** 读取全局出站代理设置。 */
+  getNetworkProxy() {
+    return normalizeNetworkProxyConfig(this._cache.network_proxy);
+  }
+
+  /** 保存全局出站代理设置。 */
+  setNetworkProxy(partial) {
+    const prefs = this._mutableCopy();
+    prefs.network_proxy = normalizeNetworkProxyConfig(partial, { strict: true });
+    this.savePreferences(prefs);
+    return prefs.network_proxy;
   }
 
   /** 读取 Bridge 媒体临时公网 base URL。空值表示回退到启动环境变量。 */

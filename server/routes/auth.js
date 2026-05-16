@@ -23,7 +23,7 @@ function diagnoseOAuthError(err) {
   // fetch 网络层失败（DNS/连接/超时）→ 代理没覆盖 Node 进程
   if (/fetch failed/i.test(msg)) {
     const detail = cause ? `（${cause}）` : "";
-    return `无法连接 OAuth 服务器${detail}。请确认代理开启了 TUN 模式，或设置 HTTPS_PROXY 环境变量`;
+    return `无法连接 OAuth 服务器${detail}。请在设置的安全页配置全局出站代理，或检查 HTTPS_PROXY 环境变量`;
   }
   // 回调超时 → localhost 不通 / 端口问题
   if (/timed out/i.test(msg)) {

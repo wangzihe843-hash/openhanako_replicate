@@ -22,6 +22,7 @@ import { ensureFirstRun } from "../core/first-run.js";
 import { initDebugLog } from "../lib/debug-log.js";
 import { redactLogLabel, redactLogText } from "../lib/log-redactor.js";
 import { safeJson } from "./hono-helpers.js";
+import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.js";
 
 // Pi SDK 的 fetch 请求会累积 AbortSignal listener，提高上限避免无害警告
 setMaxListeners(50);
@@ -94,6 +95,12 @@ console.log("[server] ② HanaEngine 构造完成，开始 init...");
 await engine.init((msg) => console.log(`[server] ${msg}`));
 console.log("[server] ② engine.init 完成");
 dlog.log("server", "engine initialized");
+
+const outboundProxyRuntime = createOutboundProxyRuntime({
+  log: (msg) => dlog.log("server", msg),
+});
+engine.setOutboundProxyRuntime(outboundProxyRuntime);
+outboundProxyRuntime.apply(engine.getNetworkProxy());
 
 // 注入依赖给 BrowserManager（避免循环依赖）
 import { BrowserManager } from "../lib/browser/browser-manager.js";

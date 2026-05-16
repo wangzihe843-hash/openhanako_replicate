@@ -29,6 +29,7 @@ export interface DeskSlice {
   deskCurrentPath: string;
   deskTreeFilesByPath: Record<string, DeskFile[]>;
   deskExpandedPaths: string[];
+  deskDirtyTreePaths: string[];
   deskSelectedPath: string;
   deskJianContent: string | null;
   cwdSkills: CwdSkillInfo[];
@@ -46,6 +47,8 @@ export interface DeskSlice {
   setDeskCurrentPath: (path: string) => void;
   setDeskTreeFiles: (subdir: string, files: DeskFile[]) => void;
   setDeskExpandedPaths: (paths: string[]) => void;
+  markDeskTreeDirty: (subdir: string) => void;
+  clearDeskTreeDirty: (subdirs: string[]) => void;
   setDeskSelectedPath: (path: string) => void;
   clearDeskTree: () => void;
   setDeskJianContent: (content: string | null) => void;
@@ -64,6 +67,7 @@ export const createDeskSlice = (
   deskCurrentPath: '',
   deskTreeFilesByPath: {},
   deskExpandedPaths: [],
+  deskDirtyTreePaths: [],
   deskSelectedPath: '',
   deskJianContent: null,
   cwdSkills: [],
@@ -86,10 +90,23 @@ export const createDeskSlice = (
     },
   })),
   setDeskExpandedPaths: (paths) => set({ deskExpandedPaths: paths }),
+  markDeskTreeDirty: (subdir) => set((s) => {
+    const normalized = (subdir || '').replace(/^\/+|\/+$/g, '');
+    return s.deskDirtyTreePaths.includes(normalized)
+      ? {}
+      : { deskDirtyTreePaths: [...s.deskDirtyTreePaths, normalized] };
+  }),
+  clearDeskTreeDirty: (subdirs) => set((s) => {
+    const clearSet = new Set(subdirs.map(subdir => (subdir || '').replace(/^\/+|\/+$/g, '')));
+    if (clearSet.size === 0) return {};
+    const next = s.deskDirtyTreePaths.filter(subdir => !clearSet.has(subdir));
+    return next.length === s.deskDirtyTreePaths.length ? {} : { deskDirtyTreePaths: next };
+  }),
   setDeskSelectedPath: (path) => set({ deskSelectedPath: path }),
   clearDeskTree: () => set({
     deskTreeFilesByPath: {},
     deskExpandedPaths: [],
+    deskDirtyTreePaths: [],
     deskSelectedPath: '',
   }),
   setDeskJianContent: (content) => set({ deskJianContent: content }),

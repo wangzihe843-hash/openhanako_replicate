@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useSettingsStore } from '../store';
 import { autoSaveConfig, t } from '../helpers';
 import { hanaFetch } from '../api';
@@ -31,6 +31,42 @@ const SIZE_OPTIONS = [
   { value: 10240, label: '10 MB' },
 ];
 
+type NetworkProxyMode = 'system' | 'manual' | 'direct';
+
+interface NetworkProxyConfig {
+  mode: NetworkProxyMode;
+  httpProxy: string;
+  httpsProxy: string;
+  wsProxy: string;
+  wssProxy: string;
+  noProxy: string;
+}
+
+type NetworkProxyTextField = Exclude<keyof NetworkProxyConfig, 'mode'>;
+
+const DEFAULT_NETWORK_PROXY: NetworkProxyConfig = {
+  mode: 'system',
+  httpProxy: '',
+  httpsProxy: '',
+  wsProxy: '',
+  wssProxy: '',
+  noProxy: 'localhost, 127.0.0.1, ::1',
+};
+
+function normalizeNetworkProxyDraft(value: Partial<NetworkProxyConfig> | null | undefined): NetworkProxyConfig {
+  const mode = value?.mode === 'manual' || value?.mode === 'direct' ? value.mode : 'system';
+  return {
+    ...DEFAULT_NETWORK_PROXY,
+    ...(value || {}),
+    mode,
+    httpProxy: value?.httpProxy || '',
+    httpsProxy: value?.httpsProxy || '',
+    wsProxy: value?.wsProxy || '',
+    wssProxy: value?.wssProxy || '',
+    noProxy: value?.noProxy || DEFAULT_NETWORK_PROXY.noProxy,
+  };
+}
+
 export function SecurityTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
   const showToast = useSettingsStore(s => s.showToast);
@@ -40,6 +76,13 @@ export function SecurityTab() {
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [proxyDraft, setProxyDraft] = useState<NetworkProxyConfig>(
+    () => normalizeNetworkProxyDraft(settingsConfig?.network_proxy),
+  );
+
+  useEffect(() => {
+    setProxyDraft(normalizeNetworkProxyDraft(settingsConfig?.network_proxy));
+  }, [settingsConfig?.network_proxy]);
 
   const handleSandboxToggle = useCallback(async (on: boolean) => {
     await autoSaveConfig({ sandbox: on }, { silent: true });
@@ -70,6 +113,23 @@ export function SecurityTab() {
     await autoSaveConfig({ file_backup: { ...current, max_file_size_kb: kb } }, { silent: true });
     await loadSettingsConfig();
   }, []);
+
+  const handleProxyFieldChange = useCallback((field: NetworkProxyTextField, value: string) => {
+    setProxyDraft(prev => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleProxyModeChange = useCallback((mode: string) => {
+    setProxyDraft(prev => ({ ...prev, mode: mode as NetworkProxyMode }));
+  }, []);
+
+  const handleProxySave = useCallback(async () => {
+    const saved = await autoSaveConfig({ network_proxy: proxyDraft }, { silent: true });
+    if (!saved) return;
+    const latest = useSettingsStore.getState().settingsConfig?.network_proxy || proxyDraft;
+    window.platform?.settingsChanged?.('network-proxy-changed', { network_proxy: latest });
+    showToast(t('settings.autoSaved'), 'success');
+    await loadSettingsConfig();
+  }, [proxyDraft, showToast]);
 
   const loadCheckpoints = useCallback(async () => {
     setLoading(true);
@@ -196,6 +256,71 @@ export function SecurityTab() {
             </ExpandableRow>
           </>
         )}
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.security.networkProxy')}>
+        <SettingsRow
+          label={t('settings.security.networkProxyMode')}
+          hint={t('settings.security.networkProxyModeDesc')}
+          control={
+            <SelectWidget
+              value={proxyDraft.mode}
+              onChange={handleProxyModeChange}
+              options={[
+                { value: 'system', label: t('settings.security.networkProxySystem') },
+                { value: 'manual', label: t('settings.security.networkProxyManual') },
+                { value: 'direct', label: t('settings.security.networkProxyDirect') },
+              ]}
+            />
+          }
+        />
+
+        {proxyDraft.mode === 'manual' && (
+          <SettingsRow
+            label={t('settings.security.networkProxyManualTitle')}
+            hint={t('settings.security.networkProxyManualDesc')}
+            layout="stacked"
+            control={
+              <div className={styles['settings-proxy-grid']}>
+                <input
+                  className={styles['settings-input']}
+                  value={proxyDraft.httpProxy}
+                  onChange={(e) => handleProxyFieldChange('httpProxy', e.target.value)}
+                  placeholder={t('settings.security.networkProxyHttp')}
+                />
+                <input
+                  className={styles['settings-input']}
+                  value={proxyDraft.httpsProxy}
+                  onChange={(e) => handleProxyFieldChange('httpsProxy', e.target.value)}
+                  placeholder={t('settings.security.networkProxyHttps')}
+                />
+                <input
+                  className={styles['settings-input']}
+                  value={proxyDraft.wsProxy}
+                  onChange={(e) => handleProxyFieldChange('wsProxy', e.target.value)}
+                  placeholder={t('settings.security.networkProxyWs')}
+                />
+                <input
+                  className={styles['settings-input']}
+                  value={proxyDraft.wssProxy}
+                  onChange={(e) => handleProxyFieldChange('wssProxy', e.target.value)}
+                  placeholder={t('settings.security.networkProxyWss')}
+                />
+                <input
+                  className={`${styles['settings-input']} ${styles['settings-proxy-wide']}`}
+                  value={proxyDraft.noProxy}
+                  onChange={(e) => handleProxyFieldChange('noProxy', e.target.value)}
+                  placeholder={t('settings.security.networkProxyNoProxy')}
+                />
+              </div>
+            }
+          />
+        )}
+        <SettingsSection.Footer>
+          <button className={styles['settings-btn-primary']} onClick={handleProxySave}>
+            {t('settings.security.networkProxySave')}
+          </button>
+        </SettingsSection.Footer>
       </SettingsSection>
     </div>
   );

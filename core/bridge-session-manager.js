@@ -14,11 +14,17 @@ import { safeReadJSON } from "../shared/safe-fs.js";
 import { findModel } from "../shared/model-ref.js";
 import { teardownSessionResources } from "./session-teardown.js";
 import { isAbortLikeError, prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
+import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
 import { adaptVisualContextMessages } from "./visual-context-pipeline.js";
 import { SESSION_PERMISSION_MODES } from "./session-permission-mode.js";
 import { collectMediaItems } from "../lib/tools/media-details.js";
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.js";
 import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import {
+  appendBridgePromptLine,
+  bridgeContextIndexMeta,
+  buildBridgeContext,
+} from "../lib/bridge/bridge-context.js";
 import {
   buildFreshCompactMetaPatch,
   buildFreshCompactSnapshot,
@@ -158,6 +164,7 @@ export class BridgeSessionManager {
     this._deps = deps;
     this._activeSessions = new Map();
     this._prePromptAbortControllers = new Map();
+    this._sessionPathBridgeContexts = new Map();
   }
 
   /** 活跃 bridge sessions（供 bridge-manager abort 用） */
@@ -308,6 +315,56 @@ export class BridgeSessionManager {
     return { changed: true, file: entry.file };
   }
 
+  _buildBridgeContext(sessionKey, meta = {}, opts = {}, agent = null) {
+    return buildBridgeContext({
+      ...(meta || {}),
+      sessionKey,
+      role: opts.guest === true ? "guest" : "owner",
+      agentId: agent?.id || opts.agentId || null,
+    }, getLocale());
+  }
+
+  _bridgeContextMeta(context, meta = {}) {
+    return bridgeContextIndexMeta(context, meta || {});
+  }
+
+  _rememberBridgeContext(sessionPath, context) {
+    if (!sessionPath || context?.isBridgeSession !== true) return;
+    const raw = { ...context };
+    delete raw.platformLabel;
+    delete raw.notificationHint;
+    this._sessionPathBridgeContexts.set(path.resolve(sessionPath), raw);
+  }
+
+  getBridgeContextForSessionPath(sessionPath, opts = {}) {
+    if (!sessionPath) return null;
+    const resolved = path.resolve(sessionPath);
+    const cached = this._sessionPathBridgeContexts.get(resolved);
+    if (cached) return buildBridgeContext(cached, getLocale());
+
+    const agents = opts.agentId
+      ? [this._resolveAgent(opts, "getBridgeContextForSessionPath")]
+      : this._listAgentsForReconcile();
+    for (const agent of agents) {
+      const index = this.readIndex(agent);
+      const bridgeDir = path.join(agent.sessionDir, "bridge");
+      for (const [sessionKey, raw] of Object.entries(index)) {
+        const entry = this._normalizeIndexEntry(raw);
+        if (!entry.file) continue;
+        const entryPath = path.resolve(bridgeDir, entry.file);
+        if (entryPath !== resolved) continue;
+        const fileRoot = String(entry.file).split(/[\\/]/)[0];
+        return buildBridgeContext({
+          ...entry,
+          role: entry.role || (fileRoot === "guests" ? "guest" : "owner"),
+          sessionKey,
+          agentId: agent.id,
+        }, getLocale());
+      }
+    }
+    return null;
+  }
+
   _buildOwnerFreshCompactContext(agent, homeCwd) {
     const prefs = this._deps.getPreferences();
     const systemPrompt = agent.buildSystemPrompt({
@@ -374,6 +431,7 @@ export class BridgeSessionManager {
       let promptText = prompt;
       const isGuest = opts.guest === true;
       const agent = this._resolveAgent(opts, "executeExternalMessage");
+      const bridgeContext = this._buildBridgeContext(sessionKey, meta, opts, agent);
       const mm = this._deps.getModelManager();
       const bridgeDir = path.join(agent.sessionDir, "bridge");
       const subDir = opts.guest ? "guests" : "owner";
@@ -412,7 +470,8 @@ export class BridgeSessionManager {
         // guest 模式：yuan + public-ishiki + contextTag，主模型，无工具
         const yuanBase = agent.yuanPrompt;
         const pubIshiki = agent.publicIshiki;
-        const parts = [yuanBase, pubIshiki, opts.contextTag].filter(Boolean);
+        const bridgePromptLine = appendBridgePromptLine("", bridgeContext, getLocale()).trim();
+        const parts = [yuanBase, pubIshiki, opts.contextTag, bridgePromptLine].filter(Boolean);
         const guestPrompt = parts.join("\n\n");
         const tempResourceLoader = Object.create(this._deps.getResourceLoader());
         tempResourceLoader.getSystemPrompt = () => guestPrompt;
@@ -453,7 +512,7 @@ export class BridgeSessionManager {
         };
       } else {
         // owner 模式：完整 agent。抽出 _buildOwnerSessionOpts 后，compactSession 也能复用同一构造逻辑
-        sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef);
+        sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef, { bridgeContext });
       }
 
       const { session } = await createAgentSession({
@@ -466,6 +525,7 @@ export class BridgeSessionManager {
 
       const activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
       sessionPathRef.current = activeSessionPath;
+      this._rememberBridgeContext(activeSessionPath, bridgeContext);
       this._activeSessions.set(sessionKey, session);
 
       let displayAttachments = [];
@@ -546,6 +606,11 @@ export class BridgeSessionManager {
           warn: (msg) => console.warn(`[bridge-session] ${msg}`),
           signal: abortController.signal,
         }));
+        ({ text: promptText, opts } = await prepareModelImageInputsForPrompt({
+          text: promptText,
+          opts,
+          signal: abortController.signal,
+        }));
         if (this._prePromptAbortControllers.get(sessionKey) === abortController) {
           this._prePromptAbortControllers.delete(sessionKey);
         }
@@ -570,7 +635,7 @@ export class BridgeSessionManager {
         const { changed, file } = this._syncIndexEntry(index, sessionKey, raw, {
           bridgeDir,
           sessionPath,
-          meta,
+          meta: this._bridgeContextMeta(bridgeContext, meta),
         });
         if (changed) {
           if (existingFile && existingFile !== file) {
@@ -624,6 +689,7 @@ export class BridgeSessionManager {
   recordAssistantMessage(sessionKey, text, opts = {}) {
     const agent = this._resolveAgent(opts, "recordAssistantMessage");
     try {
+      const bridgeContext = this._buildBridgeContext(sessionKey, opts.meta, { ...opts, guest: false }, agent);
       const index = this.readIndex(agent);
       const raw = index[sessionKey];
       const existingFile = typeof raw === "string" ? raw : raw?.file || null;
@@ -659,10 +725,11 @@ export class BridgeSessionManager {
       mgr.appendMessage(this._buildRecordedAssistantMessage(agent, text));
 
       if (sessionPath) {
+        this._rememberBridgeContext(sessionPath, bridgeContext);
         const { changed } = this._syncIndexEntry(index, sessionKey, raw, {
           bridgeDir,
           sessionPath,
-          meta: opts.meta || null,
+          meta: this._bridgeContextMeta(bridgeContext, opts.meta || null),
         });
         if (changed) this.writeIndex(index, agent);
       }
@@ -753,13 +820,14 @@ export class BridgeSessionManager {
     // 快照 prompt，隔离于其他 session 的 prompt 变更（与 SessionCoordinator.createSession 一致）。
     // 显式按 master 开关构建：bridge owner 是独立链路，不应受桌面端某个 session
     // 的 per-session 开关污染。用户在桌面关掉某个 session 的记忆，不影响这里。
-    const ownerPromptSnapshot = opts.ownerPromptSnapshot || agent.buildSystemPrompt({
+    const ownerPromptBase = opts.ownerPromptSnapshot || agent.buildSystemPrompt({
       cwdOverride: homeCwd,
       forceMemoryEnabled: agent.memoryMasterEnabled,
       ...(typeof agent.experienceEnabled === "boolean"
         ? { forceExperienceEnabled: agent.experienceEnabled === true }
         : {}),
     });
+    const ownerPromptSnapshot = appendBridgePromptLine(ownerPromptBase, opts.bridgeContext, getLocale());
     const ownerResourceLoader = Object.create(this._deps.getResourceLoader(), {
       getSystemPrompt: { value: () => ownerPromptSnapshot },
     });

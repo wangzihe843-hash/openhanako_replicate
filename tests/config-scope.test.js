@@ -119,6 +119,20 @@ describe("splitByScope", () => {
     expect(Object.keys(agent)).toHaveLength(0);
   });
 
+  it("extracts network_proxy as a top-level global field", () => {
+    const partial = {
+      network_proxy: { mode: "manual", httpProxy: "http://127.0.0.1:7890" },
+      models: { chat: { id: "gpt-4.1", provider: "openai" } },
+    };
+    const { global: g, agent } = splitByScope(partial);
+
+    expect(g).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "network_proxy", value: partial.network_proxy }),
+    ]));
+    expect(agent.network_proxy).toBeUndefined();
+    expect(agent.models).toEqual(partial.models);
+  });
+
   it("handles empty partial", () => {
     const { global: g, agent } = splitByScope({});
 
@@ -154,6 +168,7 @@ describe("injectGlobalFields", () => {
       getHeartbeatMaster: () => true,
       getBridgeReadOnly: () => true,
       getBridgeReceiptEnabled: () => false,
+      getNetworkProxy: () => ({ mode: "direct" }),
     };
     const config = {};
     injectGlobalFields(config, engine);
@@ -168,6 +183,7 @@ describe("injectGlobalFields", () => {
     expect(config.desk?.heartbeat_master).toBe(true);
     expect(config.bridge?.readOnly).toBe(true);
     expect(config.bridge?.receiptEnabled).toBe(false);
+    expect(config.network_proxy).toEqual({ mode: "direct" });
   });
 
   it("skips getters that don't exist on engine (doesn't throw)", () => {

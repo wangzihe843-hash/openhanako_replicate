@@ -58,6 +58,39 @@ describe("NotificationService", () => {
     });
   });
 
+  it("passes preferred bridge platforms to BridgeManager", async () => {
+    const bridgeManager = {
+      sendProactive: vi.fn().mockResolvedValue({
+        platform: "feishu",
+        chatId: "oc_owner",
+        sessionKey: "fs_dm_owner@hana",
+      }),
+    };
+    const service = new NotificationService({
+      emitDesktop: vi.fn(),
+      getBridgeManager: () => bridgeManager,
+    });
+
+    await service.notify(
+      {
+        title: "提醒",
+        body: "正文",
+        channels: ["bridge_owner"],
+        bridgePlatforms: ["feishu"],
+      },
+      { agentId: "hana" },
+    );
+
+    expect(bridgeManager.sendProactive).toHaveBeenCalledWith(
+      "提醒\n\n正文",
+      "hana",
+      {
+        contextPolicy: "record_when_delivered",
+        bridgePlatforms: ["feishu"],
+      },
+    );
+  });
+
   it("reports explicit bridge owner delivery failure when the channel is unavailable", async () => {
     const service = new NotificationService({
       emitDesktop: vi.fn(),

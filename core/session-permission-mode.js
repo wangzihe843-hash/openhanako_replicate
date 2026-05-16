@@ -52,6 +52,11 @@ const BROWSER_READ_ACTIONS = new Set([
   "stop",
 ]);
 
+const TERMINAL_READ_ACTIONS = new Set([
+  "read",
+  "list",
+]);
+
 export function normalizeSessionPermissionMode(raw) {
   if (typeof raw === "string") return normalizeSessionPermissionMode({ permissionMode: raw });
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.OPERATE) return SESSION_PERMISSION_MODES.OPERATE;
@@ -95,12 +100,20 @@ function classifyBrowserAction(mode, action) {
   return { action: "allow" };
 }
 
+function classifyTerminalAction(mode, action) {
+  if (TERMINAL_READ_ACTIONS.has(action)) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("terminal");
+  if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("terminal");
+  return { action: "allow" };
+}
+
 export function classifySessionPermission({ mode, toolName, params } = {}) {
   const normalized = normalizeSessionPermissionMode(mode);
   const name = typeof toolName === "string" ? toolName : "";
   if (!name) return { action: "allow" };
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action);
+  if (name === "terminal") return classifyTerminalAction(normalized, params?.action);
   if (normalized === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
   if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blocked(name);
   if (SIDE_EFFECT_TOOLS.has(name)) return prompt(name);

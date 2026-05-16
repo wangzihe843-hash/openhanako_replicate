@@ -61,6 +61,13 @@ function emitConfigAppEvents(engine, { globalFields, agentPartial, providersChan
       editor: typeof engine.getEditor === "function" ? engine.getEditor() : editor,
     });
   }
+
+  const networkProxy = getGlobalValue(globalFields, "network_proxy");
+  if (networkProxy !== undefined) {
+    emitAppEvent(engine, "network-proxy-changed", {
+      network_proxy: typeof engine.getNetworkProxy === "function" ? engine.getNetworkProxy() : networkProxy,
+    });
+  }
 }
 
 export function createConfigRoute(engine) {

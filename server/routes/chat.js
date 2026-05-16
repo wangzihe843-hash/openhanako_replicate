@@ -731,8 +731,8 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
             if (msg.type === "context_usage") {
               const usagePath = requireSessionPath(msg, ws); if (!usagePath) return;
-              const usageSession = engine.getSessionByPath(usagePath);
-              const usage = usageSession?.getContextUsage?.();
+              const usage = engine.getSessionContextUsage?.(usagePath)
+                || engine.getSessionByPath(usagePath)?.getContextUsage?.();
               wsSend(ws, {
                 type: "context_usage",
                 sessionPath: usagePath,
@@ -774,7 +774,8 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
             if (msg.type === "compact") {
               const compactPath = requireSessionPath(msg, ws); if (!compactPath) return;
-              const session = engine.getSessionByPath(compactPath);
+              const session = engine.getSessionByPath(compactPath)
+                || await engine.ensureSessionLoaded?.(compactPath);
               if (!session) {
                 wsSend(ws, { type: "error", message: t("error.noActiveSession"), sessionPath: compactPath });
                 return;

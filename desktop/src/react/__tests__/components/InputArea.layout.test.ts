@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { calculateInputCardBottomInset } from '../../utils/input-card-layout';
 
 function cssBlock(css: string, selector: string): string {
   return css.match(new RegExp(`${selector}\\s*\\{(?<body>[^}]*)\\}`))?.groups?.body || '';
@@ -40,5 +41,59 @@ describe('InputArea layout', () => {
     const inputWrapperBlock = cssBlock(css, String.raw`\.input-wrapper`);
 
     expect(inputWrapperBlock).toMatch(/padding:\s*var\(--space-md\)\s+var\(--space-md\)\s+var\(--space-sm\)/);
+  });
+
+  it('keeps one transient row free, then pushes chat when the whole input surface reaches another row', () => {
+    expect(calculateInputCardBottomInset({
+      cardHeight: 80,
+      editorHeight: 24,
+      editorLineHeight: 24,
+    })).toBe(40);
+
+    expect(calculateInputCardBottomInset({
+      cardHeight: 104,
+      editorHeight: 48,
+      editorLineHeight: 24,
+    })).toBe(40);
+
+    expect(calculateInputCardBottomInset({
+      cardHeight: 128,
+      editorHeight: 72,
+      editorLineHeight: 24,
+    })).toBe(64);
+
+    expect(calculateInputCardBottomInset({
+      cardHeight: 80,
+      editorHeight: 24,
+      editorLineHeight: 24,
+      upperChromeHeight: 60,
+    })).toBe(40);
+
+    expect(calculateInputCardBottomInset({
+      cardHeight: 104,
+      editorHeight: 48,
+      editorLineHeight: 24,
+      upperChromeHeight: 60,
+    })).toBe(64);
+
+    expect(calculateInputCardBottomInset({
+      cardHeight: 128,
+      editorHeight: 72,
+      editorLineHeight: 24,
+      upperChromeHeight: 60,
+    })).toBe(88);
+  });
+
+  it('uses the measured input bottom inset as the chat panel and footer cut point', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const shellBlock = cssBlock(css, String.raw`\.sessionShell`);
+    const footerBlock = cssBlock(css, String.raw`\.sessionFooter`);
+
+    expect(shellBlock).toMatch(/--chat-scrollbar-bottom-inset:\s*var\(--input-card-bottom-inset,\s*calc\(var\(--input-card-h,\s*0px\) \/ 2\)\)/);
+    expect(shellBlock).toMatch(/bottom:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\)\)/);
+    expect(footerBlock).toMatch(/height:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\) \+ 8rem\)/);
   });
 });

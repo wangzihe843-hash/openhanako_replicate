@@ -37,6 +37,7 @@ export const STANDARD_TOOL_NAMES = [
   "current_status",
   "wait",
   "stop_task",
+  "terminal",
 ];
 
 export const GLOBAL_TOOL_NAMES = [

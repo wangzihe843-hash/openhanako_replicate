@@ -58,6 +58,9 @@ contextBridge.exposeInMainWorld("hana", {
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   unwatchFile: (filePath) => ipcRenderer.invoke("unwatch-file", filePath),
   onFileChanged: (cb) => ipcRenderer.on("file-changed", (_, filePath) => cb(filePath)),
+  watchWorkspace: (rootPath) => ipcRenderer.invoke("watch-workspace", rootPath),
+  unwatchWorkspace: (rootPath) => ipcRenderer.invoke("unwatch-workspace", rootPath),
+  onWorkspaceChanged: (cb) => ipcRenderer.on("workspace-changed", (_, payload) => cb(payload)),
   readFileBase64: (path) => ipcRenderer.invoke("read-file-base64", path),
   // 本地路径 → file:// URL（同步，纯字符串转换，无 IPC）。逻辑见 src/shared/path-to-file-url.cjs
   getFileUrl: (filePath) => pathToFileUrl(filePath),

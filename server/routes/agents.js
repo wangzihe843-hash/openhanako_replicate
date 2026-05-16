@@ -133,6 +133,13 @@ function emitAgentConfigAppEvents(engine, agentId, { globalFields, agentPartial,
     });
   }
 
+  const networkProxy = getGlobalValue(globalFields, "network_proxy");
+  if (networkProxy !== undefined) {
+    emitAppEvent(engine, "network-proxy-changed", {
+      network_proxy: typeof engine.getNetworkProxy === "function" ? engine.getNetworkProxy() : networkProxy,
+    });
+  }
+
   if (hasOwn(agentPartial, "skills")) {
     emitAppEvent(engine, "skills-changed", { agentId });
   }

@@ -34,6 +34,7 @@ export const CONFIG_SCHEMA = {
   'channels.enabled':           { scope: 'global', setter: 'setChannelsEnabled', getter: 'getChannelsEnabled', prefsPath: 'channels_enabled', defaultValue: false },
   'bridge.readOnly':            { scope: 'global', setter: 'setBridgeReadOnly', getter: 'getBridgeReadOnly', defaultValue: false },
   'bridge.receiptEnabled':      { scope: 'global', setter: 'setBridgeReceiptEnabled', getter: 'getBridgeReceiptEnabled', defaultValue: true },
+  network_proxy:                { scope: 'global', setter: 'setNetworkProxy', getter: 'getNetworkProxy' },
 };
 
 // 未声明的字段默认为 agent scope，不需要额外导出。

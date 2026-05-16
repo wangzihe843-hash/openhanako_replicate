@@ -109,6 +109,7 @@ import { wrapWithCheckpoint } from "../lib/checkpoint-wrapper.js";
 import { wrapWithSessionPermission } from "../lib/tools/session-permission-wrapper.js";
 import { filterToolObjectsByAvailability } from "./tool-availability.js";
 import { TaskRegistry } from "../lib/task-registry.js";
+import { TerminalSessionManager } from "../lib/terminal/terminal-session-manager.js";
 import { PluginInstallRecords } from "../lib/plugin-install-records.js";
 import { ComputerHost } from "./computer-use/computer-host.js";
 import { ComputerProviderRegistry } from "./computer-use/provider-registry.js";
@@ -206,6 +207,8 @@ export class HanaEngine {
       getDeferredResultStore: () => this._deferredResultStore,
       getTaskRegistry: () => this._taskRegistry,
       getEngine: () => this,
+      closeTerminalsForSession: (sessionPath) => this._terminalSessions.closeForSession(sessionPath),
+      closeAllTerminals: () => this._terminalSessions.closeAll(),
       onBeforeSessionCreate: async (cwd) => {
         await this.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: false });
       },
@@ -277,6 +280,11 @@ export class HanaEngine {
       },
     });
 
+    this._terminalSessions = new TerminalSessionManager({
+      hanakoHome: this.hanakoHome,
+      emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+    });
+
     // Checkpoint 备份存储
     this._checkpointStore = new CheckpointStore(
       path.join(this.hanakoHome, "checkpoints")
@@ -318,6 +326,8 @@ export class HanaEngine {
     this._devLogs = [];
     this._devLogsMax = 200;
 
+    this._outboundProxyRuntime = null;
+
     // 设置起始 agentId
     this._agentMgr.activeAgentId = startId;
   }
@@ -357,6 +367,10 @@ export class HanaEngine {
 
   get taskRegistry() {
     return this._taskRegistry;
+  }
+
+  get terminalSessions() {
+    return this._terminalSessions;
   }
 
   registerSessionFile(entry) { return this._sessionFiles.registerFile(entry); }
@@ -469,6 +483,9 @@ export class HanaEngine {
   async abortBridgeSession(key) { return this._bridge?.abortSession(key) ?? false; }
   steerBridgeSession(key, text) { return this._bridge?.steerSession(key, text) ?? false; }
   get bridgeSessionManager() { return this._bridge; }
+  getBridgeContextForSessionPath(sessionPath, opts = {}) {
+    return this._bridge?.getBridgeContextForSessionPath?.(sessionPath, opts) || null;
+  }
   async deliverNotification(payload, opts = {}) {
     return this._notifications.notify(payload, opts);
   }
@@ -478,6 +495,7 @@ export class HanaEngine {
   get rcState() { return this._slashSystem?.rcState ?? null; }
   async closeSession(p) { return this._sessionCoord.closeSession(p); }
   getSessionByPath(p) { return this._sessionCoord.getSessionByPath(p); }
+  getSessionContextUsage(p) { return this._sessionCoord.getSessionContextUsage(p); }
   /** 确保桌面 session 已加载进 cache 但不改 UI 焦点（Phase 2-C：/rc 接管态用） */
   async ensureSessionLoaded(p) { return this._sessionCoord.ensureSessionLoaded(p); }
   isSessionStreaming(p) { return this._sessionCoord.isSessionStreaming(p); }
@@ -564,6 +582,13 @@ export class HanaEngine {
   setBridgeReadOnly(v) { this._prefs.setBridgeReadOnly(v); }
   getBridgeReceiptEnabled() { return this._prefs.getBridgeReceiptEnabled(); }
   setBridgeReceiptEnabled(v) { this._prefs.setBridgeReceiptEnabled(v); }
+  setOutboundProxyRuntime(runtime) { this._outboundProxyRuntime = runtime || null; }
+  getNetworkProxy() { return this._prefs.getNetworkProxy(); }
+  setNetworkProxy(v) {
+    const config = this._prefs.setNetworkProxy(v);
+    this._outboundProxyRuntime?.apply?.(config);
+    return config;
+  }
   getBridgeMediaPublicBaseUrl() { return this._prefs.getBridgeMediaPublicBaseUrl(); }
   setBridgeMediaPublicBaseUrl(v) { return this._prefs.setBridgeMediaPublicBaseUrl(v); }
   getSharedModels() { return this._configCoord.getSharedModels(); }

@@ -139,6 +139,23 @@ function runWithTargetNode(cmd, opts = {}) {
   });
 }
 
+function ensureNodePtySpawnHelperExecutable(baseDir) {
+  if (isWin) return;
+  const nodePtyRoot = path.join(baseDir, "node_modules", "node-pty");
+  if (!fs.existsSync(nodePtyRoot)) return;
+  for (const helperPath of [
+    path.join(nodePtyRoot, "build", "Release", "spawn-helper"),
+    path.join(nodePtyRoot, "prebuilds", `${platform}-${arch}`, "spawn-helper"),
+  ]) {
+    if (!fs.existsSync(helperPath)) continue;
+    const mode = fs.statSync(helperPath).mode;
+    if ((mode & 0o111) === 0) {
+      fs.chmodSync(helperPath, mode | 0o755);
+      console.log(`[build-server] node-pty executable bit fixed: ${path.relative(baseDir, helperPath)}`);
+    }
+  }
+}
+
 // ── 2. Vite bundle ──
 // 用系统 Node 跑 Vite（构建时工具，不涉及 native addon ABI）
 // 产出到 dist-server-bundle/，然后复制到 outDir/bundle/
@@ -292,6 +309,7 @@ fs.writeFileSync(
 // CI fresh install 把直接 external 依赖解析到尚未验证的新版本。
 console.log("[build-server] installing external dependencies...");
 runWithTargetNode(`"${cachedNpmCli}" install --omit=dev --no-audit --no-fund`);
+ensureNodePtySpawnHelperExecutable(outDir);
 
 // ── 5b. 验证所有 Vite external 在 node_modules 中可达 ──
 // 遍历 string 类型的 external，检查 node_modules 中是否存在。

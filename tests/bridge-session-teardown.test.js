@@ -26,6 +26,16 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
       open: (...args) => sessionManagerOpenMock(...args),
     },
     emitSessionShutdown: (...args) => emitSessionShutdownMock(...args),
+    resizeModelImageInput: async (image) => ({
+      data: image.data,
+      mimeType: image.mimeType,
+      originalWidth: 1,
+      originalHeight: 1,
+      width: 1,
+      height: 1,
+      wasResized: false,
+    }),
+    formatModelImageDimensionNote: () => undefined,
   };
 });
 
@@ -520,6 +530,80 @@ describe("BridgeSessionManager teardown", () => {
     const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
     expect(createArgs.cwd).toBe(rootCwd);
     expect(createArgs.resourceLoader.getSystemPrompt()).toBe(`system prompt @ ${rootCwd}`);
+  });
+
+  it("adds a low-salience platform line and records bridge context metadata for owner sessions", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s-wechat.jsonl");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const session = {
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+      extensionRunner: {
+        hasHandlers: vi.fn(() => false),
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await manager.executeExternalMessage(
+      "hello",
+      "wx_dm_wx-user@agent-a",
+      { userId: "wx-user", chatId: "wx-user", name: "微信用户" },
+      { agentId: "agent-a" },
+    );
+
+    const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(createArgs.resourceLoader.getSystemPrompt()).toContain(
+      "当前用户正通过微信与你对话，仅在需要理解当前平台或“这里”等指代时参考。",
+    );
+    expect(manager.readIndex(agent)["wx_dm_wx-user@agent-a"]).toMatchObject({
+      file: "owner/s-wechat.jsonl",
+      platform: "wechat",
+      chatType: "dm",
+      role: "owner",
+      userId: "wx-user",
+      chatId: "wx-user",
+    });
+    expect(manager.getBridgeContextForSessionPath(mgrPath, { agentId: "agent-a" })).toMatchObject({
+      isBridgeSession: true,
+      platform: "wechat",
+      platformLabel: "微信",
+      chatType: "dm",
+      role: "owner",
+      notificationHint: {
+        channels: ["bridge_owner"],
+        bridgePlatforms: ["wechat"],
+        contextPolicy: "record_when_delivered",
+      },
+    });
+  });
+
+  it("infers guest bridge context from legacy guest session file location", () => {
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.sessionDir, "bridge", "guests", "legacy-group.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    manager.writeIndex({
+      "tg_group_g1@agent-a": {
+        file: "guests/legacy-group.jsonl",
+        userId: "guest-user",
+        chatId: "g1",
+      },
+    }, agent);
+
+    expect(manager.getBridgeContextForSessionPath(sessionFile, { agentId: "agent-a" })).toMatchObject({
+      isBridgeSession: true,
+      platform: "telegram",
+      chatType: "group",
+      role: "guest",
+      notificationHint: null,
+    });
   });
 
   it("owner bridge tools follow the master memory switch instead of session memory state", async () => {

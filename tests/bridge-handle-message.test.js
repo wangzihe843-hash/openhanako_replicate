@@ -574,6 +574,70 @@ describe("BridgeManager._handleMessage", () => {
       });
     });
 
+    it("only sends proactive replies through the requested Bridge platform", async () => {
+      const { bm, engine } = createMocks();
+      const wechatAdapter = {
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      const feishuAdapter = {
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      bm._platforms.clear();
+      bm._platforms.set("wechat:hana", {
+        adapter: wechatAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "wechat",
+      });
+      bm._platforms.set("feishu:hana", {
+        adapter: feishuAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "feishu",
+      });
+      engine.getAgent.mockImplementation((id) => {
+        if (id === "hana") {
+          return {
+            agentName: "TestAgent",
+            config: {
+              bridge: {
+                wechat: { owner: "wx-user" },
+                feishu: { owner: "owner-user-id" },
+              },
+            },
+            sessionDir: os.tmpdir(),
+          };
+        }
+        return null;
+      });
+      engine.getBridgeIndex = vi.fn((agentId) => {
+        expect(agentId).toBe("hana");
+        return {
+          "wx_dm_wx-user@hana": {
+            file: "owner/wx.jsonl",
+            userId: "wx-user",
+          },
+          "fs_dm_owner-open-id@hana": {
+            file: "owner/fs.jsonl",
+            userId: "owner-user-id",
+            chatId: "oc_owner_chat",
+          },
+        };
+      });
+
+      const result = await bm.sendProactive("hello", "hana", {
+        bridgePlatforms: ["feishu"],
+      });
+
+      expect(wechatAdapter.sendReply).not.toHaveBeenCalled();
+      expect(feishuAdapter.sendReply).toHaveBeenCalledWith("oc_owner_chat", "hello");
+      expect(result).toMatchObject({
+        platform: "feishu",
+        chatId: "oc_owner_chat",
+        sessionKey: "fs_dm_owner-open-id@hana",
+      });
+    });
+
     it("passes message_id when downloading feishu image attachments", async () => {
       const { bm, hub } = createMocks();
       const feishuAdapter = {
