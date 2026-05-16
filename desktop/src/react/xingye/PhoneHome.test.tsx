@@ -128,7 +128,8 @@ describe('PhoneHome heartbeat trigger', () => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检已触发');
     });
     expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：通讯录变更×1、短信×2（共 3 条）');
-    expect(consumeEventLogMock).toHaveBeenCalledWith('agent-a');
+    // triggerTime is captured before the fetch and forwarded so the consumer can survive a server-side race.
+    expect(consumeEventLogMock).toHaveBeenCalledWith('agent-a', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
   });
 
   it('does not consume the event log when the heartbeat is on cooldown', async () => {

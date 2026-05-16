@@ -1,19 +1,19 @@
 /**
- * 把 event log 里 consumerName='heartbeat' 尚未消费的事件，归并成一行中文摘要，
+ * 把 event log 里属于「本次巡检」的事件归并成一行中文摘要，
  * 供 PhoneHome「立即巡检」写入 desk-heartbeat-memory，再由 9 个 AI prompt 弱引用。
  *
- * - 只读写 event log；不触发任何 LLM 调用。
- * - 摘要后会把所有读到的事件标记为 consumedBy.heartbeat，避免反复出现。
+ * - 只读 event log，不再单独标记 consumedBy；服务端 'xingye.heartbeat' consumer 是唯一消费者。
+ * - 「本次巡检」= 该 agent 下尚未被 xingye.heartbeat 消费 OR 被它在 triggerTime 之后消费过的事件，
+ *   消除了渲染端与服务端之间的竞态。
  */
 
 import {
-  listUnconsumedXingyeEvents,
-  markXingyeEventConsumed,
+  listXingyeEvents,
   type XingyeEvent,
   type XingyeEventType,
 } from './xingye-event-log';
 
-export const HEARTBEAT_CONSUMER_NAME = 'heartbeat';
+export const HEARTBEAT_CONSUMER_NAME = 'xingye.heartbeat';
 
 const TYPE_LABEL: Record<XingyeEventType, string> = {
   'recent_chat.observed': '最近对话',
@@ -106,29 +106,32 @@ export type HeartbeatEventConsumeResult = {
 };
 
 /**
- * 读取该 agent 所有未被 heartbeat 消费的事件，汇总成一行摘要，并把它们全部
- * 标记为 consumedBy.heartbeat。单个事件标记失败不影响其它事件。
+ * 读取该 agent 「本次巡检」涉及的事件并汇总为一行中文摘要。
+ * 不标记 consumedBy——服务端 xingye.heartbeat consumer 是唯一标记方。
+ *
+ * triggerTime 应在调用 /api/desk/heartbeat 之前捕获，用于过滤出
+ * 「上次巡检之后产生 / 本次被服务端 consumer 标记」的事件，跨进程竞态安全。
  */
 export async function consumeXingyeEventLogForHeartbeat(
   agentId: string,
+  triggerTime?: string,
 ): Promise<HeartbeatEventConsumeResult> {
   const aid = agentId.trim();
   if (!aid) return { summary: '', consumedCount: 0 };
 
-  const events = await listUnconsumedXingyeEvents(aid, HEARTBEAT_CONSUMER_NAME);
+  const since = (typeof triggerTime === 'string' && triggerTime)
+    ? triggerTime
+    : new Date().toISOString();
+
+  const all = await listXingyeEvents(aid);
+  const events = all.filter((event) => {
+    const consumedAt = event.consumedBy?.[HEARTBEAT_CONSUMER_NAME];
+    return !consumedAt || consumedAt >= since;
+  });
   if (events.length === 0) return { summary: '', consumedCount: 0 };
 
-  const summary = summarizeXingyeEventsForHeartbeat(events);
-
-  let consumedCount = 0;
-  for (const event of events) {
-    try {
-      const next = await markXingyeEventConsumed(aid, event.id, HEARTBEAT_CONSUMER_NAME);
-      if (next) consumedCount += 1;
-    } catch (error) {
-      console.warn('[xingye-heartbeat-event-consumer] failed to mark consumed:', error);
-    }
-  }
-
-  return { summary, consumedCount };
+  return {
+    summary: summarizeXingyeEventsForHeartbeat(events),
+    consumedCount: events.length,
+  };
 }

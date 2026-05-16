@@ -236,6 +236,7 @@ export function PhoneHome({
     if (!agent?.id || heartbeatBusy) return;
     setHeartbeatBusy(true);
     setHeartbeatStatus('巡检触发中...');
+    const triggerTime = new Date().toISOString();
     try {
       const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agent.id)}`, {
         method: 'POST',
@@ -249,7 +250,7 @@ export function PhoneHome({
       let eventsSummary = '';
       if (data?.cooldown !== true) {
         try {
-          const consumed = await consumeXingyeEventLogForHeartbeat(agent.id);
+          const consumed = await consumeXingyeEventLogForHeartbeat(agent.id, triggerTime);
           eventsSummary = consumed.summary;
         } catch (err) {
           console.warn('[PhoneHome] failed to consume event log for heartbeat:', err);

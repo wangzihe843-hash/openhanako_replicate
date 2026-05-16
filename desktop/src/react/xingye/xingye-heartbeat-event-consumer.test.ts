@@ -19,7 +19,12 @@ vi.mock('./xingye-storage-api', () => ({
   postXingyeStorage: postMock,
 }));
 
-import { XINGYE_EVENT_TYPES, appendXingyeEvent, listUnconsumedXingyeEvents } from './xingye-event-log';
+import {
+  XINGYE_EVENT_TYPES,
+  appendXingyeEvent,
+  listUnconsumedXingyeEvents,
+  markXingyeEventConsumed,
+} from './xingye-event-log';
 import {
   HEARTBEAT_CONSUMER_NAME,
   consumeXingyeEventLogForHeartbeat,
@@ -117,12 +122,16 @@ describe('consumeXingyeEventLogForHeartbeat (IO)', () => {
     postMock.mockClear();
   });
 
+  it('exports xingye.heartbeat as the consumer namespace shared with the server-side consumer', () => {
+    expect(HEARTBEAT_CONSUMER_NAME).toBe('xingye.heartbeat');
+  });
+
   it('returns empty summary and zero count when nothing is pending', async () => {
     const result = await consumeXingyeEventLogForHeartbeat('agent-a');
     expect(result).toEqual({ summary: '', consumedCount: 0 });
   });
 
-  it('summarizes unconsumed events and marks them consumed by heartbeat', async () => {
+  it('summarizes events that have not yet been consumed by xingye.heartbeat (renderer wins the race)', async () => {
     await appendXingyeEvent('agent-a', {
       type: 'phone.contact_changed', source: 't', payload: { id: 'c1' },
     });
@@ -136,14 +145,56 @@ describe('consumeXingyeEventLogForHeartbeat (IO)', () => {
     const first = await consumeXingyeEventLogForHeartbeat('agent-a');
     expect(first.consumedCount).toBe(3);
     expect(first.summary).toBe('自上次巡检以来：通讯录变更×1、短信×1、新记忆候选×1（共 3 条）');
+  });
 
-    // A second call should see nothing — heartbeat already consumed them.
-    const second = await consumeXingyeEventLogForHeartbeat('agent-a');
-    expect(second).toEqual({ summary: '', consumedCount: 0 });
+  it('still picks up events already consumed by the server-side xingye.heartbeat in this beat (server wins the race)', async () => {
+    const triggerTime = new Date(Date.now() - 1000).toISOString();
+    const e1 = await appendXingyeEvent('agent-a', {
+      type: 'phone.contact_changed', source: 't', payload: { id: 'c1' },
+    });
+    const e2 = await appendXingyeEvent('agent-a', {
+      type: 'phone.sms_appended', source: 't', payload: { id: 's1' },
+    });
+    // Simulate the server-side xingye.heartbeat consumer marking events
+    // AFTER the renderer captured triggerTime but BEFORE the renderer reads.
+    await markXingyeEventConsumed('agent-a', e1.id, HEARTBEAT_CONSUMER_NAME);
+    await markXingyeEventConsumed('agent-a', e2.id, HEARTBEAT_CONSUMER_NAME);
 
-    // Other consumers (e.g. a hypothetical 'moments') still see them.
+    const result = await consumeXingyeEventLogForHeartbeat('agent-a', triggerTime);
+    expect(result.consumedCount).toBe(2);
+    expect(result.summary).toBe('自上次巡检以来：通讯录变更×1、短信×1（共 2 条）');
+  });
+
+  it('excludes events consumed by xingye.heartbeat in a previous beat', async () => {
+    const oldEvent = await appendXingyeEvent('agent-a', {
+      type: 'phone.contact_changed', source: 't', payload: { id: 'c1' },
+    });
+    // Mark it consumed at an old timestamp (simulating a previous beat).
+    await markXingyeEventConsumed('agent-a', oldEvent.id, HEARTBEAT_CONSUMER_NAME);
+
+    // New trigger time strictly later than the old consumption timestamp.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const triggerTime = new Date().toISOString();
+
+    const result = await consumeXingyeEventLogForHeartbeat('agent-a', triggerTime);
+    expect(result).toEqual({ summary: '', consumedCount: 0 });
+
+    // Other consumers (e.g. a hypothetical 'moments') still see the event.
     const stillForOthers = await listUnconsumedXingyeEvents('agent-a', 'moments');
-    expect(stillForOthers).toHaveLength(3);
+    expect(stillForOthers).toHaveLength(1);
+  });
+
+  it('does not mark any consumedBy keys (server is the sole consumer)', async () => {
+    const event = await appendXingyeEvent('agent-a', {
+      type: 'moment.created', source: 't', payload: { id: 'a' },
+    });
+    await consumeXingyeEventLogForHeartbeat('agent-a');
+
+    // The renderer must NOT have written any consumedBy entry.
+    const remaining = await listUnconsumedXingyeEvents('agent-a', HEARTBEAT_CONSUMER_NAME);
+    expect(remaining.map((e) => e.id)).toContain(event.id);
+    const stillForOthers = await listUnconsumedXingyeEvents('agent-a', 'moments');
+    expect(stillForOthers).toHaveLength(1);
   });
 
   it('ignores blank agentId', async () => {
