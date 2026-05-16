@@ -10,16 +10,9 @@ import type { Agent } from '../types';
 import { PhoneHome } from './PhoneHome';
 
 const fetchMock = vi.hoisted(() => vi.fn());
-const consumeEventLogMock = vi.hoisted(() =>
-  vi.fn(async () => ({ summary: '', consumedCount: 0 })),
-);
 
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaFetch: fetchMock,
-}));
-
-vi.mock('./xingye-heartbeat-event-consumer', () => ({
-  consumeXingyeEventLogForHeartbeat: consumeEventLogMock,
 }));
 
 vi.mock('./XingyeAgentAvatar', () => ({
@@ -67,8 +60,6 @@ function renderPhoneHome() {
 describe('PhoneHome heartbeat trigger', () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    consumeEventLogMock.mockReset();
-    consumeEventLogMock.mockResolvedValue({ summary: '', consumedCount: 0 });
   });
 
   afterEach(() => {
@@ -111,15 +102,17 @@ describe('PhoneHome heartbeat trigger', () => {
     });
   });
 
-  it('shows the event-log summary in the heartbeat status line on a real trigger', async () => {
+  it('shows the summaryZh returned from /api/desk/heartbeat in the status line', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ ok: true, triggered: true, cooldown: false }),
+      json: async () => ({
+        ok: true,
+        triggered: true,
+        cooldown: false,
+        summaryZh: '自上次巡检以来：通讯录变更×1、短信×2（共 3 条）',
+        consumedCount: 3,
+      }),
     } as Response);
-    consumeEventLogMock.mockResolvedValueOnce({
-      summary: '自上次巡检以来：通讯录变更×1、短信×2（共 3 条）',
-      consumedCount: 3,
-    });
 
     renderPhoneHome();
     fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
@@ -128,14 +121,12 @@ describe('PhoneHome heartbeat trigger', () => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检已触发');
     });
     expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：通讯录变更×1、短信×2（共 3 条）');
-    // triggerTime is captured before the fetch and forwarded so the consumer can survive a server-side race.
-    expect(consumeEventLogMock).toHaveBeenCalledWith('agent-a', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
   });
 
-  it('does not consume the event log when the heartbeat is on cooldown', async () => {
+  it('shows just the cooldown line when the server returns no summaryZh', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ ok: true, triggered: false, cooldown: true }),
+      json: async () => ({ ok: true, triggered: false, cooldown: true, summaryZh: '' }),
     } as Response);
 
     renderPhoneHome();
@@ -144,7 +135,7 @@ describe('PhoneHome heartbeat trigger', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('冷却中');
     });
-    expect(consumeEventLogMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).not.toHaveTextContent('自上次巡检以来');
   });
 
   it('opens the schedule app from the phone home grid', () => {

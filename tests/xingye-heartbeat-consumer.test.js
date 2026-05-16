@@ -143,6 +143,8 @@ describe("Xingye heartbeat event consumer", () => {
       consumedEventIds: ["evt-a-1", "evt-a-2"],
     });
     expect(result.summary).toContain("2");
+    // 中文摘要：渲染端 PhoneHome 直接显示这条；按 TYPE_ORDER_ZH 排序，秘密空间在短信之后。
+    expect(result.summaryZh).toBe("自上次巡检以来：短信×1、秘密空间新增×1（共 2 条）");
     expect(result.observations).toEqual(expect.arrayContaining([
       expect.stringContaining("phone.sms_appended"),
       expect.stringContaining("secret_space.record_appended"),

@@ -18,6 +18,7 @@ import { WORKSPACE_SKILL_DIRS } from "../../shared/workspace-skill-paths.js";
 import { t } from "../i18n.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
 import { realPath, isSensitivePath } from "../utils/path-security.js";
+import { runXingyeHeartbeatConsumer } from "../../lib/xingye/heartbeat-consumer.js";
 
 /** 安全路径校验：target 必须在 baseDir 内部（解析 symlink 后比较） */
 function isInsidePath(target, baseDir) {
@@ -308,10 +309,29 @@ export function createDeskRoute(engine, hub) {
     const hb = hub?.scheduler?.getHeartbeat(agentId);
     if (!hb) return c.json({ error: "Heartbeat not initialized" });
     const triggered = hb.triggerNow();
+    // 触发成功时，同步在路由内消费一次 event log，把中文摘要随响应返回。
+    // beat 内部 onBeat 仍会再调一次 consumer，但事件已被标记，第二次走 skipped 分支，不会重复写结果文件。
+    let summaryZh = "";
+    let consumedCount = 0;
+    if (triggered) {
+      try {
+        const agent = engine.getAgent(agentId);
+        const agentDir = agent?.agentDir || path.join(engine.agentsDir, agentId);
+        const consumed = await runXingyeHeartbeatConsumer({ agentId, agentDir });
+        if (consumed?.result) {
+          summaryZh = typeof consumed.result.summaryZh === "string" ? consumed.result.summaryZh : "";
+          consumedCount = typeof consumed.result.eventCount === "number" ? consumed.result.eventCount : 0;
+        }
+      } catch (err) {
+        console.warn(`[desk] xingye heartbeat consumer failed: ${err?.message || err}`);
+      }
+    }
     return c.json({
       ok: true,
       triggered,
       cooldown: !triggered,
+      summaryZh,
+      consumedCount,
       message: triggered ? t("error.heartbeatTriggered") : "Heartbeat trigger cooldown",
     });
   });

@@ -4,7 +4,6 @@ import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
-import { consumeXingyeEventLogForHeartbeat } from './xingye-heartbeat-event-consumer';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -236,7 +235,6 @@ export function PhoneHome({
     if (!agent?.id || heartbeatBusy) return;
     setHeartbeatBusy(true);
     setHeartbeatStatus('巡检触发中...');
-    const triggerTime = new Date().toISOString();
     try {
       const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agent.id)}`, {
         method: 'POST',
@@ -247,15 +245,7 @@ export function PhoneHome({
       }
       const statusLine = data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发';
       const detail = typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : '';
-      let eventsSummary = '';
-      if (data?.cooldown !== true) {
-        try {
-          const consumed = await consumeXingyeEventLogForHeartbeat(agent.id, triggerTime);
-          eventsSummary = consumed.summary;
-        } catch (err) {
-          console.warn('[PhoneHome] failed to consume event log for heartbeat:', err);
-        }
-      }
+      const eventsSummary = typeof data?.summaryZh === 'string' ? data.summaryZh.trim() : '';
       const composed = [statusLine, detail, eventsSummary].filter(Boolean).join(' · ');
       setHeartbeatStatus(composed);
       rememberDeskHeartbeatUiOutcome(agent.id, composed);
