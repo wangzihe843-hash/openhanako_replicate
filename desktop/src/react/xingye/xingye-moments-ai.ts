@@ -170,11 +170,67 @@ function buildActorRefIndex(
   return index;
 }
 
-function resolveActorRef(raw: unknown, index: ActorRefIndex): ResolvedActorRef | null {
-  if (typeof raw !== 'string') return null;
-  const ref = raw.trim();
-  if (!ref) return null;
-  return index.get(ref) ?? null;
+/**
+ * 从一个 entry 中取出 ref 字符串。容忍模型多种写法：
+ * - 字符串本身：`"agent:hanako"` / `"vc:vc-1"` / 甚至无前缀的 `"hanako"`
+ * - 对象 + 多种字段名：ref / actorRef / actor / actorId / agentId / contactId / id / who
+ */
+const REF_FIELD_CANDIDATES = [
+  'ref',
+  'actorRef',
+  'actor',
+  'actorId',
+  'agentId',
+  'contactId',
+  'id',
+  'who',
+] as const;
+
+function coerceRefString(entry: unknown): string | null {
+  if (typeof entry === 'string') {
+    const trimmed = entry.trim();
+    return trimmed || null;
+  }
+  if (!entry || typeof entry !== 'object') return null;
+  const record = entry as Record<string, unknown>;
+  for (const key of REF_FIELD_CANDIDATES) {
+    const v = record[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * 先按 ref 原文查 index；若 ref 不含 `:` 前缀，再依次尝试 `vc:<ref>` 与 `agent:<ref>` 兜底。
+ * 这样模型即便偷懒只写 `"hanako"` / `"vc-1"`，只要值能在池里命中也能解析出来。
+ */
+function resolveActorRefSmart(rawRef: string, index: ActorRefIndex): ResolvedActorRef | null {
+  const direct = index.get(rawRef);
+  if (direct) return direct;
+  if (!rawRef.includes(':')) {
+    const vc = index.get(`vc:${rawRef}`);
+    if (vc) return vc;
+    const ag = index.get(`agent:${rawRef}`);
+    if (ag) return ag;
+  }
+  return null;
+}
+
+function reportDropped(
+  scope: 'likes' | 'comments',
+  rawCount: number,
+  resolved: number,
+  droppedNoRef: number,
+  droppedUnknownRef: number,
+  droppedBody: number,
+): void {
+  // 静默：模型给了多少、命中多少，全部对得上。
+  if (rawCount === resolved && !droppedNoRef && !droppedUnknownRef && !droppedBody) return;
+  // 让测试 / 实测时一眼看出模型给了但被丢；只在浏览器/jsdom 控制台暴露，不影响业务。
+  console.warn(
+    `[xingye-moments-ai] ${scope} parse:`,
+    JSON.stringify({ rawCount, resolved, droppedNoRef, droppedUnknownRef, droppedBody }),
+  );
 }
 
 function parseLikeEntries(
@@ -185,11 +241,19 @@ function parseLikeEntries(
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
   const out: XingyeMomentSeedLike[] = [];
+  let droppedNoRef = 0;
+  let droppedUnknownRef = 0;
   for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const record = entry as Record<string, unknown>;
-    const resolved = resolveActorRef(record.ref ?? record.actorRef, index);
-    if (!resolved) continue;
+    const rawRef = coerceRefString(entry);
+    if (!rawRef) {
+      droppedNoRef += 1;
+      continue;
+    }
+    const resolved = resolveActorRefSmart(rawRef, index);
+    if (!resolved) {
+      droppedUnknownRef += 1;
+      continue;
+    }
     const dedupeKey = `${resolved.actorType}:${resolved.actorId}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -200,7 +264,18 @@ function parseLikeEntries(
     });
     if (out.length >= maxLikes) break;
   }
+  reportDropped('likes', raw.length, out.length, droppedNoRef, droppedUnknownRef, 0);
   return out;
+}
+
+const COMMENT_BODY_FIELD_CANDIDATES = ['body', 'content', 'text', 'message'] as const;
+
+function coerceCommentBody(entry: Record<string, unknown>): string | null {
+  for (const key of COMMENT_BODY_FIELD_CANDIDATES) {
+    const v = entry[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
 }
 
 function parseCommentEntries(
@@ -211,15 +286,28 @@ function parseCommentEntries(
 ): XingyeMomentSeedComment[] {
   if (!Array.isArray(raw)) return [];
   const out: XingyeMomentSeedComment[] = [];
+  let droppedNoRef = 0;
+  let droppedUnknownRef = 0;
+  let droppedBody = 0;
   for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const record = entry as Record<string, unknown>;
-    const resolved = resolveActorRef(record.ref ?? record.actorRef, index);
-    if (!resolved) continue;
-    const bodyRaw = record.body ?? record.content;
-    if (typeof bodyRaw !== 'string') continue;
-    const body = bodyRaw.trim();
-    if (!body) continue;
+    const rawRef = coerceRefString(entry);
+    if (!rawRef) {
+      droppedNoRef += 1;
+      continue;
+    }
+    const resolved = resolveActorRefSmart(rawRef, index);
+    if (!resolved) {
+      droppedUnknownRef += 1;
+      continue;
+    }
+    // 字符串型 entry 不可能携带 body；只有对象型 entry 才有 body。
+    const body = entry && typeof entry === 'object'
+      ? coerceCommentBody(entry as Record<string, unknown>)
+      : null;
+    if (!body) {
+      droppedBody += 1;
+      continue;
+    }
     out.push({
       actorType: resolved.actorType,
       actorId: resolved.actorId,
@@ -228,6 +316,7 @@ function parseCommentEntries(
     });
     if (out.length >= maxComments) break;
   }
+  reportDropped('comments', raw.length, out.length, droppedNoRef, droppedUnknownRef, droppedBody);
   return out;
 }
 

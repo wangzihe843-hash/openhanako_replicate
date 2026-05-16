@@ -104,6 +104,88 @@ describe('normalizeMomentDraftResult', () => {
     expect(r?.seedLikes).toEqual([]);
     expect(r?.seedComments).toEqual([]);
   });
+
+  it('accepts string-array form of likes (model may emit ["agent:hanako", "vc:vc-1"])', () => {
+    const r = normalizeMomentDraftResult(
+      {
+        content: 'x',
+        likes: ['agent:hanako', 'vc:vc-1', '   ', 'agent:hanako'], // dedupe + drop empty
+      },
+      {
+        ownerAgentId: 'linwu',
+        virtualContacts: [{ id: 'vc-1', displayName: '北门旧巷' }],
+        peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+      },
+    );
+    expect(r?.seedLikes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'agent:hanako',
+      'virtual_contact:linwu:vc-1',
+    ]);
+  });
+
+  it('accepts alternate ref field names (agentId / actor / actorId / contactId)', () => {
+    const r = normalizeMomentDraftResult(
+      {
+        content: 'x',
+        likes: [
+          { agentId: 'agent:hanako' }, // agentId carrying full ref
+          { actor: 'vc:vc-1' },        // actor carrying full ref
+        ],
+        comments: [
+          { actorId: 'agent:hanako', text: '听见了' },          // alternate field for both ref and body
+          { contactId: 'vc:vc-1', message: '保重' },              // contactId + message
+        ],
+      },
+      {
+        ownerAgentId: 'linwu',
+        virtualContacts: [{ id: 'vc-1', displayName: '北门旧巷' }],
+        peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+      },
+    );
+    expect(r?.seedLikes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'agent:hanako',
+      'virtual_contact:linwu:vc-1',
+    ]);
+    expect(r?.seedComments.map((c) => `${c.actorType}:${c.actorId}:${c.body}`)).toEqual([
+      'agent:hanako:听见了',
+      'virtual_contact:linwu:vc-1:保重',
+    ]);
+  });
+
+  it('infers missing prefix when bare id matches the pool (e.g. "hanako" → agent:hanako)', () => {
+    const r = normalizeMomentDraftResult(
+      {
+        content: 'x',
+        likes: ['hanako', { ref: 'vc-1' }], // 无前缀，分别从 agent / vc 池命中
+      },
+      {
+        ownerAgentId: 'linwu',
+        virtualContacts: [{ id: 'vc-1', displayName: '北门旧巷' }],
+        peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+      },
+    );
+    expect(r?.seedLikes.map((l) => `${l.actorType}:${l.actorId}`)).toEqual([
+      'agent:hanako',
+      'virtual_contact:linwu:vc-1',
+    ]);
+  });
+
+  it('warns to console when entries are dropped (observability)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    normalizeMomentDraftResult(
+      {
+        content: 'x',
+        likes: [{ ref: 'agent:unknown' }, 'agent:hanako'],
+      },
+      {
+        ownerAgentId: 'linwu',
+        peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+      },
+    );
+    const calls = warnSpy.mock.calls.map((args) => String(args[0] ?? ''));
+    expect(calls.some((line) => line.includes('[xingye-moments-ai] likes parse'))).toBe(true);
+    warnSpy.mockRestore();
+  });
 });
 
 describe('generateXingyeMomentDraftWithAI', () => {
@@ -127,6 +209,37 @@ describe('generateXingyeMomentDraftWithAI', () => {
       ok: true,
       json: async () => ({ ok: true, result: { content: '今天天有点低' } }),
     } as Response);
+  });
+
+  it('prompt enforces likes/comments as mandatory when any pool is non-empty (with few-shot)', async () => {
+    vi.mocked(getVirtualContacts).mockReturnValue([
+      {
+        ownerAgentId: 'linwu',
+        id: 'vc-night',
+        displayName: '夜班搭子',
+        kind: 'coworker',
+        createdAt: '2026-05-11T00:00:00.000Z',
+        updatedAt: '2026-05-11T00:00:00.000Z',
+      },
+    ] as never);
+    const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
+    await generateXingyeMomentDraftWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+    });
+    const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+      (call) => call[0] === '/api/xingye/phone-generate',
+    );
+    const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+    // 必出指令
+    expect(prompt).toMatch(/必须.*至少 2 条 likes/);
+    expect(prompt).toMatch(/至少 1 条 comments/);
+    // few-shot 示例：让模型看到具体应该长什么样
+    expect(prompt).toContain('凌晨三点的便利店');
+    expect(prompt).toContain('"ref": "agent:hanako"');
+    // 仍允许两池全空时省略
+    expect(prompt).toContain('两个池都是「（无）」时才允许省略');
   });
 
   it('posts phone-generate with kind moments and contains moments-specific prompt markers', async () => {
