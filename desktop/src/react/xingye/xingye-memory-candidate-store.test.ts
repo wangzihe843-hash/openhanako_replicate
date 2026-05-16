@@ -371,12 +371,23 @@ describe('xingye-memory-candidate-store CRUD', () => {
   });
 
   it('list sorts by updatedAt then createdAt descending', () => {
-    const older = createXingyeMemoryCandidate('a1', { content: 'older' }, storage);
-    const newer = createXingyeMemoryCandidate('a1', { content: 'newer' }, storage);
-    updateXingyeMemoryCandidate('a1', older.id, { reason: 'touch' }, storage);
-    const list = listXingyeMemoryCandidates('a1', storage);
-    expect(list[0].id).toBe(older.id);
-    expect(list[1].id).toBe(newer.id);
+    // ISO timestamps only have ms precision; in real CPU time these three calls
+    // often collide on the same ms, leaving sort order undefined. Pin the clock
+    // and step it forward so each operation gets a distinct, ordered timestamp.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const older = createXingyeMemoryCandidate('a1', { content: 'older' }, storage);
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.010Z'));
+      const newer = createXingyeMemoryCandidate('a1', { content: 'newer' }, storage);
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.020Z'));
+      updateXingyeMemoryCandidate('a1', older.id, { reason: 'touch' }, storage);
+      const list = listXingyeMemoryCandidates('a1', storage);
+      expect(list[0].id).toBe(older.id);
+      expect(list[1].id).toBe(newer.id);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not export patchXingyeMemoryCandidate (no direct cross-agent patch)', () => {
