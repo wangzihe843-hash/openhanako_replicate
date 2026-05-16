@@ -24,10 +24,32 @@ const appEntryStoreMock = vi.hoisted(() => ({
   listAppEntries: vi.fn(),
 }));
 
+const openLibraryMock = vi.hoisted(() => ({
+  searchOpenLibraryBooks: vi.fn(),
+  searchOpenLibraryBooksViaProxy: vi.fn(),
+}));
+
+const readingTopicsAiMock = vi.hoisted(() => ({
+  inferReadingTopicsWithAI: vi.fn(),
+}));
+
+const wikiquoteMock = vi.hoisted(() => ({
+  fetchWikiquoteSuggestions: vi.fn(),
+}));
+
+const annotationAiMock = vi.hoisted(() => ({
+  inferReadingAnnotationWithAI: vi.fn(),
+}));
+
 vi.mock('./xingye-reading-book-catalog', () => catalogMock);
 vi.mock('./xingye-app-entry-store', () => appEntryStoreMock);
+vi.mock('./xingye-open-library-adapter', () => openLibraryMock);
+vi.mock('./xingye-reading-topics-ai', () => readingTopicsAiMock);
+vi.mock('./xingye-wikiquote-adapter', () => wikiquoteMock);
+vi.mock('./xingye-reading-annotation-ai', () => annotationAiMock);
 
 import { PhoneReadingNotesApp } from './PhoneReadingNotesApp';
+import type { XingyeRoleProfile } from './xingye-profile-store';
 
 const linwu: Agent = {
   id: 'test01',
@@ -37,10 +59,19 @@ const linwu: Agent = {
   hasAvatar: false,
 };
 
-function renderReadingNotes(agent: Agent | null = linwu) {
+const linwuProfile: XingyeRoleProfile = {
+  agentId: 'test01',
+  displayName: '林雾',
+  shortBio: '战地医生，喜欢冬天。',
+  personalitySummary: '克制，关注创伤恢复。',
+  updatedAt: '2026-05-16T00:00:00.000Z',
+};
+
+function renderReadingNotes(agent: Agent | null = linwu, profile: XingyeRoleProfile | null = null) {
   return render(
     <PhoneReadingNotesApp
       ownerAgent={agent}
+      ownerProfile={profile}
       displayName={agent?.name ?? 'TA'}
       onBack={vi.fn()}
     />,
@@ -83,6 +114,14 @@ describe('PhoneReadingNotesApp', () => {
     }));
     appEntryStoreMock.deleteAppEntry.mockResolvedValue(true);
     catalogMock.deleteBookForAgent.mockResolvedValue(true);
+
+    openLibraryMock.searchOpenLibraryBooks.mockReset();
+    openLibraryMock.searchOpenLibraryBooksViaProxy.mockReset();
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockReset();
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockResolvedValue([]);
+    wikiquoteMock.fetchWikiquoteSuggestions.mockReset();
+    wikiquoteMock.fetchWikiquoteSuggestions.mockResolvedValue([]);
+    annotationAiMock.inferReadingAnnotationWithAI.mockReset();
   });
 
   afterEach(() => {
@@ -139,7 +178,7 @@ describe('PhoneReadingNotesApp', () => {
     fireEvent.click(await screen.findByRole('button', { name: /雪线急救手册/ }));
     expect(screen.getByText('只含书目 metadata。')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '新增笔记' }));
+    fireEvent.click(screen.getByRole('button', { name: '手写笔记' }));
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '预读问题' } });
     fireEvent.change(screen.getByLabelText('类型'), { target: { value: 'question' } });
     fireEvent.change(screen.getByLabelText('正文'), { target: { value: '我想先确认雪地失温处理顺序。' } });
@@ -308,5 +347,246 @@ describe('PhoneReadingNotesApp', () => {
     fireEvent.click(screen.getByRole('button', { name: /非法摘录/ }));
     const detail = screen.getByTestId('phone-reading-note-detail');
     expect(within(detail).queryByText('不可显示')).not.toBeInTheDocument();
+  });
+
+  it('opens 帮 TA 找书 and asks the AI for English subject categories with Chinese labels', async () => {
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockResolvedValue([
+      { subject: 'war memoir', label: '战争回忆', reason: '幼年经历战乱' },
+      { subject: 'medical ethics', label: '医疗伦理', reason: '长期救治伤患' },
+      { subject: 'philosophy of mind', label: '心智哲学' },
+    ]);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    fireEvent.click(screen.getByRole('button', { name: /帮 TA 找书/ }));
+
+    await waitFor(() => {
+      expect(readingTopicsAiMock.inferReadingTopicsWithAI).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: linwu, ownerProfile: linwuProfile }),
+      );
+    });
+    const topicGroup = await screen.findByTestId('phone-reading-discover-topics');
+    expect(within(topicGroup).getByRole('button', { name: '战争回忆' })).toBeInTheDocument();
+    expect(within(topicGroup).getByRole('button', { name: '医疗伦理' })).toBeInTheDocument();
+    expect(within(topicGroup).getByRole('button', { name: '心智哲学' })).toBeInTheDocument();
+  });
+
+  it('shows the empty-topic hint when the model returns no usable categories', async () => {
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockResolvedValue([]);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    fireEvent.click(screen.getByRole('button', { name: /帮 TA 找书/ }));
+
+    expect(await screen.findByTestId('phone-reading-discover-empty')).toHaveTextContent('还没有可用的阅读类别');
+    expect(openLibraryMock.searchOpenLibraryBooksViaProxy).not.toHaveBeenCalled();
+  });
+
+  it('shows the AI failure message and does not call Open Library when topic inference fails', async () => {
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockRejectedValue(new Error('模型暂不可用'));
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    fireEvent.click(screen.getByRole('button', { name: /帮 TA 找书/ }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('类别推断失败：模型暂不可用');
+    expect(openLibraryMock.searchOpenLibraryBooksViaProxy).not.toHaveBeenCalled();
+  });
+
+  it('searches Open Library with the English subject on chip click and imports the picked book', async () => {
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockResolvedValue([
+      { subject: 'war memoir', label: '战争回忆', reason: '幼年经历战乱' },
+    ]);
+    openLibraryMock.searchOpenLibraryBooksViaProxy.mockResolvedValue([{
+      key: '/works/OL5W',
+      title: '战场医生回忆录',
+      authors: ['某作者'],
+      subjects: ['military medicine'],
+      openLibraryUrl: 'https://openlibrary.org/works/OL5W',
+    }]);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    fireEvent.click(screen.getByRole('button', { name: /帮 TA 找书/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '战争回忆' }));
+
+    await waitFor(() => {
+      expect(openLibraryMock.searchOpenLibraryBooksViaProxy).toHaveBeenCalledWith({ subject: 'war memoir', limit: 12 });
+    });
+    const results = await screen.findByTestId('phone-reading-discover-results');
+    expect(within(results).getByText('战场医生回忆录')).toBeInTheDocument();
+    expect(within(results).getByText('https://openlibrary.org/works/OL5W')).toBeInTheDocument();
+
+    fireEvent.click(within(results).getByRole('button', { name: '加入书目' }));
+
+    await waitFor(() => {
+      expect(catalogMock.importBooksForAgent).toHaveBeenCalledWith('test01', [{
+        key: '/works/OL5W',
+        title: '战场医生回忆录',
+        authors: ['某作者'],
+        subjects: ['military medicine'],
+        firstPublishYear: undefined,
+        languages: undefined,
+        coverId: undefined,
+        isbn: undefined,
+        openLibraryUrl: 'https://openlibrary.org/works/OL5W',
+      }], {
+        reason: 'topic search: 战争回忆 / war memoir — 幼年经历战乱',
+        interests: ['war memoir'],
+      });
+    });
+    expect(within(results).getByRole('button', { name: '已加入书目' })).toBeDisabled();
+  });
+
+  it('shows the adapter error message when the Open Library lookup fails after a topic is picked', async () => {
+    readingTopicsAiMock.inferReadingTopicsWithAI.mockResolvedValue([
+      { subject: 'survival fiction', label: '生存小说' },
+    ]);
+    openLibraryMock.searchOpenLibraryBooksViaProxy.mockRejectedValue(new Error('Open Library 查询失败：getaddrinfo ENOTFOUND'));
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    fireEvent.click(screen.getByRole('button', { name: /帮 TA 找书/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '生存小说' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Open Library 查询失败：getaddrinfo ENOTFOUND');
+    expect(catalogMock.importBooksForAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not call Open Library or the topic-inference AI on app mount (no auto-network)', async () => {
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-empty');
+    expect(openLibraryMock.searchOpenLibraryBooksViaProxy).not.toHaveBeenCalled();
+    expect(readingTopicsAiMock.inferReadingTopicsWithAI).not.toHaveBeenCalled();
+  });
+
+  describe('AI annotation flow', () => {
+    const sampleBook = {
+      id: 'book-1',
+      key: 'manual:test01:book',
+      dedupeKey: 'manual:test01:book',
+      title: 'Man\'s Search for Meaning',
+      authors: ['Viktor E. Frankl'],
+      subjects: ['psychotherapy'],
+      agentTags: [{ agentId: 'test01', reason: 'manual', interests: [], createdAt: '2026-05-16T01:00:00.000Z' }],
+      createdAt: '2026-05-16T01:00:00.000Z',
+      updatedAt: '2026-05-16T01:00:00.000Z',
+    };
+
+    it('opens 让 TA 批注, fetches Wikiquote suggestions, generates annotation, previews and saves with user_provided quote source', async () => {
+      catalogMock.listBooksForAgent.mockResolvedValueOnce([sampleBook]);
+      appEntryStoreMock.listAppEntries.mockResolvedValueOnce([]);
+      wikiquoteMock.fetchWikiquoteSuggestions.mockResolvedValue([
+        {
+          text: 'Between stimulus and response there is a space.',
+          sourceCitation: { provider: 'wikiquote', lang: 'en', pageTitle: 'Viktor Frankl', pageUrl: 'https://en.wikiquote.org/wiki/Viktor_Frankl' },
+        },
+      ]);
+      annotationAiMock.inferReadingAnnotationWithAI.mockResolvedValue({
+        title: '面对沉默的余地',
+        annotation: '我懂这种顿挫，但雪地里我们没有那个余地。',
+        mood: '克制',
+      });
+
+      renderReadingNotes(linwu, linwuProfile);
+      fireEvent.click(await screen.findByRole('button', { name: /Search for Meaning/ }));
+      fireEvent.click(screen.getByRole('button', { name: /让 TA 批注/ }));
+
+      await waitFor(() => {
+        expect(wikiquoteMock.fetchWikiquoteSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Man\'s Search for Meaning',
+          authors: ['Viktor E. Frankl'],
+        }));
+      });
+      const suggestions = await screen.findByTestId('phone-reading-annotation-suggestions');
+      fireEvent.click(within(suggestions).getByRole('button', { name: /Between stimulus and response/ }));
+      fireEvent.click(screen.getByRole('button', { name: /^让 TA 批注$/ }));
+
+      await waitFor(() => {
+        expect(annotationAiMock.inferReadingAnnotationWithAI).toHaveBeenCalledWith(expect.objectContaining({
+          agent: linwu,
+          ownerProfile: linwuProfile,
+          book: expect.objectContaining({ title: 'Man\'s Search for Meaning' }),
+          passage: 'Between stimulus and response there is a space.',
+          passageCitation: expect.objectContaining({ provider: 'wikiquote' }),
+        }));
+      });
+      const preview = await screen.findByTestId('phone-reading-annotation-preview');
+      expect(within(preview).getByDisplayValue('面对沉默的余地')).toBeInTheDocument();
+      expect(within(preview).getByDisplayValue('我懂这种顿挫，但雪地里我们没有那个余地。')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: '保存批注' }));
+      await waitFor(() => {
+        expect(appEntryStoreMock.appendAppEntry).toHaveBeenCalledWith('test01', 'reading_notes', expect.objectContaining({
+          title: '面对沉默的余地',
+          content: '我懂这种顿挫，但雪地里我们没有那个余地。',
+          source: 'ai_annotation',
+          metadata: expect.objectContaining({
+            bookId: 'book-1',
+            noteType: 'reading_note',
+            annotationSource: 'ai',
+            mood: '克制',
+            quote: expect.objectContaining({
+              text: 'Between stimulus and response there is a space.',
+              source: 'user_provided',
+              sourceCitation: expect.objectContaining({ provider: 'wikiquote' }),
+            }),
+          }),
+        }));
+      });
+      // 落盘后 passageHash 字段必须有，且就是 'p...' 格式
+      const metadataArg = (appEntryStoreMock.appendAppEntry.mock.calls[0][2] as { metadata: Record<string, unknown> }).metadata;
+      expect(typeof metadataArg.passageHash).toBe('string');
+      expect(metadataArg.passageHash).toMatch(/^p[0-9a-f]+_\d+$/);
+    });
+
+    it('blocks generating annotation when the same passage is already annotated for that book', async () => {
+      catalogMock.listBooksForAgent.mockResolvedValueOnce([sampleBook]);
+      appEntryStoreMock.listAppEntries.mockResolvedValueOnce([{
+        id: 'note-existing',
+        agentId: 'test01',
+        appId: 'reading_notes',
+        title: '已有批注',
+        content: '当年我也想过这个空间是什么。',
+        source: 'ai_annotation',
+        metadata: {
+          bookId: 'book-1',
+          noteType: 'reading_note',
+          annotationSource: 'ai',
+          quote: {
+            text: 'Between stimulus and response there is a space.',
+            source: 'user_provided',
+          },
+        },
+        createdAt: '2026-05-15T01:00:00.000Z',
+        updatedAt: '2026-05-15T01:00:00.000Z',
+      }]);
+      wikiquoteMock.fetchWikiquoteSuggestions.mockResolvedValue([]);
+
+      renderReadingNotes(linwu, linwuProfile);
+      fireEvent.click(await screen.findByRole('button', { name: /Search for Meaning/ }));
+      fireEvent.click(screen.getByRole('button', { name: /让 TA 批注/ }));
+      // wait for wikiquote fetch to settle
+      await waitFor(() => expect(wikiquoteMock.fetchWikiquoteSuggestions).toHaveBeenCalled());
+
+      const textarea = screen.getByPlaceholderText('把你想批注的那段原文粘进来。');
+      // 注意：标点和大小写不同也应被识别为重复（normalizePassageForHash 的契约）
+      fireEvent.change(textarea, { target: { value: '  BETWEEN stimulus, and response — there is a space.  ' } });
+      fireEvent.click(screen.getByRole('button', { name: /^让 TA 批注$/ }));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('这段原文已经批注过：《已有批注》');
+      expect(annotationAiMock.inferReadingAnnotationWithAI).not.toHaveBeenCalled();
+      expect(appEntryStoreMock.appendAppEntry).not.toHaveBeenCalled();
+    });
+
+    it('does not call Wikiquote or the annotation AI on app mount (no auto-network)', async () => {
+      renderReadingNotes(linwu, linwuProfile);
+      await screen.findByTestId('phone-reading-empty');
+      expect(wikiquoteMock.fetchWikiquoteSuggestions).not.toHaveBeenCalled();
+      expect(annotationAiMock.inferReadingAnnotationWithAI).not.toHaveBeenCalled();
+    });
   });
 });

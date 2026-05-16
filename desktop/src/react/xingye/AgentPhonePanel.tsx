@@ -144,6 +144,7 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
       {phonePage === 'reading-notes' ? (
         <PhoneReadingNotesApp
           ownerAgent={agent}
+          ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
           onBack={() => setPhonePage('home')}
         />

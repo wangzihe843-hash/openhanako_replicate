@@ -19,11 +19,10 @@ export function hanaUrl(path: string): string {
 }
 
 /**
- * 带认证的 fetch 封装
- * - 默认 30s 超时
- * - 自动校验 res.ok，非 2xx 抛错
+ * 带认证的 fetch 封装（**不抛错**版本，非 2xx 不会 throw，调用方自行检查 `res.ok`/body）。
+ * 用于需要读取服务端错误信封（`{ ok: false, error }`）的场景。
  */
-export async function hanaFetch(
+export async function hanaFetchAllowingErrors(
   path: string,
   opts: RequestInit & { timeout?: number } = {},
 ): Promise<Response> {
@@ -42,16 +41,28 @@ export async function hanaFetch(
   }
 
   try {
-    const res = await fetch(buildConnectionUrl(connection, path), {
+    return await fetch(buildConnectionUrl(connection, path), {
       ...fetchOpts,
       headers,
       signal: controller.signal,
     });
-    if (!res.ok) {
-      throw new Error(`hanaFetch ${path}: ${res.status} ${res.statusText}`);
-    }
-    return res;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 带认证的 fetch 封装
+ * - 默认 30s 超时
+ * - 自动校验 res.ok，非 2xx 抛错
+ */
+export async function hanaFetch(
+  path: string,
+  opts: RequestInit & { timeout?: number } = {},
+): Promise<Response> {
+  const res = await hanaFetchAllowingErrors(path, opts);
+  if (!res.ok) {
+    throw new Error(`hanaFetch ${path}: ${res.status} ${res.statusText}`);
+  }
+  return res;
 }

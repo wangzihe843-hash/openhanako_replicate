@@ -117,6 +117,124 @@ describe('xingye-reading-book-catalog', () => {
     ]);
   });
 
+  it('does not duplicate agentTags when the same agent re-imports with identical reason and interests', async () => {
+    const backend = createMemoryXingyeStorageBackend();
+    const store = createXingyeBookCatalogStore(backend, {
+      idFactory: () => 'book-1',
+      now: (() => {
+        const times = ['2026-05-16T01:00:00.000Z', '2026-05-16T02:00:00.000Z', '2026-05-16T03:00:00.000Z'];
+        return () => times.shift() ?? '2026-05-16T04:00:00.000Z';
+      })(),
+    });
+
+    await store.importBooksForAgent('test01', [book()], {
+      reason: 'manual',
+      interests: ['anthropology', 'science fiction'],
+    });
+    await store.importBooksForAgent('test01', [book()], {
+      reason: 'manual',
+      interests: ['science fiction', 'anthropology'],
+    });
+    await store.importBooksForAgent('test01', [book()], {
+      reason: 'manual',
+      interests: ['science fiction', 'winter'],
+    });
+
+    const listed = await store.listBooksForAgent('test01');
+    expect(listed).toHaveLength(1);
+    expect(listed[0].agentTags).toEqual([
+      {
+        agentId: 'test01',
+        reason: 'manual',
+        interests: ['anthropology', 'science fiction'],
+        createdAt: '2026-05-16T01:00:00.000Z',
+      },
+      {
+        agentId: 'test01',
+        reason: 'manual',
+        interests: ['science fiction', 'winter'],
+        createdAt: '2026-05-16T03:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('keeps each agent catalog isolated when two agents tag the same book', async () => {
+    const backend = createMemoryXingyeStorageBackend();
+    const store = createXingyeBookCatalogStore(backend, {
+      idFactory: (() => {
+        let n = 0;
+        return () => `book-${++n}`;
+      })(),
+      now: (() => {
+        const times = ['2026-05-16T01:00:00.000Z', '2026-05-16T02:00:00.000Z'];
+        return () => times.shift() ?? '2026-05-16T03:00:00.000Z';
+      })(),
+    });
+
+    await store.importBooksForAgent('test01', [book()], {
+      reason: '林雾偏好',
+      interests: ['science fiction'],
+    });
+    await store.importBooksForAgent('hanako', [book()], {
+      reason: 'Hanako 也读',
+      interests: ['anthropology'],
+    });
+
+    const linwu = await store.listBooksForAgent('test01');
+    const hanako = await store.listBooksForAgent('hanako');
+    expect(linwu).toHaveLength(1);
+    expect(hanako).toHaveLength(1);
+    expect(linwu[0].agentTags).toEqual([{
+      agentId: 'test01',
+      reason: '林雾偏好',
+      interests: ['science fiction'],
+      createdAt: '2026-05-16T01:00:00.000Z',
+    }]);
+    expect(hanako[0].agentTags).toEqual([{
+      agentId: 'hanako',
+      reason: 'Hanako 也读',
+      interests: ['anthropology'],
+      createdAt: '2026-05-16T02:00:00.000Z',
+    }]);
+
+    const linwuStored = await backend.listJsonl<{ agentTags: Array<{ agentId: string }> }>(
+      'test01',
+      'apps/reading_notes/book-catalog.jsonl',
+    );
+    const hanakoStored = await backend.listJsonl<{ agentTags: Array<{ agentId: string }> }>(
+      'hanako',
+      'apps/reading_notes/book-catalog.jsonl',
+    );
+    expect(linwuStored).toHaveLength(1);
+    expect(hanakoStored).toHaveLength(1);
+    expect(linwuStored[0].agentTags.map((tag) => tag.agentId)).toEqual(['test01']);
+    expect(hanakoStored[0].agentTags.map((tag) => tag.agentId)).toEqual(['hanako']);
+  });
+
+  it('never stores a quote field even when the input shape tries to inject one', async () => {
+    const store = createXingyeBookCatalogStore(createMemoryXingyeStorageBackend(), {
+      idFactory: () => 'book-1',
+      now: () => '2026-05-16T01:00:00.000Z',
+    });
+
+    const imported = await store.importBooksForAgent('test01', [book({
+      quote: { text: '伪造的摘录', source: 'generated' },
+      firstSentence: '不可作为引用。',
+      excerpts: [{ text: '同样不可作为引用。' }],
+    })], {
+      reason: 'manual',
+      interests: ['no quote'],
+    });
+
+    expect(imported[0]).not.toHaveProperty('quote');
+    expect(imported[0]).not.toHaveProperty('firstSentence');
+    expect(imported[0]).not.toHaveProperty('excerpts');
+    const listed = await store.listBooksForAgent('test01');
+    expect(listed[0]).not.toHaveProperty('quote');
+    const safe = await safeReadingBookContextForAgent('test01', store);
+    expect(safe[0]).not.toHaveProperty('quote');
+  });
+
   it('keeps local catalog unchanged when an import write fails', async () => {
     const backend = createMemoryXingyeStorageBackend();
     const store = createXingyeBookCatalogStore({

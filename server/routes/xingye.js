@@ -42,6 +42,8 @@ const PHONE_GENERATE_KINDS = new Set([
   "mm_chat",
   "divination_reading",
   "moments",
+  "reading_topics",
+  "reading_annotation",
 ]);
 
 const FORBIDDEN_TERMS = [
@@ -59,6 +61,47 @@ const FORBIDDEN_TERMS = [
 function cleanString(value, maxLength = 260) {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+/**
+ * 从 Wikiquote wikitext 抽取 quote 文本行。
+ *
+ * Wikiquote 条目典型排版：
+ *   * "Quote body here."
+ *   ** Optional speaker / context (skipped)
+ *   * "Another quote." {{cite ...}}
+ *
+ * 我们只取 `* "..."` 形式的顶层条目，删除模板/wiki 链接/HTML，长度 12-400。
+ */
+export function extractWikiquoteLines(wikitext) {
+  if (typeof wikitext !== "string") return [];
+  const out = [];
+  const lines = wikitext.split(/\r?\n/);
+  for (const raw of lines) {
+    const m = /^\*\s+(.*)$/.exec(raw);
+    if (!m) continue;
+    let text = m[1];
+    // 去模板 {{...}}
+    let prev;
+    do { prev = text; text = text.replace(/\{\{[^{}]*\}\}/g, ""); } while (text !== prev);
+    // 去 ref/HTML 注释
+    text = text.replace(/<ref[\s\S]*?<\/ref>/gi, "").replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]+>/g, "");
+    // 去 [[link|display]] / [[link]]
+    text = text.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1");
+    // 去外链 [url text] / [url]
+    text = text.replace(/\[https?:\/\/\S+\s+([^\]]+)\]/g, "$1").replace(/\[https?:\/\/\S+\]/g, "");
+    // 去 wiki 加粗/斜体
+    text = text.replace(/'''([^']+)'''/g, "$1").replace(/''([^']+)''/g, "$1");
+    text = text.replace(/\s+/g, " ").trim();
+    // 必须是引号开头/结尾的"原话"行（典型 Wikiquote 风格）
+    const quoted = /^["'“‘"][\s\S]+["'”"]$/u.test(text) || /^“[\s\S]+”$/.test(text);
+    const cleanText = text.replace(/^["“‘"']\s*/, "").replace(/\s*["”'"]$/, "").trim();
+    if (!cleanText) continue;
+    if (cleanText.length < 12 || cleanText.length > 400) continue;
+    if (!quoted && !/[.!?。！？]$/.test(cleanText)) continue;
+    out.push(cleanText);
+  }
+  return out;
 }
 
 function normalizeLoreEntries(value) {
@@ -381,6 +424,169 @@ export function createXingyeRoute(engine) {
       return c.json({ error: "model call failed", details: collapsed }, 502);
     } catch (err) {
       return c.json({ error: err.message || String(err) }, 500);
+    }
+  });
+
+  /**
+   * Open Library 搜索代理。
+   *
+   * 为什么需要这个代理：渲染进程的 CSP 只允许 `connect-src` 走 `'self'` / `http://127.0.0.1:*`，
+   * 直接从 renderer fetch `https://openlibrary.org/...` 会被静默拦截为 "Failed to fetch"。
+   * 该路由仅做透传：构造 Open Library URL → 节点侧 fetch → 原样返回 JSON（不做归一化，
+   * 让客户端复用既有 normalize 逻辑与单元测试）。
+   *
+   * 边界：
+   *  - 至少需要 q/subject/title/author 之一；纯空查询直接 400。
+   *  - limit clamp 在 [1, 20]。
+   *  - 服务端只允许调 openlibrary.org，不接受任意 URL —— 防止变成开放代理。
+   *  - 不抓书籍正文 / 书摘 / 第一句；仅透传搜索 endpoint 返回的元信息。
+   */
+  route.post("/xingye/open-library/search", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const q = cleanString(body?.q, 240);
+      const subject = cleanString(body?.subject, 120);
+      const title = cleanString(body?.title, 240);
+      const author = cleanString(body?.author, 240);
+      const limit = Math.min(Math.max(Number(body?.limit) || 10, 1), 20);
+      if (!q && !subject && !title && !author) {
+        return c.json({ ok: false, error: "至少提供 q、subject、title 或 author 之一" }, 400);
+      }
+
+      const baseUrl = "https://openlibrary.org";
+      let target;
+      if (subject && !q && !title && !author) {
+        const slug = encodeURIComponent(subject.toLowerCase().replace(/\s+/g, "_"));
+        target = new URL(`${baseUrl}/subjects/${slug}.json`);
+        target.searchParams.set("limit", String(limit));
+      } else {
+        target = new URL(`${baseUrl}/search.json`);
+        if (q) target.searchParams.set("q", q);
+        if (title) target.searchParams.set("title", title);
+        if (author) target.searchParams.set("author", author);
+        if (subject) target.searchParams.set("subject", subject);
+        target.searchParams.set("limit", String(limit));
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12_000);
+      let response;
+      try {
+        response = await fetch(target.href, {
+          method: "GET",
+          headers: { Accept: "application/json", "User-Agent": "Hanako-Xingye/1.0 (reading_notes)" },
+          signal: controller.signal,
+        });
+      } catch (err) {
+        clearTimeout(timer);
+        const reason = err?.name === "AbortError" ? "请求超时" : (err?.message || String(err));
+        return c.json({ ok: false, error: `Open Library 请求失败：${reason}` }, 502);
+      }
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        return c.json({ ok: false, error: `Open Library 查询失败：HTTP ${response.status}` }, 502);
+      }
+      let data;
+      try {
+        data = await response.json();
+      } catch (err) {
+        return c.json({ ok: false, error: `Open Library 响应不是 JSON：${err?.message || String(err)}` }, 502);
+      }
+      return c.json({ ok: true, source: "openlibrary", url: target.href, data });
+    } catch (err) {
+      return c.json({ ok: false, error: err?.message || String(err) }, 500);
+    }
+  });
+
+  /**
+   * Wikiquote 搜索代理。
+   *
+   * 目的：给「帮 TA 找书」之后新增笔记的环节提供"已有原文"建议，避免用户去外站复制。
+   * Wikiquote 是 CC BY-SA 公开站点（en.wikiquote.org / zh.wikiquote.org），有可调 API。
+   *
+   * 流程：
+   *  1) 先按 `Quote_<title>` / `<title>` 命中书页
+   *  2) 取不到再按第一作者页面找该书的章节
+   *  3) wikitext 用最小正则抽 `* "..."` 形式条目（这是 Wikiquote 的事实标准排版）
+   *
+   * 边界：
+   *  - 只允许 en/zh wikiquote.org，不做开放代理
+   *  - 严禁返回任意网页/全文，单条最长 400 字
+   *  - 客户端拿到后只是 chip 建议，落盘时用户必须点选 → `quote.source = user_provided`
+   */
+  route.post("/xingye/quotes/search", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const title = cleanString(body?.title, 200);
+      const authors = Array.isArray(body?.authors)
+        ? body.authors.map((a) => cleanString(a, 120)).filter(Boolean).slice(0, 4)
+        : [];
+      const lang = (body?.lang === "zh" ? "zh" : "en");
+      if (!title && authors.length === 0) {
+        return c.json({ ok: false, error: "至少提供 title 或 authors 之一" }, 400);
+      }
+
+      const candidates = [];
+      if (title) candidates.push(title);
+      for (const a of authors) candidates.push(a);
+
+      const allQuotes = [];
+      const seen = new Set();
+      let pageHit = null;
+      const fetchPage = async (pageTitle) => {
+        const url = new URL(`https://${lang}.wikiquote.org/w/api.php`);
+        url.searchParams.set("action", "parse");
+        url.searchParams.set("page", pageTitle);
+        url.searchParams.set("prop", "wikitext");
+        url.searchParams.set("format", "json");
+        url.searchParams.set("redirects", "1");
+        url.searchParams.set("formatversion", "2");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8_000);
+        try {
+          const res = await fetch(url.href, {
+            headers: { Accept: "application/json", "User-Agent": "Hanako-Xingye/1.0 (reading_notes)" },
+            signal: controller.signal,
+          });
+          if (!res.ok) return null;
+          const data = await res.json();
+          const wikitext = data?.parse?.wikitext;
+          if (typeof wikitext !== "string" || !wikitext) return null;
+          return { wikitext, resolvedTitle: data?.parse?.title || pageTitle };
+        } catch {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      for (const cand of candidates) {
+        if (allQuotes.length >= 10) break;
+        const page = await fetchPage(cand);
+        if (!page) continue;
+        if (!pageHit) pageHit = page.resolvedTitle;
+        const quotes = extractWikiquoteLines(page.wikitext);
+        for (const q of quotes) {
+          if (allQuotes.length >= 10) break;
+          const key = q.toLowerCase().replace(/\s+/g, " ").trim();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          allQuotes.push({
+            text: q,
+            sourceCitation: {
+              provider: "wikiquote",
+              lang,
+              pageTitle: page.resolvedTitle,
+              pageUrl: `https://${lang}.wikiquote.org/wiki/${encodeURIComponent(page.resolvedTitle.replace(/\s+/g, "_"))}`,
+            },
+          });
+        }
+      }
+
+      return c.json({ ok: true, source: "wikiquote", lang, pageHit, quotes: allQuotes });
+    } catch (err) {
+      return c.json({ ok: false, error: err?.message || String(err) }, 500);
     }
   });
 

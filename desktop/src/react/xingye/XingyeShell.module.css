@@ -1997,6 +1997,9 @@
 }
 
 .phoneTagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 10px;
 }
 
@@ -2010,6 +2013,16 @@
   background: rgba(255, 255, 255, 0.8);
   font-size: 0.72rem;
   overflow-wrap: anywhere;
+}
+
+.phoneTagRow button.phoneReadingChip {
+  border: 1px solid rgba(112, 74, 45, 0.24);
+  cursor: pointer;
+}
+
+.phoneTagRow button.phoneReadingChip[aria-pressed='true'] {
+  background: rgba(120, 80, 48, 0.28);
+  color: #2d1a0e;
 }
 
 .phoneActionRow {
@@ -6425,4 +6438,34 @@
   background: rgba(255, 252, 245, 0.72);
   color: #473023;
   line-height: 1.6;
+}
+
+.phoneReadingHandwriting {
+  font-family: '楷体', KaiTi, STKaiti, '楷体_GB2312', '华文楷体', cursive, serif;
+  font-size: 17px;
+  line-height: 1.85;
+  letter-spacing: 0.02em;
+  color: #2d1a0e;
+  white-space: pre-wrap;
+}
+
+.phoneReadingAnnotationCard {
+  border: 1px dashed rgba(112, 74, 45, 0.34);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(255, 250, 240, 0.96), rgba(255, 247, 232, 0.92));
+  box-shadow: 0 4px 14px rgba(84, 51, 28, 0.06);
+  display: grid;
+  gap: 8px;
+}
+
+.phoneReadingAnnotationMood {
+  font-size: 12px;
+  color: rgba(108, 70, 45, 0.85);
+}
+
+.phoneReadingQuoteCitation {
+  font-size: 11px;
+  color: rgba(108, 70, 45, 0.7);
+  word-break: break-all;
 }

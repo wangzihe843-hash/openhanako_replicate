@@ -177,6 +177,18 @@ function normalizeTag(agentId: string, tagContext: AgentBookTagContext, createdA
   };
 }
 
+function tagIdentityKey(tag: XingyeBookAgentTag): string {
+  const interests = [...tag.interests].sort().join('|');
+  return `${tag.agentId}::${tag.reason}::${interests}`;
+}
+
+function appendTagIfNew(existing: XingyeBookAgentTag[], tag: XingyeBookAgentTag): XingyeBookAgentTag[] {
+  const identity = tagIdentityKey(tag);
+  return existing.some((item) => tagIdentityKey(item) === identity)
+    ? existing
+    : [...existing, tag];
+}
+
 export function readingBookCatalogPath(): string {
   return READING_BOOK_CATALOG_PATH;
 }
@@ -219,7 +231,7 @@ export function createXingyeBookCatalogStore(
             coverId: book.coverId ?? current.coverId,
             isbn: book.isbn?.length ? book.isbn : current.isbn,
             openLibraryUrl: book.openLibraryUrl ?? current.openLibraryUrl,
-            agentTags: [...current.agentTags, tag],
+            agentTags: appendTagIfNew(current.agentTags, tag),
             updatedAt: timestamp,
           };
           byKey.set(dedupeKey, next);

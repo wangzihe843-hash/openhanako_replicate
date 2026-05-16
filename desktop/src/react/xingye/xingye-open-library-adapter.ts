@@ -1,8 +1,10 @@
+import { hanaFetchAllowingErrors } from '../hooks/use-hana-fetch';
 import type { BookSearchQuery, BookSearchResult } from './xingye-reading-book-catalog';
 
 export type { BookSearchQuery, BookSearchResult } from './xingye-reading-book-catalog';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+type ProxyFetchLike = (input: string, init?: RequestInit & { timeout?: number }) => Promise<Response>;
 
 const OPEN_LIBRARY_BASE = 'https://openlibrary.org';
 const MAX_SEARCH_LIMIT = 20;
@@ -125,6 +127,23 @@ function hasQueryTerm(query: BookSearchQuery): boolean {
   return Boolean(cleanText(query.q) || cleanText(query.subject) || cleanText(query.title) || cleanText(query.author));
 }
 
+export function normalizeOpenLibraryRaw(data: unknown, limit: number): BookSearchResult[] {
+  const record = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const rawItems = Array.isArray(record.works) ? record.works : Array.isArray(record.docs) ? record.docs : [];
+  const normalizer = Array.isArray(record.works) ? normalizeSubjectWork : normalizeSearchDoc;
+  return rawItems
+    .map(normalizer)
+    .filter((item): item is BookSearchResult => Boolean(item))
+    .slice(0, clampLimit(limit));
+}
+
+/**
+ * 直接打 Open Library（仅供单元测试 / Node 环境 / Server-side 使用）。
+ *
+ * 注意：Electron 渲染进程的 CSP 把 connect-src 锁在 'self' + 127.0.0.1，
+ * 直接从 UI 调用本函数会被静默拦截为 "Failed to fetch"。UI 请使用
+ * {@link searchOpenLibraryBooksViaProxy}。
+ */
 export async function searchOpenLibraryBooks(
   query: BookSearchQuery,
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
@@ -148,13 +167,56 @@ export async function searchOpenLibraryBooks(
   } catch (err) {
     throw new Error(`Open Library 查询失败：响应不是 JSON（${err instanceof Error ? err.message : String(err)}）`);
   }
-  const record = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const rawItems = Array.isArray(record.works) ? record.works : Array.isArray(record.docs) ? record.docs : [];
-  const normalizer = Array.isArray(record.works) ? normalizeSubjectWork : normalizeSearchDoc;
-  return rawItems
-    .map(normalizer)
-    .filter((item): item is BookSearchResult => Boolean(item))
-    .slice(0, clampLimit(query.limit));
+  return normalizeOpenLibraryRaw(data, query.limit ?? DEFAULT_SEARCH_LIMIT);
+}
+
+/**
+ * 通过本地服务端代理 `POST /api/xingye/open-library/search` 查询 Open Library。
+ * 这是 UI 默认调用入口：避免被渲染器 CSP 拦截，且服务端只允许 openlibrary.org，不会变成开放代理。
+ *
+ * 返回与 {@link searchOpenLibraryBooks} 完全一致的 `BookSearchResult[]` 形状。
+ */
+export async function searchOpenLibraryBooksViaProxy(
+  query: BookSearchQuery,
+  fetchImpl: ProxyFetchLike = hanaFetchAllowingErrors,
+): Promise<BookSearchResult[]> {
+  if (!hasQueryTerm(query)) {
+    throw new Error('至少提供 q、subject、title 或 author 之一。');
+  }
+  const limit = clampLimit(query.limit);
+  let response: Response;
+  try {
+    response = await fetchImpl('/api/xingye/open-library/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15_000,
+      body: JSON.stringify({
+        q: cleanText(query.q, 240),
+        subject: cleanText(query.subject, 120),
+        title: cleanText(query.title, 240),
+        author: cleanText(query.author, 240),
+        limit,
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Open Library 查询失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (response.status === 404) {
+    throw new Error('Open Library 代理路由未就绪（HTTP 404）。请重启 Hana 服务（npm run start:dev 或 start:vite）让新增的 /api/xingye/open-library/search 路由生效。');
+  }
+  let payload: { ok?: boolean; error?: string; data?: unknown } | null = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    if (!response.ok) {
+      throw new Error(`Open Library 查询失败：HTTP ${response.status} ${response.statusText || ''}`.trim());
+    }
+    throw new Error(`Open Library 查询失败：响应不是 JSON（${err instanceof Error ? err.message : String(err)}）`);
+  }
+  if (!response.ok || payload?.ok === false || payload?.error) {
+    throw new Error(payload?.error || `Open Library 查询失败：HTTP ${response.status}`);
+  }
+  return normalizeOpenLibraryRaw(payload?.data ?? {}, limit);
 }
 
 function topicFromChunk(chunk: string): string | null {
