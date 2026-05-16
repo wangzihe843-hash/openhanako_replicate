@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import type { Agent } from '../types';
-import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
-import type { XingyeMomentPost } from './xingye-moments-store';
+import type { XingyeMomentActor, XingyeMomentPost } from './xingye-moments-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
 interface MomentCardProps {
-  actorAgentId: string | null;
   authorAgent: Agent | null;
-  authorDisplay: XingyeRoleProfileDisplay | null;
-  commentAuthorDisplayName: (agentId: string) => string;
+  authorDisplayName: string;
+  authorRelationshipLabel?: string;
+  canDelete: boolean;
+  getAgentDisplayName: (agentId: string) => string;
   post: XingyeMomentPost;
-  onComment: (postId: string, content: string) => void;
+  userActor: XingyeMomentActor;
+  onComment: (postId: string, body: string) => void;
   onDelete: (postId: string) => void;
   onToggleLike: (postId: string) => void;
 }
@@ -36,25 +37,48 @@ function formatMomentTime(iso: string): string {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
+function resolveLikeDisplayName(
+  like: XingyeMomentPost['likes'][number],
+  getAgentDisplayName: (agentId: string) => string,
+): string {
+  if (like.actorType === 'agent') {
+    return getAgentDisplayName(like.actorId);
+  }
+  return like.actorName || '用户';
+}
+
+function resolveCommentDisplayName(
+  comment: XingyeMomentPost['comments'][number],
+  getAgentDisplayName: (agentId: string) => string,
+): string {
+  if (comment.actorType === 'agent') {
+    return getAgentDisplayName(comment.actorId);
+  }
+  return comment.actorName || '用户';
+}
+
 export function MomentCard({
-  actorAgentId,
   authorAgent,
-  authorDisplay,
-  commentAuthorDisplayName,
+  authorDisplayName,
+  authorRelationshipLabel,
+  canDelete,
+  getAgentDisplayName,
   post,
+  userActor,
   onComment,
   onDelete,
   onToggleLike,
 }: MomentCardProps) {
   const [commentDraft, setCommentDraft] = useState('');
-  const liked = Boolean(actorAgentId && post.likes.includes(actorAgentId));
-  const authorName = authorDisplay?.displayName ?? authorAgent?.name ?? '未知角色';
-  const relationshipLabel = authorDisplay?.relationshipLabel ?? '关系未设置';
+  const liked = post.likes.some(
+    (like) => like.actorType === userActor.actorType && like.actorId === userActor.actorId,
+  );
+  const relationshipLabel = authorRelationshipLabel ?? '关系未设置';
 
   const handleCommentSubmit = () => {
-    const content = commentDraft.trim();
-    if (!content) return;
-    onComment(post.id, content);
+    const body = commentDraft.trim();
+    if (!body) return;
+    onComment(post.id, body);
     setCommentDraft('');
   };
 
@@ -62,7 +86,7 @@ export function MomentCard({
     <article className={styles.momentCard}>
       <div className={styles.momentAvatar}>
         {authorAgent ? (
-          <XingyeAgentAvatar agent={authorAgent} alt={authorName} />
+          <XingyeAgentAvatar agent={authorAgent} alt={authorDisplayName} />
         ) : (
           <span>?</span>
         )}
@@ -72,28 +96,34 @@ export function MomentCard({
         <header className={styles.momentHeader}>
           <div className={styles.momentAuthorBlock}>
             <div className={styles.momentAuthorLine}>
-              <h3>{authorName}</h3>
+              <h3>{authorDisplayName}</h3>
               <span>{relationshipLabel}</span>
             </div>
             <time dateTime={post.createdAt}>{formatMomentTime(post.createdAt)}</time>
           </div>
-          <button className={styles.momentDeleteButton} type="button" onClick={() => onDelete(post.id)}>
-            删除
-          </button>
+          {canDelete ? (
+            <button className={styles.momentDeleteButton} type="button" onClick={() => onDelete(post.id)}>
+              删除
+            </button>
+          ) : null}
         </header>
 
         <p className={styles.momentContent}>{post.content}</p>
 
         {post.imageUrls.length > 0 ? (
           <div className={styles.momentImageGrid}>
-            {post.imageUrls.map(url => (
+            {post.imageUrls.map((url) => (
               <img key={url} src={url} alt="" />
             ))}
           </div>
         ) : null}
 
         <div className={styles.momentActions}>
-          <button type="button" className={liked ? styles.momentActionActive : ''} onClick={() => onToggleLike(post.id)}>
+          <button
+            type="button"
+            className={liked ? styles.momentActionActive : ''}
+            onClick={() => onToggleLike(post.id)}
+          >
             {liked ? '已赞' : '赞'} {post.likes.length ? post.likes.length : ''}
           </button>
         </div>
@@ -103,7 +133,11 @@ export function MomentCard({
             {post.likes.length > 0 ? (
               <div className={styles.momentLikes}>
                 <span>♥</span>
-                <p>{post.likes.map(commentAuthorDisplayName).join('、')}</p>
+                <p>
+                  {post.likes
+                    .map((like) => resolveLikeDisplayName(like, getAgentDisplayName))
+                    .join('、')}
+                </p>
               </div>
             ) : null}
 
@@ -113,10 +147,10 @@ export function MomentCard({
 
             {post.comments.length > 0 ? (
               <div className={styles.momentComments}>
-                {post.comments.map(comment => (
+                {post.comments.map((comment) => (
                   <p key={comment.id}>
-                    <strong>{commentAuthorDisplayName(comment.authorId)}</strong>
-                    <span>：{comment.content}</span>
+                    <strong>{resolveCommentDisplayName(comment, getAgentDisplayName)}</strong>
+                    <span>：{comment.body}</span>
                   </p>
                 ))}
               </div>
@@ -128,14 +162,13 @@ export function MomentCard({
           <input
             type="text"
             value={commentDraft}
-            onChange={event => setCommentDraft(event.target.value)}
-            placeholder={actorAgentId ? '写评论...' : '请先选择角色'}
-            disabled={!actorAgentId}
-            onKeyDown={event => {
+            onChange={(event) => setCommentDraft(event.target.value)}
+            placeholder={`以 ${userActor.actorName} 的身份评论...`}
+            onKeyDown={(event) => {
               if (event.key === 'Enter') handleCommentSubmit();
             }}
           />
-          <button type="button" disabled={!actorAgentId || !commentDraft.trim()} onClick={handleCommentSubmit}>
+          <button type="button" disabled={!commentDraft.trim()} onClick={handleCommentSubmit}>
             评论
           </button>
         </div>

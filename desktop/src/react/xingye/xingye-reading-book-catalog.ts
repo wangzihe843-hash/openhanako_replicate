@@ -65,6 +65,7 @@ export type XingyeBookCatalogStoreApi = {
     tagContext: AgentBookTagContext,
   ): Promise<XingyeBookCatalogEntry[]>;
   listBooksForAgent(agentId: string): Promise<XingyeBookCatalogEntry[]>;
+  deleteBookForAgent(agentId: string, bookId: string): Promise<boolean>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -254,6 +255,19 @@ export function createXingyeBookCatalogStore(
           Boolean(entry) && entry.agentTags.some((tag) => tag.agentId === aid)
         ));
     },
+
+    async deleteBookForAgent(agentId, bookId) {
+      const aid = requireSafeXingyeAgentId(agentId);
+      const targetId = cleanText(bookId, 120);
+      if (!targetId) throw new Error('bookId is required');
+      const rows = (await store.listJsonl<unknown>(aid, READING_BOOK_CATALOG_PATH))
+        .map(normalizeCatalogEntry)
+        .filter((item): item is XingyeBookCatalogEntry => Boolean(item));
+      const next = rows.filter((entry) => entry.id !== targetId);
+      if (next.length === rows.length) return false;
+      await store.writeJsonl<XingyeBookCatalogEntry>(aid, READING_BOOK_CATALOG_PATH, next);
+      return true;
+    },
   };
 }
 
@@ -267,6 +281,10 @@ export async function importBooksForAgent(
 
 export async function listBooksForAgent(agentId: string): Promise<XingyeBookCatalogEntry[]> {
   return createXingyeBookCatalogStore().listBooksForAgent(agentId);
+}
+
+export async function deleteBookForAgent(agentId: string, bookId: string): Promise<boolean> {
+  return createXingyeBookCatalogStore().deleteBookForAgent(agentId, bookId);
 }
 
 export async function safeReadingBookContextForAgent(

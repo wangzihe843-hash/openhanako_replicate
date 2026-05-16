@@ -6038,3 +6038,101 @@
   line-height: 1.6;
   margin: 0;
 }
+
+.phoneReadingLayout,
+.phoneReadingEditor,
+.phoneReadingDetail {
+  display: grid;
+  gap: 14px;
+}
+
+.phoneReadingHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.phoneReadingKicker {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: rgba(111, 74, 46, 0.68);
+}
+
+.phoneReadingTitle {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+  color: #39251b;
+  overflow-wrap: anywhere;
+}
+
+.phoneReadingSafeNote,
+.phoneReadingMeta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(58, 42, 31, 0.68);
+}
+
+.phoneReadingList {
+  display: grid;
+  gap: 10px;
+}
+
+.phoneReadingCard {
+  width: 100%;
+  border: 1px solid rgba(112, 74, 45, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.86);
+  color: #39251b;
+  padding: 12px;
+  text-align: left;
+  display: grid;
+  gap: 5px;
+  box-shadow: 0 8px 18px rgba(84, 51, 28, 0.08);
+}
+
+.phoneReadingCard strong {
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.phoneReadingCard span,
+.phoneReadingCard small,
+.phoneReadingBody {
+  color: rgba(58, 42, 31, 0.72);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.phoneReadingChip {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(120, 80, 48, 0.12);
+  color: #6c462d;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.phoneReadingActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.phoneReadingBody {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.phoneReadingQuote {
+  margin: 0;
+  border-left: 3px solid rgba(112, 74, 45, 0.28);
+  padding: 8px 10px;
+  background: rgba(255, 252, 245, 0.72);
+  color: #473023;
+  line-height: 1.6;
+}

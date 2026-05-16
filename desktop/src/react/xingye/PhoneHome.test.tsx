@@ -221,4 +221,29 @@ describe('PhoneHome heartbeat trigger', () => {
 
     expect(onOpenMail).toHaveBeenCalledTimes(1);
   });
+
+  it('opens the reading notes app from the phone home grid', () => {
+    const onOpenReadingNotes = vi.fn();
+    render(
+      <PhoneHome
+        agent={agent}
+        display={display}
+        onNavigate={vi.fn()}
+        onOpenSms={vi.fn()}
+        onOpenContacts={vi.fn()}
+        onOpenMmChat={vi.fn()}
+        onOpenJournal={vi.fn()}
+        onOpenSchedule={vi.fn()}
+        onOpenDivination={vi.fn()}
+        onOpenFiles={vi.fn()}
+        onOpenShopping={vi.fn()}
+        onOpenMail={vi.fn()}
+        onOpenReadingNotes={onOpenReadingNotes}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /阅读笔记/ }));
+
+    expect(onOpenReadingNotes).toHaveBeenCalledTimes(1);
+  });
 });

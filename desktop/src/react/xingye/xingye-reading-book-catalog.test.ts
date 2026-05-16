@@ -153,4 +153,26 @@ describe('xingye-reading-book-catalog', () => {
       },
     ]);
   });
+
+  it('deletes only the selected local book from the current agent catalog', async () => {
+    const store = createXingyeBookCatalogStore(createMemoryXingyeStorageBackend(), {
+      idFactory: (() => {
+        const ids = ['book-1', 'book-2'];
+        return () => ids.shift() ?? 'book-x';
+      })(),
+      now: () => '2026-05-16T01:00:00.000Z',
+    });
+    await store.importBooksForAgent('test01', [
+      book({ key: 'manual:one', title: 'Manual One' }),
+      book({ key: 'manual:two', title: 'Manual Two' }),
+    ], {
+      reason: 'manual',
+      interests: ['local'],
+    });
+
+    await expect(store.deleteBookForAgent('test01', 'book-1')).resolves.toBe(true);
+    await expect(store.listBooksForAgent('test01')).resolves.toEqual([
+      expect.objectContaining({ id: 'book-2', title: 'Manual Two' }),
+    ]);
+  });
 });

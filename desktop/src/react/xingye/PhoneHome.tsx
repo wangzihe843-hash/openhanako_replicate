@@ -21,6 +21,7 @@ interface PhoneHomeProps {
   onOpenFiles: () => void;
   onOpenShopping: () => void;
   onOpenMail: () => void;
+  onOpenReadingNotes?: () => void;
 }
 
 const phoneIcons = {
@@ -129,6 +130,7 @@ const appShortcuts = [
   { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
   { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
+  { label: '阅读笔记', subtitle: '本地书目与手动笔记', tone: 'journal', icon: phoneIcons.notebook, action: 'reading-notes' },
   { label: '邮箱', subtitle: 'TA 的私人邮箱', tone: 'mail', icon: phoneIcons.mail, action: 'mail' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
@@ -169,6 +171,7 @@ export function PhoneHome({
   onOpenFiles,
   onOpenShopping,
   onOpenMail,
+  onOpenReadingNotes,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -220,6 +223,10 @@ export function PhoneHome({
     }
     if (action === 'mail') {
       onOpenMail();
+      return;
+    }
+    if (action === 'reading-notes') {
+      onOpenReadingNotes?.();
       return;
     }
   };
