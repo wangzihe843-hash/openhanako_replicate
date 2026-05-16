@@ -252,6 +252,56 @@ describe("channel-ticker membership source", () => {
     expect(executeCheck).not.toHaveBeenCalled();
   });
 
+  it("skips proactive reminder when every channel member is caught up with the latest message", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    for (const agentId of ["hana", "yui", "ming"]) {
+      const agentDir = path.join(agentsDir, agentId);
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n", "utf-8");
+    }
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui", "ming"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    await appendMessage(channelFile, "user", "频道最近的事实");
+
+    // 所有成员都把 bookmark 推到最新一条之后 —— 模拟「都已读完」
+    const latestHeader = fs.readFileSync(channelFile, "utf-8").match(/### .+ \| (\S+ \S+)$/m);
+    const latestTs = latestHeader ? latestHeader[1] : "";
+    expect(latestTs).not.toBe("");
+    for (const agentId of ["hana", "yui", "ming"]) {
+      fs.writeFileSync(
+        path.join(agentsDir, agentId, "channels.md"),
+        `# 频道\n\n- ${channelId} (last: ${latestTs})\n`,
+        "utf-8",
+      );
+    }
+
+    const executeCheck = vi.fn(async () => ({ replied: false, passed: true }));
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana", "yui", "ming"],
+      executeCheck,
+      onMemorySummarize: vi.fn(),
+      random: () => 0.6,
+    });
+
+    ticker.start();
+    try {
+      await ticker.triggerReminder(channelId);
+    } finally {
+      await ticker.stop();
+    }
+
+    expect(executeCheck).not.toHaveBeenCalled();
+  });
+
   it("expands proactive reminder into normal delivery when the starter posts", async () => {
     tmpDir = mktemp();
     const channelsDir = path.join(tmpDir, "channels");
