@@ -2,6 +2,8 @@ export const STUDIO_ACCESS_CAPABILITIES = Object.freeze([
   "chat",
   "resources.read",
   "resources.write",
+  "files.read",
+  "files.write",
   "files.openLocal",
   "tools.run",
   "plugins.use",
@@ -135,6 +137,8 @@ function deriveCapabilities(connection, profile) {
   const allowed = new Set();
   if (requested.has("chat")) allowed.add("chat");
   if (requested.has("resources")) allowed.add("resources.read");
+  if (requested.has("files") || requested.has("files.read")) allowed.add("files.read");
+  if (requested.has("files") || requested.has("files.write")) allowed.add("files.write");
   if (requested.has("tools")) allowed.add("tools.run");
 
   return STUDIO_ACCESS_CAPABILITIES.filter((capability) => allowed.has(capability));

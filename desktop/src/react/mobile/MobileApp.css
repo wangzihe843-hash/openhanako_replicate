@@ -1,0 +1,372 @@
+:root {
+  color: #2f2a24;
+  background: #f7f1e7;
+  font-family: "Songti SC", "Noto Serif CJK SC", "STSong", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f7f1e7;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.mobile-loading,
+.mobile-login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.mobile-login-panel {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 16px;
+  padding: 28px 24px;
+  border: 1px solid rgba(88, 66, 44, 0.18);
+  background: rgba(255, 252, 247, 0.82);
+}
+
+.mobile-login-avatar {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+}
+
+.mobile-login h1,
+.mobile-topbar h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.mobile-login p {
+  margin: 0;
+  color: #786d5f;
+  line-height: 1.7;
+}
+
+.mobile-login label {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-login input,
+.mobile-file-actions input,
+.mobile-composer textarea,
+.mobile-new-text,
+.mobile-preview textarea {
+  width: 100%;
+  border: 1px solid rgba(88, 66, 44, 0.22);
+  border-radius: 4px;
+  background: #fffdf8;
+  color: #2f2a24;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.mobile-login button,
+.mobile-tabs button,
+.mobile-new-session,
+.mobile-session,
+.mobile-composer button,
+.mobile-files-header button,
+.mobile-file-actions button,
+.mobile-upload,
+.mobile-preview button {
+  border: 1px solid rgba(88, 66, 44, 0.24);
+  border-radius: 4px;
+  background: #fffaf1;
+  color: #2f2a24;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+button:disabled {
+  color: #aaa094;
+  background: #eee8dd;
+}
+
+.mobile-error {
+  color: #8b1d18;
+  background: #fff2ef;
+  border: 1px solid rgba(139, 29, 24, 0.2);
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+
+.mobile-app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.44), rgba(255, 255, 255, 0.18)),
+    #f7f1e7;
+}
+
+.mobile-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px 14px;
+  border-bottom: 1px solid rgba(88, 66, 44, 0.14);
+}
+
+.mobile-kicker,
+.mobile-scope,
+.mobile-session span,
+.mobile-file-row small,
+.mobile-message-role {
+  color: #867869;
+  font-size: 12px;
+}
+
+.mobile-scope {
+  border: 1px solid rgba(88, 66, 44, 0.2);
+  padding: 6px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mobile-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(88, 66, 44, 0.12);
+}
+
+.mobile-tabs button.active {
+  background: #3d3328;
+  color: #fffaf1;
+}
+
+.mobile-chat {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.mobile-session-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(88, 66, 44, 0.12);
+}
+
+.mobile-new-session,
+.mobile-session {
+  flex: 0 0 148px;
+  text-align: left;
+}
+
+.mobile-session {
+  display: grid;
+  gap: 4px;
+}
+
+.mobile-session.active {
+  background: #efe0ca;
+}
+
+.mobile-thread {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+}
+
+.mobile-messages {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.mobile-empty {
+  color: #867869;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.mobile-message {
+  max-width: 88%;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(88, 66, 44, 0.14);
+  background: rgba(255, 253, 248, 0.86);
+  border-radius: 6px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.mobile-message.user {
+  justify-self: end;
+  background: #ead8bd;
+}
+
+.mobile-message p {
+  margin: 0;
+}
+
+.mobile-thinking {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #756b60;
+}
+
+.mobile-composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  border-top: 1px solid rgba(88, 66, 44, 0.14);
+  background: rgba(247, 241, 231, 0.94);
+}
+
+.mobile-composer textarea {
+  resize: none;
+  min-height: 42px;
+  max-height: 120px;
+}
+
+.mobile-files {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.mobile-files-header,
+.mobile-file-actions,
+.mobile-preview-header,
+.mobile-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-files-header strong {
+  flex: 1;
+  text-align: center;
+}
+
+.mobile-file-actions {
+  flex-wrap: wrap;
+}
+
+.mobile-file-actions input {
+  flex: 1 1 160px;
+}
+
+.mobile-upload {
+  position: relative;
+  overflow: hidden;
+}
+
+.mobile-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.mobile-new-text {
+  resize: vertical;
+}
+
+.mobile-file-list {
+  display: grid;
+  border: 1px solid rgba(88, 66, 44, 0.14);
+}
+
+.mobile-file-row {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid rgba(88, 66, 44, 0.1);
+  background: rgba(255, 253, 248, 0.72);
+  min-height: 54px;
+}
+
+.mobile-file-row:last-child {
+  border-bottom: 0;
+}
+
+.mobile-file-row span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.mobile-file-icon {
+  width: 24px;
+  text-align: center;
+  color: #5c4d3e;
+}
+
+.mobile-preview {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(88, 66, 44, 0.16);
+  padding: 12px;
+  background: rgba(255, 253, 248, 0.82);
+}
+
+.mobile-preview-header strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-preview img,
+.mobile-preview video,
+.mobile-preview iframe {
+  width: 100%;
+  max-height: 58vh;
+  border: 0;
+  background: #fff;
+}
+
+.mobile-preview iframe {
+  min-height: 420px;
+}
+
+@media (min-width: 760px) {
+  .mobile-chat {
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .mobile-session-list {
+    display: grid;
+    align-content: start;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-right: 1px solid rgba(88, 66, 44, 0.12);
+    border-bottom: 0;
+  }
+
+  .mobile-new-session,
+  .mobile-session {
+    width: 100%;
+    flex-basis: auto;
+  }
+}

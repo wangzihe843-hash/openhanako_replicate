@@ -44,6 +44,8 @@ describe('trusted space access contract', () => {
         'chat',
         'resources.read',
         'resources.write',
+        'files.read',
+        'files.write',
         'files.openLocal',
         'tools.run',
         'plugins.use',
@@ -53,7 +55,7 @@ describe('trusted space access contract', () => {
     });
   });
 
-  it('derives a custom remote grant from device credentials without exposing desktop-only file access', () => {
+  it('derives a custom remote grant from device credentials without exposing desktop-only local file open access', () => {
     const remote = {
       ...createLocalServerConnection({
         serverPort: 3210,
@@ -84,7 +86,7 @@ describe('trusted space access contract', () => {
       transport: 'user_managed_tunnel',
       dataOwner: 'user_server',
       localOnly: false,
-      capabilities: ['chat', 'resources.read', 'tools.run'],
+      capabilities: ['chat', 'resources.read', 'files.read', 'files.write', 'tools.run'],
     });
   });
 

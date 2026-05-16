@@ -85,4 +85,27 @@ describe("shared trusted studio access contract", () => {
       ],
     });
   });
+
+  it("grants mobile file scopes only when the remote connection asks for file access", () => {
+    const lan = localConnection({
+      connectionId: "lan:phone",
+      kind: "lan",
+      serverId: "server_lan",
+      userId: "user_lan",
+      studioId: "studio_lan",
+      baseUrl: "http://192.168.1.20:14500",
+      wsUrl: "ws://192.168.1.20:14500",
+      token: "device-token",
+      trustState: "lan",
+      credentialKind: "device_credential",
+      capabilities: ["chat", "resources", "files"],
+    });
+
+    expect(deriveStudioAccessGrant(lan).capabilities).toEqual([
+      "chat",
+      "resources.read",
+      "files.read",
+      "files.write",
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import { authenticateDeviceCredential } from "./device-registry.js";
+import { authenticateWebSession } from "./web-session-store.js";
 
 export function createServerAuthService({
   hanakoHome,
@@ -15,12 +16,23 @@ export function createServerAuthService({
   function authenticateRequest({
     authorization = null,
     queryToken = null,
+    cookieHeader = null,
     allowQueryToken = false,
     connectionKind = "local",
     now,
   } = {}) {
     const parsed = parseCredential({ authorization, queryToken, allowQueryToken, connectionKind });
-    if (!parsed) return null;
+    if (!parsed) {
+      const webPrincipal = authenticateWebSession(hanakoHome, cookieHeader, { now });
+      if (!webPrincipal) return null;
+      if (!principalAllowsConnection(webPrincipal, connectionKind)) return null;
+      return deepFreeze({
+        ...webPrincipal,
+        connectionKind: connectionKind === "local"
+          ? (webPrincipal.connectionKind || connectionKind)
+          : connectionKind,
+      });
+    }
 
     if (parsed.token === loopbackToken) {
       if (connectionKind !== "local") return null;
@@ -29,7 +41,7 @@ export function createServerAuthService({
 
     const devicePrincipal = authenticateDeviceCredential(hanakoHome, parsed.token, { now });
     if (!devicePrincipal) return null;
-    if (!deviceCredentialAllowsConnection(devicePrincipal, connectionKind)) return null;
+    if (!principalAllowsConnection(devicePrincipal, connectionKind)) return null;
     return deepFreeze({
       ...devicePrincipal,
       connectionKind: connectionKind === "local" ? devicePrincipal.connectionKind : connectionKind,
@@ -79,8 +91,10 @@ function createLocalPrincipal(runtimeContext) {
   });
 }
 
-function deviceCredentialAllowsConnection(principal, connectionKind) {
-  if (!principal || principal.kind !== "device") return true;
+function principalAllowsConnection(principal, connectionKind) {
+  if (!principal) return false;
+  if (principal.kind === "local_user") return connectionKind === "local";
+  if (principal.kind !== "device") return true;
   if (connectionKind === "local") return true;
   if (principal.trustState === "tunnel") return connectionKind === "custom_remote";
   return connectionKind === "lan";

@@ -200,4 +200,93 @@ describe("server auth service", () => {
       connectionKind: "lan",
     })).toBeNull();
   });
+
+  it("authenticates web sessions from HttpOnly cookie material without accepting them as URL tokens", async () => {
+    tmpDir = makeTmpDir();
+    const { createDeviceCredential } = await import("../core/device-registry.js");
+    const { createWebSession } = await import("../core/web-session-store.js");
+    const { createServerAuthService } = await import("../core/server-auth.js");
+    const issued = createDeviceCredential(tmpDir, {
+      serverNodeId: "node_local",
+      userId: "user_local",
+      studioIds: ["studio_local"],
+      displayName: "Phone Browser",
+      deviceKind: "mobile",
+      trustState: "lan",
+      scopes: ["chat", "resources.read", "files.read", "files.write"],
+      now: "2026-05-16T00:00:00.000Z",
+    });
+    const auth = createServerAuthService({
+      hanakoHome: tmpDir,
+      loopbackToken: "local-secret",
+      runtimeContext: runtimeContext(),
+    });
+    const devicePrincipal = auth.authenticateRequest({
+      authorization: `Bearer ${issued.secret}`,
+      connectionKind: "lan",
+      now: "2026-05-16T00:00:01.000Z",
+    });
+    const webSession = createWebSession(tmpDir, {
+      principal: devicePrincipal,
+      userAgent: "Mobile Safari",
+      now: "2026-05-16T00:00:02.000Z",
+      ttlMs: 60_000,
+    });
+
+    expect(auth.authenticateRequest({
+      cookieHeader: `hana_session=${webSession.secret}`,
+      connectionKind: "lan",
+      now: "2026-05-16T00:00:03.000Z",
+    })).toMatchObject({
+      kind: "device",
+      credentialKind: "device_credential",
+      connectionKind: "lan",
+      trustState: "lan",
+      userId: "user_local",
+      studioId: "studio_local",
+      scopes: ["chat", "resources.read", "files.read", "files.write"],
+    });
+
+    expect(auth.authenticateRequest({
+      queryToken: webSession.secret,
+      allowQueryToken: true,
+      connectionKind: "lan",
+      now: "2026-05-16T00:00:03.000Z",
+    })).toBeNull();
+  });
+
+  it("does not replay a local-owner web session over LAN transport", async () => {
+    tmpDir = makeTmpDir();
+    const { createWebSession } = await import("../core/web-session-store.js");
+    const { createServerAuthService } = await import("../core/server-auth.js");
+    const auth = createServerAuthService({
+      hanakoHome: tmpDir,
+      loopbackToken: "local-secret",
+      runtimeContext: runtimeContext(),
+    });
+    const localPrincipal = auth.authenticateRequest({
+      authorization: "Bearer local-secret",
+      connectionKind: "local",
+      now: "2026-05-16T00:00:00.000Z",
+    });
+    const webSession = createWebSession(tmpDir, {
+      principal: localPrincipal,
+      now: "2026-05-16T00:00:01.000Z",
+      ttlMs: 60_000,
+    });
+
+    expect(auth.authenticateRequest({
+      cookieHeader: `hana_session=${webSession.secret}`,
+      connectionKind: "local",
+      now: "2026-05-16T00:00:02.000Z",
+    })).toMatchObject({
+      kind: "local_user",
+      connectionKind: "local",
+    });
+    expect(auth.authenticateRequest({
+      cookieHeader: `hana_session=${webSession.secret}`,
+      connectionKind: "lan",
+      now: "2026-05-16T00:00:02.000Z",
+    })).toBeNull();
+  });
 });

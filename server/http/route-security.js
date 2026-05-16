@@ -1,8 +1,12 @@
 const AUTHENTICATED_ONLY = Object.freeze({ kind: "authenticated" });
 const LOCAL_ONLY = Object.freeze({ kind: "local_only" });
+const PUBLIC = Object.freeze({ kind: "public" });
 
 export function authorizeHttpRoute({ method, path, principal }) {
   const policy = classifyHttpRoute({ method, path });
+  if (policy.kind === "public") {
+    return allowed(policy);
+  }
   if (isLocalOwnerPrincipal(principal)) {
     return allowed(policy);
   }
@@ -27,10 +31,25 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   const verb = String(method || "GET").toUpperCase();
   const routePath = normalizePath(path);
 
+  if (isMobileStaticRoute(verb, routePath)) return PUBLIC;
+  if (isWebAuthBootstrapRoute(verb, routePath)) return PUBLIC;
+
   if (routePath === "/api/health") return AUTHENTICATED_ONLY;
   if (routePath === "/api/server/identity") return AUTHENTICATED_ONLY;
 
   if (routePath === "/ws") return scoped("chat");
+  if (routePath === "/api/mobile/workbench/files" || routePath === "/api/mobile/workbench/search") {
+    return verb === "GET" ? scoped("files.read") : LOCAL_ONLY;
+  }
+  if (routePath === "/api/mobile/workbench/content") {
+    return (verb === "GET" || verb === "HEAD") ? scoped("files.read") : LOCAL_ONLY;
+  }
+  if (
+    routePath === "/api/mobile/workbench/actions"
+    || routePath === "/api/mobile/workbench/upload"
+  ) {
+    return verb === "POST" ? scoped("files.write") : LOCAL_ONLY;
+  }
   if (isSettingsReadRoute(verb, routePath)) return scoped("settings.read");
   if (isSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isProviderManagementRoute(verb, routePath)) return scoped("providers.manage");
@@ -56,6 +75,10 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   }
 
   return LOCAL_ONLY;
+}
+
+export function isPublicHttpRoute({ method = "GET", path = "" } = {}) {
+  return classifyHttpRoute({ method, path }).kind === "public";
 }
 
 export function isLocalOwnerPrincipal(principal) {
@@ -91,6 +114,24 @@ export function scopeAllows(scopes, required) {
   if (scopes.includes(required)) return true;
   const [namespace] = required.split(".");
   return scopes.includes(namespace) || scopes.includes(`${namespace}.*`);
+}
+
+function isMobileStaticRoute(verb, routePath) {
+  if (verb !== "GET" && verb !== "HEAD") return false;
+  return routePath === "/mobile"
+    || routePath === "/mobile/"
+    || routePath === "/mobile/index.html"
+    || routePath === "/mobile/manifest.webmanifest"
+    || routePath === "/mobile/sw.js"
+    || routePath.startsWith("/mobile/assets/")
+    || routePath.startsWith("/mobile/icons/");
+}
+
+function isWebAuthBootstrapRoute(verb, routePath) {
+  if (routePath === "/api/web-auth/login") return verb === "POST";
+  if (routePath === "/api/web-auth/session") return verb === "GET";
+  if (routePath === "/api/web-auth/logout") return verb === "POST";
+  return false;
 }
 
 function isSettingsReadRoute(verb, routePath) {

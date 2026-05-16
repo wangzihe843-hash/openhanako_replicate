@@ -82,7 +82,7 @@ export interface ServerConnectionSource {
   serverToken?: string | null;
 }
 
-const LOCAL_CAPABILITIES = ['chat', 'resources', 'tools'];
+const LOCAL_CAPABILITIES = ['chat', 'resources', 'files', 'tools'];
 
 function normalizePort(port: string | number | null | undefined): string | null {
   if (port === null || port === undefined) return null;

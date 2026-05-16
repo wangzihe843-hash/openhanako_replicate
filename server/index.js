@@ -26,7 +26,7 @@ import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.js";
 import { createServerAuthService } from "../core/server-auth.js";
 import { resolveServerListenOptions } from "../core/server-network-config.js";
 import { inferHttpConnectionKind } from "./http/transport-context.js";
-import { authorizeHttpRoute } from "./http/route-security.js";
+import { authorizeHttpRoute, isPublicHttpRoute } from "./http/route-security.js";
 
 // Pi SDK 的 fetch 请求会累积 AbortSignal listener，提高上限避免无害警告
 setMaxListeners(50);
@@ -57,6 +57,9 @@ import { createCheckpointsRoute } from "./routes/checkpoints.js";
 import { createCommandsRoute } from "./routes/commands.js";
 import { createServerIdentityRoute } from "./routes/server-identity.js";
 import { createResourcesRoute } from "./routes/resources.js";
+import { createWebAuthRoute } from "./routes/web-auth.js";
+import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
+import { createMobileStaticRoute } from "./routes/mobile-static.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
 // upgrade handler below (WsTransport needs raw ws .on()/.off() methods)
@@ -173,6 +176,7 @@ app.use("*", async (c, next) => {
     : /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   if (origin && isAllowed) {
     c.header("Access-Control-Allow-Origin", origin);
+    c.header("Access-Control-Allow-Credentials", "true");
   }
   c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -186,17 +190,25 @@ app.use("*", async (c, next) => {
   if (!transport.connectionKind) {
     return c.json({ error: "invalid_transport", detail: transport.reason }, 403);
   }
+  const routePath = new URL(c.req.url).pathname;
+  c.set("transportConnectionKind", transport.connectionKind);
+
+  if (isPublicHttpRoute({ method: c.req.method, path: routePath })) {
+    await next();
+    return;
+  }
 
   const authPrincipal = serverAuthService.authenticateRequest({
     authorization: c.req.header("authorization"),
     queryToken: c.req.query("token"),
+    cookieHeader: c.req.header("cookie"),
     allowQueryToken: true,
     connectionKind: transport.connectionKind,
   });
   if (!authPrincipal) return c.json({ error: "forbidden" }, 403);
   const authz = authorizeHttpRoute({
     method: c.req.method,
-    path: new URL(c.req.url).pathname,
+    path: routePath,
     principal: authPrincipal,
   });
   if (!authz.allowed) {
@@ -403,8 +415,14 @@ const bridgeManagerRef = {
 };
 
 const { restRoute: chatRestRoute, wsRoute: chatWsRoute } = createChatRoute(engine, hub, { upgradeWebSocket });
+app.route("", createMobileStaticRoute({ distDir: fromRoot("desktop", "dist-renderer") }));
 app.route("/api", chatRestRoute);
 app.route("", chatWsRoute);
+app.route("/api", createWebAuthRoute({
+  hanakoHome: engine.hanakoHome,
+  authService: serverAuthService,
+  getConnectionKind: (c) => c.get("transportConnectionKind"),
+}));
 app.route("/api", createSessionsRoute(engine));
 app.route("/api", createModelsRoute(engine));
 app.route("/api", createConfigRoute(engine));
@@ -415,6 +433,7 @@ app.route("/api", createAgentsRoute(engine));
 app.route("/api", createDevicesRoute(engine));
 app.route("/api", createCharacterCardsRoute(engine));
 app.route("/api", createDeskRoute(engine, hub));
+app.route("/api", createMobileWorkbenchRoute(engine));
 app.route("/api", createSkillsRoute(engine));
 app.route("/api", createChannelsRoute(engine, hub));
 app.route("/api", createDmRoute(engine));

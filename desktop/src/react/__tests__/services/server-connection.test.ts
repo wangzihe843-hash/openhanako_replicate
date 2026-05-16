@@ -31,7 +31,7 @@ describe('server connection helpers', () => {
       credentialKind: 'loopback_token',
       platformAccountId: null,
       officialServiceKind: null,
-      capabilities: ['chat', 'resources', 'tools'],
+      capabilities: ['chat', 'resources', 'files', 'tools'],
     });
   });
 

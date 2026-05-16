@@ -11,7 +11,7 @@ import { readAuthPrincipal } from "../http/capability-guard.js";
 import { recordSecurityAuditEvent } from "../http/security-audit.js";
 import { safeJson } from "../hono-helpers.js";
 
-const DEFAULT_DEVICE_SCOPES = Object.freeze(["chat", "resources.read"]);
+const DEFAULT_DEVICE_SCOPES = Object.freeze(["chat", "resources.read", "files.read", "files.write"]);
 
 export function createDevicesRoute(engine) {
   const route = new Hono();
