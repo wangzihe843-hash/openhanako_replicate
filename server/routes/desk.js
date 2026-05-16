@@ -1,7 +1,7 @@
 /**
  * desk.js — Desk 系统 REST API
  *
- * 提供 cron 任务、工作空间文件的 HTTP 接口。
+ * 提供 cron 任务、工作台文件的 HTTP 接口。
  * 前端通过这些接口直接操作（不经过 agent/LLM），
  * agent 通过 tool 操作（走 WebSocket 推送更新）。
  */
@@ -75,7 +75,7 @@ function workspaceSkillSource(skillDir, fallbackName) {
   });
 }
 
-/** 列出工作空间目录下的文件（异步） */
+/** 列出工作台目录下的文件（异步） */
 async function listWorkspaceFiles(dir) {
   let entries;
   try {
@@ -388,10 +388,10 @@ export function createDeskRoute(engine, hub) {
   });
 
   // ════════════════════════════
-  //  工作空间文件（直接使用 cwd）
+  //  工作台文件（直接使用 cwd）
   // ════════════════════════════
 
-  /** 扫描工作空间下的项目级技能 */
+  /** 扫描工作台下的项目级技能 */
   route.get("/desk/skills", async (c) => {
     const dir = c.req.query("dir") ? decodeURIComponent(c.req.query("dir")) : defaultDeskDir(engine);
     if (!dir) return c.json({ skills: [] });
@@ -536,7 +536,7 @@ export function createDeskRoute(engine, hub) {
     }
   });
 
-  /** 工作空间路径 */
+  /** 工作台路径 */
   route.get("/desk/path", async (c) => {
     const dir = c.req.query("dir") ? decodeURIComponent(c.req.query("dir")) : defaultDeskDir(engine);
     if (!dir) return c.json({ path: null });
@@ -545,7 +545,7 @@ export function createDeskRoute(engine, hub) {
     return c.json({ path: dir });
   });
 
-  /** 列出工作空间文件（支持 ?subdir=xxx 浏览子目录, ?dir=xxx 覆盖基目录） */
+  /** 列出工作台文件（支持 ?subdir=xxx 浏览子目录, ?dir=xxx 覆盖基目录） */
   route.get("/desk/files", async (c) => {
     const dir = c.req.query("dir") ? decodeURIComponent(c.req.query("dir")) : defaultDeskDir(engine);
     if (!dir) return c.json({ files: [], subdir: "", basePath: null });
@@ -560,7 +560,7 @@ export function createDeskRoute(engine, hub) {
     return c.json({ files: await listWorkspaceFiles(target), subdir: subdir || "", basePath: dir });
   });
 
-  /** 搜索工作空间文件名（递归，默认跳过隐藏目录和常见依赖/构建目录） */
+  /** 搜索工作台文件名（递归，默认跳过隐藏目录和常见依赖/构建目录） */
   route.get("/desk/search-files", async (c) => {
     const dir = c.req.query("dir") ? decodeURIComponent(c.req.query("dir")) : defaultDeskDir(engine);
     if (!dir) return c.json({ results: [], basePath: null, query: c.req.query("q") || "" });
@@ -630,7 +630,7 @@ export function createDeskRoute(engine, hub) {
     }
   });
 
-  /** 工作空间文件操作（支持 subdir + dir override） */
+  /** 工作台文件操作（支持 subdir + dir override） */
   route.post("/desk/files", async (c) => {
     const body = await safeJson(c);
     const baseDir = body.dir || defaultDeskDir(engine);

@@ -66,7 +66,7 @@ describe('DeskSection workspace watching', () => {
     unwatchFile = vi.fn(async () => true);
     watchWorkspace = vi.fn(async () => true);
     unwatchWorkspace = vi.fn(async () => true);
-    window.t = ((key: string) => key === 'desk.workspaceTitle' ? '工作空间' : key) as typeof window.t;
+    window.t = ((key: string) => key === 'desk.workspaceTitle' ? '工作台' : key) as typeof window.t;
     window.platform = {
       watchFile,
       unwatchFile,
@@ -437,13 +437,13 @@ describe('DeskSection workspace watching', () => {
 
     render(<DeskSection />);
 
-    expect(screen.getByText('工作空间 · hana-desk')).toBeTruthy();
+    expect(screen.getByText('工作台 · hana-desk')).toBeTruthy();
 
     act(() => {
       useStore.setState({ deskBasePath: '/workspace/Desktop', deskCurrentPath: '' } as never);
     });
 
-    expect(screen.getByText('工作空间 · Desktop')).toBeTruthy();
+    expect(screen.getByText('工作台 · Desktop')).toBeTruthy();
   });
 
   it('keeps dirty workspace paths until their tree directory becomes visible', async () => {

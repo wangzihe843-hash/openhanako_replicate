@@ -4,73 +4,100 @@ import crypto from "crypto";
 
 const SERVER_NODE_FILE = "server-node.json";
 const USERS_FILE = "users.json";
-const SPACES_FILE = "spaces.json";
+const STUDIOS_FILE = "studios.json";
+const LEGACY_SPACES_FILE = "spaces.json";
 
 export function loadServerIdentity(hanakoHome) {
   const serverNode = readRequiredIdentityJson(path.join(hanakoHome, SERVER_NODE_FILE), SERVER_NODE_FILE);
   const users = readRequiredIdentityJson(path.join(hanakoHome, USERS_FILE), USERS_FILE);
-  const spaces = readRequiredIdentityJson(path.join(hanakoHome, SPACES_FILE), SPACES_FILE);
+  const studios = readRequiredStudioRegistry(hanakoHome);
 
   validateServerNodeIdentity(serverNode, SERVER_NODE_FILE);
   validateUsersIdentity(users, USERS_FILE);
-  validateSpacesIdentity(spaces, SPACES_FILE);
-  validateIdentityRegistryLinks(users, spaces);
+  validateStudiosIdentity(studios, STUDIOS_FILE);
+  validateIdentityRegistryLinks(users, studios);
 
   const defaultUser = users.users.find((user) => user.userId === users.defaultUserId);
-  const defaultSpace = getDefaultSpace(spaces);
+  const defaultStudio = getDefaultStudio(studios);
 
   return {
     serverId: serverNode.serverId,
     userId: defaultUser.userId,
-    spaceId: defaultSpace.spaceId,
+    studioId: defaultStudio.studioId,
     label: serverNode.label,
     userLabel: defaultUser.displayName,
-    spaceLabel: defaultSpace.label,
+    studioLabel: defaultStudio.label,
     userKind: defaultUser.kind,
-    spaceKind: defaultSpace.kind,
-    membershipModel: defaultSpace.membershipModel,
-    storage: defaultSpace.storage || null,
+    studioKind: defaultStudio.kind,
+    membershipModel: defaultStudio.membershipModel,
+    storage: defaultStudio.storage || null,
   };
 }
 
 export function ensureLocalIdentityRegistries(hanakoHome) {
   const serverNodePath = path.join(hanakoHome, SERVER_NODE_FILE);
   const usersPath = path.join(hanakoHome, USERS_FILE);
-  const spacesPath = path.join(hanakoHome, SPACES_FILE);
+  const studiosPath = path.join(hanakoHome, STUDIOS_FILE);
+  const legacySpacesPath = path.join(hanakoHome, LEGACY_SPACES_FILE);
 
   const existingServerNode = readIdentityJsonIfPresent(serverNodePath, SERVER_NODE_FILE);
   const existingUsers = readIdentityJsonIfPresent(usersPath, USERS_FILE);
-  const existingSpaces = readIdentityJsonIfPresent(spacesPath, SPACES_FILE);
+  const existingStudios = readIdentityJsonIfPresent(studiosPath, STUDIOS_FILE);
+  const existingLegacySpaces = existingStudios
+    ? null
+    : readIdentityJsonIfPresent(legacySpacesPath, LEGACY_SPACES_FILE);
 
   if (existingServerNode) validateServerNodeIdentity(existingServerNode, SERVER_NODE_FILE);
   if (existingUsers) validateUsersIdentity(existingUsers, USERS_FILE);
-  if (existingSpaces) validateSpacesIdentity(existingSpaces, SPACES_FILE);
-  if (existingUsers && existingSpaces) validateIdentityRegistryLinks(existingUsers, existingSpaces);
+  if (existingStudios) validateStudiosIdentity(existingStudios, STUDIOS_FILE);
+  if (existingLegacySpaces) validateLegacySpacesIdentity(existingLegacySpaces, LEGACY_SPACES_FILE);
+
+  const migratedStudios = existingStudios
+    ? null
+    : existingLegacySpaces
+      ? mapLegacySpacesToStudios(existingLegacySpaces)
+      : null;
 
   const now = new Date().toISOString();
   const users = existingUsers || createLegacyUsersIdentity({
-    userId: existingSpaces ? getDefaultSpace(existingSpaces).ownerUserId : undefined,
+    userId: migratedStudios ? getDefaultStudio(migratedStudios).ownerUserId : undefined,
     now,
   });
-  const spaces = existingSpaces || createLegacySpacesIdentity({
+  const studios = existingStudios || migratedStudios || createLegacyStudiosIdentity({
     ownerUserId: users.defaultUserId,
     now,
   });
   const serverNode = existingServerNode || createLocalServerNodeIdentity({ now });
 
-  validateIdentityRegistryLinks(users, spaces);
+  validateIdentityRegistryLinks(users, studios);
 
   if (!existingServerNode) writeJsonAtomic(serverNodePath, serverNode);
   if (!existingUsers) writeJsonAtomic(usersPath, users);
-  if (!existingSpaces) writeJsonAtomic(spacesPath, spaces);
+  if (!existingStudios) writeJsonAtomic(studiosPath, studios);
 
   return {
     created: [
       !existingServerNode ? SERVER_NODE_FILE : null,
       !existingUsers ? USERS_FILE : null,
-      !existingSpaces ? SPACES_FILE : null,
+      !existingStudios ? STUDIOS_FILE : null,
     ].filter(Boolean),
+    migratedFromLegacySpaces: !existingStudios && !!existingLegacySpaces,
   };
+}
+
+function readRequiredStudioRegistry(hanakoHome) {
+  const studiosPath = path.join(hanakoHome, STUDIOS_FILE);
+  const studios = readIdentityJsonIfPresent(studiosPath, STUDIOS_FILE);
+  if (studios) return studios;
+
+  const legacySpacesPath = path.join(hanakoHome, LEGACY_SPACES_FILE);
+  const legacySpaces = readIdentityJsonIfPresent(legacySpacesPath, LEGACY_SPACES_FILE);
+  if (legacySpaces) {
+    validateLegacySpacesIdentity(legacySpaces, LEGACY_SPACES_FILE);
+    return mapLegacySpacesToStudios(legacySpaces);
+  }
+
+  throw new Error(`${STUDIOS_FILE} not found`);
 }
 
 function readRequiredIdentityJson(filePath, label) {
@@ -128,15 +155,15 @@ function createLegacyUsersIdentity({ userId, now }) {
   };
 }
 
-function createLegacySpacesIdentity({ ownerUserId, now }) {
-  const spaceId = `space_${crypto.randomUUID()}`;
+function createLegacyStudiosIdentity({ ownerUserId, now }) {
+  const studioId = `studio_${crypto.randomUUID()}`;
   return {
     schemaVersion: 1,
-    defaultSpaceId: spaceId,
-    spaces: [{
-      spaceId,
+    defaultStudioId: studioId,
+    studios: [{
+      studioId,
       ownerUserId,
-      label: "Personal Space",
+      label: "Personal Studio",
       kind: "personal",
       storage: {
         provider: "legacy_hana_home",
@@ -149,6 +176,31 @@ function createLegacySpacesIdentity({ ownerUserId, now }) {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function mapLegacySpacesToStudios(spaces) {
+  return {
+    schemaVersion: spaces.schemaVersion,
+    defaultStudioId: spaces.defaultSpaceId,
+    studios: spaces.spaces.map((space) => ({
+      studioId: space.spaceId,
+      ownerUserId: space.ownerUserId,
+      label: migrateLegacyStudioLabel(space.label),
+      kind: space.kind,
+      ...(space.storage ? { storage: space.storage } : {}),
+      membershipModel: space.membershipModel,
+      ...(space.createdAt ? { createdAt: space.createdAt } : {}),
+      ...(space.updatedAt ? { updatedAt: space.updatedAt } : {}),
+    })),
+    ...(spaces.createdAt ? { createdAt: spaces.createdAt } : {}),
+    ...(spaces.updatedAt ? { updatedAt: spaces.updatedAt } : {}),
+  };
+}
+
+function migrateLegacyStudioLabel(label) {
+  if (label === "Personal Space") return "Personal Studio";
+  if (label === "Default Space") return "Default Studio";
+  return label;
 }
 
 function validateServerNodeIdentity(value, label) {
@@ -179,7 +231,30 @@ function validateUsersIdentity(value, label) {
   }
 }
 
-function validateSpacesIdentity(value, label) {
+function validateStudiosIdentity(value, label) {
+  if (!isPlainObject(value)) throw new Error(`invalid ${label}: expected object`);
+  if (value.schemaVersion !== 1) throw new Error(`invalid ${label}: schemaVersion must be 1`);
+  if (!isNonEmptyString(value.defaultStudioId)) throw new Error(`invalid ${label}: defaultStudioId required`);
+  if (!Array.isArray(value.studios) || value.studios.length === 0) {
+    throw new Error(`invalid ${label}: studios must be a non-empty array`);
+  }
+  const seen = new Set();
+  for (const studio of value.studios) {
+    if (!isPlainObject(studio)) throw new Error(`invalid ${label}: studio must be object`);
+    if (!isNonEmptyString(studio.studioId)) throw new Error(`invalid ${label}: studioId required`);
+    if (seen.has(studio.studioId)) throw new Error(`invalid ${label}: duplicate studioId ${studio.studioId}`);
+    seen.add(studio.studioId);
+    if (!isNonEmptyString(studio.ownerUserId)) throw new Error(`invalid ${label}: ownerUserId required`);
+    if (!isNonEmptyString(studio.label)) throw new Error(`invalid ${label}: studio.label required`);
+    if (!isNonEmptyString(studio.kind)) throw new Error(`invalid ${label}: studio.kind required`);
+    if (!isNonEmptyString(studio.membershipModel)) throw new Error(`invalid ${label}: membershipModel required`);
+  }
+  if (!seen.has(value.defaultStudioId)) {
+    throw new Error(`invalid ${label}: defaultStudioId must reference an existing studio`);
+  }
+}
+
+function validateLegacySpacesIdentity(value, label) {
   if (!isPlainObject(value)) throw new Error(`invalid ${label}: expected object`);
   if (value.schemaVersion !== 1) throw new Error(`invalid ${label}: schemaVersion must be 1`);
   if (!isNonEmptyString(value.defaultSpaceId)) throw new Error(`invalid ${label}: defaultSpaceId required`);
@@ -202,19 +277,19 @@ function validateSpacesIdentity(value, label) {
   }
 }
 
-function validateIdentityRegistryLinks(users, spaces) {
+function validateIdentityRegistryLinks(users, studios) {
   const userIds = new Set(users.users.map((user) => user.userId));
-  const defaultSpace = getDefaultSpace(spaces);
-  if (!userIds.has(defaultSpace.ownerUserId)) {
-    throw new Error("invalid identity registries: default Space ownerUserId must reference an existing user");
+  const defaultStudio = getDefaultStudio(studios);
+  if (!userIds.has(defaultStudio.ownerUserId)) {
+    throw new Error("invalid identity registries: default Studio ownerUserId must reference an existing user");
   }
-  if (defaultSpace.ownerUserId !== users.defaultUserId) {
-    throw new Error("invalid identity registries: default Space ownerUserId must match defaultUserId");
+  if (defaultStudio.ownerUserId !== users.defaultUserId) {
+    throw new Error("invalid identity registries: default Studio ownerUserId must match defaultUserId");
   }
 }
 
-function getDefaultSpace(spaces) {
-  return spaces.spaces.find((space) => space.spaceId === spaces.defaultSpaceId);
+function getDefaultStudio(studios) {
+  return studios.studios.find((studio) => studio.studioId === studios.defaultStudioId);
 }
 
 function isPlainObject(value) {

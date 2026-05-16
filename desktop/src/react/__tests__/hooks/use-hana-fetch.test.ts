@@ -8,7 +8,7 @@ vi.mock('../../stores', () => ({
       serverToken: 'test-token-123',
       activeServerConnection: {
         serverId: 'local',
-        spaceId: 'local',
+        studioId: 'local',
         label: 'Local Hana',
         baseUrl: 'http://127.0.0.1:3210',
         wsUrl: 'ws://127.0.0.1:3210',

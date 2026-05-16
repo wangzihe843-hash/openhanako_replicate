@@ -657,7 +657,7 @@ describe("sessions route", () => {
     const engine = {
       agentsDir: "/tmp/agents",
       currentSessionPath: sessionPath,
-      runtimeContext: { spaceId: "space_route" },
+      runtimeContext: { studioId: "studio_route" },
       deferredResults: null,
       listSessionFiles: vi.fn((sp) => {
         expect(sp).toBe(sessionPath);
@@ -691,8 +691,8 @@ describe("sessions route", () => {
       createdAt: 1234,
       resource: expect.objectContaining({
         resourceId: "res_sf_write",
-        name: "spaces/space_route/resources/res_sf_write",
-        spaceId: "space_route",
+        name: "studios/studio_route/resources/res_sf_write",
+        studioId: "studio_route",
         fileId: "sf_write",
       }),
     })]);

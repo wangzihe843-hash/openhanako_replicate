@@ -11,7 +11,7 @@ export function createRequestContext(c, engine) {
     runtimeContext,
     serverId: runtimeContext?.serverId ?? null,
     userId: runtimeContext?.userId ?? null,
-    spaceId: runtimeContext?.spaceId ?? null,
+    studioId: runtimeContext?.studioId ?? null,
     connectionKind: runtimeContext?.connectionKind ?? null,
     credentialKind: runtimeContext?.credentialKind ?? null,
     platformAccountId: runtimeContext?.platformAccountId ?? null,

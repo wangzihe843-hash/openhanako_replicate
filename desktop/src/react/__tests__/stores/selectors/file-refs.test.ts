@@ -162,8 +162,8 @@ describe('selectSessionFiles', () => {
       resource: {
         schemaVersion: 1,
         resourceId: 'res_sf_image',
-        name: 'spaces/space_local/resources/res_sf_image',
-        spaceId: 'space_local',
+        name: 'studios/studio_local/resources/res_sf_image',
+        studioId: 'studio_local',
         type: 'file',
         source: 'session_file',
         fileId: 'sf_image',
@@ -179,7 +179,7 @@ describe('selectSessionFiles', () => {
 
     expect(refs[0].resource).toEqual({
       resourceId: 'res_sf_image',
-      spaceId: 'space_local',
+      studioId: 'studio_local',
       links: {
         self: '/api/resources/res_sf_image',
         content: '/api/resources/res_sf_image/content',

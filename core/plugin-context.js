@@ -11,7 +11,7 @@ export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessL
   const runtimeScope = runtimeContext ? {
     serverId: runtimeContext.serverId,
     userId: runtimeContext.userId,
-    spaceId: runtimeContext.spaceId,
+    studioId: runtimeContext.studioId,
     connectionKind: runtimeContext.connectionKind,
     credentialKind: runtimeContext.credentialKind,
     platformAccountId: runtimeContext.platformAccountId ?? null,

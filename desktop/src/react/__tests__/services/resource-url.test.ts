@@ -8,7 +8,7 @@ const localConnection: ServerConnection = {
   kind: 'local',
   serverId: 'server_local',
   userId: 'user_local',
-  spaceId: 'space_local',
+  studioId: 'studio_local',
   label: 'Local Hana',
   baseUrl: 'http://127.0.0.1:14500',
   wsUrl: 'ws://127.0.0.1:14500',
@@ -26,7 +26,7 @@ const remoteConnection: ServerConnection = {
   connectionId: 'custom:remote',
   kind: 'custom_remote',
   serverId: 'server_remote',
-  spaceId: 'space_remote',
+  studioId: 'studio_remote',
   label: 'Remote Hana',
   baseUrl: 'https://hana.example',
   wsUrl: 'wss://hana.example',
@@ -46,7 +46,7 @@ function fileRef(patch: Partial<FileRef> = {}): FileRef {
     ext: 'png',
     resource: {
       resourceId: 'res_sf_asset',
-      spaceId: 'space_local',
+      studioId: 'studio_local',
       links: {
         self: '/api/resources/res_sf_asset',
         content: '/api/resources/res_sf_asset/content',

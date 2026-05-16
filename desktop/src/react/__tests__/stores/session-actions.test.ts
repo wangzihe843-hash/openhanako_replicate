@@ -735,7 +735,7 @@ describe('session-actions', () => {
         .not.toHaveBeenCalled();
     });
 
-    it('切 session 时激活目标 cwd 的工作空间面板，不携带旧 deskCurrentPath', async () => {
+    it('切 session 时激活目标 cwd 的工作台面板，不携带旧 deskCurrentPath', async () => {
       (mockState as Record<string, unknown>).deskCurrentPath = 'notes/daily';
       (mockState as Record<string, unknown>).deskBasePath = '/workspace-old';
       (mockState as Record<string, unknown>).deskFiles = [{ name: 'stale.md' }];

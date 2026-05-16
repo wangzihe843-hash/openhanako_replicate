@@ -34,13 +34,13 @@ function writeValidIdentity(root) {
     createdAt: "2026-05-16T00:00:00.000Z",
     updatedAt: "2026-05-16T00:00:00.000Z",
   });
-  writeJson(path.join(root, "spaces.json"), {
+  writeJson(path.join(root, "studios.json"), {
     schemaVersion: 1,
-    defaultSpaceId: "space_runtime",
-    spaces: [{
-      spaceId: "space_runtime",
+    defaultStudioId: "studio_runtime",
+    studios: [{
+      studioId: "studio_runtime",
       ownerUserId: "user_runtime",
-      label: "Runtime Space",
+      label: "Runtime Studio",
       kind: "personal",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
       membershipModel: "single_user_implicit",
@@ -71,12 +71,12 @@ describe("server runtime context", () => {
       schemaVersion: 1,
       serverId: "server_runtime",
       userId: "user_runtime",
-      spaceId: "space_runtime",
+      studioId: "studio_runtime",
       label: "Runtime Server",
       userLabel: "Runtime User",
-      spaceLabel: "Runtime Space",
+      studioLabel: "Runtime Studio",
       userKind: "legacy_owner",
-      spaceKind: "personal",
+      studioKind: "personal",
       membershipModel: "single_user_implicit",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
       connectionKind: "local",

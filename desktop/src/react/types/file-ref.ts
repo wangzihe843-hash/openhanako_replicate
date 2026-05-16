@@ -38,7 +38,7 @@ export interface FileRef {
   inlineData?: { base64: string; mimeType: string };
   resource?: {
     resourceId: string;
-    spaceId: string;
+    studioId: string;
     links: {
       self: string;
       content?: string;

@@ -61,7 +61,7 @@ export interface ResourceEnvelope {
   schemaVersion: 1;
   resourceId: string;
   name: string;
-  spaceId: string;
+  studioId: string;
   type: 'file' | string;
   source: 'session_file' | string;
   sourceId?: string;

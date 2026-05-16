@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  deriveSpaceAccessGrant,
-  getSpaceConnectionProfile,
-  validateSpaceConnectionTrust,
-} from '../../services/space-access';
+  deriveStudioAccessGrant,
+  getStudioConnectionProfile,
+  validateStudioConnectionTrust,
+} from '../../services/studio-access';
 import { createLocalServerConnection } from '../../services/server-connection';
 
 describe('trusted space access contract', () => {
   it('defines local as a loopback-only connection profile', () => {
-    expect(getSpaceConnectionProfile('local')).toEqual({
+    expect(getStudioConnectionProfile('local')).toEqual({
       kind: 'local',
       transport: 'loopback',
       credentialKinds: ['loopback_token'],
@@ -28,14 +28,14 @@ describe('trusted space access contract', () => {
       serverToken: 'local-token',
     })!;
 
-    expect(deriveSpaceAccessGrant(local)).toEqual({
+    expect(deriveStudioAccessGrant(local)).toEqual({
       grantId: 'access:local:local',
       connectionId: 'local',
       actorKind: 'local_user',
       scope: {
         serverId: 'local',
         userId: null,
-        spaceId: 'local',
+        studioId: 'local',
       },
       transport: 'loopback',
       dataOwner: 'user_server',
@@ -63,8 +63,8 @@ describe('trusted space access contract', () => {
       kind: 'custom_remote' as const,
       serverId: 'server_remote',
       userId: 'user_remote',
-      spaceId: 'space_remote',
-      label: 'Remote Space',
+      studioId: 'studio_remote',
+      label: 'Remote Studio',
       baseUrl: 'https://hana.example',
       wsUrl: 'wss://hana.example',
       token: 'remote-token',
@@ -72,14 +72,14 @@ describe('trusted space access contract', () => {
       credentialKind: 'device_credential' as const,
     };
 
-    expect(deriveSpaceAccessGrant(remote)).toEqual({
-      grantId: 'access:custom:remote:space_remote',
+    expect(deriveStudioAccessGrant(remote)).toEqual({
+      grantId: 'access:custom:remote:studio_remote',
       connectionId: 'custom:remote',
       actorKind: 'device',
       scope: {
         serverId: 'server_remote',
         userId: 'user_remote',
-        spaceId: 'space_remote',
+        studioId: 'studio_remote',
       },
       transport: 'user_managed_tunnel',
       dataOwner: 'user_server',
@@ -102,7 +102,7 @@ describe('trusted space access contract', () => {
       credentialKind: 'loopback_token' as const,
     };
 
-    expect(() => validateSpaceConnectionTrust(invalidRemote))
+    expect(() => validateStudioConnectionTrust(invalidRemote))
       .toThrow('custom_remote connection must not use loopback_token');
   });
 
@@ -122,7 +122,7 @@ describe('trusted space access contract', () => {
       platformAccountId: null,
     };
 
-    expect(() => validateSpaceConnectionTrust(invalidRelay))
+    expect(() => validateStudioConnectionTrust(invalidRelay))
       .toThrow('relay connection requires officialServiceKind=relay');
   });
 });

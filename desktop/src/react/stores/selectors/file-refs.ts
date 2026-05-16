@@ -235,10 +235,10 @@ function basenameOf(filePath: string): string {
 }
 
 function compactResourceRef(resource: ResourceEnvelope | undefined): FileRef['resource'] | undefined {
-  if (!resource?.resourceId || !resource.spaceId || !resource.links?.self) return undefined;
+  if (!resource?.resourceId || !resource.studioId || !resource.links?.self) return undefined;
   return {
     resourceId: resource.resourceId,
-    spaceId: resource.spaceId,
+    studioId: resource.studioId,
     links: {
       self: resource.links.self,
       ...(resource.links.content ? { content: resource.links.content } : {}),

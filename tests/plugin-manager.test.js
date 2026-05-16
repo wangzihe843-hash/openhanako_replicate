@@ -95,7 +95,7 @@ describe("loadAll", () => {
     const runtimeContext = {
       serverId: "server_plugin",
       userId: "user_plugin",
-      spaceId: "space_plugin",
+      studioId: "studio_plugin",
       connectionKind: "local",
       credentialKind: "loopback_token",
       platformAccountId: null,
@@ -114,7 +114,7 @@ describe("loadAll", () => {
           globalThis.__hanaScopePluginLifecycle = {
             serverId: this.ctx.serverId,
             userId: this.ctx.userId,
-            spaceId: this.ctx.spaceId,
+            studioId: this.ctx.studioId,
             connectionKind: this.ctx.connectionKind,
             credentialKind: this.ctx.credentialKind,
           };
@@ -129,7 +129,7 @@ describe("loadAll", () => {
         return JSON.stringify({
           serverId: ctx.serverId,
           userId: ctx.userId,
-          spaceId: ctx.spaceId,
+          studioId: ctx.studioId,
           sessionPath: ctx.sessionPath,
         });
       }
@@ -146,7 +146,7 @@ describe("loadAll", () => {
     expect(globalThis.__hanaScopePluginLifecycle).toEqual({
       serverId: "server_plugin",
       userId: "user_plugin",
-      spaceId: "space_plugin",
+      studioId: "studio_plugin",
       connectionKind: "local",
       credentialKind: "loopback_token",
     });
@@ -157,7 +157,7 @@ describe("loadAll", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({
       serverId: "server_plugin",
       userId: "user_plugin",
-      spaceId: "space_plugin",
+      studioId: "studio_plugin",
       sessionPath: "/sessions/plugin-scope.jsonl",
     });
     delete globalThis.__hanaScopePluginLifecycle;

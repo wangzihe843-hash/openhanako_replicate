@@ -36,7 +36,7 @@ describe("createPluginContext", () => {
       runtimeContext: {
         serverId: "server_scope",
         userId: "user_scope",
-        spaceId: "space_scope",
+        studioId: "studio_scope",
         connectionKind: "local",
         credentialKind: "loopback_token",
         platformAccountId: null,
@@ -46,7 +46,7 @@ describe("createPluginContext", () => {
 
     expect(ctx.serverId).toBe("server_scope");
     expect(ctx.userId).toBe("user_scope");
-    expect(ctx.spaceId).toBe("space_scope");
+    expect(ctx.studioId).toBe("studio_scope");
     expect(ctx.connectionKind).toBe("local");
     expect(ctx.credentialKind).toBe("loopback_token");
     expect(ctx.platformAccountId).toBeNull();

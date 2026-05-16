@@ -130,8 +130,8 @@ describe('openMediaViewerFromContext', () => {
           resource: {
             schemaVersion: 1,
             resourceId: 'res_sf_img',
-            name: 'spaces/space_local/resources/res_sf_img',
-            spaceId: 'space_local',
+            name: 'studios/studio_local/resources/res_sf_img',
+            studioId: 'studio_local',
             type: 'file',
             source: 'session_file',
             fileId: 'sf_img',

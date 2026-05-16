@@ -26,8 +26,8 @@ describe("resources route", () => {
       getResource: () => ({
         schemaVersion: 1,
         resourceId: "res_sf_route",
-        name: "spaces/space_route/resources/res_sf_route",
-        spaceId: "space_route",
+        name: "studios/studio_route/resources/res_sf_route",
+        studioId: "studio_route",
         type: "file",
         source: "session_file",
         fileId: "sf_route",
@@ -45,7 +45,7 @@ describe("resources route", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       resourceId: "res_sf_route",
-      name: "spaces/space_route/resources/res_sf_route",
+      name: "studios/studio_route/resources/res_sf_route",
       fileId: "sf_route",
     });
   });
@@ -58,7 +58,7 @@ describe("resources route", () => {
       getRuntimeContext: () => ({
         serverId: "server_ctx",
         userId: "user_ctx",
-        spaceId: "space_ctx",
+        studioId: "studio_ctx",
         connectionKind: "local",
         credentialKind: "loopback_token",
         platformAccountId: null,
@@ -69,8 +69,8 @@ describe("resources route", () => {
         return {
           schemaVersion: 1,
           resourceId: "res_sf_ctx",
-          name: "spaces/space_ctx/resources/res_sf_ctx",
-          spaceId: "space_ctx",
+          name: "studios/studio_ctx/resources/res_sf_ctx",
+          studioId: "studio_ctx",
           type: "file",
           source: "session_file",
           fileId: "sf_ctx",
@@ -90,7 +90,7 @@ describe("resources route", () => {
     expect(seenContext).toMatchObject({
       serverId: "server_ctx",
       userId: "user_ctx",
-      spaceId: "space_ctx",
+      studioId: "studio_ctx",
       connectionKind: "local",
       credentialKind: "loopback_token",
       authPrincipal: {

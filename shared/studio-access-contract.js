@@ -1,4 +1,4 @@
-export const SPACE_ACCESS_CAPABILITIES = Object.freeze([
+export const STUDIO_ACCESS_CAPABILITIES = Object.freeze([
   "chat",
   "resources.read",
   "resources.write",
@@ -62,22 +62,22 @@ const CONNECTION_PROFILES = Object.freeze({
     remoteReachable: true,
     requiresDevicePairing: false,
     requiresPlatformAccount: true,
-    dataOwner: "hana_cloud_space",
-    officialServiceKind: "cloud_space",
+    dataOwner: "hana_cloud_studio",
+    officialServiceKind: "cloud_studio",
   }),
 });
 
-export function getSpaceConnectionProfile(kind) {
+export function getStudioConnectionProfile(kind) {
   const profile = CONNECTION_PROFILES[kind];
-  if (!profile) throw new Error(`unknown SpaceConnection kind: ${kind}`);
+  if (!profile) throw new Error(`unknown StudioConnection kind: ${kind}`);
   return {
     ...profile,
     credentialKinds: [...profile.credentialKinds],
   };
 }
 
-export function validateSpaceConnectionTrust(connection) {
-  const profile = getSpaceConnectionProfile(connection.kind);
+export function validateStudioConnectionTrust(connection) {
+  const profile = getStudioConnectionProfile(connection.kind);
 
   if (connection.kind === "local") {
     if (!isLoopbackUrl(connection.baseUrl) || !isLoopbackUrl(connection.wsUrl)) {
@@ -107,17 +107,17 @@ export function validateSpaceConnectionTrust(connection) {
   }
 }
 
-export function deriveSpaceAccessGrant(connection) {
-  validateSpaceConnectionTrust(connection);
-  const profile = getSpaceConnectionProfile(connection.kind);
+export function deriveStudioAccessGrant(connection) {
+  validateStudioConnectionTrust(connection);
+  const profile = getStudioConnectionProfile(connection.kind);
   return {
-    grantId: `access:${connection.connectionId}:${connection.spaceId}`,
+    grantId: `access:${connection.connectionId}:${connection.studioId}`,
     connectionId: connection.connectionId,
     actorKind: actorKindForCredential(connection.credentialKind),
     scope: {
       serverId: connection.serverId,
       userId: connection.userId ?? null,
-      spaceId: connection.spaceId,
+      studioId: connection.studioId,
     },
     transport: profile.transport,
     dataOwner: profile.dataOwner,
@@ -128,7 +128,7 @@ export function deriveSpaceAccessGrant(connection) {
 
 function deriveCapabilities(connection, profile) {
   if (profile.kind === "local") {
-    return [...SPACE_ACCESS_CAPABILITIES];
+    return [...STUDIO_ACCESS_CAPABILITIES];
   }
 
   const requested = new Set(connection.capabilities);
@@ -137,7 +137,7 @@ function deriveCapabilities(connection, profile) {
   if (requested.has("resources")) allowed.add("resources.read");
   if (requested.has("tools")) allowed.add("tools.run");
 
-  return SPACE_ACCESS_CAPABILITIES.filter((capability) => allowed.has(capability));
+  return STUDIO_ACCESS_CAPABILITIES.filter((capability) => allowed.has(capability));
 }
 
 function actorKindForCredential(credentialKind) {

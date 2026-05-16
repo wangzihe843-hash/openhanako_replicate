@@ -253,7 +253,7 @@
     opacity: 0.6;
 }
 
-/* Tab 顶部大标题（每个 tab 右侧面板第一行：工作空间、界面、助手…）
+/* Tab 顶部大标题（每个 tab 右侧面板第一行：工作台、界面、助手…）
  * 粗体衬线（宋体），所有 tab 统一 */
 .settings-tab-title {
     font-family: "Songti SC", "STSong", serif;

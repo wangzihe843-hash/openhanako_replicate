@@ -24,13 +24,13 @@ describe("ResourceEnvelope", () => {
       storageKind: "managed_cache",
       status: "available",
       missingAt: null,
-    }, { spaceId: "space_local" });
+    }, { studioId: "studio_local" });
 
     expect(resource).toEqual({
       schemaVersion: 1,
       resourceId: "res_sf_abc123",
-      name: "spaces/space_local/resources/res_sf_abc123",
-      spaceId: "space_local",
+      name: "studios/studio_local/resources/res_sf_abc123",
+      studioId: "studio_local",
       type: "file",
       source: "session_file",
       sourceId: "sf_abc123",
@@ -76,7 +76,7 @@ describe("ResourceEnvelope", () => {
       isDirectory: true,
       storageKind: "external",
       status: "available",
-    }, { spaceId: "space_local" });
+    }, { studioId: "studio_local" });
 
     expect(resource.links).toEqual({
       self: "/api/resources/res_sf_dir",
@@ -89,6 +89,6 @@ describe("ResourceEnvelope", () => {
     expect(createSessionFileResourceEnvelope({
       filePath: "/tmp/no-id.txt",
       displayName: "no-id.txt",
-    }, { spaceId: "space_local" })).toBeNull();
+    }, { studioId: "studio_local" })).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 describe("serializeSessionFile", () => {
-  it("keeps legacy fields while adding a derived ResourceEnvelope when spaceId is available", async () => {
+  it("keeps legacy fields while adding a derived ResourceEnvelope when studioId is available", async () => {
     const { serializeSessionFile } = await import("../lib/session-files/session-file-response.js");
 
     const serialized = serializeSessionFile({
@@ -22,7 +22,7 @@ describe("serializeSessionFile", () => {
       status: "available",
       missingAt: null,
       createdAt: 123,
-    }, { spaceId: "space_response" });
+    }, { studioId: "studio_response" });
 
     expect(serialized).toMatchObject({
       id: "sf_response",
@@ -33,8 +33,8 @@ describe("serializeSessionFile", () => {
       label: "report.md",
       resource: {
         resourceId: "res_sf_response",
-        name: "spaces/space_response/resources/res_sf_response",
-        spaceId: "space_response",
+        name: "studios/studio_response/resources/res_sf_response",
+        studioId: "studio_response",
         type: "file",
         source: "session_file",
         fileId: "sf_response",

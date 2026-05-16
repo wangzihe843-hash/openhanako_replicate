@@ -812,7 +812,7 @@ export class Agent {
    * @param {boolean} [options.forSubagent] - 为 subagent 构造的轻量 prompt：
    *   跳过记忆三段（规则 + pinned.md + memory.md）和团队 agent 名单。
    *   Subagent 是一次性隔离任务，不需要长期记忆和多 agent 协作上下文。
-   * @param {string} [options.cwdOverride] - 覆盖 prompt 中“工作空间”章节展示的 cwd。
+   * @param {string} [options.cwdOverride] - 覆盖 prompt 中“工作台”章节展示的 cwd。
    *   用于新建隔离 session 时，让 prompt 快照和实际执行目录保持一致。
    */
   buildSystemPrompt(options = {}) {
@@ -853,7 +853,7 @@ export class Agent {
     // cache 命中率（KV cache / Anthropic prompt cache 都按严格前缀匹配）。
     // 顺序：平台 → 环境 → 行为指南（任务/经验/工具/安全/网页/设置/技能/团队）
     //      ── cache 分界线 ──
-    //      用户档案 → ishiki（依赖 userName）→ 工作空间 → 记忆规则/置顶/记忆 → 当前时间
+    //      用户档案 → ishiki（依赖 userName）→ 工作台 → 记忆规则/置顶/记忆 → 当前时间
     //
     // ishiki 放在用户档案之后：模板里有「你和{userName}是认识很久的人」这类引用，
     // 叙事顺序上先告诉模型"用户是谁"，再告诉它"你是谁、你和用户什么关系"。
@@ -1149,11 +1149,11 @@ export class Agent {
     // 放在用户档案之后：先建立"用户是谁"的语境，再讲"你是谁、你和用户什么关系"。
     parts.push(ishiki);
 
-    // 工作空间 = 当前工作目录（注入实际路径）
+    // 工作台 = 当前工作目录（注入实际路径）
     const cwdPath = cwdOverride !== null ? cwdOverride : (this._cb?.getCwd?.() || "");
     parts.push(isZh
-      ? `\n## 工作空间\n\n` +
-        `用户所说的「工作空间」指的是当前工作目录（cwd）。` +
+      ? `\n## 工作台\n\n` +
+        `用户所说的「工作台」指的是当前工作目录（cwd）。` +
         (cwdPath ? `\n当前工作目录：${cwdPath}` : "") +
         `\n用户提到的文件、目录默认在当前工作目录下查找。`
       : `\n## Workspace\n\n` +
@@ -1164,7 +1164,7 @@ export class Agent {
 
     parts.push(isZh
       ? "\n## 技能文件身份\n\n" +
-        "技能的运行时位置可能是会话冻结的源文件指针，也可能是旧会话遗留的快照副本。指针只冻结本次会话可见的技能身份；如果源文件已不存在，该技能视为不可用。`sessions/.skill-snapshots` 与 `session-files` 下的技能副本不是源文件，不能编辑。用户要求修改技能时，先定位真实源文件：工作区技能通常在当前工作目录的 `.agents/skills/<name>/SKILL.md`；安装后的用户技能或自学技能以安装工具返回的 `skill_source` 为准。找不到源文件时显式说明。"
+        "技能的运行时位置可能是会话冻结的源文件指针，也可能是旧会话遗留的快照副本。指针只冻结本次会话可见的技能身份；如果源文件已不存在，该技能视为不可用。`sessions/.skill-snapshots` 与 `session-files` 下的技能副本不是源文件，不能编辑。用户要求修改技能时，先定位真实源文件：工作台技能通常在当前工作目录的 `.agents/skills/<name>/SKILL.md`；安装后的用户技能或自学技能以安装工具返回的 `skill_source` 为准。找不到源文件时显式说明。"
       : "\n## Skill File Identity\n\n" +
         "A skill's runtime location may be a per-session source pointer, or a legacy snapshot copy from older sessions. A pointer freezes only the skill identity visible to this session; if the source file no longer exists, that skill is unavailable. Skill copies under `sessions/.skill-snapshots` and `session-files` are not source files and must not be edited. When the user asks to modify a skill, locate the real source file first: workspace skills usually live at `.agents/skills/<name>/SKILL.md` under the current working directory; installed user or learned skills should use the `skill_source` returned by install tools. If the source cannot be resolved, say so explicitly."
     );

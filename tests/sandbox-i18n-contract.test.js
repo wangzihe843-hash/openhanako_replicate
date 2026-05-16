@@ -15,7 +15,7 @@ describe("sandbox i18n contract", () => {
     loadLocale("zh-CN");
     const text = t("sandbox.blocked", { reason: "命令访问了受限路径：C:\\Users\\alice" });
 
-    expect(text).toContain("先检查当前工作区");
+    expect(text).toContain("先检查当前工作台");
     expect(text).toContain("路径写法");
     expect(text).not.toContain("调整沙盒策略");
   });

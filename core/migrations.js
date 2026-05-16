@@ -67,7 +67,7 @@ const migrations = {
   16: migrateVideoCapabilityProjection,
   // bridge sessionKey 引入 @agentId 后，修补旧 index 中无 agent 维度的 key
   17: migrateBridgeSessionKeysToAgentScoped,
-  // Space 基础身份：为旧 HANA_HOME 补齐 server / legacy owner / default Space registry
+  // Studio 基础身份：为旧 HANA_HOME 补齐 server / legacy owner / default Studio registry
   18: migrateLocalIdentityRegistries,
   // API-key provider 凭证真相源迁移：auth.json → added-models.yaml
   19: migrateLegacyApiKeyAuthEntriesToProviders,
@@ -83,6 +83,8 @@ const migrations = {
   24: migrateChannelPhoneGuardLimitDefaults,
   // 频道主动发起开关显式化，旧频道保持开启
   25: migrateChannelPhoneProactiveDefaults,
+  // Space → Studio：把已落过盘的 spaces.json 迁出为 studios.json
+  26: migrateStudioIdentityRegistries,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -2033,8 +2035,16 @@ function legacyBrowserScreenshot(msg) {
 
 function migrateLocalIdentityRegistries(ctx) {
   const { hanakoHome, log } = ctx;
-  const { created } = ensureLocalIdentityRegistries(hanakoHome);
+  const { created, migratedFromLegacySpaces } = ensureLocalIdentityRegistries(hanakoHome);
   log?.(`[migrations] #18: local identity registries ready${created.length ? ` (created=${created.join(",")})` : ""}`);
+  if (migratedFromLegacySpaces) log?.("[migrations] #18: legacy spaces.json mapped to studios.json");
+}
+
+function migrateStudioIdentityRegistries(ctx) {
+  const { hanakoHome, log } = ctx;
+  const { created, migratedFromLegacySpaces } = ensureLocalIdentityRegistries(hanakoHome);
+  log?.(`[migrations] #26: studio identity registries ready${created.length ? ` (created=${created.join(",")})` : ""}`);
+  if (migratedFromLegacySpaces) log?.("[migrations] #26: legacy spaces.json mapped to studios.json");
 }
 
 function migrateLegacyApiKeyAuthEntriesToProviders(ctx) {

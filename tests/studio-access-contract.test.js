@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  deriveSpaceAccessGrant,
-  getSpaceConnectionProfile,
-  validateSpaceConnectionTrust,
-} from "../shared/space-access-contract.js";
+  deriveStudioAccessGrant,
+  getStudioConnectionProfile,
+  validateStudioConnectionTrust,
+} from "../shared/studio-access-contract.js";
 
 function localConnection(patch = {}) {
   return {
@@ -12,7 +12,7 @@ function localConnection(patch = {}) {
     kind: "local",
     serverId: "local",
     userId: null,
-    spaceId: "local",
+    studioId: "local",
     baseUrl: "http://127.0.0.1:3210",
     wsUrl: "ws://127.0.0.1:3210",
     token: "local-token",
@@ -26,9 +26,9 @@ function localConnection(patch = {}) {
   };
 }
 
-describe("shared trusted space access contract", () => {
+describe("shared trusted studio access contract", () => {
   it("keeps relay as a forwarding profile for user-owned server data", () => {
-    expect(getSpaceConnectionProfile("relay")).toMatchObject({
+    expect(getStudioConnectionProfile("relay")).toMatchObject({
       transport: "official_relay",
       credentialKinds: ["user_session"],
       requiresDevicePairing: true,
@@ -38,19 +38,19 @@ describe("shared trusted space access contract", () => {
     });
   });
 
-  it("keeps cloud as the only profile whose data owner is the hosted cloud space", () => {
-    expect(getSpaceConnectionProfile("cloud")).toMatchObject({
+  it("keeps cloud as the only profile whose data owner is the hosted cloud studio", () => {
+    expect(getStudioConnectionProfile("cloud")).toMatchObject({
       transport: "official_cloud",
       credentialKinds: ["user_session"],
       requiresDevicePairing: false,
       requiresPlatformAccount: true,
-      dataOwner: "hana_cloud_space",
-      officialServiceKind: "cloud_space",
+      dataOwner: "hana_cloud_studio",
+      officialServiceKind: "cloud_studio",
     });
   });
 
   it("rejects local connections that drift away from loopback transport", () => {
-    expect(() => validateSpaceConnectionTrust(localConnection({
+    expect(() => validateStudioConnectionTrust(localConnection({
       baseUrl: "https://hana.example",
     }))).toThrow("local connection must use loopback baseUrl and wsUrl");
   });
@@ -61,7 +61,7 @@ describe("shared trusted space access contract", () => {
       kind: "relay",
       serverId: "server_relay",
       userId: "user_relay",
-      spaceId: "space_relay",
+      studioId: "studio_relay",
       baseUrl: "https://relay.hana.example",
       wsUrl: "wss://relay.hana.example",
       token: "relay-session-token",
@@ -71,10 +71,18 @@ describe("shared trusted space access contract", () => {
       officialServiceKind: "relay",
     });
 
-    expect(deriveSpaceAccessGrant(relay).capabilities).toEqual([
-      "chat",
-      "resources.read",
-      "tools.run",
-    ]);
+    expect(deriveStudioAccessGrant(relay)).toMatchObject({
+      grantId: "access:relay:phone:studio_relay",
+      scope: {
+        serverId: "server_relay",
+        userId: "user_relay",
+        studioId: "studio_relay",
+      },
+      capabilities: [
+        "chat",
+        "resources.read",
+        "tools.run",
+      ],
+    });
   });
 });

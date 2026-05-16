@@ -1,24 +1,24 @@
-export type SpaceConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
+export type StudioConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
 export type ServerTrustState = 'local' | 'lan' | 'tunnel' | 'cloud';
 export type ConnectionCredentialKind = 'none' | 'loopback_token' | 'device_credential' | 'user_session';
-export type OfficialServiceKind = 'relay' | 'cloud_space' | 'inference' | 'billing';
+export type OfficialServiceKind = 'relay' | 'cloud_studio' | 'inference' | 'billing';
 
-export type SpaceConnectionTransport =
+export type StudioConnectionTransport =
   | 'loopback'
   | 'trusted_lan'
   | 'user_managed_tunnel'
   | 'official_relay'
   | 'official_cloud';
 
-export type SpaceAccessActorKind =
+export type StudioAccessActorKind =
   | 'anonymous'
   | 'local_user'
   | 'device'
   | 'platform_account';
 
-export type SpaceAccessDataOwner = 'user_server' | 'hana_cloud_space';
+export type StudioAccessDataOwner = 'user_server' | 'hana_cloud_studio';
 
-export type SpaceAccessCapability =
+export type StudioAccessCapability =
   | 'chat'
   | 'resources.read'
   | 'resources.write'
@@ -28,24 +28,24 @@ export type SpaceAccessCapability =
   | 'settings.read'
   | 'settings.write';
 
-export interface SpaceConnectionProfile {
-  kind: SpaceConnectionKind;
-  transport: SpaceConnectionTransport;
+export interface StudioConnectionProfile {
+  kind: StudioConnectionKind;
+  transport: StudioConnectionTransport;
   credentialKinds: ConnectionCredentialKind[];
   trustState: ServerTrustState;
   remoteReachable: boolean;
   requiresDevicePairing: boolean;
   requiresPlatformAccount: boolean;
-  dataOwner: SpaceAccessDataOwner;
+  dataOwner: StudioAccessDataOwner;
   officialServiceKind: OfficialServiceKind | null;
 }
 
-export interface SpaceAccessConnection {
+export interface StudioAccessConnection {
   connectionId: string;
-  kind: SpaceConnectionKind;
+  kind: StudioConnectionKind;
   serverId: string;
   userId?: string;
-  spaceId: string;
+  studioId: string;
   baseUrl: string;
   wsUrl: string;
   token: string | null;
@@ -57,22 +57,22 @@ export interface SpaceAccessConnection {
   capabilities: string[];
 }
 
-export interface SpaceAccessGrant {
+export interface StudioAccessGrant {
   grantId: string;
   connectionId: string;
-  actorKind: SpaceAccessActorKind;
+  actorKind: StudioAccessActorKind;
   scope: {
     serverId: string;
     userId: string | null;
-    spaceId: string;
+    studioId: string;
   };
-  transport: SpaceConnectionTransport;
-  dataOwner: SpaceAccessDataOwner;
+  transport: StudioConnectionTransport;
+  dataOwner: StudioAccessDataOwner;
   localOnly: boolean;
-  capabilities: SpaceAccessCapability[];
+  capabilities: StudioAccessCapability[];
 }
 
-export const SPACE_ACCESS_CAPABILITIES: readonly SpaceAccessCapability[];
-export function getSpaceConnectionProfile(kind: SpaceConnectionKind): SpaceConnectionProfile;
-export function validateSpaceConnectionTrust(connection: SpaceAccessConnection): void;
-export function deriveSpaceAccessGrant(connection: SpaceAccessConnection): SpaceAccessGrant;
+export const STUDIO_ACCESS_CAPABILITIES: readonly StudioAccessCapability[];
+export function getStudioConnectionProfile(kind: StudioConnectionKind): StudioConnectionProfile;
+export function validateStudioConnectionTrust(connection: StudioAccessConnection): void;
+export function deriveStudioAccessGrant(connection: StudioAccessConnection): StudioAccessGrant;

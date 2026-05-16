@@ -25,7 +25,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 
 const tMap: Record<string, string> = {
   'rightWorkspace.tabs.sessionFiles': '对话文件',
-  'rightWorkspace.tabs.workspace': '工作空间',
+  'rightWorkspace.tabs.workspace': '工作台',
   'rightWorkspace.sessionFiles.empty': '本对话还没有产生或上传文件',
   'rightWorkspace.sessionFiles.title': '对话文件',
   'rightWorkspace.sessionFiles.status.expired': '已过期',
@@ -50,7 +50,7 @@ const tMap: Record<string, string> = {
   'rightWorkspace.sessionFiles.sort.typeAsc': '类型↑',
   'rightWorkspace.jian.collapse': '收起笺',
   'rightWorkspace.jian.expand': '展开笺',
-  'desk.workspaceTitle': '工作空间',
+  'desk.workspaceTitle': '工作台',
   'desk.jianLabel': '笺',
   'desk.jianPlaceholder': '写点什么...',
   'desk.openInFinder': '打开文件夹',
@@ -142,11 +142,11 @@ describe('RightWorkspacePanel', () => {
     const tabList = screen.getByRole('tablist', { name: 'rightWorkspace.tabs.label' });
     expect(tabList.closest('.jian-card')).toBe(container.querySelector('.jian-card'));
     expect(within(tabList).getByRole('tab', { name: '对话文件' })).toBeInTheDocument();
-    expect(within(tabList).getByRole('tab', { name: '工作空间' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(tabList).getByRole('tab', { name: '工作台' })).toHaveAttribute('aria-selected', 'true');
     expect(container.querySelector('[data-right-workspace-tab-slider]')).toBeInTheDocument();
     expect((tabList as HTMLElement).style.getPropertyValue('--right-workspace-active-tab-index')).toBe('1');
     expect(screen.getByText('hana-work')).toBeInTheDocument();
-    expect(screen.queryByText(/工作空间 ·/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/工作台 ·/)).not.toBeInTheDocument();
   });
 
   it('moves the tab slider when switching between session files and workspace', () => {

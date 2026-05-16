@@ -21,7 +21,7 @@ describe('server connection helpers', () => {
       connectionId: 'local',
       kind: 'local',
       serverId: 'local',
-      spaceId: 'local',
+      studioId: 'local',
       label: 'Local Hana',
       baseUrl: 'http://127.0.0.1:3210',
       wsUrl: 'ws://127.0.0.1:3210',
@@ -66,15 +66,15 @@ describe('server connection helpers', () => {
     })).toBe(active);
   });
 
-  it('resolves the active connection from the SpaceConnection registry before legacy mirror fields', () => {
+  it('resolves the active connection from the StudioConnection registry before legacy mirror fields', () => {
     const registryConnection = mergeServerIdentity(createLocalServerConnection({
       serverPort: 4242,
       serverToken: 'registry-token',
     })!, {
       serverId: 'server_registry',
       userId: 'user_registry',
-      spaceId: 'space_registry',
-      label: 'Registry Space',
+      studioId: 'studio_registry',
+      label: 'Registry Studio',
     });
     const staleMirror = createLocalServerConnection({
       serverPort: 3210,
@@ -99,7 +99,7 @@ describe('server connection helpers', () => {
       ...local,
       connectionId: 'custom:remote',
       kind: 'custom_remote' as const,
-      label: 'Remote Space',
+      label: 'Remote Studio',
       baseUrl: 'https://hana.example',
       wsUrl: 'wss://hana.example',
       token: 'remote-token',
@@ -124,7 +124,7 @@ describe('server connection helpers', () => {
       ...local,
       connectionId: 'lan:bad',
       kind: 'lan' as const,
-      label: 'Bad LAN Space',
+      label: 'Bad LAN Studio',
       baseUrl: 'http://192.168.1.20:14500',
       wsUrl: 'ws://192.168.1.20:14500',
       trustState: 'lan' as const,
@@ -192,10 +192,10 @@ describe('server connection helpers', () => {
       connectionKind: 'local',
       serverId: 'server_stable',
       userId: 'user_stable',
-      spaceId: 'space_stable',
+      studioId: 'studio_stable',
       label: 'Stable Server',
       userLabel: 'Stable User',
-      spaceLabel: 'Stable Space',
+      studioLabel: 'Stable Studio',
       authState: 'paired',
       trustState: 'local',
       capabilities: ['chat', 'resources', 'tools', 'identity'],
@@ -204,10 +204,10 @@ describe('server connection helpers', () => {
       connectionId: 'local',
       serverId: 'server_stable',
       userId: 'user_stable',
-      spaceId: 'space_stable',
+      studioId: 'studio_stable',
       label: 'Stable Server',
       userLabel: 'Stable User',
-      spaceLabel: 'Stable Space',
+      studioLabel: 'Stable Studio',
       serverVersion: '1.2.3',
       kind: 'local',
       baseUrl: 'http://127.0.0.1:3210',
@@ -229,10 +229,10 @@ describe('server connection helpers', () => {
     })!, {
       serverId: 'server_stable',
       userId: 'user_stable',
-      spaceId: 'space_stable',
+      studioId: 'studio_stable',
       label: 'Stable Server',
       userLabel: 'Stable User',
-      spaceLabel: 'Stable Space',
+      studioLabel: 'Stable Studio',
       capabilities: ['chat', 'resources', 'tools', 'identity'],
     });
 

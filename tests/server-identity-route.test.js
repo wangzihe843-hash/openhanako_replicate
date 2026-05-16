@@ -35,13 +35,13 @@ function writeValidIdentity(root) {
     createdAt: "2026-05-09T00:00:00.000Z",
     updatedAt: "2026-05-09T00:00:00.000Z",
   });
-  writeJson(path.join(root, "spaces.json"), {
+  writeJson(path.join(root, "studios.json"), {
     schemaVersion: 1,
-    defaultSpaceId: "space_route",
-    spaces: [{
-      spaceId: "space_route",
+    defaultStudioId: "studio_route",
+    studios: [{
+      studioId: "studio_route",
       ownerUserId: "user_route",
-      label: "Route Space",
+      label: "Route Studio",
       kind: "personal",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
       membershipModel: "single_user_implicit",
@@ -61,7 +61,7 @@ describe("server identity route", () => {
     tmpDir = null;
   });
 
-  it("returns token-protected local server identity metadata for the active legacy Space", async () => {
+  it("returns token-protected local server identity metadata for the active legacy Studio", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir);
     const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
@@ -75,10 +75,10 @@ describe("server identity route", () => {
       connectionKind: "local",
       serverId: "server_route",
       userId: "user_route",
-      spaceId: "space_route",
+      studioId: "studio_route",
       label: "Route Server",
       userLabel: "Route User",
-      spaceLabel: "Route Space",
+      studioLabel: "Route Studio",
       trustState: "local",
       authState: "paired",
       credentialKind: "loopback_token",
@@ -92,7 +92,7 @@ describe("server identity route", () => {
   it("returns an explicit error when registry files are invalid", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir);
-    fs.writeFileSync(path.join(tmpDir, "spaces.json"), "{ bad json", "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "studios.json"), "{ bad json", "utf-8");
     const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
     const app = new Hono();
     app.route("/api", createServerIdentityRoute({ hanakoHome: tmpDir, appVersion: "1.2.3" }));
@@ -102,7 +102,7 @@ describe("server identity route", () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
       error: "invalid server identity registry",
-      detail: expect.stringContaining("invalid spaces.json"),
+      detail: expect.stringContaining("invalid studios.json"),
     });
   });
 
@@ -118,10 +118,10 @@ describe("server identity route", () => {
         connectionKind: "local",
         serverId: "server_runtime_route",
         userId: "user_runtime_route",
-        spaceId: "space_runtime_route",
+        studioId: "studio_runtime_route",
         label: "Runtime Route Server",
         userLabel: "Runtime Route User",
-        spaceLabel: "Runtime Route Space",
+        studioLabel: "Runtime Route Studio",
         trustState: "local",
         authState: "paired",
         credentialKind: "loopback_token",
@@ -139,10 +139,10 @@ describe("server identity route", () => {
       connectionKind: "local",
       serverId: "server_runtime_route",
       userId: "user_runtime_route",
-      spaceId: "space_runtime_route",
+      studioId: "studio_runtime_route",
       label: "Runtime Route Server",
       userLabel: "Runtime Route User",
-      spaceLabel: "Runtime Route Space",
+      studioLabel: "Runtime Route Studio",
       trustState: "local",
       authState: "paired",
       credentialKind: "loopback_token",

@@ -38,8 +38,8 @@ describe('connection slice registry', () => {
     const stable = mergeServerIdentity(h.state.activeServerConnection!, {
       serverId: 'server_stable',
       userId: 'user_stable',
-      spaceId: 'space_stable',
-      label: 'Stable Space',
+      studioId: 'studio_stable',
+      label: 'Stable Studio',
     });
     h.state.setActiveServerConnection(stable);
 
@@ -50,7 +50,7 @@ describe('connection slice registry', () => {
       connectionId: 'local',
       serverId: 'server_stable',
       userId: 'user_stable',
-      spaceId: 'space_stable',
+      studioId: 'studio_stable',
       baseUrl: 'http://127.0.0.1:4222',
       token: 'new-token',
     });
@@ -64,7 +64,7 @@ describe('connection slice registry', () => {
       ...h.state.activeServerConnection!,
       connectionId: 'custom:remote',
       kind: 'custom_remote' as const,
-      label: 'Remote Space',
+      label: 'Remote Studio',
       baseUrl: 'https://hana.example',
       wsUrl: 'wss://hana.example',
       token: 'remote-token',

@@ -1,25 +1,25 @@
-import { validateSpaceConnectionTrust } from './space-access';
+import { validateStudioConnectionTrust } from './studio-access';
 
-export type SpaceConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
+export type StudioConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
 export type ServerTrustState = 'local' | 'lan' | 'tunnel' | 'cloud';
 export type ServerAuthState = 'anonymous' | 'paired' | 'user' | 'expired';
 export type ConnectionCredentialKind = 'none' | 'loopback_token' | 'device_credential' | 'user_session';
-export type OfficialServiceKind = 'relay' | 'cloud_space' | 'inference' | 'billing';
+export type OfficialServiceKind = 'relay' | 'cloud_studio' | 'inference' | 'billing';
 export type ServerConnectionRegistry = Record<string, ServerConnection>;
-export type SpaceConnection = ServerConnection;
-export type SpaceConnectionRegistry = ServerConnectionRegistry;
+export type StudioConnection = ServerConnection;
+export type StudioConnectionRegistry = ServerConnectionRegistry;
 
 export const LOCAL_CONNECTION_ID = 'local';
 
 export interface ServerConnection {
   connectionId: string;
-  kind: SpaceConnectionKind;
+  kind: StudioConnectionKind;
   serverId: string;
   userId?: string;
-  spaceId: string;
+  studioId: string;
   label: string;
   userLabel?: string;
-  spaceLabel?: string;
+  studioLabel?: string;
   serverVersion?: string;
   baseUrl: string;
   wsUrl: string;
@@ -33,13 +33,13 @@ export interface ServerConnection {
 }
 
 export interface ServerIdentity {
-  connectionKind?: SpaceConnectionKind;
+  connectionKind?: StudioConnectionKind;
   serverId: string;
   userId?: string;
-  spaceId: string;
+  studioId: string;
   label: string;
   userLabel?: string;
-  spaceLabel?: string;
+  studioLabel?: string;
   authState?: ServerAuthState;
   trustState?: ServerTrustState;
   credentialKind?: ConnectionCredentialKind;
@@ -123,7 +123,7 @@ export function createLocalServerConnection({
     connectionId: LOCAL_CONNECTION_ID,
     kind: 'local',
     serverId: 'local',
-    spaceId: 'local',
+    studioId: 'local',
     label: 'Local Hana',
     baseUrl: `http://127.0.0.1:${port}`,
     wsUrl: `ws://127.0.0.1:${port}`,
@@ -200,7 +200,7 @@ export function upsertServerConnection(
   if (!connection.connectionId) {
     throw new Error('server connection requires connectionId');
   }
-  validateSpaceConnectionTrust(connection);
+  validateStudioConnectionTrust(connection);
   return {
     ...(registry ?? {}),
     [connection.connectionId]: connection,
@@ -216,10 +216,10 @@ export function mergeServerIdentity(
     kind: identity.connectionKind || connection.kind,
     serverId: identity.serverId,
     userId: identity.userId,
-    spaceId: identity.spaceId,
+    studioId: identity.studioId,
     label: identity.label,
     userLabel: identity.userLabel,
-    spaceLabel: identity.spaceLabel,
+    studioLabel: identity.studioLabel,
     serverVersion: identity.version,
     authState: identity.authState || connection.authState,
     trustState: identity.trustState || connection.trustState,
@@ -228,7 +228,7 @@ export function mergeServerIdentity(
     officialServiceKind: identity.officialServiceKind ?? connection.officialServiceKind ?? null,
     capabilities: identity.capabilities ? [...identity.capabilities] : [...connection.capabilities],
   };
-  validateSpaceConnectionTrust(next);
+  validateStudioConnectionTrust(next);
   return next;
 }
 

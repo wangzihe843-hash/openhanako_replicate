@@ -66,7 +66,7 @@ describe("ResourceService", () => {
       agentsDir,
       sessionFiles: new SessionFileRegistry(),
       runtimeContext: {
-        spaceId: "space_legacy",
+        studioId: "studio_legacy",
       },
     });
   }
@@ -80,8 +80,8 @@ describe("ResourceService", () => {
 
     expect(resource).toMatchObject({
       resourceId: "res_sf_legacy",
-      name: "spaces/space_legacy/resources/res_sf_legacy",
-      spaceId: "space_legacy",
+      name: "studios/studio_legacy/resources/res_sf_legacy",
+      studioId: "studio_legacy",
       type: "file",
       source: "session_file",
       fileId: "sf_legacy",

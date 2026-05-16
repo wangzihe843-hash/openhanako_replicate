@@ -71,7 +71,7 @@ const TAB_TITLES: Record<string, string> = {
   agent: '助手',
   me: '我',
   interface: '界面',
-  work: '工作空间',
+  work: '工作台',
   computer: '使用电脑',
   skills: '技能',
   bridge: '社交平台',

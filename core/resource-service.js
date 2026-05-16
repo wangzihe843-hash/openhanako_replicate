@@ -18,7 +18,7 @@ export class ResourceService {
   constructor({ agentsDir, sessionFiles, runtimeContext } = {}) {
     if (!agentsDir) throw new Error("agentsDir is required for ResourceService");
     if (!sessionFiles) throw new Error("sessionFiles is required for ResourceService");
-    if (!runtimeContext?.spaceId) throw new Error("runtimeContext.spaceId is required for ResourceService");
+    if (!runtimeContext?.studioId) throw new Error("runtimeContext.studioId is required for ResourceService");
     this._agentsDir = agentsDir;
     this._sessionFiles = sessionFiles;
     this._runtimeContext = runtimeContext;
@@ -28,7 +28,7 @@ export class ResourceService {
   getResource(resourceId) {
     const file = this._findSessionFileByResourceId(resourceId);
     if (!file) return null;
-    return createSessionFileResourceEnvelope(file, { spaceId: this._runtimeContext.spaceId });
+    return createSessionFileResourceEnvelope(file, { studioId: this._runtimeContext.studioId });
   }
 
   resolveContent(resourceId) {
@@ -40,7 +40,7 @@ export class ResourceService {
       });
     }
 
-    const resource = createSessionFileResourceEnvelope(file, { spaceId: this._runtimeContext.spaceId });
+    const resource = createSessionFileResourceEnvelope(file, { studioId: this._runtimeContext.studioId });
     if (!resource) {
       throw new ResourceError("invalid resource id", {
         status: 400,

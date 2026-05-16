@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
 
 const translations: Record<string, string | string[] | Record<string, { avatar: string }>> = {
-  'input.workspace': '工作空间：',
-  'input.currentWorkspace': '本次工作空间',
+  'input.workspace': '工作台：',
+  'input.currentWorkspace': '本次工作台',
   'input.selectOtherFolder': '选择其他文件夹',
   'input.extraFolders': '额外文件夹',
-  'input.addExternalFolder': '添加工作空间以外的文件夹',
+  'input.addExternalFolder': '添加工作台以外的文件夹',
   'welcome.messages': ['想到什么就说什么吧~'],
   'yuan.welcome.hanako': ['想到什么就说什么吧~'],
   'welcome.memoryOn': '记忆',
@@ -54,12 +54,12 @@ describe('WelcomeScreen workspace picker', () => {
     const { WelcomeScreen } = await import('../../components/WelcomeScreen');
 
     render(<WelcomeScreen />);
-    fireEvent.click(screen.getByRole('button', { name: /工作空间：Desktop/ }));
+    fireEvent.click(screen.getByRole('button', { name: /工作台：Desktop/ }));
 
-    const currentLabel = screen.getByText('本次工作空间');
+    const currentLabel = screen.getByText('本次工作台');
     const selectOther = screen.getByText('选择其他文件夹');
     const extraLabel = screen.getByText('额外文件夹');
-    const addExternal = screen.getByText('添加工作空间以外的文件夹');
+    const addExternal = screen.getByText('添加工作台以外的文件夹');
 
     expect(currentLabel.compareDocumentPosition(selectOther) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectOther.compareDocumentPosition(extraLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
