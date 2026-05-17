@@ -18,7 +18,6 @@ import { WORKSPACE_SKILL_DIRS } from "../../shared/workspace-skill-paths.js";
 import { t } from "../i18n.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
 import { realPath, isSensitivePath } from "../utils/path-security.js";
-import { runXingyeHeartbeatConsumer } from "../../lib/xingye/heartbeat-consumer.js";
 
 /** 安全路径校验：target 必须在 baseDir 内部（解析 symlink 后比较） */
 function isInsidePath(target, baseDir) {
@@ -302,37 +301,45 @@ export function createDeskRoute(engine, hub) {
     return c.json({ logs: engine.getDevLogs() });
   });
 
-  /** 手动触发心跳巡检（调试用） */
+  /** 手动触发心跳巡检（调试用）。
+   *
+   * 走 heartbeat.runHeartbeatOnce —— 一个 await 拿到 {status, payload}，payload 里直接带
+   * xingye consumer 结构化结果（summaryZh / eventCount）。不再 trigger + 轮询 + 读 result.json
+   * 三段式；旧实现那条路径会和 beat 内部 consumer 竞速、让 history.jsonl 出现重复行。
+   *
+   * 形状参考 openclaw 的 runHeartbeatOnce（src/infra/heartbeat-runner.ts）。
+   */
   route.post("/desk/heartbeat", async (c) => {
     const agentId = c.req.query("agentId");
     if (!agentId) return c.json({ error: "agentId is required" }, 400);
     const hb = hub?.scheduler?.getHeartbeat(agentId);
     if (!hb) return c.json({ error: "Heartbeat not initialized" });
-    const triggered = hb.triggerNow();
-    // 触发成功时，同步在路由内消费一次 event log，把中文摘要随响应返回。
-    // beat 内部 onBeat 仍会再调一次 consumer，但事件已被标记，第二次走 skipped 分支，不会重复写结果文件。
+
+    const result = await hb.runHeartbeatOnce({ source: "manual", reason: "desk-route" });
+    const triggered = result.status === "ran";
+    const cooldown = result.status === "skipped" && result.reason === "cooldown";
+
+    // Consumer 跑成功后才落 payload —— ran / failed 两种情况都可能有 payload，
+    // 因为 activity 失败时已成功的 xingye consumer 结果会通过 payload 救出来。
     let summaryZh = "";
     let consumedCount = 0;
-    if (triggered) {
-      try {
-        const agent = engine.getAgent(agentId);
-        const agentDir = agent?.agentDir || path.join(engine.agentsDir, agentId);
-        const consumed = await runXingyeHeartbeatConsumer({ agentId, agentDir });
-        if (consumed?.result) {
-          summaryZh = typeof consumed.result.summaryZh === "string" ? consumed.result.summaryZh : "";
-          consumedCount = typeof consumed.result.eventCount === "number" ? consumed.result.eventCount : 0;
-        }
-      } catch (err) {
-        console.warn(`[desk] xingye heartbeat consumer failed: ${err?.message || err}`);
-      }
+    const xingye = result.payload?.xingyeConsumed;
+    if (xingye?.result) {
+      summaryZh = typeof xingye.result.summaryZh === "string" ? xingye.result.summaryZh : "";
+      consumedCount = typeof xingye.result.eventCount === "number" ? xingye.result.eventCount : 0;
     }
+
     return c.json({
-      ok: true,
+      ok: result.status !== "failed",
       triggered,
-      cooldown: !triggered,
+      cooldown,
       summaryZh,
       consumedCount,
-      message: triggered ? t("error.heartbeatTriggered") : "Heartbeat trigger cooldown",
+      status: result.status,
+      reason: result.reason,
+      message: triggered
+        ? t("error.heartbeatTriggered")
+        : (cooldown ? "Heartbeat trigger cooldown" : (result.reason || "")),
     });
   });
 
