@@ -64,6 +64,16 @@ function decorateLoadedSkill(skill, hiddenSkills) {
   skill.defaultEnabled = meta?.defaultEnabled ?? (skill.defaultEnabled !== false);
   if (meta) {
     skill.disableModelInvocation = meta.disableModelInvocation;
+    /**
+     * 来自 frontmatter 的本地化显示名（`display-name-zh` 等）。translation-cache 用它绕过
+     * 自动翻译——项目术语类 skill（比如 xingye-* = 星野系列）必须用这条 path 控制中文显示，
+     * 否则翻译模型会按拼音强行翻成意外的中文词。
+     */
+    skill.displayNames = meta.displayNames && typeof meta.displayNames === "object"
+      ? meta.displayNames
+      : {};
+  } else if (!skill.displayNames || typeof skill.displayNames !== "object") {
+    skill.displayNames = {};
   }
   skill._hidden = hiddenSkills.has(skill.name);
   skill.sourceIdentity = sourceIdentityForSkill(skill);
@@ -301,6 +311,7 @@ export class SkillManager {
               source: "external",
               disableModelInvocation: meta.disableModelInvocation,
               defaultEnabled: meta.defaultEnabled,
+              displayNames: meta.displayNames || {},
               _agentId: null,
               _hidden: false,
               _externalLabel: label,
@@ -407,6 +418,7 @@ export class SkillManager {
           source: "learned",
           disableModelInvocation: meta.disableModelInvocation,
           defaultEnabled: meta.defaultEnabled,
+          displayNames: meta.displayNames || {},
           _agentId: agentId,
           _hidden: false,
           sourceIdentity: sourceIdentityForSkill({

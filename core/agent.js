@@ -25,6 +25,7 @@ import { createDmTool } from "../lib/tools/dm-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
+import { createProposeDraftTool } from "../lib/tools/xingye-propose-draft-tool.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
 import { createInstallSkillTool } from "../lib/tools/install-skill.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
@@ -92,6 +93,7 @@ export class Agent {
     this._todoTool = null;
     this._pinnedMemoryTools = [];
     this._experienceTools = [];
+    this._xingyeProposeDraftTool = null;
     this._memoryMasterEnabled = true;   // agent 级别总开关（config.yaml memory.enabled）
     this._memorySessionEnabled = true;  // per-session 开关（WelcomeScreen toggle）
     this._experienceEnabled = false;    // agent 级别经验能力开关（config.yaml experience.enabled，默认关闭）
@@ -293,6 +295,10 @@ export class Agent {
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir, this.id);
     this._experienceTools = createExperienceTools(this.agentDir, {
       isEnabled: () => this._experienceEnabled === true,
+    });
+    this._xingyeProposeDraftTool = createProposeDraftTool({
+      agentDir: this.agentDir,
+      agentId: this.id,
     });
 
     // 8. Desk 系统（与 memory 完全独立）
@@ -610,6 +616,7 @@ export class Agent {
       this._installSkillTool,
       this._notifyTool,
       this._stopTaskTool,
+      this._xingyeProposeDraftTool,
       this._updateSettingsTool,
       this._subagentTool,
       this._checkDeferredTool,

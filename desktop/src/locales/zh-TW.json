@@ -750,7 +750,8 @@
           "cron": { "label": "定時任務", "summary": "在指定時間自動執行任務" },
           "dm": { "label": "私訊", "summary": "向其他 Agent 傳送一對一訊息" },
           "install_skill": { "label": "安裝技能", "summary": "從 GitHub 或技能庫安裝新技能" },
-          "update_settings": { "label": "修改設定", "summary": "讓 Agent 修改應用設定項" }
+          "update_settings": { "label": "修改設定", "summary": "讓 Agent 修改應用設定項" },
+          "xingye_propose_draft": { "label": "星野草稿提議", "summary": "心跳巡檢裡給角色小手機/秘密空間生成待確認草稿（目前覆蓋：日記本；其它模組陸續接入）。關掉只阻止新草稿，已有的不受影響。" }
         }
       },
       "computerUse": {

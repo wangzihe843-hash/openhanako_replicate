@@ -13,6 +13,9 @@ const scheduleStoreMock = vi.hoisted(() => ({
   deleteScheduleEntry: vi.fn(),
   listScheduleEntries: vi.fn(),
   updateScheduleEntryStatus: vi.fn(),
+  listScheduleDrafts: vi.fn(),
+  confirmScheduleDraft: vi.fn(),
+  discardScheduleDraft: vi.fn(),
 }));
 
 const scheduleAiMock = vi.hoisted(() => ({
@@ -49,8 +52,12 @@ describe('PhoneScheduleApp', () => {
     scheduleStoreMock.deleteScheduleEntry.mockReset();
     scheduleStoreMock.listScheduleEntries.mockReset();
     scheduleStoreMock.updateScheduleEntryStatus.mockReset();
+    scheduleStoreMock.listScheduleDrafts.mockReset();
+    scheduleStoreMock.confirmScheduleDraft.mockReset();
+    scheduleStoreMock.discardScheduleDraft.mockReset();
     scheduleAiMock.generateScheduleDraftWithAI.mockReset();
     scheduleStoreMock.listScheduleEntries.mockResolvedValue([]);
+    scheduleStoreMock.listScheduleDrafts.mockResolvedValue([]);
     scheduleStoreMock.appendScheduleEntry.mockImplementation(async (_agentId, input) => ({
       id: 'created-1',
       agentId: 'linwu',
@@ -150,6 +157,99 @@ describe('PhoneScheduleApp', () => {
 
     await waitFor(() => {
       expect(scheduleStoreMock.deleteScheduleEntry).toHaveBeenCalledWith('linwu', 'lin-1');
+    });
+  });
+
+  describe('pending drafts section', () => {
+    it('does not render drafts section when there are no pending drafts', async () => {
+      renderScheduleApp();
+      await waitFor(() => {
+        expect(scheduleStoreMock.listScheduleDrafts).toHaveBeenCalledWith('linwu');
+      });
+      expect(screen.queryByTestId('phone-schedule-pending-drafts')).not.toBeInTheDocument();
+    });
+
+    it('renders draft from listScheduleDrafts and confirm moves it to entries', async () => {
+      scheduleStoreMock.listScheduleDrafts.mockResolvedValueOnce([
+        {
+          id: 'd-1',
+          title: '陪我去诊所',
+          dateLabel: '明天上午',
+          content: '带社保卡',
+          timeText: '上午',
+          createdAt: '2026-05-17T12:00:00.000Z',
+          source: 'xingye-heartbeat-tool',
+          reason: '她答应过',
+        },
+      ]);
+      scheduleStoreMock.confirmScheduleDraft.mockResolvedValueOnce({
+        id: 'entry-confirmed',
+        agentId: 'linwu',
+        title: '陪我去诊所',
+        dateLabel: '明天上午',
+        content: '带社保卡 + 体检报告',
+        source: 'ai',
+        status: 'planned',
+        createdAt: '2026-05-17T12:30:00.000Z',
+        updatedAt: '2026-05-17T12:30:00.000Z',
+      });
+
+      renderScheduleApp();
+      const card = await screen.findByTestId('phone-schedule-draft-d-1');
+      expect(card).toBeInTheDocument();
+      /** Reason is visible. */
+      expect(screen.getByText(/她答应过/)).toBeInTheDocument();
+      /** Edit content in place. */
+      fireEvent.change(screen.getByTestId('phone-schedule-draft-content-d-1'), {
+        target: { value: '带社保卡 + 体检报告' },
+      });
+      fireEvent.click(screen.getByTestId('phone-schedule-draft-confirm-d-1'));
+      await waitFor(() => {
+        expect(scheduleStoreMock.confirmScheduleDraft).toHaveBeenCalledWith(
+          'linwu',
+          'd-1',
+          expect.objectContaining({
+            title: '陪我去诊所',
+            dateLabel: '明天上午',
+            content: '带社保卡 + 体检报告',
+          }),
+        );
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId('phone-schedule-draft-d-1')).not.toBeInTheDocument();
+      });
+    });
+
+    it('discard calls discardScheduleDraft, does NOT call appendScheduleEntry', async () => {
+      scheduleStoreMock.listScheduleDrafts.mockResolvedValueOnce([
+        {
+          id: 'd-2',
+          title: 'maybe',
+          dateLabel: '某天',
+          content: '不确定',
+          createdAt: '2026-05-17T12:00:00.000Z',
+          source: 'xingye-heartbeat-tool',
+        },
+      ]);
+      scheduleStoreMock.discardScheduleDraft.mockResolvedValueOnce(true);
+      /** jsdom's `window.confirm` defaults to "not implemented" and returns false; */
+      /** plain `window.confirm = vi.fn()` doesn't take in some jsdom versions. spyOn does. */
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      try {
+        renderScheduleApp();
+        await screen.findByTestId('phone-schedule-draft-d-2');
+        fireEvent.click(screen.getByTestId('phone-schedule-draft-discard-d-2'));
+        await waitFor(() => {
+          expect(scheduleStoreMock.discardScheduleDraft).toHaveBeenCalledWith('linwu', 'd-2');
+        });
+        await waitFor(() => {
+          expect(screen.queryByTestId('phone-schedule-draft-d-2')).not.toBeInTheDocument();
+        });
+        /** Discard must not leak into the published entries list. */
+        expect(scheduleStoreMock.appendScheduleEntry).not.toHaveBeenCalled();
+      } finally {
+        confirmSpy.mockRestore();
+      }
     });
   });
 });

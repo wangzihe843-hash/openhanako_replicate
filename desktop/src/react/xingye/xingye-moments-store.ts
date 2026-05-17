@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { XingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
+import { postXingyeStorage } from './xingye-storage-api';
+import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import {
   createXingyeStore,
   generateXingyeId,
@@ -523,3 +525,191 @@ export function useXingyeMomentPosts(agentId: string | null | undefined): Xingye
 }
 
 export { XINGYE_MOMENTS_CHANGED_EVENT };
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Pending moment drafts (heartbeat-proposed, awaiting user confirmation)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 心跳巡检（或其他自动来源）产出的「待确认朋友圈草稿」存放路径，与 posts 同目录、分文件。
+ * 同 journal/schedule：posts.jsonl 是「已生成」列表；drafts.jsonl 是 agent 提议、用户未确认的候选。
+ *
+ * 注意：草稿层只承诺 `content`，不带 likes/comments/imageUrls；互动者依赖通讯录与 peer roster，
+ * 在巡检上下文里很难稳定填对——保留给用户在 MomentComposer 用「AI 生成」路径现拉。
+ */
+export const XINGYE_MOMENT_DRAFTS_JSONL = 'apps/moments/drafts.jsonl';
+
+const SAFE_MOMENT_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+const draftsBackend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+export type XingyePendingMomentDraft = {
+  id: string;
+  content: string;
+  /** 为什么提议这条草稿（展示给用户帮助决定是否确认）。 */
+  reason?: string;
+  /** Producer 标识，例：'xingye-heartbeat-tool'。 */
+  source: string;
+  /** 触发本草稿的 xingye event id 列表（可空，用于追溯）。 */
+  sourceEventIds?: string[];
+  createdAt: string;
+};
+
+function normalizeMomentDraftRow(value: unknown): XingyePendingMomentDraft | null {
+  if (!isRecord(value)) return null;
+  const id = normalizeOptionalString(value.id);
+  const content = normalizeOptionalString(value.content);
+  if (!id || !content) return null;
+  const createdAt = normalizeOptionalString(value.createdAt) ?? new Date(0).toISOString();
+  const source = normalizeOptionalString(value.source) ?? 'unknown';
+  const reason = normalizeOptionalString(value.reason);
+  const eventIdsRaw = value.sourceEventIds;
+  const sourceEventIds = Array.isArray(eventIdsRaw)
+    ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  return { id, content, createdAt, reason, source, sourceEventIds };
+}
+
+function sortMomentDrafts(a: XingyePendingMomentDraft, b: XingyePendingMomentDraft): number {
+  const ta = Date.parse(a.createdAt);
+  const tb = Date.parse(b.createdAt);
+  if (ta !== tb && !Number.isNaN(ta) && !Number.isNaN(tb)) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+function newMomentDraftId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `mom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function clampMomentDraftContent(s: string, maxCodePoints: number): string {
+  const t = s.trim();
+  const chars = [...t];
+  if (chars.length <= maxCodePoints) return t;
+  return `${chars.slice(0, maxCodePoints).join('')}…`;
+}
+
+const MOMENT_DRAFT_CONTENT_MAX = 280;
+
+export async function listMomentDrafts(agentId: string): Promise<XingyePendingMomentDraft[]> {
+  const aid = agentId.trim();
+  if (!aid) return [];
+  try {
+    const rows = await draftsBackend.listJsonl<unknown>(aid, XINGYE_MOMENT_DRAFTS_JSONL);
+    return rows
+      .map(normalizeMomentDraftRow)
+      .filter((d): d is XingyePendingMomentDraft => Boolean(d))
+      .sort(sortMomentDrafts);
+  } catch {
+    return [];
+  }
+}
+
+export async function appendMomentDraft(
+  agentId: string,
+  input: { content: string; reason?: string; source: string; sourceEventIds?: string[] },
+): Promise<XingyePendingMomentDraft> {
+  const aid = agentId.trim();
+  if (!aid) throw new Error('保存草稿失败：缺少 agentId。');
+  if (!SAFE_MOMENT_AGENT_ID_RE.test(aid)) {
+    throw new Error('保存草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  const content = clampMomentDraftContent(input.content, MOMENT_DRAFT_CONTENT_MAX);
+  if (!content) throw new Error('草稿正文不能为空。');
+  const source = input.source.trim();
+  if (!source) throw new Error('草稿来源 (source) 不能为空。');
+  const reason = normalizeOptionalString(input.reason);
+  const sourceEventIds = Array.isArray(input.sourceEventIds)
+    ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  const id = newMomentDraftId();
+  const createdAt = new Date().toISOString();
+  const row: XingyePendingMomentDraft & { key: string } = {
+    id, key: id, content, createdAt, reason, source, sourceEventIds,
+  };
+  await draftsBackend.appendJsonl(aid, XINGYE_MOMENT_DRAFTS_JSONL, row);
+  await appendMomentEventBestEffort(aid, {
+    type: 'moment.draft_proposed',
+    source,
+    subjectId: id,
+    payload: { draftId: id, contentExcerpt: content.slice(0, 60), reason: reason ?? null, sourceEventIds: sourceEventIds ?? [] },
+  });
+  return { id, content, createdAt, reason, source, sourceEventIds };
+}
+
+export async function discardMomentDraft(agentId: string, draftId: string): Promise<boolean> {
+  const aid = agentId.trim();
+  const did = draftId.trim();
+  if (!aid) throw new Error('丢弃草稿失败：缺少 agentId。');
+  if (!SAFE_MOMENT_AGENT_ID_RE.test(aid)) {
+    throw new Error('丢弃草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  if (!did) throw new Error('丢弃草稿失败：缺少草稿 id。');
+  const deleted = await draftsBackend.deleteJsonlRecord(aid, XINGYE_MOMENT_DRAFTS_JSONL, did);
+  if (deleted) {
+    await appendMomentEventBestEffort(aid, {
+      type: 'moment.draft_discarded',
+      source: 'xingye-moments-store',
+      subjectId: did,
+      payload: { draftId: did },
+    });
+  }
+  return deleted;
+}
+
+/**
+ * 用户在「待确认草稿」区点「确认生成」/「确认并生成互动」时调用：通过
+ * createXingyeMomentPost 把 draft.content 写成 post（自动发 moment.created），
+ * 再从 drafts 删掉，最后发 draft_confirmed。post 写入失败时保留 draft 不重复写。
+ *
+ * opts:
+ *  - content：用户在 UI 行内编辑后的最终正文（缺省 → 用 draft.content）
+ *  - seedLikes / seedComments：可选，用于「确认并 AI 生成互动」流程——调用方先
+ *    跑一次 generateXingyeMomentDraftWithAI({ existingContent }) 拿到 seeds，
+ *    再连同 content 一起传进来。本函数不做 AI 调用，纯落盘。
+ */
+export async function confirmMomentDraft(
+  agentId: string,
+  draftId: string,
+  opts?: {
+    content?: string;
+    seedLikes?: ReadonlyArray<XingyeMomentSeedLike>;
+    seedComments?: ReadonlyArray<XingyeMomentSeedComment>;
+  },
+): Promise<XingyeMomentPost> {
+  const aid = agentId.trim();
+  const did = draftId.trim();
+  if (!aid) throw new Error('确认草稿失败：缺少 agentId。');
+  if (!SAFE_MOMENT_AGENT_ID_RE.test(aid)) {
+    throw new Error('确认草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
+  const draft = (await listMomentDrafts(aid)).find((d) => d.id === did);
+  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+
+  const content = (opts?.content ?? draft.content).trim();
+  if (!content) throw new Error('确认草稿失败：正文不能为空。');
+
+  const post = await createXingyeMomentPost({
+    authorAgentId: aid,
+    authorName: aid,
+    content,
+    seedLikes: opts?.seedLikes,
+    seedComments: opts?.seedComments,
+    source: { kind: 'candidate' },
+  });
+  if (!post) throw new Error('确认草稿失败：写入朋友圈失败。');
+  try {
+    await draftsBackend.deleteJsonlRecord(aid, XINGYE_MOMENT_DRAFTS_JSONL, did);
+  } catch (error) {
+    console.warn('[xingye-moments-store] confirm draft: failed to delete draft after post create:', error);
+  }
+  await appendMomentEventBestEffort(aid, {
+    type: 'moment.draft_confirmed',
+    source: 'xingye-moments-store',
+    subjectId: did,
+    payload: { draftId: did, postId: post.id },
+  });
+  return post;
+}

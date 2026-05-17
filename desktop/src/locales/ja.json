@@ -750,7 +750,8 @@
           "cron": { "label": "定期実行", "summary": "指定した時刻にタスクを自動実行" },
           "dm": { "label": "ダイレクトメッセージ", "summary": "別のエージェントに 1 対 1 のメッセージを送信" },
           "install_skill": { "label": "スキルをインストール", "summary": "GitHub またはスキルライブラリから新しいスキルをインストール" },
-          "update_settings": { "label": "設定を変更", "summary": "Agent にアプリ設定の変更を許可" }
+          "update_settings": { "label": "設定を変更", "summary": "Agent にアプリ設定の変更を許可" },
+          "xingye_propose_draft": { "label": "Xingye 下書き提案", "summary": "ハートビート巡回中にキャラクター内蔵フォン／秘密空間へ確認待ち下書きを生成（現在対応：日記；他のモジュールは順次追加）。オフにすると新規下書きのみ停止、既存下書きは影響なし。" }
         }
       },
       "computerUse": {

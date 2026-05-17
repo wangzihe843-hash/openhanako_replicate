@@ -369,9 +369,19 @@ export async function generateXingyeMomentDraftWithAI(params: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   peerAgents?: ReadonlyArray<XingyeMomentPeerAgentHint>;
   timeoutMs?: number;
+  /**
+   * 用户已经写好的朋友圈正文。非空时进入「仅生成互动」模式：
+   *   - prompt 转为只产 likes/comments、保留 content 不动；
+   *   - 模型返回后再做一道 verbatim 覆盖（不依赖模型守约）。
+   * 典型场景：用户在 MomentComposer 已经写了 / 改了 content，再点「AI 生成互动」
+   * 想要根据已有内容拉点赞和评论，而不希望正文被改写。
+   */
+  existingContent?: string | null;
 }): Promise<NormalizedMomentDraft> {
   const { agent, ownerProfile } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
+  const existingContent = typeof params.existingContent === 'string' ? params.existingContent.trim() : '';
+  const interactionsOnlyMode = existingContent.length > 0;
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const userName = await resolveXingyeSpeakerUserName();
@@ -430,6 +440,7 @@ export async function generateXingyeMomentDraftWithAI(params: {
     heartbeatBlock,
     virtualContacts,
     peerAgents,
+    existingContent: interactionsOnlyMode ? existingContent : undefined,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -472,7 +483,20 @@ export async function generateXingyeMomentDraftWithAI(params: {
     peerAgents,
   });
   if (!normalized) {
+    /**
+     * 在 interactions-only 模式下，模型理论上不需要产 content（甚至可以直接省略），
+     * 我们对返回 JSON 仍要求 content 字段以走 normalize 路径。但如果模型干脆没返回
+     * content 字段（normalize 失败），我们这里自己合成一个最小骨架——content 用用户的，
+     * likes/comments 留空。这样即使模型彻底罢工，UI 也只是「没拉到互动者」，不会丢正文。
+     */
+    if (interactionsOnlyMode) {
+      return { content: existingContent, seedLikes: [], seedComments: [] };
+    }
     throw new Error('模型返回无效：缺少正文或 JSON 解析失败');
+  }
+  if (interactionsOnlyMode) {
+    /** 安全网：不依赖模型守约。哪怕 prompt 写明「逐字回填」也要这一道。 */
+    return { ...normalized, content: existingContent };
   }
   return normalized;
 }

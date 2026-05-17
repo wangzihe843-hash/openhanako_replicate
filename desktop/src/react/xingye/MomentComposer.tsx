@@ -20,12 +20,24 @@ export type MomentComposerAiDraft = {
   seedComments?: ReadonlyArray<XingyeMomentSeedComment>;
 };
 
+/**
+ * 父组件提供的 AI 草稿生成器。新增 `opts.existingContent` 入参：
+ *   - 缺省 / 空：完整生成 content + likes + comments（首次点 AI 生成）
+ *   - 非空：仅生成 likes / comments，content 由调用方逐字保留
+ *
+ * 用户已经在编辑框写了内容、又点了一次 AI 生成（想让 AI 帮忙拉互动者）的场景下，
+ * 必须传 existingContent，否则模型会重新生成 content 把用户已有正文盖掉。
+ */
+export type MomentComposerAiDraftRequest = {
+  existingContent?: string;
+};
+
 interface MomentComposerProps {
   agent: Agent | null;
   display: XingyeRoleProfileDisplay | null;
   onSubmit: (input: MomentComposerSubmitInput) => Promise<void>;
   /** 可选：由父组件提供 AI 草稿生成器；若缺省则不显示「AI 生成」按钮。 */
-  onGenerateAiDraft?: () => Promise<MomentComposerAiDraft>;
+  onGenerateAiDraft?: (opts?: MomentComposerAiDraftRequest) => Promise<MomentComposerAiDraft>;
 }
 
 export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: MomentComposerProps) {
@@ -74,10 +86,22 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
     if (!canGenerate || !onGenerateAiDraft) return;
     setAiBusy(true);
     setAiError(null);
+    /**
+     * 用户已经写了正文 → 进 interactions-only 模式：把已有正文当 `existingContent` 传下去，
+     * 父组件层（MomentsPanel）会再透传给 generateXingyeMomentDraftWithAI；AI fn 一侧的
+     * prompt 切分支 + 收到结果后逐字 verbatim 覆盖 content。本地这里再做一道：拿到结果后
+     * **不**回写 content state，只更新 seedLikes / seedComments。三道防线都断的话才会丢字。
+     */
+    const preservedContent = trimmedContent;
+    const interactionsOnlyMode = preservedContent.length > 0;
     try {
-      const draft = await onGenerateAiDraft();
-      const next = (draft?.content ?? '').slice(0, 600);
-      if (next) setContent(next);
+      const draft = await onGenerateAiDraft(
+        interactionsOnlyMode ? { existingContent: preservedContent } : undefined,
+      );
+      if (!interactionsOnlyMode) {
+        const next = (draft?.content ?? '').slice(0, 600);
+        if (next) setContent(next);
+      }
       setSeedLikes(draft?.seedLikes ? [...draft.seedLikes] : []);
       setSeedComments(draft?.seedComments ? [...draft.seedComments] : []);
     } catch (e) {
@@ -135,8 +159,15 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
                 className={styles.momentComposerGhostButton}
                 disabled={!canGenerate}
                 onClick={() => { void handleGenerate(); }}
+                title={
+                  trimmedContent.length > 0
+                    ? '保留当前正文，仅基于正文生成围观点赞与评论'
+                    : '从最近聊天 / 角色状态生成完整朋友圈草稿（含点赞评论）'
+                }
               >
-                {aiBusy ? '生成中…' : 'AI 生成'}
+                {aiBusy
+                  ? '生成中…'
+                  : (trimmedContent.length > 0 ? 'AI 生成互动' : 'AI 生成')}
               </button>
             ) : null}
             <button type="button" disabled={!canSubmit} onClick={() => { void handleSubmit(); }}>

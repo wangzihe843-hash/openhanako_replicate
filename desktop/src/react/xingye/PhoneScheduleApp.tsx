@@ -4,9 +4,13 @@ import styles from './XingyeShell.module.css';
 import { generateScheduleDraftWithAI } from './xingye-schedule-ai';
 import {
   appendScheduleEntry,
+  confirmScheduleDraft,
   deleteScheduleEntry,
+  discardScheduleDraft,
+  listScheduleDrafts,
   listScheduleEntries,
   updateScheduleEntryStatus,
+  type XingyePendingScheduleDraft,
   type XingyeScheduleEntry,
   type XingyeScheduleSource,
   type XingyeScheduleStatus,
@@ -161,23 +165,124 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
   const [aiError, setAiError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [statusBusy, setStatusBusy] = useState<XingyeScheduleStatus | null>(null);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingScheduleDraft[]>([]);
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, { title: string; dateLabel: string; timeText: string; content: string; note: string; category: string }>
+  >({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
+      setPendingDrafts([]);
+      setDraftEdits({});
       return;
     }
     setLoading(true);
     setListError(null);
     try {
-      const rows = await listScheduleEntries(ownerAgentId);
+      const [rows, drafts] = await Promise.all([
+        listScheduleEntries(ownerAgentId),
+        listScheduleDrafts(ownerAgentId),
+      ]);
       setEntries(rows);
+      setPendingDrafts(drafts);
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   }, [ownerAgentId]);
+
+  const draftWorkingValue = useCallback(
+    (draft: XingyePendingScheduleDraft) => {
+      const edit = draftEdits[draft.id];
+      if (edit) return edit;
+      return {
+        title: draft.title,
+        dateLabel: draft.dateLabel,
+        timeText: draft.timeText ?? '',
+        content: draft.content,
+        note: draft.note ?? '',
+        category: draft.category ?? '',
+      };
+    },
+    [draftEdits],
+  );
+
+  const handleDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ title: string; dateLabel: string; timeText: string; content: string; note: string; category: string }>,
+  ) => {
+    setDraftEdits((prev) => {
+      const draft = pendingDrafts.find((d) => d.id === draftId);
+      if (!draft) return prev;
+      const base = prev[draftId] ?? {
+        title: draft.title,
+        dateLabel: draft.dateLabel,
+        timeText: draft.timeText ?? '',
+        content: draft.content,
+        note: draft.note ?? '',
+        category: draft.category ?? '',
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmDraft = async (draft: XingyePendingScheduleDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(draft.id);
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(draft);
+      const entry = await confirmScheduleDraft(ownerAgentId, draft.id, {
+        title: working.title,
+        dateLabel: working.dateLabel,
+        content: working.content,
+        timeText: working.timeText.trim() ? working.timeText.trim() : null,
+        note: working.note.trim() ? working.note.trim() : null,
+        category: working.category.trim() ? working.category.trim() : null,
+      });
+      setEntries((prev) => [entry, ...prev.filter((p) => p.id !== entry.id)]);
+      setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+      setDraftEdits((prev) => {
+        if (!(draft.id in prev)) return prev;
+        const { [draft.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardDraft = async (draft: XingyePendingScheduleDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认日程草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setDraftBusyId(draft.id);
+    setDraftError(null);
+    try {
+      const ok = await discardScheduleDraft(ownerAgentId, draft.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+        setDraftEdits((prev) => {
+          if (!(draft.id in prev)) return prev;
+          const { [draft.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadEntries();
+      }
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setSelectedId(null);
@@ -403,6 +508,104 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
                 );
               })}
             </div>
+
+            {pendingDrafts.length > 0 ? (
+              <section
+                className={styles.scheduleDaySection}
+                aria-label="待确认日程草稿"
+                data-testid="phone-schedule-pending-drafts"
+              >
+                <div className={styles.scheduleDaySectionLabel}>待确认草稿 · 来自心跳巡检</div>
+                <p className={styles.phoneAppHint} style={{ margin: '4px 12px 12px' }}>
+                  这些草稿由角色在巡检里提议，**还没**出现在你的日程列表里。点「确认生成」才会真正写入；
+                  离开页面再回来不会丢草稿。
+                </p>
+                {draftError ? (
+                  <p className={styles.phoneAppHint} role="alert" style={{ margin: '0 12px 8px' }}>
+                    {draftError}
+                  </p>
+                ) : null}
+                {pendingDrafts.map((draft) => {
+                  const working = draftWorkingValue(draft);
+                  const busy = draftBusyId === draft.id;
+                  return (
+                    <div
+                      key={draft.id}
+                      className={styles.phoneJournalCard}
+                      style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, transform: 'none', margin: '0 12px 12px' }}
+                      data-testid={`phone-schedule-draft-${draft.id}`}
+                    >
+                      <input
+                        type="text"
+                        value={working.title}
+                        onChange={(e) => handleDraftFieldChange(draft.id, { title: e.target.value })}
+                        placeholder="标题"
+                        aria-label="待确认日程标题"
+                        data-testid={`phone-schedule-draft-title-${draft.id}`}
+                        disabled={busy}
+                        style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                      />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                          type="text"
+                          value={working.dateLabel}
+                          onChange={(e) => handleDraftFieldChange(draft.id, { dateLabel: e.target.value })}
+                          placeholder="日期"
+                          aria-label="待确认日程日期"
+                          data-testid={`phone-schedule-draft-date-${draft.id}`}
+                          disabled={busy}
+                          style={{ flex: 1, font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                        <input
+                          type="text"
+                          value={working.timeText}
+                          onChange={(e) => handleDraftFieldChange(draft.id, { timeText: e.target.value })}
+                          placeholder="时间（可选）"
+                          aria-label="待确认日程时间"
+                          data-testid={`phone-schedule-draft-time-${draft.id}`}
+                          disabled={busy}
+                          style={{ width: '40%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                      </div>
+                      <textarea
+                        value={working.content}
+                        onChange={(e) => handleDraftFieldChange(draft.id, { content: e.target.value })}
+                        rows={3}
+                        aria-label="待确认日程内容"
+                        data-testid={`phone-schedule-draft-content-${draft.id}`}
+                        disabled={busy}
+                        style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                      />
+                      {draft.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                          理由：{draft.reason}
+                        </p>
+                      ) : null}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmDraft(draft)}
+                          disabled={busy}
+                          data-testid={`phone-schedule-draft-confirm-${draft.id}`}
+                        >
+                          {busy ? '处理中…' : '确认生成'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneModalGhostButton}
+                          onClick={() => void handleDiscardDraft(draft)}
+                          disabled={busy}
+                          data-testid={`phone-schedule-draft-discard-${draft.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
 
             <div className={styles.scheduleScrollArea}>
               {dayGroups.map((group) => {

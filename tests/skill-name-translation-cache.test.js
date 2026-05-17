@@ -94,6 +94,55 @@ describe("skill name translation cache", () => {
     expect(translateMissing).toHaveBeenCalledTimes(1);
   });
 
+  it("uses displayNames override when present and never calls translateMissing", async () => {
+    const cachePath = getSkillNameTranslationCachePath(tempRoot);
+    const skill = writeSkill(tempRoot, "xingye-journal-draft", "Propose a journal draft.");
+    /** Frontmatter override path: skill object carries displayNames at runtime. */
+    skill.displayNames = { zh: "星野日记草稿", ja: "星野ジャーナル下書き" };
+    const translateMissing = vi.fn(async () => ({ "xingye-journal-draft": "兴业草稿" }));
+
+    const zh = await translateSkillNamesWithCache({
+      cachePath,
+      skills: [skill],
+      names: ["xingye-journal-draft"],
+      lang: "zh",
+      translateMissing,
+    });
+    const ja = await translateSkillNamesWithCache({
+      cachePath,
+      skills: [skill],
+      names: ["xingye-journal-draft"],
+      lang: "ja",
+      translateMissing,
+    });
+
+    expect(zh).toEqual({ "xingye-journal-draft": "星野日记草稿" });
+    expect(ja).toEqual({ "xingye-journal-draft": "星野ジャーナル下書き" });
+    /** Override must short-circuit the LLM call entirely. */
+    expect(translateMissing).not.toHaveBeenCalled();
+    /** Override must NOT be persisted to the cache file — author owns it via frontmatter. */
+    const persisted = fs.existsSync(cachePath) ? JSON.parse(fs.readFileSync(cachePath, "utf-8")) : null;
+    expect(persisted?.translations?.zh?.["xingye-journal-draft"]).toBeUndefined();
+  });
+
+  it("falls back to LLM translation for languages without an override entry", async () => {
+    const cachePath = getSkillNameTranslationCachePath(tempRoot);
+    const skill = writeSkill(tempRoot, "xingye-journal-draft", "Propose a journal draft.");
+    skill.displayNames = { zh: "星野日记草稿" }; // only zh override
+    const translateMissing = vi.fn(async () => ({ "xingye-journal-draft": "호시노 초안" }));
+
+    const ko = await translateSkillNamesWithCache({
+      cachePath,
+      skills: [skill],
+      names: ["xingye-journal-draft"],
+      lang: "ko",
+      translateMissing,
+    });
+
+    expect(ko).toEqual({ "xingye-journal-draft": "호시노 초안" });
+    expect(translateMissing).toHaveBeenCalledTimes(1);
+  });
+
   it("retranslates a same named skill when SKILL.md changes", async () => {
     const cachePath = getSkillNameTranslationCachePath(tempRoot);
     const skill = writeSkill(tempRoot, "user-guide", "User manual.");

@@ -41,6 +41,14 @@ export function buildMomentDraftPrompt(args: {
   heartbeatBlock: string;
   virtualContacts?: ReadonlyArray<XingyeMomentVirtualContactHint>;
   peerAgents?: ReadonlyArray<XingyeMomentPeerAgentHint>;
+  /**
+   * 用户已经写好的朋友圈正文。非空时改变本函数的输出意图：
+   *   - 不再让模型生成 content（content 由调用方 verbatim 保留）
+   *   - prompt 转成「围绕用户写好的这段内容，只产出 likes/comments」
+   * 给模型看到 existingContent 既是上下文也是硬约束，调用方还会再做一道
+   * 安全网 verbatim 覆盖（见 xingye-moments-ai.ts），不依赖模型守约。
+   */
+  existingContent?: string | null;
 }): string {
   const {
     agent,
@@ -53,6 +61,8 @@ export function buildMomentDraftPrompt(args: {
   } = args;
   const virtualContacts = args.virtualContacts ?? [];
   const peerAgents = args.peerAgents ?? [];
+  const existingContent = typeof args.existingContent === 'string' ? args.existingContent.trim() : '';
+  const interactionsOnlyMode = existingContent.length > 0;
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
@@ -82,24 +92,45 @@ export function buildMomentDraftPrompt(args: {
       )
     : '（无）';
 
-  const parts: string[] = [
-    '你是星野模式「朋友圈」短动态生成器。只返回严格 JSON，不要 Markdown，不要解释。',
+  const headerLines = interactionsOnlyMode
+    ? [
+        '你是星野模式「朋友圈」围观互动生成器。只返回严格 JSON，不要 Markdown，不要解释。',
+        '',
+        '【模式：仅生成互动】用户已经写好了朋友圈正文（见下方「用户已写好的正文」段），',
+        '你的任务**不是**写 content，而是围绕这段已有正文产出合适的 likes / comments。',
+        '不要改写、续写、缩写、扩写用户的正文；不要在 comments 里复述正文里的句子。',
+        '为了 schema 完整，可以在返回 JSON 里**原样**回填 content 字段（一字不改），',
+        '但调用方会做安全网 verbatim 覆盖——即使你乱写或省略，最终展示的仍是用户原文。',
+      ]
+    : [
+        '你是星野模式「朋友圈」短动态生成器。只返回严格 JSON，不要 Markdown，不要解释。',
+        '',
+        '写作身份：以当前角色身份发一条朋友圈短动态，第一人称「我」。',
+        '禁止写成用户视角、读者视角或系统总结；不要出现「根据聊天记录」「用户说」「系统提示」「模型」「AI」等元叙述。',
+        '不要复述或引用输入里的标签行（例如「最近场景」「关系状态」等小节标题）；直接写朋友圈口吻。',
+        '可以含蓄、留白、引一两句歌词或随手感想；不要写长篇日记，不要 emoji 堆砌。',
+        '不要捏造重大剧情、生死、关系决裂等输入里不存在的事件。',
+        '',
+        '长度：正文 content 控制在约 30–140 个汉字（朋友圈口吻为主，宁短勿滥）；不要标题，不要分段编号。',
+      ];
+
+  const interactionsRulesLines = [
     '',
-    '写作身份：以当前角色身份发一条朋友圈短动态，第一人称「我」。',
-    '禁止写成用户视角、读者视角或系统总结；不要出现「根据聊天记录」「用户说」「系统提示」「模型」「AI」等元叙述。',
-    '不要复述或引用输入里的标签行（例如「最近场景」「关系状态」等小节标题）；直接写朋友圈口吻。',
-    '可以含蓄、留白、引一两句歌词或随手感想；不要写长篇日记，不要 emoji 堆砌。',
-    '不要捏造重大剧情、生死、关系决裂等输入里不存在的事件。',
-    '',
-    '长度：正文 content 控制在约 30–140 个汉字（朋友圈口吻为主，宁短勿滥）；不要标题，不要分段编号。',
-    '',
-    '同时生成围观互动 likes / comments（这是任务的一部分，不是可选润色）：',
+    interactionsOnlyMode
+      ? '生成围观互动 likes / comments（**本次的核心任务**）：'
+      : '同时生成围观互动 likes / comments（这是任务的一部分，不是可选润色）：',
     '- 只要下方两个「可选互动者池」**至少一个**非空（不是「（无）」），就必须给出 **至少 2 条 likes 和至少 1 条 comments**；',
     '  能挑出更多合适人选时 likes 给到 3–4 条、comments 给到 2–3 条更好。',
     '- 两个池都是「（无）」时才允许省略 likes / comments 字段（不要输出空数组占位）；这种场景很少见。',
     '- ref 必须**逐字**取自池中已列出的 ref（形如 `vc:<id>` 或 `agent:<id>`，含前缀），不要凭空捏造、不要写 displayName，不要省掉前缀。',
     '- 不要把当前角色自己、user / 莉莉丝 / 任何用户身份放进 likes 或 comments（用户的点赞评论由 UI 触发）。',
     '- likes 上限 4 条；comments 上限 3 条，每条 body 控制在 30 字以内、口语化、符合该互动者口吻；多个互动者要呼应不同身份/口气，不要复读同一句。',
+    interactionsOnlyMode
+      ? '- comments 要**贴住用户写好的那段正文**做反应（玩笑、关心、追问、共情、调侃皆可）；不要写脱离正文的客套。'
+      : null,
+  ].filter((line): line is string => line !== null);
+
+  const schemaLines = [
     '',
     '输出 JSON schema（仅此结构，字段名必须一致；除 content 外其余字段在池非空时为必填）：',
     JSON.stringify(
@@ -123,6 +154,21 @@ export function buildMomentDraftPrompt(args: {
       2,
     ),
     '',
+  ];
+
+  const existingContentBlock = interactionsOnlyMode
+    ? [
+        '【用户已写好的正文（content；必须一字不改）】',
+        existingContent,
+        '',
+      ]
+    : [];
+
+  const parts: string[] = [
+    ...headerLines,
+    ...interactionsRulesLines,
+    ...schemaLines,
+    ...existingContentBlock,
     '当前角色（基础身份）：',
     JSON.stringify(
       {

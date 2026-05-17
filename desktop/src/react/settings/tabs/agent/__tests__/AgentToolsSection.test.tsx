@@ -42,20 +42,30 @@ describe("AgentToolsSection", () => {
     vi.clearAllMocks();
   });
 
-  it("renders 5 toggles when availableTools includes all optional tools", () => {
+  it("renders one toggle per optional tool when availableTools includes all of them", () => {
     const { container } = render(
       <AgentToolsSection
-        availableTools={["browser", "computer", "cron", "dm", "install_skill", "update_settings", "read"]}
+        availableTools={[
+          "browser",
+          "computer",
+          "cron",
+          "dm",
+          "install_skill",
+          "update_settings",
+          "xingye_propose_draft",
+          "read",
+        ]}
         disabled={[]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(5);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(6);
     expect(getRow(container, "browser")).toBeTruthy();
     expect(getRow(container, "computer")).toBeNull();
     expect(getRow(container, "cron")).toBeTruthy();
     expect(getRow(container, "dm")).toBeTruthy();
     expect(getRow(container, "install_skill")).toBeTruthy();
     expect(getRow(container, "update_settings")).toBeTruthy();
+    expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });
 
   it("renders built-in optional toggles while availableTools is not returned yet", () => {
@@ -65,9 +75,10 @@ describe("AgentToolsSection", () => {
         disabled={["update_settings", "dm"]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(5);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(6);
     expect(getRow(container, "browser")).toBeTruthy();
     expect(getRow(container, "computer")).toBeNull();
+    expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });
 
   it("hides dm row when dm is not in availableTools (single agent env)", () => {

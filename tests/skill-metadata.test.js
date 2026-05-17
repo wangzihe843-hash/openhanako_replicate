@@ -42,6 +42,7 @@ describe("parseSkillMetadata", () => {
       description: "Summarize PDFs for the user. Keep the answer concise.",
       disableModelInvocation: true,
       defaultEnabled: true,
+      displayNames: {},
     });
   });
 
@@ -76,6 +77,87 @@ describe("parseSkillMetadata", () => {
     const meta = parseSkillMetadata(content, "fallback-skill");
     expect(meta.name).toBe("default-off-skill");
     expect(meta.defaultEnabled).toBe(false);
+  });
+
+  it("reads top-level display-name-{lang} overrides", () => {
+    const content = [
+      "---",
+      "name: xingye-journal-draft",
+      "description: Propose journal draft.",
+      "display-name-zh: 星野日记草稿",
+      "display-name-ja: 星野ジャーナル下書き",
+      "---",
+      "",
+    ].join("\n");
+
+    const meta = parseSkillMetadata(content, "fallback");
+    expect(meta.displayNames).toEqual({
+      zh: "星野日记草稿",
+      ja: "星野ジャーナル下書き",
+    });
+  });
+
+  it("reads display-name-{lang} nested under metadata: with override precedence", () => {
+    const content = [
+      "---",
+      "name: project-skill",
+      "description: x.",
+      "display-name-zh: top-level-zh",
+      "metadata:",
+      "  display-name-zh: metadata-zh",
+      "  display-name-ko: metadata-ko",
+      "---",
+      "",
+    ].join("\n");
+
+    const meta = parseSkillMetadata(content, "fallback");
+    /** metadata: 块覆盖顶层（更具体的位置赢）。 */
+    expect(meta.displayNames.zh).toBe("metadata-zh");
+    expect(meta.displayNames.ko).toBe("metadata-ko");
+  });
+
+  it("ignores non-string and blank display-name-* values", () => {
+    const content = [
+      "---",
+      "name: x",
+      "description: x.",
+      "display-name-zh: \"   \"",
+      "display-name-ja: 123",
+      "display-name-ko: 정상",
+      "---",
+      "",
+    ].join("\n");
+
+    const meta = parseSkillMetadata(content, "fallback");
+    expect(meta.displayNames).toEqual({ ko: "정상" });
+  });
+
+  it("returns empty displayNames when no display-name-* keys are present", () => {
+    const content = [
+      "---",
+      "name: x",
+      "description: x.",
+      "---",
+      "",
+    ].join("\n");
+
+    const meta = parseSkillMetadata(content, "fallback");
+    expect(meta.displayNames).toEqual({});
+  });
+
+  it("truncates over-long display-name values defensively", () => {
+    const overlong = "重".repeat(200);
+    const content = [
+      "---",
+      "name: x",
+      "description: x.",
+      `display-name-zh: "${overlong}"`,
+      "---",
+      "",
+    ].join("\n");
+
+    const meta = parseSkillMetadata(content, "fallback");
+    expect(meta.displayNames.zh.length).toBeLessThanOrEqual(60);
   });
 });
 

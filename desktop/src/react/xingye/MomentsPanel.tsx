@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent } from '../types';
 import { MomentCard } from './MomentCard';
@@ -6,10 +6,14 @@ import { MomentComposer } from './MomentComposer';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import {
   addXingyeMomentComment,
+  confirmMomentDraft,
   createXingyeMomentPost,
   deleteXingyeMomentPost,
+  discardMomentDraft,
+  listMomentDrafts,
   toggleXingyeMomentLike,
   type XingyeMomentActor,
+  type XingyePendingMomentDraft,
 } from './xingye-moments-store';
 import { useAggregatedXingyeMoments } from './xingye-moments-feed';
 import { generateXingyeMomentDraftWithAI } from './xingye-moments-ai';
@@ -107,6 +111,135 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     await deleteXingyeMomentPost(authorAgentId, postId);
   }, []);
 
+  /** 当前 composerAgent 下「待确认朋友圈草稿」列表。只展示当前角色的草稿， */
+  /** 不跨 agent 聚合——草稿是各 agent 独立的，跨角色显示会误导。 */
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingMomentDraft[]>([]);
+  const [draftEdits, setDraftEdits] = useState<Record<string, { content: string }>>({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  /**
+   * 区分两种忙状态：plain confirm 是「确认发表」，combined 是「确认并 AI 生成互动后发表」。
+   * 不合并的原因：combined 是两段串行（先 AI 拉互动 → 再 createPost），需要给按钮分别上
+   * disabled 状态，免得用户点错另一个；UI 也用这个标志显示「生成互动并发表中…」。
+   */
+  const [draftBusyKind, setDraftBusyKind] = useState<'plain' | 'combined' | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  const reloadDrafts = useCallback(async () => {
+    if (!composerAgent) {
+      setPendingDrafts([]);
+      setDraftEdits({});
+      return;
+    }
+    try {
+      const drafts = await listMomentDrafts(composerAgent.id);
+      setPendingDrafts(drafts);
+    } catch (err) {
+      console.warn('[MomentsPanel] failed to load moment drafts:', err);
+      setPendingDrafts([]);
+    }
+  }, [composerAgent]);
+
+  useEffect(() => {
+    setDraftError(null);
+    setDraftEdits({});
+    void reloadDrafts();
+  }, [reloadDrafts]);
+
+  const draftWorkingContent = useCallback(
+    (draft: XingyePendingMomentDraft) => draftEdits[draft.id]?.content ?? draft.content,
+    [draftEdits],
+  );
+
+  const handleDraftContentChange = (draftId: string, content: string) => {
+    setDraftEdits((prev) => ({ ...prev, [draftId]: { content } }));
+  };
+
+  /** Reused by both confirm paths to clean up local UI state after a successful publish. */
+  const removeDraftFromUiState = (draftId: string) => {
+    setPendingDrafts((prev) => prev.filter((d) => d.id !== draftId));
+    setDraftEdits((prev) => {
+      if (!(draftId in prev)) return prev;
+      const { [draftId]: _omitted, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const handleConfirmDraft = async (draft: XingyePendingMomentDraft) => {
+    if (!composerAgent) return;
+    setDraftBusyId(draft.id);
+    setDraftBusyKind('plain');
+    setDraftError(null);
+    try {
+      await confirmMomentDraft(composerAgent.id, draft.id, {
+        content: draftWorkingContent(draft),
+      });
+      removeDraftFromUiState(draft.id);
+      /** 让 feed 也刷新一下（新发的 post 通过 XINGYE_MOMENTS_CHANGED_EVENT 会自动 picked up）。 */
+      retry();
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+      setDraftBusyKind(null);
+    }
+  };
+
+  /**
+   * 「确认并生成互动」组合流程：
+   *   1. 用现成 content 调一次 generateXingyeMomentDraftWithAI（interactions-only 模式），拿 seedLikes / seedComments
+   *   2. 把 seeds 连同 content 一起经 confirmMomentDraft 落到 posts.jsonl
+   * 中间任何一步失败：保留 draft，把错误抛到 UI，让用户决定是用「确认发表」走 plain 路径还是重试。
+   * 不依赖模型守约——上一节加的 verbatim 覆盖保证 seedLikes/Comments 即使模型乱写也只影响互动者，不会污染正文。
+   */
+  const handleConfirmDraftWithInteractions = async (draft: XingyePendingMomentDraft) => {
+    if (!composerAgent) return;
+    setDraftBusyId(draft.id);
+    setDraftBusyKind('combined');
+    setDraftError(null);
+    try {
+      const workingContent = draftWorkingContent(draft);
+      if (!workingContent.trim()) {
+        throw new Error('正文不能为空，无法生成互动。');
+      }
+      const aiResult = await handleGenerateAiDraft({ existingContent: workingContent });
+      await confirmMomentDraft(composerAgent.id, draft.id, {
+        content: workingContent,
+        seedLikes: aiResult.seedLikes,
+        seedComments: aiResult.seedComments,
+      });
+      removeDraftFromUiState(draft.id);
+      retry();
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+      setDraftBusyKind(null);
+    }
+  };
+
+  const handleDiscardDraft = async (draft: XingyePendingMomentDraft) => {
+    if (!composerAgent) return;
+    if (!window.confirm('确定丢弃这条待确认朋友圈草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setDraftBusyId(draft.id);
+    setDraftBusyKind('plain');
+    setDraftError(null);
+    try {
+      const ok = await discardMomentDraft(composerAgent.id, draft.id);
+      if (ok) {
+        removeDraftFromUiState(draft.id);
+      } else {
+        await reloadDrafts();
+      }
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+      setDraftBusyKind(null);
+    }
+  };
+
   const composerProfile = composerAgent ? profiles[composerAgent.id] ?? null : null;
   // roster 里除当前发帖 agent 外的其他角色，作为「其他 agent」可选互动者池。
   const peerAgentHints = useMemo(() => {
@@ -123,14 +256,22 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
       });
   }, [agents, composerAgent, profiles]);
 
-  const handleGenerateAiDraft = useCallback(async () => {
-    if (!composerAgent) throw new Error('请先选择一个星野角色');
-    return generateXingyeMomentDraftWithAI({
-      agent: composerAgent,
-      ownerProfile: composerProfile,
-      peerAgents: peerAgentHints,
-    });
-  }, [composerAgent, composerProfile, peerAgentHints]);
+  const handleGenerateAiDraft = useCallback(
+    async (opts?: { existingContent?: string }) => {
+      if (!composerAgent) throw new Error('请先选择一个星野角色');
+      return generateXingyeMomentDraftWithAI({
+        agent: composerAgent,
+        ownerProfile: composerProfile,
+        peerAgents: peerAgentHints,
+        /**
+         * 透传 composer 给的 existingContent。非空时 AI fn 走 interactions-only 分支：
+         * 只生成 likes/comments，content 由 AI fn 做 verbatim 覆盖兜底，不会改用户已有正文。
+         */
+        existingContent: opts?.existingContent,
+      });
+    },
+    [composerAgent, composerProfile, peerAgentHints],
+  );
 
   return (
     <div className={styles.momentsPanel}>
@@ -194,6 +335,81 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
           onSubmit={handleCreate}
           onGenerateAiDraft={composerAgent ? handleGenerateAiDraft : undefined}
         />
+      ) : null}
+
+      {pendingDrafts.length > 0 && composerAgent ? (
+        <section
+          className={styles.momentFeed}
+          aria-label="待确认朋友圈草稿"
+          data-testid="moments-pending-drafts"
+          style={{ paddingBottom: 0 }}
+        >
+          <p className={styles.panelDescription} style={{ marginBottom: 8 }}>
+            <strong>待确认草稿 · 来自心跳巡检</strong> — 角色在巡检里提议但还没发出来。点「确认发表」才会真正出现在
+            {composerDisplay?.displayName ?? composerAgent.name} 的朋友圈里。
+          </p>
+          {draftError ? (
+            <p className={styles.panelDescription} role="alert">
+              {draftError}
+            </p>
+          ) : null}
+          {pendingDrafts.map((draft) => {
+            const working = draftWorkingContent(draft);
+            const busy = draftBusyId === draft.id;
+            return (
+              <div
+                key={draft.id}
+                className={styles.momentCard}
+                style={{ borderStyle: 'dashed' }}
+                data-testid={`moments-draft-${draft.id}`}
+              >
+                <textarea
+                  value={working}
+                  onChange={(e) => handleDraftContentChange(draft.id, e.target.value)}
+                  rows={3}
+                  aria-label="待确认朋友圈正文"
+                  data-testid={`moments-draft-content-${draft.id}`}
+                  disabled={busy}
+                  maxLength={280}
+                  style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.25)', padding: '6px', minHeight: 60 }}
+                />
+                {draft.reason ? (
+                  <p className={styles.panelDescription} style={{ margin: '6px 0 0' }}>
+                    理由：{draft.reason}
+                  </p>
+                ) : null}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => void handleConfirmDraft(draft)}
+                    disabled={busy}
+                    data-testid={`moments-draft-confirm-${draft.id}`}
+                    title="直接发表草稿内容，不带点赞/评论"
+                  >
+                    {busy && draftBusyKind === 'plain' ? '处理中…' : '确认发表'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleConfirmDraftWithInteractions(draft)}
+                    disabled={busy || !working.trim()}
+                    data-testid={`moments-draft-confirm-with-interactions-${draft.id}`}
+                    title="先用 AI 基于这段正文拉点赞/评论，再连同正文一起发表（一步完成）"
+                  >
+                    {busy && draftBusyKind === 'combined' ? '生成互动并发表中…' : '确认并生成互动'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDiscardDraft(draft)}
+                    disabled={busy}
+                    data-testid={`moments-draft-discard-${draft.id}`}
+                  >
+                    丢弃
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </section>
       ) : null}
 
       <section className={styles.momentFeed} aria-label="朋友圈动态列表">

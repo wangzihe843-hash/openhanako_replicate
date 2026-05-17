@@ -50,6 +50,14 @@ export const OPTIONAL_TOOL_NAMES = [
   "dm",
   "install_skill",
   "update_settings",
+  /**
+   * Xingye 心跳巡检主动向小手机/秘密空间各模块提议「待确认草稿」用的 dispatch tool。
+   * OPTIONAL：默认开（不在 DEFAULT_DISABLED_TOOL_NAMES 里），但用户可以从「设置 → 助手 → 工具」
+   * 关掉以阻止 agent 自动生成草稿。草稿落到各模块的 drafts.jsonl，用户在对应 App 里确认前
+   * 不进「已生成」列表；关掉本 tool 只是不再产新草稿，已有草稿不受影响。
+   * 实际触发条件、字段要求由 skills2set 下对应 `xingye-{module}-draft` skill 描述。
+   */
+  "xingye_propose_draft",
 ];
 
 const OPTIONAL_TOOL_NAMES_SET = new Set(OPTIONAL_TOOL_NAMES);

@@ -396,4 +396,95 @@ describe('generateXingyeMomentDraftWithAI', () => {
       generateXingyeMomentDraftWithAI({ agent: agent as never, ownerProfile: null }),
     ).rejects.toThrow(/模型返回无效/);
   });
+
+  describe('interactions-only mode (existingContent non-empty)', () => {
+    it('switches the prompt to interactions-only mode and includes the existing content verbatim', async () => {
+      vi.mocked(getVirtualContacts).mockReturnValue([
+        {
+          ownerAgentId: 'linwu',
+          id: 'vc-night',
+          displayName: '夜班搭子',
+          kind: 'coworker',
+          createdAt: '2026-05-11T00:00:00.000Z',
+          updatedAt: '2026-05-11T00:00:00.000Z',
+        },
+      ] as never);
+      const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
+      await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+        peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+        existingContent: '海风把灯影吹得有点歪。',
+      });
+      const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+        (call) => call[0] === '/api/xingye/phone-generate',
+      );
+      const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+      /** Interactions-only header marker (and NOT the regular writing-identity instructions). */
+      expect(prompt).toContain('围观互动生成器');
+      expect(prompt).toContain('你的任务**不是**写 content');
+      expect(prompt).not.toContain('写作身份：以当前角色身份发一条朋友圈短动态');
+      /** The existing content is embedded in the prompt for the model to react to. */
+      expect(prompt).toContain('海风把灯影吹得有点歪。');
+      expect(prompt).toContain('【用户已写好的正文（content；必须一字不改）】');
+      /** Likes/comments rules remain — that's the whole point of the call. */
+      expect(prompt).toMatch(/必须.*至少 2 条 likes/);
+    });
+
+    it('verbatim-overwrites returned content with existingContent (defends against model drift)', async () => {
+      vi.mocked(hanaFetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: {
+            /** Model misbehaves and rewrites content despite the prompt. */
+            content: '模型擅自改写的正文',
+            likes: [],
+            comments: [],
+          },
+        }),
+      } as Response);
+      const agent = { id: 'agent-m', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+        existingContent: '用户原话保留不动。',
+      });
+      expect(result.content).toBe('用户原话保留不动。');
+    });
+
+    it('synthesizes empty interactions when model omits content entirely in interactions-only mode', async () => {
+      vi.mocked(hanaFetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, result: {} }),
+      } as Response);
+      const agent = { id: 'agent-m', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+        existingContent: '内容是用户写的。',
+      });
+      /** Even with the model returning {}, user content is preserved and we return empty seeds. */
+      expect(result).toEqual({
+        content: '内容是用户写的。',
+        seedLikes: [],
+        seedComments: [],
+      });
+    });
+
+    it('blank/whitespace existingContent does NOT trigger interactions-only mode', async () => {
+      const agent = { id: 'agent-m', name: 'Hanako', yuan: 'y' as const };
+      await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+        existingContent: '   ',
+      });
+      const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+        (call) => call[0] === '/api/xingye/phone-generate',
+      );
+      const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+      expect(prompt).not.toContain('围观互动生成器');
+      expect(prompt).toContain('写作身份：以当前角色身份发一条朋友圈短动态');
+    });
+  });
 });

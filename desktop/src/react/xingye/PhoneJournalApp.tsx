@@ -4,8 +4,12 @@ import styles from './XingyeShell.module.css';
 import { generateJournalDraftWithAI } from './xingye-journal-ai';
 import {
   appendJournalEntry,
+  confirmJournalDraft,
   deleteJournalEntry,
+  discardJournalDraft,
+  listJournalDrafts,
   listJournalEntries,
+  type XingyeJournalDraft,
   type XingyeJournalEntry,
 } from './xingye-journal-store';
 import { useXingyeRoleProfile } from './xingye-profile-store';
@@ -88,6 +92,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const [entries, setEntries] = useState<XingyeJournalEntry[]>([]);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyeJournalDraft[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -100,17 +105,33 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [draftAiBusy, setDraftAiBusy] = useState(false);
   const [draftAiError, setDraftAiError] = useState<string | null>(null);
+  /**
+   * 待确认草稿区的「行内编辑缓冲」。Key = draft.id。
+   * 用户在小手机里改了字、还没按「确认生成」前，先在内存里保留改动；
+   * 离开页面再回来时回退到 drafts.jsonl 的最新内容（草稿本身已落盘，不会丢）。
+   */
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, { title: string; body: string; mood: string }>
+  >({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
+      setPendingDrafts([]);
+      setDraftEdits({});
       return;
     }
     setListLoading(true);
     setListError(null);
     try {
-      const rows = await listJournalEntries(ownerAgentId);
+      const [rows, drafts] = await Promise.all([
+        listJournalEntries(ownerAgentId),
+        listJournalDrafts(ownerAgentId),
+      ]);
       setEntries(rows);
+      setPendingDrafts(drafts);
     } catch (e) {
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -123,11 +144,97 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setComposeOpen(false);
     setSaveError(null);
     setListError(null);
+    setDraftError(null);
+    setDraftEdits({});
   }, [ownerAgentId]);
 
   useEffect(() => {
     void reloadEntries();
   }, [reloadEntries]);
+
+  const draftWorkingValue = useCallback(
+    (draft: XingyeJournalDraft) => {
+      const edit = draftEdits[draft.id];
+      if (edit) return edit;
+      return { title: draft.title, body: draft.body, mood: draft.mood ?? '' };
+    },
+    [draftEdits],
+  );
+
+  const handleDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ title: string; body: string; mood: string }>,
+  ) => {
+    setDraftEdits((prev) => {
+      const base = prev[draftId] ?? null;
+      const draft = pendingDrafts.find((d) => d.id === draftId);
+      if (!draft) return prev;
+      const current = base ?? { title: draft.title, body: draft.body, mood: draft.mood ?? '' };
+      return { ...prev, [draftId]: { ...current, ...patch } };
+    });
+  };
+
+  const handleConfirmDraft = async (draft: XingyeJournalDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(draft.id);
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(draft);
+      const moodTrim = working.mood.trim();
+      const entry = await confirmJournalDraft(ownerAgentId, draft.id, {
+        title: working.title,
+        body: working.body,
+        dayKey: draft.dayKey,
+        mood: moodTrim ? moodTrim : null,
+      });
+      setEntries((prev) => {
+        const next = [entry, ...prev.filter((p) => p.id !== entry.id)];
+        next.sort((a, b) => {
+          if (a.dayKey !== b.dayKey) return a.dayKey < b.dayKey ? 1 : -1;
+          const taMs = Date.parse(a.createdAt);
+          const tbMs = Date.parse(b.createdAt);
+          return tbMs - taMs;
+        });
+        return next;
+      });
+      setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+      setDraftEdits((prev) => {
+        if (!(draft.id in prev)) return prev;
+        const { [draft.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (e) {
+      setDraftError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardDraft = async (draft: XingyeJournalDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setDraftBusyId(draft.id);
+    setDraftError(null);
+    try {
+      const ok = await discardJournalDraft(ownerAgentId, draft.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+        setDraftEdits((prev) => {
+          if (!(draft.id in prev)) return prev;
+          const { [draft.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadEntries();
+      }
+    } catch (e) {
+      setDraftError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
 
   const selected = useMemo(
     () => (selectedId ? entries.find((e) => e.id === selectedId) ?? null : null),
@@ -272,7 +379,106 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <h2 className={styles.phoneJournalPageTitle}>{ta} 的日记</h2>
             </header>
 
-            {grouped.length === 0 && !listLoading ? (
+            {pendingDrafts.length > 0 ? (
+              <section
+                className={styles.phoneJournalGroup}
+                aria-label="待确认日记草稿"
+                data-testid="phone-journal-pending-drafts"
+              >
+                <div className={styles.phoneJournalGroupLabel}>
+                  <span aria-hidden className={styles.phoneJournalGroupDash} />
+                  <span>待确认草稿 · 来自心跳巡检</span>
+                </div>
+                <p className={styles.phoneAppHint} style={{ margin: '4px 12px 12px' }}>
+                  这些草稿由角色在巡检里提议，还没出现在你的日记列表里。点「确认生成」才会真正写入，
+                  不确认时角色不会自作主张；离开页面再回来不会丢草稿。
+                </p>
+                {draftError ? (
+                  <p className={styles.phoneAppHint} role="alert" style={{ margin: '0 12px 8px' }}>
+                    {draftError}
+                  </p>
+                ) : null}
+                <div className={styles.phoneJournalGroupCards}>
+                  {pendingDrafts.map((draft) => {
+                    const working = draftWorkingValue(draft);
+                    const busy = draftBusyId === draft.id;
+                    return (
+                      <article
+                        key={draft.id}
+                        className={styles.phoneJournalCard}
+                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, transform: 'none' }}
+                        data-testid={`phone-journal-draft-${draft.id}`}
+                      >
+                        <div className={styles.phoneJournalCardHead}>
+                          <input
+                            type="text"
+                            value={working.title}
+                            onChange={(event) =>
+                              handleDraftFieldChange(draft.id, { title: event.target.value })
+                            }
+                            placeholder="标题"
+                            aria-label="待确认草稿标题"
+                            data-testid={`phone-journal-draft-title-${draft.id}`}
+                            disabled={busy}
+                            style={{ flex: 1, font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                          />
+                        </div>
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                          {draft.dayKey} · 来源 {draft.source}
+                          {draft.reason ? ` · 理由：${draft.reason}` : ''}
+                        </p>
+                        <textarea
+                          value={working.body}
+                          onChange={(event) =>
+                            handleDraftFieldChange(draft.id, { body: event.target.value })
+                          }
+                          rows={4}
+                          aria-label="待确认草稿正文"
+                          data-testid={`phone-journal-draft-body-${draft.id}`}
+                          disabled={busy}
+                          style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                        />
+                        <input
+                          type="text"
+                          value={working.mood}
+                          onChange={(event) =>
+                            handleDraftFieldChange(draft.id, { mood: event.target.value })
+                          }
+                          placeholder="心情（可选）"
+                          aria-label="待确认草稿心情"
+                          data-testid={`phone-journal-draft-mood-${draft.id}`}
+                          disabled={busy}
+                          maxLength={24}
+                          style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className={styles.phoneJournalPrimaryButton}
+                            onClick={() => void handleConfirmDraft(draft)}
+                            disabled={busy}
+                            data-testid={`phone-journal-draft-confirm-${draft.id}`}
+                          >
+                            {busy ? '处理中…' : '确认生成'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.phoneModalGhostButton}
+                            onClick={() => void handleDiscardDraft(draft)}
+                            disabled={busy}
+                            data-testid={`phone-journal-draft-discard-${draft.id}`}
+                          >
+                            丢弃
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            {grouped.length === 0 && pendingDrafts.length === 0 && !listLoading ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-journal-empty">
                 还没有日记。点右下角「记」添加一条记录（写入当前角色目录，刷新或重启后仍在）。
               </p>

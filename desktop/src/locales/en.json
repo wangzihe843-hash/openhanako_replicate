@@ -755,7 +755,8 @@
           "cron": { "label": "Scheduled Tasks", "summary": "Run tasks automatically at specified times" },
           "dm": { "label": "Direct Message", "summary": "Send a one-on-one message to another agent" },
           "install_skill": { "label": "Install Skill", "summary": "Install new skills from GitHub or the skill library" },
-          "update_settings": { "label": "Update Settings", "summary": "Allow the agent to modify application configuration" }
+          "update_settings": { "label": "Update Settings", "summary": "Allow the agent to modify application configuration" },
+          "xingye_propose_draft": { "label": "Xingye Draft Proposer", "summary": "Heartbeat patrol drafts pending entries for the in-character phone / secret space (currently supports: journal; more modules to follow). Turning this off only stops new drafts; existing pending drafts are unaffected." }
         }
       },
       "computerUse": {

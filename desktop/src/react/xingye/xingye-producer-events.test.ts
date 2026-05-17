@@ -65,8 +65,20 @@ vi.mock('./xingye-event-log', async () => {
 import { createXingyeMomentStore } from './xingye-moments-store';
 import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
 import { createXingyeAppEntryStore } from './xingye-app-entry-store';
-import { appendJournalEntry, deleteJournalEntry } from './xingye-journal-store';
-import { appendScheduleEntry, deleteScheduleEntry } from './xingye-schedule-store';
+import {
+  appendJournalDraft,
+  appendJournalEntry,
+  confirmJournalDraft,
+  deleteJournalEntry,
+  discardJournalDraft,
+} from './xingye-journal-store';
+import {
+  appendScheduleDraft,
+  appendScheduleEntry,
+  confirmScheduleDraft,
+  deleteScheduleEntry,
+  discardScheduleDraft,
+} from './xingye-schedule-store';
 import { appendFileEntry, deleteFileEntry } from './xingye-files-store';
 import { appendMailMessage, appendMailMessages, deleteMailMessage } from './xingye-mail-store';
 import {
@@ -201,6 +213,74 @@ describe('producer contract: journal-store', () => {
   });
 });
 
+describe('producer contract: journal-store drafts', () => {
+  it('appendJournalDraft emits journal.draft_proposed (and does NOT emit entry_appended)', async () => {
+    const draft = await appendJournalDraft('agent-a', {
+      title: 'patrol draft',
+      body: 'a small moment worth remembering',
+      source: 'xingye-heartbeat-tool',
+      reason: 'recent_chat.observed mentioned the lighthouse',
+    });
+
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'journal.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, title: 'patrol draft' },
+    });
+  });
+
+  it('discardJournalDraft emits journal.draft_discarded only when something was deleted', async () => {
+    const draft = await appendJournalDraft('agent-a', {
+      title: 't',
+      body: 'b',
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+
+    const ok = await discardJournalDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'journal.draft_discarded',
+      source: 'xingye-journal-store',
+      subjectId: draft.id,
+    });
+
+    appendEventMock.mockClear();
+    const okAgain = await discardJournalDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmJournalDraft fires entry_appended AND draft_confirmed (draft id ≠ entry id)', async () => {
+    const draft = await appendJournalDraft('agent-a', {
+      title: 'kept title',
+      body: 'kept body',
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+
+    const entry = await confirmJournalDraft('agent-a', draft.id);
+    expect(entry.id).not.toBe(draft.id);
+
+    /** Both an entry_appended (from appendJournalEntry) and a draft_confirmed (from confirmJournalDraft) must fire. */
+    const types = appendEventMock.mock.calls.map(
+      (c) => (c[1] as Record<string, unknown>).type,
+    );
+    expect(types).toContain('journal.entry_appended');
+    expect(types).toContain('journal.draft_confirmed');
+
+    const draftConfirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'journal.draft_confirmed');
+    expect(draftConfirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, entryId: entry.id },
+    });
+  });
+});
+
 describe('producer contract: schedule-store', () => {
   it('emits schedule.entry_appended and schedule.entry_deleted', async () => {
     const entry = await appendScheduleEntry('agent-a', {
@@ -222,6 +302,162 @@ describe('producer contract: schedule-store', () => {
       type: 'schedule.entry_deleted',
       source: 'xingye-schedule-store',
       subjectId: entry.id,
+    });
+  });
+});
+
+describe('producer contract: schedule-store drafts', () => {
+  it('appendScheduleDraft emits schedule.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendScheduleDraft('agent-a', {
+      title: '陪我去诊所',
+      dateLabel: '明天上午',
+      content: '带社保卡',
+      source: 'xingye-heartbeat-tool',
+      reason: '她答应过',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'schedule.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, title: '陪我去诊所', dateLabel: '明天上午' },
+    });
+  });
+
+  it('discardScheduleDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendScheduleDraft('agent-a', {
+      title: 't', dateLabel: 'd', content: 'c', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardScheduleDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'schedule.draft_discarded',
+      source: 'xingye-schedule-store',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardScheduleDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmScheduleDraft fires entry_appended AND draft_confirmed (draft id ≠ entry id)', async () => {
+    const draft = await appendScheduleDraft('agent-a', {
+      title: 'kept', dateLabel: '明天', content: 'kept body', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmScheduleDraft('agent-a', draft.id);
+    expect(entry.id).not.toBe(draft.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('schedule.entry_appended');
+    expect(types).toContain('schedule.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'schedule.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, entryId: entry.id },
+    });
+  });
+});
+
+describe('producer contract: moments-store drafts', () => {
+  /** Lazy-import to keep the moments-store mock side effects scoped. */
+  async function importMomentDraftFns() {
+    return import('./xingye-moments-store');
+  }
+
+  it('appendMomentDraft emits moment.draft_proposed only (no moment.created)', async () => {
+    const { appendMomentDraft } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: '晚风从灯塔后面绕过来。',
+      reason: '她笑了',
+      source: 'xingye-heartbeat-tool',
+    });
+    expect(lastEvent().input).toMatchObject({
+      type: 'moment.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, contentExcerpt: '晚风从灯塔后面绕过来。' },
+    });
+  });
+
+  it('discardMomentDraft emits draft_discarded only when something was deleted', async () => {
+    const { appendMomentDraft, discardMomentDraft } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: 'x', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardMomentDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'moment.draft_discarded',
+      source: 'xingye-moments-store',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardMomentDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmMomentDraft fires moment.created AND moment.draft_confirmed (draft id ≠ post id)', async () => {
+    const { appendMomentDraft, confirmMomentDraft } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: '内容', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const post = await confirmMomentDraft('agent-a', draft.id);
+    expect(post.id).not.toBe(draft.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('moment.created');
+    expect(types).toContain('moment.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'moment.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, postId: post.id },
+    });
+  });
+
+  it('confirmMomentDraft forwards seedLikes/seedComments into the published post (combined flow)', async () => {
+    const { appendMomentDraft, confirmMomentDraft } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: '正文', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const post = await confirmMomentDraft('agent-a', draft.id, {
+      seedLikes: [
+        { actorType: 'agent', actorId: 'hanako', actorName: 'Hanako' },
+      ],
+      seedComments: [
+        {
+          actorType: 'virtual_contact',
+          actorId: 'agent-a:vc-1',
+          actorName: '夜班搭子',
+          body: '又熬夜？',
+        },
+      ],
+    });
+    /** Seeds materialized on the published post — confirm path goes through createXingyeMomentPost. */
+    expect(post.likes).toHaveLength(1);
+    expect(post.likes[0]).toMatchObject({ actorType: 'agent', actorId: 'hanako' });
+    expect(post.comments).toHaveLength(1);
+    expect(post.comments[0]).toMatchObject({
+      actorType: 'virtual_contact',
+      actorId: 'agent-a:vc-1',
+      body: '又熬夜？',
+    });
+    /** moment.created payload reflects seed counts (downstream surfaces / patrol summary). */
+    const created = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'moment.created');
+    expect(created?.payload).toMatchObject({
+      seedLikeCount: 1,
+      seedCommentCount: 1,
+      sourceKind: 'candidate',
     });
   });
 });
