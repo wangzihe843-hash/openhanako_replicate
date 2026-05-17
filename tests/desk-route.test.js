@@ -20,12 +20,20 @@ describe("desk route", () => {
   });
 
   it("desk/heartbeat triggers the existing scheduler heartbeat and reports cooldown", async () => {
-    const triggerNow = vi.fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    const runHeartbeatOnce = vi.fn()
+      .mockResolvedValueOnce({
+        status: "ran",
+        payload: {
+          xingyeConsumed: {
+            consumed: 2,
+            result: { summaryZh: "自上次巡检以来：短信×2（共 2 条）", eventCount: 2 },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ status: "skipped", reason: "cooldown" });
     const hub = {
       scheduler: {
-        getHeartbeat: vi.fn(() => ({ triggerNow })),
+        getHeartbeat: vi.fn(() => ({ runHeartbeatOnce })),
       },
     };
 
@@ -35,14 +43,27 @@ describe("desk route", () => {
 
     const first = await app.request("/api/desk/heartbeat?agentId=agent-a", { method: "POST" });
     expect(first.status).toBe(200);
-    expect(await first.json()).toMatchObject({ ok: true, triggered: true, cooldown: false });
+    expect(await first.json()).toMatchObject({
+      ok: true,
+      triggered: true,
+      cooldown: false,
+      summaryZh: "自上次巡检以来：短信×2（共 2 条）",
+      consumedCount: 2,
+      status: "ran",
+    });
 
     const second = await app.request("/api/desk/heartbeat?agentId=agent-a", { method: "POST" });
     expect(second.status).toBe(200);
-    expect(await second.json()).toMatchObject({ ok: true, triggered: false, cooldown: true });
+    expect(await second.json()).toMatchObject({
+      ok: true,
+      triggered: false,
+      cooldown: true,
+      status: "skipped",
+      reason: "cooldown",
+    });
 
     expect(hub.scheduler.getHeartbeat).toHaveBeenCalledWith("agent-a");
-    expect(triggerNow).toHaveBeenCalledTimes(2);
+    expect(runHeartbeatOnce).toHaveBeenCalledTimes(2);
   });
 
   it("desk/install-skill 对 zip/.skill 走 extractZip 抽象，并把解压结果安装到工作区技能目录", async () => {

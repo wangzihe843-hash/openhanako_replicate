@@ -139,21 +139,13 @@ export class Scheduler {
       // 巡检/笺巡检不传 withMemory：executeIsolated 默认走 agent.systemPrompt，
       // 而该 cache 始终按 master 开关构建，与 per-session 开关解耦。
       // 用户关 master 时自动不带记忆；只关某个 session 的开关不影响这里。
+      //
+      // consumer 走 getEventSummary：必须在 buildHeartbeatContext 之前跑完，让 summaryZh 进 prompt，
+      // 这样 agent 能基于事件主动判断是否要 notify。heartbeat.js 会把消费结果合并进 payload，
+      // desk 路由还是能拿到 summaryZh。
+      getEventSummary: () => this._runXingyeHeartbeatConsumer(agentId, agent),
       onBeat: async (prompt) => {
-        // 把 xingye consumer 的结构化结果回传给 heartbeat.runHeartbeatOnce 的 caller
-        // （desk.js 路由要拿 summaryZh 直接展示，不再走 read-file 的旧路径）。
-        //
-        // 注意：consumer 先跑且已成功 → 事件已被标记为 consumed；下面 activity 如果失败，
-        // 不能把 consumer 结果一起丢掉，否则 UI 看不到这次实际处理的事件 summary。
-        // 解决：把 xingyeConsumed 绑到 error 上让上层捕获。
-        const xingyeConsumed = await this._runXingyeHeartbeatConsumer(agentId, agent);
-        try {
-          await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {});
-          return { xingyeConsumed };
-        } catch (err) {
-          err.xingyeConsumed = xingyeConsumed;
-          throw err;
-        }
+        await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {});
       },
       onJianBeat: (prompt, cwd) => {
         const isZh = getLocale().startsWith("zh");
@@ -350,15 +342,6 @@ export class Scheduler {
     try {
       const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
       const result = await runXingyeHeartbeatConsumer({ agentId, agentDir });
-      if (result?.consumed > 0) {
-        this._hub.eventBus.emit({
-          type: "xingye_heartbeat_consumed",
-          agentId,
-          consumerId: "xingye.heartbeat",
-          consumed: result.consumed,
-          result: result.result,
-        }, null);
-      }
       return result || null;
     } catch (err) {
       console.error(`[xingye] heartbeat consumer failed (${agentId}): ${err.message}`);

@@ -247,4 +247,61 @@ describe("Xingye heartbeat event consumer", () => {
     expect(m.consumedBy["xingye.heartbeat"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(m.consumedBy.heartbeat).toBeUndefined();
   });
+
+  /**
+   * 回归 D：consumer summary 必须在 buildHeartbeatContext 之前跑完，让 summaryZh 出现在
+   * 发给 agent 的 patrol prompt 里。修复前 consumer 在 onBeat 内部跑，事件被标记 consumed
+   * 但 prompt 完全看不到，agent 无法基于事件 notify 用户。
+   */
+  it("includes the Xingye summaryZh and notify-suppression hint in the patrol prompt", async () => {
+    const events = [
+      {
+        id: "evt-prompt-1",
+        agentId: "agent-a",
+        type: "phone.sms_appended",
+        source: "phone",
+        subjectId: "contact-1",
+        createdAt: "2026-05-17T00:00:00.000Z",
+        payload: { contactId: "contact-1", body: "hello" },
+      },
+      {
+        id: "evt-prompt-2",
+        agentId: "agent-a",
+        type: "secret_space.record_deleted",
+        source: "secret-space",
+        subjectId: "dream-1",
+        createdAt: "2026-05-17T00:01:00.000Z",
+        payload: { recordId: "dream-1" },
+      },
+    ];
+    writeEventLog(fixture.agentsDir, "agent-a", events);
+
+    const heartbeat = fixture.scheduler.getHeartbeat("agent-a");
+    await heartbeat.beat();
+
+    const calls = fixture.engine.executeIsolated.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const prompt = calls[0][0];
+    // 类型聚合摘要（按 TYPE_ORDER_ZH：短信在秘密空间删除前）
+    expect(prompt).toContain("自上次巡检以来：短信×1、秘密空间删除×1（共 2 条）");
+    // notify 抑制提示出现
+    expect(prompt).toContain("小手机事件");
+    expect(prompt).toContain("秘密空间删除");
+  });
+
+  /**
+   * 回归 D：没有未消费事件时，prompt 里不应该出现「小手机事件」段，避免空段污染。
+   */
+  it("omits the Xingye event section when there is nothing to consume", async () => {
+    writeEventLog(fixture.agentsDir, "agent-a", []);
+
+    const heartbeat = fixture.scheduler.getHeartbeat("agent-a");
+    await heartbeat.beat();
+
+    const calls = fixture.engine.executeIsolated.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const prompt = calls[0][0];
+    expect(prompt).not.toContain("小手机事件");
+    expect(prompt).not.toContain("自上次巡检以来");
+  });
 });
