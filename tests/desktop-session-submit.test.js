@@ -275,6 +275,163 @@ describe("submitDesktopSessionMessage", () => {
     }
   });
 
+  it("emits recent_chat.observed on success and scrubs PII from userPreview", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-recent-chat-"));
+    try {
+      const agentDir = path.join(tmpDir, "agents", "hanako");
+      fs.mkdirSync(agentDir, { recursive: true });
+      const session = makeFakeSession();
+      const engine = {
+        ensureSessionLoaded: vi.fn(async () => session),
+        promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+        agentIdFromSessionPath: vi.fn(() => "hanako"),
+        getAgent: vi.fn(() => ({ agentDir })),
+      };
+
+      await submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "my key is sk-abcdefghijklmnopqrstuv1234567890 ok",
+        displayMessage: { text: "my key is sk-abcdefghijklmnopqrstuv1234567890 ok" },
+      });
+
+      const logPath = path.join(agentDir, "xingye", "events", "log.json");
+      expect(fs.existsSync(logPath)).toBe(true);
+      const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+      expect(log.events).toHaveLength(1);
+      const event = log.events[0];
+      expect(event.type).toBe("recent_chat.observed");
+      expect(event.source).toBe("desktop-session-submit");
+      // PII 已被脱敏，原始 sk-* token 不再出现
+      expect(event.payload.userPreview).not.toContain("sk-abcdefghijklmnopqrstuv1234567890");
+      expect(event.payload.userPreview).toContain("[REDACTED]");
+      expect(event.payload.hasReply).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // 回归 #8：dedupeKey 之前只用 (agentId, sessionPath, turnStartedAt)。同毫秒撞的两个 turn
+  // 会被合并成一条事件，丢掉一个。修复后 dedupeKey 加了 content hash：
+  //   - 同 turn 重发（text 相同）→ 同 key → 不重复（保留）
+  //   - 同毫秒不同 text 的 turn → 不同 key → 都被记录
+  it("does NOT collapse same-millisecond turns with different text into one event", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-dedupe-"));
+    try {
+      const agentDir = path.join(tmpDir, "agents", "hanako");
+      fs.mkdirSync(agentDir, { recursive: true });
+
+      // 锁住 Date.now 让两次提交都拿到同一个 turnStartedAt
+      const fixedMs = Date.parse("2026-05-17T10:00:00.000Z");
+      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fixedMs);
+
+      const engine = {
+        ensureSessionLoaded: vi.fn(async () => makeFakeSession()),
+        promptSession: vi.fn(async () => {}),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+        agentIdFromSessionPath: vi.fn(() => "hanako"),
+        getAgent: vi.fn(() => ({ agentDir })),
+      };
+
+      await submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "first message",
+        displayMessage: { text: "first message" },
+      });
+      await submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "different second message",
+        displayMessage: { text: "different second message" },
+      });
+
+      const logPath = path.join(agentDir, "xingye", "events", "log.json");
+      const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+      expect(log.events).toHaveLength(2);
+      const previews = log.events.map((e) => e.payload.userPreview).sort();
+      expect(previews).toEqual(["different second message", "first message"]);
+
+      dateSpy.mockRestore();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // 回归 #8 续：同 turn 重连/重发（text 相同 + 时间戳相同）仍然只产生一条事件。
+  it("dedupes same-millisecond identical-text resubmissions into one event", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-dedupe-same-"));
+    try {
+      const agentDir = path.join(tmpDir, "agents", "hanako");
+      fs.mkdirSync(agentDir, { recursive: true });
+
+      const fixedMs = Date.parse("2026-05-17T10:00:00.000Z");
+      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fixedMs);
+
+      const engine = {
+        ensureSessionLoaded: vi.fn(async () => makeFakeSession()),
+        promptSession: vi.fn(async () => {}),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+        agentIdFromSessionPath: vi.fn(() => "hanako"),
+        getAgent: vi.fn(() => ({ agentDir })),
+      };
+
+      await submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "same text",
+        displayMessage: { text: "same text" },
+      });
+      await submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "same text",
+        displayMessage: { text: "same text" },
+      });
+
+      const logPath = path.join(agentDir, "xingye", "events", "log.json");
+      const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+      expect(log.events).toHaveLength(1);
+
+      dateSpy.mockRestore();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT emit recent_chat.observed when promptSession throws", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-recent-chat-fail-"));
+    try {
+      const agentDir = path.join(tmpDir, "agents", "hanako");
+      fs.mkdirSync(agentDir, { recursive: true });
+      const session = makeFakeSession();
+      const engine = {
+        ensureSessionLoaded: vi.fn(async () => session),
+        promptSession: vi.fn(async () => { throw new Error("boom"); }),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+        agentIdFromSessionPath: vi.fn(() => "hanako"),
+        getAgent: vi.fn(() => ({ agentDir })),
+      };
+
+      await expect(submitDesktopSessionMessage(engine, {
+        sessionPath: "/tmp/desk.jsonl",
+        text: "hello",
+        displayMessage: { text: "hello" },
+      })).rejects.toThrow("boom");
+
+      // 失败 turn 不应该落 event log
+      const logPath = path.join(agentDir, "xingye", "events", "log.json");
+      expect(fs.existsSync(logPath)).toBe(false);
+      // streaming:false 仍照常发，UI 状态收敛
+      expect(engine.emitEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ type: "session_status", isStreaming: false }),
+        "/tmp/desk.jsonl",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("registers bridge inbound files for desktop /rc target sessions", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desktop-inbound-"));
     try {

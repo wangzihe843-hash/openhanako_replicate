@@ -660,11 +660,9 @@ export function createAgentsRoute(engine) {
         .map(line => line.trim())
         .filter(line => line.length > 0)
         .map(line => line.replace(/^-\s*/, ""));
-      console.debug("[agents/pinned] GET ok", { agentId: id, file: "pinned.md", pinsCount: pins.length });
       return c.json({ pins });
     } catch (err) {
       if (err.code === "ENOENT") {
-        console.debug("[agents/pinned] GET ok", { agentId: id, file: "pinned.md", pinsCount: 0, note: "missing" });
         return c.json({ pins: [] });
       }
       return c.json({ error: err.message }, 500);
@@ -691,7 +689,6 @@ export function createAgentsRoute(engine) {
         + "\n";
       const targetAgentDir = agentDir(engine, id);
       await fs.writeFile(path.join(targetAgentDir, "pinned.md"), content, "utf-8");
-      console.debug("[agents/pinned] PUT ok", { agentId: id, file: "pinned.md", pinsCount: trimmedPins.length });
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
