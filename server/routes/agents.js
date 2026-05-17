@@ -33,6 +33,7 @@ import {
   normalizeExperienceCategory,
   syncExperienceCategories,
 } from "../../lib/tools/experience.js";
+import { appendXingyeEvent } from "../../lib/xingye/events.js";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.js';
 import { validateId, agentExists } from "../utils/validation.js";
 import { OPTIONAL_TOOL_NAMES } from "../../shared/tool-categories.js";
@@ -688,10 +689,25 @@ export function createAgentsRoute(engine) {
         .map(p => `- ${p}`)
         .join("\n")
         + "\n";
-      await fs.writeFile(path.join(agentDir(engine, id), "pinned.md"), content, "utf-8");
+      const targetAgentDir = agentDir(engine, id);
+      await fs.writeFile(path.join(targetAgentDir, "pinned.md"), content, "utf-8");
       console.debug("[agents/pinned] PUT ok", { agentId: id, file: "pinned.md", pinsCount: trimmedPins.length });
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
+      // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
+      try {
+        await appendXingyeEvent({
+          agentDir: targetAgentDir,
+          agentId: id,
+          input: {
+            type: "pinned_memory.changed",
+            source: "agents-pinned-route",
+            payload: { pinsCount: trimmedPins.length },
+          },
+        });
+      } catch (err) {
+        console.warn(`[agents/pinned] event log append failed: ${err?.message || err}`);
+      }
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err.message }, 500);

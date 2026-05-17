@@ -290,7 +290,7 @@ export class Agent {
     });
     this._webFetchTool = createWebFetchTool();
     this._todoTool = createTodoTool();
-    this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
+    this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir, this.id);
     this._experienceTools = createExperienceTools(this.agentDir, {
       isEnabled: () => this._experienceEnabled === true,
     });

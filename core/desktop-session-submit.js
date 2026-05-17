@@ -23,6 +23,7 @@ import { extOfName, inferFileKind } from "../lib/file-metadata.js";
 import { collectMediaItems } from "../lib/tools/media-details.js";
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.js";
 import { serializeSessionFile } from "../lib/session-files/session-file-response.js";
+import { appendXingyeEventOnce } from "../lib/xingye/events.js";
 
 export async function submitDesktopSessionMessage(engine, opts = {}) {
   const {
@@ -95,6 +96,7 @@ export async function submitDesktopSessionMessage(engine, opts = {}) {
     ];
   }
 
+  const turnStartedAt = Date.now();
   engine.emitEvent?.({ type: "session_status", isStreaming: true }, sessionPath);
   engine.emitEvent?.({
     type: "session_user_message",
@@ -145,6 +147,35 @@ export async function submitDesktopSessionMessage(engine, opts = {}) {
   } finally {
     try { unsub?.(); } catch {}
     engine.emitEvent?.({ type: "session_status", isStreaming: false }, sessionPath);
+    // 一轮用户↔agent 对话流式结束 → 给 xingye event log 打一条 recent_chat.observed。
+    // 用 (agentId, sessionPath, turnStartedAt) 作 dedupeKey，重连/重复触发不会刷出新事件。
+    try {
+      const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
+      const agent = agentId ? engine.getAgent?.(agentId) : null;
+      const agentDir = agent?.agentDir || null;
+      if (agentId && agentDir) {
+        const previewSource = (displayMessage?.text ?? text ?? "").trim();
+        const userPreview = previewSource ? previewSource.slice(0, 200) : "";
+        await appendXingyeEventOnce({
+          agentDir,
+          agentId,
+          input: {
+            type: "recent_chat.observed",
+            source: "desktop-session-submit",
+            subjectId: sessionPath,
+            payload: {
+              sessionPath,
+              turnStartedAt: new Date(turnStartedAt).toISOString(),
+              hasReply: Boolean(captured.trim()),
+              userPreview,
+            },
+          },
+          dedupeKey: `recent_chat.observed:${agentId}:${sessionPath}:${turnStartedAt}`,
+        });
+      }
+    } catch (err) {
+      console.warn(`[desktop-session-submit] recent_chat.observed append failed: ${err?.message || err}`);
+    }
   }
 
   return {

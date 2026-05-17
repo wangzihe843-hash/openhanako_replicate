@@ -23,6 +23,7 @@ import {
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.js';
 import { mergeWorkspaceHistory, normalizeWorkspacePath } from "../../shared/workspace-history.js";
 import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.js";
+import { appendXingyeEvent } from "../../lib/xingye/events.js";
 import { formatSkillsForPrompt } from "../../lib/pi-sdk/index.js";
 import {
   buildInlineProviderCredentialUpdate,
@@ -383,6 +384,21 @@ export function createConfigRoute(engine) {
       debugLog()?.log("api", `PUT /api/pinned (${pins.length} items)`);
       // 触发 system prompt 重建（updateConfig 内部会重新读取 pinned.md）
       await engine.updateConfig({}, { agentId: agent.id });
+      // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
+      try {
+        const pinsCount = content.split("\n").filter((line) => line.trim().length > 0).length;
+        await appendXingyeEvent({
+          agentDir: agent.agentDir,
+          agentId: agent.id,
+          input: {
+            type: "pinned_memory.changed",
+            source: "legacy-pinned-route",
+            payload: { pinsCount },
+          },
+        });
+      } catch (err) {
+        debugLog()?.error("api", `PUT /api/pinned event log append failed: ${err?.message || err}`);
+      }
       return c.json({ ok: true });
     } catch (err) {
       if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
