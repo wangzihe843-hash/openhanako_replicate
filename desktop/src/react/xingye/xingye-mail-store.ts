@@ -19,6 +19,20 @@ async function appendMailEventBestEffort(
 export const XINGYE_MAIL_PROFILE_JSON = 'apps/mail/profile.json';
 export const XINGYE_MAIL_MESSAGES_JSONL = 'apps/mail/messages.jsonl';
 
+/**
+ * 心跳巡检（或其他自动来源）产出的「待确认邮件草稿」存放路径，与 messages 同目录、分文件。
+ * 同 journal/schedule/moments：messages.jsonl 是「已生成」邮箱（含 drafts 邮箱）的最终邮件；
+ * apps/mail/drafts.jsonl 这个 file 是 agent 提议、用户未确认的候选；确认后才会通过
+ * appendMailMessage 写到 messages.jsonl 的 `drafts` 邮箱（用户视角的草稿箱）。
+ *
+ * 注意命名歧义：这里两个「drafts」语义不同：
+ *  - apps/mail/drafts.jsonl：本文件——巡检提议、用户尚未确认的候选；
+ *  - messages.jsonl 里 mailbox==='drafts' 的行：用户视角已经存在的草稿，可继续编辑/发送。
+ *
+ * 确认走 confirmMailDraft，丢弃走 discardMailDraft。
+ */
+export const XINGYE_MAIL_DRAFTS_JSONL = 'apps/mail/drafts.jsonl';
+
 /** 与 server/routes/xingye-storage.js SAFE_AGENT_ID_RE 一致 */
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
@@ -517,4 +531,229 @@ export async function deleteMailMessage(agentId: string, messageId: string): Pro
     });
   }
   return deleted;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Pending mail drafts (heartbeat-proposed, awaiting user confirmation)
+// ─────────────────────────────────────────────────────────────────────────
+
+export type XingyePendingMailDraft = {
+  id: string;
+  subject: string;
+  body: string;
+  toAddress?: string;
+  toName?: string;
+  /** Why the draft was proposed — shown to the user before they confirm. */
+  reason?: string;
+  /** Producer 标识，例：'xingye-heartbeat-tool'。 */
+  source: string;
+  /** Event ids that motivated this draft (for traceability)；可空。 */
+  sourceEventIds?: string[];
+  createdAt: string;
+};
+
+function normalizeMailDraftRow(value: unknown): XingyePendingMailDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
+  if (!id) return null;
+  const subject = typeof raw.subject === 'string' ? raw.subject.trim().slice(0, 200) : '';
+  const body = typeof raw.body === 'string' ? raw.body.slice(0, 8000) : '';
+  /** subject 和 body 不能同时为空——与 server 端 mail-drafts.js / buildMessage 一致。 */
+  if (!subject && !body.trim()) return null;
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt
+    ? raw.createdAt
+    : new Date(0).toISOString();
+  const source = typeof raw.source === 'string' && raw.source.trim()
+    ? raw.source.trim()
+    : 'unknown';
+  const toAddress = normalizeOptionalText(raw.toAddress, 160);
+  const toName = normalizeOptionalText(raw.toName, 80);
+  const reason = normalizeOptionalText(raw.reason, 1000);
+  const eventIdsRaw = raw.sourceEventIds;
+  const sourceEventIds = Array.isArray(eventIdsRaw)
+    ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  return { id, subject, body, toAddress, toName, createdAt, reason, source, sourceEventIds };
+}
+
+function sortMailDrafts(a: XingyePendingMailDraft, b: XingyePendingMailDraft): number {
+  const ta = Date.parse(a.createdAt);
+  const tb = Date.parse(b.createdAt);
+  if (ta !== tb && !Number.isNaN(ta) && !Number.isNaN(tb)) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+export async function listMailDrafts(agentId: string): Promise<XingyePendingMailDraft[]> {
+  const aid = String(agentId ?? '').trim();
+  if (!aid) return [];
+  try {
+    const rows = await backend.listJsonl<unknown>(aid, XINGYE_MAIL_DRAFTS_JSONL);
+    return rows
+      .map(normalizeMailDraftRow)
+      .filter((d): d is XingyePendingMailDraft => Boolean(d))
+      .sort(sortMailDrafts);
+  } catch {
+    return [];
+  }
+}
+
+function newMailDraftId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `mail-${crypto.randomUUID()}`;
+  }
+  return `mail-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 写入一条「待确认邮件草稿」。
+ *
+ * 与 appendMailMessage 区别：
+ *  - 不写 messages.jsonl，不发 mail.messages_appended，因此不会出现在任何邮箱里；
+ *  - 发出 `mail.draft_proposed`，便于心跳消费者下一轮汇总「新增 N 条邮件草稿待确认」。
+ *  - subject 与 body 至少一个非空（trim）；其它字段都可空。
+ */
+export async function appendMailDraft(
+  agentId: string,
+  input: {
+    subject?: string;
+    body?: string;
+    toAddress?: string;
+    toName?: string;
+    reason?: string;
+    source: string;
+    sourceEventIds?: string[];
+  },
+): Promise<XingyePendingMailDraft> {
+  const aid = assertAgentId(agentId, '保存邮件草稿');
+  const subject = (typeof input.subject === 'string' ? input.subject.trim() : '').slice(0, 200);
+  const body = (typeof input.body === 'string' ? input.body : '').slice(0, 8000);
+  if (!subject && !body.trim()) {
+    throw new Error('草稿主题与正文不能同时为空。');
+  }
+  const source = input.source.trim();
+  if (!source) throw new Error('草稿来源 (source) 不能为空。');
+  const toAddress = normalizeOptionalText(input.toAddress, 160);
+  const toName = normalizeOptionalText(input.toName, 80);
+  const reason = normalizeOptionalText(input.reason, 1000);
+  const sourceEventIds = Array.isArray(input.sourceEventIds)
+    ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  const id = newMailDraftId();
+  const createdAt = new Date().toISOString();
+  const row: XingyePendingMailDraft & { key: string } = {
+    id,
+    key: id,
+    subject,
+    body,
+    toAddress,
+    toName,
+    createdAt,
+    reason,
+    source,
+    sourceEventIds,
+  };
+  await backend.appendJsonl(aid, XINGYE_MAIL_DRAFTS_JSONL, row);
+  await appendMailEventBestEffort(aid, {
+    type: 'mail.draft_proposed',
+    source,
+    subjectId: id,
+    payload: {
+      draftId: id,
+      subject: subject || null,
+      hasBody: Boolean(body.trim()),
+      toAddress: toAddress ?? null,
+      reason: reason ?? null,
+      sourceEventIds: sourceEventIds ?? [],
+    },
+  });
+  return { id, subject, body, toAddress, toName, createdAt, reason, source, sourceEventIds };
+}
+
+export async function discardMailDraft(agentId: string, draftId: string): Promise<boolean> {
+  const aid = assertAgentId(agentId, '丢弃邮件草稿');
+  const did = draftId.trim();
+  if (!did) throw new Error('丢弃草稿失败：缺少草稿 id。');
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_MAIL_DRAFTS_JSONL, did);
+  if (deleted) {
+    await appendMailEventBestEffort(aid, {
+      type: 'mail.draft_discarded',
+      source: 'xingye-mail-store',
+      subjectId: did,
+      payload: { draftId: did },
+    });
+  }
+  return deleted;
+}
+
+/**
+ * 用户在「待确认草稿」区点「确认生成」时调用：先 appendMailMessage 写入
+ * messages.jsonl（mailbox='drafts'，from.kind='agent'），再从 drafts.jsonl 删掉，
+ * 最后发 mail.draft_confirmed。messages 写入失败时保留 draft 不重复写。
+ *
+ * profile 由调用方传入——巡检产出的草稿默认用 agent 自身邮箱地址当 from。
+ * 如果 agent 还没初始化 mail profile，UI 应先 ensureMailProfile 再确认。
+ */
+export async function confirmMailDraft(
+  agentId: string,
+  draftId: string,
+  profile: XingyeMailProfile,
+  edits?: {
+    subject?: string;
+    body?: string;
+    toAddress?: string | null;
+    toName?: string | null;
+  },
+): Promise<XingyeMailMessage> {
+  const aid = assertAgentId(agentId, '确认邮件草稿');
+  const did = draftId.trim();
+  if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
+  const draft = (await listMailDrafts(aid)).find((d) => d.id === did);
+  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  if (!profile || typeof profile.address !== 'string' || !profile.address.trim()) {
+    throw new Error('确认草稿失败：未提供有效邮箱 profile（请先在邮箱主页初始化）。');
+  }
+  const resolveOptional = (
+    key: 'toAddress' | 'toName',
+    max: number,
+  ): string | undefined => {
+    if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
+      const v = edits[key];
+      if (v === null) return undefined;
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        return trimmed ? trimmed.slice(0, max) : undefined;
+      }
+    }
+    return draft[key];
+  };
+  const subject = ((edits?.subject ?? draft.subject) || '').trim().slice(0, 200);
+  const body = (edits?.body ?? draft.body).slice(0, 8000);
+  if (!subject && !body.trim()) {
+    throw new Error('确认草稿失败：主题与正文不能同时为空。');
+  }
+  const toAddress = resolveOptional('toAddress', 160);
+  const toName = resolveOptional('toName', 80);
+  const to = toAddress ? [{ name: toName || toAddress, address: toAddress }] : [];
+  const message = await appendMailMessage(aid, {
+    mailbox: 'drafts',
+    from: { name: profile.displayName, address: profile.address, kind: 'agent' },
+    to,
+    subject,
+    body,
+    isRead: true,
+    source: 'xingye-heartbeat-confirmed',
+  });
+  try {
+    await backend.deleteJsonlRecord(aid, XINGYE_MAIL_DRAFTS_JSONL, did);
+  } catch (error) {
+    console.warn('[xingye-mail-store] confirm draft: failed to delete draft after message append:', error);
+  }
+  await appendMailEventBestEffort(aid, {
+    type: 'mail.draft_confirmed',
+    source: 'xingye-mail-store',
+    subjectId: did,
+    payload: { draftId: did, messageId: message.id, mailbox: message.mailbox },
+  });
+  return message;
 }

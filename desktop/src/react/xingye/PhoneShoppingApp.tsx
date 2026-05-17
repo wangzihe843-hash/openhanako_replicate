@@ -8,6 +8,14 @@ import {
   updateAppEntry,
   type AppEntry,
 } from './xingye-app-entry-store';
+import {
+  confirmShoppingDraft,
+  discardShoppingDraft,
+  listShoppingDrafts,
+  type ShoppingDraftPlatformStyle,
+  type ShoppingDraftStatus,
+  type XingyePendingShoppingDraft,
+} from './xingye-shopping-drafts';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { generateShoppingDraftWithAI } from './xingye-shopping-ai';
 
@@ -196,6 +204,7 @@ function excerpt(text: string, max = 58): string {
 export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneShoppingAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [entries, setEntries] = useState<ShoppingEntry[]>([]);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingShoppingDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -209,23 +218,136 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /**
+   * 「待确认草稿」行内编辑缓冲。Key = draft.id。
+   * 用户在小手机里改了字、还没按「确认生成」前先在内存里保留改动；
+   * 离开页面再回来时回退到 drafts.jsonl 的最新内容（草稿本身已落盘，不会丢）。
+   */
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, {
+      itemName: string;
+      status: ShoppingDraftStatus;
+      content: string;
+      category: string;
+      imaginedPrice: string;
+    }>
+  >({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
+      setPendingDrafts([]);
+      setDraftEdits({});
       return;
     }
     setLoading(true);
     setListError(null);
     try {
-      const rows = await listAppEntries(ownerAgentId, SHOPPING_APP_ID);
+      const [rows, drafts] = await Promise.all([
+        listAppEntries(ownerAgentId, SHOPPING_APP_ID),
+        listShoppingDrafts(ownerAgentId),
+      ]);
       setEntries(rows.map(normalizeShoppingEntry).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)));
+      setPendingDrafts(drafts);
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   }, [ownerAgentId]);
+
+  const draftWorkingValue = useCallback(
+    (d: XingyePendingShoppingDraft) => {
+      const edit = draftEdits[d.id];
+      if (edit) return edit;
+      return {
+        itemName: d.itemName,
+        status: d.status,
+        content: d.content ?? '',
+        category: d.category ?? '',
+        imaginedPrice: d.imaginedPrice ?? '',
+      };
+    },
+    [draftEdits],
+  );
+
+  const handleDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ itemName: string; status: ShoppingDraftStatus; content: string; category: string; imaginedPrice: string }>,
+  ) => {
+    setDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? {
+        itemName: d.itemName,
+        status: d.status,
+        content: d.content ?? '',
+        category: d.category ?? '',
+        imaginedPrice: d.imaginedPrice ?? '',
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmDraft = async (d: XingyePendingShoppingDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(d);
+      const entry = await confirmShoppingDraft(ownerAgentId, d.id, {
+        itemName: working.itemName,
+        status: working.status,
+        content: working.content.trim() ? working.content : null,
+        category: working.category.trim() ? working.category : null,
+        imaginedPrice: working.imaginedPrice.trim() ? working.imaginedPrice : null,
+      });
+      const normalized = normalizeShoppingEntry(entry);
+      setEntries((prev) =>
+        [normalized, ...prev.filter((p) => p.id !== normalized.id)].sort(
+          (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+        ),
+      );
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardDraft = async (d: XingyePendingShoppingDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认购物草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const ok = await discardShoppingDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadEntries();
+      }
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setSelectedId(null);
@@ -555,6 +677,117 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
               <h2 className={styles.phoneShoppingTitle}>{displayName || ownerAgent?.name || 'TA'} 的购物记录</h2>
               <p className={styles.phoneShoppingSafeNote}>模拟订单、收藏和想买清单，不含真实购买、推荐、价格查询或链接。</p>
             </header>
+
+            {pendingDrafts.length > 0 ? (
+              <section
+                aria-label="待确认购物草稿"
+                data-testid="phone-shopping-pending-drafts"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              >
+                <p className={styles.phoneShoppingSafeNote}>
+                  待确认草稿 · 来自心跳巡检。这些是 TA 在巡检里想加进购物清单的东西，还没出现在「已生成」列表里。
+                  点「确认生成」才会真正写入；离开页面再回来不会丢草稿。
+                </p>
+                {draftError ? (
+                  <p className={styles.phoneAppHint} role="alert">
+                    {draftError}
+                  </p>
+                ) : null}
+                {pendingDrafts.map((d) => {
+                  const working = draftWorkingValue(d);
+                  const busy = draftBusyId === d.id;
+                  return (
+                    <div
+                      key={d.id}
+                      className={styles.phoneShoppingCard}
+                      style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
+                      data-testid={`phone-shopping-draft-${d.id}`}
+                    >
+                      <input
+                        type="text"
+                        value={working.itemName}
+                        onChange={(e) => handleDraftFieldChange(d.id, { itemName: e.target.value })}
+                        placeholder="物品名"
+                        aria-label="待确认购物草稿物品名"
+                        data-testid={`phone-shopping-draft-name-${d.id}`}
+                        disabled={busy}
+                        style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                      />
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <select
+                          className={styles.phoneInlineSelect}
+                          value={working.status}
+                          onChange={(e) =>
+                            handleDraftFieldChange(d.id, { status: e.target.value as ShoppingDraftStatus })
+                          }
+                          disabled={busy}
+                          aria-label="待确认购物草稿状态"
+                          data-testid={`phone-shopping-draft-status-${d.id}`}
+                        >
+                          {FILTERS.filter((item) => item.value !== 'all').map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={working.category}
+                          onChange={(e) => handleDraftFieldChange(d.id, { category: e.target.value })}
+                          placeholder="类别（可选）"
+                          aria-label="待确认购物草稿类别"
+                          disabled={busy}
+                          style={{ flex: 1, font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                        <input
+                          type="text"
+                          value={working.imaginedPrice}
+                          onChange={(e) => handleDraftFieldChange(d.id, { imaginedPrice: e.target.value })}
+                          placeholder="价格感（可选）"
+                          aria-label="待确认购物草稿价格感"
+                          disabled={busy}
+                          style={{ flex: 1, font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                      </div>
+                      <textarea
+                        value={working.content}
+                        onChange={(e) => handleDraftFieldChange(d.id, { content: e.target.value })}
+                        rows={2}
+                        placeholder="备注（可选）"
+                        aria-label="待确认购物草稿备注"
+                        disabled={busy}
+                        style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                      />
+                      {d.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                          理由：{d.reason}
+                        </p>
+                      ) : null}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-shopping-draft-confirm-${d.id}`}
+                        >
+                          {busy ? '处理中…' : '确认生成'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneModalGhostButton}
+                          onClick={() => void handleDiscardDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-shopping-draft-discard-${d.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
 
             <div className={styles.phoneShoppingFilterRow} aria-label="购物状态筛选">
               {FILTERS.map((item) => (

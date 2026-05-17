@@ -4,9 +4,12 @@ import styles from './XingyeShell.module.css';
 import {
   appendMailMessage,
   appendMailMessages,
+  confirmMailDraft,
   deleteMailMessage,
+  discardMailDraft,
   ensureMailProfile,
   getMailProfile,
+  listMailDrafts,
   listMailMessages,
   setMailMessageStar,
   updateMailMessage,
@@ -16,6 +19,7 @@ import {
   type XingyeMailMessage,
   type XingyeMailMessageDraft,
   type XingyeMailProfile,
+  type XingyePendingMailDraft,
 } from './xingye-mail-store';
 import {
   buildFallbackMailDrafts,
@@ -120,28 +124,127 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [draftSaveBusy, setDraftSaveBusy] = useState(false);
   const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingMailDraft[]>([]);
+  /**
+   * 「待确认草稿」行内编辑缓冲。Key = draft.id。
+   * 用户在小手机里改了字、还没按「确认生成」前先在内存里保留改动；
+   * 离开页面再回来时回退到 drafts.jsonl 的最新内容（草稿本身已落盘，不会丢）。
+   */
+  const [pendingDraftEdits, setPendingDraftEdits] = useState<
+    Record<string, { subject: string; body: string; toAddress: string }>
+  >({});
+  const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
+  const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!ownerAgentId) {
       setProfile(null);
       setMessages([]);
+      setPendingDrafts([]);
+      setPendingDraftEdits({});
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [p, m] = await Promise.all([
+      const [p, m, drafts] = await Promise.all([
         getMailProfile(ownerAgentId),
         listMailMessages(ownerAgentId),
+        listMailDrafts(ownerAgentId),
       ]);
       setProfile(p);
       setMessages(m);
+      setPendingDrafts(drafts);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   }, [ownerAgentId]);
+
+  const pendingDraftWorkingValue = useCallback(
+    (d: XingyePendingMailDraft) => {
+      const edit = pendingDraftEdits[d.id];
+      if (edit) return edit;
+      return {
+        subject: d.subject,
+        body: d.body,
+        toAddress: d.toAddress ?? '',
+      };
+    },
+    [pendingDraftEdits],
+  );
+
+  const handlePendingDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ subject: string; body: string; toAddress: string }>,
+  ) => {
+    setPendingDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? {
+        subject: d.subject,
+        body: d.body,
+        toAddress: d.toAddress ?? '',
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmPendingDraft = async (d: XingyePendingMailDraft) => {
+    if (!ownerAgentId || !profile) return;
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const working = pendingDraftWorkingValue(d);
+      const message = await confirmMailDraft(ownerAgentId, d.id, profile, {
+        subject: working.subject,
+        body: working.body,
+        toAddress: working.toAddress.trim() ? working.toAddress : null,
+      });
+      setMessages((prev) =>
+        [message, ...prev.filter((m) => m.id !== message.id)].sort(
+          (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        ),
+      );
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setPendingDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardPendingDraft = async (d: XingyePendingMailDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认邮件草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const ok = await discardMailDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setPendingDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reload();
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setPage({ kind: 'home' });
@@ -711,6 +814,92 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
             </section>
           ) : (
             <>
+              {pendingDrafts.length > 0 ? (
+                <section
+                  aria-label="待确认邮件草稿"
+                  data-testid="phone-mail-pending-drafts"
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                >
+                  <p className={styles.phoneShoppingSafeNote}>
+                    待确认草稿 · 来自心跳巡检。这些是 TA 在巡检里想写的信，还没出现在任何邮箱里。
+                    点「确认生成」会写进草稿箱；离开页面再回来不会丢草稿。
+                  </p>
+                  {pendingDraftError ? (
+                    <p className={styles.phoneAppHint} role="alert">
+                      {pendingDraftError}
+                    </p>
+                  ) : null}
+                  {pendingDrafts.map((d) => {
+                    const working = pendingDraftWorkingValue(d);
+                    const busy = pendingDraftBusyId === d.id;
+                    return (
+                      <div
+                        key={d.id}
+                        className={styles.phoneShoppingCard}
+                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
+                        data-testid={`phone-mail-pending-draft-${d.id}`}
+                      >
+                        <input
+                          type="text"
+                          value={working.subject}
+                          onChange={(e) => handlePendingDraftFieldChange(d.id, { subject: e.target.value })}
+                          placeholder="主题（可空，但与正文不能同时为空）"
+                          aria-label="待确认邮件草稿主题"
+                          data-testid={`phone-mail-pending-draft-subject-${d.id}`}
+                          disabled={busy}
+                          style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                        <input
+                          type="text"
+                          value={working.toAddress}
+                          onChange={(e) => handlePendingDraftFieldChange(d.id, { toAddress: e.target.value })}
+                          placeholder={`收件人邮箱（可选，例 someone@${XINGYE_MAIL_DOMAIN}）`}
+                          aria-label="待确认邮件草稿收件人"
+                          data-testid={`phone-mail-pending-draft-to-${d.id}`}
+                          disabled={busy}
+                          style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        />
+                        <textarea
+                          value={working.body}
+                          onChange={(e) => handlePendingDraftFieldChange(d.id, { body: e.target.value })}
+                          rows={4}
+                          placeholder="正文"
+                          aria-label="待确认邮件草稿正文"
+                          data-testid={`phone-mail-pending-draft-body-${d.id}`}
+                          disabled={busy}
+                          style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                        />
+                        {d.reason ? (
+                          <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                            理由：{d.reason}
+                          </p>
+                        ) : null}
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className={styles.phoneJournalPrimaryButton}
+                            onClick={() => void handleConfirmPendingDraft(d)}
+                            disabled={busy}
+                            data-testid={`phone-mail-pending-draft-confirm-${d.id}`}
+                          >
+                            {busy ? '处理中…' : '确认生成（进草稿箱）'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.phoneModalGhostButton}
+                            onClick={() => void handleDiscardPendingDraft(d)}
+                            disabled={busy}
+                            data-testid={`phone-mail-pending-draft-discard-${d.id}`}
+                          >
+                            丢弃
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              ) : null}
+
               <div className={styles.phoneShoppingList}>
                 {XINGYE_MAIL_MAILBOXES.map((mailbox) => {
                   const meta = mailboxCounts[mailbox];

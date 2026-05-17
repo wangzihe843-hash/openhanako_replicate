@@ -4,11 +4,16 @@ import styles from './XingyeShell.module.css';
 import { generateFilesDraftWithAI } from './xingye-files-ai';
 import {
   appendFileEntry,
+  confirmFileDraft,
   deleteFileEntry,
+  discardFileDraft,
   ensureDefaultFileFolders,
+  listFileDrafts,
   listFileEntries,
   listFileFolders,
+  resolveFolderIdFromHint,
   updateFileEntry,
+  type XingyePendingFileDraft,
   type XingyeFileEntry,
   type XingyeFileEntryDraft,
   type XingyeFileFolder,
@@ -59,6 +64,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
 
   const [folders, setFolders] = useState<XingyeFileFolder[]>([]);
   const [entries, setEntries] = useState<XingyeFileEntry[]>([]);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingFileDraft[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -78,25 +84,131 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFolderName, setAiFolderName] = useState<string | null>(null);
+  /**
+   * 「待确认草稿」行内编辑缓冲。Key = draft.id。
+   * folderId 可由用户改（下拉选 folder）；title/body 也能编辑。
+   */
+  const [pendingDraftEdits, setPendingDraftEdits] = useState<
+    Record<string, { title: string; body: string; folderId: string }>
+  >({});
+  const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
+  const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!ownerAgentId) {
       setFolders([]);
       setEntries([]);
+      setPendingDrafts([]);
+      setPendingDraftEdits({});
       return;
     }
     setListLoading(true);
     setListError(null);
     try {
-      const [f, e] = await Promise.all([listFileFolders(ownerAgentId), listFileEntries(ownerAgentId)]);
+      const [f, e, drafts] = await Promise.all([
+        listFileFolders(ownerAgentId),
+        listFileEntries(ownerAgentId),
+        listFileDrafts(ownerAgentId),
+      ]);
       setFolders(f);
       setEntries(e);
+      setPendingDrafts(drafts);
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
       setListLoading(false);
     }
   }, [ownerAgentId]);
+
+  const pendingDraftWorkingValue = useCallback(
+    (d: XingyePendingFileDraft) => {
+      const edit = pendingDraftEdits[d.id];
+      if (edit) return edit;
+      /**
+       * 默认 folderId 用 hint 解析；folders 为空时给空串（UI 会显示需先初始化）。
+       */
+      const resolvedFolderId = folders.length > 0
+        ? resolveFolderIdFromHint(folders, d.folderHint)
+        : '';
+      return {
+        title: d.title,
+        body: d.body,
+        folderId: resolvedFolderId,
+      };
+    },
+    [pendingDraftEdits, folders],
+  );
+
+  const handlePendingDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ title: string; body: string; folderId: string }>,
+  ) => {
+    setPendingDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? {
+        title: d.title,
+        body: d.body,
+        folderId: folders.length > 0 ? resolveFolderIdFromHint(folders, d.folderHint) : '',
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmPendingDraft = async (d: XingyePendingFileDraft) => {
+    if (!ownerAgentId) return;
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const working = pendingDraftWorkingValue(d);
+      const entry = await confirmFileDraft(ownerAgentId, d.id, {
+        folderId: working.folderId || undefined,
+        title: working.title,
+        body: working.body,
+      });
+      setEntries((prev) => [entry, ...prev.filter((p) => p.id !== entry.id)]);
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setPendingDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+      /** confirm 路径里会 ensureDefaultFileFolders；reload 把刚被创建的 folders 拉回来。 */
+      if (folders.length === 0) {
+        await reload();
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardPendingDraft = async (d: XingyePendingFileDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认资料柜草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const ok = await discardFileDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setPendingDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reload();
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setSelectedFolderId(null);
@@ -335,6 +447,112 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         ) : null}
         {listLoading && folders.length === 0 && entries.length === 0 ? (
           <p className={styles.phoneAppHint}>加载中…</p>
+        ) : null}
+
+        {!inFolderDetail && pendingDrafts.length > 0 ? (
+          <section
+            className={styles.phoneAppCard}
+            aria-label="待确认资料柜草稿"
+            data-testid="phone-files-pending-drafts"
+          >
+            <h3 className={styles.phoneAppTitle}>待确认草稿 · 来自心跳巡检</h3>
+            <p className={styles.phoneAppHint}>
+              这些草稿由角色在巡检里提议，**还没**出现在任何文件夹里。可在下拉里改建议入的文件夹后点「确认生成」；丢弃不留痕。
+            </p>
+            {pendingDraftError ? (
+              <p className={styles.phoneAppHint} role="alert">
+                {pendingDraftError}
+              </p>
+            ) : null}
+            <ul className={styles.phoneFilesEntryList} aria-label="待确认草稿列表">
+              {pendingDrafts.map((d) => {
+                const working = pendingDraftWorkingValue(d);
+                const busy = pendingDraftBusyId === d.id;
+                return (
+                  <li key={d.id} data-testid={`phone-files-pending-draft-${d.id}`}>
+                    <div
+                      className={styles.phoneFilesEntryItem}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8 }}
+                    >
+                      <input
+                        type="text"
+                        value={working.title}
+                        onChange={(e) => handlePendingDraftFieldChange(d.id, { title: e.target.value })}
+                        placeholder="标题"
+                        aria-label="待确认资料柜草稿标题"
+                        data-testid={`phone-files-pending-draft-title-${d.id}`}
+                        disabled={busy}
+                        style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                      />
+                      <textarea
+                        value={working.body}
+                        onChange={(e) => handlePendingDraftFieldChange(d.id, { body: e.target.value })}
+                        rows={4}
+                        placeholder="正文"
+                        aria-label="待确认资料柜草稿正文"
+                        data-testid={`phone-files-pending-draft-body-${d.id}`}
+                        disabled={busy}
+                        style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                      />
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span className={styles.phoneAppHint} style={{ margin: 0 }}>文件夹：</span>
+                        {folders.length > 0 ? (
+                          <select
+                            className={styles.phoneInlineSelect}
+                            value={working.folderId}
+                            onChange={(e) => handlePendingDraftFieldChange(d.id, { folderId: e.target.value })}
+                            disabled={busy}
+                            aria-label="待确认资料柜草稿文件夹"
+                            data-testid={`phone-files-pending-draft-folder-${d.id}`}
+                          >
+                            {folders.map((folder) => (
+                              <option key={folder.id} value={folder.id}>
+                                {folder.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className={styles.phoneAppHint} style={{ margin: 0 }}>
+                            未初始化（确认时会自动建默认文件夹）
+                          </span>
+                        )}
+                        {d.folderHint ? (
+                          <span className={styles.phoneAppHint} style={{ margin: 0 }}>
+                            建议：「{d.folderHint}」
+                          </span>
+                        ) : null}
+                      </label>
+                      {d.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                          理由：{d.reason}
+                        </p>
+                      ) : null}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmPendingDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-files-pending-draft-confirm-${d.id}`}
+                        >
+                          {busy ? '处理中…' : '确认生成'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneModalGhostButton}
+                          onClick={() => void handleDiscardPendingDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-files-pending-draft-discard-${d.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         ) : null}
 
         {!inFolderDetail ? (

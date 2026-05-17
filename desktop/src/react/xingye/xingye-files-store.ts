@@ -19,6 +19,15 @@ async function appendFileEventBestEffort(
 export const XINGYE_FILES_FOLDERS_JSON = 'files/folders.json';
 export const XINGYE_FILES_ENTRIES_JSONL = 'files/entries.jsonl';
 
+/**
+ * 心跳巡检（或其他自动来源）产出的「待确认资料柜草稿」存放路径，与 entries 同目录、分文件。
+ *
+ * 关键约束：草稿**不带** folderId —— 巡检里 agent 不知道用户私人的 folder uuid。
+ * 草稿允许带 `folderHint`（按文件夹**名字**），UI 在 confirm 时按名字匹配同名 folder，
+ * 匹配不上回退到「待确认」folder（DEFAULT_FILE_FOLDER_BLUEPRINTS 里有）。
+ */
+export const XINGYE_FILES_DRAFTS_JSONL = 'files/drafts.jsonl';
+
 /** 与 server/routes/xingye-storage.js SAFE_AGENT_ID_RE 一致 */
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
@@ -314,6 +323,252 @@ export async function deleteFileEntry(agentId: string, entryId: string): Promise
     });
   }
   return deleted;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Pending file drafts (heartbeat-proposed, awaiting user confirmation)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const FILES_FALLBACK_FOLDER_NAME = '待确认';
+
+export type XingyePendingFileDraft = {
+  id: string;
+  title: string;
+  body: string;
+  summary?: string;
+  /**
+   * Suggested folder NAME (not id). UI 在 confirm 时按名字匹配同名 folder，
+   * 匹配不上回退到「待确认」folder。
+   */
+  folderHint?: string;
+  tags?: string[];
+  reason?: string;
+  source: string;
+  sourceEventIds?: string[];
+  createdAt: string;
+};
+
+function normalizeFileDraftRow(value: unknown): XingyePendingFileDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
+  if (!id) return null;
+  const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 160) : '';
+  if (!title) return null;
+  const body = typeof raw.body === 'string' ? raw.body.slice(0, 8000) : '';
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt
+    ? raw.createdAt
+    : new Date(0).toISOString();
+  const source = typeof raw.source === 'string' && raw.source.trim()
+    ? raw.source.trim()
+    : 'unknown';
+  const eventIdsRaw = raw.sourceEventIds;
+  const sourceEventIds = Array.isArray(eventIdsRaw)
+    ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  return {
+    id,
+    title,
+    body,
+    summary: normalizeOptionalText(raw.summary, 300),
+    folderHint: normalizeOptionalText(raw.folderHint, 80),
+    tags: normalizeTags(raw.tags),
+    reason: normalizeOptionalText(raw.reason, 1000),
+    source,
+    sourceEventIds,
+    createdAt,
+  };
+}
+
+function sortFileDrafts(a: XingyePendingFileDraft, b: XingyePendingFileDraft): number {
+  const ta = Date.parse(a.createdAt);
+  const tb = Date.parse(b.createdAt);
+  if (ta !== tb && !Number.isNaN(ta) && !Number.isNaN(tb)) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+export async function listFileDrafts(agentId: string): Promise<XingyePendingFileDraft[]> {
+  const aid = String(agentId ?? '').trim();
+  if (!aid) return [];
+  try {
+    const rows = await backend.listJsonl<unknown>(aid, XINGYE_FILES_DRAFTS_JSONL);
+    return rows
+      .map(normalizeFileDraftRow)
+      .filter((d): d is XingyePendingFileDraft => Boolean(d))
+      .sort(sortFileDrafts);
+  } catch {
+    return [];
+  }
+}
+
+function newFileDraftId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `fil-${crypto.randomUUID()}`;
+  }
+  return `fil-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export async function appendFileDraft(
+  agentId: string,
+  input: {
+    title: string;
+    body?: string;
+    summary?: string;
+    folderHint?: string;
+    tags?: string[];
+    reason?: string;
+    source: string;
+    sourceEventIds?: string[];
+  },
+): Promise<XingyePendingFileDraft> {
+  const aid = assertAgentId(agentId, '保存资料柜草稿');
+  const title = (input.title ?? '').trim().slice(0, 160);
+  if (!title) throw new Error('草稿标题不能为空。');
+  const source = input.source.trim();
+  if (!source) throw new Error('草稿来源 (source) 不能为空。');
+  const body = (typeof input.body === 'string' ? input.body : '').slice(0, 8000);
+  const summary = normalizeOptionalText(input.summary, 300);
+  const folderHint = normalizeOptionalText(input.folderHint, 80);
+  const tags = normalizeTags(input.tags);
+  const reason = normalizeOptionalText(input.reason, 1000);
+  const sourceEventIds = Array.isArray(input.sourceEventIds)
+    ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : undefined;
+  const id = newFileDraftId();
+  const createdAt = new Date().toISOString();
+  const row: XingyePendingFileDraft & { key: string } = {
+    id, key: id, title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds,
+  };
+  await backend.appendJsonl(aid, XINGYE_FILES_DRAFTS_JSONL, row);
+  await appendFileEventBestEffort(aid, {
+    type: 'file.draft_proposed',
+    source,
+    subjectId: id,
+    payload: {
+      draftId: id,
+      title,
+      folderHint: folderHint ?? null,
+      hasBody: Boolean(body.trim()),
+      reason: reason ?? null,
+      sourceEventIds: sourceEventIds ?? [],
+    },
+  });
+  return { id, title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds };
+}
+
+export async function discardFileDraft(agentId: string, draftId: string): Promise<boolean> {
+  const aid = assertAgentId(agentId, '丢弃资料柜草稿');
+  const did = draftId.trim();
+  if (!did) throw new Error('丢弃草稿失败：缺少草稿 id。');
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_FILES_DRAFTS_JSONL, did);
+  if (deleted) {
+    await appendFileEventBestEffort(aid, {
+      type: 'file.draft_discarded',
+      source: 'xingye-files-store',
+      subjectId: did,
+      payload: { draftId: did },
+    });
+  }
+  return deleted;
+}
+
+/**
+ * 把 folderHint 解析成可用的 folderId：
+ *  1. 优先按名字精确匹配（trim 后）
+ *  2. 退而求其次按 startsWith 匹配
+ *  3. 都匹配不上 → 「待确认」folder（默认蓝图里有的）
+ *  4. 连「待确认」都没有（用户删了）→ 第一个 folder
+ *
+ * 调用方负责保证 folders 数组非空（confirmFileDraft 里会先 ensureDefaultFileFolders）。
+ */
+export function resolveFolderIdFromHint(
+  folders: XingyeFileFolder[],
+  folderHint: string | undefined | null,
+): string {
+  if (!folders.length) throw new Error('无可用文件夹');
+  const trimmed = (folderHint ?? '').trim();
+  if (trimmed) {
+    const exact = folders.find((f) => f.name === trimmed);
+    if (exact) return exact.id;
+    const prefix = folders.find((f) => f.name.startsWith(trimmed) || trimmed.startsWith(f.name));
+    if (prefix) return prefix.id;
+  }
+  const fallback = folders.find((f) => f.name === FILES_FALLBACK_FOLDER_NAME);
+  return fallback ? fallback.id : folders[0].id;
+}
+
+/**
+ * 用户在「待确认草稿」区点「确认生成」时调用：先 appendFileEntry 写入 entries.jsonl
+ * （发 file.entry_appended），再从 drafts 删掉，最后发 file.draft_confirmed。
+ *
+ * folderId 解析顺序（参考 resolveFolderIdFromHint）：
+ *   edits.folderId 显式指定 → 用之
+ *   否则按 draft.folderHint 在现有 folders 里匹配 → 用之
+ *   都匹配不上 → 「待确认」folder，再不行用第一个 folder
+ */
+export async function confirmFileDraft(
+  agentId: string,
+  draftId: string,
+  edits?: {
+    folderId?: string;
+    title?: string;
+    body?: string;
+    summary?: string | null;
+    tags?: string[] | null;
+  },
+): Promise<XingyeFileEntry> {
+  const aid = assertAgentId(agentId, '确认资料柜草稿');
+  const did = draftId.trim();
+  if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
+  const draft = (await listFileDrafts(aid)).find((d) => d.id === did);
+  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+
+  /** 用户可能从未初始化过文件夹；先确保有默认蓝图。 */
+  const folders = await ensureDefaultFileFolders(aid);
+  let folderId = edits?.folderId?.trim() || '';
+  if (folderId) {
+    /** 显式指定的 folderId 必须真实存在；否则回退到 hint 解析。 */
+    if (!folders.some((f) => f.id === folderId)) folderId = '';
+  }
+  if (!folderId) folderId = resolveFolderIdFromHint(folders, draft.folderHint);
+
+  const title = (edits?.title ?? draft.title).trim().slice(0, 160) || '无标题';
+  const body = (edits?.body ?? draft.body).slice(0, 8000);
+  const resolveSummary = (): string | undefined => {
+    if (edits && Object.prototype.hasOwnProperty.call(edits, 'summary')) {
+      if (edits.summary === null) return undefined;
+      if (typeof edits.summary === 'string') return normalizeOptionalText(edits.summary, 300);
+    }
+    return draft.summary;
+  };
+  const resolveTags = (): string[] | undefined => {
+    if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
+      if (edits.tags === null) return undefined;
+      return normalizeTags(edits.tags);
+    }
+    return draft.tags;
+  };
+
+  const entry = await appendFileEntry(aid, {
+    folderId,
+    title,
+    body,
+    summary: resolveSummary(),
+    tags: resolveTags(),
+    source: 'xingye-heartbeat-confirmed',
+  });
+  try {
+    await backend.deleteJsonlRecord(aid, XINGYE_FILES_DRAFTS_JSONL, did);
+  } catch (error) {
+    console.warn('[xingye-files-store] confirm draft: failed to delete draft after entry append:', error);
+  }
+  await appendFileEventBestEffort(aid, {
+    type: 'file.draft_confirmed',
+    source: 'xingye-files-store',
+    subjectId: did,
+    payload: { draftId: did, entryId: entry.id, folderId: entry.folderId },
+  });
+  return entry;
 }
 
 export async function updateFileEntry(

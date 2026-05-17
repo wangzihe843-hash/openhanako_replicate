@@ -30,6 +30,14 @@ import {
   listSecretSpaceRecords,
 } from './xingye-secret-space-store';
 import {
+  confirmSecretSpaceDraft,
+  discardSecretSpaceDraft,
+  listSecretSpaceDrafts,
+  SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES,
+  type SecretSpaceDraftCategory,
+  type XingyePendingSecretSpaceDraft,
+} from './xingye-secret-space-drafts';
+import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS,
@@ -182,6 +190,17 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [secretSpaceDeleteError, setSecretSpaceDeleteError] = useState<string | null>(null);
 
+  /**
+   * 秘密空间「待确认草稿」状态。drafts.jsonl 跨 category 共用一个文件，
+   * 用 `category` 字段区分；UI 在 home 顶部统一展示一段。
+   */
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingSecretSpaceDraft[]>([]);
+  const [pendingDraftEdits, setPendingDraftEdits] = useState<
+    Record<string, { title: string; body: string; category: SecretSpaceDraftCategory }>
+  >({});
+  const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
+  const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!agent?.id) {
       setManualContent('');
@@ -206,6 +225,118 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   useEffect(() => {
     setSecretSpaceDeleteError(null);
   }, [agent?.id, activeCategory]);
+
+  /**
+   * 加载 / 刷新当前 agent 的秘密空间待确认草稿。
+   * 仅在 home view 展示，但 fetch 不区分 view（agent 切换或我们 confirm/discard 后都刷新）。
+   */
+  const reloadPendingSecretSpaceDrafts = useCallback(async () => {
+    if (!agent?.id) {
+      setPendingDrafts([]);
+      setPendingDraftEdits({});
+      return;
+    }
+    try {
+      const drafts = await listSecretSpaceDrafts(agent.id);
+      setPendingDrafts(drafts);
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    }
+  }, [agent?.id]);
+
+  useEffect(() => {
+    void reloadPendingSecretSpaceDrafts();
+  }, [reloadPendingSecretSpaceDrafts]);
+
+  const pendingDraftWorkingValue = useCallback(
+    (d: XingyePendingSecretSpaceDraft) => {
+      const edit = pendingDraftEdits[d.id];
+      if (edit) return edit;
+      return {
+        title: d.title ?? '',
+        body: d.body,
+        category: d.category,
+      };
+    },
+    [pendingDraftEdits],
+  );
+
+  const handlePendingDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ title: string; body: string; category: SecretSpaceDraftCategory }>,
+  ) => {
+    setPendingDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? {
+        title: d.title ?? '',
+        body: d.body,
+        category: d.category,
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmPendingDraft = async (d: XingyePendingSecretSpaceDraft) => {
+    if (!agent?.id) return;
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const working = pendingDraftWorkingValue(d);
+      await confirmSecretSpaceDraft(agent.id, d.id, {
+        category: working.category,
+        title: working.title,
+        body: working.body,
+      });
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setPendingDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+      /** 若用户当前正打开 confirm 的 category，刷新该 category 的记录列表。 */
+      if (activeCategory === working.category) {
+        const records = await listSecretSpaceRecords(agent.id, working.category);
+        setRecordsByCategory((prev) => ({ ...prev, [working.category]: records }));
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardPendingDraft = async (d: XingyePendingSecretSpaceDraft) => {
+    if (!agent?.id) return;
+    if (!window.confirm('确定丢弃这条待确认秘密空间草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const ok = await discardSecretSpaceDraft(agent.id, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setPendingDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadPendingSecretSpaceDrafts();
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
+
+  const CATEGORY_DRAFT_LABEL: Record<SecretSpaceDraftCategory, string> = {
+    state: '此刻心境 (state)',
+    dream: '梦境 (dream)',
+    saved_item: '摘录 (saved_item)',
+  };
 
   useEffect(() => {
     if (!activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
@@ -699,6 +830,106 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             角色侧隐藏内容的分类入口；记录从当前 agent 的 Xingye storage 读取。
           </p>
         </>
+      ) : null}
+
+      {view === 'home' && pendingDrafts.length > 0 ? (
+        <section
+          className={styles.profileForm}
+          aria-label="待确认秘密空间草稿"
+          data-testid="secret-space-pending-drafts"
+        >
+          <h3 className={styles.panelTitle}>待确认草稿 · 来自心跳巡检</h3>
+          <p className={styles.panelDescription}>
+            这些草稿由角色在巡检里提议，**还没**写进任何分类的「已生成」列表里；可改 category / 标题 / 正文后点「确认生成」，丢弃不留痕。
+            支持的分类：state / dream / saved_item（其它分类走单独流程，不在此提议范围）。
+          </p>
+          {pendingDraftError ? <p className={styles.saveStatus}>{pendingDraftError}</p> : null}
+          {pendingDrafts.map((d) => {
+            const working = pendingDraftWorkingValue(d);
+            const busy = pendingDraftBusyId === d.id;
+            return (
+              <div
+                key={d.id}
+                className={styles.profileForm}
+                style={{ border: '1px dashed rgba(0,0,0,0.2)', padding: 10, marginBottom: 8 }}
+                data-testid={`secret-space-pending-draft-${d.id}`}
+              >
+                <label className={styles.profileField}>
+                  <span>分类</span>
+                  <select
+                    value={working.category}
+                    onChange={(e) =>
+                      handlePendingDraftFieldChange(d.id, {
+                        category: e.target.value as SecretSpaceDraftCategory,
+                      })
+                    }
+                    disabled={busy}
+                    aria-label="待确认秘密空间草稿分类"
+                    data-testid={`secret-space-pending-draft-category-${d.id}`}
+                  >
+                    {SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {CATEGORY_DRAFT_LABEL[c]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={styles.profileField}>
+                  <span>标题（可选）</span>
+                  <input
+                    type="text"
+                    value={working.title}
+                    onChange={(e) =>
+                      handlePendingDraftFieldChange(d.id, { title: e.target.value })
+                    }
+                    placeholder="为空时会用正文前几字"
+                    aria-label="待确认秘密空间草稿标题"
+                    data-testid={`secret-space-pending-draft-title-${d.id}`}
+                    disabled={busy}
+                  />
+                </label>
+                <label className={styles.profileField}>
+                  <span>正文</span>
+                  <textarea
+                    value={working.body}
+                    onChange={(e) =>
+                      handlePendingDraftFieldChange(d.id, { body: e.target.value })
+                    }
+                    rows={4}
+                    aria-label="待确认秘密空间草稿正文"
+                    data-testid={`secret-space-pending-draft-body-${d.id}`}
+                    disabled={busy}
+                  />
+                </label>
+                {d.reason ? (
+                  <p className={styles.panelDescription} style={{ margin: 0 }}>
+                    理由：{d.reason}
+                  </p>
+                ) : null}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleConfirmPendingDraft(d)}
+                    disabled={busy}
+                    data-testid={`secret-space-pending-draft-confirm-${d.id}`}
+                  >
+                    {busy ? '处理中…' : '确认生成'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleDiscardPendingDraft(d)}
+                    disabled={busy}
+                    data-testid={`secret-space-pending-draft-discard-${d.id}`}
+                  >
+                    丢弃
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </section>
       ) : null}
 
       {view === 'home' ? (

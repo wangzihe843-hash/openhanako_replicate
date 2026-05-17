@@ -79,8 +79,33 @@ import {
   deleteScheduleEntry,
   discardScheduleDraft,
 } from './xingye-schedule-store';
-import { appendFileEntry, deleteFileEntry } from './xingye-files-store';
-import { appendMailMessage, appendMailMessages, deleteMailMessage } from './xingye-mail-store';
+import {
+  appendFileDraft,
+  appendFileEntry,
+  confirmFileDraft,
+  deleteFileEntry,
+  discardFileDraft,
+  ensureDefaultFileFolders,
+} from './xingye-files-store';
+import {
+  appendSecretSpaceDraft,
+  confirmSecretSpaceDraft,
+  discardSecretSpaceDraft,
+} from './xingye-secret-space-drafts';
+import {
+  appendMailDraft,
+  appendMailMessage,
+  appendMailMessages,
+  confirmMailDraft,
+  deleteMailMessage,
+  discardMailDraft,
+  type XingyeMailProfile,
+} from './xingye-mail-store';
+import {
+  appendShoppingDraft,
+  confirmShoppingDraft,
+  discardShoppingDraft,
+} from './xingye-shopping-drafts';
 import {
   appendMmChatTurnsToSession,
   saveMmChatPersistence,
@@ -462,6 +487,138 @@ describe('producer contract: moments-store drafts', () => {
   });
 });
 
+describe('producer contract: files-store drafts', () => {
+  it('appendFileDraft emits file.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendFileDraft('agent-a', {
+      title: '师父说过的几句话',
+      body: '「不必逞强。」',
+      folderHint: '人际关系',
+      source: 'xingye-heartbeat-tool',
+      reason: '晚上聊到师父',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'file.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, title: '师父说过的几句话', folderHint: '人际关系', hasBody: true },
+    });
+  });
+
+  it('discardFileDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendFileDraft('agent-a', {
+      title: 'T', body: 'b', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardFileDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'file.draft_discarded',
+      source: 'xingye-files-store',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardFileDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmFileDraft fires file.entry_appended AND file.draft_confirmed (draft id ≠ entry id; folder resolved from hint)', async () => {
+    /** Seed folders so resolveFolderIdFromHint has something to match. */
+    await ensureDefaultFileFolders('agent-a');
+    appendEventMock.mockClear();
+    const draft = await appendFileDraft('agent-a', {
+      title: '师父说过的几句话',
+      body: '「不必逞强。」',
+      folderHint: '人际关系',
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmFileDraft('agent-a', draft.id);
+    expect(entry.id).not.toBe(draft.id);
+    expect(entry.folderId).toBeTruthy();
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('file.entry_appended');
+    expect(types).toContain('file.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'file.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, entryId: entry.id, folderId: entry.folderId },
+    });
+  });
+});
+
+describe('producer contract: secret-space drafts', () => {
+  it('appendSecretSpaceDraft emits secret_space.draft_proposed only (no record_appended)', async () => {
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'dream',
+      body: '车一直没来。雨开始下。',
+      source: 'xingye-heartbeat-tool',
+      reason: '早上聊到昨夜的梦',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'secret_space.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, category: 'dream' },
+    });
+  });
+
+  it('rejects disallowed category at append', async () => {
+    await expect(appendSecretSpaceDraft('agent-a', {
+      // @ts-expect-error - testing runtime rejection of disallowed category
+      category: 'memory_fragment',
+      body: 'x',
+      source: 'xingye-heartbeat-tool',
+    })).rejects.toThrow();
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('discardSecretSpaceDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'state', body: 'x', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardSecretSpaceDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'secret_space.draft_discarded',
+      source: 'xingye-secret-space-drafts',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardSecretSpaceDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmSecretSpaceDraft fires secret_space.record_appended AND secret_space.draft_confirmed', async () => {
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'saved_item',
+      body: '「不要把日子过成一道证明题。」',
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const result = await confirmSecretSpaceDraft('agent-a', draft.id);
+    expect(result.category).toBe('saved_item');
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('secret_space.record_appended');
+    expect(types).toContain('secret_space.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'secret_space.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, category: 'saved_item' },
+    });
+  });
+});
+
 describe('producer contract: files-store', () => {
   it('emits file.entry_appended and file.entry_deleted', async () => {
     const entry = await appendFileEntry('agent-a', {
@@ -552,6 +709,133 @@ describe('producer contract: mail-store', () => {
     const noop = await deleteMailMessage('agent-a', message.id);
     expect(noop).toBe(false);
     expect(appendEventMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('producer contract: mail-store drafts', () => {
+  const profile: XingyeMailProfile = {
+    agentId: 'agent-a',
+    address: 'hanako.x@hana.mail',
+    displayName: 'Hanako',
+    createdAt: '2026-05-16T00:00:00.000Z',
+    updatedAt: '2026-05-16T00:00:00.000Z',
+  };
+
+  it('appendMailDraft emits mail.draft_proposed only (no messages_appended)', async () => {
+    const draft = await appendMailDraft('agent-a', {
+      subject: '给妈妈',
+      body: '好久没回家。',
+      toAddress: 'mom@hana.mail',
+      source: 'xingye-heartbeat-tool',
+      reason: '母亲节',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'mail.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, subject: '给妈妈', hasBody: true, toAddress: 'mom@hana.mail' },
+    });
+  });
+
+  it('discardMailDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendMailDraft('agent-a', {
+      subject: 's', body: 'b', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardMailDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'mail.draft_discarded',
+      source: 'xingye-mail-store',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardMailDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmMailDraft fires messages_appended AND mail.draft_confirmed (draft id ≠ message id)', async () => {
+    const draft = await appendMailDraft('agent-a', {
+      subject: '给妈妈',
+      body: '好久没回家。',
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const message = await confirmMailDraft('agent-a', draft.id, profile);
+    expect(message.id).not.toBe(draft.id);
+    expect(message.mailbox).toBe('drafts');
+    expect(message.from.kind).toBe('agent');
+    expect(message.from.address).toBe(profile.address);
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('mail.messages_appended');
+    expect(types).toContain('mail.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'mail.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, messageId: message.id, mailbox: 'drafts' },
+    });
+  });
+});
+
+describe('producer contract: shopping-drafts', () => {
+  it('appendShoppingDraft emits shopping.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: '《长安的荔枝》',
+      status: 'hesitating',
+      source: 'xingye-heartbeat-tool',
+      reason: '她摸了三次',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'shopping.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, itemName: '《长安的荔枝》', status: 'hesitating' },
+    });
+  });
+
+  it('discardShoppingDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: 'X', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardShoppingDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'shopping.draft_discarded',
+      source: 'xingye-shopping-drafts',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardShoppingDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmShoppingDraft fires shopping.entry_appended AND shopping.draft_confirmed (draft id ≠ entry id)', async () => {
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: '《长安的荔枝》', status: 'wanted', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmShoppingDraft('agent-a', draft.id);
+    expect(entry.id).not.toBe(draft.id);
+    expect(entry.appId).toBe('shopping');
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('shopping.entry_appended');
+    expect(types).toContain('shopping.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'shopping.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, entryId: entry.id, itemName: '《长安的荔枝》' },
+    });
   });
 });
 
