@@ -54,14 +54,15 @@ export async function hanaFetchAllowingErrors(
 /**
  * 带认证的 fetch 封装
  * - 默认 30s 超时
- * - 自动校验 res.ok，非 2xx 抛错
+ * - 默认校验 res.ok，非 2xx 抛错；传 `throwOnHttpError: false` 可禁用以读取错误体
  */
 export async function hanaFetch(
   path: string,
-  opts: RequestInit & { timeout?: number } = {},
+  opts: RequestInit & { timeout?: number; throwOnHttpError?: boolean } = {},
 ): Promise<Response> {
-  const res = await hanaFetchAllowingErrors(path, opts);
-  if (!res.ok) {
+  const { throwOnHttpError = true, ...rest } = opts;
+  const res = await hanaFetchAllowingErrors(path, rest);
+  if (throwOnHttpError && !res.ok) {
     throw new Error(`hanaFetch ${path}: ${res.status} ${res.statusText}`);
   }
   return res;
