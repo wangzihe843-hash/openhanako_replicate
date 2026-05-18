@@ -107,4 +107,58 @@ describe('buildDivinationReadingPrompt', () => {
     });
     expect(fieldPrompt).toContain('【行动签】');
   });
+
+  it('prompt includes fortuneScore / omens / luckyDirection / luckyColor in JSON schema', () => {
+    const prompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'tarot', methodLabel: '塔罗', symbols: ['◇'],
+    });
+    expect(prompt).toContain('fortuneScore');
+    expect(prompt).toContain('"overall"');
+    expect(prompt).toContain('"career"');
+    expect(prompt).toContain('"love"');
+    expect(prompt).toContain('"wealth"');
+    expect(prompt).toContain('omens');
+    expect(prompt).toContain('"good"');
+    expect(prompt).toContain('"bad"');
+    expect(prompt).toContain('luckyDirection');
+    expect(prompt).toContain('luckyColor');
+  });
+
+  it('fortune labels are method-specific (iching → 综合卦象 / field_oracle → 综合形势 + 可行/不可行)', () => {
+    const ichingPrompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'iching_liuyao', methodLabel: '六爻', symbols: ['☰'],
+    });
+    expect(ichingPrompt).toContain('综合卦象');
+    expect(ichingPrompt).toContain('吉位');
+    expect(ichingPrompt).toContain('吉色');
+
+    const fieldPrompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'field_oracle', methodLabel: '战地直觉', symbols: ['※'],
+    });
+    expect(fieldPrompt).toContain('综合形势');
+    /** field_oracle 用「可行 / 不可行」+「朝向 / 标识色」。 */
+    expect(fieldPrompt).toContain('可行');
+    expect(fieldPrompt).toContain('不可行');
+    expect(fieldPrompt).toContain('朝向');
+    expect(fieldPrompt).toContain('标识色');
+  });
+
+  it('injects seedNarrative block when provided; omits it otherwise', () => {
+    const without = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'oracle_generic', methodLabel: '通用神谕', symbols: ['※'],
+    });
+    expect(without).not.toContain('正式加工种子');
+
+    const withSeed = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'oracle_generic', methodLabel: '通用神谕', symbols: ['※'],
+      seedNarrative: {
+        agentQuestion: '我是不是该听那阵风？',
+        content: '风从北边来，桅杆轻轻晃。',
+      },
+    });
+    expect(withSeed).toContain('正式加工种子');
+    expect(withSeed).toContain('我是不是该听那阵风？');
+    expect(withSeed).toContain('风从北边来');
+    expect(withSeed).toMatch(/优先承接草稿/);
+  });
 });

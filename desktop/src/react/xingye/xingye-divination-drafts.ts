@@ -206,15 +206,23 @@ function divinationEntryIdFromDraftId(draftId: string): string {
 }
 
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用——把心象草稿落进占卜历史。
+ * 用户在「待确认草稿」区点「原样保存」/「正式加工」时调用——把心象草稿落进占卜历史。
  *
  *   1. entry id 用 `from-draft-${draftId}`；先 listAppEntries('divination') 查重，
  *      已有 → 复用跳过 append；
  *   2. 否则 appendAppEntry('divination', ...) 写入 entries（发
- *      divination.entry_appended），传 `id` 选项作为确定性 id。metadata 固定为
- *      心象语义（method='oracle_generic'、symbols=[]、autoSelected=false）；
+ *      divination.entry_appended），传 `id` 选项作为确定性 id。
  *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
  *   4. 发 divination.draft_confirmed。
+ *
+ * 两条路径共享这一份函数：
+ *  - 「原样保存」：edits 只含 agentQuestion / content / themeHint；metadata 固定
+ *    心象语义（method='oracle_generic'、symbols=[]、autoSelected=false、**不带**
+ *    fortuneScore 等），渲染端就不显示运势区。
+ *  - 「正式加工」：edits 额外带 method/methodLabel/title/symbols/autoSelected/
+ *    fortuneScore/omens/luckyDirection/luckyColor —— 来自 AI 加工产物。这些字段
+ *    都是可选的，缺省时回退到草稿原值或心象固定值；运势相关字段任一缺失则整组
+ *    不写入（依赖 entry-store mergeDivinationMetadata 的"全或无"语义）。
  *
  * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
@@ -225,6 +233,18 @@ export async function confirmDivinationDraft(
     agentQuestion?: string;
     content?: string;
     themeHint?: string | null;
+    /** 正式加工产物：覆写 entry 标题；空时回退到 agentQuestion。 */
+    title?: string;
+    /** 正式加工产物：method/methodLabel（如 'tarot' / '塔罗'）。空时保留 oracle_generic / 心象提示。 */
+    method?: string;
+    methodLabel?: string;
+    /** 正式加工产物：起卦时抽到的符号；空时保留 []。 */
+    symbols?: unknown[];
+    autoSelected?: boolean;
+    fortuneScore?: { overall: number; career: number; love: number; wealth: number };
+    omens?: { good: string; bad: string };
+    luckyDirection?: string;
+    luckyColor?: string;
   },
 ): Promise<AppEntry> {
   const aid = assertAgentId(agentId, '确认占卜（心象）草稿');
@@ -257,20 +277,30 @@ export async function confirmDivinationDraft(
       };
       const themeHint = resolveTheme();
 
+      const effectiveMethod = (edits?.method && edits.method.trim()) || DIVINATION_DRAFT_FIXED_METHOD;
+      const effectiveMethodLabel = (edits?.methodLabel && edits.methodLabel.trim()) || DIVINATION_DRAFT_FIXED_METHOD_LABEL;
+      const effectiveSymbols = Array.isArray(edits?.symbols) ? edits!.symbols : [];
+      const effectiveAutoSelected = typeof edits?.autoSelected === 'boolean' ? edits.autoSelected : false;
+      const effectiveTitle = (edits?.title && edits.title.trim()) || agentQuestion;
+
       const metadata: Record<string, unknown> = {
-        method: DIVINATION_DRAFT_FIXED_METHOD,
-        methodLabel: DIVINATION_DRAFT_FIXED_METHOD_LABEL,
+        method: effectiveMethod,
+        methodLabel: effectiveMethodLabel,
         question: agentQuestion,
         agentQuestion,
-        symbols: [],
-        autoSelected: false,
+        symbols: effectiveSymbols,
+        autoSelected: effectiveAutoSelected,
         resolverReason: draft.reason || '巡检：TA 主动写下的心象提示',
       };
       if (themeHint) metadata.themeHint = themeHint;
+      if (edits?.fortuneScore) metadata.fortuneScore = edits.fortuneScore;
+      if (edits?.omens) metadata.omens = edits.omens;
+      if (edits?.luckyDirection && edits.luckyDirection.trim()) metadata.luckyDirection = edits.luckyDirection.trim();
+      if (edits?.luckyColor && edits.luckyColor.trim()) metadata.luckyColor = edits.luckyColor.trim();
 
       entry = await appendAppEntry(aid, 'divination', {
         id: expectedEntryId,
-        title: agentQuestion,
+        title: effectiveTitle,
         content,
         metadata,
         source: 'xingye-heartbeat-confirmed',

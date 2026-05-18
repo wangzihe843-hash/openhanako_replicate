@@ -1,6 +1,23 @@
 import type { XingyeDivinationMethodId } from './xingye-divination-method-resolver';
 import styles from './PhoneDivinationApp.module.css';
 
+/**
+ * 运势评分四分类标签（综合 + 事业 / 恋情 / 财富 三个分项）的占法分化。
+ * field_oracle 偏战地语境，所以分项名走「行动 / 协同 / 物资」；其它占法基本沿用通用语义。
+ */
+export type DivinationFortuneLabels = {
+  overall: string;
+  career: string;
+  love: string;
+  wealth: string;
+};
+
+/** 宜忌两行的占法分化文案。field_oracle 用「可行 / 不可行」更贴战地决策语义。 */
+export type DivinationOmenLabels = {
+  good: string;
+  bad: string;
+};
+
 export type DivinationThemeDescriptor = {
   /** Root class applied to detail / generation card surfaces. */
   className: string;
@@ -38,6 +55,14 @@ export type DivinationThemeDescriptor = {
    * 空态文案（"还没有占卜记录。点 …" 末尾的 call-to-action）。
    */
   emptyCtaLabel: string;
+  /** 运势评分四个分类（综合 + 三分项）的小标题。 */
+  fortuneLabels: DivinationFortuneLabels;
+  /** 宜 / 忌 两行小标题。 */
+  omenLabels: DivinationOmenLabels;
+  /** 「幸运方位」一行的小标题。field_oracle 用「朝向」更合战地语义。 */
+  luckyDirectionLabel: string;
+  /** 「幸运色」一行的小标题。field_oracle 用「标识色」。 */
+  luckyColorLabel: string;
 };
 
 export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, DivinationThemeDescriptor> = {
@@ -51,6 +76,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '听一次战地签',
     generationButtonLabel: '让 TA 听一次战地签',
     emptyCtaLabel: '点「让 TA 听一次战地签」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合形势', career: '行动', love: '协同', wealth: '物资' },
+    omenLabels: { good: '可行', bad: '不可行' },
+    luckyDirectionLabel: '朝向',
+    luckyColorLabel: '标识色',
   },
   iching_liuyao: {
     className: styles.themeIching,
@@ -62,6 +91,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '起一卦',
     generationButtonLabel: '让 TA 起一卦',
     emptyCtaLabel: '点「让 TA 起一卦」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合卦象', career: '事业', love: '感情', wealth: '财运' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '吉位',
+    luckyColorLabel: '吉色',
   },
   tarot: {
     className: styles.themeTarot,
@@ -73,6 +106,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '抽一张牌',
     generationButtonLabel: '让 TA 抽一张牌',
     emptyCtaLabel: '点「让 TA 抽一张牌」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合牌势', career: '事业', love: '恋情', wealth: '财富' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '幸运方位',
+    luckyColorLabel: '幸运色',
   },
   crystal_ball: {
     className: styles.themeCrystal,
@@ -84,6 +121,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '凝视一次水晶球',
     generationButtonLabel: '让 TA 凝视水晶球',
     emptyCtaLabel: '点「让 TA 凝视水晶球」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合影像', career: '事业', love: '恋情', wealth: '财富' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '幸运方位',
+    luckyColorLabel: '幸运色',
   },
   runes: {
     className: styles.themeRunes,
@@ -95,6 +136,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '投一次符',
     generationButtonLabel: '让 TA 投一次符',
     emptyCtaLabel: '点「让 TA 投一次符」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合符意', career: '事业', love: '感情', wealth: '财运' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '幸运方位',
+    luckyColorLabel: '幸运色',
   },
   astrology: {
     className: styles.themeAstro,
@@ -106,6 +151,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '看一次星象',
     generationButtonLabel: '让 TA 看一次星象',
     emptyCtaLabel: '点「让 TA 看一次星象」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合星象', career: '事业', love: '恋情', wealth: '财富' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '幸运方位',
+    luckyColorLabel: '幸运色',
   },
   oracle_generic: {
     className: styles.themeGeneric,
@@ -121,6 +170,10 @@ export const DIVINATION_THEME_BY_METHOD: Record<XingyeDivinationMethodId, Divina
     generationLabel: '听一段心象',
     generationButtonLabel: '让 TA 听一段心象',
     emptyCtaLabel: '点「让 TA 听一段心象」，由 TA 自己决定此刻想确认的事。',
+    fortuneLabels: { overall: '综合分数', career: '事业', love: '恋情', wealth: '财富' },
+    omenLabels: { good: '宜', bad: '忌' },
+    luckyDirectionLabel: '幸运方位',
+    luckyColorLabel: '幸运色',
   },
 };
 

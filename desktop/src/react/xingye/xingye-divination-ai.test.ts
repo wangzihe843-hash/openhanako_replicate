@@ -78,6 +78,59 @@ describe('normalizeDivinationReadingResult', () => {
     });
     expect(r?.title).toBe('AAAAA');
   });
+
+  it('parses fortuneScore / omens / luckyDirection / luckyColor when present', () => {
+    const r = normalizeDivinationReadingResult({
+      ...goodReadingPayload,
+      fortuneScore: { overall: 73, career: 77, love: 82, wealth: 62 },
+      omens: { good: '靠近自己确认过的事', bad: '在路口反复折返' },
+      luckyDirection: '东南',
+      luckyColor: '#7AA2C8',
+    });
+    expect(r?.fortuneScore).toEqual({ overall: 73, career: 77, love: 82, wealth: 62 });
+    expect(r?.omens).toEqual({ good: '靠近自己确认过的事', bad: '在路口反复折返' });
+    expect(r?.luckyDirection).toBe('东南');
+    expect(r?.luckyColor).toBe('#7AA2C8');
+  });
+
+  it('clamps fortuneScore values to [0,100] integers', () => {
+    const r = normalizeDivinationReadingResult({
+      ...goodReadingPayload,
+      fortuneScore: { overall: 150, career: -20, love: 73.6, wealth: '40' },
+    });
+    expect(r?.fortuneScore).toEqual({ overall: 100, career: 0, love: 74, wealth: 40 });
+  });
+
+  it('drops fortuneScore entirely if any field is missing or non-numeric', () => {
+    const partial = normalizeDivinationReadingResult({
+      ...goodReadingPayload,
+      fortuneScore: { overall: 73, career: 77, love: 82 },
+    });
+    expect(partial?.fortuneScore).toBeUndefined();
+
+    const garbage = normalizeDivinationReadingResult({
+      ...goodReadingPayload,
+      fortuneScore: { overall: 'lots', career: 77, love: 82, wealth: 62 },
+    });
+    expect(garbage?.fortuneScore).toBeUndefined();
+  });
+
+  it('drops omens when good or bad is missing', () => {
+    const r = normalizeDivinationReadingResult({
+      ...goodReadingPayload,
+      omens: { good: '靠近自己确认过的事' },
+    });
+    expect(r?.omens).toBeUndefined();
+  });
+
+  it('returns result without optional fortune fields when AI omits them (back-compat)', () => {
+    const r = normalizeDivinationReadingResult(goodReadingPayload);
+    expect(r).not.toBeNull();
+    expect(r?.fortuneScore).toBeUndefined();
+    expect(r?.omens).toBeUndefined();
+    expect(r?.luckyDirection).toBeUndefined();
+    expect(r?.luckyColor).toBeUndefined();
+  });
 });
 
 describe('generateDivinationReadingWithAI', () => {
@@ -134,6 +187,26 @@ describe('generateDivinationReadingWithAI', () => {
         agentLike: { displayName: '林雾' },
       }),
     ).rejects.toThrow(/model call failed/);
+  });
+
+  it('forwards seedNarrative into the prompt so polish path can reuse draft', async () => {
+    await generateDivinationReadingWithAI({
+      agent: { id: 'ag-d', name: 'Lin', yuan: 'y' as const },
+      methodId: 'oracle_generic',
+      methodLabel: '通用神谕',
+      symbols: ['※'],
+      agentLike: { displayName: '林雾' },
+      seedNarrative: {
+        agentQuestion: '我是不是该听那阵风？',
+        content: '风从北边来，桅杆轻轻晃。',
+      },
+    });
+    const call = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/phone-generate');
+    const body = JSON.parse(String(call?.[1]?.body ?? '')) as Record<string, unknown>;
+    const prompt = String(body.prompt);
+    expect(prompt).toContain('正式加工种子');
+    expect(prompt).toContain('我是不是该听那阵风？');
+    expect(prompt).toContain('风从北边来');
   });
 
   it('throws when response payload fails normalization', async () => {

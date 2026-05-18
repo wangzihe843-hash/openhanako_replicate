@@ -1,6 +1,7 @@
 import type { Agent } from '../types';
 import type { XingyeDivinationAgentLike, XingyeDivinationMethodId } from './xingye-divination-method-resolver';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
+import { getDivinationTheme } from './xingye-divination-themes';
 
 const METHOD_SIGN_LABEL: Record<XingyeDivinationMethodId, string> = {
   iching_liuyao: '卦象',
@@ -76,6 +77,12 @@ export function buildDivinationReadingPrompt(args: {
   recentSceneBlock?: string;
   relationshipBlock?: string;
   heartbeatBlock?: string;
+  /**
+   * 「正式加工」路径会传：用户在草稿区已经看过的「心象」原文。模型应在生成结构化
+   * reading 时保留这段心象的意象与口吻；agentQuestion 优先承接草稿里 TA 已经写下的
+   * 那句话，而不是另起炉灶。普通正式占卜（无草稿）路径不传。
+   */
+  seedNarrative?: { agentQuestion?: string; content?: string };
 }): string {
   const {
     agent,
@@ -88,7 +95,11 @@ export function buildDivinationReadingPrompt(args: {
     recentSceneBlock,
     relationshipBlock,
     heartbeatBlock,
+    seedNarrative,
   } = args;
+  const theme = getDivinationTheme(methodId);
+  const f = theme.fortuneLabels;
+  const o = theme.omenLabels;
 
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
@@ -99,7 +110,7 @@ export function buildDivinationReadingPrompt(args: {
   const actionLabel = getDivinationActionLabel(methodId);
   const profileBlock = profileBlockFromAgentLike(agentLike);
   const extraCorpus = truncateChars(agentLike.extraCorpus ?? '', 6000);
-  const theme = (userProvidedTheme ?? '').trim();
+  const userTheme = (userProvidedTheme ?? '').trim();
   const symbolLine = symbols.length ? symbols.join(' ') : '（请自行从牌面/卦象/星图中选取符号意象）';
 
   const sections: string[] = [
@@ -120,8 +131,27 @@ export function buildDivinationReadingPrompt(args: {
     '- agentQuestion：一句话，第一人称，写出 TA 此刻最想确认的那件事，长度约 12–40 个汉字。',
     '- content：包含 4 个小节，约 220–520 个汉字；每节正文 1–4 行。',
     '',
+    '此外还要给出运势评分与简短的宜忌/幸运提示，字段说明：',
+    `- fortuneScore：四个 0-100 整数（不要小数，不要 "70+"/"≈70" 这种写法），分别对应「${f.overall}」「${f.career}」「${f.love}」「${f.wealth}」。`,
+    '  分数要呼应 content 的情绪（如内省转折较多 → 综合分数不要给极端值），但避免一边倒的"全 90 分"或"全 50 分"。',
+    `- omens：good 是${o.good}（一句不超过 14 个汉字的具体动作或意象，不写抽象建议），bad 是${o.bad}（同样长度限制）。两条都来自占法当下的意象，不要套俗语。`,
+    `- luckyDirection：${theme.luckyDirectionLabel}，写一个简短的方位词（如「东南」「向北」「靠窗」），不超过 10 个汉字。`,
+    `- luckyColor：${theme.luckyColorLabel}，可以写颜色名（如「靛蓝」「赭石」），也可以写 CSS 颜色（如「#7AA2C8」），不超过 12 个字符。`,
+    '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
-    JSON.stringify({ title: 'string', agentQuestion: 'string', content: 'string' }, null, 2),
+    JSON.stringify(
+      {
+        title: 'string',
+        agentQuestion: 'string',
+        content: 'string',
+        fortuneScore: { overall: 0, career: 0, love: 0, wealth: 0 },
+        omens: { good: 'string', bad: 'string' },
+        luckyDirection: 'string',
+        luckyColor: 'string',
+      },
+      null,
+      2,
+    ),
     '',
     'content 字段示例骨架（仅作格式参考，不要照抄文字）：',
     [
@@ -166,12 +196,30 @@ export function buildDivinationReadingPrompt(args: {
     '【占法推荐解释（内部参考，不要复述）】',
     (resolverReason ?? '').trim() || '（无）',
     '',
+  ];
+
+  const seedAq = seedNarrative?.agentQuestion?.trim() ?? '';
+  const seedContent = seedNarrative?.content?.trim() ?? '';
+  if (seedAq || seedContent) {
+    sections.push(
+      '【TA 已经写下的心象（正式加工种子）】',
+      seedAq ? `TA 在草稿里问：${seedAq}` : '',
+      seedContent ? `TA 写下的心象：\n${seedContent}` : '',
+      '把这段心象扩成结构化占卜：',
+      '- agentQuestion 优先承接草稿那一句，可微调措辞但保留主题，不要另起炉灶。',
+      '- 卦象/牌面/正文/行动签 四节里要保留草稿里的意象与口吻（具体物件、动作、感受），不要替换成无关意象。',
+      '- 运势评分要呼应草稿的情绪基调（草稿犹豫 → 综合分数不要给 90+；草稿坚定 → 也不要给 30）。',
+      '',
+    );
+  }
+
+  sections.push(
     '【用户提供的可选关注方向（仅作注脚，不是占问主体）】',
-    theme || '（无）',
-    theme
+    userTheme || '（无）',
+    userTheme
       ? '若 agentQuestion 与该方向无关，也允许；不要让 agentQuestion 与该方向字面雷同。'
       : '没有方向时，agentQuestion 完全由 TA 自己决定。',
-  ];
+  );
 
   return sections.join('\n');
 }

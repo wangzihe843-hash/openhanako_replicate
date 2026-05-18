@@ -6,6 +6,193 @@
   margin: 0;
 }
 
+/* ==========================================================================
+   运势评分 + 宜忌 + 幸运 三段卡片（占法主题共用结构；颜色走 var 主题色）
+   渲染条件：metadata.fortuneScore 存在才显示评分卡；omens / luckyDirection /
+   luckyColor 各自独立显示。旧 entry 缺这些字段时整段不渲染。
+   ========================================================================== */
+
+.fortuneCard {
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 14px;
+  align-items: center;
+  margin: 4px 0 6px;
+}
+
+.fortuneOverall {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/**
+ * conic-gradient 画圆环：填充比例由 --fortune-overall（0-100）决定。
+ * radial-gradient mask 在内圈打孔形成"环"。
+ */
+.fortuneOverallDial {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--fortune-dial-color, #5ac8e8) calc(var(--fortune-overall, 0) * 1%),
+    rgba(148, 163, 184, 0.22) 0
+  );
+  -webkit-mask: radial-gradient(circle at center, transparent 60%, #000 61%);
+  mask: radial-gradient(circle at center, transparent 60%, #000 61%);
+}
+
+.fortuneOverallValue {
+  position: relative;
+  z-index: 1;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.fortuneOverallLabel {
+  position: relative;
+  z-index: 1;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.fortuneBars {
+  display: grid;
+  gap: 8px;
+}
+
+.fortuneBarRow {
+  display: grid;
+  grid-template-columns: 36px 1fr 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+.fortuneBarLabel {
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.fortuneBarTrack {
+  height: 8px;
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.fortuneBarFill {
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.6);
+  transition: width 0.2s ease;
+}
+
+.fortuneBarFillCareer {
+  background: #f4a150;
+}
+
+.fortuneBarFillLove {
+  background: #f4a6c0;
+}
+
+.fortuneBarFillWealth {
+  background: #5ac8e8;
+}
+
+.fortuneBarValue {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.omensCard {
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  display: grid;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.omenLine {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.omenTagGood,
+.omenTagBad {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.omenTagGood {
+  background: rgba(95, 170, 90, 0.18);
+  color: #2f6b2c;
+  border: 1px solid rgba(95, 170, 90, 0.4);
+}
+
+.omenTagBad {
+  background: rgba(207, 89, 89, 0.16);
+  color: #9b3535;
+  border: 1px solid rgba(207, 89, 89, 0.36);
+}
+
+.luckyCard {
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  display: grid;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.luckyLine {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.luckySwatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin: 0 6px 0 2px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+
 .section {
   border-radius: 14px;
   padding: 12px 14px;

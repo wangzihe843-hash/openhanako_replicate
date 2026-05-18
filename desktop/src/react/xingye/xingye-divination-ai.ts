@@ -19,6 +19,14 @@ export type DivinationReadingResult = {
   title: string;
   agentQuestion: string;
   content: string;
+  /**
+   * 运势评分（综合 + 三分项），0-100 整数。模型未返回或返回非法值 → undefined，
+   * 渲染端按"无运势"处理，不显示评分/宜忌/幸运区。
+   */
+  fortuneScore?: { overall: number; career: number; love: number; wealth: number };
+  omens?: { good: string; bad: string };
+  luckyDirection?: string;
+  luckyColor?: string;
 };
 
 function formatRelationshipBlock(agentId: string): string {
@@ -45,6 +53,36 @@ function clampLine(value: string, maxChars: number): string {
   return `${t.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
+function coerceScoreInt(value: unknown): number | null {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Math.round(Math.max(0, Math.min(100, num)));
+}
+
+/**
+ * 解析 fortuneScore：四项必须全有且都能 coerce 到 [0,100]。任一缺失/非法 → undefined（不带分数）。
+ * "全或无"语义匹配 entry-store 的写入要求。
+ */
+function parseFortuneScore(raw: unknown): DivinationReadingResult['fortuneScore'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const overall = coerceScoreInt(r.overall);
+  const career = coerceScoreInt(r.career);
+  const love = coerceScoreInt(r.love);
+  const wealth = coerceScoreInt(r.wealth);
+  if (overall === null || career === null || love === null || wealth === null) return undefined;
+  return { overall, career, love, wealth };
+}
+
+function parseOmens(raw: unknown): DivinationReadingResult['omens'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const good = typeof r.good === 'string' ? clampLine(r.good, 30) : '';
+  const bad = typeof r.bad === 'string' ? clampLine(r.bad, 30) : '';
+  if (!good || !bad) return undefined;
+  return { good, bad };
+}
+
 export function normalizeDivinationReadingResult(raw: unknown): DivinationReadingResult | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
@@ -62,7 +100,16 @@ export function normalizeDivinationReadingResult(raw: unknown): DivinationReadin
   const titleRaw = typeof record.title === 'string' ? record.title : '';
   const title = clampLine(titleRaw, 80) || agentQuestion.slice(0, 48);
 
-  return { title, agentQuestion, content };
+  const result: DivinationReadingResult = { title, agentQuestion, content };
+  const fortuneScore = parseFortuneScore(record.fortuneScore);
+  if (fortuneScore) result.fortuneScore = fortuneScore;
+  const omens = parseOmens(record.omens);
+  if (omens) result.omens = omens;
+  const luckyDirection = typeof record.luckyDirection === 'string' ? clampLine(record.luckyDirection, 20) : '';
+  if (luckyDirection) result.luckyDirection = luckyDirection;
+  const luckyColor = typeof record.luckyColor === 'string' ? clampLine(record.luckyColor, 24) : '';
+  if (luckyColor) result.luckyColor = luckyColor;
+  return result;
 }
 
 export type GenerateDivinationReadingArgs = {
@@ -74,6 +121,11 @@ export type GenerateDivinationReadingArgs = {
   userProvidedTheme?: string;
   resolverReason?: string;
   timeoutMs?: number;
+  /**
+   * 「正式加工」路径用：把心象草稿作为种子注入 prompt（见
+   * xingye-divination-prompts.ts 的 seedNarrative 块）。普通正式占卜不传。
+   */
+  seedNarrative?: { agentQuestion?: string; content?: string };
 };
 
 /**
@@ -83,7 +135,7 @@ export type GenerateDivinationReadingArgs = {
 export async function generateDivinationReadingWithAI(
   args: GenerateDivinationReadingArgs,
 ): Promise<DivinationReadingResult> {
-  const { agent, methodId, methodLabel, symbols, agentLike, userProvidedTheme, resolverReason } = args;
+  const { agent, methodId, methodLabel, symbols, agentLike, userProvidedTheme, resolverReason, seedNarrative } = args;
   const timeoutMs = args.timeoutMs ?? 90_000;
 
   const userName = await resolveXingyeSpeakerUserName();
@@ -105,6 +157,7 @@ export async function generateDivinationReadingWithAI(
     recentSceneBlock,
     relationshipBlock,
     heartbeatBlock,
+    seedNarrative,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

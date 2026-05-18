@@ -64,6 +64,20 @@ export type XingyeAppEntryStoreOptions = {
 /** Divination JSONL lives at `apps/divination/entries.jsonl` under each agent's `xingye/` directory. */
 export const XINGYE_DIVINATION_APP_ID = 'divination' as const satisfies XingyeAppEntryAppId;
 
+/** 综合 + 三分项的运势评分，全部 0-100 整数。 */
+export type DivinationFortuneScore = {
+  overall: number;
+  career: number;
+  love: number;
+  wealth: number;
+};
+
+/** 宜 / 忌（占法分化文案见 xingye-divination-themes.ts）。 */
+export type DivinationOmens = {
+  good: string;
+  bad: string;
+};
+
 export type DivinationEntryMetadata = {
   method: string;
   methodLabel: string;
@@ -82,6 +96,17 @@ export type DivinationEntryMetadata = {
   symbols: unknown[];
   autoSelected: boolean;
   resolverReason: string;
+  /**
+   * 运势评分。仅正式占卜（AI 生成）会带；心象草稿「原样保存」路径下缺省。
+   * 渲染端：缺省 → 整个分数 + 宜忌 + 幸运区都不显示。
+   */
+  fortuneScore?: DivinationFortuneScore;
+  /** 宜 / 忌；与 fortuneScore 同步出现/缺省。 */
+  omens?: DivinationOmens;
+  /** 幸运方位（field_oracle 走「朝向」语义，仍存这里）。 */
+  luckyDirection?: string;
+  /** 幸运色，可以是 CSS 颜色字符串（#xxx / rgb / 颜色名）或纯文本描述。 */
+  luckyColor?: string;
 };
 
 export type DivinationEntry = Omit<AppEntry, 'appId' | 'metadata'> & {
@@ -270,6 +295,44 @@ export type XingyeAppEntryStoreApi = Pick<
   'listEntries' | 'appendEntry' | 'deleteEntry'
 >;
 
+function clampFortuneScore(value: unknown): number | null {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return null;
+  const clamped = Math.round(Math.max(0, Math.min(100, num)));
+  return clamped;
+}
+
+/**
+ * 解析运势评分。要求四个字段全有且都在 [0, 100]；任一缺失/越界（NaN/字符串/null）→ 整个 fortuneScore 视为缺失。
+ * 严格的"全或无"避免在 UI 上出现"只有部分分数"的半残卡片。
+ */
+function normalizeFortuneScore(value: unknown): DivinationFortuneScore | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const overall = clampFortuneScore(raw.overall);
+  const career = clampFortuneScore(raw.career);
+  const love = clampFortuneScore(raw.love);
+  const wealth = clampFortuneScore(raw.wealth);
+  if (overall === null || career === null || love === null || wealth === null) return undefined;
+  return { overall, career, love, wealth };
+}
+
+function normalizeOmens(value: unknown): DivinationOmens | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const good = typeof raw.good === 'string' ? raw.good.trim().slice(0, 60) : '';
+  const bad = typeof raw.bad === 'string' ? raw.bad.trim().slice(0, 60) : '';
+  if (!good || !bad) return undefined;
+  return { good, bad };
+}
+
+function normalizeTrimmedString(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, max);
+}
+
 function normalizeDivinationMetadata(meta: Record<string, unknown>): DivinationEntryMetadata {
   const symbols = meta.symbols;
   const rawQ = typeof meta.question === 'string' ? meta.question : '';
@@ -295,6 +358,14 @@ function normalizeDivinationMetadata(meta: Record<string, unknown>): DivinationE
   if (typeof meta.contextSummary === 'string' && meta.contextSummary.trim()) {
     out.contextSummary = meta.contextSummary.trim();
   }
+  const fortuneScore = normalizeFortuneScore(meta.fortuneScore);
+  if (fortuneScore) out.fortuneScore = fortuneScore;
+  const omens = normalizeOmens(meta.omens);
+  if (omens) out.omens = omens;
+  const luckyDirection = normalizeTrimmedString(meta.luckyDirection, 40);
+  if (luckyDirection) out.luckyDirection = luckyDirection;
+  const luckyColor = normalizeTrimmedString(meta.luckyColor, 40);
+  if (luckyColor) out.luckyColor = luckyColor;
   return out;
 }
 
@@ -319,6 +390,14 @@ function mergeDivinationMetadata(partial?: Partial<DivinationEntryMetadata>): Di
   if (th) out.themeHint = th;
   const cs = partial?.contextSummary?.trim();
   if (cs) out.contextSummary = cs;
+  const fortuneScore = normalizeFortuneScore(partial?.fortuneScore);
+  if (fortuneScore) out.fortuneScore = fortuneScore;
+  const omens = normalizeOmens(partial?.omens);
+  if (omens) out.omens = omens;
+  const luckyDirection = normalizeTrimmedString(partial?.luckyDirection, 40);
+  if (luckyDirection) out.luckyDirection = luckyDirection;
+  const luckyColor = normalizeTrimmedString(partial?.luckyColor, 40);
+  if (luckyColor) out.luckyColor = luckyColor;
   return out;
 }
 

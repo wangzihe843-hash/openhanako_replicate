@@ -124,6 +124,8 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
     Record<string, { agentQuestion: string; content: string; themeHint: string }>
   >({});
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  /** 区分"原样保存"和"正式加工"两条 confirm 路径，仅用于按钮 spinner 文案。 */
+  const [draftBusyKind, setDraftBusyKind] = useState<'raw' | 'polish' | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -270,9 +272,14 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
     });
   };
 
-  const handleConfirmDraft = async (d: XingyePendingDivinationDraft) => {
+  /**
+   * 原样保存：把草稿按心象语义直接落 entry（method='oracle_generic'、symbols=[]、
+   * **不带 fortuneScore** 等运势字段）。详情页就不会显示运势/宜忌/幸运区。
+   */
+  const handleConfirmDraftRaw = async (d: XingyePendingDivinationDraft) => {
     if (!ownerAgentId) return;
     setDraftBusyId(d.id);
+    setDraftBusyKind('raw');
     setDraftError(null);
     try {
       const working = draftWorkingValue(d);
@@ -292,6 +299,75 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
       setDraftError(err instanceof Error ? err.message : String(err));
     } finally {
       setDraftBusyId(null);
+      setDraftBusyKind(null);
+    }
+  };
+
+  /**
+   * 正式加工：用草稿做 seed 调一次 generateDivinationReadingWithAI，拿回结构化 reading
+   * （带四段 content + 运势评分 + 宜忌 + 幸运方位/色），然后用加工产物覆盖草稿落 entry。
+   *
+   *  - 占法：用上方 generation card 当前所选 (generationMethodId)，确保用户可以在 polish
+   *    前换占法。
+   *  - 符号：和正式占卜一样调 pickRandomSymbols(5)；symbols 写进 metadata，UI 才会显示。
+   *  - agentQuestion / content / title 用 AI 产物，不是草稿原文（草稿口吻已通过
+   *    seedNarrative 注入 prompt 保留）。
+   *  - 运势字段任一缺失 → drafts.ts 那边按"全或无"语义不写入，详情页就不显示运势区。
+   *
+   * 任何一步失败：草稿保留，错误抛到 UI，用户可改回「原样保存」或重试 polish。
+   */
+  const handleConfirmDraftPolish = async (d: XingyePendingDivinationDraft) => {
+    if (!ownerAgentId || !ownerAgent || !ctxAgentLike) return;
+    setDraftBusyId(d.id);
+    setDraftBusyKind('polish');
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(d);
+      if (!working.agentQuestion.trim() || !working.content.trim()) {
+        throw new Error('心象草稿的提问或正文为空，无法加工。');
+      }
+      const symbols = pickRandomSymbols(5);
+      const effectiveMethodId = generationMethodId;
+      const methodLabel = getDivinationMethodLabel(effectiveMethodId);
+      const reading = await generateDivinationReadingWithAI({
+        agent: ownerAgent,
+        methodId: effectiveMethodId,
+        methodLabel,
+        symbols,
+        agentLike: ctxAgentLike,
+        userProvidedTheme: working.themeHint.trim() || undefined,
+        resolverReason: recommendation.resolverReason,
+        seedNarrative: {
+          agentQuestion: working.agentQuestion,
+          content: working.content,
+        },
+      });
+      const fallbackTitle = titleForDivinationEntry(effectiveMethodId, reading.agentQuestion);
+      await confirmDivinationDraft(ownerAgentId, d.id, {
+        agentQuestion: reading.agentQuestion,
+        content: reading.content,
+        themeHint: working.themeHint.trim() ? working.themeHint : null,
+        title: reading.title || fallbackTitle,
+        method: effectiveMethodId,
+        methodLabel,
+        symbols,
+        autoSelected: effectiveMethodId === recommendation.method,
+        fortuneScore: reading.fortuneScore,
+        omens: reading.omens,
+        luckyDirection: reading.luckyDirection,
+        luckyColor: reading.luckyColor,
+      });
+      await reloadEntries();
+      setDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+      setDraftBusyKind(null);
     }
   };
 
@@ -372,6 +448,10 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
           autoSelected: effectiveMethodId === recommendation.method,
           resolverReason: recommendation.resolverReason,
           contextSummary,
+          fortuneScore: reading.fortuneScore,
+          omens: reading.omens,
+          luckyDirection: reading.luckyDirection,
+          luckyColor: reading.luckyColor,
         },
       });
       setEntries((prev) => [row, ...prev.filter((p) => p.id !== row.id)]);
@@ -527,8 +607,8 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
               >
                 <p className={styles.phoneAppHint}>
                   待确认草稿 · 来自心跳巡检（心象提示）。这是 TA 在巡检里写下的直觉读出——
-                  **不是正式占卜**，没有抽符、没有出卦。点「确认生成」后会和正式占卜并列出现在
-                  下方历史记录里（卡片会标为「心象提示」）；离开页面再回来不会丢草稿。
+                  **不是正式占卜**，没有抽符、没有出卦。两种处理方式：「原样保存」直接落档（不带运势评分）；
+                  「正式加工」让 TA 用上方所选占法把这段心象扩成完整占卜（带运势/宜忌/幸运方位等）。
                 </p>
                 {draftError ? (
                   <p className={styles.phoneAppHint} role="alert">{draftError}</p>
@@ -584,11 +664,22 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                         <button
                           type="button"
                           className={styles.phoneJournalPrimaryButton}
-                          onClick={() => void handleConfirmDraft(d)}
+                          onClick={() => void handleConfirmDraftRaw(d)}
                           disabled={busy}
                           data-testid={`phone-divination-draft-confirm-${d.id}`}
+                          title="直接把这段心象落进占卜历史，不带运势评分。"
                         >
-                          {busy ? '处理中…' : '确认生成'}
+                          {busy && draftBusyKind === 'raw' ? '处理中…' : '原样保存'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmDraftPolish(d)}
+                          disabled={busy || ctxBusy || !ctxAgentLike}
+                          data-testid={`phone-divination-draft-polish-${d.id}`}
+                          title="让 TA 用上方所选占法把这段心象扩成完整占卜（带运势/宜忌/幸运方位等）。"
+                        >
+                          {busy && draftBusyKind === 'polish' ? '正式加工中…' : '正式加工'}
                         </button>
                         <button
                           type="button"
@@ -690,6 +781,83 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                   <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem' }}>
                     记录中的可选关注方向：「{userTh}」（不等同于占问主体）
                   </p>
+                ) : null}
+                {selected.metadata.fortuneScore ? (
+                  <section
+                    className={divStyles.fortuneCard}
+                    data-divination-section="fortune"
+                    data-testid="phone-divination-fortune"
+                  >
+                    <div
+                      className={divStyles.fortuneOverall}
+                      style={{ ['--fortune-overall' as string]: String(selected.metadata.fortuneScore.overall) }}
+                    >
+                      <span aria-hidden="true" className={divStyles.fortuneOverallDial} />
+                      <span className={divStyles.fortuneOverallValue}>{selected.metadata.fortuneScore.overall}</span>
+                      <span className={divStyles.fortuneOverallLabel}>{detailTheme.fortuneLabels.overall}</span>
+                    </div>
+                    <div className={divStyles.fortuneBars}>
+                      {([
+                        ['career', detailTheme.fortuneLabels.career, divStyles.fortuneBarFillCareer],
+                        ['love', detailTheme.fortuneLabels.love, divStyles.fortuneBarFillLove],
+                        ['wealth', detailTheme.fortuneLabels.wealth, divStyles.fortuneBarFillWealth],
+                      ] as const).map(([key, label, fillClass]) => {
+                        const value = selected.metadata.fortuneScore![key];
+                        return (
+                          <div key={key} className={divStyles.fortuneBarRow} data-fortune-key={key}>
+                            <span className={divStyles.fortuneBarLabel}>{label}</span>
+                            <div className={divStyles.fortuneBarTrack}>
+                              <div
+                                className={`${divStyles.fortuneBarFill} ${fillClass ?? ''}`.trim()}
+                                style={{ width: `${value}%` }}
+                              />
+                            </div>
+                            <span className={divStyles.fortuneBarValue}>{value}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+                {selected.metadata.omens ? (
+                  <section
+                    className={divStyles.omensCard}
+                    data-divination-section="omens"
+                    data-testid="phone-divination-omens"
+                  >
+                    <p className={divStyles.omenLine}>
+                      <span className={divStyles.omenTagGood}>{detailTheme.omenLabels.good}</span>
+                      {selected.metadata.omens.good}
+                    </p>
+                    <p className={divStyles.omenLine}>
+                      <span className={divStyles.omenTagBad}>{detailTheme.omenLabels.bad}</span>
+                      {selected.metadata.omens.bad}
+                    </p>
+                  </section>
+                ) : null}
+                {(selected.metadata.luckyDirection || selected.metadata.luckyColor) ? (
+                  <section
+                    className={divStyles.luckyCard}
+                    data-divination-section="lucky"
+                    data-testid="phone-divination-lucky"
+                  >
+                    {selected.metadata.luckyDirection ? (
+                      <p className={divStyles.luckyLine}>
+                        {detailTheme.luckyDirectionLabel}：{selected.metadata.luckyDirection}
+                      </p>
+                    ) : null}
+                    {selected.metadata.luckyColor ? (
+                      <p className={divStyles.luckyLine}>
+                        {detailTheme.luckyColorLabel}：
+                        <span
+                          aria-hidden="true"
+                          className={divStyles.luckySwatch}
+                          style={{ backgroundColor: selected.metadata.luckyColor }}
+                        />
+                        {selected.metadata.luckyColor}
+                      </p>
+                    ) : null}
+                  </section>
                 ) : null}
                 {symbols.length > 0 ? (
                   <p

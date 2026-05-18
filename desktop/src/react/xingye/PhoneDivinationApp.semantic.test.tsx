@@ -192,6 +192,84 @@ describe('PhoneDivinationApp — agent-owned divination semantics (AI route)', (
     expect(payload.metadata.agentQuestion).toBe(AI_READING.agentQuestion);
   });
 
+  it('renders fortune / omens / lucky cards when AI returns those fields', async () => {
+    generateReadingMock.mockResolvedValueOnce({
+      ...AI_READING,
+      fortuneScore: { overall: 73, career: 77, love: 82, wealth: 62 },
+      omens: { good: '靠近自己确认过的事', bad: '在路口反复折返' },
+      luckyDirection: '东南',
+      luckyColor: '#7AA2C8',
+    });
+    appendDivinationEntryMock.mockImplementationOnce(async (agentId, input) => ({
+      id: 'new-entry-with-fortune',
+      agentId,
+      appId: 'divination',
+      title: input.title,
+      content: input.content,
+      metadata: {
+        method: input.metadata?.method ?? '',
+        methodLabel: input.metadata?.methodLabel ?? '',
+        question: input.metadata?.question ?? '',
+        agentQuestion: input.metadata?.agentQuestion ?? '',
+        symbols: input.metadata?.symbols ?? [],
+        autoSelected: Boolean(input.metadata?.autoSelected),
+        resolverReason: input.metadata?.resolverReason ?? '',
+        fortuneScore: input.metadata?.fortuneScore,
+        omens: input.metadata?.omens,
+        luckyDirection: input.metadata?.luckyDirection,
+        luckyColor: input.metadata?.luckyColor,
+      },
+      source: 'divination',
+      createdAt: '2026-05-14T10:00:00.000Z',
+      updatedAt: '2026-05-14T10:00:00.000Z',
+    }));
+
+    render(
+      <PhoneDivinationApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(generateButton()).not.toBeDisabled();
+    });
+    fireEvent.click(generateButton());
+
+    const fortune = await screen.findByTestId('phone-divination-fortune');
+    expect(fortune.textContent).toMatch(/73/);
+    expect(fortune.textContent).toMatch(/77/);
+    expect(fortune.textContent).toMatch(/82/);
+    expect(fortune.textContent).toMatch(/62/);
+
+    const omens = screen.getByTestId('phone-divination-omens');
+    expect(omens.textContent).toContain('靠近自己确认过的事');
+    expect(omens.textContent).toContain('在路口反复折返');
+
+    const lucky = screen.getByTestId('phone-divination-lucky');
+    expect(lucky.textContent).toContain('东南');
+    expect(lucky.textContent).toContain('#7AA2C8');
+
+    /** appendDivinationEntry payload 也应携带新字段。 */
+    const payload = appendDivinationEntryMock.mock.calls[0]![1] as { metadata: Record<string, unknown> };
+    expect(payload.metadata.fortuneScore).toEqual({ overall: 73, career: 77, love: 82, wealth: 62 });
+    expect(payload.metadata.omens).toEqual({ good: '靠近自己确认过的事', bad: '在路口反复折返' });
+    expect(payload.metadata.luckyDirection).toBe('东南');
+    expect(payload.metadata.luckyColor).toBe('#7AA2C8');
+  });
+
+  it('does NOT render fortune/omens/lucky cards when entry lacks those fields (back-compat for old entries)', async () => {
+    render(
+      <PhoneDivinationApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(generateButton()).not.toBeDisabled();
+    });
+    fireEvent.click(generateButton());
+    await waitFor(() => {
+      expect(screen.getByTestId('phone-divination-sections')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('phone-divination-fortune')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('phone-divination-omens')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('phone-divination-lucky')).not.toBeInTheDocument();
+  });
+
   it('surfaces AI errors in the UI without crashing', async () => {
     generateReadingMock.mockRejectedValueOnce(new Error('占卜生成失败：utility boom'));
     render(
