@@ -17,8 +17,10 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import {
   appendAppEntry,
+  listAppEntries,
   type AppEntry,
 } from './xingye-app-entry-store';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -283,10 +285,22 @@ export async function discardShoppingDraft(agentId: string, draftId: string): Pr
   return deleted;
 }
 
+/** Confirmed-from-draft entry 用确定性 id：让 confirm retry 走幂等查重路径。 */
+function shoppingEntryIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用：先通过 appendAppEntry('shopping', ...)
- * 写入 entries（自动发 shopping.entry_appended），再从 drafts 删掉，最后发
- * shopping.draft_confirmed。entries 写入失败时保留 draft 不重复写。
+ * 用户在「待确认草稿」区点「确认生成」时调用：
+ *   1. entry id 用 `from-draft-${draftId}`；先 listAppEntries('shopping') 查重，
+ *      发现已有同 id 的 entry（说明上一次 confirm 写完 entry 但 delete draft 失败）
+ *      → 复用现有 entry，跳过 appendAppEntry；
+ *   2. 否则 appendAppEntry('shopping', ...) 写入 entries（自动发
+ *      shopping.entry_appended），传 `id` 选项作为确定性 id；
+ *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
+ *   4. 发 shopping.draft_confirmed。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmShoppingDraft(
   agentId: string,
@@ -305,64 +319,80 @@ export async function confirmShoppingDraft(
   const aid = assertAgentId(agentId, '确认购物草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listShoppingDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  return withDraftConfirmLock(`shopping::${aid}::${did}`, async () => {
+    const expectedEntryId = shoppingEntryIdFromDraftId(did);
+    const existingEntry = (await listAppEntries(aid, 'shopping')).find((e) => e.id === expectedEntryId);
 
-  const resolveOptional = (
-    key: 'category' | 'imaginedPrice' | 'content' | 'reason',
-    max: number,
-  ): string | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
-      const v = edits[key];
-      if (v === null) return undefined;
-      if (typeof v === 'string') return normalizeOptionalText(v, max);
+    const draft = (await listShoppingDrafts(aid)).find((d) => d.id === did);
+    if (!draft && !existingEntry) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft[key];
-  };
-  const resolveTags = (): string[] | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
-      if (edits.tags === null) return undefined;
-      return normalizeTags(edits.tags);
+
+    let entry: AppEntry;
+    if (existingEntry) {
+      entry = existingEntry;
+    } else if (draft) {
+      const resolveOptional = (
+        key: 'category' | 'imaginedPrice' | 'content' | 'reason',
+        max: number,
+      ): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
+          const v = edits[key];
+          if (v === null) return undefined;
+          if (typeof v === 'string') return normalizeOptionalText(v, max);
+        }
+        return draft[key];
+      };
+      const resolveTags = (): string[] | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
+          if (edits.tags === null) return undefined;
+          return normalizeTags(edits.tags);
+        }
+        return draft.tags;
+      };
+
+      const itemName = ((edits?.itemName ?? draft.itemName) || '').trim().slice(0, 80);
+      if (!itemName) throw new Error('确认草稿失败：物品名不能为空。');
+      const status = normalizeStatus(edits?.status ?? draft.status);
+      const platformStyle = normalizePlatformStyle(edits?.platformStyle ?? draft.platformStyle);
+      const category = resolveOptional('category', 24);
+      const imaginedPrice = resolveOptional('imaginedPrice', 40);
+      const reason = resolveOptional('reason', 500);
+      const content = resolveOptional('content', 2000) ?? '';
+      const tags = resolveTags();
+
+      const metadata: Record<string, unknown> = {
+        status,
+        platformStyle,
+        itemName,
+      };
+      if (category) metadata.category = category;
+      if (imaginedPrice) metadata.imaginedPrice = imaginedPrice;
+      if (reason) metadata.reason = reason;
+      if (tags && tags.length > 0) metadata.tags = tags;
+
+      entry = await appendAppEntry(aid, 'shopping', {
+        id: expectedEntryId,
+        title: itemName,
+        content,
+        metadata,
+        source: 'xingye-heartbeat-confirmed',
+      });
+    } else {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft.tags;
-  };
 
-  const itemName = ((edits?.itemName ?? draft.itemName) || '').trim().slice(0, 80);
-  if (!itemName) throw new Error('确认草稿失败：物品名不能为空。');
-  const status = normalizeStatus(edits?.status ?? draft.status);
-  const platformStyle = normalizePlatformStyle(edits?.platformStyle ?? draft.platformStyle);
-  const category = resolveOptional('category', 24);
-  const imaginedPrice = resolveOptional('imaginedPrice', 40);
-  const reason = resolveOptional('reason', 500);
-  const content = resolveOptional('content', 2000) ?? '';
-  const tags = resolveTags();
-
-  const metadata: Record<string, unknown> = {
-    status,
-    platformStyle,
-    itemName,
-  };
-  if (category) metadata.category = category;
-  if (imaginedPrice) metadata.imaginedPrice = imaginedPrice;
-  if (reason) metadata.reason = reason;
-  if (tags && tags.length > 0) metadata.tags = tags;
-
-  const entry = await appendAppEntry(aid, 'shopping', {
-    title: itemName,
-    content,
-    metadata,
-    source: 'xingye-heartbeat-confirmed',
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_SHOPPING_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-shopping-drafts] confirm draft: failed to delete draft after entry append:', error);
+    }
+    await appendShoppingDraftEventBestEffort(aid, {
+      type: 'shopping.draft_confirmed',
+      source: 'xingye-shopping-drafts',
+      subjectId: did,
+      payload: { draftId: did, entryId: entry.id, itemName: entry.title },
+    });
+    return entry;
   });
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_SHOPPING_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-shopping-drafts] confirm draft: failed to delete draft after entry append:', error);
-  }
-  await appendShoppingDraftEventBestEffort(aid, {
-    type: 'shopping.draft_confirmed',
-    source: 'xingye-shopping-drafts',
-    subjectId: did,
-    payload: { draftId: did, entryId: entry.id, itemName },
-  });
-  return entry;
 }

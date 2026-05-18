@@ -10,6 +10,7 @@ import {
   requireSafeXingyeAgentId,
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 async function appendMomentEventBestEffort(
   agentId: string,
@@ -257,6 +258,11 @@ export type CreateXingyeMomentPostInput = {
    */
   seedLikes?: ReadonlyArray<XingyeMomentSeedLike>;
   seedComments?: ReadonlyArray<XingyeMomentSeedComment>;
+  /**
+   * 心跳 confirm 流程会传 `from-draft-${draft.id}` 走幂等路径（见 confirmMomentDraft 注释）。
+   * 手动发布时不传，沿用 idFactory('moment')。
+   */
+  id?: string;
 };
 
 export function createXingyeMomentStore(
@@ -338,7 +344,7 @@ export function createXingyeMomentStore(
         .filter((comment): comment is XingyeMomentComment => Boolean(comment));
 
       const post: XingyeMomentPost = {
-        id: idFactory('moment'),
+        id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : idFactory('moment'),
         authorAgentId: aid,
         authorName,
         content: normalizedContent,
@@ -658,16 +664,28 @@ export async function discardMomentDraft(agentId: string, draftId: string): Prom
   return deleted;
 }
 
+/** Confirmed-from-draft post 用确定性 id：让 confirm retry 走幂等查重路径。 */
+function momentPostIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 用户在「待确认草稿」区点「确认生成」/「确认并生成互动」时调用：通过
- * createXingyeMomentPost 把 draft.content 写成 post（自动发 moment.created），
- * 再从 drafts 删掉，最后发 draft_confirmed。post 写入失败时保留 draft 不重复写。
+ * 用户在「待确认草稿」区点「确认生成」/「确认并生成互动」时调用：
+ *   1. post id 用 `from-draft-${draftId}`；先 listXingyeMomentPosts 查重，发现
+ *      已有同 id 的 post（说明上一次 confirm 写完 post 但 delete draft 失败）
+ *      → 复用，跳过 createXingyeMomentPost；
+ *   2. 否则 createXingyeMomentPost 写入 posts.jsonl（发 moment.created）；
+ *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
+ *   4. 发 draft_confirmed。
  *
  * opts:
  *  - content：用户在 UI 行内编辑后的最终正文（缺省 → 用 draft.content）
  *  - seedLikes / seedComments：可选，用于「确认并 AI 生成互动」流程——调用方先
  *    跑一次 generateXingyeMomentDraftWithAI({ existingContent }) 拿到 seeds，
  *    再连同 content 一起传进来。本函数不做 AI 调用，纯落盘。
+ *    NOTE：retry 命中已有 post 时，seeds 仅初次写入有效——不会重放到现有 post。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmMomentDraft(
   agentId: string,
@@ -685,31 +703,46 @@ export async function confirmMomentDraft(
     throw new Error('确认草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
   }
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listMomentDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  return withDraftConfirmLock(`moments::${aid}::${did}`, async () => {
+    const expectedPostId = momentPostIdFromDraftId(did);
+    const existingPost = (await listXingyeMomentPosts(aid)).find((p) => p.id === expectedPostId);
 
-  const content = (opts?.content ?? draft.content).trim();
-  if (!content) throw new Error('确认草稿失败：正文不能为空。');
+    const draft = (await listMomentDrafts(aid)).find((d) => d.id === did);
+    if (!draft && !existingPost) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
 
-  const post = await createXingyeMomentPost({
-    authorAgentId: aid,
-    authorName: aid,
-    content,
-    seedLikes: opts?.seedLikes,
-    seedComments: opts?.seedComments,
-    source: { kind: 'candidate' },
+    let post: XingyeMomentPost | null;
+    if (existingPost) {
+      post = existingPost;
+    } else if (draft) {
+      const content = (opts?.content ?? draft.content).trim();
+      if (!content) throw new Error('确认草稿失败：正文不能为空。');
+      post = await createXingyeMomentPost({
+        id: expectedPostId,
+        authorAgentId: aid,
+        authorName: aid,
+        content,
+        seedLikes: opts?.seedLikes,
+        seedComments: opts?.seedComments,
+        source: { kind: 'candidate' },
+      });
+      if (!post) throw new Error('确认草稿失败：写入朋友圈失败。');
+    } else {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    try {
+      await draftsBackend.deleteJsonlRecord(aid, XINGYE_MOMENT_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-moments-store] confirm draft: failed to delete draft after post create:', error);
+    }
+    await appendMomentEventBestEffort(aid, {
+      type: 'moment.draft_confirmed',
+      source: 'xingye-moments-store',
+      subjectId: did,
+      payload: { draftId: did, postId: post.id },
+    });
+    return post;
   });
-  if (!post) throw new Error('确认草稿失败：写入朋友圈失败。');
-  try {
-    await draftsBackend.deleteJsonlRecord(aid, XINGYE_MOMENT_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-moments-store] confirm draft: failed to delete draft after post create:', error);
-  }
-  await appendMomentEventBestEffort(aid, {
-    type: 'moment.draft_confirmed',
-    source: 'xingye-moments-store',
-    subjectId: did,
-    payload: { draftId: did, postId: post.id },
-  });
-  return post;
 }

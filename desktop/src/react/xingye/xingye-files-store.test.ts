@@ -12,16 +12,19 @@ vi.mock('./xingye-storage-api', () => ({
 
 import {
   appendFileEntry,
+  confirmFileDraft,
   deleteFileEntry,
   ensureDefaultFileFolders,
   listFileEntries,
   listFileEntriesByFolder,
   listFileFolders,
   updateFileEntry,
+  XINGYE_FILES_DRAFTS_JSONL,
   XINGYE_FILES_ENTRIES_JSONL,
   XINGYE_FILES_FOLDERS_JSON,
   DEFAULT_FILE_FOLDER_BLUEPRINTS,
 } from './xingye-files-store';
+import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
 type Call = { action: string; agentId?: string; relativePath?: string; data?: unknown; recordId?: string };
 
@@ -35,6 +38,7 @@ function lastCall(action: string): Call {
 describe('xingye-files-store', () => {
   beforeEach(() => {
     postMock.mockReset();
+    __resetDraftConfirmLockForTests();
   });
 
   it('listFileFolders returns normalized folders sorted by order', async () => {
@@ -139,6 +143,21 @@ describe('xingye-files-store', () => {
     expect(postMock).not.toHaveBeenCalled();
   });
 
+  it('appendFileEntry honors caller-supplied id (used by confirm flow)', async () => {
+    postMock.mockResolvedValue({ ok: true });
+    const row = await appendFileEntry(
+      'agent-x',
+      { folderId: 'fold-1', title: 'hi', body: 'body', source: 'manual' },
+      { id: 'from-draft-xyz' },
+    );
+    expect(row.id).toBe('from-draft-xyz');
+    expect(row.key).toBe('from-draft-xyz');
+    const append = lastCall('appendJsonl');
+    const data = append.data as { id: string; key: string };
+    expect(data.id).toBe('from-draft-xyz');
+    expect(data.key).toBe('from-draft-xyz');
+  });
+
   it('listFileEntries returns normalized rows sorted by updatedAt desc', async () => {
     postMock.mockResolvedValueOnce({
       ok: true,
@@ -212,6 +231,98 @@ describe('xingye-files-store', () => {
     expect(data.id).toBe('e1');
     expect(data.key).toBe('e1');
     expect(data.title).toBe('新标题');
+  });
+
+  describe('confirmFileDraft idempotency', () => {
+    /**
+     * Shared mock setup: ensureDefaultFileFolders + folder hint resolution requires
+     * folders.json with at least one folder. We seed via readJson + writeJson responses.
+     */
+    const SEEDED_FOLDER = {
+      id: 'pending-folder',
+      agentId: 'agent-x',
+      name: '待确认',
+      order: 0,
+      createdAt: '2026-05-15T10:00:00.000Z',
+      updatedAt: '2026-05-15T10:00:00.000Z',
+    };
+
+    it(
+      'reuses an existing entry on retry when the prior delete-draft failed (no duplicate append)',
+      async () => {
+        const draftRow = {
+          id: 'd-orphan',
+          title: 'kept title',
+          body: 'kept body',
+          folderHint: '待确认',
+          createdAt: '2026-05-17T12:00:00.000Z',
+          source: 'xingye-heartbeat-tool',
+        };
+        const existingEntry = {
+          id: 'from-draft-d-orphan',
+          key: 'from-draft-d-orphan',
+          agentId: 'agent-x',
+          folderId: SEEDED_FOLDER.id,
+          title: 'previous title',
+          body: 'previous body',
+          createdAt: '2026-05-17T12:00:00.000Z',
+          updatedAt: '2026-05-17T12:00:00.000Z',
+          source: 'xingye-heartbeat-confirmed',
+        };
+        postMock
+          // listFileEntries → existing entry from prior partial confirm
+          .mockResolvedValueOnce({ ok: true, records: [existingEntry] })
+          // listFileDrafts → orphan draft still present
+          .mockResolvedValueOnce({ ok: true, records: [draftRow] })
+          // everything else (delete + event log writes) succeeds
+          .mockResolvedValue({ ok: true, deleted: true, records: [] });
+
+        const entry = await confirmFileDraft('agent-x', 'd-orphan');
+        expect(entry.id).toBe('from-draft-d-orphan');
+        expect(entry.body).toBe('previous body');
+
+        const calls = postMock.mock.calls.map((c) => c[0] as Call);
+        const entryAppends = calls.filter(
+          (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL,
+        );
+        expect(entryAppends.length).toBe(0);
+        const draftDeletes = calls.filter(
+          (c) => c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_FILES_DRAFTS_JSONL,
+        );
+        expect(draftDeletes.length).toBe(1);
+      },
+    );
+
+    it('two concurrent confirmFileDraft calls for same draft share one append', async () => {
+      const draftRow = {
+        id: 'd-dbl',
+        title: 'double click',
+        body: 'body',
+        folderHint: '待确认',
+        createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [] }) // listFileEntries
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] }) // listFileDrafts
+        // readJson for folders (ensureDefaultFileFolders) — return seeded
+        .mockResolvedValueOnce({ ok: true, data: { folders: [SEEDED_FOLDER] } })
+        // remaining: appendJsonl entries, deleteJsonlRecord, events
+        .mockResolvedValue({ ok: true, deleted: true, records: [] });
+
+      const [a, b] = await Promise.all([
+        confirmFileDraft('agent-x', 'd-dbl'),
+        confirmFileDraft('agent-x', 'd-dbl'),
+      ]);
+      expect(a.id).toBe('from-draft-d-dbl');
+      expect(b.id).toBe('from-draft-d-dbl');
+
+      const calls = postMock.mock.calls.map((c) => c[0] as Call);
+      const entryAppends = calls.filter(
+        (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL,
+      );
+      expect(entryAppends.length).toBe(1);
+    });
   });
 
   it('updateFileEntry returns null when entry not found', async () => {

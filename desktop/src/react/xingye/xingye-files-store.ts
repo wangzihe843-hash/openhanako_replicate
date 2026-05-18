@@ -1,6 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -287,13 +288,19 @@ function buildEntry(
   };
 }
 
+/**
+ * `options.id`：心跳 confirm 流程会传 `from-draft-${draft.id}` 走幂等路径
+ * （见 confirmFileDraft 注释）。用户手动新建 entry 时不传，沿用随机 id。
+ */
 export async function appendFileEntry(
   agentId: string,
   input: XingyeFileEntryDraft,
+  options: { id?: string } = {},
 ): Promise<XingyeFileEntry> {
   const aid = assertAgentId(agentId, '保存');
   const nowIso = new Date().toISOString();
-  const entry = buildEntry(aid, input, nowIso);
+  const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : newFileEntryId();
+  const entry = buildEntry(aid, input, nowIso, id);
   await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, entry);
   await appendFileEventBestEffort(aid, {
     type: 'file.entry_appended',
@@ -497,14 +504,27 @@ export function resolveFolderIdFromHint(
   return fallback ? fallback.id : folders[0].id;
 }
 
+/** Confirmed-from-draft entry 用确定性 id：让 confirm retry 走幂等查重路径。 */
+function fileEntryIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用：先 appendFileEntry 写入 entries.jsonl
- * （发 file.entry_appended），再从 drafts 删掉，最后发 file.draft_confirmed。
+ * 用户在「待确认草稿」区点「确认生成」时调用：
+ *   1. entry id 用 `from-draft-${draftId}`；先 list entries 查重，发现已有
+ *      同 id 的 entry（说明上一次 confirm 写完 entry 但 delete draft 失败）
+ *      → 复用，跳过 appendFileEntry；
+ *   2. 否则解析 folderId（edits 优先，再按 hint，再回退「待确认」folder），
+ *      appendFileEntry 写入 entries（发 file.entry_appended）；
+ *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
+ *   4. 发 file.draft_confirmed。
  *
  * folderId 解析顺序（参考 resolveFolderIdFromHint）：
  *   edits.folderId 显式指定 → 用之
  *   否则按 draft.folderHint 在现有 folders 里匹配 → 用之
  *   都匹配不上 → 「待确认」folder，再不行用第一个 folder
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmFileDraft(
   agentId: string,
@@ -520,55 +540,74 @@ export async function confirmFileDraft(
   const aid = assertAgentId(agentId, '确认资料柜草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listFileDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  return withDraftConfirmLock(`files::${aid}::${did}`, async () => {
+    const expectedEntryId = fileEntryIdFromDraftId(did);
+    const existingEntry = (await listFileEntries(aid)).find((e) => e.id === expectedEntryId);
 
-  /** 用户可能从未初始化过文件夹；先确保有默认蓝图。 */
-  const folders = await ensureDefaultFileFolders(aid);
-  let folderId = edits?.folderId?.trim() || '';
-  if (folderId) {
-    /** 显式指定的 folderId 必须真实存在；否则回退到 hint 解析。 */
-    if (!folders.some((f) => f.id === folderId)) folderId = '';
-  }
-  if (!folderId) folderId = resolveFolderIdFromHint(folders, draft.folderHint);
-
-  const title = (edits?.title ?? draft.title).trim().slice(0, 160) || '无标题';
-  const body = (edits?.body ?? draft.body).slice(0, 8000);
-  const resolveSummary = (): string | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, 'summary')) {
-      if (edits.summary === null) return undefined;
-      if (typeof edits.summary === 'string') return normalizeOptionalText(edits.summary, 300);
+    const draft = (await listFileDrafts(aid)).find((d) => d.id === did);
+    if (!draft && !existingEntry) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft.summary;
-  };
-  const resolveTags = (): string[] | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
-      if (edits.tags === null) return undefined;
-      return normalizeTags(edits.tags);
-    }
-    return draft.tags;
-  };
 
-  const entry = await appendFileEntry(aid, {
-    folderId,
-    title,
-    body,
-    summary: resolveSummary(),
-    tags: resolveTags(),
-    source: 'xingye-heartbeat-confirmed',
+    let entry: XingyeFileEntry;
+    if (existingEntry) {
+      entry = existingEntry;
+    } else if (draft) {
+      /** 用户可能从未初始化过文件夹；先确保有默认蓝图。 */
+      const folders = await ensureDefaultFileFolders(aid);
+      let folderId = edits?.folderId?.trim() || '';
+      if (folderId) {
+        /** 显式指定的 folderId 必须真实存在；否则回退到 hint 解析。 */
+        if (!folders.some((f) => f.id === folderId)) folderId = '';
+      }
+      if (!folderId) folderId = resolveFolderIdFromHint(folders, draft.folderHint);
+
+      const title = (edits?.title ?? draft.title).trim().slice(0, 160) || '无标题';
+      const body = (edits?.body ?? draft.body).slice(0, 8000);
+      const resolveSummary = (): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'summary')) {
+          if (edits.summary === null) return undefined;
+          if (typeof edits.summary === 'string') return normalizeOptionalText(edits.summary, 300);
+        }
+        return draft.summary;
+      };
+      const resolveTags = (): string[] | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
+          if (edits.tags === null) return undefined;
+          return normalizeTags(edits.tags);
+        }
+        return draft.tags;
+      };
+
+      entry = await appendFileEntry(
+        aid,
+        {
+          folderId,
+          title,
+          body,
+          summary: resolveSummary(),
+          tags: resolveTags(),
+          source: 'xingye-heartbeat-confirmed',
+        },
+        { id: expectedEntryId },
+      );
+    } else {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_FILES_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-files-store] confirm draft: failed to delete draft after entry append:', error);
+    }
+    await appendFileEventBestEffort(aid, {
+      type: 'file.draft_confirmed',
+      source: 'xingye-files-store',
+      subjectId: did,
+      payload: { draftId: did, entryId: entry.id, folderId: entry.folderId },
+    });
+    return entry;
   });
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_FILES_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-files-store] confirm draft: failed to delete draft after entry append:', error);
-  }
-  await appendFileEventBestEffort(aid, {
-    type: 'file.draft_confirmed',
-    source: 'xingye-files-store',
-    subjectId: did,
-    payload: { draftId: did, entryId: entry.id, folderId: entry.folderId },
-  });
-  return entry;
 }
 
 export async function updateFileEntry(

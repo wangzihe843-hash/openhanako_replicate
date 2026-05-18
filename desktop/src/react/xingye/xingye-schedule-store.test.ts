@@ -22,10 +22,12 @@ import {
   XINGYE_SCHEDULE_DRAFTS_JSONL,
   XINGYE_SCHEDULE_ENTRIES_JSONL,
 } from './xingye-schedule-store';
+import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
 describe('xingye-schedule-store', () => {
   beforeEach(() => {
     postMock.mockReset();
+    __resetDraftConfirmLockForTests();
   });
 
   it('lists normalized schedule rows from the agent-scoped schedule JSONL path', async () => {
@@ -214,7 +216,9 @@ describe('xingye-schedule-store', () => {
 
     it('confirmScheduleDraft moves draft → entries (entry appended, draft removed)', async () => {
       postMock
-        // listScheduleDrafts → listJsonl drafts
+        // listScheduleEntries → empty (no prior partial confirm)
+        .mockResolvedValueOnce({ ok: true, records: [] })
+        // listScheduleDrafts → the pending draft
         .mockResolvedValueOnce({
           ok: true,
           records: [{
@@ -227,26 +231,126 @@ describe('xingye-schedule-store', () => {
             source: 'xingye-heartbeat-tool',
           }],
         })
-        // appendScheduleEntry → appendJsonl entries
-        .mockResolvedValue({ ok: true });
+        // appendJsonl entries + delete + event log
+        .mockResolvedValue({ ok: true, deleted: true });
 
       const entry = await confirmScheduleDraft('agent-x', 'd-c', { content: 'edited body' });
       expect(entry.content).toBe('edited body');
       expect(entry.title).toBe('kept');
       expect(entry.source).toBe('ai');
+      expect(entry.id).toBe('from-draft-d-c');
 
       const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
-      expect(calls.some((c) =>
+      const entryAppend = calls.find((c) =>
         c.action === 'appendJsonl' && c.relativePath === XINGYE_SCHEDULE_ENTRIES_JSONL,
-      )).toBe(true);
+      ) as { data?: Record<string, unknown> } | undefined;
+      expect(entryAppend).toBeTruthy();
+      expect(entryAppend?.data?.id).toBe('from-draft-d-c');
       expect(calls.some((c) =>
         c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_SCHEDULE_DRAFTS_JSONL,
       )).toBe(true);
     });
 
     it('confirmScheduleDraft errors when draft not found', async () => {
-      postMock.mockResolvedValueOnce({ ok: true, records: [] });
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [] }) // entries
+        .mockResolvedValueOnce({ ok: true, records: [] }); // drafts
       await expect(confirmScheduleDraft('agent-x', 'nope')).rejects.toThrow(/草稿/);
+    });
+
+    it(
+      'confirmScheduleDraft reuses existing entry when retried after a previous '
+        + 'delete-draft failure (no duplicate append)',
+      async () => {
+        postMock
+          // listScheduleEntries → already has the entry from a prior attempt
+          .mockResolvedValueOnce({
+            ok: true,
+            records: [{
+              id: 'from-draft-d-c',
+              agentId: 'agent-x',
+              title: 'previous',
+              dateLabel: '明天上午',
+              content: 'previous body',
+              source: 'ai',
+              status: 'planned',
+              createdAt: '2026-05-17T12:00:00.000Z',
+              updatedAt: '2026-05-17T12:00:00.000Z',
+            }],
+          })
+          // listScheduleDrafts → orphan draft still there
+          .mockResolvedValueOnce({
+            ok: true,
+            records: [{
+              id: 'd-c',
+              title: 'kept',
+              dateLabel: '明天上午',
+              content: 'kept body',
+              createdAt: '2026-05-17T12:00:00.000Z',
+              source: 'xingye-heartbeat-tool',
+            }],
+          })
+          .mockResolvedValue({ ok: true, deleted: true });
+
+        const entry = await confirmScheduleDraft('agent-x', 'd-c');
+        expect(entry.id).toBe('from-draft-d-c');
+        expect(entry.content).toBe('previous body');
+
+        const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
+        const entryAppends = calls.filter((c) =>
+          c.action === 'appendJsonl' && c.relativePath === XINGYE_SCHEDULE_ENTRIES_JSONL,
+        );
+        expect(entryAppends.length).toBe(0);
+        const draftDeletes = calls.filter((c) =>
+          c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_SCHEDULE_DRAFTS_JSONL,
+        );
+        expect(draftDeletes.length).toBe(1);
+      },
+    );
+
+    it('concurrent confirmScheduleDraft calls for same draft share the in-flight Promise', async () => {
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [] }) // listScheduleEntries
+        .mockResolvedValueOnce({
+          ok: true,
+          records: [{
+            id: 'd-dbl',
+            title: 'double-click',
+            dateLabel: '今天',
+            content: 'body',
+            createdAt: '2026-05-17T12:00:00.000Z',
+            source: 'xingye-heartbeat-tool',
+          }],
+        })
+        .mockResolvedValue({ ok: true, deleted: true });
+
+      const [a, b] = await Promise.all([
+        confirmScheduleDraft('agent-x', 'd-dbl'),
+        confirmScheduleDraft('agent-x', 'd-dbl'),
+      ]);
+      expect(a.id).toBe('from-draft-d-dbl');
+      expect(b.id).toBe('from-draft-d-dbl');
+
+      const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
+      const entryAppends = calls.filter((c) =>
+        c.action === 'appendJsonl' && c.relativePath === XINGYE_SCHEDULE_ENTRIES_JSONL,
+      );
+      expect(entryAppends.length).toBe(1);
+    });
+
+    it('appendScheduleEntry honors caller-supplied id (used by confirm flow)', async () => {
+      postMock.mockResolvedValue({ ok: true });
+      const row = await appendScheduleEntry(
+        'agent-x',
+        { title: 't', dateLabel: '今天', content: 'b', source: 'ai' },
+        { id: 'from-draft-xyz' },
+      );
+      expect(row.id).toBe('from-draft-xyz');
+      const append = postMock.mock.calls.find(
+        (c) => (c[0] as { action?: string }).action === 'appendJsonl',
+      )?.[0] as { data: Record<string, unknown> };
+      expect(append.data.id).toBe('from-draft-xyz');
+      expect(append.data.key).toBe('from-draft-xyz');
     });
   });
 });

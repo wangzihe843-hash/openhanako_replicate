@@ -21,10 +21,12 @@ import {
   XINGYE_JOURNAL_DRAFTS_JSONL,
   XINGYE_JOURNAL_ENTRIES_JSONL,
 } from './xingye-journal-store';
+import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
 describe('xingye-journal-store', () => {
   beforeEach(() => {
     postMock.mockReset();
+    __resetDraftConfirmLockForTests();
   });
 
   it('listJournalEntries returns normalized rows sorted by dayKey desc', async () => {
@@ -174,7 +176,9 @@ describe('xingye-journal-store', () => {
 
     it('confirmJournalDraft moves draft → entries (entry_appended fires; draft is removed)', async () => {
       postMock
-        // listJournalDrafts → listJsonl drafts
+        // listJournalEntries (idempotent dedupe lookup) → empty
+        .mockResolvedValueOnce({ ok: true, records: [] })
+        // listJournalDrafts → the pending draft
         .mockResolvedValueOnce({
           ok: true,
           records: [
@@ -190,8 +194,8 @@ describe('xingye-journal-store', () => {
         })
         // appendJournalEntry → appendJsonl entries
         .mockResolvedValueOnce({ ok: true })
-        // entry_appended event log read+write — match by action shape
-        .mockResolvedValue({ ok: true, records: [] });
+        // event log + delete + remaining ops
+        .mockResolvedValue({ ok: true, records: [], deleted: true });
 
       const entry = await confirmJournalDraft('agent-x', 'd-confirm', {
         body: 'edited body',
@@ -199,14 +203,17 @@ describe('xingye-journal-store', () => {
       expect(entry.body).toBe('edited body');
       expect(entry.title).toBe('kept title');
       expect(entry.dayKey).toBe('2026-05-17');
+      /** Deterministic id derived from draft id; lets retries recognize an existing entry. */
+      expect(entry.id).toBe('from-draft-d-confirm');
 
       const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
       /** appendJsonl to entries.jsonl must happen. */
-      expect(
-        calls.some(
-          (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_JOURNAL_ENTRIES_JSONL,
-        ),
-      ).toBe(true);
+      const entryAppend = calls.find(
+        (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_JOURNAL_ENTRIES_JSONL,
+      ) as { data?: Record<string, unknown> } | undefined;
+      expect(entryAppend).toBeTruthy();
+      expect(entryAppend?.data?.id).toBe('from-draft-d-confirm');
+      expect(entryAppend?.data?.key).toBe('from-draft-d-confirm');
       /** deleteJsonlRecord on drafts must happen. */
       expect(
         calls.some(
@@ -216,9 +223,129 @@ describe('xingye-journal-store', () => {
       ).toBe(true);
     });
 
-    it('confirmJournalDraft errors if draft not found', async () => {
-      postMock.mockResolvedValueOnce({ ok: true, records: [] });
+    it('confirmJournalDraft errors if neither draft nor existing entry is found', async () => {
+      postMock
+        // listJournalEntries → empty
+        .mockResolvedValueOnce({ ok: true, records: [] })
+        // listJournalDrafts → empty
+        .mockResolvedValueOnce({ ok: true, records: [] });
       await expect(confirmJournalDraft('agent-x', 'missing-id')).rejects.toThrow(/草稿/);
+    });
+
+    it(
+      'confirmJournalDraft is idempotent: a second confirm after delete-draft failure reuses '
+        + 'the existing entry instead of appending a duplicate',
+      async () => {
+        /**
+         * Simulates the bug we're guarding against:
+         *  - First confirm wrote entry `from-draft-d-confirm` then failed to delete the draft.
+         *  - User clicks confirm again. We must NOT append a second entry.
+         *  - We MUST still retry the draft delete and emit draft_confirmed.
+         */
+        postMock
+          // listJournalEntries → already has the entry from the prior attempt
+          .mockResolvedValueOnce({
+            ok: true,
+            records: [
+              {
+                id: 'from-draft-d-confirm',
+                dayKey: '2026-05-17',
+                title: 'previous title',
+                body: 'previous body',
+                createdAt: '2026-05-17T12:00:00.000Z',
+              },
+            ],
+          })
+          // listJournalDrafts → the orphaned draft still sitting there
+          .mockResolvedValueOnce({
+            ok: true,
+            records: [
+              {
+                id: 'd-confirm',
+                dayKey: '2026-05-17',
+                title: 'kept title',
+                body: 'kept body',
+                createdAt: '2026-05-17T12:00:00.000Z',
+                source: 'xingye-heartbeat-tool',
+              },
+            ],
+          })
+          // delete draft (success this time) + event log writes
+          .mockResolvedValue({ ok: true, records: [], deleted: true });
+
+        const entry = await confirmJournalDraft('agent-x', 'd-confirm');
+
+        expect(entry.id).toBe('from-draft-d-confirm');
+        expect(entry.body).toBe('previous body');
+
+        const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
+        /** Critical assertion: no NEW appendJsonl on entries.jsonl this time. */
+        const entryAppends = calls.filter(
+          (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_JOURNAL_ENTRIES_JSONL,
+        );
+        expect(entryAppends.length).toBe(0);
+        /** But we should still retry the draft delete. */
+        const draftDeletes = calls.filter(
+          (c) => c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_JOURNAL_DRAFTS_JSONL,
+        );
+        expect(draftDeletes.length).toBe(1);
+      },
+    );
+
+    it(
+      'two concurrent confirmJournalDraft calls for the same draft share the in-flight Promise '
+        + '(only one append round-trip)',
+      async () => {
+        /**
+         * Simulates a double-click: two confirm calls fire before the first finishes.
+         * The lock should make the second await the first's Promise, not start a parallel run.
+         */
+        postMock
+          .mockResolvedValueOnce({ ok: true, records: [] }) // listJournalEntries
+          .mockResolvedValueOnce({
+            ok: true,
+            records: [
+              {
+                id: 'd-double',
+                dayKey: '2026-05-17',
+                title: 'double-click title',
+                body: 'double-click body',
+                createdAt: '2026-05-17T12:00:00.000Z',
+                source: 'xingye-heartbeat-tool',
+              },
+            ],
+          })
+          .mockResolvedValue({ ok: true, records: [], deleted: true });
+
+        const [a, b] = await Promise.all([
+          confirmJournalDraft('agent-x', 'd-double'),
+          confirmJournalDraft('agent-x', 'd-double'),
+        ]);
+        expect(a.id).toBe('from-draft-d-double');
+        expect(b.id).toBe('from-draft-d-double');
+
+        const calls = postMock.mock.calls.map((c) => c[0] as { action?: string; relativePath?: string });
+        const entryAppends = calls.filter(
+          (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_JOURNAL_ENTRIES_JSONL,
+        );
+        /** Exactly one append even with two concurrent confirms. */
+        expect(entryAppends.length).toBe(1);
+      },
+    );
+
+    it('appendJournalEntry honors caller-supplied id (used by confirm flow)', async () => {
+      postMock.mockResolvedValue({ ok: true });
+      const entry = await appendJournalEntry('agent-x', {
+        title: 't',
+        body: 'b',
+        id: 'from-draft-xyz',
+      });
+      expect(entry.id).toBe('from-draft-xyz');
+      const append = postMock.mock.calls.find(
+        (c) => (c[0] as { action?: string }).action === 'appendJsonl',
+      )?.[0] as { data: Record<string, unknown> };
+      expect(append.data.id).toBe('from-draft-xyz');
+      expect(append.data.key).toBe('from-draft-xyz');
     });
   });
 });

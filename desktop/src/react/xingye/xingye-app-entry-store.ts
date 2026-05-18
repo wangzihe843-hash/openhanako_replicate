@@ -45,6 +45,12 @@ export type AppEntryInput = {
   content: string;
   metadata?: Record<string, unknown>;
   source?: string;
+  /**
+   * 心跳 confirm 流程会传 `from-draft-${draft.id}` 作为确定性 id，让 retry 走幂等
+   * 查重路径（确认 → 已存在 → 复用而非追加重复 entry）。手动新建条目时不传，沿用
+   * idFactory 生成的随机 id。
+   */
+  id?: string;
 };
 
 export type AppEntryPatch = Partial<AppEntryInput>;
@@ -181,7 +187,7 @@ export function createXingyeAppEntryStore(
       const simpleAppId = requireSimpleAppId(appId);
       const timestamp = getNow();
       const entry: AppEntry = {
-        id: idFactory(),
+        id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : idFactory(),
         agentId: aid,
         appId: simpleAppId,
         title: input.title.trim(),

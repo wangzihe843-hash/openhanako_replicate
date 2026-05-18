@@ -17,8 +17,9 @@
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
-import { appendSecretSpaceRecord } from './xingye-secret-space-store';
+import { appendSecretSpaceRecord, listSecretSpaceRecords } from './xingye-secret-space-store';
 import type { SecretSpaceCategoryId } from './SecretSpaceHome';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -220,12 +221,28 @@ export async function discardSecretSpaceDraft(
   return deleted;
 }
 
+/** Confirmed-from-draft record 用确定性 key：让 confirm retry 走幂等查重路径。 */
+function secretSpaceRecordKeyFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 确认草稿：appendSecretSpaceRecord 写入 secret-space/{category}.jsonl
- * （发 secret_space.record_appended），再从 drafts 删掉，最后发
- * secret_space.draft_confirmed。
+ * 确认草稿：
+ *   1. record key 用 `from-draft-${draftId}`；先 listSecretSpaceRecords(category)
+ *      查重，发现已有同 key 的 record（说明上一次 confirm 写完但 delete draft 失败）
+ *      → 复用，跳过 appendSecretSpaceRecord；
+ *   2. 否则 appendSecretSpaceRecord 写入 secret-space/{category}.jsonl（发
+ *      secret_space.record_appended）；
+ *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
+ *   4. 发 secret_space.draft_confirmed。
  *
  * 用户可改 category（限制在允许子集里），title / body / tags。
+ *
+ * 已知边界：用户在 retry 前把 category 改成另一个允许值会让查重在新 category 失败，
+ * 从而在新 category 重新写一条记录——但 entries 总数仍受控（每 category 内只 1 条）。
+ * 这是低概率场景；UI 默认不让 category 在 confirm 流程里被改。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmSecretSpaceDraft(
   agentId: string,
@@ -240,49 +257,70 @@ export async function confirmSecretSpaceDraft(
   const aid = assertAgentId(agentId, '确认秘密空间草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listSecretSpaceDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  return withDraftConfirmLock(`secret_space::${aid}::${did}`, async () => {
+    const expectedRecordKey = secretSpaceRecordKeyFromDraftId(did);
+    const draft = (await listSecretSpaceDrafts(aid)).find((d) => d.id === did);
 
-  const category: SecretSpaceDraftCategory =
-    edits?.category && isAllowedCategory(edits.category) ? edits.category : draft.category;
-  const body = (edits?.body ?? draft.body).trim().slice(0, 4000);
-  if (!body) throw new Error('确认草稿失败：正文不能为空。');
-  const title = normalizeOptionalText(edits?.title ?? draft.title ?? '', 160);
-  const resolveTags = (): string[] | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
-      if (edits.tags === null) return undefined;
-      return normalizeTags(edits.tags);
+    /**
+     * 决定目标 category：edits.category > draft.category。
+     * 如果 draft 已不存在但仍有 edits.category（理论上不会，但兜底），直接走 edits。
+     */
+    const category: SecretSpaceDraftCategory =
+      edits?.category && isAllowedCategory(edits.category)
+        ? edits.category
+        : (draft?.category as SecretSpaceDraftCategory | undefined ?? 'state');
+
+    /** 在目标 category 查重——orphan-retry 场景的核心兜底。 */
+    const existingRecord = (await listSecretSpaceRecords(aid, category as SecretSpaceCategoryId))
+      .find((r) => r.recordId === expectedRecordKey);
+
+    if (!draft && !existingRecord) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft.tags;
-  };
-  const tags = resolveTags();
 
-  /**
-   * appendSecretSpaceRecord 接受 generic body：把 title/body/tags 一起塞进去。
-   * recordId 由 store 内部 stableSecretSpaceRecordId 算出；这里复用 draft.id
-   * 作为 key，便于后续按 recordId 删除（虽然 draft 完整删后就不需要了）。
-   */
-  const recordKey = `${category}-${draft.id}`;
-  const recordBody: Record<string, unknown> = {
-    key: recordKey,
-    title: title || undefined,
-    body,
-    source: 'xingye-heartbeat-confirmed',
-  };
-  if (tags && tags.length > 0) recordBody.tags = tags;
+    if (!existingRecord) {
+      if (!draft) {
+        throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+      }
+      const body = (edits?.body ?? draft.body).trim().slice(0, 4000);
+      if (!body) throw new Error('确认草稿失败：正文不能为空。');
+      const title = normalizeOptionalText(edits?.title ?? draft.title ?? '', 160);
+      const resolveTags = (): string[] | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'tags')) {
+          if (edits.tags === null) return undefined;
+          return normalizeTags(edits.tags);
+        }
+        return draft.tags;
+      };
+      const tags = resolveTags();
 
-  await appendSecretSpaceRecord(aid, category as SecretSpaceCategoryId, recordBody);
+      /**
+       * appendSecretSpaceRecord 接受 generic body：把 title/body/tags 一起塞进去。
+       * recordId 由 store 内部 stableSecretSpaceRecordId 算出；传入 key 让它落到
+       * `from-draft-${draftId}`，后续查重 / 删除都按这个稳定 key。
+       */
+      const recordBody: Record<string, unknown> = {
+        key: expectedRecordKey,
+        title: title || undefined,
+        body,
+        source: 'xingye-heartbeat-confirmed',
+      };
+      if (tags && tags.length > 0) recordBody.tags = tags;
 
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_SECRET_SPACE_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-secret-space-drafts] confirm draft: failed to delete draft after record append:', error);
-  }
-  await appendSecretSpaceDraftEventBestEffort(aid, {
-    type: 'secret_space.draft_confirmed',
-    source: 'xingye-secret-space-drafts',
-    subjectId: did,
-    payload: { draftId: did, category, recordKey },
+      await appendSecretSpaceRecord(aid, category as SecretSpaceCategoryId, recordBody);
+    }
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_SECRET_SPACE_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-secret-space-drafts] confirm draft: failed to delete draft after record append:', error);
+    }
+    await appendSecretSpaceDraftEventBestEffort(aid, {
+      type: 'secret_space.draft_confirmed',
+      source: 'xingye-secret-space-drafts',
+      subjectId: did,
+      payload: { draftId: did, category, recordKey: expectedRecordKey },
+    });
+    return { category, recordId: expectedRecordKey };
   });
-  return { category, recordId: recordKey };
 }

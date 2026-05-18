@@ -14,6 +14,7 @@ import {
   appendMailMessage,
   appendMailMessages,
   buildXingyeMailAddress,
+  confirmMailDraft,
   deleteMailMessage,
   ensureMailProfile,
   getMailProfile,
@@ -22,9 +23,11 @@ import {
   setMailMessageStar,
   updateMailMessage,
   XINGYE_MAIL_DOMAIN,
+  XINGYE_MAIL_DRAFTS_JSONL,
   XINGYE_MAIL_MESSAGES_JSONL,
   XINGYE_MAIL_PROFILE_JSON,
 } from './xingye-mail-store';
+import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
 type Call = {
   action: string;
@@ -44,6 +47,7 @@ function lastCall(action: string): Call {
 describe('xingye-mail-store', () => {
   beforeEach(() => {
     postMock.mockReset();
+    __resetDraftConfirmLockForTests();
   });
 
   it('buildXingyeMailAddress produces an agent-style local part on the simulated domain', () => {
@@ -261,6 +265,113 @@ describe('xingye-mail-store', () => {
       agentId: 'linwu',
       relativePath: XINGYE_MAIL_MESSAGES_JSONL,
       recordId: 'm1',
+    });
+  });
+
+  it('appendMailMessage honors caller-supplied id (used by confirm flow)', async () => {
+    postMock.mockResolvedValue({ ok: true });
+    const message = await appendMailMessage(
+      'linwu',
+      {
+        mailbox: 'drafts',
+        from: { name: '林雾', address: 'linwu@hana.mail', kind: 'agent' },
+        to: [],
+        subject: 's',
+        body: 'b',
+        isRead: true,
+      },
+      { id: 'from-draft-xyz' },
+    );
+    expect(message.id).toBe('from-draft-xyz');
+    expect(message.key).toBe('from-draft-xyz');
+    const append = lastCall('appendJsonl');
+    const data = append.data as { id: string; key: string };
+    expect(data.id).toBe('from-draft-xyz');
+    expect(data.key).toBe('from-draft-xyz');
+  });
+
+  describe('confirmMailDraft idempotency', () => {
+    const profile = {
+      agentId: 'linwu',
+      address: 'linwu@hana.mail',
+      displayName: '林雾',
+      createdAt: '2026-05-15T10:00:00.000Z',
+      updatedAt: '2026-05-15T10:00:00.000Z',
+    };
+
+    it(
+      'reuses an existing message on retry when the prior delete-draft failed (no duplicate append)',
+      async () => {
+        const draftRow = {
+          id: 'd-orphan',
+          subject: 'kept subject',
+          body: 'kept body',
+          createdAt: '2026-05-17T12:00:00.000Z',
+          source: 'xingye-heartbeat-tool',
+        };
+        const existingMessage = {
+          id: 'from-draft-d-orphan',
+          key: 'from-draft-d-orphan',
+          agentId: 'linwu',
+          mailbox: 'drafts',
+          from: { name: '林雾', address: 'linwu@hana.mail', kind: 'agent' },
+          to: [],
+          subject: 'previous subject',
+          body: 'previous body',
+          isRead: true,
+          isStarred: false,
+          createdAt: '2026-05-17T12:00:00.000Z',
+          updatedAt: '2026-05-17T12:00:00.000Z',
+        };
+        postMock
+          // listMailMessages → existing one from prior partial confirm
+          .mockResolvedValueOnce({ ok: true, records: [existingMessage] })
+          // listMailDrafts → orphan draft still there
+          .mockResolvedValueOnce({ ok: true, records: [draftRow] })
+          // delete + event log writes succeed
+          .mockResolvedValue({ ok: true, deleted: true, records: [] });
+
+        const message = await confirmMailDraft('linwu', 'd-orphan', profile);
+        expect(message.id).toBe('from-draft-d-orphan');
+        expect(message.body).toBe('previous body');
+
+        const calls = postMock.mock.calls.map((c) => c[0] as Call);
+        const messageAppends = calls.filter(
+          (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_MAIL_MESSAGES_JSONL,
+        );
+        expect(messageAppends.length).toBe(0);
+        const draftDeletes = calls.filter(
+          (c) => c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_MAIL_DRAFTS_JSONL,
+        );
+        expect(draftDeletes.length).toBe(1);
+      },
+    );
+
+    it('two concurrent confirmMailDraft calls for same draft share one append', async () => {
+      const draftRow = {
+        id: 'd-dbl',
+        subject: 'double click',
+        body: 'body',
+        createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [] }) // listMailMessages
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] }) // listMailDrafts
+        .mockResolvedValue({ ok: true, deleted: true, records: [] });
+
+      const [a, b] = await Promise.all([
+        confirmMailDraft('linwu', 'd-dbl', profile),
+        confirmMailDraft('linwu', 'd-dbl', profile),
+      ]);
+      expect(a.id).toBe('from-draft-d-dbl');
+      expect(b.id).toBe('from-draft-d-dbl');
+
+      const calls = postMock.mock.calls.map((c) => c[0] as Call);
+      const messageAppends = calls.filter(
+        (c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_MAIL_MESSAGES_JSONL,
+      );
+      expect(messageAppends.length).toBe(1);
     });
   });
 });

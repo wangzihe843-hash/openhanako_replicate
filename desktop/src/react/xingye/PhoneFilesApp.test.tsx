@@ -9,12 +9,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 
 const filesStoreMock = vi.hoisted(() => ({
+  appendFileDraft: vi.fn(),
   appendFileEntry: vi.fn(),
+  confirmFileDraft: vi.fn(),
   deleteFileEntry: vi.fn(),
+  discardFileDraft: vi.fn(),
   ensureDefaultFileFolders: vi.fn(),
+  listFileDrafts: vi.fn(),
   listFileEntries: vi.fn(),
   listFileEntriesByFolder: vi.fn(),
   listFileFolders: vi.fn(),
+  resolveFolderIdFromHint: vi.fn(),
   updateFileEntry: vi.fn(),
 }));
 
@@ -38,15 +43,21 @@ function renderFilesApp() {
 
 describe('PhoneFilesApp', () => {
   beforeEach(() => {
+    filesStoreMock.appendFileDraft.mockReset();
     filesStoreMock.appendFileEntry.mockReset();
+    filesStoreMock.confirmFileDraft.mockReset();
     filesStoreMock.deleteFileEntry.mockReset();
+    filesStoreMock.discardFileDraft.mockReset();
     filesStoreMock.ensureDefaultFileFolders.mockReset();
+    filesStoreMock.listFileDrafts.mockReset();
     filesStoreMock.listFileEntries.mockReset();
     filesStoreMock.listFileEntriesByFolder.mockReset();
     filesStoreMock.listFileFolders.mockReset();
+    filesStoreMock.resolveFolderIdFromHint.mockReset();
     filesStoreMock.updateFileEntry.mockReset();
     filesStoreMock.listFileFolders.mockResolvedValue([]);
     filesStoreMock.listFileEntries.mockResolvedValue([]);
+    filesStoreMock.listFileDrafts.mockResolvedValue([]);
   });
 
   afterEach(() => {

@@ -111,12 +111,14 @@ import {
   saveMmChatPersistence,
   type XingyeMmChatPersistedV1,
 } from './xingye-mm-chat-store';
+import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
 beforeEach(() => {
   jsonStore.clear();
   jsonlStore.clear();
   postMock.mockClear();
   appendEventMock.mockClear();
+  __resetDraftConfirmLockForTests();
 });
 
 function lastEvent() {
@@ -427,13 +429,15 @@ describe('producer contract: moments-store drafts', () => {
     expect(appendEventMock).not.toHaveBeenCalled();
   });
 
-  it('confirmMomentDraft fires moment.created AND moment.draft_confirmed (draft id ≠ post id)', async () => {
+  it('confirmMomentDraft fires moment.created AND moment.draft_confirmed (post id derived from draft id)', async () => {
     const { appendMomentDraft, confirmMomentDraft } = await importMomentDraftFns();
     const draft = await appendMomentDraft('agent-a', {
       content: '内容', source: 'xingye-heartbeat-tool',
     });
     appendEventMock.mockClear();
     const post = await confirmMomentDraft('agent-a', draft.id);
+    /** Deterministic from-draft-${id} so retries dedupe. Still distinct from draft.id. */
+    expect(post.id).toBe(`from-draft-${draft.id}`);
     expect(post.id).not.toBe(draft.id);
     const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
     expect(types).toContain('moment.created');
@@ -445,6 +449,51 @@ describe('producer contract: moments-store drafts', () => {
       subjectId: draft.id,
       payload: { draftId: draft.id, postId: post.id },
     });
+  });
+
+  it('confirmMomentDraft is idempotent: a second confirm after delete-draft failure reuses the existing post', async () => {
+    const { appendMomentDraft, confirmMomentDraft, listXingyeMomentPosts } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: '只想说一句', source: 'xingye-heartbeat-tool',
+    });
+    /** First confirm: post is created AND draft is deleted (in-memory delete succeeds). */
+    const first = await confirmMomentDraft('agent-a', draft.id);
+    expect((await listXingyeMomentPosts('agent-a')).length).toBe(1);
+
+    /**
+     * Simulate "delete-draft failed last time" by manually re-appending the draft row
+     * back into drafts.jsonl. Now both the post AND the orphan draft exist together.
+     */
+    const draftsKey = `agent-a|apps/moments/drafts.jsonl`;
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, content: '只想说一句', source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+
+    const second = await confirmMomentDraft('agent-a', draft.id);
+    /** Same post reused — no duplicate. */
+    expect(second.id).toBe(first.id);
+    const posts = await listXingyeMomentPosts('agent-a');
+    expect(posts.length).toBe(1);
+    /** No moment.created on retry (only the original creation counts). */
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('moment.created');
+    /** But draft_confirmed still fires (records user intent). */
+    expect(types).toContain('moment.draft_confirmed');
+  });
+
+  it('concurrent confirmMomentDraft calls for same draft share one post creation', async () => {
+    const { appendMomentDraft, confirmMomentDraft, listXingyeMomentPosts } = await importMomentDraftFns();
+    const draft = await appendMomentDraft('agent-a', {
+      content: '双击不该出两条', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const [a, b] = await Promise.all([
+      confirmMomentDraft('agent-a', draft.id),
+      confirmMomentDraft('agent-a', draft.id),
+    ]);
+    expect(a.id).toBe(b.id);
+    expect((await listXingyeMomentPosts('agent-a')).length).toBe(1);
   });
 
   it('confirmMomentDraft forwards seedLikes/seedComments into the published post (combined flow)', async () => {
@@ -605,6 +654,8 @@ describe('producer contract: secret-space drafts', () => {
     appendEventMock.mockClear();
     const result = await confirmSecretSpaceDraft('agent-a', draft.id);
     expect(result.category).toBe('saved_item');
+    /** Record key is deterministic from draft id — supports idempotent retry. */
+    expect(result.recordId).toBe(`from-draft-${draft.id}`);
 
     const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
     expect(types).toContain('secret_space.record_appended');
@@ -616,6 +667,48 @@ describe('producer contract: secret-space drafts', () => {
       subjectId: draft.id,
       payload: { draftId: draft.id, category: 'saved_item' },
     });
+  });
+
+  it('confirmSecretSpaceDraft is idempotent: second confirm reuses existing record after orphan-draft scenario', async () => {
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'state', body: 'tiny note', source: 'xingye-heartbeat-tool',
+    });
+    const first = await confirmSecretSpaceDraft('agent-a', draft.id);
+    /** Snapshot records count BEFORE re-injecting orphan draft. */
+    const stateKey = `agent-a|secret-space/state.jsonl`;
+    const recordsBefore = (jsonlStore.get(stateKey) ?? []).length;
+
+    /** Simulate "delete failed last time" by re-injecting the draft row. */
+    const draftsKey = `agent-a|secret-space/drafts.jsonl`;
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, category: 'state', body: 'tiny note',
+        source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+
+    const second = await confirmSecretSpaceDraft('agent-a', draft.id);
+    expect(second.recordId).toBe(first.recordId);
+    /** Critical: state.jsonl row count unchanged — no duplicate record written. */
+    const recordsAfter = (jsonlStore.get(stateKey) ?? []).length;
+    expect(recordsAfter).toBe(recordsBefore);
+    /** No new record_appended event on retry. */
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('secret_space.record_appended');
+    expect(types).toContain('secret_space.draft_confirmed');
+  });
+
+  it('concurrent confirmSecretSpaceDraft calls for same draft share one record append', async () => {
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'dream', body: '双击不重复', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const [a, b] = await Promise.all([
+      confirmSecretSpaceDraft('agent-a', draft.id),
+      confirmSecretSpaceDraft('agent-a', draft.id),
+    ]);
+    expect(a.recordId).toBe(b.recordId);
+    const dreamKey = `agent-a|secret-space/dream.jsonl`;
+    expect((jsonlStore.get(dreamKey) ?? []).length).toBe(1);
   });
 });
 
@@ -817,12 +910,13 @@ describe('producer contract: shopping-drafts', () => {
     expect(appendEventMock).not.toHaveBeenCalled();
   });
 
-  it('confirmShoppingDraft fires shopping.entry_appended AND shopping.draft_confirmed (draft id ≠ entry id)', async () => {
+  it('confirmShoppingDraft fires shopping.entry_appended AND shopping.draft_confirmed (entry id derived from draft id)', async () => {
     const draft = await appendShoppingDraft('agent-a', {
       itemName: '《长安的荔枝》', status: 'wanted', source: 'xingye-heartbeat-tool',
     });
     appendEventMock.mockClear();
     const entry = await confirmShoppingDraft('agent-a', draft.id);
+    expect(entry.id).toBe(`from-draft-${draft.id}`);
     expect(entry.id).not.toBe(draft.id);
     expect(entry.appId).toBe('shopping');
 
@@ -836,6 +930,41 @@ describe('producer contract: shopping-drafts', () => {
       subjectId: draft.id,
       payload: { draftId: draft.id, entryId: entry.id, itemName: '《长安的荔枝》' },
     });
+  });
+
+  it('confirmShoppingDraft is idempotent: second confirm reuses existing entry after orphan-draft scenario', async () => {
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: 'X', status: 'wanted', source: 'xingye-heartbeat-tool',
+    });
+    const first = await confirmShoppingDraft('agent-a', draft.id);
+    /** Simulate "delete failed last time" by re-injecting the draft into drafts.jsonl. */
+    const draftsKey = `agent-a|apps/shopping/drafts.jsonl`;
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, itemName: 'X', status: 'wanted', platformStyle: 'generic',
+        source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+    const second = await confirmShoppingDraft('agent-a', draft.id);
+    expect(second.id).toBe(first.id);
+    /** No new entry_appended on retry. */
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('shopping.entry_appended');
+    expect(types).toContain('shopping.draft_confirmed');
+  });
+
+  it('concurrent confirmShoppingDraft calls for same draft share one append', async () => {
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: 'Y', status: 'wanted', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const [a, b] = await Promise.all([
+      confirmShoppingDraft('agent-a', draft.id),
+      confirmShoppingDraft('agent-a', draft.id),
+    ]);
+    expect(a.id).toBe(b.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    const entryAppendedCount = types.filter((t) => t === 'shopping.entry_appended').length;
+    expect(entryAppendedCount).toBe(1);
   });
 });
 

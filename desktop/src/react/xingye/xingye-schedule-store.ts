@@ -1,6 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -191,10 +192,19 @@ export async function listScheduleEntries(agentId: string): Promise<XingyeSchedu
   }
 }
 
-export async function appendScheduleEntry(agentId: string, input: XingyeScheduleDraft): Promise<XingyeScheduleEntry> {
+/**
+ * `options.id`：心跳 confirm 流程会传 `from-draft-${draft.id}` 以走幂等路径
+ * （见 confirmScheduleDraft 注释）。用户手动新建日程时不传，沿用随机 id。
+ */
+export async function appendScheduleEntry(
+  agentId: string,
+  input: XingyeScheduleDraft,
+  options: { id?: string } = {},
+): Promise<XingyeScheduleEntry> {
   const aid = assertAgentId(agentId, '保存');
   const nowIso = new Date().toISOString();
-  const entry = buildEntry(aid, input, nowIso);
+  const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : newScheduleId();
+  const entry = buildEntry(aid, input, nowIso, id);
   await backend.appendJsonl(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, { ...entry, key: entry.id });
   await appendScheduleEventBestEffort(aid, {
     type: 'schedule.entry_appended',
@@ -365,10 +375,22 @@ export async function discardScheduleDraft(agentId: string, draftId: string): Pr
   return deleted;
 }
 
+/** Confirmed-from-draft entry 用确定性 id：let confirm retry 走幂等查重路径。 */
+function scheduleEntryIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用：先 appendScheduleEntry 写入 entries（发
- * entry_appended），再从 drafts 删掉，最后发 draft_confirmed。entries 写入失败时保留
- * draft 不重复写。
+ * 用户在「待确认草稿」区点「确认生成」时调用：
+ *   1. entry id 用 `from-draft-${draftId}`；先 list entries 查重，发现已有
+ *      同 id 的 entry（说明上一次 confirm 写完 entry 但 delete draft 失败）
+ *      → 复用现有 entry，跳过 append；
+ *   2. 否则 appendScheduleEntry 写入 entries（发 entry_appended）；
+ *   3. 从 drafts 删掉这条；删除失败仅 warn，不影响 entry 落盘——重试时 (1)
+ *      会识别已存在的 entry，跳过 append，再次尝试删除；
+ *   4. 发 draft_confirmed。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmScheduleDraft(
   agentId: string,
@@ -385,44 +407,63 @@ export async function confirmScheduleDraft(
   const aid = assertAgentId(agentId, '确认草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listScheduleDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  return withDraftConfirmLock(`schedule::${aid}::${did}`, async () => {
+    const expectedEntryId = scheduleEntryIdFromDraftId(did);
+    const existingEntry = (await listScheduleEntries(aid)).find((e) => e.id === expectedEntryId);
 
-  const title = (edits?.title ?? draft.title).trim() || '无标题';
-  const dateLabel = (edits?.dateLabel ?? draft.dateLabel).trim();
-  const content = (edits?.content ?? draft.content).trim();
-  if (!dateLabel) throw new Error('确认草稿失败：日期不能为空。');
-  if (!content) throw new Error('确认草稿失败：内容不能为空。');
-  /** edits.x === null 表示「显式清空」；undefined 表示「保留 draft 原值」。 */
-  const resolveOptional = (key: 'timeText' | 'note' | 'category'): string | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
-      const v = edits[key];
-      if (v === null) return undefined;
-      if (typeof v === 'string') return v.trim() || undefined;
+    const draft = (await listScheduleDrafts(aid)).find((d) => d.id === did);
+    if (!draft && !existingEntry) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft[key];
-  };
 
-  const entry = await appendScheduleEntry(aid, {
-    title,
-    dateLabel,
-    timeText: resolveOptional('timeText'),
-    content,
-    note: resolveOptional('note'),
-    source: 'ai',
-    status: 'planned',
-    category: resolveOptional('category'),
+    let entry: XingyeScheduleEntry;
+    if (existingEntry) {
+      entry = existingEntry;
+    } else if (draft) {
+      const title = (edits?.title ?? draft.title).trim() || '无标题';
+      const dateLabel = (edits?.dateLabel ?? draft.dateLabel).trim();
+      const content = (edits?.content ?? draft.content).trim();
+      if (!dateLabel) throw new Error('确认草稿失败：日期不能为空。');
+      if (!content) throw new Error('确认草稿失败：内容不能为空。');
+      /** edits.x === null 表示「显式清空」；undefined 表示「保留 draft 原值」。 */
+      const resolveOptional = (key: 'timeText' | 'note' | 'category'): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
+          const v = edits[key];
+          if (v === null) return undefined;
+          if (typeof v === 'string') return v.trim() || undefined;
+        }
+        return draft[key];
+      };
+
+      entry = await appendScheduleEntry(
+        aid,
+        {
+          title,
+          dateLabel,
+          timeText: resolveOptional('timeText'),
+          content,
+          note: resolveOptional('note'),
+          source: 'ai',
+          status: 'planned',
+          category: resolveOptional('category'),
+        },
+        { id: expectedEntryId },
+      );
+    } else {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_SCHEDULE_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-schedule-store] confirm draft: failed to delete draft after entry append:', error);
+    }
+    await appendScheduleEventBestEffort(aid, {
+      type: 'schedule.draft_confirmed',
+      source: 'xingye-schedule-store',
+      subjectId: did,
+      payload: { draftId: did, entryId: entry.id, dateLabel: entry.dateLabel },
+    });
+    return entry;
   });
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_SCHEDULE_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-schedule-store] confirm draft: failed to delete draft after entry append:', error);
-  }
-  await appendScheduleEventBestEffort(aid, {
-    type: 'schedule.draft_confirmed',
-    source: 'xingye-schedule-store',
-    subjectId: did,
-    payload: { draftId: did, entryId: entry.id, dateLabel: entry.dateLabel },
-  });
-  return entry;
 }

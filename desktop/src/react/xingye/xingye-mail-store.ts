@@ -1,6 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -414,13 +415,19 @@ function buildMessage(
   };
 }
 
+/**
+ * `options.id`：心跳 confirm 流程会传 `from-draft-${draft.id}` 走幂等路径
+ * （见 confirmMailDraft 注释）。手动发邮件时不传，沿用随机 id。
+ */
 export async function appendMailMessage(
   agentId: string,
   draft: XingyeMailMessageDraft,
+  options: { id?: string } = {},
 ): Promise<XingyeMailMessage> {
   const aid = assertAgentId(agentId, '保存邮件');
   const nowIso = new Date().toISOString();
-  const message = buildMessage(aid, draft, nowIso);
+  const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : newMailMessageId();
+  const message = buildMessage(aid, draft, nowIso, id);
   await backend.appendJsonl(aid, XINGYE_MAIL_MESSAGES_JSONL, message);
   await appendMailEventBestEffort(aid, {
     type: 'mail.messages_appended',
@@ -686,13 +693,25 @@ export async function discardMailDraft(agentId: string, draftId: string): Promis
   return deleted;
 }
 
+/** Confirmed-from-draft message 用确定性 id：让 confirm retry 走幂等查重路径。 */
+function mailMessageIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用：先 appendMailMessage 写入
- * messages.jsonl（mailbox='drafts'，from.kind='agent'），再从 drafts.jsonl 删掉，
- * 最后发 mail.draft_confirmed。messages 写入失败时保留 draft 不重复写。
+ * 用户在「待确认草稿」区点「确认生成」时调用：
+ *   1. message id 用 `from-draft-${draftId}`；先 list messages 查重，发现已有
+ *      同 id 的 message（说明上一次 confirm 写完但 delete draft 失败）→ 复用，
+ *      跳过 appendMailMessage；
+ *   2. 否则 appendMailMessage 写入 messages.jsonl（mailbox='drafts'，
+ *      from.kind='agent'，发 mail.messages_appended）；
+ *   3. 从 apps/mail/drafts.jsonl 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
+ *   4. 发 mail.draft_confirmed。
  *
  * profile 由调用方传入——巡检产出的草稿默认用 agent 自身邮箱地址当 from。
  * 如果 agent 还没初始化 mail profile，UI 应先 ensureMailProfile 再确认。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmMailDraft(
   agentId: string,
@@ -708,52 +727,72 @@ export async function confirmMailDraft(
   const aid = assertAgentId(agentId, '确认邮件草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
-  const draft = (await listMailDrafts(aid)).find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
   if (!profile || typeof profile.address !== 'string' || !profile.address.trim()) {
     throw new Error('确认草稿失败：未提供有效邮箱 profile（请先在邮箱主页初始化）。');
   }
-  const resolveOptional = (
-    key: 'toAddress' | 'toName',
-    max: number,
-  ): string | undefined => {
-    if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
-      const v = edits[key];
-      if (v === null) return undefined;
-      if (typeof v === 'string') {
-        const trimmed = v.trim();
-        return trimmed ? trimmed.slice(0, max) : undefined;
-      }
+  return withDraftConfirmLock(`mail::${aid}::${did}`, async () => {
+    const expectedMessageId = mailMessageIdFromDraftId(did);
+    const existingMessage = (await listMailMessages(aid)).find((m) => m.id === expectedMessageId);
+
+    const draft = (await listMailDrafts(aid)).find((d) => d.id === did);
+    if (!draft && !existingMessage) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
-    return draft[key];
-  };
-  const subject = ((edits?.subject ?? draft.subject) || '').trim().slice(0, 200);
-  const body = (edits?.body ?? draft.body).slice(0, 8000);
-  if (!subject && !body.trim()) {
-    throw new Error('确认草稿失败：主题与正文不能同时为空。');
-  }
-  const toAddress = resolveOptional('toAddress', 160);
-  const toName = resolveOptional('toName', 80);
-  const to = toAddress ? [{ name: toName || toAddress, address: toAddress }] : [];
-  const message = await appendMailMessage(aid, {
-    mailbox: 'drafts',
-    from: { name: profile.displayName, address: profile.address, kind: 'agent' },
-    to,
-    subject,
-    body,
-    isRead: true,
-    source: 'xingye-heartbeat-confirmed',
+
+    let message: XingyeMailMessage;
+    if (existingMessage) {
+      message = existingMessage;
+    } else if (draft) {
+      const resolveOptional = (
+        key: 'toAddress' | 'toName',
+        max: number,
+      ): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
+          const v = edits[key];
+          if (v === null) return undefined;
+          if (typeof v === 'string') {
+            const trimmed = v.trim();
+            return trimmed ? trimmed.slice(0, max) : undefined;
+          }
+        }
+        return draft[key];
+      };
+      const subject = ((edits?.subject ?? draft.subject) || '').trim().slice(0, 200);
+      const body = (edits?.body ?? draft.body).slice(0, 8000);
+      if (!subject && !body.trim()) {
+        throw new Error('确认草稿失败：主题与正文不能同时为空。');
+      }
+      const toAddress = resolveOptional('toAddress', 160);
+      const toName = resolveOptional('toName', 80);
+      const to = toAddress ? [{ name: toName || toAddress, address: toAddress }] : [];
+      message = await appendMailMessage(
+        aid,
+        {
+          mailbox: 'drafts',
+          from: { name: profile.displayName, address: profile.address, kind: 'agent' },
+          to,
+          subject,
+          body,
+          isRead: true,
+          source: 'xingye-heartbeat-confirmed',
+        },
+        { id: expectedMessageId },
+      );
+    } else {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_MAIL_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-mail-store] confirm draft: failed to delete draft after message append:', error);
+    }
+    await appendMailEventBestEffort(aid, {
+      type: 'mail.draft_confirmed',
+      source: 'xingye-mail-store',
+      subjectId: did,
+      payload: { draftId: did, messageId: message.id, mailbox: message.mailbox },
+    });
+    return message;
   });
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_MAIL_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-mail-store] confirm draft: failed to delete draft after message append:', error);
-  }
-  await appendMailEventBestEffort(aid, {
-    type: 'mail.draft_confirmed',
-    source: 'xingye-mail-store',
-    subjectId: did,
-    payload: { draftId: did, messageId: message.id, mailbox: message.mailbox },
-  });
-  return message;
 }
