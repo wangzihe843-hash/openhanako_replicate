@@ -1,109 +1,139 @@
 ---
 name: xingye-phone_contact-draft
-description: "Propose a pending phone-contact field-update draft during heartbeat patrol. 心跳巡检里向小手机通讯录提议一条「对现有联系人字段的更新候选」（只更新 remark / impression / relationshipHint / tags / faction，不新增联系人，不拉黑/删除）。Triggers: recent chats or events reveal that TA's view of an existing contact has shifted in a stable, post-confirmable way—e.g. impression got clearer, a tag should be added/dropped, or the relationship-hint label no longer fits | 触发场景：最近聊天或事件让 TA 对一个**现有联系人**的看法发生稳定的、可被用户审阅认可的位移——印象变得更清晰、需要加/减某个标签、或现有的关系标签不再贴切。Do NOT trigger for new contacts (use AI generation), block/delete/restore (use manual incremental update), or one-off mood swings. 不在新增联系人（走 AI 生成）、拉黑/删除/恢复（走通讯录手动 AI 更新）、一次性情绪波动上触发。"
+description: "Propose a pending phone-contact draft during heartbeat patrol—update an existing contact's fields, OR add a new virtual_contact, OR block/delete/restore a virtual_contact. 心跳巡检里向小手机通讯录提议一条「待用户审阅」的草稿：可以是更新现有联系人的 5 个字段（remark/impression/relationshipHint/tags/faction）、可以是新增虚拟联系人、也可以是对虚拟联系人的拉黑/删除/恢复。Triggers: recent chats or events justify a contact-level change that's worth surfacing to the user for review | 触发场景：最近聊天或事件让 TA 对某条联系人的判断发生足以让用户审阅的位移（印象稳定改变、出现明确新人、虚拟联系人确凿断联/越界/和解等）。HARD CONSTRAINTS: AI cannot block/delete/add/restore for `user` or real `agent` contacts—those types only allow `update`. Use 'add' ONLY for virtual_contact. 硬约束：对 user 与真实 agent 联系人，AI 只能 update，不能 add/block/delete/restore（那只能用户在通讯录界面手动操作）。"
 # 项目术语 xingye = 星野
-display-name-zh: 星野通讯录更新候选草稿
-display-name-zh-TW: 星野通訊錄更新候選草稿
-display-name-ja: 星野連絡先更新候補下書き
-display-name-ko: 호시노 연락처 갱신 후보 초안
+display-name-zh: 星野通讯录草稿
+display-name-zh-TW: 星野通訊錄草稿
+display-name-ja: 星野連絡先下書き
+display-name-ko: 호시노 연락처 초안
 ---
 
-# 通讯录更新候选草稿
+# 通讯录草稿提议
 
-让心跳巡检里的 agent 在合适时机向小手机通讯录提议一条**针对现有联系人的字段更新候选**，由用户审阅后合并到该联系人的 meta。
+让心跳巡检里的 agent 在合适时机向小手机通讯录提议一条**待用户审阅**的草稿，由用户审阅后才会真正应用。
 
 ## 流程语义
 
 ```
-agent 调 xingye_propose_draft({ module: "phone_contact", ... })
+agent 调 xingye_propose_draft({ module: "phone_contact", action, ... })
            ↓
 落到 phone-contact/drafts.jsonl
            ↓
 用户在小手机通讯录顶部「待确认草稿 · 来自心跳巡检」区看到
            ↓
-点「采纳建议」→ savePhoneContactMeta 合并 patch（markManualFields=true）
+点「采纳建议 / 采纳新增 / 采纳拉黑 / 采纳删除 / 采纳恢复」
            ↓
-合并到现有联系人的 remark / impression / relationshipHint / tags / faction
+按 action 应用：update → savePhoneContactMeta；
+              add → applyAiGeneratedContacts（仅 virtual_contact）；
+              block / delete / restore → blockPhoneContact / deletePhoneContact / restorePhoneContact
 ```
 
-**与其它路径的差异**：
+**关键认识**：本工具只产生「待审阅草稿」。**没有任何 action 会绕过用户直接生效**——包括 add / block / delete / restore，全都需要用户在 UI 上点采纳。所以你可以放心地"建议"——但仍然要写得有依据、有理由。
 
-- 「**新增联系人**」走小手机通讯录的「AI 生成 / 增量更新」路径（用户手动触发），不在本工具职责范围。**本工具不接受 add**。
-- 「**拉黑 / 删除 / 恢复**」走小手机通讯录的手动 AI 更新（仅 virtual_contact 可由 AI 操作，agent / user 永远只能用户手动）。**本工具不接受 status 变化**。
-- 本工具只做**更新候选**：对**现有联系人**的 5 个"印象 / 关系判断"字段做小步修正。
+## 安全约束（硬性）
+
+| targetType        | update | add | block | delete | restore |
+|-------------------|--------|-----|-------|--------|---------|
+| `user`            | ✓      | ✗   | ✗     | ✗      | ✗       |
+| `agent`           | ✓      | ✗   | ✗     | ✗      | ✗       |
+| `virtual_contact` | ✓      | ✓   | ✓     | ✓      | ✓       |
+
+- **`user` / `agent` 只能 update**：AI 想新增 user / agent 是无意义的（user 由系统创建、agent 由真实角色注入），想拉黑/删除真实角色须由用户在通讯录界面手动操作。
+- **`add` 仅限 virtual_contact**：批量造名单仍走「AI 生成联系人」路径；本工具只在剧情中明确出现了**单个**值得记下的新联系人时才 add。
+- 违反组合 server 会拒、UI 也会拒。
 
 ## 视角约定（重要）
 
 通讯录是**当前角色（agent）**的私人通讯录。所有字段一律按 agent 视角写：
 
 - `remark` / `impression` / `relationshipHint`：**当前角色对这位联系人**的备忘、相处印象、关系标签——第一人称、自然口吻。
-- 对 `targetType=user` 这条特殊联系人**同样如此**：写"当前角色怎么看这位用户"，**不要**把用户原话或用户对角色的态度直接搬进 impression。用户的态度变化只是触发信号；字段值仍是角色视角的相处印象。
+- 对 `targetType=user` **同样如此**：写"当前角色怎么看这位用户"，**不要**把用户原话或用户对角色的态度直接搬进 impression。
 
-## 什么时候触发
+## 触发条件
 
-需要 **同时** 满足这三条：
+需要满足以下其一，且**没在最近巡检里对同一目标重复提议过**：
 
-1. 最近聊天 / 「小手机事件」摘要里出现**针对某个现有联系人**的稳定信号，能让角色的看法发生明确位移，典型情况：
-   - 印象更清晰：之前模糊的"邻居老张"在最近聊天里反复体现"靠谱、愿意帮忙"，可以 update `impression`
-   - 标签变化：某联系人最近多次越界 → 把"亲近的人"换成"需要观察"（**对 agent / virtual_contact 必须用固定词表**：亲近的人 / 需要观察 / 不可靠 / 同伴 / 危险）
-   - 关系状态：以前的"工作互信"在长期合作后更接近"利益往来"——可以 update `relationshipHint`
-   - 对 user 这条：最近聊天体现用户尊重边界、配合度高等——可以 update user 这条的 tags（user 这条 tags 不用压固定词表，可自然短句）
-2. **目标联系人在通讯录里确实已存在**（你能在 contacts 列表里找到对应 targetId）——本工具不接受新建。
-3. 这次变更**不重复**最近巡检里同一联系人的同一字段（避免灌水）。
+### action = "update"
+- 印象更清晰：之前模糊的联系人在最近聊天里反复体现稳定特征 → patch.impression
+- 标签变化：联系人最近被反复观察到某种行为 → patch.tags（**对 agent / virtual_contact** 必须从固定词表选：亲近的人 / 需要观察 / 不可靠 / 同伴 / 危险；**对 user** 可自然短句）
+- 关系状态：长期合作后关系发生质变 → patch.relationshipHint
+- 阵营调整：从"中立"变"对立"等 → patch.faction
+
+### action = "add"（仅 virtual_contact）
+- 最近聊天里出现一个**具体可识别**的新联系人，且与现有联系人**无法视为同一人**
+- 是个**单个**联系人，不是批量造名单（批量请走通讯录手动 AI 生成）
+- contact.tags / faction / impression 等字段**必须非空**，且 tags 用固定词表
+- contact.generatedReason 写**为什么 add**——不要写进 impression / shortBio / remark
+
+### action = "block"（仅 virtual_contact）
+- 最近聊天明确出现纠缠 / 威胁 / 越界 / 明确拒绝往来等信号
+- 顶层 `reason` 写清依据，提供可核对的事由
+- 证据不足时，请用 update 改 tags 加「需要观察」「危险」，不要 block
+
+### action = "delete"（仅 virtual_contact）
+- 最近聊天明确出现断联 / 旧号失效 / 渠道作废等信号
+- 与 block 的语义区分：纠缠/威胁/越界 → block；自然断联/失效 → delete
+
+### action = "restore"（仅 virtual_contact）
+- 之前 blocked / deleted 的联系人，最近聊天出现明确和解 / 恢复往来
+- 顶层 `reason` 写清和解依据
 
 **不触发**：
 
-- 一次性的情绪波动（"今天有点不爽"），等沉淀后再说
-- 仅是想加一条联系人（→ 通讯录手动 AI 生成）
-- 要 block / delete / restore（→ 通讯录手动 AI 更新）
-- 要改 displayName / kind / shortBio / avatarDataUrl / linkedAgentId / status / originalName（本工具不接受这些字段）
-- 用户在聊天里明确说"别记下来 / 这事算了"
-- 你不确定 targetId 是哪一条——猜测 add 一条新联系人**不被允许**
+- 一次性情绪波动
+- 已经在最近巡检里提议过同一目标同一动作
+- 用户在聊天里明确说「这事别记」
+- 要 block / delete / restore user 或 agent（**禁止**）
+- 要 add user 或 agent（**禁止**——user / agent 是系统注入的，不由 AI 建议添加）
 
-宁可不提议，也不要硬凑。通讯录被低质 patch 灌水会让用户失去对本机制的信任。
+宁可不提议，也不要硬凑。草稿被低质内容灌水会让用户失去信任。
 
-## 怎么写
+## 写作要点
 
-**patch 至少要有一个字段，且只能含这 5 个之一/多个**：
+**对 update**：
+- patch 至少要有一个非空字段
+- 不要传 status / displayName / kind / shortBio / linkedAgentId / originalName / avatarDataUrl——会被忽略
+- impression 第一人称自然口语，不要写元说明（"我决定把这事记下"），写**事实+感受**
 
-- `remark`（≤120 字符）：备忘性短句（"楼下小卖部老板娘 / 周末才在"）
-- `impression`（≤600 字符）：相处印象——第一人称自然口语，不要写元说明（"我决定把这事记下"），写**事实+感受**（"她每次接话都比我快半拍，我现在懒得搭"）
-- `relationshipHint`（≤120 字符）：关系状态短语（"工作互信" / "谨慎合作" / "利益往来" / "关系紧张" / "旧识"…）
-- `tags`（数组，**整体替换**——不是增量）：
-  - **对 agent / virtual_contact**：仅从固定词表选——`亲近的人 / 需要观察 / 不可靠 / 同伴 / 危险`，1–3 个最佳
-  - **对 user**：可自然短句（"尊重边界" / "不逞强" / "愿意配合"）
-- `faction`：仅 `自己人 / 中立 / 对立 / 未知`
+**对 add**：
+- displayName 必填，像真实通讯录里的称呼（可匿名："夜班同事" / "老患者" / "供货商王姐"），禁止写"新增一个…"等任务句式
+- kind 从允许列表选；不确定写 'unknown'
+- tags 非空数组，仅固定词表
+- faction 非空，4 选一
+- impression 或 shortBio 至少一项是具象生活化内容（不要模板空话）
+- generatedReason 给用户看为什么需要 add 这个人
 
-**reason（顶层）必须填**：一句话告诉用户"为什么提议这条 patch"，包括依据的聊天信号——这是用户决定要不要采纳的核心。
+**对 block / delete / restore**：
+- 优先用 targetId 精确定位；不知道 id 才用 matchName
+- 顶层 reason 必填，写清触发的具体聊天信号
 
-## 怎么调用
+**reason（顶层）始终建议填**：一句话告诉用户"为什么提议这条草稿"，包括依据的聊天信号——这是用户决定要不要采纳的核心。
+
+## 调用方式
 
 读完本 skill，调用 `xingye_propose_draft` 工具：
 
 ```
 module: "phone_contact"
-reason: "<一句话说明为什么提议这条 patch，包含触发信号>"
+reason: "<一句话说明为什么提议这条草稿，含触发信号>"
 sourceEventIds: ["<触发的 xingye event id，可选>"]
 phone_contact:
+  action: "update" | "add" | "block" | "delete" | "restore"   # 默认 update
   targetType: "agent" | "virtual_contact" | "user"
-  targetId: "<该联系人的 id；user 用 \"__user__\">"
-  displayName: "<UI 展示用的当前名字，可选；让用户一眼认出是谁>"
-  patch:
-    impression: "<可选，agent 对该联系人的最新相处印象>"
-    remark: "<可选>"
-    relationshipHint: "<可选>"
-    tags: ["<可选；agent/virtual_contact 须用固定词表，user 可自然短句>"]
-    faction: "自己人" | "中立" | "对立" | "未知"  # 可选
+  targetId: "<现有联系人 id；action='add' 时可省略；user 用 \"__user__\">"
+  matchName: "<targetId 不可用时的备用名字匹配（仅 virtual_contact 生效）>"
+  displayName: "<UI 展示用的当前名字，可选>"
+  patch: { remark, impression, relationshipHint, tags, faction }   # action='update' 用
+  contact: { displayName, kind, shortBio, impression, relationshipHint, tags, faction, status, generatedReason, remark }   # action='add' 用
 ```
 
-返回 `details.ok === true` 表示草稿已落盘到 `phone-contact/drafts.jsonl`；用户进入小手机通讯录时会在顶部「待确认草稿」区看到。
+返回 `details.ok === true` 表示草稿已落盘。
 
 ## 不要做什么
 
-- **不要**通过本工具新增联系人（targetType+targetId 必须指向**现有**联系人）
-- **不要**通过本工具修改 status（block / delete / restore）—— 走通讯录手动 AI 更新
-- **不要**改 displayName / kind / shortBio / avatarDataUrl / linkedAgentId / originalName—— 这些字段即使传也会被忽略
-- **不要**把用户原话搬进 impression / remark / relationshipHint—— 始终用 agent 第一人称视角的自然措辞改写
-- **不要**和 `relationship_state` 重复——那个是"关系状态 5 个 delta"，与通讯录字段不重叠；同一信号若同时触发两类候选，请只发**更贴近主语义**的一条
+- **不要**对 user 或真实 agent 提议 add / block / delete / restore（server 会拒）
+- **不要**用本工具批量造联系人——单批最多 0–2 条 add，多了请走通讯录手动 AI 生成
+- **不要**把用户原话或对方原话直接搬进 impression / remark / relationshipHint—— 始终用 agent 第一人称视角的自然措辞改写
+- **不要**和 `relationship_state` 重复——那个是关系状态 delta，与通讯录字段不重叠；同一信号若同时触发两类候选，只发**更贴近主语义**的一条
 - **不要**在同一巡检里对同一联系人同一字段反复提议
 - **不要**为凑数量批量 update —— 默认每轮 0–2 条，宁缺毋滥

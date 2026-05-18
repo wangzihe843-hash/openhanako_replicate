@@ -176,12 +176,50 @@ export function PhoneContactsApp({
 
   const formatPatchPreview = (patch: XingyePendingPhoneContactDraft['patch']): Array<{ key: string; label: string; value: string }> => {
     const out: Array<{ key: string; label: string; value: string }> = [];
+    if (!patch) return out;
     if (patch.remark !== undefined) out.push({ key: 'remark', label: '备注', value: patch.remark });
     if (patch.impression !== undefined) out.push({ key: 'impression', label: '印象', value: patch.impression });
     if (patch.relationshipHint !== undefined) out.push({ key: 'relationshipHint', label: '关系', value: patch.relationshipHint });
     if (patch.tags !== undefined) out.push({ key: 'tags', label: '标签', value: patch.tags.join(' / ') });
     if (patch.faction !== undefined) out.push({ key: 'faction', label: '阵营', value: patch.faction });
     return out;
+  };
+
+  const formatContactPreview = (contact: XingyePendingPhoneContactDraft['contact']): Array<{ key: string; label: string; value: string }> => {
+    const out: Array<{ key: string; label: string; value: string }> = [];
+    if (!contact) return out;
+    out.push({ key: 'kind', label: '种类', value: contact.kind });
+    if (contact.shortBio) out.push({ key: 'shortBio', label: '简介', value: contact.shortBio });
+    if (contact.impression) out.push({ key: 'impression', label: '印象', value: contact.impression });
+    if (contact.relationshipHint) out.push({ key: 'relationshipHint', label: '关系', value: contact.relationshipHint });
+    if (contact.remark) out.push({ key: 'remark', label: '备注', value: contact.remark });
+    if (contact.tags?.length) out.push({ key: 'tags', label: '标签', value: contact.tags.join(' / ') });
+    if (contact.faction) out.push({ key: 'faction', label: '阵营', value: contact.faction });
+    if (contact.status) out.push({ key: 'status', label: '状态', value: contact.status });
+    if (contact.generatedReason) out.push({ key: 'generatedReason', label: '生成依据', value: contact.generatedReason });
+    return out;
+  };
+
+  const draftActionLabel = (action: XingyePendingPhoneContactDraft['action']): string => {
+    switch (action) {
+      case 'add': return '新增';
+      case 'block': return '拉黑';
+      case 'delete': return '删除';
+      case 'restore': return '恢复';
+      case 'update':
+      default: return '更新';
+    }
+  };
+
+  const draftConfirmButtonLabel = (action: XingyePendingPhoneContactDraft['action']): string => {
+    switch (action) {
+      case 'add': return '采纳新增';
+      case 'block': return '采纳拉黑';
+      case 'delete': return '采纳删除';
+      case 'restore': return '采纳恢复';
+      case 'update':
+      default: return '采纳建议';
+    }
   };
 
   const openSection = (section: PhoneContactsSectionId) => {
@@ -496,7 +534,7 @@ export function PhoneContactsApp({
               >
                 <h3 className={styles.phoneAppTitle}>待确认草稿 · 来自心跳巡检</h3>
                 <p className={styles.phoneAppHint}>
-                  这是 TA 在心跳巡检里对**现有联系人**字段提议的小步更新（remark / impression / relationshipHint / tags / faction）。点「采纳建议」会合并到对应联系人；不会新增联系人，也不会改 status / 拉黑 / 删除。
+                  这是 TA 在心跳巡检里对通讯录提议的草稿（更新 / 新增 / 拉黑 / 删除 / 恢复），**都需要你审阅采纳后才会生效**。AI 不会主动对 user 或真实角色做新增 / 拉黑 / 删除——那些只有你能手动操作。
                 </p>
                 {phoneContactDraftError ? (
                   <p className={styles.phoneAppHint} role="status">
@@ -504,25 +542,29 @@ export function PhoneContactsApp({
                   </p>
                 ) : null}
                 {pendingPhoneContactDrafts.map((d) => {
-                  const patchPreview = formatPatchPreview(d.patch);
-                  const who = d.displayName
-                    ? `${d.displayName}（${d.targetType}）`
-                    : `${d.targetType}:${d.targetId}`;
+                  const previewItems = d.action === 'add' ? formatContactPreview(d.contact) : formatPatchPreview(d.patch);
+                  const displayName = d.displayName ?? d.contact?.displayName ?? '';
+                  const who = displayName
+                    ? `${displayName}（${d.targetType}）`
+                    : (d.targetId
+                      ? `${d.targetType}:${d.targetId}`
+                      : `${d.targetType}:${d.matchName ?? '?'}`);
                   return (
                     <div
                       key={d.id}
                       className={styles.phoneAppCard}
                       style={{ border: '1px dashed rgba(0,0,0,0.2)', padding: 10, marginBottom: 8 }}
                       data-testid={`phone-contact-pending-draft-${d.id}`}
+                      data-action={d.action}
                     >
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
-                        <strong>通讯录更新候选</strong>
+                        <strong>通讯录草稿 · {draftActionLabel(d.action)}</strong>
                         <span className={styles.phoneAppHint}>目标 {who}</span>
                         <span className={styles.phoneAppHint}>来源 {d.source}</span>
                       </div>
-                      {patchPreview.length > 0 ? (
+                      {previewItems.length > 0 ? (
                         <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
-                          {patchPreview.map((item) => (
+                          {previewItems.map((item) => (
                             <li key={item.key} style={{ whiteSpace: 'pre-wrap' }}>
                               <strong>{item.label}</strong>：{item.value}
                             </li>
@@ -542,7 +584,7 @@ export function PhoneContactsApp({
                           disabled={phoneContactDraftBusyId === d.id}
                           data-testid={`phone-contact-pending-draft-confirm-${d.id}`}
                         >
-                          {phoneContactDraftBusyId === d.id ? '处理中…' : '采纳建议'}
+                          {phoneContactDraftBusyId === d.id ? '处理中…' : draftConfirmButtonLabel(d.action)}
                         </button>
                         <button
                           type="button"

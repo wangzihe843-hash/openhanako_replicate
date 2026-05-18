@@ -1,28 +1,37 @@
 /**
- * 渲染端「待确认通讯录更新候选」store 助手。
+ * 渲染端「待确认通讯录候选」store 助手。
  *
  * 设计要点：
  *  - 草稿落到独立的 `phone-contact/drafts.jsonl`（agent 在心跳里 propose 的）。
- *  - 用户在小手机通讯录 → 联系人列表顶部「待确认草稿 · 来自心跳巡检」区点
- *    「采纳建议」→ 走 confirmPhoneContactDraft → 内部调用 savePhoneContactMeta
- *    把 patch 合并到现有联系人 meta（remark / impression / relationshipHint /
- *    tags / faction 这 5 个字段；其余字段不动）。`markManualFields: true` —
- *    用户在 UI 上 review 过即视为手动认可。
+ *  - 5 个 action 全开（update / add / block / delete / restore），但所有 action
+ *    都是「待用户审阅 → confirm 才生效」——agent 调本工具只产出待确认草稿，
+ *    没有任何动作会绕过用户。
+ *  - 安全约束（与 phone-store 的 applyAiContactUpdates hardcoded skip 对齐）：
+ *    AI 不可对 user / agent 提议 add / block / delete / restore——server 层已经
+ *    拒，渲染端这里再做一次防御性 check。
+ *  - confirm 时按 action 分发到 phone-store 现成 helper：
+ *    - update → savePhoneContactMeta + markManualFields=true + source='manual'
+ *      （用户审阅认可即视为手动编辑，未来 AI 增量不会再覆盖）
+ *    - add → applyAiGeneratedContacts({ metaSource: 'manual', mergeMatchingDisplayName: 'never' })
+ *    - block / delete / restore → blockPhoneContact / deletePhoneContact / restorePhoneContact
+ *      （三者都已经是 markManualFields=true + source='manual' 语义）
  *  - 「丢弃」直接删 draft，不动通讯录。
- *  - 候选只针对**现有联系人**：confirm 时检查 contact meta 是否存在；不存在
- *    （已被删 / 已被替换）就 fail，让 UI 提示「联系人已不存在，是否丢弃此建议」。
- *  - 不允许的字段（displayName / kind / status / linkedAgentId / shortBio /
- *    avatarDataUrl / originalName）：server 端不写入 patch；这里 confirm 时
- *    也只透传 patch 中的 5 个字段到 savePhoneContactMeta，无需额外屏蔽。
  */
 
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import {
+  applyAiGeneratedContacts,
+  blockPhoneContact,
+  deletePhoneContact,
+  findVirtualContactByName,
   getPhoneContactMeta,
+  restorePhoneContact,
   savePhoneContactMeta,
+  type XingyeAiGeneratedContact,
   type XingyeContactTargetType,
+  type XingyeVirtualContactKind,
 } from './xingye-phone-store';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
@@ -38,6 +47,22 @@ const TAG_MAX_LEN = 32;
 const TAGS_MAX_COUNT = 8;
 const REASON_MAX = 500;
 const DISPLAY_NAME_MAX = 80;
+const SHORT_BIO_MAX = 200;
+const GENERATED_REASON_MAX = 300;
+
+export type XingyePhoneContactDraftAction = 'update' | 'add' | 'block' | 'delete' | 'restore';
+
+export const PHONE_CONTACT_DRAFT_ALLOWED_ACTIONS: ReadonlyArray<XingyePhoneContactDraftAction> = [
+  'update',
+  'add',
+  'block',
+  'delete',
+  'restore',
+];
+
+const ALLOWED_ACTION_SET: ReadonlySet<XingyePhoneContactDraftAction> = new Set(
+  PHONE_CONTACT_DRAFT_ALLOWED_ACTIONS,
+);
 
 export const PHONE_CONTACT_DRAFT_ALLOWED_TARGET_TYPES: ReadonlyArray<XingyeContactTargetType> = [
   'agent',
@@ -58,6 +83,32 @@ export const PHONE_CONTACT_DRAFT_ALLOWED_FACTIONS: ReadonlyArray<string> = [
 
 const ALLOWED_FACTION_SET: ReadonlySet<string> = new Set(PHONE_CONTACT_DRAFT_ALLOWED_FACTIONS);
 
+export const PHONE_CONTACT_DRAFT_ALLOWED_STATUSES: ReadonlyArray<'active' | 'blocked' | 'deleted'> = [
+  'active',
+  'blocked',
+  'deleted',
+];
+
+const ALLOWED_STATUS_SET: ReadonlySet<string> = new Set(PHONE_CONTACT_DRAFT_ALLOWED_STATUSES);
+
+const ALLOWED_KINDS: ReadonlySet<string> = new Set<XingyeVirtualContactKind>([
+  'friend',
+  'family',
+  'coworker',
+  'classmate',
+  'mentor',
+  'rival',
+  'enemy',
+  'client',
+  'patient',
+  'informant',
+  'superior',
+  'subordinate',
+  'ex',
+  'neighbor',
+  'unknown',
+]);
+
 export type XingyePhoneContactDraftPatch = {
   remark?: string;
   impression?: string;
@@ -66,12 +117,28 @@ export type XingyePhoneContactDraftPatch = {
   faction?: string;
 };
 
+export type XingyePhoneContactDraftContact = {
+  displayName: string;
+  kind: XingyeVirtualContactKind;
+  shortBio?: string;
+  remark?: string;
+  impression?: string;
+  relationshipHint?: string;
+  tags?: string[];
+  faction?: string;
+  status?: 'active' | 'blocked' | 'deleted';
+  generatedReason?: string;
+};
+
 export type XingyePendingPhoneContactDraft = {
   id: string;
+  action: XingyePhoneContactDraftAction;
   targetType: XingyeContactTargetType;
-  targetId: string;
+  targetId?: string;
+  matchName?: string;
   displayName?: string;
-  patch: XingyePhoneContactDraftPatch;
+  patch?: XingyePhoneContactDraftPatch;
+  contact?: XingyePhoneContactDraftContact;
   reason?: string;
   source: string;
   sourceEventIds?: string[];
@@ -129,6 +196,19 @@ function normalizeFaction(value: unknown): string | undefined {
   return ALLOWED_FACTION_SET.has(trimmed) ? trimmed : undefined;
 }
 
+function normalizeStatus(value: unknown): 'active' | 'blocked' | 'deleted' | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!ALLOWED_STATUS_SET.has(trimmed)) return undefined;
+  return trimmed as 'active' | 'blocked' | 'deleted';
+}
+
+function normalizeKind(value: unknown): XingyeVirtualContactKind {
+  if (typeof value !== 'string') return 'unknown';
+  const trimmed = value.trim();
+  return ALLOWED_KINDS.has(trimmed) ? (trimmed as XingyeVirtualContactKind) : 'unknown';
+}
+
 function normalizePatch(raw: unknown): XingyePhoneContactDraftPatch | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
@@ -146,10 +226,55 @@ function normalizePatch(raw: unknown): XingyePhoneContactDraftPatch | null {
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+function normalizeContact(raw: unknown): XingyePhoneContactDraftContact | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const displayName = normalizeOptionalText(r.displayName, DISPLAY_NAME_MAX);
+  if (!displayName) return null;
+  const contact: XingyePhoneContactDraftContact = {
+    displayName,
+    kind: normalizeKind(r.kind),
+  };
+  const shortBio = normalizeOptionalText(r.shortBio, SHORT_BIO_MAX);
+  if (shortBio !== undefined) contact.shortBio = shortBio;
+  const remark = normalizeOptionalText(r.remark, REMARK_MAX);
+  if (remark !== undefined) contact.remark = remark;
+  const impression = normalizeOptionalText(r.impression, IMPRESSION_MAX);
+  if (impression !== undefined) contact.impression = impression;
+  const relationshipHint = normalizeOptionalText(r.relationshipHint, RELATIONSHIP_HINT_MAX);
+  if (relationshipHint !== undefined) contact.relationshipHint = relationshipHint;
+  const tags = normalizeTags(r.tags);
+  if (tags && tags.length > 0) contact.tags = tags;
+  const faction = normalizeFaction(r.faction);
+  if (faction !== undefined) contact.faction = faction;
+  const status = normalizeStatus(r.status);
+  if (status !== undefined) contact.status = status;
+  const generatedReason = normalizeOptionalText(r.generatedReason, GENERATED_REASON_MAX);
+  if (generatedReason !== undefined) contact.generatedReason = generatedReason;
+  return contact;
+}
+
 function normalizeTargetType(value: unknown): XingyeContactTargetType | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim() as XingyeContactTargetType;
   return ALLOWED_TARGET_TYPE_SET.has(trimmed) ? trimmed : null;
+}
+
+function normalizeAction(value: unknown): XingyePhoneContactDraftAction | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim() as XingyePhoneContactDraftAction;
+  return ALLOWED_ACTION_SET.has(trimmed) ? trimmed : null;
+}
+
+/**
+ * 防御性 security check：与 server 端 resolveAction 同源。
+ * confirm 前再校验一次，避免老 jsonl row 或绕过 server 写入的草稿能被 confirm。
+ */
+function isActionAllowedForTargetType(action: XingyePhoneContactDraftAction, targetType: XingyeContactTargetType): boolean {
+  if (targetType === 'user' && action !== 'update') return false;
+  if (targetType === 'agent' && action !== 'update') return false;
+  if (action === 'add' && targetType !== 'virtual_contact') return false;
+  return true;
 }
 
 function normalizeDraftRow(value: unknown): XingyePendingPhoneContactDraft | null {
@@ -159,10 +284,26 @@ function normalizeDraftRow(value: unknown): XingyePendingPhoneContactDraft | nul
   if (!id) return null;
   const targetType = normalizeTargetType(raw.targetType);
   if (!targetType) return null;
-  const targetId = typeof raw.targetId === 'string' && raw.targetId.trim() ? raw.targetId.trim() : '';
-  if (!targetId) return null;
-  const patch = normalizePatch(raw.patch);
-  if (!patch) return null;
+  /**
+   * 旧 row 兼容：早期版本没有 action 字段（默认 update）。
+   */
+  const action = normalizeAction(raw.action) ?? 'update';
+  if (!isActionAllowedForTargetType(action, targetType)) return null;
+  const targetId = typeof raw.targetId === 'string' && raw.targetId.trim() ? raw.targetId.trim() : undefined;
+  const matchName = normalizeOptionalText(raw.matchName, DISPLAY_NAME_MAX);
+  if (action === 'update' && !targetId) return null;
+  if ((action === 'block' || action === 'delete' || action === 'restore') && !targetId && !matchName) return null;
+  let patch: XingyePhoneContactDraftPatch | undefined;
+  let contact: XingyePhoneContactDraftContact | undefined;
+  if (action === 'update') {
+    const p = normalizePatch(raw.patch);
+    if (!p) return null;
+    patch = p;
+  } else if (action === 'add') {
+    const c = normalizeContact(raw.contact);
+    if (!c) return null;
+    contact = c;
+  }
   const source = typeof raw.source === 'string' && raw.source.trim() ? raw.source.trim() : 'unknown';
   const createdAt = typeof raw.createdAt === 'string' && raw.createdAt
     ? raw.createdAt
@@ -173,10 +314,13 @@ function normalizeDraftRow(value: unknown): XingyePendingPhoneContactDraft | nul
     : undefined;
   return {
     id,
+    action,
     targetType,
     targetId,
+    matchName,
     displayName: normalizeOptionalText(raw.displayName, DISPLAY_NAME_MAX),
     patch,
+    contact,
     reason: normalizeOptionalText(raw.reason, REASON_MAX),
     source,
     sourceEventIds,
@@ -211,7 +355,7 @@ export async function discardPhoneContactDraft(
   agentId: string,
   draftId: string,
 ): Promise<boolean> {
-  const aid = assertAgentId(agentId, '丢弃通讯录更新候选');
+  const aid = assertAgentId(agentId, '丢弃通讯录草稿');
   const did = draftId.trim();
   if (!did) throw new Error('丢弃草稿失败：缺少草稿 id。');
   const deleted = await backend.deleteJsonlRecord(aid, XINGYE_PHONE_CONTACT_DRAFTS_JSONL, did);
@@ -227,16 +371,31 @@ export async function discardPhoneContactDraft(
 }
 
 /**
- * 确认草稿 = 把 patch 合并到现有联系人 meta：
- *   1. 列出当前 drafts，按 draftId 取出待 confirm 的那条；找不到则 fail。
- *   2. 把 edits（如果有）覆盖到 patch 上；再归一一次（确保经过相同的字段过滤 / 长度限制）。
- *   3. 用 getPhoneContactMeta 检查 (targetType, targetId) 是否存在——**对 agent 和
- *      user 这两种 targetType**，contact meta 可能尚未持久化（首次互动前没人调用
- *      savePhoneContactMeta），此时也允许 confirm，等于"首次落 meta"。仅对
- *      virtual_contact 要求存在 meta（虚拟联系人没 meta 等同于"已被删除/不存在"）。
- *   4. 调 savePhoneContactMeta 合并 patch（source='manual'，markManualFields=true）。
- *   5. 从 drafts.jsonl 删掉这条；删除失败仅 warn。
- *   6. 发 phone_contact.draft_confirmed 事件。
+ * 解析 block/delete/restore 草稿的目标 contact id：
+ *  - 优先 targetId；
+ *  - 否则用 matchName 通过 findVirtualContactByName 解析（仅 virtual_contact 可走 matchName）。
+ * 返回 null 表示找不到——UI 应提示用户「联系人已不存在，是否丢弃此建议」。
+ */
+function resolveStatusActionTargetId(
+  agentId: string,
+  draft: XingyePendingPhoneContactDraft,
+): string | null {
+  if (draft.targetId) return draft.targetId;
+  if (draft.targetType === 'virtual_contact' && draft.matchName) {
+    const vc = findVirtualContactByName(agentId, draft.matchName);
+    if (vc?.id) return vc.id;
+  }
+  return null;
+}
+
+/**
+ * 确认草稿 = 按 action 分发到 phone-store 的现成 helper：
+ *  - update → savePhoneContactMeta + markManualFields=true + source='manual'
+ *  - add    → applyAiGeneratedContacts（仅 virtual_contact；metaSource='manual'）
+ *  - block / delete / restore → blockPhoneContact / deletePhoneContact / restorePhoneContact
+ *
+ * 所有 helper 内部都会更新 meta + 写 changeLog（manual_edit source），让 sms 增量
+ * 补全流程同样能消费。
  */
 export async function confirmPhoneContactDraft(
   agentId: string,
@@ -244,11 +403,12 @@ export async function confirmPhoneContactDraft(
   edits?: { patch?: Partial<XingyePhoneContactDraftPatch> },
 ): Promise<{
   draftId: string;
+  action: XingyePhoneContactDraftAction;
   targetType: XingyeContactTargetType;
   targetId: string;
-  appliedFields: Array<keyof XingyePhoneContactDraftPatch>;
+  appliedFields?: Array<keyof XingyePhoneContactDraftPatch>;
 }> {
-  const aid = assertAgentId(agentId, '确认通讯录更新候选');
+  const aid = assertAgentId(agentId, '确认通讯录草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
 
@@ -256,58 +416,124 @@ export async function confirmPhoneContactDraft(
   const draft = drafts.find((d) => d.id === did);
   if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
 
-  const mergedRaw: Record<string, unknown> = { ...draft.patch };
-  if (edits?.patch && typeof edits.patch === 'object' && !Array.isArray(edits.patch)) {
-    for (const [k, v] of Object.entries(edits.patch)) {
-      mergedRaw[k] = v;
-    }
-  }
-  const mergedPatch = normalizePatch(mergedRaw);
-  if (!mergedPatch) {
-    throw new Error('确认草稿失败：合并后没有任何可应用的字段（patch 为空）。');
+  /**
+   * 防御性二次 check：normalizeDraftRow 已经按 action/targetType 组合拒过，但
+   * 万一未来出现新的攻击面，这里再确认一次。
+   */
+  if (!isActionAllowedForTargetType(draft.action, draft.targetType)) {
+    throw new Error(`确认草稿失败：组合不允许（action=${draft.action} on targetType=${draft.targetType}）。`);
   }
 
-  if (draft.targetType === 'virtual_contact') {
-    const meta = getPhoneContactMeta(aid, draft.targetType, draft.targetId);
-    if (!meta) {
+  let appliedFields: Array<keyof XingyePhoneContactDraftPatch> | undefined;
+  let resolvedTargetId = draft.targetId ?? '';
+
+  if (draft.action === 'update') {
+    const mergedRaw: Record<string, unknown> = { ...(draft.patch ?? {}) };
+    if (edits?.patch && typeof edits.patch === 'object' && !Array.isArray(edits.patch)) {
+      for (const [k, v] of Object.entries(edits.patch)) {
+        mergedRaw[k] = v;
+      }
+    }
+    const mergedPatch = normalizePatch(mergedRaw);
+    if (!mergedPatch) {
+      throw new Error('确认草稿失败：合并后没有任何可应用的字段（patch 为空）。');
+    }
+    if (draft.targetType === 'virtual_contact') {
+      const meta = getPhoneContactMeta(aid, draft.targetType, draft.targetId!);
+      if (!meta) {
+        throw new Error('确认草稿失败：目标虚拟联系人不存在或已被删除——请丢弃此建议。');
+      }
+    }
+    savePhoneContactMeta(
+      aid,
+      draft.targetType,
+      draft.targetId!,
+      {
+        remark: mergedPatch.remark,
+        impression: mergedPatch.impression,
+        relationshipHint: mergedPatch.relationshipHint,
+        tags: mergedPatch.tags,
+        faction: mergedPatch.faction,
+        source: 'manual',
+      },
+      undefined,
+      { markManualFields: true },
+    );
+    appliedFields = Object.keys(mergedPatch) as Array<keyof XingyePhoneContactDraftPatch>;
+  } else if (draft.action === 'add') {
+    if (!draft.contact) throw new Error('确认草稿失败：add 草稿缺少 contact 字段。');
+    const aiContact: XingyeAiGeneratedContact = {
+      targetType: 'virtual_contact',
+      displayName: draft.contact.displayName,
+      kind: draft.contact.kind,
+      shortBio: draft.contact.shortBio,
+      remark: draft.contact.remark,
+      impression: draft.contact.impression,
+      relationshipHint: draft.contact.relationshipHint,
+      tags: draft.contact.tags,
+      faction: draft.contact.faction,
+      status: draft.contact.status,
+      generatedReason: draft.contact.generatedReason ?? '',
+    };
+    const result = applyAiGeneratedContacts(aid, [aiContact], {
+      /**
+       * metaSource='manual'：用户审阅确认 = 手动认可，未来 AI 增量更新不会无声覆盖。
+       * mergeMatchingDisplayName='never'：要 add 就是 add，不要合并到老同名条目。
+       */
+      virtualSource: 'manual',
+      metaSource: 'manual',
+      mergeMatchingDisplayName: 'never',
+    });
+    if (result.createdCount > 0) {
+      const want = draft.contact.displayName.trim().toLowerCase();
+      const savedVc = result.saved.filter((s) => s.displayName.trim().toLowerCase() === want).at(-1)
+        ?? result.saved[result.saved.length - 1];
+      resolvedTargetId = savedVc?.id ?? '';
+    } else {
+      throw new Error('确认草稿失败：未新增任何联系人（可能因同名去重或字段缺失）。');
+    }
+  } else if (draft.action === 'block' || draft.action === 'delete' || draft.action === 'restore') {
+    /**
+     * 这三个 action 在 server / normalizeDraftRow 已经限定 targetType='virtual_contact'，
+     * 这里只允许 virtual_contact 走这一路；matchName fallback 解析也只查 virtual_contact。
+     */
+    if (draft.targetType !== 'virtual_contact') {
+      throw new Error(`确认草稿失败：${draft.action} 仅允许 virtual_contact。`);
+    }
+    const tid = resolveStatusActionTargetId(aid, draft);
+    if (!tid) {
       throw new Error('确认草稿失败：目标虚拟联系人不存在或已被删除——请丢弃此建议。');
     }
+    resolvedTargetId = tid;
+    if (draft.action === 'block') blockPhoneContact(aid, 'virtual_contact', tid);
+    else if (draft.action === 'delete') deletePhoneContact(aid, 'virtual_contact', tid);
+    else restorePhoneContact(aid, 'virtual_contact', tid);
   }
-
-  savePhoneContactMeta(
-    aid,
-    draft.targetType,
-    draft.targetId,
-    {
-      remark: mergedPatch.remark,
-      impression: mergedPatch.impression,
-      relationshipHint: mergedPatch.relationshipHint,
-      tags: mergedPatch.tags,
-      faction: mergedPatch.faction,
-      source: 'manual',
-    },
-    undefined,
-    { markManualFields: true },
-  );
 
   try {
     await backend.deleteJsonlRecord(aid, XINGYE_PHONE_CONTACT_DRAFTS_JSONL, did);
   } catch (error) {
-    console.warn('[xingye-phone-contact-drafts] confirm: failed to delete draft after meta save:', error);
+    console.warn('[xingye-phone-contact-drafts] confirm: failed to delete draft after apply:', error);
   }
 
-  const appliedFields = Object.keys(mergedPatch) as Array<keyof XingyePhoneContactDraftPatch>;
   await appendDraftEventBestEffort(aid, {
     type: 'phone_contact.draft_confirmed',
     source: 'xingye-phone-contact-drafts',
     subjectId: did,
     payload: {
       draftId: did,
+      action: draft.action,
       targetType: draft.targetType,
-      targetId: draft.targetId,
-      appliedFields,
+      targetId: resolvedTargetId,
+      appliedFields: appliedFields ?? [],
     },
   });
 
-  return { draftId: did, targetType: draft.targetType, targetId: draft.targetId, appliedFields };
+  return {
+    draftId: did,
+    action: draft.action,
+    targetType: draft.targetType,
+    targetId: resolvedTargetId,
+    appliedFields,
+  };
 }
