@@ -7,7 +7,13 @@
  *   【标题】 / [标题] / 【标题：】 / 【TITLE】 → title
  *   【卦象】 / 【牌面】 / 【签象】 / 【行动签象】 → signFlavor (with the literal label preserved)
  *   【正文】 / 【BODY】 → body
- *   【行动签】 / 【ACTION】 / 【ACTION SIGN】 → actionSign
+ *   【行动签】 / 【卦辞】 / 【牌意指引】 / 【影像提示】 / 【符意建议】 / 【星象建议】 /
+ *     【心象提示】 / 【ACTION】 / 【ACTION SIGN】 → actionSign（label 也保留）
+ *
+ * ACTION 组扩充原因：本仓库为每种占法定义了专属 actionSectionLabel
+ * （见 xingye-divination-themes.ts）；AI prompt 端按 method 写入对应 label。
+ * parse 端必须能识别全部 7 种 + 历史的「行动签」，否则新 method 的 action 段
+ * 会被当成 unknown 丢掉。
  *
  * Any text appearing before the first recognized header lands in `lead`,
  * so detail rendering can still show something when the model omits markers.
@@ -20,6 +26,11 @@ export type ParsedDivinationReading = {
   signFlavor?: string;
   body?: string;
   actionSign?: string;
+  /**
+   * Literal text used between 【】 for the action block. UI 优先用它显示小标题；
+   * 缺省时回退到 theme.actionSectionLabel。
+   */
+  actionLabel?: string;
   /** Leading non-section text (only present when the model skipped 【标题】). */
   lead?: string;
 };
@@ -29,7 +40,10 @@ const HEADER_RE = /^[【\[]\s*(.+?)\s*[:：]?\s*[】\]]\s*[:：]?\s*$/;
 const TITLE_KEYS = new Set(['标题', 'title']);
 const SIGN_KEYS = new Set(['卦象', '牌面', '签象', '行动签象', 'sign']);
 const BODY_KEYS = new Set(['正文', 'body']);
-const ACTION_KEYS = new Set(['行动签', 'action', 'action sign', 'actionsign']);
+const ACTION_KEYS = new Set([
+  '行动签', '卦辞', '牌意指引', '影像提示', '符意建议', '星象建议', '心象提示',
+  'action', 'action sign', 'actionsign',
+]);
 
 type Slot = 'title' | 'sign' | 'body' | 'action' | 'unknown';
 
@@ -74,7 +88,10 @@ export function parseDivinationReading(raw: unknown): ParsedDivinationReading {
         result.signFlavor = value;
         if (currentLabel) result.signLabel = currentLabel;
       } else if (currentSlot === 'body' && !result.body) result.body = value;
-      else if (currentSlot === 'action' && !result.actionSign) result.actionSign = value;
+      else if (currentSlot === 'action' && !result.actionSign) {
+        result.actionSign = value;
+        if (currentLabel) result.actionLabel = currentLabel;
+      }
     }
     buffer = [];
   };

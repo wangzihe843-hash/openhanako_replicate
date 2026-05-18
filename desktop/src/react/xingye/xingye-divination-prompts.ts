@@ -12,6 +12,23 @@ const METHOD_SIGN_LABEL: Record<XingyeDivinationMethodId, string> = {
   oracle_generic: '签象',
 };
 
+/**
+ * 第 4 小节（行动/建议段）的 label 按占法分化。
+ * - 「行动签」是 field_oracle 的本体概念（field_oracle = 战地神谕，其符号系统就叫"行动签"）
+ * - iching 用「卦辞」、tarot 用「牌意指引」等
+ * - oracle_generic 用「心象提示」，与心象草稿语义对齐
+ * 与 desktop/src/react/xingye/xingye-divination-themes.ts actionSectionLabel 保持一致。
+ */
+const METHOD_ACTION_LABEL: Record<XingyeDivinationMethodId, string> = {
+  iching_liuyao: '卦辞',
+  tarot: '牌意指引',
+  crystal_ball: '影像提示',
+  runes: '符意建议',
+  astrology: '星象建议',
+  field_oracle: '行动签',
+  oracle_generic: '心象提示',
+};
+
 function truncateChars(text: string, max: number): string {
   const t = text.trim();
   if (t.length <= max) return t;
@@ -41,6 +58,10 @@ function profileBlockFromAgentLike(agentLike: XingyeDivinationAgentLike): string
 
 export function getDivinationSignLabel(methodId: XingyeDivinationMethodId): string {
   return METHOD_SIGN_LABEL[methodId] ?? METHOD_SIGN_LABEL.oracle_generic;
+}
+
+export function getDivinationActionLabel(methodId: XingyeDivinationMethodId): string {
+  return METHOD_ACTION_LABEL[methodId] ?? METHOD_ACTION_LABEL.oracle_generic;
 }
 
 export function buildDivinationReadingPrompt(args: {
@@ -75,6 +96,7 @@ export function buildDivinationReadingPrompt(args: {
   });
 
   const signLabel = getDivinationSignLabel(methodId);
+  const actionLabel = getDivinationActionLabel(methodId);
   const profileBlock = profileBlockFromAgentLike(agentLike);
   const extraCorpus = truncateChars(agentLike.extraCorpus ?? '', 6000);
   const theme = (userProvidedTheme ?? '').trim();
@@ -91,7 +113,7 @@ export function buildDivinationReadingPrompt(args: {
     '可以写角色没有说出口的犹豫与预感，但不要凭空捏造重大剧情、生死、关系决裂等输入里不存在的事件。',
     '',
     `占法：${methodLabel}（${methodId}）。眼前符号依次为：${symbolLine}。请把这些符号意象（或与之贴合的意象）织入正文，不要罗列符号名称。`,
-    `小节标签必须使用：【标题】、【${signLabel}】、【正文】、【行动签】 这四个，顺序与字面一致。`,
+    `小节标签必须使用：【标题】、【${signLabel}】、【正文】、【${actionLabel}】 这四个，顺序与字面一致。注意 \`${actionLabel}\` 是本占法专属用语——${methodId === 'field_oracle' ? '行动签是 field_oracle 本体概念' : `区别于 field_oracle 的「行动签」，本占法用「${actionLabel}」`}。`,
     '',
     '正文长度：',
     '- title：一行，简短（不超过 24 个汉字）。',
@@ -109,7 +131,7 @@ export function buildDivinationReadingPrompt(args: {
       '<对符号/卦象/牌面的第一人称简短描摹>',
       '【正文】',
       '<对 agentQuestion 的内省式回应，可融入符号意象；不要给出占卜结论以外的人生建议>',
-      '【行动签】',
+      `【${actionLabel}】`,
       '<一句可执行的、克制的小提醒>',
     ].join('\n'),
     '',

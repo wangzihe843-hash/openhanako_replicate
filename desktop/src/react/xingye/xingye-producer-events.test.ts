@@ -107,6 +107,16 @@ import {
   discardShoppingDraft,
 } from './xingye-shopping-drafts';
 import {
+  appendReadingNoteDraft,
+  confirmReadingNoteDraft,
+  discardReadingNoteDraft,
+} from './xingye-reading-notes-drafts';
+import {
+  appendDivinationDraft,
+  confirmDivinationDraft,
+  discardDivinationDraft,
+} from './xingye-divination-drafts';
+import {
   appendMmChatTurnsToSession,
   saveMmChatPersistence,
   type XingyeMmChatPersistedV1,
@@ -968,6 +978,145 @@ describe('producer contract: shopping-drafts', () => {
   });
 });
 
+describe('producer contract: reading-notes drafts', () => {
+  it('appendReadingNoteDraft emits reading_notes.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendReadingNoteDraft('agent-a', {
+      title: '关于「不必逞强」', body: '想起师父。', source: 'xingye-heartbeat-tool',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'reading_notes.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, title: '关于「不必逞强」', noteType: 'reading_note', hasQuote: false },
+    });
+  });
+
+  it('discardReadingNoteDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendReadingNoteDraft('agent-a', { title: 'T', body: 'B', source: 'xingye-heartbeat-tool' });
+    appendEventMock.mockClear();
+    const ok = await discardReadingNoteDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'reading_notes.draft_discarded',
+      source: 'xingye-reading-notes-drafts',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardReadingNoteDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmReadingNoteDraft fires reading_notes.entry_appended AND reading_notes.draft_confirmed (entry id derived from draft id)', async () => {
+    const draft = await appendReadingNoteDraft('agent-a', {
+      title: 'T', body: 'B', noteType: 'reading_note', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmReadingNoteDraft('agent-a', draft.id);
+    expect(entry.id).toBe(`from-draft-${draft.id}`);
+    expect(entry.appId).toBe('reading_notes');
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('reading_notes.entry_appended');
+    expect(types).toContain('reading_notes.draft_confirmed');
+  });
+
+  it('confirmReadingNoteDraft is idempotent: second confirm reuses existing entry', async () => {
+    const draft = await appendReadingNoteDraft('agent-a', { title: 'T', body: 'B', source: 'xingye-heartbeat-tool' });
+    const first = await confirmReadingNoteDraft('agent-a', draft.id);
+    /** 模拟「delete draft 上一次失败」：手动把 draft 行重塞回 drafts.jsonl */
+    const draftsKey = 'agent-a|apps/reading_notes/drafts.jsonl';
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, title: 'T', body: 'B', noteType: 'reading_note',
+        source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+    const second = await confirmReadingNoteDraft('agent-a', draft.id);
+    expect(second.id).toBe(first.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('reading_notes.entry_appended');
+    expect(types).toContain('reading_notes.draft_confirmed');
+  });
+});
+
+describe('producer contract: divination drafts (心象 path)', () => {
+  it('appendDivinationDraft emits divination.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendDivinationDraft('agent-a', {
+      agentQuestion: '我是不是听岔了？',
+      content: '心里浮出一棵被风吹歪的小树。',
+      themeHint: '关系',
+      source: 'xingye-heartbeat-tool',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'divination.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, agentQuestion: '我是不是听岔了？', themeHint: '关系' },
+    });
+  });
+
+  it('discardDivinationDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendDivinationDraft('agent-a', {
+      agentQuestion: 'Q', content: 'C', source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardDivinationDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'divination.draft_discarded',
+      source: 'xingye-divination-drafts',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardDivinationDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmDivinationDraft writes 心象 entry with fixed method=oracle_generic + symbols=[]', async () => {
+    const draft = await appendDivinationDraft('agent-a', {
+      agentQuestion: 'Q', content: 'C', themeHint: '关系', source: 'xingye-heartbeat-tool', reason: '反复想起',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmDivinationDraft('agent-a', draft.id);
+    expect(entry.id).toBe(`from-draft-${draft.id}`);
+    expect(entry.appId).toBe('divination');
+    expect(entry.title).toBe('Q');
+    expect(entry.content).toBe('C');
+    /** 心象关键不变量：方法固定 oracle_generic，symbols 是空数组，autoSelected=false。 */
+    expect(entry.metadata.method).toBe('oracle_generic');
+    expect(entry.metadata.methodLabel).toBe('心象提示');
+    expect(entry.metadata.symbols).toEqual([]);
+    expect(entry.metadata.autoSelected).toBe(false);
+    expect(entry.metadata.themeHint).toBe('关系');
+    expect(entry.metadata.resolverReason).toBe('反复想起');
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('divination.entry_appended');
+    expect(types).toContain('divination.draft_confirmed');
+  });
+
+  it('confirmDivinationDraft is idempotent: second confirm reuses existing entry', async () => {
+    const draft = await appendDivinationDraft('agent-a', {
+      agentQuestion: 'Q', content: 'C', source: 'xingye-heartbeat-tool',
+    });
+    const first = await confirmDivinationDraft('agent-a', draft.id);
+    const draftsKey = 'agent-a|apps/divination/drafts.jsonl';
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, agentQuestion: 'Q', content: 'C',
+        source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+    const second = await confirmDivinationDraft('agent-a', draft.id);
+    expect(second.id).toBe(first.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('divination.entry_appended');
+    expect(types).toContain('divination.draft_confirmed');
+  });
+});
+
 describe('producer contract: mm-chat-store', () => {
   it('emits ONE mm_chat.turns_appended per batch with count + lastRole', async () => {
     const seed: XingyeMmChatPersistedV1 = {
@@ -1099,6 +1248,32 @@ describe('producer contract: payload.origin tagging (auto vs user)', () => {
     });
     await confirmShoppingDraft('agent-a', draft.id);
     expect((findEventByType('shopping.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('reading_notes.entry_appended: user for manual appendAppEntry, auto for confirm', async () => {
+    const { appendAppEntry } = await import('./xingye-app-entry-store');
+    await appendAppEntry('agent-a', 'reading_notes', { title: 't', content: 'c' });
+    expect((findEventByType('reading_notes.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendReadingNoteDraft('agent-a', {
+      title: 'T', body: 'B', source: 'xingye-heartbeat-tool',
+    });
+    await confirmReadingNoteDraft('agent-a', draft.id);
+    expect((findEventByType('reading_notes.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('divination.entry_appended: user for manual appendAppEntry, auto for confirm (心象 path)', async () => {
+    const { appendAppEntry } = await import('./xingye-app-entry-store');
+    await appendAppEntry('agent-a', 'divination', { title: 't', content: 'c' });
+    expect((findEventByType('divination.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendDivinationDraft('agent-a', {
+      agentQuestion: 'Q', content: 'C', source: 'xingye-heartbeat-tool',
+    });
+    await confirmDivinationDraft('agent-a', draft.id);
+    expect((findEventByType('divination.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
   });
 
   it('secret_space.record_appended: user for manual append, auto for confirm', async () => {

@@ -24,6 +24,12 @@ import {
   type DivinationEntry,
 } from './xingye-app-entry-store';
 import {
+  confirmDivinationDraft,
+  discardDivinationDraft,
+  listDivinationDrafts,
+  type XingyePendingDivinationDraft,
+} from './xingye-divination-drafts';
+import {
   sanitizeDivinationReadingContent,
   summarizeDivinationContextSources,
   titleForDivinationEntry,
@@ -112,6 +118,13 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /** 待确认草稿（心跳巡检产出的「心象提示」）。 */
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingDivinationDraft[]>([]);
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, { agentQuestion: string; content: string; themeHint: string }>
+  >({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedThemeHint(themeHint.trim()), 380);
@@ -207,20 +220,104 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
+      setPendingDrafts([]);
+      setDraftEdits({});
       return;
     }
     setListLoading(true);
     setListError(null);
     try {
-      const rows = await loadDivinationEntries(ownerAgentId);
+      const [rows, drafts] = await Promise.all([
+        loadDivinationEntries(ownerAgentId),
+        listDivinationDrafts(ownerAgentId),
+      ]);
       const sorted = [...rows].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       setEntries(sorted);
+      setPendingDrafts(drafts);
     } catch (e) {
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
       setListLoading(false);
     }
   }, [ownerAgentId]);
+
+  const draftWorkingValue = useCallback(
+    (d: XingyePendingDivinationDraft) => {
+      const edit = draftEdits[d.id];
+      if (edit) return edit;
+      return {
+        agentQuestion: d.agentQuestion,
+        content: d.content,
+        themeHint: d.themeHint ?? '',
+      };
+    },
+    [draftEdits],
+  );
+
+  const handleDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ agentQuestion: string; content: string; themeHint: string }>,
+  ) => {
+    setDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? {
+        agentQuestion: d.agentQuestion,
+        content: d.content,
+        themeHint: d.themeHint ?? '',
+      };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmDraft = async (d: XingyePendingDivinationDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(d);
+      await confirmDivinationDraft(ownerAgentId, d.id, {
+        agentQuestion: working.agentQuestion,
+        content: working.content,
+        themeHint: working.themeHint.trim() ? working.themeHint : null,
+      });
+      /** entry list 直接 reload 一遍——entry 形态是 DivinationEntry，借用 loadDivinationEntries 的 normalize。 */
+      await reloadEntries();
+      setDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardDraft = async (d: XingyePendingDivinationDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认占卜（心象）草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) return;
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const ok = await discardDivinationDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadEntries();
+      }
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setSelectedId(null);
@@ -364,7 +461,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
               data-divination-theme={generationMethodId}
             >
               <h3 className={styles.phoneAppTitle} style={{ marginTop: 0 }}>
-                占一卦
+                {generationTheme.generationLabel}
               </h3>
               <p className={styles.phoneAppHint}>
                 推荐：<strong>{recommendation.methodLabel}</strong>
@@ -414,13 +511,100 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                 type="button"
                 className={styles.phoneJournalPrimaryButton}
                 data-testid="phone-divination-generate"
-                aria-label="让 TA 占一卦并生成占卜记录"
+                aria-label={`${generationTheme.generationButtonLabel}并生成占卜记录`}
                 onClick={() => void handleGenerate()}
                 disabled={generateBusy || ctxBusy}
               >
-                {generateBusy ? '生成中…' : '让 TA 占一卦'}
+                {generateBusy ? '生成中…' : generationTheme.generationButtonLabel}
               </button>
             </section>
+
+            {pendingDrafts.length > 0 ? (
+              <section
+                aria-label="待确认占卜（心象）草稿"
+                data-testid="phone-divination-pending-drafts"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              >
+                <p className={styles.phoneAppHint}>
+                  待确认草稿 · 来自心跳巡检（心象提示）。这是 TA 在巡检里写下的直觉读出——
+                  **不是正式占卜**，没有抽符、没有出卦。点「确认生成」后会和正式占卜并列出现在
+                  下方历史记录里（卡片会标为「心象提示」）；离开页面再回来不会丢草稿。
+                </p>
+                {draftError ? (
+                  <p className={styles.phoneAppHint} role="alert">{draftError}</p>
+                ) : null}
+                {pendingDrafts.map((d) => {
+                  const working = draftWorkingValue(d);
+                  const busy = draftBusyId === d.id;
+                  return (
+                    <div
+                      key={d.id}
+                      className={styles.phoneAppCard}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
+                      data-testid={`phone-divination-draft-${d.id}`}
+                    >
+                      <label className={styles.phoneFormField}>
+                        <span>TA 此刻在问</span>
+                        <textarea
+                          value={working.agentQuestion}
+                          onChange={(e) => handleDraftFieldChange(d.id, { agentQuestion: e.target.value })}
+                          rows={2}
+                          aria-label="待确认心象草稿—agentQuestion"
+                          data-testid={`phone-divination-draft-question-${d.id}`}
+                          disabled={busy}
+                        />
+                      </label>
+                      <label className={styles.phoneFormField}>
+                        <span>心象（TA 自己写下的直觉读出）</span>
+                        <textarea
+                          value={working.content}
+                          onChange={(e) => handleDraftFieldChange(d.id, { content: e.target.value })}
+                          rows={5}
+                          aria-label="待确认心象草稿—content"
+                          data-testid={`phone-divination-draft-content-${d.id}`}
+                          disabled={busy}
+                        />
+                      </label>
+                      <label className={styles.phoneFormField}>
+                        <span>主题（可选）</span>
+                        <input
+                          type="text"
+                          value={working.themeHint}
+                          onChange={(e) => handleDraftFieldChange(d.id, { themeHint: e.target.value })}
+                          placeholder="如「关系」「工作」「等待」"
+                          aria-label="待确认心象草稿—主题"
+                          data-testid={`phone-divination-draft-theme-${d.id}`}
+                          disabled={busy}
+                        />
+                      </label>
+                      {d.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>理由：{d.reason}</p>
+                      ) : null}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-divination-draft-confirm-${d.id}`}
+                        >
+                          {busy ? '处理中…' : '确认生成'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneModalGhostButton}
+                          onClick={() => void handleDiscardDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-divination-draft-discard-${d.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
 
             <div className={styles.phoneJournalLayout}>
               <div className={styles.phoneJournalToolbar}>
@@ -431,7 +615,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
               {listLoading && entries.length === 0 ? <p className={styles.phoneAppHint}>加载中…</p> : null}
               {entries.length === 0 && !listLoading ? (
                 <p className={styles.phoneJournalEmpty} data-testid="phone-divination-empty">
-                  还没有占卜记录。点「让 TA 占一卦」，由 TA 自己决定此刻想确认的事。
+                  还没有占卜记录。{generationTheme.emptyCtaLabel}
                 </p>
               ) : null}
               {entries.map((e) => {
@@ -495,7 +679,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                   {new Date(selected.createdAt).toLocaleString('zh-CN')}
                 </p>
                 <p className={styles.phoneAppHint} style={{ fontSize: '0.82rem', lineHeight: 1.55 }}>
-                  {selected.metadata.autoSelected ? '起卦时采用推荐占法。' : '起卦时采用手动所选占法。'}
+                  {selected.metadata.autoSelected ? '占问时采用推荐占法。' : '占问时采用手动所选占法。'}
                 </p>
                 {agentTopic ? (
                   <p className={styles.phoneAppHint}>
@@ -548,7 +732,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                         className={`${divStyles.section} ${divStyles.sectionAction}`}
                         data-divination-section="action"
                       >
-                        <p className={divStyles.sectionHeader}>行动签</p>
+                        <p className={divStyles.sectionHeader}>{parsed.actionLabel ?? detailTheme.actionSectionLabel}</p>
                         <p className={divStyles.sectionBody}>{parsed.actionSign}</p>
                       </section>
                     ) : null}

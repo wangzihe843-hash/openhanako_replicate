@@ -45,6 +45,9 @@ export const XINGYE_EVENT_TYPES = [
   'secret_space.draft_confirmed',
   'divination.entry_appended',
   'divination.entry_deleted',
+  'divination.draft_proposed',
+  'divination.draft_discarded',
+  'divination.draft_confirmed',
   'shopping.entry_appended',
   'shopping.entry_deleted',
   'shopping.draft_proposed',
@@ -52,6 +55,9 @@ export const XINGYE_EVENT_TYPES = [
   'shopping.draft_confirmed',
   'reading_notes.entry_appended',
   'reading_notes.entry_deleted',
+  'reading_notes.draft_proposed',
+  'reading_notes.draft_discarded',
+  'reading_notes.draft_confirmed',
 ] as const;
 
 export type XingyeEventType = typeof XINGYE_EVENT_TYPES[number];

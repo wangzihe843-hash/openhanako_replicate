@@ -8,6 +8,13 @@ import {
   type AppEntry,
 } from './xingye-app-entry-store';
 import {
+  confirmReadingNoteDraft,
+  discardReadingNoteDraft,
+  listReadingNoteDrafts,
+  type ReadingNoteDraftType,
+  type XingyePendingReadingNoteDraft,
+} from './xingye-reading-notes-drafts';
+import {
   deleteBookForAgent,
   importBooksForAgent,
   listBooksForAgent,
@@ -265,31 +272,139 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   const [annotationError, setAnnotationError] = useState<string | null>(null);
   const [annotationSuggestionError, setAnnotationSuggestionError] = useState<string | null>(null);
   const [annotationSaving, setAnnotationSaving] = useState(false);
+  /** 待确认草稿（心跳巡检产出，用户在 list home 顶部确认/丢弃）。 */
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingReadingNoteDraft[]>([]);
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, { title: string; body: string; noteType: ReadingNoteDraftType }>
+  >({});
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!ownerAgentId) {
       setBooks([]);
       setNotes([]);
+      setPendingDrafts([]);
+      setDraftEdits({});
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      const [bookRows, noteRows] = await Promise.all([
+      const [bookRows, noteRows, draftRows] = await Promise.all([
         listBooksForAgent(ownerAgentId),
         listAppEntries(ownerAgentId, READING_NOTES_APP_ID),
+        listReadingNoteDrafts(ownerAgentId),
       ]);
       setBooks(bookRows.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)));
       setNotes(noteRows
         .map(normalizeReadingNote)
         .filter((note): note is ReadingNoteEntry => Boolean(note))
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
+      setPendingDrafts(draftRows);
     } catch (err) {
       setMessage(`加载失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
   }, [ownerAgentId]);
+
+  const draftWorkingValue = useCallback(
+    (d: XingyePendingReadingNoteDraft) => {
+      const edit = draftEdits[d.id];
+      if (edit) return edit;
+      return { title: d.title, body: d.body, noteType: d.noteType };
+    },
+    [draftEdits],
+  );
+
+  const handleDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ title: string; body: string; noteType: ReadingNoteDraftType }>,
+  ) => {
+    setDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? { title: d.title, body: d.body, noteType: d.noteType };
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  /**
+   * 在本地书架里按名字解析 bookHint → bookId。匹配规则与 files.folderHint 同款：
+   *   1. 精确同名
+   *   2. startsWith 互相匹配
+   *   3. 都不行 → 不带 bookId（entry 落到「未归类批注」）
+   */
+  const resolveBookIdFromHint = useCallback(
+    (hint: string | undefined): string | null => {
+      const trimmed = (hint ?? '').trim();
+      if (!trimmed) return null;
+      const exact = books.find((b) => b.title === trimmed);
+      if (exact) return exact.id;
+      const prefix = books.find((b) => b.title.startsWith(trimmed) || trimmed.startsWith(b.title));
+      return prefix ? prefix.id : null;
+    },
+    [books],
+  );
+
+  const handleConfirmDraft = async (d: XingyePendingReadingNoteDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const working = draftWorkingValue(d);
+      const bookId = resolveBookIdFromHint(d.bookHint);
+      const entry = await confirmReadingNoteDraft(ownerAgentId, d.id, {
+        title: working.title,
+        body: working.body,
+        noteType: working.noteType,
+        bookId: bookId,
+      });
+      const normalized = normalizeReadingNote(entry);
+      if (normalized) {
+        setNotes((prev) =>
+          [normalized, ...prev.filter((p) => p.id !== normalized.id)].sort(
+            (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+          ),
+        );
+      }
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardDraft = async (d: XingyePendingReadingNoteDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认读书批注草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) return;
+    setDraftBusyId(d.id);
+    setDraftError(null);
+    try {
+      const ok = await discardReadingNoteDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reload();
+      }
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setSelectedBookId(null);
@@ -1000,6 +1115,102 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               <h2 className={styles.phoneReadingTitle}>{displayName || ownerAgent?.name || 'TA'} 的阅读笔记</h2>
               <p className={styles.phoneReadingSafeNote}>本页只使用当前 agent 的本地书目和手动笔记。</p>
             </header>
+
+            {pendingDrafts.length > 0 ? (
+              <section
+                aria-label="待确认读书批注草稿"
+                data-testid="phone-reading-pending-drafts"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+              >
+                <p className={styles.phoneReadingSafeNote}>
+                  待确认草稿 · 来自心跳巡检。TA 在巡检里想留下的批注，还没出现在「已生成」列表里。
+                  点「确认生成」才会真正写入；离开页面再回来不会丢草稿。
+                </p>
+                {draftError ? (
+                  <p className={styles.phoneAppHint} role="alert">{draftError}</p>
+                ) : null}
+                {pendingDrafts.map((d) => {
+                  const working = draftWorkingValue(d);
+                  const busy = draftBusyId === d.id;
+                  return (
+                    <div
+                      key={d.id}
+                      className={styles.phoneReadingCard}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
+                      data-testid={`phone-reading-draft-${d.id}`}
+                    >
+                      <input
+                        type="text"
+                        value={working.title}
+                        onChange={(e) => handleDraftFieldChange(d.id, { title: e.target.value })}
+                        placeholder="批注标题"
+                        aria-label="待确认批注标题"
+                        data-testid={`phone-reading-draft-title-${d.id}`}
+                        disabled={busy}
+                        style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                      />
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span className={styles.phoneReadingChip}>{NOTE_TYPE_LABELS[working.noteType]}</span>
+                        <select
+                          value={working.noteType}
+                          onChange={(e) => handleDraftFieldChange(d.id, { noteType: e.target.value as ReadingNoteDraftType })}
+                          disabled={busy}
+                          aria-label="待确认批注类型"
+                          data-testid={`phone-reading-draft-type-${d.id}`}
+                          style={{ font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '4px 6px' }}
+                        >
+                          <option value="reading_note">批注</option>
+                          <option value="question">提问</option>
+                        </select>
+                        {d.bookHint ? (
+                          <span className={styles.phoneAppHint} style={{ margin: 0 }}>
+                            建议归《{d.bookHint}》
+                            {resolveBookIdFromHint(d.bookHint) ? '（已匹配本地书）' : '（书架未匹配，会落到「未归类」）'}
+                          </span>
+                        ) : null}
+                      </div>
+                      {d.quoteText ? (
+                        <blockquote className={styles.phoneReadingQuote} style={{ margin: 0 }}>{d.quoteText}</blockquote>
+                      ) : null}
+                      <textarea
+                        value={working.body}
+                        onChange={(e) => handleDraftFieldChange(d.id, { body: e.target.value })}
+                        rows={4}
+                        placeholder="批注正文"
+                        aria-label="待确认批注正文"
+                        data-testid={`phone-reading-draft-body-${d.id}`}
+                        disabled={busy}
+                        style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                      />
+                      {d.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>理由：{d.reason}</p>
+                      ) : null}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className={styles.phoneJournalPrimaryButton}
+                          onClick={() => void handleConfirmDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-reading-draft-confirm-${d.id}`}
+                        >
+                          {busy ? '处理中…' : '确认生成'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.phoneShortcutButton}
+                          onClick={() => void handleDiscardDraft(d)}
+                          disabled={busy}
+                          data-testid={`phone-reading-draft-discard-${d.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
+
             {books.length === 0 && !loading ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-reading-empty">还没有阅读书目。</p>
             ) : (

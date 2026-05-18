@@ -25,7 +25,7 @@ display-name-ko: 호시노 비밀 공간 초안
 
 - `draft_reply` ≈ `mail.draft`（写给某人的信）—— 用 `module: "mail"` 提议
 - `unsent_moment` ≈ `moments.draft`（朋友圈草稿）—— 用 `module: "moments"` 提议
-- `memory_fragment` 走单独的 memory candidate 流程（MemoryCandidatePanel + xingye_save_memory_candidate）
+- `memory_fragment` 走 MemoryCandidatePanel + xingye_save_memory_candidate——**目前是用户手动点 AI 生成候选 + 人工 confirm/reject 的二阶段流程，不是 agent 自动产出**。这条以后可能也接进 xingye_propose_draft 让 agent 在巡检里主动提议 memory candidate；现阶段如果想"记一段重要的事"，请走 secret_space 的 `saved_item` 或本工具的 `journal` 模块。
 
 ## 什么时候触发
 

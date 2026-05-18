@@ -93,4 +93,29 @@ describe('parseDivinationReading', () => {
     expect(parseDivinationReading('   \n   ')).toEqual({});
     expect(parseDivinationReading(undefined)).toEqual({});
   });
+
+  it.each([
+    ['行动签', 'field_oracle'],
+    ['卦辞', 'iching_liuyao'],
+    ['牌意指引', 'tarot'],
+    ['影像提示', 'crystal_ball'],
+    ['符意建议', 'runes'],
+    ['星象建议', 'astrology'],
+    ['心象提示', 'oracle_generic'],
+  ])('recognizes 【%s】 as the action section (per-method action label, used by %s)', (actionLabel) => {
+    const raw = [
+      '【标题】',
+      'T',
+      '【签象】',
+      'S',
+      '【正文】',
+      'B',
+      `【${actionLabel}】`,
+      '具体的小建议。',
+    ].join('\n');
+    const parsed = parseDivinationReading(raw);
+    expect(parsed.actionSign).toBe('具体的小建议。');
+    /** 保留字面 label 让 UI 渲染时不必再回退到 theme 默认。 */
+    expect(parsed.actionLabel).toBe(actionLabel);
+  });
 });
