@@ -177,20 +177,6 @@
   font-size: 0.85rem;
   line-height: 1.6;
   color: var(--text);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.luckySwatch {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  margin: 0 6px 0 2px;
-  border: 1px solid rgba(0, 0, 0, 0.18);
-  vertical-align: middle;
-  flex: 0 0 auto;
 }
 
 .section {

@@ -124,6 +124,15 @@ describe('buildDivinationReadingPrompt', () => {
     expect(prompt).toContain('luckyColor');
   });
 
+  it('luckyColor prompt requires descriptive Chinese phrase and forbids CSS color codes', () => {
+    const prompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'tarot', methodLabel: '塔罗', symbols: ['◇'],
+    });
+    expect(prompt).toMatch(/<形容>的<颜色>色/);
+    expect(prompt).toMatch(/古书纸的赭石色|晨雾的灰蓝色/);
+    expect(prompt).toMatch(/禁止输出 #RRGGBB/);
+  });
+
   it('fortune labels are method-specific (iching → 综合卦象 / field_oracle → 综合形势 + 可行/不可行)', () => {
     const ichingPrompt = buildDivinationReadingPrompt({
       agent, agentLike, methodId: 'iching_liuyao', methodLabel: '六爻', symbols: ['☰'],

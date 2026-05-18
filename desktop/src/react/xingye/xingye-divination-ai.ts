@@ -107,9 +107,25 @@ export function normalizeDivinationReadingResult(raw: unknown): DivinationReadin
   if (omens) result.omens = omens;
   const luckyDirection = typeof record.luckyDirection === 'string' ? clampLine(record.luckyDirection, 20) : '';
   if (luckyDirection) result.luckyDirection = luckyDirection;
-  const luckyColor = typeof record.luckyColor === 'string' ? clampLine(record.luckyColor, 24) : '';
+  const luckyColor = sanitizeLuckyColor(record.luckyColor);
   if (luckyColor) result.luckyColor = luckyColor;
   return result;
+}
+
+/**
+ * luckyColor 要求是「<形容>的<颜色>色」描述性短语（prompt 端已说明）。模型偶尔不
+ * 守约，会回 #RRGGBB / rgb()/hsl() 这种 CSS 颜色码——渲染端不再画色卡，光秃秃的
+ * "#D4C5A9" 单独出现是噪音，所以这里直接 reject。其他形态（含汉字的描述短语）
+ * 全部放行，最长截到 28 字符兜底。
+ */
+const HEX_OR_FUNCTIONAL_COLOR_RE = /^#?[0-9a-f]{3,8}$|^(rgba?|hsla?|hwb|lab|lch|color)\s*\(/i;
+
+function sanitizeLuckyColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = clampLine(value, 28);
+  if (!trimmed) return undefined;
+  if (HEX_OR_FUNCTIONAL_COLOR_RE.test(trimmed)) return undefined;
+  return trimmed;
 }
 
 export type GenerateDivinationReadingArgs = {

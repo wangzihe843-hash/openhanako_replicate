@@ -198,7 +198,7 @@ describe('PhoneDivinationApp — agent-owned divination semantics (AI route)', (
       fortuneScore: { overall: 73, career: 77, love: 82, wealth: 62 },
       omens: { good: '靠近自己确认过的事', bad: '在路口反复折返' },
       luckyDirection: '东南',
-      luckyColor: '#7AA2C8',
+      luckyColor: '晨雾的灰蓝色',
     });
     appendDivinationEntryMock.mockImplementationOnce(async (agentId, input) => ({
       id: 'new-entry-with-fortune',
@@ -244,14 +244,14 @@ describe('PhoneDivinationApp — agent-owned divination semantics (AI route)', (
 
     const lucky = screen.getByTestId('phone-divination-lucky');
     expect(lucky.textContent).toContain('东南');
-    expect(lucky.textContent).toContain('#7AA2C8');
+    expect(lucky.textContent).toContain('晨雾的灰蓝色');
 
     /** appendDivinationEntry payload 也应携带新字段。 */
     const payload = appendDivinationEntryMock.mock.calls[0]![1] as { metadata: Record<string, unknown> };
     expect(payload.metadata.fortuneScore).toEqual({ overall: 73, career: 77, love: 82, wealth: 62 });
     expect(payload.metadata.omens).toEqual({ good: '靠近自己确认过的事', bad: '在路口反复折返' });
     expect(payload.metadata.luckyDirection).toBe('东南');
-    expect(payload.metadata.luckyColor).toBe('#7AA2C8');
+    expect(payload.metadata.luckyColor).toBe('晨雾的灰蓝色');
   });
 
   it('does NOT render fortune/omens/lucky cards when entry lacks those fields (back-compat for old entries)', async () => {

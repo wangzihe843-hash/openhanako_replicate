@@ -136,7 +136,8 @@ export function buildDivinationReadingPrompt(args: {
     '  分数要呼应 content 的情绪（如内省转折较多 → 综合分数不要给极端值），但避免一边倒的"全 90 分"或"全 50 分"。',
     `- omens：good 是${o.good}（一句不超过 14 个汉字的具体动作或意象，不写抽象建议），bad 是${o.bad}（同样长度限制）。两条都来自占法当下的意象，不要套俗语。`,
     `- luckyDirection：${theme.luckyDirectionLabel}，写一个简短的方位词（如「东南」「向北」「靠窗」），不超过 10 个汉字。`,
-    `- luckyColor：${theme.luckyColorLabel}，可以写颜色名（如「靛蓝」「赭石」），也可以写 CSS 颜色（如「#7AA2C8」），不超过 12 个字符。`,
+    `- luckyColor：${theme.luckyColorLabel}，写成「<形容>的<颜色>色」这样的描述性短语（约 4–14 个汉字），例如「古书纸的赭石色」「晨雾的灰蓝色」「松针下的暗绿色」「旧灯笼的暖橘色」。`,
+    '  禁止输出 #RRGGBB / rgba() / hsl() 等 CSS 颜色码或英文颜色名；也不要单写一个颜色名（如只写「赭石」「红」），一定要带一个具体的「<形容>的<颜色>色」形态。',
     '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
     JSON.stringify(

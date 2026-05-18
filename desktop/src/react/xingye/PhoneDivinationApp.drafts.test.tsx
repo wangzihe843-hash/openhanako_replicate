@@ -161,7 +161,7 @@ describe('PhoneDivinationApp · pending draft section', () => {
       fortuneScore: { overall: 73, career: 77, love: 82, wealth: 62 },
       omens: { good: '靠近自己确认过的事', bad: '在路口反复折返' },
       luckyDirection: '东南',
-      luckyColor: '#7AA2C8',
+      luckyColor: '晨雾的灰蓝色',
     });
     divinationDraftsMock.confirmDivinationDraft.mockResolvedValueOnce(undefined);
 
@@ -188,7 +188,7 @@ describe('PhoneDivinationApp · pending draft section', () => {
     expect(confirmArgs.fortuneScore).toEqual({ overall: 73, career: 77, love: 82, wealth: 62 });
     expect(confirmArgs.omens).toEqual({ good: '靠近自己确认过的事', bad: '在路口反复折返' });
     expect(confirmArgs.luckyDirection).toBe('东南');
-    expect(confirmArgs.luckyColor).toBe('#7AA2C8');
+    expect(confirmArgs.luckyColor).toBe('晨雾的灰蓝色');
 
     await waitFor(() => {
       expect(screen.queryByTestId('phone-divination-draft-d-dv-polish')).not.toBeInTheDocument();

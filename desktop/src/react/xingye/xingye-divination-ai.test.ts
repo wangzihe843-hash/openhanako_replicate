@@ -85,12 +85,20 @@ describe('normalizeDivinationReadingResult', () => {
       fortuneScore: { overall: 73, career: 77, love: 82, wealth: 62 },
       omens: { good: '靠近自己确认过的事', bad: '在路口反复折返' },
       luckyDirection: '东南',
-      luckyColor: '#7AA2C8',
+      luckyColor: '古书纸的赭石色',
     });
     expect(r?.fortuneScore).toEqual({ overall: 73, career: 77, love: 82, wealth: 62 });
     expect(r?.omens).toEqual({ good: '靠近自己确认过的事', bad: '在路口反复折返' });
     expect(r?.luckyDirection).toBe('东南');
-    expect(r?.luckyColor).toBe('#7AA2C8');
+    expect(r?.luckyColor).toBe('古书纸的赭石色');
+  });
+
+  it('rejects luckyColor that came back as a bare CSS color code (hex / rgb / hsl)', () => {
+    /** 渲染端不再画色卡，光秃秃的 #RRGGBB 没语义价值——拒绝。 */
+    for (const noisy of ['#D4C5A9', 'd4c5a9', 'rgb(122, 162, 200)', 'hsl(210, 40%, 60%)']) {
+      const r = normalizeDivinationReadingResult({ ...goodReadingPayload, luckyColor: noisy });
+      expect(r?.luckyColor, `luckyColor "${noisy}" should be rejected`).toBeUndefined();
+    }
   });
 
   it('clamps fortuneScore values to [0,100] integers', () => {

@@ -848,13 +848,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                     ) : null}
                     {selected.metadata.luckyColor ? (
                       <p className={divStyles.luckyLine}>
-                        {detailTheme.luckyColorLabel}：
-                        <span
-                          aria-hidden="true"
-                          className={divStyles.luckySwatch}
-                          style={{ backgroundColor: selected.metadata.luckyColor }}
-                        />
-                        {selected.metadata.luckyColor}
+                        {detailTheme.luckyColorLabel}：{selected.metadata.luckyColor}
                       </p>
                     ) : null}
                   </section>
