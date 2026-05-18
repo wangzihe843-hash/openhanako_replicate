@@ -15,6 +15,14 @@ import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../l
 import { t } from "../i18n.js";
 import { resolveAgent, resolveAgentStrict } from "../utils/resolve-agent.js";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.js";
+import {
+  collectSecretPatchPaths,
+  isMaskedSecretValue,
+  maskSecretValue,
+  resolveSecretPatch,
+} from "../../shared/secret-custody.js";
+import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
+import { recordSecurityAuditEvent } from "../http/security-audit.js";
 
 const MAX_BRIDGE_MEDIA_SIZE = 50 * 1024 * 1024;
 
@@ -105,19 +113,19 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
 
     return c.json({
       telegram: platformStatus("telegram", bridge.telegram, {
-        configured: !!tgToken, token: tgToken,
+        configured: !!tgToken, token: maskSecretValue(tgToken),
       }),
       feishu: platformStatus("feishu", bridge.feishu, {
-        configured: !!(fsAppId && fsAppSecret), appId: fsAppId, appSecret: fsAppSecret,
+        configured: !!(fsAppId && fsAppSecret), appId: fsAppId, appSecret: maskSecretValue(fsAppSecret),
       }),
       qq: platformStatus("qq", bridge.qq, {
         configured: !!(bridge.qq?.appID && (bridge.qq?.appSecret || bridge.qq?.token)),
         appID: bridge.qq?.appID || "",
-        appSecret: bridge.qq?.appSecret || bridge.qq?.token || "",
+        appSecret: maskSecretValue(bridge.qq?.appSecret || bridge.qq?.token || ""),
       }),
       wechat: platformStatus("wechat", bridge.wechat, {
         configured: !!bridge.wechat?.botToken,
-        token: bridge.wechat?.botToken || "",
+        token: maskSecretValue(bridge.wechat?.botToken || ""),
       }),
       readOnly: engine.getBridgeReadOnly(),
       receiptEnabled: engine.getBridgeReceiptEnabled(),
@@ -136,6 +144,8 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     if (!platform || !KNOWN_PLATFORMS.includes(platform)) {
       return c.json({ ok: false, error: "invalid platform" });
     }
+    const scopeDenied = denyWithoutScope(c, "bridge.manage");
+    if (scopeDenied) return scopeDenied;
     const agent = resolveAgentStrict(engine, c);
     agent.updateConfig({ bridge: { [platform]: { owner: userId || null } } });
     debugLog()?.log("api", `POST /api/bridge/owner agent=${agent.id} platform=${platform} owner=${userId ? "[set]" : "[cleared]"}`);
@@ -149,6 +159,13 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     if (!platform || !KNOWN_PLATFORMS.includes(platform)) {
       return c.json({ error: "invalid platform" }, 400);
     }
+    const scopeDenied = denyWithoutScope(c, "bridge.manage");
+    if (scopeDenied) return scopeDenied;
+    const secretFields = credentials
+      ? collectSecretPatchPaths({ credentials }, bridgeSecretKeys(platform))
+      : [];
+    const secretDenied = denySecretMutationWithoutScope(c, secretFields);
+    if (secretDenied) return secretDenied;
 
     const agent = resolveAgentStrict(engine, c);
     const agentId = agent.id;
@@ -156,7 +173,9 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     const bridgeCfg = agent.config?.bridge?.[platform] || {};
     const patch = { ...bridgeCfg };
 
-    if (credentials) Object.assign(patch, credentials);
+    if (credentials) {
+      Object.assign(patch, resolveBridgeCredentials(platform, credentials, bridgeCfg));
+    }
     if (typeof enabled === "boolean") patch.enabled = enabled;
 
     agent.updateConfig({ bridge: { [platform]: patch } });
@@ -171,12 +190,20 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     }
 
     debugLog()?.log("api", `POST /api/bridge/config agent=${agentId} platform=${platform} enabled=${!!patch.enabled}`);
+    recordSecurityAuditEvent(c, engine, {
+      action: "settings.bridge.config.update",
+      target: `bridge.${platform}`,
+      secretFields,
+      metadata: { agentId, platform, enabled: typeof enabled === "boolean" ? enabled : null },
+    });
     return c.json({ ok: true });
   });
 
   /** 更新 bridge 总设置（readOnly / receiptEnabled）— global preferences */
   route.post("/bridge/settings", async (c) => {
     const body = await safeJson(c);
+    const scopeDenied = denyWithoutScope(c, "bridge.manage");
+    if (scopeDenied) return scopeDenied;
     const { readOnly, receiptEnabled } = body;
     if (typeof readOnly === "boolean") {
       engine.setBridgeReadOnly(readOnly);
@@ -198,6 +225,8 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     if (!platform) {
       return c.json({ error: "platform required" }, 400);
     }
+    const scopeDenied = denyWithoutScope(c, "bridge.manage");
+    if (scopeDenied) return scopeDenied;
 
     const agent = resolveAgentStrict(engine, c);
     resolveBridgeManager()?.stopPlatform(platform, agent.id);
@@ -446,11 +475,20 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     if (!KNOWN_PLATFORMS.includes(platform)) {
       return c.json({ error: "unknown platform" }, 400);
     }
+    const scopeDenied = denyWithoutScope(c, "bridge.manage");
+    if (scopeDenied) return scopeDenied;
+    const secretFields = collectSecretPatchPaths({ credentials }, bridgeSecretKeys(platform));
+    const secretDenied = denySecretMutationWithoutScope(c, secretFields);
+    if (secretDenied) return secretDenied;
 
     try {
+      const saved = hasMaskedBridgeCredentials(platform, credentials)
+        ? resolveAgent(engine, c).config?.bridge?.[platform] || {}
+        : {};
+      const effectiveCredentials = resolveBridgeCredentials(platform, credentials, saved);
       if (platform === "telegram") {
         const TelegramBot = (await import("node-telegram-bot-api")).default;
-        const bot = new TelegramBot(credentials.token, telegramBotOptions());
+        const bot = new TelegramBot(effectiveCredentials.token, telegramBotOptions());
         const me = await bot.getMe();
         return c.json({ ok: true, info: { username: me.username, name: me.first_name } });
       } else if (platform === "feishu") {
@@ -458,8 +496,8 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            app_id: credentials.appId,
-            app_secret: credentials.appSecret,
+            app_id: effectiveCredentials.appId,
+            app_secret: effectiveCredentials.appSecret,
           }),
         });
         const data = await resp.json();
@@ -472,7 +510,7 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
         const tokenRes = await fetch("https://bots.qq.com/app/getAppAccessToken", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ appId: credentials.appID, clientSecret: credentials.appSecret }),
+          body: JSON.stringify({ appId: effectiveCredentials.appID, clientSecret: effectiveCredentials.appSecret }),
         });
         const tokenData = await tokenRes.json();
         if (!tokenData.access_token) {
@@ -496,7 +534,7 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
           headers: {
             "Content-Type": "application/json",
             "AuthorizationType": "ilink_bot_token",
-            "Authorization": `Bearer ${credentials.botToken}`,
+            "Authorization": `Bearer ${effectiveCredentials.botToken}`,
             "X-WECHAT-UIN": uin,
           },
           body: JSON.stringify({ base_info: { channel_version: "1.0.0" } }),
@@ -529,6 +567,29 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
   });
 
   return route;
+}
+
+function resolveBridgeCredentials(platform, credentials, existing) {
+  return resolveSecretPatch({
+    patch: credentials,
+    existing,
+    secretKeys: bridgeSecretKeys(platform),
+  });
+}
+
+function hasMaskedBridgeCredentials(platform, credentials) {
+  const secretKeys = bridgeSecretKeys(platform);
+  return secretKeys.some((key) => isMaskedSecretValue(credentials?.[key]));
+}
+
+function bridgeSecretKeys(platform) {
+  return platform === "feishu"
+    ? ["appSecret"]
+    : platform === "qq"
+      ? ["appSecret", "token"]
+      : platform === "wechat"
+        ? ["botToken"]
+        : ["token"];
 }
 
 function buildBridgeManualSendSessionPath(agentId, platform, chatId) {

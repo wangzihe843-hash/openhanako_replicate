@@ -25,7 +25,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 
 const tMap: Record<string, string> = {
   'rightWorkspace.tabs.sessionFiles': '对话文件',
-  'rightWorkspace.tabs.workspace': '工作空间',
+  'rightWorkspace.tabs.workspace': '工作台',
   'rightWorkspace.sessionFiles.empty': '本对话还没有产生或上传文件',
   'rightWorkspace.sessionFiles.title': '对话文件',
   'rightWorkspace.sessionFiles.status.expired': '已过期',
@@ -35,6 +35,7 @@ const tMap: Record<string, string> = {
   'rightWorkspace.sessionFiles.actions.reveal': '定位',
   'rightWorkspace.sessionFiles.actions.copyPath': '复制路径',
   'rightWorkspace.sessionFiles.actions.copySelectedPaths': '复制 2 个路径',
+  'rightWorkspace.sessionFiles.actions.downloadToDevice': '下载到本机',
   'rightWorkspace.sessionFiles.actions.sendToBridge': '发送到...',
   'rightWorkspace.sessionFiles.actions.sendToBridgeLoading': '正在加载 Bridge 会话...',
   'rightWorkspace.sessionFiles.actions.sendToBridgeEmpty': '没有可发送的 Bridge 会话',
@@ -50,7 +51,7 @@ const tMap: Record<string, string> = {
   'rightWorkspace.sessionFiles.sort.typeAsc': '类型↑',
   'rightWorkspace.jian.collapse': '收起笺',
   'rightWorkspace.jian.expand': '展开笺',
-  'desk.workspaceTitle': '工作空间',
+  'desk.workspaceTitle': '工作台',
   'desk.jianLabel': '笺',
   'desk.jianPlaceholder': '写点什么...',
   'desk.openInFinder': '打开文件夹',
@@ -70,6 +71,7 @@ function resetStore(items: ChatListItem[] = []) {
         loadingMore: false,
       },
     },
+    sessionRegistryFilesByPath: {},
     rightWorkspaceTab: 'workspace',
     jianDrawerOpen: true,
     deskBasePath: '/tmp/hana-work',
@@ -115,7 +117,7 @@ describe('RightWorkspacePanel', () => {
     vi.mocked(openFilePreview).mockClear();
     vi.mocked(openMediaViewerForRef).mockClear();
     vi.mocked(hanaFetch).mockReset();
-    vi.mocked(hanaFetch).mockResolvedValue(jsonResponse({ sessions: [] }));
+    vi.mocked(hanaFetch).mockImplementation(async () => jsonResponse({ sessions: [] }));
     window.platform = {
       openFolder: () => undefined,
       openFile: vi.fn(),
@@ -142,11 +144,11 @@ describe('RightWorkspacePanel', () => {
     const tabList = screen.getByRole('tablist', { name: 'rightWorkspace.tabs.label' });
     expect(tabList.closest('.jian-card')).toBe(container.querySelector('.jian-card'));
     expect(within(tabList).getByRole('tab', { name: '对话文件' })).toBeInTheDocument();
-    expect(within(tabList).getByRole('tab', { name: '工作空间' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(tabList).getByRole('tab', { name: '工作台' })).toHaveAttribute('aria-selected', 'true');
     expect(container.querySelector('[data-right-workspace-tab-slider]')).toBeInTheDocument();
     expect((tabList as HTMLElement).style.getPropertyValue('--right-workspace-active-tab-index')).toBe('1');
     expect(screen.getByText('hana-work')).toBeInTheDocument();
-    expect(screen.queryByText(/工作空间 ·/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/工作台 ·/)).not.toBeInTheDocument();
   });
 
   it('moves the tab slider when switching between session files and workspace', () => {
@@ -232,6 +234,7 @@ describe('RightWorkspacePanel', () => {
       origin: 'session',
       sessionPath: '/sessions/main.jsonl',
       messageId: 'a1',
+      fileId: 'sf_report',
       blockIdx: 0,
     });
 
@@ -243,6 +246,60 @@ describe('RightWorkspacePanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '复制路径 report.pdf' }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/tmp/session-files/report.pdf');
+  });
+
+  it('renders a download-to-device action for resource-backed session files', () => {
+    resetStore([]);
+    useStore.setState({
+      activeServerConnection: {
+        connectionId: 'browser:server_lan',
+        kind: 'lan',
+        serverId: 'server_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Hana',
+        baseUrl: 'http://hana.local:14500',
+        wsUrl: 'ws://hana.local:14500',
+        token: null,
+        authState: 'paired',
+        trustState: 'lan',
+        credentialKind: 'device_credential',
+        platformAccountId: null,
+        officialServiceKind: null,
+        capabilities: ['resources', 'files'],
+      },
+      sessionRegistryFilesByPath: {
+        '/sessions/main.jsonl': [{
+          fileId: 'sf_report',
+          filePath: '/remote/cache/report.pdf',
+          label: 'report.pdf',
+          ext: 'pdf',
+          status: 'available',
+          resource: {
+            schemaVersion: 1,
+            resourceId: 'res_sf_report',
+            name: 'studios/studio_lan/resources/res_sf_report',
+            studioId: 'studio_lan',
+            type: 'file',
+            source: 'session_file',
+            fileId: 'sf_report',
+            lifecycle: { status: 'available', missingAt: null },
+            storage: { provider: 'session_file', localOnly: true },
+            links: {
+              self: '/api/resources/res_sf_report',
+              content: '/api/resources/res_sf_report/content',
+            },
+          },
+        }],
+      },
+    } as never);
+
+    render(<RightWorkspacePanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '对话文件' }));
+
+    const download = screen.getByRole('link', { name: '下载到本机 report.pdf' });
+    expect(download).toHaveAttribute('href', 'http://hana.local:14500/api/resources/res_sf_report/content');
+    expect(download).toHaveAttribute('download', 'report.pdf');
   });
 
   it('sorts session files without a manual refresh or add entry', () => {

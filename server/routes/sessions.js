@@ -43,6 +43,7 @@ import {
   resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.js";
 import { replayLatestUserTurn } from "../../core/session-turn-actions.js";
+import { createRequestContext } from "../http/boundary.js";
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -71,10 +72,16 @@ function getWritableSessionManager(engine, sessionPath) {
   return SessionManager.open(sessionPath, path.dirname(sessionPath));
 }
 
+function authorizeSessionRoute(requestContext, capability, target) {
+  if (requestContext.authPrincipal?.kind === "unknown") return { allowed: true, reason: "legacy_test_context" };
+  if (typeof requestContext.authorize !== "function") return { allowed: false, reason: "missing_policy" };
+  return requestContext.authorize(capability, target);
+}
+
 const TODO_COMPLETE_MESSAGE =
   "[Hana Todo] The user marked the current todo list as completed and removed it from the session UI. Treat every item in that list as completed. Create a new todo list only if new work needs tracking.";
 
-export function createSessionsRoute(engine) {
+export function createSessionsRoute(engine, hub = null) {
   const route = new Hono();
 
   // session-meta.json sidecar 按 session 目录共享；同一个 request 里遍历几十个 block
@@ -147,6 +154,41 @@ export function createSessionsRoute(engine) {
     }
   }
 
+  function taskFromSubagentRun(run) {
+    if (!run) return null;
+    return {
+      status: run.status,
+      result: run.summary || null,
+      reason: run.reason || run.summary || null,
+      meta: {
+        sessionPath: run.childSessionPath || null,
+        requestedAgentId: run.requestedAgentId || null,
+        requestedAgentNameSnapshot: run.requestedAgentNameSnapshot || null,
+        executorAgentId: run.executorAgentId || null,
+        executorAgentNameSnapshot: run.executorAgentNameSnapshot || null,
+        executorMetaVersion: run.executorMetaVersion || null,
+      },
+    };
+  }
+
+  function mergeSubagentTaskMetadata(primary, fallback) {
+    if (!primary) return fallback || null;
+    if (!fallback) return primary;
+    const primaryMeta = {};
+    for (const [key, value] of Object.entries(primary.meta || {})) {
+      if (value != null) primaryMeta[key] = value;
+    }
+    return {
+      status: primary.status || fallback.status,
+      result: primary.result ?? fallback.result,
+      reason: primary.reason ?? fallback.reason,
+      meta: {
+        ...(fallback.meta || {}),
+        ...primaryMeta,
+      },
+    };
+  }
+
   function createSubagentSummaryCache() {
     const map = new Map();
     return async (sessionPath) => {
@@ -199,6 +241,22 @@ export function createSessionsRoute(engine) {
   // 列出所有 agent 的历史 session
   route.get("/sessions", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
+      const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+        kind: "studio",
+        studioId: requestContext.studioId,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      const runtimeStudioId = requestContext.runtimeContext?.studioId || null;
+      const principalStudioId = requestContext.authPrincipal?.studioId || null;
+      // Same-Studio projection v0: paired clients may see the legacy session store
+      // only when their authenticated Studio is the server's current Studio.
+      if (runtimeStudioId && principalStudioId && runtimeStudioId !== principalStudioId) {
+        return c.json({
+          error: "studio_scope_mismatch",
+          detail: "authenticated Studio does not match this server Studio",
+        }, 403);
+      }
       const sessions = await engine.listSessions();
       const attachments = engine.rcState?.listAttachments?.() || [];
       const rcAttachmentByPath = new Map(attachments.map((attachment) => [
@@ -239,6 +297,7 @@ export function createSessionsRoute(engine) {
   // 获取单个 session 的滚动摘要。列表只暴露 hasSummary，正文按需读取。
   route.get("/sessions/summary", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
       const sessionPath = c.req.query("path") || null;
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
@@ -246,6 +305,12 @@ export function createSessionsRoute(engine) {
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
+      const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
 
       const record = getSessionSummaryRecord(sessionPath);
       return c.json(serializeSessionSummaryRecord(record));
@@ -257,6 +322,7 @@ export function createSessionsRoute(engine) {
   // 置顶 / 取消置顶 session
   route.post("/sessions/pin", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
       const body = await safeJson(c);
       const { path: sessionPath, pinned } = body;
       if (!sessionPath) {
@@ -268,6 +334,12 @@ export function createSessionsRoute(engine) {
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       const pinnedAt = await engine.setSessionPinned(sessionPath, pinned);
       return c.json({ ok: true, pinnedAt });
     } catch (err) {
@@ -278,10 +350,17 @@ export function createSessionsRoute(engine) {
   // 获取 session 的消息（支持 ?path= 指定 session，否则读焦点 session）
   route.get("/sessions/messages", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
       const queryPath = c.req.query("path") || null;
       if (queryPath && !isValidSessionPath(queryPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
+      const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath: queryPath || engine.currentSessionPath || null,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       const sourceMessages = await loadSessionHistoryMessages(engine, queryPath);
 
       // 分页参数
@@ -354,55 +433,73 @@ export function createSessionsRoute(engine) {
           .map(b => ({ ...b, afterIndex: b.afterIndex - startIdx }));
       }
 
-      // 修正 subagent blocks 的状态：优先从 deferred store 读终态，其次从 session 文件推断
+      // 修正 subagent blocks 的状态：优先从 durable run registry 读长期映射，
+      // 再用 deferred store 作为实时投递队列。deferred 会清理，不再承担历史事实源。
       {
         const deferredStore = engine.deferredResults;
+        const runStore = engine.subagentRuns;
         const readSessionMeta = createSubagentMetaCache();
         const readSessionSummary = createSubagentSummaryCache();
         for (const b of slicedBlocks) {
           if (b.type !== "subagent" || !b.taskId) continue;
           const task = deferredStore?.query?.(b.taskId) || null;
+          const run = runStore?.query?.(b.taskId) || null;
+          const runTask = taskFromSubagentRun(run);
+          const metadataTask = mergeSubagentTaskMetadata(runTask, task);
+          const durableSessionPath = run?.childSessionPath || null;
           const deferredSessionPath = task?.meta?.sessionPath || null;
+          if (!b.streamKey && durableSessionPath) b.streamKey = durableSessionPath;
           if (!b.streamKey && deferredSessionPath) b.streamKey = deferredSessionPath;
-          patchBlockRequestedMetadata(b, task);
-          patchBlockExecutorMetadata(b, task, readSessionMeta);
-          applySubagentIdentity(b, task, readSessionMeta);
+          patchBlockRequestedMetadata(b, metadataTask);
+          patchBlockExecutorMetadata(b, metadataTask, readSessionMeta);
+          applySubagentIdentity(b, metadataTask, readSessionMeta);
 
           if (b.streamStatus !== "running") continue;
 
-          // subagent 完成状态只能由 deferred store 的任务终态确认。
-          // 子 session 可能有多轮输出，尾部 assistant 文本只能作为 resolved 后的摘要来源。
-          if (deferredStore) {
-            if (task?.status === "aborted") {
-              b.streamStatus = "aborted";
-              b.summary = task.reason || "aborted";
-              if (task.meta?.sessionPath) b.streamKey = task.meta.sessionPath;
-              patchBlockRequestedMetadata(b, task);
-              patchBlockExecutorMetadata(b, task, readSessionMeta);
-              applySubagentIdentity(b, task, readSessionMeta);
-              continue;
-            }
-            if (task?.status === "failed") {
-              b.streamStatus = "failed";
-              b.summary = task.reason || "failed";
-              if (task.meta?.sessionPath) b.streamKey = task.meta.sessionPath;
-              patchBlockRequestedMetadata(b, task);
-              patchBlockExecutorMetadata(b, task, readSessionMeta);
-              applySubagentIdentity(b, task, readSessionMeta);
-              continue;
-            }
-            if (task?.status === "resolved") {
-              b.streamStatus = "done";
-              if (task.meta?.sessionPath) b.streamKey = task.meta.sessionPath;
-              patchBlockRequestedMetadata(b, task);
-              patchBlockExecutorMetadata(b, task, readSessionMeta);
-              applySubagentIdentity(b, task, readSessionMeta);
+          const terminalTask = run && run.status !== "pending" ? runTask : task;
 
-              const sp = b.streamKey || task.meta?.sessionPath || null;
-              const summary = await readSessionSummary(sp);
-              b.summary = summary || (typeof task.result === "string" ? task.result.slice(0, 200) : b.summary);
-              continue;
-            }
+          // subagent 完成状态只能由 durable run registry 或 deferred store 的任务终态确认。
+          // 子 session 可能有多轮输出，尾部 assistant 文本只能作为 resolved 后的摘要来源。
+          if (terminalTask?.status === "aborted") {
+            b.streamStatus = "aborted";
+            b.summary = terminalTask.reason || "aborted";
+            if (terminalTask.meta?.sessionPath) b.streamKey = terminalTask.meta.sessionPath;
+            patchBlockRequestedMetadata(b, terminalTask);
+            patchBlockExecutorMetadata(b, terminalTask, readSessionMeta);
+            applySubagentIdentity(b, terminalTask, readSessionMeta);
+            continue;
+          }
+          if (terminalTask?.status === "failed") {
+            b.streamStatus = "failed";
+            b.summary = terminalTask.reason || "failed";
+            if (terminalTask.meta?.sessionPath) b.streamKey = terminalTask.meta.sessionPath;
+            patchBlockRequestedMetadata(b, terminalTask);
+            patchBlockExecutorMetadata(b, terminalTask, readSessionMeta);
+            applySubagentIdentity(b, terminalTask, readSessionMeta);
+            continue;
+          }
+          if (terminalTask?.status === "resolved") {
+            b.streamStatus = "done";
+            if (terminalTask.meta?.sessionPath) b.streamKey = terminalTask.meta.sessionPath;
+            patchBlockRequestedMetadata(b, terminalTask);
+            patchBlockExecutorMetadata(b, terminalTask, readSessionMeta);
+            applySubagentIdentity(b, terminalTask, readSessionMeta);
+
+            const sp = b.streamKey || terminalTask.meta?.sessionPath || null;
+            const summary = await readSessionSummary(sp);
+            b.summary = summary || (typeof terminalTask.result === "string" ? terminalTask.result.slice(0, 200) : b.summary);
+            continue;
+          }
+
+          if (run?.status === "pending" && !task) {
+            b.streamStatus = "failed";
+            b.summary = "历史子会话运行状态不可恢复";
+            continue;
+          }
+
+          if (!b.streamKey && !run && !task) {
+            b.streamStatus = "failed";
+            b.summary = "历史子会话链接不可恢复";
           }
         }
       }
@@ -423,11 +520,18 @@ export function createSessionsRoute(engine) {
 
   route.post("/sessions/latest-user-message/replay", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
       const body = await safeJson(c);
       const sessionPath = body?.path || body?.sessionPath || null;
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       if (!isValidSessionPath(sessionPath, engine.agentsDir) || !isActiveSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
@@ -455,11 +559,18 @@ export function createSessionsRoute(engine) {
 
   route.post("/sessions/todos/complete", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
       const body = await safeJson(c);
       const sessionPath = body?.path;
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       if (!isValidSessionPath(sessionPath, engine.agentsDir) || !isActiveSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
@@ -499,6 +610,12 @@ export function createSessionsRoute(engine) {
   // 新建 session（可选指定工作目录和 agentId）
   route.post("/sessions/new", async (c) => {
     try {
+      const requestContext = createRequestContext(c, engine);
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "studio",
+        studioId: requestContext.studioId,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       const body = await safeJson(c);
       const { cwd, memoryEnabled, agentId, currentSessionPath: oldSessionPath } = body;
       const workspaceFolders = Array.isArray(body.workspaceFolders)
@@ -544,7 +661,7 @@ export function createSessionsRoute(engine) {
       }
 
       console.log("[sessions] session 创建完成");
-      return c.json({
+      const response = {
         ok: true,
         path: newSessionPath,
         cwd: engine.cwd,
@@ -556,7 +673,12 @@ export function createSessionsRoute(engine) {
         accessMode: engine.accessMode,
         thinkingLevel: engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.() || "auto",
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
-      });
+      };
+      hub?.eventBus?.emit?.({
+        type: "session_created",
+        session: response,
+      }, newSessionPath);
+      return c.json(response);
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -893,7 +1015,12 @@ function patchSessionFileLifecycleBlocks(blocks, engine, sessionPath) {
 
 function listSessionRegistryFiles(engine, sessionPath) {
   if (!sessionPath || typeof engine?.listSessionFiles !== "function") return [];
-  return engine.listSessionFiles(sessionPath).map(file => serializeSessionFile(file)).filter(Boolean);
+  return engine.listSessionFiles(sessionPath)
+    .map(file => {
+      if (typeof engine.serializeSessionFile === "function") return engine.serializeSessionFile(file);
+      return serializeSessionFile(file, { runtimeContext: engine?.runtimeContext || null });
+    })
+    .filter(Boolean);
 }
 
 function sessionFileLifecycleFields(file) {

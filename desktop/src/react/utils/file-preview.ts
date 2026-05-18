@@ -81,6 +81,7 @@ export async function openFilePreview(
     origin?: 'desk' | 'session';
     sessionPath?: string;
     messageId?: string;
+    fileId?: string;
     blockIdx?: number;
   },
 ): Promise<void> {
@@ -118,6 +119,7 @@ export async function openFilePreview(
         origin: context?.origin,
         sessionPath: context?.sessionPath,
         messageId: context?.messageId,
+        fileId: context?.fileId,
         blockIdx: context?.blockIdx,
       });
       return;

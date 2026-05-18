@@ -151,6 +151,42 @@ describe('selectSessionFiles', () => {
     });
   });
 
+  it('把 session registry 的 resource envelope 带入 FileRef', () => {
+    const refs = selectSessionFiles(sessionState([], '/s/resource', [{
+      fileId: 'sf_image',
+      filePath: '/workspace/image.png',
+      label: 'image.png',
+      ext: 'png',
+      mime: 'image/png',
+      status: 'available',
+      resource: {
+        schemaVersion: 1,
+        resourceId: 'res_sf_image',
+        name: 'studios/studio_local/resources/res_sf_image',
+        studioId: 'studio_local',
+        type: 'file',
+        source: 'session_file',
+        fileId: 'sf_image',
+        displayName: 'image.png',
+        lifecycle: { status: 'available', missingAt: null },
+        storage: { provider: 'session_file', localOnly: true },
+        links: {
+          self: '/api/resources/res_sf_image',
+          content: '/api/resources/res_sf_image/content',
+        },
+      },
+    }]), '/s/resource');
+
+    expect(refs[0].resource).toEqual({
+      resourceId: 'res_sf_image',
+      studioId: 'studio_local',
+      links: {
+        self: '/api/resources/res_sf_image',
+        content: '/api/resources/res_sf_image/content',
+      },
+    });
+  });
+
   it('registry 与旧 blocks 指向同一 SessionFile 时不重复', () => {
     const items: ChatListItem[] = [{
       type: 'message',

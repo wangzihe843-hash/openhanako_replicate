@@ -140,4 +140,20 @@ describe("SessionCoordinator._teardownSessionEntry", () => {
 
     expect(closeAllTerminals).toHaveBeenCalledOnce();
   });
+
+  it("closeAllSessions 不清理后台任务结果，避免卸载 runtime 时丢 pending", async () => {
+    const clearBySession = vi.fn();
+    const deferredStore = { clearBySession };
+    coord = makeCoordinator({
+      getDeferredResultStore: () => deferredStore,
+    });
+    const sessionPath = "/tmp/fake/session.jsonl";
+    const { entry } = makeMockEntry();
+    entry.session.isStreaming = false;
+    coord.sessions.set(sessionPath, entry);
+
+    await coord.closeAllSessions();
+
+    expect(clearBySession).not.toHaveBeenCalled();
+  });
 });

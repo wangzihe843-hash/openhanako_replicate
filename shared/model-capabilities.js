@@ -59,6 +59,12 @@ function isOfficialDeepSeekEndpoint(model, context = {}) {
     || getBaseUrl(model, context).includes("api.deepseek.com");
 }
 
+function isOpenRouterEndpoint(model, context = {}) {
+  if (getProvider(model, context) === "openrouter") return true;
+  const host = getBaseHost(model, context);
+  return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+}
+
 const OFFICIAL_MIMO_PROVIDERS = new Set([
   "mimo",
   "xiaomi",
@@ -139,6 +145,14 @@ export function getThinkingFormat(model, context = {}) {
   // Built-in Anthropic models may arrive without Hana's projected compat object.
   if (provider === "anthropic" && model.reasoning !== false) {
     return "anthropic";
+  }
+
+  if (
+    isOpenRouterEndpoint(model, context)
+    && model.reasoning === true
+    && (api === "openai-completions" || api === "")
+  ) {
+    return "openrouter";
   }
 
   if (

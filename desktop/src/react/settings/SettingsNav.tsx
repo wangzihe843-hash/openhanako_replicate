@@ -22,6 +22,7 @@ const TAB_ITEMS = [
   { id: 'providers', key: 'settings.tabs.providers', d: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>' },
   { id: 'media', key: 'settings.tabs.media', d: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>' },
   { id: 'sharing', key: 'settings.tabs.sharing', d: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>' },
+  { id: 'access', key: 'settings.tabs.access', d: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 19v2"/><path d="M17 19v2"/>' },
   { id: 'plugins', key: 'settings.tabs.plugins', d: '<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/>' },
   { id: 'security', key: 'settings.tabs.security', d: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>' },
   { id: 'about', key: 'settings.tabs.about', d: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>' },

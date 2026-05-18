@@ -66,7 +66,7 @@ describe('DeskSection workspace watching', () => {
     unwatchFile = vi.fn(async () => true);
     watchWorkspace = vi.fn(async () => true);
     unwatchWorkspace = vi.fn(async () => true);
-    window.t = ((key: string) => key === 'desk.workspaceTitle' ? '工作空间' : key) as typeof window.t;
+    window.t = ((key: string) => key === 'desk.workspaceTitle' ? '工作台' : key) as typeof window.t;
     window.platform = {
       watchFile,
       unwatchFile,
@@ -110,7 +110,7 @@ describe('DeskSection workspace watching', () => {
     vi.useRealTimers();
   });
 
-  it('watches the workspace root and reloads visible dirty tree keys from workspace events', async () => {
+  it('watches the workspace root plus expanded folders and reloads visible dirty tree keys from workspace events', async () => {
     const { DeskSection } = await import('../../components/DeskSection');
     const { WorkspaceFileWatchBridge } = await import('../../components/right-workspace/WorkspaceFileWatchBridge');
 
@@ -122,11 +122,12 @@ describe('DeskSection workspace watching', () => {
     );
 
     expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
+    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
     mocks.loadDeskTreeFiles.mockClear();
 
     await act(async () => {
       emitWorkspaceChanged?.({
-        rootPath: '/tmp/hana-desk',
+        rootPath: '/tmp/hana-desk/notes',
         changedPath: '/tmp/hana-desk/notes/new.md',
         affectedDir: '/tmp/hana-desk/notes',
         eventType: 'add',
@@ -134,6 +135,28 @@ describe('DeskSection workspace watching', () => {
     });
 
     expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
+  });
+
+  it('unwatches folders that are no longer visible and clears watchers when the workspace is removed', async () => {
+    const { WorkspaceFileWatchBridge } = await import('../../components/right-workspace/WorkspaceFileWatchBridge');
+
+    render(<WorkspaceFileWatchBridge />);
+
+    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
+    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
+
+    await act(async () => {
+      useStore.setState({ deskExpandedPaths: [] } as never);
+    });
+
+    expect(unwatchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
+    unwatchWorkspace.mockClear();
+
+    await act(async () => {
+      useStore.setState({ deskBasePath: '' } as never);
+    });
+
+    expect(unwatchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
   });
 
   it('flushes dirty expanded tree paths when the workspace tree mounts', async () => {
@@ -437,13 +460,13 @@ describe('DeskSection workspace watching', () => {
 
     render(<DeskSection />);
 
-    expect(screen.getByText('工作空间 · hana-desk')).toBeTruthy();
+    expect(screen.getByText('工作台 · hana-desk')).toBeTruthy();
 
     act(() => {
       useStore.setState({ deskBasePath: '/workspace/Desktop', deskCurrentPath: '' } as never);
     });
 
-    expect(screen.getByText('工作空间 · Desktop')).toBeTruthy();
+    expect(screen.getByText('工作台 · Desktop')).toBeTruthy();
   });
 
   it('keeps dirty workspace paths until their tree directory becomes visible', async () => {

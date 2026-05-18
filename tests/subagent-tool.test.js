@@ -47,6 +47,7 @@ function makeDeps(overrides = {}) {
     agentDir: "/test/agents/hana",
     emitEvent: vi.fn(),
     persistSubagentSessionMeta: vi.fn(async () => {}),
+    getSubagentRunStore: () => null,
     ...overrides,
   };
 }
@@ -136,6 +137,48 @@ describe("subagent-tool (executeIsolated 原子模式)", () => {
           executorMetaVersion: 1,
         }),
       );
+    });
+  });
+
+  it("records the subagent run in the durable run store across dispatch, session ready, and completion", async () => {
+    const runStore = {
+      register: vi.fn(),
+      attachSession: vi.fn(),
+      resolve: vi.fn(),
+      fail: vi.fn(),
+      abort: vi.fn(),
+    };
+    const tool = createSubagentTool(makeDeps({
+      getDeferredStore: () => mockStore,
+      getSubagentRunStore: () => runStore,
+    }));
+
+    const result = await tool.execute("call_1", { task: "写一份校准报告" }, null, null, mockCtx());
+    const { taskId } = result.details;
+
+    expect(runStore.register).toHaveBeenCalledWith(
+      taskId,
+      expect.objectContaining({
+        parentSessionPath: "/test/session.jsonl",
+        summary: "写一份校准报告",
+        requestedAgentId: "hana",
+        requestedAgentNameSnapshot: "Hana",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(runStore.attachSession).toHaveBeenCalledWith(
+        taskId,
+        "/test/child.jsonl",
+        expect.objectContaining({
+          executorAgentId: "hana",
+          executorAgentNameSnapshot: "Hana",
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(runStore.resolve).toHaveBeenCalledWith(taskId, "done");
     });
   });
 

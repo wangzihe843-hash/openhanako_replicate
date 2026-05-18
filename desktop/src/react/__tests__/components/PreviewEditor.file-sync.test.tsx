@@ -157,6 +157,69 @@ describe('PreviewEditor file sync', () => {
     expect(view?.state.selection.main.head).toBe(3);
   });
 
+  it('preserves scroll position when parent content is refreshed', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+
+    const { rerender } = render(
+      <PreviewEditor
+        ref={ref}
+        content="line 1\nline 2\nline 3"
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+      />,
+    );
+
+    const view = ref.current?.getView();
+    expect(view).toBeTruthy();
+    if (!view) return;
+
+    const originalDispatch = view.dispatch.bind(view);
+    vi.spyOn(view, 'dispatch').mockImplementation((...specs) => {
+      originalDispatch(...specs);
+      view.scrollDOM.scrollTop = 0;
+      view.scrollDOM.scrollLeft = 0;
+    });
+    view.scrollDOM.scrollTop = 240;
+    view.scrollDOM.scrollLeft = 16;
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="line 1\ninserted\nline 2\nline 3"
+          filePath="/tmp/hana-note.md"
+          mode="markdown"
+        />,
+      );
+    });
+
+    expect(view.scrollDOM.scrollTop).toBe(240);
+    expect(view.scrollDOM.scrollLeft).toBe(16);
+  });
+
+  it('reports total and selected character counts', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const onStatsChange = vi.fn();
+
+    render(
+      <PreviewEditor
+        ref={ref}
+        content="你好ab"
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+        onStatsChange={onStatsChange}
+      />,
+    );
+
+    expect(onStatsChange).toHaveBeenLastCalledWith({ selectedChars: 0, totalChars: 4 });
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({ selection: { anchor: 0, head: 2 } });
+    });
+
+    expect(onStatsChange).toHaveBeenLastCalledWith({ selectedChars: 2, totalChars: 4 });
+  });
+
   it('queues saves and does not publish stale save results over newer edits', async () => {
     const ref = createRef<PreviewEditorHandle>();
     const loadedVersion = { mtimeMs: 1, size: 8, sha256: 'loaded' };

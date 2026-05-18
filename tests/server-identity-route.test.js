@@ -35,13 +35,13 @@ function writeValidIdentity(root) {
     createdAt: "2026-05-09T00:00:00.000Z",
     updatedAt: "2026-05-09T00:00:00.000Z",
   });
-  writeJson(path.join(root, "spaces.json"), {
+  writeJson(path.join(root, "studios.json"), {
     schemaVersion: 1,
-    defaultSpaceId: "space_route",
-    spaces: [{
-      spaceId: "space_route",
+    defaultStudioId: "studio_route",
+    studios: [{
+      studioId: "studio_route",
       ownerUserId: "user_route",
-      label: "Route Space",
+      label: "Route Studio",
       kind: "personal",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
       membershipModel: "single_user_implicit",
@@ -61,7 +61,7 @@ describe("server identity route", () => {
     tmpDir = null;
   });
 
-  it("returns token-protected local server identity metadata for the active legacy Space", async () => {
+  it("returns token-protected local server identity metadata for the active legacy Studio", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir);
     const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
@@ -72,14 +72,42 @@ describe("server identity route", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
+      connectionKind: "local",
       serverId: "server_route",
+      serverNodeId: "server_route",
+      serverNodeKind: "local",
+      serverNodeTransport: "loopback",
       userId: "user_route",
-      spaceId: "space_route",
+      studioId: "studio_route",
       label: "Route Server",
       userLabel: "Route User",
-      spaceLabel: "Route Space",
+      studioLabel: "Route Studio",
       trustState: "local",
       authState: "paired",
+      credentialKind: "loopback_token",
+      platformAccountId: null,
+      officialServiceKind: null,
+      executionBoundary: {
+        schemaVersion: 1,
+        boundaryId: "execb_server_route_studio_route",
+        kind: "local_process",
+        serverNodeId: "server_route",
+        studioId: "studio_route",
+        workbench: {
+          kind: "legacy_agent_workbench",
+          root: null,
+        },
+        sandbox: {
+          kind: "legacy_session_permission",
+          enforcedBy: "existing_runtime",
+        },
+        filesystem: {
+          policy: "legacy_workbench_scope",
+        },
+        network: {
+          policy: "local_runtime_default",
+        },
+      },
       capabilities: ["chat", "resources", "tools"],
       version: "1.2.3",
     });
@@ -88,7 +116,7 @@ describe("server identity route", () => {
   it("returns an explicit error when registry files are invalid", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir);
-    fs.writeFileSync(path.join(tmpDir, "spaces.json"), "{ bad json", "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "studios.json"), "{ bad json", "utf-8");
     const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
     const app = new Hono();
     app.route("/api", createServerIdentityRoute({ hanakoHome: tmpDir, appVersion: "1.2.3" }));
@@ -98,7 +126,82 @@ describe("server identity route", () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
       error: "invalid server identity registry",
-      detail: expect.stringContaining("invalid spaces.json"),
+      detail: expect.stringContaining("invalid studios.json"),
+    });
+  });
+
+  it("uses the initialized runtime context when available", async () => {
+    tmpDir = makeTmpDir();
+    fs.writeFileSync(path.join(tmpDir, "server-node.json"), "{ bad json", "utf-8");
+    const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
+    const app = new Hono();
+    app.route("/api", createServerIdentityRoute({
+      hanakoHome: tmpDir,
+      appVersion: "9.9.9",
+      getRuntimeContext: () => ({
+        connectionKind: "local",
+        serverId: "server_runtime_route",
+        serverNodeId: "node_runtime_route",
+        serverNodeKind: "local",
+        serverNodeTransport: "loopback",
+        userId: "user_runtime_route",
+        studioId: "studio_runtime_route",
+        label: "Runtime Route Server",
+        userLabel: "Runtime Route User",
+        studioLabel: "Runtime Route Studio",
+        trustState: "local",
+        authState: "paired",
+        credentialKind: "loopback_token",
+        platformAccountId: null,
+        officialServiceKind: null,
+        executionBoundary: {
+          schemaVersion: 1,
+          boundaryId: "execb_node_runtime_route_studio_runtime_route",
+          kind: "local_process",
+          serverNodeId: "node_runtime_route",
+          studioId: "studio_runtime_route",
+          workbench: { kind: "legacy_agent_workbench", root: null },
+          sandbox: { kind: "legacy_session_permission", enforcedBy: "existing_runtime" },
+          filesystem: { policy: "legacy_workbench_scope" },
+          network: { policy: "local_runtime_default" },
+        },
+        capabilities: ["chat", "resources", "tools"],
+        appVersion: "8.8.8",
+      }),
+    }));
+
+    const res = await app.request("/api/server/identity");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      connectionKind: "local",
+      serverId: "server_runtime_route",
+      serverNodeId: "node_runtime_route",
+      serverNodeKind: "local",
+      serverNodeTransport: "loopback",
+      userId: "user_runtime_route",
+      studioId: "studio_runtime_route",
+      label: "Runtime Route Server",
+      userLabel: "Runtime Route User",
+      studioLabel: "Runtime Route Studio",
+      trustState: "local",
+      authState: "paired",
+      credentialKind: "loopback_token",
+      platformAccountId: null,
+      officialServiceKind: null,
+      executionBoundary: {
+        schemaVersion: 1,
+        boundaryId: "execb_node_runtime_route_studio_runtime_route",
+        kind: "local_process",
+        serverNodeId: "node_runtime_route",
+        studioId: "studio_runtime_route",
+        workbench: { kind: "legacy_agent_workbench", root: null },
+        sandbox: { kind: "legacy_session_permission", enforcedBy: "existing_runtime" },
+        filesystem: { policy: "legacy_workbench_scope" },
+        network: { policy: "local_runtime_default" },
+      },
+      capabilities: ["chat", "resources", "tools"],
+      version: "9.9.9",
     });
   });
 });

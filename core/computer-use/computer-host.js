@@ -238,6 +238,44 @@ export class ComputerHost {
     return this._leases.releaseLease(ctx, lease.leaseId);
   }
 
+  async dispose() {
+    const activeLease = this._leases.getActiveLease?.() || null;
+    if (activeLease) {
+      let provider = null;
+      try {
+        provider = this._providers.require(activeLease.providerId);
+      } catch {
+        provider = null;
+      }
+      const leaseCtx = {
+        sessionPath: activeLease.sessionPath || null,
+        agentId: activeLease.agentId || null,
+      };
+      if (provider) {
+        try {
+          await provider.stop?.(leaseCtx, activeLease);
+        } catch {
+          // Shutdown cleanup is best effort; releasing Hana's lease record
+          // must not depend on provider-specific teardown succeeding.
+        }
+        try {
+          await provider.releaseLease?.(leaseCtx, activeLease);
+        } catch {
+          // Same best-effort cleanup policy as provider.stop above.
+        }
+      }
+      this._leases.releaseLeaseRecord?.(activeLease);
+    }
+
+    for (const provider of this._providers.list()) {
+      try {
+        await provider.dispose?.();
+      } catch {
+        // Keep disposing remaining providers during process shutdown.
+      }
+    }
+  }
+
   abortSession(sessionPath) {
     this._leases.releaseBySession(sessionPath);
   }
@@ -314,11 +352,11 @@ export class ComputerHost {
     ) {
       return activeLease;
     }
-    this._releaseLeaseForTakeover(activeLease);
+    await this._releaseLeaseForTakeover(activeLease);
     return null;
   }
 
-  _releaseLeaseForTakeover(lease) {
+  async _releaseLeaseForTakeover(lease) {
     this._leases.releaseLeaseRecord?.(lease);
     let provider = null;
     try {
@@ -330,19 +368,17 @@ export class ComputerHost {
       sessionPath: lease.sessionPath || null,
       agentId: lease.agentId || null,
     };
-    void (async () => {
-      try {
-        await provider.stop?.(leaseCtx, lease);
-      } catch {
-        // Takeover is intentionally fail-open: the new one-shot Computer
-        // Use request should not be blocked by cleanup of an older lease.
-      }
-      try {
-        await provider.releaseLease?.(leaseCtx, lease);
-      } catch {
-        // Same fail-open policy as provider.stop above.
-      }
-    })();
+    try {
+      await provider.stop?.(leaseCtx, lease);
+    } catch {
+      // Takeover cleanup is fail-open, but it must run before the next
+      // lease starts so provider-level daemons cannot be stopped late.
+    }
+    try {
+      await provider.releaseLease?.(leaseCtx, lease);
+    } catch {
+      // Same fail-open policy as provider.stop above.
+    }
   }
 
   _leaseMatchesTarget(lease, providerId, target = {}) {

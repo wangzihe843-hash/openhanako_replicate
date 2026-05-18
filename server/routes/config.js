@@ -30,9 +30,24 @@ import {
   clearInlineProviderCredentialFields,
   hasInlineProviderCredentialPatch,
 } from "./provider-credentials.js";
+import {
+  collectSecretPatchPaths,
+  isMaskedSecretValue,
+  maskObjectSecrets,
+  maskSecretValue,
+  resolveSecretPatch,
+} from "../../shared/secret-custody.js";
+import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
+import { recordSecurityAuditEvent } from "../http/security-audit.js";
 
 function hasOwn(value, key) {
   return !!value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function hasProviderMutationPatch(partial) {
+  if (!partial || typeof partial !== "object") return false;
+  if (hasOwn(partial, "providers")) return true;
+  return ["api", "embedding_api", "utility_api"].some((key) => hasInlineProviderCredentialPatch(partial[key]));
 }
 
 function getGlobalValue(globalFields, key) {
@@ -80,8 +95,6 @@ export function createConfigRoute(engine) {
       const config = { ...engine.config };
       const raw = getRawConfig(engine.configPath) || {};
 
-      // 本地应用，直接返回完整 key（前端用 type="password" 控制显隐）
-
       // 附带原始配置结构（未经 fallback 解析，让前端知道用户显式设了什么）
       config._raw = {
         api: { provider: raw.api?.provider || "", base_url: raw.api?.base_url || "" },
@@ -97,7 +110,7 @@ export function createConfigRoute(engine) {
         providerEntries[name] = {
           base_url: p.base_url || entry?.baseUrl || "",
           api: p.api || entry?.api || "",
-          api_key: p.api_key || "",
+          api_key: maskSecretValue(p.api_key || ""),
           models: p.models || [],
           model_count: (p.models || []).length,
         };
@@ -114,7 +127,7 @@ export function createConfigRoute(engine) {
         );
       }
 
-      return c.json(config);
+      return c.json(maskObjectSecrets(config));
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -154,6 +167,15 @@ export function createConfigRoute(engine) {
       if (!partial || typeof partial !== "object") {
         return c.json({ error: t("error.invalidJson") }, 400);
       }
+      const settingsDenied = denyWithoutScope(c, "settings.write");
+      if (settingsDenied) return settingsDenied;
+      if (hasProviderMutationPatch(partial)) {
+        const providerDenied = denyWithoutScope(c, "providers.manage");
+        if (providerDenied) return providerDenied;
+      }
+      const secretFields = collectSecretPatchPaths(partial, ["api_key"]);
+      const secretDenied = denySecretMutationWithoutScope(c, secretFields);
+      if (secretDenied) return secretDenied;
       // ── schema-driven 全局字段分流 ──
       const { global: globalFields, agent: agentPartial } = splitByScope(partial);
       for (const { setter, value } of globalFields) {
@@ -163,11 +185,16 @@ export function createConfigRoute(engine) {
       // providers 块 → 全局 added-models.yaml
       let providersChanged = false;
       if (agentPartial.providers) {
+        const rawProviders = engine.providerRegistry.getAllProvidersRaw?.() || {};
         for (const [name, data] of Object.entries(agentPartial.providers)) {
           if (data === null) {
             engine.providerRegistry.removeProvider(name);
           } else {
-            engine.providerRegistry.saveProvider(name, data);
+            engine.providerRegistry.saveProvider(name, resolveSecretPatch({
+              patch: data,
+              existing: rawProviders[name] || {},
+              secretKeys: ["api_key"],
+            }));
           }
         }
         delete agentPartial.providers;
@@ -182,6 +209,7 @@ export function createConfigRoute(engine) {
           const { provider: provName, update: provUpdate } = buildInlineProviderCredentialUpdate(
             block,
             rawConfig?.[blockName]?.provider || "",
+            (provider) => engine.providerRegistry?.getAllProvidersRaw?.()?.[provider] || {},
           );
           if (!provName) {
             return c.json({ error: `${blockName}.provider is required when saving credentials` }, 400);
@@ -202,17 +230,32 @@ export function createConfigRoute(engine) {
         clearConfigCache();
         await engine.updateConfig({});
         emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
+        recordSecurityAuditEvent(c, engine, {
+          action: "settings.config.update",
+          target: "config",
+          secretFields,
+        });
         return c.json({ ok: true });
       }
 
       if (Object.keys(agentPartial).length === 0) {
         emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
+        recordSecurityAuditEvent(c, engine, {
+          action: "settings.config.update",
+          target: "config",
+          secretFields,
+        });
         return c.json({ ok: true });
       }
       debugLog()?.log("api", `PUT /api/config keys=[${Object.keys(agentPartial).join(",")}]`);
       if (providersChanged) clearConfigCache();
       await engine.updateConfig(agentPartial);
       emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
+      recordSecurityAuditEvent(c, engine, {
+        action: "settings.config.update",
+        target: "config",
+        secretFields,
+      });
       return c.json({ ok: true });
     } catch (err) {
       debugLog()?.error("api", `PUT /api/config failed: ${err.message}`);
@@ -551,10 +594,14 @@ export function createConfigRoute(engine) {
 
   route.post("/search/verify", async (c) => {
     const body = await safeJson(c);
-    const { provider, api_key } = body;
+    const { provider } = body;
     if (!provider) {
       return c.json({ ok: false, error: "provider is required" }, 400);
     }
+    const existingSearch = engine.getSearchConfig?.() || {};
+    const api_key = isMaskedSecretValue(body.api_key)
+      ? existingSearch.api_key || ""
+      : body.api_key || "";
     try {
       const { searchProviderRequiresApiKey, verifySearchKey } = await import("../../lib/tools/web-search.js");
       if (searchProviderRequiresApiKey(provider) && !api_key) {

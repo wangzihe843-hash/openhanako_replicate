@@ -102,6 +102,9 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(phonePrompt).not.toContain("</mood>");
     expect(phonePrompt).toContain("PULSE");
     expect(phonePrompt).toContain("<pulse>");
+    expect(phonePrompt).toContain("实际发到群聊的回复正文");
+    expect(phonePrompt).toContain("优先口语化");
+    expect(phonePrompt).toContain("内容很长");
     expect(phonePrompt).toContain("20");
     expect(phonePrompt).toContain("80");
     expect(runAgentPhoneSessionMock.mock.calls[0][2]).not.toHaveProperty("maxTokens");

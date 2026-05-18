@@ -4,9 +4,8 @@ import { useStore } from '../../stores';
 import { selectSessionFiles } from '../../stores/selectors/file-refs';
 import type { FileRef } from '../../types/file-ref';
 import { ContextMenu, type ContextMenuItem } from '../../ui';
-import { openFilePreview } from '../../utils/file-preview';
-import { extOfName, isMediaKind } from '../../utils/file-kind';
-import { openMediaViewerForRef } from '../../utils/open-media-viewer';
+import { isMediaKind } from '../../utils/file-kind';
+import { fileRefDownloadUrl, isWebRuntime, openFileRefPreview } from '../../utils/remote-file-preview';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import {
   clearAppFileDragPayload,
@@ -82,7 +81,10 @@ function isExpired(file: FileRef): boolean {
 }
 
 function canPreviewFile(file: FileRef): boolean {
-  return !isExpired(file) && (!!file.path || (isMediaKind(file.kind) && !!file.inlineData));
+  if (isExpired(file)) return false;
+  if (isMediaKind(file.kind) && !!file.inlineData) return true;
+  if (isWebRuntime()) return !!file.resource?.links.content;
+  return !!file.path || !!file.resource?.links.content;
 }
 
 function canUseFilePath(file: FileRef): boolean {
@@ -172,13 +174,7 @@ function copyPaths(files: readonly FileRef[]): void {
 
 function previewFile(file: FileRef, sessionPath: string | null): void {
   if (!canPreviewFile(file)) return;
-  if (isMediaKind(file.kind)) {
-    openMediaViewerForRef(file, { origin: 'session', sessionPath: sessionPath ?? undefined });
-    return;
-  }
-  if (!file.path) return;
-  const ext = file.ext || extOfName(file.name) || '';
-  void openFilePreview(file.path, file.name, ext, {
+  void openFileRefPreview(file, {
     origin: 'session',
     sessionPath: sessionPath ?? undefined,
     messageId: file.sessionMessageId,
@@ -240,7 +236,7 @@ function FileKindIcon({ file }: { file: FileRef }) {
   );
 }
 
-function ActionIcon({ type }: { type: 'preview' | 'open' | 'reveal' | 'copy' }) {
+function ActionIcon({ type }: { type: 'preview' | 'open' | 'reveal' | 'copy' | 'download' }) {
   if (type === 'preview') {
     return (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -263,6 +259,15 @@ function ActionIcon({ type }: { type: 'preview' | 'open' | 'reveal' | 'copy' }) 
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M3 6h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         <circle cx="12" cy="14" r="2.5" />
+      </svg>
+    );
+  }
+  if (type === 'download') {
+    return (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 3v12" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M5 21h14" />
       </svg>
     );
   }
@@ -293,6 +298,7 @@ function SessionFileRow({
   const canDrag = canDragFile(file);
   const canUsePath = canUseFilePath(file);
   const canCopyPath = canCopyFilePath(file);
+  const downloadUrl = fileRefDownloadUrl(file);
 
   const stopAction = (event: React.MouseEvent, action: () => void) => {
     event.stopPropagation();
@@ -368,6 +374,19 @@ function SessionFileRow({
         >
           <ActionIcon type="reveal" />
         </button>
+        {downloadUrl && (
+          <a
+            className={styles.fileAction}
+            data-session-file-action=""
+            aria-label={actionLabel('rightWorkspace.sessionFiles.actions.downloadToDevice', file)}
+            title={actionLabel('rightWorkspace.sessionFiles.actions.downloadToDevice', file)}
+            href={downloadUrl}
+            download={file.name}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <ActionIcon type="download" />
+          </a>
+        )}
         <button
           type="button"
           className={styles.fileAction}
@@ -602,6 +621,7 @@ export function SessionRegistryFilesPanel() {
     const actionFiles = filesForAction(file);
     const pathFiles = pathBackedFiles(actionFiles);
     const sendableFiles = pathBackedFiles(actionFiles, { requireAvailable: true });
+    const downloadUrl = fileRefDownloadUrl(file);
     const sendTargetItems: ContextMenuItem[] = bridgeTargetsLoading && !bridgeTargetsLoaded
       ? [{ label: tr('rightWorkspace.sessionFiles.actions.sendToBridgeLoading'), disabled: true }]
       : bridgeTargetsError
@@ -617,6 +637,19 @@ export function SessionRegistryFilesPanel() {
       { label: tr('rightWorkspace.sessionFiles.actions.preview'), disabled: !canPreviewFile(file), action: () => previewFile(file, currentSessionPath) },
       { label: tr('rightWorkspace.sessionFiles.actions.open'), disabled: !canUseFilePath(file), action: () => openFile(file) },
       { label: tr('rightWorkspace.sessionFiles.actions.reveal'), disabled: !canUseFilePath(file), action: () => revealFile(file) },
+      {
+        label: tr('rightWorkspace.sessionFiles.actions.downloadToDevice'),
+        disabled: !downloadUrl,
+        action: () => {
+          if (!downloadUrl) return;
+          // eslint-disable-next-line no-restricted-syntax -- context menu download has no rendered anchor to delegate to
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = file.name;
+          a.rel = 'noopener';
+          a.click();
+        },
+      },
       {
         label: pathFiles.length > 1
           ? tr('rightWorkspace.sessionFiles.actions.copySelectedPaths', { n: pathFiles.length })

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ComputerHost } from "../core/computer-use/computer-host.js";
 import { ComputerProviderRegistry } from "../core/computer-use/provider-registry.js";
 import { createMockComputerProvider } from "../core/computer-use/providers/mock-provider.js";
@@ -257,6 +257,29 @@ describe("ComputerHost", () => {
       .rejects.toMatchObject({ code: COMPUTER_USE_ERRORS.LEASE_RELEASED });
   });
 
+  it("disposes active leases and provider runtimes", async () => {
+    const provider = createMockComputerProvider({ providerId: "mock" });
+    provider.stop = vi.fn(async () => ({ ok: true }));
+    provider.releaseLease = vi.fn(async () => ({ released: true }));
+    provider.dispose = vi.fn(async () => ({ disposed: true }));
+    const { host } = makeHost(provider);
+    const lease = await host.createLease(ctx, { appId: "app.notes" });
+
+    await host.dispose();
+
+    expect(provider.stop).toHaveBeenCalledWith(
+      { sessionPath: ctx.sessionPath, agentId: ctx.agentId },
+      expect.objectContaining({ leaseId: lease.leaseId }),
+    );
+    expect(provider.releaseLease).toHaveBeenCalledWith(
+      { sessionPath: ctx.sessionPath, agentId: ctx.agentId },
+      expect.objectContaining({ leaseId: lease.leaseId }),
+    );
+    expect(provider.dispose).toHaveBeenCalledOnce();
+    await expect(host.getAppState(ctx, lease.leaseId))
+      .rejects.toMatchObject({ code: COMPUTER_USE_ERRORS.LEASE_RELEASED });
+  });
+
   it("fails closed when the global switch is off", async () => {
     const providers = new ComputerProviderRegistry();
     providers.register(createMockComputerProvider({ providerId: "mock" }));
@@ -312,6 +335,43 @@ describe("ComputerHost", () => {
     expect(next.sessionPath).toBe("/tmp/other-session.jsonl");
     await expect(host.getAppState(ctx))
       .rejects.toMatchObject({ code: COMPUTER_USE_ERRORS.LEASE_RELEASED });
+  });
+
+  it("waits for provider cleanup before replacing an active lease", async () => {
+    const provider = createMockComputerProvider({ providerId: "mock" });
+    const originalCreateLease = provider.createLease;
+    let createLeaseCalls = 0;
+    let finishStop = null;
+    let cleanupFinished = false;
+    provider.createLease = vi.fn(async (...args) => {
+      createLeaseCalls += 1;
+      if (createLeaseCalls === 2) {
+        expect(cleanupFinished).toBe(true);
+      }
+      return originalCreateLease(...args);
+    });
+    provider.stop = vi.fn(async () => new Promise((resolve) => {
+      finishStop = () => {
+        cleanupFinished = true;
+        resolve({ ok: true });
+      };
+    }));
+    const { host } = makeHost(provider);
+    await host.createLease(ctx, { appId: "app.notes" });
+
+    const nextLeasePromise = host.createLease({
+      ...ctx,
+      sessionPath: "/tmp/other-session.jsonl",
+    }, { appId: "app.notes" });
+    await Promise.resolve();
+
+    expect(provider.createLease).toHaveBeenCalledTimes(1);
+    finishStop();
+    const next = await nextLeasePromise;
+
+    expect(next.sessionPath).toBe("/tmp/other-session.jsonl");
+    expect(provider.stop).toHaveBeenCalledOnce();
+    expect(provider.createLease).toHaveBeenCalledTimes(2);
   });
 
   it("reuses the active lease for the same session and target", async () => {

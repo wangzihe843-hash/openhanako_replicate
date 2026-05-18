@@ -112,6 +112,7 @@ describe("sessions route", () => {
     const app = new Hono();
     const cwd = path.join(tmpDir, "main");
     const extra = path.join(tmpDir, "reference");
+    const hub = { eventBus: { emit: vi.fn() } };
 
     const engine = {
       currentAgentId: "hana",
@@ -128,7 +129,7 @@ describe("sessions route", () => {
       getSessionWorkspaceFolders: vi.fn(() => [extra]),
     };
 
-    app.route("/api", createSessionsRoute(engine));
+    app.route("/api", createSessionsRoute(engine, hub));
 
     const res = await app.request("/api/sessions/new", {
       method: "POST",
@@ -146,6 +147,13 @@ describe("sessions route", () => {
       { workspaceFolders: [extra] },
     );
     expect(data.workspaceFolders).toEqual([extra]);
+    expect(hub.eventBus.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session_created",
+        session: expect.objectContaining({ path: "/tmp/agents/hana/sessions/new.jsonl" }),
+      }),
+      "/tmp/agents/hana/sessions/new.jsonl",
+    );
   });
 
   it("includes pinnedAt in the session list response", async () => {
@@ -175,6 +183,107 @@ describe("sessions route", () => {
 
     expect(res.status).toBe(200);
     expect(data[0].pinnedAt).toBe(pinnedAt);
+  });
+
+  it("projects the same default Studio sessions to a paired device principal", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const session = {
+      path: "/tmp/agents/hana/sessions/a.jsonl",
+      title: "Shared Studio Session",
+      firstMessage: "hello from desktop",
+      modified: new Date("2026-05-16T08:00:00.000Z"),
+      messageCount: 2,
+      cwd: "/tmp/work",
+      agentId: "hana",
+      agentName: "Hana",
+    };
+    const runtimeContext = {
+      serverId: "server_projection",
+      serverNodeId: "node_projection",
+      userId: "user_projection",
+      studioId: "studio_projection",
+      connectionKind: "local",
+      credentialKind: "loopback_token",
+      platformAccountId: null,
+      officialServiceKind: null,
+    };
+
+    app.use("*", async (c, next) => {
+      c.set("authPrincipal", Object.freeze({
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        trustState: "lan",
+        serverNodeId: "node_projection",
+        userId: "user_projection",
+        studioId: "studio_projection",
+        studioIds: ["studio_projection"],
+        deviceId: "device_phone",
+        scopes: ["chat"],
+      }));
+      await next();
+    });
+    app.route("/api", createSessionsRoute({
+      getRuntimeContext: () => runtimeContext,
+      listSessions: vi.fn(async () => [session]),
+      rcState: null,
+    }));
+
+    const res = await app.request("/api/sessions");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toEqual([expect.objectContaining({
+      path: session.path,
+      title: session.title,
+      messageCount: 2,
+    })]);
+  });
+
+  it("rejects session projection when the authenticated Studio differs from the server Studio", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+
+    app.use("*", async (c, next) => {
+      c.set("authPrincipal", Object.freeze({
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        trustState: "lan",
+        serverNodeId: "node_projection",
+        userId: "user_projection",
+        studioId: "studio_other",
+        studioIds: ["studio_other"],
+        deviceId: "device_phone",
+        scopes: ["chat"],
+      }));
+      await next();
+    });
+    app.route("/api", createSessionsRoute({
+      getRuntimeContext: () => ({
+        serverId: "server_projection",
+        serverNodeId: "node_projection",
+        userId: "user_projection",
+        studioId: "studio_projection",
+        connectionKind: "local",
+        credentialKind: "loopback_token",
+        platformAccountId: null,
+        officialServiceKind: null,
+      }),
+      listSessions: vi.fn(async () => {
+        throw new Error("should not list sessions for mismatched Studio");
+      }),
+      rcState: null,
+    }));
+
+    const res = await app.request("/api/sessions");
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "studio_scope_mismatch",
+      detail: "authenticated Studio does not match this server Studio",
+    });
   });
 
   it("includes summary presence in the session list response", async () => {
@@ -657,6 +766,7 @@ describe("sessions route", () => {
     const engine = {
       agentsDir: "/tmp/agents",
       currentSessionPath: sessionPath,
+      runtimeContext: { studioId: "studio_route" },
       deferredResults: null,
       listSessionFiles: vi.fn((sp) => {
         expect(sp).toBe(sessionPath);
@@ -688,6 +798,12 @@ describe("sessions route", () => {
       origin: "agent_write",
       operations: ["created", "modified"],
       createdAt: 1234,
+      resource: expect.objectContaining({
+        resourceId: "res_sf_write",
+        name: "studios/studio_route/resources/res_sf_write",
+        studioId: "studio_route",
+        fileId: "sf_write",
+      }),
     })]);
   });
 
@@ -970,6 +1086,180 @@ describe("sessions route", () => {
       streamStatus: "done",
       summary: "child finished",
     });
+  });
+
+  it("hydrates running subagent block from durable run store when deferred delivery state is gone", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-1",
+          task: "do work",
+          sessionPath: null,
+          streamStatus: "running",
+        },
+      },
+    ]);
+    vi.mocked(msgUtils.loadLatestAssistantSummaryFromSessionFile)
+      .mockResolvedValueOnce("child finished from durable run");
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: {
+        query: vi.fn(() => null),
+      },
+      subagentRuns: {
+        query: vi.fn(() => ({
+          taskId: "subagent-1",
+          parentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
+          childSessionPath: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
+          status: "resolved",
+          summary: "durable result",
+          requestedAgentId: "hanako",
+          requestedAgentNameSnapshot: "Hanako",
+          executorAgentId: "hanako",
+          executorAgentNameSnapshot: "Hanako",
+          executorMetaVersion: 1,
+        })),
+      },
+      agentIdFromSessionPath: vi.fn((sp) => {
+        const rel = path.relative("/tmp/agents", sp);
+        return rel.split(path.sep)[0] || null;
+      }),
+      getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.subagentRuns.query).toHaveBeenCalledWith("subagent-1");
+    expect(msgUtils.loadLatestAssistantSummaryFromSessionFile).toHaveBeenCalledWith("/tmp/agents/hanako/subagent-sessions/child.jsonl");
+    expect(data.blocks[0]).toMatchObject({
+      type: "subagent",
+      streamKey: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
+      streamStatus: "done",
+      summary: "child finished from durable run",
+      agentId: "hanako",
+      agentName: "Hanako",
+    });
+  });
+
+  it("marks old unmapped running subagent block failed instead of leaving preview in an infinite connecting state", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.loadLatestAssistantSummaryFromSessionFile).mockClear();
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-legacy",
+          task: "legacy child session without persisted mapping",
+          sessionPath: null,
+          streamStatus: "running",
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: {
+        query: vi.fn(() => null),
+      },
+      subagentRuns: {
+        query: vi.fn(() => null),
+      },
+      agentIdFromSessionPath: vi.fn(() => null),
+      getAgent: vi.fn(() => null),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks[0]).toMatchObject({
+      type: "subagent",
+      streamKey: "",
+      streamStatus: "failed",
+      summary: "历史子会话链接不可恢复",
+    });
+    expect(msgUtils.loadLatestAssistantSummaryFromSessionFile).not.toHaveBeenCalled();
+  });
+
+  it("marks stale durable pending subagent run failed when the deferred runtime task is gone", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.loadLatestAssistantSummaryFromSessionFile).mockClear();
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-pending-stale",
+          task: "legacy child session still marked running",
+          sessionPath: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
+          streamStatus: "running",
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: {
+        query: vi.fn(() => null),
+      },
+      subagentRuns: {
+        query: vi.fn(() => ({
+          taskId: "subagent-pending-stale",
+          parentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
+          childSessionPath: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
+          status: "pending",
+          summary: "legacy pending",
+        })),
+      },
+      agentIdFromSessionPath: vi.fn((sp) => {
+        const rel = path.relative("/tmp/agents", sp);
+        return rel.split(path.sep)[0] || null;
+      }),
+      getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks[0]).toMatchObject({
+      type: "subagent",
+      streamKey: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
+      streamStatus: "failed",
+      summary: "历史子会话运行状态不可恢复",
+    });
+    expect(msgUtils.loadLatestAssistantSummaryFromSessionFile).not.toHaveBeenCalled();
   });
 
   it("exposes structured browser session states and returns refreshed states after close", async () => {

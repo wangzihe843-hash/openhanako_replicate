@@ -16,6 +16,7 @@ interface Props {
   sessionPath: string | null;
   agentId?: string | null;
   streamStatus: 'running' | 'done' | 'failed' | 'aborted';
+  summary?: string | null;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -49,7 +50,7 @@ function upsertBlock(
   return insertAtStart ? [nextBlock, ...blocks] : [...blocks, nextBlock];
 }
 
-export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamStatus, scrollContainerRef }: Props) {
+export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamStatus, summary, scrollContainerRef }: Props) {
   const entry = useStore(s => s.subagentPreviewByTaskId[taskId]);
   const session = useStore(s => (sessionPath ? s.chatSessions[sessionPath] ?? null : null));
   const items = session?.items ?? EMPTY_ITEMS;
@@ -316,6 +317,9 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
     : items;
 
   if (!sessionPath) {
+    if (streamStatus !== 'running') {
+      return <div>{summary || (streamStatus === 'failed' ? '历史子会话链接不可恢复' : '暂无可打开的 subagent session')}</div>;
+    }
     return <div>正在连接 subagent session...</div>;
   }
 

@@ -7,10 +7,16 @@ import { safeJson } from "../hono-helpers.js";
 import { createCharacterCardService, CharacterCardError } from "../../lib/character-cards/service.js";
 
 const MAX_CARD_PACKAGE_SIZE = 80 * 1024 * 1024;
+const RESERVED_UPLOAD_NAME_CHARS = new Set(["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]);
+
+function isUploadNameCharAllowed(char) {
+  const code = char.charCodeAt(0);
+  return code > 0x1f && !RESERVED_UPLOAD_NAME_CHARS.has(char);
+}
 
 function safeUploadName(name) {
   const base = path.basename(String(name || "character-card.zip").replace(/\\/g, "/"));
-  const cleaned = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim();
+  const cleaned = Array.from(base).filter(isUploadNameCharAllowed).join("").trim();
   return cleaned || "character-card.zip";
 }
 

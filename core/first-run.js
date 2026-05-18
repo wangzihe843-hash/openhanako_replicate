@@ -87,7 +87,7 @@ function seedDefaultAgent(agentsDir, productDir) {
   if (fs.existsSync(configSrc)) {
     fs.copyFileSync(configSrc, cfgDest);
   }
-  // 写入默认工作空间（per-agent，不存全局）
+  // 写入默认工作台（per-agent，不存全局）
   const raw = fs.existsSync(cfgDest) ? YAML.load(fs.readFileSync(cfgDest, "utf-8")) || {} : {};
   raw.desk = {
     ...(raw.desk || {}),

@@ -29,6 +29,34 @@ describe("server runtime assets", () => {
       fs.writeFileSync(path.join(dir, "yuan-hanako-card-back.png"), "card-back\n");
       fs.writeFileSync(path.join(dir, "yuan-hanako-emblem.png"), "emblem\n");
     }
+
+    const rendererDir = path.join(rootDir, "desktop", "dist-renderer");
+    fs.mkdirSync(path.join(rendererDir, "assets"), { recursive: true });
+    fs.mkdirSync(path.join(rendererDir, "lib"), { recursive: true });
+    fs.mkdirSync(path.join(rendererDir, "themes"), { recursive: true });
+    fs.mkdirSync(path.join(rendererDir, "locales"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rendererDir, "mobile.html"),
+      "<!doctype html><link rel=\"stylesheet\" href=\"./assets/mobile.css\"><script type=\"module\" src=\"./assets/mobile.js\"></script><title>Mobile</title>",
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(rendererDir, "manifest.webmanifest"), "{}", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "sw.js"), "self.addEventListener('fetch', () => {});", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "icon.png"), "png", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "mobile.js"), "import './shared.js'; console.log('mobile')", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "shared.js"), "console.log('shared')", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "mobile.css"), ".mobile { background: url('./paper.png'); }", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "paper.png"), "paper", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "mobile.js.map"), '{"sourcesContent":["sourcemap fixture"]}', "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "main-desktop.js"), "console.log('desktop')", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "assets", "main-desktop.css"), ".desktop {}", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "lib", "theme.js"), "window.HanaTheme = {}", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "lib", "theme.js.map"), '{"sourcesContent":["theme source"]}', "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "themes", "warm-paper.css"), ":root{}", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "locales", "zh.json"), "{}", "utf-8");
+    fs.writeFileSync(path.join(rendererDir, "index.html"), "<!doctype html><title>Desktop</title>", "utf-8");
+    fs.mkdirSync(path.join(rendererDir, "modules"), { recursive: true });
+    fs.writeFileSync(path.join(rendererDir, "modules", "legacy.js"), "console.log('legacy')", "utf-8");
   });
 
   afterEach(() => {
@@ -61,5 +89,31 @@ describe("server runtime assets", () => {
 
     expect(() => copyServerRuntimeAssets({ rootDir, outDir }))
       .toThrow(/required runtime asset missing: .*Butter\.png/);
+  });
+
+  it("copies the mobile renderer bundle into the bundled server root", () => {
+    const copied = copyServerRuntimeAssets({ rootDir, outDir });
+
+    expect(fs.readFileSync(path.join(outDir, "desktop", "dist-renderer", "mobile.html"), "utf-8"))
+      .toContain("<title>Mobile</title>");
+    expect(fs.readFileSync(path.join(outDir, "desktop", "dist-renderer", "assets", "mobile.js"), "utf-8"))
+      .toContain("console.log('mobile')");
+    expect(fs.readFileSync(path.join(outDir, "desktop", "dist-renderer", "assets", "shared.js"), "utf-8"))
+      .toContain("console.log('shared')");
+    expect(fs.readFileSync(path.join(outDir, "desktop", "dist-renderer", "assets", "mobile.css"), "utf-8"))
+      .toContain("background");
+    expect(fs.readFileSync(path.join(outDir, "desktop", "dist-renderer", "assets", "paper.png"), "utf-8"))
+      .toBe("paper");
+    expect(copied).toContain(path.join("desktop", "dist-renderer") + path.sep);
+  });
+
+  it("excludes source maps and desktop-only renderer files from the server runtime", () => {
+    copyServerRuntimeAssets({ rootDir, outDir });
+
+    expect(fs.existsSync(path.join(outDir, "desktop", "dist-renderer", "assets", "mobile.js.map"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "desktop", "dist-renderer", "assets", "main-desktop.js"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "desktop", "dist-renderer", "assets", "main-desktop.css"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "desktop", "dist-renderer", "index.html"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "desktop", "dist-renderer", "modules", "legacy.js"))).toBe(false);
   });
 });

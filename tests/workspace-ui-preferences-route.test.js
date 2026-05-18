@@ -15,9 +15,9 @@ describe("workspace UI preference routes", () => {
       getSharedModels: vi.fn(() => ({})),
       getSearchConfig: vi.fn(() => ({})),
       getUtilityApi: vi.fn(() => ({})),
-      getWorkspaceUiState: vi.fn((workspace) => states[workspace] || null),
-      setWorkspaceUiState: vi.fn((workspace, state) => {
-        states[workspace] = state;
+      getWorkspaceUiState: vi.fn((workspace, surface = "electron") => states[`${surface}:${workspace}`] || null),
+      setWorkspaceUiState: vi.fn((workspace, surface, state) => {
+        states[`${surface}:${workspace}`] = state;
         return state;
       }),
     };
@@ -31,6 +31,9 @@ describe("workspace UI preference routes", () => {
         state: {
           deskExpandedPaths: ["src", "", "../escape", "src"],
           deskSelectedPath: "src/App.tsx",
+          rightWorkspaceTab: "workspace",
+          jianView: "notes",
+          jianDrawerOpen: true,
           previewOpen: true,
           openTabs: ["file-src/App.tsx", "missing-tab"],
           activeTabId: "missing-tab",
@@ -52,8 +55,11 @@ describe("workspace UI preference routes", () => {
 
     expect(putRes.status).toBe(200);
     const putBody = await putRes.json();
-    expect(engine.setWorkspaceUiState).toHaveBeenCalledWith("/repo", expect.objectContaining({
+    expect(engine.setWorkspaceUiState).toHaveBeenCalledWith("/repo", "electron", expect.objectContaining({
       deskExpandedPaths: ["src"],
+      rightWorkspaceTab: "workspace",
+      jianView: "notes",
+      jianDrawerOpen: true,
       previewOpen: true,
       openTabs: ["file-src/App.tsx"],
       activeTabId: "file-src/App.tsx",
@@ -70,6 +76,68 @@ describe("workspace UI preference routes", () => {
 
     const getRes = await app.request("/api/preferences/workspace-ui-state?workspace=%2Frepo%2F");
     expect(getRes.status).toBe(200);
+    expect(engine.getWorkspaceUiState).toHaveBeenCalledWith("/repo", "electron");
     await expect(getRes.json()).resolves.toEqual({ state: putBody.state });
+  });
+
+  it("separates workspace UI state by requested surface", async () => {
+    const states = {};
+    const engine = {
+      getSharedModels: vi.fn(() => ({})),
+      getSearchConfig: vi.fn(() => ({})),
+      getUtilityApi: vi.fn(() => ({})),
+      getWorkspaceUiState: vi.fn((workspace, surface) => states[`${surface}:${workspace}`] || null),
+      setWorkspaceUiState: vi.fn((workspace, surface, state) => {
+        states[`${surface}:${workspace}`] = state;
+        return state;
+      }),
+    };
+    const app = makeApp(engine);
+
+    const putRes = await app.request("/api/preferences/workspace-ui-state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspace: "/repo",
+        surface: "pwa",
+        state: { deskExpandedPaths: ["mobile"] },
+      }),
+    });
+    expect(putRes.status).toBe(200);
+    expect(engine.setWorkspaceUiState).toHaveBeenCalledWith("/repo", "pwa", expect.objectContaining({
+      deskExpandedPaths: ["mobile"],
+    }));
+
+    const getRes = await app.request("/api/preferences/workspace-ui-state?workspace=%2Frepo&surface=pwa");
+    expect(getRes.status).toBe(200);
+    expect(engine.getWorkspaceUiState).toHaveBeenCalledWith("/repo", "pwa");
+    await expect(getRes.json()).resolves.toMatchObject({
+      state: { deskExpandedPaths: ["mobile"] },
+    });
+  });
+
+  it("rejects unknown workspace UI surfaces instead of merging unrelated clients", async () => {
+    const engine = {
+      getSharedModels: vi.fn(() => ({})),
+      getSearchConfig: vi.fn(() => ({})),
+      getUtilityApi: vi.fn(() => ({})),
+      getWorkspaceUiState: vi.fn(),
+      setWorkspaceUiState: vi.fn(),
+    };
+    const app = makeApp(engine);
+
+    const getRes = await app.request("/api/preferences/workspace-ui-state?workspace=%2Frepo&surface=watch");
+    expect(getRes.status).toBe(400);
+    await expect(getRes.json()).resolves.toEqual({ error: "workspace UI surface is invalid" });
+
+    const putRes = await app.request("/api/preferences/workspace-ui-state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace: "/repo", surface: "watch", state: {} }),
+    });
+    expect(putRes.status).toBe(400);
+    await expect(putRes.json()).resolves.toEqual({ error: "workspace UI surface is invalid" });
+    expect(engine.getWorkspaceUiState).not.toHaveBeenCalled();
+    expect(engine.setWorkspaceUiState).not.toHaveBeenCalled();
   });
 });

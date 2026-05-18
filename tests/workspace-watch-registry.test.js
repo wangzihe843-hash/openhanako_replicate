@@ -39,7 +39,7 @@ describe("workspace-watch-registry", () => {
     vi.useRealTimers();
   });
 
-  it("shares one recursive workspace watcher and notifies subscribers with the affected directory", () => {
+  it("shares one shallow workspace watcher and notifies subscribers with the affected directory", () => {
     const registry = createWorkspaceWatchRegistry({
       watch: watchMock,
       notifySubscriber: (subscriberId, payload) => notified.push({ subscriberId, payload }),
@@ -87,6 +87,20 @@ describe("workspace-watch-registry", () => {
     expect(options.ignored("/workspace/node_modules/pkg/index.js")).toBe(true);
     expect(options.ignored("/workspace/.git/index")).toBe(true);
     expect(options.ignored("/workspace/src/App.tsx")).toBe(false);
+  });
+
+  it("limits each watcher to the watched directory so opening a workspace never recursively scans the whole tree", () => {
+    const registry = createWorkspaceWatchRegistry({
+      watch: watchMock,
+      notifySubscriber: () => {},
+    });
+
+    expect(registry.watchWorkspace("/workspace", 1)).toBe(true);
+    const options = watchMock.mock.calls[0][1];
+
+    expect(options.depth).toBe(0);
+    expect(options.awaitWriteFinish).toBe(false);
+    expect(options.ignoreInitial).toBe(true);
   });
 
   it("removes only the current subscriber and closes the watcher after the last subscriber leaves", () => {

@@ -41,6 +41,23 @@
     min-width: 0;
 }
 
+.input-surface-mobile .input-bottom-bar {
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.input-surface-mobile .input-actions {
+    flex: 0 0 auto;
+    gap: 0.18rem;
+}
+
+.input-surface-mobile .input-controls {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    gap: 0.18rem;
+    min-width: 0;
+}
+
 /* 附件添加按钮 */
 .attach-btn {
     display: inline-flex;
@@ -117,6 +134,27 @@
     overflow: hidden;
     text-overflow: clip;
     white-space: nowrap;
+}
+
+.input-surface-mobile .attach-btn,
+.input-surface-mobile .thinking-pill,
+.input-surface-mobile .plan-mode-btn,
+.input-surface-mobile .send-btn {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    padding: 0;
+    justify-content: center;
+    flex: 0 0 30px;
+}
+
+.input-surface-mobile .plan-mode-label,
+.input-surface-mobile .send-label span {
+    display: none;
+}
+
+.input-surface-mobile .send-label {
+    gap: 0;
 }
 
 /* ── Context Usage Ring ── */
@@ -301,6 +339,12 @@
     flex-shrink: 1;
 }
 
+.input-surface-mobile .model-selector {
+    flex: 0 1 auto;
+    min-width: 42px;
+    max-width: min(44vw, 180px);
+}
+
 .model-pill {
     display: inline-flex;
     align-items: center;
@@ -321,6 +365,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 160px;
+}
+
+.input-surface-mobile .model-pill {
+    width: auto;
+    height: 30px;
+    max-width: min(44vw, 180px);
+    min-width: 0;
+    padding: 0 0.5rem;
+}
+
+.input-surface-mobile .model-pill span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .model-pill:hover {
@@ -1176,9 +1235,19 @@
                 box-shadow 0.3s var(--ease-out);
 }
 
+.browser-file-input {
+    display: none;
+}
+
 .input-wrapper:hover {
     border-color: rgba(0, 0, 0, 0.12);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.input-surface-mobile .input-wrapper {
+    gap: 0.45rem;
+    padding: 0.65rem 0.75rem 0.55rem;
+    border-radius: min(var(--radius-lg), 14px);
 }
 
 .input-box {
@@ -1195,6 +1264,11 @@
     max-height: 120px;
     overflow-y: auto;
     scrollbar-width: none;
+}
+
+.input-surface-mobile .input-box {
+    font-size: 16px;
+    max-height: 96px;
 }
 
 .input-box::-webkit-scrollbar {

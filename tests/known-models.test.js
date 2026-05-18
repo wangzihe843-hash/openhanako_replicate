@@ -156,6 +156,16 @@ describe("known-models dictionary", () => {
     }
   });
 
+  it("looks up known model ids case-insensitively after exact matches miss", () => {
+    expect(lookupKnown("mimo", "MiMo-V2.5-Pro")).toEqual(lookupKnown("mimo", "mimo-v2.5-pro"));
+    expect(lookupKnown("openrouter", "DeepSeek/DeepSeek-V3.2")).toEqual(
+      lookupKnown("openrouter", "deepseek/deepseek-v3.2"),
+    );
+    expect(lookupKnown("unknown-provider", "MiMo-V2-Flash")).toEqual(
+      lookupKnown("unknown-provider", "mimo-v2-flash"),
+    );
+  });
+
   it("keeps Xiaomi MiMo V2 Omni aligned with current official full-modal metadata", () => {
     expect(lookupKnown("mimo", "mimo-v2-omni")).toMatchObject({
       context: 262144,

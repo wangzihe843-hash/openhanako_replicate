@@ -27,8 +27,10 @@
     position: relative;
 }
 
-.sessionItem:hover {
-    background: var(--accent-light);
+@media (hover: hover) and (pointer: fine) {
+    .sessionItem:hover {
+        background: var(--accent-light);
+    }
 }
 
 .sessionItemActive {
@@ -61,8 +63,10 @@
     transition: padding-right var(--duration-fast);
 }
 
-.sessionItem:hover .sessionItemMeta {
-    padding-right: 68px;
+@media (hover: hover) and (pointer: fine) {
+    .sessionItem:hover .sessionItemMeta {
+        padding-right: 68px;
+    }
 }
 
 .sessionRcBadge {
@@ -99,6 +103,7 @@
     color: var(--text-muted);
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
     transition: all var(--duration-fast);
     z-index: 1;
 }
@@ -107,14 +112,17 @@
     pointer-events: none;
 }
 
-.sessionItem:hover .sessionPinBtn {
-    opacity: 0.5;
-}
+@media (hover: hover) and (pointer: fine) {
+    .sessionItem:hover .sessionPinBtn {
+        opacity: 0.5;
+        pointer-events: auto;
+    }
 
-.sessionPinBtn:hover {
-    opacity: 1 !important;
-    background: var(--accent-light);
-    color: var(--accent);
+    .sessionPinBtn:hover {
+        opacity: 1 !important;
+        background: var(--accent-light);
+        color: var(--accent);
+    }
 }
 
 .sessionRenameBtn {
@@ -132,6 +140,7 @@
     color: var(--text-muted);
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
     transition: all var(--duration-fast);
     z-index: 1;
 }
@@ -140,14 +149,17 @@
     pointer-events: none;
 }
 
-.sessionItem:hover .sessionRenameBtn {
-    opacity: 0.5;
-}
+@media (hover: hover) and (pointer: fine) {
+    .sessionItem:hover .sessionRenameBtn {
+        opacity: 0.5;
+        pointer-events: auto;
+    }
 
-.sessionRenameBtn:hover {
-    opacity: 1 !important;
-    background: var(--accent-light);
-    color: var(--accent);
+    .sessionRenameBtn:hover {
+        opacity: 1 !important;
+        background: var(--accent-light);
+        color: var(--accent);
+    }
 }
 
 /* 重命名输入框 */
@@ -181,6 +193,7 @@
     color: var(--danger);
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
     transition: all var(--duration-fast);
     z-index: 1;
 }
@@ -189,13 +202,31 @@
     pointer-events: none;
 }
 
-.sessionItem:hover .sessionArchiveBtn {
-    opacity: 0.5;
+@media (hover: hover) and (pointer: fine) {
+    .sessionItem:hover .sessionArchiveBtn {
+        opacity: 0.5;
+        pointer-events: auto;
+    }
+
+    .sessionArchiveBtn:hover {
+        opacity: 1 !important;
+        background: rgba(var(--danger-rgb), 0.08);
+    }
 }
 
-.sessionArchiveBtn:hover {
-    opacity: 1 !important;
-    background: rgba(var(--danger-rgb), 0.08);
+.sessionItemActive .sessionItemMeta,
+.sessionItem:focus-visible .sessionItemMeta {
+    padding-right: 68px;
+}
+
+.sessionItemActive .sessionPinBtn,
+.sessionItemActive .sessionRenameBtn,
+.sessionItemActive .sessionArchiveBtn,
+.sessionItem:focus-visible .sessionPinBtn,
+.sessionItem:focus-visible .sessionRenameBtn,
+.sessionItem:focus-visible .sessionArchiveBtn {
+    opacity: 0.5;
+    pointer-events: auto;
 }
 
 /* streaming 呼吸动画 */

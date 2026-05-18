@@ -24,6 +24,7 @@ function deferred<T>() {
 describe('desk-actions workspace roots', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete (globalThis as any).document;
     mockHanaFetch.mockReset();
     mockHanaFetch.mockImplementation(async (url: string) => {
       if (url.startsWith('/api/preferences/workspace-ui-state')) return jsonResponse({ state: null });
@@ -145,7 +146,7 @@ describe('desk-actions workspace roots', () => {
     expect(mockHanaFetch).toHaveBeenCalledTimes(2);
     expect(mockHanaFetch).toHaveBeenNthCalledWith(
       1,
-      '/api/preferences/workspace-ui-state?workspace=%2Fworkspace%2FDesktop',
+      '/api/preferences/workspace-ui-state?workspace=%2Fworkspace%2FDesktop&surface=electron',
     );
     expect(mockHanaFetch).toHaveBeenNthCalledWith(
       2,
@@ -260,7 +261,7 @@ describe('desk-actions workspace roots', () => {
     const { activateWorkspaceDesk } = await import('../../stores/desk-actions');
     await activateWorkspaceDesk('/workspace', { reload: false });
 
-    expect(mockHanaFetch).toHaveBeenCalledWith('/api/preferences/workspace-ui-state?workspace=%2Fworkspace');
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/preferences/workspace-ui-state?workspace=%2Fworkspace&surface=electron');
     expect(useStore.getState().deskExpandedPaths).toEqual(['src', 'src/react']);
     expect(useStore.getState().deskSelectedPath).toBe('src/react/App.tsx');
     expect(useStore.getState().jianDrawerOpen).toBe(true);
@@ -378,6 +379,27 @@ describe('desk-actions workspace roots', () => {
 
     expect(useStore.getState().jianDrawerOpen).toBe(true);
     expect(useStore.getState().workspaceDeskStateByRoot['/workspace-b'].jianDrawerOpen).toBe(true);
+  });
+
+  it('uses the mobile surface bucket for persisted workspace state in the PWA shell', async () => {
+    (globalThis as any).document = {
+      documentElement: {
+        getAttribute: (name: string) => (name === 'data-platform' ? 'web' : null),
+      },
+    };
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      state: {
+        deskExpandedPaths: ['mobile-only'],
+        deskSelectedPath: 'mobile-only/a.md',
+      },
+    }));
+
+    const { activateWorkspaceDesk } = await import('../../stores/desk-actions');
+    await activateWorkspaceDesk('/workspace', { reload: false });
+
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/preferences/workspace-ui-state?workspace=%2Fworkspace&surface=pwa');
+    expect(useStore.getState().deskExpandedPaths).toEqual(['mobile-only']);
+    expect(useStore.getState().deskSelectedPath).toBe('mobile-only/a.md');
   });
 
   it('loads tree children by explicit subdir without changing the visible current directory', async () => {

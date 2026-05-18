@@ -19,12 +19,31 @@ export interface PersistedWorkspaceUiState {
 const SAVE_DEBOUNCE_MS = 350;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+export type WorkspaceUiSurface = 'electron' | 'pwa';
+
 function normalizeRoot(root: string | null | undefined): string | null {
   return normalizeWorkspacePath(root);
 }
 
 function normalizeSubdir(value: string | null | undefined): string {
   return (value || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
+export function resolveWorkspaceUiSurface(): WorkspaceUiSurface {
+  if (typeof document !== 'undefined' && document.documentElement.getAttribute('data-platform') === 'web') {
+    return 'pwa';
+  }
+  if (typeof window !== 'undefined' && window.location?.pathname?.startsWith('/mobile')) {
+    return 'pwa';
+  }
+  return 'electron';
+}
+
+function workspaceUiStateUrl(root: string): string {
+  const params = new URLSearchParams();
+  params.set('workspace', root);
+  params.set('surface', resolveWorkspaceUiSurface());
+  return `/api/preferences/workspace-ui-state?${params.toString()}`;
 }
 
 export function buildPersistedWorkspaceUiState(_root: string): PersistedWorkspaceUiState {
@@ -44,7 +63,7 @@ export async function loadPersistedWorkspaceUiState(root: string): Promise<Persi
   const state = useStore.getState();
   if (!normalized || !hasServerConnection(state)) return null;
   try {
-    const res = await hanaFetch(`/api/preferences/workspace-ui-state?workspace=${encodeURIComponent(normalized)}`);
+    const res = await hanaFetch(workspaceUiStateUrl(normalized));
     const data = await res.json().catch(() => null);
     return data?.state && typeof data.state === 'object' ? data.state as PersistedWorkspaceUiState : null;
   } catch (err) {
@@ -67,11 +86,12 @@ export async function persistCurrentWorkspaceUiStateNow(root?: string | null): P
   const normalized = normalizeRoot(root ?? useStore.getState().deskBasePath);
   if (!normalized || !hasServerConnection(useStore.getState())) return;
   const state = buildPersistedWorkspaceUiState(normalized);
+  const surface = resolveWorkspaceUiSurface();
   try {
     await hanaFetch('/api/preferences/workspace-ui-state', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace: normalized, state }),
+      body: JSON.stringify({ workspace: normalized, surface, state }),
     });
   } catch (err) {
     console.warn('[workspace-ui-state] save failed:', err);

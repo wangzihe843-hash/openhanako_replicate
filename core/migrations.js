@@ -11,7 +11,10 @@ import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
 import { safeReadYAMLSync } from "../shared/safe-fs.js";
-import { ensureLocalIdentityRegistries } from "./server-identity.js";
+import {
+  ensureLocalIdentityRegistries,
+  ensureRemoteAccessFoundationRegistries,
+} from "./server-identity.js";
 import { saveConfig } from "../lib/memory/config-loader.js";
 import {
   getSubagentSessionMetaPath,
@@ -20,6 +23,7 @@ import {
   readSubagentSessionMetaSync,
 } from "../lib/subagent-executor-metadata.js";
 import { SessionFileRegistry } from "../lib/session-files/session-file-registry.js";
+import { SubagentRunStore } from "../lib/subagent-run-store.js";
 import { persistBrowserScreenshotFileSync } from "../lib/session-files/browser-screenshot-file.js";
 import { getInvalidProviderModelIds } from "../shared/provider-model-validation.js";
 import { normalizeThinkingLevelForModel } from "./session-thinking-level.js";
@@ -67,7 +71,7 @@ const migrations = {
   16: migrateVideoCapabilityProjection,
   // bridge sessionKey 引入 @agentId 后，修补旧 index 中无 agent 维度的 key
   17: migrateBridgeSessionKeysToAgentScoped,
-  // Space 基础身份：为旧 HANA_HOME 补齐 server / legacy owner / default Space registry
+  // Studio 基础身份：为旧 HANA_HOME 补齐 server / legacy owner / default Studio registry
   18: migrateLocalIdentityRegistries,
   // API-key provider 凭证真相源迁移：auth.json → added-models.yaml
   19: migrateLegacyApiKeyAuthEntriesToProviders,
@@ -83,6 +87,12 @@ const migrations = {
   24: migrateChannelPhoneGuardLimitDefaults,
   // 频道主动发起开关显式化，旧频道保持开启
   25: migrateChannelPhoneProactiveDefaults,
+  // Space → Studio：把已落过盘的 spaces.json 迁出为 studios.json
+  26: migrateStudioIdentityRegistries,
+  // 远程访问 UI 前地基：补齐设备、网络和挂载空 registry
+  27: migrateRemoteAccessFoundationRegistries,
+  // subagent 子会话长期映射：把临时 deferred 队列里的历史事实迁入 durable registry
+  28: migrateDurableSubagentRunRegistry,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -1879,6 +1889,43 @@ function collectLegacySessionJsonlPaths(agentsDir) {
   return out;
 }
 
+function collectAgentParentSessionJsonlPaths(agentsDir) {
+  let agents = [];
+  try {
+    agents = fs.readdirSync(agentsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const agent of agents) {
+    if (!agent.isDirectory()) continue;
+    collectJsonlRecursive(path.join(agentsDir, agent.name, "sessions"), out);
+  }
+  return out;
+}
+
+function mapSubagentRunStatus(streamStatus) {
+  if (streamStatus === "done") return "resolved";
+  if (streamStatus === "failed") return "failed";
+  if (streamStatus === "aborted") return "aborted";
+  return "pending";
+}
+
+function mapDeferredSubagentRunStatus(status) {
+  if (status === "resolved") return "resolved";
+  if (status === "failed") return "failed";
+  if (status === "aborted") return "aborted";
+  return "pending";
+}
+
+function summarizeDeferredSubagentTask(task) {
+  if (typeof task?.result === "string" && task.result) return task.result;
+  if (typeof task?.reason === "string" && task.reason) return task.reason;
+  if (typeof task?.meta?.summary === "string" && task.meta.summary) return task.meta.summary;
+  return null;
+}
+
 function collectJsonlRecursive(dir, out) {
   let entries = [];
   try {
@@ -2033,8 +2080,101 @@ function legacyBrowserScreenshot(msg) {
 
 function migrateLocalIdentityRegistries(ctx) {
   const { hanakoHome, log } = ctx;
-  const { created } = ensureLocalIdentityRegistries(hanakoHome);
+  const { created, migratedFromLegacySpaces } = ensureLocalIdentityRegistries(hanakoHome);
   log?.(`[migrations] #18: local identity registries ready${created.length ? ` (created=${created.join(",")})` : ""}`);
+  if (migratedFromLegacySpaces) log?.("[migrations] #18: legacy spaces.json mapped to studios.json");
+}
+
+function migrateStudioIdentityRegistries(ctx) {
+  const { hanakoHome, log } = ctx;
+  const { created, migratedFromLegacySpaces } = ensureLocalIdentityRegistries(hanakoHome);
+  log?.(`[migrations] #26: studio identity registries ready${created.length ? ` (created=${created.join(",")})` : ""}`);
+  if (migratedFromLegacySpaces) log?.("[migrations] #26: legacy spaces.json mapped to studios.json");
+}
+
+function migrateRemoteAccessFoundationRegistries(ctx) {
+  const { hanakoHome, log } = ctx;
+  const { created } = ensureRemoteAccessFoundationRegistries(hanakoHome);
+  log?.(`[migrations] #27: remote access foundation registries ready${created.length ? ` (created=${created.join(",")})` : ""}`);
+}
+
+function migrateDurableSubagentRunRegistry(ctx) {
+  const { hanakoHome, agentsDir, log } = ctx;
+  const store = new SubagentRunStore(path.join(hanakoHome, "subagent-runs.json"));
+  let imported = 0;
+
+  for (const sessionPath of collectAgentParentSessionJsonlPaths(agentsDir)) {
+    let raw = "";
+    try {
+      raw = fs.readFileSync(sessionPath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const msg = entry?.message;
+      if (entry?.type !== "message" || msg?.role !== "toolResult" || msg?.toolName !== "subagent") continue;
+      const details = msg.details || {};
+      const taskId = typeof details.taskId === "string" ? details.taskId : null;
+      const childSessionPath = typeof details.sessionPath === "string" && details.sessionPath ? details.sessionPath : null;
+      if (!taskId || !childSessionPath) continue;
+
+      store.upsert(taskId, {
+        parentSessionPath: sessionPath,
+        childSessionPath,
+        status: mapSubagentRunStatus(details.streamStatus),
+        summary: typeof details.summary === "string" && details.summary
+          ? details.summary
+          : (typeof details.taskTitle === "string" && details.taskTitle ? details.taskTitle : null),
+        requestedAgentId: details.requestedAgentId || null,
+        requestedAgentNameSnapshot: details.requestedAgentNameSnapshot || details.requestedAgentName || null,
+        executorAgentId: details.executorAgentId || details.agentId || null,
+        executorAgentNameSnapshot: details.executorAgentNameSnapshot || details.agentName || null,
+        executorMetaVersion: details.executorMetaVersion || null,
+      });
+      imported++;
+    }
+  }
+
+  const deferredTasksPath = path.join(hanakoHome, ".ephemeral", "deferred-tasks.json");
+  try {
+    if (fs.existsSync(deferredTasksPath)) {
+      const deferredTasks = JSON.parse(fs.readFileSync(deferredTasksPath, "utf-8"));
+      for (const [taskId, task] of Object.entries(deferredTasks || {})) {
+        if (task?.meta?.type !== "subagent") continue;
+        const childSessionPath = typeof task.meta.sessionPath === "string" && task.meta.sessionPath
+          ? task.meta.sessionPath
+          : null;
+        if (!childSessionPath) continue;
+
+        store.upsert(taskId, {
+          parentSessionPath: typeof task.sessionPath === "string" ? task.sessionPath : null,
+          childSessionPath,
+          status: mapDeferredSubagentRunStatus(task.status),
+          summary: summarizeDeferredSubagentTask(task),
+          reason: typeof task.reason === "string" ? task.reason : null,
+          requestedAgentId: task.meta.requestedAgentId || null,
+          requestedAgentNameSnapshot: task.meta.requestedAgentNameSnapshot || null,
+          executorAgentId: task.meta.executorAgentId || null,
+          executorAgentNameSnapshot: task.meta.executorAgentNameSnapshot || null,
+          executorMetaVersion: task.meta.executorMetaVersion || null,
+          createdAt: task.deferredAt ? new Date(task.deferredAt).toISOString() : null,
+        });
+        imported++;
+      }
+    }
+  } catch (err) {
+    log?.(`[migrations] #28: deferred subagent run import skipped (${err.message})`);
+  }
+
+  log?.(`[migrations] #28: durable subagent run registry backfilled (${imported})`);
 }
 
 function migrateLegacyApiKeyAuthEntriesToProviders(ctx) {

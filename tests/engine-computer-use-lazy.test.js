@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HanaEngine } from "../core/engine.js";
 
 describe("HanaEngine Computer Use lazy runtime", () => {
@@ -40,5 +40,18 @@ describe("HanaEngine Computer Use lazy runtime", () => {
     expect(enabled.enabled).toBe(true);
     expect(engine._computerProviders).toBeTruthy();
     expect(engine._computerHost).toBeTruthy();
+  });
+
+  it("disposes the lazy Computer Use runtime during engine shutdown", async () => {
+    const engine = createEngine();
+    engine.setComputerUseSettings({ enabled: true });
+    const dispose = vi.fn(async () => {});
+    engine._computerHost = { dispose };
+
+    await engine.dispose();
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(engine._computerHost).toBeNull();
+    expect(engine._computerProviders).toBeNull();
   });
 });

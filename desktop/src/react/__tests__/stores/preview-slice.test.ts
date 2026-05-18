@@ -21,6 +21,7 @@ import {
   clearPreview,
   openPreview,
   closePreview,
+  togglePreviewPanel,
   handleLegacyArtifactBlock,
   canSpawnViewer,
   setMarkdownPreviewActive,
@@ -55,6 +56,9 @@ function createTestStore() {
 }
 
 let testStore: ReturnType<typeof createTestStore>;
+const layoutMocks = vi.hoisted(() => ({
+  updateLayout: vi.fn(),
+}));
 
 vi.mock('../../stores/index', () => ({
   get useStore() {
@@ -69,7 +73,7 @@ vi.mock('../../stores/index', () => ({
 }));
 
 vi.mock('../../components/SidebarLayout', () => ({
-  updateLayout: () => {},
+  updateLayout: layoutMocks.updateLayout,
 }));
 
 function makePreviewItem(id: string, title?: string): PreviewItem {
@@ -79,6 +83,7 @@ function makePreviewItem(id: string, title?: string): PreviewItem {
 describe('preview slice (user-level content pool)', () => {
   beforeEach(() => {
     testStore = createTestStore();
+    layoutMocks.updateLayout.mockClear();
   });
 
   describe('tab 操作', () => {
@@ -241,6 +246,24 @@ describe('preview slice (user-level content pool)', () => {
       expect(testStore.getState().previewOpen).toBe(false);
       expect(selectOpenTabs(testStore.getState())).toEqual(['p1']);
       expect(selectPreviewItems(testStore.getState())).toEqual([a]);
+    });
+
+    it('togglePreviewPanel 只切换面板可见状态并刷新布局', () => {
+      const a = makePreviewItem('p1');
+      upsertPreviewItem(a);
+      openTab(a.id);
+
+      togglePreviewPanel();
+      expect(testStore.getState().previewOpen).toBe(true);
+      expect(selectOpenTabs(testStore.getState())).toEqual(['p1']);
+      expect(selectPreviewItems(testStore.getState())).toEqual([a]);
+      expect(layoutMocks.updateLayout).toHaveBeenCalledTimes(1);
+
+      togglePreviewPanel();
+      expect(testStore.getState().previewOpen).toBe(false);
+      expect(selectOpenTabs(testStore.getState())).toEqual(['p1']);
+      expect(selectPreviewItems(testStore.getState())).toEqual([a]);
+      expect(layoutMocks.updateLayout).toHaveBeenCalledTimes(2);
     });
   });
 

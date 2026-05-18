@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../../stores';
 import { subscribeWorkspaceChanges } from '../../services/workspace-change-events';
 import type { WorkspaceChangePayload } from '../../types';
@@ -9,38 +9,98 @@ function normalizeDirectoryPath(value: string): string {
   return slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
 }
 
+function normalizeSubdir(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
+function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
+  if (childPath === parentPath) return true;
+  const prefix = parentPath.endsWith('/') ? parentPath : `${parentPath}/`;
+  return childPath.startsWith(prefix);
+}
+
+function joinWorkspaceRoot(basePath: string, subdir: string): string {
+  const normalizedSubdir = normalizeSubdir(subdir);
+  if (!normalizedSubdir) return basePath;
+  const separator = /^[A-Za-z]:\\/.test(basePath) || (basePath.includes('\\') && !basePath.includes('/')) ? '\\' : '/';
+  return `${basePath.replace(/[\\/]+$/, '')}${separator}${normalizedSubdir.replace(/\//g, separator)}`;
+}
+
+function workspaceWatchRoots(basePath: string, expandedPaths: string[]): string[] {
+  if (!basePath) return [];
+  const roots = new Set<string>([basePath]);
+  for (const subdir of expandedPaths) {
+    const normalized = normalizeSubdir(subdir);
+    if (normalized) roots.add(joinWorkspaceRoot(basePath, normalized));
+  }
+  return [...roots];
+}
+
 function workspaceSubdirForAffectedDirectory(basePath: string, payload: WorkspaceChangePayload): string | null {
   if (!basePath) return null;
   const base = normalizeDirectoryPath(basePath);
   const root = normalizeDirectoryPath(payload.rootPath);
   const affected = normalizeDirectoryPath(payload.affectedDir);
-  if (root !== base) return null;
+  if (!isPathInsideOrEqual(root, base)) return null;
+  if (!isPathInsideOrEqual(affected, base)) return null;
   if (affected === base) return '';
   const prefix = base.endsWith('/') ? base : `${base}/`;
-  if (!affected.startsWith(prefix)) return null;
   return affected.slice(prefix.length).replace(/^\/+|\/+$/g, '');
 }
 
 export function WorkspaceFileWatchBridge() {
   const deskBasePath = useStore(s => s.deskBasePath);
+  const deskExpandedPaths = useStore(s => s.deskExpandedPaths);
+  const activeRootsRef = useRef<Set<string>>(new Set());
+  const watchedRoots = useMemo(
+    () => workspaceWatchRoots(deskBasePath, deskExpandedPaths),
+    [deskBasePath, deskExpandedPaths],
+  );
+  const watchedRootsKey = watchedRoots.join('\n');
 
   useEffect(() => {
     const platform = window.platform;
-    if (!deskBasePath || !platform?.watchWorkspace || !platform?.unwatchWorkspace) return undefined;
-    let closed = false;
-    void platform.watchWorkspace(deskBasePath)
-      .then((ok) => {
-        if (!ok) console.warn('[workspace-watch] watch failed:', deskBasePath);
-        if (closed && ok) void platform.unwatchWorkspace?.(deskBasePath);
-      })
-      .catch((err) => {
-        console.warn('[workspace-watch] watch failed:', err);
-      });
-    return () => {
-      closed = true;
-      void platform.unwatchWorkspace?.(deskBasePath);
-    };
-  }, [deskBasePath]);
+    if (!platform?.unwatchWorkspace) return undefined;
+    const activeRoots = activeRootsRef.current;
+    const desiredRoots = deskBasePath ? new Set(watchedRoots) : new Set<string>();
+
+    for (const root of [...activeRoots]) {
+      if (desiredRoots.has(root)) continue;
+      activeRoots.delete(root);
+      void platform.unwatchWorkspace(root);
+    }
+
+    if (!deskBasePath || !platform.watchWorkspace) return undefined;
+
+    for (const root of desiredRoots) {
+      if (activeRoots.has(root)) continue;
+      activeRoots.add(root);
+      void platform.watchWorkspace(root)
+        .then((ok) => {
+          if (!ok) {
+            console.warn('[workspace-watch] watch failed:', root);
+            activeRootsRef.current.delete(root);
+            return;
+          }
+          if (!activeRootsRef.current.has(root)) void platform.unwatchWorkspace?.(root);
+        })
+        .catch((err) => {
+          activeRootsRef.current.delete(root);
+          console.warn('[workspace-watch] watch failed:', err);
+        });
+    }
+
+    return undefined;
+  }, [deskBasePath, watchedRoots, watchedRootsKey]);
+
+  useEffect(() => () => {
+    const platform = window.platform;
+    if (!platform?.unwatchWorkspace) return;
+    for (const root of activeRootsRef.current) {
+      void platform.unwatchWorkspace(root);
+    }
+    activeRootsRef.current.clear();
+  }, []);
 
   useEffect(() => subscribeWorkspaceChanges((payload) => {
     const state = useStore.getState();

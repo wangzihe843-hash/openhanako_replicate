@@ -16,6 +16,7 @@ import {
   isPaperTextureBlockedTheme,
   isPaperTextureEnabled,
 } from '../../../shared/appearance-preferences';
+import { persistAppearancePreferences } from '../../services/appearance-sync';
 import styles from '../Settings.module.css';
 import registry from '../../../shared/theme-registry';
 
@@ -74,6 +75,11 @@ export function InterfaceTab() {
   const [appearancePrefs, setAppearancePrefs] = useState<AppearancePrefs>(() => readAppearancePrefs());
   const refreshAppearancePrefs = useCallback(() => {
     setAppearancePrefs(readAppearancePrefs());
+  }, []);
+  const syncAppearancePrefs = useCallback((patch: Record<string, unknown>) => {
+    persistAppearancePreferences(patch).catch((err) => {
+      console.warn('[settings] appearance sync failed:', err);
+    });
   }, []);
   const {
     currentTheme,
@@ -147,6 +153,7 @@ export function InterfaceTab() {
               onClick={() => {
                 window.setTheme?.(theme);
                 platform?.settingsChanged?.('theme-changed', { theme });
+                syncAppearancePrefs({ theme });
                 refreshAppearancePrefs();
               }}
             >
@@ -167,6 +174,7 @@ export function InterfaceTab() {
               onChange={(next) => {
                 window.setSerifFont?.(next);
                 platform?.settingsChanged?.('font-changed', { serif: next });
+                syncAppearancePrefs({ serif: next });
                 refreshAppearancePrefs();
               }}
             />
@@ -184,6 +192,7 @@ export function InterfaceTab() {
               onChange={(next) => {
                 window.setPaperTexture?.(next);
                 platform?.settingsChanged?.('paper-texture-changed', { enabled: next });
+                syncAppearancePrefs({ paperTexture: next });
                 refreshAppearancePrefs();
               }}
             />
@@ -201,6 +210,7 @@ export function InterfaceTab() {
                   detail: { type: 'leaves-overlay-changed', enabled: next },
                 }));
                 platform?.settingsChanged?.('leaves-overlay-changed', { enabled: next });
+                syncAppearancePrefs({ leavesOverlay: next });
                 refreshAppearancePrefs();
               }}
             />

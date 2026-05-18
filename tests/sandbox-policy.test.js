@@ -16,7 +16,7 @@ describe("sandbox workspace roots", () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it("grants full access to explicit extra workspace folders but not siblings", () => {
+  it("grants full access to explicit extra workspace folders and read-only access to ordinary external paths", () => {
     const agentDir = path.join(tempRoot, "agents", "hana");
     const hanakoHome = path.join(tempRoot, "home");
     const primary = path.join(tempRoot, "project");
@@ -40,7 +40,10 @@ describe("sandbox workspace roots", () => {
     expect(policy.protectedPaths).toContain(path.join(primary, ".git"));
     expect(policy.protectedPaths).toContain(path.join(extra, ".git"));
     expect(guard.getAccessLevel(path.join(extra, "note.md"))).toBe(AccessLevel.FULL);
-    expect(guard.check(path.join(sibling, "secret.md"), "read").allowed).toBe(false);
+    expect(guard.getAccessLevel(path.join(sibling, "secret.md"))).toBe(AccessLevel.READ_ONLY);
+    expect(guard.check(path.join(sibling, "secret.md"), "read").allowed).toBe(true);
+    expect(guard.check(path.join(sibling, "secret.md"), "write").allowed).toBe(false);
+    expect(guard.check(path.join(sibling, "secret.md"), "delete").allowed).toBe(false);
   });
 
   it("lets agents read skill snapshots and session files but blocks writing runtime copies", () => {

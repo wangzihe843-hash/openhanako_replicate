@@ -125,10 +125,9 @@ function createWorkspaceWatchRegistry({
       ignoreInitial: true,
       persistent: false,
       atomic: true,
-      awaitWriteFinish: {
-        stabilityThreshold: 80,
-        pollInterval: 20,
-      },
+      depth: 0,
+      awaitWriteFinish: false,
+      ignorePermissionErrors: true,
       ignored: (filePath) => shouldIgnoreWorkspacePath(resolvedRoot, filePath),
     });
     entry = {

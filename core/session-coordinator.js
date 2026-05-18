@@ -46,6 +46,7 @@ import {
   resolveSessionSkillsForRuntime,
   snapshotSkillsForSession,
 } from "../lib/skills/session-skill-snapshot.js";
+import { SessionListProjectionCache } from "./session-list-projection-cache.js";
 
 const log = createModuleLogger("session");
 
@@ -348,6 +349,7 @@ export class SessionCoordinator {
     this._headlessOps = new Set();
     this._titlesCache = new Map(); // sessionDir → { titles, ts }
     this._metaCache = new Map();   // metaPath → { data, ts }
+    this._sessionListProjectionCache = deps.sessionListProjectionCache || new SessionListProjectionCache();
     this._pendingPermissionMode = null;
     this._runtimePermissionModeDefault = DEFAULT_SESSION_PERMISSION_MODE;
     this._metaWriteQueue = Promise.resolve();
@@ -872,7 +874,6 @@ export class SessionCoordinator {
           log.warn(`LRU 淘汰 ${path.basename(key)}: notifySessionEnd failed: ${err.message}`),
         );
         await this._teardownSessionEntry(entry, key, "lru");
-        this._d.getDeferredResultStore?.()?.clearBySession(key);
         this._sessions.delete(key);
         if (this._sessions.size <= MAX_CACHED_SESSIONS) break;
       }
@@ -1125,6 +1126,30 @@ export class SessionCoordinator {
     entry.lastTouchedAt = Date.now();
     entry.session.steer(getSteerPrefix() + text);
     return true;
+  }
+
+  async deliverCustomMessage(sessionPath, message) {
+    if (!sessionPath) throw new Error("deliverCustomMessage: sessionPath is required");
+    let entry = this._sessions.get(sessionPath);
+    if (!entry) {
+      await this.ensureSessionLoaded(sessionPath);
+      entry = this._sessions.get(sessionPath);
+    }
+    if (!entry?.session) {
+      throw new Error(`deliverCustomMessage: session not loaded for ${sessionPath}`);
+    }
+    if (typeof entry.session.sendCustomMessage !== "function") {
+      throw new Error("deliverCustomMessage: session does not support custom messages");
+    }
+
+    entry.lastTouchedAt = Date.now();
+    if (entry.session.isStreaming) {
+      await entry.session.sendCustomMessage(message, { deliverAs: "followUp" });
+      return { ok: true, mode: "followUp" };
+    }
+
+    await entry.session.sendCustomMessage(message, { triggerTurn: true });
+    return { ok: true, mode: "triggerTurn" };
   }
 
   async abortSession(sessionPath) {
@@ -1800,10 +1825,10 @@ export class SessionCoordinator {
       } else {
         await this._teardownSessionEntry(entry, sessionPath, "close_all");
       }
-      // sidecar cleanup: 与 closeSession 保持语义一致
-      // pending confirmation 必须 abort, pending deferred task 必须 clear
+      // closeAll 只卸载运行时 sidecar，不代表删除 session。
+      // pending confirmation 必须 abort；后台任务结果由 DeferredResultCoordinator
+      // 按 sessionPath 持久投递，closeAll 只卸载 runtime，不应清掉 pending。
       this._d.getConfirmStore?.()?.abortBySession(sessionPath);
-      this._d.getDeferredResultStore?.()?.clearBySession(sessionPath);
     }
     try {
       this._d.closeAllTerminals?.();
@@ -1946,7 +1971,7 @@ export class SessionCoordinator {
       try { await fsp.access(sessionDir); } catch { return []; }
       try {
         const [sessions, titles, meta] = await Promise.all([
-          SessionManager.list(process.cwd(), sessionDir),
+          this._sessionListProjectionCache.list(sessionDir),
           this._loadSessionTitlesFor(sessionDir),
           this._readMetaCached(path.join(sessionDir, "session-meta.json")),
         ]);

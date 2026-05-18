@@ -89,6 +89,27 @@ describe("Computer Use preference routes", () => {
     expect(engine.setComputerUseSettings).toHaveBeenCalledWith({ provider_by_platform: { darwin: "mock" } });
   });
 
+  it("uses the async Computer Use settings updater when available", async () => {
+    const engine = makeEngine();
+    engine.updateComputerUseSettings = vi.fn(async (settings) => ({
+      enabled: settings.enabled,
+      provider_by_platform: { darwin: "macos:cua", win32: "windows:uia", linux: "mock" },
+      allow_windows_input_injection: false,
+      app_approvals: [],
+    }));
+    const app = makeApp(engine);
+
+    const res = await app.request("/api/preferences/computer-use", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(engine.updateComputerUseSettings).toHaveBeenCalledWith({ enabled: false });
+    expect(engine.setComputerUseSettings).not.toHaveBeenCalled();
+  });
+
   it("approves and revokes apps", async () => {
     const engine = makeEngine();
     const app = makeApp(engine);

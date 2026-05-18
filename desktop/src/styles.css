@@ -2406,10 +2406,10 @@ body.resizing .channel-inspector-rail {
     display: flex;
     align-items: center;
     gap: 10px;
-    background: var(--bg-card, var(--bg));
+    background: var(--bg-card, #fff);
     color: var(--text, var(--text-primary, #3f3a34));
     padding: 8px 12px 8px 20px;
-    border: 1px solid rgba(var(--accent-rgb), 0.12);
+    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
     border-radius: 8px;
     font-size: 13px;
     opacity: 0;
@@ -2424,7 +2424,7 @@ body.resizing .channel-inspector-rail {
     pointer-events: auto;
 }
 .hana-toast.error {
-    background: var(--bg-card, var(--bg));
+    background: var(--bg-card, #fff);
     color: var(--text-muted);
 }
 .hana-toast-close {
@@ -2441,9 +2441,6 @@ body.resizing .channel-inspector-rail {
 }
 .hana-toast-close:hover {
     opacity: 1;
-}
-.hana-toast.warning {
-    border-left-color: var(--danger, #b56b66);
 }
 .hana-toast-actions {
     display: flex;
@@ -2544,7 +2541,7 @@ body.resizing .channel-inspector-rail {
 
 /* (文件标签样式已迁移到 InputArea.module.css) */
 
-/* 工作空间上下文气泡（从按钮 callout 出来） */
+/* 工作台上下文气泡（从按钮 callout 出来） */
 
 
 /* 隐藏工具类 */

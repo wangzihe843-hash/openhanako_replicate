@@ -121,4 +121,151 @@ describe("BridgeManager session_file media delivery", () => {
     });
     expect(adapter.sendMediaBuffer).not.toHaveBeenCalled();
   });
+
+  it("sends deferred_result sessionFiles to the originating bridge chat", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-"));
+    const sessionPath = path.join(tmpDir, "bridge-session.jsonl");
+    const filePath = path.join(tmpDir, "generated.png");
+    fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]));
+    const sessionFile = {
+      id: "sf_generated",
+      sessionPath,
+      filePath,
+      realPath: filePath,
+      filename: "generated.png",
+      mime: "image/png",
+      kind: "image",
+    };
+    let subscribed = null;
+    const engine = {
+      hanakoHome: tmpDir,
+      agent: null,
+      agentName: "Hana",
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getSessionFile: vi.fn((id) => id === "sf_generated" ? sessionFile : null),
+      getBridgeContextForSessionPath: vi.fn((sp) => sp === sessionPath ? {
+        isBridgeSession: true,
+        platform: "telegram",
+        chatType: "dm",
+        chatId: "chat-1",
+        sessionKey: "tg_dm_chat-1@agent-a",
+        agentId: "agent-a",
+      } : null),
+    };
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscribed = fn;
+        return vi.fn();
+      }),
+      eventBus: { emit: vi.fn() },
+    };
+    const bm = new BridgeManager({ engine, hub });
+    const adapter = {
+      mediaCapabilities: TELEGRAM_CAPS,
+      sendMediaBuffer: vi.fn().mockResolvedValue(),
+      sendMedia: vi.fn().mockResolvedValue(),
+    };
+    bm._platforms.set("telegram:agent-a", {
+      platform: "telegram",
+      agentId: "agent-a",
+      status: "connected",
+      adapter,
+    });
+
+    subscribed({
+      type: "deferred_result",
+      taskId: "task_1",
+      status: "success",
+      result: { sessionFiles: [sessionFile] },
+    }, sessionPath);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.sendMediaBuffer).toHaveBeenCalledOnce();
+    expect(adapter.sendMediaBuffer.mock.calls[0][0]).toBe("chat-1");
+    expect(Buffer.isBuffer(adapter.sendMediaBuffer.mock.calls[0][1])).toBe(true);
+    expect(adapter.sendMediaBuffer.mock.calls[0][2]).toEqual({
+      mime: "image/png",
+      filename: "generated.png",
+      isGroup: false,
+      targetScope: "dm",
+    });
+    expect(adapter.sendMedia).not.toHaveBeenCalled();
+  });
+
+  it("sends deferred_result sessionFiles to an attached RC bridge target", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-"));
+    const sessionPath = path.join(tmpDir, "desktop-session.jsonl");
+    const filePath = path.join(tmpDir, "desktop-generated.png");
+    fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]));
+    const sessionFile = {
+      id: "sf_rc_generated",
+      sessionPath,
+      filePath,
+      realPath: filePath,
+      filename: "desktop-generated.png",
+      mime: "image/png",
+      kind: "image",
+    };
+    let subscribed = null;
+    const rcState = {
+      getAttachedBridgeSessionKey: vi.fn((sp) => sp === sessionPath ? "tg_dm_chat-1@agent-a" : null),
+      getAttachment: vi.fn(() => ({
+        platform: "telegram",
+        agentId: "agent-a",
+        chatId: "chat-1",
+        messageThreadId: "thread-1",
+      })),
+    };
+    const engine = {
+      hanakoHome: tmpDir,
+      agent: null,
+      agentName: "Hana",
+      rcState,
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getSessionFile: vi.fn((id) => id === "sf_rc_generated" ? sessionFile : null),
+      getBridgeContextForSessionPath: vi.fn(() => null),
+    };
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscribed = fn;
+        return vi.fn();
+      }),
+      eventBus: { emit: vi.fn() },
+    };
+    const bm = new BridgeManager({ engine, hub });
+    const adapter = {
+      mediaCapabilities: TELEGRAM_CAPS,
+      sendMediaBuffer: vi.fn().mockResolvedValue(),
+      sendMedia: vi.fn().mockResolvedValue(),
+    };
+    bm._platforms.set("telegram:agent-a", {
+      platform: "telegram",
+      agentId: "agent-a",
+      status: "connected",
+      adapter,
+    });
+
+    subscribed({
+      type: "deferred_result",
+      taskId: "task_rc_1",
+      status: "success",
+      result: { sessionFiles: [sessionFile] },
+    }, sessionPath);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.sendMediaBuffer).toHaveBeenCalledOnce();
+    expect(adapter.sendMediaBuffer.mock.calls[0][0]).toBe("chat-1");
+    expect(adapter.sendMediaBuffer.mock.calls[0][2]).toEqual({
+      mime: "image/png",
+      filename: "desktop-generated.png",
+      isGroup: false,
+      targetScope: "dm",
+      replyContext: {
+        messageThreadId: "thread-1",
+        isGroup: false,
+        targetScope: "dm",
+      },
+    });
+    expect(adapter.sendMedia).not.toHaveBeenCalled();
+  });
 });

@@ -106,8 +106,14 @@ export function executeDiary(
         const res = await hanaFetch('/api/diary/write', {
           method: 'POST',
           timeout: DIARY_WRITE_TIMEOUT_MS,
+          throwOnHttpError: false,
         });
-        const data = await res.json();
+        let data: { error?: string } = {};
+        try {
+          data = await res.json();
+        } catch {
+          data = {};
+        }
         if (progressToastId !== null) removeToast(progressToastId);
         if (!res.ok || data.error) {
           addToast(data.error || t('slash.diaryFailed'), 'error', 6000);

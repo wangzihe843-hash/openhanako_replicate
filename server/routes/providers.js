@@ -10,6 +10,8 @@ import { safeJson } from "../hono-helpers.js";
 import { buildProviderAuthHeaders, probeProvider } from "../../lib/llm/provider-client.js";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.js";
 import { clearConfigCache } from "../../lib/memory/config-loader.js";
+import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue } from "../../shared/secret-custody.js";
+import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
 
 // ── Models-cache helpers ──
 
@@ -116,7 +118,7 @@ export function createProvidersRoute(engine) {
         display_name: oauthInfo?.name || name,
         base_url: p.base_url || "",
         api: p.api || "",
-        api_key: p.api_key || "",
+        api_key: maskSecretValue(p.api_key || ""),
         models: rawModels,
         custom_models: customModels,
         has_credentials: hasCredentials,
@@ -295,6 +297,10 @@ export function createProvidersRoute(engine) {
    */
   route.post("/providers/fetch-models", async (c) => {
     const body = await safeJson(c);
+    const scopeDenied = denyWithoutScope(c, "providers.manage");
+    if (scopeDenied) return scopeDenied;
+    const secretDenied = denySecretMutationWithoutScope(c, collectSecretPatchPaths(body, ["api_key"]));
+    if (secretDenied) return secretDenied;
     const { name, base_url, api: explicitApi, api_key } = body;
     if (!name && !base_url) {
       return c.json({ error: "name or base_url is required" }, 400);
@@ -303,7 +309,10 @@ export function createProvidersRoute(engine) {
     // ── 1. 凭证解析：请求体 > resolveProviderCredentials（统一路径） ──
     const saved = name ? engine.resolveProviderCredentials(name) : { api_key: "", base_url: "", api: "" };
 
-    const effectiveKey = api_key || saved.api_key || "";
+    const bodyKey = typeof api_key === "string" ? api_key.trim() : "";
+    const effectiveKey = bodyKey
+      ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
+      : saved.api_key || "";
     const effectiveBaseUrl = base_url || saved.base_url || "";
     const effectiveApi = explicitApi || saved.api || "";
 
@@ -362,6 +371,8 @@ export function createProvidersRoute(engine) {
    * GET /api/providers/:name/discovered-models
    */
   route.get("/providers/:name/discovered-models", (c) => {
+    const scopeDenied = denyWithoutScope(c, "providers.manage");
+    if (scopeDenied) return scopeDenied;
     const providerName = c.req.param("name");
     const cache = readModelsCache(engine);
     const entry = cache[providerName];
@@ -378,6 +389,10 @@ export function createProvidersRoute(engine) {
    */
   route.post("/providers/test", async (c) => {
     const body = await safeJson(c);
+    const scopeDenied = denyWithoutScope(c, "providers.manage");
+    if (scopeDenied) return scopeDenied;
+    const secretDenied = denySecretMutationWithoutScope(c, collectSecretPatchPaths(body, ["api_key"]));
+    if (secretDenied) return secretDenied;
     const { name } = body;
     // 清洗 API key：去除非 ASCII 字符（防止粘贴时输入法带入中文）
     const bodyKey = (body.api_key || "").replace(/[^\x20-\x7E]/g, "").trim();
@@ -385,7 +400,9 @@ export function createProvidersRoute(engine) {
     // ── 凭证解析：请求体 > resolveProviderCredentials（统一路径） ──
     const saved = name ? engine.resolveProviderCredentials(name) : { api_key: "", base_url: "", api: "" };
 
-    const api_key = bodyKey || saved.api_key || "";
+    const api_key = bodyKey
+      ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
+      : saved.api_key || "";
     const base_url = body.base_url || saved.base_url || "";
     const api = body.api || saved.api || "";
 
@@ -409,6 +426,8 @@ export function createProvidersRoute(engine) {
    * 写回 added-models.yaml → 触发 model-sync → SDK 模型对象更新
    */
   route.put("/providers/:name/models/:modelId", async (c) => {
+    const scopeDenied = denyWithoutScope(c, "providers.manage");
+    if (scopeDenied) return scopeDenied;
     const providerName = c.req.param("name");
     const modelId = c.req.param("modelId");
     const body = await safeJson(c);
@@ -430,6 +449,8 @@ export function createProvidersRoute(engine) {
    * 从 added-models.yaml 移除指定模型 → 触发 model-sync
    */
   route.delete("/providers/:name/models/:modelId", async (c) => {
+    const scopeDenied = denyWithoutScope(c, "providers.manage");
+    if (scopeDenied) return scopeDenied;
     const providerName = c.req.param("name");
     const modelId = c.req.param("modelId");
     try {

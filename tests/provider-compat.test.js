@@ -82,6 +82,26 @@ describe("getThinkingFormat", () => {
       compat: { supportsDeveloperRole: false },
     })).toBe("qwen-chat-template");
   });
+
+  it("OpenRouter reasoning 模型派生 openrouter thinking 格式，不套官方 provider 格式", () => {
+    expect(getThinkingFormat({
+      id: "deepseek/deepseek-v3.2",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false },
+    })).toBe("openrouter");
+
+    expect(getThinkingFormat({
+      id: "xiaomi/mimo-v2-flash",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false },
+    })).toBe("openrouter");
+  });
 });
 
 describe("getReasoningProfile", () => {
@@ -458,6 +478,59 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(result.thinking).toEqual({ type: "enabled" });
   });
 
+  it("OpenRouter DeepSeek / MiMo 保留 OpenRouter reasoning 协议，不误套官方补丁", () => {
+    for (const model of [
+      {
+        id: "deepseek/deepseek-v3.2",
+        provider: "openrouter",
+        api: "openai-completions",
+        baseUrl: "https://openrouter.ai/api/v1",
+        reasoning: true,
+        maxTokens: 163840,
+        compat: { supportsDeveloperRole: false, thinkingFormat: "openrouter" },
+      },
+      {
+        id: "xiaomi/mimo-v2-flash",
+        provider: "openrouter",
+        api: "openai-completions",
+        baseUrl: "https://openrouter.ai/api/v1",
+        reasoning: true,
+        maxTokens: 16384,
+        compat: { supportsDeveloperRole: false, thinkingFormat: "openrouter" },
+      },
+    ]) {
+      const payload = {
+        model: model.id,
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { effort: "high" },
+        max_completion_tokens: Math.min(model.maxTokens, 32000),
+      };
+      const result = normalizeProviderPayload(payload, model, {
+        mode: "chat",
+        reasoningLevel: "high",
+        outputBudgetSource: "sdk-default",
+      });
+
+      expect(result.reasoning).toEqual({ effort: "high" });
+      expect(result).not.toHaveProperty("thinking");
+      expect(result).not.toHaveProperty("reasoning_effort");
+      expect(result).not.toHaveProperty("chat_template_kwargs");
+      expect(result).not.toHaveProperty("max_completion_tokens");
+
+      const offPayload = {
+        model: model.id,
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { effort: "none" },
+      };
+      const offResult = normalizeProviderPayload(offPayload, model, {
+        mode: "chat",
+        reasoningLevel: "off",
+      });
+      expect(offResult.reasoning).toEqual({ effort: "none" });
+      expect(offResult).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
   it("DashScope Qwen video models convert SDK image_url data:video blocks to video_url", () => {
     const payload = {
       model: "qwen3-vl-plus",
@@ -678,6 +751,24 @@ describe("normalizeProviderPayload — DeepSeek chat 模式", () => {
     const result = normalizeProviderPayload(payload, { provider: "openai", reasoning: true }, { mode: "chat" });
     expect(result.reasoning_effort).toBe("medium");
     expect(result.max_completion_tokens).toBe(32000);
+  });
+
+  it("通用 OpenAI-compatible provider 移除关闭型 reasoning_effort", () => {
+    const payload = {
+      model: "minimax-m2.5",
+      messages: [{ role: "user", content: "hello" }],
+      reasoning_effort: "none",
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "minimax-m2.5",
+      provider: "scnet",
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      reasoning: true,
+    }, { mode: "chat", reasoningLevel: "none" });
+    expect(result).not.toBe(payload);
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(payload.reasoning_effort).toBe("none");
   });
 
   it("DeepSeek 无工具思考请求使用官方 max_tokens，并抬过 high thinking budget", () => {

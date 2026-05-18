@@ -36,13 +36,13 @@ function writeValidIdentity(root, overrides = {}) {
     updatedAt: "2026-05-09T00:00:00.000Z",
     ...(overrides.users || {}),
   };
-  const spaces = {
+  const studios = {
     schemaVersion: 1,
-    defaultSpaceId: "space_test",
-    spaces: [{
-      spaceId: "space_test",
+    defaultStudioId: "studio_test",
+    studios: [{
+      studioId: "studio_test",
       ownerUserId: "user_test",
-      label: "Test Space",
+      label: "Test Studio",
       kind: "personal",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
       membershipModel: "single_user_implicit",
@@ -51,11 +51,11 @@ function writeValidIdentity(root, overrides = {}) {
     }],
     createdAt: "2026-05-09T00:00:00.000Z",
     updatedAt: "2026-05-09T00:00:00.000Z",
-    ...(overrides.spaces || {}),
+    ...(overrides.studios || {}),
   };
   writeJson(path.join(root, "server-node.json"), serverNode);
   writeJson(path.join(root, "users.json"), users);
-  writeJson(path.join(root, "spaces.json"), spaces);
+  writeJson(path.join(root, "studios.json"), studios);
 }
 
 describe("server identity loader", () => {
@@ -66,22 +66,104 @@ describe("server identity loader", () => {
     tmpDir = null;
   });
 
-  it("loads the active local server/user/space identity from registry files", async () => {
+  it("loads the active local server/user/studio identity from registry files", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir);
     const { loadServerIdentity } = await import("../core/server-identity.js");
 
     expect(loadServerIdentity(tmpDir)).toEqual({
       serverId: "server_test",
+      serverNodeId: "server_test",
+      serverNodeKind: "local",
+      serverNodeTransport: "loopback",
       userId: "user_test",
-      spaceId: "space_test",
+      studioId: "studio_test",
       label: "Test Server",
       userLabel: "Test User",
-      spaceLabel: "Test Space",
+      studioLabel: "Test Studio",
       userKind: "legacy_owner",
-      spaceKind: "personal",
+      studioKind: "personal",
       membershipModel: "single_user_implicit",
       storage: { provider: "legacy_hana_home", legacyRoot: true },
+    });
+  });
+
+  it("loads explicit ServerNode metadata when present", async () => {
+    tmpDir = makeTmpDir();
+    writeValidIdentity(tmpDir, {
+      serverNode: {
+        serverNodeId: "node_test",
+        nodeKind: "local",
+        transport: "loopback",
+        execution: { kind: "local_process" },
+      },
+    });
+    const { loadServerIdentity } = await import("../core/server-identity.js");
+
+    expect(loadServerIdentity(tmpDir)).toMatchObject({
+      serverId: "server_test",
+      serverNodeId: "node_test",
+      serverNodeKind: "local",
+      serverNodeTransport: "loopback",
+    });
+  });
+
+  it("creates ServerNode execution metadata for new local identity registries", async () => {
+    tmpDir = makeTmpDir();
+    const { ensureLocalIdentityRegistries } = await import("../core/server-identity.js");
+
+    const result = ensureLocalIdentityRegistries(tmpDir);
+
+    const serverNode = JSON.parse(fs.readFileSync(path.join(tmpDir, "server-node.json"), "utf-8"));
+    expect(serverNode).toMatchObject({
+      schemaVersion: 1,
+      label: "Local Hana",
+      serverNodeId: serverNode.serverId,
+      nodeKind: "local",
+      transport: "loopback",
+      execution: { kind: "local_process" },
+    });
+    expect(serverNode.serverId).toMatch(/^server_[0-9a-f-]{36}$/);
+    expect(result.created).toEqual(expect.arrayContaining([
+      "server-node.json",
+      "users.json",
+      "studios.json",
+      "devices.json",
+      "device-credentials.json",
+      "pairing-sessions.json",
+      "server-network.json",
+      "studio-mounts.json",
+      path.join("security", "grants.json"),
+      path.join("security", "execution-leases.json"),
+    ]));
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "devices.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      devices: [],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "device-credentials.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      credentials: [],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "pairing-sessions.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      pairingSessions: [],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "server-network.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      mode: "loopback",
+      listenHost: "127.0.0.1",
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "studio-mounts.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      mounts: [],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "security", "grants.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      grants: [],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "security", "execution-leases.json"), "utf-8"))).toMatchObject({
+      schemaVersion: 1,
+      leases: [],
     });
   });
 
@@ -92,14 +174,14 @@ describe("server identity loader", () => {
     expect(() => loadServerIdentity(tmpDir)).toThrow("server-node.json not found");
   });
 
-  it("throws when the default space owner does not match the default user", async () => {
+  it("throws when the default studio owner does not match the default user", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir, {
-      spaces: {
-        spaces: [{
-          spaceId: "space_test",
+      studios: {
+        studios: [{
+          studioId: "studio_test",
           ownerUserId: "user_other",
-          label: "Test Space",
+          label: "Test Studio",
           kind: "personal",
           storage: { provider: "legacy_hana_home", legacyRoot: true },
           membershipModel: "single_user_implicit",
@@ -109,6 +191,59 @@ describe("server identity loader", () => {
     const { loadServerIdentity } = await import("../core/server-identity.js");
 
     expect(() => loadServerIdentity(tmpDir))
-      .toThrow("default Space ownerUserId must reference an existing user");
+      .toThrow("default Studio ownerUserId must reference an existing user");
+  });
+
+  it("maps a legacy spaces.json registry into Studio identity for old data roots", async () => {
+    tmpDir = makeTmpDir();
+    writeJson(path.join(tmpDir, "server-node.json"), {
+      schemaVersion: 1,
+      serverId: "server_legacy",
+      label: "Legacy Server",
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+    writeJson(path.join(tmpDir, "users.json"), {
+      schemaVersion: 1,
+      defaultUserId: "user_legacy",
+      users: [{
+        userId: "user_legacy",
+        kind: "legacy_owner",
+        displayName: "Legacy User",
+        profileSource: "legacy_user_profile",
+        createdAt: "2026-05-09T00:00:00.000Z",
+        updatedAt: "2026-05-09T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+    writeJson(path.join(tmpDir, "spaces.json"), {
+      schemaVersion: 1,
+      defaultSpaceId: "space_legacy",
+      spaces: [{
+        spaceId: "space_legacy",
+        ownerUserId: "user_legacy",
+        label: "Personal Space",
+        kind: "personal",
+        storage: { provider: "legacy_hana_home", legacyRoot: true },
+        membershipModel: "single_user_implicit",
+        createdAt: "2026-05-09T00:00:00.000Z",
+        updatedAt: "2026-05-09T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+    const { loadServerIdentity } = await import("../core/server-identity.js");
+
+    expect(loadServerIdentity(tmpDir)).toMatchObject({
+      serverId: "server_legacy",
+      serverNodeId: "server_legacy",
+      serverNodeKind: "local",
+      serverNodeTransport: "loopback",
+      userId: "user_legacy",
+      studioId: "space_legacy",
+      studioLabel: "Personal Studio",
+      studioKind: "personal",
+    });
   });
 });

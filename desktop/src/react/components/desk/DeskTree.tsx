@@ -17,6 +17,7 @@ import {
 } from '../../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../../stores/workspace-ui-state-actions';
 import { openFilePreview } from '../../utils/file-preview';
+import { isWebRuntime, openMobileWorkbenchPreview } from '../../utils/remote-file-preview';
 import {
   clearAppFileDragPayload,
   readAppFileDragPayload,
@@ -263,11 +264,23 @@ function TreeNode({
     if (!expanded) void loadDeskTreeFiles(subdir);
   }, [expanded, expandedPaths, file.isDir, setDeskExpandedPaths, subdir]);
 
+  const previewFile = useCallback(() => {
+    if (file.isDir) return;
+    if (isWebRuntime()) {
+      void openMobileWorkbenchPreview({ file, subdir: parent, rootId: 'default' });
+      return;
+    }
+    const path = fullPath(deskBasePath, subdir);
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    openFilePreview(path, file.name, ext, { origin: 'desk' });
+  }, [deskBasePath, file, parent, subdir]);
+
   const handleClick = useCallback((event: React.MouseEvent) => {
     const multi = event.metaKey || event.ctrlKey;
     onSelect(subdir, { multi, shift: event.shiftKey });
     if (file.isDir && !multi && !event.shiftKey) toggleFolder();
-  }, [file.isDir, onSelect, subdir, toggleFolder]);
+    if (!file.isDir && isWebRuntime() && !multi && !event.shiftKey) previewFile();
+  }, [file.isDir, onSelect, previewFile, subdir, toggleFolder]);
 
   const openFile = useCallback(() => {
     onSelect(subdir, { multi: false, shift: false });
@@ -275,10 +288,8 @@ function TreeNode({
       if (!expanded) toggleFolder();
       return;
     }
-    const path = fullPath(deskBasePath, subdir);
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    openFilePreview(path, file.name, ext, { origin: 'desk' });
-  }, [deskBasePath, expanded, file, onSelect, subdir, toggleFolder]);
+    previewFile();
+  }, [expanded, file.isDir, onSelect, previewFile, subdir, toggleFolder]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -300,7 +311,8 @@ function TreeNode({
               schedulePersistCurrentWorkspaceUiState();
               void loadDeskTreeFiles(subdir);
             } else {
-              window.platform?.openFile?.(path);
+              if (isWebRuntime()) previewFile();
+              else window.platform?.openFile?.(path);
             }
           },
         },
@@ -333,7 +345,7 @@ function TreeNode({
         },
       ],
     });
-  }, [deskBasePath, expandedPaths, file.isDir, file.name, getDragEntries, onBeginRename, onSelect, onShowMenu, selectedPaths, setDeskExpandedPaths, subdir, t]);
+  }, [deskBasePath, expandedPaths, file.isDir, file.name, getDragEntries, onBeginRename, onSelect, onShowMenu, previewFile, selectedPaths, setDeskExpandedPaths, subdir, t]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key !== 'Enter' || isRenaming) return;

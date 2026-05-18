@@ -13,11 +13,41 @@ import { fromRoot } from "./hana-root.js";
 
 let _raw = null;
 let _fallbacks = null;
+let _rawCaseInsensitive = null;
+let _fallbacksCaseInsensitive = null;
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+function _buildCaseInsensitiveIndex(dict) {
+  const index = Object.create(null);
+  for (const [key, value] of Object.entries(dict || {})) {
+    const normalized = key.toLowerCase();
+    if (!hasOwn(index, normalized)) {
+      index[normalized] = value;
+    }
+  }
+  return index;
+}
 
 function _ensureLoaded() {
   if (_raw) return;
   _raw = JSON.parse(readFileSync(fromRoot("lib", "known-models.json"), "utf-8"));
   _fallbacks = JSON.parse(readFileSync(fromRoot("lib", "known-model-fallbacks.json"), "utf-8"));
+  _rawCaseInsensitive = Object.fromEntries(
+    Object.entries(_raw).map(([provider, models]) => [provider, _buildCaseInsensitiveIndex(models)]),
+  );
+  _fallbacksCaseInsensitive = _buildCaseInsensitiveIndex(_fallbacks);
+}
+
+function _lookupExact(dict, key) {
+  if (!dict || typeof key !== "string") return null;
+  return hasOwn(dict, key) ? dict[key] : null;
+}
+
+function _lookupCaseInsensitive(index, key) {
+  if (!index || typeof key !== "string") return null;
+  const normalized = key.toLowerCase();
+  return hasOwn(index, normalized) ? index[normalized] : null;
 }
 
 /**
@@ -30,10 +60,17 @@ function _ensureLoaded() {
 export function lookupKnown(provider, modelId) {
   if (typeof modelId !== "string" || modelId.length === 0) return null;
   _ensureLoaded();
-  if (provider && _raw[provider]?.[modelId]) return _raw[provider][modelId];
   const bare = modelId.includes("/") ? modelId.split("/").pop() : null;
-  if (bare && provider && _raw[provider]?.[bare]) return _raw[provider][bare];
-  if (_fallbacks[modelId]) return _fallbacks[modelId];
-  if (bare && _fallbacks[bare]) return _fallbacks[bare];
-  return null;
+  const providerModels = provider ? _raw[provider] : null;
+  const providerIndex = provider ? _rawCaseInsensitive[provider] : null;
+
+  return _lookupExact(providerModels, modelId)
+    || (bare ? _lookupExact(providerModels, bare) : null)
+    || _lookupExact(_fallbacks, modelId)
+    || (bare ? _lookupExact(_fallbacks, bare) : null)
+    || _lookupCaseInsensitive(providerIndex, modelId)
+    || (bare ? _lookupCaseInsensitive(providerIndex, bare) : null)
+    || _lookupCaseInsensitive(_fallbacksCaseInsensitive, modelId)
+    || (bare ? _lookupCaseInsensitive(_fallbacksCaseInsensitive, bare) : null)
+    || null;
 }

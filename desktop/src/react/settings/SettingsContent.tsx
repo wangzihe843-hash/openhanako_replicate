@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
-import { createLocalServerConnection } from '../services/server-connection';
+import { LOCAL_CONNECTION_ID, createLocalServerConnection, refreshLocalServerConnection, upsertServerConnection, type ServerConnection } from '../services/server-connection';
 import { t } from './helpers';
 import { loadAgents, loadAvatars, loadSettingsConfig, loadPluginSettings } from './actions';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -22,6 +22,7 @@ import { PluginsTab } from './tabs/PluginsTab';
 import { PluginMarketplaceTab } from './tabs/PluginMarketplaceTab';
 import { SecurityTab } from './tabs/SecurityTab';
 import { SharingTab } from './tabs/SharingTab';
+import { AccessTab } from './tabs/AccessTab';
 import { getNativeSettingsTabComponent } from './native-settings-tabs';
 import { CropOverlay } from './overlays/CropOverlay';
 import { AgentCreateOverlay } from './overlays/AgentCreateOverlay';
@@ -49,24 +50,41 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   providers: ProvidersTab,
   media: MediaTab,
   sharing: SharingTab,
+  access: AccessTab,
   plugins: PluginsTab,
   'plugin-marketplace': PluginMarketplaceTab,
   security: SecurityTab,
   about: AboutTab,
 };
 
+function connectionState(connection: ServerConnection | null) {
+  if (!connection) {
+    return {
+      serverConnections: {},
+      activeServerConnectionId: null,
+      activeServerConnection: null,
+    };
+  }
+  return {
+    serverConnections: upsertServerConnection({}, connection),
+    activeServerConnectionId: connection.connectionId,
+    activeServerConnection: connection,
+  };
+}
+
 /** Tab 顶部大标题（对应左栏导航 label），所有 tab 都会显示 */
 const TAB_TITLES: Record<string, string> = {
   agent: '助手',
   me: '我',
   interface: '界面',
-  work: '工作空间',
+  work: '工作台',
   computer: '使用电脑',
   skills: '技能',
   bridge: '社交平台',
   providers: '供应商',
   media: '多媒体',
   sharing: '分享',
+  access: '访问与设备',
   plugins: '插件',
   'plugin-marketplace': '插件市场',
   security: '安全',
@@ -134,12 +152,23 @@ export function SettingsContent({
     const unsubscribe = platform.onServerRestarted((data: { port: number }) => {
       const store = useSettingsStore.getState();
       console.log('[settings] server restarted, new port:', data.port);
+      const activeServerConnection = refreshLocalServerConnection({
+        existingConnection: store.serverConnections?.[LOCAL_CONNECTION_ID] ?? store.activeServerConnection,
+        serverPort: data.port,
+        serverToken: store.serverToken,
+      });
       store.set({
         serverPort: data.port,
-        activeServerConnection: createLocalServerConnection({
-          serverPort: data.port,
-          serverToken: store.serverToken,
-        }),
+        ...(activeServerConnection
+          ? {
+              serverConnections: upsertServerConnection(store.serverConnections, activeServerConnection),
+              activeServerConnectionId: activeServerConnection.connectionId,
+              activeServerConnection,
+            }
+          : {
+              activeServerConnectionId: null,
+              activeServerConnection: null,
+            }),
       });
       loadAgents().catch(() => {});
       loadSettingsConfig().catch(() => {});
@@ -292,7 +321,7 @@ async function initSettings() {
       serverPort,
       serverToken,
       platformName,
-      activeServerConnection: createLocalServerConnection({ serverPort, serverToken }),
+      ...connectionState(createLocalServerConnection({ serverPort, serverToken })),
     });
 
     // i18n

@@ -78,6 +78,7 @@ export class PluginManager {
     loadTimeoutMs,
     lifecycleTimeoutMs,
     logSink,
+    runtimeContext,
   }) {
     this._pluginsDirs = pluginsDirs || (pluginsDir ? [pluginsDir] : []);
     this._dataDir = dataDir;
@@ -87,6 +88,7 @@ export class PluginManager {
     this._getSessionPath = getSessionPath || (() => null);
     this._registerSessionFile = registerSessionFile || null;
     this._logSink = typeof logSink === "function" ? logSink : null;
+    this._runtimeContext = runtimeContext || null;
     this._plugins = new Map();
     this._scanned = [];
     this._opQueue = Promise.resolve();
@@ -302,6 +304,7 @@ export class PluginManager {
       registerSessionFile: this._registerSessionFile,
       configSchema: entry.configSchema,
       logSink: this._logSink,
+      runtimeContext: this._runtimeContext,
     });
 
     // All plugins: declarative contributions

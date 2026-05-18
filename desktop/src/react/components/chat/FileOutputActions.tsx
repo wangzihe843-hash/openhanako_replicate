@@ -5,6 +5,8 @@ import styles from './Chat.module.css';
 interface FileOutputActionsProps {
   filePath: string;
   displayName: string;
+  downloadUrl?: string | null;
+  downloadName?: string;
 }
 
 function actionLabel(label: string, displayName: string): string {
@@ -47,7 +49,17 @@ function CopyIcon() {
   );
 }
 
-export function FileOutputActions({ filePath, displayName }: FileOutputActionsProps) {
+function DownloadIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
+export function FileOutputActions({ filePath, displayName, downloadUrl, downloadName }: FileOutputActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -57,6 +69,11 @@ export function FileOutputActions({ filePath, displayName }: FileOutputActionsPr
   const moreLabel = window.t('chat.fileActions.more');
   const revealLabel = window.t('chat.fileActions.revealInFinder');
   const copyLabel = window.t('chat.fileActions.copyPath');
+  const downloadLabel = window.t('chat.fileActions.downloadToDevice');
+  const isWebRuntime = document.documentElement.getAttribute('data-platform') === 'web';
+  const canOpenLocalFile = !isWebRuntime && typeof window.platform?.openFile === 'function';
+  const canRevealLocalFile = !isWebRuntime && typeof window.platform?.showInFinder === 'function';
+  const resolvedDownloadName = downloadName || displayName;
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -82,6 +99,11 @@ export function FileOutputActions({ filePath, displayName }: FileOutputActionsPr
     event.stopPropagation();
     closeMenu();
     action();
+  }, [closeMenu]);
+
+  const handleDownloadClick = useCallback((event: ReactMouseEvent) => {
+    event.stopPropagation();
+    closeMenu();
   }, [closeMenu]);
 
   useEffect(() => {
@@ -129,15 +151,38 @@ export function FileOutputActions({ filePath, displayName }: FileOutputActionsPr
 
   return (
     <div className={styles.fileOutputActions} data-file-output-actions="">
-      <button
-        type="button"
-        className={`${styles.fileOutputActionButton} ${styles.fileOutputActionPrimary}`}
-        onClick={handleOpen}
-        aria-label={actionLabel(openLabel, displayName)}
-        title={openLabel}
-      >
-        <OpenIcon />
-      </button>
+      {canOpenLocalFile ? (
+        <button
+          type="button"
+          className={`${styles.fileOutputActionButton} ${styles.fileOutputActionPrimary}`}
+          onClick={handleOpen}
+          aria-label={actionLabel(openLabel, displayName)}
+          title={openLabel}
+        >
+          <OpenIcon />
+        </button>
+      ) : downloadUrl ? (
+        <a
+          className={`${styles.fileOutputActionButton} ${styles.fileOutputActionPrimary}`}
+          href={downloadUrl}
+          download={resolvedDownloadName}
+          onClick={handleDownloadClick}
+          aria-label={actionLabel(downloadLabel, displayName)}
+          title={downloadLabel}
+        >
+          <DownloadIcon />
+        </a>
+      ) : (
+        <button
+          type="button"
+          className={`${styles.fileOutputActionButton} ${styles.fileOutputActionPrimary}`}
+          disabled
+          aria-label={actionLabel(openLabel, displayName)}
+          title={openLabel}
+        >
+          <OpenIcon />
+        </button>
+      )}
       <button
         type="button"
         ref={triggerRef}
@@ -157,15 +202,29 @@ export function FileOutputActions({ filePath, displayName }: FileOutputActionsPr
           style={menuStyle}
           role="menu"
         >
-          <button
-            type="button"
-            className={styles.fileOutputActionMenuItem}
-            role="menuitem"
-            onClick={(event) => handleMenuItem(event, revealFile)}
-          >
-            <RevealIcon />
-            <span>{revealLabel}</span>
-          </button>
+          {downloadUrl && (
+            <a
+              className={styles.fileOutputActionMenuItem}
+              role="menuitem"
+              href={downloadUrl}
+              download={resolvedDownloadName}
+              onClick={handleDownloadClick}
+            >
+              <DownloadIcon />
+              <span>{downloadLabel}</span>
+            </a>
+          )}
+          {canRevealLocalFile && (
+            <button
+              type="button"
+              className={styles.fileOutputActionMenuItem}
+              role="menuitem"
+              onClick={(event) => handleMenuItem(event, revealFile)}
+            >
+              <RevealIcon />
+              <span>{revealLabel}</span>
+            </button>
+          )}
           <button
             type="button"
             className={styles.fileOutputActionMenuItem}

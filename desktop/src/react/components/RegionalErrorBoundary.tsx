@@ -1,26 +1,47 @@
 import { Component, type ReactNode } from 'react';
 import styles from './RegionalErrorBoundary.module.css';
 
-declare function t(key: string, vars?: Record<string, string | number>): string;
+const tr = (key: string, vars?: Record<string, string | number>): string => window.t?.(key, vars) ?? key;
 
 interface Props {
   region: string;
   resetKeys?: unknown[];
+  autoRetry?: {
+    attempts?: number;
+    delayMs?: number;
+  };
   children: ReactNode;
 }
 
 interface State {
   error: Error | null;
   prevResetKeys: unknown[];
+  autoRetryCount: number;
+  autoRetryPending: boolean;
 }
 
 export class RegionalErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, prevResetKeys: this.props.resetKeys || [] };
+  private autoRetryTimer: number | null = null;
+  private stableRenderTimer: number | null = null;
+
+  state: State = {
+    error: null,
+    prevResetKeys: this.props.resetKeys || [],
+    autoRetryCount: 0,
+    autoRetryPending: false,
+  };
 
   static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
     if (props.resetKeys && state.error) {
       const changed = props.resetKeys.some((k, i) => k !== state.prevResetKeys[i]);
-      if (changed) return { error: null, prevResetKeys: props.resetKeys };
+      if (changed) {
+        return {
+          error: null,
+          prevResetKeys: props.resetKeys,
+          autoRetryCount: 0,
+          autoRetryPending: false,
+        };
+      }
     }
     if (props.resetKeys) return { prevResetKeys: props.resetKeys };
     return null;
@@ -31,6 +52,8 @@ export class RegionalErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[RegionalErrorBoundary]', this.props.region, error, info.componentStack);
+    this.scheduleAutoRetry();
     // Import dynamically to avoid circular deps and TS issues with JS imports
     // @ts-expect-error -- shared JS module, no type declarations
     import('../../../../shared/error-bus.js').then(({ errorBus }: { errorBus: { report: (e: unknown, opts?: unknown) => void } }) => {
@@ -44,17 +67,67 @@ export class RegionalErrorBoundary extends Component<Props, State> {
     }).catch(() => { /* best effort - error reporting itself failed */ });
   }
 
+  componentDidUpdate(_prevProps: Props, prevState: State) {
+    if (!prevState.error || this.state.error || this.state.autoRetryCount === 0) return;
+    this.clearStableRenderTimer();
+    this.stableRenderTimer = window.setTimeout(() => {
+      this.stableRenderTimer = null;
+      if (!this.state.error && this.state.autoRetryCount > 0) {
+        this.setState({ autoRetryCount: 0 });
+      }
+    }, 600);
+  }
+
+  componentWillUnmount() {
+    this.clearAutoRetryTimer();
+    this.clearStableRenderTimer();
+  }
+
   handleRetry = () => {
-    this.setState({ error: null });
+    this.clearAutoRetryTimer();
+    this.setState({ error: null, autoRetryCount: 0, autoRetryPending: false });
   };
+
+  private scheduleAutoRetry() {
+    const config = this.props.autoRetry;
+    if (!config) return;
+    const attempts = Math.max(0, config.attempts ?? 1);
+    if (attempts <= 0 || this.state.autoRetryCount >= attempts) return;
+    const delayMs = Math.max(0, config.delayMs ?? 120);
+    this.clearAutoRetryTimer();
+    this.setState({ autoRetryPending: true });
+    this.autoRetryTimer = window.setTimeout(() => {
+      this.autoRetryTimer = null;
+      this.setState((state) => ({
+        error: null,
+        autoRetryPending: false,
+        autoRetryCount: state.autoRetryCount + 1,
+      }));
+    }, delayMs);
+  }
+
+  private clearAutoRetryTimer() {
+    if (this.autoRetryTimer === null) return;
+    window.clearTimeout(this.autoRetryTimer);
+    this.autoRetryTimer = null;
+  }
+
+  private clearStableRenderTimer() {
+    if (this.stableRenderTimer === null) return;
+    window.clearTimeout(this.stableRenderTimer);
+    this.stableRenderTimer = null;
+  }
 
   render() {
     if (this.state.error) {
+      if (this.state.autoRetryPending) {
+        return <div className={styles.recovering} aria-hidden="true" />;
+      }
       return (
         <div className={styles.fallback}>
-          <p className={styles.message}>{t('error.regionUnavailable')}</p>
+          <p className={styles.message}>{tr('error.regionUnavailable')}</p>
           <button className={styles.retry} onClick={this.handleRetry}>
-            {t('action.retry')}
+            {tr('action.retry')}
           </button>
         </div>
       );

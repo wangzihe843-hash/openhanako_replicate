@@ -91,6 +91,90 @@ describe("loadAll", () => {
     expect(entry.instance.loaded).toBe(true);
   });
 
+  it("passes runtime scope into lifecycle and tool contexts", async () => {
+    const runtimeContext = {
+      serverId: "server_plugin",
+      serverNodeId: "node_plugin",
+      userId: "user_plugin",
+      studioId: "studio_plugin",
+      connectionKind: "local",
+      credentialKind: "loopback_token",
+      platformAccountId: null,
+      officialServiceKind: null,
+      executionBoundary: {
+        schemaVersion: 1,
+        boundaryId: "execb_node_plugin_studio_plugin",
+        kind: "local_process",
+        serverNodeId: "node_plugin",
+        studioId: "studio_plugin",
+      },
+    };
+    const dir = path.join(pluginsDir, "scope-plugin");
+    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+      id: "scope-plugin",
+      trust: "full-access",
+      activationEvents: ["onStartup"],
+    }));
+    fs.writeFileSync(path.join(dir, "index.js"), `
+      export default class ScopePlugin {
+        async onload() {
+          globalThis.__hanaScopePluginLifecycle = {
+            serverId: this.ctx.serverId,
+            serverNodeId: this.ctx.serverNodeId,
+            userId: this.ctx.userId,
+            studioId: this.ctx.studioId,
+            connectionKind: this.ctx.connectionKind,
+            credentialKind: this.ctx.credentialKind,
+          };
+        }
+      }
+    `);
+    fs.writeFileSync(path.join(dir, "tools", "scope.js"), `
+      export const name = "scope";
+      export const description = "Return scope";
+      export const parameters = {};
+      export async function execute(_input, ctx) {
+        return JSON.stringify({
+          serverId: ctx.serverId,
+          serverNodeId: ctx.serverNodeId,
+          userId: ctx.userId,
+          studioId: ctx.studioId,
+          sessionPath: ctx.sessionPath,
+        });
+      }
+    `);
+    const pm = new PluginManager({
+      pluginsDir,
+      dataDir,
+      bus: await makeBus(),
+      runtimeContext,
+    });
+    pm.scan();
+    await pm.loadAll();
+
+    expect(globalThis.__hanaScopePluginLifecycle).toEqual({
+      serverId: "server_plugin",
+      serverNodeId: "node_plugin",
+      userId: "user_plugin",
+      studioId: "studio_plugin",
+      connectionKind: "local",
+      credentialKind: "loopback_token",
+    });
+    const tool = pm.getAllTools()[0];
+    const result = await tool.execute("call-1", {}, {
+      sessionManager: { getSessionFile: () => "/sessions/plugin-scope.jsonl" },
+    });
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      serverId: "server_plugin",
+      serverNodeId: "node_plugin",
+      userId: "user_plugin",
+      studioId: "studio_plugin",
+      sessionPath: "/sessions/plugin-scope.jsonl",
+    });
+    delete globalThis.__hanaScopePluginLifecycle;
+  });
+
   it("provides register() on instance and cleans up on unload", async () => {
     const dir = path.join(pluginsDir, "reg-test");
     fs.mkdirSync(dir, { recursive: true });

@@ -41,6 +41,11 @@ export interface PreviewEditorHandle {
   focus(): void;
 }
 
+export interface PreviewEditorStats {
+  selectedChars: number;
+  totalChars: number;
+}
+
 export interface PreviewEditorProps {
   content: string;
   filePath?: string;
@@ -48,6 +53,7 @@ export interface PreviewEditorProps {
   mode: 'markdown' | 'code' | 'csv' | 'text';
   language?: string | null;
   onSelectionChange?: (view: EditorView) => void;
+  onStatsChange?: (stats: PreviewEditorStats) => void;
   onContentChange?: (content: string, fileVersion?: FileVersion | null) => void;
   /**
    * 只读模式：禁用编辑、不挂 autosave listener、不挂 file watch。
@@ -79,16 +85,46 @@ function clampPos(pos: number, max: number): number {
   return Math.max(0, Math.min(pos, max));
 }
 
+function countTextChars(text: string): number {
+  return Array.from(text).length;
+}
+
+function getSelectedText(state: EditorState): string {
+  return state.selection.ranges
+    .filter(range => !range.empty)
+    .map(range => state.sliceDoc(range.from, range.to))
+    .join('');
+}
+
+function getEditorStats(view: EditorView): PreviewEditorStats {
+  return {
+    selectedChars: countTextChars(getSelectedText(view.state).trim()),
+    totalChars: countTextChars(view.state.doc.toString()),
+  };
+}
+
+function restoreScrollPosition(view: EditorView, scrollTop: number, scrollLeft: number): void {
+  const restore = () => {
+    view.scrollDOM.scrollTop = scrollTop;
+    view.scrollDOM.scrollLeft = scrollLeft;
+  };
+  restore();
+  queueMicrotask(restore);
+  window.requestAnimationFrame?.(restore);
+}
+
 function replaceDocumentPreservingSelection(view: EditorView, content: string): boolean {
   const current = view.state.doc.toString();
   if (current === content) return false;
   const nextLength = content.length;
   const { anchor, head } = view.state.selection.main;
+  const { scrollTop, scrollLeft } = view.scrollDOM;
   view.dispatch({
     changes: { from: 0, to: current.length, insert: content },
     selection: EditorSelection.single(clampPos(anchor, nextLength), clampPos(head, nextLength)),
     annotations: Transaction.remote.of(true),
   });
+  restoreScrollPosition(view, scrollTop, scrollLeft);
   return true;
 }
 
@@ -108,7 +144,7 @@ function setupFileChangeListener() {
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, fileVersion, mode, language, onSelectionChange, onContentChange, readOnly = false }, ref) {
+  function PreviewEditor({ content, filePath, fileVersion, mode, language, onSelectionChange, onStatsChange, onContentChange, readOnly = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,6 +159,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     filePathRef.current = filePath;
     const selectionCbRef = useRef(onSelectionChange);
     selectionCbRef.current = onSelectionChange;
+    const statsCbRef = useRef(onStatsChange);
+    statsCbRef.current = onStatsChange;
+    const lastStatsRef = useRef<PreviewEditorStats | null>(null);
     const contentCbRef = useRef(onContentChange);
     contentCbRef.current = onContentChange;
 
@@ -160,6 +199,20 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       } finally {
         lastCheckpointAtRef.current = now;
       }
+    }, []);
+
+    const emitStatsIfChanged = useCallback((view: EditorView) => {
+      const next = getEditorStats(view);
+      const previous = lastStatsRef.current;
+      if (
+        previous
+        && previous.selectedChars === next.selectedChars
+        && previous.totalChars === next.totalChars
+      ) {
+        return;
+      }
+      lastStatsRef.current = next;
+      statsCbRef.current?.(next);
     }, []);
 
     const rememberSelfWrite = useCallback((text: string) => {
@@ -260,6 +313,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           if (update.selectionSet && selectionCbRef.current) {
             selectionCbRef.current(update.view);
           }
+          if (update.docChanged || update.selectionSet) {
+            emitStatsIfChanged(update.view);
+          }
         }),
         // Dynamic compartments
         c.gutter.of(isMd || isCsv ? [] : lineNumbers()),
@@ -290,6 +346,8 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const state = EditorState.create({ doc: content, extensions });
       const view = new EditorView({ state, parent: containerRef.current });
       viewRef.current = view;
+      lastStatsRef.current = null;
+      emitStatsIfChanged(view);
 
       return () => {
         if (saveTimerRef.current) {
@@ -300,7 +358,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.destroy();
         viewRef.current = null;
       };
-    }, [mode, language, readOnly, filePath]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+    }, [mode, language, readOnly, filePath, emitStatsIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
 
     // content prop change → update editor (skip if already in sync)
     useEffect(() => {

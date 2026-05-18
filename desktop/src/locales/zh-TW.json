@@ -168,7 +168,8 @@
     "fileActions": {
       "more": "更多檔案操作",
       "revealInFinder": "在 Finder 中顯示",
-      "copyPath": "複製檔案路徑"
+      "copyPath": "複製檔案路徑",
+      "downloadToDevice": "下載到本機"
     }
   },
   "time": {
@@ -195,12 +196,12 @@
     "placeholder": "說點什麼...",
     "floatingInput": "選區浮動輸入",
     "selectFolder": "選擇工作資料夾",
-    "workspace": "工作空間：",
-    "selectWorkspace": "選擇工作空間",
-    "currentWorkspace": "本次工作空間",
+    "workspace": "工作台：",
+    "selectWorkspace": "選擇工作台",
+    "currentWorkspace": "本次工作台",
     "selectOtherFolder": "選擇其他資料夾",
     "extraFolders": "額外資料夾",
-    "addExternalFolder": "加入工作區以外的資料夾",
+    "addExternalFolder": "加入工作台以外的資料夾",
     "planMode": "權限模式",
     "accessMode": "會話權限模式",
     "operateMode": "自動操作",
@@ -258,12 +259,12 @@
     "agentSelector": "選擇助手",
     "placeholderTips": [
       "試試輸入 / 喚起命令選單",
-      "輸入 @ 可以引用工作空間裡的檔案",
+      "輸入 @ 可以引用工作台裡的檔案",
       "把檔案直接拖進輸入框，就能附帶傳送",
       "貼上圖片可以直接傳出去",
       "選取頁面任意文字，會浮出一個臨時輸入框",
       "頭像下方那枚菱形按鈕，控制本次對話是否被記住",
-      "工作空間按鈕可以切換或新增資料夾",
+      "工作台按鈕可以切換或新增資料夾",
       "右側「箋」面板，放著這次會話的筆記與上下文",
       "在頭像下方點不同的小圓點，可以切換助手",
       "「操作前詢問」模式讓助手在動手前先徵求你同意",
@@ -274,10 +275,10 @@
       "工作場景下用 subagent 讓 Agent 協作，頻道留給遊玩",
       "每個 Agent 可以配置自己獨立的 Skills",
       "試試晴天模式的日光浴！",
-      "工作區裡的 Markdown 檔案打開可以直接編輯",
+      "工作台裡的 Markdown 檔案打開可以直接編輯",
       "和助手相處一段時間後，試試日記功能吧！",
       "日記和截圖都保存在主助手的工作目錄",
-      "不同助手可以設定不同工作空間，開啟巡檢後會在那裡自主行動"
+      "不同助手可以設定不同工作台，開啟巡檢後會在那裡自主行動"
     ]
   },
   "yuan": {
@@ -606,12 +607,13 @@
       "providers": "供應商",
       "models": "模型",
       "memory": "記憶",
-      "work": "工作空間",
+      "work": "工作台",
       "computer": "使用電腦",
       "skills": "技能",
       "mcp": "連接器",
       "bridge": "社群平台",
       "sharing": "分享",
+      "access": "存取與裝置",
       "plugins": "插件",
       "about": "關於",
       "security": "安全"
@@ -792,12 +794,65 @@
       "betaUpdates": "接收測試版更新",
       "autoCheckUpdates": "自動檢查更新"
     },
+    "access": {
+      "mobileAccess": "手機存取",
+      "lanToggle": "允許區域網路裝置存取",
+      "lanHint": "開啟後，同一區域網路內的手機和電腦可以存取這台 Hana Server",
+      "port": "固定連接埠",
+      "portHint": "用於書籤和 QR Code；修改後需要重新啟動 Hana 生效",
+      "mobileUrl": "手機存取地址",
+      "mobileUrlLanHint": "在手機瀏覽器中開啟這個地址",
+      "mobileUrlLocalHint": "目前僅允許本機存取，開啟區域網路後會顯示手機可用地址",
+      "status": "執行狀態",
+      "statusHint": "用於確認目前服務實際監聽位置和手機可用地址",
+      "runtimeEndpoint": "目前監聽",
+      "effectiveMobileUrl": "目前生效地址",
+      "lanAddresses": "區域網路地址",
+      "noLanAddresses": "未發現區域網路地址",
+      "qrCode": "QR Code",
+      "qrCodeHint": "用手機掃碼開啟 PWA",
+      "restartRequired": "連接埠變更已儲存，重新啟動 Hana 後生效",
+      "saveNetwork": "儲存存取設定",
+      "mobileKeys": "手機密鑰",
+      "generateMobileKey": "產生手機存取密鑰",
+      "mobileKeyHint": "手機首次登入時使用，之後會換成瀏覽器登入狀態",
+      "mobileKey": "存取密鑰",
+      "mobileKeyOnce": "密鑰只在產生後顯示一次，請妥善保存",
+      "mobileKeyCreated": "已產生手機存取密鑰",
+      "mobileKeyFailed": "產生失敗",
+      "noDevices": "暫無已配對裝置",
+      "revoke": "撤銷",
+      "revokeCredential": "撤銷密鑰",
+      "credentialRevoked": "已撤銷密鑰",
+      "credentialRevokeFailed": "撤銷密鑰失敗",
+      "deviceRevoked": "已撤銷裝置",
+      "deviceRevokeFailed": "撤銷失敗",
+      "localAccount": "本機帳號",
+      "username": "使用者名稱",
+      "displayName": "顯示名稱",
+      "saveAccount": "儲存帳號",
+      "accountSaved": "帳號已儲存",
+      "password": "密碼",
+      "passwordSet": "已設定密碼",
+      "passwordNotSet": "尚未設定密碼",
+      "passwordHint": "用於後續安全遠端登入；區域網路 HTTP 仍優先使用手機存取密鑰",
+      "newPassword": "新密碼",
+      "savePassword": "儲存密碼",
+      "passwordSaved": "密碼已儲存",
+      "clearPassword": "清空密碼",
+      "passwordCleared": "密碼已清空",
+      "copy": "複製",
+      "copied": "已複製",
+      "saved": "已儲存",
+      "invalidPort": "連接埠必須是數字",
+      "loadFailed": "讀取存取設定失敗"
+    },
     "security": {
       "sandbox": "沙盒",
-      "sandboxDesc": "限制 AI 的檔案系統存取範圍，僅允許操作工作目錄和必要的資料夾",
-      "sandboxWarning": "關閉沙盒後 AI 可以存取系統上的任意檔案，可能產生意想不到的結果",
+      "sandboxDesc": "限制 AI 的檔案系統寫入範圍；普通外部檔案可唯讀存取，工作目錄內可讀寫",
+      "sandboxWarning": "關閉沙盒後 AI 可以讀寫或刪除系統上的任意檔案，可能產生意想不到的結果",
       "sandboxNetwork": "允許沙盒聯網",
-      "sandboxNetworkDesc": "開啟後，沙盒內的命令可以存取公網；檔案系統限制仍然生效",
+      "sandboxNetworkDesc": "開啟後，沙盒內的命令可以存取公網；檔案寫入限制仍然生效",
       "sandboxNetworkDisabledDesc": "沙盒關閉時命令已按普通行程聯網，這個開關只影響開啟沙盒後的命令",
       "networkProxy": "出站代理",
       "networkProxyMode": "代理模式",
@@ -1051,12 +1106,12 @@
       "heartbeatOff": "已關閉",
       "heartbeatInterval": "巡檢間隔",
       "heartbeatUnit": "分鐘",
-      "heartbeatDesc": "助手每隔多久自動巡檢一次工作空間",
+      "heartbeatDesc": "助手每隔多久自動巡檢一次工作台",
       "cronAutoApprove": "定時任務免確認",
       "cronAutoApproveOn": "已開啟",
       "cronAutoApproveOff": "已關閉",
       "cronAutoApproveDesc": "允許助手直接建立定時任務，無需手動確認",
-      "homeFolder": "工作空間",
+      "homeFolder": "工作台",
       "homeFolderDesc": "新建對話預設使用的工作目錄，巡檢和定時任務也在這裡執行",
       "homeFolderPlaceholder": "未設定（每次手動選擇）",
       "homeFolderClear": "清除",
@@ -1389,10 +1444,10 @@
       "next": "下一步"
     },
     "workspace": {
-      "title": "建立工作空間",
-      "subtitle": "我會把預設工作區放在桌面上的 OH-WorkSpace。\n你也可以選擇一個已有資料夾。",
-      "defaultLabel": "預設工作空間",
-      "customLabel": "自選工作空間",
+      "title": "建立工作台",
+      "subtitle": "我會把預設工作台放在桌面上的 OH-WorkSpace。\n你也可以選擇一個已有資料夾。",
+      "defaultLabel": "預設工作台",
+      "customLabel": "自選工作台",
       "defaultHint": "如果不選擇其他資料夾，將自動建立這個目錄。\n巡檢預設關閉，之後可在設定中開啟。",
       "choose": "選擇資料夾",
       "useDefault": "使用預設",
@@ -1411,8 +1466,8 @@
         "desc": "我可以讀寫檔案、執行命令、搜尋網頁。在設定中可以管理更多技能。"
       },
       "workspace": {
-        "title": "工作空間",
-        "desc": "指定一個資料夾作為工作空間，我就可以幫你管理專案和檔案。"
+        "title": "工作台",
+        "desc": "指定一個資料夾作為工作台，我就可以幫你管理專案和檔案。"
       },
       "jian": {
         "title": "箋",
@@ -1454,9 +1509,9 @@
   },
   "rightWorkspace": {
     "tabs": {
-      "label": "右側工作區",
+      "label": "右側工作台",
       "sessionFiles": "對話檔案",
-      "workspace": "工作空間"
+      "workspace": "工作台"
     },
     "sessionFiles": {
       "title": "對話檔案",
@@ -1465,6 +1520,7 @@
         "preview": "預覽",
         "open": "打開",
         "reveal": "定位",
+        "downloadToDevice": "下載到本機",
         "copyPath": "複製路徑",
         "copySelectedPaths": "複製 {n} 個路徑",
         "sendToBridge": "傳送到...",
@@ -1495,12 +1551,12 @@
   },
   "desk": {
     "title": "書桌",
-    "workspaceTitle": "工作空間",
+    "workspaceTitle": "工作台",
     "skills": "技能",
     "cwdSkills": "專案技能",
     "cwdSkillsEmpty": "目前資料夾沒有專案技能",
     "cwdSkillsHint": "在資料夾下建立 .agents/skills/ 目錄即可",
-    "cwdSkillsDesc": "技能跟隨工作空間",
+    "cwdSkillsDesc": "技能跟隨工作台",
     "cwdSkillsDrop": "拖入資料夾或 .zip 安裝技能",
     "deleteSkill": "刪除技能",
     "openInFinder": "打開資料夾",
@@ -1509,7 +1565,7 @@
     "execLogLabel": "執行記錄",
     "execLogDelete": "刪除此條記錄",
     "emptyTitle": "書桌還空空的呢",
-    "emptyHint": "書桌是助手日常巡檢的工作空間，也是每次對話的預設目錄\n去設定裡指定一個資料夾吧",
+    "emptyHint": "書桌是助手日常巡檢的工作台，也是每次對話的預設目錄\n去設定裡指定一個資料夾吧",
     "goToSettings": "前往設定",
     "fileLabel": "檔案",
     "openWithDefault": "用預設應用程式打開",
@@ -1553,8 +1609,8 @@
       "activeShort": "{count} 類"
     },
     "search": {
-      "placeholder": "搜尋工作空間",
-      "label": "搜尋工作空間檔案",
+      "placeholder": "搜尋工作台",
+      "label": "搜尋工作台檔案",
       "results": "搜尋結果",
       "empty": "沒有找到相符檔案",
       "root": "根目錄"
@@ -1763,7 +1819,7 @@
     "activeSessionOnly": "只能提升當前助手的活動 session",
     "heartbeatTriggered": "心跳已觸發",
     "dirNotAllowed": "目錄不在允許範圍內",
-    "noWorkspace": "未設定工作空間",
+    "noWorkspace": "未設定工作台",
     "tokenSuccess": "token 取得成功",
     "verifyFailed": "驗證失敗",
     "tokenFetchFailed": "取得 access_token 失敗",
@@ -2113,7 +2169,7 @@
     "inputHelp": "輸入 /help 查看命令列表"
   },
   "sandbox": {
-    "blocked": "[安全策略] {reason}\n\n此操作被 Hanako 的沙盒安全策略阻止，表示命令越過了路徑或權限邊界。先檢查目前工作區、具體路徑寫法，以及目標檔案是否本來就應該放在允許的工作區或 session 路徑內。請向使用者說明被攔截的路徑和原因；只有使用者明確決定時，再討論是否修改沙盒設定。",
+    "blocked": "[安全策略] {reason}\n\n此操作被 Hanako 的沙盒安全策略阻止，表示命令越過了路徑或權限邊界。先檢查目前工作台、具體路徑寫法，以及目標檔案是否本來就應該放在允許的工作台或 session 路徑內。請向使用者說明被攔截的路徑和原因；只有使用者明確決定時，再討論是否修改沙盒設定。",
     "noSudo": "禁止使用 sudo",
     "noSu": "禁止使用 su 切換使用者",
     "noChmod": "禁止修改檔案權限",
@@ -2131,7 +2187,7 @@
     "noBcdedit": "禁止修改開機設定",
     "noWmic": "禁止 WMI 命令",
     "restrictedPath": "命令存取了受限路徑：{path}",
-    "writeRestricted": "[安全策略] 檔案系統寫入被限制在允許的工作區和 session 路徑內。先檢查目前工作區和路徑寫法，再詢問使用者是否需要修改沙盒設定。",
+    "writeRestricted": "[安全策略] 檔案系統寫入被限制在允許的工作台和 session 路徑內。先檢查目前工作台和路徑寫法，再詢問使用者是否需要修改沙盒設定。",
     "osRequired": "[sandbox] standard 模式要求 OS 級沙盒，但當前平台不支援（{platform}）。請安裝 sandbox-exec (macOS) 或 bubblewrap (Linux)，或切換到 full-access 模式。",
     "opRead": "讀取",
     "opWrite": "寫入",
@@ -2165,8 +2221,10 @@
   "action.retry": "重试",
   "subagentAbort": "終止",
   "subagentAborted": "已終止",
+  "preview.toggle": "預覽面板",
   "preview.markdownPreview": "預覽",
   "preview.exitMarkdownPreview": "回到編輯",
   "preview.openInNewWindow": "在新視窗查看",
-  "preview.openInNewWindowUnsupported": "此類型不支援新視窗查看"
+  "preview.openInNewWindowUnsupported": "此類型不支援新視窗查看",
+  "preview.markdownEditorStatus": "選中 {selected} 字 · 共 {total} 字"
 }

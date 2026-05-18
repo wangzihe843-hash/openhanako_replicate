@@ -195,22 +195,26 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
     const sessionPath = path.join(agentSessionDir, "pinned.jsonl");
     const pinnedAt = "2026-04-29T08:00:00.000Z";
     fs.mkdirSync(agentSessionDir, { recursive: true });
+    fs.writeFileSync(sessionPath, [
+      JSON.stringify({
+        type: "session",
+        id: "pinned",
+        timestamp: "2026-04-29T07:00:00.000Z",
+        cwd: "/tmp/work",
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "u1",
+        timestamp: "2026-04-29T07:01:00.000Z",
+        message: { role: "user", content: "hello" },
+      }),
+      "",
+    ].join("\n"));
     fs.writeFileSync(
       path.join(agentSessionDir, "session-meta.json"),
       JSON.stringify({ [path.basename(sessionPath)]: { pinnedAt } }, null, 2),
       "utf-8",
     );
-
-    vi.mocked(SessionManager.list).mockResolvedValueOnce([
-      {
-        path: sessionPath,
-        title: null,
-        firstMessage: "hello",
-        modified: new Date("2026-04-29T07:00:00.000Z"),
-        messageCount: 1,
-        cwd: "/tmp/work",
-      },
-    ]);
 
     const coord = new SessionCoordinator(makeCoordinatorDeps({
       agentsDir,
@@ -223,6 +227,7 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
 
     const sessions = await coord.listSessions();
 
+    expect(SessionManager.list).not.toHaveBeenCalled();
     expect(sessions).toHaveLength(1);
     expect(sessions[0].pinnedAt).toBe(pinnedAt);
     expect(sessions[0].agentId).toBe("hana");

@@ -504,7 +504,7 @@ export class BridgeSessionManager {
 
         sessionOpts = {
           model: chatModel,
-          thinkingLevel: "none",
+          thinkingLevel: "off",
           resourceLoader: guestResourceLoader,
           tools: [],
           customTools: [],

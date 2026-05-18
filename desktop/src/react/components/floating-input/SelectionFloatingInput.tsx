@@ -7,6 +7,10 @@ import { FloatingInput } from './FloatingInput';
 
 export const SELECTION_OPEN_DELAY_MS = 500;
 
+function isInsideFloatingInput(root: HTMLDivElement | null, target: EventTarget | null): boolean {
+  return !!root && target instanceof Node && root.contains(target);
+}
+
 export function SelectionFloatingInput() {
   const { t } = useI18n();
   const quotedSelection = useStore(s => s.quotedSelection);
@@ -17,6 +21,8 @@ export function SelectionFloatingInput() {
   const [activeSelection, setActiveSelection] = useState<QuotedSelection | null>(null);
   const [value, setValue] = useState('');
   const timerRef = useRef<number | null>(null);
+  const floatingRootRef = useRef<HTMLDivElement | null>(null);
+  const hasFloatingAnchor = !!quotedSelection?.anchorRect;
 
   useEffect(() => {
     if (timerRef.current !== null) {
@@ -47,6 +53,40 @@ export function SelectionFloatingInput() {
     clearQuotedSelection();
   }, [clearQuotedSelection]);
 
+  const handleRootElementChange = useCallback((element: HTMLDivElement | null) => {
+    floatingRootRef.current = element;
+  }, []);
+
+  useEffect(() => {
+    if (!hasFloatingAnchor) return;
+
+    const closeIfOutside = (event: Event) => {
+      if (isInsideFloatingInput(floatingRootRef.current, event.target)) return;
+      handleClose();
+    };
+    const closeOnExternalScroll = (event: Event) => {
+      if (isInsideFloatingInput(floatingRootRef.current, event.target)) return;
+      handleClose();
+    };
+    const closeOnWindowBlur = () => {
+      handleClose();
+    };
+
+    document.addEventListener('pointerdown', closeIfOutside, true);
+    document.addEventListener('focusin', closeIfOutside, true);
+    document.addEventListener('scroll', closeOnExternalScroll, true);
+    window.addEventListener('scroll', closeOnExternalScroll, true);
+    window.addEventListener('blur', closeOnWindowBlur);
+
+    return () => {
+      document.removeEventListener('pointerdown', closeIfOutside, true);
+      document.removeEventListener('focusin', closeIfOutside, true);
+      document.removeEventListener('scroll', closeOnExternalScroll, true);
+      window.removeEventListener('scroll', closeOnExternalScroll, true);
+      window.removeEventListener('blur', closeOnWindowBlur);
+    };
+  }, [handleClose, hasFloatingAnchor]);
+
   const handleSubmit = useCallback(async (text: string) => {
     if (!activeSelection) return;
     const sent = await sendFloatingSelectionPrompt(text, activeSelection);
@@ -70,6 +110,7 @@ export function SelectionFloatingInput() {
       autoFocus={false}
       ariaLabel={t('input.floatingInput')}
       submitLabel={t('chat.send')}
+      onRootElementChange={handleRootElementChange}
     />
   );
 }

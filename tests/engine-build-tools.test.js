@@ -122,6 +122,67 @@ describe("HanaEngine.buildTools", () => {
     expect(customTools.map((tool) => tool.name)).toEqual(["cron"]);
   });
 
+  it("passes a session workbench execution boundary into plugin tools", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-boundary-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const workspace = path.join(tmpDir, "workspace");
+    const sessionPath = path.join(agentDir, "sessions", "main.jsonl");
+    const execute = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
+    const agent = {
+      id: "focus",
+      agentDir,
+      config: {},
+      tools: [],
+    };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine._runtimeContext = {
+      serverId: "server_engine",
+      serverNodeId: "node_engine",
+      studioId: "studio_engine",
+    };
+    engine.getAgent = vi.fn(() => agent);
+    engine._pluginManager = {
+      getAllTools: () => [{
+        name: "plugin_tool",
+        execute,
+      }],
+    };
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = { agent };
+
+    const { customTools } = engine.buildTools(workspace, [], {
+      agentDir,
+      workspace,
+      getSessionPath: () => sessionPath,
+      getPermissionMode: () => "operate",
+    });
+    const pluginTool = customTools.find((tool) => tool.name === "plugin_tool");
+
+    await pluginTool.execute("call-1", { ok: true }, {
+      sessionManager: { getSessionFile: () => sessionPath },
+    });
+
+    expect(execute).toHaveBeenCalledWith("call-1", { ok: true }, expect.objectContaining({
+      agentId: "focus",
+      serverNodeId: "node_engine",
+      executionBoundary: expect.objectContaining({
+        boundaryId: "execb_node_engine_studio_engine",
+        serverNodeId: "node_engine",
+        studioId: "studio_engine",
+        workbench: {
+          kind: "legacy_agent_workbench",
+          root: workspace,
+        },
+      }),
+    }));
+  });
+
   it("registers files created or modified by write and edit tools in the active session", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-touch-"));
     const agentDir = path.join(tmpDir, "agents", "focus");

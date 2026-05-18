@@ -92,11 +92,24 @@ function stripIncompatibleThinking(payload, model) {
   return rest;
 }
 
+function isDisabledReasoningEffort(value) {
+  if (value === false || value == null) return true;
+  const normalized = lower(value);
+  return normalized === "" || normalized === "none" || normalized === "off" || normalized === "disabled";
+}
+
+function stripDisabledReasoningEffort(payload) {
+  if (!Object.prototype.hasOwnProperty.call(payload, "reasoning_effort")) return payload;
+  if (!isDisabledReasoningEffort(payload.reasoning_effort)) return payload;
+  const { reasoning_effort, ...rest } = payload;
+  return rest;
+}
+
 /**
  * Provider payload 兼容化的唯一入口。chat 路径与 utility 路径共享。
  *
  * 处理顺序：
- *   1. 通用补丁（stripEmptyTools / stripIncompatibleThinking）
+ *   1. 通用补丁（stripEmptyTools / stripIncompatibleThinking / stripDisabledReasoningEffort）
  *   2. 子模块分发（first-match-wins，最多匹配一个）
  *
  * @param {object} payload — 即将发送的 HTTP body（OpenAI / Anthropic 风格）
@@ -112,6 +125,7 @@ export function normalizeProviderPayload(payload, model, options = {}) {
   // 1. 通用补丁（与 provider 无关）
   result = stripEmptyTools(result);
   result = stripIncompatibleThinking(result, model);
+  result = stripDisabledReasoningEffort(result);
   result = normalizeImplicitOutputBudget(result, model, options);
 
   // 2. Provider-specific 补丁（按 matches 分发，first-match-wins）

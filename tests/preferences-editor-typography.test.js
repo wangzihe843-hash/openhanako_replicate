@@ -56,4 +56,23 @@ describe('PreferencesManager editor typography preferences', () => {
     });
     expect(prefs.getPreferences().editor.markdown.bodyFontSize).toBe(18);
   });
+
+  it('merges synced appearance preferences without dropping earlier fields', () => {
+    const prefs = makePrefs();
+
+    expect(prefs.getAppearance()).toEqual({});
+    prefs.setAppearance({ theme: 'warm-paper', serif: true });
+    prefs.setAppearance({ paperTexture: false });
+
+    expect(prefs.getAppearance()).toEqual({
+      theme: 'warm-paper',
+      serif: true,
+      paperTexture: false,
+    });
+    expect(prefs.getPreferences().appearance).toEqual({
+      theme: 'warm-paper',
+      serif: true,
+      paperTexture: false,
+    });
+  });
 });

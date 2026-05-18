@@ -50,6 +50,8 @@ export interface Agent {
   yuan: string;
   isPrimary: boolean;
   hasAvatar?: boolean;
+  chatModel?: { id: string; provider?: string | null } | null;
+  homeFolder?: string | null;
   memoryMasterEnabled?: boolean;
 }
 

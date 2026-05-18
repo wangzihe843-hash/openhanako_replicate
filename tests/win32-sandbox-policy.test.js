@@ -61,6 +61,7 @@ describe("Windows sandbox policy projection", () => {
       policy,
       cwd: workspace,
       externalReadPaths: [externalFile],
+      systemReadRoots: [externalDir],
     });
 
     expect(grants.writePaths).toEqual([real(workspace)]);
@@ -76,11 +77,35 @@ describe("Windows sandbox policy projection", () => {
       real(path.join(agentDir, "config.yaml")),
       real(path.join(agentDir, "learned-skills")),
       real(path.join(hanakoHome, "user")),
+      real(externalDir),
     ]));
     expect(grants.writePaths).not.toContain(real(externalFile));
     expect(grants.denyWritePaths).toContain(real(path.join(workspace, ".git")));
     expect(grants.denyWritePaths).not.toContain(real(path.join(hanakoHome, "session-files")));
+    expect(grants.denyReadPaths).toContain(real(path.join(hanakoHome, "auth.json")));
     expect(grants.readPaths).not.toContain(path.join(hanakoHome, "auth.json"));
+  });
+
+  it("projects ordinary system-readable roots as optional read grants while denying sensitive Hana files", () => {
+    const { hanakoHome, agentDir, workspace, externalDir } = makeTree();
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      workspace,
+      workspaceFolders: [],
+      hanakoHome,
+      mode: "standard",
+    });
+
+    const grants = buildWin32SandboxGrants({
+      policy,
+      cwd: workspace,
+      systemReadRoots: [externalDir],
+    });
+
+    expect(grants.optionalReadPaths).toContain(real(externalDir));
+    expect(grants.writePaths).not.toContain(real(externalDir));
+    expect(grants.optionalWritePaths).not.toContain(real(externalDir));
+    expect(grants.denyReadPaths).toContain(real(path.join(hanakoHome, "auth.json")));
   });
 
   it("keeps Hana prompt files optional so a bad ACL cannot block unrelated commands", () => {

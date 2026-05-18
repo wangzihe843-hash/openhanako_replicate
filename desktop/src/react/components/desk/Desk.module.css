@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════
-   工作空间（Desk）CSS Module
+   工作台（Desk）CSS Module
    从 styles.css 迁移的 desk 专属样式
    ═══════════════════════════════════════ */
 
-/* ── 工作空间区：延伸到底 ── */
+/* ── 工作台区：延伸到底 ── */
 .section {
     align-self: stretch;
     flex: 1 1 0;
@@ -24,7 +24,7 @@
     padding-left: var(--space-md);
 }
 
-/* 工作空间未设置 overlay */
+/* 工作台未设置 overlay */
 .emptyOverlay {
     position: absolute;
     inset: 0;
@@ -72,7 +72,7 @@
     opacity: 0.8;
 }
 
-/* 工作空间标题行 */
+/* 工作台标题行 */
 .header {
     position: relative;
 }

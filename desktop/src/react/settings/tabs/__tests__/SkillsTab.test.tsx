@@ -781,6 +781,8 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       }),
     );
 
+    fireEvent.click(screen.getAllByRole('button', { name: '展开 Bundle' })[0]);
+
     const skillDrag = createDragData();
     fireEvent.dragStart(screen.getAllByTestId('skill-row-reader')[0], { dataTransfer: skillDrag });
     fireEvent.drop(screen.getAllByTestId('skill-row-writer')[0], { dataTransfer: skillDrag });

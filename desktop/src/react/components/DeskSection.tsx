@@ -1,5 +1,5 @@
 /**
- * DeskSection — 笺侧栏的工作空间内容区（编排层）
+ * DeskSection — 笺侧栏的工作台内容区（编排层）
  *
  * 替代旧 desk.js 的 renderDeskFiles / initJianEditor / updateDeskEmptyOverlay 逻辑。
  * 由 App.tsx 在 .jian-chat-content 容器内直接渲染。

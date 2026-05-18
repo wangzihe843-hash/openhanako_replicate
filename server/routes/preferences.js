@@ -3,6 +3,8 @@
  *
  * GET  /api/preferences/models  — 读取全局模型 + 搜索配置
  * PUT  /api/preferences/models  — 更新全局模型 + 搜索配置
+ * GET  /api/preferences/appearance  — 读取跨前端外观偏好
+ * PUT  /api/preferences/appearance  — 更新跨前端外观偏好
  * GET  /api/preferences/computer-use  — 读取 Computer Use provider/approval 状态
  * PUT  /api/preferences/computer-use  — 更新 Computer Use 全局设置
  * POST /api/preferences/computer-use/request-permissions — 请求系统权限
@@ -15,7 +17,10 @@ import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
 import { debugLog } from "../../lib/debug-log.js";
 import { normalizeWorkspacePath } from "../../shared/workspace-history.js";
-import { normalizeWorkspaceUiEntry } from "../../shared/workspace-ui-state.js";
+import {
+  normalizeWorkspaceUiEntry,
+  normalizeWorkspaceUiSurface,
+} from "../../shared/workspace-ui-state.js";
 import {
   normalizeSharedModelsPatch,
   sharedModelsPatchRequiresModelSync,
@@ -26,6 +31,9 @@ import {
   isComputerUsePlatformSupported,
   selectedComputerProviderId,
 } from "../../core/computer-use/platform-support.js";
+import { collectSecretPatchPaths, maskSecretValue, resolveSecretPatch } from "../../shared/secret-custody.js";
+import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
+import { recordSecurityAuditEvent } from "../http/security-audit.js";
 
 function selectedComputerProviderIdFromSettings(settings, platform = process.platform) {
   return selectedComputerProviderId(settings, { platform });
@@ -56,12 +64,12 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
         models,
         search: {
           provider: search.provider || "",
-          api_key: search.api_key || "",
+          api_key: maskSecretValue(search.api_key || ""),
         },
         utility_api: {
           provider: utilityApi.provider || "",
           base_url: utilityApi.base_url || "",
-          api_key: utilityApi.api_key || "",
+          api_key: maskSecretValue(utilityApi.api_key || ""),
         },
       });
     } catch (err) {
@@ -76,6 +84,11 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       if (!body || typeof body !== "object") {
         return c.json({ error: "invalid JSON body" }, 400);
       }
+      const settingsDenied = denyWithoutScope(c, "settings.write");
+      if (settingsDenied) return settingsDenied;
+      const secretFields = collectSecretPatchPaths(body, ["api_key"]);
+      const secretDenied = denySecretMutationWithoutScope(c, secretFields);
+      if (secretDenied) return secretDenied;
 
       const sections = [];
       let needsModelSync = false;
@@ -105,13 +118,21 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
 
       // 搜索配置
       if (body.search) {
-        engine.setSearchConfig(body.search);
+        engine.setSearchConfig(resolveSecretPatch({
+          patch: body.search,
+          existing: engine.getSearchConfig?.() || {},
+          secretKeys: ["api_key"],
+        }));
         sections.push("search");
       }
 
       // utility API 配置
       if (body.utility_api) {
-        engine.setUtilityApi(body.utility_api);
+        engine.setUtilityApi(resolveSecretPatch({
+          patch: body.utility_api,
+          existing: engine.getUtilityApi?.() || {},
+          secretKeys: ["api_key"],
+        }));
         sections.push("utility_api");
       }
 
@@ -123,6 +144,12 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       if (sections.length > 0) {
         emitAppEvent(engine, "models-changed", { agentId: engine.currentAgentId || null });
       }
+      recordSecurityAuditEvent(c, engine, {
+        action: "settings.preferences.models.update",
+        target: "preferences.models",
+        secretFields,
+        metadata: { sections },
+      });
       return c.json({ ok: true });
     } catch (err) {
       debugLog()?.error("api", `PUT /api/preferences/models failed: ${err.message}`);
@@ -130,14 +157,40 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
     }
   });
 
+  route.get("/preferences/appearance", async (c) => {
+    try {
+      return c.json({ appearance: engine.getAppearance?.() || {} });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/preferences/appearance", async (c) => {
+    try {
+      const body = await safeJson(c);
+      if (!body || typeof body !== "object") {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      const patch = body.appearance && typeof body.appearance === "object" ? body.appearance : body;
+      const before = engine.getAppearance?.() || {};
+      const appearance = engine.setAppearance?.(patch) || {};
+      emitAppearanceEvents(engine, before, appearance);
+      return c.json({ ok: true, appearance });
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
   route.get("/preferences/workspace-ui-state", async (c) => {
     try {
       const workspace = normalizeWorkspacePath(c.req.query("workspace"));
       if (!workspace) return c.json({ error: "workspace must be a non-empty path" }, 400);
+      const surface = normalizeWorkspaceUiSurface(c.req.query("surface"));
+      if (!surface) return c.json({ error: "workspace UI surface is invalid" }, 400);
       if (typeof engine.getWorkspaceUiState !== "function") {
         return c.json({ error: "workspace UI state unavailable" }, 500);
       }
-      return c.json({ state: engine.getWorkspaceUiState(workspace) });
+      return c.json({ state: engine.getWorkspaceUiState(workspace, surface) });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -151,10 +204,12 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       }
       const workspace = normalizeWorkspacePath(body.workspace);
       if (!workspace) return c.json({ error: "workspace must be a non-empty path" }, 400);
+      const surface = normalizeWorkspaceUiSurface(body.surface);
+      if (!surface) return c.json({ error: "workspace UI surface is invalid" }, 400);
       if (typeof engine.setWorkspaceUiState !== "function") {
         return c.json({ error: "workspace UI state unavailable" }, 500);
       }
-      const state = engine.setWorkspaceUiState(workspace, normalizeWorkspaceUiEntry(body.state || {}));
+      const state = engine.setWorkspaceUiState(workspace, surface, normalizeWorkspaceUiEntry(body.state || {}));
       return c.json({ ok: true, state });
     } catch (err) {
       return c.json({ error: err.message }, 400);
@@ -213,7 +268,10 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       if (!body || typeof body !== "object") {
         return c.json({ error: "invalid JSON body" }, 400);
       }
-      const settings = engine.setComputerUseSettings(body.settings && typeof body.settings === "object" ? body.settings : body);
+      const nextSettings = body.settings && typeof body.settings === "object" ? body.settings : body;
+      const settings = typeof engine.updateComputerUseSettings === "function"
+        ? await engine.updateComputerUseSettings(nextSettings)
+        : engine.setComputerUseSettings(nextSettings);
       debugLog()?.log("api", "PUT /api/preferences/computer-use");
       emitAppEvent(engine, "computer-use-settings-changed", { selectedProviderId: selectedComputerProviderIdFromSettings(settings, platform) });
       return c.json({ ok: true, settings });
@@ -272,4 +330,19 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
   });
 
   return route;
+}
+
+function emitAppearanceEvents(engine, before, appearance) {
+  if (appearance.theme && appearance.theme !== before.theme) {
+    emitAppEvent(engine, "theme-changed", { theme: appearance.theme });
+  }
+  if (typeof appearance.serif === "boolean" && appearance.serif !== before.serif) {
+    emitAppEvent(engine, "font-changed", { serif: appearance.serif });
+  }
+  if (typeof appearance.paperTexture === "boolean" && appearance.paperTexture !== before.paperTexture) {
+    emitAppEvent(engine, "paper-texture-changed", { enabled: appearance.paperTexture });
+  }
+  if (typeof appearance.leavesOverlay === "boolean" && appearance.leavesOverlay !== before.leavesOverlay) {
+    emitAppEvent(engine, "leaves-overlay-changed", { enabled: appearance.leavesOverlay });
+  }
 }

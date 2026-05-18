@@ -11,13 +11,13 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
-import { addWorkspaceFolder, applyFolder, removeWorkspaceFolder } from '../stores/desk-actions';
+import { activateWorkspaceDesk, addWorkspaceFolder, applyFolder, removeWorkspaceFolder } from '../stores/desk-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent } from '../types';
 import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../utils/agent-display';
 import styles from './Welcome.module.css';
 // @ts-expect-error — shared JS module
-import { buildWorkspacePickerItems } from '../../../../shared/workspace-history.js';
+import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调 (s: any) */
 
@@ -108,6 +108,8 @@ function WelcomeInner() {
         />
       )}
       <FolderPicker
+        agents={agents}
+        currentAgentId={currentAgentId}
         selectedFolder={selectedFolder}
         homeFolder={homeFolder}
         workspaceFolders={workspaceFolders}
@@ -144,10 +146,18 @@ function AgentChips({ agents, selectedId }: {
   selectedId: string | null;
 }) {
   const handleClick = useCallback((agentId: string) => {
+    const agent = agents.find(a => a.id === agentId) as Agent | undefined;
     useStore.setState({ selectedAgentId: agentId });
+    const homeFolder = normalizeWorkspacePath(agent?.homeFolder);
+    if (homeFolder) {
+      useStore.setState({
+        selectedFolder: homeFolder,
+        workspaceFolders: [],
+      });
+      void activateWorkspaceDesk(homeFolder);
+    }
     // 切换到该 agent 的 chat model
-    const agent = agents.find(a => a.id === agentId) as any;
-    if (agent?.chatModel?.id) {
+    if (agent?.chatModel?.id && agent.chatModel.provider) {
       hanaFetch('/api/models/set', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -201,7 +211,9 @@ function AgentChip({ agent, isSelected, onClick }: {
 
 // ── Folder Picker ──
 
-function FolderPicker({ selectedFolder, homeFolder, workspaceFolders, cwdHistory }: {
+function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, workspaceFolders, cwdHistory }: {
+  agents: Agent[];
+  currentAgentId: string | null;
   selectedFolder: string | null;
   homeFolder: string | null;
   workspaceFolders: string[];
@@ -210,6 +222,7 @@ function FolderPicker({ selectedFolder, homeFolder, workspaceFolders, cwdHistory
   const { t } = useI18n();
   const [showHistory, setShowHistory] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const agentHomeFolders = useMemo(() => collectAgentHomeFolders(agents), [agents]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -240,17 +253,35 @@ function FolderPicker({ selectedFolder, homeFolder, workspaceFolders, cwdHistory
   }, []);
 
   const handleButtonClick = useCallback(() => {
-    if (selectedFolder || cwdHistory.length > 0 || workspaceFolders.length > 0) {
+    if (selectedFolder || cwdHistory.length > 0 || workspaceFolders.length > 0 || agentHomeFolders.length > 0) {
       setShowHistory(prev => !prev);
     } else {
       handleBrowse();
     }
-  }, [cwdHistory.length, handleBrowse, selectedFolder, workspaceFolders.length]);
+  }, [agentHomeFolders.length, cwdHistory.length, handleBrowse, selectedFolder, workspaceFolders.length]);
 
   const handleSelectHistory = useCallback((folder: string) => {
     setShowHistory(false);
+    const agent = findAgentByHomeFolder(agents, folder);
+    if (agent) {
+      const homeFolder = normalizeWorkspacePath(agent.homeFolder) || folder;
+      useStore.setState({
+        selectedAgentId: agent.id === currentAgentId ? null : agent.id,
+        selectedFolder: homeFolder,
+        workspaceFolders: [],
+      });
+      void activateWorkspaceDesk(homeFolder);
+      if (agent.chatModel?.id && agent.chatModel.provider) {
+        hanaFetch('/api/models/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: agent.chatModel.id, provider: agent.chatModel.provider }),
+        }).then(() => loadModels()).catch(() => {});
+      }
+      return;
+    }
     applyFolder(folder);
-  }, []);
+  }, [agents, currentAgentId]);
 
   const folderName = selectedFolder ? selectedFolder.split('/').pop() || selectedFolder : null;
   const label = folderName
@@ -280,6 +311,7 @@ function FolderPicker({ selectedFolder, homeFolder, workspaceFolders, cwdHistory
       {showHistory && (
         <FolderHistory
           cwdHistory={cwdHistory}
+          agentHomeFolders={agentHomeFolders}
           selectedFolder={selectedFolder}
           homeFolder={homeFolder}
           workspaceFolders={workspaceFolders}
@@ -293,8 +325,9 @@ function FolderPicker({ selectedFolder, homeFolder, workspaceFolders, cwdHistory
   );
 }
 
-function FolderHistory({ cwdHistory, selectedFolder, homeFolder, workspaceFolders, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveWorkspaceFolder }: {
+function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolder, workspaceFolders, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveWorkspaceFolder }: {
   cwdHistory: string[];
+  agentHomeFolders: string[];
   selectedFolder: string | null;
   homeFolder: string | null;
   workspaceFolders: string[];
@@ -303,7 +336,11 @@ function FolderHistory({ cwdHistory, selectedFolder, homeFolder, workspaceFolder
   onAddWorkspaceFolder: () => void;
   onRemoveWorkspaceFolder: (folder: string) => void;
 }) {
-  const primaryItems: string[] = buildWorkspacePickerItems({ selectedFolder, homeFolder, cwdHistory });
+  const primaryItems: string[] = buildWorkspacePickerItems({
+    selectedFolder,
+    homeFolder,
+    cwdHistory: [...agentHomeFolders, ...cwdHistory],
+  });
   const t = window.t ?? ((p: string) => p);
   return (
     <div className={styles.folderHistory}>
@@ -384,6 +421,21 @@ function FolderHistory({ cwdHistory, selectedFolder, homeFolder, workspaceFolder
       </div>
     </div>
   );
+}
+
+function collectAgentHomeFolders(agents: Agent[]): string[] {
+  const folders: string[] = [];
+  for (const agent of agents) {
+    const folder = normalizeWorkspacePath(agent.homeFolder);
+    if (folder && !folders.includes(folder)) folders.push(folder);
+  }
+  return folders;
+}
+
+function findAgentByHomeFolder(agents: Agent[], folder: string): Agent | null {
+  const normalized = normalizeWorkspacePath(folder);
+  if (!normalized) return null;
+  return agents.find(agent => normalizeWorkspacePath(agent.homeFolder) === normalized) || null;
 }
 
 // ── Memory Toggle ──

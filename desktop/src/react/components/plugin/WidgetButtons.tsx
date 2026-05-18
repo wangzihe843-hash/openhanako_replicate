@@ -107,7 +107,7 @@ export function WidgetButtons() {
       {/* Desk toggle */}
       <button
         className={`${s.btn}${jianView === 'desk' ? ` ${s.active}` : ''}`}
-        title="工作空间"
+        title="工作台"
         onClick={() => openDesk()}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

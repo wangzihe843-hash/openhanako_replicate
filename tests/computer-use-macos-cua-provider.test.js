@@ -313,6 +313,59 @@ describe("macos Cua provider", () => {
     ]);
   });
 
+  it("stops the bundled helper daemon when the provider is stopped", async () => {
+    let statusChecks = 0;
+    const { runner, calls } = makeRunner((_command, args) => {
+      if (args[0] === "status") {
+        statusChecks += 1;
+        return statusChecks === 1
+          ? { stdout: "", stderr: "not running", exitCode: 1 }
+          : { stdout: "running", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "stop") {
+        return { stdout: "hana-computer-use-helper daemon stopped.", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "launch_app") {
+        return rawResult({
+          pid: 844,
+          bundle_id: "com.apple.calculator",
+          name: "Calculator",
+          windows: [{ window_id: 10725, title: "Calculator" }],
+        });
+      }
+      if (args[0] === "list_apps") {
+        return rawResult({ apps: [] });
+      }
+      return rawResult({ ok: true });
+    });
+    const provider = createMacosCuaProvider({
+      platform: "darwin",
+      command: "/tmp/hana-computer-use-helper",
+      runner,
+      socketPath: "/tmp/hana.sock",
+      daemonStartupTimeoutMs: 1000,
+    });
+    const lease = await provider.createLease({}, { appId: "com.apple.calculator" });
+
+    await provider.stop({}, lease);
+
+    expect(calls.map((call) => call.args[0])).toContain("stop");
+    const stopCall = calls.find((call) => call.args[0] === "stop");
+    expect(stopCall).toMatchObject({
+      command: "/tmp/hana-computer-use-helper",
+      args: ["stop", "--socket", "/tmp/hana.sock"],
+    });
+  });
+
+  it("does not stop external Cua Driver commands", async () => {
+    const { runner, calls } = makeRunner(() => rawResult({ ok: true }));
+    const provider = createMacosCuaProvider({ platform: "darwin", command: "/tmp/cua-driver", runner });
+
+    await provider.stop({}, { leaseId: "lease-1" });
+
+    expect(calls.map((call) => call.args[0])).not.toContain("stop");
+  });
+
   it("waits for launch_app to expose a usable window", async () => {
     let attempts = 0;
     const { runner, calls } = makeRunner((_command, args) => {

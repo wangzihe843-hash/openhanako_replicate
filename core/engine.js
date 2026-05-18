@@ -19,6 +19,11 @@ import { migrateConfigScope } from "../shared/migrate-config-scope.js";
 import { migrateToProvidersYaml } from "./migrate-providers.js";
 import { migrateProviderMediaConfig } from "./provider-media-config.js";
 import { runMigrations } from "./migrations.js";
+import { createServerRuntimeContext } from "./server-runtime-context.js";
+import { createRuntimeExecutionBoundary } from "./execution-boundary.js";
+import { ResourceAccessService } from "./resource-access-service.js";
+import { ResourceService } from "./resource-service.js";
+import { appendSecurityAuditEvent } from "./security-audit-log.js";
 import { findModel } from "../shared/model-ref.js";
 import { resolveWorkspaceSkillPaths } from "../shared/workspace-skill-paths.js";
 import { resolveHanaPiAgentDir, resolveHanaPiProjectDir } from "../shared/hana-runtime-paths.js";
@@ -26,6 +31,7 @@ import { PluginManager } from "./plugin-manager.js";
 import { PluginDevService } from "./plugin-dev-service.js";
 import { createPluginDevTools } from "./plugin-dev-tools.js";
 import { DefaultResourceLoader, SettingsManager } from "../lib/pi-sdk/index.js";
+import { DeferredResultCoordinator } from "../lib/deferred-result-coordinator.js";
 import { loadLocale } from "../server/i18n.js";
 
 /** 已知的外部 AI 工具技能目录（相对 $HOME） */
@@ -121,6 +127,7 @@ import {
   isComputerUsePlatformSupported,
 } from "./computer-use/platform-support.js";
 import { SessionFileRegistry } from "../lib/session-files/session-file-registry.js";
+import { serializeSessionFile } from "../lib/session-files/session-file-response.js";
 import { NotificationService } from "../lib/notifications/notification-service.js";
 import {
   getSkillNameTranslationCachePath,
@@ -133,11 +140,15 @@ export class HanaEngine {
    * @param {string} dirs.hanakoHome
    * @param {string} dirs.productDir
    * @param {string} [dirs.agentId]
+   * @param {string} [dirs.appVersion]
    */
-  constructor({ hanakoHome, productDir, agentId }) {
+  constructor({ hanakoHome, productDir, agentId, appVersion }) {
     this.hanakoHome = hanakoHome;
     this.productDir = productDir;
-    this.appVersion = "0.0.0";
+    this.appVersion = appVersion || "0.0.0";
+    this._runtimeContext = null;
+    this._resources = null;
+    this._resourceAccess = null;
     this.agentsDir = path.join(hanakoHome, "agents");
     this.userDir = path.join(hanakoHome, "user");
     this.channelsDir = path.join(hanakoHome, "channels");
@@ -273,6 +284,7 @@ export class HanaEngine {
 
     // subagent AbortController 存储（engine 级别，跨 agent 共享）
     this._subagentControllers = new Map();
+    this._subagentRunStore = null;
     this._taskRegistry.registerHandler("subagent", {
       abort: (taskId) => {
         const ctrl = this._subagentControllers.get(taskId);
@@ -358,15 +370,47 @@ export class HanaEngine {
   }
 
   setDeferredResultStore(store) {
+    this._deferredResultCoordinator?.dispose?.();
     this._deferredResultStore = store;
+    this._deferredResultCoordinator = null;
+    if (store) {
+      this._deferredResultCoordinator = new DeferredResultCoordinator({
+        store,
+        sessionCoordinator: this._sessionCoord,
+      });
+      this._deferredResultCoordinator.start();
+    }
   }
 
   get deferredResults() {
     return this._deferredResultStore || null;
   }
 
+  setSubagentRunStore(store) {
+    this._subagentRunStore = store || null;
+  }
+
+  get subagentRuns() {
+    return this._subagentRunStore || null;
+  }
+
   get taskRegistry() {
     return this._taskRegistry;
+  }
+
+  get runtimeContext() {
+    return this._runtimeContext;
+  }
+
+  getRuntimeContext() {
+    if (!this._runtimeContext) {
+      throw new Error("server runtime context is not initialized");
+    }
+    return this._runtimeContext;
+  }
+
+  createExecutionBoundary(options = {}) {
+    return createRuntimeExecutionBoundary(this.getRuntimeContext(), options);
   }
 
   get terminalSessions() {
@@ -377,6 +421,18 @@ export class HanaEngine {
   getSessionFile(fileId, options) { return this._sessionFiles.get(fileId, options); }
   getSessionFileByPath(filePath, options) { return this._sessionFiles.getByFilePath(filePath, options); }
   listSessionFiles(sessionPath) { return this._sessionFiles.list(sessionPath); }
+  get resources() { return this._resources; }
+  getResourceService() {
+    if (!this._resources) throw new Error("resource service is not initialized");
+    return this._resources;
+  }
+  getResourceAccessService() {
+    if (!this._resourceAccess) throw new Error("resource access service is not initialized");
+    return this._resourceAccess;
+  }
+  getResource(resourceId) { return this.getResourceService().getResource(resourceId); }
+  resolveResourceContent(resourceId) { return this.getResourceService().resolveContent(resourceId); }
+  serializeSessionFile(file) { return serializeSessionFile(file, { runtimeContext: this.getRuntimeContext() }); }
   async cleanupColdSessionFiles(options) {
     return this._sessionFiles.cleanupColdSessions({
       agentsDir: this.agentsDir,
@@ -629,6 +685,22 @@ export class HanaEngine {
     if (effectiveSettings.enabled === true) this._ensureComputerRuntime();
     return effectiveSettings;
   }
+  async updateComputerUseSettings(partial) {
+    const effectiveSettings = this.setComputerUseSettings(partial);
+    if (effectiveSettings.enabled !== true) {
+      await this.disposeComputerRuntime();
+    }
+    return effectiveSettings;
+  }
+  async disposeComputerRuntime() {
+    const host = this._computerHost;
+    try {
+      await host?.dispose?.();
+    } finally {
+      this._computerHost = null;
+      this._computerProviders = null;
+    }
+  }
   approveComputerUseApp(approval) { return this._prefs.approveComputerUseApp(approval); }
   revokeComputerUseApp(approval) { return this._prefs.revokeComputerUseApp(approval); }
   resolveVisionConfig() {
@@ -691,8 +763,10 @@ export class HanaEngine {
   setLocale(l) { this._prefs.setLocale(l); }
   getEditor() { return this._prefs.getEditor(); }
   setEditor(p) { return this._prefs.setEditor(p); }
-  getWorkspaceUiState(workspaceRoot) { return this._prefs.getWorkspaceUiState(workspaceRoot); }
-  setWorkspaceUiState(workspaceRoot, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, state); }
+  getAppearance() { return this._prefs.getAppearance(); }
+  setAppearance(p) { return this._prefs.setAppearance(p); }
+  getWorkspaceUiState(workspaceRoot, surface) { return this._prefs.getWorkspaceUiState(workspaceRoot, surface); }
+  setWorkspaceUiState(workspaceRoot, surface, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, surface, state); }
   getPluginUiPrefs() { return this._prefs.getPluginUiPrefs(); }
   setPluginUiPrefs(partial) { return this._prefs.setPluginUiPrefs(partial); }
   getPluginDevToolsEnabled() { return this._prefs.getPluginDevToolsEnabled(); }
@@ -945,6 +1019,19 @@ export class HanaEngine {
       providerRegistry: this._models.providerRegistry,
       log,
     });
+    this._runtimeContext = createServerRuntimeContext({
+      hanakoHome: this.hanakoHome,
+      appVersion: this.appVersion,
+    });
+    this._resources = new ResourceService({
+      agentsDir: this.agentsDir,
+      sessionFiles: this._sessionFiles,
+      runtimeContext: this._runtimeContext,
+    });
+    this._resourceAccess = new ResourceAccessService({
+      resourceService: this._resources,
+      audit: (event) => appendSecurityAuditEvent(this.hanakoHome, event),
+    });
 
     // 频道初始化和 agent 构造会调用 server-side i18n。locale 是 global
     // preference，必须在任何会写持久化文案的初始化逻辑前加载。
@@ -1148,19 +1235,25 @@ export class HanaEngine {
   }
 
   async dispose() {
-    // 先卸载 plugins（它们可能依赖 engine 资源）
-    if (this._pluginManager) {
-      for (const p of this._pluginManager.listPlugins()) {
-        if (p.status === "loaded") {
-          await this._pluginManager.unloadPlugin(p.id);
+    try {
+      // 先卸载 plugins（它们可能依赖 engine 资源）
+      if (this._pluginManager) {
+        for (const p of this._pluginManager.listPlugins()) {
+          if (p.status === "loaded") {
+            await this._pluginManager.unloadPlugin(p.id);
+          }
         }
       }
+      this._pluginDevEventBusCleanup?.();
+      this._pluginDevEventBusCleanup = null;
+      this._skills?.unwatch();
+      this._deferredResultCoordinator?.dispose?.();
+      this._deferredResultCoordinator = null;
+      await this._agentMgr.disposeAll(this._sessionCoord);
+      await this._sessionCoord.cleanupSession();
+    } finally {
+      await this.disposeComputerRuntime();
     }
-    this._pluginDevEventBusCleanup?.();
-    this._pluginDevEventBusCleanup = null;
-    this._skills?.unwatch();
-    await this._agentMgr.disposeAll(this._sessionCoord);
-    await this._sessionCoord.cleanupSession();
   }
 
   // ════════════════════════════
@@ -1198,6 +1291,7 @@ export class HanaEngine {
       registerSessionFile: (entry) => this.registerSessionFile(entry),
       slashRegistry: this._slashSystem?.registry ?? null,
       logSink: (entry) => this._pluginDevService?.recordLog(entry),
+      runtimeContext: this.getRuntimeContext(),
     });
     const allowedPluginDevSourceRoots = [
       pluginDevSourcesDir,
@@ -1304,9 +1398,19 @@ export class HanaEngine {
     }
     // Append plugin tools
     const pluginTools = this._pluginManager?.getAllTools() || [];
+    const executionBoundary = this._runtimeContext
+      ? this.createExecutionBoundary({ workbenchRoot: cwd })
+      : null;
+    const executionScope = executionBoundary
+      ? { serverNodeId: executionBoundary.serverNodeId, executionBoundary }
+      : {};
     const wrappedPluginTools = pluginTools.map(t => ({
       ...t,
-      execute: (toolCallId, params, runtimeCtx) => t.execute(toolCallId, params, { ...runtimeCtx, agentId }),
+      execute: (toolCallId, params, runtimeCtx) => t.execute(toolCallId, params, {
+        ...runtimeCtx,
+        agentId,
+        ...executionScope,
+      }),
     }));
     const pluginDevTools = this._pluginDevService && this._prefs.getPluginDevToolsEnabled?.() === true
       ? createPluginDevTools({
@@ -1356,6 +1460,7 @@ export class HanaEngine {
       workspace: effectiveWorkspace,
       workspaceFolders,
       hanakoHome: this.hanakoHome,
+      executionBoundary,
       getSandboxEnabled: () => this._readPreferences().sandbox !== false,
       getSandboxNetworkEnabled: () => this._readPreferences().sandbox_network === true,
       getExternalReadPaths,

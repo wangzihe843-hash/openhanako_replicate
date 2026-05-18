@@ -253,6 +253,35 @@ describe('handleAppEvent', () => {
     });
   });
 
+  it('does not echo desktop IPC network proxy broadcasts back to the main process', async () => {
+    const settingsChanged = vi.fn();
+    (globalThis as any).window.platform = { settingsChanged };
+
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+    (handleAppEvent as any)(
+      'network-proxy-changed',
+      { network_proxy: { mode: 'direct' } },
+      { source: 'desktop-ipc' },
+    );
+
+    expect(settingsChanged).not.toHaveBeenCalled();
+  });
+
+  it('forwards server network proxy app events to the desktop shell once', async () => {
+    const settingsChanged = vi.fn();
+    (globalThis as any).window.platform = { settingsChanged };
+
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+    (handleAppEvent as any)(
+      'network-proxy-changed',
+      { network_proxy: { mode: 'direct' } },
+      { source: 'server' },
+    );
+
+    expect(settingsChanged).toHaveBeenCalledTimes(1);
+    expect(settingsChanged).toHaveBeenCalledWith('network-proxy-changed', { network_proxy: { mode: 'direct' } });
+  });
+
   it('agent-workspace-changed updates only the current agent workspace and activates the desk', async () => {
     Object.assign(mockState, {
       currentAgentId: 'agent-a',

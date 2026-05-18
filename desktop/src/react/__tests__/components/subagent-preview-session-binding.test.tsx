@@ -85,6 +85,21 @@ describe('SubagentSessionPreview session binding', () => {
     expect(mockedLoadMessages).not.toHaveBeenCalled();
   });
 
+  it('旧 subagent 链接不可恢复时显示明确失败原因，而不是继续连接', () => {
+    render(
+      <SubagentSessionPreview
+        taskId="task-a"
+        sessionPath={null}
+        streamStatus="failed"
+        summary="历史子会话链接不可恢复"
+        scrollContainerRef={makeScrollContainerRef()}
+      />,
+    );
+
+    expect(screen.getByText('历史子会话链接不可恢复')).toBeTruthy();
+    expect(mockedLoadMessages).not.toHaveBeenCalled();
+  });
+
   it('已缓存的 subagent session 复用聊天正文渲染，而不是输出原始 HTML 字面量', () => {
     useStore.setState({
       chatSessions: {

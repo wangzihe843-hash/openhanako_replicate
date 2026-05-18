@@ -17,12 +17,16 @@ export function createDiaryRoute(engine) {
     try {
       const result = await engine.writeDiary();
       if (result.error) {
-        return c.json({ error: result.error }, 400);
+        return c.json({
+          error: result.error,
+          ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+        }, 400);
       }
       return c.json({
         filePath: result.filePath,
         content: result.content,
         logicalDate: result.logicalDate,
+        ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
       });
     } catch (err) {
       console.error(`[diary] write failed: ${err.message}`);

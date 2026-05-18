@@ -74,6 +74,7 @@ vi.mock('../../settings/tabs/AboutTab', () => ({ AboutTab: () => <div data-testi
 vi.mock('../../settings/tabs/PluginsTab', () => ({ PluginsTab: () => <div data-testid="active-tab">plugins tab</div> }));
 vi.mock('../../settings/tabs/SecurityTab', () => ({ SecurityTab: () => <div data-testid="active-tab">security tab</div> }));
 vi.mock('../../settings/tabs/SharingTab', () => ({ SharingTab: () => <div data-testid="active-tab">sharing tab</div> }));
+vi.mock('../../settings/tabs/AccessTab', () => ({ AccessTab: () => <div data-testid="active-tab">access tab</div> }));
 
 function resetState() {
   Object.keys(mockState).forEach(key => delete mockState[key]);

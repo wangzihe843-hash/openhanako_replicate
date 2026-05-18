@@ -28,6 +28,8 @@ const CSP_PROFILES: Record<string, string> = {
     "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' file:",
   'viewer-window.html':
     "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:",
+  'mobile.html':
+    "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; frame-src 'self' blob:",
 };
 
 function injectCsp(): Plugin {
@@ -147,7 +149,7 @@ function copyLegacyFiles(): Plugin {
       const outDir = path.resolve(__dirname, 'desktop/dist-renderer');
 
       const dirs = ['lib', 'modules', 'themes', 'assets', 'locales'];
-      const files = ['styles.css', 'animations.css'];
+      const files = ['styles.css', 'animations.css', 'mobile-manifest.webmanifest', 'mobile-sw.js', 'icon.png'];
 
       for (const dir of dirs) {
         const src = path.join(srcDir, dir);
@@ -159,7 +161,12 @@ function copyLegacyFiles(): Plugin {
 
       for (const file of files) {
         const src = path.join(srcDir, file);
-        const dest = path.join(outDir, file);
+        const destName = file === 'mobile-manifest.webmanifest'
+          ? 'manifest.webmanifest'
+          : file === 'mobile-sw.js'
+          ? 'sw.js'
+          : file;
+        const dest = path.join(outDir, destName);
         if (fs.existsSync(src)) {
           fs.cpSync(src, dest);
         }
@@ -206,6 +213,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'desktop/src/index.html'),
+        mobile: path.resolve(__dirname, 'desktop/src/mobile.html'),
         settings: path.resolve(__dirname, 'desktop/src/settings.html'),
         onboarding: path.resolve(__dirname, 'desktop/src/onboarding.html'),
         splash: path.resolve(__dirname, 'desktop/src/splash.html'),

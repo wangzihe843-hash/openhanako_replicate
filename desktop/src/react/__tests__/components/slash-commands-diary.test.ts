@@ -40,6 +40,7 @@ describe('executeDiary', () => {
     await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', {
       method: 'POST',
       timeout: 150_000,
+      throwOnHttpError: false,
     }));
     await vi.waitFor(() => expect(removeToast).toHaveBeenCalledWith(42));
     expect(addToast).toHaveBeenLastCalledWith('slash.diaryDone', 'success', 5000);
@@ -57,8 +58,30 @@ describe('executeDiary', () => {
     await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', {
       method: 'POST',
       timeout: 150_000,
+      throwOnHttpError: false,
     }));
     await vi.waitFor(() => expect(removeToast).toHaveBeenCalledWith(42));
     expect(addToast).toHaveBeenLastCalledWith('slash.diaryFailed', 'error', 6000);
+  });
+
+  it('shows the server error body when diary writing returns a non-2xx response', async () => {
+    vi.mocked(hanaFetch).mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: '日记材料准备失败: simulated summary failure' }),
+    } as Response);
+    const addToast = vi.fn().mockReturnValue(42);
+    const removeToast = vi.fn();
+    const setInput = vi.fn();
+    const setMenuOpen = vi.fn();
+
+    executeDiary(t, addToast, removeToast, setInput, setMenuOpen)();
+
+    await vi.waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/diary/write', {
+      method: 'POST',
+      timeout: 150_000,
+      throwOnHttpError: false,
+    }));
+    await vi.waitFor(() => expect(removeToast).toHaveBeenCalledWith(42));
+    expect(addToast).toHaveBeenLastCalledWith('日记材料准备失败: simulated summary failure', 'error', 6000);
   });
 });

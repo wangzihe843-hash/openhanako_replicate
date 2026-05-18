@@ -15,11 +15,15 @@ interface SkillInfo {
  * Fetch enabled, visible skills for the current agent.
  * Returns a stable array that only updates when skills change.
  */
-export function useSkillSlashItems(): SlashItem[] {
+export function useSkillSlashItems({ enabled = true }: { enabled?: boolean } = {}): SlashItem[] {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const agentId = useStore(s => s.currentAgentId);
 
   useEffect(() => {
+    if (!enabled) {
+      setSkills([]);
+      return;
+    }
     if (!agentId) {
       setSkills([]);
       return;
@@ -33,7 +37,7 @@ export function useSkillSlashItems(): SlashItem[] {
       .catch(() => {});
     return () => { cancelled = true; };
     // skills 是 per-agent 的，不随 session 切换变化
-  }, [agentId]);
+  }, [agentId, enabled]);
 
   return useMemo(() =>
     skills

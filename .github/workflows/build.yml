@@ -45,6 +45,9 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/download-git-portable.js
 
+      - name: Build client bundles (main + preload + renderer)
+        run: npm run build:client
+
       - name: Build server bundle
         shell: bash
         run: |
@@ -66,9 +69,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: node scripts/build-windows-sandbox-helper.mjs ${{ matrix.arch }}
-
-      - name: Build client bundles (main + preload + renderer)
-        run: npm run build:client
 
       # macOS: 手动配置签名 keychain + partition-list
       # electron-builder 内部也会导入证书，但不一定设 partition-list，

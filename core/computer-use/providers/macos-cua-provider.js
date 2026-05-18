@@ -497,6 +497,10 @@ export function createMacosCuaProvider({
 } = {}) {
   let nativeCursorConfigPromise = null;
   let daemonStartPromise = null;
+  let daemonStopPromise = null;
+  let managedDaemonActive = false;
+  let spawnedDaemonChild = null;
+  let spawnedDaemonPid = null;
   const bundledHanaHelper = commandIsBundledHanaHelper(command);
   const shouldAutoStartDaemon = autoStartDaemon ?? bundledHanaHelper;
   const resolvedCursorStyle = normalizeCursorStyle({ cursorStyle, cursorImagePath, cursorBloomColor });
@@ -563,7 +567,10 @@ export function createMacosCuaProvider({
 
   async function ensureDaemonRunning() {
     if (!shouldAutoStartDaemon) return;
-    if (await isDaemonRunning()) return;
+    if (await isDaemonRunning()) {
+      managedDaemonActive = true;
+      return;
+    }
     if (!daemonStartPromise) {
       daemonStartPromise = (async () => {
         if (typeof runner.spawn !== "function") {
@@ -573,14 +580,19 @@ export function createMacosCuaProvider({
             { providerId, command },
           );
         }
-        runner.spawn(command, ["serve", "--socket", socketPath], {
+        spawnedDaemonChild = runner.spawn(command, ["serve", "--socket", socketPath], {
           env: runEnv(process.env),
           detached: true,
           stdio: "ignore",
         });
+        const pid = Number(spawnedDaemonChild?.pid);
+        spawnedDaemonPid = Number.isFinite(pid) && pid > 0 ? pid : null;
         const deadline = Date.now() + daemonStartupTimeoutMs;
         while (Date.now() < deadline) {
-          if (await isDaemonRunning()) return;
+          if (await isDaemonRunning()) {
+            managedDaemonActive = true;
+            return;
+          }
           await sleep(120);
         }
         throw computerUseError(
@@ -593,7 +605,76 @@ export function createMacosCuaProvider({
         throw err;
       });
     }
-    await daemonStartPromise;
+    try {
+      await daemonStartPromise;
+    } finally {
+      daemonStartPromise = null;
+    }
+  }
+
+  function markDaemonInactive() {
+    managedDaemonActive = false;
+    nativeCursorConfigPromise = null;
+    spawnedDaemonChild = null;
+    spawnedDaemonPid = null;
+  }
+
+  function killSpawnedDaemon(signal) {
+    if (!spawnedDaemonPid || platform !== "darwin") return false;
+    try {
+      process.kill(-spawnedDaemonPid, signal);
+      return true;
+    } catch {
+      try {
+        return spawnedDaemonChild?.kill?.(signal) === true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  async function stopManagedDaemon() {
+    if (!bundledHanaHelper || !shouldAutoStartDaemon) {
+      return { stopped: false, reason: "not-managed" };
+    }
+    if (daemonStopPromise) return daemonStopPromise;
+    daemonStopPromise = (async () => {
+      if (daemonStartPromise) {
+        try { await daemonStartPromise; } catch {}
+      }
+      if (!managedDaemonActive && !spawnedDaemonPid) {
+        return { stopped: false, reason: "not-running" };
+      }
+
+      let stopResult = null;
+      try {
+        stopResult = await runner.run(command, ["stop", "--socket", socketPath], {
+          timeoutMs: 5000,
+          env: runEnv(process.env),
+        });
+      } catch (err) {
+        stopResult = { exitCode: 1, stderr: err?.message || String(err) };
+      }
+
+      if (stopResult?.exitCode === 0) {
+        markDaemonInactive();
+        return { stopped: true, method: "daemon-stop" };
+      }
+
+      const killed = killSpawnedDaemon("SIGTERM");
+      if (killed) {
+        markDaemonInactive();
+      }
+      return {
+        stopped: killed,
+        method: killed ? "sigterm" : "none",
+        exitCode: stopResult?.exitCode ?? null,
+        stderr: stopResult?.stderr || "",
+      };
+    })().finally(() => {
+      daemonStopPromise = null;
+    });
+    return daemonStopPromise;
   }
 
   async function ensureNativeCursorConfigured() {
@@ -811,11 +892,18 @@ export function createMacosCuaProvider({
     },
 
     async releaseLease() {
-      return { released: true };
+      const daemon = await stopManagedDaemon();
+      return { released: true, daemon };
     },
 
     async stop() {
-      return { stopped: true };
+      const daemon = await stopManagedDaemon();
+      return { stopped: true, daemon };
+    },
+
+    async dispose() {
+      const daemon = await stopManagedDaemon();
+      return { disposed: true, daemon };
     },
   };
 }

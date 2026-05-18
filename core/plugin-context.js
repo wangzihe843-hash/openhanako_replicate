@@ -4,10 +4,21 @@ import { createPluginConfigStore } from "./plugin-config.js";
 
 /**
  * Create a PluginContext for a plugin.
- * @param {{ pluginId: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function }} opts
+ * @param {{ pluginId: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
  */
-export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink }) {
+export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
   const config = createPluginConfigStore({ dataDir, schema: configSchema });
+  const runtimeScope = runtimeContext ? {
+    serverId: runtimeContext.serverId,
+    serverNodeId: runtimeContext.serverNodeId ?? runtimeContext.serverId,
+    userId: runtimeContext.userId,
+    studioId: runtimeContext.studioId,
+    connectionKind: runtimeContext.connectionKind,
+    credentialKind: runtimeContext.credentialKind,
+    platformAccountId: runtimeContext.platformAccountId ?? null,
+    officialServiceKind: runtimeContext.officialServiceKind ?? null,
+    executionBoundary: clonePlain(runtimeContext.executionBoundary),
+  } : {};
 
   const resolvedAccess = accessLevel || "restricted";
   const pluginBus = resolvedAccess === "full-access"
@@ -75,5 +86,20 @@ export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessL
     return { file, mediaItem: toMediaItem(file) };
   }
 
-  return { pluginId, pluginDir, dataDir, bus: pluginBus, config, log, registerSessionFile, stageFile };
+  return {
+    ...runtimeScope,
+    pluginId,
+    pluginDir,
+    dataDir,
+    bus: pluginBus,
+    config,
+    log,
+    registerSessionFile,
+    stageFile,
+  };
+}
+
+function clonePlain(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
 }

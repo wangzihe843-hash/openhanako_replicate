@@ -80,6 +80,7 @@ export function apply(payload, model, options) { ... }
 | `qwen` | `enable_thinking: boolean` | DashScope / SiliconFlow / ModelScope 上的 Qwen-style 模型 |
 | `qwen-chat-template` | `chat_template_kwargs: { enable_thinking, preserve_thinking }` | MiMo OpenAI-compatible API, including Xiaomi Token Plan `/v1` endpoints |
 | `deepseek` | DeepSeek 子模块统一转换 | DeepSeek V4 / reasoner |
+| `openrouter` | `reasoning: { effort }`，历史推理细节由 SDK 通过 `reasoning_details` 回放 | OpenRouter-hosted reasoning models, e.g. DeepSeek / MiMo via OpenRouter |
 
 `compat.reasoningProfile` 表示同一 wire format 内部更细的协议契约，例如
 `deepseek-v4-anthropic` 表示 Anthropic Messages 请求体，但思考强度要写入

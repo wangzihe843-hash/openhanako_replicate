@@ -91,6 +91,9 @@ describe("DmRouter agent phone session", () => {
     const phonePrompt = runAgentPhoneSessionMock.mock.calls[0][1][0].text;
     expect(phonePrompt).toContain("Reflect");
     expect(phonePrompt).toContain("<reflect>");
+    expect(phonePrompt).toContain("实际发到私聊的回复正文");
+    expect(phonePrompt).toContain("优先口语化");
+    expect(phonePrompt).toContain("内容很长");
     expect(phonePrompt).toContain("20");
     expect(phonePrompt).toContain("80");
     expect(phonePrompt).not.toContain("只在能推进话题时回复");

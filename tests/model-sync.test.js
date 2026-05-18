@@ -105,6 +105,20 @@ const KNOWN_MODELS = {
       reasoning: true,
     },
   },
+  openrouter: {
+    "deepseek/deepseek-v3.2": {
+      name: "Deepseek/Deepseek V3.2",
+      context: 163840,
+      maxOutput: 163840,
+      reasoning: true,
+    },
+    "xiaomi/mimo-v2-flash": {
+      name: "Xiaomi/Mimo V2 Flash",
+      context: 262144,
+      maxOutput: 16384,
+      reasoning: true,
+    },
+  },
   // 兼容读验证：legacy-vision 模型词典里用旧字段 vision，model-sync 应当识别并投影为 input
   legacy: {
     "legacy-vision-model": { name: "Legacy Vision Model", context: 32000, vision: true },
@@ -124,11 +138,27 @@ const GENERIC_MODEL_FALLBACKS = {
 
 vi.mock("../shared/known-models.js", () => ({
   lookupKnown(provider, modelId) {
-    if (provider && KNOWN_MODELS[provider]?.[modelId]) return KNOWN_MODELS[provider][modelId];
+    const lookup = (dict, id) => {
+      if (!dict || typeof id !== "string") return null;
+      if (dict[id]) return dict[id];
+      const lowerId = id.toLowerCase();
+      return Object.entries(dict).find(([key]) => key.toLowerCase() === lowerId)?.[1] || null;
+    };
+    if (provider) {
+      const exact = lookup(KNOWN_MODELS[provider], modelId);
+      if (exact) return exact;
+    }
     const bare = modelId.includes("/") ? modelId.split("/").pop() : null;
-    if (bare && provider && KNOWN_MODELS[provider]?.[bare]) return KNOWN_MODELS[provider][bare];
-    if (GENERIC_MODEL_FALLBACKS[modelId]) return GENERIC_MODEL_FALLBACKS[modelId];
-    if (bare && GENERIC_MODEL_FALLBACKS[bare]) return GENERIC_MODEL_FALLBACKS[bare];
+    if (bare && provider) {
+      const exactBare = lookup(KNOWN_MODELS[provider], bare);
+      if (exactBare) return exactBare;
+    }
+    const fallback = lookup(GENERIC_MODEL_FALLBACKS, modelId);
+    if (fallback) return fallback;
+    if (bare) {
+      const fallbackBare = lookup(GENERIC_MODEL_FALLBACKS, bare);
+      if (fallbackBare) return fallbackBare;
+    }
     return null;
   },
 }));
@@ -661,6 +691,47 @@ describe("syncModels", () => {
       thinkingFormat: "qwen-chat-template",
       reasoningProfile: "mimo-openai",
     });
+  });
+
+  it("projects OpenRouter reasoning models with OpenRouter thinking compat without official provider profiles", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      openrouter: {
+        base_url: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["DeepSeek/DeepSeek-V3.2", "xiaomi/MiMo-V2-Flash"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const [deepseek, mimo] = result.providers.openrouter.models;
+    expect(deepseek).toMatchObject({
+      id: "DeepSeek/DeepSeek-V3.2",
+      contextWindow: 163840,
+      maxTokens: 163840,
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+      },
+    });
+    expect(deepseek.compat).not.toHaveProperty("reasoningProfile");
+
+    expect(mimo).toMatchObject({
+      id: "xiaomi/MiMo-V2-Flash",
+      contextWindow: 262144,
+      maxTokens: 16384,
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+      },
+    });
+    expect(mimo.compat).not.toHaveProperty("reasoningProfile");
   });
 
   it("writes Pi-loadable models when Hana video capability is enabled", async () => {

@@ -681,6 +681,51 @@ describe("BridgeSessionManager teardown", () => {
     expect(buildOpts.getPermissionMode()).toBe("operate");
   });
 
+  it("guest bridge sessions pass canonical off thinking level to the SDK", async () => {
+    const agent = makeAgent(rootDir);
+    agent.config.models.chat = { id: "minimax-m2.5", provider: "scnet" };
+    const deps = {
+      ...makeDeps(agent),
+      getModelManager: () => ({
+        availableModels: [{
+          id: "minimax-m2.5",
+          provider: "scnet",
+          name: "MiniMax M2.5",
+          api: "openai-completions",
+          baseUrl: "https://example.test/v1",
+          reasoning: true,
+        }],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+    };
+    const mgrPath = path.join(agent.sessionDir, "bridge", "guests", "guest-thinking.jsonl");
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        model: { input: ["text"] },
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => mgrPath },
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await manager.executeExternalMessage("hello", "fs_group_guest@agent-a", {
+      userId: "guest-user",
+      chatId: "guest-chat",
+    }, { agentId: "agent-a", guest: true });
+
+    const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(createArgs.thinkingLevel).toBe("off");
+    expect(createArgs.tools).toEqual([]);
+    expect(createArgs.customTools).toEqual([]);
+  });
+
   it("owner bridge read-only sessions pass read-only permission mode to tool wrappers", async () => {
     const agent = makeAgent(rootDir);
     const buildTools = vi.fn(() => ({

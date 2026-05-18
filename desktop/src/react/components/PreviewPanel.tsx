@@ -10,11 +10,11 @@
  * - 独立窗口由下阶段的 viewer spawn 机制负责（单向只读副本），本面板不做 detach/dock
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useStore } from '../stores';
 import { selectPreviewItems, selectActiveTabId, selectMarkdownPreviewIds } from '../stores/preview-slice';
 import { setMarkdownPreviewActive, upsertPreviewItem } from '../stores/preview-actions';
-import { PreviewEditor } from './PreviewEditor';
+import { PreviewEditor, type PreviewEditorStats } from './PreviewEditor';
 import { PreviewRenderer } from './preview/PreviewRenderer';
 import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
@@ -39,15 +39,30 @@ function getEditorMode(previewItem: PreviewItem): 'markdown' | 'code' | 'csv' | 
   return 'code';
 }
 
+function countPreviewChars(text: string): number {
+  return Array.from(text).length;
+}
+
+function formatMarkdownEditorStatus(stats: PreviewEditorStats): string {
+  const fallback = `选中 ${stats.selectedChars} 字 · 共 ${stats.totalChars} 字`;
+  const translated = window.t?.('preview.markdownEditorStatus', {
+    selected: stats.selectedChars,
+    total: stats.totalChars,
+  });
+  return translated && translated !== 'preview.markdownEditorStatus' ? translated : fallback;
+}
+
 export function PreviewPanel() {
   const previewOpen = useStore(s => s.previewOpen);
   const activeTabId = useStore(selectActiveTabId);
   const previewItems = useStore(selectPreviewItems);
   const markdownPreviewIds = useStore(selectMarkdownPreviewIds);
+  const [editorStats, setEditorStats] = useState<PreviewEditorStats>({ selectedChars: 0, totalChars: 0 });
 
   const previewItem = previewItems.find(a => a.id === activeTabId) ?? null;
   const markdownPreviewActive = !!previewItem && markdownPreviewIds.includes(previewItem.id);
   const editable = isEditable(previewItem) && !markdownPreviewActive;
+  const showMarkdownEditorStatus = editable && previewItem?.type === 'markdown';
 
   const handleToggleMarkdownPreview = useCallback(() => {
     if (!previewItem || !isMarkdownFile(previewItem)) return;
@@ -63,6 +78,10 @@ export function PreviewPanel() {
     });
   }, [previewItem]);
 
+  const handleEditorStatsChange = useCallback((stats: PreviewEditorStats) => {
+    setEditorStats(stats);
+  }, []);
+
   // DOM 模式选区捕获（非编辑模式下 mouseup 时检测选中文本）
   const handleMouseUp = useCallback(() => {
     if (!previewItem || editable) return;
@@ -72,14 +91,22 @@ export function PreviewPanel() {
   // 切换 tab 时清除选区
   useEffect(() => {
     clearSelection();
-  }, [activeTabId]);
+    setEditorStats({
+      selectedChars: 0,
+      totalChars: previewItem?.type === 'markdown' ? countPreviewChars(previewItem.content) : 0,
+    });
+  }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps -- tab 切换时用当前 active previewItem 初始化状态栏，后续由 PreviewEditor 回调接管
 
   return (
-    <div className={`${previewStyles.previewPanel}${previewOpen ? '' : ` ${previewStyles.previewPanelCollapsed}`}`} id="previewPanel">
+    <div
+      className={`${previewStyles.previewPanel}${previewOpen ? '' : ` ${previewStyles.previewPanelCollapsed}`}`}
+      id="previewPanel"
+      data-preview-open={previewOpen ? 'true' : 'false'}
+    >
       <div className="resize-handle resize-handle-left" id="previewResizeHandle"></div>
-      <div className={previewStyles.previewPanelInner}>
+      <div className={previewStyles.previewPanelInner} data-preview-panel-inner="">
         <TabBar />
-        <div className={previewStyles.previewBodyShell}>
+        <div className={previewStyles.previewBodyShell} data-preview-body-shell="">
           {previewOpen && previewItem && (
             <FloatingActions
               content={previewItem.content}
@@ -88,7 +115,7 @@ export function PreviewPanel() {
               onToggleMarkdownPreview={handleToggleMarkdownPreview}
             />
           )}
-          <div className={previewStyles.previewPanelBody} id="previewBody" onMouseUp={handleMouseUp}>
+          <div className={previewStyles.previewPanelBody} id="previewBody" data-preview-panel-body="" onMouseUp={handleMouseUp}>
             {previewOpen && previewItem && !editable && (
               <PreviewRenderer previewItem={previewItem} />
             )}
@@ -102,8 +129,18 @@ export function PreviewPanel() {
                 onSelectionChange={(view) => {
                   if (previewItem) captureSelection(previewItem, view);
                 }}
+                onStatsChange={handleEditorStatsChange}
                 onContentChange={handleEditorContentChange}
               />
+            )}
+            {previewOpen && previewItem && showMarkdownEditorStatus && (
+              <div
+                className={previewStyles.markdownEditorStatus}
+                data-testid="markdown-editor-status"
+                aria-live="polite"
+              >
+                {formatMarkdownEditorStatus(editorStats)}
+              </div>
             )}
           </div>
         </div>

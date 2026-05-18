@@ -1,26 +1,15 @@
 import { Hono } from "hono";
-import { loadServerIdentity } from "../../core/server-identity.js";
+import { createServerRuntimeContext, toServerIdentityResponse } from "../../core/server-runtime-context.js";
 
-const LOCAL_CAPABILITIES = ["chat", "resources", "tools"];
-
-export function createServerIdentityRoute({ hanakoHome, appVersion = "?" }) {
+export function createServerIdentityRoute({ hanakoHome, appVersion = "?", getRuntimeContext } = {}) {
   const route = new Hono();
 
   route.get("/server/identity", (c) => {
     try {
-      const identity = loadServerIdentity(hanakoHome);
-      return c.json({
-        serverId: identity.serverId,
-        userId: identity.userId,
-        spaceId: identity.spaceId,
-        label: identity.label,
-        userLabel: identity.userLabel,
-        spaceLabel: identity.spaceLabel,
-        trustState: "local",
-        authState: "paired",
-        capabilities: [...LOCAL_CAPABILITIES],
-        version: appVersion,
-      });
+      const runtimeContext = typeof getRuntimeContext === "function"
+        ? getRuntimeContext()
+        : createServerRuntimeContext({ hanakoHome, appVersion });
+      return c.json(toServerIdentityResponse(runtimeContext, { appVersion }));
     } catch (err) {
       return c.json({
         error: "invalid server identity registry",

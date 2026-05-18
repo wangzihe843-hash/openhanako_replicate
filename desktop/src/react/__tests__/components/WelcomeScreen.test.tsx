@@ -7,12 +7,25 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
 
+const mocks = vi.hoisted(() => ({
+  hanaFetch: vi.fn(async (_path: string, _opts?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+  loadModels: vi.fn(),
+}));
+
+vi.mock('../../hooks/use-hana-fetch', () => ({
+  hanaFetch: (path: string, opts?: RequestInit) => mocks.hanaFetch(path, opts),
+}));
+
+vi.mock('../../utils/ui-helpers', () => ({
+  loadModels: () => mocks.loadModels(),
+}));
+
 const translations: Record<string, string | string[] | Record<string, { avatar: string }>> = {
-  'input.workspace': '工作空间：',
-  'input.currentWorkspace': '本次工作空间',
+  'input.workspace': '工作台：',
+  'input.currentWorkspace': '本次工作台',
   'input.selectOtherFolder': '选择其他文件夹',
   'input.extraFolders': '额外文件夹',
-  'input.addExternalFolder': '添加工作空间以外的文件夹',
+  'input.addExternalFolder': '添加工作台以外的文件夹',
   'welcome.messages': ['想到什么就说什么吧~'],
   'yuan.welcome.hanako': ['想到什么就说什么吧~'],
   'welcome.memoryOn': '记忆',
@@ -54,12 +67,12 @@ describe('WelcomeScreen workspace picker', () => {
     const { WelcomeScreen } = await import('../../components/WelcomeScreen');
 
     render(<WelcomeScreen />);
-    fireEvent.click(screen.getByRole('button', { name: /工作空间：Desktop/ }));
+    fireEvent.click(screen.getByRole('button', { name: /工作台：Desktop/ }));
 
-    const currentLabel = screen.getByText('本次工作空间');
+    const currentLabel = screen.getByText('本次工作台');
     const selectOther = screen.getByText('选择其他文件夹');
     const extraLabel = screen.getByText('额外文件夹');
-    const addExternal = screen.getByText('添加工作空间以外的文件夹');
+    const addExternal = screen.getByText('添加工作台以外的文件夹');
 
     expect(currentLabel.compareDocumentPosition(selectOther) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectOther.compareDocumentPosition(extraLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -82,5 +95,45 @@ describe('WelcomeScreen workspace picker', () => {
 
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(useStore.getState().memoryEnabled).toBe(true);
+  });
+
+  it('selects the target agent workbench when choosing an agent on the welcome screen', async () => {
+    useStore.setState({
+      agents: [
+        {
+          id: 'hana',
+          name: 'Hanako',
+          yuan: 'hanako',
+          isPrimary: true,
+          homeFolder: '/workspace/Hana',
+          chatModel: { id: 'deepseek-chat', provider: 'deepseek' },
+        },
+        {
+          id: 'mio',
+          name: 'Mio',
+          yuan: 'hanako',
+          isPrimary: false,
+          homeFolder: '/workspace/Mio',
+          chatModel: { id: 'gpt-5.2', provider: 'openai' },
+        },
+      ],
+      currentAgentId: 'hana',
+      selectedAgentId: null,
+      selectedFolder: '/workspace/Hana',
+      homeFolder: '/workspace/Hana',
+      workspaceFolders: ['/workspace/Reference'],
+    } as never);
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /Mio/ }));
+
+    expect(useStore.getState().selectedAgentId).toBe('mio');
+    expect(useStore.getState().selectedFolder).toBe('/workspace/Mio');
+    expect(useStore.getState().workspaceFolders).toEqual([]);
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/models/set', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ modelId: 'gpt-5.2', provider: 'openai' }),
+    }));
   });
 });

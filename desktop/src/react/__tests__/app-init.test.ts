@@ -101,14 +101,18 @@ function jsonResponse(body: unknown): Response {
 
 function serverIdentityResponse(partial: Record<string, unknown> = {}): Response {
   return jsonResponse({
+    connectionKind: 'local',
     serverId: 'server_test',
     userId: 'user_test',
-    spaceId: 'space_test',
+    studioId: 'studio_test',
     label: 'Test Server',
     userLabel: 'Test User',
-    spaceLabel: 'Test Space',
+    studioLabel: 'Test Studio',
     trustState: 'local',
     authState: 'paired',
+    credentialKind: 'loopback_token',
+    platformAccountId: null,
+    officialServiceKind: null,
     capabilities: ['chat', 'resources', 'tools'],
     version: '0.test',
     ...partial,
@@ -186,19 +190,28 @@ describe('initApp bridge indicator', () => {
     await initApp();
 
     expect(mockState.activeServerConnection).toEqual({
+      connectionId: 'local',
+      kind: 'local',
       serverId: 'server_test',
       userId: 'user_test',
-      spaceId: 'space_test',
+      studioId: 'studio_test',
       label: 'Test Server',
       userLabel: 'Test User',
-      spaceLabel: 'Test Space',
+      studioLabel: 'Test Studio',
       serverVersion: '0.test',
       baseUrl: 'http://127.0.0.1:62950',
       wsUrl: 'ws://127.0.0.1:62950',
       token: 'token',
       authState: 'paired',
       trustState: 'local',
+      credentialKind: 'loopback_token',
+      platformAccountId: null,
+      officialServiceKind: null,
       capabilities: ['chat', 'resources', 'tools'],
+    });
+    expect(mockState.activeServerConnectionId).toBe('local');
+    expect(mockState.serverConnections).toEqual({
+      local: mockState.activeServerConnection,
     });
     expect(mockState.bridgeDotConnected).toBe(true);
   });

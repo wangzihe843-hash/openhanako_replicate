@@ -1,6 +1,6 @@
 import type { FileRef } from '../../types/file-ref';
 import type { DeskFile } from '../../types';
-import type { ChatListItem, ContentBlock, SessionRegistryFile } from '../chat-types';
+import type { ChatListItem, ContentBlock, ResourceEnvelope, SessionRegistryFile } from '../chat-types';
 import { inferKindByExt, buildFileRefId } from '../../utils/file-kind';
 
 type StateShape = {
@@ -126,6 +126,7 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
       operations: file.operations,
       createdAt: file.createdAt,
       timestamp: file.createdAt,
+      resource: compactResourceRef(file.resource),
     });
   }
 
@@ -231,6 +232,18 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
 
 function basenameOf(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
+}
+
+function compactResourceRef(resource: ResourceEnvelope | undefined): FileRef['resource'] | undefined {
+  if (!resource?.resourceId || !resource.studioId || !resource.links?.self) return undefined;
+  return {
+    resourceId: resource.resourceId,
+    studioId: resource.studioId,
+    links: {
+      self: resource.links.self,
+      ...(resource.links.content ? { content: resource.links.content } : {}),
+    },
+  };
 }
 
 function fileIdentity(fileId?: string, filePath?: string): string | null {

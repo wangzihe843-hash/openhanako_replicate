@@ -70,6 +70,45 @@ describe("wrapBashTool Windows PathGuard preflight", () => {
 });
 
 describe("sandbox wrapper dynamic external read grants", () => {
+  it("bypasses PathGuard for path tools when sandbox is disabled", async () => {
+    const { wrapPathTool } = await import("../lib/sandbox/tool-wrapper.js");
+    const tool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
+    const guard = {
+      check: vi.fn(() => ({ allowed: false, reason: "blocked" })),
+    };
+
+    const wrapped = wrapPathTool(tool, guard, "write", "D:\\workspace", {
+      getSandboxEnabled: () => false,
+    });
+    const result = await wrapped.execute("call-disabled-path", { path: "C:\\outside\\note.md" });
+
+    expect(guard.check).not.toHaveBeenCalled();
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toBe("ok");
+  });
+
+  it("uses the unsandboxed bash fallback and skips PathGuard when sandbox is disabled", async () => {
+    const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
+    const sandboxedTool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "sandboxed" }] })) };
+    const fallbackTool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "fallback" }] })) };
+    const guard = {
+      check: vi.fn(() => ({ allowed: false, reason: "blocked" })),
+    };
+
+    const wrapped = wrapBashTool(sandboxedTool, guard, "D:\\workspace", {
+      getSandboxEnabled: () => false,
+      fallbackTool,
+    });
+    const result = await wrapped.execute("call-disabled-bash", {
+      command: "cat C:\\outside\\note.md",
+    });
+
+    expect(guard.check).not.toHaveBeenCalled();
+    expect(sandboxedTool.execute).not.toHaveBeenCalled();
+    expect(fallbackTool.execute).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toBe("fallback");
+  });
+
   it("lets read tools access explicitly granted external session files", async () => {
     const { wrapPathTool } = await import("../lib/sandbox/tool-wrapper.js");
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wrapper-read-grant-"));

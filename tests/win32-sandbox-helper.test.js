@@ -7,7 +7,10 @@ describe("buildWin32SandboxHelperArgs", () => {
       cwd: "C:\\work",
       executable: "C:\\Hanako\\resources\\git\\bin\\bash.exe",
       args: ["-lc", "curl https://example.com"],
-      grants: { writePaths: ["C:\\work"] },
+      grants: {
+        writePaths: ["C:\\work"],
+        denyReadPaths: ["C:\\Users\\Hana\\.hanako\\auth.json"],
+      },
     };
 
     expect(buildWin32SandboxHelperArgs(base)).not.toContain("--network");
@@ -29,6 +32,8 @@ describe("buildWin32SandboxHelperArgs", () => {
       "private-network-client-server",
       "--grant-write",
       "C:\\work",
+      "--deny-read",
+      "C:\\Users\\Hana\\.hanako\\auth.json",
       "--",
       "C:\\Hanako\\resources\\git\\bin\\bash.exe",
       "-lc",

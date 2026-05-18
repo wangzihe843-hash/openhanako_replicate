@@ -111,6 +111,35 @@ describe("writeDiary hybrid material collection", () => {
     expect(diaryPrompt()).toContain("补齐缺失摘要");
   });
 
+  it("falls back to temporary compaction when persistent summary backfill fails", async () => {
+    const opts = baseOpts({
+      generateTemporarySummary: vi.fn().mockResolvedValue("## 临时摘要\n持久摘要失败后，临时材料仍然能支撑今天的日记。"),
+    });
+    makeSession(opts.sessionDir, "backfill-fails-session", [
+      { role: "user", content: "今天写日记时某个 session 摘要补写失败。", timestamp: "2026-05-07T04:10:00.000Z" },
+      { role: "assistant", content: "那也不能让整篇日记失败。", timestamp: "2026-05-07T04:12:00.000Z" },
+    ]);
+    opts.summaryManager.rollingSummary.mockRejectedValue(new Error("simulated summary failure"));
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toBeUndefined();
+    expect(opts.generateTemporarySummary).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "backfill-fails-session",
+      previousSummary: "",
+      reason: "backfill-failed",
+    }));
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: "backfill-fails-session",
+        stage: "rolling-summary",
+        message: "simulated summary failure",
+      }),
+    ]));
+    expect(diaryPrompt()).toContain("临时补齐");
+    expect(diaryPrompt()).toContain("临时材料仍然能支撑今天的日记");
+  });
+
   it("uses temporary compaction for a memory-disabled session without saving a rolling summary", async () => {
     const opts = baseOpts({
       isSessionMemoryEnabledForPath: vi.fn().mockReturnValue(false),
@@ -166,5 +195,69 @@ describe("writeDiary hybrid material collection", () => {
     expect(diaryPrompt()).toContain("用户开始讨论日记链路");
     expect(diaryPrompt()).toContain("临时补齐");
     expect(diaryPrompt()).toContain("不要落回 session");
+  });
+
+  it("keeps a stale summary when its temporary supplement fails", async () => {
+    const staleSummary = {
+      session_id: "stale-supplement-fails",
+      created_at: "2026-05-07T03:00:00.000Z",
+      updated_at: "2026-05-07T04:11:00.000Z",
+      messageCount: 1,
+      summary: "## 事情经过\n[12:10] 用户开始讨论日记链路。",
+    };
+    const opts = baseOpts({
+      summaryManager: {
+        getSummariesInRange: vi.fn().mockReturnValue([staleSummary]),
+        getSummary: vi.fn().mockReturnValue(staleSummary),
+        rollingSummary: vi.fn(),
+      },
+      generateTemporarySummary: vi.fn().mockRejectedValue(new Error("simulated supplement failure")),
+    });
+    makeSession(opts.sessionDir, "stale-supplement-fails", [
+      { role: "user", content: "今天想把日记链路改成摘要优先。", timestamp: "2026-05-07T04:10:00.000Z" },
+      { role: "assistant", content: "我先看摘要。", timestamp: "2026-05-07T04:11:00.000Z" },
+      { role: "user", content: "后面这句补齐失败也不能毁掉已有摘要。", timestamp: "2026-05-07T04:20:00.000Z" },
+    ]);
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toBeUndefined();
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: "stale-supplement-fails",
+        stage: "temporary-supplement",
+        message: "simulated supplement failure",
+      }),
+    ]));
+    expect(diaryPrompt()).toContain("用户开始讨论日记链路");
+    expect(diaryPrompt()).not.toContain("后面这句补齐失败也不能毁掉已有摘要");
+  });
+
+  it("returns diagnostics when every matching session fails material collection", async () => {
+    const opts = baseOpts({
+      generateTemporarySummary: vi.fn().mockRejectedValue(new Error("simulated temporary failure")),
+    });
+    makeSession(opts.sessionDir, "unusable-session", [
+      { role: "user", content: "今天只有一个会话，但摘要和临时压缩都失败了。", timestamp: "2026-05-07T04:10:00.000Z" },
+      { role: "assistant", content: "这时应该返回可诊断的错误。", timestamp: "2026-05-07T04:12:00.000Z" },
+    ]);
+    opts.summaryManager.rollingSummary.mockRejectedValue(new Error("simulated summary failure"));
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toContain("日记材料准备失败");
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: "unusable-session",
+        stage: "rolling-summary",
+        message: "simulated summary failure",
+      }),
+      expect.objectContaining({
+        sessionId: "unusable-session",
+        stage: "temporary-summary",
+        message: "simulated temporary failure",
+      }),
+    ]));
+    expect(callText).not.toHaveBeenCalled();
   });
 });

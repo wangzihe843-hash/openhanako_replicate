@@ -223,4 +223,25 @@ describe('SessionList context menu', () => {
     expect(css).not.toMatch(/\.sessionContextMenu/);
     expect(css).not.toMatch(/sessionItemSummaryEmpty/);
   });
+
+  it('keeps row hover-only controls behind fine pointer media queries so mobile taps switch immediately', () => {
+    const css = fs.readFileSync(
+      path.join(__dirname, '../../components/SessionList.module.css'),
+      'utf-8',
+    );
+
+    expect(css).toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover\s*\{/);
+    expect(css).toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
+  });
+
+  it('shows row action controls for the active or focused session without requiring hover', () => {
+    const css = fs.readFileSync(
+      path.join(__dirname, '../../components/SessionList.module.css'),
+      'utf-8',
+    );
+
+    expect(css).toMatch(/\.sessionItemActive \.sessionPinBtn,\s*\.sessionItemActive \.sessionRenameBtn,\s*\.sessionItemActive \.sessionArchiveBtn/);
+    expect(css).toMatch(/\.sessionItem:focus-visible \.sessionPinBtn,\s*\.sessionItem:focus-visible \.sessionRenameBtn,\s*\.sessionItem:focus-visible \.sessionArchiveBtn/);
+    expect(css).toMatch(/\.sessionItemActive \.sessionItemMeta,\s*\.sessionItem:focus-visible \.sessionItemMeta/);
+  });
 });

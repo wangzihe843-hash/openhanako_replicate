@@ -11,7 +11,7 @@ import { getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-pr
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 25;
+const LATEST_DATA_VERSION = 28;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -2131,7 +2131,33 @@ describe("migration #18 — create local identity registries", () => {
     return prefs;
   }
 
-  it("creates stable server, legacy owner user, and default personal space for old data roots", () => {
+  function runFrom25() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 25 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  function runFrom26() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 26 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("creates stable server, legacy owner user, and default personal studio for old data roots", () => {
     fs.mkdirSync(path.join(tmpDir, "user", "avatars"), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, "user", "user.md"), "old profile\n", "utf-8");
     writeAgentConfig(agentsDir, "hana", { api: { provider: "" } });
@@ -2140,7 +2166,7 @@ describe("migration #18 — create local identity registries", () => {
 
     const serverNode = readJson(path.join(tmpDir, "server-node.json"));
     const users = readJson(path.join(tmpDir, "users.json"));
-    const spaces = readJson(path.join(tmpDir, "spaces.json"));
+    const studios = readJson(path.join(tmpDir, "studios.json"));
 
     expect(serverNode).toEqual(expect.objectContaining({
       schemaVersion: 1,
@@ -2159,13 +2185,13 @@ describe("migration #18 — create local identity registries", () => {
       }),
     ]);
 
-    expect(spaces.schemaVersion).toBe(1);
-    expect(spaces.defaultSpaceId).toMatch(/^space_[0-9a-f-]{36}$/);
-    expect(spaces.spaces).toEqual([
+    expect(studios.schemaVersion).toBe(1);
+    expect(studios.defaultStudioId).toMatch(/^studio_[0-9a-f-]{36}$/);
+    expect(studios.studios).toEqual([
       expect.objectContaining({
-        spaceId: spaces.defaultSpaceId,
+        studioId: studios.defaultStudioId,
         ownerUserId: users.defaultUserId,
-        label: "Personal Space",
+        label: "Personal Studio",
         kind: "personal",
         membershipModel: "single_user_implicit",
         storage: {
@@ -2182,7 +2208,7 @@ describe("migration #18 — create local identity registries", () => {
   it("preserves existing valid identity registries exactly", () => {
     const serverNodePath = path.join(tmpDir, "server-node.json");
     const usersPath = path.join(tmpDir, "users.json");
-    const spacesPath = path.join(tmpDir, "spaces.json");
+    const studiosPath = path.join(tmpDir, "studios.json");
     const serverNode = {
       schemaVersion: 1,
       serverId: "server_existing",
@@ -2204,13 +2230,13 @@ describe("migration #18 — create local identity registries", () => {
       createdAt: "2026-05-01T00:00:00.000Z",
       updatedAt: "2026-05-01T00:00:00.000Z",
     };
-    const spaces = {
+    const studios = {
       schemaVersion: 1,
-      defaultSpaceId: "space_existing",
-      spaces: [{
-        spaceId: "space_existing",
+      defaultStudioId: "studio_existing",
+      studios: [{
+        studioId: "studio_existing",
         ownerUserId: "user_existing",
-        label: "Existing Space",
+        label: "Existing Studio",
         kind: "personal",
         storage: { provider: "legacy_hana_home", legacyRoot: true },
         membershipModel: "single_user_implicit",
@@ -2222,17 +2248,17 @@ describe("migration #18 — create local identity registries", () => {
     };
     writeJson(serverNodePath, serverNode);
     writeJson(usersPath, users);
-    writeJson(spacesPath, spaces);
+    writeJson(studiosPath, studios);
 
     const prefs = runFrom17();
 
     expect(readJson(serverNodePath)).toEqual(serverNode);
     expect(readJson(usersPath)).toEqual(users);
-    expect(readJson(spacesPath)).toEqual(spaces);
+    expect(readJson(studiosPath)).toEqual(studios);
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 
-  it("completes partial identity registries with consistent owner and space references", () => {
+  it("completes partial identity registries with consistent owner and studio references", () => {
     writeJson(path.join(tmpDir, "server-node.json"), {
       schemaVersion: 1,
       serverId: "server_partial",
@@ -2256,17 +2282,138 @@ describe("migration #18 — create local identity registries", () => {
     });
 
     const prefs = runFrom17();
-    const spaces = readJson(path.join(tmpDir, "spaces.json"));
+    const studios = readJson(path.join(tmpDir, "studios.json"));
 
-    expect(spaces.defaultSpaceId).toMatch(/^space_[0-9a-f-]{36}$/);
-    expect(spaces.spaces[0]).toEqual(expect.objectContaining({
-      spaceId: spaces.defaultSpaceId,
+    expect(studios.defaultStudioId).toMatch(/^studio_[0-9a-f-]{36}$/);
+    expect(studios.studios[0]).toEqual(expect.objectContaining({
+      studioId: studios.defaultStudioId,
       ownerUserId: "user_partial",
       kind: "personal",
       membershipModel: "single_user_implicit",
     }));
     expect(readJson(path.join(tmpDir, "server-node.json")).serverId).toBe("server_partial");
     expect(readJson(path.join(tmpDir, "users.json")).defaultUserId).toBe("user_partial");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("migrates an already-created legacy spaces.json registry to studios.json", () => {
+    writeJson(path.join(tmpDir, "server-node.json"), {
+      schemaVersion: 1,
+      serverId: "server_legacy_space",
+      label: "Legacy Space Server",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    });
+    writeJson(path.join(tmpDir, "users.json"), {
+      schemaVersion: 1,
+      defaultUserId: "user_legacy_space",
+      users: [{
+        userId: "user_legacy_space",
+        kind: "legacy_owner",
+        displayName: "Legacy Space User",
+        profileSource: "legacy_user_profile",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    });
+    writeJson(path.join(tmpDir, "spaces.json"), {
+      schemaVersion: 1,
+      defaultSpaceId: "space_existing",
+      spaces: [{
+        spaceId: "space_existing",
+        ownerUserId: "user_legacy_space",
+        label: "Personal Space",
+        kind: "personal",
+        storage: { provider: "legacy_hana_home", legacyRoot: true },
+        membershipModel: "single_user_implicit",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    });
+
+    const prefs = runFrom25();
+    const studios = readJson(path.join(tmpDir, "studios.json"));
+
+    expect(studios).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      defaultStudioId: "space_existing",
+      studios: [
+        expect.objectContaining({
+          studioId: "space_existing",
+          ownerUserId: "user_legacy_space",
+          label: "Personal Studio",
+          kind: "personal",
+        }),
+      ],
+    }));
+    expect(fs.existsSync(path.join(tmpDir, "spaces.json"))).toBe(true);
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("creates remote access foundation registries for users already migrated to Studio", () => {
+    const serverNode = {
+      schemaVersion: 1,
+      serverId: "server_existing",
+      serverNodeId: "node_existing",
+      nodeKind: "local",
+      transport: "loopback",
+      execution: { kind: "local_process" },
+      label: "Existing Server",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const users = {
+      schemaVersion: 1,
+      defaultUserId: "user_existing",
+      users: [{
+        userId: "user_existing",
+        kind: "legacy_owner",
+        displayName: "Existing User",
+        profileSource: "legacy_user_profile",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const studios = {
+      schemaVersion: 1,
+      defaultStudioId: "studio_existing",
+      studios: [{
+        studioId: "studio_existing",
+        ownerUserId: "user_existing",
+        label: "Existing Studio",
+        kind: "personal",
+        storage: { provider: "legacy_hana_home", legacyRoot: true },
+        membershipModel: "single_user_implicit",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      }],
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    writeJson(path.join(tmpDir, "server-node.json"), serverNode);
+    writeJson(path.join(tmpDir, "users.json"), users);
+    writeJson(path.join(tmpDir, "studios.json"), studios);
+
+    const prefs = runFrom26();
+
+    expect(readJson(path.join(tmpDir, "server-node.json"))).toEqual(serverNode);
+    expect(readJson(path.join(tmpDir, "users.json"))).toEqual(users);
+    expect(readJson(path.join(tmpDir, "studios.json"))).toEqual(studios);
+    expect(readJson(path.join(tmpDir, "devices.json"))).toMatchObject({ schemaVersion: 1, devices: [] });
+    expect(readJson(path.join(tmpDir, "device-credentials.json"))).toMatchObject({ schemaVersion: 1, credentials: [] });
+    expect(readJson(path.join(tmpDir, "pairing-sessions.json"))).toMatchObject({ schemaVersion: 1, pairingSessions: [] });
+    expect(readJson(path.join(tmpDir, "server-network.json"))).toMatchObject({
+      schemaVersion: 1,
+      mode: "loopback",
+      listenHost: "127.0.0.1",
+    });
+    expect(readJson(path.join(tmpDir, "studio-mounts.json"))).toMatchObject({ schemaVersion: 1, mounts: [] });
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 
@@ -2290,7 +2437,7 @@ describe("migration #18 — create local identity registries", () => {
 
     expect(prefs.getPreferences()._dataVersion).toBe(17);
     expect(fs.existsSync(path.join(tmpDir, "server-node.json"))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, "spaces.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "studios.json"))).toBe(false);
   });
 });
 
@@ -2521,5 +2668,122 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
     runFrom18();
 
     expect(readAddedModels().providers.deepseek.api_key).toBe("");
+  });
+});
+
+describe("migration #28 — durable subagent run registry", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runFrom27() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 27 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("backfills durable subagent run mappings from existing deferred metadata", () => {
+    const parentSessionPath = path.join(agentsDir, "hanako", "sessions", "parent.jsonl");
+    const childSessionPath = path.join(agentsDir, "hanako", "subagent-sessions", "child.jsonl");
+    fs.mkdirSync(path.dirname(parentSessionPath), { recursive: true });
+    fs.mkdirSync(path.dirname(childSessionPath), { recursive: true });
+    fs.writeFileSync(parentSessionPath, "", "utf-8");
+    fs.writeFileSync(childSessionPath, "", "utf-8");
+
+    writeJson(path.join(tmpDir, ".ephemeral", "deferred-tasks.json"), {
+      "subagent-legacy": {
+        status: "resolved",
+        sessionPath: parentSessionPath,
+        result: "完成摘要",
+        deferredAt: 1710000000000,
+        delivered: true,
+        meta: {
+          type: "subagent",
+          summary: "旧任务标题",
+          sessionPath: childSessionPath,
+          requestedAgentId: "hanako",
+          requestedAgentNameSnapshot: "Hanako",
+          executorAgentId: "hanako",
+          executorAgentNameSnapshot: "Hanako",
+          executorMetaVersion: 1,
+        },
+      },
+    });
+
+    const prefs = runFrom27();
+
+    const registry = readJson(path.join(tmpDir, "subagent-runs.json"));
+    expect(registry.runs["subagent-legacy"]).toMatchObject({
+      taskId: "subagent-legacy",
+      parentSessionPath,
+      childSessionPath,
+      status: "resolved",
+      summary: "完成摘要",
+      requestedAgentId: "hanako",
+      requestedAgentNameSnapshot: "Hanako",
+      executorAgentId: "hanako",
+      executorAgentNameSnapshot: "Hanako",
+      executorMetaVersion: 1,
+    });
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("backfills historical parent records only when they already carry a child session path", () => {
+    const parentSessionPath = path.join(agentsDir, "hanako", "sessions", "parent.jsonl");
+    const childSessionPath = path.join(agentsDir, "hanako", "subagent-sessions", "child.jsonl");
+    writeSessionJsonl(parentSessionPath, [
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-with-child",
+          taskTitle: "已有子会话",
+          sessionPath: childSessionPath,
+          streamStatus: "done",
+          summary: "已完成",
+          requestedAgentId: "hanako",
+          requestedAgentNameSnapshot: "Hanako",
+          executorAgentId: "hanako",
+          executorAgentNameSnapshot: "Hanako",
+          executorMetaVersion: 1,
+        },
+      },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-without-child",
+          taskTitle: "没有子会话映射",
+          sessionPath: null,
+          streamStatus: "running",
+        },
+      },
+    ]);
+
+    runFrom27();
+
+    const registry = readJson(path.join(tmpDir, "subagent-runs.json"));
+    expect(registry.runs["subagent-with-child"]).toMatchObject({
+      taskId: "subagent-with-child",
+      parentSessionPath,
+      childSessionPath,
+      status: "resolved",
+      summary: "已完成",
+    });
+    expect(registry.runs["subagent-without-child"]).toBeUndefined();
   });
 });

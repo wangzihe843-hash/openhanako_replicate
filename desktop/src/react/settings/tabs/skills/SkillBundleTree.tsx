@@ -187,7 +187,7 @@ export function SkillBundleTree({
 
       <div className={styles['skills-list-block']}>
         {bundles.map((bundle) => {
-          const isExpanded = expanded[bundle.id] !== false;
+          const isExpanded = expanded[bundle.id] === true;
           const state = bundleEnabledState(bundle, skillByName);
           return (
             <div className={styles['skill-bundle-group']} key={bundle.id}>

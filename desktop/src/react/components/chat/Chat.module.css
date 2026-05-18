@@ -977,6 +977,7 @@
     font: inherit;
     font-size: 0.72rem;
     text-align: left;
+    text-decoration: none;
     white-space: nowrap;
     cursor: pointer;
     transition: background var(--duration-instant) var(--ease-out);
@@ -993,6 +994,7 @@
 .imageOutputCard {
     display: inline-flex;
     flex-direction: column;
+    position: relative;
     max-width: 100%;
     margin: var(--space-sm) 0;
     padding: 0.3rem;
@@ -1005,6 +1007,33 @@
 
 .imageOutputCard:hover {
     border-color: var(--text-muted, rgba(0,0,0,0.2));
+}
+
+.imageOutputDownloadButton {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.55rem;
+    z-index: 1;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: var(--bg-card, var(--bg));
+    border: 1px solid var(--border, rgba(0,0,0,0.1));
+    border-radius: var(--radius-chat-card);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    opacity: 0.84;
+    transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+
+.imageOutputDownloadButton:hover,
+.imageOutputDownloadButton:focus-visible {
+    opacity: 1;
+    color: var(--text);
+    background: var(--bg);
+    outline: none;
 }
 
 .imageOutputPreview {
@@ -1356,8 +1385,8 @@
 }
 
 .sessionFooter {
-    /* 和 sessionPanel 的切点对齐：遮挡发生在输入卡片中部，同时在滚到底时额外多留约三行呼吸空间。 */
-    height: calc(var(--chat-scrollbar-bottom-inset) + var(--space-lg) + 8rem);
+    /* 和 sessionPanel 的切点对齐：遮挡发生在输入卡片中部，同时在滚到底时额外留一行左右呼吸空间。 */
+    height: calc(var(--chat-scrollbar-bottom-inset) + var(--space-lg) + 5rem);
     flex-shrink: 0;
 }
 

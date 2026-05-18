@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { createDeferredResultExtension } from "../lib/extensions/deferred-result-ext.js";
 import { DeferredResultStore } from "../lib/deferred-result-store.js";
 
@@ -19,10 +19,15 @@ describe("DeferredResultExtension", () => {
   let store, pi, factory;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     store = new DeferredResultStore();
     factory = createDeferredResultExtension(store);
     pi = createMockPi();
     factory(pi);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("subscribes to session_start and session_shutdown", () => {
@@ -30,13 +35,27 @@ describe("DeferredResultExtension", () => {
     expect(pi.on).toHaveBeenCalledWith("session_shutdown", expect.any(Function));
   });
 
-  it("sends notification when task resolves for matching session", () => {
+  it("does not realtime-deliver newly resolved tasks through the extension", () => {
     pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
     store.defer("t1", "/s/a", { type: "image-generation" });
     store.resolve("t1", { files: ["img.png"] });
 
-    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-    const [msg, opts] = pi.sendMessage.mock.calls[0];
+    expect(pi.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "hana-background-result" }),
+      expect.anything(),
+    );
+  });
+
+  it("keeps session-start undelivered fallback for compatibility", async () => {
+    store.defer("t1", "/s/a", { type: "image-generation" });
+    store.resolve("t1", { files: ["img.png"] });
+
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    await vi.advanceTimersByTimeAsync(500);
+
+    const [msg, opts] = pi.sendMessage.mock.calls.find(([message]) => (
+      message.customType === "hana-background-result"
+    ));
     expect(msg.customType).toBe("hana-background-result");
     expect(msg.content).toContain("task-id=\"t1\"");
     expect(msg.content).toContain("status=\"success\"");
@@ -52,12 +71,14 @@ describe("DeferredResultExtension", () => {
   });
 
   it("sends failure notification", () => {
-    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
     store.defer("t1", "/s/a", { type: "image-generation" });
     store.fail("t1", "credit exhausted");
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    vi.advanceTimersByTime(500);
 
-    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
-    const [msg] = pi.sendMessage.mock.calls[0];
+    const [msg] = pi.sendMessage.mock.calls.find(([message]) => (
+      message.customType === "hana-background-result"
+    ));
     expect(msg.content).toContain("status=\"failed\"");
     expect(msg.content).toContain("credit exhausted");
   });
@@ -82,11 +103,14 @@ describe("DeferredResultExtension", () => {
   });
 
   it("escapes XML special characters in content", () => {
-    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
     store.defer("t1", "/s/a", { type: "test" });
     store.resolve("t1", { message: "a < b & c > d" });
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    vi.advanceTimersByTime(500);
 
-    const [msg] = pi.sendMessage.mock.calls[0];
+    const [msg] = pi.sendMessage.mock.calls.find(([message]) => (
+      message.customType === "hana-background-result"
+    ));
     expect(msg.content).not.toContain("< b");
     expect(msg.content).toContain("&lt;");
     expect(msg.content).toContain("&amp;");

@@ -26,6 +26,47 @@ describe("createPluginContext", () => {
     expect(typeof ctx.config.set).toBe("function");
   });
 
+  it("exposes server runtime scope when provided", () => {
+    const bus = { emit() {}, subscribe() {}, request() {}, hasHandler() {} };
+    const ctx = createPluginContext({
+      pluginId: "scoped-plugin",
+      pluginDir: "/plugins/scoped-plugin",
+      dataDir: "/plugin-data/scoped-plugin",
+      bus,
+      runtimeContext: {
+        serverId: "server_scope",
+        serverNodeId: "node_scope",
+        userId: "user_scope",
+        studioId: "studio_scope",
+        connectionKind: "local",
+        credentialKind: "loopback_token",
+        platformAccountId: null,
+        officialServiceKind: null,
+        executionBoundary: {
+          schemaVersion: 1,
+          boundaryId: "execb_node_scope_studio_scope",
+          kind: "local_process",
+          serverNodeId: "node_scope",
+          studioId: "studio_scope",
+        },
+      },
+    });
+
+    expect(ctx.serverId).toBe("server_scope");
+    expect(ctx.serverNodeId).toBe("node_scope");
+    expect(ctx.userId).toBe("user_scope");
+    expect(ctx.studioId).toBe("studio_scope");
+    expect(ctx.connectionKind).toBe("local");
+    expect(ctx.credentialKind).toBe("loopback_token");
+    expect(ctx.platformAccountId).toBeNull();
+    expect(ctx.officialServiceKind).toBeNull();
+    expect(ctx.executionBoundary).toMatchObject({
+      boundaryId: "execb_node_scope_studio_scope",
+      serverNodeId: "node_scope",
+      studioId: "studio_scope",
+    });
+  });
+
   it("config.get/set reads and writes plugin-data config.json", async () => {
     const fs = await import("fs");
     const os = await import("os");

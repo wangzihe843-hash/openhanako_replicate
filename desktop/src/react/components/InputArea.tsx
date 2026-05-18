@@ -5,7 +5,7 @@
  * 斜杠命令逻辑在 ./input/slash-commands.ts。
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import { useStore } from '../stores';
@@ -87,6 +87,19 @@ function chatImageMimeTypeForName(name: string, fallback?: string): string {
   return mimeMap[ext] || 'image/png';
 }
 
+async function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('file read failed'));
+    reader.onload = () => {
+      const value = typeof reader.result === 'string' ? reader.result : '';
+      const comma = value.indexOf(',');
+      resolve(comma >= 0 ? value.slice(comma + 1) : value);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 interface FileMentionRange {
   from: number;
   to: number;
@@ -152,11 +165,15 @@ export type { SlashItem };
 
 // ── 主组件 ──
 
-export function InputArea() {
-  return <InputAreaInner />;
+export interface InputAreaProps {
+  surface?: 'desktop' | 'mobile';
 }
 
-function InputAreaInner() {
+export function InputArea({ surface = 'desktop' }: InputAreaProps = {}) {
+  return <InputAreaInner surface={surface} />;
+}
+
+function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const { t, locale } = useI18n();
 
   // Zustand state
@@ -212,9 +229,11 @@ function InputAreaInner() {
   const isComposing = useRef(false);
   const pasteHandlerRef = useRef<(event: ClipboardEvent) => boolean>(() => false);
   const keyDownHandlerRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
+  const beforeInputHandlerRef = useRef<(event: InputEvent) => boolean>(() => false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const fileMenuRef = useRef<HTMLDivElement>(null);
   const slashBtnRef = useRef<HTMLButtonElement>(null);
+  const browserFileInputRef = useRef<HTMLInputElement>(null);
   const slashDismissedTextRef = useRef<string | null>(null);
   const fileMentionSearchSeqRef = useRef(0);
   const inputSurfaceRef = useRef<HTMLDivElement>(null);
@@ -324,6 +343,9 @@ function InputAreaInner() {
       },
       handlePaste: (_view, event) => pasteHandlerRef.current(event),
       handleKeyDown: (_view, event) => keyDownHandlerRef.current(event),
+      handleDOMEvents: {
+        beforeinput: (_view, event) => beforeInputHandlerRef.current(event as InputEvent),
+      },
     },
   });
 
@@ -439,7 +461,7 @@ function InputAreaInner() {
     await executeCompact(setSlashBusy, () => { editor?.commands.clearContent(); }, setSlashMenuOpen)();
   }, [editor]);
 
-  const skillItems = useSkillSlashItems();
+  const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile' });
 
   // 注：/stop /new /reset 仅走 bridge 平台（TG/Feishu/...）；桌面端有 GUI，菜单不暴露这些命令。
   // buildSlashCommands 第 5 参留作未来 web/mobile 端需要时再注入。后端 WS 通道 (type:'slash')
@@ -530,10 +552,61 @@ function InputAreaInner() {
     else openSlashMenu();
   }, [slashMenuOpen, dismissSlashMenu, openSlashMenu]);
 
+  const handleBrowserFileInputChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files || []);
+    event.currentTarget.value = '';
+    if (files.length === 0) return;
+    if (useStore.getState().attachedFiles.length >= 9) return;
+
+    for (const file of files) {
+      if (useStore.getState().attachedFiles.length >= 9) break;
+      const mimeType = file.type || chatImageMimeTypeForName(file.name);
+      try {
+        const base64Data = await readFileAsBase64(file);
+        const res = await hanaFetch('/api/upload-blob', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: file.name,
+            base64Data,
+            mimeType,
+            ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
+          }),
+        });
+        const data = await res.json();
+        const upload = data?.uploads?.[0];
+        if (upload?.dest) {
+          addAttachedFile({
+            fileId: upload.fileId,
+            path: upload.dest,
+            name: upload.name || file.name,
+            isDirectory: false,
+            base64Data,
+            mimeType,
+          });
+        } else {
+          useStore.getState().addToast(t('error.uploadFailed'), 'error');
+          console.warn('[upload] browser file upload failed', upload?.error || data);
+        }
+      } catch (err) {
+        console.warn('[upload] browser file upload error', err);
+        useStore.getState().addToast(t('error.uploadFailed'), 'error');
+      }
+    }
+  }, [addAttachedFile, t]);
+
   const handleAttach = useCallback(async () => {
-    const paths = await window.platform?.selectFiles?.();
-    if (paths && paths.length > 0) await attachFilesFromPaths(paths);
-  }, []);
+    if (surface === 'mobile') {
+      browserFileInputRef.current?.click();
+      return;
+    }
+    if (typeof window.platform?.selectFiles === 'function') {
+      const paths = await window.platform.selectFiles();
+      if (paths && paths.length > 0) await attachFilesFromPaths(paths);
+      return;
+    }
+    browserFileInputRef.current?.click();
+  }, [surface]);
 
   // Sync editor text to React state (drives hasInput / canSend) + slash menu detection + draft save
   useEffect(() => {
@@ -695,7 +768,7 @@ function InputAreaInner() {
   // ── Load thinking level once server port is ready + listen for plan mode sync ──
   const activeServerConnection = useStore(s => s.activeServerConnection);
   useEffect(() => {
-    if (activeServerConnection) {
+    if (activeServerConnection && surface !== 'mobile') {
       fetchConfig()
         .then(d => { if (d.thinking_level) setThinkingLevel(d.thinking_level as ThinkingLevel); })
         .catch((err: unknown) => console.warn('[InputArea] load config failed', err));
@@ -707,7 +780,7 @@ function InputAreaInner() {
     };
     window.addEventListener('hana-plan-mode', handler);
     return () => window.removeEventListener('hana-plan-mode', handler);
-  }, [activeServerConnection, setThinkingLevel]);
+  }, [activeServerConnection, setThinkingLevel, surface]);
 
   // ── Handle slash selection (builtin vs skill) ──
   const handleSlashSelect = useCallback((item: SlashItem) => {
@@ -1020,6 +1093,18 @@ function InputAreaInner() {
   ]);
 
   keyDownHandlerRef.current = handleEditorKeyDown as (event: KeyboardEvent) => boolean;
+  beforeInputHandlerRef.current = (event: InputEvent): boolean => {
+    if (surface !== 'mobile') return false;
+    if (event.defaultPrevented) return false;
+    if (event.inputType !== 'insertParagraph') return false;
+    return handleEditorKeyDown({
+      key: 'Enter',
+      shiftKey: false,
+      defaultPrevented: event.defaultPrevented,
+      isComposing: event.isComposing,
+      preventDefault: () => event.preventDefault(),
+    });
+  };
 
   const handleSlashResultClick = useCallback(() => {
     if (!slashResult?.deskDir) return;
@@ -1048,7 +1133,10 @@ function InputAreaInner() {
   }, [addToast, completingTodos, currentSessionPath, sessionTodos.length]);
 
   return (
-    <div className={styles['input-surface']} ref={inputSurfaceRef}>
+    <div
+      className={`${styles['input-surface']}${surface === 'mobile' ? ` ${styles['input-surface-mobile']}` : ''}`}
+      ref={inputSurfaceRef}
+    >
       <InputStatusBars
         slashBusy={slashBusy}
         slashBusyLabel={slashCommands.find(c => c.name === slashBusy)?.busyLabel || t('common.executing')}
@@ -1100,6 +1188,14 @@ function InputAreaInner() {
           />
         )}
         <div className={styles['input-wrapper']} ref={inputCardRef}>
+          <input
+            ref={browserFileInputRef}
+            className={styles['browser-file-input']}
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            onChange={handleBrowserFileInputChange}
+          />
           <div
             onKeyDown={(event) => {
               if (!event.defaultPrevented) handleEditorKeyDown(event);

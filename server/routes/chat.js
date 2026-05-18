@@ -23,12 +23,19 @@ import {
 } from "../session-stream-store.js";
 import { AppError } from "../../shared/errors.js";
 import { errorBus } from "../../shared/error-bus.js";
+import { createRequestContext } from "../http/boundary.js";
 import { waitTimingDetails } from "../../lib/tools/wait-contract.js";
 import { MAX_CHAT_IMAGE_BASE64_CHARS, isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.js";
 import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shared/video-mime.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import {
+  createWsClientRecord,
+  subscribeWsClientToSession,
+  wsClientCanReceiveEvent,
+  wsClientCanSendMessage,
+} from "../ws-scope.js";
 
 /** tool_start 事件只广播这些 arg 字段，避免传输完整文件内容（同步维护：chat-render-shim.ts extractToolDetail） */
 const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
@@ -55,6 +62,35 @@ function extractText(content) {
     .filter(b => b.type === "text" && b.text)
     .map(b => b.text)
     .join("");
+}
+
+function deferredResultFileBlocks(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const sessionFiles = Array.isArray(result.sessionFiles) ? result.sessionFiles : [];
+  return sessionFiles
+    .map(sessionFileToContentBlock)
+    .filter(Boolean);
+}
+
+function sessionFileToContentBlock(file) {
+  if (!file || typeof file !== "object") return null;
+  const filePath = file.filePath || file.realPath || null;
+  if (!filePath) return null;
+  const fileId = file.fileId || file.id || null;
+  const label = file.label || file.displayName || file.filename || path.basename(filePath);
+  const ext = file.ext ?? path.extname(filePath || label).toLowerCase().replace(/^\./, "");
+  return {
+    type: "file",
+    ...(fileId ? { fileId } : {}),
+    filePath,
+    label,
+    ext,
+    ...(file.mime ? { mime: file.mime } : {}),
+    ...(file.kind ? { kind: file.kind } : {}),
+    ...(file.storageKind ? { storageKind: file.storageKind } : {}),
+    ...(file.status ? { status: file.status } : {}),
+    ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+  };
 }
 
 export function toCompactionLifecycleWsMessage(event, sessionPath, getSessionByPath) {
@@ -157,11 +193,39 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     return ss;
   }
 
-  const clients = new Set();
+  const clients = new Map();
+
+  function createInitialWsClientRecord(requestContext, { assumeLocalOwner = false } = {}) {
+    return createWsClientRecord({
+      principal: assumeLocalOwner
+        ? {
+            kind: "local_user",
+            userId: requestContext.userId,
+            studioId: requestContext.studioId,
+            serverId: requestContext.serverId,
+            serverNodeId: requestContext.serverNodeId,
+            connectionKind: "local",
+            credentialKind: "loopback_token",
+            trustState: "local",
+          }
+        : requestContext.authPrincipal,
+      subscriptions: requestContext.studioId
+        ? [{ kind: "studio", studioId: requestContext.studioId }]
+        : [],
+    });
+  }
+
+  function ensureWsClientRecord(ws, requestContext, options = {}) {
+    const existing = clients.get(ws);
+    if (existing) return existing;
+    const client = createInitialWsClientRecord(requestContext, options);
+    clients.set(ws, client);
+    return client;
+  }
 
   function broadcast(msg) {
-    for (const client of clients) {
-      wsSend(client, msg);
+    for (const [clientWs, client] of clients) {
+      if (wsClientCanReceiveEvent(client, msg)) wsSend(clientWs, msg);
     }
   }
 
@@ -466,6 +530,12 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     } else if (event.type === "session_user_message") {
       if (!ss) return;
       emitStreamEvent(sessionPath, ss, { type: "session_user_message", message: event.message });
+    } else if (event.type === "session_created") {
+      broadcast({
+        type: "session_created",
+        sessionPath,
+        session: event.session || null,
+      });
     } else if (event.type === "session_status") {
       if (ss) {
         if (event.isStreaming) {
@@ -632,6 +702,11 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         reason: event.reason,
         meta: event.meta,
       });
+      if (event.status === "success") {
+        for (const block of deferredResultFileBlocks(event.result)) {
+          emitStreamEvent(sessionPath, ss, { type: "content_block", block });
+        }
+      }
     }
   });
 
@@ -652,11 +727,15 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
   wsRoute.get("/ws",
     upgradeWebSocket((c) => {
       let closed = false;
+      const requestContext = createRequestContext(c, engine);
+      const isAdapterWithoutHttpRequest = !c?.req;
 
       return {
         onOpen(event, ws) {
           activeWsClients++;
-          clients.add(ws);
+          clients.set(ws, createInitialWsClientRecord(requestContext, {
+            assumeLocalOwner: isAdapterWithoutHttpRequest,
+          }));
           cancelDisconnectAbort();
           debugLog()?.log("ws", "client connected");
         },
@@ -665,6 +744,20 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
           // Hono @hono/node-ws delivers event.data as a string for text frames
           const msg = wsParse(event.data);
           if (!msg) return;
+          let client = ensureWsClientRecord(ws, requestContext, {
+            assumeLocalOwner: isAdapterWithoutHttpRequest,
+          });
+          if (!wsClientCanSendMessage(client, msg)) {
+            wsSend(ws, { type: "error", message: "insufficient_scope", sessionPath: msg.sessionPath });
+            return;
+          }
+          if (msg.sessionPath && requestContext.studioId) {
+            client = subscribeWsClientToSession(client, {
+              studioId: requestContext.studioId,
+              sessionPath: msg.sessionPath,
+            });
+            clients.set(ws, client);
+          }
 
           // Wrap the async handler with error handling (replaces wrapWsHandler)
           (async () => {

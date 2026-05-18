@@ -1,5 +1,5 @@
 /**
- * desk-actions.ts — 工作空间文件操作（纯函数，不依赖 DOM）
+ * desk-actions.ts — 工作台文件操作（纯函数，不依赖 DOM）
  *
  * 从 desk-shim.ts 提取，供 React 组件直接调用。
  */
