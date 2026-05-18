@@ -57,7 +57,7 @@ describe("heartbeat prompt: auto-draft staleness directive", () => {
     expect(prompt).toContain("## 必须主动产出");
     expect(prompt).toContain("73 条用户对话");
     expect(prompt).toContain("xingye_propose_draft");
-    /** 列出全部 9 个模块名让 agent 选（与 SUPPORTED_MODULES in lib/tools/xingye-propose-draft-tool.js 同步） */
+    /** 列出全部 11 个模块名让 agent 选（与 SUPPORTED_MODULES in lib/tools/xingye-propose-draft-tool.js 同步） */
     expect(prompt).toContain("journal");
     expect(prompt).toContain("schedule");
     expect(prompt).toContain("moments");
@@ -67,6 +67,8 @@ describe("heartbeat prompt: auto-draft staleness directive", () => {
     expect(prompt).toContain("secret_space");
     expect(prompt).toContain("reading_notes");
     expect(prompt).toContain("divination");
+    expect(prompt).toContain("memory_candidate");
+    expect(prompt).toContain("relationship_state");
     /** 解释这是系统约束不是用户在催 */
     expect(prompt).toContain("系统层面");
   });

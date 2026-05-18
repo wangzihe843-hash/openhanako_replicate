@@ -36,6 +36,11 @@ interface SecretSpaceCategoryViewProps {
     records: SecretSpaceSampleRecord[];
     onOpen: (recordKey: string) => void;
   }) => ReactNode;
+  /**
+   * 详情视图里在删除按钮旁渲染的额外动作（如 memory_fragment 的「推到 pinned」）。
+   * 给当前选中的 record 返回 0..n 个按钮；返回 null 则不渲染额外动作。
+   */
+  renderRecordDetailExtraActions?: (record: SecretSpaceSampleRecord) => ReactNode;
 }
 
 export function SecretSpaceCategoryView({
@@ -47,6 +52,7 @@ export function SecretSpaceCategoryView({
   onRequestDeleteRecord,
   deleteError,
   renderRecordList,
+  renderRecordDetailExtraActions,
 }: SecretSpaceCategoryViewProps) {
   const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -127,17 +133,20 @@ export function SecretSpaceCategoryView({
         ) : inDetail && selectedRecord ? (
           <div className={styles.secretSpaceRecordDetailPane}>
             <SecretSpaceRecordCard record={selectedRecord} />
-            {onRequestDeleteRecord ? (
+            {(onRequestDeleteRecord || renderRecordDetailExtraActions) ? (
               <div className={styles.secretSpaceRecordDetailActions}>
-                <button
-                  type="button"
-                  className={styles.momentDeleteButton}
-                  onClick={handleDeleteClick}
-                  disabled={deleteBusy}
-                  data-testid={`secret-space-delete-${selectedRecord.key}`}
-                >
-                  {deleteBusy ? '删除中…' : deleteButtonLabel}
-                </button>
+                {renderRecordDetailExtraActions ? renderRecordDetailExtraActions(selectedRecord) : null}
+                {onRequestDeleteRecord ? (
+                  <button
+                    type="button"
+                    className={styles.momentDeleteButton}
+                    onClick={handleDeleteClick}
+                    disabled={deleteBusy}
+                    data-testid={`secret-space-delete-${selectedRecord.key}`}
+                  >
+                    {deleteBusy ? '删除中…' : deleteButtonLabel}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -39,6 +39,14 @@ vi.mock('./xingye-event-log', () => ({
   appendXingyeEventOnce: appendEventOnceMock,
 }));
 
+vi.mock('./xingye-relationship-state-drafts', () => ({
+  listRelationshipStateDrafts: vi.fn(async () => []),
+  confirmRelationshipStateDraft: vi.fn(async () => ({})),
+  discardRelationshipStateDraft: vi.fn(async () => true),
+}));
+
+const rsDraftsModule = await import('./xingye-relationship-state-drafts');
+
 describe('RelationshipStatePanel', () => {
   const agent: Agent = {
     id: 'agent-1',
@@ -54,6 +62,9 @@ describe('RelationshipStatePanel', () => {
     appendEventOnceMock.mockReset();
     appendEventOnceMock.mockResolvedValue({ id: 'event-1' });
     generateSuggestionMock.mockClear();
+    vi.mocked(rsDraftsModule.listRelationshipStateDrafts).mockReset().mockResolvedValue([]);
+    vi.mocked(rsDraftsModule.confirmRelationshipStateDraft).mockReset().mockResolvedValue({} as never);
+    vi.mocked(rsDraftsModule.discardRelationshipStateDraft).mockReset().mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -255,5 +266,128 @@ describe('RelationshipStatePanel', () => {
       );
     });
     warnSpy.mockRestore();
+  });
+
+  describe('pending draft section', () => {
+    function seedBaseState() {
+      saveRelationshipState({
+        agentId: 'agent-1',
+        targetType: 'user',
+        targetId: '__user__',
+        affection: 10,
+        trust: 0,
+        loyalty: 0,
+        jealousy: 0,
+        corruption: 0,
+        mood: '平静',
+        relationshipKey: 'stranger',
+        relationshipLabel: 'L',
+        source: 'manual',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    it('does not render the section when there are no pending drafts', async () => {
+      seedBaseState();
+      render(<RelationshipStatePanel agent={agent} profile={{ relationshipLabel: 'L' }} />);
+      await waitFor(() => {
+        expect(rsDraftsModule.listRelationshipStateDrafts).toHaveBeenCalled();
+      });
+      expect(screen.queryByTestId('relationship-state-pending-drafts')).not.toBeInTheDocument();
+    });
+
+    it('renders a draft and apply forwards draftId', async () => {
+      seedBaseState();
+      vi.mocked(rsDraftsModule.listRelationshipStateDrafts).mockResolvedValueOnce([
+        {
+          id: 'rsd-1',
+          targetType: 'user',
+          targetId: '__user__',
+          affectionDelta: 5,
+          trustDelta: 3,
+          loyaltyDelta: 0,
+          jealousyDelta: 0,
+          corruptionDelta: 0,
+          mood: '想他',
+          stateSummary: '她今天主动留下来',
+          reasonText: '晚饭后她没走',
+          source: 'xingye-heartbeat-tool',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      render(<RelationshipStatePanel agent={agent} profile={{ relationshipLabel: 'L' }} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('relationship-state-pending-drafts')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('relationship-state-draft-row-rsd-1')).toHaveTextContent('晚饭后她没走');
+
+      fireEvent.click(screen.getByTestId('relationship-state-draft-confirm-rsd-1'));
+      await waitFor(() => {
+        expect(rsDraftsModule.confirmRelationshipStateDraft).toHaveBeenCalledWith('agent-1', 'rsd-1');
+      });
+      expect(rsDraftsModule.discardRelationshipStateDraft).not.toHaveBeenCalled();
+    });
+
+    it('discard calls discard helper after user confirms window.confirm', async () => {
+      seedBaseState();
+      vi.mocked(rsDraftsModule.listRelationshipStateDrafts).mockResolvedValueOnce([
+        {
+          id: 'rsd-2',
+          targetType: 'user',
+          targetId: '__user__',
+          affectionDelta: 0,
+          trustDelta: 0,
+          loyaltyDelta: 0,
+          jealousyDelta: 0,
+          corruptionDelta: 0,
+          mood: '警惕',
+          source: 'xingye-heartbeat-tool',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<RelationshipStatePanel agent={agent} profile={{ relationshipLabel: 'L' }} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('relationship-state-draft-row-rsd-2')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('relationship-state-draft-discard-rsd-2'));
+      await waitFor(() => {
+        expect(rsDraftsModule.discardRelationshipStateDraft).toHaveBeenCalledWith('agent-1', 'rsd-2');
+      });
+      expect(rsDraftsModule.confirmRelationshipStateDraft).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+    });
+
+    it('cancelling window.confirm leaves the draft intact', async () => {
+      seedBaseState();
+      vi.mocked(rsDraftsModule.listRelationshipStateDrafts).mockResolvedValueOnce([
+        {
+          id: 'rsd-3',
+          targetType: 'user',
+          targetId: '__user__',
+          affectionDelta: 1,
+          trustDelta: 0,
+          loyaltyDelta: 0,
+          jealousyDelta: 0,
+          corruptionDelta: 0,
+          source: 'xingye-heartbeat-tool',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<RelationshipStatePanel agent={agent} profile={{ relationshipLabel: 'L' }} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('relationship-state-draft-row-rsd-3')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('relationship-state-draft-discard-rsd-3'));
+      expect(rsDraftsModule.discardRelationshipStateDraft).not.toHaveBeenCalled();
+      expect(screen.getByTestId('relationship-state-draft-row-rsd-3')).toBeInTheDocument();
+      confirmSpy.mockRestore();
+    });
   });
 });

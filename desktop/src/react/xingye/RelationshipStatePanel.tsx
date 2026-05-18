@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Agent } from '../types';
 import { saveXingyeRoleProfile, type XingyeRoleProfileDisplay } from './xingye-profile-store';
 import {
@@ -17,6 +17,12 @@ import {
   type XingyeRelationshipState,
   type XingyeRelationshipStateHistoryItem,
 } from './xingye-state-store';
+import {
+  confirmRelationshipStateDraft,
+  discardRelationshipStateDraft,
+  listRelationshipStateDrafts,
+  type XingyePendingRelationshipStateDraft,
+} from './xingye-relationship-state-drafts';
 import styles from './XingyeShell.module.css';
 
 interface RelationshipStatePanelProps {
@@ -149,6 +155,50 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
   const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingRelationshipStateDraft[]>([]);
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+
+  const reloadDrafts = useCallback(async () => {
+    try {
+      const rows = await listRelationshipStateDrafts(agent.id);
+      setPendingDrafts(rows);
+    } catch {
+      setPendingDrafts([]);
+    }
+  }, [agent.id]);
+
+  useEffect(() => {
+    void reloadDrafts();
+  }, [reloadDrafts]);
+
+  const handleConfirmDraft = useCallback(async (draftId: string) => {
+    setDraftBusyId(draftId);
+    setError(null);
+    try {
+      await confirmRelationshipStateDraft(agent.id, draftId);
+      await reloadDrafts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftBusyId(null);
+    }
+  }, [agent.id, reloadDrafts]);
+
+  const handleDiscardDraft = useCallback(async (draftId: string) => {
+    if (typeof window !== 'undefined' && !window.confirm('确定丢弃这条心跳巡检提议的关系状态草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setDraftBusyId(draftId);
+    setError(null);
+    try {
+      await discardRelationshipStateDraft(agent.id, draftId);
+      await reloadDrafts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftBusyId(null);
+    }
+  }, [agent.id, reloadDrafts]);
 
   if (!relationshipState) return null;
 
@@ -295,6 +345,84 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
         </div>
 
         {error && <div className={styles.relationshipError}>状态建议生成失败：{error}</div>}
+
+        {pendingDrafts.length > 0 ? (
+          <section
+            className={styles.relationshipSuggestion}
+            style={{ borderLeft: '3px solid #ffb84a' }}
+            data-testid="relationship-state-pending-drafts"
+            aria-label="待确认草稿 · 来自心跳巡检"
+          >
+            <div className={styles.relationshipSuggestionHeader}>
+              <strong>待确认草稿 · 来自心跳巡检</strong>
+              <span>这是 TA 主动提议的状态变化，应用后才会落到本地</span>
+            </div>
+            {pendingDrafts.map((d) => {
+              const deltaItems = METRICS
+                .map((metric) => ({ metric, delta: d[metric.key] }))
+                .filter(({ delta }) => delta !== 0);
+              return (
+                <div
+                  key={d.id}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}
+                  data-testid={`relationship-state-draft-row-${d.id}`}
+                >
+                  {deltaItems.length > 0 ? (
+                    <div className={styles.relationshipDeltaGrid}>
+                      {deltaItems.map(({ metric, delta }) => (
+                        <div key={metric.key} aria-label={`${metric.label} 建议变化 ${formatDelta(delta)}`}>
+                          <span>{metric.label} 建议变化</span>
+                          <strong>{formatDelta(delta)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {d.mood || d.stateSummary ? (
+                    <div className={styles.relationshipInfoGrid}>
+                      {d.mood ? (
+                        <div className={styles.relationshipInfoItem}>
+                          <span>建议心情</span>
+                          <strong>{d.mood}</strong>
+                        </div>
+                      ) : null}
+                      {d.stateSummary ? (
+                        <div className={styles.relationshipInfoItem}>
+                          <span>建议摘要</span>
+                          <strong>{d.stateSummary}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {d.reasonText ? (
+                    <div className={styles.relationshipTextBlock}>
+                      <span>建议原因</span>
+                      <p>{d.reasonText}</p>
+                    </div>
+                  ) : null}
+                  <div className={styles.relationshipSuggestionActions}>
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmDraft(d.id)}
+                      disabled={draftBusyId === d.id}
+                      data-testid={`relationship-state-draft-confirm-${d.id}`}
+                    >
+                      应用建议
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => void handleDiscardDraft(d.id)}
+                      disabled={draftBusyId === d.id}
+                      data-testid={`relationship-state-draft-discard-${d.id}`}
+                    >
+                      丢弃
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
 
         {relationshipState.previousStates?.length ? (
           <div className={styles.relationshipHistoryList}>

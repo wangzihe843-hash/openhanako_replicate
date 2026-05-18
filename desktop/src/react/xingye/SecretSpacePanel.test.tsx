@@ -607,7 +607,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     cleanup();
   });
 
-  it('creates candidate from manual form without using record mocks', async () => {
+  it('manual form writes to memory_fragment.jsonl (not pinned, not localStorage)', async () => {
     render(<SecretSpacePanel agent={agent} />);
 
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
@@ -615,16 +615,22 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
-    const contentInput = within(manualForm).getByPlaceholderText('输入一条你希望记住的要点');
+    const contentInput = within(manualForm).getByPlaceholderText('输入一条你希望角色记住的回忆');
 
     fireEvent.change(contentInput, {
       target: { value: 'manual note from secret space' },
     });
-    fireEvent.click(within(manualForm).getByRole('button', { name: '创建候选记忆' }));
+    fireEvent.click(within(manualForm).getByRole('button', { name: '保存到私藏回忆' }));
 
     await waitFor(() => {
       expect(screen.queryByTestId('secret-space-manual-candidate')).not.toBeInTheDocument();
     });
+    /** Record landed in jsonl, NOT in pinned, NOT in localStorage candidates. */
+    const rows = jsonlStore.get(storeKey('agent-secret-1', 'secret-space/memory_fragment.jsonl')) ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ body: 'manual note from secret space' });
+    expect(pinnedStore.get('agent-secret-1') ?? []).toEqual([]);
+    expect(window.localStorage.getItem('xingye.memoryCandidates')).toBeNull();
   });
 
   it('reads and displays pinned memory as the memory_fragment main list', async () => {
@@ -658,47 +664,65 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     expect(screen.queryByTestId(/^secret-space-record-row-memory-fragment-pinned-/)).not.toBeInTheDocument();
   });
 
-  it('manual memory input creates a pending candidate in the candidate area', async () => {
+  it('manual memory input appears in memory_fragment main list, without writing pinned', async () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
     fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
     fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
-      target: { value: 'pending memory candidate from secret space' },
+      target: { value: 'private memory from secret space' },
     });
     fireEvent.click(within(manualForm).getByTestId('secret-space-create-memory-candidate'));
 
+    /**
+     * After saving, the manual modal closes and the new memory_fragment record is loaded
+     * back into the list. Pinned is untouched (parallel storage — user later decides
+     * whether to also push this record into pinned).
+     */
     await waitFor(() => {
-      expect(screen.getByTestId(/^memory-candidate-row-/)).toBeInTheDocument();
+      const row = screen.getAllByText(/private memory from secret space/i).find((el) =>
+        el.closest('[data-testid^="secret-space-record-row-"]'),
+      );
+      expect(row).toBeTruthy();
     });
-    const row = screen.getByTestId(/^memory-candidate-row-/);
-    expect(within(row).getByDisplayValue('pending memory candidate from secret space')).toBeInTheDocument();
-    expect(within(row).getByTestId(/^memory-candidate-status-/)).toHaveTextContent('待定');
+    expect(pinnedStore.get('agent-secret-1') ?? []).toEqual([]);
   });
 
-  it('refreshes the memory_fragment main list after confirming a pending candidate to pinned', async () => {
+  it('manual memory record exposes a "push to pinned" action that, once clicked, writes pinned', async () => {
     render(<SecretSpacePanel agent={agent} />);
     fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
     fireEvent.click(screen.getByTestId('secret-space-open-memory-create'));
 
     const manualForm = screen.getByTestId('secret-space-manual-candidate');
     fireEvent.change(within(manualForm).getByTestId('secret-space-memory-candidate-content'), {
-      target: { value: 'confirmed pinned from candidate' },
+      target: { value: 'pushable private memory' },
     });
     fireEvent.click(within(manualForm).getByTestId('secret-space-create-memory-candidate'));
-    await waitFor(() => expect(screen.getByTestId(/^memory-candidate-row-/)).toBeInTheDocument());
 
-    const candidateRow = screen.getByTestId(/^memory-candidate-row-/);
-    const buttons = within(candidateRow).getAllByRole('button');
-    fireEvent.click(buttons[buttons.length - 1]);
+    /** Find the record row, open its detail, then click "push to pinned". */
+    const recordRow = await waitFor(() => {
+      const els = screen.getAllByText(/pushable private memory/i);
+      const row = els
+        .map((el) => el.closest('[data-testid^="secret-space-record-row-"]'))
+        .find((el): el is HTMLElement => !!el);
+      if (!row) throw new Error('record not found');
+      return row;
+    });
+    fireEvent.click(recordRow);
+
+    const pushBtn = await waitFor(() => {
+      const btn = screen.queryAllByRole('button').find((b) =>
+        b.textContent?.includes('推到 OpenHanako pinned'),
+      );
+      if (!btn) throw new Error('push button not found');
+      return btn;
+    });
+    fireEvent.click(pushBtn);
 
     await waitFor(() => {
-      expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).toHaveTextContent(
-        'confirmed pinned from candidate',
-      );
+      expect(pinnedStore.get('agent-secret-1')).toEqual(['pushable private memory']);
     });
-    expect(pinnedStore.get('agent-secret-1')).toEqual(['confirmed pinned from candidate']);
   });
 
   it('deletes one pinned memory while preserving the others', async () => {

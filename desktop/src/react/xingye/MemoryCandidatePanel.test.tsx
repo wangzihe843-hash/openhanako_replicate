@@ -151,4 +151,5 @@ describe('MemoryCandidatePanel', () => {
       expect(screen.queryByText('reject-me')).not.toBeInTheDocument();
     });
   });
+
 });

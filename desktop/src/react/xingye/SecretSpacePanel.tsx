@@ -38,11 +38,16 @@ import {
   type XingyePendingSecretSpaceDraft,
 } from './xingye-secret-space-drafts';
 import {
-  createXingyeMemoryCandidate,
   importanceNumberFromLevel,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS,
   XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT,
 } from './xingye-memory-candidate-store';
+import {
+  confirmMemoryCandidateDraft,
+  discardMemoryCandidateDraft,
+  listMemoryCandidateDrafts,
+  type XingyePendingMemoryCandidateDraft,
+} from './xingye-memory-candidate-drafts';
 import styles from './XingyeShell.module.css';
 
 interface SecretSpacePanelProps {
@@ -132,6 +137,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * memory_fragment 视图里"OpenHanako pinned"那一支条目用的来源标志。
+ * memory_fragment.jsonl 自身的条目（来自心跳草稿确认或秘密空间手动建私藏）source 是
+ * `xingye-heartbeat-tool` / `xingye-secret-space-store` 等；只有这个常量值代表
+ * "其实是 OpenHanako 自动从聊天提取的 pinned bullet,只是借 memory_fragment 视图展示"。
+ * UI 用它判断：是否展示"删除 pinned"按钮、是否隐藏"推到 pinned"按钮。
+ */
+export const MEMORY_FRAGMENT_PINNED_SOURCE = 'OpenHanako pinned';
+
 function pinnedMemoryToRecord(pin: string, index: number): SecretSpaceSampleRecord {
   const body = pin.trim();
   const title = body.length > 48 ? `${body.slice(0, 48)}…` : body;
@@ -143,7 +157,7 @@ function pinnedMemoryToRecord(pin: string, index: number): SecretSpaceSampleReco
     summary: body.length > 120 ? `${body.slice(0, 120)}…` : body,
     createdAt: '1970-01-01T00:00:00.000Z',
     kind: 'memory_fragment',
-    source: 'OpenHanako pinned',
+    source: MEMORY_FRAGMENT_PINNED_SOURCE,
   };
 }
 
@@ -152,8 +166,21 @@ function pinnedMemoryRecordsFromPins(pins: string[]): SecretSpaceSampleRecord[] 
 }
 
 /**
+ * memory_fragment 视图的合并逻辑：jsonl 里的私藏回忆条目排在最前（最近创建在最上），
+ * 后面接 OpenHanako pinned 的 bullets（按 pinned.md 顺序）。
+ * 两者来源由各自 record.source 区分；UI 用 MEMORY_FRAGMENT_PINNED_SOURCE 判定。
+ */
+function mergeMemoryFragmentRecords(
+  jsonlRecords: SecretSpaceSampleRecord[],
+  pinnedRecords: SecretSpaceSampleRecord[],
+): SecretSpaceSampleRecord[] {
+  return [...jsonlRecords, ...pinnedRecords];
+}
+
+/**
  * 允许在本面板追加纯文本 JSONL 的分类。
- * `state` 使用上方 RelationshipStatePanel，不进此列表；`memory_fragment` 用手动记忆候选表单。
+ * `state` 使用上方 RelationshipStatePanel，不进此列表；`memory_fragment` 用「手动记忆候选」
+ * 入口（弹出表单 → 直接写 memory_fragment.jsonl，不再经由 OpenHanako pinned 候选流程）。
  */
 const ADD_RECORD_CATEGORY_IDS = new Set<SecretSpaceCategoryId>([
   'draft_reply',
@@ -200,6 +227,21 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   >({});
   const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
   const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
+
+  /**
+   * 记忆候选「待确认草稿」单独管，schema 与秘密空间 drafts 不同（带 importance）。
+   * 展示在 memory_fragment 视图顶部，用户在此采纳 → 写 memory_fragment.jsonl,
+   * 不自动写 pinned；用户再在卡片上手动决定要不要「推到 pinned」。
+   */
+  const [pendingMemoryCandidateDrafts, setPendingMemoryCandidateDrafts] = useState<
+    XingyePendingMemoryCandidateDraft[]
+  >([]);
+  const [memoryDraftBusyId, setMemoryDraftBusyId] = useState<string | null>(null);
+  const [memoryDraftError, setMemoryDraftError] = useState<string | null>(null);
+
+  /** memory_fragment 列表卡片上"推到 pinned"操作的 busy / error 状态，按 recordId 分。 */
+  const [pushPinnedBusyKey, setPushPinnedBusyKey] = useState<string | null>(null);
+  const [pushPinnedFlash, setPushPinnedFlash] = useState<string | null>(null);
 
   useEffect(() => {
     if (!agent?.id) {
@@ -349,12 +391,15 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     setAiLoading(false);
   }, [activeCategory, agent?.id]);
 
-  const reloadPinnedMemoryFragmentRecords = useCallback(async () => {
+  const reloadMemoryFragmentRecords = useCallback(async () => {
     if (!agent?.id) return;
-    const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
+    const [pins, jsonl] = await Promise.all([
+      loadAgentPinnedMemory(agent.id, hanaFetch).catch(() => [] as string[]),
+      listSecretSpaceRecords(agent.id, 'memory_fragment').catch(() => [] as SecretSpaceSampleRecord[]),
+    ]);
     setRecordsByCategory((prev) => ({
       ...prev,
-      memory_fragment: pinnedMemoryRecordsFromPins(pins),
+      memory_fragment: mergeMemoryFragmentRecords(jsonl, pinnedMemoryRecordsFromPins(pins)),
     }));
   }, [agent?.id]);
 
@@ -362,10 +407,16 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     if (!agent?.id || !activeCategory) return undefined;
     let cancelled = false;
     const load = async () => {
-      const records =
-        activeCategory === 'memory_fragment'
-          ? pinnedMemoryRecordsFromPins(await loadAgentPinnedMemory(agent.id, hanaFetch).catch(() => []))
-          : await listSecretSpaceRecords(agent.id, activeCategory).catch(() => []);
+      let records: SecretSpaceSampleRecord[];
+      if (activeCategory === 'memory_fragment') {
+        const [pins, jsonl] = await Promise.all([
+          loadAgentPinnedMemory(agent.id, hanaFetch).catch(() => [] as string[]),
+          listSecretSpaceRecords(agent.id, 'memory_fragment').catch(() => [] as SecretSpaceSampleRecord[]),
+        ]);
+        records = mergeMemoryFragmentRecords(jsonl, pinnedMemoryRecordsFromPins(pins));
+      } else {
+        records = await listSecretSpaceRecords(agent.id, activeCategory).catch(() => []);
+      }
       if (cancelled) return;
       setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
     };
@@ -387,9 +438,121 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     if (!agent?.id || activeCategory !== 'memory_fragment') return undefined;
     return subscribeAgentPinnedMemoryChanged((detail) => {
       if (detail.agentId !== agent.id) return;
-      void reloadPinnedMemoryFragmentRecords();
+      void reloadMemoryFragmentRecords();
     });
-  }, [agent?.id, activeCategory, reloadPinnedMemoryFragmentRecords]);
+  }, [agent?.id, activeCategory, reloadMemoryFragmentRecords]);
+
+  /**
+   * memory_fragment 视图打开时，加载本 agent 的「记忆候选待确认草稿」(memory-candidate/drafts.jsonl)。
+   * 仅在 memory_fragment 视图展示——其它视图不渲染。
+   */
+  const reloadMemoryCandidateDrafts = useCallback(async () => {
+    if (!agent?.id) {
+      setPendingMemoryCandidateDrafts([]);
+      return;
+    }
+    try {
+      const drafts = await listMemoryCandidateDrafts(agent.id);
+      setPendingMemoryCandidateDrafts(drafts);
+    } catch (err) {
+      setMemoryDraftError(err instanceof Error ? err.message : String(err));
+    }
+  }, [agent?.id]);
+
+  useEffect(() => {
+    if (activeCategory === 'memory_fragment') {
+      void reloadMemoryCandidateDrafts();
+    }
+  }, [activeCategory, reloadMemoryCandidateDrafts]);
+
+  const handleConfirmMemoryCandidateDraft = async (draftId: string) => {
+    if (!agent?.id) return;
+    setMemoryDraftBusyId(draftId);
+    setMemoryDraftError(null);
+    try {
+      await confirmMemoryCandidateDraft(agent.id, draftId);
+      setPendingMemoryCandidateDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      await reloadMemoryFragmentRecords();
+    } catch (err) {
+      setMemoryDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMemoryDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardMemoryCandidateDraft = async (draftId: string) => {
+    if (!agent?.id) return;
+    if (typeof window !== 'undefined' && !window.confirm('确定丢弃这条心跳巡检提议的记忆草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setMemoryDraftBusyId(draftId);
+    setMemoryDraftError(null);
+    try {
+      const ok = await discardMemoryCandidateDraft(agent.id, draftId);
+      if (ok) {
+        setPendingMemoryCandidateDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      } else {
+        await reloadMemoryCandidateDrafts();
+      }
+    } catch (err) {
+      setMemoryDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMemoryDraftBusyId(null);
+    }
+  };
+
+  /**
+   * 单条 memory_fragment 记录「推到 pinned」：拿条目正文，GET 现有 pins，去重后 PUT 回去。
+   * 不修改 memory_fragment.jsonl 本身——条目仍在私藏回忆列表里。pinned 是另一份独立存储,
+   * 由 OpenHanako 内置 memory 维护；本动作让两者就这一条记录形成"也固化进 pinned"的并集。
+   */
+  const handlePushRecordToPinned = async (record: SecretSpaceSampleRecord) => {
+    if (!agent?.id) return;
+    const bullet = normalizePinBulletForMatch(record.body);
+    if (!bullet) {
+      setPushPinnedFlash('内容为空，无法推到 pinned。');
+      return;
+    }
+    setPushPinnedBusyKey(record.key);
+    setPushPinnedFlash(null);
+    try {
+      const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
+      const already = pins.some((p) => normalizePinBulletForMatch(p) === bullet);
+      if (already) {
+        setPushPinnedFlash('pinned 中已存在相同内容；无需重复写入。');
+        await reloadMemoryFragmentRecords();
+        return;
+      }
+      const nextPins = [...pins, record.body.trim()];
+      const putRes = await hanaFetch(`/api/agents/${agent.id}/pinned`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pins: nextPins }),
+      });
+      const putJson: unknown = await putRes.json().catch(() => ({}));
+      if (!putRes.ok) {
+        const err =
+          isRecord(putJson) && typeof putJson.error === 'string'
+            ? putJson.error
+            : `PUT pinned failed (${putRes.status})`;
+        throw new Error(err);
+      }
+      if (isRecord(putJson) && putJson.error) {
+        throw new Error(String(putJson.error));
+      }
+      emitAgentPinnedMemoryChanged({
+        agentId: agent.id,
+        source: 'xingye-secret-space',
+        pinsCount: nextPins.length,
+      });
+      setPushPinnedFlash('已推到 pinned。');
+      await reloadMemoryFragmentRecords();
+    } catch (e) {
+      setPushPinnedFlash(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPushPinnedBusyKey(null);
+    }
+  };
 
   const handleAppendSecretSpaceRecord = async () => {
     if (!agent?.id || !activeCategory || !ADD_RECORD_CATEGORY_IDS.has(activeCategory)) return;
@@ -420,28 +583,51 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     }
   };
 
-  const handleDeletePinnedMemoryFragment = async (recordKey: string) => {
+  /**
+   * memory_fragment 删除有两条路径：
+   *  - 条目 source === MEMORY_FRAGMENT_PINNED_SOURCE：从 OpenHanako pinned.md 移除；
+   *  - 其它（jsonl 私藏回忆）：从 secret-space/memory_fragment.jsonl 移除（不动 pinned）。
+   * 推到 pinned 之后再删 jsonl 不会自动回收 pinned 那一份——两份独立维护。
+   */
+  const handleDeleteMemoryFragment = async (recordKey: string) => {
     if (!agent?.id) {
       setSecretSpaceDeleteError('删除失败：当前未绑定角色（缺少 agentId）。');
       return false;
     }
     const selected = recordsByCategory.memory_fragment.find((record) => record.key === recordKey);
     if (!selected) {
-      setSecretSpaceDeleteError('删除失败：未找到当前 pinned 回忆。');
+      setSecretSpaceDeleteError('删除失败：未找到这条回忆。');
       return false;
     }
+    setSecretSpaceDeleteError(null);
+    /** jsonl 来源：走标准 secret_space delete。 */
+    if (selected.source !== MEMORY_FRAGMENT_PINNED_SOURCE) {
+      try {
+        const ok = await deleteSecretSpaceRecord(agent.id, 'memory_fragment', recordKey);
+        if (!ok) {
+          setSecretSpaceDeleteError('删除失败：存储中未找到该回忆（可能已被删除）。');
+          await reloadMemoryFragmentRecords();
+          return false;
+        }
+        await reloadMemoryFragmentRecords();
+        return true;
+      } catch (e) {
+        setSecretSpaceDeleteError(e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    }
+    /** pinned 来源：从 pinned.md 移除（保持兼容旧行为）。 */
     const target = normalizePinBulletForMatch(selected.body);
     if (!target) {
       setSecretSpaceDeleteError('删除失败：当前 pinned 回忆内容为空。');
       return false;
     }
-    setSecretSpaceDeleteError(null);
     try {
       const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
       const removeIndex = pins.findIndex((pin) => normalizePinBulletForMatch(pin) === target);
       if (removeIndex < 0) {
         setSecretSpaceDeleteError('删除失败：当前 pinned 中未找到这条回忆（可能已经被删除）。');
-        await reloadPinnedMemoryFragmentRecords();
+        await reloadMemoryFragmentRecords();
         return false;
       }
       const nextPins = pins.filter((_, index) => index !== removeIndex);
@@ -466,10 +652,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         source: 'xingye-secret-space',
         pinsCount: nextPins.length,
       });
-      setRecordsByCategory((prev) => ({
-        ...prev,
-        memory_fragment: pinnedMemoryRecordsFromPins(nextPins),
-      }));
+      await reloadMemoryFragmentRecords();
       return true;
     } catch (e) {
       setSecretSpaceDeleteError(e instanceof Error ? e.message : String(e));
@@ -541,27 +724,34 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     }
   };
 
-  const handleCreateManualCandidate = () => {
+  const handleCreateManualCandidate = async () => {
     if (!agent?.id) return;
     setManualError(null);
     const content = manualContent.trim();
     if (!content) {
-      setManualError('请填写候选记忆内容。');
+      setManualError('请填写回忆内容。');
       return;
     }
     try {
-      createXingyeMemoryCandidate(agent.id, {
-        content,
-        reason: manualReason.trim() || XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT,
+      const recordKey = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const reasonText = manualReason.trim() || XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT;
+      await appendSecretSpaceRecord(agent.id, 'memory_fragment', {
+        key: recordKey,
+        id: recordKey,
+        recordId: recordKey,
+        title: content.length > 48 ? `${content.slice(0, 48)}…` : content,
+        body: content,
+        summary: content.length > 120 ? `${content.slice(0, 120)}…` : content,
+        source: 'manual-secret-space',
         importance: importanceNumberFromLevel(manualLevel),
-        sourceDomain: 'secret_space',
-        sourceId: 'manual-secret-space',
-        target: 'pinned',
+        importanceLevel: manualLevel,
+        reason: reasonText,
       });
       setManualContent('');
       setManualReason(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
       setManualLevel('medium');
       setMemoryCreateOpen(false);
+      await reloadMemoryFragmentRecords();
     } catch (e) {
       setManualError(e instanceof Error ? e.message : String(e));
     }
@@ -577,6 +767,70 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const memoryFragmentFooter =
     agent?.id ? (
       <div className={styles.secretSpaceMemoryFooter}>
+        {pendingMemoryCandidateDrafts.length > 0 ? (
+          <section
+            className={styles.profileForm}
+            style={{ borderLeft: '3px solid #ffb84a', paddingLeft: 12, marginBottom: 12 }}
+            data-testid="memory-fragment-pending-drafts"
+            aria-label="待确认草稿 · 来自心跳巡检"
+          >
+            <h4 className={styles.detailSectionTitle} style={{ marginTop: 0 }}>
+              待确认草稿 · 来自心跳巡检
+            </h4>
+            <p className={styles.secretSpacePlaceholder} style={{ margin: 0 }}>
+              这是 TA 在心跳巡检里主动提议的回忆。点「采纳为回忆」后写入私藏回忆列表，
+              **不会**自动写到 OpenHanako pinned；之后你可以在每条回忆卡片上再单独决定要不要「推到 pinned」。
+            </p>
+            {memoryDraftError ? <p className={styles.saveStatus}>{memoryDraftError}</p> : null}
+            {pendingMemoryCandidateDrafts.map((d) => (
+              <div
+                key={d.id}
+                className={styles.profileForm}
+                style={{ border: '1px dashed rgba(0,0,0,0.2)', padding: 10, marginBottom: 8 }}
+                data-testid={`memory-fragment-pending-draft-${d.id}`}
+              >
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+                  <strong>记忆候选草稿</strong>
+                  <span className={styles.secretSpaceRecordMeta}>
+                    重要度 {d.importanceLevel === 'low' ? '低' : d.importanceLevel === 'high' ? '高' : '中'}
+                  </span>
+                  <span className={styles.secretSpaceRecordMeta}>来源 {d.source}</span>
+                </div>
+                <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{d.content}</p>
+                {d.reason ? (
+                  <p className={styles.secretSpacePlaceholder} style={{ margin: 0 }}>
+                    理由：{d.reason}
+                  </p>
+                ) : null}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleConfirmMemoryCandidateDraft(d.id)}
+                    disabled={memoryDraftBusyId === d.id}
+                    data-testid={`memory-fragment-pending-draft-confirm-${d.id}`}
+                  >
+                    {memoryDraftBusyId === d.id ? '处理中…' : '采纳为回忆'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleDiscardMemoryCandidateDraft(d.id)}
+                    disabled={memoryDraftBusyId === d.id}
+                    data-testid={`memory-fragment-pending-draft-discard-${d.id}`}
+                  >
+                    丢弃
+                  </button>
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : null}
+        {pushPinnedFlash ? (
+          <p className={styles.saveStatus} role="status" data-testid="memory-fragment-push-pinned-flash">
+            {pushPinnedFlash}
+          </p>
+        ) : null}
         <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} />
       </div>
     ) : null;
@@ -614,17 +868,17 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             </button>
           </div>
           <p className={styles.secretSpaceMemoryCreateHint}>
-            手动保存为「重要记忆候选」；确认后写入 OpenHanako{' '}
-            <code className={styles.inlineCode}>pinned.md</code>。
+            手动添加到 TA 的私藏回忆列表。**不会**自动写入 OpenHanako{' '}
+            <code className={styles.inlineCode}>pinned.md</code>；之后可以在卡片上单独「推到 pinned」。
           </p>
           <label className={styles.profileField}>
-            <span>候选记忆内容</span>
+            <span>回忆内容</span>
             <textarea
               value={manualContent}
               onChange={(e) => setManualContent(e.target.value)}
               rows={3}
-              placeholder="输入一条你希望记住的要点"
-              aria-label="候选记忆内容"
+              placeholder="输入一条你希望角色记住的回忆"
+              aria-label="回忆内容"
               data-testid="secret-space-memory-candidate-content"
             />
           </label>
@@ -663,10 +917,10 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             <button
               type="button"
               className={styles.secretSpaceMemoryCreatePrimary}
-              onClick={handleCreateManualCandidate}
+              onClick={() => void handleCreateManualCandidate()}
               data-testid="secret-space-create-memory-candidate"
             >
-              创建候选记忆
+              保存到私藏回忆
             </button>
           </div>
         </div>
@@ -945,7 +1199,20 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
               footer={categoryFooter}
               renderRecordList={renderRecordListForCategory}
               onRequestDeleteRecord={
-                agent?.id ? (key) => handleDeletePinnedMemoryFragment(key) : undefined
+                agent?.id ? (key) => handleDeleteMemoryFragment(key) : undefined
+              }
+              renderRecordDetailExtraActions={(record) =>
+                record.source !== MEMORY_FRAGMENT_PINNED_SOURCE ? (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handlePushRecordToPinned(record)}
+                    disabled={pushPinnedBusyKey === record.key}
+                    data-testid={`memory-fragment-push-pinned-${record.key}`}
+                  >
+                    {pushPinnedBusyKey === record.key ? '推送中…' : '推到 OpenHanako pinned'}
+                  </button>
+                ) : null
               }
               deleteError={secretSpaceDeleteError}
             />

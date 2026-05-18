@@ -58,6 +58,12 @@ export const XINGYE_EVENT_TYPES = [
   'reading_notes.draft_proposed',
   'reading_notes.draft_discarded',
   'reading_notes.draft_confirmed',
+  'memory_candidate.draft_proposed',
+  'memory_candidate.draft_discarded',
+  'memory_candidate.draft_confirmed',
+  'relationship_state.draft_proposed',
+  'relationship_state.draft_discarded',
+  'relationship_state.draft_confirmed',
 ] as const;
 
 export type XingyeEventType = typeof XINGYE_EVENT_TYPES[number];
