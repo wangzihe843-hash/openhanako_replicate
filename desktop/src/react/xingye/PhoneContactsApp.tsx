@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
@@ -41,6 +41,12 @@ import {
   useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
 import { collectRecentContextForAgent } from './xingye-recent-context';
+import {
+  confirmPhoneContactDraft,
+  discardPhoneContactDraft,
+  listPhoneContactDrafts,
+  type XingyePendingPhoneContactDraft,
+} from './xingye-phone-contact-drafts';
 import styles from './XingyeShell.module.css';
 
 type ContactsListView =
@@ -110,6 +116,73 @@ export function PhoneContactsApp({
   const [listView, setListView] = useState<ContactsListView>('home');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [factionFilter, setFactionFilter] = useState<string | null>(null);
+  const [pendingPhoneContactDrafts, setPendingPhoneContactDrafts] = useState<XingyePendingPhoneContactDraft[]>([]);
+  const [phoneContactDraftError, setPhoneContactDraftError] = useState<string | null>(null);
+  const [phoneContactDraftBusyId, setPhoneContactDraftBusyId] = useState<string | null>(null);
+
+  const reloadPhoneContactDrafts = useCallback(async () => {
+    if (!ownerAgentId) {
+      setPendingPhoneContactDrafts([]);
+      return;
+    }
+    try {
+      const drafts = await listPhoneContactDrafts(ownerAgentId);
+      setPendingPhoneContactDrafts(drafts);
+    } catch (error) {
+      console.warn('[PhoneContactsApp] reload pending phone-contact drafts failed:', error);
+    }
+  }, [ownerAgentId]);
+
+  useEffect(() => {
+    if (listView === 'home' && !selectedContact) {
+      void reloadPhoneContactDrafts();
+    }
+  }, [listView, selectedContact, reloadPhoneContactDrafts, _phoneStorageVersion]);
+
+  const handleConfirmPhoneContactDraft = async (draftId: string) => {
+    if (!ownerAgentId) return;
+    setPhoneContactDraftError(null);
+    setPhoneContactDraftBusyId(draftId);
+    try {
+      await confirmPhoneContactDraft(ownerAgentId, draftId);
+      setPendingPhoneContactDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      maybeRunSmsIncrementalAfterContactChange();
+    } catch (error) {
+      setPhoneContactDraftError(error instanceof Error ? error.message : String(error));
+      await reloadPhoneContactDrafts();
+    } finally {
+      setPhoneContactDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardPhoneContactDraft = async (draftId: string) => {
+    if (!ownerAgentId) return;
+    setPhoneContactDraftError(null);
+    setPhoneContactDraftBusyId(draftId);
+    try {
+      const ok = await discardPhoneContactDraft(ownerAgentId, draftId);
+      if (ok) {
+        setPendingPhoneContactDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      } else {
+        await reloadPhoneContactDrafts();
+      }
+    } catch (error) {
+      setPhoneContactDraftError(error instanceof Error ? error.message : String(error));
+      await reloadPhoneContactDrafts();
+    } finally {
+      setPhoneContactDraftBusyId(null);
+    }
+  };
+
+  const formatPatchPreview = (patch: XingyePendingPhoneContactDraft['patch']): Array<{ key: string; label: string; value: string }> => {
+    const out: Array<{ key: string; label: string; value: string }> = [];
+    if (patch.remark !== undefined) out.push({ key: 'remark', label: '备注', value: patch.remark });
+    if (patch.impression !== undefined) out.push({ key: 'impression', label: '印象', value: patch.impression });
+    if (patch.relationshipHint !== undefined) out.push({ key: 'relationshipHint', label: '关系', value: patch.relationshipHint });
+    if (patch.tags !== undefined) out.push({ key: 'tags', label: '标签', value: patch.tags.join(' / ') });
+    if (patch.faction !== undefined) out.push({ key: 'faction', label: '阵营', value: patch.faction });
+    return out;
+  };
 
   const openSection = (section: PhoneContactsSectionId) => {
     setSelectedContactKey(null);
@@ -414,6 +487,78 @@ export function PhoneContactsApp({
           />
         ) : listView === 'home' ? (
           <>
+            {pendingPhoneContactDrafts.length > 0 ? (
+              <section
+                className={styles.phoneAppCard}
+                style={{ borderLeft: '3px solid #ffb84a' }}
+                data-testid="phone-contact-pending-drafts"
+                aria-label="待确认草稿 · 来自心跳巡检"
+              >
+                <h3 className={styles.phoneAppTitle}>待确认草稿 · 来自心跳巡检</h3>
+                <p className={styles.phoneAppHint}>
+                  这是 TA 在心跳巡检里对**现有联系人**字段提议的小步更新（remark / impression / relationshipHint / tags / faction）。点「采纳建议」会合并到对应联系人；不会新增联系人，也不会改 status / 拉黑 / 删除。
+                </p>
+                {phoneContactDraftError ? (
+                  <p className={styles.phoneAppHint} role="status">
+                    {phoneContactDraftError}
+                  </p>
+                ) : null}
+                {pendingPhoneContactDrafts.map((d) => {
+                  const patchPreview = formatPatchPreview(d.patch);
+                  const who = d.displayName
+                    ? `${d.displayName}（${d.targetType}）`
+                    : `${d.targetType}:${d.targetId}`;
+                  return (
+                    <div
+                      key={d.id}
+                      className={styles.phoneAppCard}
+                      style={{ border: '1px dashed rgba(0,0,0,0.2)', padding: 10, marginBottom: 8 }}
+                      data-testid={`phone-contact-pending-draft-${d.id}`}
+                    >
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+                        <strong>通讯录更新候选</strong>
+                        <span className={styles.phoneAppHint}>目标 {who}</span>
+                        <span className={styles.phoneAppHint}>来源 {d.source}</span>
+                      </div>
+                      {patchPreview.length > 0 ? (
+                        <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
+                          {patchPreview.map((item) => (
+                            <li key={item.key} style={{ whiteSpace: 'pre-wrap' }}>
+                              <strong>{item.label}</strong>：{item.value}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {d.reason ? (
+                        <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                          理由：{d.reason}
+                        </p>
+                      ) : null}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => void handleConfirmPhoneContactDraft(d.id)}
+                          disabled={phoneContactDraftBusyId === d.id}
+                          data-testid={`phone-contact-pending-draft-confirm-${d.id}`}
+                        >
+                          {phoneContactDraftBusyId === d.id ? '处理中…' : '采纳建议'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => void handleDiscardPhoneContactDraft(d.id)}
+                          disabled={phoneContactDraftBusyId === d.id}
+                          data-testid={`phone-contact-pending-draft-discard-${d.id}`}
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
             <section className={styles.phoneAppCard}>
               <h3 className={styles.phoneAppTitle}>通讯录</h3>
               <p className={styles.phoneAppHint}>

@@ -446,10 +446,11 @@ const RECENT_CONTEXT_GUIDE = [
 ].join('\n');
 
 const USER_CONTACT_UPDATE_GUIDE = [
-  '【user contact update】如果最近聊天体现了用户本人对当前角色的态度、承诺、边界、照顾方式或风险沟通变化，应更新现有 user 联系人。',
+  '【user contact update】当最近聊天体现出用户本人对当前角色的态度、承诺、边界、照顾方式或风险沟通有新的变化时（这是触发信号），应更新现有 user 联系人。',
+  '- 视角约定：user 这条也在当前角色的通讯录里，impression / remark / relationshipHint 写的是**当前角色对这位用户**的相处印象与关系判断（第一人称视角，与其他联系人一致），不要把用户原话或用户自述的心情直接搬进 impression。用户的态度变化只是触发；写入字段时按"角色怎么看这位用户"来写。',
   '- Use targetType=user and targetId="__user__" for the existing user contact. Do not add a second user contact.',
   '- update user impression / relationshipHint / tags / remark only. Do not delete/block/restore user and do not set user status/faction/linkedAgentId.',
-  '- user 的 tags 可以是来自最近聊天的简短自然标签（例如「尊重边界」「不逞强」「愿意配合」），不需要压成 NPC 固定分类词。',
+  '- user 的 tags 可以是当前角色给这位用户贴的简短自然标签（例如「尊重边界」「不逞强」「愿意配合」），不需要压成 NPC 固定分类词。',
   '- 如果最近聊天同时提到用户和其他联系人，请分别返回 user update 与其他联系人 update。',
 ].join('\n');
 
