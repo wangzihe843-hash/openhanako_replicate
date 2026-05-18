@@ -134,7 +134,7 @@ const secretSpaceDraftsMock = vi.hoisted(() => ({
   confirmSecretSpaceDraft: vi.fn(),
   discardSecretSpaceDraft: vi.fn(),
   listSecretSpaceDrafts: vi.fn().mockResolvedValue([]),
-  SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES: ['state', 'dream', 'saved_item'] as const,
+  SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES: ['state', 'dream', 'saved_item', 'draft_reply', 'unsent_moment'] as const,
 }));
 vi.mock('./xingye-secret-space-drafts', () => secretSpaceDraftsMock);
 
@@ -771,7 +771,7 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
 
 /**
  * 覆盖「心跳巡检 → 待确认秘密空间草稿」的 UI 链路。
- * SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES = ['state', 'dream', 'saved_item']
+ * SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES = ['state', 'dream', 'saved_item', 'draft_reply', 'unsent_moment']
  * mustPropose ≥50 触发后，agent 经 `xingye_propose_draft` 向 secret_space 提议。
  */
 describe('SecretSpacePanel · pending draft section', () => {

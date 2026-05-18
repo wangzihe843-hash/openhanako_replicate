@@ -2908,6 +2908,11 @@ type AddSmsMessageInput = {
   direction: 'incoming' | 'outgoing';
   source?: XingyeContactSource;
   createdAt?: string;
+  /**
+   * 可选确定性 message id。心跳草稿 confirm 路径传 `from-draft-${draftId}` 以
+   * 实现幂等：retry 时同 id 的消息已存在则跳过。普通调用留空，自动生成。
+   */
+  messageId?: string;
 };
 
 function normalizeCreatedAt(value: string | undefined): string {
@@ -2926,11 +2931,20 @@ export function addSmsMessage(
   const map = loadSmsThreadMap(storage);
   const key = threadKey(input.ownerAgentId, input.targetType, input.targetId);
   const previous = map[key];
+
+  /**
+   * 幂等：若调用方提供 messageId 且 thread 里已有同 id 消息（confirm retry 场景），
+   * 直接返回现状不重复 append。同 id 但内容不同的场景视为开发者错误，不处理。
+   */
+  if (input.messageId && previous?.messages.some((m) => m.id === input.messageId)) {
+    return previous;
+  }
+
   const threadId = previous?.id ?? createId('sms-thread');
   const remoteId = input.targetType === 'agent' ? input.targetId : `${input.targetType}:${input.targetId}`;
   const createdAt = normalizeCreatedAt(input.createdAt);
   const message: XingyePhoneSmsMessage = {
-    id: createId('sms-message'),
+    id: input.messageId ?? createId('sms-message'),
     threadId,
     fromAgentId: input.direction === 'outgoing' ? input.ownerAgentId : remoteId,
     toAgentId: input.direction === 'outgoing' ? remoteId : input.ownerAgentId,

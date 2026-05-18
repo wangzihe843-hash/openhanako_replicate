@@ -378,6 +378,8 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     state: '此刻心境 (state)',
     dream: '梦境 (dream)',
     saved_item: '摘录 (saved_item)',
+    draft_reply: '没发出去的话 (draft_reply)',
+    unsent_moment: '朋友圈草稿 (unsent_moment)',
   };
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
@@ -15,6 +15,13 @@ import {
   type XingyeContactTargetType,
   useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
+import {
+  confirmSmsDraft,
+  discardSmsDraft,
+  listSmsDrafts,
+  type SmsDraftTargetType,
+  type XingyePendingSmsDraft,
+} from './xingye-sms-drafts';
 import styles from './XingyeShell.module.css';
 
 interface PhoneSmsAppProps {
@@ -57,6 +64,19 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   const smsHistoryState = getSmsHistoryGenerationState(ownerAgentId);
   const [smsIncrementalState, setSmsIncrementalState] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [smsIncrementalError, setSmsIncrementalError] = useState<string | null>(null);
+
+  /** 心跳巡检产出的「待确认短信草稿」——落在 apps/sms/drafts.jsonl，没有 thread。 */
+  const [pendingDrafts, setPendingDrafts] = useState<XingyePendingSmsDraft[]>([]);
+  /**
+   * 行内编辑缓冲。Key = draft.id。
+   * `targetType:targetId` 让用户在 confirm 前可以重新选收件人（比如 matchName 没匹配
+   * 上 / 用户想改给别人发）；内容编辑同 mail 草稿。
+   */
+  const [pendingDraftEdits, setPendingDraftEdits] = useState<
+    Record<string, { content: string; targetType: SmsDraftTargetType; targetId: string }>
+  >({});
+  const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
+  const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedTarget(initialTarget ?? null);
@@ -112,6 +132,114 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
       profileFingerprint,
       mode: 'replace_ai',
     }).catch(() => {});
+  };
+
+  const reloadPendingSmsDrafts = useCallback(async () => {
+    if (!ownerAgentId) {
+      setPendingDrafts([]);
+      setPendingDraftEdits({});
+      return;
+    }
+    try {
+      const drafts = await listSmsDrafts(ownerAgentId);
+      setPendingDrafts(drafts);
+    } catch (err) {
+      console.warn('[PhoneSmsApp] listSmsDrafts failed:', err);
+    }
+  }, [ownerAgentId]);
+
+  useEffect(() => {
+    void reloadPendingSmsDrafts();
+  }, [reloadPendingSmsDrafts, version]);
+
+  /**
+   * 草稿正文与收件人的"working value"。
+   * 收件人解析顺序：edits → draft.targetId → 按 displayName/matchName 在通讯录里查同名联系人。
+   * 都解析不上就让 targetId='' （UI 上 confirm 按钮 disable，提示用户先选）。
+   */
+  const pendingDraftWorkingValue = useCallback(
+    (d: XingyePendingSmsDraft): { content: string; targetType: SmsDraftTargetType; targetId: string } => {
+      const edit = pendingDraftEdits[d.id];
+      if (edit) return edit;
+      let resolvedTargetId = d.targetId ?? '';
+      if (!resolvedTargetId) {
+        const name = (d.displayName ?? d.matchName ?? '').trim();
+        if (name) {
+          const match = contactsForSms.find(
+            (c) => c.targetType === d.targetType && (c.displayName === name || c.remark === name),
+          );
+          if (match) resolvedTargetId = match.targetId;
+        }
+      }
+      return { content: d.content, targetType: d.targetType, targetId: resolvedTargetId };
+    },
+    [pendingDraftEdits, contactsForSms],
+  );
+
+  const handlePendingDraftFieldChange = (
+    draftId: string,
+    patch: Partial<{ content: string; targetType: SmsDraftTargetType; targetId: string }>,
+  ) => {
+    setPendingDraftEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d) return prev;
+      const base = prev[draftId] ?? pendingDraftWorkingValue(d);
+      return { ...prev, [draftId]: { ...base, ...patch } };
+    });
+  };
+
+  const handleConfirmPendingDraft = async (d: XingyePendingSmsDraft) => {
+    if (!ownerAgentId) return;
+    const working = pendingDraftWorkingValue(d);
+    if (!working.targetId) {
+      setPendingDraftError('请先为这条草稿选定收件人（通讯录里未能自动匹配）。');
+      return;
+    }
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      await confirmSmsDraft(ownerAgentId, d.id, {
+        targetType: working.targetType,
+        targetId: working.targetId,
+        content: working.content,
+      });
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setPendingDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardPendingDraft = async (d: XingyePendingSmsDraft) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定丢弃这条待确认短信草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
+      return;
+    }
+    setPendingDraftBusyId(d.id);
+    setPendingDraftError(null);
+    try {
+      const ok = await discardSmsDraft(ownerAgentId, d.id);
+      if (ok) {
+        setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+        setPendingDraftEdits((prev) => {
+          if (!(d.id in prev)) return prev;
+          const { [d.id]: _omitted, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        await reloadPendingSmsDrafts();
+      }
+    } catch (err) {
+      setPendingDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDraftBusyId(null);
+    }
   };
 
   const handleIncrementalSmsFromContacts = async () => {
@@ -189,6 +317,95 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
             </button>
           </div>
         </section>
+
+        {!selectedTarget && pendingDrafts.length > 0 ? (
+          <section
+            aria-label="待确认短信草稿"
+            data-testid="phone-sms-pending-drafts"
+            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <p className={styles.phoneAppHint}>
+              待确认草稿 · 来自心跳巡检。这些是 TA 在巡检里想发的短信，还没出现在任何 thread 里。
+              点「确认发送」会作为 TA 发出的消息写进对应联系人的短信线程。
+            </p>
+            {pendingDraftError ? (
+              <p className={styles.phoneAppHint} role="alert">{pendingDraftError}</p>
+            ) : null}
+            {pendingDrafts.map((d) => {
+              const working = pendingDraftWorkingValue(d);
+              const busy = pendingDraftBusyId === d.id;
+              const candidateContacts = contactsForSms.filter((c) => c.targetType === working.targetType);
+              const recipientLabel = d.displayName ?? d.matchName ?? d.targetId ?? '（未指定）';
+              return (
+                <div
+                  key={d.id}
+                  className={styles.phoneAppCard}
+                  style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
+                  data-testid={`phone-sms-pending-draft-${d.id}`}
+                >
+                  <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                    收件人提示：{recipientLabel}（{d.targetType === 'agent' ? '其他角色' : '虚拟联系人'}）
+                  </p>
+                  <label className={styles.phoneFormField}>
+                    <span>实际收件人</span>
+                    <select
+                      className={styles.phoneInlineSelect}
+                      value={working.targetId}
+                      onChange={(e) =>
+                        handlePendingDraftFieldChange(d.id, { targetId: e.target.value })
+                      }
+                      disabled={busy}
+                      data-testid={`phone-sms-pending-draft-target-${d.id}`}
+                    >
+                      <option value="">— 请选择联系人 —</option>
+                      {candidateContacts.map((c) => (
+                        <option key={`${c.targetType}:${c.targetId}`} value={c.targetId}>
+                          {c.remark || c.displayName || c.targetId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <textarea
+                    value={working.content}
+                    onChange={(e) => handlePendingDraftFieldChange(d.id, { content: e.target.value })}
+                    rows={3}
+                    maxLength={240}
+                    placeholder="短信正文（≤240 字符）"
+                    aria-label="待确认短信草稿正文"
+                    data-testid={`phone-sms-pending-draft-content-${d.id}`}
+                    disabled={busy}
+                    style={{ width: '100%', font: 'inherit', background: 'transparent', border: '1px dashed rgba(0,0,0,0.2)', padding: '6px' }}
+                  />
+                  {d.reason ? (
+                    <p className={styles.phoneAppHint} style={{ margin: 0 }}>
+                      理由：{d.reason}
+                    </p>
+                  ) : null}
+                  <div className={styles.phoneActionRow}>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => void handleConfirmPendingDraft(d)}
+                      disabled={busy || !working.targetId || !working.content.trim()}
+                      data-testid={`phone-sms-pending-draft-confirm-${d.id}`}
+                    >
+                      {busy ? '处理中…' : '确认发送'}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.phoneWeakAction}
+                      onClick={() => void handleDiscardPendingDraft(d)}
+                      disabled={busy}
+                      data-testid={`phone-sms-pending-draft-discard-${d.id}`}
+                    >
+                      丢弃
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
 
         {!selectedTarget ? (
           <section className={styles.phoneList} aria-label="短信线程列表">

@@ -10,8 +10,11 @@
  *    confirmSecretSpaceDraft 四件套，发对应的 secret_space.draft_* 事件。
  *  - confirm 路径调用 appendSecretSpaceRecord(category, ...)，把 title/body/tags
  *    塞进 record；category 写入后即发 secret_space.record_appended。
- *  - 限制 category 到 state / dream / saved_item 三个（与 server 端
- *    SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES 同步）。
+ *  - 限制 category 到 state / dream / saved_item / draft_reply / unsent_moment
+ *    五个（与 server 端 SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES 同步）。
+ *    draft_reply / unsent_moment 与 mail.draft / moments.draft 的区别：前者永远
+ *    只属于秘密空间不会外发，存在意义是「TA 选择了沉默」/「只给自己看」；后者会
+ *    走真实邮箱 / 朋友圈 feed 路径。
  */
 
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
@@ -39,7 +42,13 @@ export const XINGYE_SECRET_SPACE_DRAFTS_JSONL = 'secret-space/drafts.jsonl';
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
 /** 与 lib/xingye/secret-space-drafts.js SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES 同步。 */
-export const SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES = ['state', 'dream', 'saved_item'] as const;
+export const SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES = [
+  'state',
+  'dream',
+  'saved_item',
+  'draft_reply',
+  'unsent_moment',
+] as const;
 export type SecretSpaceDraftCategory = (typeof SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES)[number];
 
 const ALLOWED_SET = new Set<string>(SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES);

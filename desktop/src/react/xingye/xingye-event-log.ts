@@ -67,6 +67,9 @@ export const XINGYE_EVENT_TYPES = [
   'phone_contact.draft_proposed',
   'phone_contact.draft_discarded',
   'phone_contact.draft_confirmed',
+  'sms.draft_proposed',
+  'sms.draft_discarded',
+  'sms.draft_confirmed',
 ] as const;
 
 export type XingyeEventType = typeof XINGYE_EVENT_TYPES[number];

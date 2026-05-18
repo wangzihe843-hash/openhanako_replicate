@@ -39,9 +39,18 @@ afterEach(() => {
 });
 
 describe("SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES", () => {
-  it("only includes the safe text-only subset", () => {
-    /** 与 desktop 端 xingye-secret-space-drafts.ts 的常量保持同步。 */
-    expect([...SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES]).toEqual(["state", "dream", "saved_item"]);
+  it("only includes the secret-space-only subset (no auto-outbound categories)", () => {
+    /** 与 desktop 端 xingye-secret-space-drafts.ts 的常量保持同步。
+     * draft_reply / unsent_moment 与 mail.draft / moments.draft 的区别：前两者永远只
+     * 属于秘密空间不会自动外发，后两者会真的发邮件 / 发朋友圈。memory_fragment 仍排除——
+     * 走 MemoryCandidatePanel + xingye_propose_draft 的 memory_candidate 模块。 */
+    expect([...SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES]).toEqual([
+      "state",
+      "dream",
+      "saved_item",
+      "draft_reply",
+      "unsent_moment",
+    ]);
   });
 });
 
@@ -91,8 +100,8 @@ describe("appendSecretSpaceDraftServer", () => {
     expect(proposed.payload.category).toBe("state");
   });
 
-  it("rejects disallowed categories (draft_reply / unsent_moment / memory_fragment / anything else)", async () => {
-    for (const banned of ["draft_reply", "unsent_moment", "memory_fragment", "nonsense", ""]) {
+  it("rejects disallowed categories (memory_fragment / unknown / empty)", async () => {
+    for (const banned of ["memory_fragment", "nonsense", ""]) {
       const result = await appendSecretSpaceDraftServer({
         agentDir,
         agentId: "agent-a",
@@ -100,6 +109,23 @@ describe("appendSecretSpaceDraftServer", () => {
       });
       expect(result).toBeNull();
     }
+  });
+
+  it("accepts draft_reply / unsent_moment (only-in-secret-space variants)", async () => {
+    for (const category of ["draft_reply", "unsent_moment"]) {
+      const draft = await appendSecretSpaceDraftServer({
+        agentDir,
+        agentId: "agent-a",
+        input: {
+          category,
+          body: `body for ${category}`,
+          source: "xingye-heartbeat-tool",
+        },
+      });
+      expect(draft).toMatchObject({ category, body: `body for ${category}` });
+    }
+    const rows = readJsonl(path.join(agentDir, "xingye", "secret-space", "drafts.jsonl"));
+    expect(rows.map((r) => r.category).sort()).toEqual(["draft_reply", "unsent_moment"]);
   });
 
   it("does NOT write secret-space/{category}.jsonl", async () => {
@@ -146,6 +172,44 @@ describe("createProposeDraftTool · module=secret_space", () => {
     const rows = readJsonl(path.join(agentDir, "xingye", "secret-space", "drafts.jsonl"));
     expect(rows).toHaveLength(1);
     expect(rows[0].body).toBe("「不要把日子过成一道证明题。」");
+  });
+
+  it("dispatches draft_reply (only-in-secret-space; never auto-sent)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secret_space",
+      reason: "刚才她问 TA 在想什么，TA 打了一长串又全部删掉",
+      secret_space: {
+        category: "draft_reply",
+        body: "其实那天我也很想说，只是后来想想算了。",
+        tags: ["给 user"],
+      },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.module).toBe("secret_space");
+    expect(res.details.category).toBe("draft_reply");
+    const rows = readJsonl(path.join(agentDir, "xingye", "secret-space", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].category).toBe("draft_reply");
+  });
+
+  it("dispatches unsent_moment (never reaches moments feed)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secret_space",
+      reason: "路过那条街，写了又删",
+      secret_space: {
+        category: "unsent_moment",
+        body: "下班路过那条街，灯还亮着。今天没进去。",
+      },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.category).toBe("unsent_moment");
+    const rows = readJsonl(path.join(agentDir, "xingye", "secret-space", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].category).toBe("unsent_moment");
+    /** 务必只写 drafts.jsonl，不要碰真实朋友圈源文件——这是 secret_space 路径的关键不变量。 */
+    expect(fs.existsSync(path.join(agentDir, "xingye", "secret-space", "unsent_moment.jsonl"))).toBe(false);
   });
 
   it("rejects disallowed category at the tool boundary", async () => {
