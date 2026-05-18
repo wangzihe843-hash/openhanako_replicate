@@ -1,7 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
-import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -438,6 +438,7 @@ export async function appendMailMessage(
       mailbox: message.mailbox,
       firstMessageId: message.id,
       fromKind: message.from.kind,
+      origin: originFromEntryId(message.id),
     },
   });
   return message;
@@ -467,6 +468,12 @@ export async function appendMailMessages(
       mailbox: out[0].mailbox,
       firstMessageId: out[0].id,
       fromKind: out[0].from.kind,
+      /**
+       * appendMailMessages 是批量入口（system/inbox 同步用），不走 confirm 路径，
+       * 所有 id 都是随机生成。整批统一标 'user'——心跳消费者后续按 origin 聚合时
+       * 不会把这批和 confirm 来的草稿邮件混在一起。
+       */
+      origin: originFromEntryId(out[0].id),
     },
   });
   return out;

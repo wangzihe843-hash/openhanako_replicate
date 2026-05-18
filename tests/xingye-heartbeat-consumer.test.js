@@ -6,6 +6,7 @@ import { Scheduler } from "../hub/scheduler.js";
 import {
   pruneConsumedEvents,
   pruneOrphanDedupeKeys,
+  summarizeXingyeEventsForHeartbeatZh,
   XINGYE_HEARTBEAT_CONSUMER_ID,
 } from "../lib/xingye/heartbeat-consumer.js";
 
@@ -148,8 +149,16 @@ describe("Xingye heartbeat event consumer", () => {
       consumedEventIds: ["evt-a-1", "evt-a-2"],
     });
     expect(result.summary).toContain("2");
-    // 中文摘要：渲染端 PhoneHome 直接显示这条；按 TYPE_ORDER_ZH 排序，秘密空间在短信之后。
-    expect(result.summaryZh).toBe("自上次巡检以来：短信×1、秘密空间新增×1（共 2 条）");
+    /**
+     * 中文摘要：渲染端 PhoneHome 直接显示这条；按 TYPE_ORDER_ZH 排序，秘密空间
+     * 在短信之后。
+     *
+     * secret_space.record_appended 是 origin-aware 类型 → 走「（自动/手动）」拆分；
+     * 这里事件 payload 没有 origin 字段且 recordId 不带 from-draft- 前缀，
+     * fallback 归为「手动」。phone.sms_appended 不在 ORIGIN_AWARE_TYPES 里，
+     * 沿用旧格式不带后缀。
+     */
+    expect(result.summaryZh).toBe("自上次巡检以来：短信×1、秘密空间新增（手动）×1（共 2 条）");
     expect(result.observations).toEqual(expect.arrayContaining([
       expect.stringContaining("phone.sms_appended"),
       expect.stringContaining("secret_space.record_appended"),
@@ -424,6 +433,115 @@ describe("xingye event retention (pure functions)", () => {
   it("pruneOrphanDedupeKeys 输入空对象返回空对象", () => {
     expect(pruneOrphanDedupeKeys(null, [])).toEqual({});
     expect(pruneOrphanDedupeKeys({}, [])).toEqual({});
+  });
+});
+
+describe("summarizeXingyeEventsForHeartbeatZh: origin-aware grouping", () => {
+  it("returns empty string for empty / invalid input", () => {
+    expect(summarizeXingyeEventsForHeartbeatZh([])).toBe("");
+    expect(summarizeXingyeEventsForHeartbeatZh(null)).toBe("");
+    expect(summarizeXingyeEventsForHeartbeatZh([{ /* no type */ }])).toBe("");
+  });
+
+  it("does NOT split origin for non-origin-aware types (draft_* / *_deleted / etc)", () => {
+    const events = [
+      { type: "journal.draft_proposed", payload: { origin: "auto" } },
+      { type: "journal.draft_proposed", payload: { origin: "auto" } },
+      { type: "journal.entry_deleted", payload: {} },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    /** No 「（自动）」 / 「（手动）」 decoration on these types. */
+    expect(summary).toContain("日记草稿提议×2");
+    expect(summary).toContain("日记删除×1");
+    expect(summary).not.toContain("（自动）");
+    expect(summary).not.toContain("（手动）");
+  });
+
+  it("splits origin-aware types by payload.origin into auto / 手动 buckets", () => {
+    const events = [
+      {
+        type: "journal.entry_appended",
+        subjectId: "from-draft-d-1",
+        payload: { entryId: "from-draft-d-1", origin: "auto" },
+      },
+      {
+        type: "journal.entry_appended",
+        subjectId: "j-random-1",
+        payload: { entryId: "j-random-1", origin: "user" },
+      },
+      {
+        type: "journal.entry_appended",
+        subjectId: "j-random-2",
+        payload: { entryId: "j-random-2", origin: "user" },
+      },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    expect(summary).toBe("自上次巡检以来：日记新增（自动）×1、日记新增（手动）×2（共 3 条）");
+  });
+
+  it("falls back to id-prefix heuristic when payload.origin is missing (backward compat with pre-commit events)", () => {
+    /**
+     * 历史事件 payload 没写 origin 字段，consumer 用 subjectId / payload.entryId 的
+     * `from-draft-` 前缀回填——保证在 7 天 retention 窗口内的旧事件也能正确归类。
+     */
+    const events = [
+      {
+        type: "schedule.entry_appended",
+        subjectId: "from-draft-sched-old-1",
+        payload: { entryId: "from-draft-sched-old-1" },
+      },
+      {
+        type: "schedule.entry_appended",
+        subjectId: "sched-random-old",
+        payload: { entryId: "sched-random-old" },
+      },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    expect(summary).toContain("日程新增（自动）×1");
+    expect(summary).toContain("日程新增（手动）×1");
+  });
+
+  it("mixes origin-aware and non-origin-aware events in a single summary correctly", () => {
+    const events = [
+      { type: "mail.messages_appended", payload: { firstMessageId: "from-draft-m-1", origin: "auto" } },
+      { type: "mail.messages_appended", payload: { firstMessageId: "m-inbox-1", origin: "user" } },
+      { type: "mail.draft_proposed", payload: { draftId: "d-1" } },
+      { type: "phone.sms_appended", payload: { /* not origin-aware */ } },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    expect(summary).toContain("邮件（自动）×1");
+    expect(summary).toContain("邮件（手动）×1");
+    expect(summary).toContain("邮件草稿提议×1");
+    expect(summary).toContain("短信×1");
+    expect(summary).toContain("共 4 条");
+  });
+
+  it("sorts buckets stably: TYPE_ORDER first, then auto before user within same type", () => {
+    const events = [
+      { type: "schedule.entry_appended", payload: { origin: "user" } },
+      { type: "journal.entry_appended", payload: { origin: "user" } },
+      { type: "journal.entry_appended", payload: { origin: "auto" } },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    /**
+     * Expected order: journal first (TYPE_ORDER puts journal before schedule),
+     * and within journal: auto before user (alphabetical bucket key).
+     */
+    const journalAutoIdx = summary.indexOf("日记新增（自动）");
+    const journalUserIdx = summary.indexOf("日记新增（手动）");
+    const scheduleUserIdx = summary.indexOf("日程新增（手动）");
+    expect(journalAutoIdx).toBeLessThan(journalUserIdx);
+    expect(journalUserIdx).toBeLessThan(scheduleUserIdx);
+  });
+
+  it("treats invalid payload.origin values by falling back to id-prefix / 'user'", () => {
+    const events = [
+      { type: "moment.created", subjectId: "p-1", payload: { postId: "p-1", origin: "bogus" } },
+      { type: "moment.created", subjectId: "from-draft-d-x", payload: { postId: "from-draft-d-x", origin: 123 } },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    expect(summary).toContain("朋友圈新增（自动）×1");
+    expect(summary).toContain("朋友圈新增（手动）×1");
   });
 });
 

@@ -7,6 +7,7 @@ import {
   recordFieldAsString,
   stableSecretSpaceRecordId,
 } from './xingye-secret-space-record-id';
+import { originFromEntryId } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -203,6 +204,8 @@ export async function appendSecretSpaceRecord(
       recordId: stableId,
       title: typeof body.title === 'string' ? body.title : undefined,
       source: typeof body.source === 'string' ? body.source : undefined,
+      /** stableId 等于 body.key（confirm 路径会传 'from-draft-${draftId}'） */
+      origin: originFromEntryId(stableId),
     },
   });
   if (typeof window !== 'undefined') {

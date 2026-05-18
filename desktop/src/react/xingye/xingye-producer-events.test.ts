@@ -999,3 +999,118 @@ describe('producer contract: mm-chat-store', () => {
     });
   });
 });
+
+/**
+ * 心跳 consumer 按 payload.origin 把内容创建事件分成「自动」（agent 走 confirm 路径
+ * 产出）/「手动」（用户直接在 UI 写）。每个 producer 在 emit 时已经按 entry id 是否
+ * 以 'from-draft-' 开头自动标记。这一组测试守住：
+ *   - 直接 append* 走「手动」分支 → payload.origin === 'user'
+ *   - confirm*Draft 走「自动」分支 → payload.origin === 'auto'
+ * 加新模块时，记得同步把 ORIGIN_AWARE_TYPES 加进 heartbeat-consumer.js。
+ */
+describe('producer contract: payload.origin tagging (auto vs user)', () => {
+  function findEventByType(type: string): Record<string, unknown> | null {
+    for (let i = appendEventMock.mock.calls.length - 1; i >= 0; i -= 1) {
+      const input = appendEventMock.mock.calls[i][1] as Record<string, unknown>;
+      if (input?.type === type) return input;
+    }
+    return null;
+  }
+
+  it('journal.entry_appended: user for manual, auto for confirm', async () => {
+    await appendJournalEntry('agent-a', { title: 't', body: 'b' });
+    expect((findEventByType('journal.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendJournalDraft('agent-a', { title: 't', body: 'b', source: 'xingye-heartbeat-tool' });
+    await confirmJournalDraft('agent-a', draft.id);
+    expect((findEventByType('journal.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('schedule.entry_appended: user for manual, auto for confirm', async () => {
+    await appendScheduleEntry('agent-a', {
+      title: 't', dateLabel: '今天', content: 'c', source: 'manual',
+    });
+    expect((findEventByType('schedule.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendScheduleDraft('agent-a', {
+      title: 't', dateLabel: '今天', content: 'c', source: 'xingye-heartbeat-tool',
+    });
+    await confirmScheduleDraft('agent-a', draft.id);
+    expect((findEventByType('schedule.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('file.entry_appended: user for manual, auto for confirm', async () => {
+    await appendFileEntry('agent-a', { folderId: 'fav', title: 't', body: 'b', source: 'manual' });
+    expect((findEventByType('file.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    await ensureDefaultFileFolders('agent-a');
+    appendEventMock.mockClear();
+    const draft = await appendFileDraft('agent-a', { title: 't', body: 'b', source: 'xingye-heartbeat-tool' });
+    await confirmFileDraft('agent-a', draft.id);
+    expect((findEventByType('file.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('mail.messages_appended: user for manual / batch, auto for confirm', async () => {
+    await appendMailMessage('agent-a', {
+      mailbox: 'inbox',
+      from: { name: 'F', address: 'f@m', kind: 'virtual_contact' },
+      to: [],
+      subject: 's', body: 'b', isRead: false, isStarred: false, labels: [],
+    });
+    expect((findEventByType('mail.messages_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const profile: XingyeMailProfile = {
+      agentId: 'agent-a', address: 'a@m', displayName: 'A',
+      createdAt: '2026-05-16T00:00:00.000Z', updatedAt: '2026-05-16T00:00:00.000Z',
+    };
+    const draft = await appendMailDraft('agent-a', {
+      subject: 's', body: 'b', source: 'xingye-heartbeat-tool',
+    });
+    await confirmMailDraft('agent-a', draft.id, profile);
+    expect((findEventByType('mail.messages_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('moment.created: user for manual createPost, auto for confirm', async () => {
+    /** Use the default store via the high-level helpers exercised by other tests. */
+    const { appendMomentDraft, confirmMomentDraft } = await import('./xingye-moments-store');
+    /** Manual path: createPost without id from the default store via createXingyeMomentPost. */
+    const { createXingyeMomentPost } = await import('./xingye-moments-store');
+    await createXingyeMomentPost({ authorAgentId: 'agent-a', authorName: 'A', content: 'manual' });
+    expect((findEventByType('moment.created')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendMomentDraft('agent-a', { content: 'auto', source: 'xingye-heartbeat-tool' });
+    await confirmMomentDraft('agent-a', draft.id);
+    expect((findEventByType('moment.created')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('shopping.entry_appended: user for manual appendAppEntry, auto for confirm', async () => {
+    const { appendAppEntry } = await import('./xingye-app-entry-store');
+    await appendAppEntry('agent-a', 'shopping', { title: 't', content: 'c' });
+    expect((findEventByType('shopping.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendShoppingDraft('agent-a', {
+      itemName: 'X', source: 'xingye-heartbeat-tool',
+    });
+    await confirmShoppingDraft('agent-a', draft.id);
+    expect((findEventByType('shopping.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('secret_space.record_appended: user for manual append, auto for confirm', async () => {
+    const { appendSecretSpaceRecord } = await import('./xingye-secret-space-store');
+    await appendSecretSpaceRecord('agent-a', 'state', { title: 't', body: 'b', source: 'manual' });
+    expect((findEventByType('secret_space.record_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendSecretSpaceDraft('agent-a', {
+      category: 'state', body: 'b', source: 'xingye-heartbeat-tool',
+    });
+    await confirmSecretSpaceDraft('agent-a', draft.id);
+    expect((findEventByType('secret_space.record_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+});

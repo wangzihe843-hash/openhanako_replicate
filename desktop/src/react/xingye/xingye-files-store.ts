@@ -1,7 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
-import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -311,6 +311,7 @@ export async function appendFileEntry(
       folderId: entry.folderId,
       title: entry.title,
       entrySource: entry.source,
+      origin: originFromEntryId(entry.id),
     },
   });
   return entry;

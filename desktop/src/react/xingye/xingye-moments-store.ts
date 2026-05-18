@@ -10,7 +10,7 @@ import {
   requireSafeXingyeAgentId,
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
-import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 async function appendMomentEventBestEffort(
   agentId: string,
@@ -372,6 +372,7 @@ export function createXingyeMomentStore(
           sourceKind: post.source?.kind,
           seedLikeCount: post.likes.length,
           seedCommentCount: post.comments.length,
+          origin: originFromEntryId(post.id),
         },
       });
       return post;

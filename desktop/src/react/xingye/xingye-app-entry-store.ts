@@ -7,6 +7,7 @@ import {
   requireSafeXingyeAgentId,
   resolveAgentScopedXingyePath,
 } from './xingye-store-utils';
+import { originFromEntryId } from './xingye-draft-confirm-lock';
 
 async function appendAppEntryEventBestEffort(
   agentId: string,
@@ -209,6 +210,7 @@ export function createXingyeAppEntryStore(
             entryId: entry.id,
             title: entry.title,
             entrySource: entry.source,
+            origin: originFromEntryId(entry.id),
           },
         });
       }

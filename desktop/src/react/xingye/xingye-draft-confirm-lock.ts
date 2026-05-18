@@ -36,3 +36,32 @@ export async function withDraftConfirmLock<T>(
 export function __resetDraftConfirmLockForTests(): void {
   inflight.clear();
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+//  Entry origin classification
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 心跳 confirm 路径产出的 entry id 一律带这个前缀（见各模块 confirmXxxDraft 注释）。
+ * 同时是「区分 auto / user 内容」的权威信号：consumer 看到带这个前缀的 id 即可断定
+ * 是 agent 自动产出（heartbeat 草稿确认）；其他都是用户手动产出。
+ *
+ * 服务端 lib/xingye/heartbeat-consumer.js 也硬编码了这个字符串作 fallback，
+ * 改动时两边都要同步。
+ */
+export const FROM_DRAFT_ID_PREFIX = 'from-draft-';
+
+export type XingyeEntryOrigin = 'auto' | 'user';
+
+/**
+ * 根据 entry / message / post / record 的 id 判定来源。
+ *
+ * 用 id 前缀做权威判定（而不是 entry.source 字段 / 调用方 hint）是因为：
+ *   1. 前缀是 confirm 路径强制写入的，无法绕过
+ *   2. 单一 source of truth，加新模块不会忘
+ *   3. 旧事件 payload 没有 origin 字段时，消费者也能用同样规则回填
+ */
+export function originFromEntryId(id: string | null | undefined): XingyeEntryOrigin {
+  if (typeof id !== 'string') return 'user';
+  return id.startsWith(FROM_DRAFT_ID_PREFIX) ? 'auto' : 'user';
+}

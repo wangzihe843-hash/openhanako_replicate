@@ -1,7 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
-import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -144,7 +144,7 @@ export async function appendJournalEntry(
     type: 'journal.entry_appended',
     source: 'xingye-journal-store',
     subjectId: id,
-    payload: { entryId: id, dayKey, title, hasMood: Boolean(mood) },
+    payload: { entryId: id, dayKey, title, hasMood: Boolean(mood), origin: originFromEntryId(id) },
   });
   return { id, dayKey, title, body, createdAt, mood };
 }
