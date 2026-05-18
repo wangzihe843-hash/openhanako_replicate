@@ -47,11 +47,15 @@ export function SelectionFloatingInput() {
     };
   }, [quotedSelection]);
 
-  const handleClose = useCallback(() => {
+  const dismissFloatingInput = useCallback(() => {
     setActiveSelection(null);
     setValue('');
+  }, []);
+
+  const clearSelectionAndClose = useCallback(() => {
+    dismissFloatingInput();
     clearQuotedSelection();
-  }, [clearQuotedSelection]);
+  }, [clearQuotedSelection, dismissFloatingInput]);
 
   const handleRootElementChange = useCallback((element: HTMLDivElement | null) => {
     floatingRootRef.current = element;
@@ -62,14 +66,14 @@ export function SelectionFloatingInput() {
 
     const closeIfOutside = (event: Event) => {
       if (isInsideFloatingInput(floatingRootRef.current, event.target)) return;
-      handleClose();
+      dismissFloatingInput();
     };
     const closeOnExternalScroll = (event: Event) => {
       if (isInsideFloatingInput(floatingRootRef.current, event.target)) return;
-      handleClose();
+      dismissFloatingInput();
     };
     const closeOnWindowBlur = () => {
-      handleClose();
+      dismissFloatingInput();
     };
 
     document.addEventListener('pointerdown', closeIfOutside, true);
@@ -85,16 +89,14 @@ export function SelectionFloatingInput() {
       window.removeEventListener('scroll', closeOnExternalScroll, true);
       window.removeEventListener('blur', closeOnWindowBlur);
     };
-  }, [handleClose, hasFloatingAnchor]);
+  }, [dismissFloatingInput, hasFloatingAnchor]);
 
   const handleSubmit = useCallback(async (text: string) => {
     if (!activeSelection) return;
     const sent = await sendFloatingSelectionPrompt(text, activeSelection);
     if (!sent) return;
-    setActiveSelection(null);
-    setValue('');
-    clearQuotedSelection();
-  }, [activeSelection, clearQuotedSelection]);
+    clearSelectionAndClose();
+  }, [activeSelection, clearSelectionAndClose]);
 
   const disabled = !connected || isStreaming || modelSwitching;
 
@@ -105,7 +107,7 @@ export function SelectionFloatingInput() {
       value={value}
       onChange={setValue}
       onSubmit={handleSubmit}
-      onClose={handleClose}
+      onClose={dismissFloatingInput}
       disabled={disabled}
       autoFocus={false}
       ariaLabel={t('input.floatingInput')}
