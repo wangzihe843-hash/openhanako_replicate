@@ -41,12 +41,19 @@ const annotationAiMock = vi.hoisted(() => ({
   inferReadingAnnotationWithAI: vi.fn(),
 }));
 
+const readingDraftsMock = vi.hoisted(() => ({
+  confirmReadingNoteDraft: vi.fn(),
+  discardReadingNoteDraft: vi.fn(),
+  listReadingNoteDrafts: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock('./xingye-reading-book-catalog', () => catalogMock);
 vi.mock('./xingye-app-entry-store', () => appEntryStoreMock);
 vi.mock('./xingye-open-library-adapter', () => openLibraryMock);
 vi.mock('./xingye-reading-topics-ai', () => readingTopicsAiMock);
 vi.mock('./xingye-wikiquote-adapter', () => wikiquoteMock);
 vi.mock('./xingye-reading-annotation-ai', () => annotationAiMock);
+vi.mock('./xingye-reading-notes-drafts', () => readingDraftsMock);
 
 import { PhoneReadingNotesApp } from './PhoneReadingNotesApp';
 import type { XingyeRoleProfile } from './xingye-profile-store';
@@ -588,5 +595,118 @@ describe('PhoneReadingNotesApp', () => {
       expect(wikiquoteMock.fetchWikiquoteSuggestions).not.toHaveBeenCalled();
       expect(annotationAiMock.inferReadingAnnotationWithAI).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * 覆盖「心跳巡检 → 待确认读书批注草稿」的 UI 链路。
+ * noteType ∈ ('reading_note' | 'question')，bookHint 由 confirm 时 UI 解析。
+ */
+describe('PhoneReadingNotesApp · pending draft section', () => {
+  beforeEach(() => {
+    readingDraftsMock.confirmReadingNoteDraft.mockReset();
+    readingDraftsMock.discardReadingNoteDraft.mockReset();
+    readingDraftsMock.listReadingNoteDrafts.mockReset();
+    readingDraftsMock.listReadingNoteDrafts.mockResolvedValue([]);
+  });
+
+  it('renders draft and confirm forwards fields to confirmReadingNoteDraft', async () => {
+    readingDraftsMock.listReadingNoteDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-rn-1',
+        title: '关于克制',
+        body: '医生为什么总要"先稳住"？',
+        noteType: 'question' as const,
+        bookHint: '战地手记',
+        quoteText: '"先稳住，再处理。"',
+        reason: '巡检里看到角色反复提"克制"',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    readingDraftsMock.confirmReadingNoteDraft.mockResolvedValueOnce({
+      id: 'e-rn-1',
+      agentId: 'test01',
+      appId: 'reading_notes',
+      title: '关于克制',
+      content: '医生为什么总要"先稳住"？',
+      source: 'manual',
+      metadata: { bookId: 'book-1', noteType: 'question' },
+      createdAt: '2026-05-17T12:30:00.000Z',
+      updatedAt: '2026-05-17T12:30:00.000Z',
+    });
+
+    renderReadingNotes(linwu, linwuProfile);
+
+    const draftCard = await screen.findByTestId('phone-reading-draft-d-rn-1');
+    expect(within(draftCard).getByText(/巡检里看到角色反复提/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('phone-reading-draft-confirm-d-rn-1'));
+
+    await waitFor(() => {
+      expect(readingDraftsMock.confirmReadingNoteDraft).toHaveBeenCalledWith(
+        'test01',
+        'd-rn-1',
+        expect.objectContaining({
+          title: '关于克制',
+          body: '医生为什么总要"先稳住"？',
+          noteType: 'question',
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('phone-reading-draft-d-rn-1')).not.toBeInTheDocument();
+    });
+  });
+
+  it('discard calls discardReadingNoteDraft and does not call confirm', async () => {
+    readingDraftsMock.listReadingNoteDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-rn-2',
+        title: '随手',
+        body: '只是想到了一下。',
+        noteType: 'reading_note' as const,
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    readingDraftsMock.discardReadingNoteDraft.mockResolvedValueOnce(true);
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-draft-d-rn-2');
+    fireEvent.click(screen.getByTestId('phone-reading-draft-discard-d-rn-2'));
+
+    await waitFor(() => {
+      expect(readingDraftsMock.discardReadingNoteDraft).toHaveBeenCalledWith('test01', 'd-rn-2');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('phone-reading-draft-d-rn-2')).not.toBeInTheDocument();
+    });
+    expect(readingDraftsMock.confirmReadingNoteDraft).not.toHaveBeenCalled();
+    /** discard 不应该误调 appEntry append（防止假丢弃但落库）。 */
+    expect(appEntryStoreMock.appendAppEntry).not.toHaveBeenCalled();
+  });
+
+  it('discard aborts when user cancels window.confirm', async () => {
+    readingDraftsMock.listReadingNoteDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-rn-3',
+        title: '保留',
+        body: '保留。',
+        noteType: 'reading_note' as const,
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(false);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-draft-d-rn-3');
+    fireEvent.click(screen.getByTestId('phone-reading-draft-discard-d-rn-3'));
+
+    expect(readingDraftsMock.discardReadingNoteDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId('phone-reading-draft-d-rn-3')).toBeInTheDocument();
   });
 });

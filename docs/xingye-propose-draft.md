@@ -46,35 +46,42 @@
 | ① | `lib/xingye/{module}-drafts.js` | 新建 `append{Module}DraftServer({ agentDir, agentId, input })`。参考 [lib/xingye/journal-drafts.js](../lib/xingye/journal-drafts.js)，落 `{module}/drafts.jsonl` + 发 `{module}.draft_proposed` 事件。 |
 | ② | `lib/tools/xingye-propose-draft-tool.js` | `SUPPORTED_MODULES` 加 `"{module}"`；schema 加一个 `{module}: Type.Optional(Type.Object({...}))` 块描述该模块的 payload 字段；execute switch 加 `case "{module}"` 调 (①) 的 helper。 |
 | ③ | `desktop/src/react/xingye/xingye-event-log.ts` 和 `lib/xingye/heartbeat-consumer.js` 的 `TYPE_LABEL_ZH` / `TYPE_ORDER_ZH` | 把 `{module}.draft_proposed / discarded / confirmed` 三个事件类型登记进去，否则心跳摘要里就显示 raw type 字符串。 |
+| ④ | `lib/desk/heartbeat.js` 的 mustPropose directive 菜单（中文 + English 两段） + `tests/heartbeat-auto-draft-directive.test.js` 的模块名断言 | **容易忘——2026-05 接入 6 个模块时全部跳过了这一步**。`computeAutoDraftStaleness` 用 `.endsWith(".draft_proposed")` 判断阈值，本身模块无关；但 mustPropose=true 时给 agent 看的 directive 列表是硬编码的，新模块不补进去 → 强制产出时 agent 永远不会从这个模块挑。directive 里写一行 `` - `{module}`（模块中文说明） ``，测试里加 `expect(prompt).toContain("{module}")`。 |
 
 ### 2.2 渲染端 store
 
 | 步骤 | 文件 | 改什么 |
 | --- | --- | --- |
-| ④ | `desktop/src/react/xingye/xingye-{module}-store.ts` | 加 `XINGYE_{MODULE}_DRAFTS_JSONL` 常量 + `XingyeXxxDraft` 类型 + `list{Module}Drafts` / `append{Module}Draft` / `discard{Module}Draft` / `confirm{Module}Draft` 四个函数。参考 [xingye-journal-store.ts](../desktop/src/react/xingye/xingye-journal-store.ts) 的 draft 区块；`confirm` 内部先 append 到 entries 再删 draft（写入失败保留 draft 不重复写 entry）。 |
+| ⑤ | `desktop/src/react/xingye/xingye-{module}-store.ts` | 加 `XINGYE_{MODULE}_DRAFTS_JSONL` 常量 + `XingyeXxxDraft` 类型 + `list{Module}Drafts` / `append{Module}Draft` / `discard{Module}Draft` / `confirm{Module}Draft` 四个函数。参考 [xingye-journal-store.ts](../desktop/src/react/xingye/xingye-journal-store.ts) 的 draft 区块；`confirm` 内部先 append 到 entries 再删 draft（写入失败保留 draft 不重复写 entry）。 |
 
 ### 2.3 渲染端 UI
 
 | 步骤 | 文件 | 改什么 |
 | --- | --- | --- |
-| ⑤ | `desktop/src/react/xingye/Phone{Module}App.tsx` | 顶部加「待确认草稿」分组：可行内编辑、`确认生成` / `丢弃` 两个按钮，busy 状态隔离。参考 [PhoneJournalApp.tsx](../desktop/src/react/xingye/PhoneJournalApp.tsx) 的 `pendingDrafts` 区块。 |
+| ⑥ | `desktop/src/react/xingye/Phone{Module}App.tsx` | 顶部加「待确认草稿」分组：可行内编辑、`确认生成` / `丢弃` 两个按钮，busy 状态隔离。参考 [PhoneJournalApp.tsx](../desktop/src/react/xingye/PhoneJournalApp.tsx) 的 `pendingDrafts` 区块。 |
 
 ### 2.4 Skill 文档（最重要——别跳过）
 
 | 步骤 | 文件 | 改什么 |
 | --- | --- | --- |
-| ⑥ | `skills2set/xingye-{module}-draft/SKILL.md` | 写一份 skill markdown：触发条件、必填字段、写作要点（第一人称、贴角色、`reason` 必填、宁可不写）、不要做什么。**必须**带 `display-name-{lang}` 覆盖，见 §3。 |
+| ⑦ | `skills2set/xingye-{module}-draft/SKILL.md` | 写一份 skill markdown：触发条件、必填字段、写作要点（第一人称、贴角色、`reason` 必填、宁可不写）、不要做什么。**必须**带 `display-name-{lang}` 覆盖，见 §3。 |
 
 ### 2.5 测试
 
 | 步骤 | 文件 | 改什么 |
 | --- | --- | --- |
-| ⑦ | `desktop/src/react/xingye/xingye-{module}-store.test.ts` | 复制 journal store 的 draft 子 describe（list/append/discard/confirm + 不写 entries）改成本模块字段。 |
-| ⑧ | `desktop/src/react/xingye/xingye-producer-events.test.ts` | 加「`{module}-store drafts` producer 契约」一段，确认 `{module}.draft_proposed/discarded/confirmed` 三个事件按预期触发。 |
-| ⑨ | `tests/xingye-{module}-drafts.test.js` 或扩 `tests/xingye-journal-drafts.test.js` | 验证 dispatch tool 的 `module="{module}"` 分支 + `append{Module}DraftServer` 直接 fs 写。 |
-| ⑩ | `desktop/src/react/xingye/Phone{Module}App.test.tsx` | 待确认草稿渲染 + 确认搬到 entries + 丢弃不进 entries + 行内编辑不丢。 |
+| ⑧ | `desktop/src/react/xingye/xingye-{module}-store.test.ts` | 复制 journal store 的 draft 子 describe（list/append/discard/confirm + 不写 entries）改成本模块字段。 |
+| ⑨ | `desktop/src/react/xingye/xingye-producer-events.test.ts` | 加「`{module}-store drafts` producer 契约」一段，确认 `{module}.draft_proposed/discarded/confirmed` 三个事件按预期触发。 |
+| ⑩ | `tests/xingye-{module}-drafts.test.js` 或扩 `tests/xingye-journal-drafts.test.js` | 验证 dispatch tool 的 `module="{module}"` 分支 + `append{Module}DraftServer` 直接 fs 写。 |
+| ⑪ | **`desktop/src/react/xingye/Phone{Module}App.test.tsx` 的 `pending draft section` describe**（已有就 append、没有就新建） | **容易忘——2026-05 接入的 6 个模块里 5 个跳过了**。最少 4 条 case：(a) 无草稿不渲染段、(b) confirm 转发字段、(c) discard 调对 + 不漏调 confirm/append、(d) 取消 `window.confirm` 草稿保留。mock `./xingye-{module}-drafts` 模块，参考 [PhoneMailApp.test.tsx](../desktop/src/react/xingye/PhoneMailApp.test.tsx)。 |
 
 **[tests/xingye-propose-draft-skill-sync.test.js](../tests/xingye-propose-draft-skill-sync.test.js)** 这个不变量测试**不需要改**——它会自动校验你新加的 enum 项有对应 `skills2set/xingye-{module}-draft/SKILL.md`，反向也校验。enum 和 skill 漂了直接红。
+
+> ⚠️ **directive 菜单（步骤 ④）和 UI 集成测试（步骤 ⑪）目前没有不变量测试守着**——SUPPORTED_MODULES 加了一项、忘做这两步，没有任何东西会红。提交前手动 grep：
+> ```
+> grep -nE "\"{module}\"|'{module}'|`{module}`" lib/desk/heartbeat.js tests/heartbeat-auto-draft-directive.test.js desktop/src/react/xingye/Phone{Module}App.test.tsx
+> ```
+> 三个文件都至少有一处命中才算齐活。
 
 ---
 
@@ -123,6 +130,7 @@ metadata:
 | 测试 | 守的是 |
 | --- | --- |
 | [tests/xingye-propose-draft-skill-sync.test.js](../tests/xingye-propose-draft-skill-sync.test.js) | dispatch enum ↔ `skills2set/xingye-{module}-draft/` 目录双向同步 |
+| [tests/heartbeat-auto-draft-directive.test.js](../tests/heartbeat-auto-draft-directive.test.js) | mustPropose=true 时的 directive prompt 含全部模块名（**只是"含字符串"级别的断言，不能自动发现新模块没补**——加新模块时手动同步） |
 | [tests/tool-categories.test.js](../tests/tool-categories.test.js) | `xingye_propose_draft` 在 OPTIONAL_TOOL_NAMES 白名单里 |
 | [tests/optional-tool-names-drift.test.js](../tests/optional-tool-names-drift.test.js) | 前端 [AgentToolsSection.tsx](../desktop/src/react/settings/tabs/agent/AgentToolsSection.tsx) 的本地副本与 `shared/tool-categories.js` 同步 |
 | [tests/skill-metadata.test.js](../tests/skill-metadata.test.js) | `display-name-{lang}` 解析行为（顶层 / 嵌套 / 空字符串 / 截断） |

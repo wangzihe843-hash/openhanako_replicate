@@ -126,6 +126,18 @@ vi.mock('../settings/store', () => ({
     fn({ settingsAgentId: null, currentAgentId: 'agent-secret-1', ready: false }),
 }));
 
+/**
+ * 草稿模块改用 vi.mock 直接桩，避免和现有 hanaFetch 走真实流。
+ * 现有 describe 不读 drafts，默认 mockResolvedValue([]) 对它们无影响。
+ */
+const secretSpaceDraftsMock = vi.hoisted(() => ({
+  confirmSecretSpaceDraft: vi.fn(),
+  discardSecretSpaceDraft: vi.fn(),
+  listSecretSpaceDrafts: vi.fn().mockResolvedValue([]),
+  SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES: ['state', 'dream', 'saved_item'] as const,
+}));
+vi.mock('./xingye-secret-space-drafts', () => secretSpaceDraftsMock);
+
 const agent: Agent = {
   id: 'agent-secret-1',
   name: 'Test',
@@ -730,5 +742,118 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     expect(screen.getByTestId('secret-space-record-row-memory-fragment-pinned-0')).not.toHaveTextContent(
       'agent A private pinned',
     );
+  });
+});
+
+/**
+ * 覆盖「心跳巡检 → 待确认秘密空间草稿」的 UI 链路。
+ * SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES = ['state', 'dream', 'saved_item']
+ * mustPropose ≥50 触发后，agent 经 `xingye_propose_draft` 向 secret_space 提议。
+ */
+describe('SecretSpacePanel · pending draft section', () => {
+  beforeEach(() => {
+    hanaFetchMock.mockClear();
+    jsonlStore.clear();
+    jsonStore.clear();
+    pinnedStore.clear();
+    secretSpaceDraftsMock.confirmSecretSpaceDraft.mockReset();
+    secretSpaceDraftsMock.discardSecretSpaceDraft.mockReset();
+    secretSpaceDraftsMock.listSecretSpaceDrafts.mockReset();
+    secretSpaceDraftsMock.listSecretSpaceDrafts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders a draft from listSecretSpaceDrafts and confirm forwards fields', async () => {
+    secretSpaceDraftsMock.listSecretSpaceDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-ss-1',
+        category: 'state' as const,
+        title: '此刻',
+        body: '想一个人安静坐一会儿。',
+        reason: '巡检里看到角色今天累了',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    secretSpaceDraftsMock.confirmSecretSpaceDraft.mockResolvedValueOnce({
+      id: 'rec-1',
+      agentId: 'agent-secret-1',
+      kind: 'state',
+      title: '此刻',
+      summary: '想一个人安静坐一会儿。',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    });
+
+    render(<SecretSpacePanel agent={agent} />);
+
+    const draftCard = await screen.findByTestId('secret-space-pending-draft-d-ss-1');
+    expect(within(draftCard).getByText(/巡检里看到角色今天累了/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('secret-space-pending-draft-confirm-d-ss-1'));
+
+    await waitFor(() => {
+      expect(secretSpaceDraftsMock.confirmSecretSpaceDraft).toHaveBeenCalledWith(
+        'agent-secret-1',
+        'd-ss-1',
+        expect.objectContaining({
+          body: '想一个人安静坐一会儿。',
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('secret-space-pending-draft-d-ss-1')).not.toBeInTheDocument();
+    });
+  });
+
+  it('discard calls discardSecretSpaceDraft and does not call confirm', async () => {
+    secretSpaceDraftsMock.listSecretSpaceDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-ss-2',
+        category: 'saved_item' as const,
+        title: '一句话',
+        body: '"再过一阵子吧。"',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    secretSpaceDraftsMock.discardSecretSpaceDraft.mockResolvedValueOnce(true);
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+
+    render(<SecretSpacePanel agent={agent} />);
+    await screen.findByTestId('secret-space-pending-draft-d-ss-2');
+    fireEvent.click(screen.getByTestId('secret-space-pending-draft-discard-d-ss-2'));
+
+    await waitFor(() => {
+      expect(secretSpaceDraftsMock.discardSecretSpaceDraft).toHaveBeenCalledWith('agent-secret-1', 'd-ss-2');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('secret-space-pending-draft-d-ss-2')).not.toBeInTheDocument();
+    });
+    expect(secretSpaceDraftsMock.confirmSecretSpaceDraft).not.toHaveBeenCalled();
+  });
+
+  it('discard aborts when user cancels window.confirm', async () => {
+    secretSpaceDraftsMock.listSecretSpaceDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-ss-3',
+        category: 'dream' as const,
+        title: '梦',
+        body: '一段水边的梦。',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(false);
+
+    render(<SecretSpacePanel agent={agent} />);
+    await screen.findByTestId('secret-space-pending-draft-d-ss-3');
+    fireEvent.click(screen.getByTestId('secret-space-pending-draft-discard-d-ss-3'));
+
+    expect(secretSpaceDraftsMock.discardSecretSpaceDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId('secret-space-pending-draft-d-ss-3')).toBeInTheDocument();
   });
 });
