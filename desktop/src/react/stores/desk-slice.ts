@@ -21,6 +21,9 @@ export interface WorkspaceDeskState {
   jianDrawerOpen: boolean;
   rightWorkspaceTab: RightWorkspaceTab;
   jianView: string;
+  previewOpen: boolean;
+  openTabs: string[];
+  activeTabId: string | null;
 }
 
 export interface DeskSlice {

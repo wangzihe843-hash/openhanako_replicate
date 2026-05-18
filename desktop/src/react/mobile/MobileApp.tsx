@@ -1,11 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AppTitlebar } from '../components/app/AppTitlebar';
-import { ChatPage, WorkspaceCompanionRail } from '../components/app/AppPages';
+import { ChatPage } from '../components/app/ChatPage';
 import { ChatSidebar } from '../components/app/ChatSidebar';
 import { MainContent } from '../MainContent';
-import { MediaViewer } from '../components/shared/MediaViewer/MediaViewer';
-import { PreviewPanel } from '../components/PreviewPanel';
 import { StatusBar } from '../components/StatusBar';
 import { ToastContainer } from '../components/ToastContainer';
 import { toggleSidebar } from '../components/SidebarLayout';
@@ -26,6 +24,10 @@ const MOBILE_EDGE_GESTURE_WIDTH = 28;
 const MOBILE_EDGE_GESTURE_MIN_DISTANCE = 56;
 const MOBILE_EDGE_GESTURE_MAX_VERTICAL_DRIFT = 80;
 const MOBILE_EDGE_GESTURE_DOMINANCE = 1.25;
+
+const LazyPreviewPanel = lazy(() => import('../components/PreviewPanel').then(module => ({ default: module.PreviewPanel })));
+const LazyMediaViewer = lazy(() => import('../components/shared/MediaViewer/MediaViewer').then(module => ({ default: module.MediaViewer })));
+const LazyWorkspaceCompanionRail = lazy(() => import('../components/app/WorkspaceCompanionRail').then(module => ({ default: module.WorkspaceCompanionRail })));
 
 type MobileEdgeGesture = {
   edge: 'left' | 'right';
@@ -127,6 +129,7 @@ function MobileDesktopShell({
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
   const previewOpen = useStore(s => s.previewOpen);
+  const mediaViewer = useStore(s => s.mediaViewer);
   const currentTab = useStore(s => s.currentTab);
   const isNarrow = useNarrowMobileViewport();
   const edgeGestureRef = useRef<MobileEdgeGesture | null>(null);
@@ -254,14 +257,35 @@ function MobileDesktopShell({
         <MainContent>
           <ChatPage inputSurface="mobile" regionPrefix="mobile-" />
         </MainContent>
-        <PreviewPanel />
-        <WorkspaceCompanionRail />
+        {previewOpen && (
+          <Suspense fallback={null}>
+            <LazyPreviewPanel />
+          </Suspense>
+        )}
+        {(!isNarrow || jianOpen) && (
+          <Suspense fallback={<WorkspaceCompanionRailFallback open={jianOpen} />}>
+            <LazyWorkspaceCompanionRail />
+          </Suspense>
+        )}
       </div>
       {showDrawerScrim && <button className="mobile-drawer-scrim" type="button" aria-label="关闭侧边栏" onClick={closeMobileDrawers} />}
       <StatusBar />
-      <MediaViewer />
+      {mediaViewer && (
+        <Suspense fallback={null}>
+          <LazyMediaViewer />
+        </Suspense>
+      )}
       <ToastContainer />
     </main>
+  );
+}
+
+function WorkspaceCompanionRailFallback({ open }: { open: boolean }) {
+  return (
+    <aside className={`jian-sidebar${open ? '' : ' collapsed'}`} id="jianSidebar" data-mobile-workspace-loading="">
+      <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
+      <div className="jian-sidebar-inner"></div>
+    </aside>
   );
 }
 

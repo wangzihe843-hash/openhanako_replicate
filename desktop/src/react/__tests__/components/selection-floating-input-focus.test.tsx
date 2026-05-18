@@ -71,31 +71,43 @@ describe('SelectionFloatingInput focus behavior', () => {
     expect(document.activeElement).toBe(documentFocus);
   });
 
-  it('clears the quoted selection and closes when the user scrolls', async () => {
+  it('keeps the quoted selection and closes when the user scrolls', async () => {
     render(<SelectionFloatingInput />);
 
     await openSelectionFloatingInput();
 
     fireEvent.scroll(document);
 
-    expect(useStore.getState().quotedSelection).toBeNull();
+    expect(useStore.getState().quotedSelection).toMatchObject({ text: '选中文本' });
     await finishCloseAnimation();
     expect(screen.queryByLabelText('input.floatingInput')).toBeNull();
   });
 
-  it('clears the quoted selection and closes when the window loses focus', async () => {
+  it('keeps the quoted selection and closes when the window loses focus', async () => {
     render(<SelectionFloatingInput />);
 
     await openSelectionFloatingInput();
 
     fireEvent.blur(window);
 
-    expect(useStore.getState().quotedSelection).toBeNull();
+    expect(useStore.getState().quotedSelection).toMatchObject({ text: '选中文本' });
     await finishCloseAnimation();
     expect(screen.queryByLabelText('input.floatingInput')).toBeNull();
   });
 
-  it('keeps the floating input open for internal interaction and closes on outside focus', async () => {
+  it('keeps the quoted selection and closes when the user presses Escape', async () => {
+    render(<SelectionFloatingInput />);
+
+    const input = await openSelectionFloatingInput();
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(useStore.getState().quotedSelection).toMatchObject({ text: '选中文本' });
+    await finishCloseAnimation();
+    expect(screen.queryByLabelText('input.floatingInput')).toBeNull();
+  });
+
+  it('keeps the floating input open for internal interaction and only dismisses on outside focus', async () => {
     render(
       <>
         <button type="button">outside focus</button>
@@ -111,7 +123,7 @@ describe('SelectionFloatingInput focus behavior', () => {
 
     fireEvent.focusIn(screen.getByRole('button', { name: 'outside focus' }));
 
-    expect(useStore.getState().quotedSelection).toBeNull();
+    expect(useStore.getState().quotedSelection).toMatchObject({ text: '选中文本' });
     await finishCloseAnimation();
     expect(screen.queryByLabelText('input.floatingInput')).toBeNull();
   });

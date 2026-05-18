@@ -731,6 +731,70 @@ describe("model sync related routes", () => {
     );
   });
 
+  it("providers summary distinguishes configured providers from registry-only setup entries", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const { ProviderRegistry } = await import("../core/provider-registry.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-provider-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmpHome, "added-models.yaml"), [
+        "providers:",
+        "  deepseek:",
+        "    api_key: sk-test",
+        "    base_url: https://api.deepseek.com",
+        "    api: openai-completions",
+        "    models:",
+        "      - deepseek-v4-pro",
+        "  my-provider:",
+        "    api_key: sk-test",
+        "    base_url: https://api.example.com/v1",
+        "    api: openai-completions",
+        "    models:",
+        "      - m1",
+        "",
+      ].join("\n"), "utf-8");
+
+      const registry = new ProviderRegistry(tmpHome);
+      const engine = {
+        providerRegistry: registry,
+        authStorage: {
+          getOAuthProviders: () => [],
+        },
+        preferences: {
+          getOAuthCustomModels: () => ({}),
+        },
+        getRegistryModelsForProvider: () => [],
+        resolveProviderCredentials: () => ({ api_key: "", base_url: "", api: "" }),
+        hanakoHome: tmpHome,
+      };
+      const app = new Hono();
+      app.route("/api", createProvidersRoute(engine));
+
+      const before = await (await app.request("/api/providers/summary")).json();
+      expect(before.providers.deepseek).toMatchObject({
+        is_configured: true,
+        can_delete: true,
+      });
+      expect(before.providers["my-provider"]).toMatchObject({
+        is_configured: true,
+        can_delete: true,
+      });
+
+      registry.removeProvider("deepseek");
+      registry.removeProvider("my-provider");
+
+      const after = await (await app.request("/api/providers/summary")).json();
+      expect(after.providers["my-provider"]).toBeUndefined();
+      expect(after.providers.deepseek).toMatchObject({
+        is_configured: false,
+        can_delete: false,
+        config_status: "needs_setup",
+        models: [],
+      });
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("oauth provider with empty registry falls back to defaults", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.js");
     const app = new Hono();

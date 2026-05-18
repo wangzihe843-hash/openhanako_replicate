@@ -205,7 +205,10 @@ describe("memory ticker respects session-level memory toggle", () => {
 
     const messages = summaryManager.rollingSummary.mock.calls[0][1];
     expect(messages.map((m) => m.content)).toEqual(["new user message", "new assistant message"]);
-    expect(summaryManager.rollingSummary.mock.calls[0][3]).toEqual({ resetAt: "2026-04-29T08:00:00.000Z" });
+    expect(summaryManager.rollingSummary.mock.calls[0][3]).toEqual({
+      resetAt: "2026-04-29T08:00:00.000Z",
+      timeZone: "Asia/Shanghai",
+    });
   });
 
   it("startup recovery skips sessions whose file mtime is before the reset watermark", async () => {

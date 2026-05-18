@@ -10,6 +10,7 @@ import { clearChat } from './agent-actions';
 import type { DeskFile, DeskSearchResult } from '../types';
 import type { WorkspaceDeskState } from './desk-slice';
 import {
+  hydratePersistedPreviewItems,
   loadPersistedWorkspaceUiState,
   schedulePersistCurrentWorkspaceUiState,
 } from './workspace-ui-state-actions';
@@ -37,6 +38,10 @@ function defaultDeskRoot(s: ReturnType<typeof useStore.getState>): string | unde
 }
 
 function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): WorkspaceDeskState {
+  const openTabs = [...(s.openTabs || [])];
+  const activeTabId = s.activeTabId && openTabs.includes(s.activeTabId)
+    ? s.activeTabId
+    : (openTabs[0] || null);
   return {
     deskCurrentPath: s.deskCurrentPath || '',
     deskFiles: [...(s.deskFiles || [])],
@@ -49,7 +54,16 @@ function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): Works
     jianDrawerOpen: !!s.jianDrawerOpen,
     rightWorkspaceTab: s.rightWorkspaceTab || 'workspace',
     jianView: s.jianView || 'desk',
+    previewOpen: !!s.previewOpen,
+    openTabs,
+    activeTabId,
   };
+}
+
+function activePreviewTabId(openTabs: string[], activeTabId: string | null | undefined): string | null {
+  return activeTabId && openTabs.includes(activeTabId)
+    ? activeTabId
+    : (openTabs[0] || null);
 }
 
 export function captureCurrentWorkspaceDeskState(root?: string | null): void {
@@ -91,6 +105,9 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       jianDrawerOpen: false,
       rightWorkspaceTab: 'workspace',
       jianView: 'desk',
+      previewOpen: false,
+      openTabs: [],
+      activeTabId: null,
     });
     updateDeskContextBtn();
     return;
@@ -102,6 +119,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
   const nextSubdir = sameRoot
     ? (latest.deskCurrentPath || '')
     : (saved?.deskCurrentPath || '');
+  const savedOpenTabs = saved?.openTabs || [];
 
   useStore.setState({
     deskBasePath: normalized,
@@ -117,22 +135,40 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     jianDrawerOpen: saved?.jianDrawerOpen ?? false,
     rightWorkspaceTab: saved?.rightWorkspaceTab || 'workspace',
     jianView: saved?.jianView || 'desk',
+    previewOpen: saved?.previewOpen ?? false,
+    openTabs: savedOpenTabs,
+    activeTabId: activePreviewTabId(savedOpenTabs, saved?.activeTabId),
   });
   updateDeskContextBtn();
 
   let effectiveSubdir = nextSubdir;
   if (!saved) {
     const persisted = await loadPersistedWorkspaceUiState(normalized);
+    const restoredPreviewItems = await hydratePersistedPreviewItems(normalized, persisted);
+    const restoredPreviewItemsById = new Map(restoredPreviewItems.map(item => [item.id, item]));
+    const restoredOpenTabs = persisted?.openTabs?.filter(id => restoredPreviewItemsById.has(id)) || [];
+    const restoredActiveTabId = activePreviewTabId(restoredOpenTabs, persisted?.activeTabId);
     if (persisted && normalizeFolder(useStore.getState().deskBasePath) === normalized) {
       effectiveSubdir = sameRoot ? effectiveSubdir : (persisted.deskCurrentPath || '');
-      useStore.setState({
+      useStore.setState((state: any) => ({
         deskCurrentPath: effectiveSubdir,
         deskExpandedPaths: persisted.deskExpandedPaths || [],
         deskSelectedPath: persisted.deskSelectedPath || '',
         rightWorkspaceTab: persisted.rightWorkspaceTab || 'workspace',
         jianView: persisted.jianView || 'desk',
         jianDrawerOpen: persisted.jianDrawerOpen ?? false,
-      } as never);
+        previewOpen: !!persisted.previewOpen,
+        openTabs: restoredOpenTabs,
+        activeTabId: restoredActiveTabId,
+        ...(restoredPreviewItems.length > 0
+          ? {
+              previewItems: [
+                ...state.previewItems.filter((item: any) => !restoredPreviewItemsById.has(item.id)),
+                ...restoredPreviewItems,
+              ],
+            }
+          : {}),
+      }));
     }
   }
 

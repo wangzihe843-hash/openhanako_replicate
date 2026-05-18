@@ -112,5 +112,205 @@ describe("memory prompt boundaries", () => {
     expect(prompt).toContain("只提取用户画像和粗颗粒近况");
     expect(prompt).toContain("禁止提取工作方式偏好");
     expect(prompt).toContain("如果一条事实描述的是“以后遇到类似任务应该怎么做”");
+    expect(prompt).not.toContain("3月15日");
+  });
+
+  it("corrects example-anchored fact dates when a legacy summary has a single source day", async () => {
+    callText.mockResolvedValue(JSON.stringify([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-03-15T14:30",
+      },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "single-day-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统\n\n### 事情经过\n- [14:30] 用户讨论记忆系统。",
+          snapshot: "",
+          updated_at: "2026-05-16T07:00:00.000Z",
+          source_time_range: {
+            start: "2026-05-16T06:30:00.000Z",
+            end: "2026-05-16T07:00:00.000Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-05-16"],
+          },
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
+
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-05-16T14:30",
+        session_id: "single-day-session",
+      },
+    ]);
+  });
+
+  it("nulls legacy HH:mm fact dates for cross-day summaries instead of guessing one date", async () => {
+    callText.mockResolvedValue(JSON.stringify([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-03-15T23:50",
+      },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "cross-day-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统\n\n### 事情经过\n- [23:50] 用户开始讨论记忆系统。\n- [00:10] 用户继续讨论记忆系统。",
+          snapshot: "",
+          updated_at: "2026-05-16T16:20:00.000Z",
+          source_time_range: {
+            start: "2026-05-16T15:50:00.000Z",
+            end: "2026-05-16T16:20:00.000Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-05-16", "2026-05-17"],
+          },
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
+
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: null,
+        session_id: "cross-day-session",
+      },
+    ]);
+  });
+
+  it("rejects fact times that do not appear in the summary timeline", async () => {
+    callText.mockResolvedValue(JSON.stringify([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-05-16T14:30",
+      },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "no-time-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统\n\n### 事情经过\n- 用户讨论记忆系统。",
+          snapshot: "",
+          updated_at: "2026-05-16T07:00:00.000Z",
+          source_time_range: {
+            start: "2026-05-16T06:30:00.000Z",
+            end: "2026-05-16T07:00:00.000Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-05-16"],
+          },
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
+
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: null,
+        session_id: "no-time-session",
+      },
+    ]);
+  });
+
+  it("does not trust full summary dates outside the source session range", async () => {
+    callText.mockResolvedValue(JSON.stringify([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-03-15T23:50",
+      },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "cross-day-hallucinated-date",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统\n\n### 事情经过\n- [2026-03-15 23:50] 用户开始讨论记忆系统。",
+          snapshot: "",
+          updated_at: "2026-05-16T16:20:00.000Z",
+          source_time_range: {
+            start: "2026-05-16T15:50:00.000Z",
+            end: "2026-05-16T16:20:00.000Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-05-16", "2026-05-17"],
+          },
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
+
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: null,
+        session_id: "cross-day-hallucinated-date",
+      },
+    ]);
+  });
+
+  it("uses caller-provided source time ranges for old summaries without persisted time metadata", async () => {
+    callText.mockResolvedValue(JSON.stringify([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: "2026-03-15T00:10",
+      },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "old-cross-day-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统\n\n### 事情经过\n- [23:50] 用户开始讨论记忆系统。\n- [00:10] 用户继续讨论记忆系统。",
+          snapshot: "",
+          updated_at: "2026-05-16T16:20:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+    const getSourceTimeRange = vi.fn(() => ({
+      start: "2026-05-16T15:50:00.000Z",
+      end: "2026-05-16T16:20:00.000Z",
+      timezone: "Asia/Shanghai",
+      localDates: ["2026-05-16", "2026-05-17"],
+    }));
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, {
+      timeZone: "Asia/Shanghai",
+      getSourceTimeRange,
+    });
+
+    expect(getSourceTimeRange).toHaveBeenCalledWith("old-cross-day-session");
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: null,
+        session_id: "old-cross-day-session",
+      },
+    ]);
   });
 });

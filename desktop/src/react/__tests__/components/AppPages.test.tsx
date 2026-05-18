@@ -13,10 +13,6 @@ vi.mock('../../MainContent', () => ({
   ),
 }));
 
-vi.mock('../../components/PreviewPanel', () => ({
-  PreviewPanel: () => <aside data-testid="preview-panel" />,
-}));
-
 vi.mock('../../components/right-workspace/RightWorkspacePanel', () => ({
   RightWorkspacePanel: () => <section data-testid="right-workspace-panel" />,
 }));
@@ -88,7 +84,7 @@ describe('AppPages page ownership', () => {
     render(<AppPages />);
 
     expect(screen.getByTestId('chat-area')).toBeInTheDocument();
-    expect(screen.getByTestId('preview-panel')).toBeInTheDocument();
+    expect(document.querySelector('#previewPanel')).toBeInTheDocument();
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument();
   });
 
@@ -98,7 +94,7 @@ describe('AppPages page ownership', () => {
     render(<AppPages />);
 
     expect(screen.getByTestId('plugin-page')).toHaveTextContent('hanako-hyperframes');
-    expect(screen.queryByTestId('preview-panel')).not.toBeInTheDocument();
+    expect(document.querySelector('#previewPanel')).not.toBeInTheDocument();
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument();
   });
 

@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { callText as defaultCallText } from "./llm-client.js";
 import { modelSupportsImage } from "./message-sanitizer.js";
-import { getVisionCapabilities } from "../shared/model-capabilities.js";
+import { getVisionCapabilities, modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
 
 export const VISION_CONTEXT_START = "<vision-context>";
 export const VISION_CONTEXT_END = "</vision-context>";
@@ -62,8 +62,8 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
 }
 
-function hasExplicitTextOnlyInput(model) {
-  return Array.isArray(model?.input) && !model.input.includes("image");
+function requiresAuxiliaryVision(model) {
+  return Array.isArray(model?.input) && !modelSupportsDirectImageInput(model);
 }
 
 function uniquePathsFromText(text) {
@@ -396,7 +396,7 @@ export class VisionBridge {
 
   async prepare({ sessionPath, targetModel, text, images, imageAttachmentPaths, signal } = {}) {
     if (!images?.length) return { text, images };
-    if (!hasExplicitTextOnlyInput(targetModel)) return { text, images };
+    if (!requiresAuxiliaryVision(targetModel)) return { text, images };
     throwIfAborted(signal);
 
     const config = this._resolveVisionConfig?.();
@@ -437,7 +437,7 @@ export class VisionBridge {
 
   async prepareResources({ sessionPath, targetModel, userRequest, text, resources, signal } = {}) {
     if (!resources?.length) return { notes: [] };
-    if (!hasExplicitTextOnlyInput(targetModel)) return { notes: [] };
+    if (!requiresAuxiliaryVision(targetModel)) return { notes: [] };
     throwIfAborted(signal);
 
     const config = this._resolveVisionConfig?.();

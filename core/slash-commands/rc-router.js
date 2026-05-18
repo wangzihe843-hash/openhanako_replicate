@@ -1,4 +1,5 @@
 import { collectMediaItems } from "../../lib/tools/media-details.js";
+import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.js";
 
 /**
  * rc-router.js — /rc 接管态的消息路由层
@@ -63,7 +64,7 @@ export async function promptAttachedDesktopSession(engine, sessionPath, text, op
     // 非 image 模型剥图（防 provider 400；promptSession 内部也会剥，双保险无害）
     const inputMods = session.model?.input;
     let promptOpts;
-    if (opts.images?.length && Array.isArray(inputMods) && !inputMods.includes("image")) {
+    if (opts.images?.length && Array.isArray(inputMods) && !modelSupportsDirectImageInput(session.model)) {
       promptOpts = undefined;
     } else if (opts.images?.length) {
       promptOpts = { images: opts.images };

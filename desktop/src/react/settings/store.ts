@@ -40,6 +40,7 @@ export interface ProviderSummary {
   logged_in?: boolean;
   supports_oauth: boolean;
   is_coding_plan?: boolean;
+  is_configured?: boolean;
   can_delete: boolean;
   config_status?: 'ok' | 'needs_setup' | 'invalid';
   config_error?: string | null;

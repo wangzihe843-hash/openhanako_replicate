@@ -53,6 +53,7 @@ describe('desk-actions workspace roots', () => {
       cwdSkillsOpen: false,
       workspaceDeskStateByRoot: {},
       previewOpen: false,
+      previewItems: [],
       openTabs: [],
       activeTabId: null,
       selectedFolder: '/home-folder',
@@ -168,6 +169,126 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskFiles).toEqual([{ name: 'note.md' }]);
   });
 
+  it('persists preview panel layout as part of the workspace UI state', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskCurrentPath: 'src',
+      deskExpandedPaths: ['src'],
+      deskSelectedPath: 'src/App.tsx',
+      rightWorkspaceTab: 'workspace',
+      jianView: 'desk',
+      jianDrawerOpen: true,
+      previewOpen: true,
+      openTabs: ['file-/workspace/src/App.tsx', 'memory-note'],
+      activeTabId: 'file-/workspace/src/App.tsx',
+      previewItems: [
+        {
+          id: 'file-/workspace/src/App.tsx',
+          type: 'code',
+          title: 'App.tsx',
+          content: 'content is not persisted',
+          filePath: '/workspace/src/App.tsx',
+          ext: 'tsx',
+          language: 'tsx',
+        },
+        {
+          id: 'memory-note',
+          type: 'markdown',
+          title: 'memory',
+          content: 'transient',
+        },
+      ],
+    } as never);
+
+    const { persistCurrentWorkspaceUiStateNow } = await import('../../stores/workspace-ui-state-actions');
+    await persistCurrentWorkspaceUiStateNow('/workspace');
+
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/preferences/workspace-ui-state', expect.objectContaining({
+      method: 'PUT',
+    }));
+    const [, requestInit] = mockHanaFetch.mock.calls.at(-1) || [];
+    const body = JSON.parse(String((requestInit as RequestInit).body));
+    expect(body).toMatchObject({
+      workspace: '/workspace',
+      surface: 'electron',
+      state: {
+        deskCurrentPath: 'src',
+        deskExpandedPaths: ['src'],
+        deskSelectedPath: 'src/App.tsx',
+        rightWorkspaceTab: 'workspace',
+        jianView: 'desk',
+        jianDrawerOpen: true,
+        previewOpen: true,
+        openTabs: ['file-/workspace/src/App.tsx'],
+        activeTabId: 'file-/workspace/src/App.tsx',
+        previewTabs: [{
+          id: 'file-/workspace/src/App.tsx',
+          filePath: '/workspace/src/App.tsx',
+          relativePath: 'src/App.tsx',
+          title: 'App.tsx',
+          type: 'code',
+          ext: 'tsx',
+          language: 'tsx',
+        }],
+      },
+    });
+  });
+
+  it('persists the workspace snapshot captured before switching roots', async () => {
+    vi.useFakeTimers();
+    try {
+      useStore.setState({
+        deskBasePath: '/workspace-a',
+        deskCurrentPath: 'notes',
+        deskExpandedPaths: ['notes'],
+        deskSelectedPath: 'notes/a.md',
+        rightWorkspaceTab: 'workspace',
+        jianView: 'desk',
+        jianDrawerOpen: true,
+        previewOpen: true,
+        openTabs: ['file-/workspace-a/notes/a.md'],
+        activeTabId: 'file-/workspace-a/notes/a.md',
+        previewItems: [{
+          id: 'file-/workspace-a/notes/a.md',
+          type: 'markdown',
+          title: 'a.md',
+          content: 'old workspace content',
+          filePath: '/workspace-a/notes/a.md',
+          ext: 'md',
+        }],
+      } as never);
+
+      const { activateWorkspaceDesk } = await import('../../stores/desk-actions');
+      await activateWorkspaceDesk('/workspace-b', { reload: false });
+      await vi.runOnlyPendingTimersAsync();
+
+      const putCall = mockHanaFetch.mock.calls.find(([url, init]) =>
+        url === '/api/preferences/workspace-ui-state' && (init as RequestInit | undefined)?.method === 'PUT',
+      );
+      expect(putCall).toBeTruthy();
+      const body = JSON.parse(String((putCall?.[1] as RequestInit).body));
+      expect(body).toMatchObject({
+        workspace: '/workspace-a',
+        state: {
+          deskCurrentPath: 'notes',
+          deskExpandedPaths: ['notes'],
+          deskSelectedPath: 'notes/a.md',
+          jianDrawerOpen: true,
+          previewOpen: true,
+          openTabs: ['file-/workspace-a/notes/a.md'],
+          activeTabId: 'file-/workspace-a/notes/a.md',
+          previewTabs: [{
+            id: 'file-/workspace-a/notes/a.md',
+            filePath: '/workspace-a/notes/a.md',
+            relativePath: 'notes/a.md',
+          }],
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps visible desk state keyed by workspace root', async () => {
     useStore.setState({
       deskBasePath: '/workspace-a',
@@ -183,6 +304,14 @@ describe('desk-actions workspace roots', () => {
       previewOpen: true,
       openTabs: ['previewItem-a'],
       activeTabId: 'previewItem-a',
+      previewItems: [{
+        id: 'previewItem-a',
+        type: 'markdown',
+        title: 'a.md',
+        content: 'a',
+        filePath: '/workspace-a/notes/a.md',
+        ext: 'md',
+      }],
     } as never);
 
     const { activateWorkspaceDesk } = await import('../../stores/desk-actions');
@@ -191,13 +320,13 @@ describe('desk-actions workspace roots', () => {
 
     expect(useStore.getState().deskBasePath).toBe('/workspace-b');
     expect(useStore.getState().deskCurrentPath).toBe('');
-    expect(useStore.getState().previewOpen).toBe(true);
-    expect(useStore.getState().openTabs).toEqual(['previewItem-a']);
-    expect(useStore.getState().activeTabId).toBe('previewItem-a');
+    expect(useStore.getState().previewOpen).toBe(false);
+    expect(useStore.getState().openTabs).toEqual([]);
+    expect(useStore.getState().activeTabId).toBeNull();
     expect(useStore.getState().jianDrawerOpen).toBe(false);
-    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a']).not.toHaveProperty('previewOpen');
-    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a']).not.toHaveProperty('openTabs');
-    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a']).not.toHaveProperty('activeTabId');
+    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a'].previewOpen).toBe(true);
+    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a'].openTabs).toEqual(['previewItem-a']);
+    expect(useStore.getState().workspaceDeskStateByRoot['/workspace-a'].activeTabId).toBe('previewItem-a');
 
     useStore.setState({
       deskCurrentPath: 'src',
@@ -226,12 +355,12 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskJianContent).toBeNull();
     expect(useStore.getState().cwdSkillsOpen).toBe(true);
     expect(useStore.getState().jianDrawerOpen).toBe(true);
-    expect(useStore.getState().previewOpen).toBe(false);
-    expect(useStore.getState().openTabs).toEqual(['previewItem-b']);
-    expect(useStore.getState().activeTabId).toBe('previewItem-b');
+    expect(useStore.getState().previewOpen).toBe(true);
+    expect(useStore.getState().openTabs).toEqual(['previewItem-a']);
+    expect(useStore.getState().activeTabId).toBe('previewItem-a');
   });
 
-  it('restores only workspace companion state from the backend when memory has no entry', async () => {
+  it('restores persisted workspace preview state from the backend when memory has no entry', async () => {
     mockHanaFetch.mockResolvedValueOnce(jsonResponse({
       state: {
         deskExpandedPaths: ['src', 'src/react'],
@@ -265,11 +394,19 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskExpandedPaths).toEqual(['src', 'src/react']);
     expect(useStore.getState().deskSelectedPath).toBe('src/react/App.tsx');
     expect(useStore.getState().jianDrawerOpen).toBe(true);
-    expect(useStore.getState().previewOpen).toBe(false);
-    expect(useStore.getState().openTabs).toEqual(['runtime-preview']);
-    expect(useStore.getState().activeTabId).toBe('runtime-preview');
-    expect(useStore.getState().previewItems).toEqual([]);
-    expect(window.platform?.readFileSnapshot).not.toHaveBeenCalled();
+    expect(useStore.getState().previewOpen).toBe(true);
+    expect(useStore.getState().openTabs).toEqual(['file-src/react/App.tsx']);
+    expect(useStore.getState().activeTabId).toBe('file-src/react/App.tsx');
+    expect(useStore.getState().previewItems).toEqual([
+      expect.objectContaining({
+        id: 'file-src/react/App.tsx',
+        filePath: '/workspace/src/react/App.tsx',
+        title: 'App.tsx',
+        content: 'content:/workspace/src/react/App.tsx',
+        fileVersion: { mtimeMs: 1, size: 10, sha256: 'hash' },
+      }),
+    ]);
+    expect(window.platform?.readFileSnapshot).toHaveBeenCalledWith('/workspace/src/react/App.tsx');
   });
 
   it('renames a tree item by explicit parent subdir and updates that tree cache', async () => {

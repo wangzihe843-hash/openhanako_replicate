@@ -3,8 +3,62 @@ import { AppError } from "../shared/errors.js";
 import { prepareVisionInputForTextOnlyModel } from "../core/vision-prepare.js";
 
 const textOnlyModel = { id: "deepseek-chat", provider: "deepseek", input: ["text"] };
+const deepseekImageDeclaredModel = {
+  id: "deepseek-v4-pro",
+  provider: "deepseek",
+  api: "openai-completions",
+  baseUrl: "https://api.deepseek.com",
+  input: ["text", "image"],
+};
+const customImageDeclaredModel = {
+  id: "custom-vision",
+  provider: "custom",
+  api: "openai-completions",
+  baseUrl: "https://api.example.com/v1",
+  input: ["text", "image"],
+};
 
 describe("prepareVisionInputForTextOnlyModel", () => {
+  it("uses auxiliary vision for official DeepSeek even when the model is user-declared image capable", async () => {
+    const prepare = vi.fn(async () => ({
+      text: "vision notes\n\nwhat is this?",
+      images: undefined,
+    }));
+
+    const result = await prepareVisionInputForTextOnlyModel({
+      targetModel: deepseekImageDeclaredModel,
+      text: "what is this?",
+      opts: { images: [{ type: "image", data: "b64", mimeType: "image/png" }] },
+      sessionPath: "/tmp/session.jsonl",
+      getVisionBridge: () => ({ prepare }),
+      visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
+    });
+
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      targetModel: deepseekImageDeclaredModel,
+      images: [{ type: "image", data: "b64", mimeType: "image/png" }],
+    }));
+    expect(result.text).toBe("vision notes\n\nwhat is this?");
+    expect(result.opts.images).toBeUndefined();
+  });
+
+  it("trusts user-declared image support for unknown providers", async () => {
+    const images = [{ type: "image", data: "b64", mimeType: "image/png" }];
+    const prepare = vi.fn();
+
+    const result = await prepareVisionInputForTextOnlyModel({
+      targetModel: customImageDeclaredModel,
+      text: "what is this?",
+      opts: { images },
+      sessionPath: "/tmp/session.jsonl",
+      getVisionBridge: () => ({ prepare }),
+      visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
+    });
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(result).toEqual({ text: "what is this?", opts: { images } });
+  });
+
   it("degrades recoverable auxiliary vision failures into an explicit text notice", async () => {
     const warn = vi.fn();
     const result = await prepareVisionInputForTextOnlyModel({

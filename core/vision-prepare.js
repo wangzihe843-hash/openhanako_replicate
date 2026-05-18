@@ -1,4 +1,5 @@
 import { getLocale } from "../server/i18n.js";
+import { modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
 import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";
 
 export function isAbortLikeError(err) {
@@ -39,6 +40,10 @@ function appendVisionFailureNotice(text, err) {
   return text ? `${notice}\n\n${text}` : notice;
 }
 
+function requiresAuxiliaryVision(targetModel) {
+  return Array.isArray(targetModel?.input) && !modelSupportsDirectImageInput(targetModel);
+}
+
 export async function prepareVisionInputForTextOnlyModel({
   targetModel,
   text,
@@ -49,8 +54,7 @@ export async function prepareVisionInputForTextOnlyModel({
   warn,
   signal,
 }) {
-  const inputMods = targetModel?.input;
-  if (!opts?.images?.length || !Array.isArray(inputMods) || inputMods.includes("image")) {
+  if (!opts?.images?.length || !requiresAuxiliaryVision(targetModel)) {
     return { text, opts };
   }
 

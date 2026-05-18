@@ -28,18 +28,24 @@ export function ProvidersTab() {
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
   const providerIds = Object.keys(providersSummary);
+  const configuredProviderIds = providerIds.filter(id => providersSummary[id].is_configured !== false);
+  const setupProviderIds = providerIds.filter(id => providersSummary[id].is_configured === false);
   const selected = selectedProviderId;
 
   // 分组：OAuth / Coding Plan / API Key
-  const oauthProviders = providerIds.filter(id => providersSummary[id].supports_oauth);
-  const codingPlanProviders = providerIds.filter(id => !providersSummary[id].supports_oauth && providersSummary[id].is_coding_plan);
-  const registeredApiKey = providerIds.filter(id => !providersSummary[id].supports_oauth && !providersSummary[id].is_coding_plan);
-  const registeredSet = new Set(providerIds);
+  const oauthProviders = configuredProviderIds.filter(id => providersSummary[id].supports_oauth);
+  const codingPlanProviders = configuredProviderIds.filter(id => !providersSummary[id].supports_oauth && providersSummary[id].is_coding_plan);
+  const registeredApiKey = configuredProviderIds.filter(id => !providersSummary[id].supports_oauth && !providersSummary[id].is_coding_plan);
+  const registeredSet = new Set(configuredProviderIds);
 
   const unregisteredPresets = PROVIDER_PRESETS.filter(p =>
     !registeredSet.has(p.value) && !oauthProviders.includes(p.value)
   );
   const presetValues = new Set(PROVIDER_PRESETS.map(p => p.value));
+  const unregisteredCodingPresets = unregisteredPresets.filter(p => p.value.endsWith('-coding'));
+  const unregisteredApiPresets = unregisteredPresets.filter(p => !p.value.endsWith('-coding'));
+  const registryOnlyCodingProviders = setupProviderIds.filter(id => !presetValues.has(id) && providersSummary[id].is_coding_plan);
+  const registryOnlyApiProviders = setupProviderIds.filter(id => !presetValues.has(id) && !providersSummary[id].supports_oauth && !providersSummary[id].is_coding_plan);
   const customProviders = registeredApiKey.filter(id => !presetValues.has(id));
   const presetProviders = registeredApiKey.filter(id => presetValues.has(id));
 
@@ -75,6 +81,20 @@ export function ProvidersTab() {
     </button>
   );
 
+  const renderRegistrySetup = (id: string) => {
+    const p = providersSummary[id];
+    return (
+      <button
+        key={id}
+        className={`${styles['pv-list-item']} ${styles['dim']}${selected === id ? ' ' + styles['selected'] : ''}`}
+        onClick={() => selectProvider(id)}
+      >
+        <span className={styles['pv-status-dot']} />
+        <span className={styles['pv-list-item-name']}>{p.display_name || id}</span>
+      </button>
+    );
+  };
+
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="providers">
       {/* pv-layout：double-column 外壳（sectionBody 透明，pv-layout 保留原视觉） */}
@@ -89,16 +109,19 @@ export function ProvidersTab() {
               </>
             )}
 
-            {codingPlanProviders.length > 0 && (
+            {(codingPlanProviders.length > 0 || unregisteredCodingPresets.length > 0 || registryOnlyCodingProviders.length > 0) && (
               <>
                 <div className={styles['pv-list-group-label']}>Coding Plan</div>
                 {codingPlanProviders.map(renderRegistered)}
+                {unregisteredCodingPresets.map(renderUnregistered)}
+                {registryOnlyCodingProviders.map(renderRegistrySetup)}
               </>
             )}
 
             <div className={styles['pv-list-group-label']}>API</div>
             {presetProviders.map(renderRegistered)}
-            {unregisteredPresets.map(renderUnregistered)}
+            {unregisteredApiPresets.map(renderUnregistered)}
+            {registryOnlyApiProviders.map(renderRegistrySetup)}
             {customProviders.map(renderRegistered)}
 
             <AddCustomButton onClick={() => setAddingProvider(true)} />
@@ -109,6 +132,7 @@ export function ProvidersTab() {
             {selected ? (() => {
               const existing = providersSummary[selected];
               const preset = PROVIDER_PRESETS.find(p => p.value === selected);
+              const isRegistryOnlySetup = existing?.is_configured === false;
               const summary: ProviderSummary = existing || {
                 type: 'api-key' as const,
                 auth_type: 'api-key' as const,
@@ -128,7 +152,7 @@ export function ProvidersTab() {
                   providerId={selected}
                   summary={summary}
                   providerConfig={providers[selected]}
-                  isPresetSetup={!existing && !!preset}
+                  isPresetSetup={(!existing || isRegistryOnlySetup) && !!preset}
                   presetInfo={preset}
                   onRefresh={async () => { await loadSettingsConfig(); await loadSummary(); }}
                 />

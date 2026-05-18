@@ -69,6 +69,29 @@ describe("SessionSummaryManager._buildConversationText", () => {
       cleanup();
     }
   });
+
+  it("uses full local dates in timeline text so cross-day sessions keep ownership", () => {
+    const { manager, cleanup } = createManager();
+    try {
+      const text = manager._buildConversationText([
+        {
+          role: "user",
+          content: "今晚先看记忆。",
+          timestamp: "2026-05-16T15:50:00.000Z",
+        },
+        {
+          role: "assistant",
+          content: "继续处理。",
+          timestamp: "2026-05-16T16:10:00.000Z",
+        },
+      ], { timeZone: "Asia/Shanghai" });
+
+      expect(text).toContain("[2026-05-16 23:50] 【用户】今晚先看记忆。");
+      expect(text).toContain("[2026-05-17 00:10] 【助手】继续处理。");
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("SessionSummaryManager.rollingSummary prompt contract", () => {

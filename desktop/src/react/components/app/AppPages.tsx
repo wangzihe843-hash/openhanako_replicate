@@ -4,59 +4,14 @@ import { ActivityPanel } from '../ActivityPanel';
 import { AutomationPanel } from '../AutomationPanel';
 import { BridgePanel } from '../BridgePanel';
 import { PreviewPanel } from '../PreviewPanel';
-import { RightWorkspacePanel } from '../right-workspace/RightWorkspacePanel';
-import { WorkspaceFileWatchBridge } from '../right-workspace/WorkspaceFileWatchBridge';
 import { PluginPageView } from '../plugin/PluginPageView';
-import { InputArea, type InputAreaProps } from '../InputArea';
-import { WelcomeScreen } from '../WelcomeScreen';
-import { ChatArea } from '../chat/ChatArea';
 import { ChannelMessages, ChannelMembers, ChannelInput, ChannelReadonly, ChannelAgentActivityPanel, ChannelAgentSettingsPanel } from '../ChannelsPanel';
 import { ChannelHeader } from '../channels/ChannelHeader';
 import { MainContent } from '../../MainContent';
-import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
+import { ChatPage } from './ChatPage';
+import { WorkspaceCompanionRail } from './WorkspaceCompanionRail';
 
 const tr = (key: string, vars?: Record<string, string | number>) => window.t?.(key, vars) ?? key;
-
-function WelcomeContainer() {
-  const visible = useStore(s => s.welcomeVisible);
-  return (
-    <div className={`welcome${visible ? '' : ' hidden'}`} id="welcome">
-      <WelcomeScreen />
-    </div>
-  );
-}
-
-export function ChatPage({
-  inputSurface = 'desktop',
-  regionPrefix = '',
-}: {
-  inputSurface?: NonNullable<InputAreaProps['surface']>;
-  regionPrefix?: string;
-} = {}) {
-  const welcomeVisible = useStore(s => s.welcomeVisible);
-  const currentSessionPath = useStore(s => s.currentSessionPath);
-  const hasPanels = !welcomeVisible && !!currentSessionPath;
-
-  return (
-    <>
-      <div className={`chat-area${hasPanels ? ' has-panels' : ''}`}>
-        <WelcomeContainer />
-        <RegionalErrorBoundary region={`${regionPrefix}chat`} resetKeys={[currentSessionPath]}>
-          <ChatArea />
-        </RegionalErrorBoundary>
-      </div>
-      <div className="input-area">
-        <RegionalErrorBoundary
-          region={`${regionPrefix}input`}
-          resetKeys={[currentSessionPath]}
-          autoRetry={inputSurface === 'mobile' ? { attempts: 2, delayMs: 120 } : undefined}
-        >
-          <InputArea key={currentSessionPath || '__new'} surface={inputSurface} />
-        </RegionalErrorBoundary>
-      </div>
-    </>
-  );
-}
 
 function ChannelInputArea() {
   const currentChannel = useStore(s => s.currentChannel);
@@ -166,24 +121,6 @@ function PluginPage({ pluginId }: { pluginId: string }) {
     <div className="plugin-page-shell">
       <PluginPageView pluginId={pluginId} />
     </div>
-  );
-}
-
-export function WorkspaceCompanionRail() {
-  const jianOpen = useStore(s => s.jianOpen);
-
-  return (
-    <>
-      <WorkspaceFileWatchBridge />
-      <aside className={`jian-sidebar${jianOpen ? '' : ' collapsed'}`} id="jianSidebar">
-        <div className="resize-handle resize-handle-left" id="jianResizeHandle"></div>
-        <div className="jian-sidebar-inner">
-          <RegionalErrorBoundary region="right-workspace">
-            <RightWorkspacePanel />
-          </RegionalErrorBoundary>
-        </div>
-      </aside>
-    </>
   );
 }
 

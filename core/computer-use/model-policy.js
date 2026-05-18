@@ -1,7 +1,8 @@
 import { COMPUTER_USE_ERRORS, computerUseError } from "./errors.js";
+import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.js";
 
 export function modelSupportsComputerUse(model) {
-  return Array.isArray(model?.input) && model.input.includes("image");
+  return modelSupportsDirectImageInput(model);
 }
 
 export function assertComputerUseModelSupported(model) {

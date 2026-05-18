@@ -53,6 +53,20 @@ describe("modelSupportsVideo", () => {
 describe("sanitizeMessagesForModel", () => {
   const textOnlyModel = { input: ["text"] };
   const imageModel = { input: ["text", "image"] };
+  const deepseekImageDeclaredModel = {
+    id: "deepseek-v4-pro",
+    provider: "deepseek",
+    api: "openai-completions",
+    baseUrl: "https://api.deepseek.com",
+    input: ["text", "image"],
+  };
+  const customImageDeclaredModel = {
+    id: "custom-vision",
+    provider: "custom",
+    api: "openai-completions",
+    baseUrl: "https://api.example.com/v1",
+    input: ["text", "image"],
+  };
   const videoModel = {
     id: "qwen3-vl-plus",
     provider: "dashscope",
@@ -69,6 +83,28 @@ describe("sanitizeMessagesForModel", () => {
     const res = sanitizeMessagesForModel(messages, imageModel);
     expect(res.stripped).toBe(0);
     expect(res.messages).toBe(messages);
+  });
+
+  it("用户声明 image 的未知 provider：默认信任并直传图片", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("hi"), IMG_BLOCK] },
+    ];
+    const res = sanitizeMessagesForModel(messages, customImageDeclaredModel);
+    expect(res.stripped).toBe(0);
+    expect(res.messages).toBe(messages);
+  });
+
+  it("官方 DeepSeek 即使声明 image 也不直传 image_url", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("what is this?"), IMG_BLOCK] },
+    ];
+    const res = sanitizeMessagesForModel(messages, deepseekImageDeclaredModel);
+    expect(res.stripped).toBe(1);
+    expect(res.strippedImages).toBe(1);
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("what is this?"),
+      { type: "text", text: "[图片已省略：当前模型不支持图像输入]" },
+    ]);
   });
 
   it("不支持 image 的模型：user 消息里的 image block 换占位", () => {
