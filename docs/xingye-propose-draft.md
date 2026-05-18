@@ -75,13 +75,15 @@
 | ⑩ | `tests/xingye-{module}-drafts.test.js` 或扩 `tests/xingye-journal-drafts.test.js` | 验证 dispatch tool 的 `module="{module}"` 分支 + `append{Module}DraftServer` 直接 fs 写。 |
 | ⑪ | **`desktop/src/react/xingye/Phone{Module}App.test.tsx` 的 `pending draft section` describe**（已有就 append、没有就新建） | **容易忘——2026-05 接入的 6 个模块里 5 个跳过了**。最少 4 条 case：(a) 无草稿不渲染段、(b) confirm 转发字段、(c) discard 调对 + 不漏调 confirm/append、(d) 取消 `window.confirm` 草稿保留。mock `./xingye-{module}-drafts` 模块，参考 [PhoneMailApp.test.tsx](../desktop/src/react/xingye/PhoneMailApp.test.tsx)。 |
 
-**[tests/xingye-propose-draft-skill-sync.test.js](../tests/xingye-propose-draft-skill-sync.test.js)** 这个不变量测试**不需要改**——它会自动校验你新加的 enum 项有对应 `skills2set/xingye-{module}-draft/SKILL.md`，反向也校验。enum 和 skill 漂了直接红。
+两个不变量测试**不需要改**——加新模块时如果没补全 sink，它们会红：
 
-> ⚠️ **directive 菜单（步骤 ④）和 UI 集成测试（步骤 ⑪）目前没有不变量测试守着**——SUPPORTED_MODULES 加了一项、忘做这两步，没有任何东西会红。提交前手动 grep：
-> ```
-> grep -nE "\"{module}\"|'{module}'|`{module}`" lib/desk/heartbeat.js tests/heartbeat-auto-draft-directive.test.js desktop/src/react/xingye/Phone{Module}App.test.tsx
-> ```
-> 三个文件都至少有一处命中才算齐活。
+- **[tests/xingye-propose-draft-skill-sync.test.js](../tests/xingye-propose-draft-skill-sync.test.js)**：双向校验 `SUPPORTED_MODULES ↔ skills2set/xingye-{module}-draft/SKILL.md`。enum 加了 skill 没加、或 skill 加了 enum 没加都会红。
+- **[tests/xingye-propose-draft-coverage.test.js](../tests/xingye-propose-draft-coverage.test.js)**：覆盖步骤 ④（heartbeat directive）+ 步骤 ⑪（UI 集成测试），含三段断言——
+  1. zh / en 两版 must-propose directive 都要带 `` `${module}` ``（前后反引号）字面；少一处就红。
+  2. `MODULE_UI_FIXTURES` 字典的 keys 必须等于 `SUPPORTED_MODULES`（双向）；新模块没登记就红。
+  3. 每个模块登记的 UI test 文件必须含本模块 `confirm{X}Draft` / `discard{X}Draft` 两条 verb 引用——保证不是空壳测试。
+
+加新模块时，运行 `npx vitest run tests/xingye-propose-draft-coverage.test.js` 看红的项就知道哪一步漏了。**命名不规则**（`confirmMomentDraft` 单数、`confirmReadingNoteDraft` 单数、`confirmFileDraft` 单数）和**共享 fixture**（如 `memory_candidate` 的 draft UI 物理上挂在 `SecretSpacePanel` 里）都用显式 `MODULE_UI_FIXTURES` 表登记，不要在表里搞 fuzzy 映射。
 
 ---
 

@@ -138,6 +138,19 @@ const secretSpaceDraftsMock = vi.hoisted(() => ({
 }));
 vi.mock('./xingye-secret-space-drafts', () => secretSpaceDraftsMock);
 
+/**
+ * memory_candidate 待确认草稿区物理上挂在 SecretSpacePanel 的 memory_fragment 视图里
+ * （pendingMemoryCandidateDrafts），不在 MemoryCandidatePanel.tsx 里。这里桩出
+ * confirm/discard/list 三件套，由下方 memory-candidate draft 测试段消费。
+ */
+const memoryCandidateDraftsMock = vi.hoisted(() => ({
+  confirmMemoryCandidateDraft: vi.fn(),
+  discardMemoryCandidateDraft: vi.fn(),
+  listMemoryCandidateDrafts: vi.fn().mockResolvedValue([]),
+  XINGYE_MEMORY_CANDIDATE_DRAFTS_JSONL: 'memory-candidate/drafts.jsonl',
+}));
+vi.mock('./xingye-memory-candidate-drafts', () => memoryCandidateDraftsMock);
+
 const agent: Agent = {
   id: 'agent-secret-1',
   name: 'Test',
@@ -879,5 +892,89 @@ describe('SecretSpacePanel · pending draft section', () => {
 
     expect(secretSpaceDraftsMock.discardSecretSpaceDraft).not.toHaveBeenCalled();
     expect(screen.getByTestId('secret-space-pending-draft-d-ss-3')).toBeInTheDocument();
+  });
+});
+
+/**
+ * memory_candidate 模块对应的待确认草稿区——挂在 SecretSpacePanel 的 memory_fragment
+ * 视图（不是独立 Panel），所以测试也写在这里。覆盖 confirmMemoryCandidateDraft 与
+ * discardMemoryCandidateDraft 两条路径，配合 tests/xingye-propose-draft-coverage.test.js
+ * 的 marker 不变量。
+ */
+describe('SecretSpacePanel · memory_candidate pending draft section', () => {
+  beforeEach(() => {
+    hanaFetchMock.mockClear();
+    jsonlStore.clear();
+    jsonStore.clear();
+    pinnedStore.clear();
+    window.localStorage.clear();
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
+    memoryCandidateDraftsMock.confirmMemoryCandidateDraft.mockReset();
+    memoryCandidateDraftsMock.discardMemoryCandidateDraft.mockReset();
+    memoryCandidateDraftsMock.listMemoryCandidateDrafts.mockReset();
+    memoryCandidateDraftsMock.listMemoryCandidateDrafts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
+    cleanup();
+  });
+
+  it('confirm forwards draft id and removes the card from the section', async () => {
+    memoryCandidateDraftsMock.listMemoryCandidateDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-mc-1',
+        content: 'TA 反复提到那次航海',
+        importanceLevel: 'high' as const,
+        reason: '巡检看到最近三次对话都触及那次航海',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    memoryCandidateDraftsMock.confirmMemoryCandidateDraft.mockResolvedValueOnce(undefined);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    await screen.findByTestId('memory-fragment-pending-draft-d-mc-1');
+
+    fireEvent.click(screen.getByTestId('memory-fragment-pending-draft-confirm-d-mc-1'));
+
+    await waitFor(() => {
+      expect(memoryCandidateDraftsMock.confirmMemoryCandidateDraft).toHaveBeenCalledWith('agent-secret-1', 'd-mc-1');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('memory-fragment-pending-draft-d-mc-1')).not.toBeInTheDocument();
+    });
+    /** confirm 不应该顺手调 discard。 */
+    expect(memoryCandidateDraftsMock.discardMemoryCandidateDraft).not.toHaveBeenCalled();
+  });
+
+  it('discard calls discardMemoryCandidateDraft and does not call confirm', async () => {
+    memoryCandidateDraftsMock.listMemoryCandidateDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-mc-2',
+        content: '记得给奶奶打电话',
+        importanceLevel: 'medium' as const,
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+    memoryCandidateDraftsMock.discardMemoryCandidateDraft.mockResolvedValueOnce(true);
+    /** 与 secret_space discard 同款 window.confirm 拦截。 */
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+    await screen.findByTestId('memory-fragment-pending-draft-d-mc-2');
+
+    fireEvent.click(screen.getByTestId('memory-fragment-pending-draft-discard-d-mc-2'));
+
+    await waitFor(() => {
+      expect(memoryCandidateDraftsMock.discardMemoryCandidateDraft).toHaveBeenCalledWith('agent-secret-1', 'd-mc-2');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('memory-fragment-pending-draft-d-mc-2')).not.toBeInTheDocument();
+    });
+    expect(memoryCandidateDraftsMock.confirmMemoryCandidateDraft).not.toHaveBeenCalled();
   });
 });
