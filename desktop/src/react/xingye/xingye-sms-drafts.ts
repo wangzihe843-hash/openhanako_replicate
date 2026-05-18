@@ -26,7 +26,7 @@ import {
 } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
-import { addSmsMessage, type XingyeContactTargetType } from './xingye-phone-store';
+import { addSmsMessage, getSmsThreads, type XingyeContactTargetType } from './xingye-phone-store';
 import { FROM_DRAFT_ID_PREFIX, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
@@ -275,6 +275,25 @@ export async function confirmSmsDraft(
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
   return withDraftConfirmLock(`sms::${aid}::${did}`, async () => {
     const expectedMessageId = smsMessageIdFromDraftId(did);
+
+    /**
+     * 幂等 retry：第一次 confirm 成功后 draft 已删，再次 confirm 不应该报"草稿不
+     * 存在"——和其它模块（divination/secret_space 等）的 confirm 语义对齐。
+     * 扫一遍 owner 名下的所有 thread，若已经有 `from-draft-${did}` 这条消息，
+     * 直接当成"上次已写"返回，绕过 addSmsMessage / 抛错。
+     */
+    for (const thread of getSmsThreads(aid)) {
+      const existing = thread.messages.find((m) => m.id === expectedMessageId);
+      if (existing) {
+        try {
+          await backend.deleteJsonlRecord(aid, XINGYE_SMS_DRAFTS_JSONL, did);
+        } catch {
+          /** 删失败也无所谓——本来就是 retry 路径。 */
+        }
+        return { messageId: expectedMessageId, targetType: thread.targetType, targetId: thread.targetId };
+      }
+    }
+
     const draft = (await listSmsDrafts(aid)).find((d) => d.id === did);
     if (!draft) {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');

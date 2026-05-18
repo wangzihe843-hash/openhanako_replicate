@@ -584,7 +584,7 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={styles.phonePrimaryAction}
                           onClick={() => void handleConfirmDraft(draft)}
                           disabled={busy}
                           data-testid={`phone-schedule-draft-confirm-${draft.id}`}
@@ -784,7 +784,7 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
               <button type="button" className={styles.phoneModalGhostButton} onClick={() => setComposeOpen(false)} disabled={saveBusy || aiBusy}>
                 取消
               </button>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void saveCompose()} disabled={saveBusy || aiBusy}>
+              <button type="button" className={styles.phonePrimaryAction} onClick={() => void saveCompose()} disabled={saveBusy || aiBusy}>
                 {saveBusy ? '保存中…' : '保存'}
               </button>
             </div>

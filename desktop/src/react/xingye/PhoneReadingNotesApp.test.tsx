@@ -611,6 +611,21 @@ describe('PhoneReadingNotesApp · pending draft section', () => {
   });
 
   it('renders draft and confirm forwards fields to confirmReadingNoteDraft', async () => {
+    /**
+     * UI 端在 confirm 时把 bookHint 解析成本地 bookId。书架里没有匹配的书 →
+     * UI 会拒绝 confirm（避免落出"看不到的孤立 entry"）。本 case 验证正常流，
+     * 所以预先把「战地手记」放进 books 列表。
+     */
+    catalogMock.listBooksForAgent.mockResolvedValue([
+      {
+        id: 'book-1',
+        agentId: 'test01',
+        title: '战地手记',
+        authors: ['佚名'],
+        subjects: [],
+        addedAt: '2026-05-10T00:00:00.000Z',
+      },
+    ]);
     readingDraftsMock.listReadingNoteDrafts.mockResolvedValueOnce([
       {
         id: 'd-rn-1',
@@ -708,5 +723,35 @@ describe('PhoneReadingNotesApp · pending draft section', () => {
 
     expect(readingDraftsMock.discardReadingNoteDraft).not.toHaveBeenCalled();
     expect(screen.getByTestId('phone-reading-draft-d-rn-3')).toBeInTheDocument();
+  });
+
+  it('refuses confirm when bookHint does not match any local book and keeps draft visible', async () => {
+    /**
+     * 回归测试：之前 UI 允许 bookId=null 落地，entries 写入了但 normalizeReadingNote
+     * 把它 filter 掉，导致草稿消失但 entry 永不显示——孤立 entry。修复后 UI 必须
+     * 在 bookHint 无法解析时拒绝 confirm，保留草稿并提示用户先建书。
+     */
+    catalogMock.listBooksForAgent.mockResolvedValue([]); // 书架空
+
+    readingDraftsMock.listReadingNoteDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-rn-orphan',
+        title: '没有书的批注',
+        body: '内容。',
+        noteType: 'reading_note' as const,
+        bookHint: '某本不存在的书',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-17T12:00:00.000Z',
+      },
+    ]);
+
+    renderReadingNotes(linwu, linwuProfile);
+    await screen.findByTestId('phone-reading-draft-d-rn-orphan');
+
+    fireEvent.click(screen.getByTestId('phone-reading-draft-confirm-d-rn-orphan'));
+
+    /** confirm 不应该被调，草稿保留可见。 */
+    expect(readingDraftsMock.confirmReadingNoteDraft).not.toHaveBeenCalled();
+    expect(screen.getByTestId('phone-reading-draft-d-rn-orphan')).toBeInTheDocument();
   });
 });

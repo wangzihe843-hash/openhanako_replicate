@@ -170,8 +170,11 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     setDraftBusyKind('plain');
     setDraftError(null);
     try {
+      /** 与 handleCreate 同款：用 composerDisplay 解析的 displayName，否则回退 agent.name；都没有再让 store 退到 aid。 */
+      const authorName = composerDisplay?.displayName ?? composerAgent.name;
       await confirmMomentDraft(composerAgent.id, draft.id, {
         content: draftWorkingContent(draft),
+        authorName,
       });
       removeDraftFromUiState(draft.id);
       /** 让 feed 也刷新一下（新发的 post 通过 XINGYE_MOMENTS_CHANGED_EVENT 会自动 picked up）。 */
@@ -202,10 +205,12 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         throw new Error('正文不能为空，无法生成互动。');
       }
       const aiResult = await handleGenerateAiDraft({ existingContent: workingContent });
+      const authorName = composerDisplay?.displayName ?? composerAgent.name;
       await confirmMomentDraft(composerAgent.id, draft.id, {
         content: workingContent,
         seedLikes: aiResult.seedLikes,
         seedComments: aiResult.seedComments,
+        authorName,
       });
       removeDraftFromUiState(draft.id);
       retry();

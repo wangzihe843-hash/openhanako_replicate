@@ -242,4 +242,57 @@ describe('xingye-state-store', () => {
       ]),
     );
   });
+
+  /**
+   * 契约：5 个数值 metric 的字段集合。
+   *
+   * 这个 set 写死在测试里——任何 PR 改 `affection / trust / loyalty / jealousy / corruption`
+   * 五者之一的字段名都会让本测试红。
+   *
+   * Why：state 落盘到 relationship-state.json（per-agent），读盘时 normalizeState 用
+   * `asFiniteNumber(value.X)` 兜底，缺失字段悄悄变 0。如果有人重命名 metric（比如
+   * loyalty → respect）没写迁移，老用户的 loyalty: 75 数据会读成 respect: 0，无声丢失。
+   *
+   * 真要重命名时：必须主动改这个 set + 加迁移逻辑（读盘时把老字段名 map 到新的）。
+   * 改了 set 但没加迁移就当 review-time 卡点——目前没有 schema version，这是最便宜的
+   * 守门。
+   */
+  it('contract: relationship-state numeric metric set is stable (rename → must add migration)', () => {
+    /** keyof 安全：TS 会确保下面的 array 包含的字符串都是 XingyeRelationshipState 的实际字段。 */
+    const numericMetricKeys: ReadonlyArray<keyof XingyeRelationshipState> = [
+      'affection',
+      'trust',
+      'loyalty',
+      'jealousy',
+      'corruption',
+    ];
+
+    /** 落一个 state，验证这五个字段确实都是 number（保证 normalize+clamp 没漏 metric）。 */
+    const saved = saveRelationshipState(
+      clampRelationshipState({
+        agentId: 'contract-agent',
+        targetType: 'user',
+        targetId: '__user__',
+        affection: 42,
+        trust: 11,
+        loyalty: 22,
+        jealousy: 5,
+        corruption: 3,
+        mood: '试探',
+        relationshipKey: 'friend',
+        relationshipLabel: '君子之交',
+        updatedAt: '2026-05-17T00:00:00.000Z',
+      }),
+      storage,
+    );
+
+    for (const key of numericMetricKeys) {
+      expect(
+        typeof saved[key],
+        `metric ${key} must be a number — rename should fail this test and force a migration discussion`,
+      ).toBe('number');
+    }
+    /** 数量也卡——加新 metric 也要主动改 set。 */
+    expect(numericMetricKeys.length).toBe(5);
+  });
 });

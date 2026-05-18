@@ -350,16 +350,29 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
 
   const handleConfirmDraft = async (d: XingyePendingReadingNoteDraft) => {
     if (!ownerAgentId) return;
+    /**
+     * normalizeReadingNote 把没有 bookId 的 entry 视为非法直接 reject（line 153），
+     * 列表/详情都不会显示。如果这里允许 bookId=null 落地，会写出一条 jsonl 但
+     * 用户既看不到草稿（已删）也看不到 entry——静默丢数据。所以 confirm 前必须
+     * 把书匹配上：UI 拒绝、保留草稿、提示用户先创建对应的书或修改 bookHint。
+     * 真正想做的「未归类批注」桶需要额外的 UI 视图，先单独做。
+     */
+    const bookId = resolveBookIdFromHint(d.bookHint);
+    if (!bookId) {
+      setDraftError(
+        `这条草稿的「${d.bookHint ?? '（空 bookHint）'}」在书架里没找到对应的书。请先用「新建书目」把书加进来，或修改 bookHint，再确认。`,
+      );
+      return;
+    }
     setDraftBusyId(d.id);
     setDraftError(null);
     try {
       const working = draftWorkingValue(d);
-      const bookId = resolveBookIdFromHint(d.bookHint);
       const entry = await confirmReadingNoteDraft(ownerAgentId, d.id, {
         title: working.title,
         body: working.body,
         noteType: working.noteType,
-        bookId: bookId,
+        bookId,
       });
       const normalized = normalizeReadingNote(entry);
       if (normalized) {
@@ -864,7 +877,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
                       ) : null}
                       <button
                         type="button"
-                        className={styles.phoneJournalPrimaryButton}
+                        className={styles.phonePrimaryAction}
                         disabled={Boolean(candidate.importedId) || importing}
                         onClick={() => void importDiscoveredBook(candidate)}
                       >
@@ -966,7 +979,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
                 <>
                   <button
                     type="button"
-                    className={styles.phoneJournalPrimaryButton}
+                    className={styles.phonePrimaryAction}
                     disabled={annotationSaving}
                     onClick={() => void saveAnnotation()}
                   >
@@ -984,7 +997,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               ) : (
                 <button
                   type="button"
-                  className={styles.phoneJournalPrimaryButton}
+                  className={styles.phonePrimaryAction}
                   disabled={annotationStatus === 'generating' || annotationStatus === 'suggestion_loading' || !annotationPassage.trim()}
                   onClick={() => void generateAnnotation()}
                 >
@@ -1013,7 +1026,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               <span>备注</span>
               <textarea rows={4} value={bookDraft.description} onChange={(e) => updateBookDraft({ description: e.target.value })} />
             </label>
-            <button type="button" className={styles.phoneJournalPrimaryButton} onClick={saveBook}>保存书目</button>
+            <button type="button" className={styles.phonePrimaryAction} onClick={saveBook}>保存书目</button>
           </section>
         ) : mode === 'note_form' && selectedBook ? (
           <section className={styles.phoneReadingEditor} aria-label="新增笔记">
@@ -1043,7 +1056,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               <span>手动摘录</span>
               <textarea rows={3} value={noteDraft.quoteText} onChange={(e) => updateNoteDraft({ quoteText: e.target.value })} />
             </label>
-            <button type="button" className={styles.phoneJournalPrimaryButton} onClick={saveNote}>保存笔记</button>
+            <button type="button" className={styles.phonePrimaryAction} onClick={saveNote}>保存笔记</button>
           </section>
         ) : selectedNote ? (
           <section className={styles.phoneReadingDetail} data-testid="phone-reading-note-detail">
@@ -1087,8 +1100,8 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               </div>
             ) : null}
             <div className={styles.phoneReadingActions}>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openNoteForm}>手写笔记</button>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void openAnnotationForm()}>让 TA 批注</button>
+              <button type="button" className={styles.phonePrimaryAction} onClick={openNoteForm}>手写笔记</button>
+              <button type="button" className={styles.phonePrimaryAction} onClick={() => void openAnnotationForm()}>让 TA 批注</button>
               <button type="button" className={styles.phoneShortcutButton} onClick={deleteSelectedBook}>删除书目</button>
             </div>
             {selectedBookNotes.length === 0 ? (
@@ -1165,7 +1178,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
                         {d.bookHint ? (
                           <span className={styles.phoneAppHint} style={{ margin: 0 }}>
                             建议归《{d.bookHint}》
-                            {resolveBookIdFromHint(d.bookHint) ? '（已匹配本地书）' : '（书架未匹配，会落到「未归类」）'}
+                            {resolveBookIdFromHint(d.bookHint) ? '（已匹配本地书）' : '（书架未匹配——需要先「新建书目」或改 bookHint 才能确认）'}
                           </span>
                         ) : null}
                       </div>
@@ -1188,7 +1201,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={styles.phonePrimaryAction}
                           onClick={() => void handleConfirmDraft(d)}
                           disabled={busy}
                           data-testid={`phone-reading-draft-confirm-${d.id}`}
@@ -1225,7 +1238,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               </div>
             )}
             <div className={styles.phoneReadingActions}>
-              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openBookForm}>新增书目</button>
+              <button type="button" className={styles.phonePrimaryAction} onClick={openBookForm}>新增书目</button>
               <button type="button" className={styles.phoneShortcutButton} onClick={openDiscover}>帮 TA 找书</button>
             </div>
           </section>

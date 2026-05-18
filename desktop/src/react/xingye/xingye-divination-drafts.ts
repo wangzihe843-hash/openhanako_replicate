@@ -245,6 +245,14 @@ export async function confirmDivinationDraft(
     omens?: { good: string; bad: string };
     luckyDirection?: string;
     luckyColor?: string;
+    /**
+     * 正式加工路径：把用户给的「可选关注方向」(用户视角 theme) 也带过来。
+     * 与正常生成 entry (PhoneDivinationApp.handleGenerate → appendDivinationEntry)
+     * 同款语义——详情页用它显示「记录中的可选关注方向」。注意：与 themeHint 是
+     * 不同字段，themeHint 是草稿自己的主题（agent 视角），userProvidedTheme 是
+     * 用户外部输入。
+     */
+    userProvidedTheme?: string;
   },
 ): Promise<AppEntry> {
   const aid = assertAgentId(agentId, '确认占卜（心象）草稿');
@@ -293,6 +301,9 @@ export async function confirmDivinationDraft(
         resolverReason: draft.reason || '巡检：TA 主动写下的心象提示',
       };
       if (themeHint) metadata.themeHint = themeHint;
+      if (edits?.userProvidedTheme && edits.userProvidedTheme.trim()) {
+        metadata.userProvidedTheme = edits.userProvidedTheme.trim();
+      }
       if (edits?.fortuneScore) metadata.fortuneScore = edits.fortuneScore;
       if (edits?.omens) metadata.omens = edits.omens;
       if (edits?.luckyDirection && edits.luckyDirection.trim()) metadata.luckyDirection = edits.luckyDirection.trim();

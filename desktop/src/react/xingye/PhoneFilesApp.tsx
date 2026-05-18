@@ -530,7 +530,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={styles.phonePrimaryAction}
                           onClick={() => void handleConfirmPendingDraft(d)}
                           disabled={busy}
                           data-testid={`phone-files-pending-draft-confirm-${d.id}`}
@@ -608,7 +608,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
               {folders.length > 0 ? (
                 <button
                   type="button"
-                  className={styles.phoneJournalPrimaryButton}
+                  className={styles.phonePrimaryAction}
                   onClick={() => openCreateInFolder(folders[0].id)}
                   disabled={listLoading}
                   data-testid="phone-files-new-from-home"
@@ -659,7 +659,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
             <div className={styles.phoneFilesHomeActions}>
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={() => openCreateInFolder(selectedFolder.id)}
                 data-testid="phone-files-new-in-folder"
               >
@@ -814,7 +814,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
               </button>
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={() => void handleSave()}
                 disabled={saveBusy || aiBusy}
                 data-testid="phone-files-save-button"

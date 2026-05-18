@@ -13,6 +13,7 @@
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 import {
   updateRelationshipState,
   type XingyeRelationshipState,
@@ -187,49 +188,57 @@ export async function confirmRelationshipStateDraft(
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
 
-  const drafts = await listRelationshipStateDrafts(aid);
-  const draft = drafts.find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+  /**
+   * 进程内 per-draft 锁：updateRelationshipState 是非幂等的（5 个 delta 累加），
+   * 双击/多窗口并发 confirm 会把同一份 deltas 应用两次。锁住后第二次走到这里会
+   * 看到 draft 已被删 → 抛 `草稿不存在或已被丢弃`，符合预期。secret_space /
+   * divination / moments confirm 同款。
+   */
+  return withDraftConfirmLock(`relationship_state::${aid}::${did}`, async () => {
+    const drafts = await listRelationshipStateDrafts(aid);
+    const draft = drafts.find((d) => d.id === did);
+    if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
 
-  const patch: XingyeRelationshipStatePatch = {
-    affectionDelta: edits?.affectionDelta ?? draft.affectionDelta,
-    trustDelta: edits?.trustDelta ?? draft.trustDelta,
-    loyaltyDelta: edits?.loyaltyDelta ?? draft.loyaltyDelta,
-    jealousyDelta: edits?.jealousyDelta ?? draft.jealousyDelta,
-    corruptionDelta: edits?.corruptionDelta ?? draft.corruptionDelta,
-    mood: edits?.mood ?? draft.mood,
-    stateSummary: edits?.stateSummary ?? draft.stateSummary,
-    reason: edits?.reason ?? draft.reasonText,
-  };
+    const patch: XingyeRelationshipStatePatch = {
+      affectionDelta: edits?.affectionDelta ?? draft.affectionDelta,
+      trustDelta: edits?.trustDelta ?? draft.trustDelta,
+      loyaltyDelta: edits?.loyaltyDelta ?? draft.loyaltyDelta,
+      jealousyDelta: edits?.jealousyDelta ?? draft.jealousyDelta,
+      corruptionDelta: edits?.corruptionDelta ?? draft.corruptionDelta,
+      mood: edits?.mood ?? draft.mood,
+      stateSummary: edits?.stateSummary ?? draft.stateSummary,
+      reason: edits?.reason ?? draft.reasonText,
+    };
 
-  const next = updateRelationshipState(aid, patch);
+    const next = updateRelationshipState(aid, patch);
 
-  await appendDraftEventBestEffort(aid, {
-    type: 'relationship_state.applied',
-    source: 'xingye-relationship-state-drafts',
-    subjectId: next.targetId,
-    payload: {
-      draftId: did,
-      affectionDelta: patch.affectionDelta ?? 0,
-      trustDelta: patch.trustDelta ?? 0,
-      loyaltyDelta: patch.loyaltyDelta ?? 0,
-      jealousyDelta: patch.jealousyDelta ?? 0,
-      corruptionDelta: patch.corruptionDelta ?? 0,
-      mood: next.mood,
-    },
+    await appendDraftEventBestEffort(aid, {
+      type: 'relationship_state.applied',
+      source: 'xingye-relationship-state-drafts',
+      subjectId: next.targetId,
+      payload: {
+        draftId: did,
+        affectionDelta: patch.affectionDelta ?? 0,
+        trustDelta: patch.trustDelta ?? 0,
+        loyaltyDelta: patch.loyaltyDelta ?? 0,
+        jealousyDelta: patch.jealousyDelta ?? 0,
+        corruptionDelta: patch.corruptionDelta ?? 0,
+        mood: next.mood,
+      },
+    });
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_RELATIONSHIP_STATE_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-relationship-state-drafts] confirm: failed to delete draft after applying:', error);
+    }
+    await appendDraftEventBestEffort(aid, {
+      type: 'relationship_state.draft_confirmed',
+      source: 'xingye-relationship-state-drafts',
+      subjectId: did,
+      payload: { draftId: did },
+    });
+
+    return next;
   });
-
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_RELATIONSHIP_STATE_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-relationship-state-drafts] confirm: failed to delete draft after applying:', error);
-  }
-  await appendDraftEventBestEffort(aid, {
-    type: 'relationship_state.draft_confirmed',
-    source: 'xingye-relationship-state-drafts',
-    subjectId: did,
-    payload: { draftId: did },
-  });
-
-  return next;
 }

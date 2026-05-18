@@ -507,6 +507,11 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
    * 单条 memory_fragment 记录「推到 pinned」：拿条目正文，GET 现有 pins，去重后 PUT 回去。
    * 不修改 memory_fragment.jsonl 本身——条目仍在私藏回忆列表里。pinned 是另一份独立存储,
    * 由 OpenHanako 内置 memory 维护；本动作让两者就这一条记录形成"也固化进 pinned"的并集。
+   *
+   * KNOWN（lost-update race）：GET → 本地拼 nextPins → PUT 之间没有 etag/lock。如果同一窗口
+   * Settings panel / pin_memory 工具 / MemoryCandidatePanel 并发写一次，最后那一次 PUT 会覆盖
+   * 本次添加。3 个 panel 都订阅 OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED，状态最终一致——但
+   * 用户加的这条可能无声丢失，需要重点。要彻底治需要 server 端加 etag 或 append-only 端点。
    */
   const handlePushRecordToPinned = async (record: SecretSpaceSampleRecord) => {
     if (!agent?.id) return;
@@ -618,7 +623,13 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         return false;
       }
     }
-    /** pinned 来源：从 pinned.md 移除（保持兼容旧行为）。 */
+    /**
+     * pinned 来源：从 pinned.md 移除（保持兼容旧行为）。
+     *
+     * KNOWN（lost-update race）：与 handlePushRecordToPinned 同款——GET→PUT 之间无 etag/lock,
+     * 并发写有概率让本次删除"被重新写回"或让其它新加 pin 丢失。最终一致由
+     * OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED 兜底，但单次删除/新增意图可能无声丢失。
+     */
     const target = normalizePinBulletForMatch(selected.body);
     if (!target) {
       setSecretSpaceDeleteError('删除失败：当前 pinned 回忆内容为空。');
@@ -762,6 +773,14 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const closeMemoryCreate = () => {
     setMemoryCreateOpen(false);
     setManualError(null);
+    /**
+     * 关闭模态时也清掉表单缓冲。否则下次打开还能看到上次的草稿——这是
+     * UX bug，不是 feature（成功提交时已经清过，但取消/点 × 不会触发
+     * handleCreateManualCandidate）。
+     */
+    setManualContent('');
+    setManualReason(XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT);
+    setManualLevel('medium');
   };
 
   const displayProfile = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
@@ -948,6 +967,17 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const goHome = () => {
     setView('home');
     setActiveCategory(null);
+    /**
+     * activeCategory 变 null 后 reset useEffect 早返回（line 385 `if (!activeCategory)`）
+     * 不会清这些 per-category 缓冲，导致下次开同一类目时残留陈旧文本/错误/flash。
+     * 这里同步清。
+     */
+    setAddRecordTitle('');
+    setAddRecordBody('');
+    setAddRecordError(null);
+    setSavedItemSeed('');
+    setAiError(null);
+    setPushPinnedFlash(null);
   };
 
   const activeMeta = activeCategory ? metaById(activeCategory) : null;

@@ -30,7 +30,12 @@ function normalizeRecord(
   const body = typeof raw.body === 'string'
     ? raw.body
     : (typeof raw.content === 'string' ? raw.content : '');
-  const kind = category === 'state' ? 'memory_fragment' : category;
+  /**
+   * 直接用 category 作 kind——secret-space-record-types 里已为 state 加了一项。
+   * 之前把 state 强行重命名成 memory_fragment 会让 state.jsonl 里的条目在列表
+   * 里挂"回忆"标签，跟主视图（RelationshipStatePanel）语义错位。
+   */
+  const kind = category;
   if (!body && typeof raw.summary !== 'string') return null;
   return {
     recordId: recordIdStable,

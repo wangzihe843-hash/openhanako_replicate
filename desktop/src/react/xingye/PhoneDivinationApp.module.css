@@ -7,6 +7,80 @@
 }
 
 /* ==========================================================================
+   .generationActionButton —— 占卜主"起卦"按钮的本地（CSS Module 作用域）类。
+   下方每个 .themeXxx.generationCard .generationActionButton 都会改写它的
+   颜色，让按钮跟随当前所选 method 的卡片配色（紫描金塔罗 / 月银水晶 / 朱砂
+   六爻 / 锈红北欧符文 / 描金夜空星象 / 玫瑰通用神谕 / 军绿羊皮纸战地）。
+
+   注意：以前是 `:global(.phoneJournalPrimaryButton)` 覆盖默认金色按钮——但
+   CSS Module 会把按钮 className hash 化（_phoneJournalPrimaryButton_xxx），
+   `:global` 的字面选择器永远匹配不上，覆盖全是死代码。换成本地类后
+   作用域正确，UI 终于能看到设计师本来想要的 method-themed 按钮。
+
+   兜底样式（没有任何 themeXxx 套用时显示的颜色）：与 XingyeShell 的
+   .phoneJournalPrimaryButton 同款金色 gradient，跟之前 fallback 行为一致；
+   实际上 6 个 method 都会覆盖它，这个 fallback 只在异常路径下才看得到。
+   ========================================================================== */
+
+.generationActionButton {
+  border: none;
+  border-radius: 12px;
+  padding: 8px 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #7b6f54, #b99d69);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(91, 79, 58, 0.22);
+  transition: filter var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.generationActionButton:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.generationActionButton:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* ==========================================================================
+   待确认草稿（心象提示）区按钮：羊皮纸/朱砂印底色。Divination 模块自家配色，
+   不走通用 phonePrimaryAction（避免和六派占法主题色 + 主"起卦"按钮的金色对撞）。
+   "原样保存"/"正式加工" 两个按钮共用 .pendingDraftActionPrimary；"丢弃" 继续走
+   phoneModalGhostButton。
+   ========================================================================== */
+
+.pendingDraftActionPrimary {
+  border: 1px solid #8b5a3a;
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: #f6efe2;
+  /* 朱砂 → 古书赭：与上方 generationCard 的羊皮纸 + 占法分色保持同一色系，不与之争夺视觉重心 */
+  background: linear-gradient(135deg, #8b5a3a 0%, #6d4327 100%);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+  box-shadow: 0 3px 8px rgba(109, 67, 39, 0.18);
+}
+
+.pendingDraftActionPrimary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.pendingDraftActionPrimary:disabled {
+  cursor: default;
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+/* ==========================================================================
    运势评分 + 宜忌 + 幸运 三段卡片（占法主题共用结构；颜色走 var 主题色）
    渲染条件：metadata.fortuneScore 存在才显示评分卡；omens / luckyDirection /
    luckyColor 各自独立显示。旧 entry 缺这些字段时整段不渲染。
@@ -315,7 +389,7 @@
   box-shadow: 0 0 0 2px var(--field-green-soft);
 }
 
-.themeField.generationCard :global(.phoneJournalPrimaryButton) {
+.themeField.generationCard .generationActionButton {
   background: var(--field-green);
   color: var(--field-paper);
   border: 1px solid var(--field-green);
@@ -326,7 +400,7 @@
   font-size: 0.78rem;
 }
 
-.themeField.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeField.generationCard .generationActionButton:hover:not(:disabled) {
   background: #3c4a2f;
 }
 
@@ -494,7 +568,7 @@
   border-radius: 6px;
 }
 
-.themeIching.generationCard :global(.phoneJournalPrimaryButton) {
+.themeIching.generationCard .generationActionButton {
   background: var(--iching-red);
   border: 1px solid var(--iching-red);
   color: var(--iching-paper);
@@ -503,7 +577,7 @@
   border-radius: 6px;
 }
 
-.themeIching.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeIching.generationCard .generationActionButton:hover:not(:disabled) {
   background: #8e2a1f;
 }
 
@@ -657,7 +731,7 @@
   box-shadow: 0 0 0 2px var(--tarot-gold-soft);
 }
 
-.themeTarot.generationCard :global(.phoneJournalPrimaryButton) {
+.themeTarot.generationCard .generationActionButton {
   background: transparent;
   border: 1px solid var(--tarot-gold);
   color: var(--tarot-gold);
@@ -667,7 +741,7 @@
   border-radius: 4px;
 }
 
-.themeTarot.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeTarot.generationCard .generationActionButton:hover:not(:disabled) {
   background: var(--tarot-gold-soft);
 }
 
@@ -824,7 +898,7 @@
   box-shadow: 0 0 0 3px var(--crystal-violet-soft);
 }
 
-.themeCrystal.generationCard :global(.phoneJournalPrimaryButton) {
+.themeCrystal.generationCard .generationActionButton {
   background: var(--crystal-violet-soft);
   border: 1px solid var(--crystal-moon);
   color: var(--crystal-silver);
@@ -833,7 +907,7 @@
   border-radius: 999px;
 }
 
-.themeCrystal.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeCrystal.generationCard .generationActionButton:hover:not(:disabled) {
   background: rgba(111, 91, 151, 0.4);
 }
 
@@ -988,7 +1062,7 @@
   border-radius: 2px;
 }
 
-.themeRunes.generationCard :global(.phoneJournalPrimaryButton) {
+.themeRunes.generationCard .generationActionButton {
   background: var(--runes-rust);
   border: 1px solid var(--runes-rust);
   color: var(--runes-bg-soft);
@@ -998,7 +1072,7 @@
   border-radius: 2px;
 }
 
-.themeRunes.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeRunes.generationCard .generationActionButton:hover:not(:disabled) {
   background: #582c1d;
 }
 
@@ -1163,7 +1237,7 @@
   box-shadow: 0 0 0 2px var(--astro-gold-soft);
 }
 
-.themeAstro.generationCard :global(.phoneJournalPrimaryButton) {
+.themeAstro.generationCard .generationActionButton {
   background: transparent;
   border: 1px solid var(--astro-gold);
   color: var(--astro-gold);
@@ -1173,7 +1247,7 @@
   border-radius: 6px;
 }
 
-.themeAstro.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeAstro.generationCard .generationActionButton:hover:not(:disabled) {
   background: var(--astro-gold-soft);
 }
 
@@ -1320,7 +1394,7 @@
   box-shadow: 0 0 0 2px var(--generic-rose-soft);
 }
 
-.themeGeneric.generationCard :global(.phoneJournalPrimaryButton) {
+.themeGeneric.generationCard .generationActionButton {
   background: var(--generic-rose);
   border: 1px solid var(--generic-rose);
   color: var(--generic-paper);
@@ -1329,7 +1403,7 @@
   border-radius: 4px;
 }
 
-.themeGeneric.generationCard :global(.phoneJournalPrimaryButton):hover:not(:disabled) {
+.themeGeneric.generationCard .generationActionButton:hover:not(:disabled) {
   background: #97694c;
 }
 

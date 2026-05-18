@@ -356,6 +356,8 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
         omens: reading.omens,
         luckyDirection: reading.luckyDirection,
         luckyColor: reading.luckyColor,
+        /** 与 handleGenerate 同款：把"可选关注方向"带进 metadata，详情页才能显示。 */
+        userProvidedTheme: working.themeHint.trim() || undefined,
       });
       await reloadEntries();
       setDraftEdits((prev) => {
@@ -589,7 +591,14 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
               ) : null}
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                /**
+                 * 本地类 divStyles.generationActionButton —— 下方每个
+                 * .themeXxx.generationCard .generationActionButton 会按当前
+                 * method（tarot / crystal_ball / astrology 等）改写颜色。
+                 * 不要换回 styles.phoneJournalPrimaryButton：那个是全局金色
+                 * fallback，CSS module 作用域接不上 per-method 覆盖。
+                 */
+                className={divStyles.generationActionButton}
                 data-testid="phone-divination-generate"
                 aria-label={`${generationTheme.generationButtonLabel}并生成占卜记录`}
                 onClick={() => void handleGenerate()}
@@ -663,7 +672,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={divStyles.pendingDraftActionPrimary}
                           onClick={() => void handleConfirmDraftRaw(d)}
                           disabled={busy}
                           data-testid={`phone-divination-draft-confirm-${d.id}`}
@@ -673,7 +682,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
                         </button>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={divStyles.pendingDraftActionPrimary}
                           onClick={() => void handleConfirmDraftPolish(d)}
                           disabled={busy || ctxBusy || !ctxAgentLike}
                           data-testid={`phone-divination-draft-polish-${d.id}`}

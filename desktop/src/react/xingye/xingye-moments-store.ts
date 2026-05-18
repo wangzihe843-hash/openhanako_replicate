@@ -695,6 +695,12 @@ export async function confirmMomentDraft(
     content?: string;
     seedLikes?: ReadonlyArray<XingyeMomentSeedLike>;
     seedComments?: ReadonlyArray<XingyeMomentSeedComment>;
+    /**
+     * 作者展示名。UI 端来源是 `composerDisplay?.displayName ?? composerAgent.name`——
+     * 不传则回退 agentId，但**那只是个 id**，落到 post.authorName 后 JSON 导出 /
+     * 角色被移出花名册后的 fallback 渲染都是错的。所以新调用方应该一律传。
+     */
+    authorName?: string;
   },
 ): Promise<XingyeMomentPost> {
   const aid = agentId.trim();
@@ -719,10 +725,11 @@ export async function confirmMomentDraft(
     } else if (draft) {
       const content = (opts?.content ?? draft.content).trim();
       if (!content) throw new Error('确认草稿失败：正文不能为空。');
+      const authorName = opts?.authorName?.trim() || aid;
       post = await createXingyeMomentPost({
         id: expectedPostId,
         authorAgentId: aid,
-        authorName: aid,
+        authorName,
         content,
         seedLikes: opts?.seedLikes,
         seedComments: opts?.seedComments,

@@ -514,7 +514,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
             {mailbox === 'drafts' ? (
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={openDraftCreate}
                 data-testid="phone-mail-new-draft"
               >
@@ -726,7 +726,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
             <div className={styles.phoneShoppingActions}>
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={() => void handleSaveDraft('draft')}
                 disabled={draftSaveBusy}
                 data-testid="phone-mail-draft-save"
@@ -804,7 +804,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
               </p>
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={() => void handleInitProfile()}
                 disabled={initBusy}
                 data-testid="phone-mail-init-button"
@@ -877,7 +877,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <button
                             type="button"
-                            className={styles.phoneJournalPrimaryButton}
+                            className={styles.phonePrimaryAction}
                             onClick={() => void handleConfirmPendingDraft(d)}
                             disabled={busy}
                             data-testid={`phone-mail-pending-draft-confirm-${d.id}`}
@@ -929,7 +929,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
               <div className={styles.phoneShoppingActions}>
                 <button
                   type="button"
-                  className={styles.phoneJournalPrimaryButton}
+                  className={styles.phonePrimaryAction}
                   onClick={() => void handleGenerateHistory()}
                   disabled={aiBusy}
                   data-testid="phone-mail-generate-history"

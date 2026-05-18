@@ -326,7 +326,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
             {!session ? (
               <div className={styles.mmChatEmpty} data-testid="mm-chat-detail-missing">
                 <p className={styles.mmChatEmptyTitle}>找不到该会话</p>
-                <button type="button" className={styles.phoneJournalPrimaryButton} onClick={backToList}>
+                <button type="button" className={styles.phonePrimaryAction} onClick={backToList}>
                   返回列表
                 </button>
               </div>

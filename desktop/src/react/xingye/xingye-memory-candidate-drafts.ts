@@ -17,6 +17,7 @@ import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendSecretSpaceRecord } from './xingye-secret-space-store';
+import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -169,48 +170,55 @@ export async function confirmMemoryCandidateDraft(
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
 
-  const drafts = await listMemoryCandidateDrafts(aid);
-  const draft = drafts.find((d) => d.id === did);
-  if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
-
-  const contentFromEdit = typeof edits?.content === 'string' ? edits.content : undefined;
-  const content = (contentFromEdit ?? draft.content).trim().slice(0, 600);
-  if (!content) throw new Error('确认草稿失败：内容不能为空。');
-  const importanceLevel = edits?.importanceLevel ?? draft.importanceLevel;
-  const reason = edits && Object.prototype.hasOwnProperty.call(edits, 'reason')
-    ? (edits.reason === null ? undefined : normalizeOptionalText(edits.reason, 300))
-    : draft.reason;
-
   /**
-   * record key 用 `from-draft-${draftId}` 作确定性 id；如果上一次 confirm 写完
-   * memory_fragment.jsonl 但 delete draft 失败,本次重试时 appendJsonl 会再写一行——
-   * 这是 best-effort，对 memory_fragment 这种"附加性"内容比强查重更简单（同 key
-   * 多行在列表里看起来一样，删除时按 key 一次删干净）。
+   * 进程内 per-draft 锁：避免双击/多窗口产生并发 confirm。appendSecretSpaceRecord
+   * 用确定性 key（`from-draft-${did}`）已经够冪等，但事件 / delete draft 顺序
+   * 在并发下会乱，所以仍然加锁，和其它 draft confirm 路径对齐。
    */
-  const recordKey = `from-draft-${did}`;
-  await appendSecretSpaceRecord(aid, 'memory_fragment', {
-    key: recordKey,
-    id: recordKey,
-    recordId: recordKey,
-    title: content.length > 48 ? `${content.slice(0, 48)}…` : content,
-    body: content,
-    summary: content.length > 120 ? `${content.slice(0, 120)}…` : content,
-    source: 'xingye-heartbeat-tool',
-    importance: importanceNumberFromLevel(importanceLevel),
-    importanceLevel,
-    reason,
-  });
+  return withDraftConfirmLock(`memory_candidate::${aid}::${did}`, async () => {
+    const drafts = await listMemoryCandidateDrafts(aid);
+    const draft = drafts.find((d) => d.id === did);
+    if (!draft) throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
 
-  try {
-    await backend.deleteJsonlRecord(aid, XINGYE_MEMORY_CANDIDATE_DRAFTS_JSONL, did);
-  } catch (error) {
-    console.warn('[xingye-memory-candidate-drafts] confirm: failed to delete draft after memory_fragment append:', error);
-  }
-  await appendDraftEventBestEffort(aid, {
-    type: 'memory_candidate.draft_confirmed',
-    source: 'xingye-memory-candidate-drafts',
-    subjectId: did,
-    payload: { draftId: did, recordId: recordKey, importanceLevel },
+    const contentFromEdit = typeof edits?.content === 'string' ? edits.content : undefined;
+    const content = (contentFromEdit ?? draft.content).trim().slice(0, 600);
+    if (!content) throw new Error('确认草稿失败：内容不能为空。');
+    const importanceLevel = edits?.importanceLevel ?? draft.importanceLevel;
+    const reason = edits && Object.prototype.hasOwnProperty.call(edits, 'reason')
+      ? (edits.reason === null ? undefined : normalizeOptionalText(edits.reason, 300))
+      : draft.reason;
+
+    /**
+     * record key 用 `from-draft-${draftId}` 作确定性 id；如果上一次 confirm 写完
+     * memory_fragment.jsonl 但 delete draft 失败,本次重试时 appendJsonl 会再写一行——
+     * 这是 best-effort，对 memory_fragment 这种"附加性"内容比强查重更简单（同 key
+     * 多行在列表里看起来一样，删除时按 key 一次删干净）。
+     */
+    const recordKey = `from-draft-${did}`;
+    await appendSecretSpaceRecord(aid, 'memory_fragment', {
+      key: recordKey,
+      id: recordKey,
+      recordId: recordKey,
+      title: content.length > 48 ? `${content.slice(0, 48)}…` : content,
+      body: content,
+      summary: content.length > 120 ? `${content.slice(0, 120)}…` : content,
+      source: 'xingye-heartbeat-tool',
+      importance: importanceNumberFromLevel(importanceLevel),
+      importanceLevel,
+      reason,
+    });
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_MEMORY_CANDIDATE_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-memory-candidate-drafts] confirm: failed to delete draft after memory_fragment append:', error);
+    }
+    await appendDraftEventBestEffort(aid, {
+      type: 'memory_candidate.draft_confirmed',
+      source: 'xingye-memory-candidate-drafts',
+      subjectId: did,
+      payload: { draftId: did, recordId: recordKey, importanceLevel },
+    });
+    return { draftId: did, recordId: recordKey, importanceLevel };
   });
-  return { draftId: did, recordId: recordKey, importanceLevel };
 }

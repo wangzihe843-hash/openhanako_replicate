@@ -624,7 +624,7 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
             <div className={styles.phoneShoppingActions}>
               <button
                 type="button"
-                className={styles.phoneJournalPrimaryButton}
+                className={styles.phonePrimaryAction}
                 onClick={saveDraft}
                 disabled={saveBusy || aiBusy}
               >
@@ -766,7 +766,7 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          className={styles.phoneJournalPrimaryButton}
+                          className={styles.phonePrimaryAction}
                           onClick={() => void handleConfirmDraft(d)}
                           disabled={busy}
                           data-testid={`phone-shopping-draft-confirm-${d.id}`}
@@ -828,7 +828,7 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
               ))}
             </div>
 
-            <button type="button" className={styles.phoneJournalPrimaryButton} onClick={openCompose}>
+            <button type="button" className={styles.phonePrimaryAction} onClick={openCompose}>
               新增购物记录
             </button>
           </section>
