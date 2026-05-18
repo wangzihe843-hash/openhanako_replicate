@@ -4,9 +4,11 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler } from "../hub/scheduler.js";
 import {
+  computeAutoDraftStaleness,
   pruneConsumedEvents,
   pruneOrphanDedupeKeys,
   summarizeXingyeEventsForHeartbeatZh,
+  XINGYE_AUTO_DRAFT_STALENESS_THRESHOLD,
   XINGYE_HEARTBEAT_CONSUMER_ID,
 } from "../lib/xingye/heartbeat-consumer.js";
 
@@ -542,6 +544,133 @@ describe("summarizeXingyeEventsForHeartbeatZh: origin-aware grouping", () => {
     const summary = summarizeXingyeEventsForHeartbeatZh(events);
     expect(summary).toContain("朋友圈新增（自动）×1");
     expect(summary).toContain("朋友圈新增（手动）×1");
+  });
+});
+
+describe("computeAutoDraftStaleness", () => {
+  /** 构造一个 recent_chat.observed 事件（时间从 base 开始递增 i 分钟）。 */
+  function chat(i, base = "2026-05-17T00:00:00.000Z") {
+    const ms = Date.parse(base) + i * 60_000;
+    return {
+      id: `chat-${i}`,
+      agentId: "a",
+      type: "recent_chat.observed",
+      source: "desktop-session-submit",
+      createdAt: new Date(ms).toISOString(),
+      payload: { turnIndex: i },
+    };
+  }
+  /** 构造一个 *.draft_proposed 事件。 */
+  function draftProposed(module, atIso) {
+    return {
+      id: `dp-${module}-${atIso}`,
+      agentId: "a",
+      type: `${module}.draft_proposed`,
+      source: "xingye-heartbeat-tool",
+      createdAt: atIso,
+      payload: { module },
+    };
+  }
+
+  it("empty / invalid input → all zeros, mustPropose=false", () => {
+    expect(computeAutoDraftStaleness([])).toEqual({
+      lastAutoDraftAt: null,
+      chatTurnsSinceLastDraft: 0,
+      mustPropose: false,
+    });
+    expect(computeAutoDraftStaleness(null)).toEqual({
+      lastAutoDraftAt: null,
+      chatTurnsSinceLastDraft: 0,
+      mustPropose: false,
+    });
+  });
+
+  it("no draft history: chat count = total chats; mustPropose only if count ≥ threshold", () => {
+    const chats49 = Array.from({ length: 49 }, (_, i) => chat(i));
+    const r1 = computeAutoDraftStaleness(chats49);
+    expect(r1).toEqual({
+      lastAutoDraftAt: null,
+      chatTurnsSinceLastDraft: 49,
+      mustPropose: false,
+    });
+
+    const chats50 = Array.from({ length: 50 }, (_, i) => chat(i));
+    const r2 = computeAutoDraftStaleness(chats50);
+    expect(r2.chatTurnsSinceLastDraft).toBe(50);
+    expect(r2.mustPropose).toBe(true);
+  });
+
+  it("counts only chats AFTER the latest draft_proposed (strict >, not ≥)", () => {
+    const events = [
+      chat(0), // 00:00
+      chat(1), // 00:01
+      draftProposed("journal", "2026-05-17T00:02:00.000Z"), // 00:02
+      chat(3), // 00:03  ← counted
+      chat(4), // 00:04  ← counted
+      chat(5), // 00:05  ← counted
+    ];
+    const r = computeAutoDraftStaleness(events);
+    expect(r.lastAutoDraftAt).toBe("2026-05-17T00:02:00.000Z");
+    expect(r.chatTurnsSinceLastDraft).toBe(3);
+    expect(r.mustPropose).toBe(false);
+  });
+
+  it("uses the LATEST draft_proposed across all modules (not the earliest)", () => {
+    const events = [
+      draftProposed("journal", "2026-05-17T00:00:00.000Z"),
+      chat(1),
+      chat(2),
+      draftProposed("schedule", "2026-05-17T00:03:00.000Z"),
+      chat(10),
+      chat(11),
+    ];
+    const r = computeAutoDraftStaleness(events);
+    expect(r.lastAutoDraftAt).toBe("2026-05-17T00:03:00.000Z");
+    /** chat(1) chat(2) are before the schedule draft → excluded; chat(10) chat(11) → counted. */
+    expect(r.chatTurnsSinceLastDraft).toBe(2);
+  });
+
+  it("triggers mustPropose at exactly threshold (≥, not >)", () => {
+    /** Use a custom threshold of 5 for clarity. */
+    const events = [
+      draftProposed("journal", "2026-05-17T00:00:00.000Z"),
+      chat(1), chat(2), chat(3), chat(4), chat(5),
+    ];
+    expect(computeAutoDraftStaleness(events, 5).mustPropose).toBe(true);
+    expect(computeAutoDraftStaleness(events, 6).mustPropose).toBe(false);
+  });
+
+  it("ignores non-recent_chat.observed events when counting (mail/phone/etc don't trip threshold)", () => {
+    const events = [
+      draftProposed("moments", "2026-05-17T00:00:00.000Z"),
+      ...Array.from({ length: 60 }, (_, i) => ({
+        id: `sms-${i}`,
+        agentId: "a",
+        type: "phone.sms_appended",
+        source: "phone",
+        createdAt: new Date(Date.parse("2026-05-17T00:00:00.000Z") + (i + 1) * 60_000).toISOString(),
+        payload: {},
+      })),
+    ];
+    const r = computeAutoDraftStaleness(events);
+    expect(r.chatTurnsSinceLastDraft).toBe(0);
+    expect(r.mustPropose).toBe(false);
+  });
+
+  it("default threshold export matches expected value (50)", () => {
+    expect(XINGYE_AUTO_DRAFT_STALENESS_THRESHOLD).toBe(50);
+  });
+
+  it("ignores events with unparseable createdAt", () => {
+    const events = [
+      { id: "bad-1", type: "journal.draft_proposed", createdAt: "not-a-date" },
+      { id: "good-1", type: "journal.draft_proposed", createdAt: "2026-05-17T00:00:00.000Z" },
+      { id: "chat-1", type: "recent_chat.observed", createdAt: "2026-05-17T00:01:00.000Z" },
+      { id: "chat-bad", type: "recent_chat.observed", createdAt: "garbage" },
+    ];
+    const r = computeAutoDraftStaleness(events);
+    expect(r.lastAutoDraftAt).toBe("2026-05-17T00:00:00.000Z");
+    expect(r.chatTurnsSinceLastDraft).toBe(1);
   });
 });
 
