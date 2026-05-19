@@ -22,6 +22,7 @@ interface PhoneHomeProps {
   onOpenShopping: () => void;
   onOpenMail: () => void;
   onOpenReadingNotes?: () => void;
+  onOpenNews?: () => void;
 }
 
 const phoneIcons = {
@@ -120,6 +121,15 @@ const phoneIcons = {
       <path d="m4 7 8 6 8-6" />
     </svg>
   ),
+  newspaper: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6.5h13a1.5 1.5 0 0 1 1.5 1.5v10.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6.5Z" />
+      <path d="M18.5 9.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1" />
+      <path d="M7 9.5h7" />
+      <path d="M7 12.5h7" />
+      <path d="M7 15.5h4" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -132,6 +142,7 @@ const appShortcuts = [
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
   { label: '阅读笔记', subtitle: '本地书目与手动笔记', tone: 'journal', icon: phoneIcons.notebook, action: 'reading-notes' },
   { label: '邮箱', subtitle: 'TA 的私人邮箱', tone: 'mail', icon: phoneIcons.mail, action: 'mail' },
+  { label: '报纸', subtitle: '第三方视角的世态与情事', tone: 'news', icon: phoneIcons.newspaper, action: 'news' },
   { label: '相册', subtitle: '功能占位', tone: 'album', icon: phoneIcons.images, action: 'placeholder' },
   { label: '日记', subtitle: '纯文本，按角色持久化', tone: 'journal', icon: phoneIcons.notebook, action: 'journal' },
   { label: '音频', subtitle: '功能占位', tone: 'audio', icon: phoneIcons.mic, action: 'placeholder' },
@@ -172,6 +183,7 @@ export function PhoneHome({
   onOpenShopping,
   onOpenMail,
   onOpenReadingNotes,
+  onOpenNews,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -227,6 +239,10 @@ export function PhoneHome({
     }
     if (action === 'reading-notes') {
       onOpenReadingNotes?.();
+      return;
+    }
+    if (action === 'news') {
+      onOpenNews?.();
       return;
     }
   };

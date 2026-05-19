@@ -58,6 +58,8 @@ export const XINGYE_EVENT_TYPES = [
   'reading_notes.draft_proposed',
   'reading_notes.draft_discarded',
   'reading_notes.draft_confirmed',
+  'news.entry_appended',
+  'news.entry_deleted',
   'memory_candidate.draft_proposed',
   'memory_candidate.draft_discarded',
   'memory_candidate.draft_confirmed',

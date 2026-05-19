@@ -1696,6 +1696,10 @@
   background: linear-gradient(135deg, #4a6585, #8aa7c4);
 }
 
+.phoneAppGlyph_news {
+  background: linear-gradient(135deg, #3a342a, #6b5d48);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;

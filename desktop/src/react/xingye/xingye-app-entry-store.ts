@@ -25,6 +25,7 @@ export const XINGYE_APP_ENTRY_APP_IDS = [
   'divination',
   'shopping',
   'reading_notes',
+  'news',
 ] as const;
 
 export type XingyeAppEntryAppId = typeof XINGYE_APP_ENTRY_APP_IDS[number];
@@ -141,6 +142,10 @@ const APP_ENTRY_EVENT_TYPES: Partial<Record<XingyeAppEntryAppId, {
   reading_notes: {
     appended: 'reading_notes.entry_appended',
     deleted: 'reading_notes.entry_deleted',
+  },
+  news: {
+    appended: 'news.entry_appended',
+    deleted: 'news.entry_deleted',
   },
 };
 

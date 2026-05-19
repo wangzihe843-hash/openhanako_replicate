@@ -17,6 +17,7 @@ import { PhoneFilesApp } from './PhoneFilesApp';
 import { PhoneShoppingApp } from './PhoneShoppingApp';
 import { PhoneReadingNotesApp } from './PhoneReadingNotesApp';
 import { PhoneMailApp } from './PhoneMailApp';
+import { PhoneNewsApp } from './PhoneNewsApp';
 import { PhoneSmsApp } from './PhoneSmsApp';
 import styles from './XingyeShell.module.css';
 
@@ -27,7 +28,7 @@ interface AgentPhonePanelProps {
   onOpenGroupChatTab?: () => void;
 }
 
-type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination' | 'files' | 'shopping' | 'reading-notes' | 'mail';
+type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination' | 'files' | 'shopping' | 'reading-notes' | 'mail' | 'news';
 
 export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
   const channels = useStore(state => state.channels);
@@ -63,6 +64,7 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           onOpenShopping={() => setPhonePage('shopping')}
           onOpenReadingNotes={() => setPhonePage('reading-notes')}
           onOpenMail={() => setPhonePage('mail')}
+          onOpenNews={() => setPhonePage('news')}
         />
       ) : null}
 
@@ -152,6 +154,15 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
 
       {phonePage === 'mail' ? (
         <PhoneMailApp
+          ownerAgent={agent}
+          ownerProfile={profile}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'news' ? (
+        <PhoneNewsApp
           ownerAgent={agent}
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
