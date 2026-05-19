@@ -2,6 +2,12 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import {
+  buildNewsEraAgentLike,
+  resolveNewsEra,
+  type NewsEraResolution,
+} from './xingye-news-era-resolver';
+import { getNewsEraStyle } from './xingye-news-era-style';
 import { buildNewsDraftPrompt } from './xingye-news-prompts';
 import {
   normalizeNewsEntryMetadata,
@@ -275,6 +281,26 @@ export async function generateNewsDraftWithAI(params: {
     keywordLoreBlock = '';
   }
 
+  // 按 agent profile + lore 识别 era（民国小报闲笔体 / 西方译文体 / 现代狗仔体）。
+  // resolver 失败 / 抛错 → 兜底 modern_or_future（最通用，最不容易出戏）。
+  let eraResolution: NewsEraResolution;
+  try {
+    const eraAgentLike = buildNewsEraAgentLike(agent, ownerProfile ?? null, {
+      extraCorpus: stableLoreBlock || null,
+      lore: keywordLoreBlock || null,
+    });
+    eraResolution = resolveNewsEra(eraAgentLike);
+  } catch {
+    eraResolution = {
+      era: 'modern_or_future',
+      score: 0,
+      scores: { oriental_classical: 0, western_fantasy: 0, modern_or_future: 0 },
+      matchedTerms: [],
+      reason: 'resolver 异常 fallback。',
+    };
+  }
+  const eraStyle = getNewsEraStyle(eraResolution.era);
+
   const prompt = buildNewsDraftPrompt({
     agent,
     userName,
@@ -287,6 +313,8 @@ export async function generateNewsDraftWithAI(params: {
     relationshipBlock,
     heartbeatBlock,
     continuityAnchorBlock,
+    era: eraResolution.era,
+    eraStyle,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

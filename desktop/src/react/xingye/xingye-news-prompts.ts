@@ -1,6 +1,9 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
+import type { NewsEraId } from './xingye-news-era-resolver';
+import { NEWS_ERA_LABELS } from './xingye-news-era-resolver';
+import { getNewsEraStyle, type NewsEraStyleDescriptor } from './xingye-news-era-style';
 import {
   AT_LEAST_ONE_OF_RELATIONSHIP_SECTION_KINDS,
   NEWS_MASTHEAD_MAX,
@@ -36,6 +39,10 @@ export function buildNewsDraftPrompt(args: {
   heartbeatBlock: string;
   /** 历史 masthead / 头条 / 感情专栏开头样本，跨期防重复用。 */
   continuityAnchorBlock: string;
+  /** resolveNewsEra 给出的笔调 era（modern_or_future 兜底）。 */
+  era: NewsEraId;
+  /** era 对应的笔调描述符。**调用方应**用 getNewsEraStyle(era) 取，与 era 保持一致。 */
+  eraStyle: NewsEraStyleDescriptor;
 }): string {
   const {
     agent,
@@ -49,7 +56,12 @@ export function buildNewsDraftPrompt(args: {
     relationshipBlock,
     heartbeatBlock,
     continuityAnchorBlock,
+    era,
+    eraStyle,
   } = args;
+  // 兜底：万一调用方传的 eraStyle 与 era 不匹配，按 era 重取一次（防止断链）。
+  const style = eraStyle ?? getNewsEraStyle(era);
+  const eraLabel = NEWS_ERA_LABELS[era] ?? NEWS_ERA_LABELS.modern_or_future;
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
@@ -84,6 +96,20 @@ export function buildNewsDraftPrompt(args: {
     ],
   };
 
+  const eraGuideLines: string[] = [
+    `本期报纸的 era（已由系统按 agent 设定识别）：**${era}** — ${eraLabel}。`,
+    `笔调：**${style.toneName}**。${style.toneSummary}`,
+    '',
+    '### 写作守则（按本笔调严格执行）',
+    ...style.writingStyleGuide,
+    '',
+    '### 标题与 headline 风格',
+    ...style.headlineStyleGuide,
+    '',
+    '### 本笔调专属禁忌',
+    ...style.taboos.map((t) => `- ${t}`),
+  ];
+
   const parts: string[] = [
     '你是星野模式「小手机报纸」一期内容生成器。只返回严格 JSON，不要 Markdown，不要解释。',
     '',
@@ -96,8 +122,11 @@ export function buildNewsDraftPrompt(args: {
     `- 全文第三人称。${currentAgentName}（即 TA）应被作为新闻对象提及，**禁止** TA 的第一人称内心独白。`,
     `- ${currentUserName}（即用户）也是新闻对象，**禁止**用户的第一人称来信或对话原文复读。`,
     '- 板块作者全部是"虚构记者 / 专栏作者 / 投书读者"等第三方；署名（byline）若给出必须是化名 / 笔名 / 匿名。',
-    '- 报道笔调贴合 TA 所在的世界观（古代街市 / 仙侠门派 / 现代都市 / 废土未来等），见下方设定。',
+    `- 报道笔调贴合 TA 所在的世界观（${eraLabel}），详见下方「笔调与报刊年代」。`,
     '- 不要出现「根据聊天记录」「用户让我」「系统提示」「模型」「AI」「prompt」「OpenHanako」「设定库」等元叙述。',
+    '',
+    '## 笔调与报刊年代（按 era 分化，必读）',
+    ...eraGuideLines,
     '',
     '## 板块选择规则',
     `- 本期总共生成 ${NEWS_SECTIONS_PER_ISSUE.min}-${NEWS_SECTIONS_PER_ISSUE.max} 个板块（含必选）。`,
@@ -115,10 +144,15 @@ export function buildNewsDraftPrompt(args: {
     ...sectionGuideLines,
     '',
     `## masthead（报头）：长度 ≤ ${NEWS_MASTHEAD_MAX} 字`,
-    '- 形如「《XX报》今日号」/「《XX时讯》第N期」/「XX晚刊 · 某月某日」等。',
-    '- 报名必须紧贴世界观（古代用《暮报》《时讯》《街市闻》、未来用《辐尘日报》《浮空电讯》等）。',
+    `- ${style.mastheadStyleGuide}`,
+    `- 仿名样本（仅作笔调锚点，不必照抄；首次发刊时可在样本风格内自创一个紧贴 lore 的报名）：${style.exampleMastheads.map((m) => `「${m}」`).join('、')}。`,
     '- **报头跨期应保持稳定**：如果下方"近期报头样本"已经定下了一个报名，请沿用相同报名，'
     + '只换期号 / 日期；不要每期换一个报名。',
+    '',
+    '## byline（虚构记者 / 笔名）风格',
+    `- ${style.bylineStyleGuide}`,
+    `- 仿名样本：${style.exampleBylines.map((b) => `「${b}」`).join('、')}。`,
+    '- byline 不是必填——短板块（讣告 / 广告 / 天气）可以不署名。',
     '',
     '## 输出 JSON schema（结构必须严格一致；额外字段会被丢弃）',
     JSON.stringify(schemaExample, null, 2),
