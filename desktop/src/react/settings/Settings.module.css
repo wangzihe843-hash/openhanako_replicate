@@ -1783,6 +1783,14 @@
     line-height: 1.5;
 }
 
+.settings-control-loading {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
 /* 巡检开关 */
 :global(.hana-toggle-label) {
     font-size: 0.78rem;
@@ -3088,6 +3096,41 @@
 .search-verify-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.search-api-key-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.search-api-key-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.search-api-key-label {
+    font-size: 0.72rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.search-api-key-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.search-api-key-controls > :first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+.search-api-key-controls .search-verify-btn {
+    flex-shrink: 0;
+    margin-top: 0;
 }
 
 /* Toast */

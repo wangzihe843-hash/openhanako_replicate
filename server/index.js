@@ -25,6 +25,7 @@ import { safeJson } from "./hono-helpers.js";
 import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.js";
 import { createServerAuthService } from "../core/server-auth.js";
 import { resolveServerListenOptions } from "../core/server-network-config.js";
+import { isCorsOriginAllowed } from "./http/cors-policy.js";
 import { inferHttpConnectionKind } from "./http/transport-context.js";
 import { authorizeHttpRoute, isPublicHttpRoute } from "./http/route-security.js";
 
@@ -181,13 +182,14 @@ const serverRuntimeState = {
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-// CORS（默认仅允许 localhost，HANA_CORS_ORIGIN 可放宽）+ 鉴权
+// CORS（默认允许 localhost 开发前端和 production Electron file:// 前端；HANA_CORS_ORIGIN 可收紧到单一来源）+ 鉴权
 const corsAllowedOrigin = process.env.HANA_CORS_ORIGIN;
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin") || "";
-  const isAllowed = corsAllowedOrigin
-    ? origin === corsAllowedOrigin
-    : /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  const isAllowed = isCorsOriginAllowed({
+    origin,
+    configuredOrigin: corsAllowedOrigin,
+  });
   if (origin && isAllowed) {
     c.header("Access-Control-Allow-Origin", origin);
     c.header("Access-Control-Allow-Credentials", "true");

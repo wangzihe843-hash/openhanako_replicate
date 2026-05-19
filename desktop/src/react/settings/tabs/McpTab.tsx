@@ -34,6 +34,7 @@ export function McpTab() {
   viewAgentIdRef.current = viewAgentId;
 
   const [state, setState] = useState(EMPTY_MCP_STATE);
+  const [loadingState, setLoadingState] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [editingConnectorId, setEditingConnectorId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -45,14 +46,20 @@ export function McpTab() {
 
   const loadState = useCallback(async () => {
     const agentId = viewAgentIdRef.current;
-    if (!agentId) return;
+    if (!agentId) {
+      setLoadingState(false);
+      return;
+    }
+    const snapshotAgentId = agentId;
+    setLoadingState(true);
     try {
-      const snapshotAgentId = agentId;
       const data = await loadMcpState(agentId);
       if (viewAgentIdRef.current !== snapshotAgentId) return;
       setState(data);
     } catch (err) {
       console.error('[mcp] load failed:', err);
+    } finally {
+      if (viewAgentIdRef.current === snapshotAgentId) setLoadingState(false);
     }
   }, []);
 
@@ -75,7 +82,7 @@ export function McpTab() {
 
   const toggleGlobal = (enabled: boolean) => run('global', () => setMcpEnabled(enabled));
   const toggleGlobalFromRow = () => {
-    if (busyKey === 'global') return;
+    if (loadingState || busyKey === 'global') return;
     toggleGlobal(!state.enabled);
   };
 
@@ -145,8 +152,8 @@ export function McpTab() {
             <Toggle
               on={state.enabled}
               onChange={toggleGlobal}
-              disabled={busyKey === 'global'}
-              label={state.enabled ? t('common.on') : t('common.off')}
+              disabled={loadingState || busyKey === 'global'}
+              label={loadingState ? t('status.loading') : state.enabled ? t('common.on') : t('common.off')}
             />
           </div>
         </div>
@@ -216,6 +223,7 @@ export function McpTab() {
       <AgentConnectorControls
         connectors={state.connectors}
         globalEnabled={state.enabled}
+        loading={loadingState}
         viewAgentId={viewAgentId}
         busyKey={busyKey}
         agentConfig={state.agentConfig}

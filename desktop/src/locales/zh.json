@@ -659,6 +659,11 @@
       "leavesOverlay": "晴天模式",
       "leavesOverlayHint": "没事儿晒晒太阳"
     },
+    "interface": {
+      "system": "系统",
+      "hardwareAcceleration": "硬件加速",
+      "hardwareAccelerationHint": "使用显卡渲染窗口内容。关闭后会在下次启动使用软件渲染，可用于恢复 Windows 显卡驱动导致的启动闪退。"
+    },
     "editor": {
       "title": "编辑器",
       "markdownBodyFontSize": "正文字号",
@@ -805,7 +810,9 @@
       "autoCheckUpdates": "自动检查更新"
     },
     "access": {
+      "networkAccess": "局域网访问",
       "mobileAccess": "手机访问",
+      "desktopAccess": "电脑访问",
       "lanToggle": "允许局域网设备访问",
       "lanHint": "开启后，同一局域网内的手机和电脑可以访问这台 Hana Server",
       "port": "固定端口",
@@ -817,6 +824,7 @@
       "statusHint": "用于确认当前服务实际监听位置和手机可访问地址",
       "runtimeEndpoint": "当前监听",
       "effectiveMobileUrl": "当前生效地址",
+      "effectiveDesktopUrl": "电脑连接地址",
       "lanAddresses": "局域网地址",
       "noLanAddresses": "未发现局域网地址",
       "qrCode": "二维码",
@@ -830,6 +838,23 @@
       "mobileKeyOnce": "密钥只在生成后显示一次，请妥善保存",
       "mobileKeyCreated": "已生成手机访问密钥",
       "mobileKeyFailed": "生成失败",
+      "desktopUrl": "电脑连接地址",
+      "desktopUrlLanHint": "在另一台电脑的 Hana 前端中填入这个地址",
+      "desktopUrlLocalHint": "当前仅允许本机访问，开启局域网后会显示电脑可用地址",
+      "generateDesktopKey": "生成电脑访问密钥",
+      "desktopKeyHint": "给另一台电脑的 Hana 前端手动连接使用",
+      "desktopKey": "电脑访问密钥",
+      "desktopKeyOnce": "密钥只在生成后显示一次，请在另一台电脑上填入",
+      "desktopKeyCreated": "已生成电脑访问密钥",
+      "desktopKeyFailed": "生成失败",
+      "connectLanServer": "连接局域网服务器",
+      "remoteServerUrl": "服务器地址",
+      "remoteServerUrlHint": "填入另一台电脑或 NAS 上 Hana Server 的地址",
+      "remoteServerKey": "访问密钥",
+      "remoteServerKeyHint": "填入那台服务器设置页生成的电脑访问密钥",
+      "remoteServerConnected": "已连接局域网服务器",
+      "remoteServerFailed": "连接失败",
+      "pairedDevices": "已配对设备",
       "noDevices": "暂无已配对设备",
       "revoke": "撤销",
       "revokeCredential": "撤销密钥",
@@ -1016,6 +1041,7 @@
       "searchProviderField": "搜索引擎",
       "searchApiKey": "搜索 API Key",
       "searchApiKeyHint": "启用搜索时请填写所选 provider 的 API Key",
+      "searchApiKeysAutoHint": "Auto 会优先使用已配置的 Tavily、Brave、Serper，额度耗尽、报错、空结果或相关性较弱时再回退到浏览器搜索。",
       "searchApiKeyNotRequired": "浏览器搜索不需要 API Key，会在本机后台打开搜索页并整理结果。",
       "favorites": "收藏",
       "searchModel": "搜索模型...",
@@ -1424,6 +1450,14 @@
       "subtitle": "我是你的个人 AI 助手。\n来做一些简单的设置，让我们开始吧。",
       "next": "开始设置"
     },
+    "remote": {
+      "link": "已有服务器？使用局域网连接",
+      "url": "服务器地址",
+      "key": "访问密钥",
+      "connect": "连接",
+      "connecting": "连接中...",
+      "failed": "连接局域网服务器失败"
+    },
     "name": {
       "title": "我该怎么称呼你？",
       "subtitle": "这会让我们的对话更自然",
@@ -1615,6 +1649,7 @@
     "fileLabel": "文件",
     "openWithDefault": "用默认应用打开",
     "refresh": "刷新",
+    "newMarkdownFileName": "未命名.md",
     "newFolder": "新建文件夹",
     "ctx": {
       "open": "打开",
@@ -1630,6 +1665,7 @@
     "deleteConfirm": "要把「{name}」移到系统废纸篓吗？",
     "deleteSelectedConfirm": "要把选中的 {count} 项移到系统废纸篓吗？",
     "trashFailed": "移到系统废纸篓失败",
+    "createFailed": "创建失败",
     "renameInvalid": "文件名不能包含路径分隔符",
     "renameFailed": "重命名失败",
     "sort": {

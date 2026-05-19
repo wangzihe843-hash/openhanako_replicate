@@ -32,19 +32,23 @@ export async function loadChannels(): Promise<void> {
       isDM: false,
     }));
 
-    const dms: Channel[] = (dmData.dms || []).map((dm: any) => ({
-      id: `dm:${dm.peerId}`,
-      name: dm.peerName || dm.peerId,
-      members: [dm.peerId],
-      lastMessage: dm.lastMessage || '',
-      lastSender: dm.lastSender || '',
-      lastTimestamp: dm.lastTimestamp || '',
-      newMessageCount: 0,
-      messageCount: dm.messageCount || 0,
-      isDM: true,
-      peerId: dm.peerId,
-      peerName: dm.peerName,
-    }));
+    const dms: Channel[] = (dmData.dms || []).map((dm: any) => {
+      const dmOwnerId = dm.ownerAgentId || dmData.ownerAgentId || undefined;
+      return {
+        id: `dm:${dm.peerId}`,
+        name: dm.peerName || dm.peerId,
+        members: [dm.peerId],
+        lastMessage: dm.lastMessage || '',
+        lastSender: dm.lastSender || '',
+        lastTimestamp: dm.lastTimestamp || '',
+        newMessageCount: 0,
+        messageCount: dm.messageCount || 0,
+        isDM: true,
+        dmOwnerId,
+        peerId: dm.peerId,
+        peerName: dm.peerName,
+      };
+    });
 
     const allChannels = [...channels, ...dms];
     const totalUnread = allChannels.reduce((sum, ch) => sum + (ch.newMessageCount || 0), 0);
@@ -110,6 +114,16 @@ function normalizeAgentPhoneToolMode(mode: unknown): AgentPhoneToolMode {
   return mode === 'write' ? 'write' : 'read_only';
 }
 
+function conversationOwnerQuery(conversationId: string): string {
+  if (!conversationId.startsWith('dm:')) return '';
+  const channel = useStore.getState().channels.find((ch: Channel) => ch.id === conversationId);
+  return channel?.dmOwnerId ? `?agentId=${encodeURIComponent(channel.dmOwnerId)}` : '';
+}
+
+function conversationPhoneSettingsUrl(conversationId: string): string {
+  return `/api/conversations/${encodeURIComponent(conversationId)}/agent-phone-settings${conversationOwnerQuery(conversationId)}`;
+}
+
 function normalizeNullablePositiveInt(value: unknown): number | null {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
@@ -168,7 +182,7 @@ export async function loadConversationAgentPhoneSettings(conversationId: string)
   const s = useStore.getState();
   if (!conversationId || !hasServerConnection(s)) return;
   try {
-    const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/agent-phone-settings`);
+    const res = await hanaFetch(conversationPhoneSettingsUrl(conversationId));
     if (!res.ok) {
       applyAgentPhoneSettings({
         mode: 'read_only',
@@ -207,7 +221,7 @@ export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPho
   const s = useStore.getState();
   const conversationId = s.currentChannel;
   if (!conversationId || !hasServerConnection(s)) return;
-  const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/agent-phone-settings`, {
+  const res = await hanaFetch(conversationPhoneSettingsUrl(conversationId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -240,6 +254,7 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
   // DM 时从 channel 列表提取 peerId，即使 API 失败也能显示 agent 信息
   const peerId = isThisDM ? (ch?.peerId || channelId.replace('dm:', '')) : '';
   const peerName = isThisDM ? (ch?.name || peerId) : '';
+  const dmOwnerId = isThisDM ? ch?.dmOwnerId : undefined;
   useStore.setState({
     currentChannel: channelId,
     channelMessages: [],
@@ -252,13 +267,19 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
 
   try {
     if (isThisDM) {
-      const res = await hanaFetch(`/api/dm/${encodeURIComponent(peerId)}`);
+      const ownerQuery = dmOwnerId ? `?agentId=${encodeURIComponent(dmOwnerId)}` : '';
+      const res = await hanaFetch(`/api/dm/${encodeURIComponent(peerId)}${ownerQuery}`);
       if (res.ok) {
         const data = await res.json();
+        const responseOwnerId = data.ownerAgentId || dmOwnerId;
         useStore.setState({
           channelMessages: data.messages || [],
           channelHeaderName: data.peerName || peerName,
           channelInfoName: data.peerName || peerName,
+          channels: responseOwnerId
+            ? useStore.getState().channels.map((channel: Channel) =>
+              channel.id === channelId ? { ...channel, dmOwnerId: responseOwnerId } : channel)
+            : useStore.getState().channels,
         });
       }
       // 404 = 没有历史，基本信息已在上方设置，不需要额外处理

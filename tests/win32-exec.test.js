@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnAndStream = vi.fn(async () => ({ exitCode: 0 }));
 const classifyWin32Command = vi.fn();
+const prepareSandboxRuntime = vi.fn((runtimeInfo) => runtimeInfo);
 const existsSync = vi.fn(() => false);
 const spawnSync = vi.fn(() => ({ status: 1, stdout: "", stderr: "" }));
 
@@ -11,6 +12,10 @@ vi.mock("../lib/sandbox/exec-helper.js", () => ({
 
 vi.mock("../lib/sandbox/win32-command-router.js", () => ({
   classifyWin32Command,
+}));
+
+vi.mock("../lib/sandbox/win32-runtime-cache.js", () => ({
+  prepareSandboxRuntime,
 }));
 
 vi.mock("fs", () => ({
@@ -30,6 +35,7 @@ describe("createWin32Exec", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    prepareSandboxRuntime.mockImplementation((runtimeInfo) => runtimeInfo);
     existsSync.mockReturnValue(false);
     spawnSync.mockReturnValue({ status: 1, stdout: "", stderr: "" });
   });
@@ -137,6 +143,70 @@ describe("createWin32Exec", () => {
       ]),
       expect.objectContaining({ cwd: "C:\\work" })
     );
+  });
+
+  it("rewrites sandboxed Git commands to the user-writable runtime cache", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "git", reason: "git-command" });
+    const gitExe = "C:\\Hanako\\resources\\git\\cmd\\git.exe";
+    const cachedRoot = "C:\\Users\\Hana\\.hanako\\.ephemeral\\win32-sandbox-runtime\\git-cache";
+    const cachedGit = `${cachedRoot}\\cmd\\git.exe`;
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === gitExe || p === helper);
+    prepareSandboxRuntime.mockImplementation((runtimeInfo, options) => {
+      expect(options).toEqual(expect.objectContaining({
+        kind: "git",
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+      }));
+      return {
+        ...runtimeInfo,
+        bundledRoot: cachedRoot,
+        git: cachedGit,
+      };
+    });
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await exec("git status --short", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    const helperArgs = spawnAndStream.mock.calls[0][1];
+    expect(helperArgs).toEqual(expect.arrayContaining([
+      "--grant-read-optional",
+      cachedRoot,
+      "--",
+      cachedGit,
+      "status",
+      "--short",
+    ]));
+    expect(helperArgs).not.toContain("C:\\Hanako\\resources\\git");
+    expect(helperArgs).not.toContain(gitExe);
   });
 
   it("grants sandboxed Python commands read-write access to the Python runtime", async () => {
@@ -248,6 +318,72 @@ describe("createWin32Exec", () => {
     for (let i = 0; i < helperArgs.length - 1; i += 1) {
       if (helperArgs[i] === "--grant-write") expect(helperArgs[i + 1]).not.toBe(nodeRoot);
     }
+  });
+
+  it("rewrites sandboxed Node commands to the user-writable runtime cache", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "node", reason: "node-command" });
+    const nodeExe = "C:\\Hanako\\resources\\server\\hana-server.exe";
+    const cachedRoot = "C:\\Users\\Hana\\.hanako\\.ephemeral\\win32-sandbox-runtime\\node-cache";
+    const cachedNode = `${cachedRoot}\\hana-server.exe`;
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === nodeExe || p === helper);
+    prepareSandboxRuntime.mockImplementation((runtimeInfo, options) => {
+      expect(options).toEqual(expect.objectContaining({
+        kind: "node",
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+      }));
+      return {
+        ...runtimeInfo,
+        executable: cachedNode,
+      };
+    });
+
+    const originalExecPath = process.execPath;
+    Object.defineProperty(process, "execPath", {
+      value: nodeExe,
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await exec("node server.js --port 3000", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "execPath", {
+        value: originalExecPath,
+        configurable: true,
+      });
+    }
+
+    const helperArgs = spawnAndStream.mock.calls[0][1];
+    expect(helperArgs).toEqual(expect.arrayContaining([
+      "--grant-read-optional",
+      cachedRoot,
+      "--grant-write",
+      "C:\\work",
+      "--",
+      cachedNode,
+      "server.js",
+      "--port",
+      "3000",
+    ]));
+    expect(helperArgs).not.toContain("C:\\Hanako\\resources\\server");
+    expect(helperArgs).not.toContain(nodeExe);
   });
 
   it("rejects explicit Python executables outside the workspace when they are not on PATH", async () => {
@@ -461,6 +597,78 @@ describe("createWin32Exec", () => {
     );
   });
 
+  it("rewrites sandboxed Bash commands to the user-writable runtime cache", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
+    const bundledShell = "C:\\Hanako\\resources\\git\\bin\\bash.exe";
+    const cachedRoot = "C:\\Users\\Hana\\.hanako\\.ephemeral\\win32-sandbox-runtime\\bash-cache";
+    const cachedShell = `${cachedRoot}\\bin\\bash.exe`;
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === bundledShell || p === helper);
+    spawnSync.mockImplementation((cmd, args) => {
+      if (cmd === bundledShell && args?.[0] === "-lc") {
+        return { status: 0, stdout: "__hana_probe_ok__\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    });
+    prepareSandboxRuntime.mockImplementation((runtimeInfo, options) => {
+      expect(options).toEqual(expect.objectContaining({
+        kind: "bash",
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+      }));
+      return {
+        ...runtimeInfo,
+        bundledRoot: cachedRoot,
+        shell: cachedShell,
+      };
+    });
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await exec("ls && pwd", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    const helperArgs = spawnAndStream.mock.calls[0][1];
+    expect(helperArgs).toEqual(expect.arrayContaining([
+      "--grant-read-optional",
+      cachedRoot,
+      "--grant-write",
+      "C:\\work",
+      "--",
+      cachedShell,
+      "-lc",
+      "ls && pwd",
+    ]));
+    expect(helperArgs).not.toContain("C:\\Hanako\\resources\\git");
+    expect(helperArgs).not.toContain(bundledShell);
+  });
+
   it("passes local-server AppContainer network grants to the helper when sandbox networking is enabled", async () => {
     classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
     const bundledShell = "C:\\Hanako\\resources\\git\\bin\\bash.exe";
@@ -523,6 +731,60 @@ describe("createWin32Exec", () => {
       helperArgs,
       expect.objectContaining({ cwd: "C:\\work" })
     );
+  });
+
+  it("passes full AppContainer network grants by default for sandboxed commands", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
+    const bundledShell = "C:\\Hanako\\resources\\git\\bin\\bash.exe";
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === bundledShell || p === helper);
+    spawnSync.mockImplementation((cmd, args) => {
+      if (cmd === bundledShell && args?.[0] === "-lc") {
+        return { status: 0, stdout: "__hana_probe_ok__\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    });
+
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, "resourcesPath", {
+      value: "C:\\Hanako\\resources",
+      configurable: true,
+    });
+
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    try {
+      await exec("curl https://example.com", "C:\\work", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      });
+    } finally {
+      Object.defineProperty(process, "resourcesPath", {
+        value: originalResourcesPath,
+        configurable: true,
+      });
+    }
+
+    const helperArgs = spawnAndStream.mock.calls[0][1];
+    expect(helperArgs).toEqual(expect.arrayContaining([
+      "--network",
+      "internet-client",
+      "--network",
+      "internet-client-server",
+      "--network",
+      "private-network-client-server",
+    ]));
   });
 
   it("does not fall back to system Git Bash for sandboxed POSIX commands", async () => {

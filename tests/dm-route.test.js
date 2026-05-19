@@ -1,0 +1,92 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import { createDmRoute } from "../server/routes/dm.js";
+import { appendMessage } from "../lib/channels/channel-store.js";
+
+function mktemp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "hana-dm-route-test-"));
+}
+
+function makeAgent(root, id, name = id) {
+  const agentDir = path.join(root, "agents", id);
+  fs.mkdirSync(path.join(agentDir, "dm"), { recursive: true });
+  return { id, name, agentName: name, agentDir };
+}
+
+async function writeDm(agent, peerId, sender, body) {
+  const filePath = path.join(agent.agentDir, "dm", `${peerId}.md`);
+  await appendMessage(filePath, sender, body);
+}
+
+describe("dm route owner resolution", () => {
+  let tmpDir;
+  let app;
+  let agents;
+
+  beforeEach(async () => {
+    tmpDir = mktemp();
+    agents = new Map([
+      ["alice", makeAgent(tmpDir, "alice", "Alice")],
+      ["bob", makeAgent(tmpDir, "bob", "Bob")],
+      ["carol", makeAgent(tmpDir, "carol", "Carol")],
+      ["dana", makeAgent(tmpDir, "dana", "Dana")],
+    ]);
+
+    await writeDm(agents.get("alice"), "bob", "bob", "primary-owned thread");
+    await writeDm(agents.get("dana"), "bob", "bob", "focus-owned thread");
+    await writeDm(agents.get("dana"), "alice", "alice", "stale self-looking thread");
+
+    const engine = {
+      agentsDir: path.join(tmpDir, "agents"),
+      currentAgentId: "dana",
+      getPrimaryAgentId: () => "alice",
+      getAgent: (id) => agents.get(id) || null,
+      listAgents: () => Array.from(agents.values()),
+    };
+
+    app = new Hono();
+    app.route("/api", createDmRoute(engine));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists primary agent DMs even when the focused agent is different", async () => {
+    const res = await app.request("/api/dm");
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ownerAgentId).toBe("alice");
+    expect(data.dms.map((dm) => dm.peerId).sort()).toEqual(["bob", "carol", "dana"]);
+    expect(data.dms.find((dm) => dm.peerId === "alice")).toBeUndefined();
+    expect(data.dms.find((dm) => dm.peerId === "bob")).toMatchObject({
+      ownerAgentId: "alice",
+      peerId: "bob",
+      lastMessage: "primary-owned thread",
+      messageCount: 1,
+    });
+  });
+
+  it("opens the primary agent DM by default and keeps explicit owner override available", async () => {
+    const primaryRes = await app.request("/api/dm/bob");
+
+    expect(primaryRes.status).toBe(200);
+    const primaryData = await primaryRes.json();
+    expect(primaryData).toMatchObject({
+      ownerAgentId: "alice",
+      peerId: "bob",
+      peerName: "Bob",
+    });
+    expect(primaryData.messages.map((msg) => msg.body)).toEqual(["primary-owned thread"]);
+
+    const explicitRes = await app.request("/api/dm/bob?agentId=dana");
+    expect(explicitRes.status).toBe(200);
+    const explicitData = await explicitRes.json();
+    expect(explicitData.ownerAgentId).toBe("dana");
+    expect(explicitData.messages.map((msg) => msg.body)).toEqual(["focus-owned thread"]);
+  });
+});

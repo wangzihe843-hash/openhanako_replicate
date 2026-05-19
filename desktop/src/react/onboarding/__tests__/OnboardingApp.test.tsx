@@ -29,11 +29,25 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     'onboarding.welcome.title': '欢迎',
     'onboarding.welcome.subtitle': '开始设置',
     'onboarding.welcome.next': '下一步',
+    'onboarding.remote.link': '已有服务器？使用局域网连接',
+    'onboarding.remote.url': '服务器地址',
+    'onboarding.remote.key': '访问密钥',
+    'onboarding.remote.connect': '连接',
+    'onboarding.remote.connecting': '连接中...',
+    'onboarding.remote.failed': '连接局域网服务器失败',
+    'common.cancel': '取消',
   },
   en: {
     'onboarding.welcome.title': 'Welcome',
     'onboarding.welcome.subtitle': 'Start setup',
     'onboarding.welcome.next': 'Next',
+    'onboarding.remote.link': 'Already have a server? Connect over LAN',
+    'onboarding.remote.url': 'Server URL',
+    'onboarding.remote.key': 'Access key',
+    'onboarding.remote.connect': 'Connect',
+    'onboarding.remote.connecting': 'Connecting...',
+    'onboarding.remote.failed': 'Failed to connect to LAN server',
+    'common.cancel': 'Cancel',
   },
 };
 
@@ -78,6 +92,7 @@ describe('OnboardingApp locale switching', () => {
       getServerToken: vi.fn(async () => 'token'),
       getSplashInfo: vi.fn(async () => ({ locale: 'zh-CN', agentName: 'Hanako' })),
       getAvatarPath: vi.fn(async () => null),
+      onboardingComplete: vi.fn(async () => {}),
     });
     vi.stubGlobal('platform', {
       getFileUrl: vi.fn((path: string) => `file://${path}`),
@@ -104,5 +119,50 @@ describe('OnboardingApp locale switching', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Welcome' })).toBeInTheDocument();
     });
+  });
+
+  it('lets first-run users connect to an existing LAN server from the welcome page', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'http://192.168.31.75:14500/api/web-auth/login') {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (url === 'http://192.168.31.75:14500/api/server/identity') {
+        return {
+          ok: true,
+          json: async () => ({
+            connectionKind: 'lan',
+            serverId: 'server_lan',
+            serverNodeId: 'node_lan',
+            userId: 'user_lan',
+            studioId: 'studio_lan',
+            label: 'LAN Server',
+            trustState: 'lan',
+            authState: 'paired',
+            credentialKind: 'device_credential',
+            capabilities: ['chat', 'resources', 'files'],
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected URL ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<OnboardingApp preview={false} skipToTutorial={false} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '已有服务器？使用局域网连接' }));
+    fireEvent.change(screen.getByLabelText('服务器地址'), {
+      target: { value: 'http://192.168.31.75:14500' },
+    });
+    fireEvent.change(screen.getByLabelText('访问密钥'), {
+      target: { value: 'hana_dev_remote_secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '连接' }));
+
+    await waitFor(() => {
+      expect(window.hana.onboardingComplete).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchMock).toHaveBeenCalledWith('http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
+      credentials: 'include',
+    }));
   });
 });

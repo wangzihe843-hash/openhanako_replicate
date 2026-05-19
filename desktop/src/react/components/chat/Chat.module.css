@@ -117,39 +117,48 @@
     padding: var(--space-sm) var(--space-md);
 }
 
-.userActionRow {
+.messageFooterActions {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
     gap: 6px;
     min-height: 20px;
     margin-top: 2px;
-    padding-right: 5px;
     color: var(--text-muted);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--duration-fast) var(--ease-out);
 }
 
-.messageGroupUser:hover .userActionRow,
-.userActionRow:focus-within,
-.userActionRowVisible {
+.messageFooterActionsRight {
+    justify-content: flex-end;
+    padding-right: 5px;
+}
+
+.messageFooterActionsLeft {
+    justify-content: flex-start;
+    padding-left: 5px;
+}
+
+.messageGroupUser:hover .messageFooterActions,
+.messageGroupAssistant:hover .messageFooterActions,
+.messageFooterActions:focus-within,
+.messageFooterActionsVisible {
     opacity: 0.72;
     pointer-events: auto;
 }
 
-.userActionRow:hover {
+.messageFooterActions:hover {
     opacity: 1;
 }
 
-.userMessageTime {
+.messageFooterTime {
     font-size: 0.64rem;
     line-height: 1;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
 
-.userActionBtn {
+.messageFooterBtn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -164,22 +173,22 @@
     transition: color var(--duration-instant), background var(--duration-instant), opacity var(--duration-instant);
 }
 
-.userActionBtn svg {
+.messageFooterBtn svg {
     width: 12px;
     height: 12px;
 }
 
-.userActionBtn:hover {
+.messageFooterBtn:hover {
     color: var(--text);
     background: rgba(0, 0, 0, 0.06);
 }
 
-.userActionBtn:disabled {
+.messageFooterBtn:disabled {
     opacity: 0.35;
     cursor: default;
 }
 
-.userActionBtnActive {
+.messageFooterBtnActive {
     color: var(--accent);
     background: transparent;
 }
@@ -1218,6 +1227,16 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
+}
+
+:global(.mobile-desktop-root) .sessionPanel {
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
+}
+
+:global(.mobile-desktop-root) .messageUser,
+:global(.mobile-desktop-root) .messageAssistant {
+    font-size: 1rem;
 }
 
 .timelineNav {

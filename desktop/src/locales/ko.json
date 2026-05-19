@@ -674,6 +674,11 @@
       "leavesOverlay": "맑은 날 모드",
       "leavesOverlayHint": "가끔은 햇볕도 쬐어요"
     },
+    "interface": {
+      "system": "시스템",
+      "hardwareAcceleration": "하드웨어 가속",
+      "hardwareAccelerationHint": "GPU로 앱 창을 렌더링합니다. 끄면 다음 실행부터 소프트웨어 렌더링을 사용해 Windows GPU 드라이버로 인한 시작 충돌 복구에 도움이 됩니다."
+    },
     "editor": {
       "title": "편집기",
       "markdownBodyFontSize": "본문 크기",
@@ -795,7 +800,9 @@
       "autoCheckUpdates": "업데이트 자동 확인"
     },
     "access": {
+      "networkAccess": "LAN 접근",
       "mobileAccess": "모바일 접근",
+      "desktopAccess": "컴퓨터 접근",
       "lanToggle": "LAN 기기 접근 허용",
       "lanHint": "같은 LAN의 휴대폰과 컴퓨터가 이 Hana Server에 접근할 수 있어요",
       "port": "고정 포트",
@@ -807,6 +814,7 @@
       "statusHint": "서버가 실제로 듣고 있는 위치와 현재 유효한 모바일 URL을 확인합니다",
       "runtimeEndpoint": "현재 리스닝",
       "effectiveMobileUrl": "유효한 URL",
+      "effectiveDesktopUrl": "컴퓨터 URL",
       "lanAddresses": "LAN 주소",
       "noLanAddresses": "LAN 주소를 찾지 못했어요",
       "qrCode": "QR 코드",
@@ -820,6 +828,23 @@
       "mobileKeyOnce": "키는 생성 직후 한 번만 표시됩니다",
       "mobileKeyCreated": "모바일 접근 키 생성됨",
       "mobileKeyFailed": "생성 실패",
+      "desktopUrl": "컴퓨터 URL",
+      "desktopUrlLanHint": "다른 Hana 데스크톱 프론트엔드에 이 주소를 입력하세요",
+      "desktopUrlLocalHint": "LAN 접근을 켜기 전에는 이 컴퓨터에서만 접속할 수 있어요",
+      "generateDesktopKey": "컴퓨터 접근 키 생성",
+      "desktopKeyHint": "다른 Hana 데스크톱 프론트엔드에서 수동 연결할 때 사용합니다",
+      "desktopKey": "컴퓨터 접근 키",
+      "desktopKeyOnce": "키는 생성 직후 한 번만 표시됩니다",
+      "desktopKeyCreated": "컴퓨터 접근 키 생성됨",
+      "desktopKeyFailed": "생성 실패",
+      "connectLanServer": "LAN 서버 연결",
+      "remoteServerUrl": "서버 URL",
+      "remoteServerUrlHint": "다른 컴퓨터나 NAS의 Hana Server URL을 입력하세요",
+      "remoteServerKey": "접근 키",
+      "remoteServerKeyHint": "그 서버 설정 페이지에서 생성한 컴퓨터 접근 키를 입력하세요",
+      "remoteServerConnected": "LAN 서버 연결됨",
+      "remoteServerFailed": "연결 실패",
+      "pairedDevices": "페어링된 기기",
       "noDevices": "페어링된 기기 없음",
       "revoke": "해제",
       "revokeCredential": "키 해제",
@@ -985,6 +1010,7 @@
       "searchProviderField": "검색 엔진",
       "searchApiKey": "검색 API Key",
       "searchApiKeyHint": "선택한 검색 Provider의 API Key를 입력해 주세요",
+      "searchApiKeysAutoHint": "Auto는 설정된 Tavily, Brave, Serper 키를 먼저 사용하고, 한도 초과, 오류, 빈 결과, 낮은 관련도일 때 브라우저 검색으로 대체해요.",
       "searchApiKeyNotRequired": "브라우저 검색은 API Key가 필요 없어요. 로컬 백그라운드에서 검색 페이지를 열고 결과를 정리합니다.",
       "favorites": "즐겨찾기",
       "searchModel": "모델 검색...",
@@ -1379,6 +1405,14 @@
       "subtitle": "저는 당신의 개인 AI 어시스턴트예요.\n간단한 설정을 하고 시작해 볼까요.",
       "next": "시작하기"
     },
+    "remote": {
+      "link": "이미 서버가 있나요? LAN으로 연결",
+      "url": "서버 URL",
+      "key": "접근 키",
+      "connect": "연결",
+      "connecting": "연결 중...",
+      "failed": "LAN 서버 연결 실패"
+    },
     "name": {
       "title": "어떻게 부르면 될까요?",
       "subtitle": "대화가 더 자연스러워져요",
@@ -1570,6 +1604,7 @@
     "fileLabel": "파일",
     "openWithDefault": "기본 앱으로 열기",
     "refresh": "새로고침",
+    "newMarkdownFileName": "제목 없음.md",
     "newFolder": "새 폴더",
     "ctx": {
       "open": "열기",
@@ -1585,6 +1620,7 @@
     "deleteConfirm": "\"{name}\"을 시스템 휴지통으로 이동할까요?",
     "deleteSelectedConfirm": "선택한 {count}개 항목을 시스템 휴지통으로 이동할까요?",
     "trashFailed": "시스템 휴지통으로 이동하지 못했습니다",
+    "createFailed": "생성 실패",
     "renameInvalid": "파일 이름에는 경로 구분자를 사용할 수 없습니다",
     "renameFailed": "이름 변경 실패",
     "sort": {

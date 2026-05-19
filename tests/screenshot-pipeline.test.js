@@ -38,6 +38,21 @@ describe("screenshot pipeline", () => {
     expect(fatalList).not.toMatch(/display surface .*not available/i);
   });
 
+  it("rejects empty Electron capture images before JPEG encoding", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain("encodeCapturedPageToJpegBase64");
+    expect(mainSource).toMatch(/typeof image\.isEmpty === "function" && image\.isEmpty\(\)/);
+    expect(mainSource).toContain("Browser screenshot capture returned an empty image");
+  });
+
+  it("rejects empty JPEG buffers before returning browser screenshot data", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain("if (!Buffer.isBuffer(jpeg) || jpeg.length === 0)");
+    expect(mainSource).toContain("Browser screenshot capture returned no image data");
+  });
+
   it("keeps long screenshot bitmap stitching scale-aware", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
 

@@ -93,6 +93,8 @@ const migrations = {
   27: migrateRemoteAccessFoundationRegistries,
   // subagent 子会话长期映射：把临时 deferred 队列里的历史事实迁入 durable registry
   28: migrateDurableSubagentRunRegistry,
+  // 巡检显式 opt-in：历史缺省值统一落盘为 false，避免旧配置被运行时当成开启
+  29: migrateHeartbeatDefaultExplicitOff,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -864,6 +866,33 @@ function migrateWorkspaceToPerAgent(ctx) {
     }
   } catch (err) {
     log(`[migrations] #3: warning — failed to disable non-primary heartbeats: ${err.message}`);
+  }
+}
+
+/**
+ * #29 — 巡检默认显式关闭
+ *
+ * 旧配置里缺失 desk.heartbeat_enabled 时，运行时代码曾把它当成开启。
+ * 现在产品默认是 opt-in：只有明确写 true 才启动巡检。
+ * 迁移只补缺省 false，尊重用户已有 true / false。
+ */
+function migrateHeartbeatDefaultExplicitOff(ctx) {
+  const { agentsDir, log } = ctx;
+  let dirs;
+  try {
+    dirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return;
+  }
+
+  for (const dir of dirs) {
+    const cfgPath = path.join(agentsDir, dir.name, "config.yaml");
+    if (!fs.existsSync(cfgPath)) continue;
+    const config = safeReadYAMLSync(cfgPath, null, YAML);
+    if (!config) continue;
+    if (config.desk?.heartbeat_enabled !== undefined) continue;
+    saveConfig(cfgPath, { desk: { heartbeat_enabled: false } });
+    log(`[migrations] #29: heartbeat defaulted to false for "${dir.name}"`);
   }
 }
 

@@ -7,6 +7,10 @@ import { InterfaceTab } from '../InterfaceTab';
 import { useSettingsStore } from '../../store';
 import registry from '../../../../shared/theme-registry';
 
+vi.mock('../../../services/appearance-sync', () => ({
+  persistAppearancePreferences: vi.fn().mockResolvedValue(undefined),
+}));
+
 type AppearanceGlobals = typeof globalThis & {
   setTheme?: (theme: string) => void;
   setSerifFont?: (enabled: boolean) => void;
@@ -32,6 +36,7 @@ function seedSettings() {
     settingsConfig: {
       locale: 'zh-CN',
       timezone: 'Asia/Shanghai',
+      hardware_acceleration: true,
       editor: {},
     },
     currentAgentId: 'agent-1',
@@ -82,5 +87,21 @@ describe('InterfaceTab appearance state', () => {
 
     expect(paperSwitch().getAttribute('aria-checked')).toBe('false');
     expect(paperSwitch().disabled).toBe(true);
+  });
+
+  it('renders the hardware acceleration switch from settings config', () => {
+    useSettingsStore.setState({
+      settingsConfig: {
+        locale: 'zh-CN',
+        timezone: 'Asia/Shanghai',
+        hardware_acceleration: false,
+        editor: {},
+      },
+    } as never);
+
+    render(React.createElement(InterfaceTab));
+
+    expect(screen.getByText('settings.interface.hardwareAcceleration')).toBeTruthy();
+    expect(screen.getAllByRole('switch')[3].getAttribute('aria-checked')).toBe('false');
   });
 });

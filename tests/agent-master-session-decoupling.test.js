@@ -15,11 +15,16 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { memoryTickerTickMock, memoryTickerStartMock } = vi.hoisted(() => ({
+  memoryTickerTickMock: vi.fn().mockResolvedValue(undefined),
+  memoryTickerStartMock: vi.fn(),
+}));
+
 vi.mock("../lib/memory/memory-ticker.js", () => ({
   createMemoryTicker: () => ({
-    start: vi.fn(),
+    start: memoryTickerStartMock,
     stop: vi.fn().mockResolvedValue(undefined),
-    tick: vi.fn().mockResolvedValue(undefined),
+    tick: memoryTickerTickMock,
     triggerNow: vi.fn(),
     notifyTurn: vi.fn(),
     notifySessionEnd: vi.fn().mockResolvedValue(undefined),
@@ -79,6 +84,7 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
   let agentsDir;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-master-decouple-"));
     ({ agentsDir } = bootstrapAgentDir(tmpDir));
   });
@@ -206,6 +212,24 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
 
     expect(toolNames).not.toContain("computer");
     expect(prompt).not.toContain("Desktop App Control");
+
+    await agent.dispose();
+  });
+
+  it("init 把首次记忆维护交给 manager 调度，不在启动路径直接 tick", async () => {
+    const agent = makeAgent(agentsDir, tmpDir);
+    const scheduleMemoryMaintenance = vi.fn();
+    agent.setCallbacks({
+      scheduleMemoryMaintenance,
+      getLearnSkills: () => ({}),
+      isChannelsEnabled: () => false,
+    });
+
+    await agent.init(() => {}, {}, () => ({ id: "gpt-4", provider: "openai" }));
+
+    expect(memoryTickerTickMock).not.toHaveBeenCalled();
+    expect(scheduleMemoryMaintenance).toHaveBeenCalledWith("test-agent", "runtime-init");
+    expect(memoryTickerStartMock).toHaveBeenCalledOnce();
 
     await agent.dispose();
   });

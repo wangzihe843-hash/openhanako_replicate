@@ -78,4 +78,104 @@ describe("channel tool membership contract", () => {
     });
     expect(result.content[0].text).not.toContain("secret");
   });
+
+  it("lists joined channels with ids and display names", async () => {
+    const { id } = await createChannel(channelsDir, {
+      id: "team",
+      name: "工作群",
+      members: ["alice", "bob"],
+    });
+
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    });
+
+    const result = await tool.execute("call-3", { action: "list" });
+
+    expect(result.details).toMatchObject({
+      action: "list",
+      channels: [
+        expect.objectContaining({ id, name: "工作群", members: ["alice", "bob"] }),
+      ],
+    });
+    expect(result.content[0].text).toContain("ch_team");
+    expect(result.content[0].text).toContain("工作群");
+    expect(result.content[0].text).toContain("alice, bob");
+  });
+
+  it("resolves a unique display name for read and post", async () => {
+    const { id } = await createChannel(channelsDir, {
+      id: "team",
+      name: "工作群",
+      members: ["alice", "bob"],
+    });
+    await appendMessage(path.join(channelsDir, `${id}.md`), "bob", "hello by name");
+
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    });
+
+    const readResult = await tool.execute("call-4", {
+      action: "read",
+      channel: "工作群",
+    });
+    expect(readResult.details).toMatchObject({ action: "read", channel: id, messageCount: 1 });
+    expect(readResult.content[0].text).toContain("hello by name");
+
+    const postResult = await tool.execute("call-5", {
+      action: "post",
+      channel: "工作群",
+      content: "reply by display name",
+    });
+    expect(postResult.details).toMatchObject({ action: "post", channel: id });
+
+    const confirm = await tool.execute("call-6", {
+      action: "read",
+      channel: id,
+    });
+    expect(confirm.content[0].text).toContain("reply by display name");
+  });
+
+  it("reports ambiguous display names instead of guessing", async () => {
+    await createChannel(channelsDir, {
+      id: "team-a",
+      name: "工作群",
+      members: ["alice", "bob"],
+    });
+    await createChannel(channelsDir, {
+      id: "team-b",
+      name: "工作群",
+      members: ["alice", "charlie"],
+    });
+
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    });
+
+    const result = await tool.execute("call-7", {
+      action: "read",
+      channel: "工作群",
+    });
+
+    expect(result.details).toMatchObject({
+      action: "read",
+      error: "ambiguous channel name",
+      matches: ["ch_team-a", "ch_team-b"],
+    });
+    expect(result.content[0].text).toContain("工作群");
+    expect(result.content[0].text).toContain("ch_team-a");
+    expect(result.content[0].text).toContain("ch_team-b");
+  });
 });

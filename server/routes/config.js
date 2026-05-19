@@ -22,6 +22,7 @@ import {
 } from "../../shared/default-workspace.js";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.js';
 import { mergeWorkspaceHistory, normalizeWorkspacePath } from "../../shared/workspace-history.js";
+import { isSearchApiProvider, normalizeSearchApiKeys } from "../../shared/search-providers.js";
 import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.js";
 import { appendXingyeEvent } from "../../lib/xingye/events.js";
 import { formatSkillsForPrompt } from "../../lib/pi-sdk/index.js";
@@ -595,12 +596,13 @@ export function createConfigRoute(engine) {
   route.post("/search/verify", async (c) => {
     const body = await safeJson(c);
     const { provider } = body;
+    const selectedProvider = body.search_provider || provider;
     if (!provider) {
       return c.json({ ok: false, error: "provider is required" }, 400);
     }
     const existingSearch = engine.getSearchConfig?.() || {};
     const api_key = isMaskedSecretValue(body.api_key)
-      ? existingSearch.api_key || ""
+      ? existingSearch.api_keys?.[provider] || existingSearch.api_key || ""
       : body.api_key || "";
     try {
       const { searchProviderRequiresApiKey, verifySearchKey } = await import("../../lib/tools/web-search.js");
@@ -609,9 +611,12 @@ export function createConfigRoute(engine) {
       }
       await verifySearchKey(provider, api_key);
       const storedApiKey = searchProviderRequiresApiKey(provider) ? api_key : "";
-      engine.setSearchConfig({ provider, api_key: storedApiKey });
-      await engine.updateConfig({ search: { provider, api_key: storedApiKey } });
-      debugLog()?.log("api", `POST /api/search/verify provider=${provider} (ok)`);
+      const apiKeys = normalizeSearchApiKeys(existingSearch.api_keys || {});
+      if (isSearchApiProvider(provider)) apiKeys[provider] = storedApiKey;
+      const selectedApiKey = isSearchApiProvider(selectedProvider) ? apiKeys[selectedProvider] || "" : "";
+      engine.setSearchConfig({ provider: selectedProvider, api_key: selectedApiKey, api_keys: apiKeys });
+      await engine.updateConfig({ search: { provider: selectedProvider, api_key: selectedApiKey, api_keys: apiKeys } });
+      debugLog()?.log("api", `POST /api/search/verify provider=${provider} selected=${selectedProvider} (ok)`);
       return c.json({ ok: true });
     } catch (err) {
       debugLog()?.warn("api", `POST /api/search/verify provider=${provider} failed: ${err.message}`);

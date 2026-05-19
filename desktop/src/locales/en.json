@@ -654,6 +654,11 @@
       "leavesOverlay": "Sunny Mode",
       "leavesOverlayHint": "Go touch some grass (and sunlight)"
     },
+    "interface": {
+      "system": "System",
+      "hardwareAcceleration": "Hardware Acceleration",
+      "hardwareAccelerationHint": "Use the GPU to render app windows. Turning this off takes effect on next launch and uses software rendering for Windows GPU-driver startup recovery."
+    },
     "editor": {
       "title": "Editor",
       "markdownBodyFontSize": "Body Size",
@@ -800,7 +805,9 @@
       "autoCheckUpdates": "Check for updates automatically"
     },
     "access": {
+      "networkAccess": "LAN Access",
       "mobileAccess": "Mobile Access",
+      "desktopAccess": "Computer Access",
       "lanToggle": "Allow LAN devices",
       "lanHint": "Allow phones and computers on the same LAN to reach this Hana Server",
       "port": "Fixed Port",
@@ -812,6 +819,7 @@
       "statusHint": "Confirms where the server is listening and which mobile URL is currently effective",
       "runtimeEndpoint": "Listening Now",
       "effectiveMobileUrl": "Effective URL",
+      "effectiveDesktopUrl": "Computer URL",
       "lanAddresses": "LAN Addresses",
       "noLanAddresses": "No LAN address found",
       "qrCode": "QR Code",
@@ -825,6 +833,23 @@
       "mobileKeyOnce": "The key is shown only once after creation",
       "mobileKeyCreated": "Mobile access key created",
       "mobileKeyFailed": "Creation failed",
+      "desktopUrl": "Computer URL",
+      "desktopUrlLanHint": "Enter this address in another Hana desktop frontend",
+      "desktopUrlLocalHint": "Only this computer can connect until LAN access is enabled",
+      "generateDesktopKey": "Generate Computer Access Key",
+      "desktopKeyHint": "Use this for manual connection from another Hana desktop frontend",
+      "desktopKey": "Computer Access Key",
+      "desktopKeyOnce": "The key is shown only once after creation",
+      "desktopKeyCreated": "Computer access key created",
+      "desktopKeyFailed": "Creation failed",
+      "connectLanServer": "Connect LAN Server",
+      "remoteServerUrl": "Server URL",
+      "remoteServerUrlHint": "Enter the Hana Server URL on another computer or NAS",
+      "remoteServerKey": "Access key",
+      "remoteServerKeyHint": "Enter the computer access key generated on that server",
+      "remoteServerConnected": "LAN server connected",
+      "remoteServerFailed": "Connection failed",
+      "pairedDevices": "Paired Devices",
       "noDevices": "No paired devices",
       "revoke": "Revoke",
       "revokeCredential": "Revoke Key",
@@ -1011,6 +1036,7 @@
       "searchProviderField": "Search engine",
       "searchApiKey": "Search API Key",
       "searchApiKeyHint": "Enter the API key for the selected search provider",
+      "searchApiKeysAutoHint": "Auto uses configured Tavily, Brave, and Serper keys first, then falls back to browser search when quota, errors, empty results, or weak relevance get in the way.",
       "searchApiKeyNotRequired": "Browser search does not need an API key. It opens the search page locally in the background and structures the results.",
       "favorites": "Favorites",
       "searchModel": "Search models...",
@@ -1419,6 +1445,14 @@
       "subtitle": "I'm your personal AI assistant.\nLet's do some quick setup to get started.",
       "next": "Get Started"
     },
+    "remote": {
+      "link": "Already have a server? Connect over LAN",
+      "url": "Server URL",
+      "key": "Access key",
+      "connect": "Connect",
+      "connecting": "Connecting...",
+      "failed": "Failed to connect to LAN server"
+    },
     "name": {
       "title": "What should I call you?",
       "subtitle": "This makes our conversations more natural",
@@ -1610,6 +1644,7 @@
     "fileLabel": "file",
     "openWithDefault": "Open with default app",
     "refresh": "Refresh",
+    "newMarkdownFileName": "Untitled.md",
     "newFolder": "New Folder",
     "ctx": {
       "open": "Open",
@@ -1625,6 +1660,7 @@
     "deleteConfirm": "Move \"{name}\" to the system Trash?",
     "deleteSelectedConfirm": "Move {count} selected items to the system Trash?",
     "trashFailed": "Failed to move item to the system Trash",
+    "createFailed": "Create failed",
     "renameInvalid": "File names cannot contain path separators",
     "renameFailed": "Rename failed",
     "sort": {

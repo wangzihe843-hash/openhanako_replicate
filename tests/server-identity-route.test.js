@@ -204,4 +204,40 @@ describe("server identity route", () => {
       version: "9.9.9",
     });
   });
+
+  it("describes the authenticated device principal for LAN clients", async () => {
+    tmpDir = makeTmpDir();
+    writeValidIdentity(tmpDir);
+    const { createServerIdentityRoute } = await import("../server/routes/server-identity.js");
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("authPrincipal", Object.freeze({
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        trustState: "lan",
+        serverId: "server_route",
+        serverNodeId: "server_route",
+        userId: "user_route",
+        studioId: "studio_route",
+        scopes: ["chat", "resources.read", "files.read", "files.write"],
+      }));
+      await next();
+    });
+    app.route("/api", createServerIdentityRoute({ hanakoHome: tmpDir, appVersion: "1.2.3" }));
+
+    const res = await app.request("/api/server/identity");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      connectionKind: "lan",
+      trustState: "lan",
+      authState: "paired",
+      credentialKind: "device_credential",
+      serverId: "server_route",
+      userId: "user_route",
+      studioId: "studio_route",
+      capabilities: ["chat", "resources", "files"],
+    });
+  });
 });

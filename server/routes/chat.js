@@ -447,7 +447,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         if (d.thumbnail) statusMsg.thumbnail = d.thumbnail;
         emitStreamEvent(sessionPath, ss, statusMsg);
         if (statusMsg.running) startBrowserThumbPoll();
-        else stopBrowserThumbPoll();
+        else if (!BrowserManager.instance().hasAnyRunning) stopBrowserThumbPoll();
       }
 
       if (["write", "edit", "bash"].includes(event.toolName)) {
@@ -457,6 +457,18 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       broadcast({ type: "jian_update", content: event.content });
     } else if (event.type === "devlog") {
       broadcast({ type: "devlog", text: event.text, level: event.level });
+    } else if (event.type === "browser_status") {
+      const statusMsg = {
+        type: "browser_status",
+        running: !!event.running,
+        url: event.url || null,
+        sessionPath,
+      };
+      if (event.thumbnail) statusMsg.thumbnail = event.thumbnail;
+      if (event.error) statusMsg.error = event.error;
+      broadcast(statusMsg);
+      if (statusMsg.running) startBrowserThumbPoll();
+      else if (!BrowserManager.instance().hasAnyRunning) stopBrowserThumbPoll();
     } else if (event.type === "browser_bg_status") {
       broadcast({ type: "browser_bg_status", running: event.running, url: event.url, sessionPath });
     } else if (event.type === "computer_overlay") {

@@ -119,6 +119,32 @@ function serverIdentityResponse(partial: Record<string, unknown> = {}): Response
   });
 }
 
+function persistedLanConnectionJson() {
+  const connection = {
+    connectionId: 'lan:node_lan:studio_lan',
+    kind: 'lan',
+    serverId: 'server_lan',
+    serverNodeId: 'node_lan',
+    userId: 'user_lan',
+    studioId: 'studio_lan',
+    label: 'LAN Studio',
+    baseUrl: 'http://192.168.31.75:14500',
+    wsUrl: 'ws://192.168.31.75:14500',
+    token: 'hana_dev_remote_secret',
+    authState: 'paired',
+    trustState: 'lan',
+    credentialKind: 'device_credential',
+    platformAccountId: null,
+    officialServiceKind: null,
+    capabilities: ['chat', 'resources', 'files'],
+  };
+  return JSON.stringify({
+    schemaVersion: 1,
+    serverConnections: { [connection.connectionId]: connection },
+    activeServerConnectionId: connection.connectionId,
+  });
+}
+
 describe('initApp bridge indicator', () => {
   beforeEach(() => {
     Object.keys(mockState).forEach(k => delete mockState[k]);
@@ -214,6 +240,80 @@ describe('initApp bridge indicator', () => {
       local: mockState.activeServerConnection,
     });
     expect(mockState.bridgeDotConnected).toBe(true);
+  });
+
+  it('refreshes the HttpOnly device web session before opening WebSocket for a persisted LAN frontend', async () => {
+    const listeners: Record<string, Array<(data?: unknown) => void>> = {};
+    (globalThis as Record<string, unknown>).window = {
+      addEventListener: vi.fn((type: string, cb: (data?: unknown) => void) => {
+        listeners[type] ||= [];
+        listeners[type].push(cb);
+      }),
+      localStorage: {
+        getItem: vi.fn((key: string) => key === 'hana-server-connections-v1' ? persistedLanConnectionJson() : null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+      platform: {
+        getServerPort: vi.fn(async () => 62950),
+        getServerToken: vi.fn(async () => 'token'),
+        appReady: vi.fn(),
+        onSettingsChanged: vi.fn(),
+        openSettings: vi.fn(),
+      },
+      dispatchEvent: vi.fn(),
+    };
+    (globalThis as Record<string, unknown>).document = {
+      addEventListener: vi.fn(),
+    };
+    (globalThis as Record<string, unknown>).i18n = {
+      locale: 'zh-CN',
+      defaultName: 'Hanako',
+      load: vi.fn(async () => {}),
+    };
+    (globalThis as Record<string, unknown>).t = vi.fn((key: string) => key);
+
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(serverIdentityResponse({
+        connectionKind: 'lan',
+        serverId: 'server_lan',
+        serverNodeId: 'node_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Studio',
+        trustState: 'lan',
+        authState: 'paired',
+        credentialKind: 'device_credential',
+        capabilities: ['chat', 'resources', 'files'],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
+      .mockResolvedValueOnce(jsonResponse({
+        telegram: { status: 'disconnected' },
+        feishu: { status: 'disconnected' },
+        qq: { status: 'disconnected' },
+        wechat: { status: 'disconnected' },
+      }));
+
+    const { initApp } = await import('../app-init');
+    await initApp();
+
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(1, '/api/web-auth/login', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+      body: JSON.stringify({ credential: 'hana_dev_remote_secret' }),
+    }));
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(2, '/api/server/identity');
+    expect(mockState.activeServerConnection).toEqual(expect.objectContaining({
+      connectionId: 'lan:node_lan:studio_lan',
+      kind: 'lan',
+      token: 'hana_dev_remote_secret',
+      credentialKind: 'device_credential',
+    }));
+    expect(mockConnectWebSocket).toHaveBeenCalledTimes(1);
+    expect((mockHanaFetch.mock.invocationCallOrder[0] ?? 0)).toBeLessThan(mockConnectWebSocket.mock.invocationCallOrder[0] ?? 0);
   });
 
   it('stops startup explicitly when server identity cannot be loaded', async () => {

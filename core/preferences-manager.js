@@ -81,15 +81,32 @@ export class PreferencesManager {
     this.savePreferences(prefs);
   }
 
-  /** 读取沙盒内命令是否允许出站联网。默认关闭。 */
+  /** 读取沙盒内命令是否允许出站联网。默认开启，避免沙盒破坏常规工具链。 */
   getSandboxNetwork() {
-    return this._cache.sandbox_network === true;
+    return this._cache.sandbox_network !== false;
   }
 
   /** 保存沙盒内命令出站联网偏好。 */
   setSandboxNetwork(enabled) {
     const prefs = this._mutableCopy();
     prefs.sandbox_network = typeof enabled === "string" ? enabled === "true" : !!enabled;
+    this.savePreferences(prefs);
+  }
+
+  /** 读取桌面硬件加速偏好。默认开启。 */
+  getHardwareAcceleration() {
+    return this._cache.hardware_acceleration !== false;
+  }
+
+  /** 保存桌面硬件加速偏好；主进程下次启动时生效。 */
+  setHardwareAcceleration(enabled) {
+    const prefs = this._mutableCopy();
+    if (typeof enabled === "string") {
+      const value = enabled.trim().toLowerCase();
+      prefs.hardware_acceleration = !["false", "0", "off", "no", "disabled"].includes(value);
+    } else {
+      prefs.hardware_acceleration = !!enabled;
+    }
     this.savePreferences(prefs);
   }
 

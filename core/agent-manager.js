@@ -52,6 +52,14 @@ export class AgentManager {
     this._activityStores = new Map();
     this._agentListCache = null;       // { raw: [{id,name,yuan,identity}], ts: number }
     this._descRefreshPending = false;
+    this._runtimeInitPromises = new Map();
+    this._runtimeInitQueue = [];
+    this._runtimeInitRunning = 0;
+    this._runtimeInitConcurrency = 2;
+    this._memoryMaintenanceQueue = [];
+    this._memoryMaintenanceQueued = new Set();
+    this._memoryMaintenanceRunning = 0;
+    this._memoryMaintenanceConcurrency = 1;
   }
 
   /** 清除 listAgents 缓存（agent 增删改时调用） */
@@ -90,25 +98,21 @@ export class AgentManager {
   async initAllAgents(log, startId) {
     this._activeAgentId = startId;
 
-    const sharedModels = this._d.getSharedModels();
-    const resolveModel = (bareId) =>
-      this._d.getModels().resolveModelWithCredentials(bareId);
-
     const entries = this._scanAgentDirs();
-    const initOne = async (agentId) => {
-      const ag = this._createAgentInstance(agentId, () => ({}));
-      ag.setGetOwnerIds(this._makeOwnerIdsFn(ag));
-      await ag.init(
-        agentId === this._activeAgentId ? log : () => {},
-        sharedModels,
-        resolveModel,
-      );
-      this._registerAgent(agentId, ag);
-    };
+    const ids = new Set([this._activeAgentId, ...entries.map(e => e.name)].filter(Boolean));
+    for (const agentId of ids) {
+      await this._loadAgentConfigOnly(agentId, { required: agentId === this._activeAgentId });
+    }
 
+    let activeRuntimeReady = false;
     // 焦点 agent 先初始化 — 失败不阻塞启动，让用户能进应用修配置
     try {
-      await initOne(this._activeAgentId);
+      await this.ensureAgentRuntime(this._activeAgentId, {
+        log,
+        priority: "foreground",
+        reason: "startup",
+      });
+      activeRuntimeReady = true;
     } catch (err) {
       console.error(`[agent-manager] 焦点 agent "${this._activeAgentId}" init 失败: ${err.message}`);
       if (err.stack) console.error(err.stack);
@@ -116,29 +120,111 @@ export class AgentManager {
       // 关键：必须至少把 config 加载进来，否则 agent.config.models.chat 读不到，
       // 下游会误判为"没配模型"，触发 session 创建跳过 / 记忆系统未启动等连锁崩溃（#414）。
       if (!this._agents.has(this._activeAgentId)) {
-        const ag = this._createAgentInstance(this._activeAgentId, () => ({}));
-        ag.setGetOwnerIds(this._makeOwnerIdsFn(ag));
-        try {
-          ag.loadConfigOnly();
-        } catch (cfgErr) {
-          console.error(`[agent-manager] fallback loadConfigOnly 也失败: ${cfgErr.message}`);
-          if (cfgErr.stack) console.error(cfgErr.stack);
-        }
-        this._registerAgent(this._activeAgentId, ag);
+        await this._loadAgentConfigOnly(this._activeAgentId, { required: true });
       }
     }
 
-    // 其余并行
-    const others = entries.map(e => e.name).filter(id => id !== this._activeAgentId);
-    if (others.length) {
-      const results = await Promise.allSettled(others.map(id => initOne(id)));
-      for (let i = 0; i < results.length; i++) {
-        if (results[i].status === "rejected") {
-          console.error(`[agent-manager] agent "${others[i]}" init 失败: ${results[i].reason?.message}`);
-        }
-      }
+    log(`[init] ${this._agents.size} 个 agent 已加载配置，焦点 runtime ${activeRuntimeReady ? "已就绪" : "待修复"}`);
+  }
+
+  async _loadAgentConfigOnly(agentId, { required = false } = {}) {
+    if (this._agents.has(agentId)) return this._agents.get(agentId);
+
+    const ag = this._createAgentInstance(agentId, () => ({}));
+    ag.setGetOwnerIds(this._makeOwnerIdsFn(ag));
+    try {
+      ag.loadConfigOnly();
+    } catch (err) {
+      console.error(`[agent-manager] agent "${agentId}" config load 失败: ${err.message}`);
+      if (!required) return null;
     }
-    log(`[init] ${this._agents.size} 个 agent 初始化完成`);
+    this._registerAgent(agentId, ag);
+    return ag;
+  }
+
+  async ensureAgentRuntime(agentId, options = {}) {
+    if (!agentId) throw new Error("ensureAgentRuntime: agentId is required");
+    let ag = this._agents.get(agentId);
+    if (!ag) {
+      ag = await this._loadAgentConfigOnly(agentId, { required: true });
+    }
+    if (!ag) throw new Error(t("error.agentNotFound", { id: agentId }));
+    if (ag.runtimeInitialized === true) return ag;
+
+    const existing = this._runtimeInitPromises.get(agentId);
+    if (existing) return existing;
+
+    const promise = new Promise((resolve, reject) => {
+      this._runtimeInitQueue.push({
+        agentId,
+        priority: options.priority === "foreground" ? 0 : 1,
+        log: options.log || (() => {}),
+        resolve,
+        reject,
+      });
+      this._pumpRuntimeInitQueue();
+    });
+    this._runtimeInitPromises.set(agentId, promise);
+    return promise;
+  }
+
+  _pumpRuntimeInitQueue() {
+    while (this._runtimeInitRunning < this._runtimeInitConcurrency && this._runtimeInitQueue.length) {
+      this._runtimeInitQueue.sort((a, b) => a.priority - b.priority);
+      const task = this._runtimeInitQueue.shift();
+      this._runtimeInitRunning++;
+      this._runRuntimeInitTask(task)
+        .then(task.resolve, task.reject)
+        .finally(() => {
+          this._runtimeInitRunning--;
+          this._runtimeInitPromises.delete(task.agentId);
+          this._pumpRuntimeInitQueue();
+        });
+    }
+  }
+
+  async _runRuntimeInitTask(task) {
+    const ag = this._agents.get(task.agentId);
+    if (!ag) throw new Error(t("error.agentNotFound", { id: task.agentId }));
+    if (ag.runtimeInitialized === true) return ag;
+    if (typeof ag.init !== "function") return ag;
+
+    const sharedModels = this._d.getSharedModels?.() || {};
+    const resolveModel = (bareId) =>
+      this._d.getModels().resolveModelWithCredentials(bareId);
+    await ag.init(task.log, sharedModels, resolveModel);
+    this._d.getSkills()?.syncAgentSkills?.(ag);
+    this._d.getHub()?.scheduler?.startAgentHeartbeat?.(task.agentId, ag);
+    return ag;
+  }
+
+  scheduleAgentMemoryMaintenance(agentId, reason = "manual", agentRef = null) {
+    if (!agentId || this._memoryMaintenanceQueued.has(agentId)) return;
+    this._memoryMaintenanceQueued.add(agentId);
+    this._memoryMaintenanceQueue.push({ agentId, reason, agentRef });
+    this._pumpMemoryMaintenanceQueue();
+  }
+
+  _pumpMemoryMaintenanceQueue() {
+    while (this._memoryMaintenanceRunning < this._memoryMaintenanceConcurrency && this._memoryMaintenanceQueue.length) {
+      const task = this._memoryMaintenanceQueue.shift();
+      this._memoryMaintenanceRunning++;
+      this._runMemoryMaintenanceTask(task)
+        .catch((err) => {
+          console.error(`[记忆] 后台维护出错 (${task.agentId}, ${task.reason}): ${err.message}`);
+        })
+        .finally(() => {
+          this._memoryMaintenanceQueued.delete(task.agentId);
+          this._memoryMaintenanceRunning--;
+          this._pumpMemoryMaintenanceQueue();
+        });
+    }
+  }
+
+  async _runMemoryMaintenanceTask({ agentId, agentRef }) {
+    const ag = agentRef || this._agents.get(agentId);
+    if (ag?.runtimeInitialized !== true || !ag.memoryTicker) return;
+    await ag.memoryTicker.tick();
   }
 
   // ── List ──
@@ -518,6 +604,10 @@ export class AgentManager {
     log.log(`switching agent to ${agentId}`);
     try {
       clearConfigCache();
+      await this.ensureAgentRuntime(agentId, {
+        priority: "foreground",
+        reason: "switch",
+      });
       this._activeAgentId = agentId;
 
       // migration #5 之后 models.chat 是 {id, provider}；
@@ -735,6 +825,8 @@ export class AgentManager {
       resolveUtilityConfig: () => getEngine()?.resolveUtilityConfig?.({ agentId: ag.id }),
       getCwd:               () => getEngine()?.cwd ?? "",
       getTimezone:          () => getEngine()?.getTimezone?.() ?? "",
+      scheduleMemoryMaintenance: (agentId, reason) =>
+        this.scheduleAgentMemoryMaintenance(agentId, reason, ag),
       getEngine,  // update-settings-tool 仍需要完整 engine
     });
     ag.setOnInstallCallback(async (skillName) => {

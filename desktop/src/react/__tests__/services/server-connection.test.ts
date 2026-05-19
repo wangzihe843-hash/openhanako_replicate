@@ -1,15 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   appendConnectionAuth,
   buildConnectionUrl,
   buildConnectionWsUrl,
+  connectDeviceServerConnection,
+  createDeviceServerConnection,
   createLocalServerConnection,
   hasServerConnection,
   mergeServerIdentity,
+  persistServerConnectionSelection,
+  readPersistedServerConnectionState,
   refreshLocalServerConnection,
   resolveServerConnection,
   upsertServerConnection,
+  writePersistedServerConnectionState,
 } from '../../services/server-connection';
 
 describe('server connection helpers', () => {
@@ -168,6 +173,125 @@ describe('server connection helpers', () => {
     expect(buildConnectionUrl(remote, '/api/resources/res_1/content', { includeTokenQuery: true }))
       .toBe('https://hana.example/api/resources/res_1/content');
     expect(buildConnectionWsUrl(remote, '/ws')).toBe('wss://hana.example/ws');
+  });
+
+  it('creates a LAN device ServerConnection from manual URL, credential, and server identity', () => {
+    const connection = createDeviceServerConnection({
+      baseUrl: '192.168.31.75:14500/mobile/',
+      credential: 'hana_dev_remote_secret',
+      identity: {
+        connectionKind: 'lan',
+        serverId: 'server_lan',
+        serverNodeId: 'node_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Server',
+        studioLabel: 'Personal Studio',
+        trustState: 'lan',
+        authState: 'paired',
+        credentialKind: 'device_credential',
+        capabilities: ['chat', 'resources', 'files'],
+      },
+    });
+
+    expect(connection).toMatchObject({
+      connectionId: 'lan:node_lan:studio_lan',
+      kind: 'lan',
+      serverId: 'server_lan',
+      serverNodeId: 'node_lan',
+      studioId: 'studio_lan',
+      label: 'Personal Studio',
+      baseUrl: 'http://192.168.31.75:14500',
+      wsUrl: 'ws://192.168.31.75:14500',
+      token: 'hana_dev_remote_secret',
+      trustState: 'lan',
+      credentialKind: 'device_credential',
+      capabilities: ['chat', 'resources', 'files'],
+    });
+  });
+
+  it('logs in once before creating a manual LAN connection so WebSocket can use the web session cookie', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'http://192.168.31.75:14500/api/web-auth/login') {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (url === 'http://192.168.31.75:14500/api/server/identity') {
+        return {
+          ok: true,
+          json: async () => ({
+            connectionKind: 'lan',
+            serverId: 'server_lan',
+            serverNodeId: 'node_lan',
+            userId: 'user_lan',
+            studioId: 'studio_lan',
+            label: 'LAN Server',
+            trustState: 'lan',
+            authState: 'paired',
+            credentialKind: 'device_credential',
+            capabilities: ['chat', 'resources', 'files'],
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected URL ${url}`);
+    });
+
+    const connection = await connectDeviceServerConnection({
+      baseUrl: 'http://192.168.31.75:14500/',
+      credential: 'hana_dev_remote_secret',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+      body: JSON.stringify({ credential: 'hana_dev_remote_secret' }),
+    }));
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'http://192.168.31.75:14500/api/server/identity', expect.objectContaining({
+      headers: { Authorization: 'Bearer hana_dev_remote_secret' },
+      credentials: 'include',
+    }));
+    expect(connection.connectionId).toBe('lan:node_lan:studio_lan');
+  });
+
+  it('persists only non-local ServerConnections and the active remote selection', () => {
+    const storageData = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => storageData.get(key) ?? null,
+      setItem: (key: string, value: string) => { storageData.set(key, value); },
+      removeItem: (key: string) => { storageData.delete(key); },
+    };
+    const local = createLocalServerConnection({
+      serverPort: 3210,
+      serverToken: 'local-token',
+    })!;
+    const remote = createDeviceServerConnection({
+      baseUrl: 'http://192.168.31.75:14500',
+      credential: 'hana_dev_remote_secret',
+      identity: {
+        connectionKind: 'lan',
+        serverId: 'server_lan',
+        serverNodeId: 'node_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Server',
+        trustState: 'lan',
+        authState: 'paired',
+        credentialKind: 'device_credential',
+        capabilities: ['chat'],
+      },
+    });
+
+    writePersistedServerConnectionState({
+      serverConnections: { local, [remote.connectionId]: remote },
+      activeServerConnectionId: remote.connectionId,
+    }, storage);
+
+    const loaded = readPersistedServerConnectionState(storage);
+    expect(Object.keys(loaded.serverConnections)).toEqual([remote.connectionId]);
+    expect(loaded.activeServerConnectionId).toBe(remote.connectionId);
+
+    const selected = persistServerConnectionSelection(remote, storage);
+    expect(selected.activeServerConnectionId).toBe(remote.connectionId);
   });
 
   it('builds fetch URLs without leaking token into the query string', () => {

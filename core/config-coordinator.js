@@ -10,6 +10,13 @@ import { createModuleLogger } from "../lib/debug-log.js";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.js";
 import { t } from "../server/i18n.js";
 import { ensureDefaultWorkspace } from "../shared/default-workspace.js";
+import {
+  AUTO_SEARCH_PROVIDER,
+  isSearchApiProvider,
+  mergeSearchApiKeys,
+  normalizeSearchApiKeys,
+  normalizeSearchProvider,
+} from "../shared/search-providers.js";
 
 const log = createModuleLogger("config");
 
@@ -241,24 +248,57 @@ export class ConfigCoordinator {
 
   getSearchConfig() {
     const prefs = this._prefs();
+    const provider = normalizeSearchProvider(prefs.search_provider) || AUTO_SEARCH_PROVIDER;
+    const apiKeys = normalizeSearchApiKeys(prefs.search_api_keys);
+    const legacyProvider = normalizeSearchProvider(prefs.search_provider);
+    if (isSearchApiProvider(legacyProvider) && typeof prefs.search_api_key === "string" && prefs.search_api_key.trim()) {
+      apiKeys[legacyProvider] = apiKeys[legacyProvider] || prefs.search_api_key.trim();
+    }
+    const apiKey = isSearchApiProvider(provider)
+      ? apiKeys[provider] || (typeof prefs.search_api_key === "string" ? prefs.search_api_key.trim() : "") || null
+      : null;
     return {
-      provider: prefs.search_provider || null,
-      api_key: prefs.search_api_key || null,
+      provider,
+      api_key: apiKey,
+      api_keys: apiKeys,
     };
   }
 
   setSearchConfig(partial) {
     const prefs = this._prefs();
+    const previousProvider = normalizeSearchProvider(prefs.search_provider);
+    let apiKeys = normalizeSearchApiKeys(prefs.search_api_keys);
+    if (isSearchApiProvider(previousProvider) && typeof prefs.search_api_key === "string" && prefs.search_api_key.trim()) {
+      apiKeys[previousProvider] = apiKeys[previousProvider] || prefs.search_api_key.trim();
+    }
+    const nextProvider = partial.provider !== undefined
+      ? normalizeSearchProvider(partial.provider)
+      : previousProvider || AUTO_SEARCH_PROVIDER;
+
     if (partial.provider !== undefined) {
-      if (partial.provider) prefs.search_provider = partial.provider;
+      if (nextProvider) prefs.search_provider = nextProvider;
       else delete prefs.search_provider;
     }
+    if (partial.api_keys !== undefined) {
+      apiKeys = mergeSearchApiKeys(apiKeys, partial.api_keys);
+    }
     if (partial.api_key !== undefined) {
-      if (partial.api_key) prefs.search_api_key = partial.api_key;
-      else delete prefs.search_api_key;
+      if (isSearchApiProvider(nextProvider)) {
+        const apiKey = typeof partial.api_key === "string" ? partial.api_key.trim() : "";
+        if (apiKey) apiKeys[nextProvider] = apiKey;
+        else delete apiKeys[nextProvider];
+      }
+    }
+    if (Object.keys(apiKeys).length > 0) prefs.search_api_keys = apiKeys;
+    else delete prefs.search_api_keys;
+
+    if (isSearchApiProvider(nextProvider) && apiKeys[nextProvider]) {
+      prefs.search_api_key = apiKeys[nextProvider];
+    } else {
+      delete prefs.search_api_key;
     }
     this._savePrefs(prefs);
-    log.log(`setSearchConfig: provider=${partial.provider || "(cleared)"}`);
+    log.log(`setSearchConfig: provider=${nextProvider || "(cleared)"}`);
   }
 
   // ── Utility API ──
@@ -446,7 +486,7 @@ export class ConfigCoordinator {
           if (partial.desk.heartbeat_enabled === false) {
             this._d.emitDevLog("[heartbeat] 巡检已关闭");
             await hb.stop();
-          } else if (this.getHeartbeatMaster() !== false) {
+          } else if (partial.desk.heartbeat_enabled === true && this.getHeartbeatMaster() !== false) {
             this._d.emitDevLog("[heartbeat] 巡检已开启");
             hb.start();
           }
@@ -530,7 +570,7 @@ export class ConfigCoordinator {
       if (!hb) continue;
       if (!enabled) {
         hb.stop();
-      } else if (agent.config?.desk?.heartbeat_enabled !== false) {
+      } else if (agent.config?.desk?.heartbeat_enabled === true) {
         hb.start();
       }
     }

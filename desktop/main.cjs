@@ -50,6 +50,17 @@ const {
   proxyConfigToEnvironment,
   withForcedLocalProxyBypass,
 } = require("../shared/network-proxy.cjs");
+const {
+  applyGpuStartupPolicy,
+  buildGpuStartupDiagnostics,
+  markGpuStartupFailed,
+  markGpuStartupPending,
+  markGpuStartupPhase,
+  markGpuStartupReady,
+  recordGpuChildProcessGone,
+  recordGpuInfoUpdate,
+  resolveGpuStartupPolicy,
+} = require("./src/shared/gpu-startup-policy.cjs");
 
 const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json build.appId.
 
@@ -196,6 +207,59 @@ configureClientSingleInstance(app, {
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
+
+const gpuStartupPolicy = resolveGpuStartupPolicy({
+  hanakoHome,
+  platform: process.platform,
+  argv: process.argv,
+  env: process.env,
+});
+applyGpuStartupPolicy(app, gpuStartupPolicy);
+if (!gpuStartupPolicy.hardwareAccelerationEnabled) {
+  console.warn(`[desktop] GPU safe mode enabled (${gpuStartupPolicy.reason}); hardware acceleration disabled for this launch`);
+}
+const desktopStartupId = `${Date.now()}-${process.pid}`;
+if (process.platform === "win32") {
+  markGpuStartupPending({
+    hanakoHome,
+    platform: process.platform,
+    phase: "electron-starting",
+    startupId: desktopStartupId,
+  });
+}
+
+app.on("child-process-gone", (_event, details) => {
+  if (process.platform !== "win32") return;
+  if (!recordGpuChildProcessGone({
+    hanakoHome,
+    platform: process.platform,
+    details,
+  })) {
+    return;
+  }
+  const reason = `${details?.reason || "unknown"} (code: ${details?.exitCode ?? "unknown"})`;
+  console.error(`[desktop] GPU process exited unexpectedly: ${reason}`);
+  try {
+    writeCrashLog(`GPU process exited unexpectedly: ${reason}`);
+  } catch (err) {
+    console.error("[desktop] 写入 GPU crash.log 失败:", err.message);
+  }
+});
+
+app.on("gpu-info-update", () => {
+  if (process.platform !== "win32") return;
+  try {
+    if (typeof app.getGPUFeatureStatus === "function") {
+      recordGpuInfoUpdate({
+        hanakoHome,
+        platform: process.platform,
+        featureStatus: app.getGPUFeatureStatus(),
+      });
+    }
+  } catch (err) {
+    console.warn("[desktop] GPU info update 记录失败:", err.message);
+  }
+});
 
 let splashWindow = null;
 let mainWindow = null;
@@ -963,6 +1027,8 @@ function buildServerCrashDiagnostics() {
     items.push(`Manual debug: open cmd.exe, cd to "${serverDir}", run hana-server.cmd`);
   }
 
+  items.push(buildGpuStartupDiagnostics({ hanakoHome, policy: gpuStartupPolicy, app }));
+
   return items.join("\n");
 }
 
@@ -1000,6 +1066,14 @@ function writeCrashLog(errorMessage) {
 
 // ── 创建启动窗口 ──
 function createSplashWindow() {
+  if (process.platform === "win32") {
+    markGpuStartupPhase({
+      hanakoHome,
+      platform: process.platform,
+      phase: "launching-splash",
+      startupId: desktopStartupId,
+    });
+  }
   splashWindow = new BrowserWindow({
     width: 380,
     height: 280,
@@ -1019,6 +1093,14 @@ function createSplashWindow() {
   loadWindowURL(splashWindow, "splash");
 
   splashWindow.once("ready-to-show", () => {
+    if (process.platform === "win32") {
+      markGpuStartupPhase({
+        hanakoHome,
+        platform: process.platform,
+        phase: "splash-ready",
+        startupId: desktopStartupId,
+      });
+    }
     splashWindow.show();
   });
 
@@ -1710,6 +1792,42 @@ function _notifyViewerUrl(url) {
   }
 }
 
+async function closeBrowserSessionViaServer(sessionPath) {
+  if (!sessionPath) throw new Error("No active browser session");
+  if (!serverPort || !serverToken) throw new Error("Server is not ready");
+  const res = await fetch(`http://127.0.0.1:${serverPort}/api/browser/close-session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${serverToken}`,
+    },
+    body: JSON.stringify({ sessionPath }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = await res.text(); } catch {}
+    throw new Error(`Browser close request failed with HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+  }
+}
+
+function encodeCapturedPageToJpegBase64(image, quality, label = "screenshot") {
+  if (!image || (typeof image.isEmpty === "function" && image.isEmpty())) {
+    const emptyImageMessage = label === "screenshot"
+      ? "Browser screenshot capture returned an empty image. The browser display surface may be unavailable."
+      : `Browser ${label} capture returned an empty image. The browser display surface may be unavailable.`;
+    throw new Error(emptyImageMessage);
+  }
+  const jpeg = image.toJPEG(quality);
+  if (!Buffer.isBuffer(jpeg) || jpeg.length === 0) {
+    const noDataMessage = label === "screenshot"
+      ? "Browser screenshot capture returned no image data. The browser display surface may be unavailable."
+      : `Browser ${label} capture returned no image data. The browser display surface may be unavailable.`;
+    throw new Error(noDataMessage);
+  }
+  return jpeg.toString("base64");
+}
+
 async function handleBrowserCommand(cmd, params) {
   switch (cmd) {
 
@@ -1952,8 +2070,7 @@ async function handleBrowserCommand(cmd, params) {
     case "screenshot": {
       return await _withLiveWebContents(params.sessionPath, async (wc) => {
         const img = await wc.capturePage();
-        const jpeg = img.toJPEG(75);
-        return { base64: jpeg.toString("base64") };
+        return { base64: encodeCapturedPageToJpegBase64(img, 75, "screenshot") };
       });
     }
 
@@ -1962,8 +2079,7 @@ async function handleBrowserCommand(cmd, params) {
       return await _withLiveWebContents(params.sessionPath, async (wc) => {
         const img = await wc.capturePage();
         const resized = img.resize({ width: 400 });
-        const jpeg = resized.toJPEG(60);
-        return { base64: jpeg.toString("base64") };
+        return { base64: encodeCapturedPageToJpegBase64(resized, 60, "thumbnail") };
       });
     }
 
@@ -2546,7 +2662,11 @@ wrapIpcBestEffortHandler("close-browser-viewer", () => {
   if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.close();
 });
 wrapIpcBestEffortHandler("browser-emergency-stop", () => {
-  // 紧急停止：销毁当前浏览器实例，释放 AI 控制
+  // 有 session 归属时必须经过 server 的 BrowserManager，保持 UI 和运行时状态一致。
+  if (_currentBrowserSession) {
+    return closeBrowserSessionViaServer(_currentBrowserSession);
+  }
+  // 兼容无 sessionPath 的旧浏览器实例：没有 server 状态可同步，只能本地清理。
   if (_browserWebView) {
     if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
       try { browserViewerWindow.contentView.removeChildView(_browserWebView); } catch {}
@@ -3183,6 +3303,15 @@ wrapIpcHandler("window-is-maximized", (event) => {
 
 // 前端初始化完成后调用，关闭 splash / onboarding，显示主窗口
 wrapIpcBestEffortHandler("app-ready", () => {
+  if (process.platform === "win32") {
+    markGpuStartupReady({
+      hanakoHome,
+      platform: process.platform,
+      startupId: desktopStartupId,
+      phase: "app-ready",
+    });
+  }
+
   if (mainWindow && !_startHiddenAtLogin) {
     mainWindow.show();
   }
@@ -3223,8 +3352,24 @@ app.whenReady().then(async () => {
     await applyDesktopNetworkProxy(readNetworkProxyPreference(), { reason: "startup" });
 
     // 2. 后台启动 server（PATH 已就绪）
+    if (process.platform === "win32") {
+      markGpuStartupPhase({
+        hanakoHome,
+        platform: process.platform,
+        phase: "server-starting",
+        startupId: desktopStartupId,
+      });
+    }
     console.log("[desktop] 启动 Hanako Server...");
     await startServer();
+    if (process.platform === "win32") {
+      markGpuStartupPhase({
+        hanakoHome,
+        platform: process.platform,
+        phase: "server-ready",
+        startupId: desktopStartupId,
+      });
+    }
     console.log(`[desktop] Server 就绪，端口: ${serverPort}`);
     monitorServer();
     setupBrowserCommands();
@@ -3244,14 +3389,38 @@ app.whenReady().then(async () => {
     if (isSetupComplete()) {
       // 已完成配置：直接创建主窗口
       createMainWindow();
+      if (process.platform === "win32") {
+        markGpuStartupPhase({
+          hanakoHome,
+          platform: process.platform,
+          phase: "main-window-created",
+          startupId: desktopStartupId,
+        });
+      }
     } else if (hasExistingConfig()) {
       // 老用户：已有 api_key，跳过填写直接看教程
       console.log("[desktop] 检测到已有配置，跳到教程页");
       createOnboardingWindow({ skipToTutorial: "1" });
+      if (process.platform === "win32") {
+        markGpuStartupPhase({
+          hanakoHome,
+          platform: process.platform,
+          phase: "onboarding-window-created",
+          startupId: desktopStartupId,
+        });
+      }
     } else {
       // 全新用户：完整 onboarding 向导
       console.log("[desktop] 首次启动，显示 Onboarding 向导");
       createOnboardingWindow();
+      if (process.platform === "win32") {
+        markGpuStartupPhase({
+          hanakoHome,
+          platform: process.platform,
+          phase: "onboarding-window-created",
+          startupId: desktopStartupId,
+        });
+      }
     }
 
     // 5. 后台检查更新（不阻塞启动）
@@ -3266,6 +3435,14 @@ app.whenReady().then(async () => {
     checkForUpdates().catch(() => {});
   } catch (err) {
     console.error("[desktop] 启动失败:", err.message);
+    if (process.platform === "win32") {
+      markGpuStartupFailed({
+        hanakoHome,
+        platform: process.platform,
+        startupId: desktopStartupId,
+        reason: err.message || "startup-failed",
+      });
+    }
     // 写入 crash.log 并获取详细日志
     const crashInfo = writeCrashLog(err.message);
     // 截取最后 800 字符放进 dialog（太长会显示不全）

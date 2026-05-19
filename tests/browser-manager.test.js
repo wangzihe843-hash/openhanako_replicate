@@ -146,6 +146,16 @@ describe("BrowserManager explicit sessionPath", () => {
     expect(manager._sendCmd).toHaveBeenNthCalledWith(2, "snapshot", { sessionPath: SP1 });
   });
 
+  it("reports empty screenshot captures before they reach session-file persistence", async () => {
+    const manager = new BrowserManager();
+    manager._sessions.set(SP1, { running: true, url: "https://example.com", headless: false });
+    manager._sendCmd = vi.fn().mockResolvedValue({ base64: "" });
+
+    await expect(manager.screenshot(SP1)).rejects.toThrow(/no image data|empty image/i);
+    expect(manager.isRunning(SP1)).toBe(true);
+    expect(manager.sessionUnavailableReason(SP1)).toBeNull();
+  });
+
   it("does not send further commands for an unavailable browser session", async () => {
     const manager = new BrowserManager();
     manager._sessions.set(SP1, { running: true, url: "https://example.com", headless: false });

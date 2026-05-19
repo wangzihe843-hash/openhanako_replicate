@@ -103,12 +103,11 @@ export class Scheduler {
 
   _startAgentHeartbeat(agentId, agent) {
     if (this._heartbeats.has(agentId)) return; // 幂等
-    if (!agent.deskManager || !agent.cronStore) return;
 
     const engine = this._engine;
     const hbInterval = agent.config?.desk?.heartbeat_interval;
     const masterEnabled = engine.getHeartbeatMaster() !== false;
-    const hbEnabled = masterEnabled && (agent.config?.desk?.heartbeat_enabled !== false);
+    const hbEnabled = masterEnabled && (agent.config?.desk?.heartbeat_enabled === true);
     // per-agent workspace（fallback: 主 agent → ~/Desktop）
     const getWorkspace = () => engine.getHomeCwd(agentId);
     const hb = createHeartbeat({
@@ -266,6 +265,10 @@ export class Scheduler {
    */
   async _executeActivityForAgent(agentId, prompt, type, label, opts = {}) {
     const engine = this._engine;
+    await engine.ensureAgentRuntime?.(agentId, {
+      priority: "background",
+      reason: type,
+    });
     const agentDir = path.join(engine.agentsDir, agentId);
     const activityDir = path.join(agentDir, "activity");
     const startedAt = Date.now();

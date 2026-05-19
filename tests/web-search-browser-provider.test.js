@@ -28,9 +28,11 @@ describe("web_search browser providers", () => {
   });
 
   it("does not require API keys for browser-backed providers", async () => {
+    expect(searchProviderRequiresApiKey("auto")).toBe(false);
     expect(searchProviderRequiresApiKey("bing_browser")).toBe(false);
     expect(searchProviderRequiresApiKey("google_browser")).toBe(false);
     expect(searchProviderRequiresApiKey("duckduckgo_browser")).toBe(false);
+    await expect(verifySearchKey("auto", "")).resolves.toBe(true);
     await expect(verifySearchKey("bing_browser", "")).resolves.toBe(true);
   });
 
@@ -158,7 +160,7 @@ describe("web_search browser providers", () => {
     });
   });
 
-  it("defaults to Bing browser search when no search provider is configured", async () => {
+  it("defaults to auto search and uses Bing browser first when no API provider is configured", async () => {
     searchWebMock.mockResolvedValue({
       query: "hana default",
       provider: "bing_browser",
@@ -195,6 +197,15 @@ describe("web_search browser providers", () => {
       query: "hana default",
       provider: "bing_browser",
       source_type: "browser",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "bing_browser",
+            status: "ok",
+          },
+        ],
+      },
       results: [
         {
           title: "Default Result",
@@ -204,6 +215,187 @@ describe("web_search browser providers", () => {
           metadata: { engine: "bing" },
         },
       ],
+    });
+  });
+
+  it("auto search tries configured API providers before browser providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        results: [
+          { title: "Tavily Result", url: "https://example.com/tavily", content: "Tavily snippet" },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const rateLimiter = {
+      run: vi.fn(async (_provider, _sourceType, operation) => operation()),
+    };
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({
+        provider: "auto",
+        api_keys: { tavily: "tvly-key", brave: "brave-key" },
+      }),
+      rateLimiter,
+    });
+    const result = await tool.execute("call-auto-api", { query: "hana api", maxResults: 2 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(rateLimiter.run).toHaveBeenCalledWith("tavily", "api", expect.any(Function));
+    expect(searchWebMock).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      provider: "tavily",
+      source_type: "api",
+      results: [
+        {
+          title: "Tavily Result",
+          url: "https://example.com/tavily",
+          content: "Tavily snippet",
+        },
+      ],
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "tavily",
+            status: "ok",
+          },
+        ],
+      },
+    });
+  });
+
+  it("auto search falls back from an exhausted API provider to the next configured API provider", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: "quota exceeded" }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "2" },
+        },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          web: {
+            results: [
+              { title: "Brave Result", url: "https://example.com/brave", description: "Brave snippet" },
+            ],
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    vi.stubGlobal("fetch", fetchMock);
+    const rateLimiter = {
+      run: vi.fn(async (_provider, _sourceType, operation) => operation()),
+    };
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({
+        provider: "auto",
+        api_keys: { tavily: "tvly-key", brave: "brave-key" },
+      }),
+      rateLimiter,
+    });
+    const result = await tool.execute("call-auto-fallback", { query: "hana fallback", maxResults: 1 });
+
+    expect(rateLimiter.run).toHaveBeenNthCalledWith(1, "tavily", "api", expect.any(Function));
+    expect(rateLimiter.run).toHaveBeenNthCalledWith(2, "brave", "api", expect.any(Function));
+    expect(result.details).toMatchObject({
+      provider: "brave",
+      source_type: "api",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "tavily",
+            status: "error",
+            error_type: "rate_limited",
+          },
+          {
+            provider: "brave",
+            status: "ok",
+          },
+        ],
+      },
+    });
+  });
+
+  it("auto search falls back from low-quality Bing Chinese results to Google", async () => {
+    searchWebMock.mockImplementation(async ({ provider, query }) => {
+      if (provider === "bing_browser") {
+        return {
+          query,
+          provider,
+          source_type: "browser",
+          results: [
+            {
+              title: "大（汉语文字）_百度百科",
+              url: "https://baike.baidu.com/item/%E5%A4%A7",
+              content: "大，汉语常用字。",
+              rank: 1,
+            },
+            {
+              title: "大的解释|大的意思|汉典“大”字的基本解释",
+              url: "https://www.zdic.net/hans/%E5%A4%A7",
+              content: "汉典提供大字解释。",
+              rank: 2,
+            },
+          ],
+          diagnostics: { blocked: false, captcha: false },
+        };
+      }
+      return {
+        query,
+        provider,
+        source_type: "browser",
+        results: [
+          {
+            title: "腾讯混元官方定价",
+            url: "https://cloud.tencent.com/product/hunyuan/pricing",
+            content: "腾讯混元大模型官方价格说明。",
+            rank: 1,
+          },
+        ],
+        diagnostics: { blocked: false, captcha: false },
+      };
+    });
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "auto", api_keys: {} }),
+    });
+    const result = await tool.execute("call-auto-low-quality", {
+      query: "大模型 官方定价 百炼 腾讯混元 2026",
+      maxResults: 2,
+    });
+
+    expect(searchWebMock).toHaveBeenNthCalledWith(1, {
+      provider: "bing_browser",
+      query: "大模型 官方定价 百炼 腾讯混元 2026",
+      maxResults: 2,
+      locale: "zh",
+    });
+    expect(searchWebMock).toHaveBeenNthCalledWith(2, {
+      provider: "google_browser",
+      query: "大模型 官方定价 百炼 腾讯混元 2026",
+      maxResults: 2,
+      locale: "zh",
+    });
+    expect(result.details).toMatchObject({
+      provider: "google_browser",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "bing_browser",
+            status: "low_quality",
+          },
+          {
+            provider: "google_browser",
+            status: "ok",
+          },
+        ],
+      },
     });
   });
 

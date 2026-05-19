@@ -118,6 +118,41 @@ describe('dm_new_message websocket routing', () => {
     expect(openChannelMock).toHaveBeenCalledWith('dm:bob', true);
     expect(loadChannelsMock).not.toHaveBeenCalled();
   });
+
+  it('routes a primary-owned visible DM even when chat focus is another agent', () => {
+    useStore.setState({
+      currentTab: 'channels',
+      currentAgentId: 'dana',
+      agents: [
+        { id: 'alice', name: 'Alice', yuan: 'hanako', isPrimary: true },
+        { id: 'bob', name: 'Bob', yuan: 'ming', isPrimary: false },
+        { id: 'dana', name: 'Dana', yuan: 'ming', isPrimary: false },
+      ],
+      channels: [{
+        id: 'dm:bob',
+        name: 'Bob',
+        members: ['bob'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: true,
+        peerId: 'bob',
+        peerName: 'Bob',
+        dmOwnerId: 'alice',
+      }],
+      currentChannel: 'dm:bob',
+    } as never);
+
+    handleServerMessage({
+      type: 'dm_new_message',
+      from: 'alice',
+      to: 'bob',
+    });
+
+    expect(openChannelMock).toHaveBeenCalledWith('dm:bob', true);
+    expect(loadChannelsMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('conversation_agent_activity websocket routing', () => {

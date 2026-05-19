@@ -8,7 +8,6 @@ import {
   deskUploadFiles,
   deskUploadFilesToSubdir,
   deskCreateFile,
-  deskMkdir,
   deskMoveTreeFiles,
 } from '../../stores/desk-actions';
 import {
@@ -16,16 +15,19 @@ import {
   readAppFileDragPayload,
 } from '../../utils/app-file-drag';
 import type { CtxMenuState } from './desk-types';
+import type { InlineCreateKind } from './DeskTree';
 import s from './Desk.module.css';
 
 export function DeskDropZone({
   children,
   onShowMenu,
+  onStartCreate,
   framed = true,
   rightWorkspaceLayout = false,
 }: {
   children: React.ReactNode;
   onShowMenu: (state: CtxMenuState) => void;
+  onStartCreate: (parentSubdir: string, kind: InlineCreateKind) => Promise<void>;
   framed?: boolean;
   rightWorkspaceLayout?: boolean;
 }) {
@@ -75,12 +77,12 @@ export function DeskDropZone({
     onShowMenu({
       position: { x: e.clientX, y: e.clientY },
       items: [
-        { label: tFn('desk.ctx.newMdFile'), action: () => deskCreateFile('') },
-        { label: tFn('desk.ctx.newFolder'), action: () => deskMkdir() },
+        { label: tFn('desk.ctx.newMdFile'), action: () => { void onStartCreate('', 'markdown'); } },
+        { label: tFn('desk.ctx.newFolder'), action: () => { void onStartCreate('', 'folder'); } },
         { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
       ],
     });
-  }, [onShowMenu]);
+  }, [onShowMenu, onStartCreate]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();

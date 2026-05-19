@@ -674,6 +674,11 @@
       "leavesOverlay": "晴天模式",
       "leavesOverlayHint": "沒事兒曬曬太陽"
     },
+    "interface": {
+      "system": "系統",
+      "hardwareAcceleration": "硬體加速",
+      "hardwareAccelerationHint": "使用顯示卡繪製視窗內容。關閉後會在下次啟動使用軟體渲染，可用於恢復 Windows 顯示卡驅動導致的啟動閃退。"
+    },
     "editor": {
       "title": "編輯器",
       "markdownBodyFontSize": "正文字號",
@@ -795,7 +800,9 @@
       "autoCheckUpdates": "自動檢查更新"
     },
     "access": {
+      "networkAccess": "區域網路存取",
       "mobileAccess": "手機存取",
+      "desktopAccess": "電腦存取",
       "lanToggle": "允許區域網路裝置存取",
       "lanHint": "開啟後，同一區域網路內的手機和電腦可以存取這台 Hana Server",
       "port": "固定連接埠",
@@ -807,6 +814,7 @@
       "statusHint": "用於確認目前服務實際監聽位置和手機可用地址",
       "runtimeEndpoint": "目前監聽",
       "effectiveMobileUrl": "目前生效地址",
+      "effectiveDesktopUrl": "電腦連線地址",
       "lanAddresses": "區域網路地址",
       "noLanAddresses": "未發現區域網路地址",
       "qrCode": "QR Code",
@@ -820,6 +828,23 @@
       "mobileKeyOnce": "密鑰只在產生後顯示一次，請妥善保存",
       "mobileKeyCreated": "已產生手機存取密鑰",
       "mobileKeyFailed": "產生失敗",
+      "desktopUrl": "電腦連線地址",
+      "desktopUrlLanHint": "在另一台電腦的 Hana 前端中填入這個地址",
+      "desktopUrlLocalHint": "目前僅允許本機存取，開啟區域網路後會顯示電腦可用地址",
+      "generateDesktopKey": "產生電腦存取密鑰",
+      "desktopKeyHint": "給另一台電腦的 Hana 前端手動連線使用",
+      "desktopKey": "電腦存取密鑰",
+      "desktopKeyOnce": "密鑰只在產生後顯示一次，請在另一台電腦上填入",
+      "desktopKeyCreated": "已產生電腦存取密鑰",
+      "desktopKeyFailed": "產生失敗",
+      "connectLanServer": "連線區域網路伺服器",
+      "remoteServerUrl": "伺服器位址",
+      "remoteServerUrlHint": "填入另一台電腦或 NAS 上 Hana Server 的地址",
+      "remoteServerKey": "存取密鑰",
+      "remoteServerKeyHint": "填入那台伺服器設定頁產生的電腦存取密鑰",
+      "remoteServerConnected": "已連線區域網路伺服器",
+      "remoteServerFailed": "連線失敗",
+      "pairedDevices": "已配對裝置",
       "noDevices": "暫無已配對裝置",
       "revoke": "撤銷",
       "revokeCredential": "撤銷密鑰",
@@ -985,6 +1010,7 @@
       "searchProviderField": "搜尋引擎",
       "searchApiKey": "搜尋 API Key",
       "searchApiKeyHint": "啟用搜尋時請填寫所選 provider 的 API Key",
+      "searchApiKeysAutoHint": "Auto 會優先使用已設定的 Tavily、Brave、Serper，額度耗盡、報錯、空結果或相關性較弱時再回退到瀏覽器搜尋。",
       "searchApiKeyNotRequired": "瀏覽器搜尋不需要 API Key，會在本機背景開啟搜尋頁並整理結果。",
       "favorites": "收藏",
       "searchModel": "搜尋模型...",
@@ -1379,6 +1405,14 @@
       "subtitle": "我是你的個人 AI 助手。\n來做一些簡單的設定，讓我們開始吧。",
       "next": "開始設定"
     },
+    "remote": {
+      "link": "已有伺服器？使用區域網路連線",
+      "url": "伺服器位址",
+      "key": "存取密鑰",
+      "connect": "連線",
+      "connecting": "連線中...",
+      "failed": "連線區域網路伺服器失敗"
+    },
     "name": {
       "title": "我該怎麼稱呼你？",
       "subtitle": "這會讓我們的對話更自然",
@@ -1570,6 +1604,7 @@
     "fileLabel": "檔案",
     "openWithDefault": "用預設應用程式打開",
     "refresh": "重新整理",
+    "newMarkdownFileName": "未命名.md",
     "newFolder": "新建資料夾",
     "ctx": {
       "open": "打開",
@@ -1585,6 +1620,7 @@
     "deleteConfirm": "要把「{name}」移到系統垃圾桶嗎？",
     "deleteSelectedConfirm": "要把選取的 {count} 項移到系統垃圾桶嗎？",
     "trashFailed": "移到系統垃圾桶失敗",
+    "createFailed": "建立失敗",
     "renameInvalid": "檔名不能包含路徑分隔符",
     "renameFailed": "重新命名失敗",
     "sort": {

@@ -83,6 +83,19 @@ export interface ServerConnectionSource {
 }
 
 const LOCAL_CAPABILITIES = ['chat', 'resources', 'files', 'tools'];
+const REMOTE_FALLBACK_CAPABILITIES = ['chat'];
+const PERSISTED_CONNECTIONS_KEY = 'hana-server-connections-v1';
+
+interface ConnectionStorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+export interface PersistedServerConnectionState {
+  serverConnections: ServerConnectionRegistry;
+  activeServerConnectionId: string | null;
+}
 
 interface BrowserServerConnectionPrincipal {
   kind?: string | null;
@@ -117,6 +130,21 @@ function normalizeToken(token: string | null | undefined): string | null {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+function normalizeBaseUrl(value: string): string {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) throw new Error('server URL required');
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const parsed = new URL(withProtocol);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('server URL must use http or https');
+  }
+  parsed.hash = '';
+  parsed.search = '';
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = pathname === '/mobile' ? '/' : pathname || '/';
+  return trimTrailingSlash(parsed.toString());
 }
 
 function assertRoutePath(path: string): void {
@@ -229,6 +257,82 @@ export function createBrowserServerConnection({
   return connection;
 }
 
+export function createDeviceServerConnection({
+  baseUrl,
+  credential,
+  identity,
+}: {
+  baseUrl: string;
+  credential: string;
+  identity: ServerIdentity;
+}): ServerConnection {
+  const base = normalizeBaseUrl(baseUrl);
+  const parsed = new URL(base);
+  const wsProtocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+  const serverId = identity.serverId || parsed.host;
+  const serverNodeId = identity.serverNodeId || serverId;
+  const studioId = identity.studioId || 'default';
+  const kind = normalizeManualConnectionKind(identity.connectionKind, parsed.hostname);
+  const connection: ServerConnection = {
+    connectionId: `${kind}:${serverNodeId}:${studioId}`,
+    kind,
+    serverId,
+    serverNodeId,
+    serverNodeKind: identity.serverNodeKind,
+    serverNodeTransport: identity.serverNodeTransport,
+    userId: identity.userId,
+    studioId,
+    label: identity.studioLabel || identity.label || 'Hana Studio',
+    userLabel: identity.userLabel,
+    studioLabel: identity.studioLabel,
+    serverVersion: identity.version,
+    baseUrl: base,
+    wsUrl: `${wsProtocol}//${parsed.host}`,
+    token: normalizeToken(credential),
+    authState: identity.authState || 'paired',
+    trustState: kind === 'custom_remote' ? 'tunnel' : (identity.trustState || 'lan'),
+    credentialKind: 'device_credential',
+    platformAccountId: identity.platformAccountId ?? null,
+    officialServiceKind: identity.officialServiceKind ?? null,
+    executionBoundary: identity.executionBoundary,
+    capabilities: normalizeRemoteCapabilities(identity.capabilities),
+  };
+  validateStudioConnectionTrust(connection);
+  return connection;
+}
+
+export async function connectDeviceServerConnection({
+  baseUrl,
+  credential,
+  fetchImpl = fetch,
+}: {
+  baseUrl: string;
+  credential: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ServerConnection> {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const token = normalizeToken(credential);
+  if (!token) throw new Error('server access key required');
+
+  await requestJson(fetchImpl, `${normalizedBaseUrl}/api/web-auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ credential: token }),
+  });
+
+  const identity = await requestJson(fetchImpl, `${normalizedBaseUrl}/api/server/identity`, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+  }) as ServerIdentity;
+
+  return createDeviceServerConnection({
+    baseUrl: normalizedBaseUrl,
+    credential: token,
+    identity,
+  });
+}
+
 export function refreshLocalServerConnection({
   existingConnection,
   serverPort,
@@ -271,6 +375,15 @@ function normalizeBrowserConnectionKind(
   return isLoopbackHost(hostname) ? 'local' : 'lan';
 }
 
+function normalizeManualConnectionKind(
+  value: StudioConnectionKind | string | null | undefined,
+  hostname: string,
+): StudioConnectionKind {
+  if (value === 'custom_remote' || value === 'relay' || value === 'cloud') return value;
+  if (value === 'local' && isLoopbackHost(hostname)) return 'local';
+  return 'lan';
+}
+
 function normalizeBrowserTrustState(
   value: ServerTrustState | string | null | undefined,
   kind: StudioConnectionKind,
@@ -310,6 +423,21 @@ function normalizeBrowserCapabilities(
     else if (scope === 'tools' || scope.startsWith('tools.')) out.add('tools');
   }
   return [...out];
+}
+
+function normalizeRemoteCapabilities(identityCapabilities: string[] | null | undefined): string[] {
+  if (!Array.isArray(identityCapabilities) || identityCapabilities.length === 0) {
+    return [...REMOTE_FALLBACK_CAPABILITIES];
+  }
+  const out = new Set<string>();
+  for (const capability of identityCapabilities) {
+    if (capability === 'chat') out.add('chat');
+    else if (capability === 'resources' || capability.startsWith('resources.')) out.add('resources');
+    else if (capability === 'files' || capability.startsWith('files.')) out.add('files');
+    else if (capability === 'tools' || capability.startsWith('tools.')) out.add('tools');
+    else if (capability === 'settings' || capability.startsWith('settings.')) out.add('settings');
+  }
+  return out.size > 0 ? [...out] : [...REMOTE_FALLBACK_CAPABILITIES];
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -354,6 +482,68 @@ export function upsertServerConnection(
     ...(registry ?? {}),
     [connection.connectionId]: connection,
   };
+}
+
+export function readPersistedServerConnectionState(
+  storage: ConnectionStorageLike | null | undefined = getDefaultStorage(),
+): PersistedServerConnectionState {
+  if (!storage) return { serverConnections: {}, activeServerConnectionId: null };
+  try {
+    const raw = storage.getItem(PERSISTED_CONNECTIONS_KEY);
+    if (!raw) return { serverConnections: {}, activeServerConnectionId: null };
+    const parsed = JSON.parse(raw);
+    const registry: ServerConnectionRegistry = {};
+    for (const connection of Object.values(parsed?.serverConnections || {}) as ServerConnection[]) {
+      if (!connection || connection.kind === 'local') continue;
+      registry[connection.connectionId] = connection;
+      validateStudioConnectionTrust(connection);
+    }
+    const activeServerConnectionId = typeof parsed?.activeServerConnectionId === 'string'
+      && registry[parsed.activeServerConnectionId]
+      ? parsed.activeServerConnectionId
+      : null;
+    return { serverConnections: registry, activeServerConnectionId };
+  } catch {
+    return { serverConnections: {}, activeServerConnectionId: null };
+  }
+}
+
+export function writePersistedServerConnectionState(
+  state: PersistedServerConnectionState,
+  storage: ConnectionStorageLike | null | undefined = getDefaultStorage(),
+): void {
+  if (!storage) return;
+  const serverConnections: ServerConnectionRegistry = {};
+  for (const connection of Object.values(state.serverConnections || {})) {
+    if (!connection || connection.kind === 'local') continue;
+    validateStudioConnectionTrust(connection);
+    serverConnections[connection.connectionId] = connection;
+  }
+  const activeServerConnectionId = state.activeServerConnectionId && serverConnections[state.activeServerConnectionId]
+    ? state.activeServerConnectionId
+    : null;
+  if (Object.keys(serverConnections).length === 0 && !activeServerConnectionId) {
+    storage.removeItem(PERSISTED_CONNECTIONS_KEY);
+    return;
+  }
+  storage.setItem(PERSISTED_CONNECTIONS_KEY, JSON.stringify({
+    schemaVersion: 1,
+    serverConnections,
+    activeServerConnectionId,
+  }));
+}
+
+export function persistServerConnectionSelection(
+  connection: ServerConnection,
+  storage: ConnectionStorageLike | null | undefined = getDefaultStorage(),
+): PersistedServerConnectionState {
+  const previous = readPersistedServerConnectionState(storage);
+  const next = {
+    serverConnections: upsertServerConnection(previous.serverConnections, connection),
+    activeServerConnectionId: connection.connectionId,
+  };
+  writePersistedServerConnectionState(next, storage);
+  return next;
 }
 
 export function mergeServerIdentity(
@@ -418,4 +608,20 @@ export function appendConnectionAuth(
     next.Authorization = `Bearer ${connection.token}`;
   }
   return next;
+}
+
+async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<unknown> {
+  const res = await fetchImpl(url, init);
+  if (!res.ok) {
+    throw new Error(`server connection request failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function getDefaultStorage(): ConnectionStorageLike | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
 }

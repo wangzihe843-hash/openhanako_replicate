@@ -11,7 +11,7 @@ import { getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-pr
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 28;
+const LATEST_DATA_VERSION = 29;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -792,7 +792,7 @@ describe("migration #3 — migrateWorkspaceToPerAgent", () => {
     runMigration3(prefs);
 
     const config = readAgentConfig(agentsDir, "hana");
-    expect(config.desk).toBeUndefined();
+    expect(config.desk.heartbeat_enabled).toBe(false);
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 
@@ -905,9 +905,9 @@ describe("migration #3 — migrateWorkspaceToPerAgent", () => {
 
     runMigration3(prefs);
 
-    // Primary agent keeps heartbeat on (default)
+    // Primary agent also gets the product default made explicit by migration #29
     const hanaConfig = readAgentConfig(agentsDir, "hana");
-    expect(hanaConfig.desk.heartbeat_enabled).toBeUndefined();
+    expect(hanaConfig.desk.heartbeat_enabled).toBe(false);
 
     // Non-primary agents get heartbeat disabled
     const assistantConfig = readAgentConfig(agentsDir, "assistant");
@@ -2785,5 +2785,53 @@ describe("migration #28 — durable subagent run registry", () => {
       summary: "已完成",
     });
     expect(registry.runs["subagent-without-child"]).toBeUndefined();
+  });
+});
+
+describe("migration #29 — heartbeat default is explicit opt-in", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runFrom28() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 28 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("sets missing heartbeat_enabled to false while preserving explicit true and false", () => {
+    writeAgentConfig(agentsDir, "missing", {
+      agent: { name: "Missing" },
+      desk: { heartbeat_interval: 31 },
+    });
+    writeAgentConfig(agentsDir, "enabled", {
+      agent: { name: "Enabled" },
+      desk: { heartbeat_enabled: true, heartbeat_interval: 31 },
+    });
+    writeAgentConfig(agentsDir, "disabled", {
+      agent: { name: "Disabled" },
+      desk: { heartbeat_enabled: false, heartbeat_interval: 31 },
+    });
+
+    const prefs = runFrom28();
+
+    expect(readAgentConfig(agentsDir, "missing").desk.heartbeat_enabled).toBe(false);
+    expect(readAgentConfig(agentsDir, "enabled").desk.heartbeat_enabled).toBe(true);
+    expect(readAgentConfig(agentsDir, "disabled").desk.heartbeat_enabled).toBe(false);
+    expect(prefs.getPreferences()._dataVersion).toBe(29);
   });
 });

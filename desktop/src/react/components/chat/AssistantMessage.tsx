@@ -11,6 +11,7 @@ import { PluginCardBlock } from './PluginCardBlock';
 import { SubagentCard } from './SubagentCard';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { MessageActions } from './MessageActions';
+import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { BLOCK_RENDERERS } from './block-renderers';
 import { FileOutputActions } from './FileOutputActions';
 const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
@@ -25,6 +26,7 @@ import { resolveServerConnection } from '../../services/server-connection';
 import { resolveFileRefUrl } from '../../services/resource-url';
 import type { FileRef } from '../../types/file-ref';
 import { openPreview } from '../../stores/preview-actions';
+import { replayLatestUserMessage } from '../../stores/message-turn-actions';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts } from '../../utils/message-text';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
@@ -38,16 +40,28 @@ interface Props {
   sessionPath: string;
   agentId?: string | null;
   readOnly?: boolean;
+  isLatestAssistantMessage?: boolean;
+  retrySourceMessage?: ChatMessage | null;
   messageRef?: (element: HTMLDivElement | null) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, sessionPath, agentId, readOnly = false, messageRef }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({
+  message,
+  showAvatar,
+  sessionPath,
+  agentId,
+  readOnly = false,
+  isLatestAssistantMessage = false,
+  retrySourceMessage = null,
+  messageRef,
+}: Props) {
   const agents = useStore(s => s.agents);
   const globalAgentName = useStore(s => s.agentName) || 'Hanako';
   const globalYuan = useStore(s => s.agentYuan) || 'hanako';
   const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
   const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
   const isSelected = selectedIds.includes(message.id);
+  const t = window.t ?? ((p: string) => p);
 
   // Resolve agent identity from agentId prop; fall back to global values
   const displayInfo = resolveAgentDisplayInfo({
@@ -65,6 +79,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   );
 
   const [copied, setCopied] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const handleCopy = useCallback(() => {
     const ids = selectSelectedIdsBySession(useStore.getState(), sessionPath);
     let text: string;
@@ -91,6 +106,28 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     const fn = await lazyScreenshot();
     fn(message.id, sessionPath);
   }, [message.id, sessionPath]);
+
+  const handleRegenerate = useCallback(async () => {
+    if (!retrySourceMessage || retrying || isStreaming) return;
+    setRetrying(true);
+    try {
+      await replayLatestUserMessage(sessionPath, retrySourceMessage);
+    } finally {
+      setRetrying(false);
+    }
+  }, [isStreaming, retrying, retrySourceMessage, sessionPath]);
+
+  const canShowCompletionFooter = !readOnly && isLatestAssistantMessage && !!retrySourceMessage && !isStreaming;
+  const timeText = formatMessageTime(message.timestamp);
+  const footerActions: MessageFooterAction[] = useMemo(() => [
+    {
+      id: 'regenerate',
+      title: t('common.regenerate'),
+      icon: <RegenerateIcon />,
+      onClick: () => { void handleRegenerate(); },
+      disabled: retrying || isStreaming,
+    },
+  ], [handleRegenerate, isStreaming, retrying, t]);
 
   return (
     <div className={`${styles.messageGroup} ${styles.messageGroupAssistant}${isSelected ? ` ${styles.messageGroupSelected}` : ''}`}
@@ -131,9 +168,27 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           isStreaming={isStreaming}
         />
       )}
+      {canShowCompletionFooter && (
+        <MessageFooterActions
+          align="left"
+          visible
+          timeText={timeText}
+          actions={footerActions}
+          testId="assistant-completion-actions"
+        />
+      )}
     </div>
   );
 });
+
+function RegenerateIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
 
 // ── ContentBlock 分发 ──
 

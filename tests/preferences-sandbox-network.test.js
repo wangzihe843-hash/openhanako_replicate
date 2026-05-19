@@ -13,10 +13,10 @@ function makePrefs() {
 }
 
 describe("PreferencesManager sandbox network preference", () => {
-  it("defaults sandbox networking to disabled", () => {
+  it("defaults sandbox networking to enabled so sandboxed commands keep network functionality", () => {
     const prefs = makePrefs();
 
-    expect(prefs.getSandboxNetwork()).toBe(false);
+    expect(prefs.getSandboxNetwork()).toBe(true);
   });
 
   it("stores sandbox networking as an explicit boolean", () => {

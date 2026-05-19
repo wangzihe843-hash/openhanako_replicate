@@ -116,6 +116,31 @@ function hasOptimisticCurrentSession(): boolean {
   return !!state.sessions.find((s: any) => s.path === sessionPath && s._optimistic);
 }
 
+function resolvePrimaryAgentId(state: any): string | null {
+  const primary = Array.isArray(state.agents)
+    ? state.agents.find((agent: any) => agent?.isPrimary === true)
+    : null;
+  return typeof primary?.id === 'string' && primary.id ? primary.id : null;
+}
+
+function resolveDmPeerIdForEvent(state: any, msg: any): string | null {
+  const channels = Array.isArray(state.channels) ? state.channels : [];
+  const known = channels.find((channel: any) => {
+    if (!channel?.isDM || !channel.dmOwnerId || !channel.peerId) return false;
+    return (
+      (msg.from === channel.dmOwnerId && msg.to === channel.peerId)
+      || (msg.to === channel.dmOwnerId && msg.from === channel.peerId)
+    );
+  });
+  if (known?.peerId) return known.peerId;
+
+  const ownerId = resolvePrimaryAgentId(state) || state.currentAgentId || null;
+  if (!ownerId) return typeof msg.from === 'string' ? msg.from : null;
+  if (msg.from === ownerId && typeof msg.to === 'string') return msg.to;
+  if (msg.to === ownerId && typeof msg.from === 'string') return msg.from;
+  return null;
+}
+
 function applyTodoToolEnd(msg: any): void {
   if (msg.type !== 'tool_end' || !TODO_TOOL_NAMES.includes(msg.name as TodoToolName)) return;
   const sp = msg.sessionPath;
@@ -543,10 +568,11 @@ export function handleServerMessage(msg: any): void {
 
     case 'dm_new_message': {
       const store2 = useStore.getState();
-      const currentAgentId = store2.currentAgentId;
-      const peerId = currentAgentId && msg.from === currentAgentId && msg.to
-        ? msg.to
-        : msg.from;
+      const peerId = resolveDmPeerIdForEvent(store2, msg);
+      if (!peerId) {
+        loadChannelsAction();
+        break;
+      }
       const dmId = `dm:${peerId}`;
       const isViewingDM = store2.currentTab === 'channels' && store2.currentChannel === dmId && document.visibilityState === 'visible';
       if (isViewingDM) {

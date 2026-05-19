@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { createChannelsRoute } from "../server/routes/channels.js";
 import { createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.js";
+import { updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-channels-route-test-"));
@@ -13,6 +14,7 @@ function mktemp() {
 describe("channels route membership contract", () => {
   let tmpDir;
   let app;
+  let engine;
   let refreshChannelProactiveSchedule;
   let triggerChannelDelivery;
   let agentList;
@@ -20,12 +22,13 @@ describe("channels route membership contract", () => {
   beforeEach(() => {
     tmpDir = mktemp();
     agentList = [];
-    const engine = {
+    engine = {
       channelsDir: path.join(tmpDir, "channels"),
       agentsDir: path.join(tmpDir, "agents"),
       userDir: path.join(tmpDir, "user"),
       userName: "user",
       currentAgentId: "alice",
+      getPrimaryAgentId: () => "alice",
       isChannelsEnabled: () => true,
       availableModels: [
         { id: "deepseek-v4-flash", provider: "deepseek", name: "DeepSeek V4 Flash" },
@@ -109,6 +112,30 @@ describe("channels route membership contract", () => {
 
     const getRes = await app.request("/api/conversations/ch_crew/agent-phone-tool-mode");
     expect(await getRes.json()).toMatchObject({ mode: "write" });
+  });
+
+  it("reads DM phone settings from the primary agent when focus is different", async () => {
+    engine.currentAgentId = "carol";
+    await updateAgentPhoneProjectionMeta({
+      agentDir: path.join(tmpDir, "agents", "alice"),
+      agentId: "alice",
+      conversationId: "dm:bob",
+      conversationType: "dm",
+      patch: {
+        toolMode: "write",
+        replyMinChars: "20",
+        replyMaxChars: "80",
+      },
+    });
+
+    const res = await app.request("/api/conversations/dm%3Abob/agent-phone-settings");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      mode: "write",
+      replyMinChars: 20,
+      replyMaxChars: 80,
+    });
   });
 
   it("persists channel phone settings without the removed reply-scope field", async () => {
@@ -259,7 +286,7 @@ describe("channels route membership contract", () => {
     expect(triggerChannelDelivery).toHaveBeenCalledWith("ch_crew", { mentionedAgents: ["bob"] });
   });
 
-  it("persists DM agent phone tool mode in the current agent projection", async () => {
+  it("persists DM agent phone tool mode in the primary agent projection by default", async () => {
     const setRes = await app.request("/api/conversations/dm%3Abob/agent-phone-tool-mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -100,6 +100,7 @@ export class Agent {
     this._enabledSkills = [];
     this._systemPrompt = "";
     this._descriptionRefreshHandler = null;
+    this._runtimeInitialized = false;
 
     // Desk 系统（与 memory 完全独立）
     this._deskManager = null;
@@ -150,6 +151,8 @@ export class Agent {
   }
 
   async init(log = () => {}, sharedModels = {}, resolveModel = null) {
+    if (this._runtimeInitialized) return;
+
     // 0. 兼容性检查（目录、数据库、配置文件）
     await runCompatChecks({
       agentDir: this.agentDir,
@@ -270,15 +273,8 @@ export class Agent {
       });
       log(`  [agent] 4. memoryTicker 创建完成`);
 
-      // 5. 后台跑首次 tick（不阻塞启动，memory.md 已有上次编译结果）
-      log(`  [agent] 5. 后台 tick...`);
-      this._memoryTicker.tick().then(() => {
-        log(`✿ 记忆整理完成`);
-      }).catch((err) => {
-        console.error(`[记忆] 启动 tick 出错：${err.message}`);
-      });
-
-      // 6. 启动定时调度
+      // 6. 启动定时调度。首次维护交给 AgentManager 的后台队列，
+      // 避免 agent runtime 初始化时直接抢前台 CPU。
       this._memoryTicker.start();
     } else {
       console.warn(`[agent] ⚠ 未配置 utility 模型，记忆系统暂不可用（用户可在设置中配置后重启）`);
@@ -478,6 +474,10 @@ export class Agent {
     // 12. 组装 system prompt（按 master 构建，与 per-session 开关解耦）
     log(`  [agent] 9. buildSystemPrompt...`);
     this._systemPrompt = this.buildSystemPrompt({ forceMemoryEnabled: this._memoryMasterEnabled });
+    this._runtimeInitialized = true;
+    if (this._memoryTicker) {
+      this._cb?.scheduleMemoryMaintenance?.(this.id, "runtime-init");
+    }
     log(`  [agent] init 全部完成`);
   }
 
@@ -487,6 +487,7 @@ export class Agent {
   async dispose() {
     await this._memoryTicker?.stop();
     this._factStore?.close();
+    this._runtimeInitialized = false;
   }
 
   /**
@@ -501,6 +502,7 @@ export class Agent {
     const cleanup = () => {
       this._memoryTicker = null;
       this._factStore = null;
+      this._runtimeInitialized = false;
       this._disposing = false;
       factStore?.close();
     };
@@ -553,6 +555,7 @@ export class Agent {
   get publicIshiki() { return this._readPublicIshiki(); }
   get utilityModel() { return this._utilityModel; }
   get memoryModel() { return this._memoryModel; }
+  get runtimeInitialized() { return this._runtimeInitialized; }
   /**
    * 当前记忆模型凭证（现场 resolve，不缓存）
    * 用户改完 provider key/url/api 后这里立即反映最新值

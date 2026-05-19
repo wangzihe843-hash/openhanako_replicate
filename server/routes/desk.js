@@ -58,6 +58,16 @@ function defaultDeskDir(engine) {
   return engine.defaultDeskCwd || engine.homeCwd || engine.deskCwd;
 }
 
+function isPlainEntryName(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.trim() === value
+    && value !== "."
+    && value !== ".."
+    && !value.includes("/")
+    && !value.includes("\\");
+}
+
 function workspaceSkillSource(skillDir, fallbackName) {
   const skillFile = path.join(skillDir, "SKILL.md");
   let skillName = fallbackName;
@@ -725,15 +735,18 @@ export function createDeskRoute(engine, hub) {
         if (!name || content === undefined) {
           return c.json({ error: "name and content required" });
         }
-        const createTarget = path.join(dir, path.basename(name));
+        if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
+        const createTarget = path.join(dir, name);
         if (!isInsidePath(createTarget, dir)) return c.json({ error: "invalid name" });
+        if (fs.existsSync(createTarget)) return c.json({ error: "target already exists" });
         fs.writeFileSync(createTarget, content, "utf-8");
         return c.json({ ok: true, files: await listWorkspaceFiles(dir) });
       }
 
       case "mkdir": {
         if (!name) return c.json({ error: "name required" });
-        const mkTarget = path.join(dir, path.basename(name));
+        if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
+        const mkTarget = path.join(dir, name);
         if (!isInsidePath(mkTarget, dir)) return c.json({ error: "invalid name" });
         if (fs.existsSync(mkTarget)) return c.json({ error: "already exists" });
         fs.mkdirSync(mkTarget, { recursive: true });
@@ -742,8 +755,9 @@ export function createDeskRoute(engine, hub) {
 
       case "rename": {
         if (!oldName || !newName) return c.json({ error: "oldName and newName required" });
-        const src = path.join(dir, path.basename(oldName));
-        const dest = path.join(dir, path.basename(newName));
+        if (!isPlainEntryName(oldName) || !isPlainEntryName(newName)) return c.json({ error: "invalid name" });
+        const src = path.join(dir, oldName);
+        const dest = path.join(dir, newName);
         if (!isInsidePath(src, dir) || !isInsidePath(dest, dir)) return c.json({ error: "invalid name" });
         if (!fs.existsSync(src)) return c.json({ error: "not found" });
         if (fs.existsSync(dest)) return c.json({ error: "target already exists" });

@@ -17,8 +17,24 @@ import { isLocalOwnerPrincipal } from "../http/route-security.js";
 import { recordSecurityAuditEvent } from "../http/security-audit.js";
 import { safeJson } from "../hono-helpers.js";
 
-const DEFAULT_MOBILE_SCOPES = Object.freeze(["chat", "resources.read", "files.read", "files.write"]);
-const ALLOWED_MOBILE_SCOPES = new Set(["chat", "resources.read", "files.read", "files.write"]);
+const DEFAULT_REMOTE_ACCESS_SCOPES = Object.freeze(["chat", "resources.read", "files.read", "files.write"]);
+const ALLOWED_REMOTE_ACCESS_SCOPES = new Set(DEFAULT_REMOTE_ACCESS_SCOPES);
+const ACCESS_PROFILES = Object.freeze({
+  mobile: Object.freeze({
+    deviceKind: "mobile",
+    fallbackDisplayName: "Mobile PWA",
+    auditAction: "access.mobile_credential.issue",
+    urlField: "lanMobileUrl",
+    localUrlField: "localMobileUrl",
+  }),
+  desktop: Object.freeze({
+    deviceKind: "desktop",
+    fallbackDisplayName: "Desktop Frontend",
+    auditAction: "access.desktop_credential.issue",
+    urlField: "lanServerUrl",
+    localUrlField: "localServerUrl",
+  }),
+});
 
 export function createAccessRoute({
   engine,
@@ -90,6 +106,14 @@ export function createAccessRoute({
   });
 
   route.post("/access/mobile-credentials", async (c) => {
+    return issueAccessCredential(c, ACCESS_PROFILES.mobile);
+  });
+
+  route.post("/access/desktop-credentials", async (c) => {
+    return issueAccessCredential(c, ACCESS_PROFILES.desktop);
+  });
+
+  async function issueAccessCredential(c, profile) {
     const denied = requireLocalOwner(c);
     if (denied) return denied;
     try {
@@ -100,8 +124,8 @@ export function createAccessRoute({
         serverNodeId: runtimeContext.serverNodeId,
         userId: runtimeContext.userId,
         studioIds: [runtimeContext.studioId],
-        displayName: normalizeDisplayName(body?.displayName, "Mobile PWA"),
-        deviceKind: "mobile",
+        displayName: normalizeDisplayName(body?.displayName, profile.fallbackDisplayName),
+        deviceKind: profile.deviceKind,
         trustState: "lan",
         scopes,
         expiresAt: body?.expiresAt ?? null,
@@ -109,7 +133,7 @@ export function createAccessRoute({
       });
       const summary = createAccessSummary(engine, runtimeState, listLanAddresses);
       recordSecurityAuditEvent(c, engine, {
-        action: "access.mobile_credential.issue",
+        action: profile.auditAction,
         target: issued.device.deviceId,
         secretFields: ["secret"],
         metadata: {
@@ -120,14 +144,14 @@ export function createAccessRoute({
       return c.json({
         ok: true,
         secret: issued.secret,
-        accessUrl: summary.network.lanMobileUrl || summary.network.localMobileUrl,
+        accessUrl: summary.network[profile.urlField] || summary.network[profile.localUrlField],
         device: sanitizeDevice(issued.device),
         credential: sanitizeCredential(issued.credential),
       });
     } catch (err) {
       return c.json({ error: err.message }, 400);
     }
-  });
+  }
 
   route.put("/access/account/profile", async (c) => {
     const denied = requireLocalOwner(c);
@@ -205,6 +229,11 @@ function createNetworkSummary(network, runtimeState, listLanAddresses) {
   const runtimeMode = runtimeState?.mode || network.mode;
   const runtimeHost = runtimeState?.listenHost || network.listenHost;
   const lanAddresses = listLanAddresses();
+  const localServerUrl = buildServerUrl("127.0.0.1", actualPort);
+  const candidateLanServerUrl = buildLanServerUrl(lanAddresses, network.listenPort);
+  const lanServerUrl = network.mode === "lan" && lanAddresses.length > 0
+    ? buildServerUrl(lanAddresses[0], actualPort)
+    : null;
   const localMobileUrl = buildMobileUrl("127.0.0.1", actualPort);
   const candidateLanMobileUrl = buildLanMobileUrl(lanAddresses, network.listenPort);
   const lanMobileUrl = network.mode === "lan" && lanAddresses.length > 0
@@ -221,19 +250,36 @@ function createNetworkSummary(network, runtimeState, listLanAddresses) {
       || runtimeHost !== network.listenHost
       || actualPort !== network.listenPort,
     lanAddresses,
+    localServerUrl,
+    candidateLanServerUrl,
+    lanServerUrl,
     localMobileUrl,
     candidateLanMobileUrl,
     lanMobileUrl,
   };
 }
 
+function buildServerUrl(host, port) {
+  return `http://${formatUrlHost(host)}:${port}/`;
+}
+
 function buildMobileUrl(host, port) {
-  return `http://${host}:${port}/mobile/`;
+  return `http://${formatUrlHost(host)}:${port}/mobile/`;
+}
+
+function buildLanServerUrl(lanAddresses, port) {
+  const host = Array.isArray(lanAddresses) ? lanAddresses[0] : null;
+  return host ? buildServerUrl(host, port) : null;
 }
 
 function buildLanMobileUrl(lanAddresses, port) {
   const host = Array.isArray(lanAddresses) ? lanAddresses[0] : null;
   return host ? buildMobileUrl(host, port) : null;
+}
+
+function formatUrlHost(host) {
+  const value = String(host || "");
+  return value.includes(":") && !value.startsWith("[") ? `[${value}]` : value;
 }
 
 function requireLocalOwner(c) {
@@ -277,13 +323,13 @@ function normalizeDisplayName(value, fallback) {
 }
 
 function normalizeScopes(value) {
-  const raw = Array.isArray(value) && value.length > 0 ? value : DEFAULT_MOBILE_SCOPES;
+  const raw = Array.isArray(value) && value.length > 0 ? value : DEFAULT_REMOTE_ACCESS_SCOPES;
   const validScopes = raw
-    .filter((scope) => typeof scope === "string" && ALLOWED_MOBILE_SCOPES.has(scope));
+    .filter((scope) => typeof scope === "string" && ALLOWED_REMOTE_ACCESS_SCOPES.has(scope));
   if (validScopes.length === 0) throw new Error("at least one supported scope is required");
   const scopeSet = new Set(validScopes);
   scopeSet.add("resources.read");
-  return DEFAULT_MOBILE_SCOPES.filter((scope) => scopeSet.has(scope));
+  return DEFAULT_REMOTE_ACCESS_SCOPES.filter((scope) => scopeSet.has(scope));
 }
 
 function sanitizeDevice(device) {

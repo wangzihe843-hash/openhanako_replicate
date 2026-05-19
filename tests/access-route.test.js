@@ -103,7 +103,7 @@ describe("access route", () => {
     tmpDir = null;
   });
 
-  it("summarizes mobile access without exposing loopback tokens", async () => {
+  it("summarizes mobile and desktop LAN access without exposing loopback tokens", async () => {
     tmpDir = makeTmpDir();
     writeIdentity(tmpDir);
     const app = await makeApp(tmpDir);
@@ -119,6 +119,9 @@ describe("access route", () => {
         actualPort: 14500,
         restartRequired: false,
         lanAddresses: ["192.168.31.75"],
+        localServerUrl: "http://127.0.0.1:14500/",
+        candidateLanServerUrl: "http://192.168.31.75:14500/",
+        lanServerUrl: null,
         localMobileUrl: "http://127.0.0.1:14500/mobile/",
         candidateLanMobileUrl: "http://192.168.31.75:14500/mobile/",
         lanMobileUrl: null,
@@ -154,6 +157,7 @@ describe("access route", () => {
         listenHost: "0.0.0.0",
         configuredPort: 14500,
         restartRequired: false,
+        lanServerUrl: "http://192.168.31.75:14500/",
         lanMobileUrl: "http://192.168.31.75:14500/mobile/",
       },
     });
@@ -179,6 +183,8 @@ describe("access route", () => {
         configuredPort: 14550,
         actualPort: 14500,
         restartRequired: true,
+        candidateLanServerUrl: "http://192.168.31.75:14550/",
+        lanServerUrl: "http://192.168.31.75:14500/",
         lanMobileUrl: "http://192.168.31.75:14500/mobile/",
       },
     });
@@ -222,6 +228,50 @@ describe("access route", () => {
         status: "active",
       },
     });
+    const stored = fs.readFileSync(path.join(tmpDir, "device-credentials.json"), "utf-8");
+    expect(stored).not.toContain(data.secret);
+    expect(JSON.stringify(data)).not.toContain("secretHash");
+  });
+
+  it("issues a desktop access key for professional manual connection without using the mobile PWA URL", async () => {
+    tmpDir = makeTmpDir();
+    writeIdentity(tmpDir);
+    writeJson(path.join(tmpDir, "server-network.json"), {
+      schemaVersion: 1,
+      mode: "lan",
+      listenHost: "0.0.0.0",
+      listenPort: 14500,
+      customRemote: { enabled: false, baseUrl: null, wsUrl: null },
+      createdAt: "2026-05-16T00:00:00.000Z",
+      updatedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const app = await makeApp(tmpDir, { mode: "lan", listenHost: "0.0.0.0", actualPort: 14500 });
+
+    const res = await app.request("/api/access/desktop-credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        displayName: "Studio Laptop",
+        scopes: ["chat", "files.read", "files.write"],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.secret).toMatch(/^hana_dev_/);
+    expect(data).toMatchObject({
+      accessUrl: "http://192.168.31.75:14500/",
+      device: {
+        displayName: "Studio Laptop",
+        deviceKind: "desktop",
+        trustState: "lan",
+      },
+      credential: {
+        scopes: ["chat", "resources.read", "files.read", "files.write"],
+        status: "active",
+      },
+    });
+    expect(data.accessUrl).not.toContain("/mobile/");
     const stored = fs.readFileSync(path.join(tmpDir, "device-credentials.json"), "utf-8");
     expect(stored).not.toContain(data.secret);
     expect(JSON.stringify(data)).not.toContain("secretHash");

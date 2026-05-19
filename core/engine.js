@@ -213,6 +213,7 @@ export class HanaEngine {
       getAgents: () => this._agentMgr.agents,
       getActivityStore: (id) => this.getActivityStore(id),
       getAgentById: (id) => this._agentMgr.getAgent(id),
+      ensureAgentRuntime: (id, opts) => this.ensureAgentRuntime(id, opts),
       listAgents: () => this.listAgents(),
       getConfirmStore: () => this._confirmStore,
       getDeferredResultStore: () => this._deferredResultStore,
@@ -265,6 +266,7 @@ export class HanaEngine {
       getSessionFile: (fileId, options) => this.getSessionFile(fileId, options),
       getSessionFileByPath: (filePath, options) => this.getSessionFileByPath(filePath, options),
       emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+      ensureAgentRuntime: (id, opts) => this.ensureAgentRuntime(id, opts),
     });
     this._notifications = new NotificationService({
       emitDesktop: ({ title, body, agentId }) => {
@@ -351,6 +353,10 @@ export class HanaEngine {
   /** @ui-focus-only 返回 UI 焦点 agent 实例，后端逻辑应通过 getAgent(agentId) 查询 */
   get agent() { return this._agentMgr.agent; }
   getAgent(agentId) { return this._agentMgr.getAgent(agentId); }
+  async ensureAgentRuntime(agentId, opts = {}) {
+    const targetId = agentId || this.currentAgentId;
+    return this._agentMgr.ensureAgentRuntime(targetId, opts);
+  }
   /** @ui-focus-only 返回 UI 焦点 agent 的 ID */
   get currentAgentId() { return this._agentMgr.activeAgentId; }
   get confirmStore() { return this._confirmStore; }
@@ -736,6 +742,8 @@ export class HanaEngine {
   setSandbox(v) { this._prefs.setSandbox(v); }
   getSandboxNetwork() { return this._prefs.getSandboxNetwork(); }
   setSandboxNetwork(v) { this._prefs.setSandboxNetwork(v); }
+  getHardwareAcceleration() { return this._prefs.getHardwareAcceleration(); }
+  setHardwareAcceleration(v) { this._prefs.setHardwareAcceleration(v); }
   getFileBackup() { return this._prefs.getFileBackup(); }
   setFileBackup(p) { this._prefs.setFileBackup(p); }
   listCheckpoints() { return this._checkpointStore.list(); }
@@ -1462,7 +1470,7 @@ export class HanaEngine {
       hanakoHome: this.hanakoHome,
       executionBoundary,
       getSandboxEnabled: () => this._readPreferences().sandbox !== false,
-      getSandboxNetworkEnabled: () => this._readPreferences().sandbox_network === true,
+      getSandboxNetworkEnabled: () => this._readPreferences().sandbox_network !== false,
       getExternalReadPaths,
       getSessionPath,
       recordFileOperation: (entry) => this.registerSessionFile(entry),

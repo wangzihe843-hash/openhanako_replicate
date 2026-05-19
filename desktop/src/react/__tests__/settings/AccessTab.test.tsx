@@ -43,6 +43,9 @@ const baseSummary = {
     runtimeHost: '127.0.0.1',
     restartRequired: false,
     lanAddresses: ['192.168.31.75'],
+    localServerUrl: 'http://127.0.0.1:14500/',
+    candidateLanServerUrl: 'http://192.168.31.75:14500/',
+    lanServerUrl: null,
     localMobileUrl: 'http://127.0.0.1:14500/mobile/',
     candidateLanMobileUrl: 'http://192.168.31.75:14500/mobile/',
     lanMobileUrl: null,
@@ -81,7 +84,10 @@ const pairedSummary = {
 describe('AccessTab', () => {
   beforeEach(() => {
     Object.keys(mockState).forEach(key => delete mockState[key]);
-    Object.assign(mockState, { showToast: vi.fn() });
+    Object.assign(mockState, {
+      set: vi.fn((partial: Partial<MockState>) => Object.assign(mockState, partial)),
+      showToast: vi.fn(),
+    });
     mockHanaFetch.mockReset();
     mockHanaFetch.mockImplementation((url: string, options?: RequestInit) => {
       if (url === '/api/access/summary') return Promise.resolve(jsonResponse(baseSummary));
@@ -93,6 +99,8 @@ describe('AccessTab', () => {
             mode: 'lan',
             listenHost: '0.0.0.0',
             configuredPort: 14500,
+            lanServerUrl: 'http://192.168.31.75:14500/',
+            candidateLanServerUrl: 'http://192.168.31.75:14500/',
             lanMobileUrl: 'http://192.168.31.75:14500/mobile/',
             candidateLanMobileUrl: 'http://192.168.31.75:14500/mobile/',
             restartRequired: false,
@@ -106,6 +114,15 @@ describe('AccessTab', () => {
           accessUrl: 'http://192.168.31.75:14500/mobile/',
           device: { deviceId: 'device_1', displayName: 'iPhone', status: 'active' },
           credential: { credentialId: 'cred_1', scopes: ['chat', 'files.read', 'files.write'], status: 'active' },
+        }));
+      }
+      if (url === '/api/access/desktop-credentials' && options?.method === 'POST') {
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          secret: 'hana_dev_desktop_visible_once',
+          accessUrl: 'http://192.168.31.75:14500/',
+          device: { deviceId: 'device_desktop', displayName: 'Studio Laptop', deviceKind: 'desktop', status: 'active' },
+          credential: { credentialId: 'cred_desktop', scopes: ['chat', 'files.read', 'files.write'], status: 'active' },
         }));
       }
       if (url === '/api/access/account/profile' && options?.method === 'PUT') {
@@ -134,10 +151,37 @@ describe('AccessTab', () => {
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn(async () => {}) },
     });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === 'http://192.168.31.75:14500/api/web-auth/login') {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (url === 'http://192.168.31.75:14500/api/server/identity') {
+        return {
+          ok: true,
+          json: async () => ({
+            connectionKind: 'lan',
+            serverId: 'server_lan',
+            serverNodeId: 'node_lan',
+            userId: 'user_lan',
+            studioId: 'studio_lan',
+            label: 'LAN Server',
+            trustState: 'lan',
+            authState: 'paired',
+            credentialKind: 'device_credential',
+            capabilities: ['chat', 'resources', 'files'],
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch URL: ${url}`);
+    }));
+    Object.assign(window, {
+      hana: { reloadMainWindow: vi.fn(async () => {}) },
+    });
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it('shows the stable mobile URL and saves LAN network settings', async () => {
@@ -146,14 +190,19 @@ describe('AccessTab', () => {
     render(<AccessTab />);
 
     await screen.findByText('settings.access.mobileUrlLocalHint');
+    expect(screen.getByText('settings.access.networkAccess')).toBeInTheDocument();
+    expect(screen.getByText('settings.access.mobileAccess')).toBeInTheDocument();
+    expect(screen.getByText('settings.access.desktopAccess')).toBeInTheDocument();
     expect(screen.getByText('settings.access.status')).toBeInTheDocument();
     expect(screen.getByText('settings.access.runtimeEndpoint')).toBeInTheDocument();
     expect(screen.getByText('127.0.0.1:14500')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('http://127.0.0.1:14500/mobile/')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('http://127.0.0.1:14500/')).not.toBeInTheDocument();
     expect(screen.getByDisplayValue('14500')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('switch', { name: 'settings.access.lanToggle' }));
     expect(await screen.findByDisplayValue('http://192.168.31.75:14500/mobile/')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'settings.access.qrCode' })).toHaveAttribute(
       'src',
       expect.stringContaining('/api/access/mobile-qr.svg?port=14500'),
@@ -185,6 +234,8 @@ describe('AccessTab', () => {
             runtimeMode: 'lan',
             runtimeHost: '0.0.0.0',
             restartRequired: true,
+            lanServerUrl: 'http://192.168.31.75:14500/',
+            candidateLanServerUrl: 'http://192.168.31.75:14550/',
             lanMobileUrl: 'http://192.168.31.75:14500/mobile/',
             candidateLanMobileUrl: 'http://192.168.31.75:14550/mobile/',
           },
@@ -197,8 +248,10 @@ describe('AccessTab', () => {
     render(<AccessTab />);
 
     expect(await screen.findByDisplayValue('http://192.168.31.75:14500/mobile/')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/')).toBeInTheDocument();
     expect(screen.getByDisplayValue('14550')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('http://192.168.31.75:14550/mobile/')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('http://192.168.31.75:14550/')).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'settings.access.qrCode' })).not.toBeInTheDocument();
     expect(screen.getAllByText('settings.access.restartRequired').length).toBeGreaterThan(0);
   });
@@ -218,6 +271,52 @@ describe('AccessTab', () => {
         scopes: ['chat', 'resources.read', 'files.read', 'files.write'],
       }),
     }));
+  });
+
+  it('generates a desktop access key from the manual computer section', async () => {
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+
+    render(<AccessTab />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.access.generateDesktopKey' }));
+
+    expect(await screen.findByDisplayValue('hana_dev_desktop_visible_once')).toBeInTheDocument();
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/access/desktop-credentials', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        displayName: 'Desktop Frontend',
+        scopes: ['chat', 'resources.read', 'files.read', 'files.write'],
+      }),
+    }));
+  });
+
+  it('connects to an existing LAN server from the client connection section', async () => {
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+
+    render(<AccessTab />);
+
+    fireEvent.change(await screen.findByLabelText('settings.access.remoteServerUrl'), {
+      target: { value: 'http://192.168.31.75:14500' },
+    });
+    fireEvent.change(screen.getByLabelText('settings.access.remoteServerKey'), {
+      target: { value: 'hana_dev_remote_secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.access.connectLanServer' }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ credential: 'hana_dev_remote_secret' }),
+      }));
+    });
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.31.75:14500/api/server/identity', expect.objectContaining({
+        credentials: 'include',
+        headers: { Authorization: 'Bearer hana_dev_remote_secret' },
+      }));
+      expect(window.hana.reloadMainWindow).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('saves the local owner profile and password from the account section', async () => {

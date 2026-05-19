@@ -34,6 +34,7 @@ describe("Windows sandbox policy projection", () => {
       path.join(hanakoHome, "user"),
       path.join(hanakoHome, "skills"),
       path.join(hanakoHome, "session-files"),
+      path.join(hanakoHome, ".ephemeral"),
     ]) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -80,10 +81,32 @@ describe("Windows sandbox policy projection", () => {
       real(externalDir),
     ]));
     expect(grants.writePaths).not.toContain(real(externalFile));
-    expect(grants.denyWritePaths).toContain(real(path.join(workspace, ".git")));
+    expect(grants.optionalWritePaths).toContain(real(path.join(hanakoHome, ".ephemeral")));
+    expect(grants.denyWritePaths).not.toContain(real(path.join(workspace, ".git")));
     expect(grants.denyWritePaths).not.toContain(real(path.join(hanakoHome, "session-files")));
     expect(grants.denyReadPaths).toContain(real(path.join(hanakoHome, "auth.json")));
     expect(grants.readPaths).not.toContain(path.join(hanakoHome, "auth.json"));
+  });
+
+  it("keeps the Windows grant model functionality-first while still denying sensitive Hana reads", () => {
+    const { hanakoHome, agentDir, workspace } = makeTree();
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      workspace,
+      workspaceFolders: [],
+      hanakoHome,
+      mode: "standard",
+    });
+
+    const grants = buildWin32SandboxGrants({
+      policy,
+      cwd: workspace,
+    });
+
+    expect(grants.writePaths).toContain(real(workspace));
+    expect(grants.optionalWritePaths).toContain(real(path.join(hanakoHome, ".ephemeral")));
+    expect(grants.denyWritePaths).not.toContain(real(path.join(workspace, ".git")));
+    expect(grants.denyReadPaths).toContain(real(path.join(hanakoHome, "auth.json")));
   });
 
   it("projects ordinary system-readable roots as optional read grants while denying sensitive Hana files", () => {

@@ -274,6 +274,23 @@ function isPlainFileName(value: string): boolean {
   return !!value && !value.includes('/') && !value.includes('\\') && value !== '.' && value !== '..';
 }
 
+function uniqueNameForSubdir(subdir: string, baseName: string): string {
+  const s = useStore.getState();
+  const normalizedSubdir = normalizeSubdir(subdir);
+  const files = s.deskTreeFilesByPath?.[normalizedSubdir]
+    || ((s.deskCurrentPath || '') === normalizedSubdir ? s.deskFiles : []);
+  const existing = new Set((files || []).map((f: { name: string }) => f.name));
+  if (!existing.has(baseName)) return baseName;
+
+  const dotIndex = baseName.lastIndexOf('.');
+  const hasExtension = dotIndex > 0;
+  const stem = hasExtension ? baseName.slice(0, dotIndex) : baseName;
+  const ext = hasExtension ? baseName.slice(dotIndex) : '';
+  let index = 2;
+  while (existing.has(`${stem} ${index}${ext}`)) index += 1;
+  return `${stem} ${index}${ext}`;
+}
+
 function joinDeskPath(basePath: string, subdir: string, name: string): string {
   const separator = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/';
   const base = basePath.replace(/[\\/]+$/g, '');
@@ -435,28 +452,48 @@ export async function deskUploadFilesToSubdir(paths: string[], subdir: string): 
   }
 }
 
+function applyFilesForSubdir(subdir: string, files: DeskFile[]): void {
+  const normalizedSubdir = normalizeSubdir(subdir);
+  const st = useStore.getState();
+  st.setDeskTreeFiles(normalizedSubdir, files);
+  if ((st.deskCurrentPath || '') === normalizedSubdir) st.setDeskFiles(files);
+}
+
+export async function deskCreateFileInSubdir(subdir: string, name: string, text: string): Promise<boolean> {
+  const s = useStore.getState();
+  const normalizedSubdir = normalizeSubdir(subdir);
+  const trimmed = name.trim();
+  if (!isPlainFileName(trimmed)) return false;
+  try {
+    const res = await hanaFetch('/api/desk/files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create',
+        dir: s.deskBasePath || undefined,
+        subdir: normalizedSubdir,
+        name: trimmed,
+        content: text,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) { console.error('[desk] create file error:', data.error); return false; }
+    if (data.files) applyFilesForSubdir(normalizedSubdir, data.files);
+    return true;
+  } catch (err) {
+    console.error('[jian-desk] create failed:', err);
+    return false;
+  }
+}
+
 export async function deskCreateFile(text: string): Promise<void> {
   const s = useStore.getState();
   const d = new Date();
   const ts = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   const locale = window.i18n?.locale || 'zh';
   const prefix = locale.startsWith('zh') ? '备注' : locale.startsWith('ja') ? 'メモ' : locale.startsWith('ko') ? '메모' : 'note';
-  const name = `${ts}-${prefix}.md`;
-  try {
-    const res = await hanaFetch('/api/desk/files', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name, content: text }),
-    });
-    const data = await res.json();
-    if (data.files) {
-      const st = useStore.getState();
-      st.setDeskFiles(data.files);
-      st.setDeskTreeFiles(st.deskCurrentPath || '', data.files);
-    }
-  } catch (err) {
-    console.error('[jian-desk] create failed:', err);
-  }
+  const name = uniqueNameForSubdir(s.deskCurrentPath || '', `${ts}-${prefix}.md`);
+  await deskCreateFileInSubdir(s.deskCurrentPath || '', name, text);
 }
 
 export async function deskMoveFiles(names: string[], destFolder: string): Promise<void> {
@@ -652,30 +689,34 @@ export async function deskRemoveFile(name: string): Promise<void> {
  */
 export async function deskMkdir(): Promise<string | null> {
   const s = useStore.getState();
-  let name = t('desk.newFolder');
-  const existing = new Set(s.deskFiles.map((f: { name: string }) => f.name));
-  if (existing.has(name)) {
-    let i = 2;
-    while (existing.has(`${name} ${i}`)) i++;
-    name = `${name} ${i}`;
-  }
+  const name = uniqueNameForSubdir(s.deskCurrentPath || '', t('desk.newFolder'));
+  return await deskMkdirInSubdir(s.deskCurrentPath || '', name) ? name : null;
+}
+
+export async function deskMkdirInSubdir(subdir: string, name: string): Promise<boolean> {
+  const s = useStore.getState();
+  const normalizedSubdir = normalizeSubdir(subdir);
+  const trimmed = name.trim();
+  if (!isPlainFileName(trimmed)) return false;
   try {
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mkdir', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name }),
+      body: JSON.stringify({
+        action: 'mkdir',
+        dir: s.deskBasePath || undefined,
+        subdir: normalizedSubdir,
+        name: trimmed,
+      }),
     });
     const data = await res.json();
-    if (data.files) {
-      const st = useStore.getState();
-      st.setDeskFiles(data.files);
-      st.setDeskTreeFiles(st.deskCurrentPath || '', data.files);
-      return name;
-    }
+    if (data.error) { console.error('[desk] mkdir error:', data.error); return false; }
+    if (data.files) applyFilesForSubdir(normalizedSubdir, data.files);
+    return true;
   } catch (err) {
     console.error('[desk] mkdir failed:', err);
+    return false;
   }
-  return null;
 }
 
 export async function deskRenameFile(oldName: string, newName: string): Promise<boolean> {

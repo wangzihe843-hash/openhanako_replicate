@@ -22,7 +22,7 @@ import type { MemberInfo } from './channels/ChannelList';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ContextMenu, type ContextMenuItem } from '../ui';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../stores/chat-types';
-import type { AgentPhoneActivity, Model } from '../types';
+import type { AgentPhoneActivity, Channel, Model } from '../types';
 import styles from './channels/Channels.module.css';
 import chatStyles from './chat/Chat.module.css';
 
@@ -31,6 +31,10 @@ import chatStyles from './chat/Chat.module.css';
 const CHANNEL_SCROLL_THRESHOLD = 80;
 const EMPTY_CHAT_ITEMS: ChatListItem[] = [];
 const PHONE_STREAM_MESSAGE_PREFIX = 'agent-phone-stream';
+
+function resolveDmOwnerId(channel: Channel | undefined, currentAgentId: string | null): string {
+  return channel?.isDM ? (channel.dmOwnerId || currentAgentId || '') : (currentAgentId || '');
+}
 
 export function ChannelsPanel() {
   const channelsEnabled = useStore(s => s.channelsEnabled);
@@ -138,6 +142,7 @@ export function ChannelMessages() {
 
   const ch = channels.find((c) => c.id === currentChannel);
   const isDM = ch?.isDM ?? false;
+  const dmOwnerId = resolveDmOwnerId(ch, currentAgentId);
   let lastSender: string | null = null;
 
   return (
@@ -145,8 +150,8 @@ export function ChannelMessages() {
       <div ref={wrapperRef}>
         {messages.map((msg, idx) => {
           const isContinuation = msg.sender === lastSender;
-          const senderInfo = resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId, agentMap);
-          const isSelf = senderInfo.isUser || (isDM && msg.sender === (currentAgentId || ''));
+          const senderInfo = resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, isDM ? dmOwnerId : currentAgentId, agentMap);
+          const isSelf = senderInfo.isUser || (isDM && msg.sender === dmOwnerId);
           const el = (
             <div
               key={`${msg.timestamp}-${msg.sender}-${idx}`}
@@ -230,6 +235,7 @@ function MemberItem({ info, memberId, onRemove, removeDisabled, removeTitle }: {
 export function ChannelMembers() {
   const { t } = useI18n();
   const currentChannel = useStore(s => s.currentChannel);
+  const channels = useStore(s => s.channels);
   const channelMembers = useStore(s => s.channelMembers);
   const isDM = useStore(s => s.channelIsDM);
   const agents = useStore(s => s.agents);
@@ -243,11 +249,13 @@ export function ChannelMembers() {
 
   if (!currentChannel) return null;
 
-  const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, currentAgentId, agentMap);
+  const ch = channels.find((channel) => channel.id === currentChannel);
+  const dmOwnerId = resolveDmOwnerId(ch, currentAgentId);
+  const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, isDM ? dmOwnerId : currentAgentId, agentMap);
 
   if (isDM) {
     const peerInfo = resolve(channelMembers[0] || '');
-    const selfInfo = resolve(currentAgentId || '');
+    const selfInfo = resolve(dmOwnerId);
     return <>{[peerInfo, selfInfo].map(i => <MemberItem key={i.id} info={i} />)}</>;
   }
 
@@ -590,6 +598,7 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
 export function ChannelAgentActivityPanel() {
   const { t } = useI18n();
   const currentChannel = useStore(s => s.currentChannel);
+  const channels = useStore(s => s.channels);
   const channelMembers = useStore(s => s.channelMembers);
   const isDM = useStore(s => s.channelIsDM);
   const agents = useStore(s => s.agents);
@@ -603,14 +612,16 @@ export function ChannelAgentActivityPanel() {
 
   if (!currentChannel) return null;
 
+  const ch = channels.find((channel) => channel.id === currentChannel);
+  const dmOwnerId = resolveDmOwnerId(ch, currentAgentId);
   const ids = isDM
-    ? [currentAgentId, channelMembers[0]].filter((id): id is string => !!id)
+    ? [dmOwnerId, channelMembers[0]].filter((id): id is string => !!id)
     : channelMembers;
   const uniqueIds = Array.from(new Set(ids));
   if (uniqueIds.length === 0) return null;
 
   const byAgent = allActivities?.[currentChannel] || {};
-  const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, currentAgentId, agentMap);
+  const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, isDM ? dmOwnerId : currentAgentId, agentMap);
 
   return (
     <div className="jian-card">

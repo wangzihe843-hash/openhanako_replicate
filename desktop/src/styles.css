@@ -3018,6 +3018,42 @@ html[data-platform="linux"] .onboarding {
     margin-top: auto;
     padding-top: 16px;
 }
+
+.ob-remote-connect {
+    width: 100%;
+    margin-top: 12px;
+    text-align: center;
+}
+
+.ob-remote-connect-link {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.76rem;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.ob-remote-connect-link:hover {
+    color: var(--accent);
+}
+
+.ob-remote-connect-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(100%, 360px);
+    margin: 0 auto;
+    padding-top: 2px;
+}
+
+.ob-remote-connect-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
 .ob-btn {
     font-family: inherit;
     font-size: 0.85rem;

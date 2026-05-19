@@ -17,6 +17,7 @@ import {
   createPluginInstallBackup,
   restorePluginInstallBackup,
 } from "../../lib/plugin-install-backups.js";
+import { detectIncompatiblePluginFormat } from "../../lib/plugin-format-guard.js";
 
 const MAX_PLUGIN_RELEASE_PACKAGE_SIZE = 50 * 1024 * 1024;
 
@@ -86,6 +87,10 @@ function assertInsideDir(childPath, parentDir) {
 }
 
 function readPluginDescriptorForInstall(pm, pluginDir) {
+  const formatIssue = detectIncompatiblePluginFormat(pluginDir);
+  if (formatIssue) {
+    throw createPluginRouteError(formatIssue.message, 400, formatIssue.code);
+  }
   if (typeof pm.readPluginDescriptor === "function") {
     return pm.readPluginDescriptor(pluginDir, path.basename(pluginDir));
   }
@@ -141,26 +146,37 @@ async function stagePluginSource({ pm, sourcePath, userPluginsDir }) {
   const tmpTarget = fs.mkdtempSync(path.join(userPluginsDir, ".installing-"));
   cleanupPaths.push(tmpTarget);
 
-  let pluginSrc = null;
-  if (sourcePath.endsWith(".zip")) {
-    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-install-"));
-    cleanupPaths.push(extractDir);
-    await extractZip(sourcePath, extractDir);
-    const entries = fs.readdirSync(extractDir, { withFileTypes: true });
-    pluginSrc = entries.length === 1 && entries[0].isDirectory()
-      ? path.join(extractDir, entries[0].name)
-      : extractDir;
-  } else if (stat.isDirectory()) {
-    pluginSrc = sourcePath;
-  } else {
-    throw createPluginRouteError("Path must be a .zip file or directory", 400, "PLUGIN_INSTALL_SOURCE_INVALID");
-  }
+  try {
+    let pluginSrc = null;
+    if (sourcePath.endsWith(".zip")) {
+      const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-install-"));
+      cleanupPaths.push(extractDir);
+      await extractZip(sourcePath, extractDir);
+      const entries = fs.readdirSync(extractDir, { withFileTypes: true });
+      pluginSrc = entries.length === 1 && entries[0].isDirectory()
+        ? path.join(extractDir, entries[0].name)
+        : extractDir;
+    } else if (stat.isDirectory()) {
+      pluginSrc = sourcePath;
+    } else {
+      throw createPluginRouteError("Path must be a .zip file or directory", 400, "PLUGIN_INSTALL_SOURCE_INVALID");
+    }
 
-  fs.cpSync(pluginSrc, tmpTarget, { recursive: true });
-  if (!pm.isValidPluginDir(tmpTarget)) {
-    throw createPluginRouteError("Not a valid plugin directory", 400, "PLUGIN_INVALID");
+    const formatIssue = detectIncompatiblePluginFormat(pluginSrc);
+    if (formatIssue) {
+      throw createPluginRouteError(formatIssue.message, 400, formatIssue.code);
+    }
+    fs.cpSync(pluginSrc, tmpTarget, { recursive: true });
+    if (!pm.isValidPluginDir(tmpTarget)) {
+      throw createPluginRouteError("Not a valid plugin directory", 400, "PLUGIN_INVALID");
+    }
+    return { stagedDir: tmpTarget, cleanupPaths };
+  } catch (err) {
+    for (const cleanupPath of cleanupPaths) {
+      fs.rmSync(cleanupPath, { recursive: true, force: true });
+    }
+    throw err;
   }
-  return { stagedDir: tmpTarget, cleanupPaths };
 }
 
 function assertExpectedPlugin(desc, { expectedPluginId, expectedVersion }) {

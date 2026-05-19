@@ -177,6 +177,15 @@
     font-family: inherit;
 }
 
+:global(.mobile-desktop-root) .sessionItemTitle,
+:global(.mobile-desktop-root) .sessionRenameInput {
+    font-size: 0.9rem;
+}
+
+:global(.mobile-desktop-root) .sessionItemMeta {
+    font-size: 0.72rem;
+}
+
 /* 归档按钮 */
 .sessionArchiveBtn {
     position: absolute;

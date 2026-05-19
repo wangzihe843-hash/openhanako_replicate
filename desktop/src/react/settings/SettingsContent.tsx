@@ -2,7 +2,14 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
-import { LOCAL_CONNECTION_ID, createLocalServerConnection, refreshLocalServerConnection, upsertServerConnection, type ServerConnection } from '../services/server-connection';
+import {
+  LOCAL_CONNECTION_ID,
+  createLocalServerConnection,
+  readPersistedServerConnectionState,
+  refreshLocalServerConnection,
+  upsertServerConnection,
+  type ServerConnection,
+} from '../services/server-connection';
 import { t } from './helpers';
 import { loadAgents, loadAvatars, loadSettingsConfig, loadPluginSettings } from './actions';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -58,15 +65,17 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
 };
 
 function connectionState(connection: ServerConnection | null) {
+  const persisted = readPersistedServerConnectionState();
   if (!connection) {
     return {
-      serverConnections: {},
+      serverConnections: persisted.serverConnections,
       activeServerConnectionId: null,
       activeServerConnection: null,
     };
   }
+  const serverConnections = upsertServerConnection(persisted.serverConnections, connection);
   return {
-    serverConnections: upsertServerConnection({}, connection),
+    serverConnections,
     activeServerConnectionId: connection.connectionId,
     activeServerConnection: connection,
   };

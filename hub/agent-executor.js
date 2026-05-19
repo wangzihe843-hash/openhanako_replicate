@@ -45,6 +45,18 @@ function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
   return found;
 }
 
+async function getRuntimeAgent(engine, agentId, reason) {
+  await engine.ensureAgentRuntime?.(agentId, {
+    priority: "background",
+    reason,
+  });
+  const agent = engine.getAgent(agentId);
+  if (!agent) {
+    throw new Error(t("error.agentExecNotInit", { id: agentId }));
+  }
+  return agent;
+}
+
 /**
  * 以指定 agentId 的身份跑一次临时会话。
  *
@@ -63,10 +75,7 @@ function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
  */
 export async function runAgentSession(agentId, rounds, { engine, signal, sessionSuffix = "temp", ephemeralDir, systemAppend, keepSession = false, noMemory = false, noTools = false, readOnly = false } = {}) {
   // 1. 从长驻 Map 获取 Agent 实例
-  const agent = engine.getAgent(agentId);
-  if (!agent) {
-    throw new Error(t("error.agentExecNotInit", { id: agentId }));
-  }
+  const agent = await getRuntimeAgent(engine, agentId, "agent-session");
   const agentDir = agent.agentDir;
 
   // 2. 临时 ResourceLoader
@@ -298,10 +307,7 @@ export async function freshCompactAgentPhoneSession(agentId, {
 } = {}) {
   if (!conversationId) throw new Error("conversationId is required for agent phone fresh compact");
 
-  const agent = engine.getAgent(agentId);
-  if (!agent) {
-    throw new Error(t("error.agentExecNotInit", { id: agentId }));
-  }
+  const agent = await getRuntimeAgent(engine, agentId, "agent-phone-fresh-compact");
   const agentDir = agent.agentDir;
   const projectionPath = await ensureAgentPhoneProjection({
     agentDir,
@@ -410,10 +416,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
 } = {}) {
   if (!conversationId) throw new Error("conversationId is required for agent phone session");
 
-  const agent = engine.getAgent(agentId);
-  if (!agent) {
-    throw new Error(t("error.agentExecNotInit", { id: agentId }));
-  }
+  const agent = await getRuntimeAgent(engine, agentId, "agent-phone-session");
   const agentDir = agent.agentDir;
   await ensureAgentPhoneProjection({
     agentDir,

@@ -4,6 +4,7 @@ import { createPluginContext } from "./plugin-context.js";
 import { freshImport } from "./fresh-import.js";
 import { normalizePluginConfigSchema } from "./plugin-config.js";
 import { semverGte } from "../lib/plugin-versioning.js";
+import { detectIncompatiblePluginFormat } from "../lib/plugin-format-guard.js";
 
 const KNOWN_CONTRIBUTION_DIRS = [
   "tools", "routes", "skills", "agents", "commands", "providers",
@@ -146,14 +147,15 @@ export class PluginManager {
   }
 
   _readPluginDescriptor(pluginDir, dirName) {
+    const formatIssue = detectIncompatiblePluginFormat(pluginDir);
     const manifestPath = path.join(pluginDir, "manifest.json");
     let manifest = null;
     if (fs.existsSync(manifestPath)) {
       manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
     }
-    const id = manifest?.id || dirName;
-    const name = manifest?.name || dirName;
-    const version = manifest?.version || "0.0.0";
+    const id = manifest?.id || formatIssue?.id || dirName;
+    const name = manifest?.name || formatIssue?.name || dirName;
+    const version = manifest?.version || formatIssue?.version || "0.0.0";
     const description = manifest?.description || "";
     const uiHostCapabilities = normalizeUiHostCapabilities(manifest?.ui?.hostCapabilities, id);
     const configSchema = manifest?.contributes?.configuration
@@ -169,7 +171,7 @@ export class PluginManager {
     const trust = manifest?.trust === "full-access" ? "full-access" : "restricted";
     const hidden = !!manifest?.hidden;
     const activationEvents = normalizeActivationEvents(manifest?.activationEvents, hasLifecycle);
-    return { id, name, version, description, pluginDir, manifest, contributions, trust, hidden, uiHostCapabilities, configSchema, activationEvents, hasLifecycle };
+    return { id, name, version, description, pluginDir, manifest, contributions, trust, hidden, uiHostCapabilities, configSchema, activationEvents, hasLifecycle, formatIssue };
   }
 
   async loadAll() {
@@ -182,6 +184,14 @@ export class PluginManager {
       if (desc.source !== "builtin" && disabledList.includes(desc.id)) {
         entry.status = "disabled";
         this._plugins.set(desc.id, entry);
+        continue;
+      }
+
+      if (desc.formatIssue) {
+        entry.status = "incompatible";
+        entry.error = desc.formatIssue.message;
+        this._plugins.set(desc.id, entry);
+        console.warn(`[plugin-manager] "${desc.id}" skipped: ${entry.error}`);
         continue;
       }
 
@@ -852,6 +862,13 @@ export class PluginManager {
         return entry;
       }
 
+      if (desc.formatIssue) {
+        entry.status = "incompatible";
+        entry.error = desc.formatIssue.message;
+        this._bus?.emit({ type: "plugin_ui_changed" });
+        return entry;
+      }
+
       if (desc.trust === "full-access" && !this._isFullAccessAllowed(entry, options)) {
         entry.status = "restricted";
         return entry;
@@ -1096,6 +1113,7 @@ export class PluginManager {
         activationEvents: Array.isArray(entry.activationEvents) ? [...entry.activationEvents] : [],
         activationReason: entry.activationReason || null,
         activationError: entry.activationError || null,
+        formatIssue: entry.formatIssue ? clonePlain(entry.formatIssue) : null,
         contributions: Array.isArray(entry.contributions) ? [...entry.contributions] : [],
         uiHostCapabilities: Array.isArray(entry.uiHostCapabilities) ? [...entry.uiHostCapabilities] : [],
         routes: {

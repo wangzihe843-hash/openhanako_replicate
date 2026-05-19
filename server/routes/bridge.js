@@ -215,7 +215,11 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
       "api",
       `POST /api/bridge/settings readOnly=${readOnly} receiptEnabled=${receiptEnabled}`,
     );
-    return c.json({ ok: true });
+    return c.json({
+      ok: true,
+      readOnly: engine.getBridgeReadOnly(),
+      receiptEnabled: engine.getBridgeReceiptEnabled(),
+    });
   });
 
   /** 停止指定平台 */

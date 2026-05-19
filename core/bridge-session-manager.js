@@ -229,6 +229,15 @@ export class BridgeSessionManager {
     return agent;
   }
 
+  async _ensureAgentRuntime(agent, operation) {
+    if (!agent?.id || typeof this._deps.ensureAgentRuntime !== "function") return agent;
+    const ensured = await this._deps.ensureAgentRuntime(agent.id, {
+      priority: "background",
+      reason: `bridge:${operation}`,
+    });
+    return ensured || this._deps.getAgentById?.(agent.id) || agent;
+  }
+
   _listAgentsForReconcile() {
     const all = this._deps.getAgents?.();
     if (all instanceof Map) return [...all.values()].filter(Boolean);
@@ -430,7 +439,8 @@ export class BridgeSessionManager {
     try {
       let promptText = prompt;
       const isGuest = opts.guest === true;
-      const agent = this._resolveAgent(opts, "executeExternalMessage");
+      let agent = this._resolveAgent(opts, "executeExternalMessage");
+      agent = await this._ensureAgentRuntime(agent, "executeExternalMessage");
       const bridgeContext = this._buildBridgeContext(sessionKey, meta, opts, agent);
       const mm = this._deps.getModelManager();
       const bridgeDir = path.join(agent.sessionDir, "bridge");
@@ -873,7 +883,8 @@ export class BridgeSessionManager {
    */
   async compactSession(sessionKey, opts = {}) {
     // 1. 定位 agent
-    const agent = this._resolveAgent(opts, "compactSession");
+    let agent = this._resolveAgent(opts, "compactSession");
+    agent = await this._ensureAgentRuntime(agent, "compactSession");
 
     // 2. 并发保护：正在生成回复时禁止压缩（SDK 内部冲突）
     const active = this._activeSessions.get(sessionKey);

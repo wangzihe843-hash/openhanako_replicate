@@ -641,7 +641,7 @@ export function createSessionsRoute(engine, hub = null) {
           cwd || undefined,
           memFlag,
           undefined,
-          { workspaceFolders },
+          { workspaceFolders, visibleInSessionList: true },
         ));
       } else {
         ({ sessionPath: newSessionPath, agentId: newAgentId } = await engine.createSession(
@@ -649,7 +649,7 @@ export function createSessionsRoute(engine, hub = null) {
           cwd || undefined,
           memFlag,
           undefined,
-          { workspaceFolders },
+          { workspaceFolders, visibleInSessionList: true },
         ));
       }
       engine.persistSessionMeta();
@@ -779,6 +779,7 @@ export function createSessionsRoute(engine, hub = null) {
     if (!sessionPath) return c.json({ error: "missing sessionPath" });
     const bm = BrowserManager.instance();
     await bm.closeBrowserForSession(sessionPath);
+    hub?.eventBus?.emit?.({ type: "browser_status", running: false, url: null }, sessionPath);
     return c.json({ ok: true, sessions: bm.getBrowserSessionStates() });
   });
 

@@ -4,8 +4,8 @@
  * DM 文件存在 agents/{agentId}/dm/{peerId}.md
  *
  * 端点：
- * GET  /api/dm           — 列出当前 focus agent 的所有 DM 对话
- * GET  /api/dm/:peerId   — 获取与某个 agent 的 DM 消息
+ * GET  /api/dm           — 列出主 agent 的所有 DM 对话
+ * GET  /api/dm/:peerId   — 获取主 agent 与某个 agent 的 DM 消息
  */
 
 import fs from "fs";
@@ -14,18 +14,40 @@ import { Hono } from "hono";
 import { parseChannel } from "../../lib/channels/channel-store.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
 
+function requestedAgentId(c) {
+  const value = c.req.query("agentId");
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function resolveDmOwnerAgent(engine, c) {
+  if (requestedAgentId(c)) {
+    return resolveAgent(engine, c);
+  }
+
+  const primaryAgentId = engine.getPrimaryAgentId?.() || null;
+  if (!primaryAgentId) {
+    return resolveAgent(engine, c);
+  }
+
+  const agent = engine.getAgent(primaryAgentId);
+  if (!agent) {
+    throw new Error(`primary agent "${primaryAgentId}" not found`);
+  }
+  return agent;
+}
+
 export function createDmRoute(engine) {
   const route = new Hono();
 
   // ── 列出所有 DM 对话（包含未聊过的 agent 作为占位） ──
   route.get("/dm", async (c) => {
     try {
-      const agent = resolveAgent(engine, c);
+      const agent = resolveDmOwnerAgent(engine, c);
       if (!agent) {
         return c.json({ dms: [] });
       }
 
-      const currentAgentId = agent.id;
+      const ownerAgentId = agent.id;
       const dmDir = path.join(agent.agentDir, "dm");
 
       // 已有 DM 文件 → 读取消息摘要
@@ -50,12 +72,13 @@ export function createDmRoute(engine) {
       // 所有其他 agent 都作为 DM 条目（没聊过的也显示）
       const allAgents = engine.listAgents?.() || [];
       const dms = allAgents
-        .filter(a => a.id !== currentAgentId)
+        .filter(a => a.id !== ownerAgentId)
         .map(a => {
           const existing = existingDms.get(a.id);
           return {
+            ownerAgentId,
             peerId: a.id,
-            peerName: a.name || a.id,
+            peerName: a.name || a.agentName || a.id,
             lastMessage: existing?.lastMessage || "",
             lastSender: existing?.lastSender || "",
             lastTimestamp: existing?.lastTimestamp || "",
@@ -71,7 +94,7 @@ export function createDmRoute(engine) {
         return a.peerName.localeCompare(b.peerName);
       });
 
-      return c.json({ dms });
+      return c.json({ ownerAgentId, dms });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -81,10 +104,11 @@ export function createDmRoute(engine) {
   route.get("/dm/:peerId", async (c) => {
     try {
       const peerId = c.req.param("peerId");
-      const agent = resolveAgent(engine, c);
+      const agent = resolveDmOwnerAgent(engine, c);
       if (!agent) {
         return c.json({ error: "No active agent" }, 400);
       }
+      const ownerAgentId = agent.id;
 
       // 安全校验
       if (/[\/\\]|\.\./.test(peerId)) {
@@ -100,9 +124,10 @@ export function createDmRoute(engine) {
       const { meta, messages } = parseChannel(content);
 
       const peerAgent = engine.getAgent(peerId);
-      const peerName = peerAgent?.agentName || peerId;
+      const peerName = peerAgent?.agentName || peerAgent?.name || peerId;
 
       return c.json({
+        ownerAgentId,
         peerId,
         peerName,
         messages,

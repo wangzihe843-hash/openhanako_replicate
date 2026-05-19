@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { hanaFetch, hanaUrl } from '../api';
 import { t } from '../helpers';
 import { useSettingsStore } from '../store';
+import {
+  connectDeviceServerConnection,
+  persistServerConnectionSelection,
+  upsertServerConnection,
+} from '../../services/server-connection';
 import { Toggle } from '../widgets/Toggle';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
@@ -19,6 +24,9 @@ interface AccessSummary {
     runtimeHost: string;
     restartRequired: boolean;
     lanAddresses: string[];
+    localServerUrl: string;
+    candidateLanServerUrl: string | null;
+    lanServerUrl: string | null;
     localMobileUrl: string;
     candidateLanMobileUrl: string | null;
     lanMobileUrl: string | null;
@@ -56,21 +64,32 @@ export function AccessTab() {
   const [mode, setMode] = useState<AccessMode>('loopback');
   const [port, setPort] = useState('14500');
   const [mobileKey, setMobileKey] = useState('');
-  const [generating, setGenerating] = useState(false);
+  const [desktopKey, setDesktopKey] = useState('');
+  const [generatingMobileKey, setGeneratingMobileKey] = useState(false);
+  const [generatingDesktopKey, setGeneratingDesktopKey] = useState(false);
+  const [remoteServerUrl, setRemoteServerUrl] = useState('');
+  const [remoteServerKey, setRemoteServerKey] = useState('');
+  const [connectingRemoteServer, setConnectingRemoteServer] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(true);
   const [savingNetwork, setSavingNetwork] = useState(false);
   const [accountDraft, setAccountDraft] = useState({ username: '', displayName: '' });
   const [passwordDraft, setPasswordDraft] = useState('');
 
   const loadSummary = useCallback(async () => {
-    const res = await hanaFetch('/api/access/summary');
-    const data = await res.json();
-    setSummary(data);
-    setMode(data.network.mode);
-    setPort(String(data.network.configuredPort));
-    setAccountDraft({
-      username: data.account.username || '',
-      displayName: data.account.displayName || '',
-    });
+    setLoadingSummary(true);
+    try {
+      const res = await hanaFetch('/api/access/summary');
+      const data = await res.json();
+      setSummary(data);
+      setMode(data.network.mode);
+      setPort(String(data.network.configuredPort));
+      setAccountDraft({
+        username: data.account.username || '',
+        displayName: data.account.displayName || '',
+      });
+    } finally {
+      setLoadingSummary(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -85,6 +104,12 @@ export function AccessTab() {
     return summary.network.lanMobileUrl || '';
   }, [mode, summary]);
 
+  const desktopUrl = useMemo(() => {
+    if (!summary) return '';
+    if (mode !== 'lan') return '';
+    return summary.network.lanServerUrl || '';
+  }, [mode, summary]);
+
   const qrUrl = useMemo(() => {
     if (mode !== 'lan' || !mobileUrl || summary?.network.restartRequired) return '';
     const query = summary?.network.actualPort
@@ -94,9 +119,11 @@ export function AccessTab() {
   }, [mode, mobileUrl, summary?.network.actualPort, summary?.network.restartRequired]);
 
   const canCopyMobileUrl = mobileUrl.length > 0;
+  const canCopyDesktopUrl = desktopUrl.length > 0;
   const canShowQr = mode === 'lan' && mobileUrl.length > 0 && !summary?.network.restartRequired;
   const runtimeEndpoint = summary ? `${summary.network.runtimeHost}:${summary.network.actualPort}` : '';
   const effectiveMobileUrl = summary?.network.lanMobileUrl || summary?.network.localMobileUrl || '';
+  const effectiveDesktopUrl = summary?.network.lanServerUrl || summary?.network.localServerUrl || '';
   const lanAddressText = summary?.network.lanAddresses.length
     ? summary.network.lanAddresses.join(', ')
     : t('settings.access.noLanAddresses');
@@ -143,13 +170,14 @@ export function AccessTab() {
   }, [mode, port, saveNetworkSettings]);
 
   const handleLanToggle = useCallback((on: boolean) => {
+    if (!summary || loadingSummary || savingNetwork) return;
     const nextMode = on ? 'lan' : 'loopback';
     setMode(nextMode);
     void saveNetworkSettings(nextMode, port);
-  }, [port, saveNetworkSettings]);
+  }, [loadingSummary, port, saveNetworkSettings, savingNetwork, summary]);
 
   const generateMobileKey = useCallback(async () => {
-    setGenerating(true);
+    setGeneratingMobileKey(true);
     try {
       const res = await hanaFetch('/api/access/mobile-credentials', {
         method: 'POST',
@@ -166,9 +194,55 @@ export function AccessTab() {
     } catch (err: any) {
       showToast(`${t('settings.access.mobileKeyFailed')}: ${err.message}`, 'error');
     } finally {
-      setGenerating(false);
+      setGeneratingMobileKey(false);
     }
   }, [loadSummary, showToast]);
+
+  const generateDesktopKey = useCallback(async () => {
+    setGeneratingDesktopKey(true);
+    try {
+      const res = await hanaFetch('/api/access/desktop-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: 'Desktop Frontend',
+          scopes: DEFAULT_SCOPES,
+        }),
+      });
+      const data = await res.json();
+      setDesktopKey(data.secret || '');
+      await loadSummary();
+      showToast(t('settings.access.desktopKeyCreated'), 'success');
+    } catch (err: any) {
+      showToast(`${t('settings.access.desktopKeyFailed')}: ${err.message}`, 'error');
+    } finally {
+      setGeneratingDesktopKey(false);
+    }
+  }, [loadSummary, showToast]);
+
+  const connectRemoteServer = useCallback(async () => {
+    setConnectingRemoteServer(true);
+    try {
+      const connection = await connectDeviceServerConnection({
+        baseUrl: remoteServerUrl,
+        credential: remoteServerKey,
+      });
+      persistServerConnectionSelection(connection);
+      const current = useSettingsStore.getState();
+      current.set({
+        serverConnections: upsertServerConnection(current.serverConnections, connection),
+        activeServerConnectionId: connection.connectionId,
+        activeServerConnection: connection,
+      });
+      setRemoteServerKey('');
+      showToast(t('settings.access.remoteServerConnected'), 'success');
+      window.hana?.reloadMainWindow?.();
+    } catch (err: any) {
+      showToast(`${t('settings.access.remoteServerFailed')}: ${err.message}`, 'error');
+    } finally {
+      setConnectingRemoteServer(false);
+    }
+  }, [remoteServerKey, remoteServerUrl, showToast]);
 
   const saveAccount = useCallback(async () => {
     try {
@@ -235,11 +309,18 @@ export function AccessTab() {
 
   return (
     <div className={`${styles['settings-tab-content']} ${styles.active}`} data-tab="access">
-      <SettingsSection title={t('settings.access.mobileAccess')}>
+      <SettingsSection title={t('settings.access.networkAccess')}>
         <SettingsRow
           label={t('settings.access.lanToggle')}
           hint={t('settings.access.lanHint')}
-          control={<Toggle label={t('settings.access.lanToggle')} on={mode === 'lan'} onChange={handleLanToggle} />}
+          control={
+            <Toggle
+              label={t('settings.access.lanToggle')}
+              on={summary ? mode === 'lan' : false}
+              onChange={handleLanToggle}
+              disabled={loadingSummary || savingNetwork || !summary}
+            />
+          }
         />
         <SettingsRow
           label={t('settings.access.port')}
@@ -253,6 +334,42 @@ export function AccessTab() {
             />
           }
         />
+        <SettingsRow
+          label={t('settings.access.status')}
+          hint={summary?.network.restartRequired ? t('settings.access.restartRequired') : t('settings.access.statusHint')}
+          layout="stacked"
+          control={
+            <div className={styles['access-status-grid']}>
+              <div className={styles['access-status-item']}>
+                <span>{t('settings.access.runtimeEndpoint')}</span>
+                <strong>{runtimeEndpoint}</strong>
+              </div>
+              <div className={styles['access-status-item']}>
+                <span>{t('settings.access.effectiveMobileUrl')}</span>
+                <strong>{effectiveMobileUrl}</strong>
+              </div>
+              <div className={styles['access-status-item']}>
+                <span>{t('settings.access.effectiveDesktopUrl')}</span>
+                <strong>{effectiveDesktopUrl}</strong>
+              </div>
+              <div className={styles['access-status-item']}>
+                <span>{t('settings.access.lanAddresses')}</span>
+                <strong>{lanAddressText}</strong>
+              </div>
+            </div>
+          }
+        />
+        {summary?.network.restartRequired && (
+          <SettingsSection.Warning>{t('settings.access.restartRequired')}</SettingsSection.Warning>
+        )}
+        <SettingsSection.Footer>
+          <button className={styles['settings-btn-primary']} type="button" onClick={saveNetwork} disabled={loadingSummary || savingNetwork || !summary}>
+            {t('settings.access.saveNetwork')}
+          </button>
+        </SettingsSection.Footer>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.access.mobileAccess')}>
         <SettingsRow
           label={t('settings.access.mobileUrl')}
           hint={mode === 'lan' ? t('settings.access.mobileUrlLanHint') : t('settings.access.mobileUrlLocalHint')}
@@ -271,27 +388,6 @@ export function AccessTab() {
             </div>
           }
         />
-        <SettingsRow
-          label={t('settings.access.status')}
-          hint={summary?.network.restartRequired ? t('settings.access.restartRequired') : t('settings.access.statusHint')}
-          layout="stacked"
-          control={
-            <div className={styles['access-status-grid']}>
-              <div className={styles['access-status-item']}>
-                <span>{t('settings.access.runtimeEndpoint')}</span>
-                <strong>{runtimeEndpoint}</strong>
-              </div>
-              <div className={styles['access-status-item']}>
-                <span>{t('settings.access.effectiveMobileUrl')}</span>
-                <strong>{effectiveMobileUrl}</strong>
-              </div>
-              <div className={styles['access-status-item']}>
-                <span>{t('settings.access.lanAddresses')}</span>
-                <strong>{lanAddressText}</strong>
-              </div>
-            </div>
-          }
-        />
         {canShowQr && (
           <SettingsRow
             label={t('settings.access.qrCode')}
@@ -299,22 +395,11 @@ export function AccessTab() {
             control={<img className={styles['access-qr']} src={qrUrl} alt={t('settings.access.qrCode')} />}
           />
         )}
-        {summary?.network.restartRequired && (
-          <SettingsSection.Warning>{t('settings.access.restartRequired')}</SettingsSection.Warning>
-        )}
-        <SettingsSection.Footer>
-          <button className={styles['settings-btn-primary']} type="button" onClick={saveNetwork} disabled={savingNetwork}>
-            {t('settings.access.saveNetwork')}
-          </button>
-        </SettingsSection.Footer>
-      </SettingsSection>
-
-      <SettingsSection title={t('settings.access.mobileKeys')}>
         <SettingsRow
           label={t('settings.access.generateMobileKey')}
           hint={t('settings.access.mobileKeyHint')}
           control={
-            <button className={styles['settings-btn-primary']} type="button" onClick={generateMobileKey} disabled={generating}>
+            <button className={styles['settings-btn-primary']} type="button" onClick={generateMobileKey} disabled={generatingMobileKey}>
               {t('settings.access.generateMobileKey')}
             </button>
           }
@@ -334,6 +419,102 @@ export function AccessTab() {
             }
           />
         )}
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.access.desktopAccess')}>
+        <SettingsRow
+          label={t('settings.access.desktopUrl')}
+          hint={mode === 'lan' ? t('settings.access.desktopUrlLanHint') : t('settings.access.desktopUrlLocalHint')}
+          layout="stacked"
+          control={
+            <div className={styles['access-url-row']}>
+              <input className={styles['settings-input']} value={desktopUrl} readOnly />
+              <button
+                className={styles['settings-btn-secondary']}
+                type="button"
+                onClick={() => copyText(desktopUrl)}
+                disabled={!canCopyDesktopUrl}
+              >
+                {t('settings.access.copy')}
+              </button>
+            </div>
+          }
+        />
+        <SettingsRow
+          label={t('settings.access.generateDesktopKey')}
+          hint={t('settings.access.desktopKeyHint')}
+          control={
+            <button className={styles['settings-btn-primary']} type="button" onClick={generateDesktopKey} disabled={generatingDesktopKey}>
+              {t('settings.access.generateDesktopKey')}
+            </button>
+          }
+        />
+        {desktopKey && (
+          <SettingsRow
+            label={t('settings.access.desktopKey')}
+            hint={t('settings.access.desktopKeyOnce')}
+            layout="stacked"
+            control={
+              <div className={styles['access-url-row']}>
+                <input className={styles['settings-input']} value={desktopKey} readOnly />
+                <button className={styles['settings-btn-secondary']} type="button" onClick={() => copyText(desktopKey)}>
+                  {t('settings.access.copy')}
+                </button>
+              </div>
+            }
+          />
+        )}
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.access.connectLanServer')}>
+        <SettingsRow
+          label={t('settings.access.remoteServerUrl')}
+          hint={t('settings.access.remoteServerUrlHint')}
+          layout="stacked"
+          control={
+            <label className={styles['access-field']}>
+              <span>{t('settings.access.remoteServerUrl')}</span>
+              <input
+                aria-label={t('settings.access.remoteServerUrl')}
+                className={styles['settings-input']}
+                value={remoteServerUrl}
+                placeholder="http://192.168.31.75:14500"
+                onChange={(event) => setRemoteServerUrl(event.target.value)}
+              />
+            </label>
+          }
+        />
+        <SettingsRow
+          label={t('settings.access.remoteServerKey')}
+          hint={t('settings.access.remoteServerKeyHint')}
+          layout="stacked"
+          control={
+            <label className={styles['access-field']}>
+              <span>{t('settings.access.remoteServerKey')}</span>
+              <input
+                aria-label={t('settings.access.remoteServerKey')}
+                className={styles['settings-input']}
+                value={remoteServerKey}
+                type="password"
+                placeholder="hana_dev_..."
+                onChange={(event) => setRemoteServerKey(event.target.value)}
+              />
+            </label>
+          }
+        />
+        <SettingsSection.Footer>
+          <button
+            className={styles['settings-btn-primary']}
+            type="button"
+            onClick={connectRemoteServer}
+            disabled={connectingRemoteServer || !remoteServerUrl.trim() || !remoteServerKey.trim()}
+          >
+            {t('settings.access.connectLanServer')}
+          </button>
+        </SettingsSection.Footer>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.access.pairedDevices')}>
         <div className={styles['access-device-list']}>
           {activeDevicesWithoutCredentials.length === 0 && activeCredentials.length === 0 ? (
             <div className={styles['access-empty']}>{t('settings.access.noDevices')}</div>
@@ -346,7 +527,7 @@ export function AccessTab() {
                     <div className={styles['access-device-info']}>
                       <span className={styles['access-device-name']}>{device?.displayName || credential.deviceId}</span>
                       <span className={styles['access-device-meta']}>
-                        {credential.secretPrefix || credential.credentialId} · {credential.scopes.join(', ')}
+                        {device?.deviceKind || 'device'} · {credential.secretPrefix || credential.credentialId} · {credential.scopes.join(', ')}
                       </span>
                     </div>
                     <button

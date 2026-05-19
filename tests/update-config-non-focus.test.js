@@ -219,6 +219,31 @@ describe("updateConfig with agentId", () => {
     }));
   });
 
+  it("setHeartbeatMaster only restarts agents that explicitly opted in", () => {
+    let prefs = {};
+    const focusHb = { start: vi.fn(), stop: vi.fn() };
+    const targetHb = { start: vi.fn(), stop: vi.fn() };
+    const { focusAgent, targetAgent, deps } = makeDeps({
+      getPrefs: () => ({
+        getPreferences: () => prefs,
+        savePreferences: (next) => { prefs = { ...next }; },
+      }),
+      getHub: () => ({
+        scheduler: {
+          getHeartbeat: (agentId) => (agentId === "focus" ? focusHb : targetHb),
+        },
+      }),
+    });
+    focusAgent.config.desk = {};
+    targetAgent.config.desk = { heartbeat_enabled: true };
+    const coord = new ConfigCoordinator(deps);
+
+    coord.setHeartbeatMaster(true);
+
+    expect(focusHb.start).not.toHaveBeenCalled();
+    expect(targetHb.start).toHaveBeenCalledOnce();
+  });
+
   it("setSharedModels stores and clears auxiliary vision without mutating utility or memory runtime state", () => {
     let prefs = {};
     const { focusAgent, deps } = makeDeps({

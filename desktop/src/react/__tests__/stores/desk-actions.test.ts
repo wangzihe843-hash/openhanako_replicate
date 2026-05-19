@@ -441,6 +441,69 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([{ name: 'renamed.md', isDir: false }]);
   });
 
+  it('creates a file by explicit parent subdir and updates that tree cache', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        notes: [],
+      },
+      deskFiles: [{ name: 'notes', isDir: true }],
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [{ name: 'idea.md', isDir: false }],
+    }));
+
+    const { deskCreateFileInSubdir } = await import('../../stores/desk-actions');
+    const ok = await deskCreateFileInSubdir('notes', 'idea.md', '');
+
+    expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/desk/files', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'create',
+        dir: '/workspace',
+        subdir: 'notes',
+        name: 'idea.md',
+        content: '',
+      }),
+    }));
+    expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([{ name: 'idea.md', isDir: false }]);
+    expect(useStore.getState().deskFiles).toEqual([{ name: 'notes', isDir: true }]);
+  });
+
+  it('creates a folder by explicit parent subdir and updates visible desk files when it is current', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskCurrentPath: 'notes',
+      deskTreeFilesByPath: {
+        notes: [],
+      },
+      deskFiles: [],
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [{ name: 'drafts', isDir: true }],
+    }));
+
+    const { deskMkdirInSubdir } = await import('../../stores/desk-actions');
+    const ok = await deskMkdirInSubdir('notes', 'drafts');
+
+    expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/desk/files', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'mkdir',
+        dir: '/workspace',
+        subdir: 'notes',
+        name: 'drafts',
+      }),
+    }));
+    expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([{ name: 'drafts', isDir: true }]);
+    expect(useStore.getState().deskFiles).toEqual([{ name: 'drafts', isDir: true }]);
+  });
+
   it('renames expanded folder cache keys when a tree folder is renamed', async () => {
     useStore.setState({
       deskBasePath: '/workspace',

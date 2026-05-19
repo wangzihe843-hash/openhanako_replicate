@@ -68,6 +68,28 @@ function readOptionalPositiveInt(value) {
   return Math.floor(num);
 }
 
+function requestedAgentId(c) {
+  const value = c.req.query("agentId");
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function resolveConversationOwnerAgent(engine, c) {
+  if (requestedAgentId(c)) {
+    return resolveAgent(engine, c);
+  }
+
+  const primaryAgentId = engine.getPrimaryAgentId?.() || null;
+  if (!primaryAgentId) {
+    return resolveAgent(engine, c);
+  }
+
+  const agent = engine.getAgent(primaryAgentId);
+  if (!agent) {
+    throw new Error(`primary agent "${primaryAgentId}" not found`);
+  }
+  return agent;
+}
+
 function normalizePhoneSettingsPayload(body = {}) {
   const replyMinChars = normalizeOptionalPositiveInt(body.replyMinChars, "replyMinChars");
   const replyMaxChars = normalizeOptionalPositiveInt(body.replyMaxChars, "replyMaxChars");
@@ -175,7 +197,7 @@ export function createChannelsRoute(engine, hub) {
 
   async function readConversationPhoneSettings(id, c) {
     if (id.startsWith("dm:")) {
-      const agent = resolveAgent(engine, c);
+      const agent = resolveConversationOwnerAgent(engine, c);
       const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agent.agentDir, id));
       return {
         mode: normalizeAgentPhoneToolMode(projection.meta.toolMode),
@@ -210,7 +232,7 @@ export function createChannelsRoute(engine, hub) {
         err.status = 400;
         throw err;
       }
-      const agent = resolveAgent(engine, c);
+      const agent = resolveConversationOwnerAgent(engine, c);
       await updateAgentPhoneProjectionMeta({
         agentDir: agent.agentDir,
         agentId: agent.id,

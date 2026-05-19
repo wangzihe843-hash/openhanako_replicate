@@ -92,6 +92,7 @@ export function InterfaceTab() {
     () => normalizeEditorTypography(settingsConfig?.editor),
     [settingsConfig?.editor],
   );
+  const hardwareAccelerationEnabled = settingsConfig?.hardware_acceleration !== false;
 
   const saveEditorTypography = async (patch: Partial<EditorMarkdownTypography>) => {
     const previousConfig = useSettingsStore.getState().settingsConfig || {};
@@ -111,6 +112,20 @@ export function InterfaceTab() {
     useSettingsStore.setState({ settingsConfig: previousConfig });
     applyEditorTypography(restored);
     platform?.settingsChanged?.('editor-typography-changed', { editor: restored });
+  };
+
+  const saveHardwareAcceleration = async (next: boolean) => {
+    const previousConfig = useSettingsStore.getState().settingsConfig || {};
+    useSettingsStore.setState({ settingsConfig: { ...previousConfig, hardware_acceleration: next } });
+
+    const saved = await autoSaveConfig({ hardware_acceleration: next }, { silent: true });
+    if (saved) {
+      platform?.settingsChanged?.('hardware-acceleration-changed', { hardware_acceleration: next });
+      useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
+      return;
+    }
+
+    useSettingsStore.setState({ settingsConfig: previousConfig });
   };
 
   const locale = settingsConfig?.locale || 'zh-CN';
@@ -213,6 +228,19 @@ export function InterfaceTab() {
                 syncAppearancePrefs({ leavesOverlay: next });
                 refreshAppearancePrefs();
               }}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.interface.system')}>
+        <SettingsRow
+          label={t('settings.interface.hardwareAcceleration')}
+          hint={t('settings.interface.hardwareAccelerationHint')}
+          control={
+            <Toggle
+              on={hardwareAccelerationEnabled}
+              onChange={saveHardwareAcceleration}
             />
           }
         />

@@ -15,8 +15,11 @@ export function BridgeTab() {
   const fsInfo = b.status?.feishu || {};
   const qqInfo = b.status?.qq || {};
   const wxInfo = b.status?.wechat || {};
-  const readOnly = !!b.status?.readOnly;
-  const receiptEnabled = b.status?.receiptEnabled !== false;
+  const globalSettingsLoaded = !!b.status;
+  const readOnly = b.status?.readOnly === true;
+  const receiptEnabled = b.status ? b.status.receiptEnabled !== false : false;
+  const globalSettingsPending = !globalSettingsLoaded || b.globalSettingsSaving;
+  const loadingControl = <span className={styles['settings-control-loading']}>{t('status.loading')}</span>;
 
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="bridge">
@@ -25,20 +28,26 @@ export function BridgeTab() {
           label={t('settings.bridge.receiptEnabled')}
           hint={t('settings.bridge.receiptEnabledDesc')}
           control={
-            <Toggle
-              on={receiptEnabled}
-              onChange={(on) => b.saveGlobalSettings({ receiptEnabled: on })}
-            />
+            globalSettingsLoaded ? (
+              <Toggle
+                on={receiptEnabled}
+                onChange={(on) => b.saveGlobalSettings({ receiptEnabled: on })}
+                disabled={globalSettingsPending}
+              />
+            ) : loadingControl
           }
         />
         <SettingsRow
           label={t('settings.bridge.readOnly')}
           hint={t('settings.bridge.readOnlyDesc')}
           control={
-            <Toggle
-              on={readOnly}
-              onChange={(on) => b.saveGlobalSettings({ readOnly: on })}
-            />
+            globalSettingsLoaded ? (
+              <Toggle
+                on={readOnly}
+                onChange={(on) => b.saveGlobalSettings({ readOnly: on })}
+                disabled={globalSettingsPending}
+              />
+            ) : loadingControl
           }
         />
       </SettingsSection>

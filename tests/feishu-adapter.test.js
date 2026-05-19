@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockContactUserGet = vi.fn();
 const mockImageGet = vi.fn();
@@ -9,8 +9,10 @@ const mockMessageUpdate = vi.fn();
 const mockImageCreate = vi.fn();
 const mockFileCreate = vi.fn();
 const mockWsStart = vi.fn();
+const mockWsClose = vi.fn();
 
 let registeredHandlers = {};
+let mockWsInstances = [];
 
 vi.mock("@larksuiteoapi/node-sdk", () => {
   class MockEventDispatcher {
@@ -23,13 +25,16 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
   class MockWSClient {
     constructor() {
       this.wsConfig = { wsInstance: { readyState: 1 } };
+      mockWsInstances.push(this);
     }
 
     start(...args) {
       return mockWsStart(...args);
     }
 
-    close() {}
+    close(...args) {
+      return mockWsClose(...args);
+    }
   }
 
   class MockClient {
@@ -80,9 +85,19 @@ function markdownPostContent(text) {
   });
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function latestWsClient() {
+  return mockWsInstances[mockWsInstances.length - 1];
+}
+
 describe("createFeishuAdapter", () => {
   beforeEach(() => {
     registeredHandlers = {};
+    mockWsInstances = [];
     mockContactUserGet.mockReset();
     mockImageGet.mockReset();
     mockMessageResourceGet.mockReset();
@@ -91,6 +106,7 @@ describe("createFeishuAdapter", () => {
     mockImageCreate.mockReset();
     mockFileCreate.mockReset();
     mockWsStart.mockReset();
+    mockWsClose.mockReset();
 
     mockWsStart.mockResolvedValue(undefined);
     mockContactUserGet.mockResolvedValue({
@@ -101,6 +117,64 @@ describe("createFeishuAdapter", () => {
         },
       },
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps monitoring the Feishu websocket after the initial connection", async () => {
+    vi.useFakeTimers();
+    const onStatus = vi.fn();
+    const adapter = createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus,
+    });
+
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onStatus).toHaveBeenCalledWith("connected");
+
+    const wsClient = latestWsClient();
+    wsClient.wsConfig.wsInstance.readyState = 3;
+    onStatus.mockClear();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(onStatus).toHaveBeenCalledWith("error", "WebSocket disconnected");
+    adapter.stop();
+  });
+
+  it("nudges the Feishu websocket client to restart when health check sees a closed socket", async () => {
+    vi.useFakeTimers();
+    const onStatus = vi.fn();
+    const adapter = createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus,
+    });
+
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mockWsStart).toHaveBeenCalledTimes(1);
+
+    const wsClient = latestWsClient();
+    wsClient.wsConfig.wsInstance.readyState = 3;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockWsStart).toHaveBeenCalledTimes(2);
+
+    await flushPromises();
+    wsClient.wsConfig.wsInstance.readyState = 1;
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(onStatus).toHaveBeenLastCalledWith("connected");
+    adapter.stop();
   });
 
   it("keeps message_id on inbound image attachments", async () => {

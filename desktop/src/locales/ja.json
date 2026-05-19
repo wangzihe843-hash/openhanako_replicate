@@ -674,6 +674,11 @@
       "leavesOverlay": "晴れモード",
       "leavesOverlayHint": "たまには日向ぼっこしよう"
     },
+    "interface": {
+      "system": "システム",
+      "hardwareAcceleration": "ハードウェアアクセラレーション",
+      "hardwareAccelerationHint": "GPU でウィンドウを描画します。オフにすると次回起動からソフトウェア描画を使い、Windows の GPU ドライバー起因の起動クラッシュ復旧に役立ちます。"
+    },
     "editor": {
       "title": "エディター",
       "markdownBodyFontSize": "本文サイズ",
@@ -795,7 +800,9 @@
       "autoCheckUpdates": "アップデートを自動で確認"
     },
     "access": {
+      "networkAccess": "LAN アクセス",
       "mobileAccess": "モバイルアクセス",
+      "desktopAccess": "コンピューターアクセス",
       "lanToggle": "LAN デバイスを許可",
       "lanHint": "同じ LAN 上のスマートフォンやコンピューターからこの Hana Server にアクセスできます",
       "port": "固定ポート",
@@ -807,6 +814,7 @@
       "statusHint": "サーバーの実際の待ち受け先と有効なモバイル URL を確認します",
       "runtimeEndpoint": "現在の待ち受け",
       "effectiveMobileUrl": "有効な URL",
+      "effectiveDesktopUrl": "コンピューター URL",
       "lanAddresses": "LAN アドレス",
       "noLanAddresses": "LAN アドレスが見つかりません",
       "qrCode": "QR コード",
@@ -820,6 +828,23 @@
       "mobileKeyOnce": "キーは生成直後に一度だけ表示されます",
       "mobileKeyCreated": "モバイルアクセスキーを生成しました",
       "mobileKeyFailed": "生成に失敗しました",
+      "desktopUrl": "コンピューター URL",
+      "desktopUrlLanHint": "別の Hana デスクトップフロントエンドにこのアドレスを入力します",
+      "desktopUrlLocalHint": "LAN アクセスを有効にするまではこのコンピューターだけが接続できます",
+      "generateDesktopKey": "コンピューターアクセスキーを生成",
+      "desktopKeyHint": "別の Hana デスクトップフロントエンドから手動接続するときに使います",
+      "desktopKey": "コンピューターアクセスキー",
+      "desktopKeyOnce": "キーは生成直後に一度だけ表示されます",
+      "desktopKeyCreated": "コンピューターアクセスキーを生成しました",
+      "desktopKeyFailed": "生成に失敗しました",
+      "connectLanServer": "LAN サーバーに接続",
+      "remoteServerUrl": "サーバー URL",
+      "remoteServerUrlHint": "別のコンピューターまたは NAS の Hana Server URL を入力します",
+      "remoteServerKey": "アクセスキー",
+      "remoteServerKeyHint": "そのサーバーの設定ページで生成したコンピューターアクセスキーを入力します",
+      "remoteServerConnected": "LAN サーバーに接続しました",
+      "remoteServerFailed": "接続に失敗しました",
+      "pairedDevices": "ペアリング済みデバイス",
       "noDevices": "ペアリング済みデバイスはありません",
       "revoke": "取り消す",
       "revokeCredential": "キーを取り消す",
@@ -985,6 +1010,7 @@
       "searchProviderField": "検索エンジン",
       "searchApiKey": "検索 API Key",
       "searchApiKeyHint": "選択した検索プロバイダーの API Key を入力してください",
+      "searchApiKeysAutoHint": "Auto は設定済みの Tavily、Brave、Serper を優先し、上限、エラー、空結果、関連度不足の場合はブラウザー検索へフォールバックします。",
       "searchApiKeyNotRequired": "ブラウザー検索に API Key は不要です。ローカルのバックグラウンドで検索ページを開き、結果を整形します。",
       "favorites": "お気に入り",
       "searchModel": "モデルを検索...",
@@ -1379,6 +1405,14 @@
       "subtitle": "あなた専用の AI アシスタントです。\n簡単なセットアップから始めましょう。",
       "next": "はじめる"
     },
+    "remote": {
+      "link": "既存のサーバーがありますか？LAN で接続",
+      "url": "サーバー URL",
+      "key": "アクセスキー",
+      "connect": "接続",
+      "connecting": "接続中...",
+      "failed": "LAN サーバーへの接続に失敗しました"
+    },
     "name": {
       "title": "なんとお呼びすればいいですか？",
       "subtitle": "会話がより自然になります",
@@ -1570,6 +1604,7 @@
     "fileLabel": "ファイル",
     "openWithDefault": "デフォルトアプリで開く",
     "refresh": "再読み込み",
+    "newMarkdownFileName": "無題.md",
     "newFolder": "新しいフォルダ",
     "ctx": {
       "open": "開く",
@@ -1585,6 +1620,7 @@
     "deleteConfirm": "「{name}」をシステムのゴミ箱に移動しますか？",
     "deleteSelectedConfirm": "選択した {count} 件をシステムのゴミ箱に移動しますか？",
     "trashFailed": "システムのゴミ箱への移動に失敗しました",
+    "createFailed": "作成に失敗しました",
     "renameInvalid": "ファイル名にパス区切り文字は使えません",
     "renameFailed": "名前の変更に失敗しました",
     "sort": {

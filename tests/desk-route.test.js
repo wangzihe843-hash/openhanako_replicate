@@ -215,6 +215,49 @@ describe("desk route", () => {
     }
   });
 
+  it("rejects path-like names for create, mkdir, and rename instead of truncating them", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
+    try {
+      const cwd = path.join(tempRoot, "workspace");
+      fs.mkdirSync(cwd, { recursive: true });
+      fs.writeFileSync(path.join(cwd, "old.md"), "old", "utf-8");
+
+      const engine = {
+        deskCwd: cwd,
+        homeCwd: cwd,
+      };
+
+      const { createDeskRoute } = await import("../server/routes/desk.js");
+      const app = new Hono();
+      app.route("/api", createDeskRoute(engine, null));
+
+      const createRes = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", dir: cwd, name: "../evil.md", content: "" }),
+      });
+      const mkdirRes = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "mkdir", dir: cwd, name: "nested/folder" }),
+      });
+      const renameRes = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rename", dir: cwd, oldName: "old.md", newName: "nested/new.md" }),
+      });
+
+      expect(await createRes.json()).toHaveProperty("error", "invalid name");
+      expect(await mkdirRes.json()).toHaveProperty("error", "invalid name");
+      expect(await renameRes.json()).toHaveProperty("error", "invalid name");
+      expect(fs.existsSync(path.join(cwd, "evil.md"))).toBe(false);
+      expect(fs.existsSync(path.join(cwd, "nested"))).toBe(false);
+      expect(fs.existsSync(path.join(cwd, "old.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("searches workspace file names recursively without exposing hidden or dependency folders", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
     try {

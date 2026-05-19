@@ -9,14 +9,22 @@ import { useStore } from '../../stores';
 import type { DeskSearchResult } from '../../types';
 
 const mocks = vi.hoisted(() => ({
-  loadDeskFiles: vi.fn(async () => {}),
-  loadDeskTreeFiles: vi.fn(async () => {}),
-  deskMoveTreeFiles: vi.fn(async () => {}),
-  deskRenameTreeItem: vi.fn(async () => true),
-  deskTrashTreeItems: vi.fn(async () => true),
-  searchDeskFiles: vi.fn(async (): Promise<DeskSearchResult[]> => []),
+    loadDeskFiles: vi.fn(async () => {}),
+    loadDeskTreeFiles: vi.fn(async () => {}),
+    deskCreateFileInSubdir: vi.fn(async () => true),
+    deskMkdirInSubdir: vi.fn(async () => true),
+    deskMoveTreeFiles: vi.fn(async () => {}),
+    deskRenameTreeItem: vi.fn(async () => true),
+    deskTrashTreeItems: vi.fn(async () => true),
+    searchDeskFiles: vi.fn(async (): Promise<DeskSearchResult[]> => []),
   jumpToDeskSearchResult: vi.fn(async () => {}),
 }));
+
+function pendingCreateInput(): HTMLInputElement {
+  const input = document.querySelector<HTMLInputElement>('[data-desk-pending-create] input');
+  if (!input) throw new Error('pending create input not found');
+  return input;
+}
 
 vi.mock('../../stores/desk-actions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../stores/desk-actions')>();
@@ -24,6 +32,8 @@ vi.mock('../../stores/desk-actions', async (importOriginal) => {
     ...actual,
     loadDeskFiles: mocks.loadDeskFiles,
     loadDeskTreeFiles: mocks.loadDeskTreeFiles,
+    deskCreateFileInSubdir: mocks.deskCreateFileInSubdir,
+    deskMkdirInSubdir: mocks.deskMkdirInSubdir,
     deskMoveTreeFiles: mocks.deskMoveTreeFiles,
     deskRenameTreeItem: mocks.deskRenameTreeItem,
     deskTrashTreeItems: mocks.deskTrashTreeItems,
@@ -320,6 +330,116 @@ describe('DeskSection workspace watching', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(mocks.deskRenameTreeItem).toHaveBeenCalledWith('notes', 'chapter.md', 'renamed.md', false);
+  });
+
+  it('starts a markdown create draft from blank workspace space and writes only after naming', async () => {
+    useStore.setState({
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [{ name: 'notes', isDir: true }],
+      },
+      deskExpandedPaths: [],
+      deskSelectedPath: '',
+    } as never);
+    const { DeskSection } = await import('../../components/DeskSection');
+
+    render(<DeskSection />);
+
+    fireEvent.contextMenu(screen.getByRole('tree'), { clientX: 10, clientY: 20 });
+    fireEvent.click(screen.getByText('desk.ctx.newMdFile'));
+
+    expect(mocks.deskCreateFileInSubdir).not.toHaveBeenCalled();
+
+    const input = pendingCreateInput();
+    fireEvent.change(input, { target: { value: 'idea.md' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await Promise.resolve();
+    });
+
+    expect(mocks.deskCreateFileInSubdir).toHaveBeenCalledWith('', 'idea.md', '');
+    expect(useStore.getState().deskSelectedPath).toBe('idea.md');
+  });
+
+  it('cancels a folder create draft with a blank name instead of writing to disk', async () => {
+    useStore.setState({
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [],
+      },
+      deskExpandedPaths: [],
+      deskSelectedPath: '',
+    } as never);
+    const { DeskSection } = await import('../../components/DeskSection');
+
+    render(<DeskSection />);
+
+    fireEvent.contextMenu(screen.getByRole('tree'), { clientX: 10, clientY: 20 });
+    fireEvent.click(screen.getByText('desk.ctx.newFolder'));
+
+    const input = pendingCreateInput();
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(mocks.deskMkdirInSubdir).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-desk-pending-create] input')).toBeNull();
+  });
+
+  it('creates a markdown draft inside a folder from that folder context menu', async () => {
+    useStore.setState({
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [{ name: 'notes', isDir: true }],
+        notes: [{ name: 'old.md', isDir: false }],
+      },
+      deskExpandedPaths: ['notes'],
+      deskSelectedPath: '',
+    } as never);
+    const { DeskSection } = await import('../../components/DeskSection');
+
+    render(<DeskSection />);
+
+    fireEvent.contextMenu(screen.getByRole('treeitem', { name: /notes/ }), { clientX: 10, clientY: 20 });
+    fireEvent.click(screen.getByText('desk.ctx.newMdFile'));
+
+    const input = pendingCreateInput();
+    fireEvent.change(input, { target: { value: 'child.md' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await Promise.resolve();
+    });
+
+    expect(mocks.deskCreateFileInSubdir).toHaveBeenCalledWith('notes', 'child.md', '');
+    expect(useStore.getState().deskSelectedPath).toBe('notes/child.md');
+  });
+
+  it('expands a collapsed folder before creating a child draft inside it', async () => {
+    useStore.setState({
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [{ name: 'notes', isDir: true }],
+      },
+      deskExpandedPaths: [],
+      deskSelectedPath: '',
+    } as never);
+    const { DeskSection } = await import('../../components/DeskSection');
+
+    render(<DeskSection />);
+
+    fireEvent.contextMenu(screen.getByRole('treeitem', { name: /notes/ }), { clientX: 10, clientY: 20 });
+    await act(async () => {
+      fireEvent.click(screen.getByText('desk.ctx.newFolder'));
+      await Promise.resolve();
+    });
+
+    expect(useStore.getState().deskExpandedPaths).toEqual(['notes']);
+    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes');
+
+    const input = pendingCreateInput();
+    fireEvent.change(input, { target: { value: 'drafts' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(mocks.deskMkdirInSubdir).toHaveBeenCalledWith('notes', 'drafts');
   });
 
   it('starts inline rename for the selected tree item when Enter is pressed', async () => {

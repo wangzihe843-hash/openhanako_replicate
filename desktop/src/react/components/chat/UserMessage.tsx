@@ -4,6 +4,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
+import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { AttachmentChip } from '../shared/AttachmentChip';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
@@ -120,6 +121,46 @@ export const UserMessage = memo(function UserMessage({
 
   const canShowLatestActions = !readOnly && isLatestUserMessage;
   const timeText = formatMessageTime(message.timestamp);
+  const editingActions: MessageFooterAction[] = useMemo(() => [
+    {
+      id: 'cancel',
+      title: t('common.cancel'),
+      icon: <XIcon />,
+      onClick: () => handleCancelEdit(),
+      disabled: busy,
+    },
+    {
+      id: 'confirm',
+      title: t('common.confirm'),
+      icon: <CheckIcon />,
+      onClick: () => { void handleConfirmEdit(); },
+      disabled: busy || !editValue.trim(),
+    },
+  ], [busy, editValue, handleCancelEdit, handleConfirmEdit, t]);
+  const defaultActions: MessageFooterAction[] = useMemo(() => [
+    {
+      id: 'copy',
+      title: t('common.copyText'),
+      icon: copied ? <CheckIcon /> : <CopyIcon />,
+      onClick: () => handleCopy(),
+      disabled: isStreaming || busy,
+      active: copied,
+    },
+    {
+      id: 'regenerate',
+      title: t('common.regenerate'),
+      icon: <RegenerateIcon />,
+      onClick: () => { void handleRegenerate(); },
+      disabled: isStreaming || busy,
+    },
+    {
+      id: 'edit',
+      title: t('common.edit'),
+      icon: <EditIcon />,
+      onClick: () => handleEdit(),
+      disabled: isStreaming || busy,
+    },
+  ], [busy, copied, handleCopy, handleEdit, handleRegenerate, isStreaming, t]);
 
   return (
     <div className={`${styles.messageGroup} ${styles.messageGroupUser}${isSelected ? ` ${styles.messageGroupSelected}` : ''}`}
@@ -184,68 +225,16 @@ export const UserMessage = memo(function UserMessage({
         )}
       </div>
       {canShowLatestActions && (
-        <div className={`${styles.userActionRow}${editing ? ` ${styles.userActionRowVisible}` : ''}`}>
-          {timeText && <span className={styles.userMessageTime}>{timeText}</span>}
-          {editing ? (
-            <>
-              <button
-                className={styles.userActionBtn}
-                onClick={handleCancelEdit}
-                title={t('common.cancel')}
-                disabled={busy}
-              >
-                <XIcon />
-              </button>
-              <button
-                className={styles.userActionBtn}
-                onClick={handleConfirmEdit}
-                title={t('common.confirm')}
-                disabled={busy || !editValue.trim()}
-              >
-                <CheckIcon />
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className={`${styles.userActionBtn}${copied ? ` ${styles.userActionBtnActive}` : ''}`}
-                onClick={handleCopy}
-                title={t('common.copyText')}
-                disabled={isStreaming || busy}
-              >
-                {copied ? <CheckIcon /> : <CopyIcon />}
-              </button>
-              <button
-                className={styles.userActionBtn}
-                onClick={handleRegenerate}
-                title={t('common.regenerate')}
-                disabled={isStreaming || busy}
-              >
-                <RegenerateIcon />
-              </button>
-              <button
-                className={styles.userActionBtn}
-                onClick={handleEdit}
-                title={t('common.edit')}
-                disabled={isStreaming || busy}
-              >
-                <EditIcon />
-              </button>
-            </>
-          )}
-        </div>
+        <MessageFooterActions
+          align="right"
+          timeText={timeText}
+          visible={editing}
+          actions={editing ? editingActions : defaultActions}
+        />
       )}
     </div>
   );
 });
-
-function formatMessageTime(timestamp?: number): string | null {
-  if (!timestamp || !Number.isFinite(timestamp)) return null;
-  const date = new Date(timestamp);
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
 
 // ── 附件区 ──
 

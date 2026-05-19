@@ -43,6 +43,7 @@ export function useBridgeState() {
 
   const [status, setStatus] = useState<BridgeStatus | null>(null);
   const [testingPlatform, setTestingPlatform] = useState<BridgePlatform | null>(null);
+  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
 
   // Selected agent for bridge config (independent of Agent tab selection)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
@@ -184,24 +185,36 @@ export function useBridgeState() {
   };
 
   const saveGlobalSettings = async (partial: { readOnly?: boolean; receiptEnabled?: boolean }) => {
+    setGlobalSettingsSaving(true);
     try {
-      await hanaFetch('/api/bridge/settings', {
+      const res = await hanaFetch('/api/bridge/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(partial),
       });
+      const saved = await res.json();
+      if (saved.error) throw new Error(saved.error);
+      if (typeof saved.readOnly === 'boolean' && typeof saved.receiptEnabled === 'boolean') {
+        setStatus(prev => prev ? {
+          ...prev,
+          readOnly: saved.readOnly,
+          receiptEnabled: saved.receiptEnabled,
+        } : prev);
+      }
       showToast(t('settings.saved'), 'success');
       await Promise.all([
         loadStatus(),
         loadSettingsConfig(),
       ]);
-    } catch {
-      showToast(t('settings.saveFailed'), 'error');
+    } catch (err: unknown) {
+      showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    } finally {
+      setGlobalSettingsSaving(false);
     }
   };
 
   return {
-    status, testingPlatform, showToast, loadStatus,
+    status, testingPlatform, globalSettingsSaving, showToast, loadStatus,
     selectedAgentId, setSelectedAgentId,
     publicIshiki, setPublicIshiki, savePublicIshiki,
     tgToken, setTgToken,

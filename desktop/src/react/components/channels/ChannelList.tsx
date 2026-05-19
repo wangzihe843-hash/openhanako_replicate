@@ -272,7 +272,8 @@ function ChannelItem({ channel, isDM, isActive, agents, agentMap, userName, user
     setCtxMenu(null);
   }, []);
 
-  const selfInfo = resolveChannelMember(currentAgentId || '', userName, userAvatarUrl, agents, currentAgentId, agentMap);
+  const ownerAgentId = isDM ? (channel.dmOwnerId || currentAgentId || '') : (currentAgentId || '');
+  const selfInfo = resolveChannelMember(ownerAgentId, userName, userAvatarUrl, agents, ownerAgentId, agentMap);
 
   const ctxMenuItems: ContextMenuItem[] = ctxMenu ? [
     {
@@ -290,7 +291,7 @@ function ChannelItem({ channel, isDM, isActive, agents, agentMap, userName, user
       onContextMenu={handleContextMenu}
     >
       {isDM ? (
-        <DmIcon channel={channel} selfInfo={selfInfo} agents={agents} agentMap={agentMap} userName={userName} userAvatarUrl={userAvatarUrl} currentAgentId={currentAgentId} />
+        <DmIcon channel={channel} selfInfo={selfInfo} agents={agents} agentMap={agentMap} userName={userName} userAvatarUrl={userAvatarUrl} ownerAgentId={ownerAgentId} />
       ) : (
         <div className={styles.channelItemIcon}>#</div>
       )}
@@ -303,7 +304,7 @@ function ChannelItem({ channel, isDM, isActive, agents, agentMap, userName, user
         </div>
         <div className={styles.channelItemPreview}>
           {channel.lastMessage && (() => {
-            const senderInfo = resolveChannelMember(channel.lastSender, userName, userAvatarUrl, agents, currentAgentId, agentMap);
+            const senderInfo = resolveChannelMember(channel.lastSender, userName, userAvatarUrl, agents, ownerAgentId || currentAgentId, agentMap);
             return `${senderInfo.displayName}: ${channel.lastMessage}`;
           })()}
         </div>
@@ -327,17 +328,17 @@ function ChannelItem({ channel, isDM, isActive, agents, agentMap, userName, user
 
 // ── DM Icon (dual avatar) ──
 
-function DmIcon({ channel, selfInfo, agents, agentMap, userName, userAvatarUrl, currentAgentId }: {
+function DmIcon({ channel, selfInfo, agents, agentMap, userName, userAvatarUrl, ownerAgentId }: {
   channel: Channel;
   selfInfo: MemberInfo;
   agents: Agent[];
   agentMap: Map<string, Agent>;
   userName: string;
   userAvatarUrl: string | null;
-  currentAgentId: string | null;
+  ownerAgentId: string | null;
 }) {
   const peerId = channel.peerId || channel.members?.[0] || '';
-  const peerInfo = resolveChannelMember(peerId, userName, userAvatarUrl, agents, currentAgentId, agentMap);
+  const peerInfo = resolveChannelMember(peerId, userName, userAvatarUrl, agents, ownerAgentId, agentMap);
 
   return (
     <div className={styles.channelDmIcon}>

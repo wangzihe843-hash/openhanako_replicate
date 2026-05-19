@@ -47,6 +47,7 @@ describe("createSandboxedTools on Windows", () => {
     expect(createWin32Exec).toHaveBeenCalledWith(expect.objectContaining({
       sandbox: expect.objectContaining({
         policy: expect.objectContaining({ mode: "standard" }),
+        hanakoHome: "C:\\hana",
         getExternalReadPaths,
         getSandboxNetworkEnabled,
       }),

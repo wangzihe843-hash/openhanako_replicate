@@ -80,7 +80,7 @@ describe('channel-actions', () => {
         } as Response)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ dms: [{ peerId: 'agent1', peerName: 'Agent 1', messageCount: 5 }] }),
+          json: async () => ({ ownerAgentId: 'hana', dms: [{ ownerAgentId: 'hana', peerId: 'agent1', peerName: 'Agent 1', messageCount: 5 }] }),
         } as Response);
 
       const { loadChannels } = await import('../../stores/channel-actions');
@@ -90,11 +90,12 @@ describe('channel-actions', () => {
       // 检查 setState 被调用，包含合并的 channels
       const lastPatch = setStateCalls[setStateCalls.length - 1];
       expect(lastPatch.channels).toBeDefined();
-      const channels = lastPatch.channels as Array<{ id: string; isDM: boolean }>;
+      const channels = lastPatch.channels as Array<{ id: string; isDM: boolean; dmOwnerId?: string }>;
       expect(channels.length).toBe(2);
       expect(channels[0].isDM).toBe(false);
       expect(channels[1].isDM).toBe(true);
       expect(channels[1].id).toBe('dm:agent1');
+      expect(channels[1].dmOwnerId).toBe('hana');
     });
 
     it('serverPort 为空时不请求', async () => {
@@ -103,6 +104,50 @@ describe('channel-actions', () => {
       await loadChannels();
       expect(mockFetch).not.toHaveBeenCalled();
       mockState.serverPort = '3210';
+    });
+  });
+
+  describe('openChannel', () => {
+    it('opens DM history with the stored owner agent id', async () => {
+      vi.stubGlobal('window', { t: (key: string) => key });
+      mockState.channels = [{
+        id: 'dm:agent1',
+        name: 'Agent 1',
+        members: ['agent1'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: true,
+        peerId: 'agent1',
+        peerName: 'Agent 1',
+        dmOwnerId: 'hana',
+      }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ownerAgentId: 'hana',
+          peerId: 'agent1',
+          peerName: 'Agent 1',
+          messages: [{ sender: 'agent1', timestamp: '2026-05-19 12:00:00', body: 'hello' }],
+        }),
+      } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ activities: [] }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ mode: 'read_only' }),
+        } as Response);
+
+      const { openChannel } = await import('../../stores/channel-actions');
+      await openChannel('dm:agent1', true);
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/dm/agent1?agentId=hana');
+      expect(mockState.channelMessages).toEqual([
+        { sender: 'agent1', timestamp: '2026-05-19 12:00:00', body: 'hello' },
+      ]);
     });
   });
 
@@ -130,6 +175,65 @@ describe('channel-actions', () => {
         state: 'idle',
         summary: '已回复',
       });
+    });
+  });
+
+  describe('DM phone settings owner', () => {
+    it('loads DM phone settings with the stored owner agent id', async () => {
+      mockState.channels = [{
+        id: 'dm:agent1',
+        name: 'Agent 1',
+        members: ['agent1'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: true,
+        peerId: 'agent1',
+        peerName: 'Agent 1',
+        dmOwnerId: 'hana',
+      }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ mode: 'write', replyMinChars: 10, replyMaxChars: 80 }),
+      } as Response);
+
+      const { loadConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
+      await loadConversationAgentPhoneSettings('dm:agent1');
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/conversations/dm%3Aagent1/agent-phone-settings?agentId=hana');
+      expect(mockState.channelAgentPhoneToolMode).toBe('write');
+      expect(mockState.channelAgentReplyMinChars).toBe(10);
+      expect(mockState.channelAgentReplyMaxChars).toBe(80);
+    });
+
+    it('saves DM phone settings with the stored owner agent id', async () => {
+      mockState.currentChannel = 'dm:agent1';
+      mockState.channels = [{
+        id: 'dm:agent1',
+        name: 'Agent 1',
+        members: ['agent1'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: true,
+        peerId: 'agent1',
+        peerName: 'Agent 1',
+        dmOwnerId: 'hana',
+      }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ mode: 'write', replyMinChars: 20, replyMaxChars: 90 }),
+      } as Response);
+
+      const { saveConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
+      await saveConversationAgentPhoneSettings({ mode: 'write', replyMinChars: 20, replyMaxChars: 90 });
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/conversations/dm%3Aagent1/agent-phone-settings?agentId=hana', expect.objectContaining({
+        method: 'POST',
+      }));
+      expect(mockState.channelAgentPhoneToolMode).toBe('write');
     });
   });
 

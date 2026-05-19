@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { installMobilePlatform } from './react/mobile/mobile-platform';
-import './styles.css';
+import './react/mobile/mobile-entry.css';
 import './react/mobile/MobileApp.css';
 
 if (!window.t) {

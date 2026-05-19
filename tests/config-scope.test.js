@@ -17,19 +17,21 @@ import { migrateConfigScope } from "../shared/migrate-config-scope.js";
 // ---------------------------------------------------------------------------
 
 describe("splitByScope", () => {
-  it("extracts top-level global fields (locale, sandbox, sandbox_network) while keeping agent fields (models)", () => {
-    const partial = { locale: "zh-CN", sandbox: false, sandbox_network: true, models: ["gpt-4"] };
+  it("extracts top-level global fields while keeping agent fields (models)", () => {
+    const partial = { locale: "zh-CN", sandbox: false, sandbox_network: true, hardware_acceleration: false, models: ["gpt-4"] };
     const { global: g, agent } = splitByScope(partial);
 
     expect(g).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "locale", value: "zh-CN" }),
       expect.objectContaining({ key: "sandbox", value: false }),
       expect.objectContaining({ key: "sandbox_network", value: true }),
+      expect.objectContaining({ key: "hardware_acceleration", value: false }),
     ]));
     expect(agent.models).toEqual(["gpt-4"]);
     expect(agent.locale).toBeUndefined();
     expect(agent.sandbox).toBeUndefined();
     expect(agent.sandbox_network).toBeUndefined();
+    expect(agent.hardware_acceleration).toBeUndefined();
   });
 
   it("extracts nested global fields (capabilities.learn_skills) while keeping sibling nested fields", () => {
@@ -162,6 +164,7 @@ describe("injectGlobalFields", () => {
       getTimezone: () => "Asia/Tokyo",
       getSandbox: () => false,
       getSandboxNetwork: () => true,
+      getHardwareAcceleration: () => false,
       getUpdateChannel: () => "beta",
       getThinkingLevel: () => "high",
       getLearnSkills: () => true,
@@ -177,6 +180,7 @@ describe("injectGlobalFields", () => {
     expect(config.timezone).toBe("Asia/Tokyo");
     expect(config.sandbox).toBe(false);
     expect(config.sandbox_network).toBe(true);
+    expect(config.hardware_acceleration).toBe(false);
     expect(config.update_channel).toBe("beta");
     expect(config.thinking_level).toBe("high");
     expect(config.capabilities?.learn_skills).toBe(true);

@@ -956,6 +956,50 @@ describe("plugin management API", () => {
       expect(res.status).toBe(500);
     });
 
+    it("rejects dragged OpenClaw plugin zips with an explicit incompatibility error", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-openclaw-plugin-"));
+      try {
+        const userPluginsDir = path.join(tmpDir, "plugins");
+        const sourcePath = path.join(tmpDir, "openclaw-plugin.zip");
+        fs.writeFileSync(sourcePath, makeStoredZip({
+          "openclaw-voice/openclaw.plugin.json": JSON.stringify({
+            id: "openclaw-voice",
+            name: "OpenClaw Voice",
+            configSchema: { type: "object", additionalProperties: false },
+          }),
+          "openclaw-voice/package.json": JSON.stringify({
+            name: "openclaw-voice",
+            version: "1.0.0",
+          }),
+        }));
+        const installPlugin = vi.fn();
+        const engine = mockEngine({
+          pm: {
+            getUserPluginsDir: () => userPluginsDir,
+            installPlugin,
+          },
+        });
+        const app = createApp(engine);
+
+        const res = await app.request("/api/plugins/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: sourcePath }),
+        });
+        const data = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(data).toMatchObject({
+          code: "PLUGIN_FORMAT_INCOMPATIBLE",
+        });
+        expect(data.error).toMatch(/OpenClaw plugin/i);
+        expect(installPlugin).not.toHaveBeenCalled();
+        expect(fs.readdirSync(userPluginsDir)).toEqual([]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("registers a session-scoped plugin install source before installing", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-install-"));
       try {

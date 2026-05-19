@@ -72,6 +72,31 @@ describe("scan", () => {
     const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() });
     expect(pm.scan()).toHaveLength(0);
   });
+
+  it("marks manually copied OpenClaw plugin directories as incompatible", async () => {
+    const dir = path.join(pluginsDir, "openclaw-voice");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "openclaw.plugin.json"), JSON.stringify({
+      id: "openclaw-voice",
+      name: "OpenClaw Voice",
+      configSchema: { type: "object", additionalProperties: false },
+    }));
+    const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() });
+
+    pm.scan();
+    await pm.loadAll();
+    const entry = pm.getPlugin("openclaw-voice");
+
+    expect(entry.status).toBe("incompatible");
+    expect(entry.error).toMatch(/OpenClaw plugin/i);
+    expect(pm.getDiagnostics()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "openclaw-voice",
+        status: "incompatible",
+        error: expect.stringMatching(/OpenClaw plugin/i),
+      }),
+    ]));
+  });
 });
 
 describe("loadAll", () => {
