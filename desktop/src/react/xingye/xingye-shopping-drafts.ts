@@ -72,6 +72,10 @@ export type XingyePendingShoppingDraft = {
   platformStyle: ShoppingDraftPlatformStyle;
   category?: string;
   imaginedPrice?: string;
+  /** 价格 delta 短语，不带货币符号；见 ShoppingEntryMetadata.delta。 */
+  delta?: string;
+  /** 卖家 / 店名口吻，不带真实电商平台；见 ShoppingEntryMetadata.seller。 */
+  seller?: string;
   /** 为什么提议这条草稿（展示给用户帮助决定是否确认）。 */
   reason?: string;
   /** 备注/正文，写入 entries 时落到 AppEntry.content。 */
@@ -149,6 +153,8 @@ function normalizeDraftRow(value: unknown): XingyePendingShoppingDraft | null {
     platformStyle: normalizePlatformStyle(raw.platformStyle),
     category: normalizeOptionalText(raw.category, 24),
     imaginedPrice: normalizeOptionalText(raw.imaginedPrice, 40),
+    delta: normalizeOptionalText(raw.delta, 32),
+    seller: normalizeOptionalText(raw.seller, 24),
     reason: normalizeOptionalText(raw.reason, 500),
     content: normalizeOptionalText(raw.content, 2000),
     tags: normalizeTags(raw.tags),
@@ -201,6 +207,8 @@ export async function appendShoppingDraft(
     platformStyle?: ShoppingDraftPlatformStyle;
     category?: string;
     imaginedPrice?: string;
+    delta?: string;
+    seller?: string;
     reason?: string;
     content?: string;
     tags?: string[];
@@ -217,6 +225,8 @@ export async function appendShoppingDraft(
   const platformStyle = normalizePlatformStyle(input.platformStyle);
   const category = normalizeOptionalText(input.category, 24);
   const imaginedPrice = normalizeOptionalText(input.imaginedPrice, 40);
+  const delta = normalizeOptionalText(input.delta, 32);
+  const seller = normalizeOptionalText(input.seller, 24);
   const reason = normalizeOptionalText(input.reason, 500);
   const content = normalizeOptionalText(input.content, 2000);
   const tags = normalizeTags(input.tags);
@@ -233,6 +243,8 @@ export async function appendShoppingDraft(
     platformStyle,
     category,
     imaginedPrice,
+    delta,
+    seller,
     reason,
     content,
     tags,
@@ -260,6 +272,8 @@ export async function appendShoppingDraft(
     platformStyle,
     category,
     imaginedPrice,
+    delta,
+    seller,
     reason,
     content,
     tags,
@@ -311,6 +325,8 @@ export async function confirmShoppingDraft(
     platformStyle?: ShoppingDraftPlatformStyle;
     category?: string | null;
     imaginedPrice?: string | null;
+    delta?: string | null;
+    seller?: string | null;
     content?: string | null;
     reason?: string | null;
     tags?: string[] | null;
@@ -333,7 +349,7 @@ export async function confirmShoppingDraft(
       entry = existingEntry;
     } else if (draft) {
       const resolveOptional = (
-        key: 'category' | 'imaginedPrice' | 'content' | 'reason',
+        key: 'category' | 'imaginedPrice' | 'delta' | 'seller' | 'content' | 'reason',
         max: number,
       ): string | undefined => {
         if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
@@ -357,6 +373,8 @@ export async function confirmShoppingDraft(
       const platformStyle = normalizePlatformStyle(edits?.platformStyle ?? draft.platformStyle);
       const category = resolveOptional('category', 24);
       const imaginedPrice = resolveOptional('imaginedPrice', 40);
+      const delta = resolveOptional('delta', 32);
+      const seller = resolveOptional('seller', 24);
       const reason = resolveOptional('reason', 500);
       const content = resolveOptional('content', 2000) ?? '';
       const tags = resolveTags();
@@ -368,6 +386,8 @@ export async function confirmShoppingDraft(
       };
       if (category) metadata.category = category;
       if (imaginedPrice) metadata.imaginedPrice = imaginedPrice;
+      if (delta) metadata.delta = delta;
+      if (seller) metadata.seller = seller;
       if (reason) metadata.reason = reason;
       if (tags && tags.length > 0) metadata.tags = tags;
 

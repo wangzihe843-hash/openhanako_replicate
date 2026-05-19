@@ -44,6 +44,8 @@ const PHONE_GENERATE_KINDS = new Set([
   "moments",
   "reading_topics",
   "reading_annotation",
+  "shopping_draft",
+  "shopping_polish",
 ]);
 
 const FORBIDDEN_TERMS = [

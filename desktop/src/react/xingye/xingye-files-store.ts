@@ -220,6 +220,34 @@ async function persistFolders(agentId: string, folders: XingyeFileFolder[]): Pro
   await backend.writeJson(agentId, XINGYE_FILES_FOLDERS_JSON, { folders });
 }
 
+/**
+ * 把指定 folder 的 `updatedAt` 刷成 `nowIso`，并持久化整个 folders 列表。
+ *
+ * 为什么需要：folder.updatedAt 只在 ensureDefaultFileFolders 创建时写一次；
+ * 后续 appendFileEntry / updateFileEntry / deleteFileEntry 不会更新 folder 本身，
+ * 导致 PhoneFilesApp 首页"修改"列永远是初始化时间。这个 helper 把入口收拢，
+ * 写 entries 的 mutating 函数都调一次。
+ *
+ * 失败仅 warn——entry 已经写入成功；folder 时间慢一次不致命。
+ */
+async function bumpFolderUpdatedAtBestEffort(
+  agentId: string,
+  folderId: string,
+  nowIso: string,
+): Promise<void> {
+  try {
+    const existing = await listFileFolders(agentId);
+    const next = existing.map((f) =>
+      f.id === folderId ? { ...f, updatedAt: nowIso } : f,
+    );
+    /** 没匹配到 folderId 就不写——可能是脏 entry 指向不存在的 folder，不应该新建。 */
+    if (next === existing || !next.some((f) => f.id === folderId)) return;
+    await persistFolders(agentId, next);
+  } catch (error) {
+    console.warn('[xingye-files-store] bump folder.updatedAt failed:', error);
+  }
+}
+
 export async function ensureDefaultFileFolders(agentId: string): Promise<XingyeFileFolder[]> {
   const aid = assertAgentId(agentId, '初始化资料柜');
   const existing = await listFileFolders(aid);
@@ -302,6 +330,7 @@ export async function appendFileEntry(
   const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : newFileEntryId();
   const entry = buildEntry(aid, input, nowIso, id);
   await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, entry);
+  await bumpFolderUpdatedAtBestEffort(aid, entry.folderId, nowIso);
   await appendFileEventBestEffort(aid, {
     type: 'file.entry_appended',
     source: 'xingye-files-store',
@@ -321,8 +350,22 @@ export async function deleteFileEntry(agentId: string, entryId: string): Promise
   const aid = assertAgentId(agentId, '删除');
   const eid = entryId.trim();
   if (!eid) throw new Error('删除失败：缺少文件 id。');
+  /**
+   * 在删除前读一次拿到 folderId，删完再 bump 对应 folder 的 updatedAt。
+   * 这里宽容点——拿不到 folderId 就跳过 bump，不阻塞主流程。
+   */
+  let folderIdToBump: string | null = null;
+  try {
+    const existing = (await listFileEntries(aid)).find((e) => e.id === eid);
+    if (existing) folderIdToBump = existing.folderId;
+  } catch {
+    folderIdToBump = null;
+  }
   const deleted = await backend.deleteJsonlRecord(aid, XINGYE_FILES_ENTRIES_JSONL, eid);
   if (deleted) {
+    if (folderIdToBump) {
+      await bumpFolderUpdatedAtBestEffort(aid, folderIdToBump, new Date().toISOString());
+    }
     await appendFileEventBestEffort(aid, {
       type: 'file.entry_deleted',
       source: 'xingye-files-store',
@@ -638,5 +681,13 @@ export async function updateFileEntry(
   };
   await backend.deleteJsonlRecord(aid, XINGYE_FILES_ENTRIES_JSONL, eid);
   await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, updated);
+  /**
+   * folderId 没变就只 bump 当前 folder；
+   * 改了 folder（move）就两个 folder 都 bump（源 folder 少了一条、目标 folder 多了一条）。
+   */
+  await bumpFolderUpdatedAtBestEffort(aid, updated.folderId, updated.updatedAt ?? new Date().toISOString());
+  if (current.folderId !== updated.folderId) {
+    await bumpFolderUpdatedAtBestEffort(aid, current.folderId, updated.updatedAt ?? new Date().toISOString());
+  }
   return updated;
 }

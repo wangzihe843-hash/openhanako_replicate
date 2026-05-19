@@ -195,7 +195,29 @@ describe('xingye-files-store', () => {
   });
 
   it('deleteFileEntry forwards recordId to deleteJsonlRecord', async () => {
-    postMock.mockResolvedValueOnce({ ok: true, deleted: true });
+    /**
+     * `deleteFileEntry` 现在的实现会：
+     *   1. listJsonl(entries) 读 entry-1 拿到 folderId，用于后续 folder.updatedAt 刷新；
+     *   2. deleteJsonlRecord 真删；
+     *   3. bumpFolderUpdatedAtBestEffort → readJson(folders) + writeJson(folders)
+     *      （best-effort，失败仅 warn，不影响主流程返回值）。
+     * 测试只断言主语义：deleteJsonlRecord 收到正确 recordId 且函数返回 true。
+     * 后两步的 mock 给定即可让 bump 不抛错；不强校验 bump 的存在与否。
+     */
+    postMock
+      // (1) listJsonl(entries) → 找到 entry-1 所在的 folderId
+      .mockResolvedValueOnce({
+        ok: true,
+        records: [
+          { id: 'entry-1', agentId: 'agent-x', folderId: 'fold-1', title: 'T', body: 'b', createdAt: '2026-05-15T10:00:00.000Z' },
+        ],
+      })
+      // (2) deleteJsonlRecord → 返回 deleted:true
+      .mockResolvedValueOnce({ ok: true, deleted: true })
+      // (3) readJson(folders) → bumpFolderUpdatedAtBestEffort 读 folders
+      .mockResolvedValueOnce({ ok: true, data: { folders: [{ id: 'fold-1', agentId: 'agent-x', name: 'x', order: 0, createdAt: '2026-05-15T10:00:00.000Z', updatedAt: '2026-05-15T10:00:00.000Z' }] } })
+      // (4) writeJson(folders) → bump 持久化
+      .mockResolvedValueOnce({ ok: true });
     await expect(deleteFileEntry('agent-x', 'entry-1')).resolves.toBe(true);
     expect(postMock).toHaveBeenCalledWith({
       action: 'deleteJsonlRecord',
@@ -203,6 +225,23 @@ describe('xingye-files-store', () => {
       relativePath: XINGYE_FILES_ENTRIES_JSONL,
       recordId: 'entry-1',
     });
+  });
+
+  it('deleteFileEntry still resolves true when bumping folder.updatedAt fails', async () => {
+    /**
+     * folder.updatedAt 同步是 best-effort：如果 readJson(folders) 或 writeJson 失败，
+     * 主流程（entry 删除成功）依然返回 true。
+     */
+    postMock
+      .mockResolvedValueOnce({
+        ok: true,
+        records: [
+          { id: 'entry-1', agentId: 'agent-x', folderId: 'fold-1', title: 'T', body: 'b', createdAt: '2026-05-15T10:00:00.000Z' },
+        ],
+      })
+      .mockResolvedValueOnce({ ok: true, deleted: true })
+      .mockRejectedValueOnce(new Error('folders.json missing'));
+    await expect(deleteFileEntry('agent-x', 'entry-1')).resolves.toBe(true);
   });
 
   it('updateFileEntry deletes old row and appends updated one', async () => {

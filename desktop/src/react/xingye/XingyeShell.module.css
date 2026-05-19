@@ -6502,3 +6502,1250 @@
   color: rgba(108, 70, 45, 0.7);
   word-break: break-all;
 }
+
+/* ==========================================================================
+   星野小手机 · 购物 / 文件管理 v2（claude design 落地）
+   --------------------------------------------------------------------------
+   设计来源：optimized/IMPLEMENTATION_NOTES.md
+   - 暖纸色系（paper/ink）+ 5 色 tone（terracotta/sage/ochre/plum/slate）
+   - 不带图片：色块 + 衬线/mono 字体 + 排版
+   - 价格不带货币符号（直接取 metadata.imaginedPrice）
+   ========================================================================== */
+
+.xyPalette {
+  /* 暖纸色 */
+  --xy-paper: #f7f3eb;
+  --xy-paper-soft: #fbf8f1;
+  --xy-paper-deep: #ede5d4;
+  --xy-line: #e4dccc;
+  --xy-line-soft: #efe8d8;
+
+  /* 墨色 */
+  --xy-ink: #2b251c;
+  --xy-ink-soft: #5a4f3f;
+  --xy-ink-mute: #8a7d68;
+  --xy-ink-faint: #b3a890;
+
+  /* 5 色 tone（chroma 接近、hue 不同） */
+  --xy-terracotta: #c46a44;
+  --xy-terracotta-bg: #f6e3d6;
+  --xy-terracotta-soft: #e9b598;
+  --xy-sage: #6b7a56;
+  --xy-sage-bg: #e4e7d4;
+  --xy-ochre: #b08828;
+  --xy-ochre-bg: #f1e6c4;
+  --xy-plum: #864d5e;
+  --xy-plum-bg: #efd9de;
+  --xy-slate: #4a5a6a;
+  --xy-slate-bg: #d9e1e6;
+
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.96), rgba(247, 243, 235, 0.96)),
+    var(--bg-card, var(--overlay-subtle));
+  color: var(--xy-ink);
+}
+
+.xyBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.xyScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 80px;
+}
+
+.xyFabBar {
+  position: relative;
+}
+
+.xyFab {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--xy-ink);
+  color: var(--xy-paper-soft);
+  border: 0;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 26px -8px rgba(43, 37, 28, 0.45);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xyFab:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---------- chip ---------- */
+.xyChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  background: var(--xy-paper-deep);
+  color: var(--xy-ink-soft);
+}
+.xyChipTintTerracotta { background: var(--xy-terracotta-bg); color: var(--xy-terracotta); }
+.xyChipTintSage       { background: var(--xy-sage-bg);       color: var(--xy-sage); }
+.xyChipTintOchre      { background: var(--xy-ochre-bg);      color: var(--xy-ochre); }
+.xyChipTintPlum       { background: var(--xy-plum-bg);       color: var(--xy-plum); }
+.xyChipTintSlate      { background: var(--xy-slate-bg);      color: var(--xy-slate); }
+.xyChipSolidTerracotta { background: var(--xy-terracotta); color: #fff; }
+.xyChipSolidSage       { background: var(--xy-sage); color: #fff; }
+.xyChipSolidOchre      { background: var(--xy-ochre); color: #fff; }
+.xyChipSolidPlum       { background: var(--xy-plum); color: #fff; }
+.xyChipSolidSlate      { background: var(--xy-slate); color: #fff; }
+
+/* ---------- 横向滚动 chip seg ---------- */
+.xySegWrap {
+  padding: 6px 14px 6px;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.xySeg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--xy-paper-deep);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  width: max-content;
+}
+
+.xySeg button {
+  border: 0;
+  background: transparent;
+  color: var(--xy-ink-mute);
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.xySeg button[aria-pressed='true'] {
+  background: var(--xy-paper-soft);
+  color: var(--xy-ink);
+  box-shadow: 0 1px 2px rgba(60, 50, 40, 0.06);
+}
+
+/* ---------- hero ---------- */
+.xyShopHero,
+.xyFilesHero {
+  padding: 8px 18px 12px;
+  flex: 0 0 auto;
+}
+
+.xyFilesHero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.xyShopKicker,
+.xyFilesKicker {
+  margin: 0;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--xy-terracotta);
+  text-transform: uppercase;
+}
+
+.xyShopTitle,
+.xyFilesTitle {
+  margin: 2px 0 4px;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--xy-ink);
+  line-height: 1.2;
+}
+
+.xyShopSub {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--xy-ink-mute);
+  line-height: 1.5;
+}
+
+.xyShopStats {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+}
+
+.xyShopStats b {
+  font-family: var(--xingye-font-serif, serif);
+  font-weight: 600;
+  color: var(--xy-ink);
+  font-size: 14px;
+  margin-right: 4px;
+}
+
+.xyFilesMeta {
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* ---------- 购物列表 · row-card with day stub ---------- */
+.xyShopList {
+  padding: 4px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xyRowCard {
+  width: 100%;
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-line);
+  border-radius: 14px;
+  align-items: stretch;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.xyRowCard:hover {
+  border-color: var(--xy-terracotta-soft);
+  transform: translateY(-1px);
+}
+
+.xyRowCardStub {
+  width: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  background: var(--xy-paper-deep);
+  border-radius: 8px;
+  align-self: stretch;
+}
+
+.xyRowCardDay {
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--xy-ink);
+  line-height: 1;
+}
+
+.xyRowCardDayUnit {
+  margin-top: 2px;
+  font-size: 10px;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  color: var(--xy-ink-mute);
+  letter-spacing: 0.04em;
+}
+
+.xyRowCardBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xyRowCardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xyRowCardSeller {
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.xyRowCardName {
+  margin: 2px 0 0;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--xy-ink);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.xyRowCardReason {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--xy-ink-soft);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.xyRowCardFoot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.xyRowCardPrice {
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--xy-terracotta);
+  letter-spacing: -0.01em;
+}
+
+.xyRowCardDelta {
+  font-size: 11px;
+  color: var(--xy-sage);
+  font-weight: 500;
+}
+
+/* ---------- 购物详情 · detail-cover ---------- */
+.xyDetail {
+  padding: 0 0 80px;
+}
+
+.xyDetailCover {
+  margin: 4px 16px;
+  border-radius: 22px;
+  padding: 18px 20px 20px;
+  position: relative;
+  overflow: hidden;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid rgba(60, 50, 40, 0.06);
+}
+
+.xyDetailCover::before {
+  content: '';
+  position: absolute;
+  right: -40px;
+  top: -40px;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+.xyToneWarm { background: linear-gradient(135deg, #fbece1 0%, #f7d8c2 100%); }
+.xyToneCool { background: linear-gradient(135deg, #e8eddc 0%, #d3dec0 100%); }
+.xyToneGold { background: linear-gradient(135deg, #f5ead0 0%, #e8d2a0 100%); }
+.xyTonePlum { background: linear-gradient(135deg, #f4e1e6 0%, #e8c8d0 100%); }
+
+.xyDetailCoverTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  position: relative;
+  z-index: 1;
+  gap: 8px;
+}
+
+.xyDetailCoverCat,
+.xyDetailCoverSeller {
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--xy-ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.xyDetailCoverName {
+  margin: 8px 0 0;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--xy-ink);
+  line-height: 1.2;
+  position: relative;
+  z-index: 1;
+  text-wrap: balance;
+}
+
+.xyDetailCoverFoot {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+  margin-top: 16px;
+}
+
+.xyDetailBody {
+  padding: 16px 18px 20px;
+}
+
+.xyDetailMeta {
+  margin: 0 0 12px;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  letter-spacing: 0.04em;
+}
+
+.xyDetailPriceRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--xy-line);
+  border-bottom: 1px solid var(--xy-line);
+  flex-wrap: wrap;
+}
+
+.xyDetailPrice {
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--xy-terracotta);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.xyDetailDelta {
+  font-size: 12px;
+  color: var(--xy-sage);
+}
+
+.xyDetailNote {
+  margin-top: 16px;
+  padding: 14px 14px 12px;
+  background: var(--xy-paper-soft);
+  border-left: 3px solid var(--xy-terracotta-soft);
+  border-radius: 4px 8px 8px 4px;
+}
+
+.xyDetailNoteKicker {
+  margin: 0;
+  font-size: 11px;
+  color: var(--xy-terracotta);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.04em;
+}
+
+.xyDetailNoteText {
+  margin: 4px 0 8px;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--xy-ink);
+  white-space: pre-wrap;
+}
+
+.xyDetailNoteReason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--xy-ink-mute);
+  font-style: italic;
+}
+
+.xyDetailSection {
+  margin-top: 18px;
+}
+
+.xyDetailSecTitle {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--xy-ink-soft);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.xyDetailTimeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xyDetailTimeline li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xyDetailTimelineRow {
+  display: flex;
+  justify-content: space-between;
+  flex: 1;
+  font-size: 13px;
+  color: var(--xy-ink);
+  gap: 8px;
+}
+
+.xyDetailTimelineRow b {
+  font-weight: 600;
+}
+
+.xyDetailTimelineRow i {
+  font-style: normal;
+  color: var(--xy-ink-mute);
+  font-size: 12px;
+}
+
+.xyDetailTimelinePending {
+  opacity: 0.55;
+}
+
+.xyDetailTimelineDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid var(--xy-ink-faint);
+  background: transparent;
+  flex: 0 0 10px;
+}
+
+.xyDetailTimelineDotDone {
+  background: var(--xy-sage);
+  border-color: var(--xy-sage);
+}
+
+.xyDetailTimelineDotActive {
+  background: var(--xy-terracotta);
+  border-color: var(--xy-terracotta);
+  box-shadow: 0 0 0 4px var(--xy-terracotta-bg);
+}
+
+.xyDetailBranchCard {
+  padding: 12px 14px;
+  background: var(--xy-paper-soft);
+  border-radius: 10px;
+  border: 1px solid var(--xy-line);
+}
+
+.xyDetailBranchTitle {
+  margin: 0;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--xy-ink);
+}
+
+.xyDetailBranchHint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--xy-ink-mute);
+  line-height: 1.5;
+}
+
+.xyDetailTagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.xyDetailActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.xyBtnGhost {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--xy-line);
+  color: var(--xy-ink-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 11px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.xyBtnGhost:hover:not(:disabled) {
+  background: var(--xy-paper-soft);
+  color: var(--xy-ink);
+}
+
+.xyBtnGhost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.xyBtnGhostDanger {
+  color: var(--xy-terracotta);
+  border-color: var(--xy-terracotta-soft);
+}
+
+.xyBtnGhostDanger:hover:not(:disabled) {
+  background: var(--xy-terracotta-bg);
+  color: var(--xy-terracotta);
+}
+
+/* ---------- 待确认草稿（pending draft）共用样式 ---------- */
+.xyDraftSection {
+  padding: 8px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.xyDraftHeader {
+  padding: 8px 4px 4px;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--xy-terracotta);
+}
+
+.xyDraftCard {
+  padding: 12px 14px 14px;
+  background: var(--xy-paper-soft);
+  border: 1px dashed var(--xy-terracotta-soft);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.xyDraftReason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--xy-ink-mute);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.xyDraftRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xyDraftInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--xy-ink);
+  background: transparent;
+  border: 1px solid var(--xy-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.xyDraftInput:focus {
+  outline: none;
+  border-color: var(--xy-terracotta-soft);
+}
+
+.xyDraftSelect {
+  font: inherit;
+  font-size: 13px;
+  color: var(--xy-ink);
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.xyDraftTextarea {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  color: var(--xy-ink);
+  background: transparent;
+  border: 1px solid var(--xy-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.xyDraftActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.xyDraftConfirm {
+  background: var(--xy-ink);
+  color: var(--xy-paper-soft);
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.xyDraftConfirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.xyDraftDiscard {
+  background: transparent;
+  color: var(--xy-ink-mute);
+  border: 1px solid var(--xy-line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.xyDraftDiscard:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.xyDraftHint {
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  margin: 0;
+}
+
+.xyDraftError {
+  margin: 0;
+  font-size: 12px;
+  color: var(--xy-terracotta);
+}
+
+/* ---------- 编辑器（compose / edit）卡片化容器 ---------- */
+.xyEditorWrap {
+  padding: 4px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xyEditorField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xyEditorField > span {
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--xy-ink-mute);
+}
+
+.xyEditorField > input,
+.xyEditorField > textarea,
+.xyEditorField > select {
+  font: inherit;
+  font-size: 14px;
+  color: var(--xy-ink);
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+
+.xyEditorField > textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.xyEditorField > input:focus,
+.xyEditorField > textarea:focus,
+.xyEditorField > select:focus {
+  outline: none;
+  border-color: var(--xy-terracotta-soft);
+}
+
+.xyEditorActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.xyEditorPrimary {
+  flex: 1;
+  background: var(--xy-ink);
+  color: var(--xy-paper-soft);
+  border: 0;
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.xyEditorPrimary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.xyEditorError {
+  margin: 0;
+  font-size: 12px;
+  color: var(--xy-terracotta);
+}
+
+/* ==========================================================================
+   文件管理 v2
+   ========================================================================== */
+
+.xyBreadcrumb {
+  padding: 4px 18px 8px;
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.04em;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.xyBreadcrumb b {
+  color: var(--xy-ink);
+}
+
+.xyBcSep {
+  opacity: 0.5;
+}
+
+.xyFilesColHead {
+  display: flex;
+  gap: 12px;
+  padding: 6px 18px;
+  font-size: 10.5px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-top: 1px solid var(--xy-line);
+  border-bottom: 1px solid var(--xy-line);
+  background: var(--xy-paper-soft);
+}
+
+.xyFilesColName {
+  flex: 1;
+  min-width: 0;
+}
+
+.xyFilesColCount {
+  width: 54px;
+  flex: 0 0 54px;
+  text-align: right;
+}
+
+.xyFilesColTime {
+  width: 70px;
+  flex: 0 0 70px;
+  text-align: right;
+}
+
+.xyFilesList {
+  display: flex;
+  flex-direction: column;
+}
+
+.xyFilesRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--xy-line-soft);
+  padding: 11px 18px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background 0.15s;
+}
+
+.xyFilesRow:hover {
+  background: var(--xy-paper-soft);
+}
+
+.xyFilesRowPending {
+  background: linear-gradient(90deg, rgba(196, 106, 68, 0.07) 0%, transparent 60%);
+}
+
+.xyFilesRowIcon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--xy-paper-deep);
+}
+
+.xyFilesRowIconTerracotta { background: #fbece1; color: var(--xy-terracotta); }
+.xyFilesRowIconPlum       { background: #f4e1e6; color: var(--xy-plum); }
+.xyFilesRowIconOchre      { background: #f5ead0; color: var(--xy-ochre); }
+.xyFilesRowIconSage       { background: #e8eddc; color: var(--xy-sage); }
+.xyFilesRowIconSlate      { background: #dde6ee; color: var(--xy-slate); }
+.xyFilesRowIconDoc        { background: var(--xy-paper-deep); color: var(--xy-ink-mute); }
+
+.xyFilesRowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xyFilesRowName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--xy-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xyFilesRowDraftBadge {
+  font-style: normal;
+  color: var(--xy-terracotta);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.xyFilesRowDesc {
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xyFilesRowCount {
+  width: 54px;
+  flex: 0 0 54px;
+  text-align: right;
+  font-family: var(--xingye-font-serif, serif);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--xy-ink);
+}
+
+.xyFilesRowTime {
+  width: 70px;
+  flex: 0 0 70px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+}
+
+.xyFilesSectionLabel {
+  margin: 0;
+  padding: 14px 18px 6px;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--xy-ink-mute);
+  text-transform: uppercase;
+}
+
+.xyFilesEmpty {
+  padding: 24px 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--xy-ink-mute);
+  line-height: 1.6;
+}
+
+.xyFilesEmpty .xyEditorPrimary {
+  margin-top: 12px;
+  flex: 0 0 auto;
+  padding: 10px 18px;
+}
+
+/* ---------- 文件夹内容（folder content） ---------- */
+.xyFolderHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 14px 8px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(60, 50, 40, 0.06);
+}
+
+.xyFolderHeaderTerracotta { background: linear-gradient(160deg, #fbece1 0%, #f7e2d2 100%); }
+.xyFolderHeaderPlum       { background: linear-gradient(160deg, #f4e1e6 0%, #ecd0d8 100%); }
+.xyFolderHeaderOchre      { background: linear-gradient(160deg, #f5ead0 0%, #ecdbb0 100%); }
+.xyFolderHeaderSage       { background: linear-gradient(160deg, #e8eddc 0%, #d9e1c5 100%); }
+.xyFolderHeaderSlate      { background: linear-gradient(160deg, #dde6ee 0%, #c9d6e0 100%); }
+
+.xyFolderHeaderGlyph {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--xy-ink);
+}
+
+.xyFolderHeaderMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xyFolderHeaderName {
+  margin: 0;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--xy-ink);
+}
+
+.xyFolderHeaderDesc {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--xy-ink-soft);
+  line-height: 1.45;
+}
+
+.xyNoteList {
+  padding: 4px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xyNoteCard {
+  width: 100%;
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-line);
+  border-radius: 12px;
+  padding: 12px 14px 12px 16px;
+  position: relative;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.xyNoteCard:hover {
+  border-color: var(--xy-terracotta-soft);
+  transform: translateY(-1px);
+}
+
+.xyNoteCard::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: var(--xy-terracotta-soft);
+  border-radius: 999px;
+}
+
+.xyNoteCardTitle {
+  margin: 0;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--xy-ink);
+  line-height: 1.3;
+}
+
+.xyNoteCardBody {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--xy-ink-soft);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.xyNoteCardFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.xyNoteSpacer {
+  flex: 1;
+}
+
+.xyNoteTime {
+  font-size: 10.5px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+}
+
+/* ---------- 文件详情 · 纸样式（detail-paper） ---------- */
+.xyDetailPaper {
+  background: var(--xy-paper-soft);
+  margin: 8px 16px 0;
+  border: 1px solid var(--xy-line);
+  border-radius: 14px;
+  padding: 24px 22px 16px;
+  position: relative;
+}
+
+.xyDetailPaper::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 22px;
+  right: 22px;
+  height: 1px;
+  border-top: 1px dashed var(--xy-line);
+  opacity: 0.7;
+}
+
+.xyDetailPaperPath {
+  margin: 0;
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--xy-ink-mute);
+  letter-spacing: 0.04em;
+}
+
+.xyDetailPaperTitle {
+  margin: 6px 0 4px;
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--xy-ink);
+  letter-spacing: -0.005em;
+  line-height: 1.25;
+}
+
+.xyDetailPaperMeta {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  font-family: var(--xingye-font-mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+}
+
+.xyDetailPaperTags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.xyDetailPaperRule {
+  border: 0;
+  height: 1px;
+  background: var(--xy-line);
+  margin: 14px 0;
+}
+
+.xyDetailPaperBody {
+  font-family: var(--xingye-font-serif, serif);
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--xy-ink);
+}
+
+.xyDetailPaperBody p {
+  margin: 0 0 10px;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.xyDetailPaperBody p:last-child {
+  margin-bottom: 0;
+}
+
+.xyDetailPaperQuote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--xy-terracotta-soft);
+  background: var(--xy-paper-deep);
+  font-style: italic;
+  color: var(--xy-ink-soft);
+  border-radius: 0 8px 8px 0;
+}
+
+.xyDetailPaperFoot {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+

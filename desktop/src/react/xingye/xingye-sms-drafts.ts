@@ -283,6 +283,13 @@ export async function confirmSmsDraft(
      * 直接当成"上次已写"返回，绕过 addSmsMessage / 抛错。
      */
     for (const thread of getSmsThreads(aid)) {
+      /**
+       * SMS 草稿只会落到 'agent' / 'virtual_contact' 两类 thread；
+       * 但 thread.targetType 的类型是更宽的 XingyeContactTargetType（含 channel/tag/faction）。
+       * 用 isAllowedTargetType 做 type guard 把它收窄到 SmsDraftTargetType，同时跳过
+       * 任何其它意外类型的 thread（理论上不会有，但写防御性更稳）。
+       */
+      if (!isAllowedTargetType(thread.targetType)) continue;
       const existing = thread.messages.find((m) => m.id === expectedMessageId);
       if (existing) {
         try {
