@@ -62,11 +62,10 @@ describe('xingye-news-era-style (descriptors)', () => {
   });
 
   it('getNewsEraStyle 对非法 era → fallback 到 modern_or_future（与 resolver 一致）', () => {
-    // @ts-expect-error 故意传 null
+    // null / undefined 在函数签名里已经允许，直接传不需要 @ts-expect-error
     expect(getNewsEraStyle(null)).toBe(NEWS_ERA_STYLES.modern_or_future);
-    // @ts-expect-error 故意传 undefined
     expect(getNewsEraStyle(undefined)).toBe(NEWS_ERA_STYLES.modern_or_future);
-    // @ts-expect-error 故意传非法字符串
+    // @ts-expect-error 故意传非法字符串（签名只接受 NewsEraId | null | undefined）
     expect(getNewsEraStyle('not_an_era')).toBe(NEWS_ERA_STYLES.modern_or_future);
   });
 
