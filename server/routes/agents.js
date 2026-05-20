@@ -749,7 +749,7 @@ export function createAgentsRoute(engine) {
           },
         });
       } catch (err) {
-        console.warn(`[agents/pinned] event log append failed: ${err?.message || err}`);
+        log.warn(`[agents/pinned] event log append failed: ${err?.message || err}`);
       }
       return c.json({ ok: true });
     } catch (err) {

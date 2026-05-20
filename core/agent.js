@@ -1243,7 +1243,7 @@ export class Agent {
           parts.push(...section(genderPreamble.title, genderPreamble.body));
         }
       } catch (error) {
-        console.warn(`[xingye] skip gender preamble: ${error?.message || error}`);
+        moduleLog.warn(`[xingye] skip gender preamble: ${error?.message || error}`);
       }
 
       /*
@@ -1267,7 +1267,7 @@ export class Agent {
           parts.push(...section(relationshipPreamble.title, relationshipPreamble.body));
         }
       } catch (error) {
-        console.warn(`[xingye] skip relationship preamble: ${error?.message || error}`);
+        moduleLog.warn(`[xingye] skip relationship preamble: ${error?.message || error}`);
       }
 
       try {
@@ -1288,7 +1288,7 @@ export class Agent {
           ));
         }
       } catch (error) {
-        console.warn(`[xingye] skip stable lore prompt section: ${error?.message || error}`);
+        moduleLog.warn(`[xingye] skip stable lore prompt section: ${error?.message || error}`);
       }
 
       try {
@@ -1309,7 +1309,7 @@ export class Agent {
           parts.push("", "---", "", runtimeLore);
         }
       } catch (error) {
-        console.warn(`[xingye] skip runtime lore prompt section: ${error?.message || error}`);
+        moduleLog.warn(`[xingye] skip runtime lore prompt section: ${error?.message || error}`);
       }
     }
 

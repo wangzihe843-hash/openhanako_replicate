@@ -371,7 +371,7 @@ export class Scheduler {
       const result = await runXingyeHeartbeatConsumer({ agentId, agentDir });
       return result || null;
     } catch (err) {
-      console.error(`[xingye] heartbeat consumer failed (${agentId}): ${err.message}`);
+      log.error(`[xingye] heartbeat consumer failed (${agentId}): ${err.message}`);
       this._engine.emitDevLog?.(`[xingye] heartbeat consumer failed: ${err.message}`, "error");
       return null;
     }
