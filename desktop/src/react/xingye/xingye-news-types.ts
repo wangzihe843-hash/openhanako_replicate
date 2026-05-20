@@ -8,7 +8,10 @@
  *
  * 板块选择由模型决定（每期 2-4 个），但受以下硬约束（见 selectSectionKindsRules）：
  *   - 必含 `headline_world`（头版要闻不能缺）
- *   - 至少含 {gossip_column, interview, review} 中一个（每期必须有"感情/角色视角"内容）
+ *   - 至少含 {gossip_column, review} 中一个（每期必须有"感情/角色视角"内容）
+ *
+ * 注：interview（人物专访）已从可选板块中移除——Q&A 形态在多板块平衡下很难稳定生成，
+ * 已迁出为「秘密空间 · TA 的独家专访」独立模块。
  *
  * 每个 section_kind 有固定的 layoutSlot —— UI 渲染时按 slot 决定塞到报纸版面的哪个位置。
  * 字数范围由代码强制（normalize 时按 max 截断），下限不强制（留弹性）。
@@ -19,7 +22,6 @@ export const NEWS_SECTION_KINDS = [
   'headline_world',
   'second_news',
   'gossip_column',
-  'interview',
   'review',
   'street_snap',
   'obituary',
@@ -86,19 +88,6 @@ export const NEWS_SECTION_REGISTRY: Record<NewsSectionKind, NewsSectionRegistryE
       + '语气暧昧、带点世故的旁观，不要正面引用 TA 的内心独白；可以委婉点名（"那位常被提起的某某"）'
       + '或直呼姓名（参照 lore / 关系状态）。**不要写成 TA 的自述、用户的来信或两人的对话**；只能是第三方在评论。',
   },
-  interview: {
-    label: '第三人称采访',
-    titleCandidates: ['人物专访', '一席谈', '记者手记', '对答录'],
-    targetChars: [200, 350],
-    layoutSlot: 'left_column',
-    taskPrompt:
-      '虚构一位"记者"采访与 TA 相关的边缘人物（朋友 / 邻居 / 病人 / 同行等），勾勒 TA 的人物侧面。'
-      + '以**夹叙夹议**为主——记者用第三人称叙述场景与受访者的姿态、神态，关键处引用一两句直接引语即可；'
-      + '**避免冷生的 Q&A 问答体（"问：……答：……"）**，那样像调查笔录，不像报纸采访稿。'
-      + '话题限定在人物的**职业能力 / 习惯口碑 / 人物轶事**层面——感情进展归「感情专栏」管，'
-      + '本板块**不要追问 TA 和用户的关系、也不要让受访者主动八卦两人关系**。'
-      + '不要原文复读已发生的对话；只能是事后回忆或第三方观察。',
-  },
   review: {
     label: '评论员文章',
     titleCandidates: ['主笔评论', '社论', '长评'],
@@ -163,11 +152,10 @@ export const REQUIRED_SECTION_KINDS: readonly NewsSectionKind[] = ['headline_wor
 
 /**
  * 至少要从这些里挑一个：感情视角是新闻模块的核心价值，每期必须有一个。
- * 三选一，让模型按当期素材挑笔调最合适的那一个。
+ * 二选一，让模型按当期素材挑笔调最合适的那一个。
  */
 export const AT_LEAST_ONE_OF_RELATIONSHIP_SECTION_KINDS: readonly NewsSectionKind[] = [
   'gossip_column',
-  'interview',
   'review',
 ];
 

@@ -96,7 +96,7 @@ async function buildStableLoreBlock(agentId: string): Promise<string> {
  * 从已生成的 news entries 抽样：
  *  - 最近 8 期 masthead（要求本期与已用过的保持同名报头）
  *  - 最近 8 期 headline_world 标题 + 第一句（要求本期换主题、不要重复世界线大事）
- *  - 最近 4 期感情类板块（gossip/interview/review）的开头 30 字（要求本期换笔调或切口）
+ *  - 最近 4 期感情类板块（gossip/review）的开头 30 字（要求本期换笔调或切口）
  *
  * 没有历史数据 → 返回空字符串，prompt 端会渲染「（无；这是 TA 的第一期报纸）」。
  */
@@ -128,7 +128,7 @@ async function buildNewsContinuityAnchorBlock(agentId: string): Promise<string> 
           headlineSamples.push(title ? `${title}：${firstLine}` : firstLine);
         }
         if (
-          (kind === 'gossip_column' || kind === 'interview' || kind === 'review')
+          (kind === 'gossip_column' || kind === 'review')
           && relationshipSamples.length < 4
         ) {
           const opener = body.slice(0, 30);
