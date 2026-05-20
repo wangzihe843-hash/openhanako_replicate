@@ -4,6 +4,7 @@ import { isCorsOriginAllowed } from "../server/http/cors-policy.js";
 describe("CORS policy", () => {
   it("allows production Electron file-origin frontends to pair with a LAN server", () => {
     expect(isCorsOriginAllowed({ origin: "null" })).toBe(true);
+    expect(isCorsOriginAllowed({ origin: "file://" })).toBe(true);
   });
 
   it("keeps the default browser allowance limited to loopback web frontends", () => {

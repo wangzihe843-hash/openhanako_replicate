@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { safeReadYAMLSync } from "../shared/safe-fs.js";
+import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.js";
 import { getInvalidProviderModelIds } from "../shared/provider-model-validation.js";
 import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 
@@ -25,9 +25,8 @@ function writeProvidersYaml(filePath, raw, providers) {
   const header =
     "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
     "# 由设置页面管理\n\n";
-  const tmpPath = filePath + ".tmp";
-  fs.writeFileSync(
-    tmpPath,
+  atomicWriteSync(
+    filePath,
     header + YAML.dump({ ...raw, providers }, {
       indent: 2,
       lineWidth: -1,
@@ -35,9 +34,7 @@ function writeProvidersYaml(filePath, raw, providers) {
       quotingType: "\"",
       forceQuotes: false,
     }),
-    "utf-8",
   );
-  fs.renameSync(tmpPath, filePath);
 }
 
 function extractLegacyApiKey(credential) {

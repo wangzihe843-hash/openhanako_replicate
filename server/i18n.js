@@ -4,10 +4,15 @@
 import fs from "fs";
 import path from "path";
 import { fromRoot } from "../shared/hana-root.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("i18n");
 
 const localesDir = fromRoot("desktop", "src", "locales");
 
 let data = {};
+// 英文兜底包：当前 locale 缺某个 key 时回退到这里，避免把 key 字面量直接吐给用户。
+let fallbackData = {};
 let currentLocale = "zh";
 let loaded = false;
 
@@ -27,31 +32,45 @@ function resolveKey(locale) {
  * 加载语言包
  * @param {string} locale  config.yaml 里的 locale 值，如 "zh-CN" / "zh-TW" / "ja" / "ko" / "en"
  */
+function readLocaleFile(key) {
+  return JSON.parse(fs.readFileSync(path.join(localesDir, `${key}.json`), "utf-8"));
+}
+
 export function loadLocale(locale) {
   const key = resolveKey(locale);
   currentLocale = key;
   loaded = true;
+  // 英文包始终加载为兜底（key 缺失时回退），en locale 时与 data 共用同一份。
   try {
-    const file = path.join(localesDir, `${key}.json`);
-    data = JSON.parse(fs.readFileSync(file, "utf-8"));
+    fallbackData = readLocaleFile("en");
   } catch (err) {
-    console.error(`[i18n] Failed to load locale "${key}":`, err.message);
-    if (key !== "en") {
-      try {
-        data = JSON.parse(fs.readFileSync(path.join(localesDir, "en.json"), "utf-8"));
-      } catch { data = {}; }
-    } else {
-      data = {};
-    }
+    log.error(`Failed to load fallback locale "en": ${err.message}`);
+    fallbackData = {};
+  }
+  if (key === "en") {
+    data = fallbackData;
+    return;
+  }
+  try {
+    data = readLocaleFile(key);
+  } catch (err) {
+    log.error(`Failed to load locale "${key}": ${err.message}`);
+    data = fallbackData;
   }
 }
 
 /**
- * 按 dot path 取值
+ * 按 dot path 取值。当前 locale 缺失时回退英文兜底包。
  */
+function getFrom(source, p) {
+  return p.split(".").reduce((obj, k) => obj?.[k], source);
+}
+
 function get(p) {
   if (!loaded) loadLocale(currentLocale);
-  return p.split(".").reduce((obj, k) => obj?.[k], data);
+  const val = getFrom(data, p);
+  if (val !== undefined && val !== null) return val;
+  return getFrom(fallbackData, p);
 }
 
 /**

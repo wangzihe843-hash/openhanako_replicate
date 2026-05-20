@@ -8,6 +8,7 @@
     "dmHint": "주 에이전트 전용",
     "groupLabel": "채널",
     "noMessages": "아직 메시지가 없어요",
+    "selectHint": "채널이나 다이렉트 메시지를 선택해 대화를 시작하세요",
     "nameExists": "이미 같은 이름의 채널이 있어요",
     "membersCount": " 명",
     "info": "채널 정보",
@@ -518,6 +519,11 @@
       "done": "🧭 분신을 보냈어요",
       "failed": "🧭 분신이 문제가 생겼어요"
     },
+    "wait": {
+      "running": "⏳ {name} 이(가) 결과를 기다리고 있어요",
+      "done": "⏳ 대기가 끝났어요",
+      "failed": "⏳ 대기가 중단됐어요"
+    },
     "check_pending_tasks": {
       "running": "📋 {name}이(가) 안 끝난 일을 찾고 있어요",
       "done": "📋 {name} 확인 끝",
@@ -589,7 +595,8 @@
       "흩어진 감정들을 모아보았어요",
       "{name}은(는) 어느 오후의 귤 향기를 맡았어요",
       "그 대화들에는 아직 온기가 남아 있어요"
-    ]
+    ],
+    "installing": "{name}을(를) v{version}(으)로 업데이트하고 있어요. 잠시만 기다려 주세요……"
   },
   "settings": {
     "title": "설정",
@@ -605,6 +612,7 @@
       "agent": "에이전트",
       "me": "나",
       "providers": "제공자",
+      "media": "미디어",
       "models": "모델",
       "memory": "기억",
       "work": "워크스페이스",
@@ -723,6 +731,8 @@
       "chatModelHint": "대화와 작업에 사용하는 모델",
       "modelUnavailable": "사용 불가: {model}",
       "modelUnavailableHint": "현재 모델이 사용 가능한 목록에 없어요. 다른 모델을 선택하거나 Provider 페이지에서 설정을 다시 저장하고 모델을 가져오세요.",
+      "imageModel": "이미지 모델",
+      "imageModelHint": "이미지 생성에 사용하는 모델",
       "addAgent": "새 에이전트",
       "createTitle": "새 에이전트",
       "namePlaceholder": "이름을 지어주세요",
@@ -958,6 +968,27 @@
       "noKey": "미설정",
       "remove": "제거",
       "deleteConfirm": "Provider {name}을(를) 삭제할까요? 연결된 모델도 함께 제거돼요."
+    },
+    "media": {
+      "imageGeneration": "이미지 생성",
+      "defaultModel": "기본 이미지 모델",
+      "credentialOk": "API Key 설정됨 (제공자 설정 공유)",
+      "credentialMissing": "설정되지 않음, 제공자 설정으로 이동하세요",
+      "addModel": "이미지 모델 추가",
+      "providerDefaults": "기본 매개변수",
+      "size": "크기",
+      "format": "형식",
+      "quality": "품질",
+      "watermark": "워터마크",
+      "aspectRatio": "가로세로 비율",
+      "speechRecognition": "음성 인식",
+      "speechSynthesis": "음성 합성",
+      "comingSoon": "곧 제공 예정",
+      "noProvider": "제공자를 선택해 자세히 보기",
+      "models": "이미지 모델",
+      "globalDefault": "전역 기본값",
+      "followGlobal": "전역 기본값 따르기",
+      "default": "기본값"
     },
     "oauth": {
       "title": "간편 로그인",
@@ -1354,6 +1385,20 @@
       "qqAppId": "App ID",
       "qqAppSecret": "App Secret",
       "qqHint": "QQ 봇 오픈 플랫폼(q.qq.com/qqbot)에서 받으세요",
+      "wechat": "WeChat",
+      "wechatHint": "WeChat iLink 프로토콜로 개인 계정에 연결",
+      "wechatExclusive": "WeChat 계정 하나는 Agent 하나에만 연결할 수 있어요. 새 Agent를 연결하면 이전 연결은 자동으로 해제돼요",
+      "wechatScan": "QR 코드로 로그인",
+      "wechatRescan": "다시 로그인",
+      "wechatLoggedIn": "로그인됨",
+      "wechatNeedScan": "먼저 QR 코드로 로그인해 주세요",
+      "wechatScanning": "WeChat으로 QR 코드를 스캔해 주세요",
+      "wechatScanned": "스캔 완료, 휴대폰에서 확인해 주세요",
+      "wechatExpired": "QR 코드가 만료됐어요",
+      "wechatLoginSuccess": "로그인 성공",
+      "wechatLoginFailed": "로그인 실패",
+      "wechatUnbind": "연결 해제",
+      "wechatUnbound": "WeChat 연결을 해제했어요",
       "connected": "연결됨",
       "disconnected": "연결 안 됨",
       "error": "연결 실패",
@@ -1849,6 +1894,7 @@
     "installSkillSizeLimit": "스킬 내용이 크기 제한을 초과했어요 ({size}KB > {max}KB)",
     "installSkillNoUtility": "안전 검토 불가: utility 모델이 설정되지 않았어요. 설정에서 보조 모델을 설정해 주세요",
     "installSkillUtilityIncomplete": "안전 검토 불가: 보조 모델 설정이 불완전해요 (API key 또는 base URL 누락). 설정에서 보완해 주세요",
+    "installSkillSafetyPassed": "✓ 안전 검토를 통과했어요",
     "installSkillSafetyEmpty": "안전 검토가 빈 응답을 반환했어요",
     "installSkillSafetyUnexpected": "안전 검토가 예상하지 못한 형식을 반환했어요: {reply}",
     "installSkillSafetyTimeout": "안전 검토 타임아웃 또는 네트워크 오류",
@@ -1944,7 +1990,9 @@
       "serverKilledBySignal": "Server가 시그널로 종료되었어요 ({signal})",
       "serverExitedWithCode": "Server가 종료되었어요. 코드: {code}",
       "serverFilesNotReady": "자동 업데이트가 방금 완료되었고, 새 버전 파일이 아직 디스크에 쓰이고 있어요 ({missing} 없음). {waited}초 동안 기다렸지만 준비되지 않았어요. 잠시 후 Hanako를 다시 시작해 주세요.",
-      "serverModuleMissing": "Server 시작 실패: 모듈 {module}을(를) 찾을 수 없어요.\n자동 업데이트가 완료된 직후 파일이 아직 디스크에 쓰이는 중일 때 자주 발생해요.\n권장: 1-2분 기다린 후 Hanako를 다시 시작해 주세요. 반복되면 GitHub에 신고해 주세요."
+      "serverModuleMissing": "Server 시작 실패: 모듈 {module}을(를) 찾을 수 없어요.\n자동 업데이트가 완료된 직후 파일이 아직 디스크에 쓰이는 중일 때 자주 발생해요.\n권장: 1-2분 기다린 후 Hanako를 다시 시작해 주세요. 반복되면 GitHub에 신고해 주세요.",
+      "installFailedTitle": "Hanako 업데이트",
+      "installFailedBody": "업데이트 설치에 실패했어요:\n{error}\n\nHanako를 다시 시작한 후 재시도하거나, 설정 페이지에서 수동으로 업데이트를 확인해 주세요."
     },
     "notification": {
       "ready": "알림이 준비되었어요"
@@ -2097,6 +2145,11 @@
       "filepathsDesc": "전달할 로컬 파일의 절대 경로 배열. 파일을 찾은 뒤 여기에 전달하면 StageFile이 데스크톱, Bridge, 미래 모바일 소비자를 위해 등록해요.",
       "filePathDesc": "(호환) 단일 로컬 파일의 절대 경로. 새 호출은 filepaths를 우선 사용하세요.",
       "labelDesc": "(호환) 사용자에게 표시할 파일 이름. 보통 생략할 수 있고 기본값은 파일명이에요."
+    },
+    "wait": {
+      "label": "대기",
+      "description": "지정한 초만큼 대기해요. 백그라운드 작업이 끝날 때까지 기다리는 동안 턴을 활성 상태로 유지하는 데 사용해요.",
+      "secondsDesc": "대기할 초 (1-300)"
     },
     "subagent": {
       "label": "서브 에이전트 시작",

@@ -109,6 +109,42 @@ describe("sandbox wrapper dynamic external read grants", () => {
     expect(result.content[0].text).toBe("fallback");
   });
 
+  it("blocks managed config writes before using the unsandboxed bash fallback", async () => {
+    const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wrapper-managed-config-"));
+    try {
+      const configPath = path.join(tempRoot, "home", "agents", "hana", "config.yaml");
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, "agent:\n  yuan: hanako\n", "utf-8");
+
+      const sandboxedTool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "sandboxed" }] })) };
+      const fallbackTool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "fallback" }] })) };
+      const guard = {
+        check: vi.fn(() => ({ allowed: true })),
+      };
+
+      const wrapped = wrapBashTool(sandboxedTool, guard, tempRoot, {
+        getSandboxEnabled: () => false,
+        fallbackTool,
+        checkManagedConfigWrite: (absolutePath, operation) => (
+          absolutePath === configPath && operation === "write"
+            ? { allowed: false, reason: "managed config files must be changed through settings APIs" }
+            : { allowed: true }
+        ),
+      });
+      const result = await wrapped.execute("call-managed-bash", {
+        command: `printf 'agent:\\n  yuan: caikangyong\\n' > "${configPath}"`,
+      });
+
+      expect(fallbackTool.execute).not.toHaveBeenCalled();
+      expect(sandboxedTool.execute).not.toHaveBeenCalled();
+      expect(result.content[0].text).toContain("managed config files");
+      expect(fs.readFileSync(configPath, "utf-8")).toContain("yuan: hanako");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("lets read tools access explicitly granted external session files", async () => {
     const { wrapPathTool } = await import("../lib/sandbox/tool-wrapper.js");
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wrapper-read-grant-"));

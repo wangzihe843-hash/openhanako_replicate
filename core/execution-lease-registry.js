@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 import { validateExecutionLease } from "./remote-execution-boundary.js";
 
 export const EXECUTION_LEASES_FILE = "execution-leases.json";
@@ -132,9 +133,7 @@ function readJsonIfPresent(filePath, label) {
 
 function writeJsonAtomic(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, filePath);
+  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function isPlainObject(value) {

@@ -34,7 +34,7 @@ switch (mode) {
     break;
   case "cli":
     bin = process.execPath;
-    args = ["index.js", ...extra];
+    args = ["cli/entry.js", ...extra];
     break;
   case "server":
     bin = process.execPath;

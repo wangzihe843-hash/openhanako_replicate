@@ -19,7 +19,8 @@ import {
   loadSessionHistoryMessages,
   loadLatestAssistantSummaryFromSessionFile,
   isValidSessionPath,
-  isActiveSessionPath,
+  isActiveDesktopSessionPath,
+  isArchivedDesktopSessionPath,
 } from "../../core/message-utils.js";
 import {
   loadLatestTodosFromSessionFile,
@@ -44,6 +45,11 @@ import {
 } from "../../shared/model-capabilities.js";
 import { replayLatestUserTurn } from "../../core/session-turn-actions.js";
 import { createRequestContext } from "../http/boundary.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("sessions");
+const lifecycleLog = createModuleLogger("sessions/lifecycle");
+const switchLog = createModuleLogger("sessions/switch");
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -235,6 +241,60 @@ export function createSessionsRoute(engine, hub = null) {
           sessionPath: attachment.desktopSessionPath,
         }, attachment.desktopSessionPath);
       } catch {}
+    }
+  }
+
+  function archivedPathForActiveSession(sessionPath) {
+    return path.join(path.dirname(sessionPath), "archived", path.basename(sessionPath));
+  }
+
+  function activePathForArchivedSession(sessionPath) {
+    return path.join(path.dirname(path.dirname(sessionPath)), path.basename(sessionPath));
+  }
+
+  function uniqueLifecyclePaths(paths) {
+    return [...new Set((paths || []).filter((p) => typeof p === "string" && p.trim()))];
+  }
+
+  async function cleanupSessionLifecycle(sessionPaths, reason) {
+    const bm = BrowserManager.instance();
+    for (const sessionPath of uniqueLifecyclePaths(sessionPaths)) {
+      try {
+        engine.taskRegistry?.abortByParentSession?.(sessionPath, reason);
+      } catch (err) {
+        lifecycleLog.warn(`task cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        engine.subagentRuns?.abortByParentSession?.(sessionPath, reason);
+      } catch (err) {
+        lifecycleLog.warn(`subagent run cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        engine.deferredResults?.suppressBySession?.(sessionPath, reason);
+      } catch (err) {
+        lifecycleLog.warn(`deferred cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        engine.confirmStore?.abortBySession?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`confirm cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        await engine.abortSessionByPath?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`session abort failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        await bm.closeBrowserForSession(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`browser cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        engine.terminalSessions?.closeForSession?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`terminal cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      invalidateRcTarget(sessionPath);
     }
   }
 
@@ -532,7 +592,7 @@ export function createSessionsRoute(engine, hub = null) {
         sessionPath,
       });
       if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
-      if (!isValidSessionPath(sessionPath, engine.agentsDir) || !isActiveSessionPath(sessionPath, engine.agentsDir)) {
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
       if (!(await pathExists(sessionPath))) {
@@ -571,7 +631,7 @@ export function createSessionsRoute(engine, hub = null) {
         sessionPath,
       });
       if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
-      if (!isValidSessionPath(sessionPath, engine.agentsDir) || !isActiveSessionPath(sessionPath, engine.agentsDir)) {
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
       try {
@@ -622,11 +682,11 @@ export function createSessionsRoute(engine, hub = null) {
         ? body.workspaceFolders.filter(p => typeof p === "string" && p.trim())
         : [];
       const memFlag = memoryEnabled !== false; // 默认 true
-      console.log("[sessions] 新建 session", {
+      log.log(`新建 session ${JSON.stringify({
         hasCwd: !!cwd,
         memoryEnabled: memFlag,
         customAgent: !!agentId,
-      });
+      })}`);
 
       // 新建前挂起浏览器（保存当前 session 的浏览器状态）
       const bm = BrowserManager.instance();
@@ -660,7 +720,7 @@ export function createSessionsRoute(engine, hub = null) {
         await engine.updateConfig({ last_cwd: cwd, cwd_history: history });
       }
 
-      console.log("[sessions] session 创建完成");
+      log.log("session 创建完成");
       const response = {
         ok: true,
         path: newSessionPath,
@@ -692,10 +752,8 @@ export function createSessionsRoute(engine, hub = null) {
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
-      // 必须是 agents/{id}/sessions/ 或 sessions/archived/ 下的对话文件，
-      // 拒绝 subagent-sessions/、activity/、.ephemeral/ 等旁路目录——那些是
-      // 运行态产物，不是用户可切换的对话焦点。
-      if (!isActiveSessionPath(sessionPath, engine.agentsDir)) {
+      // 运行路径只允许 active desktop session。归档会话必须先 restore。
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
       // 切换前挂起浏览器（保存当前 session 的浏览器状态）
@@ -754,7 +812,7 @@ export function createSessionsRoute(engine, hub = null) {
       });
     } catch (err) {
       const errDetail = `${err.message}\n${err.stack || ""}`;
-      console.error("[sessions/switch] error:", errDetail);
+      switchLog.error(`error: ${errDetail}`);
       try { appendFileSync(path.join(engine.hanakoHome, "switch-error.log"), `${new Date().toISOString()}\n${errDetail}\n---\n`); } catch {}
       return c.json({ error: err.message }, 500);
     }
@@ -825,13 +883,13 @@ export function createSessionsRoute(engine, hub = null) {
           try {
             const stat = await fs.stat(fp);
             if (stat.mtime.getTime() < cutoff) {
+              const activeKey = path.join(agentsDir, agentId, "sessions", f);
+              await cleanupSessionLifecycle([activeKey, fp], "parent session deleted");
               await fs.unlink(fp);
               deleteSessionFileSidecarSync(fp);
               deleteSessionSkillSnapshotSync(fp);
               deleted++;
               // 清理 titles.json 孤儿（key = 对应的活跃路径）
-              const activeKey = path.join(agentsDir, agentId, "sessions", f);
-              invalidateRcTarget(activeKey);
               try { await engine.clearSessionTitle(activeKey); } catch {}
             }
           } catch {}
@@ -862,8 +920,8 @@ export function createSessionsRoute(engine, hub = null) {
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
-      // 校验路径在 agentsDir 范围内
-      if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
+      // archive 是 lifecycle transition，只允许 active desktop session。
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
 
@@ -874,28 +932,28 @@ export function createSessionsRoute(engine, hub = null) {
         return c.json({ error: t("error.sessionNotFound") }, 404);
       }
 
-      // 先从 engine 的 session map 中移除（如果正在后台跑会被 abort）
-      await engine.setSessionPinned(sessionPath, false);
-      await engine.closeSession(sessionPath);
-
       // 从 session 路径推导归档目录（同 agent 的 sessions/archived/）
-      const sessDir = path.dirname(sessionPath);
-      const archiveDir = path.join(sessDir, "archived");
-      await fs.mkdir(archiveDir, { recursive: true });
-
-      const fileName = path.basename(sessionPath);
-      const destPath = path.join(archiveDir, fileName);
+      const destPath = archivedPathForActiveSession(sessionPath);
+      const archiveDir = path.dirname(destPath);
+      if (await pathExists(destPath)) {
+        return c.json({ error: "Archived path already exists" }, 409);
+      }
       if (await pathExists(sessionFileSidecarPath(destPath))) {
         return c.json({ error: "Stage file sidecar destination already exists" }, 409);
       }
+      await cleanupSessionLifecycle([sessionPath, destPath], "parent session archived");
+
+      // 再从 engine 的 session map 中移除。
+      await engine.setSessionPinned(sessionPath, false);
+      await engine.closeSession(sessionPath);
+
+      await fs.mkdir(archiveDir, { recursive: true });
       await fs.rename(sessionPath, destPath);
       moveSessionFileSidecarSync(sessionPath, destPath);
 
       // 将 mtime 置为归档瞬间，使 cleanup 按"归档时间"而非"最后活动时间"判断
       const nowSec = Date.now() / 1000;
       await fs.utimes(destPath, nowSec, nowSec);
-
-      invalidateRcTarget(sessionPath);
 
       return c.json({ ok: true });
     } catch (err) {
@@ -911,7 +969,7 @@ export function createSessionsRoute(engine, hub = null) {
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
-      if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
+      if (!isArchivedDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
       // 必须位于 /archived/ 目录下，防止把活跃 session 当归档路径调用
@@ -953,13 +1011,15 @@ export function createSessionsRoute(engine, hub = null) {
       if (!sessionPath) {
         return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
       }
-      if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
+      if (!isArchivedDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
       const archDir = path.dirname(sessionPath);
       if (path.basename(archDir) !== "archived") {
         return c.json({ error: "Not an archived session path" }, 403);
       }
+      const activeKey = activePathForArchivedSession(sessionPath);
+      await cleanupSessionLifecycle([activeKey, sessionPath], "parent session deleted");
       try {
         await fs.unlink(sessionPath);
         deleteSessionFileSidecarSync(sessionPath);
@@ -971,8 +1031,6 @@ export function createSessionsRoute(engine, hub = null) {
         throw err;
       }
       // 清理 titles.json 孤儿（key = 对应的活跃路径）
-      const activeKey = path.join(path.dirname(archDir), path.basename(sessionPath));
-      invalidateRcTarget(activeKey);
       try { await engine.clearSessionTitle(activeKey); } catch {}
       return c.json({ ok: true });
     } catch (err) {

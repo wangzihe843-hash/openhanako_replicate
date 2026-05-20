@@ -6,14 +6,14 @@
  */
 
 import { QUOTE_ORIGINAL_END, QUOTE_ORIGINAL_START } from './quoted-selection';
+import { moodLabelForYuan } from '../../../../shared/yuan-visuals.js';
 
 // ── Mood 解析 ──
 
 const TAG_TO_YUAN: Record<string, string> = { mood: 'hanako', pulse: 'butter', reflect: 'ming' };
-const YUAN_LABELS: Record<string, string> = { hanako: '✿ MOOD', butter: '❊ PULSE', ming: '◈ REFLECT' };
 
 export function moodLabel(yuan: string): string {
-  return YUAN_LABELS[yuan] || YUAN_LABELS.hanako;
+  return moodLabelForYuan(yuan);
 }
 
 export function cleanMoodText(raw: string): string {

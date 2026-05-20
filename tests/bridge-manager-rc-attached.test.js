@@ -11,7 +11,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../lib/bridge/telegram-adapter.js", () => ({ createTelegramAdapter: vi.fn() }));
 vi.mock("../lib/bridge/feishu-adapter.js", () => ({ createFeishuAdapter: vi.fn() }));
-vi.mock("../lib/debug-log.js", () => ({ debugLog: () => null }));
+vi.mock("../lib/debug-log.js", () => ({
+  debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
 
 import os from "os";
 import { BridgeManager } from "../lib/bridge/bridge-manager.js";

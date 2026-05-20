@@ -53,12 +53,16 @@ export function wsClientCanReceiveEvent(client, event) {
   if (event.thumbnail && typeof event.thumbnail === "string") return false;
 
   const sessionPath = stringOrNull(event.sessionPath);
-  const studioId = stringOrNull(event.studioId) || principal.studioId;
+  const eventStudioId = stringOrNull(event.studioId);
   if (sessionPath) {
+    // session 事件必须显式携带 studioId 才能投递给非本地 owner；
+    // publisher (server/routes/chat.js broadcast()) 已在 wrap 时注入 server
+    // runtime studioId。缺 studioId 视为来源不明，拒收 fail-closed。
+    if (!eventStudioId) return false;
     if (!principalHasScope(principal, "chat.read")) return false;
-    if (!sameStudio(principal, studioId)) return false;
-    return subscriptionAllows(client.subscriptions, { kind: "session", studioId, sessionPath })
-      || subscriptionAllows(client.subscriptions, { kind: "studio", studioId });
+    if (!sameStudio(principal, eventStudioId)) return false;
+    return subscriptionAllows(client.subscriptions, { kind: "session", studioId: eventStudioId, sessionPath })
+      || subscriptionAllows(client.subscriptions, { kind: "studio", studioId: eventStudioId });
   }
 
   if (SAFE_GLOBAL_EVENTS.has(event.type)) {

@@ -23,6 +23,7 @@ vi.mock("node-telegram-bot-api", () => {
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 import { createTelegramAdapter } from "../lib/bridge/telegram-adapter.js";

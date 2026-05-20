@@ -78,7 +78,8 @@ export function ComputerUseTab() {
     return data?.status?.providers?.find((provider) => provider.providerId === id) || null;
   }, [data]);
 
-  const enabled = data?.settings?.enabled === true;
+  // data 未到位时传 undefined 给 Toggle，走加载态；加载完成后用真实 boolean。
+  const enabled = data ? data.settings?.enabled === true : undefined;
   const available = selectedProvider?.status?.available === true;
   const availabilityIssue = selectedProvider?.status?.reason || selectedProvider?.status?.error || '';
   const permissions = selectedProvider?.status?.permissions || [];
@@ -170,7 +171,7 @@ export function ComputerUseTab() {
         <SettingsRow
           label={t('settings.computerUse.enabled')}
           hint={t('settings.computerUse.enabledHint')}
-          control={<Toggle on={enabled} onChange={(next) => saveEnabled(next)} disabled={saving || loading || !data} />}
+          control={<Toggle on={enabled} onChange={(next) => saveEnabled(next)} disabled={saving} />}
         />
         <SettingsRow
           label={t('settings.computerUse.provider')}

@@ -7,6 +7,9 @@
  */
 
 import { Hono } from "hono";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("commands");
 
 export function createCommandsRoute(engine) {
   const route = new Hono();
@@ -26,7 +29,7 @@ export function createCommandsRoute(engine) {
       }));
       return c.json({ commands: defs });
     } catch (err) {
-      console.error(`[commands] list failed: ${err.message}`);
+      log.error(`list failed: ${err.message}`);
       return c.json({ error: err.message }, 500);
     }
   });

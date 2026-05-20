@@ -93,6 +93,29 @@ describe("TaskRegistry", () => {
     expect(reg.listAll()).toHaveLength(2);
   });
 
+  it("aborts active tasks registered under a parent session path", () => {
+    const reg = new TaskRegistry();
+    const abortFn = vi.fn();
+    reg.registerHandler("subagent", { abort: abortFn });
+    reg.register("t1", { type: "subagent", parentSessionPath: "/s/a" });
+    reg.register("t2", { type: "subagent", parentSessionPath: "/s/b" });
+    reg.register("t3", { type: "subagent", parentSessionPath: "/s/a" });
+    reg.complete("t3");
+
+    const result = reg.abortByParentSession("/s/a", "parent session archived");
+
+    expect(result).toMatchObject({ aborted: 1, skippedFinal: 1 });
+    expect(abortFn).toHaveBeenCalledWith("t1");
+    expect(abortFn).not.toHaveBeenCalledWith("t2");
+    expect(reg.query("t1")).toMatchObject({
+      status: "aborted",
+      aborted: true,
+      error: "parent session archived",
+    });
+    expect(reg.query("t2")).toMatchObject({ status: "running", aborted: false });
+    expect(reg.query("t3")).toMatchObject({ status: "completed", aborted: false });
+  });
+
   it("update, complete, and fail keep explicit task state", () => {
     const reg = new TaskRegistry();
     reg.registerHandler("render", { abort: vi.fn() });

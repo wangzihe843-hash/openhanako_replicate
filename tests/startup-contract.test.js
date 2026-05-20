@@ -23,12 +23,16 @@ describe("local startup contract", () => {
     expect(mainCjs).toContain("HANA_DEV_NODE_BIN");
   });
 
-  it("CLI and server configure the Pi SDK agent directory from HANA_HOME", () => {
+  it("server configures Pi SDK from HANA_HOME and CLI stays server-first", () => {
     const cliSource = fs.readFileSync(path.join(ROOT, "index.js"), "utf-8");
+    const cliEntrySource = fs.readFileSync(path.join(ROOT, "cli", "entry.js"), "utf-8");
+    const launchSource = fs.readFileSync(path.join(ROOT, "scripts", "launch.js"), "utf-8");
     const serverSource = fs.readFileSync(path.join(ROOT, "server", "index.js"), "utf-8");
 
-    expect(cliSource).toContain("ensureHanaPiSdkDirs(hanakoHome)");
-    expect(cliSource).toContain("configureProcessPiSdkEnv(hanakoHome)");
+    expect(cliSource).toContain("./cli/entry.js");
+    expect(cliSource).not.toContain("HanaEngine");
+    expect(cliEntrySource).not.toContain("HanaEngine");
+    expect(launchSource).toContain('"cli/entry.js"');
     expect(serverSource).toContain("ensureHanaPiSdkDirs(hanakoHome)");
     expect(serverSource).toContain("configureProcessPiSdkEnv(hanakoHome)");
   });
@@ -55,5 +59,14 @@ describe("local startup contract", () => {
     const external = viteServerConfig.build?.rollupOptions?.external || [];
 
     expect(external).toContain("jsdom");
+  });
+
+  it("server-only packaging emits a bundled CLI and wrapper", () => {
+    const buildServer = fs.readFileSync(path.join(ROOT, "scripts", "build-server.mjs"), "utf-8");
+
+    expect(buildServer).toContain("bundle/cli.js");
+    expect(buildServer).toContain('path.join(ROOT, "cli", "entry.js")');
+    expect(buildServer).toContain('path.join(outDir, "hana")');
+    expect(buildServer).toContain('path.join(outDir, "hana.cmd")');
   });
 });

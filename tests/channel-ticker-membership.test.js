@@ -3,10 +3,11 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createChannel, appendMessage, updateChannelMeta } from "../lib/channels/channel-store.js";
-import { createChannelTicker } from "../lib/channels/channel-ticker.js";
+import { buildChannelUnreadDeliveryWindow, createChannelTicker } from "../lib/channels/channel-ticker.js";
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => ({ log: vi.fn(), error: vi.fn(), warn: vi.fn() }),
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 function mktemp() {
@@ -21,6 +22,80 @@ describe("channel-ticker membership source", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       tmpDir = null;
     }
+  });
+
+  it("builds a rolling unread delivery window capped at the most recent 20 messages for missing bookmarks", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    for (let i = 1; i <= 25; i += 1) {
+      await appendMessage(channelFile, "user", `message ${i}`);
+    }
+
+    const window = buildChannelUnreadDeliveryWindow({
+      channelFile,
+      bookmark: undefined,
+      agentId: "hana",
+    });
+
+    expect(window.totalUnreadCount).toBe(25);
+    expect(window.droppedUnreadCount).toBe(5);
+    expect(window.bookmarkState).toBe("missing");
+    expect(window.messages.map((message) => message.body)).toEqual(
+      Array.from({ length: 20 }, (_, idx) => `message ${idx + 6}`),
+    );
+  });
+
+  it("passes the rolling unread delivery window metadata into immediate phone delivery", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    const agentDir = path.join(agentsDir, "hana");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n- ch_crew (last: never)\n", "utf-8");
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    for (let i = 1; i <= 23; i += 1) {
+      await appendMessage(channelFile, "user", `message ${i}`);
+    }
+
+    const executeCheck = vi.fn(async () => ({ replied: false, passed: true }));
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana"],
+      executeCheck,
+      onMemorySummarize: vi.fn(),
+    });
+
+    ticker.start();
+    try {
+      await ticker.triggerImmediate(channelId);
+    } finally {
+      await ticker.stop();
+    }
+
+    expect(executeCheck).toHaveBeenCalledOnce();
+    expect(executeCheck.mock.calls[0][2].map((message) => message.body)).toEqual(
+      Array.from({ length: 20 }, (_, idx) => `message ${idx + 4}`),
+    );
+    expect(executeCheck.mock.calls[0][4]).toMatchObject({
+      deliveryWindow: {
+        totalUnreadCount: 23,
+        droppedUnreadCount: 3,
+        bookmarkState: "never",
+      },
+    });
   });
 
   it("delivers unread channel messages to an agent listed in channel members even when its cursor projection is missing", async () => {

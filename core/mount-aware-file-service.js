@@ -2,6 +2,9 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { loadStudioMountRegistry } from "./studio-mounts.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("mount-files");
 
 const SEARCH_SKIP_DIRS = new Set([
   ".git",
@@ -254,7 +257,7 @@ async function listFiles(dir) {
         mtime: stat.mtime.toISOString(),
       });
     } catch (err) {
-      if (err.code !== "ENOENT") console.warn(`[mount-files] stat failed: ${err.message}`);
+      if (err.code !== "ENOENT") log.warn(`stat failed: ${err.message}`);
     }
   }
   return items.sort((a, b) => {

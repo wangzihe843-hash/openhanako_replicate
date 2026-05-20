@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 import { normalizePrincipal } from "./security-principal.js";
 
 export const DEVICES_FILE = "devices.json";
@@ -372,9 +373,7 @@ function readJsonIfPresent(filePath, label) {
 
 function writeJsonAtomic(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, filePath);
+  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function hashSecret(secret, salt) {

@@ -1,5 +1,9 @@
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("plugin-config");
 
 const SUPPORTED_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array"]);
 const SCOPES = new Set(["global", "per-agent", "per-session"]);
@@ -50,9 +54,7 @@ export function createPluginConfigStore({ dataDir, schema }) {
       agents: state.agents || {},
       sessions: state.sessions || {},
     };
-    const tmp = `${configPath}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
-    fs.renameSync(tmp, configPath);
+    atomicWriteSync(configPath, `${JSON.stringify(next, null, 2)}\n`);
   }
 
   function resolveBucket(state, options = {}, create = false) {
@@ -243,7 +245,7 @@ function readJson(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (err) {
-    if (err.code !== "ENOENT") console.warn(`[plugin-config] failed to read ${filePath}: ${err.message}`);
+    if (err.code !== "ENOENT") log.warn(`failed to read ${filePath}: ${err.message}`);
     return {};
   }
 }

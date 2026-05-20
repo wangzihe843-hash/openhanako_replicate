@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 
 export const RESOURCE_TICKET_KEY_FILE = "resource-ticket-key";
 export const RESOURCE_TICKET_ACTION = "resources.content";
@@ -122,7 +123,7 @@ function readOrCreateTicketKey(hanakoHome) {
   }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const key = crypto.randomBytes(32).toString("base64url");
-  fs.writeFileSync(filePath, `${key}\n`, { encoding: "utf-8", mode: 0o600 });
+  atomicWriteSync(filePath, `${key}\n`, { mode: 0o600 });
   return key;
 }
 

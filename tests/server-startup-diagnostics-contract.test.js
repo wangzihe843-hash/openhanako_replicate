@@ -100,7 +100,7 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("HANA_CREATE_STARTUP_SESSION");
     expect(mainSource).toContain('"0"');
     expect(serverSource).toContain('process.env.HANA_CREATE_STARTUP_SESSION !== "0"');
-    expect(serverSource).toContain("[server] ③ 跳过启动期 session 创建");
+    expect(serverSource).toContain("③ 跳过启动期 session 创建");
   });
 
   it("keeps waiting after the first server-info deadline while startup output is still progressing", () => {
@@ -128,6 +128,26 @@ describe("server startup diagnostics contract", () => {
     expect(bridgeRouteSource).not.toContain('import { getWechatQrcode, pollWechatQrcodeStatus } from "../../lib/bridge/wechat-login.js";');
     expect(bridgeRouteSource).toContain('await import("../../lib/bridge/wechat-login.js")');
     expect(bridgeRouteSource).toContain("resolveBridgeManager");
+  });
+
+  it("reuses only trusted server-info after token health and server identity checks", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain("verifyReusableServerInfo");
+    expect(mainSource).toContain("/api/health");
+    expect(mainSource).toContain("/api/server/identity");
+    expect(mainSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
+    expect(mainSource).toContain("identity.studioId");
+  });
+
+  it("surfaces structured port conflicts instead of burying them under GPU diagnostics", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain("parsePortInUseStartupError");
+    expect(mainSource).toContain("extractRootServerStartupError");
+    expect(mainSource).toContain("buildLaunchFailureDialogDetail");
+    expect(mainSource).toContain("const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs)");
+    expect(mainSource).toContain("return `${rootServerError}\\n\\n${tail}`");
   });
 
   it("keeps native SQLite out of the server static import graph", () => {

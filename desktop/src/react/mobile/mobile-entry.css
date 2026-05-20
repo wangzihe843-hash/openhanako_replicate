@@ -1,3 +1,4 @@
+@import url('../../themes/new-warm-paper-fonts.css');
 @import url('../../animations.css');
 
 :root {
@@ -27,9 +28,9 @@
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-    --font-ui: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    --font-serif: 'Songti SC', 'STSong', 'Noto Serif SC', serif;
-    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --font-serif: 'EB Garamond', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --editor-markdown-font-size: 16px;
     --editor-markdown-h1-font-size: 24px;
     --editor-markdown-h2-font-size: 20px;

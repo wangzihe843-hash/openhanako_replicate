@@ -53,10 +53,17 @@ export function safeReadYAMLSync(filePath, fallback = null, yaml) {
 /**
  * Atomic file write: write to tmp, then rename over target.
  * Prevents partial writes if the process crashes mid-write.
+ * @param {string} filePath - target path
+ * @param {string} content - text content (utf-8)
+ * @param {object} [opts]
+ * @param {number} [opts.mode] - file permission bits (e.g. 0o600 for sensitive credentials)
  */
-export function atomicWriteSync(filePath, content) {
+export function atomicWriteSync(filePath, content, { mode } = {}) {
   const tmp = filePath + ".tmp";
-  fs.writeFileSync(tmp, content, "utf-8");
+  fs.writeFileSync(tmp, content, mode !== undefined ? { encoding: "utf-8", mode } : "utf-8");
+  if (mode !== undefined) {
+    try { fs.chmodSync(tmp, mode); } catch { /* mode-on-create 兜底 */ }
+  }
   fs.renameSync(tmp, filePath);
 }
 

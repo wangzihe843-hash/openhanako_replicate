@@ -13,6 +13,8 @@ const mockState: Record<string, unknown> = {
   channels: [],
   currentChannel: null,
   channelMessages: [],
+  channelMessageCache: {},
+  channelMessageCacheDirty: {},
   channelTotalUnread: 0,
   channelsEnabled: true,
   userName: 'testuser',
@@ -58,6 +60,8 @@ describe('channel-actions', () => {
     mockState.channels = [];
     mockState.currentChannel = null;
     mockState.channelMessages = [];
+    mockState.channelMessageCache = {};
+    mockState.channelMessageCacheDirty = {};
     mockState.channelTotalUnread = 0;
     mockState.channelsEnabled = true;
     mockState.channelAgentPhoneToolMode = 'read_only';
@@ -387,6 +391,7 @@ describe('channel-actions', () => {
 
   describe('appendChannelMessage', () => {
     it('追加当前频道的新消息并刷新频道预览，不清空已有消息', async () => {
+      mockState.currentTab = 'channels';
       mockState.currentChannel = 'ch1';
       mockState.channelMessages = [
         { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
@@ -419,6 +424,122 @@ describe('channel-actions', () => {
         newMessageCount: 0,
       });
       expect(mockState.channelTotalUnread).toBe(0);
+    });
+
+    it('updates the current channel body cache while chat tab is active without marking read', async () => {
+      mockState.currentTab = 'chat';
+      mockState.currentChannel = 'ch1';
+      mockState.channelMessages = [
+        { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
+      ];
+      mockState.channels = [{
+        id: 'ch1',
+        name: 'general',
+        members: [],
+        lastMessage: 'old',
+        lastSender: 'testuser',
+        lastTimestamp: '2026-05-07 17:00:00',
+        newMessageCount: 0,
+        isDM: false,
+      }];
+
+      const { appendChannelMessage, hydrateCurrentChannelIfNeeded } = await import('../../stores/channel-actions');
+      appendChannelMessage('ch1', {
+        sender: 'hanako',
+        timestamp: '2026-05-07 17:01:00',
+        body: 'new reply',
+      }, { markRead: false });
+
+      expect(mockState.channelMessages).toEqual([
+        { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
+        { sender: 'hanako', timestamp: '2026-05-07 17:01:00', body: 'new reply' },
+      ]);
+      expect((mockState.channelMessageCache as any).ch1).toEqual(mockState.channelMessages);
+      expect((mockState.channels as Array<{ newMessageCount: number }>)[0].newMessageCount).toBe(1);
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/channels/ch1/read', expect.anything());
+
+      mockState.currentTab = 'channels';
+      await hydrateCurrentChannelIfNeeded();
+
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/channels/ch1', expect.anything());
+      expect(mockState.channelMessages).toEqual((mockState.channelMessageCache as any).ch1);
+    });
+
+    it('does not mark the current channel as read when the document is hidden', async () => {
+      mockState.currentTab = 'channels';
+      mockState.currentChannel = 'ch1';
+      mockState.channelMessages = [];
+      mockState.channels = [{
+        id: 'ch1',
+        name: 'general',
+        members: [],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: false,
+      }];
+
+      const { appendChannelMessage } = await import('../../stores/channel-actions');
+      appendChannelMessage('ch1', {
+        sender: 'hanako',
+        timestamp: '2026-05-07 17:01:00',
+        body: 'hidden reply',
+      }, { markRead: false });
+
+      expect((mockState.channels as Array<{ newMessageCount: number }>)[0].newMessageCount).toBe(1);
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/channels/ch1/read', expect.anything());
+    });
+
+    it('reloads the active channel when a message-less event marked its cache dirty', async () => {
+      vi.stubGlobal('window', { t: (key: string) => key });
+      mockState.currentTab = 'channels';
+      mockState.currentChannel = 'ch1';
+      mockState.channelMessages = [
+        { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
+      ];
+      mockState.channelMessageCache = {
+        ch1: mockState.channelMessages,
+      };
+      mockState.channels = [{
+        id: 'ch1',
+        name: 'general',
+        members: ['hanako', 'yui'],
+        lastMessage: 'old',
+        lastSender: 'testuser',
+        lastTimestamp: '2026-05-07 17:00:00',
+        newMessageCount: 0,
+        isDM: false,
+      }];
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: 'general',
+            members: ['hanako', 'yui'],
+            messages: [
+              { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
+              { sender: 'hanako', timestamp: '2026-05-07 17:01:00', body: 'reloaded reply' },
+            ],
+          }),
+        } as Response)
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({ activities: [] }),
+        } as Response);
+
+      const { markChannelMessagesDirty, hydrateCurrentChannelIfNeeded } = await import('../../stores/channel-actions');
+      markChannelMessagesDirty('ch1');
+      expect((mockState.channelMessageCacheDirty as any).ch1).toBe(true);
+
+      await hydrateCurrentChannelIfNeeded();
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/channels/ch1');
+      expect(mockState.channelMessages).toEqual([
+        { sender: 'testuser', timestamp: '2026-05-07 17:00:00', body: 'old' },
+        { sender: 'hanako', timestamp: '2026-05-07 17:01:00', body: 'reloaded reply' },
+      ]);
+      expect((mockState.channelMessageCacheDirty as any).ch1).toBe(false);
     });
   });
 

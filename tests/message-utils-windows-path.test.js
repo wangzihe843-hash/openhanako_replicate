@@ -13,6 +13,8 @@ vi.mock("../core/llm-utils.js", () => ({
 const {
   isValidSessionPath,
   isActiveSessionPath,
+  isArchivedDesktopSessionPath,
+  isDesktopSessionPath,
 } = await import("../core/message-utils.js");
 
 describe("Windows session path validation", () => {
@@ -22,6 +24,17 @@ describe("Windows session path validation", () => {
 
     expect(isValidSessionPath(sessionPath, agentsDir)).toBe(true);
     expect(isActiveSessionPath(sessionPath, agentsDir)).toBe(true);
+    expect(isDesktopSessionPath(sessionPath, agentsDir)).toBe(true);
+  });
+
+  it("treats archived desktop sessions as desktop but not active", () => {
+    const agentsDir = "C:\\Users\\Alice\\.hanako\\agents";
+    const sessionPath = "c:\\users\\alice\\.hanako\\agents\\hana\\sessions\\archived\\old.jsonl";
+
+    expect(isValidSessionPath(sessionPath, agentsDir)).toBe(true);
+    expect(isActiveSessionPath(sessionPath, agentsDir)).toBe(false);
+    expect(isArchivedDesktopSessionPath(sessionPath, agentsDir)).toBe(true);
+    expect(isDesktopSessionPath(sessionPath, agentsDir)).toBe(true);
   });
 
   it("still rejects sibling paths that only share a textual prefix", () => {

@@ -1,3 +1,7 @@
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("app-events");
+
 function isPlainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
@@ -7,14 +11,14 @@ function isPlainObject(value) {
 function normalizePayload(payload, context) {
   if (payload === undefined) return {};
   if (isPlainObject(payload)) return payload;
-  console.warn(`[app-events] invalid payload for ${context}; expected plain object`);
+  log.warn(`invalid payload for ${context}; expected plain object`);
   return null;
 }
 
 function normalizeSource(source) {
   if (source === undefined) return "server";
   if (typeof source === "string" && source) return source;
-  console.warn("[app-events] invalid source for app_event; expected non-empty string");
+  log.warn("invalid source for app_event; expected non-empty string");
   return null;
 }
 

@@ -15,6 +15,9 @@ import {
   DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
   ensureDefaultWorkspace,
 } from "../shared/default-workspace.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("first-run");
 
 /**
  * 确保 ~/.hanako/ 数据目录就绪
@@ -33,7 +36,7 @@ export function ensureFirstRun(hanakoHome, productDir) {
   });
 
   if (!hasAgent) {
-    console.log("[first-run] 首次启动，正在创建默认助手...");
+    log.log("首次启动，正在创建默认助手...");
     seedDefaultAgent(agentsDir, productDir);
   }
 
@@ -149,7 +152,7 @@ function seedDefaultAgent(agentsDir, productDir) {
     fs.copyFileSync(publicIshikiSrc, path.join(agentDir, "public-ishiki.md"));
   }
 
-  console.log(`[first-run] 默认助手 "${agentId}" 已创建`);
+  log.log(`默认助手 "${agentId}" 已创建`);
 }
 
 /**

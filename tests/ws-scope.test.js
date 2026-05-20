@@ -93,6 +93,44 @@ describe("websocket scope filtering", () => {
     expect(wsClientCanReceiveEvent(client, { type: "plugin_ui_changed" })).toBe(false);
   });
 
+  it("denies session events that lack explicit studioId for non-local-owner clients", () => {
+    // 收紧 wsClientCanReceiveEvent：session 事件必须显式 set studioId，
+    // 否则非 local owner 一律拒收（fail-closed），避免 publisher 漏 set
+    // 时 fallback 到 receiver 自己的 studioId 让校验形同虚设。
+    const client = createWsClientRecord({
+      principal: {
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        userId: "user_1",
+        studioId: "studio_1",
+        serverNodeId: "node_1",
+        scopes: ["chat.read"],
+      },
+      subscriptions: [{ kind: "studio", studioId: "studio_1" }],
+    });
+    expect(wsClientCanReceiveEvent(client, {
+      type: "message",
+      sessionPath: "/s/a.jsonl",
+      // studioId intentionally omitted
+    })).toBe(false);
+    // local owner 仍然能收（不受新契约约束）
+    const owner = createWsClientRecord({
+      principal: {
+        kind: "local_user",
+        credentialKind: "loopback_token",
+        connectionKind: "local",
+        userId: "user_1",
+        studioId: "studio_1",
+        serverNodeId: "node_1",
+      },
+    });
+    expect(wsClientCanReceiveEvent(owner, {
+      type: "message",
+      sessionPath: "/s/a.jsonl",
+    })).toBe(true);
+  });
+
   it("adds session subscriptions without losing prior principal", () => {
     const client = createWsClientRecord({
       principal: {

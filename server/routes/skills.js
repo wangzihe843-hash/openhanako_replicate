@@ -29,6 +29,9 @@ import {
   updateSkillBundle,
 } from "../../lib/skill-bundles/store.js";
 import { exportSkillBundlePackage } from "../../lib/skill-bundles/package-service.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("skills");
 
 /** 从 SKILL.md frontmatter 解析 name */
 function parseSkillName(skillMdPath) {
@@ -395,7 +398,7 @@ export function createSkillsRoute(engine) {
         ...(sourceFile ? { sourceFile } : {}),
       });
     } catch (err) {
-      console.error("[skills] install failed:", err);
+      log.error(`install failed: ${err?.stack || err}`);
       return c.json({ error: err.message }, 500);
     }
     }); // withInstallLock
@@ -498,7 +501,7 @@ export function createSkillsRoute(engine) {
             saveConfig(configPath, { skills: { enabled: filtered } });
           }
         } catch (e) {
-          console.error(`[skills] 清理 agent ${agentName} 的 skill 引用失败:`, e.message);
+          log.error(`清理 agent ${agentName} 的 skill 引用失败: ${e.message}`);
         }
       }
 

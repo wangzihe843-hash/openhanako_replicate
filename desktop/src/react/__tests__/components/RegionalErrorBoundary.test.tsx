@@ -37,6 +37,7 @@ describe('RegionalErrorBoundary', () => {
     vi.useFakeTimers();
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     window.t = ((key: string) => key) as typeof window.t;
+    window.i18n = { locale: 'zh-CN' } as typeof window.i18n;
   });
 
   afterEach(async () => {
@@ -77,7 +78,7 @@ describe('RegionalErrorBoundary', () => {
       </RegionalErrorBoundary>,
     );
 
-    expect(screen.queryByText('error.regionUnavailable')).not.toBeInTheDocument();
+    expect(screen.queryByText('此区域暂时无法显示')).not.toBeInTheDocument();
 
     releaseCrash = true;
     await act(async () => {
@@ -116,7 +117,7 @@ describe('RegionalErrorBoundary', () => {
       vi.advanceTimersByTime(5);
     });
 
-    expect(screen.getByText('error.regionUnavailable')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'action.retry' })).toBeInTheDocument();
+    expect(screen.getByText('此区域暂时无法显示')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
   });
 });

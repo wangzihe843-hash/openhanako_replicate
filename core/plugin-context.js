@@ -4,9 +4,9 @@ import { createPluginConfigStore } from "./plugin-config.js";
 
 /**
  * Create a PluginContext for a plugin.
- * @param {{ pluginId: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
+ * @param {{ pluginId: string, pluginKey?: string, source?: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
  */
-export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
+export function createPluginContext({ pluginId, pluginKey, source, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
   const config = createPluginConfigStore({ dataDir, schema: configSchema });
   const runtimeScope = runtimeContext ? {
     serverId: runtimeContext.serverId,
@@ -89,6 +89,8 @@ export function createPluginContext({ pluginId, pluginDir, dataDir, bus, accessL
   return {
     ...runtimeScope,
     pluginId,
+    pluginKey: pluginKey || pluginId,
+    source: source || "community",
     pluginDir,
     dataDir,
     bus: pluginBus,

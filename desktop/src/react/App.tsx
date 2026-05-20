@@ -33,7 +33,6 @@ import { openSettingsModal } from './stores/settings-modal-actions';
 import { AppTitlebar } from './components/app/AppTitlebar';
 import { ChatSidebar } from './components/app/ChatSidebar';
 import { AppPages } from './components/app/AppPages';
-import { togglePreviewPanel } from './stores/preview-actions';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
 
@@ -69,7 +68,6 @@ function App() {
   useStore(s => s.locale);
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
-  const previewOpen = useStore(s => s.previewOpen);
   const currentTab = useStore(s => s.currentTab);
   const isPluginTab = typeof currentTab === 'string' && currentTab.startsWith('plugin:');
   const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
@@ -91,10 +89,8 @@ function App() {
       <AppTitlebar
         sidebarOpen={sidebarOpen}
         jianOpen={jianOpen}
-        previewOpen={previewOpen}
         onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
         onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
-        onTogglePreview={() => { hideFloat(); togglePreviewPanel(); }}
         onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
         onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
         onToggleMouseLeave={scheduleFloatHide}

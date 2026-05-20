@@ -12,6 +12,9 @@
  */
 import fs from "fs/promises";
 import { summarizeSessionForRc } from "./rc-summary.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("rc");
 
 const STREAM_WAIT_TIMEOUT_MS = 30_000;
 const STREAM_POLL_INTERVAL_MS = 200;
@@ -89,7 +92,7 @@ export async function handleRcPendingInput(ctx) {
   try {
     summary = await summarizeSessionForRc(engine, agent, sessionPath);
   } catch (err) {
-    console.warn(`[rc] summarize threw: ${err.message}`);
+    log.warn(`summarize threw: ${err.message}`);
   }
 
   const preAttachCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId);
@@ -122,7 +125,7 @@ export async function handleRcPendingInput(ctx) {
       platform: _platformFromSessionKey(sessionKey),
     }, sessionPath);
   } catch (err) {
-    console.warn(`[rc] emit attached event failed: ${err.message}`);
+    log.warn(`emit attached event failed: ${err.message}`);
   }
 
   const body = summary
@@ -208,6 +211,6 @@ async function _waitForSessionIdle(engine, sessionPath) {
 
 async function _safeReply(reply, text) {
   try { await reply(text); } catch (err) {
-    console.warn(`[rc] reply failed: ${err.message}`);
+    log.warn(`reply failed: ${err.message}`);
   }
 }

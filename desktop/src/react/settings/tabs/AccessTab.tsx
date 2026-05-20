@@ -316,9 +316,9 @@ export function AccessTab() {
           control={
             <Toggle
               label={t('settings.access.lanToggle')}
-              on={summary ? mode === 'lan' : false}
+              on={summary ? mode === 'lan' : undefined}
               onChange={handleLanToggle}
-              disabled={loadingSummary || savingNetwork || !summary}
+              disabled={loadingSummary || savingNetwork}
             />
           }
         />

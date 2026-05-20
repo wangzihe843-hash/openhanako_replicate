@@ -6,10 +6,11 @@ import { WindowControls } from '../WindowControls';
 interface AppTitlebarProps {
   sidebarOpen: boolean;
   jianOpen: boolean;
-  previewOpen: boolean;
   onToggleSidebar: () => void;
   onToggleJian: () => void;
-  onTogglePreview: () => void;
+  previewOpen?: boolean;
+  onTogglePreview?: () => void;
+  showPreviewToggle?: boolean;
   showChannelTabs?: boolean;
   showWidgetButtons?: boolean;
   onLeftMouseEnter?: MouseEventHandler<HTMLButtonElement>;
@@ -20,10 +21,11 @@ interface AppTitlebarProps {
 export function AppTitlebar({
   sidebarOpen,
   jianOpen,
-  previewOpen,
   onToggleSidebar,
   onToggleJian,
+  previewOpen = false,
   onTogglePreview,
+  showPreviewToggle = false,
   showChannelTabs = true,
   showWidgetButtons = true,
   onLeftMouseEnter,
@@ -51,20 +53,22 @@ export function AppTitlebar({
       {showChannelTabs && <ChannelTabBar />}
       <div className="tb-right-group">
         {showWidgetButtons && <WidgetButtons />}
-        <button
-          className={`tb-toggle tb-toggle-preview${previewOpen ? ' active' : ''}`}
-          id="tbTogglePreview"
-          title={t('preview.toggle')}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onTogglePreview}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7 3.5h7l3 3v14H7z"></path>
-            <path d="M14 3.5v3h3"></path>
-            <path d="M9.5 11h5"></path>
-            <path d="M9.5 14.5h5"></path>
-          </svg>
-        </button>
+        {showPreviewToggle && onTogglePreview && (
+          <button
+            className={`tb-toggle tb-toggle-preview${previewOpen ? ' active' : ''}`}
+            id="tbTogglePreview"
+            title={t('preview.toggle')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onTogglePreview}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7 3.5h7l3 3v14H7z"></path>
+              <path d="M14 3.5v3h3"></path>
+              <path d="M9.5 11h5"></path>
+              <path d="M9.5 14.5h5"></path>
+            </svg>
+          </button>
+        )}
         <button
           className={`tb-toggle tb-toggle-right${jianOpen ? ' active' : ''}`}
           id="tbToggleRight"

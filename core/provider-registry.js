@@ -13,7 +13,7 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { safeReadYAMLSync } from "../shared/safe-fs.js";
+import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.js";
 import { fromRoot } from "../shared/hana-root.js";
 import { lookupKnown } from "../shared/known-models.js";
 import {
@@ -433,7 +433,7 @@ export class ProviderRegistry {
         }
         const header = "# Hanako Agent 配置\n# 由设置页面管理，手动编辑也可以\n\n";
         const yamlStr = header + YAML.dump(cfg, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '"', forceQuotes: false });
-        fs.writeFileSync(cfgPath, yamlStr, "utf-8");
+        atomicWriteSync(cfgPath, yamlStr);
       }
     }
 
@@ -476,9 +476,7 @@ export class ProviderRegistry {
       quotingType: "\"",
       forceQuotes: false,
     });
-    const tmpPath = ymlPath + ".tmp";
-    fs.writeFileSync(tmpPath, yamlStr, "utf-8");
-    fs.renameSync(tmpPath, ymlPath);
+    atomicWriteSync(ymlPath, yamlStr);
     // 写入后失效缓存，下次 _loadAddedModels 会重读
     this._addedModelsCache = null;
     this._addedModelsMtime = 0;

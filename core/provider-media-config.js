@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { safeReadYAMLSync } from "../shared/safe-fs.js";
+import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.js";
 import { lookupKnown } from "../shared/known-models.js";
 
 function isPlainObject(value) {
@@ -104,9 +104,7 @@ export function migrateProviderMediaConfig(hanakoHome, log = () => {}) {
     quotingType: "\"",
     forceQuotes: false,
   });
-  const tmpPath = `${ymlPath}.tmp`;
-  fs.writeFileSync(tmpPath, yamlStr, "utf-8");
-  fs.renameSync(tmpPath, ymlPath);
+  atomicWriteSync(ymlPath, yamlStr);
   log("[migrate] provider image models migrated to media.image_generation");
   return true;
 }

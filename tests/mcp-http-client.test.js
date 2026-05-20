@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { MCP_PROTOCOL_VERSION } from "../plugins/mcp/lib/mcp-stdio-client.js";
 import {
   McpAutoHttpClient,
+  McpLegacySseClient,
   McpStreamableHttpClient,
 } from "../plugins/mcp/lib/mcp-http-client.js";
 
@@ -167,6 +168,85 @@ describe("MCP HTTP clients", () => {
     expect(initializeCount).toBe(2);
     const listRequests = requests.filter(r => r.body?.method === "tools/list");
     expect(headerValue(listRequests.at(-1).init.headers, "MCP-Session-Id")).toBe("session-2");
+  });
+
+  it("uses one initial Streamable HTTP protocol version source and then negotiated headers", async () => {
+    const requests = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = requestBody(init);
+      requests.push({ url: String(url), init, body });
+      if (body?.method === "initialize") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: "2026-01-01", capabilities: {} },
+        }, { headers: { "MCP-Session-Id": "session-a" } });
+      }
+      if (body?.method === "notifications/initialized") return emptyResponse();
+      if (body?.method === "tools/list") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      }
+      throw new Error(`unexpected method ${body?.method}`);
+    });
+
+    const client = new McpStreamableHttpClient({
+      id: "versioned",
+      url: "https://mcp.example.com/mcp",
+      headers: {
+        "MCP-Protocol-Version": "2024-11-05",
+      },
+    }, { fetchImpl });
+
+    await client.start();
+    await client.listTools();
+
+    expect(requests[0].body.params.protocolVersion).toBe("2024-11-05");
+    expect(headerValue(requests[0].init.headers, "MCP-Protocol-Version")).toBe("2024-11-05");
+    expect(headerValue(requests[2].init.headers, "MCP-Protocol-Version")).toBe("2026-01-01");
+  });
+
+  it("does not let a legacy SSE server ping with the same id satisfy a tool response", async () => {
+    const encoder = new TextEncoder();
+    let streamController;
+    const fetchImpl = vi.fn(async (url, init = {}) => {
+      const body = requestBody(init);
+      if (init.method === "POST" && body?.method === "tools/call") {
+        queueMicrotask(() => {
+          streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, method: "ping", params: {} })}\n\n`));
+          streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } })}\n\n`));
+        });
+        return emptyResponse();
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    const client = new McpLegacySseClient({
+      id: "legacy",
+      url: "https://legacy.example.com/sse",
+    }, { fetchImpl });
+    const stream = new ReadableStream({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    client.messageEndpoint = "https://legacy.example.com/messages";
+    client._closed = false;
+    client._handleSseEvent({
+      event: "message",
+      data: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: {} }),
+    });
+    client._readSse(stream).catch((err) => {
+      throw err;
+    });
+
+    const result = await client.callTool("search", { q: "hana" });
+    await client.stop();
+
+    expect(result).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(client._queued.size).toBe(0);
   });
 
   it("falls back from Streamable HTTP to legacy SSE endpoint transport", async () => {

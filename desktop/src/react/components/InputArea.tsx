@@ -334,6 +334,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
   // ── TipTap editor ──
   const editor = useEditor({
+    // Mobile PWA cold starts can race editor DOM creation with the first render.
+    // Create the editor after mount there; keep desktop's immediate path unchanged.
+    immediatelyRender: surface !== 'mobile',
     extensions: createInputEditorExtensions(getEditorPlaceholder),
     editorProps: {
       attributes: {

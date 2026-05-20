@@ -40,6 +40,7 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
 });
 
 import { BridgeSessionManager } from "../core/bridge-session-manager.js";
+import { VisionBridge, VISION_CONTEXT_START } from "../core/vision-bridge.js";
 
 function makeAgent(rootDir, id = "agent-a") {
   const sessionDir = path.join(rootDir, "sessions");
@@ -841,6 +842,84 @@ describe("BridgeSessionManager teardown", () => {
       imageAttachmentPaths: ["/tmp/upload.png"],
     }));
     expect(session.prompt).toHaveBeenCalledWith("hello", undefined);
+  });
+
+  it("bridge vision context injection uses captured Hana refs when Pi context is stale", async () => {
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.sessionDir, "bridge", "owner", "s-vision-restore.jsonl");
+    const imagePath = path.join(rootDir, "bridge-upload.png");
+    const textOnlyModel = { id: "gpt-4o", provider: "openai", name: "GPT-4o", input: ["text"] };
+    const callText = vi.fn(async () => [
+      "image_overview: A bridge image with a red alert.",
+      "user_request_answer: The alert is the important visual context.",
+      "evidence: red alert.",
+      "uncertainty: none.",
+    ].join("\n"));
+    const visionBridge = new VisionBridge({
+      resolveVisionConfig: () => ({
+        model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
+        api: "openai-completions",
+        api_key: "sk-test",
+        base_url: "https://example.test/v1",
+      }),
+      callText,
+    });
+    await visionBridge.prepare({
+      sessionPath: sessionFile,
+      targetModel: textOnlyModel,
+      text: `[attached_image: ${imagePath}]\nwhat is this?`,
+      images: [{ type: "image", data: "BASE64", mimeType: "image/png" }],
+      imageAttachmentPaths: [imagePath],
+    });
+    const deps = {
+      ...makeDeps(agent),
+      getVisionBridge: () => visionBridge,
+      isVisionAuxiliaryEnabled: () => true,
+      getModelManager: () => ({
+        availableModels: [textOnlyModel],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+    };
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    let injectedText = "";
+    const session = {
+      model: textOnlyModel,
+      prompt: vi.fn(async () => {
+        const resourceLoader = createAgentSessionMock.mock.calls.at(-1)[0].resourceLoader;
+        const extension = resourceLoader.getExtensions().extensions
+          .find((entry) => entry.path === "hana-vision-context-injection");
+        const handler = extension.handlers.get("context")[0];
+        const staleCtx = {
+          get sessionManager() {
+            throw new Error("stale session manager");
+          },
+          get model() {
+            throw new Error("stale model");
+          },
+        };
+        const result = await handler({
+          messages: [{
+            role: "user",
+            content: [{ type: "text", text: `[attached_image: ${imagePath}]\nwhat is this?` }],
+          }],
+        }, staleCtx);
+        injectedText = result.messages[0].content[0].text;
+      }),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await manager.executeExternalMessage("what is this?", "bridge-k-vision-restore", null, { agentId: "agent-a" });
+
+    expect(injectedText).toContain(VISION_CONTEXT_START);
+    expect(injectedText).toContain("image_overview");
   });
 
   it("compactSession 的临时 owner session 结束后也会 shutdown + dispose", async () => {

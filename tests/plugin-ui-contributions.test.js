@@ -209,6 +209,8 @@ describe('Plugin UI Contributions', () => {
       expect(pm.getSettingsTabs()).toEqual([
         {
           pluginId: 'mcp',
+          pluginKey: 'builtin:mcp',
+          source: 'builtin',
           id: 'mcp',
           title: { zh: 'MCP', en: 'MCP' },
           icon: null,

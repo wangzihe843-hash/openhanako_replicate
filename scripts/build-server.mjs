@@ -13,9 +13,11 @@
  * 产出结构：
  *   dist-server/{platform}-{arch}/
  *     hana-server             ← shell wrapper（设置 HANA_ROOT 并启动）
+ *     hana                    ← shell wrapper（server-first CLI）
  *     node                    ← Node.js runtime
  *     bundle/                 ← Vite bundle 产出
  *       index.js              ← 入口（~750KB）
+ *       cli.js                ← server-first CLI 入口
  *       chunks/               ← 按模块拆分的 chunk
  *         shared-XXXX.js
  *         core-XXXX.js
@@ -171,6 +173,16 @@ execSync("npx vite build --config vite.config.server.js", {
 const bundleOutDir = path.join(outDir, "bundle");
 fs.cpSync(viteBundleDir, bundleOutDir, { recursive: true });
 console.log("[build-server] Vite bundle copied to bundle/");
+
+console.log("[build-server] running CLI bundle...");
+execSync(
+  `npx esbuild "${path.join(ROOT, "cli", "entry.js")}" --bundle --platform=node --format=esm --target=node22 --external:ws --outfile="${path.join(bundleOutDir, "cli.js")}"`,
+  {
+    cwd: ROOT,
+    stdio: "inherit",
+  },
+);
+console.log("[build-server] CLI bundle copied to bundle/cli.js");
 
 fs.copyFileSync(path.join(ROOT, "server", "bootstrap.js"), path.join(outDir, "bootstrap.js"));
 console.log("[build-server] bootstrap copied");
@@ -491,6 +503,10 @@ if (isWin) {
     path.join(outDir, "hana-server.cmd"),
     '@echo off\r\nset "HANA_ROOT=%~dp0"\r\nset "HANA_SERVER_ENTRY=%~dp0bundle\\index.js"\r\n"%~dp0hana-server.exe" "%~dp0bootstrap.js" %*\r\n',
   );
+  fs.writeFileSync(
+    path.join(outDir, "hana.cmd"),
+    '@echo off\r\nset "HANA_ROOT=%~dp0"\r\nset "HANA_SERVER_ENTRY=%~dp0bundle\\index.js"\r\n"%~dp0hana-server.exe" "%~dp0bundle\\cli.js" %*\r\n',
+  );
 } else {
   const wrapper = path.join(outDir, "hana-server");
   fs.writeFileSync(wrapper, [
@@ -507,6 +523,17 @@ if (isWin) {
     "",
   ].join("\n"));
   fs.chmodSync(wrapper, 0o755);
+
+  const cliWrapper = path.join(outDir, "hana");
+  fs.writeFileSync(cliWrapper, [
+    "#!/bin/sh",
+    'DIR="$(cd "$(dirname "$0")" && pwd)"',
+    'export HANA_ROOT="$DIR"',
+    'export HANA_SERVER_ENTRY="$DIR/bundle/index.js"',
+    'exec "$DIR/node" "$DIR/bundle/cli.js" "$@"',
+    "",
+  ].join("\n"));
+  fs.chmodSync(cliWrapper, 0o755);
 }
 console.log("[build-server] wrapper created");
 

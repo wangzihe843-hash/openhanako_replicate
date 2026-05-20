@@ -18,6 +18,9 @@ import {
   restorePluginInstallBackup,
 } from "../../lib/plugin-install-backups.js";
 import { detectIncompatiblePluginFormat } from "../../lib/plugin-format-guard.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("plugin-install");
 
 const MAX_PLUGIN_RELEASE_PACKAGE_SIZE = 50 * 1024 * 1024;
 
@@ -110,7 +113,7 @@ function readPluginDescriptorForInstall(pm, pluginDir) {
 }
 
 function findInstalledPlugin(pm, pluginId, candidateDir) {
-  const plugins = typeof pm.listPlugins === "function" ? pm.listPlugins() : [];
+  const plugins = typeof pm.listPlugins === "function" ? pm.listPlugins({ source: "community" }) : [];
   return plugins.find((plugin) => (
     plugin.id === pluginId
     || (candidateDir && plugin.pluginDir && path.resolve(plugin.pluginDir) === path.resolve(candidateDir))
@@ -211,17 +214,17 @@ function assertInstallEntryHealthy(entry) {
 async function restoreAfterFailedInstall({ engine, pm, backup, targetDir, desc }) {
   if (backup && restorePluginInstallBackup(backup, targetDir)) {
     try {
-      await pm.installPlugin(targetDir);
+      await pm.installPlugin(targetDir, { source: "community" });
       await engine.syncPluginExtensions();
     } catch (restoreErr) {
-      console.warn(`[plugin-install] failed to reload restored plugin "${desc.id}":`, restoreErr.message);
+      log.warn(`failed to reload restored plugin "${desc.id}": ${restoreErr.message}`);
     }
     return;
   }
   fs.rmSync(targetDir, { recursive: true, force: true });
   if (desc?.id && typeof pm.removePlugin === "function") {
     try {
-      await pm.removePlugin(desc.id, { persist: false });
+      await pm.removePlugin(desc.id, { source: "community", persist: false });
     } catch {
       // The failed install may not have reached the plugin registry.
     }
@@ -276,7 +279,7 @@ async function installPluginFromPath({
 
     let entry;
     try {
-      entry = await pm.installPlugin(targetDir);
+      entry = await pm.installPlugin(targetDir, { source: "community" });
       assertInstallEntryHealthy(entry);
       await engine.syncPluginExtensions();
     } catch (err) {
@@ -499,7 +502,11 @@ export function createPluginsRoute(engine) {
     if (opts.source) plugins = plugins.filter(p => p.source === opts.source);
     return plugins.map(p => ({
       id: p.id, name: p.name, version: p.version,
+      pluginKey: p.pluginKey || `${p.source || "community"}:${p.id}`,
       description: p.description, status: p.status,
+      shadowedBy: p.shadowedBy || null,
+      shadowedByPluginKey: p.shadowedByPluginKey || null,
+      shadows: Array.isArray(p.shadows) ? p.shadows : [],
       activationState: p.activationState || null,
       activationEvents: Array.isArray(p.activationEvents) ? p.activationEvents : [],
       activationError: p.activationError || null,
@@ -700,7 +707,7 @@ export function createPluginsRoute(engine) {
     const marketplace = getMarketplace();
     const data = await marketplace.load();
     const appVersion = getEngineAppVersion(engine);
-    const installed = new Map((pm?.listPlugins?.() || []).map((plugin) => [plugin.id, plugin]));
+    const installed = new Map((pm?.listPlugins?.({ source: "community" }) || []).map((plugin) => [plugin.id, plugin]));
     return c.json({
       ...data,
       plugins: data.plugins.map((plugin) => {
@@ -745,7 +752,7 @@ export function createPluginsRoute(engine) {
       allowDowngrade = false,
     } = await c.req.json().catch(() => ({}));
     try {
-      const installedPlugin = (pm.listPlugins?.() || []).find((item) => item.id === plugin.id);
+      const installedPlugin = (pm.listPlugins?.({ source: "community" }) || []).find((item) => item.id === plugin.id);
       const installedVersion = installedPlugin?.version || engine.getPluginInstallRecord?.(plugin.id)?.installedVersion || null;
       const versionState = getMarketplacePluginVersionState(plugin, {
         appVersion: getEngineAppVersion(engine),
@@ -853,7 +860,7 @@ export function createPluginsRoute(engine) {
     if (!pm) return c.json({ error: "Plugin manager not available" }, 500);
     const id = c.req.param("id");
     try {
-      const pluginDir = await pm.removePlugin(id);
+      const pluginDir = await pm.removePlugin(id, { source: "community" });
       await engine.syncPluginExtensions();
       if (pluginDir && fs.existsSync(pluginDir)) {
         fs.rmSync(pluginDir, { recursive: true, force: true });
@@ -872,9 +879,9 @@ export function createPluginsRoute(engine) {
     const { enabled } = await c.req.json();
     try {
       if (enabled) {
-        await pm.enablePlugin(id);
+        await pm.enablePlugin(id, { source: "community" });
       } else {
-        await pm.disablePlugin(id);
+        await pm.disablePlugin(id, { source: "community" });
       }
       await engine.syncPluginExtensions();
       return c.json({ ok: true });

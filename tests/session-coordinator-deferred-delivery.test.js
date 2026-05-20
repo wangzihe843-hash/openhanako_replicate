@@ -4,7 +4,7 @@ import { SessionCoordinator } from "../core/session-coordinator.js";
 
 function makeCoordinator(overrides = {}) {
   return new SessionCoordinator({
-    agentsDir: "/tmp/fake",
+    agentsDir: "/tmp/fake/agents",
     getAgent: () => ({ id: "test-agent" }),
     getActiveAgentId: () => "test-agent",
     getModels: () => ({}),
@@ -36,14 +36,15 @@ describe("SessionCoordinator deferred custom delivery", () => {
   it("wakes an idle live session with triggerTurn instead of steer", async () => {
     const coord = makeCoordinator();
     const session = makeSession({ isStreaming: false });
-    coord.sessions.set("/sessions/a.jsonl", {
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/a.jsonl";
+    coord.sessions.set(sessionPath, {
       session,
       agentId: "test-agent",
       lastTouchedAt: 0,
     });
     coord.steerSession = vi.fn();
 
-    const result = await coord.deliverCustomMessage("/sessions/a.jsonl", {
+    const result = await coord.deliverCustomMessage(sessionPath, {
       customType: "hana-background-result",
       content: "<hana-background-result />",
       display: false,
@@ -60,13 +61,14 @@ describe("SessionCoordinator deferred custom delivery", () => {
   it("queues custom delivery as a follow-up when the session is currently streaming", async () => {
     const coord = makeCoordinator();
     const session = makeSession({ isStreaming: true });
-    coord.sessions.set("/sessions/a.jsonl", {
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/a.jsonl";
+    coord.sessions.set(sessionPath, {
       session,
       agentId: "test-agent",
       lastTouchedAt: 0,
     });
 
-    const result = await coord.deliverCustomMessage("/sessions/a.jsonl", {
+    const result = await coord.deliverCustomMessage(sessionPath, {
       customType: "hana-background-result",
       content: "<hana-background-result />",
       display: false,
@@ -82,6 +84,7 @@ describe("SessionCoordinator deferred custom delivery", () => {
   it("cold-loads an unloaded session before delivering the custom message", async () => {
     const coord = makeCoordinator();
     const session = makeSession({ isStreaming: false });
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/cold.jsonl";
     coord.ensureSessionLoaded = vi.fn(async (sessionPath) => {
       coord.sessions.set(sessionPath, {
         session,
@@ -91,17 +94,60 @@ describe("SessionCoordinator deferred custom delivery", () => {
       return session;
     });
 
-    const result = await coord.deliverCustomMessage("/sessions/cold.jsonl", {
+    const result = await coord.deliverCustomMessage(sessionPath, {
       customType: "hana-background-result",
       content: "<hana-background-result />",
       display: false,
     });
 
     expect(result).toMatchObject({ ok: true, mode: "triggerTurn" });
-    expect(coord.ensureSessionLoaded).toHaveBeenCalledWith("/sessions/cold.jsonl");
+    expect(coord.ensureSessionLoaded).toHaveBeenCalledWith(sessionPath);
     expect(session.sendCustomMessage).toHaveBeenCalledWith(
       expect.objectContaining({ customType: "hana-background-result", display: false }),
       { triggerTurn: true },
+    );
+  });
+
+  it("refuses to cold-load archived sessions for custom delivery", async () => {
+    const coord = makeCoordinator();
+    coord.ensureSessionLoaded = vi.fn();
+    const archivedPath = "/tmp/fake/agents/test-agent/sessions/archived/cold.jsonl";
+
+    await expect(
+      coord.deliverCustomMessage(archivedPath, {
+        customType: "hana-background-result",
+        content: "<hana-background-result />",
+        display: false,
+      }),
+    ).rejects.toThrow(/active desktop session/);
+
+    expect(coord.ensureSessionLoaded).not.toHaveBeenCalled();
+  });
+
+  it("can deliver a notification without triggering a parent turn", async () => {
+    const coord = makeCoordinator();
+    const session = makeSession({ isStreaming: false });
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/a.jsonl";
+    coord.sessions.set(sessionPath, {
+      session,
+      agentId: "test-agent",
+      lastTouchedAt: 0,
+    });
+
+    const result = await coord.deliverCustomMessage(
+      sessionPath,
+      {
+        customType: "hana-background-result",
+        content: "<hana-background-result />",
+        display: false,
+      },
+      { triggerTurn: false },
+    );
+
+    expect(result).toMatchObject({ ok: true, mode: "notifyOnly" });
+    expect(session.sendCustomMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "hana-background-result", display: false }),
+      { triggerTurn: false },
     );
   });
 });

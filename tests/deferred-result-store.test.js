@@ -85,6 +85,34 @@ describe("DeferredResultStore", () => {
     });
   });
 
+  describe("suppressBySession", () => {
+    it("aborts pending tasks and marks undelivered terminal tasks as suppressed", () => {
+      store.defer("pending", "/s/a", {});
+      store.defer("resolved", "/s/a", {});
+      store.resolve("resolved", "done");
+      store.defer("other", "/s/b", {});
+
+      const result = store.suppressBySession("/s/a", "parent session archived");
+
+      expect(result).toMatchObject({ aborted: 1, suppressed: 1 });
+      expect(store.query("pending")).toMatchObject({
+        status: "aborted",
+        delivered: true,
+        deliverySuppressed: true,
+        reason: "parent session archived",
+      });
+      expect(store.query("resolved")).toMatchObject({
+        status: "resolved",
+        delivered: true,
+        deliverySuppressed: true,
+      });
+      expect(store.query("other")).toMatchObject({
+        status: "pending",
+        delivered: false,
+      });
+    });
+  });
+
   describe("unsubscribe", () => {
     it("onResult returns unsubscribe function", () => {
       const cb = vi.fn();

@@ -8,6 +8,7 @@
 import fs from "fs";
 import { getPiModel } from "../lib/pi-sdk/index.js";
 import { lookupKnown } from "../shared/known-models.js";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 import { normalizeVisionCapabilities, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.js";
 import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
@@ -244,9 +245,7 @@ export function syncModels(providers, opts = {}) {
   if (oldStr === newStr) return false;
 
   // 原子写入：先写 tmp 文件，再 rename
-  const tmpPath = modelsJsonPath + ".tmp";
-  fs.writeFileSync(tmpPath, newStr, "utf-8");
-  fs.renameSync(tmpPath, modelsJsonPath);
+  atomicWriteSync(modelsJsonPath, newStr);
 
   return true;
 }

@@ -70,8 +70,10 @@ function normalizeNetworkProxyDraft(value: Partial<NetworkProxyConfig> | null | 
 export function SecurityTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
   const showToast = useSettingsStore(s => s.showToast);
+  // 默认开（!== false）：和后端 preferences-manager.getSandboxNetwork / engine.getSandboxNetwork 保持一致。
+  // 见 core/preferences-manager.js:86 和 commit 51ecc435。
   const sandboxEnabled = settingsConfig?.sandbox !== false;
-  const sandboxNetworkEnabled = settingsConfig?.sandbox_network === true;
+  const sandboxNetworkEnabled = settingsConfig?.sandbox_network !== false;
   const fileBackup = settingsConfig?.file_backup || { enabled: false, retention_days: 1, max_file_size_kb: 1024 };
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);

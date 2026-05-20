@@ -33,7 +33,11 @@ function writePrefs(hanakoHome, prefs) {
 }
 
 function readPrefs(hanakoHome) {
-  return readJson(path.join(hanakoHome, "user", "preferences.json"));
+  try {
+    return readJson(path.join(hanakoHome, "user", "preferences.json"));
+  } catch {
+    return {};
+  }
 }
 
 describe("desktop GPU startup policy", () => {
@@ -96,7 +100,12 @@ describe("desktop GPU startup policy", () => {
 
     expect(policy.hardwareAccelerationEnabled).toBe(false);
     expect(policy.reason).toBe("previous-startup-incomplete");
-    expect(readPrefs(hanakoHome).hardware_acceleration).toBe(false);
+    expect(readPrefs(hanakoHome).hardware_acceleration).toBeUndefined();
+    const state = readJson(path.join(hanakoHome, "user", "gpu-startup.json"));
+    expect(state.autoGpuMode).toMatchObject({
+      mode: "software-safe",
+      reason: "previous-startup-incomplete",
+    });
   });
 
   it("does not auto-disable hardware acceleration for non-Windows stale startup markers", () => {
@@ -138,8 +147,45 @@ describe("desktop GPU startup policy", () => {
     });
 
     expect(policy.hardwareAccelerationEnabled).toBe(false);
-    expect(policy.reason).toBe("preference");
+    expect(policy.reason).toBe("gpu-child-process-gone");
+    expect(policy.mode).toBe("software-safe");
+    expect(readPrefs(hanakoHome).hardware_acceleration).toBeUndefined();
+  });
+
+  it("escalates a software-safe GPU crash to deep compatibility without changing the user preference", () => {
+    const hanakoHome = makeHome();
+    writePrefs(hanakoHome, { hardware_acceleration: false });
+    const policy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe"],
+      env: {},
+    });
+
+    recordGpuChildProcessGone({
+      hanakoHome,
+      platform: "win32",
+      policy,
+      details: { type: "GPU", reason: "crashed", exitCode: -2147483645 },
+      now: "2026-05-19T01:02:00.000Z",
+    });
+
+    const nextPolicy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe"],
+      env: {},
+    });
+
+    expect(nextPolicy.hardwareAccelerationEnabled).toBe(false);
+    expect(nextPolicy.mode).toBe("deep-compat");
+    expect(nextPolicy.shouldApplyDeepCompatSwitches).toBe(true);
     expect(readPrefs(hanakoHome).hardware_acceleration).toBe(false);
+    expect(readJson(path.join(hanakoHome, "user", "gpu-startup.json")).autoGpuMode).toMatchObject({
+      mode: "deep-compat",
+      reason: "gpu-child-process-gone",
+      previousMode: "software-safe",
+    });
   });
 
   it("clears the pending marker when startup reaches app-ready", () => {
@@ -201,6 +247,28 @@ describe("desktop GPU startup policy", () => {
     });
 
     expect(app.disableHardwareAcceleration).toHaveBeenCalledTimes(1);
+    expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("disable-software-rasterizer", expect.anything());
+    expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("disable-gpu-sandbox", expect.anything());
+    expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox", expect.anything());
+  });
+
+  it("applies deep compatibility switches without disabling software rasterizer or sandbox", () => {
+    const app = {
+      disableHardwareAcceleration: vi.fn(),
+      commandLine: { appendSwitch: vi.fn() },
+    };
+
+    applyGpuStartupPolicy(app, {
+      shouldDisableHardwareAcceleration: true,
+      shouldApplyDeepCompatSwitches: true,
+      mode: "deep-compat",
+      reason: "gpu-child-process-gone",
+    });
+
+    expect(app.disableHardwareAcceleration).toHaveBeenCalledTimes(1);
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu-compositing");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu-rasterization");
     expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("disable-software-rasterizer", expect.anything());
     expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("disable-gpu-sandbox", expect.anything());
     expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox", expect.anything());

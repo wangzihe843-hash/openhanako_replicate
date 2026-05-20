@@ -70,4 +70,41 @@ describe("DeferredResultCoordinator", () => {
     expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledOnce();
     expect(store.query("task-3")).toMatchObject({ delivered: true });
   });
+
+  it("delivers aborted tasks without triggering the parent agent turn", async () => {
+    store.defer("task-4", "/sessions/a.jsonl", { type: "subagent" });
+    store.abort("task-4", "user stopped");
+
+    await vi.waitFor(() => {
+      expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledWith(
+      "/sessions/a.jsonl",
+      expect.objectContaining({ customType: "hana-background-result" }),
+      { triggerTurn: false },
+    );
+    expect(store.query("task-4")).toMatchObject({ delivered: true });
+  });
+
+  it("suppresses old undelivered results when the parent session is no longer runnable", async () => {
+    sessionCoordinator.isRunnableSessionPath = vi.fn(() => false);
+    store._tasks.set("task-5", {
+      status: "resolved",
+      sessionPath: "/sessions/archived/a.jsonl",
+      meta: { type: "subagent" },
+      deferredAt: Date.now(),
+      result: "done",
+      reason: null,
+      delivered: false,
+    });
+
+    await coordinator.flushUndelivered();
+
+    expect(sessionCoordinator.deliverCustomMessage).not.toHaveBeenCalled();
+    expect(store.query("task-5")).toMatchObject({
+      delivered: true,
+      deliverySuppressed: true,
+    });
+  });
 });

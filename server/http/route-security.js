@@ -201,6 +201,7 @@ function isDeskFileWriteRoute(verb, routePath) {
 }
 
 function isSettingsWriteRoute(verb, routePath) {
+  if (verb === "POST" && routePath === "/api/preferences/setup-complete") return true;
   return (verb === "PUT" && (
     routePath === "/api/config"
     || routePath === "/api/preferences/models"

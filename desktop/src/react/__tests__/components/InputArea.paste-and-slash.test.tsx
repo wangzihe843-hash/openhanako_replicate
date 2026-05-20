@@ -218,6 +218,10 @@ function tiptapPasteHandler(): ((view: unknown, event: ClipboardEvent) => boolea
   return editorProps?.handlePaste as ((view: unknown, event: ClipboardEvent) => boolean | void) | undefined;
 }
 
+function latestEditorOptions(): Record<string, unknown> | undefined {
+  return mocks.editorOptions;
+}
+
 function tiptapKeyDownHandler(): ((view: unknown, event: KeyboardEvent) => boolean | void) | undefined {
   const editorProps = mocks.editorOptions?.editorProps as Record<string, unknown> | undefined;
   return editorProps?.handleKeyDown as ((view: unknown, event: KeyboardEvent) => boolean | void) | undefined;
@@ -240,6 +244,18 @@ describe('InputArea paste and slash menu behavior', () => {
     seedInputState();
     mocks.hanaFetch.mockResolvedValue(new Response('{}', { status: 200 }));
     window.platform = {} as typeof window.platform;
+  });
+
+  it('keeps desktop editor creation immediate while deferring mobile editor creation until after mount', () => {
+    const { unmount } = render(React.createElement(InputArea));
+
+    expect(latestEditorOptions()?.immediatelyRender).toBe(true);
+
+    unmount();
+    mocks.editorOptions = undefined;
+    render(<InputArea surface="mobile" />);
+
+    expect(latestEditorOptions()?.immediatelyRender).toBe(false);
   });
 
   it('consumes a rich URL paste through the TipTap paste hook before the default editor paste runs', () => {

@@ -15,6 +15,9 @@
  * @property {string} [usage]
  */
 
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("slash");
 const MAX_COMMAND_NAME_LENGTH = 32;
 
 function normalize(raw) {
@@ -46,7 +49,7 @@ export class SlashCommandRegistry {
     const gateSource = meta.source ?? "core";
     const sourceId = meta.sourceId ?? def.sourceId ?? null;
     if (gateSource !== "core" && SlashCommandRegistry.CORE_RESERVED_NAMES.has(base)) {
-      console.warn(`[slash] rejected register: "${base}" is core-reserved (source=${gateSource}${sourceId ? `, sourceId=${sourceId}` : ""})`);
+      log.warn(`rejected register: "${base}" is core-reserved (source=${gateSource}${sourceId ? `, sourceId=${sourceId}` : ""})`);
       return null;
     }
     // 存储时 meta.source 优先，其次 def.source，最后默认 "core"
@@ -62,11 +65,11 @@ export class SlashCommandRegistry {
       // 纪律 #3 扩展：alias 也受 core-reserved 闸门约束，防 plugin/skill 用 aliases 绕过
       // （不仅依赖启动顺序；未来 hot-reload / test 重排路径下这是唯一保障）
       if (gateSource !== "core" && SlashCommandRegistry.CORE_RESERVED_NAMES.has(an)) {
-        console.warn(`[slash] rejected alias "${an}" for "${finalName}": core-reserved (source=${gateSource}${sourceId ? `, sourceId=${sourceId}` : ""})`);
+        log.warn(`rejected alias "${an}" for "${finalName}": core-reserved (source=${gateSource}${sourceId ? `, sourceId=${sourceId}` : ""})`);
         continue;
       }
       if (this._byName.has(an)) {
-        console.warn(`[slash] alias "${an}" for command "${finalName}" skipped (name already taken)`);
+        log.warn(`alias "${an}" for command "${finalName}" skipped (name already taken)`);
         continue;
       }
       this._byName.set(an, stored);

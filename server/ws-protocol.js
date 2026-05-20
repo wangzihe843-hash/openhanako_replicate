@@ -42,6 +42,17 @@ export function wsSend(ws, msg) {
   }
 }
 
+/**
+ * 发送已序列化的 JSON 字符串到 WebSocket。
+ * 用于 broadcast 场景：同一条消息发给 N 个 client 时，调用方只 JSON.stringify
+ * 一次再复用，避免对每个 client 重复序列化。
+ */
+export function wsSendSerialized(ws, payload) {
+  if (ws.readyState === 1) { // OPEN
+    ws.send(payload);
+  }
+}
+
 /** 安全地解析 WebSocket 消息（兼容 Buffer / string / ArrayBuffer） */
 export function wsParse(data) {
   try {

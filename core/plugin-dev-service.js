@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 import crypto from "crypto";
 
 const DEFAULT_LOG_LIMIT = 200;
@@ -281,6 +282,7 @@ function summarizePlugin(entry) {
   if (!entry) return null;
   return {
     id: entry.id,
+    pluginKey: entry.pluginKey,
     name: entry.name,
     version: entry.version,
     source: entry.source || "community",
@@ -428,7 +430,7 @@ export class PluginDevService {
     const runDir = path.join(this._runDataDir, record.pluginId);
     fs.mkdirSync(runDir, { recursive: true });
     const runPath = path.join(runDir, `${record.devRunId}.json`);
-    fs.writeFileSync(runPath, JSON.stringify(record, null, 2));
+    atomicWriteSync(runPath, JSON.stringify(record, null, 2));
     return runPath;
   }
 
@@ -460,7 +462,7 @@ export class PluginDevService {
         "PLUGIN_DEV_RUN_ID_MISMATCH",
       );
     }
-    const entry = this._pluginManager.getPlugin(pluginId);
+    const entry = this._pluginManager.getPlugin(pluginId, { source: "dev" });
     if (!entry) {
       throw createDevError(`Plugin "${pluginId}" not found`, 404, "PLUGIN_DEV_PLUGIN_NOT_FOUND");
     }
@@ -547,12 +549,12 @@ export class PluginDevService {
 
   async disablePlugin(pluginId, options = {}) {
     this._requireDevSlot(pluginId, options);
-    await this._pluginManager.disablePlugin(pluginId, { persist: false });
+    await this._pluginManager.disablePlugin(pluginId, { source: "dev", persist: false });
     await this._syncPluginExtensions();
     return {
       ok: true,
       pluginId,
-      plugin: summarizePlugin(this._pluginManager.getPlugin(pluginId)),
+      plugin: summarizePlugin(this._pluginManager.getPlugin(pluginId, { source: "dev" })),
       slot: this.getDevSlot(pluginId),
     };
   }
@@ -560,14 +562,15 @@ export class PluginDevService {
   async enablePlugin(pluginId, options = {}) {
     const { slot } = this._requireDevSlot(pluginId, options);
     await this._pluginManager.enablePlugin(pluginId, {
+      source: "dev",
       persist: false,
       allowFullAccess: options.allowFullAccess ?? slot.allowFullAccess,
     });
     await this._syncPluginExtensions();
     return {
-      ok: this._pluginManager.getPlugin(pluginId)?.status === "loaded",
+      ok: this._pluginManager.getPlugin(pluginId, { source: "dev" })?.status === "loaded",
       pluginId,
-      plugin: summarizePlugin(this._pluginManager.getPlugin(pluginId)),
+      plugin: summarizePlugin(this._pluginManager.getPlugin(pluginId, { source: "dev" })),
       slot: this.getDevSlot(pluginId),
     };
   }
@@ -579,7 +582,7 @@ export class PluginDevService {
 
   async uninstallPlugin(pluginId, options = {}) {
     const { slot } = this._requireDevSlot(pluginId, options);
-    const pluginDir = await this._pluginManager.removePlugin(pluginId, { persist: false });
+    const pluginDir = await this._pluginManager.removePlugin(pluginId, { source: "dev", persist: false });
     const removeTarget = slot.targetDir || pluginDir;
     if (removeTarget && assertInsideDir(removeTarget, this._devPluginsDir)) {
       fs.rmSync(removeTarget, { recursive: true, force: true });
@@ -596,14 +599,14 @@ export class PluginDevService {
   async invokeTool({ pluginId, toolName, input = {}, sessionPath, agentId } = {}) {
     if (!pluginId) throw createDevError("pluginId is required", 400, "PLUGIN_DEV_PLUGIN_ID_REQUIRED");
     if (!toolName) throw createDevError("toolName is required", 400, "PLUGIN_DEV_TOOL_NAME_REQUIRED");
-    const entry = this._pluginManager.getPlugin(pluginId);
+    const entry = this._pluginManager.getPlugin(pluginId, { source: "dev" });
     if (!entry) throw createDevError(`Plugin "${pluginId}" not found`, 404, "PLUGIN_DEV_PLUGIN_NOT_FOUND");
     if (entry.status !== "loaded") {
       throw createDevError(`Plugin "${pluginId}" is not loaded`, 409, "PLUGIN_DEV_PLUGIN_NOT_LOADED");
     }
     const fullToolName = toolName.includes("_") ? toolName : `${pluginId}_${toolName}`;
-    const tool = this._pluginManager.getAllTools().find((candidate) => (
-      candidate._pluginId === pluginId
+    const tool = this._pluginManager.getAllTools({ includeShadowed: true }).find((candidate) => (
+      candidate._pluginKey === entry.pluginKey
       && (candidate.name === fullToolName || candidate.name === toolName)
     ));
     if (!tool) {
@@ -674,7 +677,7 @@ export class PluginDevService {
 
   getScenarios({ pluginId } = {}) {
     if (!pluginId) throw createDevError("pluginId is required", 400, "PLUGIN_DEV_PLUGIN_ID_REQUIRED");
-    const entry = this._pluginManager.getPlugin(pluginId);
+    const entry = this._pluginManager.getPlugin(pluginId, { source: "dev" });
     if (!entry) throw createDevError(`Plugin "${pluginId}" not found`, 404, "PLUGIN_DEV_PLUGIN_NOT_FOUND");
     const scenarios = Array.isArray(entry.manifest?.dev?.scenarios)
       ? entry.manifest.dev.scenarios
@@ -810,7 +813,7 @@ export class PluginDevService {
     const plugins = typeof this._pluginManager.getDiagnostics === "function"
       ? this._pluginManager.getDiagnostics()
       : [];
-    const scenarios = pluginId && this._pluginManager.getPlugin(pluginId)
+    const scenarios = pluginId && this._pluginManager.getPlugin(pluginId, { source: "dev" })
       ? this.getScenarios({ pluginId }).map(({ steps: _steps, ...scenario }) => scenario)
       : [];
     return {

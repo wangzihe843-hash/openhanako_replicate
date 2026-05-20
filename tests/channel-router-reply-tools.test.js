@@ -225,6 +225,39 @@ describe("ChannelRouter reply tool boundary", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("tells phone sessions that unread delivery is a rolling window, not full channel history", async () => {
+    runAgentPhoneSessionMock.mockClear();
+
+    const router = new ChannelRouter({
+      hub: {
+        engine: { marker: "engine" },
+        eventBus: { emit: vi.fn() },
+      },
+    });
+
+    await router._executeReply(
+      "hanako",
+      "ch_crew",
+      "user: message 6\nuser: message 7",
+      {
+        messageCount: 20,
+        deliveryWindow: {
+          totalUnreadCount: 25,
+          droppedUnreadCount: 5,
+          bookmarkState: "never",
+        },
+      },
+    );
+
+    const phonePrompt = runAgentPhoneSessionMock.mock.calls[0][1][0].text;
+    expect(phonePrompt).toContain("本次投递窗口内未处理的新消息");
+    expect(phonePrompt).toContain("不是频道全部历史");
+    expect(phonePrompt).toContain("较早的 5 条未读消息没有放入本次投递窗口");
+    expect(phonePrompt).toContain("channel_read_context");
+    expect(phonePrompt).toContain("频道 Truth");
+    expect(phonePrompt).toContain("结合此前 Phone Session");
+  });
+
   it("emits a complete incremental message from the channel_reply tool, not raw model text", async () => {
     runAgentSessionMock.mockClear();
     runAgentPhoneSessionMock.mockClear();

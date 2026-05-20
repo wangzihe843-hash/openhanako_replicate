@@ -7,7 +7,10 @@ vi.mock("../lib/bridge/telegram-adapter.js", () => ({ createTelegramAdapter: vi.
 vi.mock("../lib/bridge/feishu-adapter.js", () => ({ createFeishuAdapter: vi.fn() }));
 vi.mock("../lib/bridge/qq-adapter.js", () => ({ createQQAdapter: vi.fn() }));
 vi.mock("../lib/bridge/wechat-adapter.js", () => ({ createWechatAdapter: vi.fn() }));
-vi.mock("../lib/debug-log.js", () => ({ debugLog: () => null }));
+vi.mock("../lib/debug-log.js", () => ({
+  debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
 
 import { BridgeManager } from "../lib/bridge/bridge-manager.js";
 

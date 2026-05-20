@@ -93,7 +93,7 @@ Use `@hana/plugin-runtime` for Node-side plugin code:
 import { definePlugin, defineTool, registerTask, requestBus } from '@hana/plugin-runtime';
 ```
 
-Tools should return local files through `stageFile()` and `createMediaDetails()` so desktop, Bridge, and future mobile clients all consume the same `SessionFile` identity.
+Tools should return local files through `stageFile()` and `createMediaDetails()` so desktop, Bridge, Mobile PWA, and future remote clients all consume the same `SessionFile` / Resource identity.
 
 Lifecycle plugins should declare `activationEvents` in `manifest.json` when they do not need to start on app launch. Existing lifecycle plugins without this field still activate on startup for compatibility.
 

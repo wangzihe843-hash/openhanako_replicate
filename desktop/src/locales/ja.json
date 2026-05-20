@@ -8,6 +8,7 @@
     "dmHint": "プライマリエージェントのみ",
     "groupLabel": "チャンネル",
     "noMessages": "メッセージはまだありません",
+    "selectHint": "チャンネルまたはダイレクトメッセージを選んで会話を始めましょう",
     "nameExists": "このチャンネル名はすでに使われています",
     "membersCount": " 人のメンバー",
     "info": "チャンネル情報",
@@ -518,6 +519,11 @@
       "done": "🧭 分身を送り出した",
       "failed": "🧭 分身がトラブった"
     },
+    "wait": {
+      "running": "⏳ {name} は結果を待っています",
+      "done": "⏳ 待機が終わりました",
+      "failed": "⏳ 待機が中断されました"
+    },
     "check_pending_tasks": {
       "running": "📋 {name} はやり残しを探している",
       "done": "📋 {name} 確認おわり",
@@ -589,7 +595,8 @@
       "散らばった気持ちを集めました",
       "{name} はある午後のオレンジの香りがしました",
       "あの会話はまだ温もりを残しています"
-    ]
+    ],
+    "installing": "{name} を v{version} に更新しています。少々お待ちください……"
   },
   "settings": {
     "title": "設定",
@@ -605,6 +612,7 @@
       "agent": "エージェント",
       "me": "自分",
       "providers": "プロバイダー",
+      "media": "メディア",
       "models": "モデル",
       "memory": "記憶",
       "work": "ワークスペース",
@@ -723,6 +731,8 @@
       "chatModelHint": "会話とタスクに使用するモデル",
       "modelUnavailable": "利用不可: {model}",
       "modelUnavailableHint": "現在のモデルは利用可能リストにありません。別のモデルを選ぶか、プロバイダーページで設定を保存し直してモデルを取得してください。",
+      "imageModel": "画像モデル",
+      "imageModelHint": "画像生成で使用するモデル",
       "addAgent": "新しいエージェント",
       "createTitle": "新しいエージェント",
       "namePlaceholder": "名前をつけてください",
@@ -958,6 +968,27 @@
       "noKey": "未設定",
       "remove": "削除",
       "deleteConfirm": "プロバイダー {name} を削除しますか？関連するモデルも削除されます。"
+    },
+    "media": {
+      "imageGeneration": "画像生成",
+      "defaultModel": "デフォルト画像モデル",
+      "credentialOk": "API Key 設定済み（プロバイダー設定を共用）",
+      "credentialMissing": "未設定です。プロバイダー設定へ移動してください",
+      "addModel": "画像モデルを追加",
+      "providerDefaults": "デフォルトパラメータ",
+      "size": "サイズ",
+      "format": "形式",
+      "quality": "品質",
+      "watermark": "ウォーターマーク",
+      "aspectRatio": "アスペクト比",
+      "speechRecognition": "音声認識",
+      "speechSynthesis": "音声合成",
+      "comingSoon": "近日公開",
+      "noProvider": "プロバイダーを選択して詳細を表示",
+      "models": "画像モデル",
+      "globalDefault": "グローバルデフォルト",
+      "followGlobal": "グローバルデフォルトに従う",
+      "default": "デフォルト"
     },
     "oauth": {
       "title": "クイックログイン",
@@ -1354,6 +1385,20 @@
       "qqAppId": "App ID",
       "qqAppSecret": "App Secret",
       "qqHint": "QQ ボットオープンプラットフォーム（q.qq.com/qqbot）から取得",
+      "wechat": "WeChat",
+      "wechatHint": "WeChat iLink プロトコルで個人アカウントに接続",
+      "wechatExclusive": "1 つの WeChat アカウントは 1 つの Agent にのみ紐付けできます。新しい Agent を紐付けると、以前のものは自動的に無効になります",
+      "wechatScan": "QR コードでログイン",
+      "wechatRescan": "再ログイン",
+      "wechatLoggedIn": "ログイン済み",
+      "wechatNeedScan": "先に QR コードでログインしてください",
+      "wechatScanning": "WeChat で QR コードをスキャンしてください",
+      "wechatScanned": "スキャン完了。スマートフォンで確認してください",
+      "wechatExpired": "QR コードの有効期限が切れました",
+      "wechatLoginSuccess": "ログインに成功しました",
+      "wechatLoginFailed": "ログインに失敗しました",
+      "wechatUnbind": "紐付けを解除",
+      "wechatUnbound": "WeChat の紐付けを解除しました",
       "connected": "接続済み",
       "disconnected": "未接続",
       "error": "接続に失敗しました",
@@ -1849,6 +1894,7 @@
     "installSkillSizeLimit": "スキルの内容がサイズ上限を超えています（{size}KB > {max}KB）",
     "installSkillNoUtility": "安全レビュー不可：utility モデルが設定されていません。設定で補助モデルを設定してください",
     "installSkillUtilityIncomplete": "安全レビュー不可：補助モデルの設定が不完全です（API key または base URL が不足）。設定で補完してください",
+    "installSkillSafetyPassed": "✓ 安全レビューに合格しました",
     "installSkillSafetyEmpty": "安全レビューが空のレスポンスを返しました",
     "installSkillSafetyUnexpected": "安全レビューが予期しない形式を返しました: {reply}",
     "installSkillSafetyTimeout": "安全レビューがタイムアウトまたはネットワークエラー",
@@ -1944,7 +1990,9 @@
       "serverKilledBySignal": "Server がシグナルで終了しました ({signal})",
       "serverExitedWithCode": "Server が終了しました。コード: {code}",
       "serverFilesNotReady": "自動アップデートが完了したばかりで、新バージョンのファイルがまだディスクに書き込まれていません（{missing} が見つかりません）。{waited} 秒待機しましたが完了しませんでした。しばらくしてから Hanako を再起動してください。",
-      "serverModuleMissing": "Server 起動失敗：モジュール {module} が見つかりません。\n通常、自動アップデート完了直後にファイルがまだディスクに書き込み中の場合に発生します。\n推奨：1〜2 分待ってから Hanako を再起動してください。問題が続く場合は GitHub で報告してください。"
+      "serverModuleMissing": "Server 起動失敗：モジュール {module} が見つかりません。\n通常、自動アップデート完了直後にファイルがまだディスクに書き込み中の場合に発生します。\n推奨：1〜2 分待ってから Hanako を再起動してください。問題が続く場合は GitHub で報告してください。",
+      "installFailedTitle": "Hanako アップデート",
+      "installFailedBody": "アップデートのインストールに失敗しました：\n{error}\n\nHanako を再起動してからもう一度お試しください。または設定ページで手動でアップデートを確認してください。"
     },
     "notification": {
       "ready": "通知が有効になりました"
@@ -2097,6 +2145,11 @@
       "filepathsDesc": "交付するローカルファイルの絶対パス配列。見つけたファイルはここに渡し、StageFile がデスクトップ、Bridge、将来のモバイル消費側向けに登録します。",
       "filePathDesc": "（互換）単一ローカルファイルの絶対パス。新しい呼び出しでは filepaths を優先してください。",
       "labelDesc": "（互換）ユーザーに表示するファイル名。通常は省略でき、既定でファイル名が使われます。"
+    },
+    "wait": {
+      "label": "待機",
+      "description": "指定した秒数だけ待機します。バックグラウンドタスクの完了を待つ間、ターンをアクティブに保つために使います。",
+      "secondsDesc": "待機する秒数（1〜300）"
     },
     "subagent": {
       "label": "サブエージェントを起動",

@@ -27,7 +27,21 @@ describe('AppTitlebar', () => {
     cleanup();
   });
 
-  it('renders a file preview toggle next to the right workspace toggle', () => {
+  it('does not render the file preview toggle by default on desktop', () => {
+    render(
+      <AppTitlebar
+        sidebarOpen={false}
+        jianOpen={false}
+        onToggleSidebar={vi.fn()}
+        onToggleJian={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTitle('preview.toggle')).not.toBeInTheDocument();
+    expect(screen.getByTitle('sidebar.jian')).toBeInTheDocument();
+  });
+
+  it('renders a file preview toggle next to the right workspace toggle when enabled', () => {
     const onTogglePreview = vi.fn();
 
     render(
@@ -35,6 +49,7 @@ describe('AppTitlebar', () => {
         sidebarOpen={false}
         jianOpen={false}
         previewOpen={false}
+        showPreviewToggle
         onToggleSidebar={vi.fn()}
         onToggleJian={vi.fn()}
         onTogglePreview={onTogglePreview}
@@ -56,6 +71,7 @@ describe('AppTitlebar', () => {
         sidebarOpen={false}
         jianOpen={false}
         previewOpen={true}
+        showPreviewToggle
         onToggleSidebar={vi.fn()}
         onToggleJian={vi.fn()}
         onTogglePreview={vi.fn()}

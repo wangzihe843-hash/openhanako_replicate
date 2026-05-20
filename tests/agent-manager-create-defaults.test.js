@@ -72,6 +72,9 @@ describe("AgentManager.createAgent default skills.enabled", () => {
   let skillsMock;
 
   function seedTemplate(enabledLiteral = '["skill-creator"]') {
+    fs.mkdirSync(path.join(productDir, "yuan"), { recursive: true });
+    fs.writeFileSync(path.join(productDir, "yuan", "hanako.md"), "Hanako yuan\n", "utf-8");
+    fs.writeFileSync(path.join(productDir, "yuan", "ming.md"), "Ming yuan\n", "utf-8");
     fs.writeFileSync(
       path.join(productDir, "config.example.yaml"),
       [

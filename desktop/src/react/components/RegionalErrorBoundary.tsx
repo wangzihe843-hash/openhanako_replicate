@@ -1,7 +1,23 @@
 import { Component, type ReactNode } from 'react';
 import styles from './RegionalErrorBoundary.module.css';
 
-const tr = (key: string, vars?: Record<string, string | number>): string => window.t?.(key, vars) ?? key;
+const FALLBACK_TEXT: Record<string, { en: string; zh: string }> = {
+  'error.regionUnavailable': {
+    en: 'This area is temporarily unavailable',
+    zh: '此区域暂时无法显示',
+  },
+  'action.retry': {
+    en: 'Retry',
+    zh: '重试',
+  },
+};
+
+const tr = (key: string, vars?: Record<string, string | number>): string => {
+  const translated = window.t?.(key, vars);
+  if (translated && translated !== key) return translated;
+  const locale = window.i18n?.locale || '';
+  return FALLBACK_TEXT[key]?.[locale.startsWith('zh') ? 'zh' : 'en'] ?? key;
+};
 
 interface Props {
   region: string;

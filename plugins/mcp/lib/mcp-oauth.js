@@ -1,5 +1,9 @@
 import crypto from "node:crypto";
 import { MCP_PROTOCOL_VERSION } from "./mcp-stdio-client.js";
+import {
+  MCP_PROTOCOL_VERSION_HEADER,
+  resolveInitialMcpProtocolVersion,
+} from "./mcp-protocol-version.js";
 
 export function parseWwwAuthenticate(value) {
   const header = String(value || "");
@@ -23,9 +27,15 @@ export function createOAuthState() {
   return base64url(crypto.randomBytes(24));
 }
 
-export async function discoverMcpOAuth({ connectorUrl, fetchImpl = globalThis.fetch } = {}) {
+export async function discoverMcpOAuth({
+  connectorUrl,
+  headers = {},
+  protocolVersion = "",
+  fetchImpl = globalThis.fetch,
+} = {}) {
   if (!connectorUrl) throw new Error("connectorUrl is required");
-  const challenge = await fetchAuthChallenge(connectorUrl, fetchImpl);
+  const initialProtocolVersion = resolveInitialMcpProtocolVersion({ headers, protocolVersion });
+  const challenge = await fetchAuthChallenge(connectorUrl, fetchImpl, initialProtocolVersion);
   const challengeParams = parseWwwAuthenticate(challenge.wwwAuthenticate);
   const resourceMetadata = await fetchProtectedResourceMetadata({
     connectorUrl,
@@ -65,7 +75,11 @@ export async function createMcpOAuthAuthorization({
   if (!connector?.oauthClientId) throw new Error("OAuth client ID is required");
   if (!redirectUri) throw new Error("redirectUri is required");
   const pkce = codeVerifier && codeChallenge ? { codeVerifier, codeChallenge } : createPkcePair();
-  const discovery = await discoverMcpOAuth({ connectorUrl: connector.url, fetchImpl });
+  const discovery = await discoverMcpOAuth({
+    connectorUrl: connector.url,
+    headers: connector.headers,
+    fetchImpl,
+  });
   const url = new URL(discovery.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", connector.oauthClientId);
@@ -145,20 +159,20 @@ export async function exchangeMcpOAuthCode({
   };
 }
 
-async function fetchAuthChallenge(connectorUrl, fetchImpl) {
+async function fetchAuthChallenge(connectorUrl, fetchImpl, protocolVersion = MCP_PROTOCOL_VERSION) {
   const response = await fetchImpl(connectorUrl, {
     method: "POST",
     headers: {
       Accept: "application/json, text/event-stream",
       "Content-Type": "application/json",
-      "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+      [MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
       params: {
-        protocolVersion: MCP_PROTOCOL_VERSION,
+        protocolVersion,
         capabilities: {},
         clientInfo: { name: "hana", title: "Hana", version: "0.1.0" },
       },

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 import { ensureDeviceAccessRegistries } from "./device-registry.js";
 import { ensureExecutionLeaseRegistry } from "./execution-lease-registry.js";
 import { ensureGrantRegistry } from "./grant-registry.js";
@@ -156,9 +157,7 @@ function readIdentityJsonIfPresent(filePath, label) {
 
 function writeJsonAtomic(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, filePath);
+  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function createLocalServerNodeIdentity({ now }) {

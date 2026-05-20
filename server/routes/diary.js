@@ -8,6 +8,9 @@
 import fs from "fs";
 import { Hono } from "hono";
 import { resolveDiaryDir } from "../../lib/diary/diary-writer.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("diary");
 
 export function createDiaryRoute(engine) {
   const route = new Hono();
@@ -29,7 +32,7 @@ export function createDiaryRoute(engine) {
         ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
       });
     } catch (err) {
-      console.error(`[diary] write failed: ${err.message}`);
+      log.error(`write failed: ${err.message}`);
       return c.json({ error: err.message }, 500);
     }
   });

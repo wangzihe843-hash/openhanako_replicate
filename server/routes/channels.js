@@ -51,6 +51,9 @@ import {
 } from "../../lib/conversations/agent-phone-projection.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
 import { findModel } from "../../shared/model-ref.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("channel");
 
 function normalizeOptionalPositiveInt(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
@@ -555,7 +558,7 @@ export function createChannelsRoute(engine, hub) {
 
       const triggerDelivery = hub.triggerChannelDelivery || hub.triggerChannelTriage;
       triggerDelivery.call(hub, name, { mentionedAgents })?.catch(err =>
-        console.error(`[channel] 触发手机送达失败: ${err.message}`)
+        log.error(`触发手机送达失败: ${err.message}`)
       );
 
       return c.json({ ok: true, timestamp: result.timestamp });

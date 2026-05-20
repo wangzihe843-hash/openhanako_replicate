@@ -6,6 +6,9 @@ import {
 } from "../lib/conversations/agent-phone-projection.js";
 import { shouldRunFreshCompact } from "../lib/fresh-compact/policy.js";
 import { freshCompactAgentPhoneSession } from "./agent-executor.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("fresh-compact");
 
 function sleep(ms) {
   if (!ms) return Promise.resolve();
@@ -79,7 +82,7 @@ export class FreshCompactMaintainer {
           } catch (err) {
             result.failed += 1;
             result.staleRemaining += 1;
-            console.warn(`[fresh-compact] bridge ${agent.id}/${target.sessionKey} skipped: ${err?.message || err}`);
+            log.warn(`bridge ${agent.id}/${target.sessionKey} skipped: ${err?.message || err}`);
           }
           await sleep(this._delayBetweenJobsMs);
         }
@@ -98,7 +101,7 @@ export class FreshCompactMaintainer {
           } catch (err) {
             result.failed += 1;
             result.staleRemaining += 1;
-            console.warn(`[fresh-compact] phone ${target.agentId}/${target.conversationId} skipped: ${err?.message || err}`);
+            log.warn(`phone ${target.agentId}/${target.conversationId} skipped: ${err?.message || err}`);
           }
           await sleep(this._delayBetweenJobsMs);
         }

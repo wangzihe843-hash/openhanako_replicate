@@ -51,6 +51,10 @@ import {
 } from "../../shared/secret-custody.js";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
 import { recordSecurityAuditEvent } from "../http/security-audit.js";
+import { assertAgentConfigPatchYuan } from "../../core/yuan-registry.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("agents");
 
 // ── 工具函数 ──
 
@@ -188,7 +192,7 @@ export function createAgentsRoute(engine) {
       emitAppEvent(engine, "agent-created", { agentId: result.id, name: result.name });
       return c.json({ ok: true, ...result });
     } catch (err) {
-      return c.json({ error: err.message }, err.message.includes("已存在") ? 409 : 500);
+      return c.json({ error: err.message }, err.statusCode || (err.message.includes("已存在") ? 409 : 500));
     }
   });
 
@@ -412,7 +416,7 @@ export function createAgentsRoute(engine) {
         // agentExists(engine, id) already guarded above; reaching here means
         // engine.getAgent diverged from agentExists. That's a bug, not a missing
         // resource — log it but don't 500 the response.
-        console.warn(
+        log.warn(
           `GET /agents/${id}/config: agent not found by keyed lookup despite passing agentExists check`
         );
         config.availableTools = [];
@@ -546,6 +550,8 @@ export function createAgentsRoute(engine) {
           agentPartial.memory.reenableAt = now;
         }
       }
+
+      assertAgentConfigPatchYuan(engine.productDir, agentPartial);
 
       const configPath = path.join(agentDir(engine, id), "config.yaml");
       saveConfig(configPath, agentPartial);

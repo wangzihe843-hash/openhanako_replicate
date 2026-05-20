@@ -21,6 +21,7 @@ vi.mock("../lib/bridge/feishu-adapter.js", () => ({
 }));
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 import os from "os";
@@ -836,6 +837,99 @@ describe("BridgeManager._handleMessage", () => {
       );
       expect(feishuAdapter.sendBlockReply).not.toHaveBeenCalled();
       expect(feishuAdapter.sendReply).not.toHaveBeenCalledWith("oc_chat", "Hello");
+    });
+
+    it("folds Feishu waiting receipts into the edit-message stream lifecycle", async () => {
+      const { bm, hub } = createMocks();
+      const feishuAdapter = {
+        streamingCapabilities: {
+          mode: "edit_message",
+          scopes: ["dm"],
+          minIntervalMs: 0,
+          maxChars: 150_000,
+          renderer: "post",
+          receiptMode: "fold_into_stream",
+        },
+        startStreamReply: vi.fn().mockResolvedValue({ messageId: "om_stream_001" }),
+        updateStreamReply: vi.fn().mockResolvedValue(),
+        finishStreamReply: vi.fn().mockResolvedValue(),
+        sendReply: vi.fn().mockResolvedValue(),
+        sendBlockReply: vi.fn().mockResolvedValue(),
+        stop: vi.fn(),
+      };
+      bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
+      hub.send.mockImplementation(async (_text, opts) => {
+        opts.onDelta("Hel", "Hel");
+        opts.onDelta("lo", "Hello");
+        return "Hello";
+      });
+
+      bm._handleMessage("feishu", {
+        sessionKey: "fs_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "oc_chat",
+        agentId: "hana",
+      });
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await vi.waitFor(() => expect(feishuAdapter.finishStreamReply).toHaveBeenCalledWith(
+        "oc_chat",
+        { messageId: "om_stream_001" },
+        "Hello",
+        expect.any(Object),
+      ));
+
+      expect(feishuAdapter.sendReply).not.toHaveBeenCalledWith("oc_chat", "（TestAgent正在输入...）", expect.anything());
+      expect(feishuAdapter.startStreamReply).toHaveBeenCalledTimes(1);
+      expect(feishuAdapter.startStreamReply).toHaveBeenCalledWith(
+        "oc_chat",
+        "（TestAgent正在输入...）",
+        expect.any(Object),
+      );
+      expect(feishuAdapter.updateStreamReply).toHaveBeenCalledWith(
+        "oc_chat",
+        { messageId: "om_stream_001" },
+        "Hel",
+        expect.any(Object),
+      );
+    });
+
+    it("does not send a second Feishu final message when a created stream has no message id", async () => {
+      const { bm, hub } = createMocks();
+      const feishuAdapter = {
+        streamingCapabilities: {
+          mode: "edit_message",
+          scopes: ["dm"],
+          minIntervalMs: 0,
+          maxChars: 150_000,
+          renderer: "post",
+          receiptMode: "fold_into_stream",
+        },
+        startStreamReply: vi.fn().mockResolvedValue({ messageId: null, missingMessageId: true }),
+        updateStreamReply: vi.fn().mockResolvedValue(),
+        finishStreamReply: vi.fn().mockResolvedValue(),
+        sendReply: vi.fn().mockResolvedValue(),
+        sendBlockReply: vi.fn().mockResolvedValue(),
+        stop: vi.fn(),
+      };
+      bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
+      hub.send.mockResolvedValue("Hello");
+
+      bm._handleMessage("feishu", {
+        sessionKey: "fs_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "oc_chat",
+        agentId: "hana",
+      });
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await vi.waitFor(() => expect(hub.send).toHaveBeenCalled());
+
+      expect(feishuAdapter.startStreamReply).toHaveBeenCalledTimes(1);
+      expect(feishuAdapter.finishStreamReply).not.toHaveBeenCalled();
+      expect(feishuAdapter.sendReply).not.toHaveBeenCalledWith("oc_chat", "Hello", expect.anything());
     });
 
     it("does not use legacy block streaming without an explicit streaming capability", async () => {

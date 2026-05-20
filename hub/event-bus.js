@@ -6,6 +6,9 @@
  * 支持 request/handle 请求响应模式，供 plugin 间通信使用。
  */
 import { EventBusCapabilityDirectory } from "./event-bus-capabilities.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("event-bus");
 
 export class BusNoHandlerError extends Error {
   constructor(type) {
@@ -94,7 +97,7 @@ export class EventBus {
       if (!entry) return;
       if (entry.filter.types && !entry.filter.types.has(event.type)) return;
       try { entry.callback(event, sessionPath); } catch (err) {
-        console.error("[EventBus] subscriber error:", err.message);
+        log.error(`subscriber error: ${err.message}`);
       }
     };
 

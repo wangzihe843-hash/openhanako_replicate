@@ -41,4 +41,22 @@ describe("SubagentRunStore", () => {
       executorAgentNameSnapshot: "小花",
     });
   });
+
+  it("aborts pending runs registered under a parent session path", () => {
+    const store = new SubagentRunStore(storePath);
+    store.register("subagent-1", { parentSessionPath: "/agents/hana/sessions/a.jsonl" });
+    store.register("subagent-2", { parentSessionPath: "/agents/hana/sessions/b.jsonl" });
+    store.register("subagent-3", { parentSessionPath: "/agents/hana/sessions/a.jsonl" });
+    store.resolve("subagent-3", "done");
+
+    const result = store.abortByParentSession("/agents/hana/sessions/a.jsonl", "parent session archived");
+
+    expect(result).toMatchObject({ aborted: 1, skippedFinal: 1 });
+    expect(store.query("subagent-1")).toMatchObject({
+      status: "aborted",
+      reason: "parent session archived",
+    });
+    expect(store.query("subagent-2")).toMatchObject({ status: "pending" });
+    expect(store.query("subagent-3")).toMatchObject({ status: "resolved" });
+  });
 });

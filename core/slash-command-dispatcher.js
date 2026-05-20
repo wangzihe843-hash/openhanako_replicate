@@ -1,3 +1,6 @@
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("slash");
 const CMD_RE = /^\s*\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*?))?\s*$/;
 const RANK = { anyone: 0, owner: 1, admin: 2 };
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -33,7 +36,7 @@ export class SlashCommandDispatcher {
 
     const role = this._resolveRole(ctx);
     if (RANK[role] < RANK[def.permission]) {
-      try { console.debug(`[slash] rejected: /${parsed.commandName} from ${role}`); } catch {}
+      try { log.log(`rejected: /${parsed.commandName} from ${role}`); } catch {}
       return { handled: true };
     }
 

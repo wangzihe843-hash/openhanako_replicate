@@ -20,6 +20,7 @@ vi.mock("../lib/bridge/wechat-adapter.js", () => ({
 }));
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 import { BridgeManager } from "../lib/bridge/bridge-manager.js";

@@ -37,6 +37,8 @@ vi.mock("../core/message-utils.js", () => ({
   loadLatestAssistantSummaryFromSessionFile: vi.fn(async () => null),
   isValidSessionPath: vi.fn(() => true),
   isActiveSessionPath: vi.fn(() => true),
+  isActiveDesktopSessionPath: vi.fn(() => true),
+  isArchivedDesktopSessionPath: vi.fn(() => true),
 }));
 
 vi.mock("../core/session-turn-actions.js", () => ({

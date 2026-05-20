@@ -115,6 +115,7 @@
     display: flex;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
 }
 
 .settings-nav {
@@ -170,7 +171,10 @@
 .settings-main {
     position: relative;
     flex: 1;
+    min-width: 0;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0 var(--settings-main-x-padding, var(--space-xl)) var(--space-xl);
     max-width: 640px;
 }
@@ -1783,14 +1787,6 @@
     line-height: 1.5;
 }
 
-.settings-control-loading {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    font-size: 0.72rem;
-    color: var(--text-muted);
-}
-
 /* 巡检开关 */
 :global(.hana-toggle-label) {
     font-size: 0.78rem;
@@ -1953,6 +1949,12 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-card, 10px);
     overflow: hidden;
+}
+
+.skill-bundle-tree .skills-list-block {
+    max-height: min(520px, 60vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .skills-list-block-spaced {

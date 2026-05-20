@@ -20,6 +20,9 @@ import fs from "fs";
 import { callText } from "../llm-client.js";
 import { getLocale } from "../../server/i18n.js";
 import { isToolCallBlock } from "../llm-utils.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("rc-summary");
 
 const SUMMARY_TIMEOUT_MS = 15_000;
 const SUMMARY_MAX_TOKENS = 150;
@@ -80,7 +83,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
         if (text) return text;
       }
     } catch (err) {
-      console.warn(`[rc-summary] chat tier resolve failed: ${err.message}`);
+      log.warn(`chat tier resolve failed: ${err.message}`);
     }
   }
 
@@ -98,7 +101,7 @@ async function _safeCall({ api, model, apiKey, baseUrl, messages }, tierLabel) {
     });
     return text?.trim() || null;
   } catch (err) {
-    console.warn(`[rc-summary] ${tierLabel} tier failed: ${err.message}`);
+    log.warn(`${tierLabel} tier failed: ${err.message}`);
     return null;
   }
 }

@@ -106,6 +106,67 @@ function isModuleResolutionError(stderrLogs) {
   return null;
 }
 
+function parsePortInUseStartupError(stderrLogs) {
+  if (!Array.isArray(stderrLogs) || stderrLogs.length === 0) return null;
+  const joined = stderrLogs.join("");
+  const marker = "[server] startup-error ";
+  const markerIndex = joined.indexOf(marker);
+  if (markerIndex >= 0) {
+    const afterMarker = joined.slice(markerIndex + marker.length);
+    const line = afterMarker.split(/\r?\n/, 1)[0]?.trim();
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed?.code === "PORT_IN_USE") {
+        return normalizePortInUsePayload(parsed);
+      }
+    } catch {}
+  }
+
+  const eaddrMatch = joined.match(/EADDRINUSE[^,\n]*?(?:address already in use\s*)?([^\s:]+):(\d+)/i);
+  if (!eaddrMatch) return null;
+  return normalizePortInUsePayload({
+    code: "PORT_IN_USE",
+    host: eaddrMatch[1],
+    port: Number(eaddrMatch[2]),
+    networkMode: "unknown",
+    suggestions: [],
+  });
+}
+
+function extractRootServerStartupError(stderrLogs) {
+  const portInUse = parsePortInUseStartupError(stderrLogs);
+  if (portInUse) {
+    const suggestions = Array.isArray(portInUse.suggestions) && portInUse.suggestions.length
+      ? ` Suggestions: ${portInUse.suggestions.join(" ")}`
+      : "";
+    const cause = portInUse.networkMode === "unknown" ? " (EADDRINUSE)" : "";
+    return `PORT_IN_USE${cause}: ${portInUse.host}:${portInUse.port} is already in use (network mode: ${portInUse.networkMode}).${suggestions}`;
+  }
+
+  if (!Array.isArray(stderrLogs) || stderrLogs.length === 0) return null;
+  const eaddrLine = stderrLogs
+    .join("")
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\[stderr\]\s*/, "").trim())
+    .find(line => /EADDRINUSE/i.test(line));
+  return eaddrLine || null;
+}
+
+function normalizePortInUsePayload(value) {
+  if (!value || value.code !== "PORT_IN_USE") return null;
+  const port = Number(value.port);
+  return {
+    code: "PORT_IN_USE",
+    host: typeof value.host === "string" && value.host ? value.host : "unknown",
+    port: Number.isInteger(port) ? port : null,
+    networkMode: typeof value.networkMode === "string" && value.networkMode ? value.networkMode : "unknown",
+    listenHost: typeof value.listenHost === "string" && value.listenHost ? value.listenHost : undefined,
+    suggestions: Array.isArray(value.suggestions)
+      ? value.suggestions.filter(item => typeof item === "string" && item.trim()).map(item => item.trim())
+      : [],
+  };
+}
+
 /**
  * Server readiness has two clocks:
  * - firstDeadlineMs: the normal fast-path deadline.
@@ -142,5 +203,7 @@ module.exports = {
   SERVER_INFO_MAX_WAIT_MS,
   ensureServerFilesReady,
   isModuleResolutionError,
+  parsePortInUseStartupError,
+  extractRootServerStartupError,
   shouldKeepWaitingForServerInfo,
 };

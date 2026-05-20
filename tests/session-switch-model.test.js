@@ -27,11 +27,15 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { SessionCoordinator } from "../core/session-coordinator.js";
 
+const agentsDir = "/tmp/agents";
+const sessionPath = `${agentsDir}/hana/sessions/session.jsonl`;
+const missingSessionPath = `${agentsDir}/hana/sessions/missing.jsonl`;
+
 describe("SessionCoordinator.switchSessionModel", () => {
   it("reports per-session model switch state through a public query", () => {
     const coord = new SessionCoordinator({
-      agentsDir: "/tmp/agents",
-      getAgent: () => ({ sessionDir: "/tmp/sessions" }),
+      agentsDir,
+      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
       getActiveAgentId: () => "hana",
       getModels: () => null,
       getResourceLoader: () => null,
@@ -49,19 +53,19 @@ describe("SessionCoordinator.switchSessionModel", () => {
       listAgents: () => [],
     });
 
-    coord.sessions.set("/tmp/session.jsonl", {
+    coord.sessions.set(sessionPath, {
       session: {},
       _switching: true,
     });
 
-    expect(coord.isSessionSwitching("/tmp/session.jsonl")).toBe(true);
-    expect(coord.isSessionSwitching("/tmp/missing.jsonl")).toBe(false);
+    expect(coord.isSessionSwitching(sessionPath)).toBe(true);
+    expect(coord.isSessionSwitching(missingSessionPath)).toBe(false);
   });
 
   it("does not crash when context usage exists and adaptation is needed", async () => {
     const coord = new SessionCoordinator({
-      agentsDir: "/tmp/agents",
-      getAgent: () => ({ sessionDir: "/tmp/sessions" }),
+      agentsDir,
+      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
       getActiveAgentId: () => "hana",
       getModels: () => null,
       getResourceLoader: () => null,
@@ -99,12 +103,12 @@ describe("SessionCoordinator.switchSessionModel", () => {
       modelId: "old-model",
       modelProvider: "test",
     };
-    coord.sessions.set("/tmp/session.jsonl", entry);
+    coord.sessions.set(sessionPath, entry);
 
     const compactSpy = vi.spyOn(coord, "_compactWithModel").mockResolvedValue();
     const truncateSpy = vi.spyOn(coord, "_hardTruncate").mockResolvedValue();
 
-    const result = await coord.switchSessionModel("/tmp/session.jsonl", {
+    const result = await coord.switchSessionModel(sessionPath, {
       id: "new-model",
       provider: "test",
       contextWindow: 12000,
@@ -124,8 +128,8 @@ describe("SessionCoordinator.switchSessionModel", () => {
 
   it("falls back from xhigh to high when switching to a model without max thinking support", async () => {
     const coord = new SessionCoordinator({
-      agentsDir: "/tmp/agents",
-      getAgent: () => ({ sessionDir: "/tmp/sessions" }),
+      agentsDir,
+      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
       getActiveAgentId: () => "hana",
       getModels: () => null,
       getResourceLoader: () => null,
@@ -159,9 +163,9 @@ describe("SessionCoordinator.switchSessionModel", () => {
       modelProvider: "test",
       thinkingLevel: "xhigh",
     };
-    coord.sessions.set("/tmp/session.jsonl", entry);
+    coord.sessions.set(sessionPath, entry);
 
-    const result = await coord.switchSessionModel("/tmp/session.jsonl", {
+    const result = await coord.switchSessionModel(sessionPath, {
       id: "regular-model",
       provider: "test",
       contextWindow: 64000,
@@ -171,7 +175,7 @@ describe("SessionCoordinator.switchSessionModel", () => {
     expect(setModel).toHaveBeenCalledOnce();
     expect(setThinkingLevel).toHaveBeenCalledWith("high");
     expect(entry.thinkingLevel).toBe("high");
-    expect(coord.writeSessionMeta).toHaveBeenCalledWith("/tmp/session.jsonl", expect.objectContaining({
+    expect(coord.writeSessionMeta).toHaveBeenCalledWith(sessionPath, expect.objectContaining({
       thinkingLevel: "high",
     }));
   });

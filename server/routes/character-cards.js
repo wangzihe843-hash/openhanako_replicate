@@ -5,6 +5,9 @@ import { bodyLimit } from "hono/body-limit";
 import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
 import { createCharacterCardService, CharacterCardError } from "../../lib/character-cards/service.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("character-cards");
 
 const MAX_CARD_PACKAGE_SIZE = 80 * 1024 * 1024;
 const RESERVED_UPLOAD_NAME_CHARS = new Set(["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]);
@@ -36,7 +39,7 @@ async function saveUploadedPackage(engine, file) {
 function routeError(c, err) {
   const status = err instanceof CharacterCardError ? err.status : 500;
   if (!(err instanceof CharacterCardError)) {
-    console.error("[character-cards] route failed:", err);
+    log.error(`route failed: ${err?.stack || err}`);
   }
   return c.json({ error: err.message || String(err) }, status);
 }

@@ -519,6 +519,11 @@
       "done": "🧭 Clone dispatched",
       "failed": "🧭 Clone ran into trouble"
     },
+    "wait": {
+      "running": "⏳ {name} is waiting for results",
+      "done": "⏳ Wait finished",
+      "failed": "⏳ Wait interrupted"
+    },
     "check_pending_tasks": {
       "running": "📋 {name} is checking unfinished business",
       "done": "📋 {name} all caught up",

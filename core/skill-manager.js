@@ -9,6 +9,9 @@ import path from "path";
 import chokidar from "chokidar";
 import { parseSkillMetadata } from "../lib/skills/skill-metadata.js";
 import { sourceIdentityForSkill } from "../lib/skills/skill-file-identity.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const log = createModuleLogger("skill-manager");
 
 // 重型目录名：watcher 必须主动跳过，否则一个带 npm 依赖的 skill 就能撑爆 fd
 // 上限（macOS 默认 256），触发 EMFILE → 错误日志雪崩 → server OOM/SIGKILL。
@@ -134,6 +137,7 @@ export class SkillManager {
 
   /** 将 agent 启用的 skill 同步到 agent 的 system prompt */
   syncAgentSkills(agent) {
+    if (!agent || agent.runtimeInitialized === false || agent.needsRepair === true) return;
     const enabled = new Set(agent?.config?.skills?.enabled || []);
     const skills = this._skillsVisibleToAgent(agent, { includePlugin: true, includeWorkspace: true })
       .filter(s => this._isRuntimeEnabledForAgent(s, enabled));
@@ -240,10 +244,10 @@ export class SkillManager {
         this._reloadTimer = setTimeout(() => this._autoReload(), 1000);
       });
       this._watcher.on("error", (err) => {
-        console.error("[skill-manager] watcher error:", err.message);
+        log.error(`watcher error: ${err.message}`);
       });
     } catch (err) {
-      console.error("[skill-manager] failed to create watcher:", err.message);
+      log.error(`failed to create watcher: ${err.message}`);
     }
     this._watchExternalPaths();
   }
@@ -255,7 +259,7 @@ export class SkillManager {
       await this.reload(deps.resourceLoader, deps.agents);
       deps.onReloaded?.();
     } catch (err) {
-      console.warn("[skill-manager] auto-reload failed:", err.message);
+      log.warn(`auto-reload failed: ${err.message}`);
     }
   }
 
@@ -367,11 +371,11 @@ export class SkillManager {
           this._reloadTimer = setTimeout(() => this._autoReload(), 1000);
         });
         w.on("error", (err) => {
-          console.error(`[skill-manager] external watcher error (${dirPath}):`, err.message);
+          log.error(`external watcher error (${dirPath}): ${err.message}`);
         });
         this._externalWatchers.set(dirPath, w);
       } catch (err) {
-        console.error(`[skill-manager] failed to watch external path (${dirPath}):`, err.message);
+        log.error(`failed to watch external path (${dirPath}): ${err.message}`);
       }
     }
   }

@@ -1,4 +1,9 @@
 import { MCP_PROTOCOL_VERSION } from "./mcp-stdio-client.js";
+import {
+  MCP_PROTOCOL_VERSION_HEADER,
+  headersWithoutMcpProtocolVersion,
+  resolveInitialMcpProtocolVersion,
+} from "./mcp-protocol-version.js";
 
 const STREAMABLE_ACCEPT = "application/json, text/event-stream";
 const SSE_ACCEPT = "text/event-stream";
@@ -65,7 +70,11 @@ async function responseText(response) {
 }
 
 function isJsonRpcResponse(message) {
-  return message && typeof message === "object" && message.jsonrpc === "2.0" && message.id != null;
+  if (!message || typeof message !== "object" || message.jsonrpc !== "2.0" || message.id == null) return false;
+  if (Object.prototype.hasOwnProperty.call(message, "method")) return false;
+  const hasResult = Object.prototype.hasOwnProperty.call(message, "result");
+  const hasError = Object.prototype.hasOwnProperty.call(message, "error");
+  return hasResult !== hasError;
 }
 
 function methodErrorMessage(status, body) {
@@ -109,7 +118,8 @@ export class McpStreamableHttpClient {
     this._closed = true;
     this._initialized = false;
     this.sessionId = "";
-    this.protocolVersion = MCP_PROTOCOL_VERSION;
+    this.initialProtocolVersion = resolveInitialMcpProtocolVersion({ headers: connectorHeaders(server) });
+    this.protocolVersion = this.initialProtocolVersion;
   }
 
   get running() {
@@ -131,8 +141,9 @@ export class McpStreamableHttpClient {
   }
 
   async initialize() {
+    this.protocolVersion = this.initialProtocolVersion;
     const result = await this._request("initialize", {
-      protocolVersion: MCP_PROTOCOL_VERSION,
+      protocolVersion: this.initialProtocolVersion,
       capabilities: {},
       clientInfo: {
         name: "hana",
@@ -209,9 +220,9 @@ export class McpStreamableHttpClient {
 
   _headers({ sessionId = this.sessionId, includeJson = true, initializing = false } = {}) {
     const headers = {
-      ...connectorHeaders(this.server),
+      ...headersWithoutMcpProtocolVersion(connectorHeaders(this.server)),
       Accept: STREAMABLE_ACCEPT,
-      "MCP-Protocol-Version": this.protocolVersion || MCP_PROTOCOL_VERSION,
+      [MCP_PROTOCOL_VERSION_HEADER]: this.protocolVersion || this.initialProtocolVersion || MCP_PROTOCOL_VERSION,
     };
     if (includeJson) headers["Content-Type"] = "application/json";
     if (sessionId && !initializing) headers["MCP-Session-Id"] = sessionId;

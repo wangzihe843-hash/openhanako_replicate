@@ -8,14 +8,14 @@ import fs from "fs";
 import path from "path";
 import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.js";
 import { createDefaultSettings } from "./session-defaults.js";
-import { debugLog } from "../lib/debug-log.js";
+import { debugLog, createModuleLogger } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
-import { safeReadJSON } from "../shared/safe-fs.js";
+import { atomicWriteSync, safeReadJSON } from "../shared/safe-fs.js";
 import { findModel } from "../shared/model-ref.js";
 import { teardownSessionResources } from "./session-teardown.js";
 import { isAbortLikeError, prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
-import { adaptVisualContextMessages } from "./visual-context-pipeline.js";
+import { withVisionContextInjectionExtension } from "./vision-context-injector.js";
 import { SESSION_PERMISSION_MODES } from "./session-permission-mode.js";
 import { collectMediaItems } from "../lib/tools/media-details.js";
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.js";
@@ -30,6 +30,8 @@ import {
   buildFreshCompactSnapshot,
   shouldRunFreshCompact,
 } from "../lib/fresh-compact/policy.js";
+
+const log = createModuleLogger("bridge-session");
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
@@ -81,53 +83,12 @@ function zeroUsage() {
   };
 }
 
-function withVisionExtension(resourceLoader, getBridge, getSessionPath, isEnabled, warn, resolveSessionFile) {
-  return Object.create(resourceLoader, {
-    getExtensions: {
-      value: () => {
-        const base = resourceLoader.getExtensions?.() ?? { extensions: [], errors: [] };
-        const extension = {
-          path: "hana-vision-context-injection",
-          tools: new Map(),
-          handlers: new Map([
-            [
-              "context",
-              [
-                async (event, ctx) => {
-                  try {
-                    if (isEnabled?.() !== true) return undefined;
-                    const bridge = getBridge?.();
-                    if (!bridge) return undefined;
-                    const sessionPath = getSessionPath?.() || null;
-                    const adapted = await adaptVisualContextMessages({
-                      messages: event.messages,
-                      sessionPath,
-                      targetModel: ctx?.model,
-                      visionBridge: bridge,
-                      isVisionAuxiliaryEnabled: () => isEnabled?.() === true,
-                      resolveSessionFile,
-                      warn,
-                    });
-                    const injectedNotes = bridge.injectNotes(adapted.messages, sessionPath);
-                    if (!adapted.injected && !injectedNotes.injected) return undefined;
-                    return { messages: injectedNotes.messages };
-                  } catch (err) {
-                    warn?.(`vision context injection failed: ${err?.message || err}`);
-                    return undefined;
-                  }
-                },
-              ],
-            ],
-          ]),
-          flags: new Map(),
-          shortcuts: new Map(),
-          commands: new Map(),
-          messageRenderers: new Map(),
-        };
-        return { ...base, extensions: [extension, ...(base.extensions || [])] };
-      },
-    },
-  });
+function warnVisionContextInjection(entry) {
+  if (typeof entry === "string") {
+    log.warn(`${entry}`);
+    return;
+  }
+  log.warn(`vision context injection diagnostic: ${JSON.stringify(entry)}`);
 }
 
 /**
@@ -175,7 +136,7 @@ export class BridgeSessionManager {
     try {
       this._deps.emitEvent(event, sessionPath);
     } catch (err) {
-      console.warn(`[bridge-session] emit ${event?.type || "event"} failed: ${err?.message || err}`);
+      log.warn(`emit ${event?.type || "event"} failed: ${err?.message || err}`);
     }
   }
 
@@ -199,15 +160,15 @@ export class BridgeSessionManager {
     try {
       const abortPromise = session.abort?.();
       Promise.resolve(abortPromise).catch((err) =>
-        console.warn(`[bridge-session] abortSession[${sessionKey}]: abort failed: ${err.message}`),
+        log.warn(`abortSession[${sessionKey}]: abort failed: ${err.message}`),
       );
     } catch (err) {
-      console.warn(`[bridge-session] abortSession[${sessionKey}]: abort failed: ${err.message}`);
+      log.warn(`abortSession[${sessionKey}]: abort failed: ${err.message}`);
     }
     try {
       session.dispose?.();
     } catch (err) {
-      console.warn(`[bridge-session] abortSession[${sessionKey}]: session.dispose failed: ${err.message}`);
+      log.warn(`abortSession[${sessionKey}]: session.dispose failed: ${err.message}`);
     }
     return true;
   }
@@ -278,7 +239,7 @@ export class BridgeSessionManager {
     }
 
     if (totalCleaned > 0) {
-      console.log(`[bridge-session] reconcile: 清理 ${totalCleaned} 个孤儿 session 引用`);
+      log.log(`reconcile: 清理 ${totalCleaned} 个孤儿 session 引用`);
     }
   }
 
@@ -291,7 +252,7 @@ export class BridgeSessionManager {
   writeIndex(index, agent) {
     const dir = path.dirname(this._indexPath(agent));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(this._indexPath(agent), JSON.stringify(index, null, 2) + "\n", "utf-8");
+    atomicWriteSync(this._indexPath(agent), JSON.stringify(index, null, 2) + "\n");
   }
 
   _normalizeIndexEntry(raw) {
@@ -462,7 +423,7 @@ export class BridgeSessionManager {
         } catch (err) {
           reopenError = err;
           mgr = null;
-          console.warn(`[bridge-session] existing session open failed (${sessionKey}): ${err.message}; creating a new session and rebinding index`);
+          log.warn(`existing session open failed (${sessionKey}): ${err.message}; creating a new session and rebinding index`);
           debugLog()?.log("bridge-session", `open failed for ${sessionKey}: ${err.message}`);
         }
       }
@@ -473,6 +434,7 @@ export class BridgeSessionManager {
 
       let sessionOpts;
       const sessionPathRef = { current: null };
+      const targetModelRef = { current: null };
       // 工具 details.media 收集器（被动提取 tool_execution_end 事件）
       const toolMediaUrls = [];
 
@@ -486,19 +448,20 @@ export class BridgeSessionManager {
         const tempResourceLoader = Object.create(this._deps.getResourceLoader());
         tempResourceLoader.getSystemPrompt = () => guestPrompt;
         tempResourceLoader.getSkills = () => ({ skills: [], diagnostics: [] });
-        const guestResourceLoader = withVisionExtension(
-          tempResourceLoader,
-          () => this._deps.getVisionBridge?.(),
-          () => sessionPathRef.current,
-          () => this._deps.isVisionAuxiliaryEnabled?.() === true,
-          (msg) => console.warn(`[bridge-session] ${msg}`),
-          ({ fileId, filePath, sessionPath }) => {
+        const guestResourceLoader = withVisionContextInjectionExtension(tempResourceLoader, {
+          path: "hana-vision-context-injection",
+          sessionPathRef,
+          targetModelRef,
+          getVisionBridge: () => this._deps.getVisionBridge?.(),
+          isVisionAuxiliaryEnabled: () => this._deps.isVisionAuxiliaryEnabled?.() === true,
+          warn: warnVisionContextInjection,
+          resolveSessionFile: ({ fileId, filePath, sessionPath }) => {
             const lookupSessionPath = sessionPath || sessionPathRef.current || null;
             if (fileId) return this._deps.getSessionFile?.(fileId, { sessionPath: lookupSessionPath });
             if (filePath) return this._deps.getSessionFileByPath?.(filePath, { sessionPath: lookupSessionPath });
             return null;
           },
-        );
+        });
 
         // 使用 agent 配置的模型，而非 defaultModel。
         // migration #5 之后 models.chat 必为 {id, provider} 对象；缺 provider 视为未配置。
@@ -511,6 +474,7 @@ export class BridgeSessionManager {
         if (!chatModel) {
           throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: `${ref.provider}/${ref.id}` }));
         }
+        targetModelRef.current = chatModel;
 
         sessionOpts = {
           model: chatModel,
@@ -522,7 +486,7 @@ export class BridgeSessionManager {
         };
       } else {
         // owner 模式：完整 agent。抽出 _buildOwnerSessionOpts 后，compactSession 也能复用同一构造逻辑
-        sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef, { bridgeContext });
+        sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef, targetModelRef, { bridgeContext });
       }
 
       const { session } = await createAgentSession({
@@ -535,6 +499,7 @@ export class BridgeSessionManager {
 
       const activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
       sessionPathRef.current = activeSessionPath;
+      targetModelRef.current = session.model || sessionOpts.model || targetModelRef.current || null;
       this._rememberBridgeContext(activeSessionPath, bridgeContext);
       this._activeSessions.set(sessionKey, session);
 
@@ -613,7 +578,7 @@ export class BridgeSessionManager {
           visionPolicyTarget: {
             isVisionAuxiliaryEnabled: this._deps.isVisionAuxiliaryEnabled,
           },
-          warn: (msg) => console.warn(`[bridge-session] ${msg}`),
+          warn: (msg) => log.warn(msg),
           signal: abortController.signal,
         }));
         ({ text: promptText, opts } = await prepareModelImageInputsForPrompt({
@@ -633,7 +598,7 @@ export class BridgeSessionManager {
           session,
           unsub,
           label: `bridge.executeExternalMessage[${sessionKey}]`,
-          warn: (msg) => console.warn(`[bridge-session] ${msg}`),
+          warn: (msg) => log.warn(msg),
         });
         this._activeSessions.delete(sessionKey);
         this._emitSessionEvent({ type: "session_status", isStreaming: false }, activeSessionPath);
@@ -651,7 +616,7 @@ export class BridgeSessionManager {
           if (existingFile && existingFile !== file) {
             debugLog()?.log("bridge-session", `rebound ${sessionKey}: ${existingFile} -> ${file}`);
             if (reopenError) {
-              console.log(`[bridge-session] ${sessionKey} 已自愈：${existingFile} -> ${file}`);
+              log.log(`${sessionKey} 已自愈：${existingFile} -> ${file}`);
             }
           }
           this.writeIndex(index, agent);
@@ -669,7 +634,7 @@ export class BridgeSessionManager {
       return text;
     } catch (err) {
       if (isAbortLikeError(err)) return null;
-      console.error(`[bridge-session] external message failed (${sessionKey}):`, err.message);
+      log.error(`external message failed (${sessionKey}): ${err.message}`);
       return { __bridgeError: true, message: err.message };
     }
   }
@@ -714,11 +679,11 @@ export class BridgeSessionManager {
         if (fs.existsSync(sessionPath)) {
           mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
         } else if (!opts.createIfMissing) {
-          console.warn(`[bridge-session] recordAssistantMessage: session 文件不存在: ${sessionPath}`);
+          log.warn(`recordAssistantMessage: session 文件不存在: ${sessionPath}`);
           return false;
         }
       } else if (!opts.createIfMissing) {
-        console.warn(`[bridge-session] recordAssistantMessage: sessionKey "${sessionKey}" 不存在`);
+        log.warn(`recordAssistantMessage: sessionKey "${sessionKey}" 不存在`);
         return false;
       }
 
@@ -727,7 +692,7 @@ export class BridgeSessionManager {
         mgr = SessionManager.create(homeCwd, sessionDir);
         sessionPath = mgr.getSessionFile?.() || null;
         if (!sessionPath) {
-          console.warn(`[bridge-session] recordAssistantMessage: new session path unavailable for "${sessionKey}"`);
+          log.warn(`recordAssistantMessage: new session path unavailable for "${sessionKey}"`);
           return false;
         }
       }
@@ -747,7 +712,7 @@ export class BridgeSessionManager {
       debugLog()?.log("bridge-session", `recorded assistant message to ${sessionKey} (${text.length} chars)`);
       return true;
     } catch (err) {
-      console.error(`[bridge-session] recordAssistantMessage failed: ${err.message}`);
+      log.error(`recordAssistantMessage failed: ${err.message}`);
       return false;
     }
   }
@@ -793,7 +758,7 @@ export class BridgeSessionManager {
    * @param {string} homeCwd
    * @returns {object} sessionOpts for createAgentSession
    */
-  _buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef = { current: null }, opts = {}) {
+  _buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef = { current: null }, targetModelRef = { current: null }, opts = {}) {
     const prefs = this._deps.getPreferences();
     const bridgeReadOnly = prefs?.bridge?.readOnly === true;
     const bridgePermissionMode = bridgeReadOnly
@@ -826,6 +791,7 @@ export class BridgeSessionManager {
     if (!ownerModel) {
       throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: `${ref.provider}/${ref.id}` }));
     }
+    targetModelRef.current = ownerModel;
 
     // 快照 prompt，隔离于其他 session 的 prompt 变更（与 SessionCoordinator.createSession 一致）。
     // 显式按 master 开关构建：bridge owner 是独立链路，不应受桌面端某个 session
@@ -841,19 +807,20 @@ export class BridgeSessionManager {
     const ownerResourceLoader = Object.create(this._deps.getResourceLoader(), {
       getSystemPrompt: { value: () => ownerPromptSnapshot },
     });
-    const visionResourceLoader = withVisionExtension(
-      ownerResourceLoader,
-      () => this._deps.getVisionBridge?.(),
-      () => sessionPathRef.current,
-      () => this._deps.isVisionAuxiliaryEnabled?.() === true,
-      (msg) => console.warn(`[bridge-session] ${msg}`),
-      ({ fileId, filePath, sessionPath }) => {
+    const visionResourceLoader = withVisionContextInjectionExtension(ownerResourceLoader, {
+      path: "hana-vision-context-injection",
+      sessionPathRef,
+      targetModelRef,
+      getVisionBridge: () => this._deps.getVisionBridge?.(),
+      isVisionAuxiliaryEnabled: () => this._deps.isVisionAuxiliaryEnabled?.() === true,
+      warn: warnVisionContextInjection,
+      resolveSessionFile: ({ fileId, filePath, sessionPath }) => {
         const lookupSessionPath = sessionPath || sessionPathRef.current || null;
         if (fileId) return this._deps.getSessionFile?.(fileId, { sessionPath: lookupSessionPath });
         if (filePath) return this._deps.getSessionFileByPath?.(filePath, { sessionPath: lookupSessionPath });
         return null;
       },
-    );
+    });
 
     return {
       model: ownerModel,
@@ -913,7 +880,7 @@ export class BridgeSessionManager {
     const freshContext = opts.fresh === true
       ? this._buildOwnerFreshCompactContext(agent, homeCwd)
       : null;
-    const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, { current: sessionFilePath }, {
+    const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, { current: sessionFilePath }, { current: null }, {
       ownerPromptSnapshot: freshContext?.systemPrompt,
     });
 
@@ -957,7 +924,7 @@ export class BridgeSessionManager {
       await teardownSessionResources({
         session,
         label: `bridge.compactSession[${sessionKey}]`,
-        warn: (msg) => console.warn(`[bridge-session] ${msg}`),
+        warn: (msg) => log.warn(msg),
       });
     }
   }

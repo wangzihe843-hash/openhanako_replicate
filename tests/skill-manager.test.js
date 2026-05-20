@@ -141,6 +141,33 @@ describe("SkillManager.syncAgentSkills — per-agent isolation", () => {
     const agentIds = injected.filter(s => s._agentId).map(s => s._agentId);
     expect(agentIds).not.toContain("agent-b");
   });
+
+  it("does not build prompts for config-only agents during global skill sync", () => {
+    const fakeAgent = {
+      id: "agent-a",
+      runtimeInitialized: false,
+      config: { skills: { enabled: ["shared-name"] } },
+      setEnabledSkills() {
+        throw new Error("config-only agent should not be synced");
+      },
+    };
+
+    expect(() => sm.syncAgentSkills(fakeAgent)).not.toThrow();
+  });
+
+  it("does not build prompts for agents that need config repair", () => {
+    const fakeAgent = {
+      id: "agent-a",
+      runtimeInitialized: true,
+      needsRepair: true,
+      config: { skills: { enabled: ["shared-name"] } },
+      setEnabledSkills() {
+        throw new Error("repair agent should not be synced");
+      },
+    };
+
+    expect(() => sm.syncAgentSkills(fakeAgent)).not.toThrow();
+  });
 });
 
 describe("SkillManager.getSkillsForAgent — baseline (unchanged)", () => {

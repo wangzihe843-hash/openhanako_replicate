@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   appendChannelMessageMock,
+  markChannelMessagesDirtyMock,
   loadChannelsMock,
   openChannelMock,
   upsertConversationAgentActivityMock,
 } = vi.hoisted(() => ({
   appendChannelMessageMock: vi.fn(),
+  markChannelMessagesDirtyMock: vi.fn(),
   loadChannelsMock: vi.fn(),
   openChannelMock: vi.fn(),
   upsertConversationAgentActivityMock: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock('../../stores/desk-actions', () => ({
 
 vi.mock('../../stores/channel-actions', () => ({
   appendChannelMessage: appendChannelMessageMock,
+  markChannelMessagesDirty: markChannelMessagesDirtyMock,
   loadChannels: loadChannelsMock,
   openChannel: openChannelMock,
   upsertConversationAgentActivity: upsertConversationAgentActivityMock,
@@ -87,9 +90,74 @@ describe('channel_new_message websocket routing', () => {
       message,
     });
 
-    expect(appendChannelMessageMock).toHaveBeenCalledWith('ch_crew', message);
+    expect(appendChannelMessageMock).toHaveBeenCalledWith('ch_crew', message, { markRead: true });
     expect(openChannelMock).not.toHaveBeenCalled();
     expect(loadChannelsMock).not.toHaveBeenCalled();
+  });
+
+  it('updates the current channel cache while chat tab is active without marking read', () => {
+    useStore.setState({
+      currentTab: 'chat',
+      currentChannel: 'ch_crew',
+      channelMessages: [
+        { sender: 'user', timestamp: '2026-05-07 17:00:00', body: 'old' },
+      ],
+    } as never);
+    const message = {
+      sender: 'hanako',
+      timestamp: '2026-05-07 17:01:00',
+      body: 'new reply',
+    };
+
+    handleServerMessage({
+      type: 'channel_new_message',
+      channelName: 'ch_crew',
+      sender: 'hanako',
+      message,
+    });
+
+    expect(appendChannelMessageMock).toHaveBeenCalledWith('ch_crew', message, { markRead: false });
+    expect(openChannelMock).not.toHaveBeenCalled();
+    expect(loadChannelsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a visible current channel read while the document is hidden', () => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    const message = {
+      sender: 'hanako',
+      timestamp: '2026-05-07 17:01:00',
+      body: 'new reply',
+    };
+
+    handleServerMessage({
+      type: 'channel_new_message',
+      channelName: 'ch_crew',
+      sender: 'hanako',
+      message,
+    });
+
+    expect(appendChannelMessageMock).toHaveBeenCalledWith('ch_crew', message, { markRead: false });
+    expect(openChannelMock).not.toHaveBeenCalled();
+  });
+
+  it('marks message-less channel events dirty for the keyed channel cache', () => {
+    useStore.setState({
+      currentTab: 'chat',
+      currentChannel: 'ch_crew',
+    } as never);
+
+    handleServerMessage({
+      type: 'channel_new_message',
+      channelName: 'ch_crew',
+      sender: 'hanako',
+    });
+
+    expect(markChannelMessagesDirtyMock).toHaveBeenCalledWith('ch_crew');
+    expect(loadChannelsMock).toHaveBeenCalledOnce();
+    expect(openChannelMock).not.toHaveBeenCalled();
   });
 });
 

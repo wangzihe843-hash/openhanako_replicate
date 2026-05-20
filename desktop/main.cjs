@@ -26,6 +26,10 @@ const { readTextFileSnapshot, writeTextFileIfUnchanged } = require("./file-text-
 const chokidar = require("chokidar");
 const { wrapIpcHandler, wrapIpcBestEffortHandler, wrapIpcOn } = require('./ipc-wrapper.cjs');
 const themeRegistry = require('./src/shared/theme-registry.cjs');
+const {
+  completeOnboardingAndOpenMain,
+  submitOnboardingCompleteIntent,
+} = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
 const { redactLogText } = require("../shared/log-redactor.cjs");
 const {
@@ -233,6 +237,7 @@ app.on("child-process-gone", (_event, details) => {
   if (!recordGpuChildProcessGone({
     hanakoHome,
     platform: process.platform,
+    policy: gpuStartupPolicy,
     details,
   })) {
     return;
@@ -502,35 +507,26 @@ function hasExistingConfig() {
   return false;
 }
 
-/**
- * 一次性迁移：为 onboarding 功能上线前的老用户补写 setupComplete 标记。
- * 判断依据：agents/ 下存在至少一个含 config.yaml 的目录 → 用户配置过 agent → 老用户。
- * 补写后后续启动直接走 isSetupComplete() 快速路径，不再弹任何 onboarding 窗口。
- */
-function migrateSetupComplete() {
-  if (isSetupComplete()) return;
+function hasLegacyProviderConfig() {
   // 判断依据：added-models.yaml 存在且含有真实 api_key → 老用户配置过 provider。
   // 不能只看 agents/*/config.yaml 是否存在，因为 ensureFirstRun 会为全新用户
   // 播种默认 agent（含 config.yaml），导致新用户被误判为老用户而跳过 onboarding。
   try {
     const modelsPath = path.join(hanakoHome, "added-models.yaml");
-    if (!fs.existsSync(modelsPath)) return;
+    if (!fs.existsSync(modelsPath)) return false;
     const content = fs.readFileSync(modelsPath, "utf-8");
-    if (!/api_key:\s*["']?[^"'\s]+/.test(content)) return;
+    return /api_key:\s*["']?[^"'\s]+/.test(content);
   } catch {
-    return;
+    return false;
   }
-  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
-  try {
-    let prefs = {};
-    try { prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8")); } catch {}
-    prefs.setupComplete = true;
-    fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
-    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-    console.log("[desktop] 检测到老用户（已有 agent 配置），自动补写 setupComplete");
-  } catch (err) {
-    console.error("[desktop] migrateSetupComplete failed:", err);
-  }
+}
+
+async function migrateSetupCompleteViaServerIfNeeded() {
+  if (isSetupComplete()) return false;
+  if (!hasLegacyProviderConfig()) return false;
+  await submitOnboardingCompleteIntent({ serverPort, serverToken });
+  console.log("[desktop] 检测到老用户（已有 agent 配置），已通过 server 标记 setupComplete");
+  return true;
 }
 
 // ── 启动 Server ──
@@ -582,6 +578,8 @@ async function waitForProcessExit(proc, pid, timeoutMs) {
 const {
   ensureServerFilesReady,
   isModuleResolutionError,
+  parsePortInUseStartupError,
+  extractRootServerStartupError,
   SERVER_INFO_FIRST_WAIT_MS,
   shouldKeepWaitingForServerInfo,
 } = require("./src/shared/server-readiness.cjs");
@@ -645,6 +643,65 @@ function pollServerInfo(infoPath, {
   });
 }
 
+async function verifyReusableServerInfo(existingInfo) {
+  const port = Number(existingInfo?.port);
+  const token = typeof existingInfo?.token === "string" ? existingInfo.token : "";
+  const pid = Number(existingInfo?.pid);
+  if (!Number.isInteger(port) || port <= 0 || !token || !Number.isInteger(pid)) {
+    return { reusable: false, trusted: false, terminate: false, reason: "invalid server-info shape" };
+  }
+
+  const currentVersion = app.getVersion();
+  const headers = { Authorization: `Bearer ${existingInfo.token}` };
+  let health = null;
+  let identity = null;
+  try {
+    const healthRes = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      headers,
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!healthRes.ok) {
+      return { reusable: false, trusted: false, terminate: false, reason: `health returned ${healthRes.status}` };
+    }
+    health = await healthRes.json().catch(() => null);
+  } catch (err) {
+    return { reusable: false, trusted: false, terminate: false, reason: `health failed: ${err.message}` };
+  }
+
+  try {
+    const identityRes = await fetch(`http://127.0.0.1:${port}/api/server/identity`, {
+      headers,
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!identityRes.ok) {
+      return { reusable: false, trusted: false, terminate: false, reason: `identity returned ${identityRes.status}` };
+    }
+    identity = await identityRes.json().catch(() => null);
+  } catch (err) {
+    return { reusable: false, trusted: false, terminate: false, reason: `identity failed: ${err.message}` };
+  }
+
+  if (!identity || !identity.studioId) {
+    return { reusable: false, trusted: false, terminate: false, reason: "identity missing studioId" };
+  }
+
+  const healthVersion = health?.version;
+  const identityVersion = identity?.version;
+  const serverInfoVersion = existingInfo.version;
+  const versionMatches = (!serverInfoVersion || serverInfoVersion === currentVersion)
+    && (!healthVersion || healthVersion === currentVersion)
+    && (!identityVersion || identityVersion === currentVersion);
+  if (!versionMatches) {
+    return { reusable: false, trusted: true, terminate: true, reason: "version mismatch", health, identity };
+  }
+
+  if (existingInfo.studioId && existingInfo.studioId !== identity.studioId) {
+    return { reusable: false, trusted: true, terminate: false, reason: "studio identity mismatch", health, identity };
+  }
+
+  return { reusable: true, trusted: true, terminate: false, reason: "ok", health, identity };
+}
+
 async function startServer() {
   const serverInfoPath = path.join(hanakoHome, "server-info.json");
 
@@ -660,41 +717,27 @@ async function startServer() {
     })();
 
     if (pidAlive) {
-      // 版本校验：server-info 中的 version 必须与当前 app 版本一致，
-      // 否则是更新后残存的旧 server，必须杀掉重启
-      const currentVersion = app.getVersion();
-      const serverVersion = existingInfo.version;
-      if (serverVersion && serverVersion !== currentVersion) {
-        console.log(`[desktop] 旧 server 版本不匹配（server: ${serverVersion}, app: ${currentVersion}），终止旧 server`);
+      const verification = await verifyReusableServerInfo(existingInfo);
+      if (verification.reusable) {
+        console.log(`[desktop] 复用已运行的 server，端口: ${existingInfo.port}, 版本: ${existingInfo.version || "unknown"}, studio: ${verification.identity.studioId}`);
+        serverPort = existingInfo.port;
+        serverToken = existingInfo.token;
+        reusedServerPid = existingInfo.pid;
+        return; // 跳过启动
+      }
+
+      if (verification.terminate) {
+        console.log(`[desktop] 可信旧 server 不可复用（${verification.reason}），正在终止 PID ${existingInfo.pid}`);
+        killPid(existingInfo.pid);
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+          try { process.kill(existingInfo.pid, 0); } catch { break; }
+          await new Promise(r => setTimeout(r, 100));
+        }
+        killPid(existingInfo.pid, true);
       } else {
-        // PID 存活且版本匹配（或无版本字段的老 server），尝试 health check
-        let reused = false;
-        try {
-          const res = await fetch(`http://127.0.0.1:${existingInfo.port}/api/health`, {
-            headers: { Authorization: `Bearer ${existingInfo.token}` },
-            signal: AbortSignal.timeout(2000),
-          });
-          if (res.ok) {
-            console.log(`[desktop] 复用已运行的 server，端口: ${existingInfo.port}, 版本: ${serverVersion || "unknown"}`);
-            serverPort = existingInfo.port;
-            serverToken = existingInfo.token;
-            reusedServerPid = existingInfo.pid;
-            reused = true;
-          }
-        } catch { /* health check 网络抖动，继续 kill 旧 server */ }
-
-        if (reused) return; // 跳过启动
+        console.warn(`[desktop] server-info 不可信，拒绝复用且不自动终止 PID ${existingInfo.pid}: ${verification.reason}`);
       }
-
-      // PID 存活但 health 失败（无响应或异常）：主动 kill，避免双 server 并存
-      console.log(`[desktop] 旧 server (PID ${existingInfo.pid}) 无响应，正在终止...`);
-      killPid(existingInfo.pid);
-      const deadline = Date.now() + 2000;
-      while (Date.now() < deadline) {
-        try { process.kill(existingInfo.pid, 0); } catch { break; }
-        await new Promise(r => setTimeout(r, 100));
-      }
-      killPid(existingInfo.pid, true);
     }
 
     // PID 已死或已 kill，删除脏文件
@@ -729,6 +772,14 @@ async function startServer() {
       return;
     } catch (err) {
       lastErr = err;
+      const portConflict = parsePortInUseStartupError(_serverLogs);
+      if (portConflict) {
+        const friendly = new Error(formatPortInUseStartupError(portConflict));
+        friendly.code = "PORT_IN_USE";
+        friendly.startupError = portConflict;
+        friendly.cause = err;
+        throw friendly;
+      }
       const missingModule = isModuleResolutionError(_serverLogs);
       const canRetry = missingModule && attempt === 0;
       if (!canRetry) {
@@ -1030,6 +1081,27 @@ function buildServerCrashDiagnostics() {
   items.push(buildGpuStartupDiagnostics({ hanakoHome, policy: gpuStartupPolicy, app }));
 
   return items.join("\n");
+}
+
+function formatPortInUseStartupError(conflict) {
+  const host = conflict?.host || "unknown";
+  const port = conflict?.port ?? "unknown";
+  const networkMode = conflict?.networkMode || "unknown";
+  const suggestions = Array.isArray(conflict?.suggestions) && conflict.suggestions.length
+    ? `\n\n${conflict.suggestions.map(item => `- ${item}`).join("\n")}`
+    : "";
+  return `PORT_IN_USE: ${host}:${port} is already in use (network mode: ${networkMode}).${suggestions}`;
+}
+
+function buildLaunchFailureDialogDetail(err, crashInfo) {
+  const structuredPortConflict = err?.startupError?.code === "PORT_IN_USE"
+    ? formatPortInUseStartupError(err.startupError)
+    : null;
+  const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs);
+  const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
+  if (!rootServerError) return tail;
+  if (tail.includes(rootServerError)) return tail;
+  return `${rootServerError}\n\n${tail}`;
 }
 
 function writeCrashLog(errorMessage) {
@@ -3270,19 +3342,13 @@ wrapIpcBestEffortHandler("debug-open-onboarding-preview", () => {
   createOnboardingWindow({ preview: "1" });
 });
 
-// Onboarding 完成后，写标记 → 创建主窗口
-wrapIpcHandler("onboarding-complete", () => {
-  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
-  try {
-    let prefs = {};
-    try { prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8")); } catch {}
-    prefs.setupComplete = true;
-    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-  } catch (err) {
-    console.error("[desktop] Failed to write setupComplete:", err);
-  }
-  // 创建主窗口（隐藏），前端 init 完成后通过 app-ready 显示
-  createMainWindow();
+// Onboarding 完成后，经 server PreferencesManager 持久化，成功后才创建主窗口。
+wrapIpcHandler("onboarding-complete", async () => {
+  await completeOnboardingAndOpenMain({
+    serverPort,
+    serverToken,
+    createMainWindow,
+  });
 });
 
 // ── 窗口控制 IPC（Windows/Linux 自绘标题栏用）──
@@ -3340,7 +3406,6 @@ wrapIpcBestEffortHandler("app-ready", () => {
 // ── App 生命周期 ──
 app.whenReady().then(async () => {
   try {
-    migrateSetupComplete();
     _startHiddenAtLogin = getAutoLaunchStatus({ app }).openedAtLogin === true && isSetupComplete();
 
     // 1. 立刻显示启动窗口，同时异步获取 login shell PATH。登录项后台启动时跳过 splash。
@@ -3386,7 +3451,8 @@ app.whenReady().then(async () => {
     }
 
     // 4. 检测是否需要 onboarding
-    if (isSetupComplete()) {
+    const migratedSetupComplete = await migrateSetupCompleteViaServerIfNeeded();
+    if (isSetupComplete() || migratedSetupComplete) {
       // 已完成配置：直接创建主窗口
       createMainWindow();
       if (process.platform === "win32") {
@@ -3445,13 +3511,12 @@ app.whenReady().then(async () => {
     }
     // 写入 crash.log 并获取详细日志
     const crashInfo = writeCrashLog(err.message);
-    // 截取最后 800 字符放进 dialog（太长会显示不全）
-    const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
+    const detail = buildLaunchFailureDialogDetail(err, crashInfo);
     dialog.showErrorBox(
       mt("dialog.launchFailedTitle", null, "Hanako Launch Failed"),
       mt("dialog.launchFailedBody", {
         version: app?.getVersion?.() || "unknown",
-        detail: tail,
+        detail,
         logPath: path.join(hanakoHome, "crash.log"),
       })
     );

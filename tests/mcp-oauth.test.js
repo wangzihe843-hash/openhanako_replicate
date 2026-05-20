@@ -94,7 +94,9 @@ describe("MCP OAuth helpers", () => {
   });
 
   it("creates an authorization URL with PKCE, resource, scope, and redirect URI", async () => {
-    const fetchImpl = vi.fn(async (url) => {
+    const calls = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      calls.push({ url: String(url), init });
       if (String(url) === "https://mcp.example.com/mcp") {
         return new Response("auth required", {
           status: 401,
@@ -120,6 +122,9 @@ describe("MCP OAuth helpers", () => {
         id: "github",
         url: "https://mcp.example.com/mcp",
         oauthClientId: "client-id",
+        headers: {
+          "MCP-Protocol-Version": "2024-11-05",
+        },
       },
       redirectUri: "http://127.0.0.1:3210/api/plugins/mcp/oauth/callback",
       state: "state-123",
@@ -143,6 +148,8 @@ describe("MCP OAuth helpers", () => {
       codeVerifier: "verifier-123",
       tokenEndpoint: "https://auth.example.com/token",
     });
+    expect(JSON.parse(String(calls[0].init.body)).params.protocolVersion).toBe("2024-11-05");
+    expect(calls[0].init.headers["MCP-Protocol-Version"]).toBe("2024-11-05");
   });
 
   it("exchanges an OAuth authorization code for connector token state", async () => {

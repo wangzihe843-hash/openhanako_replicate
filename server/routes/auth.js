@@ -13,6 +13,9 @@
 import crypto from "crypto";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
+import { createModuleLogger } from "../../lib/debug-log.js";
+
+const log = createModuleLogger("auth");
 
 /** 将 OAuth 底层错误转为用户可理解的诊断信息 */
 function diagnoseOAuthError(err) {
@@ -110,7 +113,7 @@ export function createAuthRoute(engine) {
       flow.result = { ok: true };
     }).catch(err => {
       const cause = err.cause?.message || err.cause?.code || "";
-      console.error(`[auth] OAuth login failed (${provider}): ${err.message}${cause ? ` [${cause}]` : ""}`);
+      log.error(`OAuth login failed (${provider}): ${err.message}${cause ? ` [${cause}]` : ""}`);
       flow.result = { ok: false, error: diagnoseOAuthError(err) };
     });
 
@@ -158,7 +161,7 @@ export function createAuthRoute(engine) {
       try {
         await engine.onProviderChanged();
       } catch (err) {
-        console.error("[auth] post-login model sync failed:", err.message);
+        log.error(`post-login model sync failed: ${err.message}`);
       }
 
       return c.json({ ok: true });
@@ -189,7 +192,7 @@ export function createAuthRoute(engine) {
       try {
         await engine.onProviderChanged();
       } catch (err) {
-        console.error("[auth] post-login model sync failed:", err.message);
+        log.error(`post-login model sync failed: ${err.message}`);
       }
       return c.json({ status: "done" });
     }

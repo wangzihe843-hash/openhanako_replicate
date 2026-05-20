@@ -1,9 +1,13 @@
 const fs = require("fs");
 const path = require("path");
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const STATE_FILE = path.join("user", "gpu-startup.json");
 const PREFERENCES_FILE = path.join("user", "preferences.json");
+const GPU_MODE_HARDWARE = "hardware";
+const GPU_MODE_SOFTWARE_SAFE = "software-safe";
+const GPU_MODE_DEEP_COMPAT = "deep-compat";
+const GPU_MODE_DIAGNOSTIC_FAILED = "diagnostic-failed";
 const EARLY_STARTUP_PHASES = new Set([
   "electron-starting",
   "launching-splash",
@@ -93,6 +97,71 @@ function persistHardwareAccelerationPreference(hanakoHome, enabled) {
   writePreferences(hanakoHome, prefs);
 }
 
+function policyForMode(mode, reason, extra = {}) {
+  const normalizedMode = mode || GPU_MODE_HARDWARE;
+  return {
+    mode: normalizedMode,
+    hardwareAccelerationEnabled: normalizedMode === GPU_MODE_HARDWARE,
+    shouldDisableHardwareAcceleration: normalizedMode !== GPU_MODE_HARDWARE,
+    shouldApplyDeepCompatSwitches: normalizedMode === GPU_MODE_DEEP_COMPAT || normalizedMode === GPU_MODE_DIAGNOSTIC_FAILED,
+    reason: reason || "default",
+    ...extra,
+  };
+}
+
+function writeAutoGpuMode(hanakoHome, mode, {
+  reason,
+  previousMode,
+  previousStartup,
+  now,
+} = {}) {
+  const timestamp = nowIso(now);
+  const state = readState(hanakoHome);
+  writeState(hanakoHome, {
+    ...state,
+    autoGpuMode: {
+      mode,
+      reason: reason || "unknown",
+      previousMode: previousMode || null,
+      previousStartup: previousStartup || null,
+      updatedAt: timestamp,
+    },
+  });
+}
+
+function resolveStoredAutoGpuMode(state) {
+  const mode = state?.autoGpuMode?.mode;
+  if (mode === GPU_MODE_SOFTWARE_SAFE || mode === GPU_MODE_DEEP_COMPAT || mode === GPU_MODE_DIAGNOSTIC_FAILED) {
+    return state.autoGpuMode;
+  }
+  if (state?.safeMode?.enabled) {
+    return {
+      mode: GPU_MODE_SOFTWARE_SAFE,
+      reason: state.safeMode.reason || "legacy-safe-mode",
+      previousMode: null,
+      previousStartup: state.safeMode.previousStartup || null,
+      updatedAt: state.safeMode.updatedAt || null,
+    };
+  }
+  return null;
+}
+
+function currentPolicyMode(policy, prefs) {
+  if (policy?.mode) return policy.mode;
+  if (policy?.shouldApplyDeepCompatSwitches) return GPU_MODE_DEEP_COMPAT;
+  if (policy?.shouldDisableHardwareAcceleration) return GPU_MODE_SOFTWARE_SAFE;
+  if (!boolFromSetting(prefs?.hardware_acceleration, true)) return GPU_MODE_SOFTWARE_SAFE;
+  return GPU_MODE_HARDWARE;
+}
+
+function nextModeAfterGpuFailure(mode) {
+  if (mode === GPU_MODE_DEEP_COMPAT || mode === GPU_MODE_DIAGNOSTIC_FAILED) {
+    return GPU_MODE_DIAGNOSTIC_FAILED;
+  }
+  if (mode === GPU_MODE_SOFTWARE_SAFE) return GPU_MODE_DEEP_COMPAT;
+  return GPU_MODE_SOFTWARE_SAFE;
+}
+
 function isEarlyIncompleteStartup(state) {
   const startup = state?.startup;
   if (!startup || startup.status !== "pending") return false;
@@ -111,53 +180,51 @@ function resolveGpuStartupPolicy({
   const prefs = readPreferences(hanakoHome);
   const explicitSafeMode = isExplicitSafeMode(argv, env);
   if (explicitSafeMode) {
-    return {
-      hardwareAccelerationEnabled: false,
-      shouldDisableHardwareAcceleration: true,
-      reason: "explicit",
-    };
+    return policyForMode(GPU_MODE_SOFTWARE_SAFE, "explicit");
   }
 
   const preferenceEnabled = boolFromSetting(prefs.hardware_acceleration, true);
-  if (!preferenceEnabled) {
-    return {
-      hardwareAccelerationEnabled: false,
-      shouldDisableHardwareAcceleration: true,
-      reason: "preference",
-    };
-  }
-
   const state = readState(hanakoHome);
-  if (platform === "win32" && isEarlyIncompleteStartup(state)) {
-    const timestamp = nowIso(now);
-    persistHardwareAccelerationPreference(hanakoHome, false);
-    writeState(hanakoHome, {
-      ...state,
-      safeMode: {
-        enabled: true,
-        reason: "previous-startup-incomplete",
-        previousStartup: state.startup,
-        updatedAt: timestamp,
-      },
+  const autoMode = platform === "win32" ? resolveStoredAutoGpuMode(state) : null;
+  if (autoMode?.mode === GPU_MODE_DEEP_COMPAT || autoMode?.mode === GPU_MODE_DIAGNOSTIC_FAILED) {
+    return policyForMode(autoMode.mode, autoMode.reason || "gpu-child-process-gone", {
+      autoGpuMode: autoMode,
     });
-    return {
-      hardwareAccelerationEnabled: false,
-      shouldDisableHardwareAcceleration: true,
-      reason: "previous-startup-incomplete",
-    };
   }
 
-  return {
-    hardwareAccelerationEnabled: true,
-    shouldDisableHardwareAcceleration: false,
-    reason: "default",
-  };
+  if (!preferenceEnabled) {
+    return policyForMode(GPU_MODE_SOFTWARE_SAFE, "preference");
+  }
+
+  if (platform === "win32" && isEarlyIncompleteStartup(state)) {
+    writeAutoGpuMode(hanakoHome, GPU_MODE_SOFTWARE_SAFE, {
+      reason: "previous-startup-incomplete",
+      previousMode: GPU_MODE_HARDWARE,
+      previousStartup: state.startup,
+      now,
+    });
+    return policyForMode(GPU_MODE_SOFTWARE_SAFE, "previous-startup-incomplete");
+  }
+
+  if (autoMode?.mode === GPU_MODE_SOFTWARE_SAFE) {
+    return policyForMode(GPU_MODE_SOFTWARE_SAFE, autoMode.reason || "gpu-child-process-gone", {
+      autoGpuMode: autoMode,
+    });
+  }
+
+  return policyForMode(GPU_MODE_HARDWARE, "default");
 }
 
 function applyGpuStartupPolicy(app, policy) {
   if (policy?.shouldDisableHardwareAcceleration && typeof app?.disableHardwareAcceleration === "function") {
     app.disableHardwareAcceleration();
-    return { applied: true };
+    if (policy?.shouldApplyDeepCompatSwitches && app?.commandLine?.appendSwitch) {
+      app.commandLine.appendSwitch("disable-gpu");
+      app.commandLine.appendSwitch("disable-gpu-compositing");
+      app.commandLine.appendSwitch("disable-gpu-rasterization");
+      return { applied: true, deepCompat: true };
+    }
+    return { applied: true, deepCompat: false };
   }
   return { applied: false };
 }
@@ -273,6 +340,7 @@ function isGpuChildProcessFailure(details = {}) {
 function recordGpuChildProcessGone({
   hanakoHome,
   platform = process.platform,
+  policy = null,
   details,
   now,
 } = {}) {
@@ -284,16 +352,19 @@ function recordGpuChildProcessGone({
     at: timestamp,
   };
   const state = readState(hanakoHome);
+  const prefs = readPreferences(hanakoHome);
+  const previousMode = currentPolicyMode(policy, prefs);
+  const nextMode = nextModeAfterGpuFailure(previousMode);
   writeState(hanakoHome, {
     ...state,
-    safeMode: {
-      enabled: true,
+    autoGpuMode: {
+      mode: nextMode,
       reason: "gpu-child-process-gone",
+      previousMode,
       updatedAt: timestamp,
     },
     lastGpuCrash: crash,
   });
-  persistHardwareAccelerationPreference(hanakoHome, false);
   return true;
 }
 
@@ -322,6 +393,8 @@ function buildGpuStartupDiagnostics({ hanakoHome, policy, app } = {}) {
     `--- GPU Startup ---`,
     `Hardware acceleration preference: ${readPreferences(hanakoHome).hardware_acceleration ?? "default"}`,
     `Startup policy: ${policy?.reason || "unknown"}`,
+    `Startup policy mode: ${policy?.mode || "unknown"}`,
+    `Deep compatibility switches enabled: ${policy?.shouldApplyDeepCompatSwitches === true}`,
     `Hardware acceleration enabled by policy: ${policy?.hardwareAccelerationEnabled !== false}`,
   ];
   try {
@@ -336,6 +409,7 @@ function buildGpuStartupDiagnostics({ hanakoHome, policy, app } = {}) {
   } catch {}
   const state = readState(hanakoHome);
   if (state.startup) items.push(`GPU startup marker: ${JSON.stringify(state.startup)}`);
+  if (state.autoGpuMode) items.push(`GPU auto mode: ${JSON.stringify(state.autoGpuMode)}`);
   if (state.safeMode) items.push(`GPU safe mode: ${JSON.stringify(state.safeMode)}`);
   if (state.lastGpuCrash) items.push(`Last GPU crash: ${JSON.stringify(state.lastGpuCrash)}`);
   if (state.lastGpuFeatureStatus) {

@@ -42,6 +42,47 @@ CRCCheck off
   !insertmacro hanakoKillProcess hana-server.exe ${_FORCE}
 !macroend
 
+!macro hanakoRequireInstallSurfaceFile _PATH _LABEL
+  IfFileExists "${_PATH}" +2 0
+    StrCpy $R2 "$R2$\r$\n- ${_LABEL}: ${_PATH}"
+!macroend
+
+!macro hanakoVerifyInstallSurface
+  Push $0
+  Push $R2
+  StrCpy $R2 ""
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "Hanako.exe"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\app.asar" "resources\app.asar"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\app-update.yml" "resources\app-update.yml"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\hana-server.exe" "resources\server\hana-server.exe"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\bootstrap.js" "resources\server\bootstrap.js"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\bundle\index.js" "resources\server\bundle\index.js"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\node_modules\better-sqlite3\build\Release\better_sqlite3.node" "better-sqlite3 native addon"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\git\cmd\git.exe" "PortableGit git.exe"
+  IfFileExists "$INSTDIR\resources\git\bin\bash.exe" +3 0
+    IfFileExists "$INSTDIR\resources\git\usr\bin\bash.exe" +2 0
+      StrCpy $R2 "$R2$\r$\n- PortableGit bash.exe: $INSTDIR\resources\git\bin\bash.exe or $INSTDIR\resources\git\usr\bin\bash.exe"
+
+  ${If} $R2 != ""
+    DetailPrint "Hanako install surface self-check failed."
+    FileOpen $0 "$INSTDIR\hanako-install-diagnostics.log" w
+    FileWrite $0 "Hanako install surface self-check failed.$\r$\n"
+    FileWrite $0 "Install dir: $INSTDIR$\r$\n"
+    FileWrite $0 "Missing or unreadable files:$R2$\r$\n"
+    FileClose $0
+    MessageBox MB_OK|MB_ICONSTOP "Hanako installation is incomplete. Missing or unreadable files:$R2$\r$\n$\r$\nDiagnostic file:$\r$\n$INSTDIR\hanako-install-diagnostics.log"
+    SetErrorLevel 1
+    Pop $R2
+    Pop $0
+    Quit
+  ${Else}
+    Delete "$INSTDIR\hanako-install-diagnostics.log"
+    DetailPrint "Hanako install surface self-check passed."
+  ${EndIf}
+  Pop $R2
+  Pop $0
+!macroend
+
 !macro hanakoWriteInstallDirProcessCleaner _SCRIPT
   Push $0
   FileOpen $0 "${_SCRIPT}" w
@@ -159,6 +200,7 @@ CRCCheck off
 !macroend
 
 !macro customInstall
+  !insertmacro hanakoVerifyInstallSurface
   ${If} ${isUpdated}
   ${AndIf} ${isForceRun}
     HideWindow
@@ -262,6 +304,7 @@ CRCCheck off
   RMDir /r "$INSTDIR\resources\server"
   RMDir /r "$INSTDIR\resources\git"
   RMDir /r "$INSTDIR\resources\screenshot-themes"
+  RMDir /r "$INSTDIR\resources\app"
   RMDir /r "$INSTDIR\resources\app.asar.unpacked"
   Delete "$INSTDIR\resources\app.asar"
   Delete "$INSTDIR\resources\app-update.yml"

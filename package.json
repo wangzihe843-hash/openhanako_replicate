@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.220.1",
+  "version": "0.222.30",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -18,7 +18,10 @@
     "telegram",
     "personal-assistant"
   ],
-  "main": "desktop/main.cjs",
+  "main": "desktop/bootstrap.cjs",
+  "bin": {
+    "hana": "cli/entry.js"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -75,7 +78,6 @@
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
     "codemirror": "^6.0.2",
-    "duck-duck-scrape": "^2.2.7",
     "electron-updater": "^6.8.3",
     "exceljs": "^4.4.0",
     "extract-zip": "^2.0.1",
@@ -117,7 +119,6 @@
     "esbuild": "^0.27.4",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "patch-package": "^8.0.1",
     "pngjs": "^5.0.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.2",
@@ -130,10 +131,13 @@
     "asar": true,
     "afterPack": "./scripts/fix-modules.cjs",
     "extraMetadata": {
-      "main": "desktop/main.bundle.cjs"
+      "main": "desktop/bootstrap.cjs"
     },
     "files": [
       "desktop/main.bundle.cjs",
+      "desktop/bootstrap.cjs",
+      "desktop/src/shared/launch-integrity.cjs",
+      "shared/hana-runtime-paths.cjs",
       "desktop/preload.bundle.cjs",
       "desktop/dist-renderer/**",
       "desktop/src/**/*.{html,icns,ico,png,svg,json}",

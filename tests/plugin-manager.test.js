@@ -985,6 +985,46 @@ function createMockPrefs(overrides = {}) {
   };
 }
 
+function writeToolRoutePlugin(root, id, { text, sourceName = text } = {}) {
+  const dir = path.join(root, id);
+  fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "routes"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+    id,
+    name: `${sourceName} Plugin`,
+    version: "1.0.0",
+    trust: "full-access",
+  }));
+  fs.writeFileSync(path.join(dir, "tools", "echo.js"), `
+    export const name = "echo";
+    export const description = "Echo source";
+    export const parameters = {};
+    export async function execute() { return ${JSON.stringify(text)}; }
+  `);
+  fs.writeFileSync(path.join(dir, "routes", "api.js"), `
+    export function register(app) { app.get("/who", (c) => c.text(${JSON.stringify(text)})); }
+  `);
+  return dir;
+}
+
+function writeConfigPlugin(root, id, version = "1.0.0") {
+  const dir = path.join(root, id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+    id,
+    name: "Config Shadow",
+    version,
+    contributes: {
+      configuration: {
+        properties: {
+          mode: { type: "string", default: "unset" },
+        },
+      },
+    },
+  }));
+  return dir;
+}
+
 describe("hot operations", () => {
   it("installPlugin loads a new plugin at runtime", async () => {
     const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() });
@@ -1072,6 +1112,90 @@ describe("hot operations", () => {
     expect(entry.source).toBe("dev");
     expect(entry.status).toBe("restricted");
     expect(globalThis.__devDeniedLoaded).toBeUndefined();
+  });
+
+  it("keeps same-id community and dev entries separate while dev shadows runtime namespace", async () => {
+    const communityRoot = path.join(tmpHome, "community-shadow");
+    const devRoot = path.join(tmpHome, "dev-shadow");
+    const communityDir = writeToolRoutePlugin(communityRoot, "shadow-demo", { text: "community" });
+    const devDir = writeToolRoutePlugin(devRoot, "shadow-demo", { text: "dev" });
+    const pm = new PluginManager({
+      pluginsDirs: [communityRoot, devRoot],
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager: createMockPrefs({ allow_full_access_plugins: true }),
+    });
+
+    await pm.installPlugin(communityDir, { source: "community" });
+    await pm.installPlugin(devDir, { source: "dev", allowFullAccess: true });
+
+    const entries = pm.listPlugins().filter((entry) => entry.id === "shadow-demo");
+    expect(entries).toHaveLength(2);
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "shadow-demo",
+        pluginKey: "community:shadow-demo",
+        source: "community",
+        shadowedBy: "dev",
+        shadowedByPluginKey: "dev:shadow-demo",
+      }),
+      expect.objectContaining({
+        id: "shadow-demo",
+        pluginKey: "dev:shadow-demo",
+        source: "dev",
+        shadows: ["community:shadow-demo"],
+      }),
+    ]));
+
+    const routeApp = pm.getRouteApp("shadow-demo");
+    const routeRes = await routeApp.request(new Request("http://x/who"));
+    expect(await routeRes.text()).toBe("dev");
+
+    const publicTools = pm.getAllTools().filter((tool) => tool.name === "shadow-demo_echo");
+    expect(publicTools).toHaveLength(1);
+    const toolResult = await publicTools[0].execute("call-1", {}, {});
+    expect(toolResult.content[0].text).toBe("dev");
+
+    const diagnostics = pm.getDiagnostics().filter((entry) => entry.id === "shadow-demo");
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        pluginKey: "community:shadow-demo",
+        source: "community",
+        shadowedBy: "dev",
+        routes: expect.objectContaining({ hasRouteApp: false }),
+        tools: [{ name: "shadow-demo_echo", dynamic: false }],
+      }),
+      expect.objectContaining({
+        pluginKey: "dev:shadow-demo",
+        source: "dev",
+        shadows: ["community:shadow-demo"],
+        routes: expect.objectContaining({ hasRouteApp: true }),
+        tools: [{ name: "shadow-demo_echo", dynamic: false }],
+      }),
+    ]));
+  });
+
+  it("keeps same-id dev config isolated from legacy community config", async () => {
+    const communityRoot = path.join(tmpHome, "community-config-shadow");
+    const devRoot = path.join(tmpHome, "dev-config-shadow");
+    const communityDir = writeConfigPlugin(communityRoot, "config-shadow", "1.0.0");
+    const devDir = writeConfigPlugin(devRoot, "config-shadow", "0.1.0");
+    const pm = new PluginManager({
+      pluginsDirs: [communityRoot, devRoot],
+      dataDir,
+      bus: await makeBus(),
+    });
+
+    await pm.installPlugin(communityDir, { source: "community" });
+    pm.setConfig("config-shadow", { mode: "community" }, { source: "community" });
+    await pm.installPlugin(devDir, { source: "dev" });
+    pm.setConfig("config-shadow", { mode: "dev" }, { source: "dev" });
+
+    expect(pm.getConfig("config-shadow").values.mode).toBe("community");
+    expect(pm.getConfig("config-shadow", { source: "community" }).values.mode).toBe("community");
+    expect(pm.getConfig("config-shadow", { source: "dev" }).values.mode).toBe("dev");
+    expect(fs.existsSync(path.join(dataDir, "config-shadow", "config.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dataDir, "dev", "config-shadow", "config.json"))).toBe(true);
   });
 
   it("installPlugin upgrades an existing plugin (same dirName)", async () => {

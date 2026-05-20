@@ -16,6 +16,7 @@ import { loadDeskFiles } from '../stores/desk-actions';
 import {
   appendChannelMessage as appendChannelMessageAction,
   loadChannels as loadChannelsAction,
+  markChannelMessagesDirty as markChannelMessagesDirtyAction,
   openChannel as openChannelAction,
   upsertConversationAgentActivity as upsertConversationAgentActivityAction,
 } from '../stores/channel-actions';
@@ -555,12 +556,17 @@ export function handleServerMessage(msg: any): void {
 
     case 'channel_new_message': {
       const store = useStore.getState();
-      const isViewing = store.currentTab === 'channels' && store.currentChannel === msg.channelName && document.visibilityState === 'visible';
-      if (msg.channelName && isViewing && msg.message) {
-        appendChannelMessageAction(msg.channelName, msg.message);
-      } else if (msg.channelName && isViewing) {
+      const isVisibleCurrentChannel =
+        store.currentTab === 'channels'
+        && store.currentChannel === msg.channelName
+        && document.visibilityState === 'visible';
+      if (msg.channelName && msg.message) {
+        appendChannelMessageAction(msg.channelName, msg.message, { markRead: isVisibleCurrentChannel });
+      } else if (msg.channelName && isVisibleCurrentChannel) {
+        markChannelMessagesDirtyAction(msg.channelName);
         openChannelAction(msg.channelName);
       } else if (msg.channelName) {
+        markChannelMessagesDirtyAction(msg.channelName);
         loadChannelsAction();
       }
       break;

@@ -30,7 +30,7 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 **Personality** — Not a generic "AI assistant". Each agent has its own voice and behavior through personality templates. Agents are self-contained folders, easy to back up and manage.
 
-**Tools** — Read/write files, run one-shot commands or persistent terminal sessions, browse the web, search the internet through browser-backed or API providers, take screenshots and segmented long screenshots, preview media, and inspect pages. Covers the vast majority of daily work scenarios.
+**Tools** — Read/write files, run one-shot commands or persistent terminal sessions, browse the web, search the internet through browser-backed or API providers, take screenshots and segmented long screenshots, preview media, and inspect pages. Covers the vast majority of daily work scenarios. A server-first CLI can also attach to the same Hana Server to show status, list sessions, and continue chats from a terminal.
 
 **Skills** — Built-in compatibility with the community Skills ecosystem. Agents can also install skills from GitHub or write their own. Strict safety review enabled by default.
 
@@ -49,6 +49,8 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 **Plugins** — Extensible plugin system with a convention-first architecture. Install community plugins by drag-and-drop. Plugins can contribute tools, skills, commands, agent templates, HTTP routes, event hooks, LLM providers, pages, widgets, configuration schemas, and background tasks. Routes have direct access to core services (PluginContext injection) and can interact with agent sessions via the Session Bus. Two-level permission model (restricted / full-access) keeps things safe.
 
 **Multi-Platform Bridge** — A single agent can connect to Telegram, Feishu, QQ, and WeChat bots simultaneously. Chat from any platform and remotely operate your computer. Bridge sessions carry platform context, and notifications can be delivered back to the current external platform.
+
+**Mobile & LAN Frontends** — Hana Server can host the `/mobile/` PWA. Phones can sign in with a device access key or local account, view sessions, chat, and manage workbench files. Another desktop frontend can also connect to an existing LAN Hana Server with a LAN URL and access key.
 
 **i18n** — Interface available in 5 languages: Chinese, English, Japanese, Korean, and Traditional Chinese.
 
@@ -93,7 +95,7 @@ tests/          Vitest test suite
 
 The engine layer coordinates multiple managers (Agent, Session, Model, Preferences, Skill, Channel, BridgeSession, Plugin, etc.) and exposes them through a unified facade. The Hub handles background tasks (heartbeat, cron, channel routing, agent messaging, DM routing) independently of the active chat session.
 
-User-visible files inside a session are registered through `SessionFile` sidecars. Desktop, Bridge, and future mobile surfaces consume the same file identity according to their own capabilities. Bridge media delivery rules live in `.docs/BRIDGE-MEDIA-CAPABILITIES.md`; plugin file contribution rules live in `PLUGINS.md`.
+User-visible files inside a session are registered through `SessionFile` sidecars. Desktop, Bridge, Mobile PWA, and other remote frontends consume the same file identity according to their own capabilities. Bridge media delivery rules live in `.docs/BRIDGE-MEDIA-CAPABILITIES.md`; plugin file contribution rules live in `PLUGINS.md`.
 
 Local staged files are uploaded directly by platform adapters when possible: Telegram / Feishu / WeChat use their native upload flows, and QQ uses the official bot chunked-upload flow before sending `msg_type: 7` rich media. `preferences.bridge.mediaPublicBaseUrl` / `HANA_BRIDGE_PUBLIC_BASE_URL` are only for consumers or fallback paths that still require an internet-reachable URL.
 
@@ -121,7 +123,7 @@ User data is rooted at `HANA_HOME` (`~/.hanako` in production, `~/.hanako-dev` i
 | macOS (Intel) | Supported |
 | Windows | Beta |
 | Linux | Supported (AppImage / deb) |
-| Mobile (PWA) | Planned |
+| Mobile (PWA) | v0: phone sessions and workbench access through the same Hana Server |
 
 ## Development
 
@@ -134,6 +136,12 @@ npm start
 
 # Start with Vite HMR (run npm run dev:renderer first)
 npm run start:vite
+
+# Server only
+npm run server
+
+# Server-first CLI
+npm run cli
 
 # Run tests
 npm test

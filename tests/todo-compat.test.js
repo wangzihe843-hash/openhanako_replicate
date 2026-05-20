@@ -114,6 +114,22 @@ describe("migrateLegacyTodos", () => {
     expect(result).toEqual([]);
     errorSpy.mockRestore();
   });
+
+  it("丢弃不可 JSON 序列化的损坏 item 时不抛错", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const circular = { foo: "bar" };
+    circular.self = circular;
+    let result;
+
+    expect(() => {
+      result = migrateLegacyTodos({ todos: [circular] });
+    }).not.toThrow();
+    expect(result).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0][0]).toContain("[Circular]");
+
+    errorSpy.mockRestore();
+  });
 });
 
 describe("extractLatestTodos", () => {
@@ -361,6 +377,43 @@ describe("extractLatestTodos", () => {
     expect(result).toEqual([
       { content: "good", activeForm: "正在 good", status: "pending" },
     ]);
+    errorSpy.mockRestore();
+  });
+
+  it("跳过不可 JSON 序列化的坏快照时不抛错", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const badToolDetails = { todos: "not array" };
+    badToolDetails.self = badToolDetails;
+    const badStateDetails = { todos: "also not array" };
+    badStateDetails.self = badStateDetails;
+    const messages = [
+      {
+        role: "toolResult",
+        toolName: "todo_write",
+        details: { todos: [{ content: "good", activeForm: "正在 good", status: "pending" }] },
+      },
+      {
+        role: "toolResult",
+        toolName: "todo_write",
+        details: badToolDetails,
+      },
+      {
+        role: "custom",
+        customType: "hana.todo_state",
+        details: badStateDetails,
+      },
+    ];
+    let result;
+
+    expect(() => {
+      result = extractLatestTodos(messages);
+    }).not.toThrow();
+    expect(result).toEqual([
+      { content: "good", activeForm: "正在 good", status: "pending" },
+    ]);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy.mock.calls[0][0]).toContain("[Circular]");
+
     errorSpy.mockRestore();
   });
 });

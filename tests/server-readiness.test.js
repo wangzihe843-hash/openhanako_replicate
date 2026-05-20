@@ -18,6 +18,8 @@ import {
   SERVER_INFO_PROGRESS_GRACE_MS,
   SERVER_INFO_MAX_WAIT_MS,
   shouldKeepWaitingForServerInfo,
+  parsePortInUseStartupError,
+  extractRootServerStartupError,
 } from "../desktop/src/shared/server-readiness.cjs";
 
 let tmp;
@@ -164,6 +166,48 @@ describe("isModuleResolutionError", () => {
       "[stderr] Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'ws' imported from D:\\1\\openHanako\\resources\\server\\bundle\\index.js\n",
     ];
     expect(isModuleResolutionError(real)).toBe("ws");
+  });
+});
+
+describe("startup root error extraction", () => {
+  it("parses structured PORT_IN_USE startup errors from server stderr", () => {
+    const parsed = parsePortInUseStartupError([
+      '[stderr] [server] startup-error {"code":"PORT_IN_USE","host":"0.0.0.0","port":14500,"networkMode":"loopback","listenHost":"127.0.0.1","suggestions":["Close the process using this port."]}\n',
+    ]);
+
+    expect(parsed).toEqual({
+      code: "PORT_IN_USE",
+      host: "0.0.0.0",
+      port: 14500,
+      networkMode: "loopback",
+      listenHost: "127.0.0.1",
+      suggestions: ["Close the process using this port."],
+    });
+  });
+
+  it("extracts EADDRINUSE as the root server startup error before diagnostics tails", () => {
+    const root = extractRootServerStartupError([
+      "[stderr] Error: listen EADDRINUSE: address already in use 0.0.0.0:14500\n",
+      "--- GPU Startup ---\n",
+      'GPU startup marker: {"status":"failed","reason":"previous-startup-incomplete"}\n',
+    ]);
+
+    expect(root).toContain("EADDRINUSE");
+    expect(root).toContain("0.0.0.0:14500");
+    expect(root).not.toContain("GPU startup marker");
+  });
+
+  it("does not let GPU diagnostics override a structured server port conflict", () => {
+    const root = extractRootServerStartupError([
+      '[stderr] [server] startup-error {"code":"PORT_IN_USE","host":"0.0.0.0","port":14500,"networkMode":"loopback","suggestions":["Use Access & Devices to change the port."]}\n',
+      "--- GPU Startup ---\n",
+      'GPU startup marker: {"status":"failed","reason":"startup-failed"}\n',
+    ]);
+
+    expect(root).toContain("PORT_IN_USE");
+    expect(root).toContain("14500");
+    expect(root).toContain("Access & Devices");
+    expect(root).not.toContain("GPU startup marker");
   });
 });
 

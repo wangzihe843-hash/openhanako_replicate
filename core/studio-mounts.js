@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 
 export const STUDIO_MOUNTS_FILE = "studio-mounts.json";
 
@@ -157,9 +158,7 @@ function readJsonIfPresent(filePath, label) {
 
 function writeJsonAtomic(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, filePath);
+  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function assertNonEmptyString(value, label) {

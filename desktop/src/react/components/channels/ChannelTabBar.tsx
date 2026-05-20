@@ -11,6 +11,7 @@ import type { TabType, PluginPageInfo } from '../../types';
 import { toggleSidebar } from '../SidebarLayout';
 import { resolvePluginTitle } from '../../utils/resolve-plugin-title';
 import { reorderTabs, hidePluginTab, showPluginTab } from '../../stores/plugin-ui-actions';
+import { hydrateCurrentChannelIfNeeded } from '../../stores/channel-actions';
 import { PluginTabOverflow } from '../plugin/PluginTabOverflow';
 import { ContextMenu, type ContextMenuItem } from '../../ui';
 import styles from './Channels.module.css';
@@ -30,6 +31,10 @@ export function switchTab(tab: TabType) {
   }
 
   s.setCurrentTab(tab);
+  if (tab === 'channels') {
+    hydrateCurrentChannelIfNeeded().catch((err: unknown) =>
+      console.warn('[channels] hydrate current channel failed', err));
+  }
   localStorage.setItem('hana-tab', tab);
 
   const isPluginTab = typeof tab === 'string' && tab.startsWith('plugin:');

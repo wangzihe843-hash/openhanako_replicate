@@ -52,7 +52,12 @@ function mockEngine(overrides = {}) {
     getAgent: overrides.getAgent || (() => ({ id: "hanako" })),
     syncPluginExtensions: vi.fn(),
     pluginManager: {
-      listPlugins: () => overrides.plugins || [],
+      listPlugins: (opts = {}) => {
+        const plugins = overrides.plugins || [];
+        return opts.source
+          ? plugins.filter((plugin) => (plugin.source || "community") === opts.source)
+          : plugins;
+      },
       routeRegistry,
       enablePlugin: overrides.enablePlugin || vi.fn(),
       disablePlugin: overrides.disablePlugin || vi.fn(),
@@ -197,6 +202,56 @@ describe("plugin management API", () => {
       expect(body[0].trust).toBe("restricted");
       expect(body[0].source).toBe("community");
     });
+
+    it("exposes source-aware runtime identity and shadowing fields", async () => {
+      const engine = mockEngine({
+        plugins: [
+          {
+            id: "demo",
+            pluginKey: "community:demo",
+            source: "community",
+            shadowedBy: "dev",
+            shadowedByPluginKey: "dev:demo",
+            name: "Demo",
+            version: "1.0",
+            description: "",
+            status: "loaded",
+            contributions: {},
+          },
+          {
+            id: "demo",
+            pluginKey: "dev:demo",
+            source: "dev",
+            shadows: ["community:demo"],
+            name: "Demo Dev",
+            version: "1.1",
+            description: "",
+            status: "loaded",
+            contributions: {},
+          },
+        ],
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins");
+      const body = await res.json();
+
+      expect(body).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "demo",
+          pluginKey: "community:demo",
+          source: "community",
+          shadowedBy: "dev",
+          shadowedByPluginKey: "dev:demo",
+        }),
+        expect.objectContaining({
+          id: "demo",
+          pluginKey: "dev:demo",
+          source: "dev",
+          shadows: ["community:demo"],
+        }),
+      ]));
+    });
   });
 
   describe("DELETE /plugins/:id", () => {
@@ -207,7 +262,7 @@ describe("plugin management API", () => {
       const res = await app.request("/api/plugins/my-plugin", { method: "DELETE" });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true });
-      expect(removeFn).toHaveBeenCalledWith("my-plugin");
+      expect(removeFn).toHaveBeenCalledWith("my-plugin", { source: "community" });
     });
 
     it("returns 404 when plugin not found", async () => {
@@ -231,7 +286,7 @@ describe("plugin management API", () => {
       });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true });
-      expect(enableFn).toHaveBeenCalledWith("p1");
+      expect(enableFn).toHaveBeenCalledWith("p1", { source: "community" });
     });
 
     it("disables a plugin", async () => {
@@ -244,7 +299,7 @@ describe("plugin management API", () => {
         body: JSON.stringify({ enabled: false }),
       });
       expect(res.status).toBe(200);
-      expect(disableFn).toHaveBeenCalledWith("p1");
+      expect(disableFn).toHaveBeenCalledWith("p1", { source: "community" });
     });
 
     it("returns 404 when plugin not found", async () => {
@@ -501,6 +556,43 @@ describe("plugin management API", () => {
         }],
       });
       expect(await readmeRes.json()).toEqual({ pluginId: "demo", markdown: "# Demo" });
+    });
+
+    it("does not mark marketplace plugins installed when only a same-id dev plugin is loaded", async () => {
+      const plugin = {
+        id: "demo",
+        name: "Demo",
+        publisher: "Hana",
+        version: "1.0.0",
+        description: "Demo plugin",
+        trust: "restricted",
+        permissions: [],
+        contributions: ["tools"],
+        distribution: { kind: "source", path: "plugins/demo", resolvedPath: "/tmp/demo" },
+        readme: "# Demo",
+      };
+      const engine = mockEngine({
+        plugins: [{ id: "demo", pluginKey: "dev:demo", source: "dev", name: "Demo Dev", version: "9.0.0", status: "loaded" }],
+      });
+      engine.pluginMarketplace = {
+        load: async () => ({ source: { kind: "file", configured: true }, schemaVersion: 1, plugins: [plugin], warnings: [] }),
+        getReadme: async () => "# Demo",
+        getPlugin: async () => plugin,
+        resolveSourceDistribution: () => "/tmp/demo",
+      };
+      const app = createApp(engine);
+
+      const listRes = await app.request("/api/plugins/marketplace");
+
+      expect(listRes.status).toBe(200);
+      expect(await listRes.json()).toMatchObject({
+        plugins: [{
+          id: "demo",
+          installed: false,
+          installedVersion: null,
+          installAction: "install",
+        }],
+      });
     });
 
     it("installs release marketplace plugins after downloading and verifying sha256", async () => {
@@ -1057,7 +1149,7 @@ describe("plugin management API", () => {
           origin: "plugin_install_source",
           storageKind: "install_source",
         });
-        expect(installPlugin).toHaveBeenCalledWith(path.join(userPluginsDir, "plugin-src"));
+        expect(installPlugin).toHaveBeenCalledWith(path.join(userPluginsDir, "plugin-src"), { source: "community" });
         expect(data).toMatchObject({
           id: "plugin-src",
           sourceFile: {
@@ -1069,6 +1161,58 @@ describe("plugin management API", () => {
             storageKind: "install_source",
           },
         });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("installs a community plugin into plugins dir when a same-id dev plugin is loaded", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-install-dev-shadow-"));
+      try {
+        const sourceDir = path.join(tmpDir, "source-demo");
+        const userPluginsDir = path.join(tmpDir, "plugins");
+        const devPluginDir = path.join(tmpDir, "plugins-dev", "demo");
+        fs.mkdirSync(sourceDir, { recursive: true });
+        fs.writeFileSync(path.join(sourceDir, "manifest.json"), JSON.stringify({
+          id: "demo",
+          name: "Demo",
+          version: "1.0.0",
+        }), "utf-8");
+        const installPlugin = vi.fn(async (dir) => ({
+          id: "demo",
+          pluginKey: "community:demo",
+          source: "community",
+          name: "Demo",
+          version: "1.0.0",
+          pluginDir: dir,
+        }));
+        const engine = mockEngine({
+          plugins: [{
+            id: "demo",
+            pluginKey: "dev:demo",
+            source: "dev",
+            version: "0.0.1",
+            pluginDir: devPluginDir,
+            status: "loaded",
+          }],
+          pm: {
+            getUserPluginsDir: () => userPluginsDir,
+            installPlugin,
+          },
+        });
+        const app = createApp(engine);
+
+        const res = await app.request("/api/plugins/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: sourceDir }),
+        });
+        const data = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(data).toMatchObject({ id: "demo", source: "community" });
+        expect(installPlugin).toHaveBeenCalledWith(path.join(userPluginsDir, "demo"), { source: "community" });
+        expect(data.code).not.toBe("PLUGIN_INSTALL_PATH_INVALID");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

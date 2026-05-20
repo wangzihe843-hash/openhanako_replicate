@@ -72,6 +72,8 @@ describe("HTTP route security policy", () => {
       .toMatchObject({ allowed: true });
     expect(authorizeHttpRoute({ method: "PUT", path: "/api/preferences/models", principal: settingsWriter }))
       .toMatchObject({ allowed: true });
+    expect(authorizeHttpRoute({ method: "POST", path: "/api/preferences/setup-complete", principal: settingsWriter }))
+      .toMatchObject({ allowed: true });
     expect(authorizeHttpRoute({ method: "POST", path: "/api/providers/test", principal: providerManager }))
       .toMatchObject({ allowed: true });
     expect(authorizeHttpRoute({ method: "POST", path: "/api/providers/fetch-models", principal: providerManager }))

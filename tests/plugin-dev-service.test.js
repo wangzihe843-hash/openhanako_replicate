@@ -42,6 +42,7 @@ function writeDevPlugin(root, id, options = {}) {
 describe("PluginDevService", () => {
   let tmpDir;
   let sourceRoot;
+  let communityPluginsDir;
   let devPluginsDir;
   let runDataDir;
   let dataDir;
@@ -53,6 +54,7 @@ describe("PluginDevService", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-dev-"));
     sourceRoot = path.join(tmpDir, "sources");
+    communityPluginsDir = path.join(tmpDir, "hana-home", "plugins");
     devPluginsDir = path.join(tmpDir, "hana-home", "plugins-dev");
     runDataDir = path.join(tmpDir, "hana-home", "plugin-dev-runs");
     dataDir = path.join(tmpDir, "hana-home", "plugin-data");
@@ -60,7 +62,7 @@ describe("PluginDevService", () => {
     bus = makeBus();
     syncPluginExtensions = vi.fn();
     pluginManager = new PluginManager({
-      pluginsDirs: [devPluginsDir],
+      pluginsDirs: [communityPluginsDir, devPluginsDir],
       dataDir,
       bus,
       preferencesManager: {
@@ -148,11 +150,51 @@ describe("PluginDevService", () => {
 
   it("refuses to uninstall a normal community plugin through the dev service", async () => {
     const communityDir = writeDevPlugin(sourceRoot, "normal-plugin");
-    await pluginManager.installPlugin(communityDir);
+    await pluginManager.installPlugin(communityDir, { source: "community" });
 
     await expect(service.uninstallPlugin("normal-plugin"))
       .rejects.toMatchObject({ code: "PLUGIN_DEV_SLOT_NOT_FOUND", status: 404 });
     expect(pluginManager.getPlugin("normal-plugin")).toBeTruthy();
+  });
+
+  it("uninstalls a same-id dev plugin without deleting the community plugin", async () => {
+    const communityDir = writeDevPlugin(communityPluginsDir, "same-id", {
+      prefix: "Community",
+      version: "1.0.0",
+    });
+    await pluginManager.installPlugin(communityDir, { source: "community" });
+    const sourcePath = writeDevPlugin(sourceRoot, "same-id", {
+      prefix: "Dev",
+      version: "0.1.0",
+    });
+
+    const install = await service.installFromSource({ sourcePath });
+
+    expect(pluginManager.getPlugin("same-id", { source: "community" })).toMatchObject({
+      id: "same-id",
+      pluginKey: "community:same-id",
+      source: "community",
+      status: "loaded",
+    });
+    expect(pluginManager.getPlugin("same-id", { source: "dev" })).toMatchObject({
+      id: "same-id",
+      pluginKey: "dev:same-id",
+      source: "dev",
+      status: "loaded",
+    });
+
+    const removed = await service.uninstallPlugin("same-id", { devRunId: install.devRunId });
+
+    expect(removed).toMatchObject({ ok: true, pluginId: "same-id" });
+    expect(pluginManager.getPlugin("same-id", { source: "dev" })).toBeNull();
+    expect(pluginManager.getPlugin("same-id", { source: "community" })).toMatchObject({
+      id: "same-id",
+      pluginKey: "community:same-id",
+      source: "community",
+      status: "loaded",
+    });
+    expect(fs.existsSync(communityDir)).toBe(true);
+    expect(fs.existsSync(path.join(devPluginsDir, "same-id"))).toBe(false);
   });
 
   it("keeps dev full-access plugins restricted when re-enabled without dev permission", async () => {

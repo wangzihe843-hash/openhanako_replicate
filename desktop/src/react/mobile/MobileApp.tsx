@@ -229,6 +229,7 @@ function MobileDesktopShell({
         sidebarOpen={sidebarOpen}
         jianOpen={jianOpen}
         previewOpen={previewOpen}
+        showPreviewToggle
         showChannelTabs={false}
         showWidgetButtons={false}
         onToggleSidebar={() => {

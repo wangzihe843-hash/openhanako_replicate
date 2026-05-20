@@ -35,7 +35,7 @@ import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/w
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
 import { prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
-import { adaptVisualContextMessages } from "./visual-context-pipeline.js";
+import { createVisionContextInjectionExtension } from "./vision-context-injector.js";
 import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
 import {
   normalizeSessionThinkingLevel,
@@ -465,7 +465,9 @@ export class SessionCoordinator {
           primaryCwd: effectiveCwd,
           workspaceFolders: restoredFolders,
         });
-      } catch {}
+      } catch {
+        // session-meta 可选：读取或解析失败时沿用上面 fresh 算出的 workspaceScope。
+      }
     }
     const includeLegacyArtifactTool = restore
       ? await this._shouldIncludeLegacyArtifactToolForRestore(agent, sessionPathForMeta)
@@ -572,53 +574,35 @@ export class SessionCoordinator {
       agentsFilesResult: agentsFilesResultSnapshot,
     };
 
+    const sessionPathRef = { current: sessionPathForMeta };
+    const targetModelRef = { current: promptPatchModel || effectiveModel || null };
+    const warnVisionContextInjection = (entry) => {
+      if (typeof entry === "string") {
+        log.warn(entry);
+        return;
+      }
+      log.warn(`vision context injection diagnostic: ${JSON.stringify(entry)}`);
+    };
+
     // Vision 辅助注入扩展：只在目标模型需要图片辅助笔记时注入视觉上下文。
+    // 注入器由 Hana 持有 session/model 引用，不读取 Pi SDK ctx，避免 restore 后 stale ctx 丢失 sidecar 笔记。
     // 用户当前 UI 视野不再自动注入；需要时由 current_status(ui_context) 显式查询。
     const getEngine = this._d.getEngine;
-    const visionAuxiliaryExtension = {
+    const visionAuxiliaryExtension = createVisionContextInjectionExtension({
       path: "hana-desktop-vision-context-injection",
-      tools: new Map(),
-      handlers: new Map([
-        [
-          "context",
-          [
-            async (event, ctx) => {
-              try {
-                const engine = getEngine?.();
-                if (!engine?.isVisionAuxiliaryEnabled?.()) return undefined;
-                const bridge = engine?.getVisionBridge?.();
-                if (!bridge) return undefined;
-                const sp = ctx.sessionManager?.getSessionFile?.();
-                const adapted = await adaptVisualContextMessages({
-                  messages: event.messages,
-                  sessionPath: sp,
-                  targetModel: ctx?.model,
-                  visionBridge: bridge,
-                  isVisionAuxiliaryEnabled: () => engine.isVisionAuxiliaryEnabled?.() === true,
-                  resolveSessionFile: ({ fileId, filePath, sessionPath }) => {
-                    const lookupSessionPath = sessionPath || sp || null;
-                    if (fileId) return engine.getSessionFile?.(fileId, { sessionPath: lookupSessionPath });
-                    if (filePath) return engine.getSessionFileByPath?.(filePath, { sessionPath: lookupSessionPath });
-                    return null;
-                  },
-                  warn: (msg) => log.warn(msg),
-                });
-                const injectedNotes = bridge.injectNotes(adapted.messages, sp);
-                if (!adapted.injected && !injectedNotes.injected) return undefined;
-                return { messages: injectedNotes.messages };
-              } catch (err) {
-                log.warn(`vision context injection failed: ${err?.message || err}`);
-                return undefined;
-              }
-            },
-          ],
-        ],
-      ]),
-      flags: new Map(),
-      shortcuts: new Map(),
-      commands: new Map(),
-      messageRenderers: new Map(),
-    };
+      sessionPathRef,
+      targetModelRef,
+      getVisionBridge: () => getEngine?.()?.getVisionBridge?.(),
+      isVisionAuxiliaryEnabled: () => getEngine?.()?.isVisionAuxiliaryEnabled?.() === true,
+      resolveSessionFile: ({ fileId, filePath, sessionPath }) => {
+        const engine = getEngine?.();
+        const lookupSessionPath = sessionPath || sessionPathRef.current || null;
+        if (fileId) return engine?.getSessionFile?.(fileId, { sessionPath: lookupSessionPath });
+        if (filePath) return engine?.getSessionFileByPath?.(filePath, { sessionPath: lookupSessionPath });
+        return null;
+      },
+      warn: warnVisionContextInjection,
+    });
 
     // Wrap resourceLoader: per-session prompt snapshot + plan mode injection + vision auxiliary extension
     const resourceLoaderProps = {
@@ -690,6 +674,8 @@ export class SessionCoordinator {
 
     // 事件转发（附带 agentId，供订阅者按 agent 过滤）
     const sessionPath = session.sessionManager?.getSessionFile?.();
+    sessionPathRef.current = sessionPath || sessionPathRef.current || null;
+    targetModelRef.current = resolvedModel || targetModelRef.current || null;
     this._session = session;
     this._currentSessionPath = sessionPath || null;
     this._sessionStarted = false;
@@ -895,7 +881,7 @@ export class SessionCoordinator {
     // 目录下的 session 文件。一旦这类路径混入焦点指针，listSessions 的占位逻辑会把
     // 它伪造成"新对话"幻影条目（不能归档、重启即消失）。
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) {
-      throw new Error(`switchSession: path must be in agents/{id}/sessions/ — got ${sessionPath}`);
+      throw new Error(`switchSession: path must be in active desktop session agents/{id}/sessions/*.jsonl; got ${sessionPath}`);
     }
 
     // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
@@ -1062,6 +1048,7 @@ export class SessionCoordinator {
   // ── Path 感知 API（Phase 2） ──
 
   async promptSession(sessionPath, text, opts) {
+    this._assertActiveDesktopSessionPath(sessionPath, "promptSession");
     let entry = this._sessions.get(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
@@ -1131,8 +1118,9 @@ export class SessionCoordinator {
     return true;
   }
 
-  async deliverCustomMessage(sessionPath, message) {
+  async deliverCustomMessage(sessionPath, message, options = {}) {
     if (!sessionPath) throw new Error("deliverCustomMessage: sessionPath is required");
+    this._assertActiveDesktopSessionPath(sessionPath, "deliverCustomMessage");
     let entry = this._sessions.get(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
@@ -1151,8 +1139,9 @@ export class SessionCoordinator {
       return { ok: true, mode: "followUp" };
     }
 
-    await entry.session.sendCustomMessage(message, { triggerTurn: true });
-    return { ok: true, mode: "triggerTurn" };
+    const triggerTurn = options?.triggerTurn !== false;
+    await entry.session.sendCustomMessage(message, { triggerTurn });
+    return { ok: true, mode: triggerTurn ? "triggerTurn" : "notifyOnly" };
   }
 
   async abortSession(sessionPath) {
@@ -1178,6 +1167,7 @@ export class SessionCoordinator {
    * @returns {Promise<{ adaptations: string[] }>}
    */
   async switchSessionModel(sessionPath, newModel) {
+    this._assertActiveDesktopSessionPath(sessionPath, "switchSessionModel");
     let entry = this._sessions.get(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
@@ -1881,6 +1871,22 @@ export class SessionCoordinator {
     return this._hibernatedSessionMeta.get(sessionPath)?.contextUsage || null;
   }
 
+  _assertActiveDesktopSessionPath(sessionPath, operation) {
+    if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) {
+      throw new Error(`${operation}: path must be an active desktop session under agents/{id}/sessions/*.jsonl; got ${sessionPath}`);
+    }
+  }
+
+  isRunnableSessionPath(sessionPath) {
+    if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) return false;
+    if (this._sessions.has(sessionPath) || this._hibernatedSessionMeta.has(sessionPath)) return true;
+    try {
+      return fs.existsSync(sessionPath);
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * 确保 sessionPath 已加载进 _sessions cache，但**不改 this._session（UI 焦点）**。
    *
@@ -1895,6 +1901,7 @@ export class SessionCoordinator {
    * @returns {Promise<object>} AgentSession 实例
    */
   async ensureSessionLoaded(sessionPath) {
+    this._assertActiveDesktopSessionPath(sessionPath, "ensureSessionLoaded");
     const existing = this._sessions.get(sessionPath);
     if (existing) {
       existing.lastTouchedAt = Date.now();
@@ -2154,7 +2161,9 @@ export class SessionCoordinator {
         for (const sp of sessionPaths) {
           if (dirTitles[sp]) titles[sp] = dirTitles[sp];
         }
-      } catch { /* ignore */ }
+      } catch {
+        // titles 可选：某个目录的 session-titles.json 缺失/损坏时，该目录下路径保持预设的 null。
+      }
     }
 
     return titles;
@@ -2227,7 +2236,10 @@ export class SessionCoordinator {
     if (typeof finalSystemPrompt !== "string") return;
     try {
       session._baseSystemPrompt = finalSystemPrompt;
-    } catch {}
+    } catch {
+      // session 对象理论上可能 frozen 或 _baseSystemPrompt 带抛错 setter；
+      // 容错即可，下面 agent.state.systemPrompt 仍独立尝试写入。
+    }
     if (session?.agent?.state && typeof session.agent.state === "object") {
       session.agent.state.systemPrompt = finalSystemPrompt;
     }
@@ -2283,6 +2295,8 @@ export class SessionCoordinator {
         return;
       } catch (err) {
         if (attempt === 0) {
+          // 首次写失败可能因父目录缺失：best-effort 补建后由下一轮 attempt 重试 writeFile。
+          // mkdir 自身失败（如目录已存在）不影响重试，吞掉即可。
           try { await fsp.mkdir(path.dirname(metaPath), { recursive: true }); } catch {}
         } else {
           log.warn(`writeSessionMeta failed for ${sessKey}: ${err.message}`);
@@ -2396,6 +2410,7 @@ export class SessionCoordinator {
     const cleanupTempSession = () => {
       const sp = tempSessionMgr?.getSessionFile?.();
       if (sp) {
+        // 临时 session 文件清理 best-effort：删不掉（如已被删/权限）不应让 isolated 执行失败。
         try { fs.unlinkSync(sp); } catch {}
       }
     };
@@ -2530,7 +2545,7 @@ export class SessionCoordinator {
       const childSessionPath = session.sessionManager?.getSessionFile?.() || null;
 
       // 通知调用方 session 已就绪（subagent 用它来后补 streamKey）
-      try { opts.onSessionReady?.(childSessionPath); } catch {}
+      try { opts.onSessionReady?.(childSessionPath); } catch (err) { log.warn(`isolated onSessionReady callback failed: ${err?.message}`); }
 
       let replyText = "";
       let finalAssistantText = "";
@@ -2598,6 +2613,7 @@ export class SessionCoordinator {
       const completionError = isolatedCompletionError(finalStopReason, finalErrorMessage);
 
       if (!opts.persist && sessionPath) {
+        // 非 persist 的临时 session 文件清理 best-effort：删不掉不影响返回结果。
         try { fs.unlinkSync(sessionPath); } catch {}
         return {
           sessionPath: null,

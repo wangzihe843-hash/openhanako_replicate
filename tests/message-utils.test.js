@@ -16,6 +16,10 @@ import {
   loadSessionHistoryMessages,
   loadLatestAssistantSummaryFromSessionFile,
   isValidSessionPath,
+  isActiveSessionPath,
+  isActiveDesktopSessionPath,
+  isArchivedDesktopSessionPath,
+  isDesktopSessionPath,
 } from "../core/message-utils.js";
 import { SessionManager } from "../lib/pi-sdk/index.js";
 
@@ -156,6 +160,29 @@ describe("isValidSessionPath", () => {
   it("前缀相似但不是子路径时被拒绝", () => {
     // /tmp/agents-evil 不是 /tmp/agents 的子路径
     expect(isValidSessionPath("/tmp/agents-evil/session.jsonl", "/tmp/agents")).toBe(false);
+  });
+});
+
+describe("desktop session path predicates", () => {
+  it("splits active and archived desktop session paths", () => {
+    const agentsDir = "/tmp/agents";
+    const active = "/tmp/agents/agent1/sessions/abc.jsonl";
+    const archived = "/tmp/agents/agent1/sessions/archived/abc.jsonl";
+    const subagent = "/tmp/agents/agent1/subagent-sessions/child.jsonl";
+
+    expect(isActiveDesktopSessionPath(active, agentsDir)).toBe(true);
+    expect(isActiveSessionPath(active, agentsDir)).toBe(true);
+    expect(isArchivedDesktopSessionPath(active, agentsDir)).toBe(false);
+    expect(isDesktopSessionPath(active, agentsDir)).toBe(true);
+
+    expect(isActiveDesktopSessionPath(archived, agentsDir)).toBe(false);
+    expect(isActiveSessionPath(archived, agentsDir)).toBe(false);
+    expect(isArchivedDesktopSessionPath(archived, agentsDir)).toBe(true);
+    expect(isDesktopSessionPath(archived, agentsDir)).toBe(true);
+
+    expect(isActiveDesktopSessionPath(subagent, agentsDir)).toBe(false);
+    expect(isArchivedDesktopSessionPath(subagent, agentsDir)).toBe(false);
+    expect(isDesktopSessionPath(subagent, agentsDir)).toBe(false);
   });
 });
 

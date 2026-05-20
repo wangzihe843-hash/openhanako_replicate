@@ -4,6 +4,8 @@ export interface ChannelSlice {
   channels: Channel[];
   currentChannel: string | null;
   channelMessages: ChannelMessage[];
+  channelMessageCache: Record<string, ChannelMessage[]>;
+  channelMessageCacheDirty: Record<string, boolean>;
   channelMembers: string[];
   channelTotalUnread: number;
   channelsEnabled: boolean;
@@ -33,6 +35,8 @@ export const createChannelSlice = (
   channels: [],
   currentChannel: null,
   channelMessages: [],
+  channelMessageCache: {},
+  channelMessageCacheDirty: {},
   channelMembers: [],
   channelTotalUnread: 0,
   channelsEnabled: false,

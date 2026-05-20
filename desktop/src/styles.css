@@ -887,6 +887,21 @@ html[data-platform="linux"] .tb-toggle-right {
     pointer-events: none;
 }
 
+/* loading：异步数据未到位的中性态。滑块居中，背景脉冲，覆盖 disabled 的低 opacity */
+.hana-toggle.loading {
+    opacity: 0.55;
+    animation: hana-toggle-loading-pulse 1.2s ease-in-out infinite;
+}
+
+.hana-toggle.loading::after {
+    transform: translateX(8px);
+}
+
+@keyframes hana-toggle-loading-pulse {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 0.35; }
+}
+
 .hana-toggle-label {
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -1881,6 +1896,7 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .sv-body {
     flex: 1;
+    min-height: 0;
     display: flex;
     overflow: hidden;
 }
@@ -1888,6 +1904,7 @@ html[data-platform="linux"] .tb-toggle-right {
 .sv-sidebar {
     width: 200px;
     min-width: 160px;
+    min-height: 0;
     border-right: 1px solid var(--border);
     overflow-y: auto;
     padding: 8px 0;
@@ -1932,6 +1949,8 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .sv-content {
     flex: 1;
+    min-width: 0;
+    min-height: 0;
     overflow-y: auto;
     padding: 24px 32px;
 }

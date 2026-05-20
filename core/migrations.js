@@ -30,6 +30,9 @@ import { normalizeThinkingLevelForModel } from "./session-thinking-level.js";
 import { lookupKnown } from "../shared/known-models.js";
 import { SESSION_PREFIX_MAP } from "../lib/bridge/session-key.js";
 import { migrateLegacyApiKeyAuthToProviders } from "./provider-auth-migration.js";
+import { createModuleLogger } from "../lib/debug-log.js";
+
+const moduleLog = createModuleLogger("migrations");
 
 // ── 迁移表 ──────────────────────────────────────────────────────────────────
 
@@ -126,7 +129,7 @@ export function runMigrations(ctx) {
       migrations[v](ctx);
       log(`[migrations] #${v} 完成`);
     } catch (err) {
-      console.error(`[migrations] #${v} 失败: ${err.message}`);
+      moduleLog.error(`#${v} 失败: ${err.message}`);
       // 失败则停在当前版本，不继续后续迁移
       break;
     }

@@ -150,9 +150,9 @@ export function McpTab() {
           </div>
           <div className={styles['skills-list-actions']}>
             <Toggle
-              on={state.enabled}
+              on={loadingState ? undefined : state.enabled}
               onChange={toggleGlobal}
-              disabled={loadingState || busyKey === 'global'}
+              disabled={busyKey === 'global'}
               label={loadingState ? t('status.loading') : state.enabled ? t('common.on') : t('common.off')}
             />
           </div>

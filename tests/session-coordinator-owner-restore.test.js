@@ -43,7 +43,7 @@ function makeAgent({ id, sessionDir, locale = "en", initialMemoryEnabled = true,
   let sessionMemoryEnabled = initialMemoryEnabled;
   return {
     id,
-    agentDir: path.join(path.dirname(sessionDir), id),
+    agentDir: path.dirname(sessionDir),
     sessionDir,
     tools: [makeTool(`${id}-tool`)],
     config: { locale, tools: {} },
@@ -80,8 +80,9 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
   });
 
   it("restores a detached session with the owner agent context and does not pollute focus session state", async () => {
-    const focusSessionDir = path.join(tempDir, "focus", "sessions");
-    const ownerSessionDir = path.join(tempDir, "owner", "sessions");
+    const agentsDir = path.join(tempDir, "agents");
+    const focusSessionDir = path.join(agentsDir, "focus", "sessions");
+    const ownerSessionDir = path.join(agentsDir, "owner", "sessions");
     fs.mkdirSync(focusSessionDir, { recursive: true });
     fs.mkdirSync(ownerSessionDir, { recursive: true });
 
@@ -127,7 +128,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
     };
 
     const coordinator = new SessionCoordinator({
-      agentsDir: path.join(tempDir, "agents"),
+      agentsDir,
       getAgent: () => focusAgent,
       getActiveAgentId: () => "focus",
       getModels: () => ({
@@ -185,7 +186,8 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
   });
 
   it("restores the frozen memory snapshot even when the owner's current master switch is off", async () => {
-    const ownerSessionDir = path.join(tempDir, "owner", "sessions");
+    const agentsDir = path.join(tempDir, "agents");
+    const ownerSessionDir = path.join(agentsDir, "owner", "sessions");
     fs.mkdirSync(ownerSessionDir, { recursive: true });
 
     const sessionPath = path.join(ownerSessionDir, "cached.jsonl");
@@ -194,7 +196,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
       [path.basename(sessionPath)]: { memoryEnabled: true },
     }, null, 2));
 
-    const focusAgent = makeAgent({ id: "focus", sessionDir: path.join(tempDir, "focus", "sessions") });
+    const focusAgent = makeAgent({ id: "focus", sessionDir: path.join(agentsDir, "focus", "sessions") });
     const ownerAgent = makeAgent({
       id: "owner",
       sessionDir: ownerSessionDir,
@@ -219,7 +221,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
     });
 
     const coordinator = new SessionCoordinator({
-      agentsDir: path.join(tempDir, "agents"),
+      agentsDir,
       getAgent: () => focusAgent,
       getActiveAgentId: () => "focus",
       getModels: () => ({

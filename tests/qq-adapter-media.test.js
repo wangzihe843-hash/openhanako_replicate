@@ -17,6 +17,7 @@ vi.mock("ws", () => {
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 import { createQQAdapter } from "../lib/bridge/qq-adapter.js";

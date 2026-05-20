@@ -11,6 +11,7 @@ const debugLogMock = vi.hoisted(() => ({
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => debugLogMock,
+  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
 import { MediaDeliveryService } from "../lib/bridge/media-delivery-service.js";

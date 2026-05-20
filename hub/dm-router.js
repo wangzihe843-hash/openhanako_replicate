@@ -20,7 +20,7 @@ import {
   formatMessagesForLLM,
 } from "../lib/channels/channel-store.js";
 import { runAgentPhoneSession } from "./agent-executor.js";
-import { debugLog } from "../lib/debug-log.js";
+import { debugLog, createModuleLogger } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
 import {
   getAgentPhoneProjectionPath,
@@ -33,6 +33,8 @@ import {
   formatAgentPhonePromptGuidance,
   positiveIntegerOrNull,
 } from "../lib/conversations/agent-phone-prompt.js";
+
+const log = createModuleLogger("dm-router");
 
 const MAX_ROUNDS = 3;
 const COOLDOWN_MS = 10_000;
@@ -136,7 +138,7 @@ export class DmRouter {
     try {
       await this._processReply(fromId, toId);
     } catch (err) {
-      console.error(`[dm-router] ${key} failed: ${err.message}`);
+      log.error(`${key} failed: ${err.message}`);
     } finally {
       this._processing.delete(key);
     }

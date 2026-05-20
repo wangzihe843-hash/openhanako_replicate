@@ -55,7 +55,7 @@ describe("plugin commands/ — slash 注册路径（方案 C）", () => {
     await pm.loadAll();
     const cmd = registry.lookup("ping");
     expect(cmd?.source).toBe("plugin");
-    expect(cmd?.sourceId).toBe("pp");
+    expect(cmd?.sourceId).toBe("builtin:pp");
   });
 
   it("handler 优先（#2）：同文件 export execute + handler 只注册 slash，不进 _commands", async () => {
