@@ -43,6 +43,8 @@ export type XingyeLoreRuntimeContextPurpose =
   | 'secret_space_saved_item'
   /** 记忆碎片 lore 用途（与普通 JSONL 生成分开；记忆候选见 memory-candidate-store） */
   | 'secret_space_memory_fragment'
+  /** 「TA 的独家专访」秘密空间生成（独立模块，与通用 secret_space_* AI 路径分开） */
+  | 'secret_space_interview'
   | 'relationship_state'
   /** 小手机日记草稿：仅 keyword 命中设定（与 stable 块分离） */
   | 'journal_draft'

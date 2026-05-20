@@ -7,9 +7,10 @@ export type SecretSpaceCategoryId =
   | 'dream'
   | 'saved_item'
   | 'unsent_moment'
-  | 'memory_fragment';
+  | 'memory_fragment'
+  | 'interview';
 
-type ToneKey = 'state' | 'draft' | 'dream' | 'saved' | 'moment' | 'memory';
+type ToneKey = 'state' | 'draft' | 'dream' | 'saved' | 'moment' | 'memory' | 'interview';
 
 interface DrawerEntry {
   id: SecretSpaceCategoryId;
@@ -28,6 +29,7 @@ const TONE_CLASS_MAP: Record<ToneKey, string> = {
   saved: 'secretSpaceHomeCard_saved',
   moment: 'secretSpaceHomeCard_moment',
   memory: 'secretSpaceHomeCard_memory',
+  interview: 'secretSpaceHomeCard_interview',
 };
 
 function StatePeek() {
@@ -163,6 +165,43 @@ function MemoryPeek() {
   );
 }
 
+function InterviewPeek() {
+  return (
+    <div className={styles.secretSpaceHomePeek_interview}>
+      <svg viewBox="0 0 100 100" aria-hidden focusable="false">
+        {/* 立麦 + 舞台聚光圈：构图暗示"录制中" */}
+        <defs>
+          <radialGradient id="xingye-interview-spot" cx="0.5" cy="0.35" r="0.6">
+            <stop offset="0%" stopColor="#f0d896" stopOpacity="0.7" />
+            <stop offset="70%" stopColor="#c9a85a" stopOpacity="0.15" />
+            <stop offset="100%" stopColor="#c9a85a" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+        <circle cx="50" cy="40" r="36" fill="url(#xingye-interview-spot)" />
+        <g stroke="#e8d8b2" strokeWidth="1.4" fill="none" opacity="0.95">
+          <path d="M 50 48 L 50 86" />
+          <ellipse cx="50" cy="34" rx="9" ry="13" />
+          <path d="M 42 86 L 58 86" />
+          <path d="M 38 92 L 62 92" />
+        </g>
+        <g fill="#e8d8b2" opacity="0.55">
+          <circle cx="46" cy="30" r="0.9" />
+          <circle cx="54" cy="30" r="0.9" />
+          <circle cx="46" cy="36" r="0.9" />
+          <circle cx="54" cy="36" r="0.9" />
+          <circle cx="50" cy="42" r="0.9" />
+        </g>
+      </svg>
+      <div className={styles.secretSpaceHomePeekInterviewDanmaku} aria-hidden>
+        <span>「这一题答得真心虚」</span>
+        <span>「姐姐永远是我心头朱砂痣」</span>
+        <span>「TA 看了一眼摄像机」</span>
+      </div>
+      <div className={styles.secretSpaceHomePeekCaption_interview}>INTERVIEW</div>
+    </div>
+  );
+}
+
 const ENTRIES: DrawerEntry[] = [
   { id: 'state', label: 'TA 的状态', hint: 'state · 此刻 / 心情', tone: 'state', peek: <StatePeek /> },
   { id: 'draft_reply', label: 'TA 的草稿箱', hint: 'draft · 没说出口的话', tone: 'draft', peek: <DraftPeek /> },
@@ -170,6 +209,7 @@ const ENTRIES: DrawerEntry[] = [
   { id: 'saved_item', label: 'TA 收藏的', hint: 'saved · 摘抄 / 片段', tone: 'saved', peek: <SavedPeek /> },
   { id: 'unsent_moment', label: '未发的朋友圈', hint: 'unsent · 草稿动态', tone: 'moment', peek: <MomentPeek /> },
   { id: 'memory_fragment', label: '私藏回忆', hint: 'memory · 碎片 / 标本', tone: 'memory', peek: <MemoryPeek /> },
+  { id: 'interview', label: 'TA 的独家专访', hint: 'interview · 录制 / 弹幕 / 幕后', tone: 'interview', peek: <InterviewPeek /> },
 ];
 
 interface SecretSpaceHomeProps {
@@ -183,7 +223,7 @@ export function SecretSpaceHome({ onSelectCategory }: SecretSpaceHomeProps) {
         <div className={styles.secretSpaceHomeCabinetKicker}>HER · SECRET CABINET</div>
         <h3 className={styles.secretSpaceHomeCabinetTitle}>TA 藏起来的那些东西</h3>
         <p className={styles.secretSpaceHomeCabinetSub}>
-          —— 抽屉里有六个角落，请轻轻一格一格打开。
+          —— 抽屉里有七个角落，请轻轻一格一格打开。
         </p>
       </div>
       <div className={styles.secretSpaceHomeCabinetBody}>

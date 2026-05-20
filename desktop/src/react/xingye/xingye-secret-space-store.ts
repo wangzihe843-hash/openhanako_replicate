@@ -37,6 +37,10 @@ function normalizeRecord(
    */
   const kind = category;
   if (!body && typeof raw.summary !== 'string') return null;
+  const metadata =
+    raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata)
+      ? (raw.metadata as Record<string, unknown>)
+      : undefined;
   return {
     recordId: recordIdStable,
     key: recordIdStable,
@@ -49,6 +53,7 @@ function normalizeRecord(
     source: typeof raw.source === 'string' ? raw.source : undefined,
     tags: Array.isArray(raw.tags) ? raw.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
     kind,
+    ...(metadata ? { metadata } : {}),
   };
 }
 

@@ -41,6 +41,12 @@ interface SecretSpaceCategoryViewProps {
    * 给当前选中的 record 返回 0..n 个按钮；返回 null 则不渲染额外动作。
    */
   renderRecordDetailExtraActions?: (record: SecretSpaceSampleRecord) => ReactNode;
+  /**
+   * 自定义"记录详情"渲染（取代默认 SecretSpaceRecordCard）。
+   * 用于「独家专访」这种正文是结构化 metadata、需要专属阅读器（翻页 / 弹幕）的分类。
+   * 返回的节点会替换默认详情卡；删除按钮 / extra actions 仍由 CategoryView 自己渲染。
+   */
+  renderRecordDetail?: (record: SecretSpaceSampleRecord) => ReactNode;
 }
 
 export function SecretSpaceCategoryView({
@@ -53,6 +59,7 @@ export function SecretSpaceCategoryView({
   deleteError,
   renderRecordList,
   renderRecordDetailExtraActions,
+  renderRecordDetail,
 }: SecretSpaceCategoryViewProps) {
   const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -132,7 +139,9 @@ export function SecretSpaceCategoryView({
           </div>
         ) : inDetail && selectedRecord ? (
           <div className={styles.secretSpaceRecordDetailPane}>
-            <SecretSpaceRecordCard record={selectedRecord} />
+            {renderRecordDetail
+              ? renderRecordDetail(selectedRecord)
+              : <SecretSpaceRecordCard record={selectedRecord} />}
             {(onRequestDeleteRecord || renderRecordDetailExtraActions) ? (
               <div className={styles.secretSpaceRecordDetailActions}>
                 {renderRecordDetailExtraActions ? renderRecordDetailExtraActions(selectedRecord) : null}

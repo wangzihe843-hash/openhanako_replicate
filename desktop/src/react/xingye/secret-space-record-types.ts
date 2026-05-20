@@ -11,7 +11,9 @@ export type SecretSpaceRecordKind =
    * 但 state.jsonl 里的具体条目应当如实标 kind='state'——之前 store 把它强行
    * 改成 'memory_fragment' 是错的（条目在列表里挂"回忆"标签）。
    */
-  | 'state';
+  | 'state'
+  /** TA 的独家专访（秘密空间独立模块；结构化数据存在 record.metadata 里）。 */
+  | 'interview';
 
 /** 分类列表与详情页共用的类型展示文案 */
 export const SECRET_SPACE_RECORD_KIND_LABEL: Record<SecretSpaceRecordKind, string> = {
@@ -21,6 +23,7 @@ export const SECRET_SPACE_RECORD_KIND_LABEL: Record<SecretSpaceRecordKind, strin
   unsent_moment: '朋友圈草稿',
   memory_fragment: '回忆',
   state: '状态记录',
+  interview: '独家专访',
 };
 
 export interface SecretSpaceSampleRecord {
@@ -40,4 +43,10 @@ export interface SecretSpaceSampleRecord {
   source?: string;
   tags?: string[];
   kind: SecretSpaceRecordKind;
+  /**
+   * 结构化 metadata（appendSecretSpaceRecord 传入时落进 jsonl 行内的 `metadata` 字段）。
+   * 主要用于「独家专访」这种正文不是单字符串、需要结构化渲染的分类。
+   * 普通分类的记录可以不带 metadata；读出来也允许为 undefined。
+   */
+  metadata?: Record<string, unknown>;
 }

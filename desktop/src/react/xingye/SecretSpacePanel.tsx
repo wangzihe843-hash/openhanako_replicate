@@ -24,6 +24,13 @@ import {
 } from './SecretSpaceCategoryRenderers';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { generateSecretSpaceRecordWithAI, isSecretSpaceAiGenerableCategory } from './xingye-secret-space-ai';
+import { generateSecretInterviewWithAI } from './xingye-secret-space-interview-ai';
+import {
+  flattenSecretInterviewToContent,
+  normalizeSecretInterviewMetadata,
+  type SecretInterviewMetadata,
+} from './xingye-secret-space-interview-types';
+import { SecretInterviewReader } from './SecretInterviewReader';
 import {
   appendSecretSpaceRecord,
   deleteSecretSpaceRecord,
@@ -61,6 +68,7 @@ const EMPTY_RECORDS: Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]> = 
   saved_item: [],
   unsent_moment: [],
   memory_fragment: [],
+  interview: [],
 };
 
 const CATEGORY_META: SecretSpaceCategoryMeta[] = [
@@ -112,6 +120,14 @@ const CATEGORY_META: SecretSpaceCategoryMeta[] = [
     recordsEmptyTitle: '还没有回忆片段',
     recordsEmptyBody: '可记录一句场景、气味或对话残片。',
   },
+  {
+    id: 'interview',
+    kicker: 'INTERVIEW · 录制 / 弹幕 / 幕后',
+    title: 'TA 的独家专访',
+    description: '5 题录制 + 吃瓜弹幕 + 「相机关了之后」的彩蛋',
+    recordsEmptyTitle: '还没有任何一期专访',
+    recordsEmptyBody: '点下方「录一期专访」让模型出一期：5 题、弹幕、幕后彩蛋一次性生成。',
+  },
 ];
 
 function emptyRecords(): Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]> {
@@ -122,6 +138,7 @@ function emptyRecords(): Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]
     saved_item: [],
     unsent_moment: [],
     memory_fragment: [],
+    interview: [],
   };
 }
 
@@ -217,6 +234,11 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [secretSpaceDeleteError, setSecretSpaceDeleteError] = useState<string | null>(null);
 
+  // interview 生成专属状态：用户出题（可空） + 生成态 + 错误
+  const [interviewUserQuestion, setInterviewUserQuestion] = useState('');
+  const [interviewLoading, setInterviewLoading] = useState(false);
+  const [interviewError, setInterviewError] = useState<string | null>(null);
+
   /**
    * 秘密空间「待确认草稿」状态。drafts.jsonl 跨 category 共用一个文件，
    * 用 `category` 字段区分；UI 在 home 顶部统一展示一段。
@@ -257,6 +279,9 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setSavedItemSeed('');
       setAiError(null);
       setAiLoading(false);
+      setInterviewUserQuestion('');
+      setInterviewError(null);
+      setInterviewLoading(false);
       setSecretSpaceDeleteError(null);
       setView('home');
       setActiveCategory(null);
@@ -707,6 +732,35 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     }
   };
 
+  const handleGenerateInterview = async () => {
+    if (!agent?.id || activeCategory !== 'interview') return;
+    setInterviewError(null);
+    setInterviewLoading(true);
+    try {
+      const meta = await generateSecretInterviewWithAI({
+        agent,
+        ownerProfile: profile,
+        userQuestion: interviewUserQuestion.trim() || undefined,
+      });
+      const content = flattenSecretInterviewToContent(meta);
+      const summary = content.length > 120 ? `${content.slice(0, 120)}…` : content;
+      await appendSecretSpaceRecord(agent.id, 'interview', {
+        title: meta.title,
+        body: content,
+        summary,
+        source: 'ai',
+        metadata: meta as unknown as Record<string, unknown>,
+      });
+      const records = await listSecretSpaceRecords(agent.id, 'interview');
+      setRecordsByCategory((prev) => ({ ...prev, interview: records }));
+      setInterviewUserQuestion('');
+    } catch (e) {
+      setInterviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInterviewLoading(false);
+    }
+  };
+
   const handleAiGenerate = async () => {
     if (!agent?.id || !activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
     setAiError(null);
@@ -1065,9 +1119,43 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       </div>
     ) : null;
 
+  const interviewFooter =
+    activeCategory === 'interview' && agent?.id ? (
+      <div className={styles.profileForm} data-testid="secret-space-interview-footer">
+        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
+          录一期专访：模型一次性生成 5 个 Q&A、每题 4-6 条弹幕、加一段「相机关了之后」的彩蛋。
+          也可以给一题你想问的，让它落在第 3 或第 4 题位置；不出题模型自己决定 5 题。
+        </p>
+        <label className={styles.profileField}>
+          <span>你想问 TA 的一题（可空）</span>
+          <textarea
+            value={interviewUserQuestion}
+            onChange={(e) => setInterviewUserQuestion(e.target.value)}
+            rows={2}
+            placeholder="例：在你过去那么多年里，有没有过想放弃的时刻？"
+            aria-label="独家专访用户出题"
+            disabled={interviewLoading}
+            data-testid="secret-space-interview-user-question"
+          />
+        </label>
+        {interviewError ? <p className={styles.saveStatus}>{interviewError}</p> : null}
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => void handleGenerateInterview()}
+          disabled={interviewLoading}
+          data-testid="secret-space-interview-generate"
+        >
+          {interviewLoading ? '正在录制本期…' : '录一期专访'}
+        </button>
+      </div>
+    ) : null;
+
   const categoryFooter =
     activeCategory === 'memory_fragment'
       ? memoryFragmentFooter
+      : activeCategory === 'interview'
+      ? interviewFooter
       : addRecordFooter;
 
   /**
@@ -1106,6 +1194,30 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         )
       : undefined
     : undefined;
+
+  /**
+   * interview 详情走专属的翻页阅读器（含弹幕 / 幕后彩蛋），不走默认 SecretSpaceRecordCard。
+   * record.metadata 来自 store 透传的结构化数据；缺失或解析失败时给一个降级提示，
+   * 让用户至少能看到 record.body（flatten 后的纯文本备份），方便排错。
+   */
+  const renderInterviewDetail = (record: SecretSpaceSampleRecord) => {
+    const meta = normalizeSecretInterviewMetadata(record.metadata) as SecretInterviewMetadata | null;
+    if (meta) {
+      return <SecretInterviewReader meta={meta} />;
+    }
+    return (
+      <div
+        className={styles.profileForm}
+        data-testid="secret-interview-fallback"
+        style={{ padding: 16, whiteSpace: 'pre-wrap' }}
+      >
+        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
+          这期专访的结构化数据缺失或损坏；以下是纯文本备份：
+        </p>
+        <p>{record.body}</p>
+      </div>
+    );
+  };
 
   return (
     <div className={styles.panelInner}>
@@ -1269,6 +1381,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             records={activeSamples}
             footer={categoryFooter}
             renderRecordList={renderRecordListForCategory}
+            renderRecordDetail={activeCategory === 'interview' ? renderInterviewDetail : undefined}
             onRequestDeleteRecord={
               agent?.id ? (key) => handleRequestDeleteSecretSpaceRecord(key) : undefined
             }

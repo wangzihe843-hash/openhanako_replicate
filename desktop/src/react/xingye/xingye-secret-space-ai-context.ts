@@ -25,7 +25,8 @@ export type XingyeSecretSpaceLoreCategory =
   | 'draft_reply'
   | 'unsent_moment'
   | 'saved_item'
-  | 'memory_fragment';
+  | 'memory_fragment'
+  | 'interview';
 
 /**
  * SecretSpace AI 生成允许使用的 purpose 子集。
@@ -39,6 +40,7 @@ export type XingyeSecretSpaceLorePurpose = Extract<
   | 'secret_space_unsent_moment'
   | 'secret_space_saved_item'
   | 'secret_space_memory_fragment'
+  | 'secret_space_interview'
 >;
 
 const CATEGORY_TO_PURPOSE: Record<XingyeSecretSpaceLoreCategory, XingyeSecretSpaceLorePurpose> = {
@@ -48,6 +50,7 @@ const CATEGORY_TO_PURPOSE: Record<XingyeSecretSpaceLoreCategory, XingyeSecretSpa
   unsent_moment: 'secret_space_unsent_moment',
   saved_item: 'secret_space_saved_item',
   memory_fragment: 'secret_space_memory_fragment',
+  interview: 'secret_space_interview',
 };
 
 export function getSecretSpaceLorePurpose(category: XingyeSecretSpaceLoreCategory): XingyeSecretSpaceLorePurpose {

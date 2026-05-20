@@ -4229,6 +4229,66 @@
   --xingye-drawer-fg2: rgba(90, 58, 58, 0.6);
 }
 
+.secretSpaceHomeCard_interview {
+  background:
+    radial-gradient(circle at 75% 25%, rgba(255, 220, 160, 0.18), transparent 55%),
+    linear-gradient(180deg, #2a2622 0%, #1a1612 100%);
+  --xingye-drawer-fg: #e8d8b2;
+  --xingye-drawer-fg2: rgba(232, 216, 178, 0.55);
+  border-color: rgba(201, 168, 90, 0.32);
+}
+
+.secretSpaceHomePeek_interview {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 12px 22px;
+  overflow: hidden;
+}
+
+.secretSpaceHomePeek_interview svg {
+  width: 70%;
+  height: auto;
+  max-height: 64%;
+  opacity: 0.85;
+}
+
+.secretSpaceHomePeekCaption_interview {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: #c9a85a;
+  text-transform: uppercase;
+}
+
+.secretSpaceHomePeekInterviewDanmaku {
+  position: absolute;
+  top: 14%;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+  font-size: 10px;
+  color: rgba(232, 216, 178, 0.7);
+  text-align: center;
+  pointer-events: none;
+}
+.secretSpaceHomePeekInterviewDanmaku span {
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+}
+.secretSpaceHomePeekInterviewDanmaku span:nth-child(2) { color: #f4b5c8; }
+.secretSpaceHomePeekInterviewDanmaku span:nth-child(3) { color: #c9a85a; font-style: italic; }
+
 /* === Peek 内容样式 ==================================================== */
 
 .secretSpaceHomePeek_state {
