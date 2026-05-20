@@ -31,7 +31,8 @@ type Page =
   | { kind: 'backstage' };
 
 const DANMAKU_LANE_COUNT = 5;
-const DANMAKU_DURATION_RANGE = [10, 16] as const; // 秒
+// 整体周期 22-30 秒；CSS 里 55%/100% 让每条弹幕"飘 12-16s + 歇 10-14s"再来下一轮。
+const DANMAKU_DURATION_RANGE = [22, 30] as const; // 秒
 
 function pickLane(index: number): number {
   return index % DANMAKU_LANE_COUNT;
@@ -39,13 +40,17 @@ function pickLane(index: number): number {
 
 function pickDuration(index: number): number {
   const [min, max] = DANMAKU_DURATION_RANGE;
-  // 简单确定性函数让每条速度不同，但同一条每次都一样（避免重渲染抖动）
-  return min + ((index * 1.7) % (max - min));
+  // 确定性函数：同一条每次重渲都一样，避免抖动；不同条速度错开
+  return min + ((index * 2.3) % (max - min));
 }
 
 function pickStartDelay(index: number): number {
-  // 同一页内首屏要看到几条已经飘到中间，错开 -0.6s..-3.6s
-  return -(((index * 0.9) % 3) + 0.6);
+  /*
+   * 错开起始 delay：让首屏分散看到 2-3 条弹幕在不同位置，而不是全挤在最右边等出场。
+   * 总周期 22-30s，所以 delay 错到 -1..-9 之间，覆盖各弹幕进入到飘动中段的不同时刻。
+   * 同时配合 CSS keyframe 的 55% pause，让一些弹幕一进页面就在"歇"——节奏自然。
+   */
+  return -(((index * 1.7) % 8) + 1);
 }
 
 function DanmakuFloater({ danmaku }: { danmaku: SecretInterviewDanmaku[] }) {
