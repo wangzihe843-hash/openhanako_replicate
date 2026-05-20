@@ -164,6 +164,77 @@ async function buildNewsContinuityAnchorBlock(agentId: string): Promise<string> 
   }
 }
 
+/**
+ * 把本次报纸生成实际用到的 prompt + 各上下文 block 落盘到调试文件。
+ *
+ * - 路径：`news/.debug/last-prompt.txt`（按 agent 隔离；每期覆盖一次）
+ * - 内容：era resolve 结果（含 scores / matchedTerms / reason）、各 block 内容（原样不截断）、
+ *   最后是完整 prompt。便于排查「era 对了但世界观词跑偏」「某 block 里夹带了别 era 关键词」。
+ * - 失败不抛错（调试日志缺失不应阻塞主流程）。
+ */
+async function writeLastNewsPromptDebug(
+  agentId: string,
+  params: {
+    era: NewsEraResolution;
+    prompt: string;
+    stableLoreBlock: string;
+    keywordLoreBlock: string;
+    recentSceneBlock: string;
+    relationshipBlock: string;
+    heartbeatBlock: string;
+    continuityAnchorBlock: string;
+    userIntent: string;
+  },
+): Promise<void> {
+  try {
+    const sections: string[] = [
+      '# 小手机报纸 · 最近一次生成的调试快照',
+      `# 时间：${new Date().toISOString()}`,
+      `# agentId：${agentId}`,
+      '',
+      '## era 解析结果（只看 profile）',
+      `- era：${params.era.era}`,
+      `- score：${params.era.score}`,
+      `- scores：${JSON.stringify(params.era.scores)}`,
+      `- matchedTerms：${JSON.stringify(params.era.matchedTerms)}`,
+      `- reason：${params.era.reason}`,
+      '',
+      '## 用户附言（userIntent）',
+      params.userIntent || '（无）',
+      '',
+      '## stableLoreBlock（lore-memory.md / always-on canonical 条目）',
+      params.stableLoreBlock || '（无）',
+      '',
+      '## keywordLoreBlock（按 queryText 召回的 keyword-triggered 条目）',
+      params.keywordLoreBlock || '（无）',
+      '',
+      '## recentSceneBlock（最近聊天上下文）',
+      params.recentSceneBlock || '（无）',
+      '',
+      '## relationshipBlock（当前关系状态）',
+      params.relationshipBlock || '（无）',
+      '',
+      '## heartbeatBlock（最近一次桌面巡检 UI 反馈）',
+      params.heartbeatBlock || '（无）',
+      '',
+      '## continuityAnchorBlock（历史报纸抽样，跨期防重复）',
+      params.continuityAnchorBlock || '（无）',
+      '',
+      '## 最终拼出的 prompt（原样喂给模型）',
+      params.prompt,
+    ];
+    await postXingyeStorage({
+      action: 'write',
+      agentId,
+      relativePath: 'news/.debug/last-prompt.txt',
+      content: sections.join('\n'),
+      encoding: 'utf8',
+    });
+  } catch {
+    // 调试日志写盘失败不影响主流程；下次再生成时还会再写一次。
+  }
+}
+
 function formatRelationshipBlock(agentId: string): string {
   try {
     const storage = getXingyePersistenceStorage();
@@ -281,14 +352,24 @@ export async function generateNewsDraftWithAI(params: {
     keywordLoreBlock = '';
   }
 
-  // 按 agent profile + lore 识别 era（民国小报闲笔体 / 西方译文体 / 现代狗仔体）。
+  // 按 agent profile 识别 era（民国小报闲笔体 / 西方译文体 / 现代狗仔体）。
+  //
+  // **输入故意收紧到只有 profile**：
+  //  - keywordLoreBlock 是按 queryText 召回的，而 queryText 里夹了 recentContext.summaryText
+  //    （最近聊天总结）。如果用户跟 TA 在角色扮演带"魔晶 / 教廷 / 塔楼"的桥段，
+  //    那些词会顺着 recent chat → queryText → 命中 keyword lore → 倒灌进 era resolver，
+  //    把一个边境医生强行判成 western_fantasy。era 应当反映**角色根本设定**，
+  //    不应被一次性的 RP 主题左右。
+  //  - stableLoreBlock 是 lore-memory.md 整块，可能含用户写的额外世界观笔记，
+  //    同样不是角色"根本"。
+  //
   // resolver 失败 / 抛错 → 兜底 modern_or_future（最通用，最不容易出戏）。
+  //
+  // 这个算法**必须**与 UI 侧 PhoneNewsApp fallback 时用的输入一致（profile only），
+  // 才能保证旧数据缺 era 时 UI 与生成侧给出同样的判定。
   let eraResolution: NewsEraResolution;
   try {
-    const eraAgentLike = buildNewsEraAgentLike(agent, ownerProfile ?? null, {
-      extraCorpus: stableLoreBlock || null,
-      lore: keywordLoreBlock || null,
-    });
+    const eraAgentLike = buildNewsEraAgentLike(agent, ownerProfile ?? null);
     eraResolution = resolveNewsEra(eraAgentLike);
   } catch {
     eraResolution = {
@@ -315,6 +396,27 @@ export async function generateNewsDraftWithAI(params: {
     continuityAnchorBlock,
     era: eraResolution.era,
     eraStyle,
+  });
+
+  // ─── 调试落盘 ────────────────────────────────────────────────────────────
+  // 把本次生成实际喂给模型的完整 prompt + 各 block 的来源摘要写到磁盘，
+  // 路径 `news/.debug/last-prompt.txt`（每期覆盖式更新，只保留最新一份）。
+  //
+  // 用途：当报纸出现"era 对但世界观词跑偏"之类问题时，用户能直接打开这份文件
+  // 看到 stableLore / keywordLore / recentScene / continuity 各 block 里到底
+  // 塞了什么——这才是真正能判断"prompt 是否喂混"的依据。
+  //
+  // fire-and-forget：写盘失败不影响生成主流程。
+  void writeLastNewsPromptDebug(agent.id, {
+    era: eraResolution,
+    prompt,
+    stableLoreBlock,
+    keywordLoreBlock,
+    recentSceneBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    continuityAnchorBlock,
+    userIntent,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -346,13 +448,23 @@ export async function generateNewsDraftWithAI(params: {
 
   // 模型可能返回 { issueDate?, masthead, sections }；强制把当期 issueDateIso 覆盖回去，
   // 即使模型乱写日期也以系统时间为准。
+  // 同时把已经算好的 era 灌进 raw — normalize 会校验 era 合法性后写进 metadata。
+  // 这是「era 算一次绑死」的关键：UI 渲染时直接读 metadata.era，不再二次 resolve，
+  // 避免两侧因输入不同（profile vs profile+lore+recent chat）走出不一样的 era。
   const rawResult = (data?.result && typeof data.result === 'object' && !Array.isArray(data.result))
-    ? { ...(data.result as Record<string, unknown>), issueDate: issueDateIso }
+    ? {
+        ...(data.result as Record<string, unknown>),
+        issueDate: issueDateIso,
+        era: eraResolution.era,
+      }
     : null;
 
   const normalized = normalizeNewsEntryMetadata(rawResult);
   if (!normalized) {
     throw new Error('模型返回无效：缺少 masthead / sections 或字段不合规。');
   }
+  // 兜底：即便 normalize 因为某种原因没写上（理论不应发生，因为我们刚塞了合法的 era），
+  // 也手动补上一次，保证存档里**一定**有 era。
+  if (!normalized.era) normalized.era = eraResolution.era;
   return normalized;
 }

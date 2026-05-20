@@ -14,8 +14,9 @@
 
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import type { NewsEraId } from './xingye-news-types';
 
-export type NewsEraId = 'oriental_classical' | 'western_fantasy' | 'modern_or_future';
+export type { NewsEraId };
 
 export const NEWS_ERA_LABELS: Record<NewsEraId, string> = {
   oriental_classical: '东方古典（中国古代 / 武侠 / 仙侠 / 民国）',

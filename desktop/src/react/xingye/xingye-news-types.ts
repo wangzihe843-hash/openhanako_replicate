@@ -165,6 +165,31 @@ export const NEWS_SECTIONS_PER_ISSUE = { min: 2, max: 4 } as const;
 /** masthead 总长度限制（"《长安暮报》今日号"这种）。 */
 export const NEWS_MASTHEAD_MAX = 24;
 
+/**
+ * 头版「现场证词」黄色卡片的数据。
+ * 仅 `kind === 'headline_world'` 的 section 会读取；其它 kind 上写了也会被
+ * normalize 丢弃。生成模型在现代/未来时代必填这一段（替代「头版相片」的视觉位）。
+ */
+export type NewsHeadlineWitness = {
+  /** 证人原话；≤ 50 字。组件自带「」引号，模型不要再带。 */
+  quote: string;
+  /** 落款，形如「旧六区合成饮档店员·对本报记者」；≤ 40 字。 */
+  attribution: string;
+};
+
+/**
+ * 头版「证据 · 时间线」白底卡片的一行。
+ */
+export type NewsHeadlineEvidenceItem = {
+  /** HH:MM 24 小时制。 */
+  time: string;
+  /** 一句话动作化描述；≤ 24 字。 */
+  text: string;
+};
+
+/** evidence 数组长度上限（超过 5 条 UI 会显得拥挤）。 */
+export const NEWS_HEADLINE_EVIDENCE_MAX = 5;
+
 export type NewsSection = {
   kind: NewsSectionKind;
   /** 板块标题，应从对应 kind 的 titleCandidates 里选一个；模型若乱写会在 normalize 时 fallback 到 candidates[0]。 */
@@ -173,7 +198,39 @@ export type NewsSection = {
   body: string;
   /** 署名（虚构记者名 / 笔名 / 化名），可空。 */
   byline?: string;
+
+  /**
+   * 头版「现场证词」黄色卡片。**仅 `kind === 'headline_world'` 时**生效；
+   * 其它 kind 上即使写了也会被 normalize 忽略。
+   * 缺失时 UI 会用 body 前 42 字 + byline 兜底渲染（不会留空）。
+   */
+  witness?: NewsHeadlineWitness;
+
+  /**
+   * 头版「证据 · 时间线」白底卡片。**仅 `kind === 'headline_world'` 时**生效；
+   * 其它 kind 上即使写了也会被 normalize 忽略。
+   * 缺失时整块卡片不渲染（不要画空卡）。
+   */
+  evidence?: NewsHeadlineEvidenceItem[];
 };
+
+/**
+ * 报纸笔调/版面分化用的「时代」。
+ *
+ * 与 xingye-news-era-resolver.ts 的 NewsEraId 同义；之所以在 types.ts 这里
+ * 也声明一遍，是因为生成端算完 era 后要把它**写进 metadata**（一份报纸只算一次，
+ * UI 渲染直接读，不再二次 resolve）。
+ *
+ * 这避免了「生成侧 resolver 把 recent chat / keyword-triggered lore 喂进来后
+ * 判定成 western_fantasy，但 UI 侧 resolver 只看 profile 判定成 modern_or_future」
+ * 这种两侧不一致导致正文/版面错位的问题。
+ */
+export const NEWS_ERA_IDS = ['oriental_classical', 'western_fantasy', 'modern_or_future'] as const;
+export type NewsEraId = (typeof NEWS_ERA_IDS)[number];
+
+export function isNewsEraId(value: unknown): value is NewsEraId {
+  return typeof value === 'string' && (NEWS_ERA_IDS as readonly string[]).includes(value);
+}
 
 export type NewsEntryMetadata = {
   /** 这期报纸的"出版日"（ISO 字符串）。 */
@@ -182,6 +239,12 @@ export type NewsEntryMetadata = {
   masthead: string;
   /** 本期板块列表，2-4 个。 */
   sections: NewsSection[];
+  /**
+   * 本期所属的时代（笔调 / 版面 era）。生成时由 resolver 算出来写进来；
+   * UI 渲染分发**只读这一个字段**，不再二次 resolve（避免两侧 era 算法
+   * 因输入不同而走偏）。旧数据可能缺这个字段：UI 侧应 fallback。
+   */
+  era?: NewsEraId;
 };
 
 /** 判断一个 unknown 是否符合 NewsSectionKind。 */
@@ -208,6 +271,47 @@ function normalizeOptionalString(value: unknown, max: number): string | undefine
   return truncateChars(trimmed, max);
 }
 
+const EVIDENCE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function stripQuoteMarks(s: string): string {
+  // 模型若把 「」/ "" / '' 当成 quote 的一部分塞进来，UI 会重复一层引号，所以 strip 干净。
+  return s.replace(/^[「『"'“‘]+/, '').replace(/[」』"'”’]+$/, '').trim();
+}
+
+function normalizeWitness(value: unknown): NewsHeadlineWitness | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const quoteRaw = typeof raw.quote === 'string' ? stripQuoteMarks(raw.quote) : '';
+  const attributionRaw = typeof raw.attribution === 'string' ? raw.attribution.trim() : '';
+  if (!quoteRaw || !attributionRaw) return undefined;
+  return {
+    quote: truncateChars(quoteRaw, 50),
+    attribution: truncateChars(attributionRaw, 40),
+  };
+}
+
+function normalizeEvidenceItem(value: unknown): NewsHeadlineEvidenceItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const time = typeof raw.time === 'string' ? raw.time.trim() : '';
+  const textRaw = typeof raw.text === 'string' ? raw.text.trim() : '';
+  if (!EVIDENCE_TIME_RE.test(time)) return null;
+  if (!textRaw) return null;
+  return { time, text: truncateChars(textRaw, 24) };
+}
+
+function normalizeEvidence(value: unknown): NewsHeadlineEvidenceItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: NewsHeadlineEvidenceItem[] = [];
+  for (const raw of value) {
+    const item = normalizeEvidenceItem(raw);
+    if (!item) continue;
+    items.push(item);
+    if (items.length >= NEWS_HEADLINE_EVIDENCE_MAX) break;
+  }
+  return items.length ? items : undefined;
+}
+
 function normalizeSection(value: unknown): NewsSection | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -223,6 +327,13 @@ function normalizeSection(value: unknown): NewsSection | null {
   const out: NewsSection = { kind: raw.kind, title, body };
   const byline = normalizeOptionalString(raw.byline, 24);
   if (byline) out.byline = byline;
+  // witness / evidence 只挂在 headline_world 上；其它 kind 即便写了也丢弃。
+  if (raw.kind === 'headline_world') {
+    const witness = normalizeWitness(raw.witness);
+    if (witness) out.witness = witness;
+    const evidence = normalizeEvidence(raw.evidence);
+    if (evidence) out.evidence = evidence;
+  }
   return out;
 }
 
@@ -260,7 +371,9 @@ export function normalizeNewsEntryMetadata(value: unknown): NewsEntryMetadata | 
     ? raw.issueDate.trim()
     : new Date().toISOString();
 
-  return { issueDate, masthead, sections };
+  const out: NewsEntryMetadata = { issueDate, masthead, sections };
+  if (isNewsEraId(raw.era)) out.era = raw.era;
+  return out;
 }
 
 /** 把 NewsEntryMetadata 拍成纯文本（落 entry.content，便于兜底显示 / 全文搜索）。 */

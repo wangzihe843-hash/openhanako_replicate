@@ -97,6 +97,89 @@ export function buildNewsDraftPrompt(args: {
     ],
   };
 
+  // 现代/未来时代生成端没有生图能力，头版的视觉节奏完全由 witness + evidence
+  // 这两段结构化文字撑起来。这两段只在 era === 'modern_or_future' 时强制要求。
+  //
+  // ⚠️ 历史坑：这段最早的"正确示例"直接抄了设计稿 mo-1 的 mock data，那是一份
+  // "狗仔跟拍主角"的样本，导致模型把 headline_world 写成了关于 TA 的八卦——
+  // 直接违反 registry 里 `headline_world.taskPrompt` 的"世态新闻，不要写成 TA 的
+  // 日记或感情独白"。schema 上「TA 的八卦」属于 `gossip_column`，不是 headline。
+  // 现在的示例已经换成「世态事件」（街区基建 / 城市公告 / 群体事件），witness 是
+  // 这些事件的目击者证词，evidence 是这些事件本身的时间线——不是跟拍 TA。
+  const modernHeadlineExtraGuide: string[] = era === 'modern_or_future'
+    ? [
+        '## 现代/未来时代 · 头版附加要求（必读）',
+        '本期是「现代或未来」时代（笔调为狗仔小报体）。生成端没有相片，头版的视觉节奏完全由两段',
+        '结构化文字撑起来。`sections` 中 `kind === "headline_world"` 的那一条**必须**在 body 之外，',
+        '**额外输出 `witness` 字段**，并**强烈建议**输出 `evidence` 字段。',
+        '',
+        '### ⚠️ headline_world 仍然是「世态新闻」，不是「狗仔追 TA」',
+        `- 头版讲的应当是 **${currentAgentName} 所处世界的事**（城市基建、街区事件、社区公告、`
+        + '突发治安、产业新闻、自然异象 ……），第三人称客观报道笔调。',
+        `- **禁止**把 ${currentAgentName} / ${currentUserName} 写成头版主角。`
+        + `${currentAgentName} 可以作为"次要被提及对象"（例如在群体事件中她恰好在场），`
+        + `但头版的主语**不是** ${currentAgentName}。`,
+        `- 关于 ${currentAgentName} 与 ${currentUserName} 的私人动向 / 关系八卦 → 走 \`gossip_column\`，**不要**塞进 headline_world。`,
+        `- witness.quote 是**头版事件**的目击者证词（路人 / 救援 / 商户 / 工作人员），**不是关于 ${currentAgentName} 的评价**。`,
+        `- evidence 是**头版事件本身**的时间线（事件如何展开），**不是跟拍 ${currentAgentName} 的踪迹**。`,
+        '',
+        '### 头版扩展字段 schema（仅 headline_world 使用；其它 kind 写了会被丢弃）',
+        JSON.stringify(
+          {
+            kind: 'headline_world',
+            title: '…',
+            byline: '现代记者笔名（如「夜城市政线 · 苏 Q」「街区线记者 K」），不要写真名',
+            body: '一整段 180-260 字的世态事件正文',
+            witness: {
+              quote: '一句**事件目击者**的原话，≤ 50 字。不要带「」，组件会自动加。',
+              attribution: '落款，形如「事发街区便利店店员·对本报记者」「应急小组成员·匿名」',
+            },
+            evidence: [
+              { time: 'HH:MM', text: '≤ 24 字一句话，写**事件本身**的可观测动作' },
+            ],
+          },
+          null,
+          2,
+        ),
+        '',
+        '### 5 条硬约束',
+        '1. `witness.quote` 是一句**引用**，不是叙述。要像真有人在被采访那样说话，可以带语气词、断句、犹豫，**但不要带「」引号**（组件会自动加）。',
+        '2. `witness.attribution` 要包含**地点/职业 + 说话语境**两段，用 `·` 连接。例「事发街区便利店店员·对本报记者」「应急小组成员·匿名」。**不要写真实姓名**。',
+        '3. `evidence` 是「世态事件本身」的时间线，第三人称、动作化、短句。时间用 HH:MM（24 小时制），间隔通常几分钟到几十分钟。**不要**写心理活动，**也不要**把它写成跟拍主角的路线。',
+        '4. `evidence` 数组 2-5 条，按时间升序。条目之间要有"叙事增益"：从「事件初起」→「事态扩大」→「关键节点」→「暂时平息 / 仍在持续」。',
+        '5. 如果本期头版讲的不是连续事件而是一次性公告（例如政策变更），可以**省略 evidence**，但 `witness` 仍然必须有（找一个事件相关方引述一句）。',
+        '',
+        '### ❌ 错误示例（不要这样）',
+        `- 头版主语是 ${currentAgentName} 自己（"某医生最近频繁出入 …"）→ 这属于 gossip_column，不是 headline_world`,
+        '- `witness.quote: "「他来了三次。」"` → 不要带引号',
+        '- `evidence` 写「主角心里很慌乱」→ 心理活动不可观测',
+        `- \`evidence\` 写「${currentAgentName} 自西门入便利店、与某女子接头 …」→ 这是跟拍 TA，应写到 gossip_column 里去`,
+        '- `witness.attribution: "张三"` → 不要真实姓名',
+        '',
+        '### ✅ 正确示例（世态事件：旧城区基建故障）',
+        JSON.stringify(
+          {
+            title: '头版大事',
+            byline: '街区线记者 · K',
+            body: '本市旧六区供水网络今晨 03 时起出现大面积异常，至发稿时已影响约一万二千户居民。市政应急小组初步判断为主干管腐蚀加剧叠加昨夜骤降气温所致，正调度备用水源车进场，但因夜间道路施工，进场速度低于预期。受影响居民多在社交频段中抱怨"龙头时通时断"，部分商户已被迫提前歇业。',
+            witness: {
+              quote: '从凌晨三点开始就一阵一阵的，烧水做夜宵都做不成，街上全是端着锅去借水的。',
+              attribution: '旧六区夜市摊主·对本报记者',
+            },
+            evidence: [
+              { time: '02:58', text: '旧六区供水压力首次报警。' },
+              { time: '03:14', text: '市政应急小组接到首批居民投诉。' },
+              { time: '04:20', text: '备用水源车进场，因施工绕行延误。' },
+              { time: '06:05', text: '局部恢复供水，主干管尚未修复。' },
+            ],
+          },
+          null,
+          2,
+        ),
+        '',
+      ]
+    : [];
+
   const eraGuideLines: string[] = [
     `本期报纸的 era（已由系统按 agent 设定识别）：**${era}** — ${eraLabel}。`,
     `笔调：**${style.toneName}**。${style.toneSummary}`,
@@ -126,6 +209,25 @@ export function buildNewsDraftPrompt(args: {
     `- 报道笔调贴合 TA 所在的世界观（${eraLabel}），详见下方「笔调与报刊年代」。`,
     '- 不要出现「根据聊天记录」「用户让我」「系统提示」「模型」「AI」「prompt」「OpenHanako」「设定库」等元叙述。',
     '',
+    '## 世界观锁定（铁律，违反必重写）',
+    //
+    // 这一段是为了堵住 prompt 各 block（lore-memory / keyword 触发的 lore / 最近聊天 /
+    // 跨期连续性锚点）里夹带的「别 era 关键词」污染本期世界观的问题。
+    //
+    // 出现过的 bug 现象：一个边境医生（modern_or_future）的 agent，因为 lore-memory
+    // 或历史报纸里写过 / 提过西幻词，模型把"南方边境之雷恩郡 / 圣安德烈教区 / 魔晶 /
+    // 炼金术士 / 白塔"塞进了本期头版，整篇变成西幻译文体——但 era 系统侧仍判定为现代。
+    //
+    // 这条铁律明确告诉模型：era 已经定了，下方任何 block 出现别 era 的词都视为噪声。
+    `- 本期 era 已由系统锁定为 **${era}**（${eraLabel}）。**这是不可商量的硬设定**。`,
+    '- 「世界观词汇」（朝代 / 王国 / 货币 / 物件 / 地名 / 称谓 / 物理规律）**只能从下方「## 当前角色」的 profile 字段抽取**。',
+    '- 下方「## 设定库（always 项 / lore-memory.md）」「## 设定库（关键词触发）」「## 最近聊天 / 场景摘要」'
+    + '「## 跨期连续性锚点」等 block 里若出现**不属于本期 era 的关键词**（例如本期是 modern_or_future 但 lore 里冒出'
+    + '「魔晶 / 教廷 / 雷恩郡 / 主教 / 灵石 / 丹药 / 朝堂」等他 era 词），**一律视为与本期无关**，禁止抄进正文、'
+    + '禁止借用做地名 / 物件 / 称谓。这些 block 只能作为「感情 / 关系 / 事件素材」参考，**不是世界观词汇库**。',
+    `- 检查清单（生成完自检）：通读全文，若发现任何词不属于「${eraLabel}」的常识范围，把它替换为本期 era 的等价词；`
+    + '不要保留任何"看起来很有氛围但其实是别 era 的"借用词。',
+    '',
     '## 笔调与报刊年代（按 era 分化，必读）',
     ...eraGuideLines,
     '',
@@ -135,6 +237,18 @@ export function buildNewsDraftPrompt(args: {
     `- **至少含 1 个**：${relationshipKindList}（感情视角是本期必备）。`,
     '- 其他板块按当期素材自行挑选，但同一 kind **只能出现一次**。',
     '- 选板块时优先选与当期素材匹配的：素材充足时多挑、素材稀薄时只生 2-3 个不要硬凑。',
+    '',
+    '## 板块语义边界（铁律，跨 era 通用）',
+    //
+    // 历史坑：现代狗仔体 prompt 曾把"狗仔跟拍主角"当 headline 范本，导致 LLM 把
+    // 关于 TA 的私事写到了 headline_world 里。下面这块明确各 kind 的主语边界，
+    // 三个 era 都适用。
+    //
+    `- \`headline_world\` / \`second_news\` 是**世态新闻**：主语是 ${currentAgentName} 所在世界的**事件 / 街区 / 城市设施 / 群体 / 自然异象**，**不是** ${currentAgentName} 自己。`
+    + `${currentAgentName} **最多**作为「被波及的市民之一」被次要提及，**不能**做头版主语；关于她个人的踪迹 / 关系 / 私事一律放到 \`gossip_column\`。`,
+    `- \`gossip_column\` / \`review\` / \`letters_to_editor\` 才是关于 ${currentAgentName} 与 ${currentUserName} 的板块：`
+    + '这里可以写"那位""咱们这位主角""TA 又被拍到""他对她说"等。',
+    `- 自检：写完头版后通读一遍，如果主语 / 中心事件是 ${currentAgentName} 或 ${currentUserName}，**改写为世态事件**或**搬到 gossip_column**。`,
     '',
     '## 字数硬约束',
     '- 每个 section.body 必须落在该 kind 标注的 [min, max] 字数范围内。',
@@ -158,6 +272,7 @@ export function buildNewsDraftPrompt(args: {
     '## 输出 JSON schema（结构必须严格一致；额外字段会被丢弃）',
     JSON.stringify(schemaExample, null, 2),
     '',
+    ...modernHeadlineExtraGuide,
     '## 当前角色',
     JSON.stringify(
       {
