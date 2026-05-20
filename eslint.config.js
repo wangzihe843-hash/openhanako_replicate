@@ -46,6 +46,7 @@ export default [
   // Node-side JS files
   {
     files: [
+      'cli/**/*.js',
       'core/**/*.js',
       'hub/**/*.js',
       'index.js',
