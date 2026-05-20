@@ -162,3 +162,54 @@ describe("desktop launch integrity helper", () => {
     expect(written.payload.missing[0].id).toBe("hanako-exe");
   });
 });
+
+describe("launch integrity fs resolution", () => {
+  it("resolveRealFs prefers original-fs so Electron's asar-patched fs cannot mask app.asar", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const originalFs = { tag: "original-fs" };
+    const nodeFs = { tag: "fs" };
+    const fakeRequire = (id) => {
+      if (id === "original-fs") return originalFs;
+      if (id === "fs") return nodeFs;
+      throw new Error(`unexpected require id: ${id}`);
+    };
+
+    expect(helper.resolveRealFs(fakeRequire)).toBe(originalFs);
+  });
+
+  it("resolveRealFs falls back to fs outside Electron, where original-fs is absent", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const nodeFs = { tag: "fs" };
+    const fakeRequire = (id) => {
+      if (id === "original-fs") {
+        const err = new Error("Cannot find module 'original-fs'");
+        err.code = "MODULE_NOT_FOUND";
+        throw err;
+      }
+      if (id === "fs") return nodeFs;
+      throw new Error(`unexpected require id: ${id}`);
+    };
+
+    expect(helper.resolveRealFs(fakeRequire)).toBe(nodeFs);
+  });
+
+  it("resolveRealFs returns a usable fs implementation without an injected require", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const resolved = helper.resolveRealFs();
+    expect(typeof resolved.accessSync).toBe("function");
+    expect(typeof resolved.statSync).toBe("function");
+  });
+
+  it("loads its module fs through resolveRealFs rather than a bare fs require", () => {
+    const source = fs.readFileSync(helperPath, "utf-8");
+    expect(source).toContain("original-fs");
+    expect(source).toMatch(/=\s*resolveRealFs\(\)/);
+    expect(source).not.toMatch(/^const fs = require\("fs"\);/m);
+  });
+});

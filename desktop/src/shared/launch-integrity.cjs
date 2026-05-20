@@ -1,5 +1,15 @@
-const fs = require("fs");
 const path = require("path");
+
+// Electron 的 asar 补丁会让 fs.accessSync 对 .asar 文件本身抛 ENOENT，把归档误判为缺失；original-fs 绕过补丁，按真实文件系统判定。
+function resolveRealFs(requireFn = require) {
+  try {
+    return requireFn("original-fs");
+  } catch {
+    return requireFn("fs");
+  }
+}
+
+const fs = resolveRealFs();
 
 function canRead(filePath) {
   try {
@@ -248,5 +258,6 @@ module.exports = {
   buildWindowsInstallSurfaceChecks,
   checkWindowsInstallSurface,
   formatInstallSurfaceError,
+  resolveRealFs,
   writeLaunchDiagnostic,
 };
