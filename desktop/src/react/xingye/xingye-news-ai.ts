@@ -11,7 +11,11 @@ import { getNewsEraStyle } from './xingye-news-era-style';
 import { buildNewsDraftPrompt } from './xingye-news-prompts';
 import {
   normalizeNewsEntryMetadata,
+  NEWS_SECTION_REGISTRY,
+  type NewsComment,
   type NewsEntryMetadata,
+  type NewsSection,
+  type NewsSectionKind,
 } from './xingye-news-types';
 import {
   buildXingyeLoreRuntimeQueryText,
@@ -28,6 +32,7 @@ import {
 import {
   buildXingyeRecentChatExcerpts,
   formatXingyeRecentChatExcerptsForPrompt,
+  formatXingyeSpeakerContextForPrompt,
   resolveXingyeSpeakerUserName,
 } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
@@ -467,4 +472,215 @@ export async function generateNewsDraftWithAI(params: {
   // 也手动补上一次，保证存档里**一定**有 era。
   if (!normalized.era) normalized.era = eraResolution.era;
   return normalized;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   AI 评论：以 agent 第一人称对自己手机里这份报纸的某段话写一句批注。
+
+   设计：
+   - 模型扮演的**不是**报刊记者，而是「在自己手机上看到这条新闻的 TA」
+   - 输出 JSON: { sectionKind, highlightText, comment }
+   - highlightText 必须是某 section.body 的连续子串；如果模型乱写，UI 找不到
+     匹配就在 section 末尾追加一条无高亮的批注（兜底，不报错）
+   ─────────────────────────────────────────────────────────────────────── */
+
+export type GenerateNewsCommentParams = {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  /** 当前完整的报纸 metadata（sections / masthead 都从这里取）。 */
+  meta: NewsEntryMetadata;
+  /** 已经存在的 comments（用作"避免重复评论同一段话"的反重复锚点）。 */
+  existingComments?: NewsComment[];
+  /** 可选：用户点了某个 section.kind 想让 AI 针对它评，省略则让模型自挑。 */
+  preferredSectionKind?: NewsSectionKind;
+  userName?: string;
+  timeoutMs?: number;
+};
+
+function buildNewsCommentPrompt(args: {
+  agentName: string;
+  userName: string;
+  profile: XingyeRoleProfile | null | undefined;
+  meta: NewsEntryMetadata;
+  existingComments: NewsComment[];
+  preferredSectionKind?: NewsSectionKind;
+}): string {
+  const { agentName, userName, profile, meta, existingComments, preferredSectionKind } = args;
+  const speakerCtx = formatXingyeSpeakerContextForPrompt({
+    userName,
+    agentName,
+    gender: profile?.gender,
+  });
+
+  // 把 sections 列出来给模型挑——body 不截，让模型能挑准；但每段标上序号 + kind。
+  const sectionLines: string[] = [];
+  for (let i = 0; i < meta.sections.length; i += 1) {
+    const s = meta.sections[i];
+    const def = NEWS_SECTION_REGISTRY[s.kind];
+    sectionLines.push(`### [${i}] kind=${s.kind}（${def?.label ?? s.kind}）—— ${s.title}${s.byline ? ` · 署名「${s.byline}」` : ''}`);
+    sectionLines.push(s.body);
+    sectionLines.push('');
+  }
+
+  const existingLines: string[] = existingComments.length
+    ? existingComments.map((c) => `- 在 ${c.sectionKind} 板块对「${c.highlightText}」已批注过：「${c.comment}」`)
+    : ['（无；这是本期的第 1 条批注）'];
+
+  const preferredLine = preferredSectionKind
+    ? `用户希望本次针对 \`${preferredSectionKind}\` 板块写一句批注。请挑这一段里**最让你有反应**的一句原文做 highlightText。`
+    : '请自己挑一个**最让你有反应**的板块（任意 kind 都可），然后从那段 body 里抽一句原文做 highlightText。';
+
+  return [
+    `你将扮演 ${agentName}（即 TA）本人。${agentName} 正在自己的手机上读这份对自己所处世界的报道。`,
+    '你**不是**报刊记者，**也不是**第三方专栏作者；你是 TA 本人，对屏幕上某一句话有一闪而过的反应，'
+    + '把它写成一条**很短的内心独白式批注**（像在书页上画线 + 在旁边写一行小字）。',
+    '',
+    '## 视角硬约束',
+    `- 以 **${agentName}** 第一人称写。可以用「我」「咱」「俺」「在下」之类符合 TA 笔调的自称（参考下方 profile 的 speakingStyle）。`,
+    `- ${userName}（即用户）若被报纸提到，可以在批注里出现，但你不是在跟 ${userName} 对话，而是在自言自语。`,
+    `- 不要出现「根据这篇报道」「报道说」「文中提到」等元叙述；批注是 TA **当下的反应**，不是 TA 在评论新闻文体。`,
+    '- 不要泄漏「prompt」「模型」「AI」「设定库」「OpenHanako」「星野」等系统词。',
+    '- 字数：comment 严格控制在 12-60 字之间。短不怕，长一定不要。',
+    '',
+    '## highlightText 硬约束（重要）',
+    '- highlightText 必须是下面 sections 列表里某一段 body 的**逐字连续子串**——一字不能差。',
+    '- 不要写省略号、不要改字、不要加引号、不要把多段拼起来。',
+    '- 长度 6-50 字之间。最理想是一句话（句号 / 逗号截止）；也可以是半句，但不要只截一个词。',
+    '- 选最能勾住 TA 当下情绪 / 让 TA 想反驳 / 让 TA 心头一动的那一句话。',
+    '',
+    preferredLine,
+    '',
+    '## 反重复',
+    '本期报纸的已有批注（请避免针对同一句话重复写）：',
+    ...existingLines,
+    '',
+    '## 当前角色 profile',
+    JSON.stringify({ name: agentName, profile: profile ?? null }, null, 2),
+    '',
+    speakerCtx,
+    '',
+    '## 报纸本期内容（一次性给你；请挑一句话做 highlightText）',
+    `报头：${meta.masthead}`,
+    '',
+    ...sectionLines,
+    '',
+    '## 输出 JSON schema（结构必须严格一致；额外字段会被丢弃）',
+    JSON.stringify(
+      {
+        sectionKind: '上面 sections 列表里实际出现的某个 kind',
+        highlightText: '上面 sections[].body 里的逐字连续子串',
+        comment: 'TA 第一人称的批注，12-60 字',
+      },
+      null,
+      2,
+    ),
+    '',
+    '## 收尾',
+    '现在生成 JSON 对象本身，不要 ```json``` 围栏，不要解释文字。',
+  ].join('\n');
+}
+
+/**
+ * 校验并把模型返回的原始 JSON 包装成一条 NewsComment。
+ *
+ * 关键的安全网：highlightText 必须出现在它声称的 section.body 里——这是 UI 高亮
+ * 能正常工作的前提。如果模型把 highlightText 微改 / 拼接了，做 fallback：取
+ * 该 section.body 的前 24 字做 highlight，这样至少 UI 还能展示一条评论而不报错。
+ */
+function buildCommentFromModelResult(
+  raw: unknown,
+  meta: NewsEntryMetadata,
+): NewsComment | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const kindRaw = typeof r.sectionKind === 'string' ? r.sectionKind.trim() : '';
+  const targetSection: NewsSection | undefined = meta.sections.find((s) => s.kind === kindRaw);
+  if (!targetSection) return null;
+  const commentRaw = typeof r.comment === 'string' ? r.comment.trim() : '';
+  if (!commentRaw) return null;
+  let highlightRaw = typeof r.highlightText === 'string' ? r.highlightText.trim() : '';
+  // strip 引号——模型偶尔会把 highlightText 包在「」/""里
+  highlightRaw = highlightRaw.replace(/^[「『"'“‘]+/, '').replace(/[」』"'”’]+$/, '').trim();
+  // 校验：必须是 body 的连续子串
+  if (!highlightRaw || !targetSection.body.includes(highlightRaw)) {
+    // fallback：取 body 的前 24 字做 highlight，避免整条评论无法挂载
+    highlightRaw = targetSection.body.slice(0, 24);
+  }
+  return {
+    id: `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    sectionKind: targetSection.kind,
+    highlightText: highlightRaw.slice(0, 60),
+    comment: commentRaw.slice(0, 80),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 调 `POST /api/xingye/phone-generate`（kind: news_comment），生成一条 NewsComment。
+ * 不写存储；调用方拿到 NewsComment 后用 updateAppEntry 把它合并进 metadata.comments。
+ */
+export async function generateNewsCommentWithAI(params: GenerateNewsCommentParams): Promise<NewsComment> {
+  const { agent, ownerProfile, meta } = params;
+  const timeoutMs = params.timeoutMs ?? 60_000;
+  const userName = await resolveXingyeSpeakerUserName(params.userName);
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+  const existing = Array.isArray(params.existingComments) ? params.existingComments : [];
+
+  const prompt = buildNewsCommentPrompt({
+    agentName,
+    userName,
+    profile: ownerProfile,
+    meta,
+    existingComments: existing,
+    preferredSectionKind: params.preferredSectionKind,
+  });
+
+  // 调试落盘（与报纸生成同款，不同文件名）。fire-and-forget。
+  void postXingyeStorage({
+    action: 'write',
+    agentId: agent.id,
+    relativePath: 'news/.debug/last-comment-prompt.txt',
+    content: [
+      `# 时间：${new Date().toISOString()}`,
+      `# agentId：${agent.id}`,
+      `# preferredSectionKind：${params.preferredSectionKind ?? '(未指定，模型自选)'}`,
+      `# existingComments：${existing.length} 条`,
+      '',
+      '## 最终拼出的 prompt（原样喂给模型）',
+      prompt,
+    ].join('\n'),
+    encoding: 'utf8',
+  }).catch(() => {});
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'news_comment',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const comment = buildCommentFromModelResult(data?.result, meta);
+  if (!comment) {
+    throw new Error('模型返回无效：缺少 sectionKind / highlightText / comment 或字段不合规。');
+  }
+  return comment;
 }

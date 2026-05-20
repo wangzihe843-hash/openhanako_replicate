@@ -190,6 +190,30 @@ export type NewsHeadlineEvidenceItem = {
 /** evidence 数组长度上限（超过 5 条 UI 会显得拥挤）。 */
 export const NEWS_HEADLINE_EVIDENCE_MAX = 5;
 
+/**
+ * 一条「AI 生成的批注」。
+ *
+ * 由当前角色（TA）以第一人称视角对自己手机里这份报纸的某段话写下的反应。
+ * UI 渲染时按 `highlightText` 在对应 section.body 里做 indexOf 匹配，命中
+ * 区间加荧光笔背景；如果模型乱写、找不到匹配，UI 在 section 末尾追加该条
+ * 批注（不做高亮）作为兜底。
+ */
+export type NewsComment = {
+  /** 评论本地唯一 id（增删用）。 */
+  id: string;
+  /** 被评论的 section.kind（必须是合法 NewsSectionKind）。 */
+  sectionKind: NewsSectionKind;
+  /** 被评论的原文片段——应当是对应 section.body 的连续子串；≤ 60 字。 */
+  highlightText: string;
+  /** TA 第一人称视角的批注；≤ 80 字。 */
+  comment: string;
+  /** 评论生成时间 ISO。 */
+  createdAt: string;
+};
+
+/** 单期报纸允许挂的评论数上限。 */
+export const NEWS_COMMENTS_MAX = 8;
+
 export type NewsSection = {
   kind: NewsSectionKind;
   /** 板块标题，应从对应 kind 的 titleCandidates 里选一个；模型若乱写会在 normalize 时 fallback 到 candidates[0]。 */
@@ -245,6 +269,13 @@ export type NewsEntryMetadata = {
    * 因输入不同而走偏）。旧数据可能缺这个字段：UI 侧应 fallback。
    */
   era?: NewsEraId;
+
+  /**
+   * AI 生成的批注（TA 第一人称对某段话的反应）。每次"AI 评论"按钮触发追加一条；
+   * 上限 NEWS_COMMENTS_MAX；UI 渲染时按 highlightText 做高亮 + 在 section 后挂卡片。
+   * 旧数据缺这个字段属于正常状态。
+   */
+  comments?: NewsComment[];
 };
 
 /** 判断一个 unknown 是否符合 NewsSectionKind。 */
@@ -312,6 +343,43 @@ function normalizeEvidence(value: unknown): NewsHeadlineEvidenceItem[] | undefin
   return items.length ? items : undefined;
 }
 
+function normalizeComment(value: unknown): NewsComment | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (!isNewsSectionKind(raw.sectionKind)) return null;
+  const highlightRaw = typeof raw.highlightText === 'string' ? raw.highlightText.trim() : '';
+  const commentRaw = typeof raw.comment === 'string' ? raw.comment.trim() : '';
+  if (!highlightRaw || !commentRaw) return null;
+  const id = typeof raw.id === 'string' && raw.id.trim()
+    ? raw.id.trim().slice(0, 80)
+    : `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim()
+    ? raw.createdAt.trim()
+    : new Date().toISOString();
+  return {
+    id,
+    sectionKind: raw.sectionKind,
+    highlightText: truncateChars(highlightRaw, 60),
+    comment: truncateChars(commentRaw, 80),
+    createdAt,
+  };
+}
+
+function normalizeComments(value: unknown): NewsComment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: NewsComment[] = [];
+  const seenIds = new Set<string>();
+  for (const raw of value) {
+    const c = normalizeComment(raw);
+    if (!c) continue;
+    if (seenIds.has(c.id)) continue;
+    seenIds.add(c.id);
+    out.push(c);
+    if (out.length >= NEWS_COMMENTS_MAX) break;
+  }
+  return out.length ? out : undefined;
+}
+
 function normalizeSection(value: unknown): NewsSection | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -373,6 +441,8 @@ export function normalizeNewsEntryMetadata(value: unknown): NewsEntryMetadata | 
 
   const out: NewsEntryMetadata = { issueDate, masthead, sections };
   if (isNewsEraId(raw.era)) out.era = raw.era;
+  const comments = normalizeComments(raw.comments);
+  if (comments) out.comments = comments;
   return out;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Agent } from '../types';
 import shell from './XingyeShell.module.css';
 import news from './PhoneNewsApp.module.css';
@@ -6,17 +6,21 @@ import {
   appendAppEntry,
   deleteAppEntry,
   listAppEntries,
+  updateAppEntry,
   type AppEntry,
 } from './xingye-app-entry-store';
 import {
   flattenNewsMetadataToContent,
   normalizeNewsEntryMetadata,
   NEWS_SECTION_REGISTRY,
+  NEWS_COMMENTS_MAX,
+  type NewsComment,
   type NewsEntryMetadata,
   type NewsLayoutSlot,
   type NewsSection,
+  type NewsSectionKind,
 } from './xingye-news-types';
-import { generateNewsDraftWithAI } from './xingye-news-ai';
+import { generateNewsCommentWithAI, generateNewsDraftWithAI } from './xingye-news-ai';
 import { resolveNewsEra, buildNewsEraAgentLike, type NewsEraId } from './xingye-news-era-resolver';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 
@@ -93,6 +97,107 @@ function groupBySlot(sections: NewsSection[]): Record<NewsLayoutSlot, NewsSectio
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   AI 评论：高亮渲染 + 评论卡片（三 era 共用）
+───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 把 `body` 按 `marks` 切成 ReactNode[]——命中段裹 <mark> 加荧光笔背景，其它原样。
+ *
+ * 算法：每次找剩余 marks 中**最早出现位置**的一条做切分，然后递归处理剩余文本。
+ * 处理 overlapping：如果两条 mark 重叠，只用最早出现的那条，重叠的另一条等下一轮再找。
+ * 找不到任何 mark 时返回纯文本（数组里就一个字符串元素）。
+ */
+function renderBodyWithMarks(body: string, marks: NewsComment[] | undefined): ReactNode {
+  if (!marks || marks.length === 0) return body;
+  // 先在 body 里把每条 mark 的所有出现位置算出来，按位置升序排列；重叠时优先保留更早的
+  type Hit = { start: number; end: number; comment: NewsComment };
+  const hits: Hit[] = [];
+  for (const m of marks) {
+    if (!m.highlightText) continue;
+    const idx = body.indexOf(m.highlightText);
+    if (idx < 0) continue;
+    hits.push({ start: idx, end: idx + m.highlightText.length, comment: m });
+  }
+  if (hits.length === 0) return body;
+  hits.sort((a, b) => a.start - b.start);
+  // 去重 overlap：保留最早出现且最长的
+  const pruned: Hit[] = [];
+  for (const h of hits) {
+    const last = pruned[pruned.length - 1];
+    if (last && h.start < last.end) continue; // 与前一段重叠，跳过
+    pruned.push(h);
+  }
+  // 按 hits 切片
+  const out: ReactNode[] = [];
+  let cursor = 0;
+  pruned.forEach((h, i) => {
+    if (h.start > cursor) out.push(body.slice(cursor, h.start));
+    out.push(
+      <mark
+        key={`m-${h.comment.id}-${i}`}
+        className={news['news-mark']}
+        data-comment-id={h.comment.id}
+        title={h.comment.comment}
+      >
+        {body.slice(h.start, h.end)}
+      </mark>,
+    );
+    cursor = h.end;
+  });
+  if (cursor < body.length) out.push(body.slice(cursor));
+  return <>{out.map((node, i) => <Fragment key={i}>{node}</Fragment>)}</>;
+}
+
+function SectionCommentBlock({
+  comments,
+  agentName,
+  onDelete,
+}: {
+  comments: NewsComment[];
+  agentName: string;
+  onDelete: (id: string) => void;
+}) {
+  if (!comments.length) return null;
+  return (
+    <div className={news['news-comments']} data-testid="phone-news-section-comments">
+      <div className={news['news-comments-label']}>
+        <span className={news['news-comments-label-dot']}>◆</span>
+        <span>{agentName} 的批注</span>
+      </div>
+      {comments.map((c) => (
+        <div key={c.id} className={news['news-comment']}>
+          <div className={news['news-comment-head']}>
+            <span className={news['news-comment-author']}>{agentName}</span>
+            <button
+              type="button"
+              className={news['news-comment-delete']}
+              onClick={() => onDelete(c.id)}
+              aria-label="删除批注"
+            >
+              ×
+            </button>
+          </div>
+          <p className={news['news-comment-text']}>{c.comment}</p>
+          <p className={news['news-comment-quote']}>—— 批注于「{c.highlightText}」</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 按 sectionKind 把 comments 分组。同一 kind 下可能有多条评论。 */
+function groupCommentsByKind(comments: NewsComment[] | undefined): Map<NewsSectionKind, NewsComment[]> {
+  const map = new Map<NewsSectionKind, NewsComment[]>();
+  if (!comments) return map;
+  for (const c of comments) {
+    const arr = map.get(c.sectionKind);
+    if (arr) arr.push(c);
+    else map.set(c.sectionKind, [c]);
+  }
+  return map;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    ORIENTAL CLASSICAL — 民国小报闲笔体
 ───────────────────────────────────────────────────────────────────────────── */
 
@@ -106,7 +211,17 @@ function OrientalSectionTitle({ title, byline }: { title: string; byline?: strin
   );
 }
 
-function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
+function OrientalDetail({
+  meta,
+  commentsByKind,
+  agentName,
+  onDeleteComment,
+}: {
+  meta: NewsEntryMetadata;
+  commentsByKind: Map<NewsSectionKind, NewsComment[]>;
+  agentName: string;
+  onDeleteComment: (id: string) => void;
+}) {
   const slots = groupBySlot(meta.sections);
   const head = slots.masthead[0];
   const hasBody = slots.left_column.length > 0 || slots.right_column.length > 0;
@@ -114,6 +229,7 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
   const d = new Date(meta.issueDate);
   const weekday = ['日', '一', '二', '三', '四', '五', '六'][Number.isNaN(d.getTime()) ? 0 : d.getDay()];
   const twocolSingle = !(slots.left_column.length && slots.right_column.length);
+  const cmtOf = (kind: NewsSectionKind): NewsComment[] => commentsByKind.get(kind) ?? [];
   return (
     <div className={k('or-paper')} data-testid="phone-news-detail">
       <div className={k('or-paperhead')}>
@@ -154,8 +270,9 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
           <OrientalSectionTitle title={head.title} byline={head.byline} />
           <p className={cx('or-body', 'or-body-lead')}>
             <span className={k('or-dropcap')}>{head.body.charAt(0)}</span>
-            {head.body.slice(1)}
+            {renderBodyWithMarks(head.body.slice(1), cmtOf(head.kind))}
           </p>
+          <SectionCommentBlock comments={cmtOf(head.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -169,7 +286,8 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
               data-testid={`phone-news-section-${s.kind}`}
             >
               <OrientalSectionTitle title={s.title} byline={s.byline} />
-              <p className={k('or-body')}>{s.body}</p>
+              <p className={k('or-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+              <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
             </article>
           ))}
           {slots.left_column.length && slots.right_column.length ? (
@@ -183,7 +301,8 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
               data-testid={`phone-news-section-${s.kind}`}
             >
               <OrientalSectionTitle title={s.title} byline={s.byline} />
-              <p className={k('or-body')}>{s.body}</p>
+              <p className={k('or-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+              <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
             </article>
           ))}
         </div>
@@ -197,7 +316,8 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${s.kind}`}
         >
           <div className={k('or-ad-title')}>{s.title}</div>
-          <div className={k('or-ad-body')}>{s.body}</div>
+          <div className={k('or-ad-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</div>
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </aside>
       ))}
 
@@ -210,8 +330,9 @@ function OrientalDetail({ meta }: { meta: NewsEntryMetadata }) {
         >
           <div className={k('or-footer-bar')} />
           <OrientalSectionTitle title={s.title} byline={s.byline} />
-          <p className={cx('or-body', 'or-body-footer')}>{s.body}</p>
+          <p className={cx('or-body', 'or-body-footer')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
           <div className={k('or-footer-bar')} />
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </section>
       ))}
 
@@ -282,7 +403,17 @@ function WesternSectionTitle({ title, byline }: { title: string; byline?: string
   );
 }
 
-function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
+function WesternDetail({
+  meta,
+  commentsByKind,
+  agentName,
+  onDeleteComment,
+}: {
+  meta: NewsEntryMetadata;
+  commentsByKind: Map<NewsSectionKind, NewsComment[]>;
+  agentName: string;
+  onDeleteComment: (id: string) => void;
+}) {
   const slots = groupBySlot(meta.sections);
   const head = slots.masthead[0];
   const hasBody = slots.left_column.length > 0 || slots.right_column.length > 0;
@@ -292,6 +423,7 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
   const month = isValid ? WE_MONTHS[d.getMonth()] : '';
   const die = isValid ? d.getDate() : 1;
   const year = isValid ? d.getFullYear() : new Date().getFullYear();
+  const cmtOf = (kind: NewsSectionKind): NewsComment[] => commentsByKind.get(kind) ?? [];
   return (
     <div className={k('we-paper')} data-testid="phone-news-detail">
       <div className={k('we-paperhead')}>
@@ -320,8 +452,9 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
           <WesternSectionTitle title={head.title} byline={head.byline} />
           <p className={cx('we-body', 'we-body-lead')}>
             <span className={k('we-dropcap')}>{head.body.charAt(0)}</span>
-            {head.body.slice(1)}
+            {renderBodyWithMarks(head.body.slice(1), cmtOf(head.kind))}
           </p>
+          <SectionCommentBlock comments={cmtOf(head.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -341,7 +474,8 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
               data-testid={`phone-news-section-${s.kind}`}
             >
               <WesternSectionTitle title={s.title} byline={s.byline} />
-              <p className={k('we-body')}>{s.body}</p>
+              <p className={k('we-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+              <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
             </article>
           ))}
           {slots.left_column.length && slots.right_column.length ? (
@@ -355,7 +489,8 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
               data-testid={`phone-news-section-${s.kind}`}
             >
               <WesternSectionTitle title={s.title} byline={s.byline} />
-              <p className={k('we-body')}>{s.body}</p>
+              <p className={k('we-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+              <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
             </article>
           ))}
         </div>
@@ -371,9 +506,10 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
           <div className={k('we-ad-frame')}>
             <div className={k('we-ad-fleuron')}>⁂</div>
             <div className={k('we-ad-title')}>{s.title}</div>
-            <div className={k('we-ad-body')}>{s.body}</div>
+            <div className={k('we-ad-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</div>
             <div className={cx('we-ad-fleuron', 'we-ad-fleuron-bottom')}>⁂</div>
           </div>
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </aside>
       ))}
 
@@ -390,7 +526,8 @@ function WesternDetail({ meta }: { meta: NewsEntryMetadata }) {
             <span className={k('we-fleuron-line')} />
           </div>
           <WesternSectionTitle title={s.title} byline={s.byline} />
-          <p className={cx('we-body', 'we-body-footer')}>{s.body}</p>
+          <p className={cx('we-body', 'we-body-footer')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </section>
       ))}
 
@@ -497,7 +634,18 @@ function EvidenceTimeline({ items }: { items: Array<{ time: string; text: string
   );
 }
 
-function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
+function ModernDetail({
+  meta,
+  commentsByKind,
+  agentName,
+  onDeleteComment,
+}: {
+  meta: NewsEntryMetadata;
+  commentsByKind: Map<NewsSectionKind, NewsComment[]>;
+  agentName: string;
+  onDeleteComment: (id: string) => void;
+}) {
+  const cmtOf = (kind: NewsSectionKind): NewsComment[] => commentsByKind.get(kind) ?? [];
   const byKind: Partial<Record<NewsSection['kind'], NewsSection>> = {};
   for (const s of meta.sections) {
     if (!byKind[s.kind]) byKind[s.kind] = s;
@@ -553,8 +701,9 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
             <span className={k('mo-headline-h2-tail')}>。</span>
           </h2>
           {witnessQuote ? <WitnessCallout quote={witnessQuote} attribution={witnessAttr} /> : null}
-          <p className={cx('mo-body', 'mo-body-lead')}>{headline.body}</p>
+          <p className={cx('mo-body', 'mo-body-lead')}>{renderBodyWithMarks(headline.body, cmtOf(headline.kind))}</p>
           {evidence && evidence.length ? <EvidenceTimeline items={evidence} /> : null}
+          <SectionCommentBlock comments={cmtOf(headline.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -565,7 +714,8 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${second.kind}`}
         >
           <ModernSectionTitle title={second.title} byline={second.byline} tag="次条" />
-          <p className={k('mo-body')}>{second.body}</p>
+          <p className={k('mo-body')}>{renderBodyWithMarks(second.body, cmtOf(second.kind))}</p>
+          <SectionCommentBlock comments={cmtOf(second.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -576,11 +726,12 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${gossip.kind}`}
         >
           <ModernSectionTitle title={gossip.title} byline={gossip.byline} tag="八卦" />
-          <p className={cx('mo-body', 'mo-body-gossip')}>{gossip.body}</p>
+          <p className={cx('mo-body', 'mo-body-gossip')}>{renderBodyWithMarks(gossip.body, cmtOf(gossip.kind))}</p>
           <div className={k('mo-redacted-row')} aria-hidden="true">
             <span>消息源·</span><span className={k('mo-redacted')}>■■■■■■</span>
             <span>·频段</span><span className={k('mo-redacted')}>■■■.■■</span>
           </div>
+          <SectionCommentBlock comments={cmtOf(gossip.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -591,7 +742,8 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${review.kind}`}
         >
           <ModernSectionTitle title={review.title} byline={review.byline} tag="评论" />
-          <p className={k('mo-body')}>{review.body}</p>
+          <p className={k('mo-body')}>{renderBodyWithMarks(review.body, cmtOf(review.kind))}</p>
+          <SectionCommentBlock comments={cmtOf(review.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -602,7 +754,8 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${letters.kind}`}
         >
           <ModernSectionTitle title={letters.title} byline={letters.byline} tag="读者投书" />
-          <p className={k('mo-body')}>{letters.body}</p>
+          <p className={k('mo-body')}>{renderBodyWithMarks(letters.body, cmtOf(letters.kind))}</p>
+          <SectionCommentBlock comments={cmtOf(letters.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </article>
       ) : null}
 
@@ -615,8 +768,9 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
         >
           <div className={k('mo-ad-tag')}>{s.kind === 'weather' ? '天气 · WX' : '广告 · AD'}</div>
           <div className={k('mo-ad-title')}>{s.title}</div>
-          <div className={k('mo-ad-body')}>{s.body}</div>
+          <div className={k('mo-ad-body')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</div>
           <div className={k('mo-ad-stamp')}>{s.kind === 'weather' ? '☀' : '◢'}</div>
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </aside>
       ))}
 
@@ -628,7 +782,8 @@ function ModernDetail({ meta }: { meta: NewsEntryMetadata }) {
           data-testid={`phone-news-section-${s.kind}`}
         >
           <ModernSectionTitle title={s.title} byline={s.byline} tag={s.kind === 'obituary' ? '怀念' : '街角速写'} />
-          <p className={cx('mo-body', 'mo-body-footer')}>{s.body}</p>
+          <p className={cx('mo-body', 'mo-body-footer')}>{renderBodyWithMarks(s.body, cmtOf(s.kind))}</p>
+          <SectionCommentBlock comments={cmtOf(s.kind)} agentName={agentName} onDelete={onDeleteComment} />
         </section>
       ))}
 
@@ -769,9 +924,12 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [commenting, setCommenting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [userIntent, setUserIntent] = useState('');
   const [showIntentBox, setShowIntentBox] = useState(false);
+
+  const agentDisplayName = ownerProfile?.displayName?.trim() || ownerAgent?.name || displayName || 'TA';
 
   // 「外壳 era」：决定列表头部、列表 actions、空态、外层背景色用哪套主题。
   // **故意只看 profile**——与生成侧 xingye-news-ai.ts 的输入一致，所以同一个
@@ -856,6 +1014,69 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
     }
   };
 
+  /**
+   * 把一份新 metadata（增/删 comment 后的结果）持久化到 entry，并更新本地 state。
+   * 这里复用 updateAppEntry——会写 metadata + 同步刷新 content（flatten 后的纯文本）。
+   */
+  const persistEntryMeta = useCallback(
+    async (entry: NewsEntry, nextMeta: NewsEntryMetadata) => {
+      const content = flattenNewsMetadataToContent(nextMeta);
+      const updated = await updateAppEntry(ownerAgentId, NEWS_APP_ID, entry.id, {
+        title: nextMeta.masthead,
+        content,
+        metadata: nextMeta as unknown as Record<string, unknown>,
+      });
+      const normalized = updated ? normalizeNewsEntry(updated) : null;
+      if (normalized) {
+        setEntries((prev) => prev.map((e) => (e.id === normalized.id ? normalized : e)));
+      }
+    },
+    [ownerAgentId],
+  );
+
+  const handleGenerateComment = async (entry: NewsEntry) => {
+    if (!ownerAgent || commenting) return;
+    const existing = entry.metadata.comments ?? [];
+    if (existing.length >= NEWS_COMMENTS_MAX) {
+      setMessage(`这期已经积了 ${NEWS_COMMENTS_MAX} 条批注，先删一条再继续。`);
+      return;
+    }
+    setCommenting(true);
+    setMessage(null);
+    try {
+      const comment = await generateNewsCommentWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        meta: entry.metadata,
+        existingComments: existing,
+      });
+      const nextMeta: NewsEntryMetadata = {
+        ...entry.metadata,
+        comments: [...existing, comment],
+      };
+      await persistEntryMeta(entry, nextMeta);
+    } catch (err) {
+      setMessage(`生成批注失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setCommenting(false);
+    }
+  };
+
+  const handleDeleteComment = async (entry: NewsEntry, commentId: string) => {
+    if (!ownerAgentId) return;
+    const existing = entry.metadata.comments ?? [];
+    const next = existing.filter((c) => c.id !== commentId);
+    if (next.length === existing.length) return;
+    const nextMeta: NewsEntryMetadata = { ...entry.metadata };
+    if (next.length) nextMeta.comments = next;
+    else delete nextMeta.comments;
+    try {
+      await persistEntryMeta(entry, nextMeta);
+    } catch (err) {
+      setMessage(`删除批注失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const handleDelete = async (entry: NewsEntry) => {
     if (!ownerAgentId) return;
     if (!window.confirm(`确定删除这期《${entry.metadata.masthead}》？`)) return;
@@ -906,7 +1127,29 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
             {message ? (
               <p className={cx('notice', 'notice-error')} role="alert">{message}</p>
             ) : null}
-            <DetailRenderer era={eraOf(selected)} meta={selected.metadata} />
+            <DetailRenderer
+              era={eraOf(selected)}
+              meta={selected.metadata}
+              commentsByKind={groupCommentsByKind(selected.metadata.comments)}
+              agentName={agentDisplayName}
+              onDeleteComment={(id) => { void handleDeleteComment(selected, id); }}
+            />
+            <div className={k('news-comment-actions')}>
+              <button
+                type="button"
+                className={k('news-comment-action-button')}
+                onClick={() => { void handleGenerateComment(selected); }}
+                disabled={commenting || (selected.metadata.comments?.length ?? 0) >= NEWS_COMMENTS_MAX}
+                data-testid="phone-news-generate-comment"
+                title={`让 ${agentDisplayName} 对一段话写一句批注`}
+              >
+                {commenting
+                  ? `${agentDisplayName} 正在批注…`
+                  : (selected.metadata.comments?.length ?? 0) >= NEWS_COMMENTS_MAX
+                    ? `已达上限 (${NEWS_COMMENTS_MAX})`
+                    : `让 ${agentDisplayName} 批注一句`}
+              </button>
+            </div>
             <div className={k('delete-row')}>
               <button
                 type="button"
@@ -1009,10 +1252,47 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   );
 }
 
-function DetailRenderer({ era, meta }: { era: NewsEraId; meta: NewsEntryMetadata }) {
-  if (era === 'oriental_classical') return <OrientalDetail meta={meta} />;
-  if (era === 'western_fantasy') return <WesternDetail meta={meta} />;
-  return <ModernDetail meta={meta} />;
+function DetailRenderer({
+  era,
+  meta,
+  commentsByKind,
+  agentName,
+  onDeleteComment,
+}: {
+  era: NewsEraId;
+  meta: NewsEntryMetadata;
+  commentsByKind: Map<NewsSectionKind, NewsComment[]>;
+  agentName: string;
+  onDeleteComment: (id: string) => void;
+}) {
+  if (era === 'oriental_classical') {
+    return (
+      <OrientalDetail
+        meta={meta}
+        commentsByKind={commentsByKind}
+        agentName={agentName}
+        onDeleteComment={onDeleteComment}
+      />
+    );
+  }
+  if (era === 'western_fantasy') {
+    return (
+      <WesternDetail
+        meta={meta}
+        commentsByKind={commentsByKind}
+        agentName={agentName}
+        onDeleteComment={onDeleteComment}
+      />
+    );
+  }
+  return (
+    <ModernDetail
+      meta={meta}
+      commentsByKind={commentsByKind}
+      agentName={agentName}
+      onDeleteComment={onDeleteComment}
+    />
+  );
 }
 
 function ListCardRenderer({
