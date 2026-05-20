@@ -65,10 +65,16 @@ export function buildMailInitPrompt(args: {
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
+  /*
+   * 邮箱豁免 gender 强约束（与 phone-prompts 同理）：
+   * 多数邮件来自 virtual_contact / 其他 agent，发件人各有自己的性别。
+   * 如果对 currentAgent 强约束「第三人称必须用她」，模型会把所有 NPC 发件人
+   * 都按主人性别写代词，邮件落款 / 自指都乱套。
+   * currentAgent 自己的性别仍通过下方 profile JSON 自然透传，模型仍能读到。
+   */
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
-    gender: profile?.gender,
   });
 
   const contactListing = virtualContacts.length

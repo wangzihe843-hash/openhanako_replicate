@@ -63,10 +63,17 @@ export function buildMomentDraftPrompt(args: {
   const peerAgents = args.peerAgents ?? [];
   const existingContent = typeof args.existingContent === 'string' ? args.existingContent.trim() : '';
   const interactionsOnlyMode = existingContent.length > 0;
+  /*
+   * 朋友圈豁免 gender 强约束：
+   * 朋友圈正文是 currentAgent 第一人称（"我"），强约束作用有限；
+   * 但 comments 来自 virtualContacts + peerAgents（其他 Xingye 角色，
+   * **各自有自己的 profile.json + gender**）—— 这些评论者的代词必须按各自性别。
+   * 如果强约束 currentAgent 是女性、第三人称必用「她」，模型会把所有评论者也
+   * 染成同一代词。currentAgent 自己的性别仍通过下方 profile JSON 透传。
+   */
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
-    gender: profile?.gender,
   });
 
   const virtualContactsBlock = virtualContacts.length

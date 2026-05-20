@@ -101,10 +101,16 @@ export function buildGroupChatReplyPrompt(args: BuildGroupChatReplyPromptArgs): 
 
   const userName = safeText(args.userName) || 'user';
   const taMoniker = safeText(profile?.displayName) || agent.name;
+  /*
+   * 群聊豁免 gender 强约束：
+   * 群聊中 currentAgent 写自己发言时，会频繁提及其他群员（其他 agent + user）；
+   * 其他 agent 各有自己的 profile.json + gender，代词必须按各自性别。
+   * 强约束「所有第三人称用 currentAgent 性别代词」会让 currentAgent 把其他群员
+   * 也写成同性别。currentAgent 自己的性别仍通过下方 profile JSON 透传。
+   */
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName,
     agentName: taMoniker,
-    gender: profile?.gender,
   });
 
   const otherMembers = channelMembers.filter((m) => m !== agent.id);
