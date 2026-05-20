@@ -769,6 +769,8 @@ export class HanaEngine {
   setLearnSkills(p) { this._prefs.setLearnSkills(p); }
   getLocale() { return this._prefs.getLocale(); }
   setLocale(l) { this._prefs.setLocale(l); }
+  getSetupComplete() { return this._prefs.getSetupComplete(); }
+  markSetupComplete() { return this._prefs.markSetupComplete(); }
   getEditor() { return this._prefs.getEditor(); }
   setEditor(p) { return this._prefs.setEditor(p); }
   getAppearance() { return this._prefs.getAppearance(); }

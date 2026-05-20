@@ -5,6 +5,7 @@
  * PUT  /api/preferences/models  — 更新全局模型 + 搜索配置
  * GET  /api/preferences/appearance  — 读取跨前端外观偏好
  * PUT  /api/preferences/appearance  — 更新跨前端外观偏好
+ * POST /api/preferences/setup-complete — 提交首次配置完成意图
  * GET  /api/preferences/computer-use  — 读取 Computer Use provider/approval 状态
  * PUT  /api/preferences/computer-use  — 更新 Computer Use 全局设置
  * POST /api/preferences/computer-use/request-permissions — 请求系统权限
@@ -218,6 +219,20 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       return c.json({ ok: true, appearance });
     } catch (err) {
       return c.json({ error: err.message }, 400);
+    }
+  });
+
+  route.post("/preferences/setup-complete", async (c) => {
+    try {
+      const result = typeof engine.markSetupComplete === "function"
+        ? engine.markSetupComplete()
+        : engine.preferences?.markSetupComplete?.();
+      if (result?.setupComplete !== true) {
+        throw new Error("setup completion manager is unavailable");
+      }
+      return c.json({ ok: true, setupComplete: true });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
     }
   });
 

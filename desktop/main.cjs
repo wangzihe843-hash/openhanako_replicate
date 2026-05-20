@@ -26,6 +26,10 @@ const { readTextFileSnapshot, writeTextFileIfUnchanged } = require("./file-text-
 const chokidar = require("chokidar");
 const { wrapIpcHandler, wrapIpcBestEffortHandler, wrapIpcOn } = require('./ipc-wrapper.cjs');
 const themeRegistry = require('./src/shared/theme-registry.cjs');
+const {
+  completeOnboardingAndOpenMain,
+  submitOnboardingCompleteIntent,
+} = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
 const { redactLogText } = require("../shared/log-redactor.cjs");
 const {
@@ -502,35 +506,26 @@ function hasExistingConfig() {
   return false;
 }
 
-/**
- * 一次性迁移：为 onboarding 功能上线前的老用户补写 setupComplete 标记。
- * 判断依据：agents/ 下存在至少一个含 config.yaml 的目录 → 用户配置过 agent → 老用户。
- * 补写后后续启动直接走 isSetupComplete() 快速路径，不再弹任何 onboarding 窗口。
- */
-function migrateSetupComplete() {
-  if (isSetupComplete()) return;
+function hasLegacyProviderConfig() {
   // 判断依据：added-models.yaml 存在且含有真实 api_key → 老用户配置过 provider。
   // 不能只看 agents/*/config.yaml 是否存在，因为 ensureFirstRun 会为全新用户
   // 播种默认 agent（含 config.yaml），导致新用户被误判为老用户而跳过 onboarding。
   try {
     const modelsPath = path.join(hanakoHome, "added-models.yaml");
-    if (!fs.existsSync(modelsPath)) return;
+    if (!fs.existsSync(modelsPath)) return false;
     const content = fs.readFileSync(modelsPath, "utf-8");
-    if (!/api_key:\s*["']?[^"'\s]+/.test(content)) return;
+    return /api_key:\s*["']?[^"'\s]+/.test(content);
   } catch {
-    return;
+    return false;
   }
-  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
-  try {
-    let prefs = {};
-    try { prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8")); } catch {}
-    prefs.setupComplete = true;
-    fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
-    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-    console.log("[desktop] 检测到老用户（已有 agent 配置），自动补写 setupComplete");
-  } catch (err) {
-    console.error("[desktop] migrateSetupComplete failed:", err);
-  }
+}
+
+async function migrateSetupCompleteViaServerIfNeeded() {
+  if (isSetupComplete()) return false;
+  if (!hasLegacyProviderConfig()) return false;
+  await submitOnboardingCompleteIntent({ serverPort, serverToken });
+  console.log("[desktop] 检测到老用户（已有 agent 配置），已通过 server 标记 setupComplete");
+  return true;
 }
 
 // ── 启动 Server ──
@@ -3270,19 +3265,13 @@ wrapIpcBestEffortHandler("debug-open-onboarding-preview", () => {
   createOnboardingWindow({ preview: "1" });
 });
 
-// Onboarding 完成后，写标记 → 创建主窗口
-wrapIpcHandler("onboarding-complete", () => {
-  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
-  try {
-    let prefs = {};
-    try { prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8")); } catch {}
-    prefs.setupComplete = true;
-    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-  } catch (err) {
-    console.error("[desktop] Failed to write setupComplete:", err);
-  }
-  // 创建主窗口（隐藏），前端 init 完成后通过 app-ready 显示
-  createMainWindow();
+// Onboarding 完成后，经 server PreferencesManager 持久化，成功后才创建主窗口。
+wrapIpcHandler("onboarding-complete", async () => {
+  await completeOnboardingAndOpenMain({
+    serverPort,
+    serverToken,
+    createMainWindow,
+  });
 });
 
 // ── 窗口控制 IPC（Windows/Linux 自绘标题栏用）──
@@ -3340,7 +3329,6 @@ wrapIpcBestEffortHandler("app-ready", () => {
 // ── App 生命周期 ──
 app.whenReady().then(async () => {
   try {
-    migrateSetupComplete();
     _startHiddenAtLogin = getAutoLaunchStatus({ app }).openedAtLogin === true && isSetupComplete();
 
     // 1. 立刻显示启动窗口，同时异步获取 login shell PATH。登录项后台启动时跳过 splash。
@@ -3386,7 +3374,8 @@ app.whenReady().then(async () => {
     }
 
     // 4. 检测是否需要 onboarding
-    if (isSetupComplete()) {
+    const migratedSetupComplete = await migrateSetupCompleteViaServerIfNeeded();
+    if (isSetupComplete() || migratedSetupComplete) {
       // 已完成配置：直接创建主窗口
       createMainWindow();
       if (process.platform === "win32") {
