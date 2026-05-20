@@ -41,6 +41,7 @@ import { runCompatChecks } from "../lib/compat/index.js";
 import { getPlatformPromptNote } from "./platform-prompt.js";
 import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
 import { readXingyeAgentGenderPreambleSync } from "../shared/xingye-profile-file.js";
+import { readXingyeAgentRelationshipPreambleSync } from "../shared/xingye-relationship-preamble.js";
 import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
 import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
 
@@ -1218,6 +1219,30 @@ export class Agent {
         }
       } catch (error) {
         console.warn(`[xingye] skip gender preamble: ${error?.message || error}`);
+      }
+
+      /*
+       * 注入位置说明：关系 preamble 出现在 gender preamble 之后、lore-memory.md 之前。
+       * 原因：lore 里常包含其他角色的关系叙述（前任 / 旧友 / 仇敌），LLM 若没先吃到
+       * 「你与 user 的当前关系」，容易把 lore 中提到的旧关系误当作当前态度的依据。
+       * 先讲性别 → 再讲与 user 的当前关系 → 再讲 lore 与记忆，这样态度基线才稳。
+       * 数据来源：profile.json 的 relationshipLabel / relationshipMode，由秘密空间
+       * 「TA 当前状态」面板的关系变化通过 xingye-state-store.syncRelationshipLabelToProfile
+       * 自动写入；用户也可在角色详情页手动编辑。
+       */
+      try {
+        const relationshipPreamble = readXingyeAgentRelationshipPreambleSync({
+          hanakoHome: path.dirname(path.dirname(this.agentDir)),
+          agentId: this.id,
+          agentName: this.agentName,
+          userName: this.userName,
+          locale: this._config.locale,
+        });
+        if (relationshipPreamble) {
+          parts.push(...section(relationshipPreamble.title, relationshipPreamble.body));
+        }
+      } catch (error) {
+        console.warn(`[xingye] skip relationship preamble: ${error?.message || error}`);
       }
 
       try {

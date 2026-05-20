@@ -1,4 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Mock 整个 profile-store：state-store 在 update/reset 关系变化时会
+ * fire-and-forget 调 saveXingyeRoleProfile 把 relationshipLabel 同步回详情页。
+ * 这里把它替换成 vi.fn() 让我们可以断言「同步是否被触发 / 传了什么」。
+ *
+ * 注：vi.mock 被 vitest 提升到文件顶部，所以引用的 mock 工厂必须用 vi.hoisted
+ * 一起提升 —— 否则会撞 "Cannot access 'X' before initialization"。
+ */
+const { mockSaveXingyeRoleProfile } = vi.hoisted(() => ({
+  mockSaveXingyeRoleProfile: vi.fn(async () => ({ agentId: 'mock', updatedAt: new Date().toISOString() })),
+}));
+vi.mock('./xingye-profile-store', () => ({
+  saveXingyeRoleProfile: mockSaveXingyeRoleProfile,
+}));
+
 import {
   XINGYE_RELATIONSHIP_STATES_STORAGE_KEY,
   clampRelationshipState,
@@ -47,6 +63,7 @@ describe('xingye-state-store', () => {
 
   beforeEach(() => {
     storage = new MemoryStorage();
+    mockSaveXingyeRoleProfile.mockClear();
   });
 
   it('derives initial affection from the role relationship label', () => {
@@ -294,5 +311,116 @@ describe('xingye-state-store', () => {
     }
     /** 数量也卡——加新 metric 也要主动改 set。 */
     expect(numericMetricKeys.length).toBe(5);
+  });
+
+  /**
+   * 「秘密空间 TA 状态」与「详情页关系」的同步契约。
+   *
+   * 用户在秘密空间接受 AI 状态建议 → updateRelationshipState 根据 affection 重算
+   * relationshipLabel。如果阶段跳了（朋友→知己），详情页 profile.relationshipLabel
+   * 必须自动跟进 —— 否则主对话 system prompt 还在用旧 label 渲染态度，体感"白点了"。
+   *
+   * 这条同步通过 fire-and-forget 调用 saveXingyeRoleProfile（已在文件顶部 mock）实现。
+   */
+  describe('updateRelationshipState → profile sync', () => {
+    it('relationshipLabel 跨阶段跳变时，自动 sync 到详情页 profile', () => {
+      // 初始：朋友（affection=30, friend → 君子之交）
+      ensureRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
+      mockSaveXingyeRoleProfile.mockClear();
+
+      // +25 affection → 55 → close_friend → 知己相照（跨阶段）
+      updateRelationshipState('agent-1', { affectionDelta: 25, mood: '靠近' }, storage);
+
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledTimes(1);
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledWith('agent-1', {
+        relationshipLabel: '知己相照',
+      });
+    });
+
+    it('阶段没跳的微调（同阶段内 +/- 几点）不触发 profile sync —— 避免无意义写盘', () => {
+      ensureRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
+      mockSaveXingyeRoleProfile.mockClear();
+
+      // 朋友 30 → 朋友 32（friend 区间内 0..49，不跨阶段）
+      updateRelationshipState('agent-1', { affectionDelta: 2 }, storage);
+
+      expect(mockSaveXingyeRoleProfile).not.toHaveBeenCalled();
+    });
+
+    it('多次跨阶段累加 → 每次跨阶段都触发一次 sync，传的是最新 label', () => {
+      ensureRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
+      mockSaveXingyeRoleProfile.mockClear();
+
+      updateRelationshipState('agent-1', { affectionDelta: 25 }, storage); // 朋友→知己
+      updateRelationshipState('agent-1', { affectionDelta: 40 }, storage); // 知己→恋人
+
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledTimes(2);
+      expect(mockSaveXingyeRoleProfile).toHaveBeenNthCalledWith(1, 'agent-1', { relationshipLabel: '知己相照' });
+      expect(mockSaveXingyeRoleProfile).toHaveBeenNthCalledWith(2, 'agent-1', { relationshipLabel: '情愫暗生' });
+    });
+
+    it('resetRelationshipState：reset 后 label 与 reset 前不同时也触发 sync', () => {
+      // 把状态先推到「恋人」
+      ensureRelationshipState('agent-1', { relationshipLabel: '恋人' }, storage);
+      mockSaveXingyeRoleProfile.mockClear();
+
+      // reset，profile 改成「朋友」初始值
+      resetRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
+
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledTimes(1);
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledWith('agent-1', { relationshipLabel: '君子之交' });
+    });
+
+    it('saveRelationshipState（底层 save）单独使用时不触发 sync', () => {
+      // 底层 save 是 reset / update 复用的纯落盘函数；reset / update 上层才决定要不要 sync。
+      // 这条 case 守住：单独调 saveRelationshipState（比如未来 importState 之类）不会
+      // 错误地反向覆盖详情页用户填的 relationshipLabel。
+      saveRelationshipState(
+        clampRelationshipState({
+          agentId: 'agent-1',
+          targetType: 'user',
+          targetId: '__user__',
+          affection: 90,
+          trust: 0,
+          loyalty: 0,
+          jealousy: 0,
+          corruption: 0,
+          mood: '平静',
+          relationshipKey: 'lover',
+          relationshipLabel: '情愫暗生',
+          updatedAt: new Date().toISOString(),
+        }),
+        storage,
+      );
+
+      expect(mockSaveXingyeRoleProfile).not.toHaveBeenCalled();
+    });
+
+    it('saveXingyeRoleProfile 抛错时，updateRelationshipState 仍返回正确 next（不影响主流程）', async () => {
+      // 静默 catch 里的 warn：state-store 的 syncRelationshipLabelToProfile 是
+      // fire-and-forget（void promise.catch），失败走 .catch → console.warn。
+      // 必须 await 一个微任务 tick 让 .catch 回调跑完后再 restore，否则 warn 漏到 stderr。
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      ensureRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
+      mockSaveXingyeRoleProfile.mockClear();
+      mockSaveXingyeRoleProfile.mockImplementationOnce(async () => {
+        throw new Error('boom (offline / 写盘失败)');
+      });
+
+      const next = updateRelationshipState('agent-1', { affectionDelta: 25 }, storage);
+
+      expect(next.relationshipLabel).toBe('知己相照');
+      expect(mockSaveXingyeRoleProfile).toHaveBeenCalledTimes(1);
+
+      // 等 fire-and-forget 的 .catch 回调跑完，再撤 spy
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[xingye-state-store] failed to sync relationshipLabel to profile'),
+        expect.any(Error),
+      );
+      warnSpy.mockRestore();
+    });
   });
 });

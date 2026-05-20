@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Agent } from '../types';
-import { saveXingyeRoleProfile, type XingyeRoleProfileDisplay } from './xingye-profile-store';
+import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
@@ -258,7 +258,6 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
         appliedFields: getAppliedFields(suggestion),
       },
     }, `relationship_state.applied:${agent.id}:${suggestion.suggestionId}:${next.updatedAt}`);
-    void saveXingyeRoleProfile(agent.id, { relationshipLabel: next.relationshipLabel }).catch(() => {});
     setSuggestion(null);
     setError(null);
   };

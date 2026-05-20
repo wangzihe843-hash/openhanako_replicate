@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { XingyeRoleProfile } from './xingye-profile-store';
+import { saveXingyeRoleProfile, type XingyeRoleProfile } from './xingye-profile-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeStateTargetType = 'user';
@@ -274,6 +274,24 @@ export function saveRelationshipState(
   return next;
 }
 
+/**
+ * 把当前关系阶段标签同步回详情页 profile.json。
+ *
+ * 触发场景：updateRelationshipState（接受 AI 建议 / 心跳巡检草稿落地）或
+ * resetRelationshipState 之后，关系阶段（基于 affection 推导出的 relationshipLabel）
+ * 与上一份不同 ── 让详情页和主对话 system prompt 都能立刻看到新关系。
+ *
+ * fire-and-forget：失败只 warn，不抛错给上层（saveRelationshipState 同步返回，
+ * 不应被一次详情页落盘失败拖累）。saveXingyeRoleProfile 自带 requireServerForProfile
+ * 检查，离线环境会自动跳过。
+ */
+function syncRelationshipLabelToProfile(agentId: string, relationshipLabel: string): void {
+  if (!agentId || !relationshipLabel) return;
+  void saveXingyeRoleProfile(agentId, { relationshipLabel }).catch((error) => {
+    console.warn('[xingye-state-store] failed to sync relationshipLabel to profile:', error);
+  });
+}
+
 export function updateRelationshipState(
   agentId: string,
   patch: XingyeRelationshipStatePatch,
@@ -284,7 +302,7 @@ export function updateRelationshipState(
     toRelationshipStateHistoryItem(current),
     ...(current.previousStates ?? []),
   ].slice(0, MAX_PREVIOUS_STATES);
-  return saveRelationshipState({
+  const next = saveRelationshipState({
     ...current,
     affection: current.affection + asFiniteNumber(patch.affectionDelta),
     trust: current.trust + asFiniteNumber(patch.trustDelta),
@@ -298,6 +316,10 @@ export function updateRelationshipState(
     previousStates,
     updatedAt: new Date().toISOString(),
   }, storage);
+  if (next.relationshipLabel !== current.relationshipLabel) {
+    syncRelationshipLabelToProfile(agentId, next.relationshipLabel);
+  }
+  return next;
 }
 
 export function resetRelationshipState(
@@ -305,11 +327,16 @@ export function resetRelationshipState(
   profile?: Pick<XingyeRoleProfile, 'relationshipLabel'> | null,
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeRelationshipState {
+  const previous = getRelationshipState(agentId, storage);
   const states = loadRelationshipStates(storage);
   delete states[agentId];
   persistRelationshipStates(states, storage);
   notifyRelationshipStatesChanged();
-  return ensureRelationshipState(agentId, profile, storage);
+  const next = ensureRelationshipState(agentId, profile, storage);
+  if (previous && next.relationshipLabel !== previous.relationshipLabel) {
+    syncRelationshipLabelToProfile(agentId, next.relationshipLabel);
+  }
+  return next;
 }
 
 export function getStateDisplayBadges(state: XingyeRelationshipState): Array<{ label: string; value: string }> {
