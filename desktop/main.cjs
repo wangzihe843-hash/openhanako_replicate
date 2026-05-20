@@ -65,6 +65,9 @@ const {
   recordGpuInfoUpdate,
   resolveGpuStartupPolicy,
 } = require("./src/shared/gpu-startup-policy.cjs");
+const {
+  buildWin32ServerEnv,
+} = require("./src/shared/server-process-env.cjs");
 
 const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json build.appId.
 
@@ -814,7 +817,7 @@ async function _spawnServerOnce(serverInfoPath) {
   let serverEnv = { ...withHanaPiSdkEnv(process.env, hanakoHome), HANA_HOME: hanakoHome };
   serverEnv = await serverEnvironmentForNetworkProxy(serverEnv);
 
-  // Windows: 注入 PortableGit 路径
+  // Windows: 注入 PortableGit 路径，并从注册表补齐当前系统 / 用户 PATH。
   if (process.platform === "win32") {
     // PortableGit 结构：cmd/git.exe, bin/bash.exe, usr/bin/*, mingw64/bin/*
     const gitRoot = path.join(process.resourcesPath || "", "git");
@@ -824,16 +827,9 @@ async function _spawnServerOnce(serverInfoPath) {
       path.join(gitRoot, "mingw64", "bin"),
       path.join(gitRoot, "cmd"),
     ].filter(p => fs.existsSync(p));
-    if (gitPaths.length) {
-      // Windows 的 PATH 环境变量 key 可能是 "Path"（title case）或 "PATH"，
-      // { ...process.env } 展开后变成普通对象（区分大小写）。
-      // 必须找到原始 key 并删除，否则会同时存在 Path 和 PATH 两个 key，
-      // 导致 spawn 子进程的 PATH 不可预测。
-      const pathKey = Object.keys(serverEnv).find(k => k.toLowerCase() === "path") || "PATH";
-      const existingPath = serverEnv[pathKey] || "";
-      if (pathKey !== "PATH") delete serverEnv[pathKey];
-      serverEnv.PATH = gitPaths.join(";") + ";" + existingPath;
-    }
+    serverEnv = await buildWin32ServerEnv(serverEnv, {
+      prependPathEntries: gitPaths,
+    });
   }
 
   // 选择 server 启动方式
