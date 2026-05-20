@@ -68,6 +68,7 @@ export function buildMailInitPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const contactListing = virtualContacts.length

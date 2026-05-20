@@ -52,6 +52,7 @@ export function buildFilesDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const folderListing = folderOptions.length

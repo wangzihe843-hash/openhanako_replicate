@@ -16,6 +16,7 @@ export function buildJournalDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
 
   const parts: string[] = [

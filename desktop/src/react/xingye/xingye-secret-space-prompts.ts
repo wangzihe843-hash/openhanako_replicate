@@ -84,6 +84,7 @@ export function buildSecretSpaceGenerationPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
   const seedTrimmed = typeof seedText === 'string' ? seedText.replace(/\s+/g, ' ').trim() : '';
 

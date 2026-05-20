@@ -11,6 +11,7 @@ import {
   getXingyeRoleProfileDisplay,
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
+  type XingyeRoleGender,
 } from './xingye-profile-store';
 import { getXingyePersistenceDiagnostics } from './xingye-persistence';
 import { useXingyeLoreEntries, XINGYE_LORE_CATEGORIES } from './xingye-lore-store';
@@ -41,6 +42,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [values, setValues] = useState('');
   const [taboos, setTaboos] = useState('');
   const [relationshipMode, setRelationshipMode] = useState('');
+  const [gender, setGender] = useState<XingyeRoleGender>('unspecified');
   const [allowAutoMoments, setAllowAutoMoments] = useState(false);
   const [allowProactiveDM, setAllowProactiveDM] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -65,6 +67,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setValues(profile?.values ?? '');
     setTaboos(profile?.taboos ?? '');
     setRelationshipMode(profile?.relationshipMode ?? '');
+    setGender(profile?.gender ?? 'unspecified');
     setAllowAutoMoments(profile?.allowAutoMoments ?? false);
     setAllowProactiveDM(profile?.allowProactiveDM ?? false);
   }, [agent?.id, profile]);
@@ -111,6 +114,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     values,
     taboos,
     relationshipMode,
+    gender,
     updatedAt: profile?.updatedAt ?? new Date(0).toISOString(),
   }), [
     agent?.id,
@@ -125,6 +129,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     values,
     taboos,
     relationshipMode,
+    gender,
     profile?.updatedAt,
   ]);
   const syncPayload = useMemo(
@@ -161,6 +166,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         values,
         taboos,
         relationshipMode,
+        gender,
         allowAutoMoments,
         allowProactiveDM,
       });
@@ -347,6 +353,39 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
               onChange={(event) => setDisplayName(event.target.value)}
             />
           </label>
+          <div
+            className={styles.profileField}
+            role="radiogroup"
+            aria-label="角色性别"
+            data-testid="xingye-role-gender"
+          >
+            <span>性别（用于代词约束）</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, paddingTop: 4 }}>
+              {(
+                [
+                  { value: 'female', label: '女（她）' },
+                  { value: 'male', label: '男（他）' },
+                  { value: 'nonbinary', label: '非二元（TA）' },
+                  { value: 'unspecified', label: '不指明' },
+                ] as Array<{ value: XingyeRoleGender; label: string }>
+              ).map((opt) => (
+                <label
+                  key={opt.value}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                >
+                  <input
+                    type="radio"
+                    name={`xingye-role-gender-${agent.id}`}
+                    value={opt.value}
+                    checked={gender === opt.value}
+                    onChange={() => setGender(opt.value)}
+                    data-testid={`xingye-role-gender-${opt.value}`}
+                  />
+                  <span>{opt.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <label className={styles.profileField}>
             <span>简介</span>
             <textarea

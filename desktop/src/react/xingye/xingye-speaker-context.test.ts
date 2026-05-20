@@ -128,4 +128,48 @@ describe('xingye speaker context', () => {
       expect(prompt).not.toContain('currentUserName=莉莉丝');
     }
   });
+
+  describe('gender pronoun rules', () => {
+    it('gender=undefined / unspecified → 不输出代词约束段', () => {
+      const block = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾' });
+      const blockUnspec = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾', gender: 'unspecified' });
+      expect(block).not.toContain('pronoun');
+      expect(block).not.toContain('性别与代词约束');
+      expect(blockUnspec).not.toContain('pronoun');
+      expect(blockUnspec).not.toContain('性别与代词约束');
+    });
+
+    it('gender=female → 强制使用「她」+ 女性称谓 + 禁用男性指代', () => {
+      const block = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾', gender: 'female' });
+      expect(block).toContain('pronoun / 性别与代词约束');
+      expect(block).toContain('林雾 的性别为「女性」');
+      expect(block).toMatch(/必须.*使用「她」/);
+      expect(block).toContain('姐姐');
+      // 必须明禁男性代词
+      expect(block).toMatch(/禁用.*他/);
+    });
+
+    it('gender=male → 强制使用「他」+ 男性称谓 + 禁用女性指代', () => {
+      const block = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾', gender: 'male' });
+      expect(block).toContain('林雾 的性别为「男性」');
+      expect(block).toMatch(/必须.*使用「他」/);
+      expect(block).toContain('哥哥');
+      expect(block).toMatch(/禁用.*她/);
+    });
+
+    it('gender=nonbinary → 强制使用「TA」+ 中性称谓 + 禁二元代词', () => {
+      const block = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾', gender: 'nonbinary' });
+      expect(block).toContain('非二元');
+      expect(block).toMatch(/必须.*使用「TA」/);
+      expect(block).toMatch(/禁用.{0,30}他.{0,10}她/);
+    });
+
+    it('gender 代词约束段在 实体归因 段之后（保证显眼且不被其它规则干扰）', () => {
+      const block = formatXingyeSpeakerContextForPrompt({ userName: '莫子', agentName: '林雾', gender: 'female' });
+      const entityIdx = block.indexOf('speaker context / 实体归因规则');
+      const genderIdx = block.indexOf('pronoun / 性别与代词约束');
+      expect(entityIdx).toBeGreaterThanOrEqual(0);
+      expect(genderIdx).toBeGreaterThan(entityIdx);
+    });
+  });
 });

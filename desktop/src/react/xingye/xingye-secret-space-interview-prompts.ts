@@ -58,6 +58,7 @@ export function buildSecretInterviewPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const userQ = userQuestion?.trim() ?? '';

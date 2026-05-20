@@ -27,6 +27,7 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile.displayName ?? args.agent.name,
+    gender: profile.gender,
   });
   const context = {
     trigger: args.trigger,

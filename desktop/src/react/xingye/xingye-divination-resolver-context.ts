@@ -135,6 +135,7 @@ function profileToAgentLike(profile: XingyeRoleProfile, agent: Agent | null): Xi
     taboos: profile.taboos,
     relationshipMode: profile.relationshipMode,
     behaviorLogic: profile.behaviorLogic,
+    gender: profile.gender,
   };
 }
 

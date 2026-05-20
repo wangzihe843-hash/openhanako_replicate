@@ -29,6 +29,7 @@ export function buildScheduleDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const parts: string[] = [

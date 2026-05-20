@@ -104,6 +104,7 @@ export function buildDivinationReadingPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: agentLike.displayName ?? agent.name,
+    gender: agentLike.gender ?? null,
   });
 
   const signLabel = getDivinationSignLabel(methodId);

@@ -69,6 +69,7 @@ export function buildShoppingDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const parts: string[] = [
@@ -329,6 +330,7 @@ export function buildShoppingPolishPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const lockedDraft = {

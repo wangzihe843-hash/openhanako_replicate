@@ -35,6 +35,8 @@ export type XingyeDivinationAgentLike = {
   era?: string | null;
   culture?: string | null;
   tags?: string[] | readonly string[] | null;
+  /** 角色性别，用于占卜文本里的代词与称谓约束（透传给 formatXingyeSpeakerContextForPrompt）。 */
+  gender?: 'female' | 'male' | 'nonbinary' | 'unspecified' | null;
 };
 
 /** UI / context builder 传入：用于区分「无背景可读」与「有背景但占法不确定」 */

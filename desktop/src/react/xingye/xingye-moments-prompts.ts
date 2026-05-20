@@ -66,6 +66,7 @@ export function buildMomentDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
 
   const virtualContactsBlock = virtualContacts.length

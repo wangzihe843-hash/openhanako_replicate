@@ -68,6 +68,7 @@ export function buildNewsDraftPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: currentUserName,
     agentName: currentAgentName,
+    gender: profile?.gender,
   });
 
   const requiredKindList = REQUIRED_SECTION_KINDS.join(' / ');

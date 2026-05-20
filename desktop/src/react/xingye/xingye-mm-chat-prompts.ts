@@ -74,6 +74,7 @@ export function buildMmChatGenerationPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
 
   const parts: string[] = [
@@ -148,6 +149,7 @@ export function buildMmChatFollowupAgentQuestionPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
   const hint = args.followUpDirectionHint.trim();
   const parts: string[] = [
@@ -240,6 +242,7 @@ export function buildMmChatFollowupAssistantAnswerPrompt(args: {
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
+    gender: profile?.gender,
   });
   const parts: string[] = [
     '你是星野模式「MM Chat」追问链路的第二步：扮演「通用 AI 助手」，针对角色刚提出的追问给出下一段回复。',

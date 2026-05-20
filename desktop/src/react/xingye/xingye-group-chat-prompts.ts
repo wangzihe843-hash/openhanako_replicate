@@ -104,6 +104,7 @@ export function buildGroupChatReplyPrompt(args: BuildGroupChatReplyPromptArgs): 
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName,
     agentName: taMoniker,
+    gender: profile?.gender,
   });
 
   const otherMembers = channelMembers.filter((m) => m !== agent.id);

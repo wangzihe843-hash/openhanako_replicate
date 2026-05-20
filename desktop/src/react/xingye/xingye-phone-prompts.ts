@@ -37,6 +37,7 @@ function speakerContextForPhonePrompt(args: {
   return formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: args.ownerProfile?.displayName ?? args.ownerAgent.name,
+    gender: args.ownerProfile?.gender,
   });
 }
 

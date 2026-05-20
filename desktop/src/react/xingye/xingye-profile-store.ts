@@ -7,6 +7,24 @@ import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
 import type { XingyeLoreEntry } from './xingye-lore-store';
 
+/**
+ * 性别枚举，用于驱动所有 AI 生成模块里的代词选择（她 / 他 / TA）与称谓约束。
+ * 'unspecified' 与 undefined 行为一致——都不输出代词约束段，由模型自由发挥。
+ * 与代词关系：
+ *  - female → 「她」+ 女性称谓（姐姐 / 女士 / 小姐）
+ *  - male   → 「他」+ 男性称谓（哥哥 / 先生 / 弟弟）
+ *  - nonbinary → 「TA」+ 中性称谓（朋友 / 这位）
+ *  - unspecified → 不约束（模型自决）
+ */
+export type XingyeRoleGender = 'female' | 'male' | 'nonbinary' | 'unspecified';
+
+export const XINGYE_ROLE_GENDERS: readonly XingyeRoleGender[] = [
+  'female',
+  'male',
+  'nonbinary',
+  'unspecified',
+];
+
 export type XingyeRoleProfile = {
   agentId: string;
   displayName?: string;
@@ -20,6 +38,11 @@ export type XingyeRoleProfile = {
   values?: string;
   taboos?: string;
   relationshipMode?: string;
+  /**
+   * 角色性别。仅用于代词约束（不在 UI 上当作"个人信息"展示给用户）。
+   * 缺省视为 'unspecified'——不强制代词。
+   */
+  gender?: XingyeRoleGender;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   /** workspace 落盘引用（由 xingye-persistence / v2 layout 写入/加载） */
@@ -46,6 +69,7 @@ export type XingyeRoleProfileDisplay = {
   values?: string;
   taboos?: string;
   relationshipMode?: string;
+  gender?: XingyeRoleGender;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   allowAutoMoments: boolean;
@@ -115,6 +139,7 @@ type SyncProfileInput = Pick<
   | 'values'
   | 'taboos'
   | 'relationshipMode'
+  | 'gender'
   | 'avatarDataUrl'
   | 'chatBackgroundDataUrl'
   | 'allowAutoMoments'
@@ -144,6 +169,13 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
   for (const field of STRING_FIELDS) {
     const normalized = normalizeOptionalString(value[field]);
     if (normalized) profile[field] = normalized;
+  }
+
+  // gender 是 enum；非法值（含旧数据 / 拼写错误）直接丢弃，回退到 undefined（语义 = unspecified）
+  const rawGender = value.gender;
+  if (typeof rawGender === 'string'
+      && (XINGYE_ROLE_GENDERS as readonly string[]).includes(rawGender)) {
+    profile.gender = rawGender as XingyeRoleGender;
   }
 
   const avatarMediaPath = normalizeOptionalString(value.avatarMediaPath);
@@ -287,6 +319,7 @@ export function getXingyeRoleProfileDisplay(
     values: profile?.values,
     taboos: profile?.taboos,
     relationshipMode: profile?.relationshipMode,
+    gender: profile?.gender,
     avatarDataUrl: profile?.avatarDataUrl,
     chatBackgroundDataUrl: profile?.chatBackgroundDataUrl,
     allowAutoMoments: profile?.allowAutoMoments ?? false,
@@ -373,6 +406,17 @@ export function filterLoreEntriesForAgentSync(
     .sort((a, b) => b.priority - a.priority || a.title.localeCompare(b.title));
 }
 
+/**
+ * 把 gender 翻成 OpenHanako identity/ishiki 里的一句中文描述。
+ * unspecified / undefined → 返回空字符串（不写入这一行）。
+ */
+function formatGenderLineForSync(gender: XingyeRoleGender | undefined): string {
+  if (!gender || gender === 'unspecified') return '';
+  if (gender === 'female') return '你的性别是女性；第三方提及你时使用「她」。';
+  if (gender === 'male') return '你的性别是男性；第三方提及你时使用「他」。';
+  return '你的性别是非二元（non-binary）；第三方提及你时使用「TA」，避免「他 / 她」二元代词。';
+}
+
 export function buildOpenHanakoIdentity(
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>,
   profile: SyncProfileInput,
@@ -389,6 +433,7 @@ export function buildOpenHanakoIdentity(
     OPENHANAKO_SYNC_MAX_IDENTITY_FIELD,
   );
   const shortBio = truncateForOpenHanakoSync(resolveRoleSummary(profile?.shortBio), OPENHANAKO_SYNC_MAX_IDENTITY_FIELD);
+  const genderLine = formatGenderLineForSync(profile?.gender);
 
   return [
     `# ${displayName}`,
@@ -396,6 +441,7 @@ export function buildOpenHanakoIdentity(
     ...uniqueLines([
       asSentence(identitySummary),
       relationshipSentence(relationship),
+      ...(genderLine ? [genderLine] : []),
       asSentence(backgroundSummary),
       asSentence(shortBio),
     ]),
@@ -432,11 +478,14 @@ export function buildOpenHanakoIshiki(
   );
   const displayNameLine = truncateForOpenHanakoSync(display.displayName, OPENHANAKO_SYNC_MAX_DISPLAY_NAME);
 
+  const genderLine = formatGenderLineForSync(profile?.gender);
+
   return [
     '# 人格与行动逻辑',
     '',
     `- 你是 ${displayNameLine}。`,
     `- 你与用户的关系是：${relationship}。`,
+    ...(genderLine ? [`- ${genderLine}`] : []),
     `- 你的性格基础：${personalitySummary}`,
     `- 你的说话风格：${speakingStyle}`,
     `- 你的行事逻辑：${behaviorLogic}`,
