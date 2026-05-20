@@ -34,10 +34,18 @@ function speakerContextForPhonePrompt(args: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   userName?: string | null;
 }): string {
+  /*
+   * 通讯录 / 短信 / 虚拟联系人专用：**不**注入 currentAgent 的 gender 代词约束。
+   * 原因：这一组 prompt 的核心是 *NPC*（联系人）的描述与对话，NPC 各有自己的
+   * 性别（女性主人也会有男性朋友、男性主人也会有女性同事）。如果在这里强制
+   * "第三人称必须用她"，模型会把所有 NPC 都按主人性别写成同一代词，
+   * 把男性朋友写成「她」、女性同事写成「他」。
+   * currentAgent 自己的性别仍通过 prompt 中 JSON.stringify(profile) 自然透传；
+   * 仅去掉**强约束段**，让 NPC 代词由各自的 kind / shortBio / impression 决定。
+   */
   return formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: args.ownerProfile?.displayName ?? args.ownerAgent.name,
-    gender: args.ownerProfile?.gender,
   });
 }
 

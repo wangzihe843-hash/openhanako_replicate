@@ -40,6 +40,7 @@ import { createTerminalTool } from "../lib/tools/terminal-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { getPlatformPromptNote } from "./platform-prompt.js";
 import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
+import { readXingyeAgentGenderPreambleSync } from "../shared/xingye-profile-file.js";
 import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
 import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
 
@@ -1195,6 +1196,30 @@ export class Agent {
     }
 
     if (!forSubagent) {
+      /*
+       * 注入位置说明：性别 preamble 必须出现在「星野核心设定」(lore-memory.md) 之前。
+       * 原因：lore 里常包含其他角色姓名 / 关系描述 / 称呼习惯，LLM 在没有先吃到
+       * agent 性别提示的情况下，容易把 lore 中提到的某个人物误认为 agent 本人、
+       * 或被 lore 里的代词带歪。先讲性别再讲 lore，能在解码 lore 前锁定身份基线。
+       * 不在 ishiki.md 内补——ishiki 是模板渲染的，性别只是一行，容易被其它人格
+       * 描述淹没；独立成段更醒目。profile 缺失 / gender=unspecified → 返回 null
+       * 静默跳过，不影响未填性别的 agent。
+       */
+      try {
+        const genderPreamble = readXingyeAgentGenderPreambleSync({
+          hanakoHome: path.dirname(path.dirname(this.agentDir)),
+          agentId: this.id,
+          agentName: this.agentName,
+          userName: this.userName,
+          locale: this._config.locale,
+        });
+        if (genderPreamble) {
+          parts.push(...section(genderPreamble.title, genderPreamble.body));
+        }
+      } catch (error) {
+        console.warn(`[xingye] skip gender preamble: ${error?.message || error}`);
+      }
+
       try {
         const xingyeStableLore = readXingyeStableLoreMemoryForPromptSync({
           hanakoHome: path.dirname(path.dirname(this.agentDir)),

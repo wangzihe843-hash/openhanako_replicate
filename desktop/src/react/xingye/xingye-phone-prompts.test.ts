@@ -477,4 +477,47 @@ describe('contact update prompts - user contact updates', () => {
     expect(prompt).toContain('targetId="__user__"');
     expect(prompt).toContain('update user impression');
   });
+
+  describe('gender 豁免（通讯录 / 短信不应强制 currentAgent 的代词）', () => {
+    /*
+     * NPC 各有自己的性别，女性主人也会有男性朋友、男性主人也会有女性同事。
+     * speakerContextForPhonePrompt 不传 gender，让模型按各 NPC 自己的 kind / shortBio
+     * / impression 决定代词，而不是被 currentAgent 性别带走。
+     */
+    const femaleOwnerProfile = { ...ownerProfile, gender: 'female' as const };
+
+    it('virtual contact 生成：即使 owner 性别=女，prompt 也不出现 currentAgent 的代词约束段', () => {
+      const prompt = buildVirtualContactGenerationPrompt({
+        ownerAgent,
+        ownerProfile: femaleOwnerProfile,
+        contacts: [],
+        userName: '莫子',
+        recentContext: null,
+      });
+      expect(prompt).not.toContain('pronoun / 性别与代词约束');
+      expect(prompt).not.toContain('必须**使用「她」');
+    });
+
+    it('短信历史：同样豁免代词约束段', () => {
+      const prompt = buildSmsHistoryPrompt({
+        ownerAgent,
+        ownerProfile: femaleOwnerProfile,
+        contacts: [activeView],
+        userName: '莫子',
+      });
+      expect(prompt).not.toContain('pronoun / 性别与代词约束');
+    });
+
+    it('owner 性别仍通过 profile JSON 自然透传（不丢失，仅去强约束段）', () => {
+      const prompt = buildVirtualContactGenerationPrompt({
+        ownerAgent,
+        ownerProfile: femaleOwnerProfile,
+        contacts: [],
+        userName: '莫子',
+        recentContext: null,
+      });
+      // profile JSON 里 gender 字段会被 stringify 进 prompt，模型仍能读到
+      expect(prompt).toContain('"gender": "female"');
+    });
+  });
 });
