@@ -187,6 +187,7 @@ describe('producer contract: app-entry-store', () => {
     ['divination', 'divination.entry_appended', 'divination.entry_deleted'],
     ['shopping', 'shopping.entry_appended', 'shopping.entry_deleted'],
     ['reading_notes', 'reading_notes.entry_appended', 'reading_notes.entry_deleted'],
+    ['news', 'news.entry_appended', 'news.entry_deleted'],
   ] as const)('emits %s entry events', async (appId, appendedType, deletedType) => {
     const memBackend = createMemoryXingyeStorageBackend();
     const store = createXingyeAppEntryStore(memBackend, {
@@ -221,6 +222,47 @@ describe('producer contract: app-entry-store', () => {
     await store.appendEntry('agent-a', 'diary', { title: 'T', content: 'C' });
     await store.deleteEntry('agent-a', 'diary', 'diary-1');
     expect(appendEventMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('producer contract: secret-space interview', () => {
+  it('appendSecretSpaceRecord(interview) emits interview.entry_appended; delete emits interview.entry_deleted', async () => {
+    const { appendSecretSpaceRecord, deleteSecretSpaceRecord } = await import('./xingye-secret-space-store');
+    await appendSecretSpaceRecord('agent-a', 'interview', {
+      title: '专访 · 林雾',
+      body: 'Q1. 问\nA1. 答',
+      recordId: 'iv-1',
+      key: 'iv-1',
+      source: 'manual',
+    });
+    expect(lastEvent().input).toMatchObject({
+      type: 'interview.entry_appended',
+      source: 'xingye-secret-space-store',
+      subjectId: 'iv-1',
+      payload: { category: 'interview', recordId: 'iv-1' },
+    });
+
+    appendEventMock.mockClear();
+    const ok = await deleteSecretSpaceRecord('agent-a', 'interview', 'iv-1');
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'interview.entry_deleted',
+      source: 'xingye-secret-space-store',
+      subjectId: 'iv-1',
+      payload: { category: 'interview', recordId: 'iv-1' },
+    });
+  });
+
+  it('non-interview secret-space records still emit secret_space.record_appended', async () => {
+    const { appendSecretSpaceRecord } = await import('./xingye-secret-space-store');
+    await appendSecretSpaceRecord('agent-a', 'state', {
+      title: 't', body: 'b', recordId: 'st-1', key: 'st-1', source: 'manual',
+    });
+    expect(lastEvent().input).toMatchObject({
+      type: 'secret_space.record_appended',
+      subjectId: 'state',
+      payload: { category: 'state' },
+    });
   });
 });
 

@@ -21,6 +21,12 @@ import {
   type NewsSectionKind,
 } from './xingye-news-types';
 import { generateNewsCommentWithAI, generateNewsDraftWithAI } from './xingye-news-ai';
+import {
+  confirmNewsDraftWithEntry,
+  discardNewsDraft,
+  listNewsDrafts,
+  type XingyePendingNewsDraft,
+} from './xingye-news-drafts';
 import { resolveNewsEra, buildNewsEraAgentLike, type NewsEraId } from './xingye-news-era-resolver';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 
@@ -928,6 +934,9 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [message, setMessage] = useState<string | null>(null);
   const [userIntent, setUserIntent] = useState('');
   const [showIntentBox, setShowIntentBox] = useState(false);
+  // 心跳 agent 提议的「待确认报纸意图草稿」——确认时才跑生成。
+  const [drafts, setDrafts] = useState<XingyePendingNewsDraft[]>([]);
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
 
   const agentDisplayName = ownerProfile?.displayName?.trim() || ownerAgent?.name || displayName || 'TA';
 
@@ -956,12 +965,16 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
     setLoading(true);
     setMessage(null);
     try {
-      const rows = await listAppEntries(ownerAgentId, NEWS_APP_ID);
+      const [rows, draftRows] = await Promise.all([
+        listAppEntries(ownerAgentId, NEWS_APP_ID),
+        listNewsDrafts(ownerAgentId),
+      ]);
       const normalized = rows
         .map(normalizeNewsEntry)
         .filter((e): e is NewsEntry => Boolean(e))
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       setEntries(normalized);
+      setDrafts(draftRows);
     } catch (err) {
       setMessage(`加载失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1011,6 +1024,50 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
       setMessage(`生成失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  /**
+   * 确认一条「待确认报纸草稿」：用草稿 angle 作为 userIntent 现跑 generateNewsDraftWithAI，
+   * 生成整期报纸后调 confirmNewsDraftWithEntry 幂等落地 + 删草稿 + 发 news.draft_confirmed。
+   */
+  const handleConfirmNewsDraft = async (draft: XingyePendingNewsDraft) => {
+    if (!ownerAgent || draftBusyId) return;
+    setDraftBusyId(draft.id);
+    setMessage(null);
+    try {
+      const meta = await generateNewsDraftWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        userIntent: draft.angle || undefined,
+        issueDateIso: new Date().toISOString(),
+      });
+      const entry = await confirmNewsDraftWithEntry(ownerAgentId, draft.id, meta);
+      const normalized = normalizeNewsEntry(entry);
+      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+      if (normalized) {
+        setEntries((prev) => [normalized, ...prev.filter((e) => e.id !== normalized.id)]);
+        setSelectedId(normalized.id);
+      } else {
+        await reload();
+      }
+    } catch (err) {
+      setMessage(`确认出版失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardNewsDraft = async (draft: XingyePendingNewsDraft) => {
+    if (!ownerAgentId || draftBusyId) return;
+    setDraftBusyId(draft.id);
+    try {
+      await discardNewsDraft(ownerAgentId, draft.id);
+      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+    } catch (err) {
+      setMessage(`丢弃草稿失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDraftBusyId(null);
     }
   };
 
@@ -1220,6 +1277,58 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                 {variant.ghostLabel(showIntentBox)}
               </button>
             </div>
+
+            {drafts.length > 0 ? (
+              <div
+                className={k('news-drafts')}
+                data-testid="phone-news-drafts"
+                style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0' }}
+              >
+                <p style={{ fontWeight: 600, fontSize: 13, opacity: 0.8, margin: 0 }}>
+                  待确认草稿 · {agentDisplayName} 想出一期报纸
+                </p>
+                {drafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    data-testid={`phone-news-draft-${draft.id}`}
+                    style={{
+                      border: '1px dashed currentColor',
+                      borderRadius: 8,
+                      padding: 10,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      opacity: 0.92,
+                    }}
+                  >
+                    <p style={{ fontSize: 13, margin: 0 }}>
+                      {draft.angle ? `角度：${draft.angle}` : '（没有特定角度，就是想出一期）'}
+                    </p>
+                    {draft.reason ? (
+                      <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>缘由：{draft.reason}</p>
+                    ) : null}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmNewsDraft(draft)}
+                        disabled={draftBusyId !== null || generating}
+                        data-testid={`phone-news-draft-confirm-${draft.id}`}
+                      >
+                        {draftBusyId === draft.id ? '正在排版本期…' : '确认出版'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDiscardNewsDraft(draft)}
+                        disabled={draftBusyId !== null}
+                        data-testid={`phone-news-draft-discard-${draft.id}`}
+                      >
+                        丢弃
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             {loading && entries.length === 0 ? (
               <p className={k('notice')}>加载中…</p>

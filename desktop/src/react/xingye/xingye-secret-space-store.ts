@@ -92,7 +92,11 @@ function logDeleteDebug(
 async function appendSecretSpaceEvent(
   agentId: string,
   event: {
-    type: 'secret_space.record_appended' | 'secret_space.record_deleted';
+    type:
+      | 'secret_space.record_appended'
+      | 'secret_space.record_deleted'
+      | 'interview.entry_appended'
+      | 'interview.entry_deleted';
     subjectId: string;
     payload: Record<string, unknown>;
   },
@@ -176,8 +180,9 @@ export async function deleteSecretSpaceRecord(
   });
 
   await appendSecretSpaceEvent(aid, {
-    type: 'secret_space.record_deleted',
-    subjectId: category,
+    // 专访已迁出为独立模块，发专属事件类型而非泛化的 secret_space.record_*。
+    type: category === 'interview' ? 'interview.entry_deleted' : 'secret_space.record_deleted',
+    subjectId: category === 'interview' ? rid : category,
     payload: { category, recordId: rid },
   });
 
@@ -207,8 +212,9 @@ export async function appendSecretSpaceRecord(
     updatedAt: body.updatedAt ?? body.createdAt ?? now,
   });
   await appendSecretSpaceEvent(agentId, {
-    type: 'secret_space.record_appended',
-    subjectId: category,
+    // 专访已迁出为独立模块，发专属事件类型而非泛化的 secret_space.record_*。
+    type: category === 'interview' ? 'interview.entry_appended' : 'secret_space.record_appended',
+    subjectId: category === 'interview' ? stableId : category,
     payload: {
       category,
       recordId: stableId,

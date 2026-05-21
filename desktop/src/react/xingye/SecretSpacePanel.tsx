@@ -32,6 +32,12 @@ import {
 } from './xingye-secret-space-interview-types';
 import { SecretInterviewReader } from './SecretInterviewReader';
 import {
+  confirmInterviewDraftWithEntry,
+  discardInterviewDraft,
+  listInterviewDrafts,
+  type XingyePendingInterviewDraft,
+} from './xingye-interview-drafts';
+import {
   appendSecretSpaceRecord,
   deleteSecretSpaceRecord,
   listSecretSpaceRecords,
@@ -238,6 +244,9 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [interviewUserQuestion, setInterviewUserQuestion] = useState('');
   const [interviewLoading, setInterviewLoading] = useState(false);
   const [interviewError, setInterviewError] = useState<string | null>(null);
+  // interview「待确认草稿」（心跳 agent 提议的意图草稿）状态。
+  const [interviewDrafts, setInterviewDrafts] = useState<XingyePendingInterviewDraft[]>([]);
+  const [interviewDraftBusyId, setInterviewDraftBusyId] = useState<string | null>(null);
 
   /**
    * 秘密空间「待确认草稿」状态。drafts.jsonl 跨 category 共用一个文件，
@@ -282,6 +291,8 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       setInterviewUserQuestion('');
       setInterviewError(null);
       setInterviewLoading(false);
+      setInterviewDrafts([]);
+      setInterviewDraftBusyId(null);
       setSecretSpaceDeleteError(null);
       setView('home');
       setActiveCategory(null);
@@ -761,6 +772,59 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     }
   };
 
+  // 进入 interview 分类时加载心跳提议的「待确认专访意图草稿」。
+  useEffect(() => {
+    if (!agent?.id || activeCategory !== 'interview') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listInterviewDrafts(agent.id);
+        if (!cancelled) setInterviewDrafts(rows);
+      } catch {
+        if (!cancelled) setInterviewDrafts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [agent?.id, activeCategory]);
+
+  /**
+   * 确认一条「待确认专访草稿」：用草稿 userQuestion 现跑 generateSecretInterviewWithAI，
+   * 生成整期专访后调 confirmInterviewDraftWithEntry 幂等落地 + 删草稿 + 发 interview.draft_confirmed。
+   */
+  const handleConfirmInterviewDraft = async (draft: XingyePendingInterviewDraft) => {
+    if (!agent?.id || interviewDraftBusyId) return;
+    setInterviewError(null);
+    setInterviewDraftBusyId(draft.id);
+    try {
+      const meta = await generateSecretInterviewWithAI({
+        agent,
+        ownerProfile: profile,
+        userQuestion: draft.userQuestion || undefined,
+      });
+      await confirmInterviewDraftWithEntry(agent.id, draft.id, meta);
+      setInterviewDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+      const records = await listSecretSpaceRecords(agent.id, 'interview');
+      setRecordsByCategory((prev) => ({ ...prev, interview: records }));
+    } catch (e) {
+      setInterviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInterviewDraftBusyId(null);
+    }
+  };
+
+  const handleDiscardInterviewDraft = async (draft: XingyePendingInterviewDraft) => {
+    if (!agent?.id || interviewDraftBusyId) return;
+    setInterviewDraftBusyId(draft.id);
+    try {
+      await discardInterviewDraft(agent.id, draft.id);
+      setInterviewDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+    } catch (e) {
+      setInterviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInterviewDraftBusyId(null);
+    }
+  };
+
   const handleAiGenerate = async () => {
     if (!agent?.id || !activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
     setAiError(null);
@@ -1122,6 +1186,59 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const interviewFooter =
     activeCategory === 'interview' && agent?.id ? (
       <div className={styles.profileForm} data-testid="secret-space-interview-footer">
+        {interviewDrafts.length > 0 ? (
+          <div
+            data-testid="secret-space-interview-drafts"
+            style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}
+          >
+            <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0, fontWeight: 600 }}>
+              待确认草稿 · TA 想接受一次专访
+            </p>
+            {interviewDrafts.map((draft) => (
+              <div
+                key={draft.id}
+                data-testid={`secret-space-interview-draft-${draft.id}`}
+                style={{
+                  border: '1px dashed currentColor',
+                  borderRadius: 8,
+                  padding: 10,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                <p style={{ fontSize: 13, margin: 0 }}>
+                  {draft.userQuestion
+                    ? `想被问到：${draft.userQuestion}`
+                    : '（没有指定题目，由生成端自拟全部 5 题）'}
+                </p>
+                {draft.reason ? (
+                  <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>缘由：{draft.reason}</p>
+                ) : null}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleConfirmInterviewDraft(draft)}
+                    disabled={interviewDraftBusyId !== null || interviewLoading}
+                    data-testid={`secret-space-interview-draft-confirm-${draft.id}`}
+                  >
+                    {interviewDraftBusyId === draft.id ? '正在录制本期…' : '确认录制'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleDiscardInterviewDraft(draft)}
+                    disabled={interviewDraftBusyId !== null}
+                    data-testid={`secret-space-interview-draft-discard-${draft.id}`}
+                  >
+                    丢弃
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
           录一期专访：模型一次性生成 5 个 Q&A、每题 4-6 条弹幕、加一段「相机关了之后」的彩蛋。
           也可以给一题你想问的，让它落在第 3 或第 4 题位置；不出题模型自己决定 5 题。

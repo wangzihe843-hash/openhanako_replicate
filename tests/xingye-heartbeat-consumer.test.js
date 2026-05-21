@@ -545,6 +545,26 @@ describe("summarizeXingyeEventsForHeartbeatZh: origin-aware grouping", () => {
     expect(summary).toContain("朋友圈新增（自动）×1");
     expect(summary).toContain("朋友圈新增（手动）×1");
   });
+
+  it("labels news / interview events with registered Chinese labels and origin split", () => {
+    const events = [
+      { type: "news.entry_appended", payload: { entryId: "from-draft-n-1", origin: "auto" } },
+      { type: "news.entry_appended", payload: { entryId: "n-manual-1", origin: "user" } },
+      { type: "news.draft_proposed", payload: { draftId: "nd-1" } },
+      { type: "interview.entry_appended", payload: { recordId: "from-draft-iv-1", origin: "auto" } },
+      { type: "interview.draft_proposed", payload: { draftId: "ivd-1" } },
+    ];
+    const summary = summarizeXingyeEventsForHeartbeatZh(events);
+    /** news / interview entry types are origin-aware → split into 自动/手动. */
+    expect(summary).toContain("报纸新增（自动）×1");
+    expect(summary).toContain("报纸新增（手动）×1");
+    expect(summary).toContain("报纸草稿提议×1");
+    expect(summary).toContain("独家专访新增（自动）×1");
+    expect(summary).toContain("独家专访草稿提议×1");
+    /** No raw event-type strings leak into the summary. */
+    expect(summary).not.toContain("news.entry_appended");
+    expect(summary).not.toContain("interview.");
+  });
 });
 
 describe("computeAutoDraftStaleness", () => {

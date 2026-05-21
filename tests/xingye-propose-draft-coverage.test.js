@@ -58,6 +58,12 @@ const MODULE_UI_FIXTURES = {
   relationship_state: { src: "desktop/src/react/xingye/RelationshipStatePanel.tsx", test: "desktop/src/react/xingye/RelationshipStatePanel.test.tsx", confirmVerb: "confirmRelationshipStateDraft", discardVerb: "discardRelationshipStateDraft" },
   phone_contact:      { src: "desktop/src/react/xingye/PhoneContactsApp.tsx",       test: "desktop/src/react/xingye/PhoneContactsApp.test.tsx",      confirmVerb: "confirmPhoneContactDraft",     discardVerb: "discardPhoneContactDraft" },
   sms:                { src: "desktop/src/react/xingye/PhoneSmsApp.tsx",            test: "desktop/src/react/xingye/PhoneSmsApp.test.tsx",           confirmVerb: "confirmSmsDraft",              discardVerb: "discardSmsDraft" },
+  // news / interview 走「意图草稿」模型：草稿只带 angle / userQuestion，确认时 UI 才跑
+  // 重型生成。confirm verb 因此是 confirmNewsDraftWithEntry / confirmInterviewDraftWithEntry
+  // （带 WithEntry 后缀，区别于「草稿即成品」模块的 confirmXxxDraft）。interview 的待确认
+  // 草稿区物理上挂在 SecretSpacePanel 的 interview 视图里。
+  news:               { src: "desktop/src/react/xingye/PhoneNewsApp.tsx",          test: "desktop/src/react/xingye/PhoneNewsApp.test.tsx",          confirmVerb: "confirmNewsDraftWithEntry",      discardVerb: "discardNewsDraft" },
+  interview:          { src: "desktop/src/react/xingye/SecretSpacePanel.tsx",       test: "desktop/src/react/xingye/SecretSpacePanel.test.tsx",      confirmVerb: "confirmInterviewDraftWithEntry", discardVerb: "discardInterviewDraft" },
 };
 
 /**

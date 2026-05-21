@@ -151,6 +151,22 @@ const memoryCandidateDraftsMock = vi.hoisted(() => ({
 }));
 vi.mock('./xingye-memory-candidate-drafts', () => memoryCandidateDraftsMock);
 
+/**
+ * 独家专访意图草稿三件套 + 生成入口。专访是重型结构化生成，确认草稿时 UI 会现跑
+ * generateSecretInterviewWithAI，所以这里把 AI 入口也桩掉。
+ */
+const interviewAiMock = vi.hoisted(() => ({
+  generateSecretInterviewWithAI: vi.fn(),
+}));
+vi.mock('./xingye-secret-space-interview-ai', () => interviewAiMock);
+
+const interviewDraftsMock = vi.hoisted(() => ({
+  confirmInterviewDraftWithEntry: vi.fn(),
+  discardInterviewDraft: vi.fn(),
+  listInterviewDrafts: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('./xingye-interview-drafts', () => interviewDraftsMock);
+
 const agent: Agent = {
   id: 'agent-secret-1',
   name: 'Test',
@@ -976,5 +992,96 @@ describe('SecretSpacePanel · memory_candidate pending draft section', () => {
       expect(screen.queryByTestId('memory-fragment-pending-draft-d-mc-2')).not.toBeInTheDocument();
     });
     expect(memoryCandidateDraftsMock.confirmMemoryCandidateDraft).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 覆盖「心跳巡检 → 待确认独家专访意图草稿」的 UI 链路。
+ * 草稿只带 userQuestion/reason；确认时 UI 现跑 generateSecretInterviewWithAI 生成整期
+ * 专访，再调 confirmInterviewDraftWithEntry 幂等落地。
+ */
+describe('SecretSpacePanel · interview pending draft section', () => {
+  beforeEach(() => {
+    hanaFetchMock.mockClear();
+    jsonlStore.clear();
+    jsonStore.clear();
+    interviewAiMock.generateSecretInterviewWithAI.mockReset();
+    interviewDraftsMock.confirmInterviewDraftWithEntry.mockReset();
+    interviewDraftsMock.discardInterviewDraft.mockReset();
+    interviewDraftsMock.listInterviewDrafts.mockReset();
+    interviewDraftsMock.listInterviewDrafts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders an interview draft and confirm runs generation then confirmInterviewDraftWithEntry', async () => {
+    interviewDraftsMock.listInterviewDrafts.mockResolvedValueOnce([
+      {
+        id: 'd-iv-1',
+        userQuestion: '关于那次离开，你后悔过吗',
+        reason: '巡检里 TA 反复提起那年冬天',
+        source: 'xingye-heartbeat-tool',
+        createdAt: '2026-05-21T12:00:00.000Z',
+      },
+    ]);
+    interviewAiMock.generateSecretInterviewWithAI.mockResolvedValueOnce({
+      recordedAt: '2026-05-21T00:00:00.000Z',
+      title: '专访 · 一个冬天',
+      hostName: '本刊记者',
+      hostIntro: '演播室里只点了一盏灯。',
+      questions: [],
+      backstage: '相机关了之后，TA 沉默了很久。',
+    });
+    interviewDraftsMock.confirmInterviewDraftWithEntry.mockResolvedValueOnce({
+      recordId: 'from-draft-d-iv-1',
+      title: '专访 · 一个冬天',
+    });
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-interview'));
+
+    const draftCard = await screen.findByTestId('secret-space-interview-draft-d-iv-1');
+    expect(within(draftCard).getByText(/关于那次离开/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('secret-space-interview-draft-confirm-d-iv-1'));
+
+    await waitFor(() => {
+      expect(interviewAiMock.generateSecretInterviewWithAI).toHaveBeenCalledWith(
+        expect.objectContaining({ userQuestion: '关于那次离开，你后悔过吗' }),
+      );
+    });
+    await waitFor(() => {
+      expect(interviewDraftsMock.confirmInterviewDraftWithEntry).toHaveBeenCalledWith(
+        'agent-secret-1',
+        'd-iv-1',
+        expect.objectContaining({ title: '专访 · 一个冬天' }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('secret-space-interview-draft-d-iv-1')).not.toBeInTheDocument();
+    });
+  });
+
+  it('discard calls discardInterviewDraft without running generation', async () => {
+    interviewDraftsMock.listInterviewDrafts.mockResolvedValueOnce([
+      { id: 'd-iv-2', source: 'xingye-heartbeat-tool', createdAt: '2026-05-21T12:00:00.000Z' },
+    ]);
+    interviewDraftsMock.discardInterviewDraft.mockResolvedValueOnce(true);
+
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-interview'));
+    await screen.findByTestId('secret-space-interview-draft-d-iv-2');
+    fireEvent.click(screen.getByTestId('secret-space-interview-draft-discard-d-iv-2'));
+
+    await waitFor(() => {
+      expect(interviewDraftsMock.discardInterviewDraft).toHaveBeenCalledWith('agent-secret-1', 'd-iv-2');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('secret-space-interview-draft-d-iv-2')).not.toBeInTheDocument();
+    });
+    expect(interviewAiMock.generateSecretInterviewWithAI).not.toHaveBeenCalled();
+    expect(interviewDraftsMock.confirmInterviewDraftWithEntry).not.toHaveBeenCalled();
   });
 });
