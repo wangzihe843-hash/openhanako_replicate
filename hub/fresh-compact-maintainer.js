@@ -73,6 +73,9 @@ export class FreshCompactMaintainer {
           ?.listDailyFreshCompactTargets?.(agent, { now }) || [];
         for (const target of bridgeTargets) {
           try {
+            if (target.sessionPath && typeof agent.memoryTicker?.flushSessionAndCompile === "function") {
+              await agent.memoryTicker.flushSessionAndCompile(target.sessionPath);
+            }
             await this._engine.bridgeSessionManager.freshCompactSession(target.sessionKey, {
               agentId: agent.id,
               reason: "daily",

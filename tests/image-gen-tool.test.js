@@ -151,7 +151,7 @@ describe("generate-image tool — adapter resolution", () => {
 
     expect(openaiAdapter.submit).toHaveBeenCalledOnce();
     expect(codexAdapter.submit).not.toHaveBeenCalled();
-    expect(result.details.card.type).toBe("iframe");
+    expect(result.details.mediaGeneration.tasks).toEqual([{ taskId: "task-openai" }]);
   });
 });
 
@@ -167,8 +167,8 @@ describe("generate-image tool — submit error", () => {
   });
 });
 
-describe("generate-image tool — single submit returns card", () => {
-  it("returns iframe card on successful single submit", async () => {
+describe("generate-image tool — single submit returns media placeholder metadata", () => {
+  it("returns mediaGeneration metadata on successful single submit", async () => {
     const { registry, store, poller } = makeMediaGen({
       submit: vi.fn(async () => ({ taskId: "t-abc" })),
     });
@@ -177,10 +177,13 @@ describe("generate-image tool — single submit returns card", () => {
     const result = await execute({ prompt: "a sunset" }, ctx);
 
     expect(result.content[0].text).toContain("已提交 1 张");
-    expect(result.details.card.type).toBe("iframe");
-    expect(result.details.card.route).toMatch(/^\/card\?batch=/);
-    expect(result.details.card.title).toBe("图片生成");
-    expect(result.details.card.description).toContain("a sunset");
+    expect(result.details.card).toBeUndefined();
+    expect(result.details.mediaGeneration).toMatchObject({
+      kind: "image",
+      prompt: "a sunset",
+      tasks: [{ taskId: "t-abc" }],
+    });
+    expect(result.details.mediaGeneration.batchId).toBeTruthy();
   });
 
   it("records task in store", async () => {
@@ -211,6 +214,7 @@ describe("generate-image tool — single submit returns card", () => {
     expect(deferredCall).toBeTruthy();
     expect(deferredCall[1].taskId).toBe("t-deferred");
     expect(deferredCall[1].meta.type).toBe("image-generation");
+    expect(deferredCall[1].meta.mediaKind).toBe("image");
   });
 
   it("adds task to poller", async () => {
@@ -290,7 +294,7 @@ describe("generate-image tool — count=3 concurrent submits", () => {
 });
 
 describe("generate-image tool — partial failure handling", () => {
-  it("reports partial failure in text and still returns card", async () => {
+  it("reports partial failure in text and still returns media placeholder metadata", async () => {
     let callIndex = 0;
     const { registry, store, poller } = makeMediaGen({
       submit: vi.fn(async () => {
@@ -305,7 +309,10 @@ describe("generate-image tool — partial failure handling", () => {
 
     expect(result.content[0].text).toContain("已提交 2 张");
     expect(result.content[0].text).toContain("1 张提交失败");
-    expect(result.details.card).toBeTruthy();
+    expect(result.details.mediaGeneration.tasks).toEqual([
+      { taskId: "t-1" },
+      { taskId: "t-3" },
+    ]);
   });
 
   it("returns all-failed error when every submit throws", async () => {
@@ -366,7 +373,7 @@ describe("generate-image tool — image param (image-to-image)", () => {
 });
 
 describe("generate-image tool — deferred:register failure is non-fatal", () => {
-  it("still returns card when deferred:register throws", async () => {
+  it("still returns media placeholder metadata when deferred:register throws", async () => {
     const { registry, store, poller } = makeMediaGen({
       submit: vi.fn(async () => ({ taskId: "t-deferred-fail" })),
     });
@@ -380,7 +387,7 @@ describe("generate-image tool — deferred:register failure is non-fatal", () =>
     const result = await execute({ prompt: "fire" }, ctx);
 
     expect(result.content[0].text).toContain("已提交 1 张");
-    expect(result.details.card).toBeTruthy();
+    expect(result.details.mediaGeneration.tasks).toEqual([{ taskId: "t-deferred-fail" }]);
     expect(ctx.log.warn).toHaveBeenCalled();
   });
 });

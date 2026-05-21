@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { BLOCK_EXTRACTORS, extractBlocks } from '../server/block-extractors.js';
+import {
+  BLOCK_EXTRACTORS,
+  extractBlocks,
+  resolveMediaGenerationBlocks,
+} from '../server/block-extractors.js';
 
 // ─── stage_files ─────────────────────────────────────────────────────────────
 
@@ -95,6 +99,81 @@ describe('present_files', () => {
   it('produces identical output to stage_files', () => {
     const details = { filePath: '/a/x.py', label: 'x', ext: 'py' };
     expect(BLOCK_EXTRACTORS.present_files(details)).toEqual(BLOCK_EXTRACTORS.stage_files(details));
+  });
+});
+
+// ─── image-gen media generation ─────────────────────────────────────────────
+
+describe('image-gen media generation', () => {
+  it('extracts one pending media_generation block per submitted image task', () => {
+    const blocks = extractBlocks('image-gen_generate-image', {
+      mediaGeneration: {
+        kind: 'image',
+        batchId: 'batch-1',
+        prompt: 'A small moonlit room',
+        tasks: [
+          { taskId: 'task-a' },
+          { taskId: 'task-b' },
+        ],
+      },
+    });
+
+    expect(blocks).toEqual([
+      {
+        type: 'media_generation',
+        taskId: 'task-a',
+        kind: 'image',
+        batchId: 'batch-1',
+        prompt: 'A small moonlit room',
+        status: 'pending',
+      },
+      {
+        type: 'media_generation',
+        taskId: 'task-b',
+        kind: 'image',
+        batchId: 'batch-1',
+        prompt: 'A small moonlit room',
+        status: 'pending',
+      },
+    ]);
+  });
+
+  it('replaces historical pending media_generation blocks with completed session file blocks', () => {
+    const blocks = [{
+      type: 'media_generation',
+      afterIndex: 4,
+      taskId: 'task-a',
+      kind: 'image',
+      status: 'pending',
+    }];
+    const results = new Map([[
+      'task-a',
+      {
+        status: 'success',
+        result: {
+          sessionFiles: [{
+            fileId: 'sf_img',
+            filePath: '/tmp/generated.png',
+            label: 'generated.png',
+            ext: 'png',
+            mime: 'image/png',
+            kind: 'image',
+          }],
+        },
+      },
+    ]]);
+
+    expect(resolveMediaGenerationBlocks(blocks, results)).toEqual([{
+      type: 'file',
+      afterIndex: 4,
+      replacesTaskId: 'task-a',
+      fileId: 'sf_img',
+      filePath: '/tmp/generated.png',
+      label: 'generated.png',
+      ext: 'png',
+      mime: 'image/png',
+      kind: 'image',
+    }]);
   });
 });
 

@@ -1,6 +1,9 @@
 import { submitDesktopSessionMessage } from "./desktop-session-submit.js";
+import fsp from "fs/promises";
+import { detectMime } from "../lib/file-metadata.js";
 
 const ATTACHMENT_MARKER_RE = /^\[(attached_(?:image|video):[^\]]+)\]\s*$/;
+const ATTACHED_IMAGE_MARKER_RE = /\[attached_image:\s*([^\]]+)\]/g;
 
 export async function replayLatestUserTurn(engine, opts = {}, deps = {}) {
   const submit = deps.submit || submitDesktopSessionMessage;
@@ -39,6 +42,12 @@ export async function replayLatestUserTurn(engine, opts = {}, deps = {}) {
   const promptText = replacementText == null
     ? original.text
     : mergeAttachmentMarkers(original.text, String(replacementText));
+  const imageAttachmentPaths = attachedImagePathsFromText(promptText);
+  const missingImagePaths = imageAttachmentPaths.slice(original.images.length);
+  const images = [
+    ...original.images,
+    ...await imagePayloadsFromPaths(missingImagePaths, deps),
+  ];
 
   if (typeof session.navigateTree === "function") {
     const result = await session.navigateTree(latest.id, { summarize: false });
@@ -60,13 +69,29 @@ export async function replayLatestUserTurn(engine, opts = {}, deps = {}) {
   return await submit(engine, {
     sessionPath,
     text: promptText,
-    images: original.images.length ? original.images : undefined,
+    images: images.length ? images : undefined,
+    imageAttachmentPaths: imageAttachmentPaths.length ? imageAttachmentPaths : undefined,
     displayMessage: {
       ...(displayMessage || {}),
       text: displayMessage?.text ?? (replacementText == null ? visibleUserText(original.text) : String(replacementText)),
     },
     uiContext,
   });
+}
+
+async function imagePayloadsFromPaths(paths, deps = {}) {
+  const readFile = deps.readFile || fsp.readFile;
+  const images = [];
+  for (const filePath of paths) {
+    const buffer = await readFile(filePath);
+    const bytes = Buffer.from(buffer);
+    images.push({
+      type: "image",
+      data: bytes.toString("base64"),
+      mimeType: detectMime(bytes, "image/png", filePath),
+    });
+  }
+  return images;
 }
 
 function findLatestUserEntry(branch) {
@@ -91,6 +116,18 @@ function promptPayloadFromUserMessage(message) {
     .filter(block => block?.type === "image")
     .map(block => ({ ...block }));
   return { text, images };
+}
+
+function attachedImagePathsFromText(text) {
+  const paths = [];
+  const seen = new Set();
+  for (const match of String(text || "").matchAll(ATTACHED_IMAGE_MARKER_RE)) {
+    const filePath = String(match[1] || "").trim();
+    if (!filePath || seen.has(filePath)) continue;
+    seen.add(filePath);
+    paths.push(filePath);
+  }
+  return paths;
 }
 
 function mergeAttachmentMarkers(originalText, replacementText) {

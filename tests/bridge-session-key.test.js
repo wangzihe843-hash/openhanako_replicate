@@ -145,6 +145,83 @@ describe("collectKnownUsers", () => {
     expect(result.telegram[0].userId).toBe("222");
   });
 
+  it("normalizes QQ principals, aliases, and placeholder names from metadata", () => {
+    const index = {
+      "qq_dm_c2c-openid@hana": {
+        file: "owner/c2c.jsonl",
+        userId: "principal-1",
+        chatId: "c2c-openid",
+        name: "User",
+        qqPrincipal: {
+          principalId: "principal-1",
+          aliases: ["c2c-openid", "legacy-id"],
+          displayName: "User",
+        },
+      },
+      "qq_group_group-openid@hana": {
+        file: "guests/group.jsonl",
+        userId: "principal-1",
+        chatId: "group-openid",
+        name: "Alice",
+        qqPrincipal: {
+          principalId: "principal-1",
+          aliases: ["member-openid", "legacy-id"],
+          displayName: "Alice",
+        },
+      },
+    };
+
+    const result = collectKnownUsers(index);
+
+    expect(result.qq).toEqual([
+      {
+        userId: "principal-1",
+        principalId: "principal-1",
+        aliases: ["principal-1", "c2c-openid", "legacy-id", "member-openid"],
+        name: "Alice",
+        displayName: "Alice",
+        fallbackName: "QQ prin…al-1",
+      },
+    ]);
+  });
+
+  it("keeps legacy QQ strangers separate when no principal metadata links them", () => {
+    const index = {
+      "qq_dm_c2c-openid@hana": {
+        file: "owner/c2c.jsonl",
+        userId: "c2c-openid",
+        name: "User",
+      },
+      "qq_group_group-openid@hana": {
+        file: "guests/group.jsonl",
+        userId: "member-openid",
+        chatId: "group-openid",
+        name: "User",
+      },
+    };
+
+    const result = collectKnownUsers(index);
+
+    expect(result.qq).toEqual([
+      {
+        userId: "c2c-openid",
+        principalId: "c2c-openid",
+        aliases: ["c2c-openid"],
+        name: null,
+        displayName: null,
+        fallbackName: "QQ c2c-…enid",
+      },
+      {
+        userId: "member-openid",
+        principalId: "member-openid",
+        aliases: ["member-openid"],
+        name: null,
+        displayName: null,
+        fallbackName: "QQ memb…enid",
+      },
+    ]);
+  });
+
   it("returns empty object for empty index", () => {
     expect(collectKnownUsers({})).toEqual({});
   });

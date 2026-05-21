@@ -67,15 +67,15 @@ function extractText(content) {
     .join("");
 }
 
-function deferredResultFileBlocks(result) {
+function deferredResultFileBlocks(result, taskId = null) {
   if (!result || typeof result !== "object" || Array.isArray(result)) return [];
   const sessionFiles = Array.isArray(result.sessionFiles) ? result.sessionFiles : [];
   return sessionFiles
-    .map(sessionFileToContentBlock)
+    .map((file) => sessionFileToContentBlock(file, taskId ? { replacesTaskId: taskId } : undefined))
     .filter(Boolean);
 }
 
-function sessionFileToContentBlock(file) {
+function sessionFileToContentBlock(file, extra = undefined) {
   if (!file || typeof file !== "object") return null;
   const filePath = file.filePath || file.realPath || null;
   if (!filePath) return null;
@@ -84,6 +84,7 @@ function sessionFileToContentBlock(file) {
   const ext = file.ext ?? path.extname(filePath || label).toLowerCase().replace(/^\./, "");
   return {
     type: "file",
+    ...(extra || {}),
     ...(fileId ? { fileId } : {}),
     filePath,
     label,
@@ -93,6 +94,20 @@ function sessionFileToContentBlock(file) {
     ...(file.storageKind ? { storageKind: file.storageKind } : {}),
     ...(file.status ? { status: file.status } : {}),
     ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+  };
+}
+
+function deferredResultFailureBlock(event) {
+  const metaType = event?.meta?.type || "";
+  const mediaKind = event?.meta?.mediaKind || (metaType === "video-generation" ? "video" : (metaType === "image-generation" ? "image" : null));
+  if (!mediaKind || !event?.taskId) return null;
+  return {
+    type: "media_generation",
+    taskId: event.taskId,
+    kind: mediaKind,
+    status: event.status === "aborted" ? "aborted" : "failed",
+    ...(event.reason ? { reason: event.reason } : {}),
+    ...(event.meta?.prompt ? { prompt: event.meta.prompt } : {}),
   };
 }
 
@@ -739,9 +754,12 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         meta: event.meta,
       });
       if (event.status === "success") {
-        for (const block of deferredResultFileBlocks(event.result)) {
+        for (const block of deferredResultFileBlocks(event.result, event.taskId)) {
           emitStreamEvent(sessionPath, ss, { type: "content_block", block });
         }
+      } else {
+        const block = deferredResultFailureBlock(event);
+        if (block) emitStreamEvent(sessionPath, ss, { type: "content_block", block });
       }
     }
   });

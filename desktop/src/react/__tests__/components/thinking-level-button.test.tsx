@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { ThinkingLevelButton } from '../../components/input/ThinkingLevelButton';
 import { useStore } from '../../stores';
@@ -23,8 +23,11 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('ThinkingLevelButton', () => {
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     useStore.setState({
       currentSessionPath: null,

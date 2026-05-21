@@ -18,10 +18,12 @@ describe("channels route membership contract", () => {
   let refreshChannelProactiveSchedule;
   let triggerChannelDelivery;
   let agentList;
+  let channelsEnabled;
 
   beforeEach(() => {
     tmpDir = mktemp();
     agentList = [];
+    channelsEnabled = true;
     engine = {
       channelsDir: path.join(tmpDir, "channels"),
       agentsDir: path.join(tmpDir, "agents"),
@@ -29,7 +31,10 @@ describe("channels route membership contract", () => {
       userName: "user",
       currentAgentId: "alice",
       getPrimaryAgentId: () => "alice",
-      isChannelsEnabled: () => true,
+      isChannelsEnabled: () => channelsEnabled,
+      setChannelsEnabled: vi.fn(async (enabled) => {
+        channelsEnabled = !!enabled;
+      }),
       availableModels: [
         { id: "deepseek-v4-flash", provider: "deepseek", name: "DeepSeek V4 Flash" },
       ],
@@ -76,6 +81,83 @@ describe("channels route membership contract", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/at least 2/i);
+  });
+
+  it("freezes channel and phone settings routes when channels are disabled", async () => {
+    const channelsDir = path.join(tmpDir, "channels");
+    await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["alice", "bob"],
+    });
+    channelsEnabled = false;
+
+    const requests = [
+      () => app.request("/api/conversations/ch_crew/agent-activities"),
+      () => app.request("/api/conversations/ch_crew/agent-phone-settings"),
+      () => app.request("/api/conversations/ch_crew/agent-phone-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "write" }),
+      }),
+      () => app.request("/api/conversations/ch_crew/agent-phone-tool-mode"),
+      () => app.request("/api/conversations/ch_crew/agent-phone-tool-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "write" }),
+      }),
+      () => app.request("/api/conversations/dm%3Abob/agent-phone-settings"),
+      () => app.request("/api/conversations/dm%3Abob/agent-phone-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "write" }),
+      }),
+      () => app.request("/api/conversations/dm%3Abob/agent-phone-tool-mode"),
+      () => app.request("/api/conversations/dm%3Abob/agent-phone-tool-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "write" }),
+      }),
+      () => app.request("/api/channels"),
+      () => app.request("/api/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "New Crew", members: ["alice", "bob"] }),
+      }),
+      () => app.request("/api/channels/ch_crew"),
+      () => app.request("/api/channels/ch_crew/members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberId: "carol" }),
+      }),
+      () => app.request("/api/channels/ch_crew/members/bob", { method: "DELETE" }),
+      () => app.request("/api/channels/ch_crew/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "hello" }),
+      }),
+      () => app.request("/api/channels/ch_crew/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timestamp: new Date().toISOString() }),
+      }),
+      () => app.request("/api/channels/ch_crew", { method: "DELETE" }),
+    ];
+
+    for (const request of requests) {
+      const res = await request();
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toMatch(/disabled/i);
+    }
+
+    const toggleRes = await app.request("/api/channels/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(toggleRes.status).toBe(200);
+    expect(await toggleRes.json()).toMatchObject({ ok: true, enabled: true });
+    expect(engine.setChannelsEnabled).toHaveBeenCalledWith(true);
   });
 
   it("returns agent phone activities for a conversation", async () => {

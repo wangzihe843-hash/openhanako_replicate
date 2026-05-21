@@ -34,6 +34,12 @@ describe("FreshCompactMaintainer", () => {
 
   it("runs stale bridge and phone fresh-compacts from the background maintainer", async () => {
     const agent = makeAgent();
+    const bridgeFile = path.join(agent.sessionDir, "bridge", "owner", "owner.jsonl");
+    fs.mkdirSync(path.dirname(bridgeFile), { recursive: true });
+    fs.writeFileSync(bridgeFile, "", "utf-8");
+    agent.memoryTicker = {
+      flushSessionAndCompile: vi.fn(async () => {}),
+    };
     const phoneFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone.jsonl");
     fs.mkdirSync(path.dirname(phoneFile), { recursive: true });
     fs.writeFileSync(phoneFile, "", "utf-8");
@@ -49,7 +55,7 @@ describe("FreshCompactMaintainer", () => {
     });
 
     const bridgeSessionManager = {
-      listDailyFreshCompactTargets: vi.fn(() => [{ sessionKey: "tg_dm_owner" }]),
+      listDailyFreshCompactTargets: vi.fn(() => [{ sessionKey: "tg_dm_owner", sessionPath: bridgeFile }]),
       freshCompactSession: vi.fn(async () => ({ fresh: true })),
     };
     const engine = {
@@ -66,11 +72,14 @@ describe("FreshCompactMaintainer", () => {
     const result = await maintainer.runDaily({ now });
 
     expect(bridgeSessionManager.listDailyFreshCompactTargets).toHaveBeenCalledWith(agent, { now });
+    expect(agent.memoryTicker.flushSessionAndCompile).toHaveBeenCalledWith(bridgeFile);
     expect(bridgeSessionManager.freshCompactSession).toHaveBeenCalledWith("tg_dm_owner", {
       agentId: agent.id,
       reason: "daily",
       now,
     });
+    expect(agent.memoryTicker.flushSessionAndCompile.mock.invocationCallOrder[0])
+      .toBeLessThan(bridgeSessionManager.freshCompactSession.mock.invocationCallOrder[0]);
     expect(freshCompactAgentPhoneSessionMock).toHaveBeenCalledWith(agent.id, {
       engine,
       conversationId: "ch_crew",

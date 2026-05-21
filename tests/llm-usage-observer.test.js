@@ -66,6 +66,27 @@ describe("LLM usage observer", () => {
     });
   });
 
+  it("normalizes DeepSeek cache hit and miss token fields", () => {
+    const usage = normalizeLlmUsage({
+      prompt_tokens: 1000,
+      completion_tokens: 120,
+      total_tokens: 1120,
+      prompt_cache_hit_tokens: 720,
+      prompt_cache_miss_tokens: 280,
+    });
+
+    expect(usage).toMatchObject({
+      inputTokens: 1000,
+      outputTokens: 120,
+      cacheReadTokens: 720,
+      cacheWriteTokens: 0,
+      cacheMissTokens: 280,
+      totalTokens: 1120,
+      cacheHit: true,
+      cacheCreated: false,
+    });
+  });
+
   it("builds a structured debug record without request content", () => {
     const record = buildUsageDebugRecord({
       source: "utility",

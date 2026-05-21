@@ -112,6 +112,7 @@ describe("HanaEngine.buildTools", () => {
     const { customTools } = engine.buildTools(tmpDir, [
       { name: "browser", execute: vi.fn() },
       { name: "channel", execute: vi.fn() },
+      { name: "dm", execute: vi.fn() },
       { name: "cron", execute: vi.fn() },
     ], {
       agentDir,

@@ -7,6 +7,7 @@
  * toolResult 消息没有 .toolCall 属性。
  */
 
+import path from "path";
 import { materializeExecutorIdentity } from "../lib/subagent-executor-metadata.js";
 
 export const BLOCK_EXTRACTORS = {
@@ -61,6 +62,10 @@ export const BLOCK_EXTRACTORS = {
       mimeType: imgBlock?.mimeType || details.mimeType || "image/jpeg",
     }];
   },
+
+  "image-gen_generate-image": (details) => extractMediaGenerationBlocks(details, "image"),
+
+  "image-gen_generate-video": (details) => extractMediaGenerationBlocks(details, "video"),
 
   computer: (details) => {
     const confirmation = details.confirmation;
@@ -185,6 +190,140 @@ function sessionFileFields(file) {
   };
 }
 
+function extractMediaGenerationBlocks(details, fallbackKind) {
+  const media = details?.mediaGeneration;
+  if (!media || typeof media !== "object") return null;
+  const tasks = Array.isArray(media.tasks) ? media.tasks : [];
+  const kind = media.kind || fallbackKind || "image";
+  const blocks = tasks
+    .map((task) => {
+      const taskId = typeof task === "string" ? task : task?.taskId;
+      if (!taskId) return null;
+      return {
+        type: "media_generation",
+        taskId,
+        kind,
+        ...(media.batchId ? { batchId: media.batchId } : {}),
+        ...(media.prompt ? { prompt: media.prompt } : {}),
+        status: "pending",
+      };
+    })
+    .filter(Boolean);
+  return blocks.length ? blocks : null;
+}
+
+function resultSessionFileBlocks(result, taskId, afterIndex) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const sessionFiles = Array.isArray(result.sessionFiles) ? result.sessionFiles : [];
+  return sessionFiles
+    .map((file) => sessionFileToContentBlock(file, {
+      replacesTaskId: taskId,
+      ...(afterIndex !== undefined ? { afterIndex } : {}),
+    }))
+    .filter(Boolean);
+}
+
+function sessionFileToContentBlock(file, extra = undefined) {
+  if (!file || typeof file !== "object") return null;
+  const filePath = file.filePath || file.realPath || null;
+  if (!filePath) return null;
+  const fileId = file.fileId || file.id || null;
+  const label = file.label || file.displayName || file.filename || path.basename(filePath);
+  const ext = file.ext ?? path.extname(filePath || label).toLowerCase().replace(/^\./, "");
+  return {
+    type: "file",
+    ...(extra || {}),
+    ...(fileId ? { fileId } : {}),
+    filePath,
+    label,
+    ext,
+    ...(file.mime ? { mime: file.mime } : {}),
+    ...(file.kind ? { kind: file.kind } : {}),
+    ...(file.storageKind ? { storageKind: file.storageKind } : {}),
+    ...(file.status ? { status: file.status } : {}),
+    ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+  };
+}
+
+function mediaGenerationFallbackBlock(block, result) {
+  const status = result?.status === "aborted" ? "aborted" : "failed";
+  return {
+    ...block,
+    status,
+    ...(result?.reason ? { reason: result.reason } : {}),
+  };
+}
+
+function mediaGenerationReplacementBlocks(block, result) {
+  if (!result) return [block];
+  if (result.status === "success" || result.status === "resolved") {
+    const fileBlocks = resultSessionFileBlocks(result.result, block.taskId, block.afterIndex);
+    return fileBlocks.length ? fileBlocks : [mediaGenerationFallbackBlock(block, {
+      status: "failed",
+      reason: "生成结果没有可显示文件",
+    })];
+  }
+  if (result.status === "failed" || result.status === "aborted") {
+    return [mediaGenerationFallbackBlock(block, result)];
+  }
+  return [block];
+}
+
+function fileBlockKey(block) {
+  if (!block || block.type !== "file") return null;
+  return block.fileId || block.filePath || null;
+}
+
+function pushUniqueBlock(target, seenFiles, block) {
+  const key = fileBlockKey(block);
+  if (key) {
+    if (seenFiles.has(key)) return;
+    seenFiles.add(key);
+  }
+  target.push(block);
+}
+
+function mediaKindFromDeferredType(type) {
+  if (type === "video-generation") return "video";
+  if (type === "image-generation") return "image";
+  return "image";
+}
+
+export function resolveMediaGenerationBlocks(blocks, results = new Map(), standaloneResults = []) {
+  const resolved = [];
+  const consumedTaskIds = new Set();
+  const seenFiles = new Set();
+  const resultMap = results && typeof results.get === "function" ? results : new Map();
+
+  for (const block of blocks || []) {
+    if (block?.type === "media_generation" && block.taskId && resultMap.has(block.taskId)) {
+      const result = resultMap.get(block.taskId);
+      consumedTaskIds.add(block.taskId);
+      for (const replacement of mediaGenerationReplacementBlocks(block, result)) {
+        pushUniqueBlock(resolved, seenFiles, replacement);
+      }
+      continue;
+    }
+    pushUniqueBlock(resolved, seenFiles, block);
+  }
+
+  for (const result of standaloneResults || []) {
+    if (!result?.taskId || consumedTaskIds.has(result.taskId)) continue;
+    const syntheticBlock = {
+      type: "media_generation",
+      taskId: result.taskId,
+      kind: mediaKindFromDeferredType(result.type),
+      status: "pending",
+      ...(result.afterIndex !== undefined ? { afterIndex: result.afterIndex } : {}),
+    };
+    for (const replacement of mediaGenerationReplacementBlocks(syntheticBlock, result)) {
+      pushUniqueBlock(resolved, seenFiles, replacement);
+    }
+  }
+
+  return resolved;
+}
+
 function extractPluginCard(details) {
   if (!details?.card?.pluginId) return null;
   const c = details.card;
@@ -200,6 +339,14 @@ function extractPluginCard(details) {
   return { type: "plugin_card", card: { ...safeCard, type: safeCard.type || "iframe" } };
 }
 
+function shouldExtractPluginCard(toolName, details) {
+  const card = details?.card;
+  if (card?.pluginId === "image-gen" && String(toolName || "").startsWith("image-gen_")) {
+    return false;
+  }
+  return true;
+}
+
 export function extractBlocks(toolName, details, toolResult) {
   const blocks = [];
   const extractor = BLOCK_EXTRACTORS[toolName];
@@ -207,7 +354,7 @@ export function extractBlocks(toolName, details, toolResult) {
     const result = extractor(details || {}, toolResult);
     if (result) blocks.push(...result);
   }
-  const card = extractPluginCard(details);
+  const card = shouldExtractPluginCard(toolName, details) ? extractPluginCard(details) : null;
   if (card) blocks.push(card);
   return blocks;
 }

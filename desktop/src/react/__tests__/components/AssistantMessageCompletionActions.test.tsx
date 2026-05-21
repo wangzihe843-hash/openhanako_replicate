@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssistantMessage } from '../../components/chat/AssistantMessage';
 import { useStore } from '../../stores';
 import type { ChatMessage } from '../../stores/chat-types';
@@ -50,8 +50,11 @@ describe('AssistantMessage completion actions', () => {
     blocks: [{ type: 'text', html: '<p>月亮很好。</p>' }],
   };
 
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     Object.assign(window, {
       t: (key: string) => ({

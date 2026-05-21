@@ -11,6 +11,10 @@ import styles from '../../Settings.module.css';
 export interface KnownUser {
   userId: string;
   name?: string;
+  displayName?: string | null;
+  fallbackName?: string;
+  aliases?: string[];
+  principalId?: string;
 }
 
 // ── BridgeStatusDot ──
@@ -60,6 +64,16 @@ export function OwnerSelect({ platform, users, currentOwner, onChange }: OwnerSe
   };
 
   const cancel = () => setPendingUserId(null);
+  const optionLabel = (u: KnownUser) => {
+    if (platform === 'qq') {
+      const displayName = cleanQQOwnerDisplayName(u.displayName || u.name);
+      if (displayName) return displayName;
+      if (u.fallbackName) return u.fallbackName;
+      return `QQ ${shortOwnerId(u.principalId || u.userId)}`;
+    }
+    if (u.name) return u.name;
+    return u.userId;
+  };
 
   return (
     <div className={`${styles['settings-form-field']} ${'bridge-owner-field'}`}>
@@ -71,7 +85,7 @@ export function OwnerSelect({ platform, users, currentOwner, onChange }: OwnerSe
         disabled={users.length === 0}
         options={[
           { value: '', label: users.length > 0 ? '—' : t('settings.bridge.ownerNone') },
-          ...users.map((u) => ({ value: u.userId, label: u.name || u.userId })),
+          ...users.map((u) => ({ value: u.userId, label: optionLabel(u) })),
         ]}
       />
 
@@ -94,4 +108,17 @@ export function OwnerSelect({ platform, users, currentOwner, onChange }: OwnerSe
       )}
     </div>
   );
+}
+
+function cleanQQOwnerDisplayName(name?: string | null) {
+  const value = typeof name === 'string' ? name.trim() : '';
+  if (!value) return null;
+  if (value.toLowerCase() === 'user') return null;
+  return value;
+}
+
+function shortOwnerId(id: string) {
+  const value = String(id || '');
+  if (value.length <= 8) return value;
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
 }

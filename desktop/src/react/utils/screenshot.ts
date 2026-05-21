@@ -23,6 +23,7 @@ function dispatchInlineNotice(text: string, type: 'success' | 'error', deskDir?:
 type StoreSnapshot = ReturnType<typeof useStore.getState>;
 type ScreenshotRenderPayload = ScreenshotPayload & {
   saveDir?: string | null;
+  locale?: string;
   segmentIndex?: number;
   segmentTotal?: number;
 };
@@ -97,6 +98,7 @@ async function buildScreenshotPayloadForMessages(
 ): Promise<ScreenshotRenderPayload> {
   const payload = extractScreenshotPayload(messages, theme) as ScreenshotRenderPayload;
   payload.saveDir = state.homeFolder || null;
+  payload.locale = window.i18n?.locale || state.locale || window.navigator?.language || 'zh';
   if (segment.total > 1) {
     payload.segmentIndex = segment.index;
     payload.segmentTotal = segment.total;
@@ -230,6 +232,7 @@ export async function takeArticleScreenshot(markdown: string): Promise<void> {
       theme,
       markdown,
       saveDir: homeFolder,
+      locale: window.i18n?.locale || useStore.getState().locale || window.navigator?.language || 'zh',
     });
 
     if (result.success) {

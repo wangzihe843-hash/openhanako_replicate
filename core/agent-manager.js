@@ -647,7 +647,6 @@ export class AgentManager {
     try {
       await this._doSwitchAgentOnly(agentId);
       this._d.getSkills().syncAgentSkills(this.agent);
-      this._d.getPrefs().savePrimaryAgent(agentId);
       const homeFolder = engine?.getExplicitHomeCwd?.(agentId) || null;
       const nextCwd = homeFolder || previousCwd || engine?.getHomeCwd?.(agentId) || undefined;
       const sessionResult = await this._d.getSessionCoordinator().createSession(null, nextCwd);

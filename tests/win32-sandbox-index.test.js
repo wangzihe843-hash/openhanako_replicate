@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("createSandboxedTools on Windows", () => {
-  it("constructs a sandboxed AppContainer exec plus an unsandboxed fallback exec", async () => {
+  it("constructs a sandboxed restricted-token exec plus an unsandboxed fallback exec", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const { createSandboxedTools } = await import("../lib/sandbox/index.js");
 

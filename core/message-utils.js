@@ -18,6 +18,7 @@ export const TOOL_ARG_SUMMARY_KEYS = [
 ];
 
 const SESSION_TAIL_READ_THRESHOLD = 256 * 1024;
+const ATTACHED_IMAGE_MARKER_RE = /\[attached_image:\s*[^\]]+\]/g;
 
 /** 从文本中提取并剥离 <think>/<thinking> 标签 */
 export function stripThinkTags(raw) {
@@ -72,6 +73,14 @@ export function extractTextContent(content, { stripThink = false } = {}) {
   return { text, thinking, toolUses, images };
 }
 
+export function filterUnreferencedInlineImages(text, images) {
+  if (!Array.isArray(images) || images.length === 0) return [];
+  const markerCount = String(text || "").match(ATTACHED_IMAGE_MARKER_RE)?.length || 0;
+  if (markerCount <= 0) return images;
+  if (markerCount >= images.length) return [];
+  return images.slice(markerCount);
+}
+
 /**
  * 优先从 session JSONL 读取完整历史。
  * engine.messages 可能只是当前上下文窗口，切回页面时会导致旧消息缺失。
@@ -87,11 +96,8 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
       const branch = manager.getBranch();
       const messages = [];
       for (const entry of branch) {
-        if (entry.type !== "message" || !entry.message) continue;
-        const message = { ...entry.message };
-        if (entry.id) message.id = entry.id;
-        if (entry.timestamp) message.timestamp = entry.timestamp;
-        messages.push(message);
+        const message = historyMessageFromEntry(entry);
+        if (message) messages.push(message);
       }
       if (messages.length > 0) return messages;
     }
@@ -107,12 +113,8 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
       if (!line.trim()) continue;
       try {
         const entry = JSON.parse(line);
-        if (entry.type === "message" && entry.message) {
-          const message = { ...entry.message };
-          if (entry.id) message.id = entry.id;
-          if (entry.timestamp) message.timestamp = entry.timestamp;
-          messages.push(message);
-        }
+        const message = historyMessageFromEntry(entry);
+        if (message) messages.push(message);
       } catch {
         // 跳过损坏行
       }
@@ -124,6 +126,28 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
   }
 
   return [];
+}
+
+function historyMessageFromEntry(entry) {
+  if (entry?.type === "message" && entry.message) {
+    const message = { ...entry.message };
+    if (entry.id) message.id = entry.id;
+    if (entry.timestamp) message.timestamp = entry.timestamp;
+    return message;
+  }
+  if (entry?.type === "custom_message" && entry.customType) {
+    const message = {
+      role: "custom",
+      customType: entry.customType,
+      content: entry.content || "",
+      display: entry.display,
+      ...(entry.details !== undefined ? { details: entry.details } : {}),
+    };
+    if (entry.id) message.id = entry.id;
+    if (entry.timestamp) message.timestamp = entry.timestamp;
+    return message;
+  }
+  return null;
 }
 
 async function looksLikePiSessionFile(sessionPath) {

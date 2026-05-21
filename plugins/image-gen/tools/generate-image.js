@@ -111,7 +111,7 @@ export async function execute(input, ctx) {
       await ctx.bus.request("deferred:register", {
         taskId: r.taskId,
         sessionPath: ctx.sessionPath,
-        meta: { type: "image-generation", prompt: input.prompt },
+        meta: { type: "image-generation", mediaKind: "image", prompt: input.prompt },
       });
     } catch (err) {
       ctx.log.warn(`deferred:register failed for ${r.taskId}:`, err);
@@ -144,12 +144,11 @@ export async function execute(input, ctx) {
   return {
     content: [{ type: "text", text }],
     details: {
-      card: {
-        type: "iframe",
-        route: `/card?batch=${batchId}`,
-        title: "图片生成",
-        description: `${input.prompt.slice(0, 60)} (${succeeded.length}张)`,
-        aspectRatio: input.ratio || "1:1",
+      mediaGeneration: {
+        kind: "image",
+        batchId,
+        prompt: input.prompt,
+        tasks: succeeded.map((task) => ({ taskId: task.taskId })),
       },
     },
   };

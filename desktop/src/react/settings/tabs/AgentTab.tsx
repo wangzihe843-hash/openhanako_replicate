@@ -5,7 +5,7 @@ import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t, autoSaveConfig } from '../helpers';
 import { SelectWidget } from '@/ui';
-import { browseAgent, switchToAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { browseAgent, switchToAgent, setPrimaryAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { AgentCardStack } from './agent/AgentCardStack';
 import { YuanSelector } from './agent/YuanSelector';
 import { MemorySection } from './agent/AgentMemory';
@@ -236,7 +236,7 @@ export function AgentTab() {
             });
             input.click();
           }}
-          onSetActive={(id) => switchToAgent(id)}
+          onSetPrimary={(id) => setPrimaryAgent(id)}
           onDelete={(id) => window.dispatchEvent(new CustomEvent('hana-show-agent-delete', {
             detail: { agentId: id },
           }))}

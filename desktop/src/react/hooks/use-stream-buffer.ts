@@ -370,7 +370,7 @@ class StreamBufferManager {
         }
         this.updateTargetMessage(buf, (m) => ({
           ...m,
-          blocks: [...(m.blocks || []), block],
+          blocks: mergeContentBlock([...(m.blocks || [])], block),
         }));
         break;
       }
@@ -441,6 +441,25 @@ class StreamBufferManager {
 
 /** 全局 singleton */
 export const streamBufferManager = new StreamBufferManager();
+
+function mergeContentBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[] {
+  const taskId = replacementTaskId(block);
+  if (!taskId) return [...blocks, block];
+  const idx = blocks.findIndex((existing) => (
+    existing.type === 'media_generation' &&
+    existing.taskId === taskId
+  ));
+  if (idx < 0) return [...blocks, block];
+  const next = [...blocks];
+  next[idx] = block;
+  return next;
+}
+
+function replacementTaskId(block: ContentBlock): string | null {
+  if (block.type === 'file') return block.replacesTaskId || null;
+  if (block.type === 'media_generation' && block.status !== 'pending') return block.taskId;
+  return null;
+}
 
 // 让 chat-slice / session-actions 通过桥接模块触达 manager，打破循环依赖。
 registerStreamBufferInvalidator((sessionPath) => {

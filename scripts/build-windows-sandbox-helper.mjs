@@ -37,6 +37,7 @@ export function buildWindowsSandboxCompileCommand({ source, output } = {}) {
     `/OUT:${quoteCmd(output)}`,
     "userenv.lib",
     "advapi32.lib",
+    "user32.lib",
   ].join(" ");
 }
 

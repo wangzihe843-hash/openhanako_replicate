@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { InputArea } from '../../components/InputArea';
 import { AssistantMessage } from '../../components/chat/AssistantMessage';
@@ -161,8 +161,11 @@ function seedSession() {
 }
 
 describe('computer app approval prompt', () => {
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     seedSession();
   });

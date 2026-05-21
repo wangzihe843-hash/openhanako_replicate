@@ -54,48 +54,70 @@ function normalizeSystem(system) {
   return { value: next, changed: true };
 }
 
-function normalizeLastUserMessage(messages) {
+function normalizeUserMessage(message) {
+  if (!message || message.role !== "user") {
+    return { value: message, changed: false, cacheable: false };
+  }
+
+  if (typeof message.content === "string") {
+    if (message.content.trim().length === 0) {
+      return { value: message, changed: false, cacheable: false };
+    }
+    return {
+      value: {
+        ...message,
+        content: [{
+          type: "text",
+          text: message.content,
+          cache_control: { ...CACHE_CONTROL },
+        }],
+      },
+      changed: true,
+      cacheable: true,
+    };
+  }
+
+  if (!Array.isArray(message.content) || message.content.length === 0) {
+    return { value: message, changed: false, cacheable: false };
+  }
+
+  const blockIndex = message.content.length - 1;
+  const lastBlock = message.content[blockIndex];
+  if (!shouldCacheContentBlock(lastBlock)) {
+    return { value: message, changed: false, cacheable: false };
+  }
+  if (hasCacheControl(lastBlock)) {
+    return { value: message, changed: false, cacheable: true };
+  }
+
+  const nextContent = message.content.slice();
+  nextContent[blockIndex] = withCacheControl(lastBlock);
+  return {
+    value: { ...message, content: nextContent },
+    changed: true,
+    cacheable: true,
+  };
+}
+
+function normalizeRecentUserMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return { value: messages, changed: false };
   }
 
-  const lastIndex = messages.length - 1;
-  const lastMessage = messages[lastIndex];
-  if (!lastMessage || lastMessage.role !== "user") {
-    return { value: messages, changed: false };
-  }
-
-  if (typeof lastMessage.content === "string") {
-    if (lastMessage.content.trim().length === 0) {
-      return { value: messages, changed: false };
+  let next = messages;
+  let changed = false;
+  let marked = 0;
+  for (let i = messages.length - 1; i >= 0 && marked < 2; i--) {
+    const result = normalizeUserMessage(next[i]);
+    if (!result.cacheable) continue;
+    marked++;
+    if (result.changed) {
+      if (next === messages) next = messages.slice();
+      next[i] = result.value;
+      changed = true;
     }
-    const next = messages.slice();
-    next[lastIndex] = {
-      ...lastMessage,
-      content: [{
-        type: "text",
-        text: lastMessage.content,
-        cache_control: { ...CACHE_CONTROL },
-      }],
-    };
-    return { value: next, changed: true };
   }
-
-  if (!Array.isArray(lastMessage.content) || lastMessage.content.length === 0) {
-    return { value: messages, changed: false };
-  }
-
-  const blockIndex = lastMessage.content.length - 1;
-  const lastBlock = lastMessage.content[blockIndex];
-  if (!shouldCacheContentBlock(lastBlock) || hasCacheControl(lastBlock)) {
-    return { value: messages, changed: false };
-  }
-
-  const nextContent = lastMessage.content.slice();
-  nextContent[blockIndex] = withCacheControl(lastBlock);
-  const next = messages.slice();
-  next[lastIndex] = { ...lastMessage, content: nextContent };
-  return { value: next, changed: true };
+  return { value: next, changed };
 }
 
 export function matches(model) {
@@ -114,7 +136,7 @@ export function apply(payload) {
     if (system.changed) result = { ...result, system: system.value };
   }
 
-  const messages = normalizeLastUserMessage(result.messages);
+  const messages = normalizeRecentUserMessages(result.messages);
   if (messages.changed) result = { ...result, messages: messages.value };
 
   return result;

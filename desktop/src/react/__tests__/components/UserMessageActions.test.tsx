@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserMessage } from '../../components/chat/UserMessage';
 import { useStore } from '../../stores';
 
@@ -14,8 +14,11 @@ vi.mock('../../stores/message-turn-actions', () => ({
 }));
 
 describe('UserMessage Codex-style actions', () => {
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     Object.assign(window, {
       t: (key: string) => ({

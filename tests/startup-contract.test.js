@@ -61,6 +61,14 @@ describe("local startup contract", () => {
     expect(external).toContain("jsdom");
   });
 
+  it("keeps workspace output helper statically bundleable in packaged server", () => {
+    const source = fs.readFileSync(path.join(ROOT, "shared", "workspace-output.js"), "utf-8");
+
+    expect(source).toContain('from "./workspace-output.cjs"');
+    expect(source).not.toContain("createRequire");
+    expect(source).not.toContain('require("./workspace-output.cjs")');
+  });
+
   it("server-only packaging emits a bundled CLI and wrapper", () => {
     const buildServer = fs.readFileSync(path.join(ROOT, "scripts", "build-server.mjs"), "utf-8");
 

@@ -1045,6 +1045,104 @@ describe("BridgeManager._handleMessage", () => {
       // agent 的回复送回 adapter
       await vi.waitFor(() => expect(adapter.sendReply).toHaveBeenCalled());
     });
+
+    it("treats a QQ principal alias as owner for slash dispatch", async () => {
+      const { bm, engine, hub } = createMocks();
+      engine.getAgent.mockImplementation((id) => {
+        if (id === "hana") {
+          return {
+            agentName: "TestAgent",
+            config: { bridge: { qq: { owner: "c2c-openid" } } },
+            sessionDir: os.tmpdir(),
+          };
+        }
+        return null;
+      });
+      engine.abortBridgeSession.mockResolvedValue(true);
+      bm._platforms.set("qq:hana", {
+        adapter: {
+          sendReply: vi.fn().mockResolvedValue(),
+          sendBlockReply: vi.fn().mockResolvedValue(),
+          sendTypingIndicator: vi.fn().mockResolvedValue(),
+          stop: vi.fn(),
+        },
+        status: "connected",
+        agentId: "hana",
+        platform: "qq",
+      });
+
+      await bm._handleMessage("qq", {
+        sessionKey: "qq_dm_c2c-openid@hana",
+        text: "/stop",
+        senderName: "QQ stable",
+        userId: "stable-user-id",
+        chatId: "c2c-openid",
+        qqPrincipal: {
+          principalId: "stable-user-id",
+          aliases: ["stable-user-id", "c2c-openid"],
+        },
+        isGroup: false,
+        agentId: "hana",
+      });
+
+      expect(engine.abortBridgeSession).toHaveBeenCalledWith("qq_dm_c2c-openid@hana");
+      expect(hub.send).not.toHaveBeenCalled();
+    });
+  });
+
+  it("carries QQ principal metadata into bridge session writes", async () => {
+    const { bm, engine, hub } = createMocks();
+    engine.getAgent.mockImplementation((id) => {
+      if (id === "hana") {
+        return {
+          agentName: "TestAgent",
+          config: { bridge: { qq: { owner: "c2c-openid" } } },
+          sessionDir: os.tmpdir(),
+        };
+      }
+      return null;
+    });
+    bm._platforms.set("qq:hana", {
+      adapter: {
+        sendReply: vi.fn().mockResolvedValue(),
+        sendBlockReply: vi.fn().mockResolvedValue(),
+        sendTypingIndicator: vi.fn().mockResolvedValue(),
+        stop: vi.fn(),
+      },
+      status: "connected",
+      agentId: "hana",
+      platform: "qq",
+    });
+
+    const qqPrincipal = {
+      principalId: "stable-user-id",
+      aliases: ["stable-user-id", "c2c-openid"],
+      fallbackName: "QQ stab…r-id",
+    };
+
+    await bm._handleMessage("qq", {
+      sessionKey: "qq_dm_c2c-openid@hana",
+      text: "hello",
+      senderName: "QQ stab…r-id",
+      userId: "stable-user-id",
+      chatId: "c2c-openid",
+      qqPrincipal,
+      isGroup: false,
+      agentId: "hana",
+    });
+
+    await vi.advanceTimersByTimeAsync(2100);
+
+    expect(hub.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          userId: "stable-user-id",
+          chatId: "c2c-openid",
+          qqPrincipal,
+        }),
+      }),
+    );
   });
 
   // ── Agent isolation ──

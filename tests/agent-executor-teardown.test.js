@@ -340,6 +340,51 @@ describe("runAgentSession teardown", () => {
     ]);
   });
 
+  it("registers a live phone abort handler and unregisters it after teardown", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "dm_yui", "phone-abort.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    let abortHandler = null;
+    let resolvePrompt = null;
+    const unregister = vi.fn();
+    const session = {
+      abort: vi.fn(),
+      prompt: vi.fn(() => new Promise((resolve) => { resolvePrompt = resolve; })),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const engine = {
+      ...makeEngine(agent, cwd),
+      registerAgentPhoneAbortHandler: vi.fn((handler) => {
+        abortHandler = handler;
+        return unregister;
+      }),
+    };
+
+    const running = runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "dm:yui",
+      conversationType: "dm",
+    });
+    await vi.waitFor(() => expect(engine.registerAgentPhoneAbortHandler).toHaveBeenCalledOnce());
+
+    abortHandler?.("phone-disabled");
+    expect(session.abort).toHaveBeenCalledOnce();
+
+    resolvePrompt?.();
+    await running;
+    expect(unregister).toHaveBeenCalledOnce();
+  });
+
   it("phone session can use a channel-scoped model override without mutating the agent default", async () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });

@@ -398,7 +398,7 @@ export async function hydrateCurrentChannelIfNeeded(): Promise<void> {
 export function appendChannelMessage(
   channelId: string,
   message: ChannelMessage,
-  options: { markRead?: boolean } = { markRead: true },
+  options: { markRead?: boolean; countUnread?: boolean } = { markRead: true },
 ): void {
   if (
     !channelId
@@ -414,6 +414,7 @@ export function appendChannelMessage(
   const alreadyInCache = baseMessages.some((m: ChannelMessage) => sameCachedMessage(m, message));
   const nextMessages = alreadyInCache ? baseMessages : [...baseMessages, message];
   const shouldMarkRead = isCurrentChannel && options.markRead === true;
+  const shouldCountUnread = !shouldMarkRead && options.countUnread !== false;
   const nextCacheDirty = state.channelMessageCacheDirty[channelId] === true
     || (!cachedMessages && !isCurrentChannel);
 
@@ -428,9 +429,9 @@ export function appendChannelMessage(
       && channel.lastMessage === message.body.slice(0, 60);
 
     const previousUnread = channel.newMessageCount || 0;
-    const nextUnread = shouldMarkRead
-      ? 0
-      : previousUnread + (isDuplicatePreview ? 0 : 1);
+    const nextUnread = shouldMarkRead ? 0 : previousUnread + (
+      shouldCountUnread && !isDuplicatePreview ? 1 : 0
+    );
 
     if (shouldMarkRead) {
       readDelta = previousUnread;
@@ -482,10 +483,13 @@ export function appendChannelMessage(
 
 export async function sendChannelMessage(text: string): Promise<void> {
   const s = useStore.getState();
-  if (!text.trim() || !s.currentChannel) return;
+  const channelId = s.currentChannel;
+  const body = text.trim();
+  if (!body || !channelId) return;
+  const sender = s.userName || 'user';
 
   try {
-    const res = await hanaFetch(`/api/channels/${encodeURIComponent(s.currentChannel)}/messages`, {
+    const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: text }),
@@ -493,15 +497,11 @@ export async function sendChannelMessage(text: string): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.ok && data.timestamp) {
-      // 重新取最新消息列表，避免覆盖 await 期间的并发更新
-      const fresh = useStore.getState();
-      useStore.setState({
-        channelMessages: [...fresh.channelMessages, {
-          sender: fresh.userName || 'user',
-          timestamp: data.timestamp,
-          body: text,
-        }],
-      });
+      appendChannelMessage(channelId, {
+        sender,
+        timestamp: data.timestamp,
+        body: text,
+      }, { markRead: true, countUnread: false });
     }
   } catch (err) {
     console.error('[channels] send failed:', err);

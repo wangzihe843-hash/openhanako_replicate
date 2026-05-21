@@ -44,7 +44,7 @@ export function AgentCardStack({
   currentAgentId,
   onSelect,
   onAvatarClick,
-  onSetActive,
+  onSetPrimary,
   onDelete,
   onExport,
   onAdd,
@@ -55,7 +55,7 @@ export function AgentCardStack({
   currentAgentId: string | null;
   onSelect: (id: string) => void;
   onAvatarClick: () => void;
-  onSetActive: (id: string) => void;
+  onSetPrimary: (id: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string) => void;
   onAdd: () => void;
@@ -304,9 +304,9 @@ export function AgentCardStack({
             <button
               type="button"
               className={styles['agent-card-action']}
-              onClick={() => onSetActive(selectedAgent.id)}
+              onClick={() => onSetPrimary(selectedAgent.id)}
             >
-              {t('settings.agent.setActive')}
+              {t('settings.agent.setPrimary')}
             </button>
           )}
           <button

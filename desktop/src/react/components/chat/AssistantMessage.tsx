@@ -229,6 +229,8 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
           blockIdx={blockIdx}
         />
       );
+    case 'media_generation':
+      return <MediaGenerationBlock block={block} />;
     default: {
       const Renderer = BLOCK_RENDERERS[block.type];
       return Renderer ? <Renderer block={block} agentId={agentId} /> : null;
@@ -248,6 +250,34 @@ const EXT_LABELS: Record<string, string> = {
   csv: 'CSV', svg: 'SVG', skill: 'Skill',
   png: 'Image', jpg: 'Image', jpeg: 'Image', gif: 'Image', webp: 'Image',
 };
+
+const MediaGenerationBlock = memo(function MediaGenerationBlock({ block }: { block: any }) {
+  const failed = block.status === 'failed' || block.status === 'aborted';
+  const kindLabel = block.kind === 'video' ? '视频' : '图片';
+  const title = failed
+    ? `${kindLabel}生成失败`
+    : `${kindLabel}生成中`;
+  const reason = typeof block.reason === 'string' ? block.reason : '';
+  const prompt = typeof block.prompt === 'string' ? block.prompt : '';
+
+  return (
+    <div className={`${styles.mediaGenerationCard}${failed ? ` ${styles.mediaGenerationCardFailed}` : ''}`}>
+      <div className={styles.mediaGenerationSurface} aria-hidden="true">
+        <div className={styles.mediaGenerationFrame}>
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <div className={styles.mediaGenerationText}>
+        <div className={styles.mediaGenerationTitle}>{title}</div>
+        {(failed ? reason : prompt) && (
+          <div className={styles.mediaGenerationPrompt}>{failed ? reason : prompt}</div>
+        )}
+      </div>
+    </div>
+  );
+});
 
 // file / image block
 

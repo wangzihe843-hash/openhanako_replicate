@@ -45,6 +45,16 @@ function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
   return found;
 }
 
+function isAgentPhoneEnabled(engine) {
+  return engine?.isChannelsEnabled?.() !== false;
+}
+
+function assertAgentPhoneEnabled(engine) {
+  if (!isAgentPhoneEnabled(engine)) {
+    throw new Error("Agent phone is disabled");
+  }
+}
+
 async function getRuntimeAgent(engine, agentId, reason) {
   await engine.ensureAgentRuntime?.(agentId, {
     priority: "background",
@@ -306,6 +316,7 @@ export async function freshCompactAgentPhoneSession(agentId, {
   onActivity,
 } = {}) {
   if (!conversationId) throw new Error("conversationId is required for agent phone fresh compact");
+  assertAgentPhoneEnabled(engine);
 
   const agent = await getRuntimeAgent(engine, agentId, "agent-phone-fresh-compact");
   const agentDir = agent.agentDir;
@@ -362,6 +373,12 @@ export async function freshCompactAgentPhoneSession(agentId, {
     customTools,
   });
   session.setActiveToolsByName?.(getAgentPhoneActiveToolNames({ tools, customTools }));
+  const unregisterPhoneAbort = engine.registerAgentPhoneAbortHandler?.(
+    () => {
+      try { session.abort?.(); } catch {}
+    },
+    { agentId, conversationId, conversationType, sessionPath: existingSessionPath, reason },
+  ) || (() => {});
 
   const snapshot = buildFreshCompactSnapshot({
     systemPrompt: basePrompt,
@@ -386,6 +403,7 @@ export async function freshCompactAgentPhoneSession(agentId, {
       onActivity,
     });
   } finally {
+    try { unregisterPhoneAbort(); } catch {}
     await teardownSessionResources({
       session,
       label: `hub.freshCompactAgentPhoneSession[${agentId}:${conversationId}]`,
@@ -415,6 +433,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
   extraCustomTools = [],
 } = {}) {
   if (!conversationId) throw new Error("conversationId is required for agent phone session");
+  assertAgentPhoneEnabled(engine);
 
   const agent = await getRuntimeAgent(engine, agentId, "agent-phone-session");
   const agentDir = agent.agentDir;
@@ -490,6 +509,12 @@ export async function runAgentPhoneSession(agentId, rounds, {
   }));
 
   const sessionPath = session.sessionManager?.getSessionFile?.();
+  const unregisterPhoneAbort = engine.registerAgentPhoneAbortHandler?.(
+    () => {
+      try { session.abort?.(); } catch {}
+    },
+    { agentId, conversationId, conversationType, sessionPath: sessionPath || null },
+  ) || (() => {});
   if (sessionPath) {
     await updateAgentPhoneProjectionMeta({
       agentDir,
@@ -558,6 +583,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
     await maybeCompactPhoneSession(session, { isActive: false, onActivity });
   } finally {
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    try { unregisterPhoneAbort(); } catch {}
     await teardownSessionResources({
       session,
       unsub,

@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions } from '../../components/chat/MessageActions';
 import { useStore } from '../../stores';
 
@@ -18,8 +18,11 @@ vi.mock('../../hooks/use-i18n', () => ({
 }));
 
 describe('MessageActions', () => {
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     useStore.setState({
       selectedIdsBySession: {},

@@ -61,6 +61,7 @@ describe("MCP stdio client", () => {
           API_KEY: "secret",
           NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com",
         }),
+        windowsHide: true,
       }),
     );
 

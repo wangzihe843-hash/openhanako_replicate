@@ -39,6 +39,40 @@ function writeDmFile(filePath, sender, body) {
 }
 
 describe("DmRouter agent phone session", () => {
+  it("does not start DM phone processing when the phone feature is disabled", async () => {
+    runAgentPhoneSessionMock.mockClear();
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-dm-phone-disabled-"));
+    const agentsDir = path.join(root, "agents");
+    const aliceDir = path.join(agentsDir, "alice");
+    const bobDir = path.join(agentsDir, "bob");
+    writeDmFile(path.join(aliceDir, "dm", "bob.md"), "bob", "ping");
+    writeDmFile(path.join(bobDir, "dm", "alice.md"), "bob", "ping");
+
+    const router = new DmRouter({
+      hub: {
+        engine: {
+          agentsDir,
+          isChannelsEnabled: () => false,
+          getAgent: (id) => ({
+            id,
+            agentDir: id === "alice" ? aliceDir : bobDir,
+            agentName: id === "alice" ? "Alice" : "Bob",
+            config: { agent: { name: id } },
+            personality: `I am ${id}`,
+          }),
+        },
+        eventBus: { emit: vi.fn() },
+        agentPhoneActivities: { record: vi.fn() },
+      },
+    });
+
+    await router.handleNewDm("bob", "alice");
+
+    expect(runAgentPhoneSessionMock).not.toHaveBeenCalled();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("uses a reusable phone session and records per-agent DM activity", async () => {
     runAgentPhoneSessionMock.mockClear();
     runAgentPhoneSessionMock.mockResolvedValueOnce("收到 <done/>");

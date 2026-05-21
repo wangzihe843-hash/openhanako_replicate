@@ -15,6 +15,27 @@ function normalizeChatPayload(name, model, payload, options = {}) {
 }
 
 describe("provider payload snapshots", () => {
+  it("marks the two most recent Anthropic user messages as cache breakpoints", () => {
+    const payload = normalizeProviderPayload({
+      model: "claude-opus-4-7",
+      system: "stable system prompt",
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: [{ type: "text", text: "middle" }] },
+        { role: "user", content: "second" },
+      ],
+      max_tokens: 32000,
+    }, {
+      id: "claude-opus-4-7",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      maxTokens: 128000,
+    }, { mode: "chat" });
+
+    expect(payload.messages[0].content[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(payload.messages[2].content[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
   it("keeps final chat payload contracts stable across representative providers", () => {
     const payloads = Object.fromEntries([
       normalizeChatPayload(

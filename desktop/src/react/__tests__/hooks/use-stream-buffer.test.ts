@@ -172,4 +172,42 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(last.data.id).toBe(assistantId);
     expect(last.data.blocks?.some((block: { type: string }) => block.type === 'tool_group')).toBe(true);
   });
+
+  it('deferred 文件结果按 taskId 原地替换 media_generation 占位块', () => {
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'media_generation',
+        taskId: 'task-img',
+        kind: 'image',
+        status: 'pending',
+        prompt: 'a moonlit room',
+      },
+    });
+
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_img',
+        filePath: '/tmp/generated.png',
+        label: 'generated.png',
+        ext: 'png',
+        mime: 'image/png',
+        kind: 'image',
+      },
+    });
+
+    const assistant = getAssistantMessage();
+    expect(assistant?.blocks).toEqual([
+      expect.objectContaining({
+        type: 'file',
+        fileId: 'sf_img',
+        filePath: '/tmp/generated.png',
+      }),
+    ]);
+  });
 });

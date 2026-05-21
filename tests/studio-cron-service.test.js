@@ -18,6 +18,22 @@ function writeLegacyJobs(root, agentId, jobs) {
   );
 }
 
+function writeLegacyRun(root, agentId, jobId, run) {
+  const runsDir = path.join(root, "agents", agentId, "desk", "cron-runs");
+  fs.mkdirSync(runsDir, { recursive: true });
+  fs.writeFileSync(path.join(runsDir, `${jobId}.jsonl`), JSON.stringify(run) + "\n", "utf-8");
+}
+
+function writeStudioJobs(root, studioId, jobs) {
+  const deskDir = path.join(root, "studios", studioId, "desk");
+  fs.mkdirSync(deskDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(deskDir, "cron-jobs.json"),
+    JSON.stringify({ jobs, nextNum: jobs.length + 1 }, null, 2) + "\n",
+    "utf-8",
+  );
+}
+
 describe("StudioCronService", () => {
   const roots = [];
 
@@ -116,6 +132,100 @@ describe("StudioCronService", () => {
 
     const second = new StudioCronService(opts);
     expect(second.listJobs()).toHaveLength(1);
+  });
+
+  it("does not re-import a deleted legacy job after the legacy store was reconciled", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const agentsDir = path.join(root, "agents");
+    writeLegacyJobs(root, "agent-a", [
+      {
+        id: "job_1",
+        type: "cron",
+        schedule: "0 9 * * *",
+        prompt: "daily a",
+        label: "Daily A",
+        enabled: true,
+        nextRunAt: "2026-05-21T01:00:00.000Z",
+      },
+    ]);
+    writeLegacyRun(root, "agent-a", "job_1", {
+      status: "success",
+      startedAt: "2026-05-20T01:00:00.000Z",
+      finishedAt: "2026-05-20T01:00:01.000Z",
+    });
+
+    const opts = { hanakoHome: root, agentsDir, getStudioId: () => "studio-main" };
+    const first = new StudioCronService(opts);
+    const imported = first.listJobs();
+    expect(imported).toHaveLength(1);
+    expect(first.getRunHistory(imported[0].id, 10)).toEqual([
+      expect.objectContaining({
+        status: "success",
+        startedAt: "2026-05-20T01:00:00.000Z",
+      }),
+    ]);
+    expect(first.removeJob(imported[0].id)).toBe(true);
+    expect(first.listJobs()).toHaveLength(0);
+
+    const second = new StudioCronService(opts);
+    expect(second.listJobs()).toHaveLength(0);
+
+    const legacyData = JSON.parse(
+      fs.readFileSync(path.join(agentsDir, "agent-a", "desk", "cron-jobs.json"), "utf-8"),
+    );
+    expect(legacyData.jobs).toHaveLength(1);
+    expect(legacyData.studioCronMigration).toMatchObject({
+      version: 1,
+      status: "imported",
+      studioId: "studio-main",
+    });
+  });
+
+  it("reconciles legacy stores that were imported before the migration marker existed", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const agentsDir = path.join(root, "agents");
+    writeLegacyJobs(root, "agent-a", [
+      {
+        id: "job_1",
+        type: "cron",
+        schedule: "0 9 * * *",
+        prompt: "daily a",
+        label: "Daily A",
+        enabled: true,
+        nextRunAt: "2026-05-21T01:00:00.000Z",
+      },
+    ]);
+    writeStudioJobs(root, "studio-main", [
+      {
+        id: "studio_job_1",
+        type: "cron",
+        schedule: "0 9 * * *",
+        prompt: "daily a",
+        label: "Daily A",
+        enabled: true,
+        nextRunAt: "2026-05-21T01:00:00.000Z",
+        legacyRef: { agentId: "agent-a", jobId: "job_1" },
+      },
+    ]);
+
+    const service = new StudioCronService({
+      hanakoHome: root,
+      agentsDir,
+      getStudioId: () => "studio-main",
+    });
+    const jobs = service.listJobs();
+    expect(jobs).toHaveLength(1);
+    expect(service.removeJob("studio_job_1")).toBe(true);
+    expect(service.listJobs()).toHaveLength(0);
+
+    const restarted = new StudioCronService({
+      hanakoHome: root,
+      agentsDir,
+      getStudioId: () => "studio-main",
+    });
+    expect(restarted.listJobs()).toHaveLength(0);
   });
 
   it("requires new jobs to carry actorAgentId and executionContext", () => {

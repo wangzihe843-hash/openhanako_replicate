@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InputArea } from '../../components/InputArea';
 import { useStore } from '../../stores';
 
@@ -235,8 +235,11 @@ function tiptapBeforeInputHandler(): ((view: unknown, event: InputEvent) => bool
 }
 
 describe('InputArea paste and slash menu behavior', () => {
-  beforeEach(() => {
+  afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
     vi.clearAllMocks();
     mocks.editorOptions = undefined;
     mocks.editorText = '';

@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeMessagesForModel,
+  stripHistoricalInlineMediaForReplay,
   modelSupportsImage,
   modelSupportsVideo,
 } from "../core/message-sanitizer.js";
@@ -237,5 +238,55 @@ describe("sanitizeMessagesForModel", () => {
     expect(res.messages[0]).toBe(pure);  // 纯文本未复制
     expect(res.messages[1]).not.toBe(dirty);  // 脏消息已复制
     expect(res.messages[2]).not.toBe(tr);
+  });
+});
+
+describe("stripHistoricalInlineMediaForReplay", () => {
+  it("剥离上一个 assistant 之前的历史图片，避免后续请求重放 base64", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("[attached_image: /tmp/a.png]\nfirst"), IMG_BLOCK] },
+      { role: "assistant", content: [TEXT_BLOCK("seen")] },
+      { role: "user", content: [TEXT_BLOCK("follow up")] },
+    ];
+
+    const res = stripHistoricalInlineMediaForReplay(messages);
+
+    expect(res.strippedImages).toBe(1);
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("[attached_image: /tmp/a.png]\nfirst"),
+    ]);
+    expect(res.messages[1]).toBe(messages[1]);
+    expect(res.messages[2]).toBe(messages[2]);
+    expect(messages[0].content).toEqual([TEXT_BLOCK("[attached_image: /tmp/a.png]\nfirst"), IMG_BLOCK]);
+  });
+
+  it("保留最后一个 assistant 之后的当前轮图片，让用户刚发的图仍能直接进入视觉模型", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("[attached_image: /tmp/old.png]\nold"), IMG_BLOCK] },
+      { role: "assistant", content: [TEXT_BLOCK("seen")] },
+      { role: "user", content: [TEXT_BLOCK("[attached_image: /tmp/current.png]\ncurrent"), IMG_BLOCK] },
+    ];
+
+    const res = stripHistoricalInlineMediaForReplay(messages);
+
+    expect(res.strippedImages).toBe(1);
+    expect(res.messages[0].content).not.toContain(IMG_BLOCK);
+    expect(res.messages[2]).toBe(messages[2]);
+    expect(res.messages[2].content).toEqual([TEXT_BLOCK("[attached_image: /tmp/current.png]\ncurrent"), IMG_BLOCK]);
+  });
+
+  it("没有 attached_image 引用的 legacy inline 图片会留下轻量占位", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("legacy image"), IMG_BLOCK] },
+      { role: "assistant", content: [TEXT_BLOCK("seen")] },
+      { role: "user", content: [TEXT_BLOCK("follow up")] },
+    ];
+
+    const res = stripHistoricalInlineMediaForReplay(messages);
+
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("legacy image"),
+      { type: "text", text: "[图片已省略：历史图片保留为文件引用，避免重复发送原始 base64]" },
+    ]);
   });
 });

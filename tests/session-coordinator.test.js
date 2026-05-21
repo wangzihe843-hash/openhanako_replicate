@@ -1638,6 +1638,188 @@ describe("SessionCoordinator", () => {
     expect(meta[path.basename(sessionFile)].memoryEnabled).toBe(false);
   });
 
+  it("blocks provider calls when an existing session cache prefix mutates without renew", async () => {
+    const sessionFile = path.join(tempDir, "hana", "sessions", "cache-contract.jsonl");
+    const model = {
+      id: "deepseek-v4-pro",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com",
+      contextWindow: 1000000,
+      maxTokens: 32000,
+    };
+    const readTool = { name: "read", description: "Read files", parameters: { type: "object" } };
+    const bashTool = { name: "bash", description: "Run shell", parameters: { type: "object" } };
+    const activeTools = new Map([["read", readTool], ["bash", bashTool]]);
+    const originalStreamFn = vi.fn(async () => "ok");
+    const session = {
+      sessionManager: { getSessionFile: () => sessionFile },
+      subscribe: vi.fn(() => vi.fn()),
+      model,
+      getContextUsage: () => ({ tokens: 0 }),
+      setActiveToolsByName: vi.fn((names) => {
+        session.agent.state.tools = names.map((name) => activeTools.get(name)).filter(Boolean);
+      }),
+      agent: {
+        streamFn: originalStreamFn,
+        state: {
+          model,
+          systemPrompt: "FINAL CACHE PREFIX",
+          tools: [readTool, bashTool],
+          messages: [],
+        },
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "FROZEN BASE",
+      getToolsSnapshot: () => [],
+      config: { tools: {} },
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [readTool, bashTool], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, "/tmp/workspace", true);
+
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "FINAL CACHE PREFIX",
+      tools: [readTool, bashTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).resolves.toBe("ok");
+
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "MUTATED CACHE PREFIX",
+      tools: [readTool, bashTool],
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "toolResult", content: [{ type: "text", text: "dynamic" }] },
+      ],
+    }, {})).rejects.toThrow(/Cache prefix contract violated/);
+    expect(originalStreamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews the cache prefix contract for an explicit model switch", async () => {
+    const sessionFile = path.join(tempDir, "hana", "sessions", "cache-contract-model-switch.jsonl");
+    const initialModel = {
+      id: "deepseek-v4-flash",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com",
+      contextWindow: 1000000,
+      maxTokens: 32000,
+    };
+    const nextModel = { ...initialModel, id: "deepseek-v4-pro" };
+    const readTool = { name: "read", description: "Read files", parameters: { type: "object" } };
+    const originalStreamFn = vi.fn(async () => "ok");
+    const session = {
+      sessionManager: { getSessionFile: () => sessionFile },
+      subscribe: vi.fn(() => vi.fn()),
+      model: initialModel,
+      getContextUsage: () => ({ tokens: 0 }),
+      setActiveToolsByName: vi.fn((names) => {
+        session.agent.state.tools = names.includes("read") ? [readTool] : [];
+      }),
+      setModel: vi.fn(async (model) => {
+        session.model = model;
+        session.agent.state.model = model;
+      }),
+      setThinkingLevel: vi.fn(),
+      agent: {
+        streamFn: originalStreamFn,
+        state: {
+          model: initialModel,
+          systemPrompt: "FINAL CACHE PREFIX",
+          tools: [readTool],
+          messages: [],
+        },
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "FROZEN BASE",
+      getToolsSnapshot: () => [],
+      config: { tools: {} },
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: initialModel,
+        availableModels: [initialModel, nextModel],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: (level) => level,
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [readTool], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, "/tmp/workspace", true);
+    await coordinator.switchSessionModel(sessionFile, nextModel);
+
+    await expect(session.agent.streamFn(nextModel, {
+      systemPrompt: "FINAL CACHE PREFIX",
+      tools: [readTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).resolves.toBe("ok");
+  });
+
   it("cleans up the temporary session file when aborted after session creation", async () => {
     const sessionFile = path.join(tempDir, "isolated.jsonl");
     fs.writeFileSync(sessionFile, "temp");

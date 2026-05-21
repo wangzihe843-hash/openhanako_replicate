@@ -59,6 +59,7 @@ describe("replayLatestUserTurn", () => {
     manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "bad answer" }] });
     const session = makeNavigableSession(manager);
     const submit = vi.fn(async () => ({ text: "new answer", toolMedia: [] }));
+    const readFile = vi.fn(async () => Buffer.from("png-by-filename"));
     const engine = {
       ensureSessionLoaded: vi.fn(async () => session),
       isSessionStreaming: vi.fn(() => false),
@@ -70,11 +71,74 @@ describe("replayLatestUserTurn", () => {
       sourceEntryId: latestUserId,
       replacementText: "new text",
       displayMessage: { text: "new text" },
-    }, { submit });
+    }, { submit, readFile });
 
     expect(submit).toHaveBeenCalledWith(engine, expect.objectContaining({
       text: "[attached_image: /tmp/a.png]\nnew text",
+      images: [{ type: "image", data: Buffer.from("png-by-filename").toString("base64"), mimeType: "image/png" }],
+      imageAttachmentPaths: ["/tmp/a.png"],
       displayMessage: expect.objectContaining({ text: "new text" }),
+    }));
+  });
+
+  it("rehydrates pruned attached image markers when replaying a turn", async () => {
+    const manager = SessionManager.inMemory("/workspace");
+    const latestUserId = manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "[attached_image: /tmp/a.png]\nold text" }],
+    });
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "bad answer" }] });
+    const session = makeNavigableSession(manager);
+    const submit = vi.fn(async () => ({ text: "new answer", toolMedia: [] }));
+    const readFile = vi.fn(async () => Buffer.from("png-by-filename"));
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      isSessionStreaming: vi.fn(() => false),
+      emitEvent: vi.fn(),
+    };
+
+    await replayLatestUserTurn(engine, {
+      sessionPath: "/tmp/main.jsonl",
+      sourceEntryId: latestUserId,
+      displayMessage: { text: "old text" },
+    }, { submit, readFile });
+
+    expect(readFile).toHaveBeenCalledWith("/tmp/a.png");
+    expect(submit).toHaveBeenCalledWith(engine, expect.objectContaining({
+      images: [{ type: "image", data: Buffer.from("png-by-filename").toString("base64"), mimeType: "image/png" }],
+      imageAttachmentPaths: ["/tmp/a.png"],
+    }));
+  });
+
+  it("keeps existing inline image payloads on replay without rereading the path", async () => {
+    const manager = SessionManager.inMemory("/workspace");
+    const latestUserId = manager.appendMessage({
+      role: "user",
+      content: [
+        { type: "text", text: "[attached_image: /tmp/a.png]\nold text" },
+        { type: "image", data: "BASE64_A", mimeType: "image/png" },
+      ],
+    });
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "bad answer" }] });
+    const session = makeNavigableSession(manager);
+    const submit = vi.fn(async () => ({ text: "new answer", toolMedia: [] }));
+    const readFile = vi.fn();
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      isSessionStreaming: vi.fn(() => false),
+      emitEvent: vi.fn(),
+    };
+
+    await replayLatestUserTurn(engine, {
+      sessionPath: "/tmp/main.jsonl",
+      sourceEntryId: latestUserId,
+      displayMessage: { text: "old text" },
+    }, { submit, readFile });
+
+    expect(readFile).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledWith(engine, expect.objectContaining({
+      images: [{ type: "image", data: "BASE64_A", mimeType: "image/png" }],
+      imageAttachmentPaths: ["/tmp/a.png"],
     }));
   });
 

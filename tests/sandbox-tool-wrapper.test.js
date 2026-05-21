@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("wrapBashTool Windows PathGuard preflight", () => {
-  it("normalizes MSYS drive paths before checking restricted reads", async () => {
+  it("lets command reads use the current user's normal Windows permissions", async () => {
     const { wrapBashTool } = await importToolWrapperAsWin32();
     const tool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
     const guard = {
@@ -27,12 +27,12 @@ describe("wrapBashTool Windows PathGuard preflight", () => {
 
     const wrapped = wrapBashTool(tool, guard, "D:\\workspace");
     const result = await wrapped.execute("call-1", {
-      command: 'ls "/c/Program Files/GitHub CLI/gh.exe"',
+      command: 'cat "/c/Users/alice/Desktop/reference.md"',
     });
 
-    expect(guard.check).toHaveBeenCalledWith("C:\\Program Files\\GitHub CLI\\gh.exe", "read");
-    expect(tool.execute).not.toHaveBeenCalled();
-    expect(result.content[0].text).toBeTruthy();
+    expect(guard.check).not.toHaveBeenCalled();
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toBe("ok");
   });
 
   it("checks bash redirection targets as writes", async () => {

@@ -25,9 +25,11 @@ describe("dm route owner resolution", () => {
   let tmpDir;
   let app;
   let agents;
+  let channelsEnabled;
 
   beforeEach(async () => {
     tmpDir = mktemp();
+    channelsEnabled = true;
     agents = new Map([
       ["alice", makeAgent(tmpDir, "alice", "Alice")],
       ["bob", makeAgent(tmpDir, "bob", "Bob")],
@@ -45,6 +47,7 @@ describe("dm route owner resolution", () => {
       getPrimaryAgentId: () => "alice",
       getAgent: (id) => agents.get(id) || null,
       listAgents: () => Array.from(agents.values()),
+      isChannelsEnabled: () => channelsEnabled,
     };
 
     app = new Hono();
@@ -69,6 +72,18 @@ describe("dm route owner resolution", () => {
       lastMessage: "primary-owned thread",
       messageCount: 1,
     });
+  });
+
+  it("freezes DM routes when channels are disabled", async () => {
+    channelsEnabled = false;
+
+    const listRes = await app.request("/api/dm");
+    expect(listRes.status).toBe(503);
+    expect((await listRes.json()).error).toMatch(/disabled/i);
+
+    const detailRes = await app.request("/api/dm/bob");
+    expect(detailRes.status).toBe(503);
+    expect((await detailRes.json()).error).toMatch(/disabled/i);
   });
 
   it("opens the primary agent DM by default and keeps explicit owner override available", async () => {

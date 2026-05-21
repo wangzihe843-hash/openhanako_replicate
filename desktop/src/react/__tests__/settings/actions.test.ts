@@ -162,4 +162,34 @@ describe('settings actions', () => {
       expect.objectContaining({ name: 'AbortError' }),
     );
   });
+
+  it('setPrimaryAgent updates only primary ownership and keeps the current focus', async () => {
+    mockFetch.mockImplementation((path: string, opts?: RequestInit) => {
+      if (path === '/api/agents/primary') {
+        expect(opts).toMatchObject({
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: 'agent-b' }),
+        });
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      if (path === '/api/agents') {
+        return Promise.resolve(jsonResponse({
+          agents: [
+            { id: 'agent-a', name: 'Agent A', yuan: 'hanako', isPrimary: false },
+            { id: 'agent-b', name: 'Agent B', yuan: 'ming', isPrimary: true },
+          ],
+        }));
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    const { setPrimaryAgent } = await import('../../settings/actions');
+
+    await setPrimaryAgent('agent-b');
+
+    expect(mockState.currentAgentId).toBe('agent-a');
+    expect(mockState.agentName).toBe('Agent A');
+    expect(mockState.agents.find((agent: any) => agent.id === 'agent-b')?.isPrimary).toBe(true);
+  });
 });

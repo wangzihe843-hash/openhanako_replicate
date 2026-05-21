@@ -173,7 +173,6 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
           name: ref.name,
           isDir: false,
           mimeType: img?.mimeType,
-          visionAuxiliary: !img,
         };
       });
       const imageAtts = imageBlocks.slice(attachedImages.length).map((img, idx) => ({

@@ -79,4 +79,23 @@ describe("Hub agent config bus handlers", () => {
 
     expect(noLookup.error).toBe("agent_lookup_unavailable");
   });
+
+  it("aborts registered phone sessions when channels are disabled", async () => {
+    const engine = createEngine();
+    const hub = new Hub({ engine });
+    const callbacks = engine.setHubCallbacks.mock.calls[0][0];
+    const abortHandler = vi.fn();
+
+    const unregister = callbacks.registerAgentPhoneAbortHandler(abortHandler, {
+      conversationId: "dm:agent-1",
+    });
+
+    await hub.toggleChannels(false);
+    expect(abortHandler).toHaveBeenCalledWith("channels-disabled");
+
+    abortHandler.mockClear();
+    unregister();
+    await hub.toggleChannels(false);
+    expect(abortHandler).not.toHaveBeenCalled();
+  });
 });

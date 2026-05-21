@@ -340,20 +340,10 @@ export function SkillsTab() {
     setSkillsList(updated);
 
     try {
-      const freshRes = await hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`);
-      const freshData = await freshRes.json();
-      if (freshData.error) throw new Error(freshData.error);
-      if (skillsViewAgentIdRef.current !== snapshotAgentId) return;
-      const freshSkills = (freshData.skills || []) as Array<{ name: string; enabled: boolean }>;
-      const enabledList = freshSkills
-        .map(s => s.name === name ? { ...s, enabled: enable } : s)
-        .filter(s => s.enabled)
-        .map(s => s.name);
-
-      const res = await hanaFetch(`/api/agents/${agentId}/skills`, {
-        method: 'PUT',
+      const res = await hanaFetch(`/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: enabledList }),
+        body: JSON.stringify({ enabled: enable }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -387,19 +377,10 @@ export function SkillsTab() {
       : item));
 
     try {
-      const freshRes = await hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`);
-      const freshData = await freshRes.json();
-      if (freshData.error) throw new Error(freshData.error);
-      if (skillsViewAgentIdRef.current !== snapshotAgentId) return;
-      const enabledList = ((freshData.skills || []) as Array<{ name: string; enabled: boolean }>)
-        .map(s => bundleSkillNames.has(s.name) ? { ...s, enabled: enable } : s)
-        .filter(s => s.enabled)
-        .map(s => s.name);
-
-      const res = await hanaFetch(`/api/agents/${agentId}/skills`, {
-        method: 'PUT',
+      const res = await hanaFetch(`/api/agents/${encodeURIComponent(agentId)}/skill-bundles/${encodeURIComponent(bundle.id)}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: enabledList }),
+        body: JSON.stringify({ enabled: enable }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);

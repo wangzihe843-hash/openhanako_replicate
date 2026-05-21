@@ -211,6 +211,31 @@ describe("BridgeSessionManager teardown", () => {
     );
   });
 
+  it("notifies the owner bridge memory ticker after a successful external turn", async () => {
+    const agent = makeAgent(rootDir);
+    agent.memoryTicker = {
+      notifyTurn: vi.fn(),
+    };
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "memory-turn.jsonl");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const session = {
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => vi.fn()),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await manager.executeExternalMessage("hello", "tg_dm_owner@agent-a", null, { agentId: "agent-a" });
+
+    expect(agent.memoryTicker.notifyTurn).toHaveBeenCalledOnce();
+    expect(agent.memoryTicker.notifyTurn).toHaveBeenCalledWith(mgrPath);
+  });
+
   it("returns provider message_end errors to bridge adapters instead of swallowing them", async () => {
     const agent = makeAgent(rootDir);
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "error.jsonl");
@@ -342,7 +367,7 @@ describe("BridgeSessionManager teardown", () => {
     expect(index["tg_dm_existing@agent-a"].freshCompact).toEqual({ lastFreshCompactDate: "2026-05-14" });
     expect(manager.listDailyFreshCompactTargets(agent, {
       now: new Date("2026-05-15T09:00:00"),
-    })).toEqual([{ sessionKey: "tg_dm_existing@agent-a", reason: "daily" }]);
+    })).toEqual([{ sessionKey: "tg_dm_existing@agent-a", sessionPath: sessionFile, reason: "daily" }]);
   });
 
   it("recordAssistantMessage records without fresh-compacting inline for an existing owner bridge session", async () => {
@@ -383,7 +408,7 @@ describe("BridgeSessionManager teardown", () => {
     expect(index["tg_dm_assistant@agent-a"].freshCompact).toEqual({ lastFreshCompactDate: "2026-05-14" });
     expect(manager.listDailyFreshCompactTargets(agent, {
       now: new Date("2026-05-15T09:00:00"),
-    })).toEqual([{ sessionKey: "tg_dm_assistant@agent-a", reason: "daily" }]);
+    })).toEqual([{ sessionKey: "tg_dm_assistant@agent-a", sessionPath: sessionFile, reason: "daily" }]);
   });
 
   it("registers bridge inbound image files after the bridge session path exists", async () => {

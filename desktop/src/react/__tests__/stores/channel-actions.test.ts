@@ -387,6 +387,75 @@ describe('channel-actions', () => {
       expect(msgs[msgs.length - 1].body).toBe('hello world');
       expect(msgs[msgs.length - 1].sender).toBe('testuser');
     });
+
+    it('发送成功后按发送开始时的频道同步消息 cache 和频道列表投影', async () => {
+      mockState.currentChannel = 'ch1';
+      mockState.channelMessages = [
+        { sender: 'hanako', timestamp: '2026-05-07 17:00:00', body: 'old ch1' },
+      ];
+      mockState.channelMessageCache = {
+        ch1: mockState.channelMessages,
+        ch2: [{ sender: 'ming', timestamp: '2026-05-07 16:00:00', body: 'old ch2' }],
+      };
+      mockState.channelMessageCacheDirty = { ch1: false, ch2: false };
+      mockState.channels = [{
+        id: 'ch1',
+        name: 'general',
+        members: [],
+        lastMessage: 'old ch1',
+        lastSender: 'hanako',
+        lastTimestamp: '2026-05-07 17:00:00',
+        messageCount: 1,
+        newMessageCount: 0,
+        isDM: false,
+      }, {
+        id: 'ch2',
+        name: 'random',
+        members: [],
+        lastMessage: 'old ch2',
+        lastSender: 'ming',
+        lastTimestamp: '2026-05-07 16:00:00',
+        messageCount: 1,
+        newMessageCount: 0,
+        isDM: false,
+      }];
+
+      let resolveSend!: (value: Response) => void;
+      mockFetch.mockReturnValueOnce(new Promise<Response>((resolve) => {
+        resolveSend = resolve;
+      }));
+
+      const { sendChannelMessage } = await import('../../stores/channel-actions');
+      const pendingSend = sendChannelMessage('hello from me');
+
+      mockState.currentChannel = 'ch2';
+      mockState.channelMessages = (mockState.channelMessageCache as any).ch2;
+      resolveSend({
+        ok: true,
+        json: async () => ({ ok: true, timestamp: '2026-05-07 17:01:00' }),
+      } as Response);
+      await pendingSend;
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/channels/ch1/messages', expect.objectContaining({
+        method: 'POST',
+      }));
+      expect(mockState.channelMessages).toEqual([
+        { sender: 'ming', timestamp: '2026-05-07 16:00:00', body: 'old ch2' },
+      ]);
+      expect((mockState.channelMessageCache as any).ch1).toEqual([
+        { sender: 'hanako', timestamp: '2026-05-07 17:00:00', body: 'old ch1' },
+        { sender: 'testuser', timestamp: '2026-05-07 17:01:00', body: 'hello from me' },
+      ]);
+      expect((mockState.channelMessageCacheDirty as any).ch1).toBe(false);
+      expect((mockState.channels as any[])[0]).toMatchObject({
+        id: 'ch1',
+        lastMessage: 'hello from me',
+        lastSender: 'testuser',
+        lastTimestamp: '2026-05-07 17:01:00',
+        messageCount: 2,
+        newMessageCount: 0,
+      });
+    });
   });
 
   describe('appendChannelMessage', () => {

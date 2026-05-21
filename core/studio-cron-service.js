@@ -2,8 +2,10 @@ import fs from "fs";
 import path from "path";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { createModuleLogger } from "../lib/debug-log.js";
+import { atomicWriteSync } from "../shared/safe-fs.js";
 
 const log = createModuleLogger("studio-cron");
+const LEGACY_CRON_MIGRATION_VERSION = 1;
 
 function assertValidPathSegment(value, label) {
   if (typeof value !== "string" || !value.trim()) {
@@ -49,6 +51,34 @@ function readJsonIfPresent(filePath) {
     if (err.code === "ENOENT") return null;
     throw err;
   }
+}
+
+function isLegacyCronMigrationComplete(data) {
+  const marker = data?.studioCronMigration;
+  return marker?.version === LEGACY_CRON_MIGRATION_VERSION && marker?.status === "imported";
+}
+
+function markLegacyCronStoreMigrated(jobsPath, data, studioId) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  if (isLegacyCronMigrationComplete(data)) return;
+  const jobIds = Array.isArray(data.jobs)
+    ? data.jobs.map((job) => job?.id).filter((id) => typeof id === "string" && id)
+    : [];
+  const next = {
+    ...data,
+    studioCronMigration: {
+      version: LEGACY_CRON_MIGRATION_VERSION,
+      status: "imported",
+      studioId,
+      migratedAt: new Date().toISOString(),
+      jobIds,
+    },
+  };
+  atomicWriteSync(jobsPath, JSON.stringify(next, null, 2) + "\n");
+}
+
+function isSafeRunFileId(value) {
+  return typeof value === "string" && value && !value.includes("/") && !value.includes("\\") && !value.includes("..");
 }
 
 export class StudioCronService {
@@ -124,16 +154,17 @@ export class StudioCronService {
       );
       this._storeStudioId = studioId;
     }
-    this._importLegacyJobs(this._store);
+    this._importLegacyJobs(this._store, studioId);
     return this._store;
   }
 
-  _importLegacyJobs(store) {
-    const existingLegacyRefs = new Set(
-      store.listJobs()
-        .map((job) => legacyRefKey(job.legacyRef))
-        .filter(Boolean),
-    );
+  _importLegacyJobs(store, studioId) {
+    const studioRunsDir = path.join(this._hanakoHome, "studios", studioId, "desk", "cron-runs");
+    const existingLegacyJobs = new Map();
+    for (const job of store.listJobs()) {
+      const refKey = legacyRefKey(job.legacyRef);
+      if (refKey) existingLegacyJobs.set(refKey, job);
+    }
     let entries;
     try {
       entries = fs.readdirSync(this._agentsDir, { withFileTypes: true });
@@ -152,15 +183,43 @@ export class StudioCronService {
         continue;
       }
       if (!data || !Array.isArray(data.jobs)) continue;
+      if (isLegacyCronMigrationComplete(data)) continue;
+      let historyMigrated = true;
       for (const legacyJob of data.jobs) {
         const ref = { agentId, jobId: legacyJob?.id };
         const refKey = legacyRefKey(ref);
-        if (!refKey || existingLegacyRefs.has(refKey)) continue;
-        const imported = this._toStudioJob(agentId, legacyJob, ref);
-        if (!imported) continue;
-        store.addImportedJob(imported);
-        existingLegacyRefs.add(refKey);
+        if (!refKey) continue;
+        let studioJob = existingLegacyJobs.get(refKey);
+        if (!studioJob) {
+          const imported = this._toStudioJob(agentId, legacyJob, ref);
+          if (!imported) continue;
+          studioJob = store.addImportedJob(imported);
+          existingLegacyJobs.set(refKey, studioJob);
+        }
+        historyMigrated = this._copyLegacyRunHistory(agentId, legacyJob?.id, studioJob.id, studioRunsDir) && historyMigrated;
       }
+      if (historyMigrated) {
+        try {
+          markLegacyCronStoreMigrated(jobsPath, data, studioId);
+        } catch (err) {
+          log.warn(`failed to mark legacy cron store migrated for ${agentId}: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  _copyLegacyRunHistory(agentId, legacyJobId, studioJobId, studioRunsDir) {
+    if (!isSafeRunFileId(legacyJobId) || !isSafeRunFileId(studioJobId)) return true;
+    const source = path.join(this._agentsDir, agentId, "desk", "cron-runs", `${legacyJobId}.jsonl`);
+    const target = path.join(studioRunsDir, `${studioJobId}.jsonl`);
+    try {
+      if (!fs.existsSync(source) || fs.existsSync(target)) return true;
+      fs.mkdirSync(studioRunsDir, { recursive: true });
+      fs.copyFileSync(source, target);
+      return true;
+    } catch (err) {
+      log.warn(`failed to migrate legacy cron run history for ${agentId}/${legacyJobId}: ${err.message}`);
+      return false;
     }
   }
 

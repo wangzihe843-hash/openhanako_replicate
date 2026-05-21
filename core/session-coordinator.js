@@ -35,6 +35,7 @@ import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/w
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
 import { prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
+import { pruneSessionInlineMediaHistory } from "./session-inline-media-prune.js";
 import { createVisionContextInjectionExtension } from "./vision-context-injector.js";
 import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
 import {
@@ -47,11 +48,20 @@ import {
   snapshotSkillsForSession,
 } from "../lib/skills/session-skill-snapshot.js";
 import { SessionListProjectionCache } from "./session-list-projection-cache.js";
+import {
+  buildLlmContextCachePrefixContract,
+  diffCachePrefixContracts,
+  summarizeCachePrefixContract,
+} from "../lib/llm/cache-prefix-contract.js";
 
 const log = createModuleLogger("session");
 
 /** 巡检/定时任务默认工具白名单（"*" = 与 chat 一致，全部放行） */
 export const PATROL_TOOLS_DEFAULT = "*";
+
+function cacheContractDebugEnabled() {
+  return process.env.HANA_CACHE_CONTRACT_DEBUG === "1";
+}
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
@@ -762,9 +772,12 @@ export class SessionCoordinator {
         }
         if (metaEntry && Array.isArray(metaEntry.toolNames)) {
           const restoredToolNames = uniqueToolNames(metaEntry.toolNames);
-          snapshotToolNames = restoredToolNames;  // Case A
+          snapshotToolNames = computeToolSnapshot(restoredToolNames, [], {
+            extraDisabled: stableFeatureDisabledToolNames,
+          });  // Case A, with current global feature gates enforced
           shouldPersistRestoredToolNames = restoredToolNames.length !== metaEntry.toolNames.length
-            || restoredToolNames.some((name, index) => name !== metaEntry.toolNames[index]);
+            || restoredToolNames.some((name, index) => name !== metaEntry.toolNames[index])
+            || snapshotToolNames.length !== restoredToolNames.length;
         } else {
           // Legacy sessions created before tool snapshots had no stable tool
           // identity boundary. Establish one on first restore so future plugin
@@ -819,6 +832,8 @@ export class SessionCoordinator {
     const promptSnapshotToWrite = finalSystemPrompt
       ? { ...promptSnapshotForPersist, finalSystemPrompt }
       : promptSnapshotForPersist;
+    this._renewCachePrefixContract(mapKey, sessionEntry, restore ? "session_restore" : "new_session");
+    this._installCachePrefixGuard(mapKey, sessionEntry);
 
     // Persist fresh snapshots and repair/establish restored snapshots. Restored
     // legacy sessions with missing toolNames get a baseline on first restore,
@@ -1007,6 +1022,7 @@ export class SessionCoordinator {
     try {
       await this._session.prompt(text, promptOpts);
     } finally {
+      pruneSessionInlineMediaHistory(this._session);
       if (sp) this._scheduleRuntimePressureCheck(sp, "prompt");
     }
     if (sp) {
@@ -1105,6 +1121,7 @@ export class SessionCoordinator {
     try {
       await entry.session.prompt(text, promptOpts);
     } finally {
+      pruneSessionInlineMediaHistory(entry.session);
       this._scheduleRuntimePressureCheck(sessionPath, "prompt_session");
     }
     agent?._memoryTicker?.notifyTurn(sessionPath);
@@ -1249,6 +1266,7 @@ export class SessionCoordinator {
       entry.thinkingLevel = nextThinkingLevel;
       session.setThinkingLevel?.(models?.resolveThinkingLevel?.(nextThinkingLevel) || nextThinkingLevel);
       this.writeSessionMeta(sessionPath, { thinkingLevel: nextThinkingLevel });
+      this._renewCachePrefixContract(sessionPath, entry, "model_switch");
 
       return { adaptations, thinkingLevel: nextThinkingLevel };
     } finally {
@@ -1849,9 +1867,10 @@ export class SessionCoordinator {
    * 本方法由 engine.onProviderChanged() 触发。
    */
   refreshAllSessionsModels() {
-    for (const entry of this._sessions.values()) {
+    for (const [sessionPath, entry] of this._sessions) {
       try {
         refreshSessionModelFromRegistry(entry.session);
+        this._renewCachePrefixContract(sessionPath, entry, "provider_refresh");
       } catch (err) {
         log.warn(`refreshAllSessionsModels: ${err.message}`);
       }
@@ -2230,6 +2249,88 @@ export class SessionCoordinator {
       return session.agent.state.systemPrompt;
     }
     return null;
+  }
+
+  _buildCachePrefixContract(entry, { model = null, context = null } = {}) {
+    const session = entry?.session;
+    const state = session?.agent?.state;
+    const hasContextPrompt = context && Object.prototype.hasOwnProperty.call(context, "systemPrompt");
+    return buildLlmContextCachePrefixContract({
+      model: model || session?.model || state?.model || null,
+      systemPrompt: hasContextPrompt ? context.systemPrompt : (this._getFinalSystemPrompt(session) ?? ""),
+      tools: Array.isArray(context?.tools) ? context.tools : (Array.isArray(state?.tools) ? state.tools : []),
+    });
+  }
+
+  _renewCachePrefixContract(sessionPath, entry, reason, options = {}) {
+    if (!entry?.session) return null;
+    const contract = this._buildCachePrefixContract(entry, options);
+    entry.cachePrefixContract = contract;
+    entry.cachePrefixContractRenewReason = reason;
+    entry.cachePrefixContractRenewedAt = Date.now();
+    entry.cachePrefixContractRequestCount = 0;
+
+    if (cacheContractDebugEnabled()) {
+      log.log(`cache_contract_renew ${JSON.stringify({
+        session: sessionPath ? path.basename(sessionPath) : null,
+        reason,
+        contract: summarizeCachePrefixContract(contract),
+      })}`);
+    }
+    return contract;
+  }
+
+  _assertCachePrefixContract(sessionPath, entry, { model = null, context = null } = {}) {
+    if (!entry?.session) return null;
+    const expected = entry.cachePrefixContract
+      || this._renewCachePrefixContract(sessionPath, entry, "late_init", { model, context });
+    const actual = this._buildCachePrefixContract(entry, { model, context });
+    const diffs = diffCachePrefixContracts(expected, actual);
+    if (diffs.length > 0) {
+      const record = {
+        session: sessionPath ? path.basename(sessionPath) : null,
+        renewReason: entry.cachePrefixContractRenewReason || null,
+        requestCount: entry.cachePrefixContractRequestCount || 0,
+        diffs,
+        expected: summarizeCachePrefixContract(expected),
+        actual: summarizeCachePrefixContract(actual),
+      };
+      log.error(`cache_contract_violation ${JSON.stringify(record)}`);
+      try {
+        this._d.emitEvent?.({
+          type: "cache_contract_violation",
+          sessionPath,
+          diffs,
+          expected: summarizeCachePrefixContract(expected),
+          actual: summarizeCachePrefixContract(actual),
+        }, sessionPath);
+      } catch {
+        // The provider request must still fail even if UI event delivery fails.
+      }
+      throw new Error(`Cache prefix contract violated: ${diffs.map((d) => d.field).join(", ")}`);
+    }
+
+    entry.cachePrefixContractRequestCount = (entry.cachePrefixContractRequestCount || 0) + 1;
+    if (cacheContractDebugEnabled()) {
+      log.log(`cache_contract_check ${JSON.stringify({
+        session: sessionPath ? path.basename(sessionPath) : null,
+        requestCount: entry.cachePrefixContractRequestCount,
+        contract: summarizeCachePrefixContract(actual),
+      })}`);
+    }
+    return actual;
+  }
+
+  _installCachePrefixGuard(sessionPath, entry) {
+    const agent = entry?.session?.agent;
+    if (!agent || typeof agent.streamFn !== "function" || entry.cachePrefixGuardInstalled) return;
+    const originalStreamFn = agent.streamFn;
+    entry.cachePrefixGuardInstalled = true;
+    entry.cachePrefixOriginalStreamFn = originalStreamFn;
+    agent.streamFn = async (model, context, options) => {
+      this._assertCachePrefixContract(sessionPath, entry, { model, context });
+      return originalStreamFn.call(agent, model, context, options);
+    };
   }
 
   _applyFinalPromptSnapshot(session, finalSystemPrompt) {

@@ -290,6 +290,7 @@ export function handleServerMessage(msg: any): void {
     dispatchStreamKey(msg.sessionPath, msg);
     applyTodoToolEnd(msg);
     applyToolEndSessionFile(msg);
+    applyContentBlockSessionFile(msg);
     return;
   }
 
@@ -311,6 +312,7 @@ export function handleServerMessage(msg: any): void {
     if (msg.type === 'tool_end') {
       applyToolEndSessionFile(msg);
     }
+    applyContentBlockSessionFile(msg);
     // COMPAT(create_artifact, remove no earlier than v0.133):
     // 旧 artifact block 进入当前 Preview 面板。
     if (msg.type === 'content_block' && msg.block?.type === 'artifact' && state.currentTab === 'chat') {
@@ -691,4 +693,24 @@ function applyToolEndSessionFile(msg: any): void {
   const sessionFile = msg.details?.sessionFile;
   if (!sp || !sessionFile) return;
   useStore.getState().upsertSessionRegistryFile?.(sp, sessionFile);
+}
+
+function applyContentBlockSessionFile(msg: any): void {
+  const sp = msg.sessionPath;
+  const block = msg.block;
+  if (!sp || block?.type !== 'file') return;
+  useStore.getState().upsertSessionRegistryFile?.(sp, {
+    id: block.fileId,
+    fileId: block.fileId,
+    filePath: block.filePath,
+    label: block.label,
+    ext: block.ext,
+    mime: block.mime,
+    kind: block.kind,
+    storageKind: block.storageKind,
+    status: block.status,
+    missingAt: block.missingAt,
+    origin: block.origin,
+    operations: block.operations,
+  });
 }

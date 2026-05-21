@@ -365,7 +365,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(allNames());
   });
 
-  it("Case C: fresh session hides channel when the global channel feature is disabled", async () => {
+  it("Case C: fresh session hides channel and dm when the global phone feature is disabled", async () => {
     channelsEnabled = false;
     currentAgentConfig = { tools: { disabled: [] } };
 
@@ -373,11 +373,29 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
     expect(appliedList).not.toContain("channel");
-    expect(appliedList).toContain("dm");
+    expect(appliedList).not.toContain("dm");
     expect(appliedList).toContain("browser");
 
     const entry = coord._sessions.get(sessionPath);
     expect(entry.toolNames).not.toContain("channel");
+    expect(entry.toolNames).not.toContain("dm");
+  });
+
+  it("Case A: restore applies the global phone feature gate over frozen toolNames", async () => {
+    channelsEnabled = false;
+    currentAgentConfig = { tools: { disabled: [] } };
+    const replayList = ["read", "channel", "dm", "browser"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+    const appliedList = activeToolsSpy.mock.calls[0][0];
+    expect(appliedList).toEqual(["read", "browser"]);
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).toEqual(["read", "browser"]);
   });
 
   it("Case C: snapshot includes Pi SDK built-ins (regression for P1 — bundle must carry read/bash/etc)", async () => {

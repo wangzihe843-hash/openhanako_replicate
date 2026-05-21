@@ -169,3 +169,21 @@ export async function switchToAgent(agentId: string) {
     store.showToast(t('settings.agent.switchFailed') + ': ' + err.message, 'error');
   }
 }
+
+export async function setPrimaryAgent(agentId: string) {
+  const store = useSettingsStore.getState();
+  try {
+    const res = await hanaFetch('/api/agents/primary', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: agentId }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    await loadAgents();
+    store.showToast(t('settings.agent.setPrimary'), 'success');
+  } catch (err: any) {
+    store.showToast(t('settings.agent.setPrimaryFailed') + ': ' + err.message, 'error');
+  }
+}

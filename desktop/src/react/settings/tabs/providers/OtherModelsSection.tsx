@@ -251,7 +251,7 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
           <label className={styles['settings-form-label']}>{t('settings.api.searchProviderField')}</label>
           <SelectWidget
             options={[
-              { value: AUTO_SEARCH_PROVIDER, label: 'Auto (API -> Browser)' },
+              { value: AUTO_SEARCH_PROVIDER, label: 'Auto (API -> AnySearch -> Browser)' },
               { value: 'bing_browser', label: 'Bing (Browser)' },
               { value: 'google_browser', label: 'Google (Browser)' },
               { value: 'duckduckgo_browser', label: 'DuckDuckGo (Browser)' },

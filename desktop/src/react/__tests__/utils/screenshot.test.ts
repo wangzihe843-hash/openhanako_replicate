@@ -40,6 +40,7 @@ describe('screenshot utils', () => {
       removeItem: vi.fn(),
       clear: vi.fn(),
     });
+    window.i18n = { locale: 'zh' } as typeof window.i18n;
     window.addEventListener('hana-inline-notice', noticeHandler);
     (window as any).t = (key: string) => (
       key === 'common.screenshotFailed' ? '截图保存失败'
@@ -53,6 +54,7 @@ describe('screenshot utils', () => {
     window.removeEventListener('hana-inline-notice', noticeHandler);
     delete (window as any).hana;
     delete (window as any).t;
+    delete (window as any).i18n;
   });
 
   it('主进程 IPC reject 时，给用户发出明确失败提示而不是变成未处理异常', async () => {
@@ -112,6 +114,7 @@ describe('screenshot utils', () => {
     expect(storeMock.state.endScreenshotTask).toHaveBeenCalledOnce();
     expect((window as any).hana.screenshotRender).toHaveBeenCalledTimes(2);
     expect((window as any).hana.screenshotRender).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      locale: 'zh',
       segmentIndex: 1,
       segmentTotal: 2,
     }));

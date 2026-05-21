@@ -39,12 +39,13 @@ describe("AgentManager.switchAgent workspace selection", () => {
         },
       },
     }));
+    const savePrimaryAgent = vi.fn();
     const manager = new AgentManager({
       agentsDir: makeDir("agents"),
       productDir: makeDir("product"),
       userDir: makeDir("user"),
       channelsDir: makeDir("channels"),
-      getPrefs: () => ({ savePrimaryAgent: vi.fn() }),
+      getPrefs: () => ({ savePrimaryAgent }),
       getModels: () => ({
         availableModels: [
           { id: "focus-model", provider: "openai" },
@@ -66,7 +67,7 @@ describe("AgentManager.switchAgent workspace selection", () => {
     manager.agents.set("focus", focusAgent);
     manager.agents.set("target", targetAgent);
     manager.activeAgentId = "focus";
-    return { manager, createSession };
+    return { manager, createSession, savePrimaryAgent };
   }
 
   it("creates the new focus session in the target agent explicit workspace", async () => {
@@ -90,5 +91,15 @@ describe("AgentManager.switchAgent workspace selection", () => {
     expect(createSession).toHaveBeenCalledWith(null, previousCwd);
     expect(result.cwd).toBe(previousCwd);
     expect(result.homeFolder).toBeNull();
+  });
+
+  it("switching focus does not change the primary agent", async () => {
+    const previousCwd = makeDir("previous-workspace");
+    const { manager, savePrimaryAgent } = makeManager({ previousCwd, targetHome: null });
+
+    await manager.switchAgent("target");
+
+    expect(manager.activeAgentId).toBe("target");
+    expect(savePrimaryAgent).not.toHaveBeenCalled();
   });
 });

@@ -21,11 +21,16 @@ import { HanaEngine } from "../core/engine.js";
 import { ensureFirstRun } from "../core/first-run.js";
 import { initDebugLog, createModuleLogger } from "../lib/debug-log.js";
 import { redactLogLabel, redactLogText } from "../lib/log-redactor.js";
+import {
+  runWin32LegacySandboxMigration,
+  summarizeWin32LegacySandboxMigration,
+} from "../lib/sandbox/win32-legacy-migration.js";
 import { safeJson } from "./hono-helpers.js";
 
 const log = createModuleLogger("server");
 const checkpointLog = createModuleLogger("checkpoint");
 const sessionFilesLog = createModuleLogger("session-files");
+const win32SandboxMigrationLog = createModuleLogger("win32-sandbox-migration");
 import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.js";
 import { createServerAuthService } from "../core/server-auth.js";
 import { resolveServerListenOptions } from "../core/server-network-config.js";
@@ -235,6 +240,30 @@ dlog.header(appVersion, {
   utilityModel: (() => { try { return engine.resolveUtilityConfig?.()?.utility?.id || "(none)"; } catch { return "(none)"; } })(),
   channelsDir: engine.channelsDir,
 });
+
+if (process.platform === "win32") {
+  const workspaceRoots = [
+    engine.homeCwd,
+    ...(Array.isArray(engine.config?.cwd_history) ? engine.config.cwd_history : []),
+  ].filter(Boolean);
+  runWin32LegacySandboxMigration({
+    hanakoHome,
+    workspaceRoots,
+    cleanup: true,
+  }).then((result) => {
+    const summary = summarizeWin32LegacySandboxMigration(result);
+    if (result.status === "failed") {
+      const detail = result.error || result.stderr || `exit=${result.exitCode ?? "unknown"}`;
+      win32SandboxMigrationLog.warn(`legacy migration failed: ${summary}; ${detail}`);
+      return;
+    }
+    if (result.status !== "skipped") {
+      win32SandboxMigrationLog.log(`legacy migration ${summary}`);
+    }
+  }).catch((err) => {
+    win32SandboxMigrationLog.warn(`legacy migration crashed: ${err?.message || String(err)}`);
+  });
+}
 
 // ── 初始化 Hub（调度中枢，包装 engine） ──
 const hub = new Hub({ engine });

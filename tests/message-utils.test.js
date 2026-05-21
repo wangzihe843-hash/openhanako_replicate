@@ -15,6 +15,7 @@ import {
   extractTextContent,
   loadSessionHistoryMessages,
   loadLatestAssistantSummaryFromSessionFile,
+  filterUnreferencedInlineImages,
   isValidSessionPath,
   isActiveSessionPath,
   isActiveDesktopSessionPath,
@@ -140,6 +141,32 @@ describe("extractTextContent", () => {
   });
 });
 
+describe("filterUnreferencedInlineImages", () => {
+  it("不把已有 attached_image 路径引用覆盖的图片 base64 返回给历史接口", () => {
+    const images = [
+      { data: "BASE64_A", mimeType: "image/png" },
+      { data: "BASE64_B", mimeType: "image/png" },
+    ];
+
+    expect(filterUnreferencedInlineImages(
+      "[attached_image: /tmp/a.png]\n[attached_image: /tmp/b.png]\ncompare",
+      images,
+    )).toEqual([]);
+  });
+
+  it("保留没有路径引用的 legacy inline 图片", () => {
+    const images = [
+      { data: "BASE64_A", mimeType: "image/png" },
+      { data: "BASE64_B", mimeType: "image/png" },
+    ];
+
+    expect(filterUnreferencedInlineImages(
+      "[attached_image: /tmp/a.png]\ncompare",
+      images,
+    )).toEqual([{ data: "BASE64_B", mimeType: "image/png" }]);
+  });
+});
+
 describe("isValidSessionPath", () => {
   it("合法子路径通过校验", () => {
     expect(isValidSessionPath("/tmp/agents/agent1/sessions/abc.jsonl", "/tmp/agents")).toBe(true);
@@ -251,6 +278,31 @@ describe("loadSessionHistoryMessages", () => {
       { id: expect.any(String), role: "user", text: "new prompt" },
       { id: expect.any(String), role: "assistant", text: "new answer" },
     ]);
+  });
+
+  it("从 Pi session 分支恢复 custom_message 供后台结果重建 UI 块", async () => {
+    const sessionDir = path.join(tmpDir, "sessions");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "submitted" }] });
+    manager.appendCustomMessageEntry(
+      "hana-background-result",
+      "<hana-background-result task-id=\"task-img\" status=\"success\" type=\"image-generation\">{}</hana-background-result>",
+      false,
+      { source: "test" },
+    );
+
+    const result = await loadSessionHistoryMessages({}, manager.getSessionFile());
+
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      role: "custom",
+      customType: "hana-background-result",
+      content: "<hana-background-result task-id=\"task-img\" status=\"success\" type=\"image-generation\">{}</hana-background-result>",
+      display: false,
+      details: { source: "test" },
+    });
+    expect(result[1].id).toEqual(expect.any(String));
+    expect(result[1].timestamp).toEqual(expect.any(String));
   });
 });
 

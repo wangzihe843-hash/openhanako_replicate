@@ -20,7 +20,7 @@ vi.mock("../lib/debug-log.js", () => ({
   createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
-import { createQQAdapter } from "../lib/bridge/qq-adapter.js";
+import { createQQAdapter, deriveQQPrincipal } from "../lib/bridge/qq-adapter.js";
 
 function jsonResponse(body) {
   return {
@@ -442,5 +442,33 @@ describe("createQQAdapter media delivery", () => {
 
     expect(fetch.mock.calls.some(([url]) => String(url).includes("/v2/groups/group-openid/files"))).toBe(false);
     adapter.stop();
+  });
+});
+
+describe("QQ principal metadata", () => {
+  it("prefers stable author id as principal while keeping C2C openid as delivery alias", () => {
+    expect(deriveQQPrincipal({
+      id: "stable-user-id",
+      user_openid: "c2c-openid",
+      username: "User",
+    })).toEqual({
+      principalId: "stable-user-id",
+      aliases: ["stable-user-id", "c2c-openid"],
+      displayName: null,
+      fallbackName: "QQ stab…r-id",
+    });
+  });
+
+  it("uses member openid as a QQ alias without treating placeholder username as display name", () => {
+    expect(deriveQQPrincipal({
+      id: "stable-user-id",
+      member_openid: "member-openid",
+      username: "User",
+    })).toEqual({
+      principalId: "stable-user-id",
+      aliases: ["stable-user-id", "member-openid"],
+      displayName: null,
+      fallbackName: "QQ stab…r-id",
+    });
   });
 });

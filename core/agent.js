@@ -441,6 +441,7 @@ export class Agent {
         agentId,
         agentsDir: path.dirname(this.agentDir),
         listAgents,
+        isEnabled: () => this._cb?.isChannelsEnabled?.() ?? false,
         onDmSent: (fromId, toId) => this._dmSentHandler?.(fromId, toId),
       });
     }

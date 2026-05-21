@@ -111,6 +111,24 @@ describe("writeDiary hybrid material collection", () => {
     expect(diaryPrompt()).toContain("补齐缺失摘要");
   });
 
+  it("writes new diary files under OH-Works and ignores legacy diary folders", async () => {
+    const opts = baseOpts();
+    fs.mkdirSync(path.join(tempRoot, "日记"), { recursive: true });
+    makeSession(opts.sessionDir, "workspace-output-session", [
+      { role: "user", content: "今天要把工作区产物统一到一个目录。", timestamp: "2026-05-07T04:10:00.000Z" },
+      { role: "assistant", content: "我会把新日记写进 OH-Works。", timestamp: "2026-05-07T04:12:00.000Z" },
+    ]);
+    opts.summaryManager.rollingSummary.mockResolvedValue("## 事情经过\n[12:10] 工作区产物统一到 OH-Works。");
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toBeUndefined();
+    expect(result.filePath).toContain(path.join("OH-Works", "日记"));
+    expect(result.filePath).not.toContain(path.join(tempRoot, "日记"));
+    expect(fs.readdirSync(path.join(tempRoot, "日记"))).toEqual([]);
+    expect(fs.existsSync(result.filePath)).toBe(true);
+  });
+
   it("falls back to temporary compaction when persistent summary backfill fails", async () => {
     const opts = baseOpts({
       generateTemporarySummary: vi.fn().mockResolvedValue("## 临时摘要\n持久摘要失败后，临时材料仍然能支撑今天的日记。"),

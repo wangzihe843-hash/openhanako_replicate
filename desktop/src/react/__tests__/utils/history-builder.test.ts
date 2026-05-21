@@ -50,7 +50,7 @@ describe('buildItemsFromHistory user image restoration', () => {
     expect(first.data.text).toBe('hello from phone');
   });
 
-  it('把辅助视觉 attached_image 标记恢复成图片附件，并从正文隐藏', () => {
+  it('把 attached_image 标记恢复成图片附件，并从正文隐藏', () => {
     const items = buildItemsFromHistory({
       messages: [{
         id: 'u1',
@@ -69,7 +69,6 @@ describe('buildItemsFromHistory user image restoration', () => {
       path: '/Users/test/.hanako/attachments/upload-abc.png',
       name: 'upload-abc.png',
       isDir: false,
-      visionAuxiliary: true,
     }]);
   });
 
@@ -92,7 +91,6 @@ describe('buildItemsFromHistory user image restoration', () => {
       name: 'upload-native.png',
       isDir: false,
       mimeType: 'image/png',
-      visionAuxiliary: false,
     }]);
   });
 });

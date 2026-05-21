@@ -1,15 +1,55 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
 import { COMPUTER_USE_ERRORS, computerUseError } from "../errors.js";
 import { createCommandRunner } from "./command-runner.js";
 import { WINDOWS_UIA_HELPER_SCRIPT } from "./windows-uia-script.js";
-
-function encodePowerShell(script) {
-  return Buffer.from(script, "utf16le").toString("base64");
-}
 
 function defaultPowerShellCommand(env = process.env) {
   if (process.platform !== "win32") return "powershell.exe";
   const root = env.SystemRoot || "C:\\Windows";
   return `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+}
+
+function defaultHelperDir() {
+  return path.join(os.tmpdir(), "hana-computer-use", "windows-uia");
+}
+
+function helperScriptHash(script) {
+  return crypto.createHash("sha256").update(script, "utf8").digest("hex");
+}
+
+function ensureHelperFile(helperDir, helperScript) {
+  const hash = helperScriptHash(helperScript);
+  const helperPath = path.join(helperDir, `windows-uia-helper-${hash.slice(0, 16)}.ps1`);
+  try {
+    fs.mkdirSync(helperDir, { recursive: true });
+    let current = null;
+    try {
+      current = fs.readFileSync(helperPath, "utf8");
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+    if (current !== helperScript) {
+      fs.writeFileSync(helperPath, helperScript, "utf8");
+    }
+    return helperPath;
+  } catch (err) {
+    throw computerUseError(
+      COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+      `Windows UIA helper file could not be prepared: ${err?.message || String(err)}`,
+      { helperPath, launchCode: err?.code || null },
+    );
+  }
+}
+
+function mapHelperLaunchError(err, providerId) {
+  throw computerUseError(
+    COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+    `Windows UIA helper failed to launch: ${err?.message || String(err)}`,
+    { providerId, launchCode: err?.code || null },
+  );
 }
 
 function parsePidAppId(appId) {
@@ -177,22 +217,29 @@ export function createWindowsUiaProvider({
   command = defaultPowerShellCommand(),
   runner = createCommandRunner(),
   helperScript = WINDOWS_UIA_HELPER_SCRIPT,
+  helperDir = defaultHelperDir(),
   timeoutMs = 30000,
 } = {}) {
-  const encodedScript = encodePowerShell(helperScript);
+  let helperPath = null;
 
   async function runHelper(payload) {
-    const result = await runner.run(command, [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-EncodedCommand",
-      encodedScript,
-    ], {
-      stdin: JSON.stringify(payload),
-      timeoutMs,
-    });
+    helperPath ||= ensureHelperFile(helperDir, helperScript);
+    let result;
+    try {
+      result = await runner.run(command, [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        helperPath,
+      ], {
+        stdin: JSON.stringify(payload),
+        timeoutMs,
+      });
+    } catch (err) {
+      mapHelperLaunchError(err, providerId);
+    }
 
     if (result.exitCode !== 0) {
       throw computerUseError(
@@ -256,10 +303,11 @@ export function createWindowsUiaProvider({
         const data = await runHelper({ command: "status" });
         return { providerId, available: data.available !== false, permissions: data.permissions || [] };
       } catch (err) {
+        const launchCode = err?.details?.launchCode || err?.code;
         return {
           providerId,
           available: false,
-          reason: err?.code === "ENOENT" ? "powershell-not-found" : "status-failed",
+          reason: launchCode === "ENOENT" ? "powershell-not-found" : "status-failed",
           error: err?.message || String(err),
         };
       }

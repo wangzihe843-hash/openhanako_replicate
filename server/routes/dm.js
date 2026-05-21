@@ -39,9 +39,18 @@ function resolveDmOwnerAgent(engine, c) {
 export function createDmRoute(engine) {
   const route = new Hono();
 
+  function isPhoneEnabled() {
+    return engine.isChannelsEnabled?.() !== false;
+  }
+
+  function phoneDisabledResponse(c) {
+    return c.json({ error: "Agent phone is disabled" }, 503);
+  }
+
   // ── 列出所有 DM 对话（包含未聊过的 agent 作为占位） ──
   route.get("/dm", async (c) => {
     try {
+      if (!isPhoneEnabled()) return phoneDisabledResponse(c);
       const agent = resolveDmOwnerAgent(engine, c);
       if (!agent) {
         return c.json({ dms: [] });
@@ -103,6 +112,7 @@ export function createDmRoute(engine) {
   // ── 获取 DM 消息 ──
   route.get("/dm/:peerId", async (c) => {
     try {
+      if (!isPhoneEnabled()) return phoneDisabledResponse(c);
       const peerId = c.req.param("peerId");
       const agent = resolveDmOwnerAgent(engine, c);
       if (!agent) {

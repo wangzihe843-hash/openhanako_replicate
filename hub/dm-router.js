@@ -48,6 +48,10 @@ export class DmRouter {
 
   get _engine() { return this._hub.engine; }
 
+  _isPhoneEnabled() {
+    return this._engine.isChannelsEnabled?.() !== false;
+  }
+
   async _recordPhoneActivity(agentId, peerId, state, summary, details = {}) {
     try {
       const agent = this._engine.getAgent(agentId);
@@ -111,6 +115,8 @@ export class DmRouter {
    * @param {string} toId - 接收方 agent ID
    */
   async handleNewDm(fromId, toId) {
+    if (!this._isPhoneEnabled()) return;
+
     const key = `${fromId}→${toId}`;
 
     // 清理卡住的 entry（超过 5 分钟视为异常）
@@ -148,6 +154,8 @@ export class DmRouter {
    * 让 toId 读取聊天记录并回复，可能触发多轮
    */
   async _processReply(fromId, toId) {
+    if (!this._isPhoneEnabled()) return;
+
     const engine = this._engine;
     const agentsDir = engine.agentsDir;
 

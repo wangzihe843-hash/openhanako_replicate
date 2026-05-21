@@ -160,7 +160,33 @@ describe("web_search browser providers", () => {
     });
   });
 
-  it("defaults to auto search and uses Bing browser first when no API provider is configured", async () => {
+  it("defaults to auto search and uses AnySearch free before browser providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        message: "success",
+        data: {
+          results: [
+            {
+              title: "AnySearch Result",
+              url: "https://example.com/anysearch",
+              description: "AnySearch description",
+              content: "AnySearch content",
+              score: 68.5,
+              quality_score: 68.5,
+            },
+          ],
+          metadata: {
+            total_results: 1,
+            search_time_ms: 123,
+            request_id: "req-anysearch",
+            cached: false,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
     searchWebMock.mockResolvedValue({
       query: "hana default",
       provider: "bing_browser",
@@ -187,34 +213,92 @@ describe("web_search browser providers", () => {
     });
     const result = await tool.execute("call-2", { query: "hana default", maxResults: 2 });
 
-    expect(searchWebMock).toHaveBeenCalledWith({
-      provider: "bing_browser",
-      query: "hana default",
-      maxResults: 2,
-      locale: "zh",
-    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(searchWebMock).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({
       query: "hana default",
-      provider: "bing_browser",
-      source_type: "browser",
+      provider: "anysearch_free",
+      source_type: "api",
       diagnostics: {
         strategy: "auto",
+        request_id: "req-anysearch",
         attempts: [
           {
-            provider: "bing_browser",
+            provider: "anysearch_free",
             status: "ok",
           },
         ],
       },
       results: [
         {
-          title: "Default Result",
-          url: "https://example.com/default",
-          content: "Default snippet",
+          title: "AnySearch Result",
+          url: "https://example.com/anysearch",
+          content: "AnySearch content",
+          score: 68.5,
+          metadata: { quality_score: 68.5 },
+        },
+      ],
+    });
+  });
+
+  it("auto search falls back from exhausted AnySearch free quota to browser providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ code: 402, message: "free quota exhausted" }),
+      {
+        status: 402,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    searchWebMock.mockResolvedValue({
+      query: "hana quota fallback",
+      provider: "bing_browser",
+      source_type: "browser",
+      results: [
+        {
+          title: "Browser Result",
+          url: "https://example.com/browser",
+          content: "Browser snippet",
           rank: 1,
+          score: null,
           metadata: { engine: "bing" },
         },
       ],
+      diagnostics: { blocked: false, captcha: false },
+    });
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "auto", api_keys: {} }),
+    });
+    const result = await tool.execute("call-anysearch-fallback", {
+      query: "hana quota fallback",
+      maxResults: 1,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(searchWebMock).toHaveBeenCalledWith({
+      provider: "bing_browser",
+      query: "hana quota fallback",
+      maxResults: 1,
+      locale: "zh",
+    });
+    expect(result.details).toMatchObject({
+      provider: "bing_browser",
+      source_type: "browser",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "anysearch_free",
+            status: "error",
+            error_type: "rate_limited",
+          },
+          {
+            provider: "bing_browser",
+            status: "ok",
+          },
+        ],
+      },
     });
   });
 
@@ -322,6 +406,11 @@ describe("web_search browser providers", () => {
   });
 
   it("auto search falls back from low-quality Bing Chinese results to Google", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ code: 0, message: "success", data: { results: [] } }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
     searchWebMock.mockImplementation(async ({ provider, query }) => {
       if (provider === "bing_browser") {
         return {
@@ -369,6 +458,7 @@ describe("web_search browser providers", () => {
       maxResults: 2,
     });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(searchWebMock).toHaveBeenNthCalledWith(1, {
       provider: "bing_browser",
       query: "大模型 官方定价 百炼 腾讯混元 2026",
@@ -386,6 +476,10 @@ describe("web_search browser providers", () => {
       diagnostics: {
         strategy: "auto",
         attempts: [
+          {
+            provider: "anysearch_free",
+            status: "empty",
+          },
           {
             provider: "bing_browser",
             status: "low_quality",

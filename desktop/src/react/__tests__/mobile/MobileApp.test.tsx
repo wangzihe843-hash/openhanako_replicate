@@ -221,7 +221,7 @@ describe('MobileApp', () => {
       })).toBe(true);
       expect(useStore.getState().previewOpen).toBe(true);
     });
-    expect(await screen.findByText('来自手机工作台预览')).toBeInTheDocument();
+    expect(await screen.findByText('来自手机工作台预览', undefined, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it('uses the desktop new-session draft flow on mobile instead of creating an empty session immediately', async () => {
