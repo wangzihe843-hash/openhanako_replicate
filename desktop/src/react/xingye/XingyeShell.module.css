@@ -1700,6 +1700,10 @@
   background: linear-gradient(135deg, #3a342a, #6b5d48);
 }
 
+.phoneAppGlyph_health {
+  background: linear-gradient(135deg, #b5675b, #c98a7e);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;
