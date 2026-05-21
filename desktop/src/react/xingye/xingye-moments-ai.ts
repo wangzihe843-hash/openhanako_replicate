@@ -16,7 +16,7 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
-import { getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
+import { getPhoneContactMeta, getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
 import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
@@ -25,7 +25,9 @@ import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
+  buildMomentCommentReplyPrompt,
   buildMomentDraftPrompt,
+  normalizeMomentCommentReplyResult,
   type XingyeMomentPeerAgentHint,
   type XingyeMomentVirtualContactHint,
 } from './xingye-moments-prompts';
@@ -499,4 +501,139 @@ export async function generateXingyeMomentDraftWithAI(params: {
     return { ...normalized, content: existingContent };
   }
   return normalized;
+}
+
+/**
+ * 生成一条朋友圈「评论回复」：user 在某条朋友圈下写了评论，@ 一个角色来回复这条评论。
+ *
+ * 与 `generateXingyeMomentDraftWithAI` 的区别：这里是「单个角色针对单条评论作答」，
+ * 不产 likes/comments 批量互动，只返回一段回复文本。
+ *
+ * 上下文按**回复角色（被 @ 的 agent）**的 id 采集：lore / 关系 / 近期一对一聊天，
+ * 再额外读回复角色自己小手机通讯录里对帖子作者的备注 / 印象——补「agent↔agent
+ * 没有结构化关系」的缺口。任意上下文缺失都优雅降级，不抛错。
+ *
+ * 不写入 moments store；调用方拿到文本后以 agent 身份调 `addXingyeMomentComment`。
+ */
+export async function generateXingyeMomentCommentReplyWithAI(params: {
+  /** 被 @ 来回复的角色。 */
+  replyAgent: Agent;
+  replyProfile: XingyeRoleProfile | null | undefined;
+  post: {
+    authorAgentId: string;
+    authorDisplayName: string;
+    /** 帖子作者 profile.identitySummary，可空。 */
+    authorIdentitySummary?: string | null;
+    content: string;
+  };
+  /** 评论区已有评论（不含正在回复的那条）。 */
+  existingComments: ReadonlyArray<{ authorName: string; body: string }>;
+  /** 被回复的那条评论（通常是 user 刚发的）。 */
+  targetComment: { authorName: string; body: string };
+  timeoutMs?: number;
+}): Promise<string> {
+  const { replyAgent, replyProfile, post, existingComments, targetComment } = params;
+  const timeoutMs = params.timeoutMs ?? 90_000;
+  const replyIsAuthor = replyAgent.id === post.authorAgentId;
+
+  const stableLoreBlock = await buildStableLoreBlock(replyAgent.id);
+  const userName = await resolveXingyeSpeakerUserName();
+  const recentContext = collectRecentContextForAgent({ agentId: replyAgent.id });
+  const recentSceneBlock = describeRecentContextForPrompt(recentContext);
+  const relationshipBlock = formatRelationshipBlock(replyAgent.id);
+
+  /**
+   * 回复者（在自己的小手机通讯录里）对帖子作者的备注 / 印象。
+   * impression 是 agent 视角的主观印象——正好用来补 agent↔agent 关系。
+   * replyIsAuthor 时跳过（对自己没有「联系人印象」）；读取失败静默降级。
+   */
+  let authorContactRemark: string | null = null;
+  let authorContactImpression: string | null = null;
+  if (!replyIsAuthor) {
+    try {
+      const meta = getPhoneContactMeta(replyAgent.id, 'agent', post.authorAgentId);
+      authorContactRemark = meta?.remark?.trim() || null;
+      authorContactImpression = meta?.impression?.trim() || null;
+    } catch {
+      authorContactRemark = null;
+      authorContactImpression = null;
+    }
+  }
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(replyProfile ?? null),
+    recentContext.summaryText,
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    post.content,
+    targetComment.body,
+    authorContactImpression ?? '',
+  ]);
+
+  const keywordCtx = collectXingyeLoreRuntimeContext(replyAgent.id, {
+    purpose: 'mm_chat',
+    queryText,
+    maxChars: 2000,
+    includeAlways: false,
+    includeKeyword: true,
+  });
+  const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+
+  const prompt = buildMomentCommentReplyPrompt({
+    replyAgent,
+    replyProfile,
+    userName,
+    postAuthorDisplayName: post.authorDisplayName,
+    replyIsAuthor,
+    postAuthorIdentitySummary: post.authorIdentitySummary,
+    postContent: post.content,
+    existingComments,
+    targetComment,
+    authorContactRemark,
+    authorContactImpression,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+  });
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'moments',
+      ownerAgentId: replyAgent.id,
+      agentId: replyAgent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: {
+    ok?: boolean;
+    error?: string;
+    result?: unknown;
+    details?: unknown;
+  };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[])
+        .map((item) => item.message ?? '')
+        .join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const reply = normalizeMomentCommentReplyResult(data?.result);
+  if (!reply) {
+    throw new Error('模型返回无效：缺少 reply 字段或 JSON 解析失败');
+  }
+  return reply;
 }

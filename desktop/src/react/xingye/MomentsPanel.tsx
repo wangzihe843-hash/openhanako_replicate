@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent } from '../types';
-import { MomentCard } from './MomentCard';
+import { MomentCard, type MomentReplyAgentOption } from './MomentCard';
 import { MomentComposer } from './MomentComposer';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import {
@@ -13,10 +13,14 @@ import {
   listMomentDrafts,
   toggleXingyeMomentLike,
   type XingyeMomentActor,
+  type XingyeMomentPost,
   type XingyePendingMomentDraft,
 } from './xingye-moments-store';
 import { useAggregatedXingyeMoments } from './xingye-moments-feed';
-import { generateXingyeMomentDraftWithAI } from './xingye-moments-ai';
+import {
+  generateXingyeMomentCommentReplyWithAI,
+  generateXingyeMomentDraftWithAI,
+} from './xingye-moments-ai';
 import type { MomentComposerSubmitInput } from './MomentComposer';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfiles } from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
@@ -110,6 +114,79 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
   const handleDelete = useCallback(async (authorAgentId: string, postId: string) => {
     await deleteXingyeMomentPost(authorAgentId, postId);
   }, []);
+
+  /** 为某条朋友圈构造「让 TA 回复」可选角色列表：作者排在最前并标记。 */
+  const buildReplyAgentOptions = (postAuthorAgentId: string): MomentReplyAgentOption[] =>
+    [...agents]
+      .sort((a, b) => {
+        const aAuthor = a.id === postAuthorAgentId ? 0 : 1;
+        const bAuthor = b.id === postAuthorAgentId ? 0 : 1;
+        return aAuthor - bAuthor;
+      })
+      .map((agent) => ({
+        id: agent.id,
+        displayName: getAgentDisplayName(agent.id),
+        isAuthor: agent.id === postAuthorAgentId,
+      }));
+
+  /**
+   * 「让 TA 回复」：先把用户输入的评论以 user 身份发出，再调 AI 让 replyAgent
+   * 针对这条评论生成回复，最后以 agent 身份写进同一条朋友圈的评论区。
+   * 任一步抛错都由 MomentCard 捕获并展示，不吞错。
+   */
+  const handleAgentReply = async (
+    post: XingyeMomentPost,
+    userCommentBody: string,
+    replyAgentId: string,
+  ) => {
+    const replyAgent = agentsById.get(replyAgentId);
+    if (!replyAgent) throw new Error('找不到要回复的角色');
+
+    const userCommented = await addXingyeMomentComment(
+      post.authorAgentId,
+      post.id,
+      userActor,
+      userCommentBody,
+    );
+    if (!userCommented) throw new Error('评论失败：内容无效');
+
+    const authorAgent = agentsById.get(post.authorAgentId) ?? null;
+    const authorProfile = authorAgent ? profiles[authorAgent.id] ?? null : null;
+    const authorDisplayName = authorAgent
+      ? getXingyeRoleProfileDisplay(authorAgent, authorProfile).displayName
+      : post.authorName;
+
+    const reply = await generateXingyeMomentCommentReplyWithAI({
+      replyAgent,
+      replyProfile: profiles[replyAgent.id] ?? null,
+      post: {
+        authorAgentId: post.authorAgentId,
+        authorDisplayName,
+        authorIdentitySummary: authorProfile?.identitySummary ?? null,
+        content: post.content,
+      },
+      existingComments: post.comments.map((comment) => ({
+        authorName:
+          comment.actorType === 'agent'
+            ? getAgentDisplayName(comment.actorId)
+            : comment.actorName,
+        body: comment.body,
+      })),
+      targetComment: { authorName: userActor.actorName, body: userCommentBody },
+    });
+
+    const replied = await addXingyeMomentComment(
+      post.authorAgentId,
+      post.id,
+      {
+        actorType: 'agent',
+        actorId: replyAgent.id,
+        actorName: getAgentDisplayName(replyAgent.id),
+      },
+      reply,
+    );
+    if (!replied) throw new Error('回复写入失败：内容无效');
+  };
 
   /** 当前 composerAgent 下「待确认朋友圈草稿」列表。只展示当前角色的草稿， */
   /** 不跨 agent 聚合——草稿是各 agent 独立的，跨角色显示会误导。 */
@@ -449,9 +526,13 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
                 getAgentDisplayName={getAgentDisplayName}
                 post={post}
                 userActor={userActor}
+                replyAgentOptions={buildReplyAgentOptions(post.authorAgentId)}
                 onComment={(postId, body) => handleComment(post.authorAgentId, postId, body)}
                 onDelete={(postId) => handleDelete(post.authorAgentId, postId)}
                 onToggleLike={(postId) => handleToggleLike(post.authorAgentId, postId)}
+                onAgentReply={(_postId, body, replyAgentId) =>
+                  handleAgentReply(post, body, replyAgentId)
+                }
               />
             );
           })

@@ -4,6 +4,14 @@ import type { XingyeMomentActor, XingyeMomentPost } from './xingye-moments-store
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
+/** 「让 TA 回复」下拉菜单里的一个可选角色。 */
+export type MomentReplyAgentOption = {
+  id: string;
+  displayName: string;
+  /** 是否就是这条朋友圈的作者（菜单里标「作者」）。 */
+  isAuthor: boolean;
+};
+
 interface MomentCardProps {
   authorAgent: Agent | null;
   authorDisplayName: string;
@@ -12,9 +20,13 @@ interface MomentCardProps {
   getAgentDisplayName: (agentId: string) => string;
   post: XingyeMomentPost;
   userActor: XingyeMomentActor;
+  /** 「让 TA 回复」可选的角色列表；为空则不渲染该按钮。 */
+  replyAgentOptions: ReadonlyArray<MomentReplyAgentOption>;
   onComment: (postId: string, body: string) => Promise<void>;
   onDelete: (postId: string) => Promise<void>;
   onToggleLike: (postId: string) => Promise<void>;
+  /** 把当前输入框里的评论以 user 身份发出，再让 replyAgentId 角色回复它。 */
+  onAgentReply: (postId: string, userCommentBody: string, replyAgentId: string) => Promise<void>;
 }
 
 function formatMomentTime(iso: string): string {
@@ -65,9 +77,11 @@ export function MomentCard({
   getAgentDisplayName,
   post,
   userActor,
+  replyAgentOptions,
   onComment,
   onDelete,
   onToggleLike,
+  onAgentReply,
 }: MomentCardProps) {
   const [commentDraft, setCommentDraft] = useState('');
   const [commentPending, setCommentPending] = useState(false);
@@ -75,6 +89,9 @@ export function MomentCard({
   const [likePending, setLikePending] = useState(false);
   const [likeError, setLikeError] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  const [replyMenuOpen, setReplyMenuOpen] = useState(false);
+  const [replyPending, setReplyPending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
   const liked = post.likes.some(
     (like) => like.actorType === userActor.actorType && like.actorId === userActor.actorId,
   );
@@ -92,6 +109,22 @@ export function MomentCard({
       setCommentError(e instanceof Error ? e.message : String(e));
     } finally {
       setCommentPending(false);
+    }
+  };
+
+  const handlePickReplyAgent = async (replyAgentId: string) => {
+    const body = commentDraft.trim();
+    if (!body || replyPending || commentPending) return;
+    setReplyMenuOpen(false);
+    setReplyPending(true);
+    setReplyError(null);
+    try {
+      await onAgentReply(post.id, body, replyAgentId);
+      setCommentDraft('');
+    } catch (e) {
+      setReplyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReplyPending(false);
     }
   };
 
@@ -229,22 +262,69 @@ export function MomentCard({
             value={commentDraft}
             onChange={(event) => setCommentDraft(event.target.value)}
             placeholder={`以 ${userActor.actorName} 的身份评论...`}
-            disabled={commentPending}
+            disabled={commentPending || replyPending}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void handleCommentSubmit();
             }}
           />
-          <button
-            type="button"
-            disabled={!commentDraft.trim() || commentPending}
-            onClick={() => { void handleCommentSubmit(); }}
-          >
-            {commentPending ? '评论中…' : '评论'}
-          </button>
+          <div className={styles.momentCommentActions}>
+            <button
+              type="button"
+              disabled={!commentDraft.trim() || commentPending || replyPending}
+              onClick={() => { void handleCommentSubmit(); }}
+            >
+              {commentPending ? '评论中…' : '评论'}
+            </button>
+            {replyAgentOptions.length > 0 ? (
+              <div className={styles.momentReplyMenuWrap}>
+                <button
+                  type="button"
+                  className={styles.momentReplyButton}
+                  disabled={!commentDraft.trim() || commentPending || replyPending}
+                  aria-haspopup="menu"
+                  aria-expanded={replyMenuOpen}
+                  title="发出这条评论，并让选定的角色回复它"
+                  onClick={() => setReplyMenuOpen((prev) => !prev)}
+                >
+                  {replyPending ? '回复中…' : '让 TA 回复 ▾'}
+                </button>
+                {replyMenuOpen ? (
+                  <>
+                    <div
+                      className={styles.momentReplyMenuBackdrop}
+                      aria-hidden
+                      onClick={() => setReplyMenuOpen(false)}
+                    />
+                    <div className={styles.momentReplyMenu} role="menu">
+                      {replyAgentOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="menuitem"
+                          className={styles.momentReplyMenuItem}
+                          onClick={() => { void handlePickReplyAgent(option.id); }}
+                        >
+                          {option.displayName}
+                          {option.isAuthor ? (
+                            <span className={styles.momentReplyMenuItemSub}>作者</span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
         {commentError ? (
           <p className={styles.momentCommentError} role="alert">
             {commentError}
+          </p>
+        ) : null}
+        {replyError ? (
+          <p className={styles.momentCommentError} role="alert">
+            {replyError}
           </p>
         ) : null}
       </div>

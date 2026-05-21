@@ -215,3 +215,184 @@ export function buildMomentDraftPrompt(args: {
 
   return parts.join('\n');
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  朋友圈「评论回复」生成（user 写评论 → @ 某个 agent 回复这条评论）
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 单条评论回复 body 的硬上限（朋友圈口吻，宁短勿长）。 */
+export const MOMENT_COMMENT_REPLY_MAX_CHARS = 80;
+
+export type XingyeMomentCommentReplyPromptArgs = {
+  /** 被 @ 来回复的角色。 */
+  replyAgent: Pick<Agent, 'id' | 'name' | 'yuan'>;
+  replyProfile: XingyeRoleProfile | null | undefined;
+  userName?: string;
+  /** 帖子作者展示名。 */
+  postAuthorDisplayName: string;
+  /** 回复者是否就是帖子作者本人（是则不喂「印象」「身份名片」，改写口吻）。 */
+  replyIsAuthor: boolean;
+  /** 帖子作者的客观身份摘要（来自其 profile.identitySummary），可空。 */
+  postAuthorIdentitySummary?: string | null;
+  postContent: string;
+  /** 评论区已有评论（不含正在回复的那条）。 */
+  existingComments: ReadonlyArray<{ authorName: string; body: string }>;
+  /** 被回复的那条评论（通常是 user 刚发的）。 */
+  targetComment: { authorName: string; body: string };
+  /** 回复者通讯录里对帖子作者的备注名 / 印象（replyIsAuthor 时忽略）。 */
+  authorContactRemark?: string | null;
+  authorContactImpression?: string | null;
+  recentSceneBlock: string;
+  stableLoreBlock: string;
+  keywordLoreBlock: string;
+  relationshipBlock: string;
+};
+
+function clampReplyChars(text: string, max: number): string {
+  const t = text.trim();
+  const chars = [...t];
+  if (chars.length <= max) return t;
+  return `${chars.slice(0, max).join('')}…`;
+}
+
+/**
+ * 构造朋友圈「评论回复」prompt。
+ * 输出仅 JSON：`{ reply: string }`，由调用方以 agent 身份写回评论区。
+ *
+ * 关键点：`authorContactImpression` 是**回复者视角**对帖子作者的印象（来自回复者
+ * 自己的小手机通讯录），不是用户视角——prompt 里据此标注为「你对 TA 的印象」。
+ */
+export function buildMomentCommentReplyPrompt(args: XingyeMomentCommentReplyPromptArgs): string {
+  const {
+    replyAgent,
+    replyProfile,
+    postAuthorDisplayName,
+    replyIsAuthor,
+    postContent,
+    existingComments,
+    targetComment,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+  } = args;
+
+  const userName = (args.userName ?? '').trim() || 'user';
+  const taMoniker = (replyProfile?.displayName ?? '').trim() || replyAgent.name;
+  const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
+    userName,
+    agentName: taMoniker,
+  });
+
+  const profileBlock = replyProfile
+    ? JSON.stringify(replyProfile, null, 2)
+    : '（无）';
+
+  const existingCommentsBlock = existingComments.length
+    ? existingComments
+        .map((c) => `- ${c.authorName}：${c.body}`)
+        .join('\n')
+    : '（评论区暂无其他评论）';
+
+  const authorIdentity = (args.postAuthorIdentitySummary ?? '').trim();
+  const contactRemark = (args.authorContactRemark ?? '').trim();
+  const contactImpression = (args.authorContactImpression ?? '').trim();
+
+  const postBlockLines = replyIsAuthor
+    ? [
+        '【这条朋友圈】这是你自己发的朋友圈，有人在评论区留言，你来回复。',
+        `正文：${postContent.trim() || '（空）'}`,
+      ]
+    : [
+        `【这条朋友圈】作者是「${postAuthorDisplayName}」（不是你）。`,
+        `正文：${postContent.trim() || '（空）'}`,
+      ];
+
+  const authorContextLines = replyIsAuthor
+    ? []
+    : [
+        '',
+        '【帖子作者是谁（客观身份名片，仅供你认人，勿逐字复述）】',
+        authorIdentity || '（无更多资料）',
+        '',
+        '【你（在自己的小手机通讯录里）对帖子作者的备注与印象】',
+        contactRemark ? `备注名：${contactRemark}` : '备注名：（未设置）',
+        contactImpression
+          ? `印象：${contactImpression}`
+          : '印象：（你的通讯录里还没有对 TA 形成明确印象——按你自己的人设与关系自然处理即可）',
+        '注意：以上「印象」是你本人对 TA 的主观看法，请让回复口吻与之一致。',
+      ];
+
+  const parts: string[] = [
+    '你是星野模式「朋友圈评论回复」生成器：以当前角色身份，在朋友圈评论区回复指定的那条评论。',
+    '只返回严格 JSON，不要 Markdown，不要解释，不要思考过程。',
+    '',
+    '【硬性规则】',
+    '1. 你只能输出当前角色本人的一条评论回复，写在 reply 字段。',
+    '2. 不要模拟 user 的发言，不要模拟其他人的发言，不要假装别人在说话。',
+    '3. 不要一次输出多条回复；不要在同一段里串起多条独立发言；不要使用 JSON 数组。',
+    '4. 不要出现「系统提示」「用户要求」「上下文」「模型」「prompt」「AI 助手」等元叙述。',
+    `5. 这是朋友圈评论区：回复要短、口语化，像微信朋友圈评论——建议 30 字以内，最长不得超过 ${MOMENT_COMMENT_REPLY_MAX_CHARS} 字；不要分段、不要编号、不要堆 emoji。`,
+    '6. 紧扣「你要回复的那条评论」来回应（接话、调侃、关心、追问、共情皆可），要符合当前角色 profile / 关系 / 口吻；第一人称。',
+    '7. 不要复述帖子正文或别人评论里的原句。',
+    '',
+    '【说话人语境】',
+    speakerContextBlock,
+    '',
+    `【你的 agent id】 ${replyAgent.id}`,
+    `【你的展示名】 ${taMoniker}`,
+    '',
+    '【当前角色 profile】',
+    profileBlock,
+    '',
+    ...postBlockLines,
+    ...authorContextLines,
+    '',
+    '【评论区已有评论（时间从早到晚，仅作上下文，不要逐条回应）】',
+    existingCommentsBlock,
+    '',
+    '【★ 你要回复的那条评论（你的回复必须针对它）】',
+    `${targetComment.authorName}：${targetComment.body.trim()}`,
+    '',
+    '【最近发生的事（仅作你的背景情绪参考，不要在 reply 中复述来源）】',
+    recentSceneBlock.trim() || '（无）',
+    '',
+    '【当前对 user 的关系状态摘要（内部参考）】',
+    relationshipBlock.trim() || '（无）',
+    '',
+    '【星野核心设定摘录（lore-memory / 常驻设定；勿逐字复述）】',
+    stableLoreBlock.trim() || '（无）',
+    '',
+    '【按需命中的设定库关键词条目（仅命中项；勿逐字复述）】',
+    keywordLoreBlock.trim() || '（无）',
+    '',
+    '【输出 JSON schema（字段名必须一致；不要返回数组）】',
+    JSON.stringify({ reply: 'string' }, null, 2),
+    '',
+    '只返回 JSON 对象，不要任何其他文字。',
+  ];
+
+  return parts.join('\n');
+}
+
+const MOMENT_COMMENT_REPLY_BODY_FIELDS = ['reply', 'body', 'content', 'text', 'message'] as const;
+
+/**
+ * 校验 / 收窄朋友圈评论回复 AI 结果。容忍模型把回复写在 reply / body / content / text / message
+ * 任一字段，或直接返回字符串。返回 null 表示无有效回复。
+ */
+export function normalizeMomentCommentReplyResult(raw: unknown): string | null {
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t ? clampReplyChars(t, MOMENT_COMMENT_REPLY_MAX_CHARS) : null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  for (const key of MOMENT_COMMENT_REPLY_BODY_FIELDS) {
+    const v = record[key];
+    if (typeof v === 'string' && v.trim()) {
+      return clampReplyChars(v.trim(), MOMENT_COMMENT_REPLY_MAX_CHARS);
+    }
+  }
+  return null;
+}
