@@ -104,15 +104,30 @@ vi.mock('../hooks/use-hana-fetch', () => ({
   hanaFetch: hanaFetchMock,
 }));
 
-const secretStoreHoisted = vi.hoisted(() => ({
-  state: {
+const secretStoreHoisted = vi.hoisted(() => {
+  type StagedQuote = { text: string; sourceTitle: string; charCount: number; updatedAt?: number };
+  const state: {
+    currentAgentId: string;
+    agentName: string;
+    serverPort: string;
+    activeServerConnection: null;
+    agents: { id: string }[];
+    stagedChatQuote: StagedQuote | null;
+    stageChatQuote: (sel: StagedQuote) => void;
+  } = {
     currentAgentId: 'agent-secret-1',
     agentName: 'Test',
     serverPort: '17333',
-    activeServerConnection: null as null,
-    agents: [] as { id: string }[],
-  },
-}));
+    activeServerConnection: null,
+    agents: [],
+    stagedChatQuote: null,
+    stageChatQuote: () => {},
+  };
+  state.stageChatQuote = (sel) => {
+    state.stagedChatQuote = sel;
+  };
+  return { state };
+});
 
 vi.mock('../stores', () => ({
   useStore: Object.assign(
@@ -189,6 +204,7 @@ describe('SecretSpacePanel secret space navigation', () => {
     jsonlStore.clear();
     jsonStore.clear();
     pinnedStore.clear();
+    secretStoreHoisted.state.stagedChatQuote = null;
     jsonlStore.set(storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl'), [
       {
         key: 'stored-dr1',
@@ -277,6 +293,49 @@ describe('SecretSpacePanel secret space navigation', () => {
     expect(screen.getByTestId('secret-space-record-row-stored-dr1')).toBeInTheDocument();
     expect(screen.queryByTestId('secret-space-record-detail-stored-dr1')).not.toBeInTheDocument();
     expect(screen.getByTestId('secret-space-category-draft_reply')).toBeInTheDocument();
+  });
+
+  it('「去和 TA 聊聊」stages the draft body for the next chat the user opens', async () => {
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-stored-dr1')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('secret-space-record-row-stored-dr1'));
+
+    expect(secretStoreHoisted.state.stagedChatQuote).toBeNull();
+    fireEvent.click(screen.getByTestId('secret-space-share-to-chat-stored-dr1'));
+
+    expect(secretStoreHoisted.state.stagedChatQuote).toMatchObject({
+      text: 'storage body',
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+    });
+    expect(
+      screen.getByTestId('secret-space-share-to-chat-notice-stored-dr1'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not show the share-to-chat button outside the draft_reply category', async () => {
+    jsonlStore.set(storeKey('agent-secret-1', 'secret-space/dream.jsonl'), [
+      {
+        key: 'dream-1',
+        title: 'a dream',
+        createdAt: '2026-05-12T12:00:00.000Z',
+        summary: 's',
+        body: 'dream body',
+        kind: 'dream',
+      },
+    ]);
+    render(<SecretSpacePanel agent={agent} />);
+
+    fireEvent.click(screen.getByTestId('secret-space-entry-dream'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-space-record-row-dream-1')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('secret-space-record-row-dream-1'));
+
+    expect(screen.queryByTestId('secret-space-share-to-chat-dream-1')).not.toBeInTheDocument();
   });
 
   it('opens detail, confirms delete, returns to list with one fewer record', async () => {

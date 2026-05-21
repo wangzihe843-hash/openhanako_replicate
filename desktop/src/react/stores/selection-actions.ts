@@ -117,5 +117,8 @@ function getCMSelectionAnchorRect(view: EditorView, from: number, to: number): F
 
 export function clearSelection(): void {
   const s = useStore.getState();
-  if (s.quotedSelection) s.clearQuotedSelection();
+  // 只清「锚定在划词选区上的浮动引用」（带 anchorRect）。不带 anchorRect 的引用是
+  // 别处刻意放进来的（如秘密空间「去和 TA 聊聊」暂存兑换的），不是划词选区，
+  // PreviewPanel 挂载 / 切 tab 时的 clearSelection 不能把它清掉。
+  if (s.quotedSelection?.anchorRect) s.clearQuotedSelection();
 }

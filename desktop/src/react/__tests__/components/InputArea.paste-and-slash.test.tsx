@@ -192,6 +192,7 @@ function seedInputState(overrides: Partial<ReturnType<typeof useStore.getState>>
     attachedFilesBySession: {},
     docContextAttached: false,
     quotedSelection: null,
+    stagedChatQuote: null,
     models: [{
       id: 'deepseek-chat',
       provider: 'deepseek',
@@ -256,6 +257,22 @@ describe('InputArea paste and slash menu behavior', () => {
     render(<InputArea surface="mobile" />);
 
     expect(latestEditorOptions()?.immediatelyRender).toBe(false);
+  });
+
+  it('挂载时把暂存引用 stagedChatQuote 兑换成输入框引用 quotedSelection', () => {
+    useStore.getState().stageChatQuote({
+      text: '没说出口的话',
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+      charCount: 6,
+    });
+
+    render(React.createElement(InputArea));
+
+    expect(useStore.getState().quotedSelection).toMatchObject({
+      text: '没说出口的话',
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+    });
+    expect(useStore.getState().stagedChatQuote).toBeNull();
   });
 
   it('consumes a rich URL paste through the TipTap paste hook before the default editor paste runs', () => {

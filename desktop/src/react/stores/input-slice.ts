@@ -56,6 +56,15 @@ export interface InputSlice {
   requestInputFocus: () => void;
   setQuotedSelection: (sel: QuotedSelection) => void;
   clearQuotedSelection: () => void;
+  /**
+   * 「待带入下一个聊天的引用」暂存槽。与 quotedSelection 的关键区别：跨 session
+   * 切换不会被清除（switchSession 会清 quotedSelection）。秘密空间「去和 TA 聊聊」
+   * 这类"在别处暂存内容、让用户自己挑聊天目的地"的入口用它暂存，进入任意聊天后
+   * 由 redeemStagedChatQuote 兑换成 quotedSelection。
+   */
+  stagedChatQuote: QuotedSelection | null;
+  stageChatQuote: (sel: QuotedSelection) => void;
+  redeemStagedChatQuote: () => void;
 }
 
 function syncCurrentSessionAttachments(state: InputSlice & { currentSessionPath?: string | null }, files: AttachedFile[]) {
@@ -111,4 +120,12 @@ export const createInputSlice = (
     set((s) => ({ inputFocusTrigger: s.inputFocusTrigger + 1 })),
   setQuotedSelection: (sel) => set({ quotedSelection: sel }),
   clearQuotedSelection: () => set({ quotedSelection: null }),
+  stagedChatQuote: null,
+  stageChatQuote: (sel) => set({ stagedChatQuote: sel }),
+  redeemStagedChatQuote: () =>
+    set((s) =>
+      s.stagedChatQuote
+        ? { quotedSelection: s.stagedChatQuote, stagedChatQuote: null }
+        : {},
+    ),
 });

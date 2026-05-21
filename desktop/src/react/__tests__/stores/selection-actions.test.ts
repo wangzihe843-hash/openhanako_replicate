@@ -1,7 +1,7 @@
 import { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { captureSelection } from '../../stores/selection-actions';
+import { captureSelection, clearSelection } from '../../stores/selection-actions';
 import { useStore } from '../../stores';
 import type { PreviewItem } from '../../types';
 
@@ -48,5 +48,32 @@ describe('captureSelection', () => {
     useStore.getState().setMessageSelection('/session/a.jsonl', []);
 
     expect(useStore.getState().selectedIdsBySession['/session/a.jsonl']).toBeUndefined();
+  });
+});
+
+describe('clearSelection', () => {
+  beforeEach(() => {
+    useStore.getState().clearQuotedSelection();
+  });
+
+  it('清掉带 anchorRect 的浮动划词引用', () => {
+    useStore.getState().setQuotedSelection({
+      text: '划词选中的文字',
+      sourceTitle: 'note.md',
+      charCount: 7,
+      anchorRect: { left: 0, right: 1, top: 0, bottom: 1, width: 1, height: 1 },
+    });
+    clearSelection();
+    expect(useStore.getState().quotedSelection).toBeNull();
+  });
+
+  it('保留不带 anchorRect 的暂存引用（如「去和 TA 聊聊」兑换进来的）', () => {
+    useStore.getState().setQuotedSelection({
+      text: '秘密草稿正文',
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+      charCount: 6,
+    });
+    clearSelection();
+    expect(useStore.getState().quotedSelection).toMatchObject({ text: '秘密草稿正文' });
   });
 });

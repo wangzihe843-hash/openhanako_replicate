@@ -265,6 +265,31 @@ describe('preview slice (user-level content pool)', () => {
       expect(selectPreviewItems(testStore.getState())).toEqual([a]);
       expect(layoutMocks.updateLayout).toHaveBeenCalledTimes(2);
     });
+
+    it('收起面板：清掉带 anchorRect 的浮动划词引用，保留无 anchorRect 的暂存引用', () => {
+      // 无 anchorRect —— 如秘密空间「去和 TA 聊聊」兑换进来的引用，与预览无关，必须保留
+      testStore.setState({
+        previewOpen: true,
+        quotedSelection: { text: '秘密草稿', sourceTitle: '秘密空间 · TA 的草稿箱', charCount: 4 },
+      });
+      togglePreviewPanel(false);
+      expect(testStore.getState().previewOpen).toBe(false);
+      expect(testStore.getState().quotedSelection).toMatchObject({ text: '秘密草稿' });
+
+      // 带 anchorRect —— 锚定在预览里的浮动划词引用，收起面板时清掉
+      testStore.setState({
+        previewOpen: true,
+        quotedSelection: {
+          text: '预览里选中的文字',
+          sourceTitle: 'artifact',
+          charCount: 8,
+          anchorRect: { left: 0, right: 1, top: 0, bottom: 1, width: 1, height: 1 },
+        },
+      });
+      togglePreviewPanel(false);
+      expect(testStore.getState().previewOpen).toBe(false);
+      expect(testStore.getState().quotedSelection).toBeNull();
+    });
   });
 
   describe('handleLegacyArtifactBlock', () => {

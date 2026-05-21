@@ -47,6 +47,31 @@ describe('input-slice quotedSelection', () => {
   });
 });
 
+describe('input-slice stagedChatQuote', () => {
+  let slice: SliceState;
+  beforeEach(() => { slice = makeSlice(); });
+
+  it('初始状态 stagedChatQuote 为 null', () => {
+    expect(slice.stagedChatQuote).toBeNull();
+  });
+  it('stageChatQuote 只暂存，不直接写 quotedSelection', () => {
+    slice.stageChatQuote({ text: '秘密', sourceTitle: '草稿箱', charCount: 2 });
+    expect(slice.stagedChatQuote).toMatchObject({ text: '秘密' });
+    expect(slice.quotedSelection).toBeNull();
+  });
+  it('redeemStagedChatQuote 把暂存兑换成 quotedSelection 并清空暂存槽', () => {
+    slice.stageChatQuote({ text: '秘密', sourceTitle: '草稿箱', charCount: 2 });
+    slice.redeemStagedChatQuote();
+    expect(slice.quotedSelection).toMatchObject({ text: '秘密', sourceTitle: '草稿箱' });
+    expect(slice.stagedChatQuote).toBeNull();
+  });
+  it('redeemStagedChatQuote 在没有暂存时是 no-op，不动 quotedSelection', () => {
+    slice.setQuotedSelection({ text: 'keep', sourceTitle: 'X', charCount: 4 });
+    slice.redeemStagedChatQuote();
+    expect(slice.quotedSelection).toMatchObject({ text: 'keep' });
+  });
+});
+
 describe('input-slice attachedFiles session ownership', () => {
   it('当前会话存在时，add/remove/clear 会同步更新 attachedFilesBySession', () => {
     const slice = makeSlice({ currentSessionPath: '/session/a' });

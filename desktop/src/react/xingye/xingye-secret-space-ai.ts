@@ -4,7 +4,7 @@
  * 每类放入模型的上下文（与 Xingye AI 审计 §6–7 对齐；无 OpenHanako 聊天缓存时照常降级，不抛错）：
  * - **draft_reply**：`XingyeRoleProfile` + `collectRecentContextForAgent` / `describeRecentContextForPrompt` + lore `secret_space_draft_reply`（`buildSecretSpaceLoreRuntimeOptions`）
  * - **dream**：profile + 同上 recent（可空）+ lore `secret_space_dream`
- * - **saved_item**：profile + lore `secret_space_saved_item` + 用户可选 `seedText`（参与 lore queryText 与 prompt）
+ * - **saved_item**：profile + 同上 recent（可空）+ lore `secret_space_saved_item` + 用户可选 `seedText`（参与 lore queryText 与 prompt）
  * - **unsent_moment**：profile + 同上 recent（可空）+ lore `secret_space_unsent_moment`；**不**读朋友圈 / moments store
  * - **state**：profile + 同上 recent（可空）+ lore `relationship_state`（与 RelationshipStatePanel 并存；可追加状态类 JSONL 短笔记）
  *

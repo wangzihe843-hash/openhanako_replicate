@@ -247,6 +247,16 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const [fileMentionBusy, setFileMentionBusy] = useState(false);
   const [completingTodos, setCompletingTodos] = useState(false);
 
+  // ── 兑换暂存引用 ──
+  // 用户可能在别处（如秘密空间「去和 TA 聊聊」）通过 stageChatQuote 暂存了一段引用。
+  // InputArea 在用户进入聊天时必定重新挂载：App.tsx 里 XingyeShell 与 AppPages 互斥，
+  // 从 xingye 返回必定重挂；ChatPage 又用 currentSessionPath 给 InputArea 做 key，
+  // 切会话也重挂。所以挂载时兑换一次即可覆盖"开新对话 / 切旧会话 / 留在原会话"所有
+  // 路径——不能依赖 switchSession，它对"切回当前会话"会提前 return。
+  useEffect(() => {
+    useStore.getState().redeemStagedChatQuote();
+  }, []);
+
   useEffect(() => {
     if (pendingSessionConfirmation) {
       setVisibleSessionConfirmation(pendingSessionConfirmation);

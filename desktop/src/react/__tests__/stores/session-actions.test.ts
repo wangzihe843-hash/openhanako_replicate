@@ -621,6 +621,38 @@ describe('session-actions', () => {
       expect(deskActionMocks.activateWorkspaceDesk).not.toHaveBeenCalledWith('/workspace-b');
     });
 
+    it('切会话保留无 anchorRect 的暂存引用，清掉带 anchorRect 的浮动引用', async () => {
+      Object.assign(mockState, {
+        currentSessionPath: '/current',
+        quotedSelection: { text: '秘密草稿', sourceTitle: '秘密空间 · TA 的草稿箱', charCount: 4 },
+        chatSessions: {
+          '/keep': { items: [{ type: 'message', data: { id: 'cached-keep' } }], hasMore: false },
+        },
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        agentId: null, cwd: '/wk', currentModelId: null, currentModelName: null, currentModelProvider: null,
+      }));
+      await switchSession('/keep');
+      expect(mockState.clearQuotedSelection).not.toHaveBeenCalled();
+
+      (mockState.clearQuotedSelection as ReturnType<typeof vi.fn>).mockClear();
+      Object.assign(mockState, {
+        currentSessionPath: '/keep',
+        quotedSelection: {
+          text: '划词', sourceTitle: 'x', charCount: 2,
+          anchorRect: { left: 0, right: 1, top: 0, bottom: 1, width: 1, height: 1 },
+        },
+        chatSessions: {
+          '/drop': { items: [{ type: 'message', data: { id: 'cached-drop' } }], hasMore: false },
+        },
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        agentId: null, cwd: '/wd', currentModelId: null, currentModelName: null, currentModelProvider: null,
+      }));
+      await switchSession('/drop');
+      expect(mockState.clearQuotedSelection).toHaveBeenCalled();
+    });
+
     it('surfaces the server error when switching to an old session fails', async () => {
       (globalThis.window as unknown as { t: (key: string) => string }).t = (key: string) =>
         key === 'session.switchFailed' ? 'Switch session failed' : key;

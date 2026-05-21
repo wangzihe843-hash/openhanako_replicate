@@ -7,6 +7,7 @@ import {
   subscribeAgentPinnedMemoryChanged,
 } from '../agent-pinned-memory';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { useStore } from '../stores';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfile } from './xingye-profile-store';
 import { MemoryCandidatePanel } from './MemoryCandidatePanel';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
@@ -1154,7 +1155,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         ) : null}
 
         <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
-          使用 AI 根据角色资料与设定参考生成一条记录（失败时不会写入）。
+          使用 AI 根据角色资料、最近 OpenHanako 聊天与设定参考生成一条记录（失败时不会写入）。
         </p>
         {activeCategory === 'saved_item' ? (
           <label className={styles.profileField}>
@@ -1274,6 +1275,34 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       : activeCategory === 'interview'
       ? interviewFooter
       : addRecordFooter;
+
+  /**
+   * 「去和 TA 聊聊」：把 draft_reply 记录正文暂存到 stagedChatQuote，不导航——目的地
+   * 由用户自己挑（新开对话或翻旧 session 都行）。不直接写 quotedSelection：用户从
+   * 秘密空间走到聊天必经一次 session 切换，而 switchSession 会清 quotedSelection，
+   * 直接写会被清掉。stagedChatQuote 跨切换保留，进入任意聊天后由 redeemStagedChatQuote
+   * 兑换成输入框引用。sharedToChatKey 仅用于给刚点过的那条记录显示一句确认文案，
+   * 4s 后自动复位。
+   */
+  const [sharedToChatKey, setSharedToChatKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sharedToChatKey) return undefined;
+    const timer = setTimeout(() => setSharedToChatKey(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatKey]);
+
+  const handleShareDraftToChat = useCallback((record: SecretSpaceSampleRecord) => {
+    const text = (record.body || record.summary || record.title || '').trim();
+    if (!text) return;
+    useStore.getState().stageChatQuote({
+      text,
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+      charCount: text.length,
+      updatedAt: Date.now(),
+    });
+    setSharedToChatKey(record.key);
+  }, []);
 
   /**
    * 分类内页的"列表渲染器"：每个分类用各自的标志性版式（便签 / 书签卡 / 朋友圈
@@ -1499,6 +1528,31 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             footer={categoryFooter}
             renderRecordList={renderRecordListForCategory}
             renderRecordDetail={activeCategory === 'interview' ? renderInterviewDetail : undefined}
+            renderRecordDetailExtraActions={
+              activeCategory === 'draft_reply'
+                ? (record) => (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => handleShareDraftToChat(record)}
+                        data-testid={`secret-space-share-to-chat-${record.key}`}
+                      >
+                        去和 TA 聊聊
+                      </button>
+                      {sharedToChatKey === record.key ? (
+                        <span
+                          className={styles.panelDescription}
+                          style={{ margin: 0, alignSelf: 'center' }}
+                          data-testid={`secret-space-share-to-chat-notice-${record.key}`}
+                        >
+                          已放进聊天输入框引用 —— 打开任意对话即可发出
+                        </span>
+                      ) : null}
+                    </>
+                  )
+                : undefined
+            }
             onRequestDeleteRecord={
               agent?.id ? (key) => handleRequestDeleteSecretSpaceRecord(key) : undefined
             }
