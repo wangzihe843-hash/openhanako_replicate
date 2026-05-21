@@ -68,6 +68,9 @@ const {
 const {
   buildWin32ServerEnv,
 } = require("./src/shared/server-process-env.cjs");
+const {
+  sanitizeWindowState,
+} = require("./src/shared/window-state.cjs");
 
 const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json build.appId.
 
@@ -1209,7 +1212,12 @@ function saveWindowState() {
 
 // ── 创建主窗口 ──
 function createMainWindow() {
-  const saved = loadWindowState();
+  const saved = sanitizeWindowState(loadWindowState(), screen.getAllDisplays(), {
+    defaultWidth: 960,
+    defaultHeight: 820,
+    minWidth: 420,
+    minHeight: 500,
+  });
   const initialTheme = themeRegistry.DEFAULT_THEME;
 
   const opts = {

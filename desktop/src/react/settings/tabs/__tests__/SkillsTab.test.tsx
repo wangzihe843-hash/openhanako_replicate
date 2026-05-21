@@ -369,8 +369,8 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     });
   });
 
-  // ── Test 4: toggleSkill race guard — stale GET must not trigger PUT ─────────
-  it('toggleSkill race guard: switching selector mid-flight skips the PUT', async () => {
+  // ── Test 4: toggleSkill race guard — stale write result must not refresh UI ─
+  it('toggleSkill race guard: switching selector mid-flight ignores the stale PATCH result', async () => {
     seedStore({ currentAgentId: 'agent-a' });
 
     // Initial load: agent-a has one skill; external-paths empty.
@@ -405,10 +405,10 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     ).toBeTruthy();
 
     // ── Arm the race ──────────────────────────────────────────────────────────
-    // From here on, the first GET to /api/skills?agentId=agent-a (the "fresh
-    // read" inside toggleSkill) is DEFERRED — we control when it resolves.
-    const pendingFreshGet = defer<Response>();
-    let freshGetConsumed = false;
+    // From here on, the skill delta PATCH is DEFERRED — we control when it
+    // resolves, then switch the selector before the stale write completes.
+    const pendingPatch = defer<Response>();
+    let patchConsumed = false;
 
     fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
       if (url.includes('/api/skills/external-paths')) {
@@ -417,18 +417,17 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       if (url.includes('/api/skills/bundles')) {
         return Promise.resolve(jsonResponse({ bundles: [] }));
       }
-      // The PUT that the race guard should prevent.
       if (
-        url.includes('/api/agents/agent-a/skills') &&
-        opts?.method === 'PUT'
+        url.includes('/api/agents/agent-a/skills/test-skill') &&
+        opts?.method === 'PATCH'
       ) {
+        if (!patchConsumed) {
+          patchConsumed = true;
+          return pendingPatch.promise;
+        }
         return Promise.resolve(jsonResponse({ ok: true }));
       }
       if (url.includes('/api/skills?agentId=agent-a')) {
-        if (!freshGetConsumed) {
-          freshGetConsumed = true;
-          return pendingFreshGet.promise;
-        }
         return Promise.resolve(
           jsonResponse({
             skills: [{ name: 'test-skill', enabled: false, source: 'user' }],
@@ -441,8 +440,10 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       return Promise.resolve(jsonResponse({}));
     });
 
+    fetchMock.mockClear();
+
     // Click the toggle — starts toggleSkill('test-skill', true).
-    // This kicks off the deferred GET; the function is now parked awaiting it.
+    // This kicks off the deferred PATCH; the function is now parked awaiting it.
     await act(async () => {
       fireEvent.click(screen.getByTestId('skill-toggle-test-skill'));
     });
@@ -459,28 +460,31 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     });
     await flushMicrotasks();
 
-    // Now resolve the stale GET from agent-a.
+    const agentBLoadsBeforePatchSettles = fetchMock.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].includes('/api/skills?agentId=agent-b'),
+    ).length;
+    expect(agentBLoadsBeforePatchSettles).toBeGreaterThanOrEqual(1);
+
+    // Now resolve the stale PATCH from agent-a.
     await act(async () => {
-      pendingFreshGet.resolve(
-        jsonResponse({
-          skills: [{ name: 'test-skill', enabled: false, source: 'user' }],
-        }),
-      );
+      pendingPatch.resolve(jsonResponse({ ok: true, enabled: ['test-skill'], changed: ['test-skill'] }));
     });
-    // toggleSkill's await chain is 3 deep (await hanaFetch → await res.json →
-    // race-guard check → potential PUT → await res.json). Flush 6 ticks so the
-    // entire chain settles before we assert the PUT never fired.
     await flushMicrotasks(6);
 
     // ── Assertion ────────────────────────────────────────────────────────────
-    // The race guard must have prevented the PUT to /api/agents/agent-a/skills.
-    const putCallsToAgentA = fetchMock.mock.calls.filter(
+    // The delta write is allowed because it belongs to the original click, but
+    // the stale result must not toast or refresh the newly selected agent.
+    const patchCallsToAgentA = fetchMock.mock.calls.filter(
       (c) =>
         typeof c[0] === 'string' &&
-        c[0].includes('/api/agents/agent-a/skills') &&
-        (c[1] as RequestInit | undefined)?.method === 'PUT',
+        c[0].includes('/api/agents/agent-a/skills/test-skill') &&
+        (c[1] as RequestInit | undefined)?.method === 'PATCH',
     );
-    expect(putCallsToAgentA.length).toBe(0);
+    expect(patchCallsToAgentA.length).toBe(1);
+    const agentBLoadsAfterPatchSettles = fetchMock.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].includes('/api/skills?agentId=agent-b'),
+    ).length;
+    expect(agentBLoadsAfterPatchSettles).toBe(agentBLoadsBeforePatchSettles);
 
     // Sanity: toast state remained at the seed baseline, proving the guard
     // skipped past the showToast branch.
@@ -524,7 +528,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     expect(agentCallsAfter.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('renders skill bundles and toggles all bundled skills for the selected agent', async () => {
+  it('renders skill bundles and toggles all bundled skills through the selected agent delta endpoint', async () => {
     seedStore({ currentAgentId: 'agent-a' });
 
     fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
@@ -558,7 +562,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
           ],
         }));
       }
-      if (url.includes('/api/agents/agent-a/skills') && opts?.method === 'PUT') {
+      if (url.includes('/api/agents/agent-a/skill-bundles/writing-bundle') && opts?.method === 'PATCH') {
         return Promise.resolve(jsonResponse({ ok: true }));
       }
       return Promise.resolve(jsonResponse({}));
@@ -573,15 +577,73 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     });
     await flushMicrotasks(6);
 
-    const putCall = fetchMock.mock.calls.find(
+    const deltaCall = fetchMock.mock.calls.find(
+      (c) =>
+        typeof c[0] === 'string' &&
+        c[0].includes('/api/agents/agent-a/skill-bundles/writing-bundle') &&
+        (c[1] as RequestInit | undefined)?.method === 'PATCH',
+    );
+    expect(deltaCall).toBeTruthy();
+    expect(JSON.parse(String((deltaCall?.[1] as RequestInit)?.body))).toEqual({
+      enabled: true,
+    });
+    expect(fetchMock.mock.calls.some(
       (c) =>
         typeof c[0] === 'string' &&
         c[0].includes('/api/agents/agent-a/skills') &&
         (c[1] as RequestInit | undefined)?.method === 'PUT',
-    );
-    expect(JSON.parse(String((putCall?.[1] as RequestInit)?.body))).toEqual({
-      enabled: ['writer', 'reader'],
+    )).toBe(false);
+  });
+
+  it('toggleSkill writes one backend delta without fetching a stale full list', async () => {
+    seedStore({ currentAgentId: 'agent-a' });
+
+    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.includes('/api/skills/external-paths')) {
+        return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
+      }
+      if (url.includes('/api/skills/bundles')) {
+        return Promise.resolve(jsonResponse({ bundles: [] }));
+      }
+      if (url.includes('/api/skills?agentId=agent-a')) {
+        return Promise.resolve(jsonResponse({
+          skills: [
+            { name: 'writer', enabled: false, source: 'user' },
+            { name: 'reader', enabled: false, source: 'user' },
+          ],
+        }));
+      }
+      if (url.includes('/api/agents/agent-a/skills/writer') && opts?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ok: true, enabled: ['writer'], changed: ['writer'] }));
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
     });
+
+    render(<SkillsTab />);
+    await flushMicrotasks(6);
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('skill-toggle-writer'));
+    });
+    await flushMicrotasks(6);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/agents/agent-a/skills/writer'),
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: true }),
+      }),
+    );
+    const firstCall = fetchMock.mock.calls[0];
+    expect(firstCall[0]).toEqual(expect.stringContaining('/api/agents/agent-a/skills/writer'));
+    expect((firstCall[1] as RequestInit | undefined)?.method).toBe('PATCH');
+    expect(fetchMock.mock.calls.some(
+      (c) =>
+        typeof c[0] === 'string' &&
+        c[0].includes('/api/agents/agent-a/skills') &&
+        (c[1] as RequestInit | undefined)?.method === 'PUT',
+    )).toBe(false);
   });
 
   it('manages bundles through in-panel dialogs instead of browser prompts', async () => {

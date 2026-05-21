@@ -278,7 +278,8 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
       } catch {}
 
       const userId = entry.userId || (plat === "wechat" && chatType === "dm" ? chatId : null);
-      const isOwner = isBridgeOwner({ platform: plat, chatType, userId, agent });
+      const aliases = Array.isArray(entry.qqPrincipal?.aliases) ? entry.qqPrincipal.aliases : undefined;
+      const isOwner = isBridgeOwner({ platform: plat, chatType, userId, aliases, agent });
 
       sessions.push({
         sessionKey, platform: plat, chatType, chatId, file, sessionPath: fp, lastActive,

@@ -129,6 +129,113 @@ describe("skills route", () => {
     expect(engine.emitEvent).not.toHaveBeenCalled();
   });
 
+  it("merges concurrent single-skill delta writes for the same agent", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n", "utf-8");
+
+    const { createSkillsRoute } = await import("../server/routes/skills.js");
+    const app = new Hono();
+    let enabled = [];
+    const engine = {
+      agentsDir: tempRoot,
+      getAllSkills: vi.fn(() => [
+        { name: "writer", enabled: enabled.includes("writer") },
+        { name: "reader", enabled: enabled.includes("reader") },
+      ]),
+      getAgent: vi.fn(() => ({ id: agentId })),
+      updateConfig: vi.fn(async (partial) => {
+        await Promise.resolve();
+        enabled = partial.skills.enabled;
+      }),
+      emitEvent: vi.fn(),
+    };
+
+    app.route("/api", createSkillsRoute(engine));
+
+    const [writerRes, readerRes] = await Promise.all([
+      app.request(`/api/agents/${agentId}/skills/writer`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      }),
+      app.request(`/api/agents/${agentId}/skills/reader`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      }),
+    ]);
+
+    expect(writerRes.status).toBe(200);
+    expect(readerRes.status).toBe(200);
+    expect(enabled).toEqual(["writer", "reader"]);
+    expect(engine.updateConfig).toHaveBeenLastCalledWith({
+      skills: { enabled: ["writer", "reader"] },
+    }, { agentId });
+    expectAppEvent(engine.emitEvent, "skills-changed", { agentId });
+    expect(engine.emitEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("enables a skill bundle through a serialized per-agent delta write", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n", "utf-8");
+    fs.writeFileSync(path.join(tempRoot, "skill-bundles.json"), JSON.stringify({
+      schemaVersion: 1,
+      bundles: [
+        {
+          id: "writing-bundle",
+          name: "Writing Bundle",
+          skillNames: ["writer", "reader", "missing-skill"],
+          source: "user",
+          agentId: null,
+          sourcePackage: null,
+          createdAt: "2026-05-21T00:00:00.000Z",
+          updatedAt: "2026-05-21T00:00:00.000Z",
+        },
+      ],
+    }), "utf-8");
+
+    const { createSkillsRoute } = await import("../server/routes/skills.js");
+    const app = new Hono();
+    let enabled = ["existing"];
+    const engine = {
+      hanakoHome: tempRoot,
+      agentsDir: tempRoot,
+      getAllSkills: vi.fn(() => [
+        { name: "existing", enabled: enabled.includes("existing") },
+        { name: "writer", enabled: enabled.includes("writer") },
+        { name: "reader", enabled: enabled.includes("reader") },
+      ]),
+      getAgent: vi.fn(() => ({ id: agentId })),
+      updateConfig: vi.fn(async (partial) => {
+        enabled = partial.skills.enabled;
+      }),
+      emitEvent: vi.fn(),
+    };
+
+    app.route("/api", createSkillsRoute(engine));
+
+    const res = await app.request(`/api/agents/${agentId}/skill-bundles/writing-bundle`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      enabled: ["existing", "writer", "reader"],
+      changed: ["writer", "reader"],
+    });
+    expect(engine.updateConfig).toHaveBeenCalledWith({
+      skills: { enabled: ["existing", "writer", "reader"] },
+    }, { agentId });
+    expectAppEvent(engine.emitEvent, "skills-changed", { agentId });
+  });
+
   it("emits global skills-changed after reloading skills", async () => {
     const { createSkillsRoute } = await import("../server/routes/skills.js");
     const app = new Hono();

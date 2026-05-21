@@ -32,20 +32,52 @@ describe("Windows UIA provider", () => {
     });
   });
 
-  it("invokes PowerShell helper with request JSON over stdin", async () => {
+  it("invokes PowerShell helper file with request JSON over stdin", async () => {
     const { runner, calls } = makeRunner(() => helperResult({ apps: [] }));
     const provider = createWindowsUiaProvider({
       platform: "win32",
       command: "powershell.exe",
-      helperScript: "Write-Output '{}'",
+      helperScript: `${"#".repeat(40000)}\nWrite-Output '{}'`,
       runner,
     });
 
     await provider.listApps();
 
     expect(calls[0].command).toBe("powershell.exe");
-    expect(calls[0].args).toContain("-EncodedCommand");
+    expect(calls[0].args).toContain("-File");
+    expect(calls[0].args).not.toContain("-EncodedCommand");
+    expect(calls[0].args.join("")).not.toContain("#".repeat(1000));
+    expect(calls[0].args[calls[0].args.indexOf("-File") + 1]).toMatch(/windows-uia-helper-[a-f0-9]+\.ps1$/);
     expect(JSON.parse(calls[0].options.stdin)).toEqual({ command: "list_apps" });
+  });
+
+  it("maps helper launch ENAMETOOLONG into a typed provider error", async () => {
+    const launchError = new Error("spawn ENAMETOOLONG");
+    launchError.code = "ENAMETOOLONG";
+    const { runner } = makeRunner(() => {
+      throw launchError;
+    });
+    const provider = createWindowsUiaProvider({ platform: "win32", command: "powershell.exe", runner });
+
+    await expect(provider.listApps()).rejects.toMatchObject({
+      code: COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+      message: expect.stringContaining("Windows UIA helper failed to launch"),
+      details: expect.objectContaining({ launchCode: "ENAMETOOLONG" }),
+    });
+  });
+
+  it("keeps powershell-not-found status reason after launch error mapping", async () => {
+    const launchError = new Error("spawn ENOENT");
+    launchError.code = "ENOENT";
+    const { runner } = makeRunner(() => {
+      throw launchError;
+    });
+    const provider = createWindowsUiaProvider({ platform: "win32", command: "missing-powershell.exe", runner });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      available: false,
+      reason: "powershell-not-found",
+    });
   });
 
   it("normalizes list_apps and lease provider state", async () => {

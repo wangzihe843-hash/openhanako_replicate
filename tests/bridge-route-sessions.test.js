@@ -70,4 +70,51 @@ describe("bridge sessions route", () => {
       avatarUrl: "https://example.com/avatar.png",
     });
   });
+
+  it("marks QQ sessions as owner when configured owner matches a principal alias", async () => {
+    const agentId = "hana";
+    const sessionDir = path.join(rootDir, "agents", agentId, "sessions");
+    const bridgeDir = path.join(sessionDir, "bridge");
+    const sessionPath = path.join(bridgeDir, "owner", "qq-owner.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, "", "utf-8");
+
+    const agent = {
+      id: agentId,
+      sessionDir,
+      config: {
+        bridge: {
+          qq: { owner: "c2c-openid" },
+        },
+      },
+    };
+    const engine = {
+      currentAgentId: agentId,
+      getAgent: (id) => (id === agentId ? agent : null),
+      getBridgeIndex: () => ({
+        "qq_dm_c2c-openid@hana": {
+          file: "owner/qq-owner.jsonl",
+          userId: "stable-user-id",
+          chatId: "c2c-openid",
+          qqPrincipal: {
+            principalId: "stable-user-id",
+            aliases: ["stable-user-id", "c2c-openid"],
+          },
+        },
+      }),
+      getBridgeReadOnly: () => false,
+      getBridgeReceiptEnabled: () => true,
+    };
+    const qqApp = new Hono();
+    qqApp.route("/api", createBridgeRoute(engine, null));
+
+    const res = await qqApp.request("/api/bridge/sessions?platform=qq&agentId=hana");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.sessions[0]).toMatchObject({
+      sessionKey: "qq_dm_c2c-openid@hana",
+      isOwner: true,
+    });
+  });
 });

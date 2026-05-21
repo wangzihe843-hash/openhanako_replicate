@@ -64,4 +64,33 @@ describe('file mention items', () => {
       { path: '/workspace/src', name: 'src', isDirectory: true },
     ]);
   });
+
+  it('preserves browser-held image bytes when editor refs rebuild attached files', () => {
+    const merged = mergeEditorFileRefs(
+      [{
+        fileId: 'sf_mobile_photo',
+        path: '/session-files/mobile-photo.png',
+        name: 'mobile-photo.png',
+        base64Data: 'iVBORw0KGgo=',
+        mimeType: 'image/png',
+      }],
+      [
+        {
+          fileId: 'sf_mobile_photo',
+          path: '/session-files/mobile-photo.png',
+          name: 'mobile-photo.png',
+        },
+      ],
+    );
+
+    expect(merged).toEqual([
+      {
+        fileId: 'sf_mobile_photo',
+        path: '/session-files/mobile-photo.png',
+        name: 'mobile-photo.png',
+        base64Data: 'iVBORw0KGgo=',
+        mimeType: 'image/png',
+      },
+    ]);
+  });
 });

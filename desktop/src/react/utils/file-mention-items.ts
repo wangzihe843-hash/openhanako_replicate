@@ -139,6 +139,7 @@ export function mergeEditorFileRefs(
       path: file.path,
       name: file.name || file.path,
       ...(file.isDirectory ? { isDirectory: true } : {}),
+      ...('base64Data' in file && typeof file.base64Data === 'string' && file.base64Data ? { base64Data: file.base64Data } : {}),
       ...(file.mimeType ? { mimeType: file.mimeType } : {}),
     });
   }

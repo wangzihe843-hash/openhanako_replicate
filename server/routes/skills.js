@@ -3,6 +3,8 @@
  *
  * GET    /skills              — 列出所有可用 skill（含当前 agent 的 enabled 状态）
  * PUT    /agents/:id/skills   — 更新指定 agent 的 enabled skills 列表
+ * PATCH  /agents/:id/skills/:name — 增量启用/停用单个 skill
+ * PATCH  /agents/:id/skill-bundles/:bundleId — 增量启用/停用 bundle 内 skills
  * POST   /skills/install      — 安装用户技能（文件夹路径 / .zip / .skill）
  * DELETE /skills/:name        — 删除用户技能
  */
@@ -63,6 +65,20 @@ export function createSkillsRoute(engine) {
     return prev.then(fn).finally(resolve);
   }
 
+  const agentSkillWriteLocks = new Map();
+
+  function withAgentSkillWriteLock(agentId, fn) {
+    const prev = agentSkillWriteLocks.get(agentId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const cleanup = run.finally(() => {
+      if (agentSkillWriteLocks.get(agentId) === cleanup) {
+        agentSkillWriteLocks.delete(agentId);
+      }
+    });
+    agentSkillWriteLocks.set(agentId, cleanup);
+    return cleanup;
+  }
+
   function bundleForResponse(bundle, skillByName = new Map()) {
     return {
       ...bundle,
@@ -119,6 +135,57 @@ export function createSkillsRoute(engine) {
         throw err;
       }
     }
+  }
+
+  function validateAgentIdOrResponse(c, id) {
+    if (!validateId(id) || !agentExists(engine, id)) {
+      return c.json({ error: "agent not found" }, 404);
+    }
+    return null;
+  }
+
+  async function persistEnabledSkills(agentId, enabled) {
+    const partial = { skills: { enabled } };
+
+    // 走 engine.updateConfig (ConfigCoordinator)，它会在 partial.skills 存在时
+    // 调用 syncAgentSkills 把新 enabled 列表同步到 agent 的内存态和 system prompt。
+    // 直接调 agent.updateConfig 会绕过这一步，导致写盘成功但内存未刷新。
+    const agent = engine.getAgent?.(agentId);
+    if (agent) {
+      await engine.updateConfig(partial, { agentId });
+    } else {
+      const configPath = path.join(engine.agentsDir, agentId, "config.yaml");
+      saveConfig(configPath, partial);
+    }
+    return enabled;
+  }
+
+  function visibleSkillsForAgent(agentId) {
+    const skills = engine.getAllSkills(agentId) || [];
+    return {
+      skills,
+      visibleSet: new Set(skills.map(skill => skill.name)),
+    };
+  }
+
+  async function writeSkillDelta(agentId, skillNames, enable) {
+    const requested = [...new Set(skillNames.filter(name => typeof name === "string" && name.trim()))];
+    return withAgentSkillWriteLock(agentId, async () => {
+      const { skills, visibleSet } = visibleSkillsForAgent(agentId);
+      const changed = requested.filter(name => visibleSet.has(name));
+      const currentEnabled = new Set(skills.filter(skill => skill.enabled).map(skill => skill.name));
+      if (enable) {
+        for (const name of changed) currentEnabled.add(name);
+      } else {
+        for (const name of changed) currentEnabled.delete(name);
+      }
+      const enabled = skills
+        .map(skill => skill.name)
+        .filter(name => currentEnabled.has(name));
+      await persistEnabledSkills(agentId, enabled);
+      emitAppEvent(engine, "skills-changed", { agentId });
+      return { enabled, changed };
+    });
   }
 
   route.get("/skills/bundles", async (c) => {
@@ -224,9 +291,8 @@ export function createSkillsRoute(engine) {
 
   route.put("/agents/:id/skills", async (c) => {
     const id = c.req.param("id");
-    if (!validateId(id) || !agentExists(engine, id)) {
-      return c.json({ error: "agent not found" }, 404);
-    }
+    const invalidAgent = validateAgentIdOrResponse(c, id);
+    if (invalidAgent) return invalidAgent;
     try {
       const body = await safeJson(c);
       const { enabled } = body;
@@ -240,23 +306,56 @@ export function createSkillsRoute(engine) {
       const visibleSet = new Set(visible);
       const filtered = enabled.filter(name => visibleSet.has(name));
 
-      const partial = { skills: { enabled: filtered } };
-
-      // 走 engine.updateConfig (ConfigCoordinator)，它会在 partial.skills 存在时
-      // 调用 syncAgentSkills 把新 enabled 列表同步到 agent 的内存态和 system prompt。
-      // 直接调 agent.updateConfig 会绕过这一步，导致写盘成功但内存未刷新。
-      const agent = engine.getAgent(id);
-      if (agent) {
-        await engine.updateConfig(partial, { agentId: id });
-      } else {
-        const configPath = path.join(engine.agentsDir, id, "config.yaml");
-        saveConfig(configPath, partial);
-      }
-
-      emitAppEvent(engine, "skills-changed", { agentId: id });
-      return c.json({ ok: true, enabled: filtered });
+      const persisted = await withAgentSkillWriteLock(id, async () => {
+        await persistEnabledSkills(id, filtered);
+        emitAppEvent(engine, "skills-changed", { agentId: id });
+        return filtered;
+      });
+      return c.json({ ok: true, enabled: persisted });
     } catch (err) {
       return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.patch("/agents/:id/skills/:name", async (c) => {
+    const id = c.req.param("id");
+    const invalidAgent = validateAgentIdOrResponse(c, id);
+    if (invalidAgent) return invalidAgent;
+    try {
+      const body = await safeJson(c);
+      if (typeof body.enabled !== "boolean") {
+        return c.json({ error: "enabled must be a boolean" }, 400);
+      }
+      const name = c.req.param("name");
+      const { visibleSet } = visibleSkillsForAgent(id);
+      if (!visibleSet.has(name)) {
+        return c.json({ error: "skill not found" }, 404);
+      }
+      const result = await writeSkillDelta(id, [name], body.enabled);
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.patch("/agents/:id/skill-bundles/:bundleId", async (c) => {
+    const id = c.req.param("id");
+    const invalidAgent = validateAgentIdOrResponse(c, id);
+    if (invalidAgent) return invalidAgent;
+    try {
+      const body = await safeJson(c);
+      if (typeof body.enabled !== "boolean") {
+        return c.json({ error: "enabled must be a boolean" }, 400);
+      }
+      const store = loadSkillBundleStore(engine);
+      const bundle = store.bundles.find(item => item.id === c.req.param("bundleId"));
+      if (!bundle) {
+        return c.json({ error: "skill bundle not found" }, 404);
+      }
+      const result = await writeSkillDelta(id, bundle.skillNames, body.enabled);
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      return c.json({ error: err.message }, err.status || 500);
     }
   });
 
