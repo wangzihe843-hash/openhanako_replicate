@@ -407,6 +407,8 @@ export async function generateXingyeMomentDraftWithAI(params: {
         displayName: resolveContactDisplayName(agent.id, 'virtual_contact', c.id, [], {}),
         kind: c.kind,
         relationshipHint: c.relationshipHint,
+        // 发帖人对该联系人的印象（发帖人视角）——补 vc 评论的关系质感。
+        impression: c.impression,
       }));
   } catch {
     virtualContacts = [];

@@ -9,8 +9,14 @@ import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 export type XingyeMomentVirtualContactHint = {
   id: string;
   displayName: string;
+  /** TA 与发帖人的关系类型（friend / rival / enemy / ex ...）——vc 本就是发帖人的联系人。 */
   kind?: string;
   relationshipHint?: string;
+  /**
+   * 发帖人对这位联系人的印象。**方向是发帖人 → 联系人**（发帖人视角，不是联系人视角），
+   * 与 peerAgents 的 impressionOfAuthor（联系人 → 发帖人）方向相反——prompt 里要标清楚。
+   */
+  impression?: string;
 };
 
 /**
@@ -90,6 +96,7 @@ export function buildMomentDraftPrompt(args: {
           displayName: c.displayName,
           kind: c.kind ?? undefined,
           relationshipHint: c.relationshipHint ?? undefined,
+          impression: c.impression ?? undefined,
         })),
         null,
         2,
@@ -208,6 +215,7 @@ export function buildMomentDraftPrompt(args: {
     speakerContextBlock,
     '',
     '【可选互动者池 · 当前角色的虚拟联系人（vc:<id>，仅本人可见）】',
+    '（kind 是 TA 与发帖人的关系类型，relationshipHint 是关系线索，impression 是**发帖人对 TA**的印象（发帖人视角，不是 TA 对发帖人的看法）——写 TA 的评论时三者一起定亲疏冷热。）',
     virtualContactsBlock,
     '',
     '【可选互动者池 · 其他星野角色（agent:<id>，共同好友式可见）】',

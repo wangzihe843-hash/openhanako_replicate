@@ -287,6 +287,33 @@ describe('generateXingyeMomentDraftWithAI', () => {
     expect(prompt).toContain('林雾面冷心热，别被那张臭脸吓到');
   });
 
+  it('feeds each virtual contact the owner-side impression into the prompt', async () => {
+    vi.mocked(getVirtualContacts).mockReturnValue([
+      {
+        ownerAgentId: 'linwu',
+        id: 'vc-1',
+        displayName: '北门旧巷',
+        kind: 'rival',
+        impression: '嘴上不饶人，但记仇',
+        relationshipHint: '老对头',
+        createdAt: '2026-05-11T00:00:00.000Z',
+        updatedAt: '2026-05-11T00:00:00.000Z',
+      },
+    ] as never);
+    const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
+    await generateXingyeMomentDraftWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+    });
+    const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+      (call) => call[0] === '/api/xingye/phone-generate',
+    );
+    const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+    // 发帖人对 vc 的印象进了 prompt，且标清楚了方向（发帖人视角）
+    expect(prompt).toContain('嘴上不饶人，但记仇');
+    expect(prompt).toContain('发帖人对 TA');
+  });
+
   it('posts phone-generate with kind moments and contains moments-specific prompt markers', async () => {
     const agent = { id: 'agent-m', name: 'Hanako', yuan: 'y' as const };
     await expect(
