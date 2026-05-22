@@ -10,8 +10,10 @@ import {
   createXingyeMomentPost,
   deleteXingyeMomentPost,
   discardMomentDraft,
+  isXingyeMomentUserAuthor,
   listMomentDrafts,
   toggleXingyeMomentLike,
+  XINGYE_MOMENT_USER_AUTHOR_ID,
   type XingyeMomentActor,
   type XingyeMomentPost,
   type XingyePendingMomentDraft,
@@ -21,7 +23,8 @@ import {
   generateXingyeMomentCommentReplyWithAI,
   generateXingyeMomentDraftWithAI,
 } from './xingye-moments-ai';
-import type { MomentComposerSubmitInput } from './MomentComposer';
+import { fanOutAgentReactionsToUserPost } from './xingye-moments-user-fanout';
+import type { MomentComposerIdentityMode, MomentComposerSubmitInput } from './MomentComposer';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfiles } from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
 
@@ -43,6 +46,8 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
   const profiles = useXingyeRoleProfiles();
   const storeUserName = useStore((state) => state.userName);
   const [composerOpen, setComposerOpen] = useState(false);
+  /** 发表身份：默认「我自己」——用户视角发朋友圈是这个面板的主路径。 */
+  const [composerIdentity, setComposerIdentity] = useState<MomentComposerIdentityMode>('user');
 
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent] as const)),
@@ -70,7 +75,12 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   // viewer === 当前 xingye 视角的 agent（用于隐藏其他 agent 的 virtual_contact 互动）。
   const viewerAgentId = composerAgent?.id ?? null;
-  const { posts, loading, error, retry } = useAggregatedXingyeMoments(agentIds, viewerAgentId);
+  // feed 聚合范围里额外纳入「用户本人」这个保留作者——用户自己发的朋友圈也要进流。
+  const feedAgentIds = useMemo(
+    () => [...agentIds, XINGYE_MOMENT_USER_AUTHOR_ID],
+    [agentIds],
+  );
+  const { posts, loading, error, retry } = useAggregatedXingyeMoments(feedAgentIds, viewerAgentId);
 
   const getAgentDisplayName = (agentId: string): string => {
     const agent = agentsById.get(agentId);
@@ -80,6 +90,30 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   const handleCreate = useCallback(
     async ({ content, seedLikes, seedComments }: MomentComposerSubmitInput) => {
+      // 「我自己」身份：以保留作者 id 发帖，发完后台扇出让各角色按关系点赞/评论。
+      if (composerIdentity === 'user') {
+        const createdByUser = await createXingyeMomentPost({
+          authorAgentId: XINGYE_MOMENT_USER_AUTHOR_ID,
+          authorName: userName,
+          content,
+          source: { kind: 'manual' },
+        });
+        if (!createdByUser) throw new Error('发表失败：内容无效');
+        setComposerOpen(false);
+        // fire-and-forget：帖子已即时出现，角色反应通过 store 事件陆续刷进 feed。
+        void fanOutAgentReactionsToUserPost({
+          postId: createdByUser.id,
+          agents: agents.map((a) => ({
+            agent: a,
+            profile: profiles[a.id] ?? null,
+            displayName: getXingyeRoleProfileDisplay(a, profiles[a.id] ?? null).displayName,
+          })),
+        }).catch((err) => {
+          console.warn('[MomentsPanel] user-post fan-out failed:', err);
+        });
+        return;
+      }
+      // 「以角色发表」身份：沿用原有逻辑（含 AI 生成的 seed 互动者）。
       if (!composerAgent) throw new Error('请先选择一个星野角色');
       const authorName = composerDisplay?.displayName ?? composerAgent.name;
       const created = await createXingyeMomentPost({
@@ -93,7 +127,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
       if (!created) throw new Error('发表失败：内容无效');
       setComposerOpen(false);
     },
-    [composerAgent, composerDisplay?.displayName],
+    [composerIdentity, userName, agents, profiles, composerAgent, composerDisplay?.displayName],
   );
 
   const handleToggleLike = useCallback(
@@ -414,6 +448,9 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         <MomentComposer
           agent={composerAgent}
           display={composerDisplay}
+          identityMode={composerIdentity}
+          onIdentityModeChange={setComposerIdentity}
+          userName={userName}
           onSubmit={handleCreate}
           onGenerateAiDraft={composerAgent ? handleGenerateAiDraft : undefined}
         />
@@ -508,21 +545,25 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
           </div>
         ) : posts.length > 0 ? (
           posts.map((post) => {
-            const authorAgent = agentsById.get(post.authorAgentId) ?? null;
+            const isUserPost = isXingyeMomentUserAuthor(post.authorAgentId);
+            const authorAgent = isUserPost ? null : agentsById.get(post.authorAgentId) ?? null;
             const fallbackName = post.authorName || authorAgent?.name || post.authorAgentId;
-            const authorDisplayName = authorAgent
-              ? getXingyeRoleProfileDisplay(authorAgent, profiles[authorAgent.id] ?? null).displayName
-              : fallbackName;
-            const relationshipLabel = authorAgent
-              ? getXingyeRoleProfileDisplay(authorAgent, profiles[authorAgent.id] ?? null).relationshipLabel
-              : undefined;
+            const authorDisplayName = isUserPost
+              ? post.authorName || userName
+              : authorAgent
+                ? getXingyeRoleProfileDisplay(authorAgent, profiles[authorAgent.id] ?? null).displayName
+                : fallbackName;
+            const relationshipLabel = isUserPost || !authorAgent
+              ? undefined
+              : getXingyeRoleProfileDisplay(authorAgent, profiles[authorAgent.id] ?? null).relationshipLabel;
             return (
               <MomentCard
                 key={post.id}
                 authorAgent={authorAgent}
                 authorDisplayName={authorDisplayName}
                 authorRelationshipLabel={relationshipLabel}
-                canDelete={post.authorAgentId === composerAgent?.id}
+                isUserPost={isUserPost}
+                canDelete={isUserPost || post.authorAgentId === composerAgent?.id}
                 getAgentDisplayName={getAgentDisplayName}
                 post={post}
                 userActor={userActor}

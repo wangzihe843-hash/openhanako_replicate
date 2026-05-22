@@ -18,11 +18,13 @@ vi.mock('./xingye-phone-store', () => ({
   // （meta.remark 优先 → contact.displayName）。测试里默认实现回退到 contact.displayName，
   // 等价于无 phone-contact-meta 的情况；个别 case 用 mockImplementation 注入 remark 优先。
   resolveContactDisplayName: vi.fn(),
+  // peerAgents 的 impressionOfAuthor 走 getPhoneContactMeta（peer 通讯录里对发帖人的印象）。
+  getPhoneContactMeta: vi.fn(),
 }));
 
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
-import { getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
+import { getPhoneContactMeta, getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
 import {
   generateXingyeMomentDraftWithAI,
   normalizeMomentDraftResult,
@@ -194,6 +196,8 @@ describe('generateXingyeMomentDraftWithAI', () => {
     vi.mocked(hanaFetch).mockReset();
     vi.mocked(getVirtualContacts).mockReset();
     vi.mocked(resolveContactDisplayName).mockReset();
+    vi.mocked(getPhoneContactMeta).mockReset();
+    vi.mocked(getPhoneContactMeta).mockReturnValue(null as never);
     vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
     vi.mocked(getVirtualContacts).mockReturnValue([]);
     // Default：fallback 到 contact.displayName（无 remark 场景），与通讯录 UI 一致
@@ -240,6 +244,47 @@ describe('generateXingyeMomentDraftWithAI', () => {
     expect(prompt).toContain('"ref": "agent:hanako"');
     // 仍允许两池全空时省略
     expect(prompt).toContain('两个池都是「（无）」时才允许省略');
+  });
+
+  it('prompt pushes comments to include peer agents, not only virtual contacts', async () => {
+    const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
+    await generateXingyeMomentDraftWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+    });
+    const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+      (call) => call[0] === '/api/xingye/phone-generate',
+    );
+    const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+    // 显式规则：peerAgents 池非空时 comments 至少 1 条来自 agent
+    expect(prompt).toContain('不要只来自虚拟联系人');
+    // few-shot 示例的 comments 里现在带了一条 agent 评论
+    expect(prompt).toContain('又通宵？明早我替你盯着会。');
+  });
+
+  it('feeds each peer agent the impression-of-author from their contact book (agent↔agent grounding)', async () => {
+    vi.mocked(getPhoneContactMeta).mockImplementation(
+      ((ownerId: string, targetType: unknown, targetId: string) => {
+        if (ownerId === 'hanako' && targetType === 'agent' && targetId === 'linwu') {
+          return { impression: '林雾面冷心热，别被那张臭脸吓到' };
+        }
+        return null;
+      }) as never,
+    );
+    const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
+    await generateXingyeMomentDraftWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      peerAgents: [{ id: 'hanako', displayName: 'Hanako' }],
+    });
+    const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+      (call) => call[0] === '/api/xingye/phone-generate',
+    );
+    const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+    // peer 对发帖人的印象进了 prompt，模型替 peer 写评论时有关系依据
+    expect(prompt).toContain('impressionOfAuthor');
+    expect(prompt).toContain('林雾面冷心热，别被那张臭脸吓到');
   });
 
   it('posts phone-generate with kind moments and contains moments-specific prompt markers', async () => {

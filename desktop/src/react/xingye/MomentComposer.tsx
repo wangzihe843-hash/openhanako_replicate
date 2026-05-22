@@ -32,15 +32,31 @@ export type MomentComposerAiDraftRequest = {
   existingContent?: string;
 };
 
+/** 发表身份：'user' = 用户本人（用户视角发朋友圈）；'agent' = 当前星野角色。 */
+export type MomentComposerIdentityMode = 'user' | 'agent';
+
 interface MomentComposerProps {
   agent: Agent | null;
   display: XingyeRoleProfileDisplay | null;
+  /** 当前发表身份。 */
+  identityMode: MomentComposerIdentityMode;
+  onIdentityModeChange: (mode: MomentComposerIdentityMode) => void;
+  /** 用户展示名（identityMode === 'user' 时作为作者展示）。 */
+  userName: string;
   onSubmit: (input: MomentComposerSubmitInput) => Promise<void>;
-  /** 可选：由父组件提供 AI 草稿生成器；若缺省则不显示「AI 生成」按钮。 */
+  /** 可选：由父组件提供 AI 草稿生成器；仅在「以角色发表」时显示「AI 生成」按钮。 */
   onGenerateAiDraft?: (opts?: MomentComposerAiDraftRequest) => Promise<MomentComposerAiDraft>;
 }
 
-export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: MomentComposerProps) {
+export function MomentComposer({
+  agent,
+  display,
+  identityMode,
+  onIdentityModeChange,
+  userName,
+  onSubmit,
+  onGenerateAiDraft,
+}: MomentComposerProps) {
   const [content, setContent] = useState('');
   const [seedLikes, setSeedLikes] = useState<XingyeMomentSeedLike[]>([]);
   const [seedComments, setSeedComments] = useState<XingyeMomentSeedComment[]>([]);
@@ -48,9 +64,11 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const isUser = identityMode === 'user';
   const trimmedContent = content.trim();
-  const canSubmit = Boolean(agent && trimmedContent) && !submitting && !aiBusy;
-  const canGenerate = Boolean(agent && onGenerateAiDraft) && !submitting && !aiBusy;
+  // 以用户身份发表不需要选中角色；以角色身份发表才要求 agent 存在。
+  const canSubmit = Boolean(trimmedContent) && (isUser || Boolean(agent)) && !submitting && !aiBusy;
+  const canGenerate = !isUser && Boolean(agent && onGenerateAiDraft) && !submitting && !aiBusy;
 
   // 切换发帖 agent 时，缓存的 seed（含上一位 agent 的 virtual_contact 引用）必须清空，
   // 否则会把 A 的私人通讯录互动写到 B 的帖子里。
@@ -62,6 +80,16 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
     setAiError(null);
   }, [agent?.id]);
 
+  // 切到「我自己」时，清掉角色 AI 生成缓存的 seed（那是角色私人通讯录里的互动者，
+  // 与用户帖子无关——用户帖子的互动由发布后的角色扇出产生）。
+  useEffect(() => {
+    if (isUser) {
+      setSeedLikes([]);
+      setSeedComments([]);
+      setAiError(null);
+    }
+  }, [isUser]);
+
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
@@ -69,8 +97,8 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
     try {
       await onSubmit({
         content: trimmedContent,
-        seedLikes: seedLikes.length ? seedLikes : undefined,
-        seedComments: seedComments.length ? seedComments : undefined,
+        seedLikes: !isUser && seedLikes.length ? seedLikes : undefined,
+        seedComments: !isUser && seedComments.length ? seedComments : undefined,
       });
       setContent('');
       setSeedLikes([]);
@@ -111,10 +139,24 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
     }
   };
 
+  const resolvedUserName = (userName ?? '').trim() || '我';
+  const userInitial = resolvedUserName.slice(0, 1);
+  const identityName = isUser
+    ? resolvedUserName
+    : display?.displayName ?? agent?.name ?? '未选择角色';
+  const identitySub = isUser ? '我自己' : display?.relationshipLabel ?? '关系未设置';
+  const placeholder = isUser
+    ? '写下这一刻的想法，分享到朋友圈…'
+    : agent
+      ? '写下这一刻的想法...'
+      : '请先选择一个星野角色';
+
   return (
     <section className={styles.momentComposer} aria-label="发朋友圈">
       <div className={styles.momentComposerAvatar}>
-        {agent ? (
+        {isUser ? (
+          <span>{userInitial}</span>
+        ) : agent ? (
           <XingyeAgentAvatar agent={agent} alt={display?.displayName ?? agent.name} />
         ) : (
           <span>未</span>
@@ -122,10 +164,38 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
       </div>
 
       <div className={styles.momentComposerBody}>
+        <div
+          className={styles.momentComposerIdentitySwitch}
+          role="radiogroup"
+          aria-label="发表身份"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={isUser}
+            className={isUser ? styles.momentIdentityChipActive : styles.momentIdentityChip}
+            disabled={submitting || aiBusy}
+            onClick={() => onIdentityModeChange('user')}
+          >
+            以我自己发表
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={!isUser}
+            className={!isUser ? styles.momentIdentityChipActive : styles.momentIdentityChip}
+            disabled={submitting || aiBusy || !agent}
+            title={agent ? '以当前角色身份发表' : '没有可用角色'}
+            onClick={() => onIdentityModeChange('agent')}
+          >
+            以角色发表
+          </button>
+        </div>
+
         <div className={styles.momentComposerHeader}>
           <div className={styles.momentComposerIdentity}>
-            <strong>{display?.displayName ?? agent?.name ?? '未选择角色'}</strong>
-            <span>{display?.relationshipLabel ?? '关系未设置'}</span>
+            <strong>{identityName}</strong>
+            <span>{identitySub}</span>
           </div>
           <span className={styles.momentComposerCounter}>{trimmedContent.length}/600</span>
         </div>
@@ -133,9 +203,9 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
         <textarea
           value={content}
           onChange={event => setContent(event.target.value.slice(0, 600))}
-          placeholder={agent ? '写下这一刻的想法...' : '请先选择一个星野角色'}
+          placeholder={placeholder}
           rows={4}
-          disabled={!agent || submitting || aiBusy}
+          disabled={(!isUser && !agent) || submitting || aiBusy}
           className={styles.momentComposerInput}
         />
 
@@ -151,9 +221,13 @@ export function MomentComposer({ agent, display, onSubmit, onGenerateAiDraft }: 
         ) : null}
 
         <div className={styles.momentComposerFooter}>
-          <span>图片上传暂未接入，imageUrls 字段已预留</span>
+          <span>
+            {isUser
+              ? '发布后，关系够好的角色大概率会来点赞评论'
+              : '图片上传暂未接入，imageUrls 字段已预留'}
+          </span>
           <div className={styles.momentComposerActions}>
-            {onGenerateAiDraft ? (
+            {!isUser && onGenerateAiDraft ? (
               <button
                 type="button"
                 className={styles.momentComposerGhostButton}

@@ -2498,6 +2498,45 @@
   background: rgba(241, 245, 249, 0.7);
 }
 
+.momentComposerIdentitySwitch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.momentIdentityChip,
+.momentIdentityChipActive {
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.momentIdentityChip {
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: var(--text-muted);
+  background: #fff;
+}
+
+.momentIdentityChip:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.momentIdentityChipActive {
+  border: 1px solid var(--accent, #6366f1);
+  color: #fff;
+  background: var(--accent, #6366f1);
+}
+
+.momentIdentityChip:disabled,
+.momentIdentityChipActive:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .momentCardBody {
   min-width: 0;
   display: grid;

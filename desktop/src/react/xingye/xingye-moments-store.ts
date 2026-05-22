@@ -69,6 +69,23 @@ export type XingyeMomentPost = {
 
 export const XINGYE_MOMENTS_POSTS_JSONL = 'apps/moments/posts.jsonl';
 
+/**
+ * 用户以「自己」身份发朋友圈时所用的保留作者 id。
+ *
+ * 朋友圈存储是 agent-scoped 的（agents/{authorAgentId}/xingye/apps/moments/posts.jsonl），
+ * 而用户没有 agent 目录——用这个保留 id 给用户帖子一个固定的「家」：
+ * agents/__user__/xingye/apps/moments/posts.jsonl。
+ *
+ * 它能通过 requireSafeXingyeAgentId（仅字母/数字/下划线/短横线），且双下划线包裹的形态
+ * 不会与任何真实角色 id 冲突；与 xingye-state-store 里的 USER_TARGET_ID 取同一约定。
+ */
+export const XINGYE_MOMENT_USER_AUTHOR_ID = '__user__';
+
+/** 判断一条朋友圈是否由用户本人（而非某个角色）发布。 */
+export function isXingyeMomentUserAuthor(authorAgentId: string | null | undefined): boolean {
+  return authorAgentId === XINGYE_MOMENT_USER_AUTHOR_ID;
+}
+
 const XINGYE_MOMENTS_CHANGED_EVENT = 'xingye-moments-changed';
 
 const EPOCH_ISO = new Date(0).toISOString();

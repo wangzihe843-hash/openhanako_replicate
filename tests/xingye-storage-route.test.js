@@ -697,6 +697,65 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("allows the reserved __user__ scope even though it is not a registered agent", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(agentsDir, { recursive: true });
+      // engine 里没有任何角色 —— __user__（用户本人）必须仍能读写，否则用户发不了朋友圈。
+      const engine = {
+        agentsDir,
+        getAgent: () => null,
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const append = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendJsonl",
+          agentId: "__user__",
+          relativePath: "apps/moments/posts.jsonl",
+          data: { id: "moment-1", content: "用户发的第一条朋友圈" },
+        }),
+      });
+      expect(append.status).toBe(200);
+
+      const list = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "__user__",
+          relativePath: "apps/moments/posts.jsonl",
+        }),
+      });
+      expect(await list.json()).toMatchObject({
+        ok: true,
+        records: [{ id: "moment-1", content: "用户发的第一条朋友圈" }],
+      });
+
+      const abs = path.join(agentsDir, "__user__", "xingye", "apps", "moments", "posts.jsonl");
+      expect(fs.existsSync(abs)).toBe(true);
+
+      // 真正不存在的角色仍然 404 —— 豁免只针对保留的 __user__。
+      const unknown = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "listJsonl",
+          agentId: "ghost-agent",
+          relativePath: "apps/moments/posts.jsonl",
+        }),
+      });
+      expect(unknown.status).toBe(404);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("allows list at root but requires non-empty paths for read and write", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {

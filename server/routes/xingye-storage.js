@@ -17,6 +17,17 @@ import { realPath } from "../utils/path-security.js";
 
 const XINGYE_ROOT_DIR = "xingye";
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+/**
+ * 「用户本人」的保留存储作用域。
+ *
+ * 朋友圈支持「用户以自己身份发帖」后，用户的帖子存在 agents/__user__/xingye/ 下。
+ * 用户没有 agent 记录，engine.getAgent("__user__") 查不到——故该 id 跳过 agent 存在性
+ * 校验，但仍要过 SAFE_AGENT_ID_RE 与全部路径安全检查。
+ *
+ * 字面量与 desktop 端 XINGYE_MOMENT_USER_AUTHOR_ID、xingye-state-store 的
+ * USER_TARGET_ID 保持一致（"__user__"），双下划线包裹不会和真实角色 id 冲突。
+ */
+const RESERVED_USER_SCOPE_ID = "__user__";
 const ACTIONS = new Set([
   "readJson",
   "writeJson",
@@ -178,7 +189,8 @@ export function createXingyeStorageRoute(engine) {
     if (!isSafeAgentId(agentId)) {
       return c.json({ error: "invalid agentId" }, 400);
     }
-    if (!engine.getAgent?.(agentId)) {
+    // 保留作用域 __user__（用户本人）没有 agent 记录，跳过存在性校验；其余 id 仍需是已注册角色。
+    if (agentId !== RESERVED_USER_SCOPE_ID && !engine.getAgent?.(agentId)) {
       return c.json({ error: `agent "${agentId}" not found` }, 404);
     }
 

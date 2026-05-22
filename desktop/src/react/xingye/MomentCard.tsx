@@ -16,6 +16,8 @@ interface MomentCardProps {
   authorAgent: Agent | null;
   authorDisplayName: string;
   authorRelationshipLabel?: string;
+  /** 这条朋友圈是否由用户本人发布（影响头像与作者行渲染）。 */
+  isUserPost?: boolean;
   canDelete: boolean;
   getAgentDisplayName: (agentId: string) => string;
   post: XingyeMomentPost;
@@ -73,6 +75,7 @@ export function MomentCard({
   authorAgent,
   authorDisplayName,
   authorRelationshipLabel,
+  isUserPost = false,
   canDelete,
   getAgentDisplayName,
   post,
@@ -95,7 +98,7 @@ export function MomentCard({
   const liked = post.likes.some(
     (like) => like.actorType === userActor.actorType && like.actorId === userActor.actorId,
   );
-  const relationshipLabel = authorRelationshipLabel ?? '关系未设置';
+  const relationshipLabel = isUserPost ? '我' : authorRelationshipLabel ?? '关系未设置';
 
   const handleCommentSubmit = async () => {
     const body = commentDraft.trim();
@@ -154,7 +157,9 @@ export function MomentCard({
   return (
     <article className={styles.momentCard}>
       <div className={styles.momentAvatar}>
-        {authorAgent ? (
+        {isUserPost ? (
+          <span>{(authorDisplayName.trim() || '我').slice(0, 1)}</span>
+        ) : authorAgent ? (
           <XingyeAgentAvatar agent={authorAgent} alt={authorDisplayName} />
         ) : (
           <span>?</span>

@@ -54,6 +54,9 @@ describe('MomentComposer · AI generate behavior', () => {
       <MomentComposer
         agent={agent}
         display={display as never}
+        identityMode="agent"
+        onIdentityModeChange={vi.fn()}
+        userName="我"
         onSubmit={onSubmit}
         onGenerateAiDraft={onGenerateAiDraft}
       />,
@@ -100,6 +103,9 @@ describe('MomentComposer · AI generate behavior', () => {
       <MomentComposer
         agent={agent}
         display={display as never}
+        identityMode="agent"
+        onIdentityModeChange={vi.fn()}
+        userName="我"
         onSubmit={onSubmit}
         onGenerateAiDraft={onGenerateAiDraft}
       />,
@@ -133,6 +139,9 @@ describe('MomentComposer · AI generate behavior', () => {
       <MomentComposer
         agent={agent}
         display={display as never}
+        identityMode="agent"
+        onIdentityModeChange={vi.fn()}
+        userName="我"
         onSubmit={vi.fn()}
         onGenerateAiDraft={onGenerateAiDraft}
       />,
@@ -144,5 +153,51 @@ describe('MomentComposer · AI generate behavior', () => {
     fireEvent.click(btn);
     await waitFor(() => expect(onGenerateAiDraft).toHaveBeenCalledTimes(1));
     expect(onGenerateAiDraft.mock.calls[0][0]).toBeUndefined();
+  });
+});
+
+describe('MomentComposer · identity mode', () => {
+  it('user mode: hides the AI generate button and submits with no seeds', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MomentComposer
+        agent={agent}
+        display={display as never}
+        identityMode="user"
+        onIdentityModeChange={vi.fn()}
+        userName="阿离"
+        onSubmit={onSubmit}
+        onGenerateAiDraft={makeAiMock(async () => ({ content: 'x' }))}
+      />,
+    );
+    /** No AI generate button in user mode — user writes their own moment. */
+    expect(screen.queryByRole('button', { name: /AI 生成/ })).not.toBeInTheDocument();
+
+    const textarea = screen.getByPlaceholderText('写下这一刻的想法，分享到朋友圈…') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: '今天天气真好' } });
+    fireEvent.click(screen.getByRole('button', { name: '发表' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({
+      content: '今天天气真好',
+      seedLikes: undefined,
+      seedComments: undefined,
+    });
+  });
+
+  it('clicking the "以角色发表" chip invokes onIdentityModeChange', () => {
+    const onIdentityModeChange = vi.fn();
+    render(
+      <MomentComposer
+        agent={agent}
+        display={display as never}
+        identityMode="user"
+        onIdentityModeChange={onIdentityModeChange}
+        userName="阿离"
+        onSubmit={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: '以角色发表' }));
+    expect(onIdentityModeChange).toHaveBeenCalledWith('agent');
   });
 });

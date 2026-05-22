@@ -51,9 +51,14 @@ const storesMock = vi.hoisted(() => ({
 vi.mock('./xingye-moments-store', () => ({
   ...momentsStoreMock,
   XINGYE_MOMENTS_CHANGED_EVENT: 'xingye-moments-changed',
+  XINGYE_MOMENT_USER_AUTHOR_ID: '__user__',
+  isXingyeMomentUserAuthor: (id: string) => id === '__user__',
 }));
 vi.mock('./xingye-moments-feed', () => momentsFeedMock);
 vi.mock('./xingye-moments-ai', () => momentsAiMock);
+vi.mock('./xingye-moments-user-fanout', () => ({
+  fanOutAgentReactionsToUserPost: vi.fn(() => Promise.resolve()),
+}));
 vi.mock('./xingye-profile-store', () => profileMock);
 vi.mock('../stores', () => storesMock);
 vi.mock('./XingyeAgentAvatar', () => ({

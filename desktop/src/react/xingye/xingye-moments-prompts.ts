@@ -19,7 +19,14 @@ export type XingyeMomentVirtualContactHint = {
 export type XingyeMomentPeerAgentHint = {
   id: string;
   displayName: string;
+  /** 该角色对 user 的关系标签——仅作口吻参考，不是 TA 与发帖人的关系。 */
   relationshipLabel?: string;
+  /**
+   * 该角色在自己小手机通讯录里对「当前发帖角色」的备注 / 印象（agent→agent 视角）。
+   * 这是补 agent↔agent 关系缺口的关键：让 TA 评论时按这个印象定亲疏冷热。
+   * 由 generateXingyeMomentDraftWithAI 读 getPhoneContactMeta 填入，缺省表示没有特别印象。
+   */
+  impressionOfAuthor?: string;
 };
 
 /**
@@ -94,6 +101,7 @@ export function buildMomentDraftPrompt(args: {
           ref: `agent:${a.id}`,
           displayName: a.displayName,
           relationshipLabel: a.relationshipLabel ?? undefined,
+          impressionOfAuthor: a.impressionOfAuthor ?? undefined,
         })),
         null,
         2,
@@ -129,10 +137,14 @@ export function buildMomentDraftPrompt(args: {
       : '同时生成围观互动 likes / comments（这是任务的一部分，不是可选润色）：',
     '- 只要下方两个「可选互动者池」**至少一个**非空（不是「（无）」），就必须给出 **至少 2 条 likes 和至少 1 条 comments**；',
     '  能挑出更多合适人选时 likes 给到 3–4 条、comments 给到 2–3 条更好。',
+    peerAgents.length > 0
+      ? '- comments **不要只来自虚拟联系人**：其他星野角色（`agent:<id>`）同样会刷到并评论朋友圈。「其他星野角色」池非空时，comments 里**至少 1 条必须来自 `agent:<id>`**；理想情况下 agent 与 vc 的评论兼有，别让评论区清一色虚拟联系人。'
+      : null,
     '- 两个池都是「（无）」时才允许省略 likes / comments 字段（不要输出空数组占位）；这种场景很少见。',
     '- ref 必须**逐字**取自池中已列出的 ref（形如 `vc:<id>` 或 `agent:<id>`，含前缀），不要凭空捏造、不要写 displayName，不要省掉前缀。',
     '- 不要把当前角色自己、user / 莉莉丝 / 任何用户身份放进 likes 或 comments（用户的点赞评论由 UI 触发）。',
     '- likes 上限 4 条；comments 上限 3 条，每条 body 控制在 30 字以内、口语化、符合该互动者口吻；多个互动者要呼应不同身份/口气，不要复读同一句。',
+    '- 写其他星野角色（`agent:<id>`）的评论时，若该角色带了 `impressionOfAuthor`（TA 对发帖人的私下印象），口吻要贴合那份印象——亲近、生分、还是带刺，都按印象来，不要一律写成热络。',
     interactionsOnlyMode
       ? '- comments 要**贴住用户写好的那段正文**做反应（玩笑、关心、追问、共情、调侃皆可）；不要写脱离正文的客套。'
       : null,
@@ -152,11 +164,15 @@ export function buildMomentDraftPrompt(args: {
     ),
     '',
     '示例（假设池里有 { ref: "agent:hanako", displayName: "Hanako" } 与 { ref: "vc:vc-night", displayName: "夜班搭子" }）：',
+    '注意示例的 comments：既有其他星野角色（agent:hanako），也有虚拟联系人（vc:vc-night）——评论区不要清一色虚拟联系人。',
     JSON.stringify(
       {
         content: '凌晨三点的便利店，泡面味混着冷气。',
         likes: [{ ref: 'agent:hanako' }, { ref: 'vc:vc-night' }],
-        comments: [{ ref: 'vc:vc-night', body: '又轮到你守夜？记得留一盒关东煮。' }],
+        comments: [
+          { ref: 'agent:hanako', body: '又通宵？明早我替你盯着会。' },
+          { ref: 'vc:vc-night', body: '关东煮给你留了，记得过来拿。' },
+        ],
       },
       null,
       2,
@@ -195,6 +211,7 @@ export function buildMomentDraftPrompt(args: {
     virtualContactsBlock,
     '',
     '【可选互动者池 · 其他星野角色（agent:<id>，共同好友式可见）】',
+    '（这些角色会刷到并评论当前这条朋友圈；impressionOfAuthor 是 TA 私下对发帖人的印象/备注，写 TA 的评论时按这个印象定亲疏冷热，缺省则按 TA 自己的人设自然处理。）',
     peerAgentsBlock,
     '',
     '【最近发生的事（场景参考；勿在正文里交代信息来源）】',
@@ -358,6 +375,130 @@ export function buildMomentCommentReplyPrompt(args: XingyeMomentCommentReplyProm
     recentSceneBlock.trim() || '（无）',
     '',
     '【当前对 user 的关系状态摘要（内部参考）】',
+    relationshipBlock.trim() || '（无）',
+    '',
+    '【星野核心设定摘录（lore-memory / 常驻设定；勿逐字复述）】',
+    stableLoreBlock.trim() || '（无）',
+    '',
+    '【按需命中的设定库关键词条目（仅命中项；勿逐字复述）】',
+    keywordLoreBlock.trim() || '（无）',
+    '',
+    '【输出 JSON schema（字段名必须一致；不要返回数组）】',
+    JSON.stringify({ reply: 'string' }, null, 2),
+    '',
+    '只返回 JSON 对象，不要任何其他文字。',
+  ];
+
+  return parts.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  朋友圈「角色评论用户帖」生成（user 自己发了一条朋友圈 → 各角色围观评论）
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 角色评论用户朋友圈时的语气：
+ * - friendly：关系正常 / 亲密——友善、关心、调侃皆可，贴合该角色人设；
+ * - sarcastic：关系很差——冷嘲热讽、阴阳怪气、夹枪带棒。
+ */
+export type XingyeMomentUserPostCommentTone = 'friendly' | 'sarcastic';
+
+export type XingyeMomentUserPostCommentPromptArgs = {
+  /** 来评论的角色。 */
+  commentAgent: Pick<Agent, 'id' | 'name' | 'yuan'>;
+  commentProfile: XingyeRoleProfile | null | undefined;
+  userName?: string;
+  /** 用户本人发的这条朋友圈正文。 */
+  postContent: string;
+  /** 评论区已有评论（含其他角色刚写的，用来避免复读）。 */
+  existingComments: ReadonlyArray<{ authorName: string; body: string }>;
+  tone: XingyeMomentUserPostCommentTone;
+  recentSceneBlock: string;
+  stableLoreBlock: string;
+  keywordLoreBlock: string;
+  /** 该角色对 user 的关系状态摘要（agent→user，第一人称视角）。 */
+  relationshipBlock: string;
+};
+
+/**
+ * 构造「角色评论用户朋友圈」prompt。
+ * 输出仅 JSON：`{ reply: string }`，由调用方以 agent 身份写进评论区。
+ *
+ * 与 buildMomentCommentReplyPrompt 的区别：那条是「回复评论区里某条评论」，需要靠
+ * 通讯录印象补 agent↔agent 关系；这里帖子作者就是 user 本人，关系是一等公民——
+ * relationshipBlock 直接就是该角色对 user 的态度，不需要任何补丁。
+ */
+export function buildMomentUserPostCommentPrompt(args: XingyeMomentUserPostCommentPromptArgs): string {
+  const {
+    commentAgent,
+    commentProfile,
+    postContent,
+    existingComments,
+    tone,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+  } = args;
+
+  const userName = (args.userName ?? '').trim() || 'user';
+  const taMoniker = (commentProfile?.displayName ?? '').trim() || commentAgent.name;
+  const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
+    userName,
+    agentName: taMoniker,
+  });
+
+  const profileBlock = commentProfile ? JSON.stringify(commentProfile, null, 2) : '（无）';
+
+  const existingCommentsBlock = existingComments.length
+    ? existingComments.map((c) => `- ${c.authorName}：${c.body}`).join('\n')
+    : '（评论区暂无其他评论，你是第一个评论的人）';
+
+  const toneLines = tone === 'sarcastic'
+    ? [
+        '【语气：冷嘲热讽】你和 TA 关系很差（见下方关系状态）。这条评论要阴阳怪气、夹枪带棒、',
+        '明褒暗贬或看热闹不嫌事大——刻薄但仍像真人朋友圈评论，不要写成谩骂、人身攻击或脏话。',
+        '别假装热情，也别突然和好；冷淡、嘲讽、挑刺，符合你对 TA 的真实态度。',
+      ]
+    : [
+        '【语气：友善】你和 TA 关系正常或亲密。这条评论可以关心、调侃、共情、追问、起哄——',
+        '自然、口语化，贴合你的人设与你对 TA 的关系，不要客套套话。',
+      ];
+
+  const parts: string[] = [
+    '你是星野模式「朋友圈评论」生成器：以当前角色身份，给用户本人发的一条朋友圈写一条评论。',
+    '只返回严格 JSON，不要 Markdown，不要解释，不要思考过程。',
+    '',
+    '【硬性规则】',
+    '1. 你只能输出当前角色本人的一条评论，写在 reply 字段。',
+    '2. 不要模拟 user 的发言，不要模拟其他角色的发言，不要假装别人在说话。',
+    '3. 不要一次输出多条评论；不要在同一段里串起多条独立发言；不要使用 JSON 数组。',
+    '4. 不要出现「系统提示」「用户要求」「上下文」「模型」「prompt」「AI 助手」等元叙述。',
+    `5. 这是朋友圈评论区：评论要短、口语化，像微信朋友圈评论——建议 30 字以内，最长不得超过 ${MOMENT_COMMENT_REPLY_MAX_CHARS} 字；不要分段、不要编号、不要堆 emoji。`,
+    '6. 紧扣用户这条朋友圈正文来反应；第一人称，符合当前角色 profile / 关系 / 口吻。',
+    '7. 不要复述帖子正文或别人评论里的原句；如果评论区已有别人评论，你的角度要和他们不同。',
+    '',
+    ...toneLines,
+    '',
+    '【说话人语境】',
+    speakerContextBlock,
+    '',
+    `【你的 agent id】 ${commentAgent.id}`,
+    `【你的展示名】 ${taMoniker}`,
+    '',
+    '【当前角色 profile】',
+    profileBlock,
+    '',
+    `【这条朋友圈】作者是「${userName}」本人（也就是你正在相处的那个人）。`,
+    `正文：${postContent.trim() || '（空）'}`,
+    '',
+    '【评论区已有评论（时间从早到晚，仅作上下文，不要逐条回应，不要复读）】',
+    existingCommentsBlock,
+    '',
+    '【最近发生的事（仅作你的背景情绪参考，不要在 reply 中复述来源）】',
+    recentSceneBlock.trim() || '（无）',
+    '',
+    `【你（当前角色）对「${userName}」的关系状态摘要（决定你评论的态度，内部参考）】`,
     relationshipBlock.trim() || '（无）',
     '',
     '【星野核心设定摘录（lore-memory / 常驻设定；勿逐字复述）】',
