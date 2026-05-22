@@ -15,51 +15,55 @@ vi.mock('./xingye-storage-api', () => ({
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
-  generateShoppingDraftWithAI,
-  normalizeShoppingDraftResult,
-} from './xingye-shopping-ai';
+  generateSecondhandDraftWithAI,
+  normalizeSecondhandDraftResult,
+} from './xingye-secondhand-ai';
 import {
-  buildShoppingDraftPrompt,
-  SHOPPING_AI_STATUSES,
-} from './xingye-shopping-prompts';
+  buildSecondhandDraftPrompt,
+  SECONDHAND_AI_STATUSES,
+} from './xingye-secondhand-prompts';
 
-describe('normalizeShoppingDraftResult', () => {
+describe('normalizeSecondhandDraftResult', () => {
   it('requires itemName and clamps fields, defaulting status/platform', () => {
     expect(
-      normalizeShoppingDraftResult({
-        itemName: '  深色台灯  ',
-        content: '今晚刷到的，挺合我口味。',
+      normalizeSecondhandDraftResult({
+        itemName: '  旧台灯  ',
+        content: '用不上了，想出掉。',
       }),
     ).toEqual({
-      itemName: '深色台灯',
-      status: 'wanted',
+      itemName: '旧台灯',
+      status: 'to_sell',
       platformStyle: 'generic',
-      content: '今晚刷到的，挺合我口味。',
+      content: '用不上了，想出掉。',
     });
-    expect(normalizeShoppingDraftResult({ itemName: '' })).toBeNull();
-    expect(normalizeShoppingDraftResult(null)).toBeNull();
+    expect(normalizeSecondhandDraftResult({ itemName: '' })).toBeNull();
+    expect(normalizeSecondhandDraftResult(null)).toBeNull();
   });
 
   it('coerces unknown enum values back to safe defaults and slices tags', () => {
-    const r = normalizeShoppingDraftResult({
-      itemName: '保温杯',
+    const r = normalizeSecondhandDraftResult({
+      itemName: '旧相机',
       status: 'maybe',
       platformStyle: 'jd',
-      category: '日用',
-      imaginedPrice: '小几百',
-      reason: '冬天上班用',
+      category: '旧物',
+      askingPrice: '小几百',
+      delta: '卖不上价',
+      buyer: '楼下收旧货的',
+      reason: '占地方',
       tags: Array.from({ length: 12 }, (_, i) => `t${i}`),
       content: 'c',
     });
-    expect(r?.status).toBe('wanted');
+    expect(r?.status).toBe('to_sell');
     expect(r?.platformStyle).toBe('generic');
-    expect(r?.category).toBe('日用');
-    expect(r?.imaginedPrice).toBe('小几百');
+    expect(r?.category).toBe('旧物');
+    expect(r?.askingPrice).toBe('小几百');
+    expect(r?.delta).toBe('卖不上价');
+    expect(r?.buyer).toBe('楼下收旧货的');
     expect(r?.tags?.length).toBeLessThanOrEqual(8);
   });
 });
 
-describe('generateShoppingDraftWithAI', () => {
+describe('generateSecondhandDraftWithAI', () => {
   beforeEach(() => {
     vi.mocked(postXingyeStorage).mockReset();
     vi.mocked(hanaFetch).mockReset();
@@ -69,28 +73,30 @@ describe('generateShoppingDraftWithAI', () => {
       json: async () => ({
         ok: true,
         result: {
-          itemName: '深色台灯',
-          status: 'wanted',
+          itemName: '旧台灯',
+          status: 'to_sell',
           platformStyle: 'generic',
-          category: '日用',
-          imaginedPrice: '一杯奶茶钱',
-          reason: '夜里写字眼睛会舒服点。',
-          tags: ['日用', '夜里'],
-          content: '今天看到挺顺眼的，先记下，回头再决定。',
+          category: '旧物',
+          askingPrice: '一杯奶茶钱',
+          delta: '亏一点也认了',
+          buyer: '楼下收旧货的',
+          reason: '换书桌后用不上了。',
+          tags: ['旧物', '断舍离'],
+          content: '陪了我两年，但新桌子配不上它。',
         },
       }),
     } as Response);
   });
 
-  it('posts phone-generate with kind shopping_draft and a first-person agent prompt', async () => {
+  it('posts phone-generate with kind secondhand_draft and a first-person agent prompt', async () => {
     const agent = { id: 'agent-s', name: 'Lin', yuan: 'y' as const };
-    const result = await generateShoppingDraftWithAI({
+    const result = await generateSecondhandDraftWithAI({
       agent: agent as never,
       ownerProfile: null,
-      userIntent: '想买个台灯',
+      userIntent: '想出掉旧台灯',
     });
-    expect(result.itemName).toBe('深色台灯');
-    expect(result.status).toBe('wanted');
+    expect(result.itemName).toBe('旧台灯');
+    expect(result.status).toBe('to_sell');
     expect(result.platformStyle).toBe('generic');
     expect(hanaFetch).toHaveBeenCalledWith(
       '/api/xingye/phone-generate',
@@ -98,18 +104,18 @@ describe('generateShoppingDraftWithAI', () => {
     );
     const call = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/phone-generate');
     const body = JSON.parse(String(call?.[1]?.body ?? '')) as { kind?: string; prompt?: string };
-    expect(body.kind).toBe('shopping_draft');
-    expect(body.prompt).toContain('购物');
+    expect(body.kind).toBe('secondhand_draft');
+    expect(body.prompt).toContain('二手');
     expect(body.prompt).toContain('第一人称');
-    expect(body.prompt).toContain('想买个台灯');
-    expect(body.prompt).toContain('不会真的下单');
+    expect(body.prompt).toContain('想出掉旧台灯');
+    expect(body.prompt).toContain('不会真的挂平台');
   });
 
   it('gracefully degrades when no recent chat / heartbeat / lore is available', async () => {
     const agent = { id: 'agent-empty', name: 'Lin', yuan: 'y' as const };
     await expect(
-      generateShoppingDraftWithAI({ agent: agent as never, ownerProfile: null, userIntent: '' }),
-    ).resolves.toMatchObject({ itemName: '深色台灯' });
+      generateSecondhandDraftWithAI({ agent: agent as never, ownerProfile: null, userIntent: '' }),
+    ).resolves.toMatchObject({ itemName: '旧台灯' });
     const call = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/phone-generate');
     const body = JSON.parse(String(call?.[1]?.body ?? '')) as { prompt?: string };
     expect(body.prompt).toContain('（无）');
@@ -122,17 +128,17 @@ describe('generateShoppingDraftWithAI', () => {
     } as Response);
     const agent = { id: 'agent-err', name: 'Lin', yuan: 'y' as const };
     await expect(
-      generateShoppingDraftWithAI({ agent: agent as never, ownerProfile: null }),
+      generateSecondhandDraftWithAI({ agent: agent as never, ownerProfile: null }),
     ).rejects.toThrow(/model call failed/);
   });
 });
 
-describe('buildShoppingDraftPrompt', () => {
+describe('buildSecondhandDraftPrompt', () => {
   it('tells the model all six statuses are valid active generation choices', () => {
-    const prompt = buildShoppingDraftPrompt({
+    const prompt = buildSecondhandDraftPrompt({
       agent: { id: 'agent-s', name: 'Lin', yuan: 'y' as const },
       profile: null,
-      userIntent: '刚下单了台灯，等到货',
+      userIntent: '有人问旧相机还能不能出',
       recentSceneBlock: '',
       stableLoreBlock: '',
       keywordLoreBlock: '',
@@ -140,10 +146,10 @@ describe('buildShoppingDraftPrompt', () => {
       heartbeatBlock: '',
     });
 
-    for (const status of SHOPPING_AI_STATUSES) {
+    for (const status of SECONDHAND_AI_STATUSES) {
       expect(prompt).toContain(`"${status}"`);
     }
     expect(prompt).toContain('所有 6 个 status 都可以主动生成');
-    expect(prompt).toContain('不要无脑回退到 "wanted"');
+    expect(prompt).toContain('不要无脑回退到 "to_sell"');
   });
 });

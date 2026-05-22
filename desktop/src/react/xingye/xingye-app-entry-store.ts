@@ -24,6 +24,7 @@ export const XINGYE_APP_ENTRY_APP_IDS = [
   'diary',
   'divination',
   'shopping',
+  'secondhand',
   'reading_notes',
   'news',
 ] as const;
@@ -124,7 +125,7 @@ export type DivinationEntryAppendInput = {
 const SIMPLE_APP_ENTRY_IDS = new Set<string>(XINGYE_APP_ENTRY_APP_IDS);
 
 /**
- * 仅把 divination / shopping / reading_notes 三个对外可见的 app 暴露给 event log。
+ * 仅把有事件消费者的对外可见 app 暴露给 event log。
  * diary 没有对应 Phone*App 调用方，暂时不打事件。
  */
 const APP_ENTRY_EVENT_TYPES: Partial<Record<XingyeAppEntryAppId, {
@@ -138,6 +139,10 @@ const APP_ENTRY_EVENT_TYPES: Partial<Record<XingyeAppEntryAppId, {
   shopping: {
     appended: 'shopping.entry_appended',
     deleted: 'shopping.entry_deleted',
+  },
+  secondhand: {
+    appended: 'secondhand.entry_appended',
+    deleted: 'secondhand.entry_deleted',
   },
   reading_notes: {
     appended: 'reading_notes.entry_appended',

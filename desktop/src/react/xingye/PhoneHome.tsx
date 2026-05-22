@@ -20,6 +20,7 @@ interface PhoneHomeProps {
   onOpenDivination: () => void;
   onOpenFiles: () => void;
   onOpenShopping: () => void;
+  onOpenSecondhand?: () => void;
   onOpenMail: () => void;
   onOpenReadingNotes?: () => void;
   onOpenNews?: () => void;
@@ -116,6 +117,12 @@ const phoneIcons = {
       <path d="M9.5 16h3" />
     </svg>
   ),
+  tag: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4.5h7l9 9-6.5 6.5-9-9V4.5Z" />
+      <circle cx="8" cy="8.5" r="1.6" />
+    </svg>
+  ),
   mail: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />
@@ -147,6 +154,7 @@ const appShortcuts = [
   { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
   { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
+  { label: '二手', subtitle: 'TA 出掉的旧物', tone: 'shopping', icon: phoneIcons.tag, action: 'secondhand' },
   { label: '阅读笔记', subtitle: '本地书目与手动笔记', tone: 'journal', icon: phoneIcons.notebook, action: 'reading-notes' },
   { label: '邮箱', subtitle: 'TA 的私人邮箱', tone: 'mail', icon: phoneIcons.mail, action: 'mail' },
   { label: '报纸', subtitle: '第三方视角的世态与情事', tone: 'news', icon: phoneIcons.newspaper, action: 'news' },
@@ -189,6 +197,7 @@ export function PhoneHome({
   onOpenDivination,
   onOpenFiles,
   onOpenShopping,
+  onOpenSecondhand,
   onOpenMail,
   onOpenReadingNotes,
   onOpenNews,
@@ -240,6 +249,10 @@ export function PhoneHome({
     }
     if (action === 'shopping') {
       onOpenShopping();
+      return;
+    }
+    if (action === 'secondhand') {
+      onOpenSecondhand?.();
       return;
     }
     if (action === 'mail') {
