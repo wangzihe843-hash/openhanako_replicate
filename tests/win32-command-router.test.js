@@ -39,7 +39,27 @@ describe("classifyWin32Command", () => {
 
   it("routes explicit Windows shells to cmd", () => {
     expect(classifyWin32Command("cmd /c dir", { resolveNativePath }).runner).toBe("cmd");
-    expect(classifyWin32Command('powershell -Command "ipconfig /all"', { resolveNativePath }).runner).toBe("cmd");
+  });
+
+  it("routes explicit PowerShell commands to the PowerShell runner", () => {
+    expect(classifyWin32Command('powershell -Command "Write-Output 1"', { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "powershell", reason: "explicit-powershell-shell" })
+    );
+    expect(classifyWin32Command('pwsh -Command "Write-Output 1"', { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "powershell", reason: "explicit-powershell-shell" })
+    );
+  });
+
+  it("routes Windows script files to their native shell runners", () => {
+    expect(classifyWin32Command("C:\\tmp\\run-tests.bat --fast", { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "cmd-script", reason: "cmd-script-file" })
+    );
+    expect(classifyWin32Command('"C:\\tmp\\run tests.cmd"', { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "cmd-script", reason: "cmd-script-file" })
+    );
+    expect(classifyWin32Command("C:\\tmp\\run-tests.ps1", { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "powershell-file", reason: "powershell-script-file" })
+    );
   });
 
   it("keeps explicit POSIX shells on the bash path", () => {

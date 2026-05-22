@@ -136,6 +136,85 @@ describe("createWin32Exec", () => {
     );
   });
 
+  it("routes explicit PowerShell commands directly without cmd wrapping", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "powershell", reason: "explicit-powershell-shell" });
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    await exec('powershell -Command "Write-Output \\"name\\""', "C:\\work", {
+      onData: () => {},
+      signal: undefined,
+      timeout: 5,
+      env: { PATH: "C:\\Windows\\System32" },
+    });
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        'Write-Output "name"',
+      ],
+      expect.objectContaining({
+        cwd: "C:\\work",
+        env: expect.objectContaining({
+          PYTHONUTF8: "1",
+          PYTHONIOENCODING: "utf-8",
+        }),
+      })
+    );
+  });
+
+  it("routes PowerShell script files through -File with argv", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "powershell-file", reason: "powershell-script-file" });
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    await exec('"C:\\work\\run tests.ps1" -Name Hana', "C:\\work", {
+      onData: () => {},
+      signal: undefined,
+      timeout: 5,
+      env: { PATH: "C:\\Windows\\System32" },
+    });
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\work\\run tests.ps1",
+        "-Name",
+        "Hana",
+      ],
+      expect.objectContaining({ cwd: "C:\\work" })
+    );
+  });
+
+  it("routes batch scripts through cmd call without bash", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "cmd-script", reason: "cmd-script-file" });
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    await exec("C:\\work\\run-tests.bat --fast", "C:\\work", {
+      onData: () => {},
+      signal: undefined,
+      timeout: 5,
+      env: { PATH: "C:\\Windows\\System32" },
+    });
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      "cmd.exe",
+      ["/d", "/s", "/c", 'chcp 65001 >NUL & call "C:\\work\\run-tests.bat" --fast'],
+      expect.objectContaining({ cwd: "C:\\work" })
+    );
+  });
+
   it("routes simple Git commands through bundled git.exe without bash", async () => {
     classifyWin32Command.mockReturnValue({ runner: "git", reason: "git-command" });
     const gitExe = "C:\\Hanako\\resources\\git\\cmd\\git.exe";
