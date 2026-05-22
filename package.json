@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.227.5",
+  "version": "0.228.0",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -29,6 +29,7 @@
     "start": "npm run build:preload && npm run build:renderer && npm run build:theme && node scripts/launch.js electron",
     "start:dev": "npm run build:preload && npm run build:renderer && npm run build:theme && node scripts/launch.js electron-dev",
     "start:vite": "npm run build:preload && node scripts/launch.js electron-vite",
+    "dev:web": "node scripts/dev-web.js",
     "dev:renderer": "vite --config vite.config.ts",
     "build:renderer": "vite build --config vite.config.ts",
     "build:theme": "vite build --config vite.config.theme.js",

@@ -15,8 +15,31 @@
 
   // Web / 非 Electron 环境 — HTTP fallback
   const params = new URLSearchParams(location.search);
+  const devWeb = normalizeDevWebConfig(window.__HANA_DEV_WEB__);
   const token = params.get("token") || localStorage.getItem("hana-token") || "";
-  const baseUrl = `${location.protocol}//${location.host}`;
+  const baseUrl = devWeb.apiBaseUrl || `${location.protocol}//${location.host}`;
+  const serverPort = devWeb.serverPort || safePortFromBaseUrl(baseUrl) || location.port || "3000";
+
+  function normalizeDevWebConfig(value) {
+    if (!value || typeof value !== "object") {
+      return { serverPort: "", apiBaseUrl: "" };
+    }
+    const serverPort = typeof value.serverPort === "number" || typeof value.serverPort === "string"
+      ? String(value.serverPort).trim()
+      : "";
+    const apiBaseUrl = typeof value.apiBaseUrl === "string"
+      ? value.apiBaseUrl.replace(/\/+$/, "")
+      : "";
+    return { serverPort, apiBaseUrl };
+  }
+
+  function safePortFromBaseUrl(value) {
+    try {
+      return new URL(value).port;
+    } catch {
+      return "";
+    }
+  }
 
   function apiFetch(path, opts = {}) {
     const headers = { ...opts.headers };
@@ -26,7 +49,7 @@
 
   window.platform = {
     // 服务器连接
-    getServerPort: async () => location.port || "3000",
+    getServerPort: async () => serverPort,
     getServerToken: async () => token,
     appReady: async () => {},
     syncWindowTheme: () => {},

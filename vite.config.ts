@@ -1,8 +1,13 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+
+interface DevWebClientConfig {
+  serverPort: string;
+  apiBaseUrl: string;
+}
 
 /**
  * CSP 集中管理：
@@ -136,6 +141,83 @@ function useSourceThemeInDev(): Plugin {
   };
 }
 
+function readDevWebClientConfig(): DevWebClientConfig | null {
+  if (process.env.HANA_DEV_WEB !== '1') return null;
+  const apiBaseUrl = process.env.HANA_DEV_WEB_API_BASE_URL?.trim();
+  if (!apiBaseUrl) {
+    throw new Error('HANA_DEV_WEB requires HANA_DEV_WEB_API_BASE_URL');
+  }
+  const parsed = new URL(apiBaseUrl);
+  const serverPort = process.env.HANA_DEV_WEB_CLIENT_PORT?.trim() || parsed.port;
+  if (!serverPort) {
+    throw new Error('HANA_DEV_WEB requires HANA_DEV_WEB_CLIENT_PORT or a port in HANA_DEV_WEB_API_BASE_URL');
+  }
+  return { serverPort, apiBaseUrl };
+}
+
+/**
+ * Browser-only dev entry for Codex Preview.
+ * Electron keeps using preload; this injects only the Vite-facing browser
+ * endpoint when scripts/dev-web.js starts Vite with HANA_DEV_WEB=1. The
+ * loopback owner token stays in the Vite proxy environment.
+ */
+function injectDevWebConfig(): Plugin {
+  return {
+    name: 'hana-inject-dev-web-config',
+    apply: 'serve',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html, ctx) {
+        if (path.basename(ctx.filename) !== 'index.html') return html;
+        const config = readDevWebClientConfig();
+        if (!config) return html;
+        const payload = JSON.stringify(config).replace(/</g, '\\u003c');
+        return html.replace(
+          '</head>',
+          `<script>window.__HANA_DEV_WEB__=${payload};</script>\n</head>`,
+        );
+      },
+    },
+  };
+}
+
+function createDevWebProxy(): Record<string, ProxyOptions> | undefined {
+  if (process.env.HANA_DEV_WEB !== '1') return undefined;
+  const target = process.env.HANA_DEV_WEB_SERVER_URL?.trim();
+  const token = process.env.HANA_DEV_WEB_SERVER_TOKEN?.trim();
+  if (!target || !token) {
+    throw new Error('HANA_DEV_WEB proxy requires HANA_DEV_WEB_SERVER_URL and HANA_DEV_WEB_SERVER_TOKEN');
+  }
+  const auth = `Bearer ${token}`;
+  const targetUrl = new URL(target);
+  const wsTarget = `${targetUrl.protocol === 'https:' ? 'wss:' : 'ws:'}//${targetUrl.host}`;
+
+  const withAuth = (proxyTarget: string, extra: ProxyOptions = {}): ProxyOptions => ({
+    target: proxyTarget,
+    changeOrigin: true,
+    ...extra,
+    headers: {
+      ...(extra.headers || {}),
+      Authorization: auth,
+    },
+    configure(proxy, options) {
+      proxy.on('proxyReq', (proxyReq) => {
+        proxyReq.setHeader('Authorization', auth);
+      });
+      proxy.on('proxyReqWs', (proxyReq) => {
+        proxyReq.setHeader('Authorization', auth);
+      });
+      extra.configure?.(proxy, options);
+    },
+  });
+
+  return {
+    '/api': withAuth(target),
+    '/preview': withAuth(target),
+    '/ws': withAuth(wsTarget, { ws: true }),
+  };
+}
+
 /**
  * Build 后复制旧文件到 dist-renderer/：
  * 旧 JS 模块、CSS、主题、资源、语言包等，
@@ -182,6 +264,7 @@ export default defineConfig({
     preserveLegacyCss(),
     react(),
     injectCsp(),
+    injectDevWebConfig(),
     useSourceThemeInDev(),
     restoreLegacyCss(),
     copyLegacyFiles(),
@@ -225,6 +308,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    proxy: createDevWebProxy(),
   },
   test: {
     root: path.resolve(__dirname),

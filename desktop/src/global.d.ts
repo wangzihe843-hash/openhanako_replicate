@@ -18,6 +18,12 @@ declare global {
     // ── 日志上报 ──
     __hanaLog: (level: string, module: string, message: string) => void;
 
+    // ── Dev-only browser preview bootstrap（scripts/dev-web.js 注入） ──
+    __HANA_DEV_WEB__?: {
+      serverPort?: string | number;
+      apiBaseUrl?: string;
+    };
+
     // ── 主题（由 lib/theme.js IIFE bundle 注入） ──
     setTheme: (name: string) => void;
     // applyTheme 为 optional：ws-message-handler 运行在所有窗口中，包括不加载
