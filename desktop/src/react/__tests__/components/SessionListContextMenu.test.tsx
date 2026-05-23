@@ -213,6 +213,64 @@ describe('SessionList context menu', () => {
     });
   });
 
+  it('shows title search results first and then content results', async () => {
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url.includes('phase=title')) {
+        return jsonResponse({
+          results: [{
+            path: '/tmp/agents/hana/sessions/title-search.jsonl',
+            title: '聊天记录搜索',
+            firstMessage: 'hello',
+            modified: '2026-05-22T08:00:00.000Z',
+            messageCount: 2,
+            agentId: 'hana',
+            agentName: 'Hana',
+            cwd: '/tmp/project',
+            matchKind: 'title',
+            snippet: '',
+          }],
+        });
+      }
+      if (url.includes('phase=content')) {
+        return jsonResponse({
+          results: [{
+            path: '/tmp/agents/hana/sessions/content-search.jsonl',
+            title: '排查记录',
+            firstMessage: 'hello',
+            modified: '2026-05-22T07:00:00.000Z',
+            messageCount: 4,
+            agentId: 'hana',
+            agentName: 'Hana',
+            cwd: '/tmp/project',
+            matchKind: 'content',
+            snippet: '这里记录了和其他 Agent 的聊天记录排查。',
+          }],
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    fireEvent.change(screen.getByPlaceholderText('sidebar.searchPlaceholder'), {
+      target: { value: '聊天记录' },
+    });
+
+    expect(await screen.findByText('聊天记录搜索')).toBeInTheDocument();
+    expect(await screen.findByText(/和其他 Agent 的聊天记录/)).toBeInTheDocument();
+
+    const searchCalls = hanaFetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter(url => url.startsWith('/api/sessions/search'));
+    expect(searchCalls[0]).toContain('phase=title');
+    expect(searchCalls[1]).toContain('phase=content');
+
+    const resultButton = screen.getByText('聊天记录搜索').closest('button');
+    if (!resultButton) throw new Error('missing search result button');
+    fireEvent.click(resultButton);
+    expect(switchSessionMock).toHaveBeenCalledWith('/tmp/agents/hana/sessions/title-search.jsonl');
+  });
+
   it('uses the session meta font size for the summary body', () => {
     const css = fs.readFileSync(
       path.join(__dirname, '../../components/SessionList.module.css'),

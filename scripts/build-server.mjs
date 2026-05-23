@@ -49,7 +49,9 @@ import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { builtinModules } from "module";
 import {
+  buildJiebaRuntimeSmokeScript,
   buildExternalPackage,
+  collectInstalledOptionalDependencyDirs,
   verifyExternalEntrypoints,
 } from "./build-server-deps.mjs";
 import { copyServerRuntimeAssets } from "./build-server-runtime-assets.mjs";
@@ -156,6 +158,17 @@ function ensureNodePtySpawnHelperExecutable(baseDir) {
       fs.chmodSync(helperPath, mode | 0o755);
       console.log(`[build-server] node-pty executable bit fixed: ${path.relative(baseDir, helperPath)}`);
     }
+  }
+}
+
+function runJiebaRuntimeSmokeIfNeeded() {
+  if (!externalPkg.dependencies["@node-rs/jieba"]) return;
+  const smokeScript = path.join(outDir, ".jieba-smoke.mjs");
+  fs.writeFileSync(smokeScript, buildJiebaRuntimeSmokeScript());
+  try {
+    runWithTargetNode(path.basename(smokeScript));
+  } finally {
+    fs.rmSync(smokeScript, { force: true });
   }
 }
 
@@ -419,6 +432,9 @@ for (const packageName of Object.keys(externalPkg.dependencies)) {
     protectedDirs.add(pkgDir);
   }
 }
+for (const pkgDir of collectInstalledOptionalDependencyDirs(nmDir, Object.keys(externalPkg.dependencies))) {
+  protectedDirs.add(pkgDir);
+}
 
 if (protectedDirs.size > 0) {
   const names = [...protectedDirs].map(d => path.relative(nmDir, d));
@@ -467,6 +483,7 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
+runJiebaRuntimeSmokeIfNeeded();
 
 // ── 8b. 删除 koffi 多余平台二进制 ──
 // koffi 带了 18 个平台的 .node 文件，nft 全部追踪到了（因为 require 路径指向包根）。

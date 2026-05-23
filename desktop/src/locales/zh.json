@@ -81,7 +81,15 @@
     "bridge": "接入社交平台",
     "toggle": "侧边栏",
     "bridgeShort": "接入社交平台",
-    "pinned": "置顶"
+    "pinned": "置顶",
+    "searchPlaceholder": "搜索聊天记录",
+    "searchClear": "清空搜索",
+    "searchTitleMatches": "标题",
+    "searchContentMatches": "正文",
+    "searchingTitles": "正在搜索标题…",
+    "searchingContent": "正在搜索正文…",
+    "searchNoResults": "没有找到相关会话",
+    "searchFailed": "搜索失败"
   },
   "titlebar": {
     "currentChatTitle": "当前对话标题"
@@ -908,6 +916,9 @@
       "networkProxyWss": "WSS proxy，可留空",
       "networkProxyNoProxy": "不走代理，例如 localhost, 127.0.0.1, ::1",
       "networkProxySave": "保存代理设置",
+      "archivedChats": "归档对话",
+      "archivedChatsDesc": "查看已归档的聊天，恢复需要继续的对话，或永久删除不再需要的记录",
+      "viewArchivedChats": "查看归档对话",
       "fileBackup": "文件备份",
       "fileBackupDesc": "AI 修改或删除文件前自动保存原始内容",
       "retention": "保留时长",

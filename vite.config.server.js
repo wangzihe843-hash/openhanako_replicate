@@ -14,6 +14,7 @@ export default defineConfig({
     rollupOptions: {
       external: [
         ...nodeBuiltins,
+        "@node-rs/jieba",
         "better-sqlite3",
         "node-pty",
 

@@ -188,6 +188,84 @@ describe("sessions route", () => {
     expect(data[0].pinnedAt).toBe(pinnedAt);
   });
 
+  it("searches sessions without exposing the cached full transcript", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const sessions = [
+      {
+        path: "/tmp/agents/hana/sessions/title.jsonl",
+        title: "聊天记录搜索",
+        firstMessage: "hello",
+        modified: new Date("2026-05-22T07:00:00.000Z"),
+        messageCount: 2,
+        cwd: "/tmp/work",
+        agentId: "hana",
+        agentName: "Hana",
+        allMessagesText: "标题命中时不需要扫正文。",
+      },
+      {
+        path: "/tmp/agents/hana/sessions/content.jsonl",
+        title: "无关主题",
+        firstMessage: "hello",
+        modified: new Date("2026-05-22T08:00:00.000Z"),
+        messageCount: 4,
+        cwd: "/tmp/work",
+        agentId: "hana",
+        agentName: "Hana",
+        allMessagesText: "这里记录了和其他 Agent 的聊天记录排查。",
+      },
+    ];
+
+    app.route("/api", createSessionsRoute({
+      listSessions: vi.fn(async () => sessions),
+      rcState: null,
+    }));
+
+    const titleRes = await app.request("/api/sessions/search?q=%E8%81%8A%E5%A4%A9%E8%AE%B0%E5%BD%95&phase=title");
+    const titleData = await titleRes.json();
+    expect(titleRes.status).toBe(200);
+    expect(titleData.results).toEqual([
+      expect.objectContaining({
+        path: "/tmp/agents/hana/sessions/title.jsonl",
+        matchKind: "title",
+      }),
+    ]);
+
+    const contentRes = await app.request("/api/sessions/search?q=%E8%81%8A%E5%A4%A9%E8%AE%B0%E5%BD%95&phase=content");
+    const contentData = await contentRes.json();
+    expect(contentRes.status).toBe(200);
+    expect(contentData.results).toEqual([
+      expect.objectContaining({
+        path: "/tmp/agents/hana/sessions/content.jsonl",
+        matchKind: "content",
+        snippet: expect.stringContaining("聊天记录"),
+      }),
+    ]);
+    expect(contentData.results[0]).not.toHaveProperty("allMessagesText");
+  });
+
+  it("rejects overly long session search queries before scanning session text", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const listSessions = vi.fn(async () => {
+      throw new Error("should not scan sessions for invalid query");
+    });
+
+    app.route("/api", createSessionsRoute({
+      listSessions,
+      rcState: null,
+    }));
+
+    const res = await app.request(`/api/sessions/search?q=${encodeURIComponent("记".repeat(513))}`);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "query_too_long",
+      maxLength: 512,
+    });
+    expect(listSessions).not.toHaveBeenCalled();
+  });
+
   it("projects the same default Studio sessions to a paired device principal", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const app = new Hono();

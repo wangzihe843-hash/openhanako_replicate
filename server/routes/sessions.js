@@ -54,10 +54,13 @@ import {
 import { replayLatestUserTurn } from "../../core/session-turn-actions.js";
 import { createRequestContext } from "../http/boundary.js";
 import { createModuleLogger } from "../../lib/debug-log.js";
+import { searchSessions } from "../../lib/search/session-search.js";
+import { SessionSearchTokenizerUnavailableError } from "../../lib/search/session-search-tokenizer.js";
 
 const log = createModuleLogger("sessions");
 const lifecycleLog = createModuleLogger("sessions/lifecycle");
 const switchLog = createModuleLogger("sessions/switch");
+const SESSION_SEARCH_QUERY_MAX_LENGTH = 512;
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -408,6 +411,62 @@ export function createSessionsRoute(engine, hub = null) {
         });
       }));
     } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.get("/sessions/search", async (c) => {
+    try {
+      const requestContext = createRequestContext(c, engine);
+      const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+        kind: "studio",
+        studioId: requestContext.studioId,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      const runtimeStudioId = requestContext.runtimeContext?.studioId || null;
+      const principalStudioId = requestContext.authPrincipal?.studioId || null;
+      if (runtimeStudioId && principalStudioId && runtimeStudioId !== principalStudioId) {
+        return c.json({
+          error: "studio_scope_mismatch",
+          detail: "authenticated Studio does not match this server Studio",
+        }, 403);
+      }
+
+      const query = c.req.query("q") || "";
+      const phase = c.req.query("phase") === "content" ? "content" : "title";
+      const limit = c.req.query("limit");
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) return c.json({ query, phase, results: [] });
+      if ([...trimmedQuery].length > SESSION_SEARCH_QUERY_MAX_LENGTH) {
+        return c.json({
+          error: "query_too_long",
+          maxLength: SESSION_SEARCH_QUERY_MAX_LENGTH,
+        }, 400);
+      }
+
+      const sessions = await engine.listSessions();
+      const results = searchSessions(sessions, trimmedQuery, { phase, limit }).map((s) => ({
+        path: s.path,
+        title: s.title || null,
+        firstMessage: (s.firstMessage || "").slice(0, 100),
+        modified: s.modified?.toISOString?.() || s.modified || null,
+        messageCount: s.messageCount || 0,
+        cwd: s.cwd || null,
+        agentId: s.agentId || null,
+        agentName: s.agentName || null,
+        modelId: s.modelId || null,
+        modelProvider: s.modelProvider || null,
+        pinnedAt: s.pinnedAt || null,
+        matchKind: s.matchKind,
+        snippet: s.snippet || "",
+        score: s.score,
+      }));
+      return c.json({ query, phase, results });
+    } catch (err) {
+      if (err instanceof SessionSearchTokenizerUnavailableError) {
+        log.error("session search tokenizer unavailable", err.cause || err);
+        return c.json({ error: err.message }, 503);
+      }
       return c.json({ error: err.message }, 500);
     }
   });

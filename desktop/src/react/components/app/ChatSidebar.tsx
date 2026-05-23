@@ -1,7 +1,6 @@
 import type { ActivePanel } from '../../types';
 import { useStore } from '../../stores';
 import { useAnyBrowserRunning } from '../../stores/browser-slice';
-import { ArchivedChatsButton } from '../ArchivedChatsButton';
 import { ChannelListSidebar } from '../channels/ChannelList';
 import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
 import { SessionList } from '../SessionList';
@@ -112,9 +111,6 @@ export function ChatSidebar({
             <RegionalErrorBoundary region={region} resetKeys={[currentAgentId]}>
               <SessionList />
             </RegionalErrorBoundary>
-          </div>
-          <div className="sidebar-footer">
-            <ArchivedChatsButton />
           </div>
         </div>
 

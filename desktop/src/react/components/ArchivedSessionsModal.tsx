@@ -29,9 +29,10 @@ function formatAgo(iso: string, t: (k: string, v?: Record<string, string | numbe
 interface Props {
   open: boolean;
   onClose: () => void;
+  zIndex?: number;
 }
 
-export function ArchivedSessionsModal({ open, onClose }: Props) {
+export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
   const { t } = useI18n();
   const [list, setList] = useState<ArchivedSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -95,7 +96,7 @@ export function ArchivedSessionsModal({ open, onClose }: Props) {
       open={open}
       onClose={onClose}
       backdrop="blur"
-      zIndex={1000}
+      zIndex={zIndex}
       className={styles.modal}
       disableContainerAnimation
     >

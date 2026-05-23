@@ -81,7 +81,15 @@
     "bridge": "ソーシャル連携",
     "toggle": "サイドバー",
     "bridgeShort": "連携",
-    "pinned": "ピン留め"
+    "pinned": "ピン留め",
+    "searchPlaceholder": "チャットを検索",
+    "searchClear": "検索をクリア",
+    "searchTitleMatches": "タイトル",
+    "searchContentMatches": "本文",
+    "searchingTitles": "タイトルを検索中…",
+    "searchingContent": "本文を検索中…",
+    "searchNoResults": "一致するチャットがありません",
+    "searchFailed": "検索に失敗しました"
   },
   "titlebar": {
     "currentChatTitle": "現在のチャットタイトル"
@@ -908,6 +916,9 @@
       "networkProxyWss": "WSS proxy、省略可",
       "networkProxyNoProxy": "プロキシ除外 例: localhost, 127.0.0.1, ::1",
       "networkProxySave": "プロキシ設定を保存",
+      "archivedChats": "アーカイブ済み会話",
+      "archivedChatsDesc": "アーカイブ済みのチャットを確認し、必要な会話を復元したり、不要な記録を完全に削除したりできます",
+      "viewArchivedChats": "アーカイブ済み会話を表示",
       "fileBackup": "ファイルバックアップ",
       "fileBackupDesc": "AIがファイルを変更・削除する前に元の内容を自動保存します",
       "retention": "保持期間",

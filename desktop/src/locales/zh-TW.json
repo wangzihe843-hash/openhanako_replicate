@@ -81,7 +81,15 @@
     "bridge": "接入社群平台",
     "toggle": "側邊欄",
     "bridgeShort": "接入",
-    "pinned": "置頂"
+    "pinned": "置頂",
+    "searchPlaceholder": "搜尋聊天記錄",
+    "searchClear": "清空搜尋",
+    "searchTitleMatches": "標題",
+    "searchContentMatches": "正文",
+    "searchingTitles": "正在搜尋標題…",
+    "searchingContent": "正在搜尋正文…",
+    "searchNoResults": "沒有找到相關會話",
+    "searchFailed": "搜尋失敗"
   },
   "titlebar": {
     "currentChatTitle": "目前對話標題"
@@ -908,6 +916,9 @@
       "networkProxyWss": "WSS proxy，可留空",
       "networkProxyNoProxy": "不走代理，例如 localhost, 127.0.0.1, ::1",
       "networkProxySave": "儲存代理設定",
+      "archivedChats": "歸檔對話",
+      "archivedChatsDesc": "查看已歸檔的聊天，還原需要繼續的對話，或永久刪除不再需要的紀錄",
+      "viewArchivedChats": "查看歸檔對話",
       "fileBackup": "檔案備份",
       "fileBackupDesc": "AI 修改或刪除檔案前自動儲存原始內容",
       "retention": "保留時間",

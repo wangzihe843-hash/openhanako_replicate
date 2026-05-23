@@ -81,7 +81,15 @@
     "bridge": "Social Platforms",
     "toggle": "Sidebar",
     "bridgeShort": "Bridge",
-    "pinned": "Pinned"
+    "pinned": "Pinned",
+    "searchPlaceholder": "Search chats",
+    "searchClear": "Clear search",
+    "searchTitleMatches": "Titles",
+    "searchContentMatches": "Content",
+    "searchingTitles": "Searching titles…",
+    "searchingContent": "Searching content…",
+    "searchNoResults": "No matching chats",
+    "searchFailed": "Search failed"
   },
   "titlebar": {
     "currentChatTitle": "Current chat title"
@@ -908,6 +916,9 @@
       "networkProxyWss": "WSS proxy, optional",
       "networkProxyNoProxy": "Bypass proxy, for example localhost, 127.0.0.1, ::1",
       "networkProxySave": "Save Proxy Settings",
+      "archivedChats": "Archived Conversations",
+      "archivedChatsDesc": "Review archived chats, restore conversations you need again, or permanently delete records you no longer want",
+      "viewArchivedChats": "View Archived Conversations",
       "fileBackup": "File Backup",
       "fileBackupDesc": "Automatically save original file content before AI modifications or deletions",
       "retention": "Retention",

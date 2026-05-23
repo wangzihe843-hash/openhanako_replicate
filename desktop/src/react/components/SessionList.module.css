@@ -9,6 +9,146 @@
     -webkit-app-region: no-drag;
 }
 
+.sessionSearchBox {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    margin: 15px var(--space-sm) 6px;
+    padding: 0 8px;
+    background: color-mix(in srgb, var(--sidebar-bg, var(--bg)) 97%, var(--text) 3%);
+    border: none;
+    border-radius: var(--radius-sm);
+    -webkit-app-region: no-drag;
+}
+
+.sessionSearchBox::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -10px;
+    width: 184px;
+    height: 1px;
+    transform: translateX(-50%);
+    background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+    pointer-events: none;
+}
+
+.sessionSearchIcon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    opacity: 0.62;
+}
+
+.sessionSearchInput {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.76rem;
+    line-height: 24px;
+}
+
+.sessionSearchInput::placeholder {
+    color: var(--text-muted);
+    opacity: 0.64;
+}
+
+.sessionSearchClear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.sessionSearchClear:hover,
+.sessionSearchClear:focus-visible {
+    color: var(--accent);
+    background: var(--accent-light);
+    outline: none;
+}
+
+.sessionSearchSection {
+    margin: 0;
+    padding: 0;
+}
+
+.sessionSearchSectionTitle {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0;
+    padding: var(--space-sm) var(--space-sm) 2px;
+    opacity: 0.72;
+    user-select: none;
+}
+
+.sessionSearchItem {
+    display: flex;
+    flex-direction: column;
+    padding: 6px var(--space-sm);
+    margin-bottom: 1px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast), color var(--duration-fast);
+    -webkit-app-region: no-drag;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    overflow: hidden;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .sessionSearchItem:hover {
+        background: var(--accent-light);
+    }
+}
+
+.sessionSearchItemActive {
+    background: var(--accent-light);
+}
+
+.sessionSearchItemActive .sessionItemTitle {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.sessionSearchSnippet {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.sessionSearchStatus,
+.sessionSearchEmpty {
+    padding: 10px var(--space-sm);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    line-height: 1.5;
+}
+
 .sessionItem {
     display: flex;
     flex-direction: column;

@@ -68,6 +68,12 @@ describe("local startup contract", () => {
     expect(external).toContain("jsdom");
   });
 
+  it("keeps the native jieba tokenizer external in the server bundle", () => {
+    const external = viteServerConfig.build?.rollupOptions?.external || [];
+
+    expect(external).toContain("@node-rs/jieba");
+  });
+
   it("keeps workspace output helper statically bundleable in packaged server", () => {
     const source = fs.readFileSync(path.join(ROOT, "shared", "workspace-output.js"), "utf-8");
 
