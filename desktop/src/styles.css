@@ -254,7 +254,7 @@ option,
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-light, #888);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
     opacity: 0.8;
 }
@@ -321,7 +321,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     background: transparent;
     color: var(--text-secondary, #888);
-    cursor: pointer;
+    cursor: default;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -371,7 +371,7 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.78rem;
     color: var(--text);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -436,7 +436,7 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: 5px 8px;
     font-size: 0.75rem;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     border-radius: var(--radius-sm);
     transition: color var(--duration-instant), background var(--duration-instant);
     text-align: center;
@@ -615,7 +615,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     border-radius: var(--radius-sm);
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -639,7 +639,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
     flex-shrink: 0;
 }
@@ -735,7 +735,7 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: var(--space-sm);
     margin-bottom: 2px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
     border: none;
     background: none;
@@ -852,7 +852,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border-radius: 5px;
     border: none;
     background: var(--overlay-medium);
-    cursor: pointer;
+    cursor: default;
     position: relative;
     transition: background var(--duration-slow);
     flex-shrink: 0;
@@ -1039,7 +1039,7 @@ html[data-platform="linux"] .tb-toggle-right {
     width: 2rem;
     height: 2rem;
     padding: 0;
-    cursor: pointer;
+    cursor: default;
     opacity: 0.45;
     transition: opacity var(--duration-fast), color var(--duration-fast);
 }
@@ -1141,7 +1141,7 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 .md-content summary.markdown-callout-title {
-    cursor: pointer;
+    cursor: default;
 }
 
 .md-content .markdown-callout > :last-child {
@@ -1316,7 +1316,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-light);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
     white-space: nowrap;
 }
@@ -1397,7 +1397,7 @@ html[data-platform="linux"] .tb-toggle-right {
     flex-shrink: 0;
     background: transparent;
     border: none;
-    cursor: pointer;
+    cursor: default;
     padding: 0;
     font-family: inherit;
 }
@@ -1456,7 +1456,7 @@ html[data-platform="linux"] .tb-toggle-right {
 .bridge-help-link {
     font-size: 0.76rem;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     opacity: 0.7;
     transition: opacity var(--duration-fast);
 }
@@ -1515,7 +1515,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     border-radius: var(--radius-sm);
     transition: all var(--duration-fast);
 }
@@ -1610,7 +1610,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text);
     font-family: inherit;
     font-size: 0.76rem;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant), border-color var(--duration-instant);
     user-select: none;
 }
@@ -1668,7 +1668,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     border-bottom: 2px solid transparent;
     padding: 6px 0;
-    cursor: pointer;
+    cursor: default;
     transition: color var(--duration-instant), border-color var(--duration-instant);
 }
 
@@ -1781,7 +1781,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--accent);
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     padding: 2px 6px;
     border-radius: 4px;
 }
@@ -1863,7 +1863,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     background: none;
     border-radius: 6px;
-    cursor: pointer;
+    cursor: default;
     color: var(--text-muted);
     transition: background var(--duration-instant), color var(--duration-instant);
     flex-shrink: 0;
@@ -1907,7 +1907,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border-radius: 6px;
     background: var(--bg);
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 
@@ -1951,7 +1951,7 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: 5px 12px 5px 16px;
     font-size: 13px;
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant);
     user-select: none;
 }
@@ -2363,7 +2363,7 @@ body.resizing .channel-inspector-rail {
     padding: 5px 12px;
     font-size: 0.72rem;
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant);
     white-space: nowrap;
 }
@@ -2485,7 +2485,7 @@ body.resizing .channel-inspector-rail {
     border: none;
     color: inherit;
     opacity: 0.5;
-    cursor: pointer;
+    cursor: default;
     padding: 2px;
     border-radius: 4px;
 }
@@ -2504,7 +2504,7 @@ body.resizing .channel-inspector-rail {
     border-radius: 3px;
     padding: 2px 8px;
     font-size: 11px;
-    cursor: pointer;
+    cursor: default;
     color: inherit;
     white-space: nowrap;
 }
@@ -2806,7 +2806,7 @@ body.resizing .channel-inspector-rail {
     display: flex;
     align-items: center;
     gap: 12px;
-    cursor: pointer;
+    cursor: default;
     transition: box-shadow var(--duration-fast);
     -webkit-app-region: no-drag;
     animation: hana-card-slide-down var(--duration-slow) var(--ease-out) both;
@@ -2831,7 +2831,7 @@ body.resizing .channel-inspector-rail {
     border: none;
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     border-radius: 6px;
     padding: 0;
     opacity: 0;
@@ -2889,7 +2889,7 @@ body.resizing .channel-inspector-rail {
     max-width: 100%;
     border-radius: 8px;
     border: 1px solid var(--border);
-    cursor: pointer;
+    cursor: default;
     transition: opacity var(--duration-fast);
 }
 .browser-screenshot img:hover {
@@ -2948,7 +2948,7 @@ body.resizing .channel-inspector-rail {
     padding: 0.4rem 1rem;
     border-radius: var(--radius-md);
     border: none;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
 }
 .hana-warning-cancel {
@@ -3081,7 +3081,7 @@ html[data-platform="linux"] .onboarding {
     color: var(--text-muted);
     font-family: inherit;
     font-size: 0.76rem;
-    cursor: pointer;
+    cursor: default;
     padding: 4px 8px;
 }
 
@@ -3110,7 +3110,7 @@ html[data-platform="linux"] .onboarding {
     padding: 0.5rem 1.6rem;
     border-radius: var(--radius-md, 8px);
     border: none;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 .ob-btn-primary {
@@ -3210,7 +3210,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-md, 8px);
     border: 1px solid var(--border);
     background-color: var(--bg-card);
-    cursor: pointer;
+    cursor: default;
     font-size: 0.8rem;
     color: var(--text);
     text-align: center;
@@ -3244,7 +3244,7 @@ html[data-platform="linux"] .onboarding {
     color: var(--text);
     font-family: inherit;
     font-size: 0.86rem;
-    cursor: pointer;
+    cursor: default;
 }
 .ob-provider-trigger:hover {
     border-color: var(--accent);
@@ -3289,7 +3289,7 @@ html[data-platform="linux"] .onboarding {
     font-family: inherit;
     font-size: 0.8rem;
     text-align: left;
-    cursor: pointer;
+    cursor: default;
 }
 .ob-provider-option:hover {
     background: var(--accent-bg, rgba(139,115,85,0.06));
@@ -3348,7 +3348,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-md, 8px);
     background-color: var(--bg-card);
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     white-space: nowrap;
     display: flex;
     align-items: center;
@@ -3370,7 +3370,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-md, 8px);
     background-color: var(--bg-card);
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 .ob-test-btn:hover { border-color: var(--accent); }
@@ -3398,7 +3398,7 @@ html[data-platform="linux"] .onboarding {
     padding: 9px 14px;
     font-size: 0.82rem;
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     border-bottom: 1px solid var(--overlay-subtle, rgba(0,0,0,0.04));
     transition: background var(--duration-fast);
 }
@@ -3517,7 +3517,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-sm, 4px);
     background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     padding: 0.2rem 0.45rem;
 }
 .ob-main-model-btn:hover {
@@ -3534,7 +3534,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-sm, 4px);
     background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
 }
 .ob-model-icon-btn:hover {
     color: var(--accent);
@@ -3561,7 +3561,7 @@ html[data-platform="linux"] .onboarding {
     color: var(--text);
     font-family: inherit;
     font-size: 0.82rem;
-    cursor: pointer;
+    cursor: default;
 }
 .ob-add-model-trigger:hover {
     border-color: var(--accent);
@@ -3605,7 +3605,7 @@ html[data-platform="linux"] .onboarding {
     font-family: inherit;
     font-size: 0.8rem;
     text-align: left;
-    cursor: pointer;
+    cursor: default;
 }
 .ob-add-model-option:hover {
     background: var(--accent-bg, rgba(139,115,85,0.06));
@@ -3636,7 +3636,7 @@ html[data-platform="linux"] .onboarding {
     color: var(--text);
     font-family: inherit;
     font-size: 0.78rem;
-    cursor: pointer;
+    cursor: default;
 }
 .ob-add-model-manual-btn:hover:not(:disabled) {
     border-color: var(--accent);
@@ -3849,7 +3849,7 @@ html[data-platform="linux"] .onboarding {
     color: var(--text);
     font-family: inherit;
     font-size: 0.82rem;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 .ob-locale-btn:hover {
@@ -3871,7 +3871,7 @@ html[data-platform="linux"] .onboarding {
     border: none;
     background: var(--accent);
     color: white;
-    cursor: pointer;
+    cursor: default;
     margin-top: auto;
     transition: opacity var(--duration-fast);
 }
@@ -3908,7 +3908,7 @@ html[data-platform="linux"] .onboarding {
     border-radius: var(--radius-lg, 12px);
     border: 1.5px solid var(--border);
     background-color: var(--bg-card);
-    cursor: pointer;
+    cursor: default;
     font-family: inherit;
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -3974,7 +3974,7 @@ html[data-platform="linux"] .onboarding {
     border: 1.5px solid var(--border);
     background-size: cover;
     background-position: center;
-    cursor: pointer;
+    cursor: default;
     overflow: hidden;
     display: flex;
     flex-direction: column;

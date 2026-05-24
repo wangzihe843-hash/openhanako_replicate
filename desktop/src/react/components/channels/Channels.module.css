@@ -38,7 +38,7 @@
     font-family: var(--font-ui);
     font-size: 0.78rem;
     font-weight: 500;
-    cursor: pointer;
+    cursor: default;
     transition: color var(--duration-fast) var(--ease-out);
     display: flex;
     align-items: center;
@@ -164,7 +164,7 @@
     padding: 8px var(--space-sm);
     margin-bottom: 1px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast);
 }
 
@@ -323,7 +323,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     padding: 4px;
     border-radius: var(--radius-sm);
     transition: background var(--duration-fast), color var(--duration-fast);
@@ -464,7 +464,7 @@
     color: var(--accent);
     box-shadow: 0 4px 14px var(--shadow);
     font-size: 0.78rem;
-    cursor: pointer;
+    cursor: default;
     z-index: 2;
 }
 
@@ -516,7 +516,7 @@
     align-items: center;
     gap: var(--space-sm);
     padding: 6px 12px;
-    cursor: pointer;
+    cursor: default;
     font-size: 13px;
     color: var(--text-primary);
     transition: background var(--duration-instant);
@@ -583,7 +583,7 @@
     color: white;
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     flex-shrink: 0;
     transition: opacity var(--duration-fast);
@@ -689,7 +689,7 @@
     border: none;
     font-family: inherit;
     font-size: 0.82rem;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
 }
 
@@ -729,7 +729,7 @@
     color: var(--text-light);
     font-family: var(--font-ui);
     font-size: 0.78rem;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
 }
 
@@ -824,7 +824,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
+    cursor: default;
     opacity: 0.62;
 }
 
@@ -853,7 +853,7 @@
     align-items: center;
     justify-content: center;
     gap: 5px;
-    cursor: pointer;
+    cursor: default;
 }
 
 .channelMemberAddButton:hover:not(:disabled) {
@@ -917,7 +917,7 @@
     background: transparent;
     color: var(--text-muted);
     font-size: 0.68rem;
-    cursor: pointer;
+    cursor: default;
 }
 
 .agentToolModeButton:disabled {
@@ -950,7 +950,7 @@
     background: transparent;
     color: inherit;
     text-align: left;
-    cursor: pointer;
+    cursor: default;
 }
 
 .agentActivityRow:hover {
@@ -1116,7 +1116,7 @@
     color: var(--text);
     font-size: 0.7rem;
     padding: 0 7px;
-    cursor: pointer;
+    cursor: default;
 }
 
 .agentModelSelectButton:disabled {
@@ -1168,7 +1168,7 @@
     font-size: 0.7rem;
     text-align: left;
     padding: 5px 7px;
-    cursor: pointer;
+    cursor: default;
 }
 
 .agentModelOption:hover {

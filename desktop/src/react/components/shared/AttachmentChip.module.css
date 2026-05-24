@@ -60,7 +60,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     font-size: 0.7rem;
     border-radius: 50%;
     flex-shrink: 0;

@@ -65,7 +65,7 @@
 .index { opacity: 0.8; }
 .closeBtn {
   background: transparent; border: 0; color: inherit;
-  font-size: 22px; cursor: pointer; padding: 4px 10px;
+  font-size: 22px; cursor: default; padding: 4px 10px;
   border-radius: 2px;
 }
 .closeBtn:hover { background: rgba(255, 255, 255, 0.14); }
@@ -101,7 +101,7 @@
   color: rgba(255, 255, 255, 0.9);
   border: 0;
   font-size: 28px;
-  cursor: pointer;
+  cursor: default;
   border-radius: 2px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   transition: opacity var(--duration-fast) ease-out, background var(--duration-instant) ease-out;

@@ -147,7 +147,7 @@ export const SettingsConfirmCard = memo(function SettingsConfirmCard(props: Prop
     <div className={styles.settingsConfirmCard}>
       {cardType === 'toggle' ? (
         <>
-          <div className={styles.settingsConfirmHeader} onClick={() => setEditValue(editValue === 'true' ? 'false' : 'true')} style={{ cursor: 'pointer' }}>
+          <div className={styles.settingsConfirmHeader} onClick={() => setEditValue(editValue === 'true' ? 'false' : 'true')} style={{ cursor: 'default' }}>
             <div>
               <div className={styles.settingsConfirmLabel}>{displayLabel}</div>
               {description && <div className={styles.settingsConfirmDesc}>{description}</div>}

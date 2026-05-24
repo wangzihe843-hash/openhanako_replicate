@@ -374,7 +374,7 @@ const ImageOutputCard = memo(function ImageOutputCard({ fileId, filePath, label,
         fileId,
         blockIdx: ctx.blockIdx,
       })}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'default' }}
     >
       {downloadUrl && (
         <a
@@ -572,7 +572,7 @@ const LegacyArtifactBlock = memo(function LegacyArtifactBlock({ block }: { block
   const expired = block.status === 'expired';
 
   return (
-    <div className={styles.legacyArtifactCard} onClick={handleClick} style={{ cursor: 'pointer' }}>
+    <div className={styles.legacyArtifactCard} onClick={handleClick} style={{ cursor: 'default' }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="9" x2="21" y2="9" />
@@ -619,7 +619,7 @@ const ScreenshotBlock = memo(function ScreenshotBlock({ block, sessionPath, mess
   };
 
   return (
-    <div className={styles.browserScreenshot} onClick={handleClick} style={{ cursor: 'pointer' }}>
+    <div className={styles.browserScreenshot} onClick={handleClick} style={{ cursor: 'default' }}>
       <img src={`data:${block.mimeType};base64,${block.base64}`} alt={window.t('chat.browserScreenshot')} />
     </div>
   );
@@ -632,7 +632,7 @@ const SkillBlock = memo(function SkillBlock({ block }: { block: any }) {
     ? block.installedSkillSource.filePath
     : block.skillFilePath;
   return (
-    <div className={styles.skillCard} onClick={() => openSkillPreview(block.skillName, skillFilePath)} style={{ cursor: 'pointer' }}>
+    <div className={styles.skillCard} onClick={() => openSkillPreview(block.skillName, skillFilePath)} style={{ cursor: 'default' }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2L2 7l10 5 10-5-10-5z" />
         <path d="M2 17l10 5 10-5" />

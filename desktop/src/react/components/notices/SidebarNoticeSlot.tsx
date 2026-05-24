@@ -69,10 +69,6 @@ function updateTitle(state: AutoUpdateState): string {
   return tr('settings.about.updateReadyInstall', { version: state.version ?? '' });
 }
 
-function updateBody(): string {
-  return tr('settings.about.updateInstallSidebarHint');
-}
-
 export function SidebarUpdateNoticeCard({
   state,
   onInstall,
@@ -90,7 +86,6 @@ export function SidebarUpdateNoticeCard({
     if (!state || !noticeKey || dismissedKey === noticeKey) return null;
     return {
       title: updateTitle(state),
-      body: updateBody(),
     };
   }, [dismissedKey, noticeKey, state]);
 
@@ -109,11 +104,10 @@ export function SidebarUpdateNoticeCard({
         </span>
         <div className={styles.content}>
           <div className={styles.title}>{content.title}</div>
-          <div className={styles.body}>{content.body}</div>
           {state.status === 'downloaded' && onInstall && (
             <div className={styles.actions}>
               <button type="button" className={styles.actionButton} onClick={() => void onInstall()}>
-                <span>{tr('settings.about.updateInstall')}</span>
+                <span>{tr('settings.about.updateInstallNow')}</span>
                 <UpdateIcon />
               </button>
             </div>

@@ -87,7 +87,7 @@
     background: var(--accent);
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: filter var(--duration-slow) var(--ease-out), opacity var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
 }

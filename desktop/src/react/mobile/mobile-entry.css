@@ -206,7 +206,7 @@ option,
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-light, #888);
-    cursor: pointer;
+    cursor: default;
     opacity: 0.8;
     transition: background var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
 }
@@ -265,7 +265,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     background: transparent;
     color: var(--text-secondary, #888);
-    cursor: pointer;
+    cursor: default;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -364,7 +364,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border-radius: var(--radius-sm);
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -387,7 +387,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     font: inherit;
     font-size: 0.78rem;
-    cursor: pointer;
+    cursor: default;
     flex-shrink: 0;
     transition: all var(--duration-fast) var(--ease-out);
 }
@@ -476,7 +476,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     border-radius: 5px;
     background: var(--overlay-medium);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-slow);
 }
 
@@ -584,7 +584,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     font: inherit;
     font-size: 0.68rem;
-    cursor: pointer;
+    cursor: default;
     opacity: 0.45;
     transition: opacity var(--duration-fast), color var(--duration-fast);
 }
@@ -942,7 +942,7 @@ body.resizing .jian-sidebar-inner {
 .hana-toast-action {
     font: inherit;
     color: inherit;
-    cursor: pointer;
+    cursor: default;
 }
 
 .hana-toast-close {
@@ -1054,7 +1054,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: 14px;
     background-color: var(--bg-card, var(--bg));
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.09), 0 2px 6px rgba(0, 0, 0, 0.06);
-    cursor: pointer;
+    cursor: default;
     transition: box-shadow var(--duration-fast);
     -webkit-app-region: no-drag;
     animation: hana-card-slide-down var(--duration-slow) var(--ease-out) both;
@@ -1127,7 +1127,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: 6px;
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     opacity: 0;
     transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast);
 }
@@ -1150,7 +1150,7 @@ body.resizing .jian-sidebar-inner {
     max-width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
-    cursor: pointer;
+    cursor: default;
     transition: opacity var(--duration-fast);
 }
 
@@ -1247,7 +1247,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: var(--radius-md, 8px);
     font: inherit;
     font-size: 0.85rem;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 
@@ -1308,7 +1308,7 @@ body.resizing .jian-sidebar-inner {
     font: inherit;
     font-size: 0.8rem;
     text-align: center;
-    cursor: pointer;
+    cursor: default;
     user-select: none;
     transition: all var(--duration-fast);
 }

@@ -84,7 +84,7 @@
     border-radius: 3px;
     background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
 }
 
 .sessionSearchClear:hover,
@@ -115,7 +115,7 @@
     padding: 6px var(--space-sm);
     margin-bottom: 1px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
     -webkit-app-region: no-drag;
     border: none;
@@ -166,7 +166,7 @@
     padding: 6px var(--space-sm);
     margin-bottom: 1px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
     -webkit-app-region: no-drag;
     border: none;
@@ -252,7 +252,7 @@
     border: none;
     border-radius: 3px;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     opacity: 0;
     pointer-events: none;
     transition: all var(--duration-fast);
@@ -289,7 +289,7 @@
     border: none;
     border-radius: 3px;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     opacity: 0;
     pointer-events: none;
     transition: all var(--duration-fast);
@@ -351,7 +351,7 @@
     border: none;
     border-radius: 3px;
     color: var(--danger);
-    cursor: pointer;
+    cursor: default;
     opacity: 0;
     pointer-events: none;
     transition: all var(--duration-fast);
@@ -411,7 +411,7 @@
     height: 18px;
     color: var(--text-muted);
     opacity: 0.5;
-    cursor: pointer;
+    cursor: default;
     pointer-events: auto;
     border-radius: 3px;
     transition: color var(--duration-fast), background var(--duration-fast), opacity var(--duration-fast);

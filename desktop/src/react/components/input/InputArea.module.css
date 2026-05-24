@@ -70,7 +70,7 @@
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
     flex-shrink: 0;
@@ -93,7 +93,7 @@
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
     flex-shrink: 1;
@@ -168,7 +168,7 @@
     padding: 0.15rem 0.4rem 0.15rem 0.2rem;
     border: none;
     background: transparent;
-    cursor: pointer;
+    cursor: default;
     font-size: 0.7rem;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: var(--text-muted);
@@ -243,7 +243,7 @@
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -305,7 +305,7 @@
     color: var(--text);
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     text-align: left;
     transition: all var(--duration-fast);
 }
@@ -358,7 +358,7 @@
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
     overflow: hidden;
@@ -452,7 +452,7 @@
     background: none;
     border: none;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     text-align: left;
     transition: all var(--duration-fast);
 }
@@ -489,7 +489,7 @@
     background: none;
     border: none;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     box-shadow: none;
     -webkit-app-region: no-drag;
@@ -587,7 +587,7 @@
     background: var(--accent);
     border: none;
     border-radius: var(--radius-md);
-    cursor: pointer;
+    cursor: default;
     transition: opacity var(--duration-fast);
     -webkit-app-region: no-drag;
 }
@@ -676,7 +676,7 @@
     background: transparent;
     border: 0;
     border-top: 1px solid var(--overlay-light);
-    cursor: pointer;
+    cursor: default;
     -webkit-app-region: no-drag;
 }
 
@@ -756,7 +756,7 @@
     border: none;
     background: none;
     border-radius: var(--radius-md);
-    cursor: pointer;
+    cursor: default;
     text-align: left;
     color: var(--text);
     font-size: 0.88rem;
@@ -828,7 +828,7 @@
     background: none;
     border-radius: var(--radius-md);
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     font-family: inherit;
     text-align: left;
     transition: background var(--duration-instant);
@@ -890,7 +890,7 @@
 }
 
 .slash-busy-bar-clickable {
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
 
@@ -1102,7 +1102,7 @@
     border: 1px solid rgba(var(--accent-rgb), 0.18);
     background: var(--bg-card);
     color: var(--text);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -1166,7 +1166,7 @@
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     text-align: left;
     white-space: nowrap;
     transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
@@ -1295,7 +1295,7 @@
     color: white;
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -1326,7 +1326,7 @@
 /* streaming 状态按钮样式（三态由 React 条件渲染控制） */
 .send-btn.is-streaming {
     opacity: 1;
-    cursor: pointer;
+    cursor: default;
     background: transparent;
     color: var(--coral);
     border-color: var(--coral);
@@ -1337,7 +1337,7 @@
 }
 .send-btn.is-steer {
     opacity: 1;
-    cursor: pointer;
+    cursor: default;
     background: transparent;
     color: var(--accent);
     border-color: var(--accent);

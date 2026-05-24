@@ -274,7 +274,7 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
                     messageId,
                   });
                 }}
-                style={{ cursor: 'pointer' }}
+                style={{ cursor: 'default' }}
               />
               {att.visionAuxiliary && (
                 <div className={styles.visionAuxiliaryLabel}>

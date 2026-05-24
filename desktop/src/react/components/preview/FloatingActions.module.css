@@ -21,7 +21,7 @@
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant), color var(--duration-instant);
 }
 

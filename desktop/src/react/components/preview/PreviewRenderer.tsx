@@ -45,7 +45,7 @@ function LegacyMediaFallback({ previewItem }: { previewItem: PreviewItem }) {
         justifyContent: 'center',
         height: 200,
         color: 'var(--text-muted)',
-        cursor: 'pointer',
+        cursor: 'default',
         fontSize: '0.85rem',
       }}
       onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text)'; }}
