@@ -149,7 +149,7 @@ describe("desktop GPU startup policy", () => {
     });
   });
 
-  it("turns on GPU sandbox compatibility after any stale pending Windows startup", () => {
+  it("does not turn a stale server startup marker into GPU recovery", () => {
     const hanakoHome = makeHome();
     markGpuStartupPending({
       hanakoHome,
@@ -171,20 +171,49 @@ describe("desktop GPU startup policy", () => {
       now: "2026-05-19T01:01:00.000Z",
     });
 
-    expect(policy.mode).toBe("gpu-sandbox-compat");
+    expect(policy.mode).toBe("hardware");
     expect(policy.hardwareAccelerationEnabled).toBe(true);
-    expect(policy.reason).toBe("previous-startup-incomplete");
-    expect(readJson(statePath).autoGpuMode).toMatchObject({
-      mode: "gpu-sandbox-compat",
-      reason: "previous-startup-incomplete",
-      previousStartup: expect.objectContaining({
+    expect(policy.reason).toBe("default");
+    expect(readJson(statePath).autoGpuMode).toBeUndefined();
+  });
+
+  it("still applies an existing auto GPU mode when a server marker is stale", () => {
+    const hanakoHome = makeHome();
+    writeGpuState(hanakoHome, {
+      version: 2,
+      autoGpuMode: {
+        mode: "gpu-sandbox-compat",
+        reason: "gpu-child-process-gone",
+        previousMode: "hardware",
+        updatedAt: "2026-05-19T01:00:00.000Z",
+      },
+      startup: {
         status: "pending",
-        phase: "server-starting",
-      }),
+        startupId: "server-launch",
+        phase: "server-ready",
+        platform: "win32",
+        startedAt: "2026-05-19T01:00:00.000Z",
+        updatedAt: "2026-05-19T01:00:00.000Z",
+      },
+    });
+
+    const policy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe"],
+      env: {},
+      now: "2026-05-19T01:01:00.000Z",
+    });
+
+    expect(policy.mode).toBe("gpu-sandbox-compat");
+    expect(policy.reason).toBe("gpu-child-process-gone");
+    expect(readJson(path.join(hanakoHome, "user", "gpu-startup.json")).autoGpuMode).toMatchObject({
+      mode: "gpu-sandbox-compat",
+      reason: "gpu-child-process-gone",
     });
   });
 
-  it("escalates a stale pending Windows startup from the recorded launch policy", () => {
+  it("escalates a stale pending GPU sandbox launch into backend compatibility", () => {
     const hanakoHome = makeHome();
     const compatPolicy = resolveGpuStartupPolicy({
       hanakoHome,
@@ -210,11 +239,12 @@ describe("desktop GPU startup policy", () => {
       now: "2026-05-19T01:01:00.000Z",
     });
 
-    expect(policy.mode).toBe("software-safe");
-    expect(policy.hardwareAccelerationEnabled).toBe(false);
+    expect(policy.mode).toBe("gpu-backend-compat");
+    expect(policy.hardwareAccelerationEnabled).toBe(true);
+    expect(policy.shouldApplyGpuBackendCompatSwitches).toBe(true);
     expect(policy.reason).toBe("previous-startup-incomplete");
     expect(readJson(path.join(hanakoHome, "user", "gpu-startup.json")).autoGpuMode).toMatchObject({
-      mode: "software-safe",
+      mode: "gpu-backend-compat",
       reason: "previous-startup-incomplete",
       previousMode: "gpu-sandbox-compat",
       previousStartup: expect.objectContaining({
@@ -316,6 +346,40 @@ describe("desktop GPU startup policy", () => {
     expect(policy.reason).toBe("gpu-child-process-gone");
     expect(policy.mode).toBe("gpu-sandbox-compat");
     expect(readPrefs(hanakoHome).hardware_acceleration).toBeUndefined();
+  });
+
+  it("escalates a GPU crash from sandbox compatibility into backend compatibility", () => {
+    const hanakoHome = makeHome();
+    const policy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe", "--hana-gpu-sandbox-compat"],
+      env: {},
+    });
+
+    recordGpuChildProcessGone({
+      hanakoHome,
+      platform: "win32",
+      policy,
+      details: { type: "GPU", reason: "crashed", exitCode: -2147483645 },
+      now: "2026-05-19T01:02:00.000Z",
+    });
+
+    const nextPolicy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe"],
+      env: {},
+    });
+
+    expect(nextPolicy.hardwareAccelerationEnabled).toBe(true);
+    expect(nextPolicy.mode).toBe("gpu-backend-compat");
+    expect(nextPolicy.shouldApplyGpuBackendCompatSwitches).toBe(true);
+    expect(readJson(path.join(hanakoHome, "user", "gpu-startup.json")).autoGpuMode).toMatchObject({
+      mode: "gpu-backend-compat",
+      reason: "gpu-child-process-gone",
+      previousMode: "gpu-sandbox-compat",
+    });
   });
 
   it("escalates a software-safe GPU crash to deep compatibility without changing the user preference", () => {
@@ -440,6 +504,32 @@ describe("desktop GPU startup policy", () => {
     expect(app.disableHardwareAcceleration).not.toHaveBeenCalled();
     expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu-sandbox");
     expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", "Vulkan,GpuSandbox");
+    expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox");
+    expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox", expect.anything());
+  });
+
+  it("applies backend compatibility switches before disabling hardware acceleration", () => {
+    const app = {
+      disableHardwareAcceleration: vi.fn(),
+      commandLine: {
+        appendSwitch: vi.fn(),
+        hasSwitch: vi.fn((name) => name === "disable-features"),
+        getSwitchValue: vi.fn((name) => name === "disable-features" ? "GpuSandbox" : ""),
+      },
+    };
+
+    applyGpuStartupPolicy(app, {
+      mode: "gpu-backend-compat",
+      shouldApplyGpuBackendCompatSwitches: true,
+      shouldDisableHardwareAcceleration: false,
+      reason: "gpu-child-process-gone",
+    });
+
+    expect(app.disableHardwareAcceleration).not.toHaveBeenCalled();
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu-sandbox");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", "GpuSandbox,Vulkan,SkiaGraphite");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("use-angle", "d3d11");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("disable-direct-composition");
     expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox");
     expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith("no-sandbox", expect.anything());
   });
