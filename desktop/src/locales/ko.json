@@ -810,6 +810,7 @@
       "updateReadyInstall": "v{version} 설치 준비 완료",
       "updateInstalling": "업데이트를 설치하는 중입니다. Hanako가 자동으로 다시 시작됩니다…",
       "updateInstallManualHint": "다시 시작하여 업데이트를 누른 뒤 설치합니다. 종료만으로는 자동 설치하지 않습니다",
+      "updateInstallSidebarHint": "다시 시작하여 업데이트를 누른 뒤 설치합니다",
       "updateInstall": "재시작하여 업데이트",
       "updateProgress": "{percent}%",
       "updateError": "업데이트 확인 실패",

@@ -810,6 +810,7 @@
       "updateReadyInstall": "v{version} 已就绪",
       "updateInstalling": "正在安装更新，Hanako 会自动重启…",
       "updateInstallManualHint": "点「重启更新」后安装，直接退出不会自动安装",
+      "updateInstallSidebarHint": "点「重启更新」后安装",
       "updateInstall": "重启更新",
       "updateProgress": "{percent}%",
       "updateError": "检查更新失败",

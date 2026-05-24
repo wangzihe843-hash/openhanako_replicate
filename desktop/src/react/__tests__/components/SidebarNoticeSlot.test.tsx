@@ -15,6 +15,7 @@ const labels: Record<string, string> = {
   'settings.about.updateProgress': '{percent}%',
   'settings.about.updateReadyInstall': 'v{version} 已就绪',
   'settings.about.updateInstallManualHint': '点「重启更新」后安装，直接退出不会自动安装',
+  'settings.about.updateInstallSidebarHint': '点「重启更新」后安装',
   'settings.about.updateInstall': '重启更新',
   'settings.about.updateInstalling': '正在安装更新，Hanako 会自动重启…',
   'settings.about.updateDiskSpace': '空间不足，暂时无法下载更新',
@@ -88,6 +89,8 @@ describe('SidebarUpdateNoticeCard', () => {
     );
 
     expect(screen.getByText('v0.234.0 已就绪')).toBeInTheDocument();
+    expect(screen.getByText('点「重启更新」后安装')).toBeInTheDocument();
+    expect(screen.queryByText('点「重启更新」后安装，直接退出不会自动安装')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     expect(container).toBeEmptyDOMElement();

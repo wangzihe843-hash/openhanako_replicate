@@ -70,7 +70,7 @@ function updateTitle(state: AutoUpdateState): string {
 }
 
 function updateBody(): string {
-  return tr('settings.about.updateInstallManualHint');
+  return tr('settings.about.updateInstallSidebarHint');
 }
 
 export function SidebarUpdateNoticeCard({
