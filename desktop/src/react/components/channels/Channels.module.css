@@ -711,6 +711,22 @@
     background: var(--accent-hover);
 }
 
+.createConfirm:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.createConfirm:disabled:hover {
+    background: var(--accent);
+}
+
+.createError {
+    color: var(--danger, #b45757);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    margin-top: 4px;
+}
+
 /* ── 成员选择器 ── */
 .channelCreateMembers {
     display: flex;

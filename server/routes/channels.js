@@ -432,6 +432,12 @@ export function createChannelsRoute(engine, hub) {
       const channelsDir = engine.channelsDir;
       fs.mkdirSync(channelsDir, { recursive: true });
 
+      for (const memberId of normalizedMembers) {
+        if (!safeAgentDir(memberId)) {
+          return c.json({ error: `Agent not found: ${memberId}`, code: "CHANNEL_AGENT_NOT_FOUND" }, 404);
+        }
+      }
+
       const { id: channelId } = await createChannel(channelsDir, {
         name,
         description: description || undefined,

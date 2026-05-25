@@ -277,6 +277,7 @@ import { geminiPlugin } from "../lib/providers/gemini.js";
 import { openrouterPlugin } from "../lib/providers/openrouter.js";
 import { ollamaPlugin } from "../lib/providers/ollama.js";
 import { minimaxPlugin } from "../lib/providers/minimax.js";
+import { minimaxTokenPlanPlugin } from "../lib/providers/minimax-token-plan.js";
 import { openaiCodexOAuthPlugin } from "../lib/providers/openai-codex-oauth.js";
 // 中国
 import { siliconflowPlugin } from "../lib/providers/siliconflow.js";
@@ -311,6 +312,7 @@ const BUILTIN_PLUGINS = [
   openrouterPlugin,
   ollamaPlugin,
   minimaxPlugin,
+  minimaxTokenPlanPlugin,
   openaiCodexOAuthPlugin,
   // 中国
   siliconflowPlugin,

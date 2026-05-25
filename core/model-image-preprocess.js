@@ -53,6 +53,91 @@ function assertImageInput(image, index) {
   }
 }
 
+function parseImageData(data, index) {
+  const raw = String(data || "").trim();
+  const dataUrlMatch = raw.match(/^data:([^;,]+);base64,(.*)$/is);
+  if (raw.startsWith("data:") && !dataUrlMatch) {
+    throw imagePreprocessError(`image ${index + 1} has malformed data URL`);
+  }
+  return {
+    declaredMimeType: dataUrlMatch?.[1]?.trim().toLowerCase() || "",
+    base64: dataUrlMatch ? dataUrlMatch[2] : raw,
+  };
+}
+
+function decodeBase64Image(data, index) {
+  const compact = String(data || "").replace(/\s+/g, "");
+  if (!compact) {
+    throw imagePreprocessError(`image ${index + 1} has empty base64 data`);
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.length % 4 === 1) {
+    throw imagePreprocessError(`image ${index + 1} has malformed base64 data`);
+  }
+  const padded = compact + "=".repeat((4 - (compact.length % 4)) % 4);
+  const bytes = Buffer.from(padded, "base64");
+  if (!bytes.length) {
+    throw imagePreprocessError(`image ${index + 1} has empty image bytes`);
+  }
+  const canonical = bytes.toString("base64").replace(/=+$/, "");
+  const source = compact.replace(/=+$/, "");
+  if (canonical !== source) {
+    throw imagePreprocessError(`image ${index + 1} has malformed base64 data`);
+  }
+  return bytes;
+}
+
+function sniffImageMimeType(bytes) {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (
+    bytes.length >= 6 &&
+    (bytes.toString("ascii", 0, 6) === "GIF87a" || bytes.toString("ascii", 0, 6) === "GIF89a")
+  ) {
+    return "image/gif";
+  }
+  return "";
+}
+
+export function normalizeModelImageInput(image, index = 0) {
+  assertImageInput(image, index);
+  const parsed = parseImageData(image.data, index);
+  if (parsed.declaredMimeType && !parsed.declaredMimeType.startsWith("image/")) {
+    throw imagePreprocessError(`image ${index + 1} has unsupported mimeType "${parsed.declaredMimeType}"`);
+  }
+  const bytes = decodeBase64Image(parsed.base64, index);
+  const detectedMimeType = sniffImageMimeType(bytes);
+  if (!detectedMimeType) {
+    throw imagePreprocessError(`image ${index + 1} has unsupported or corrupt image bytes`);
+  }
+  return {
+    ...image,
+    type: "image",
+    data: bytes.toString("base64"),
+    mimeType: detectedMimeType,
+  };
+}
+
 function escapeXmlAttr(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -154,8 +239,7 @@ export async function prepareModelImageInputsForPrompt({
 
   for (let index = 0; index < opts.images.length; index += 1) {
     throwIfAborted(signal);
-    const image = opts.images[index];
-    assertImageInput(image, index);
+    const image = normalizeModelImageInput(opts.images[index], index);
     const resized = await effectiveResizeImage(image, resizeOptions);
     throwIfAborted(signal);
 
@@ -165,12 +249,13 @@ export async function prepareModelImageInputsForPrompt({
       );
     }
 
-    nextImages.push({
+    const normalizedResized = normalizeModelImageInput({
       ...image,
       type: "image",
       data: resized.data,
       mimeType: resized.mimeType || image.mimeType,
-    });
+    }, index);
+    nextImages.push(normalizedResized);
 
     const note = await effectiveFormatDimensionNote(resized);
     if (note) {

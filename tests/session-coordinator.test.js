@@ -36,6 +36,8 @@ vi.mock("../lib/debug-log.js", () => ({
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { VisionBridge, VISION_CONTEXT_START } from "../core/vision-bridge.js";
 
+const PNG_BASE64 = "iVBORw0KGgo=";
+
 describe("SessionCoordinator", () => {
   let tempDir;
 
@@ -127,7 +129,7 @@ describe("SessionCoordinator", () => {
       sessionPath: sessionFile,
       targetModel: textOnlyModel,
       text: `[attached_image: ${imagePath}]\nwhat is this?`,
-      images: [{ type: "image", data: "BASE64", mimeType: "image/png" }],
+      images: [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }],
       imageAttachmentPaths: [imagePath],
     });
     const agent = {
@@ -586,7 +588,7 @@ describe("SessionCoordinator", () => {
     });
 
     const promptPromise = coordinator.promptSession(sessionPath, "describe image", {
-      images: [{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" }],
+      images: [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }],
     });
     await prepareStarted;
 

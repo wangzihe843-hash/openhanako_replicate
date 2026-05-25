@@ -665,6 +665,54 @@ describe("model sync related routes", () => {
     });
   });
 
+  it("classifies expected session model switch failures instead of returning a generic 500", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.js");
+    const app = new Hono();
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      isSessionStreaming: vi.fn(() => false),
+      switchSessionModel: vi.fn()
+        .mockRejectedValueOnce(new Error("Model not found: minimax-token-plan/MiniMax-M2.7"))
+        .mockRejectedValueOnce(new Error("No API key configured for provider minimax-token-plan"))
+        .mockRejectedValueOnce(new Error("cannot switch model during compaction")),
+      getSessionByPath: vi.fn(),
+    };
+    app.route("/api", createModelsRoute(engine));
+
+    const request = () => app.request("/api/models/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionPath: "/tmp/session.jsonl",
+        modelId: "MiniMax-M2.7",
+        provider: "minimax-token-plan",
+      }),
+    });
+
+    const missingModel = await request();
+    expect(missingModel.status).toBe(404);
+    expect(await missingModel.json()).toMatchObject({
+      code: "MODEL_NOT_FOUND",
+      error: expect.stringContaining("MiniMax-M2.7"),
+    });
+
+    const missingCredentials = await request();
+    expect(missingCredentials.status).toBe(422);
+    expect(await missingCredentials.json()).toMatchObject({
+      code: "MODEL_CREDENTIALS_MISSING",
+      error: expect.stringContaining("minimax-token-plan"),
+    });
+
+    const conflict = await request();
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      code: "MODEL_SWITCH_CONFLICT",
+      error: expect.stringContaining("compaction"),
+    });
+  });
+
   it("oauth provider with empty baseUrl falls back to registry", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.js");
     const app = new Hono();

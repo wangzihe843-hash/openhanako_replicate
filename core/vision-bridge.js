@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { callText as defaultCallText } from "./llm-client.js";
+import { normalizeModelImageInput } from "./model-image-preprocess.js";
 import { modelSupportsImage } from "./message-sanitizer.js";
 import { getVisionCapabilities, modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
 
@@ -604,9 +605,10 @@ export class VisionBridge {
   }
 
   async _analyzeImage(config, img, index, userRequest, signal) {
+    const normalizedImg = normalizeModelImageInput(img, index);
     const visionCapabilities = getVisionCapabilities(config.model);
     const key = imagePromptCacheKey(
-      img,
+      normalizedImg,
       userRequest,
       visionModelCacheSignature(config.model, visionCapabilities),
     );
@@ -617,8 +619,8 @@ export class VisionBridge {
     }
 
     const note = visionCapabilities
-      ? await this._analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal)
-      : await this._analyzeImageAsNote(config, img, userRequest, signal);
+      ? await this._analyzeImageWithPrimitives(config, normalizedImg, userRequest, visionCapabilities, signal)
+      : await this._analyzeImageAsNote(config, normalizedImg, userRequest, signal);
 
     this._analysisByPrompt.set(key, {
       note,

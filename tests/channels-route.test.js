@@ -86,6 +86,25 @@ describe("channels route membership contract", () => {
     expect(data.error).toMatch(/at least 2/i);
   });
 
+  it("rejects creating a channel with a missing agent member before writing the channel file", async () => {
+    const res = await app.request("/api/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Mixed Crew",
+        members: ["alice", "ghost"],
+      }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({
+      code: "CHANNEL_AGENT_NOT_FOUND",
+      error: "Agent not found: ghost",
+    });
+    expect(fs.readdirSync(engine.channelsDir)).toEqual([]);
+    expect(fs.existsSync(path.join(engine.userDir, "channels.md"))).toBe(false);
+  });
+
   it("freezes channel and phone settings routes when channels are disabled", async () => {
     const channelsDir = path.join(tmpDir, "channels");
     await createChannel(channelsDir, {

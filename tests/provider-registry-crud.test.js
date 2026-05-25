@@ -55,6 +55,25 @@ afterEach(() => {
 // ── getCredentials ───────────────────────────────────────────────────────────
 
 describe("getCredentials", () => {
+  it("registers MiniMax Token Plan as an OpenAI-compatible provider boundary", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    const entry = reg.get("minimax-token-plan");
+
+    expect(entry).toMatchObject({
+      id: "minimax-token-plan",
+      displayName: "MiniMax Token Plan",
+      authType: "api-key",
+      baseUrl: "https://api.minimax.io/v1",
+      api: "openai-completions",
+      isBuiltin: true,
+    });
+    expect(reg.getDefaultModels("minimax-token-plan")).toEqual(
+      expect.arrayContaining(["MiniMax-M2.7"])
+    );
+  });
+
   it("返回已配置 provider 的 apiKey/baseUrl/api", () => {
     writeAddedModels({
       "test-provider": {
