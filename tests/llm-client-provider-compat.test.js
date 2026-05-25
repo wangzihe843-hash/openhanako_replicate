@@ -327,12 +327,14 @@ describe("callText provider-compat routing", () => {
     expect(detailedResult).toEqual({
       text: "ok",
       usage: expect.objectContaining({
-        inputTokens: 100,
-        outputTokens: 20,
-        cacheReadTokens: 80,
-        cacheWriteTokens: 40,
-        cacheHit: true,
-        cacheCreated: true,
+        input: { totalTokens: 100, uncachedTokens: 20 },
+        output: { totalTokens: 20, reasoningTokens: null },
+        cache: expect.objectContaining({
+          readTokens: 80,
+          writeTokens: 40,
+          hit: true,
+          created: true,
+        }),
       }),
     });
   });

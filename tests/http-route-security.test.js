@@ -51,6 +51,7 @@ describe("HTTP route security policy", () => {
     for (const [method, path] of [
       ["POST", "/api/shutdown"],
       ["GET", "/internal/browser"],
+      ["GET", "/api/usage/llm"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal })).toMatchObject({
         allowed: false,

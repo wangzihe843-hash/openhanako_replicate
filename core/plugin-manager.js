@@ -463,6 +463,7 @@ export class PluginManager {
       configSchema: entry.configSchema,
       logSink: this._logSink,
       runtimeContext: this._runtimeContext,
+      permissions: entry.manifest?.permissions,
     });
 
     // All plugins: declarative contributions

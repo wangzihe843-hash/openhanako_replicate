@@ -986,6 +986,51 @@
       "remove": "削除",
       "deleteConfirm": "プロバイダー {name} を削除しますか？関連するモデルも削除されます。"
     },
+    "usage": {
+      "title": "使用量",
+      "note": "使用量は参考値です。正確な集計はプロバイダー側の統計を基準にしてください。",
+      "refresh": "使用量を更新",
+      "total": "すべて",
+      "requests": "リクエスト",
+      "totalTokens": "合計 Tokens",
+      "cacheRead": "キャッシュ読込",
+      "cacheHitRate": "ヒット率",
+      "estimatedCost": "推定コスト",
+      "uncached": "非キャッシュ",
+      "modelMix": "モデル分布",
+      "dailyUsage": "日別使用量",
+      "requestLedger": "リクエスト明細",
+      "loading": "使用量を読み込み中…",
+      "empty": "使用量の記録はまだありません",
+      "groupMeta": "{requests} 件 · {errors} エラー",
+      "cacheShort": "cache {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "キャッシュ {cache} · 非キャッシュ {uncached}",
+      "view": {
+        "overall": "概要",
+        "daily": "日別",
+        "category": "カテゴリ",
+        "model": "モデル"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "Memory",
+        "automation": "Automation",
+        "subagent": "Subagent",
+        "compaction": "Compaction",
+        "plugin": "Plugin",
+        "utility": "Utility",
+        "vision": "Vision",
+        "unknown": "Unknown"
+      },
+      "status": {
+        "ok": "完了",
+        "error": "エラー",
+        "aborted": "中止",
+        "usage_missing": "使用量なし"
+      }
+    },
     "media": {
       "imageGeneration": "画像生成",
       "defaultModel": "デフォルト画像モデル",

@@ -199,7 +199,7 @@ export function SettingsContent({
     || AgentTab;
   const isModal = variant === 'modal';
   const activeTabTitle = TAB_TITLES[effectiveActiveTab] || titleToLabel(dynamicTab?.title);
-  const isWideTab = effectiveActiveTab === 'plugin-marketplace';
+  const isWideTab = effectiveActiveTab === 'plugin-marketplace' || effectiveActiveTab === 'providers';
 
   const reportActiveTabChange = useCallback((tab: string) => {
     const nextTab = normalizeNativeTabForPlatform(tab, platformName);

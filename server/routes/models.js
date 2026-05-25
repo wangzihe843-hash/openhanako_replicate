@@ -222,6 +222,19 @@ export function createModelsRoute(engine) {
         messages: [{ role: "user", content: HEALTH_CHECK_PROMPT }],
         maxTokens: HEALTH_CHECK_MAX_TOKENS,
         timeoutMs: 15_000,
+        usageLedger: engine.usageLedger,
+        usageContext: {
+          source: {
+            subsystem: "utility",
+            operation: "model_health",
+            surface: "settings",
+            trigger: "user",
+          },
+          attribution: {
+            kind: "utility",
+            agentId: engine.currentAgentId ?? null,
+          },
+        },
       });
 
       return c.json({ ok: true, status: 200, provider: resolved.provider });

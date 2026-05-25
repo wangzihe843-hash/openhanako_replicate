@@ -137,6 +137,7 @@ import {
   getSkillNameTranslationCachePath,
   translateSkillNamesWithCache,
 } from "../lib/skills/skill-name-translation-cache.js";
+import { createUsageLedger } from "../lib/llm/usage-ledger.js";
 
 const moduleLog = createModuleLogger("engine");
 const toolAvailabilityLog = createModuleLogger("tool-availability");
@@ -236,6 +237,7 @@ export class HanaEngine {
       getDeferredResultStore: () => this._deferredResultStore,
       getTaskRegistry: () => this._taskRegistry,
       getEngine: () => this,
+      getUsageLedger: () => this._usageLedger,
       closeTerminalsForSession: (sessionPath) => this._terminalSessions.closeForSession(sessionPath),
       closeAllTerminals: () => this._terminalSessions.closeAll(),
       onBeforeSessionCreate: async (cwd) => {
@@ -264,6 +266,8 @@ export class HanaEngine {
 
     this._visionBridge = new VisionBridge({
       resolveVisionConfig: () => this.resolveVisionConfig(),
+      getUsageLedger: () => this._usageLedger,
+      getActiveAgentId: () => this._agentMgr.activeAgentId,
     });
 
     // ── Bridge Session Manager ──
@@ -285,6 +289,7 @@ export class HanaEngine {
       getSessionFileByPath: (filePath, options) => this.getSessionFileByPath(filePath, options),
       emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
       ensureAgentRuntime: (id, opts) => this.ensureAgentRuntime(id, opts),
+      getUsageLedger: () => this._usageLedger,
     });
     this._notifications = new NotificationService({
       emitDesktop: ({ title, body, agentId }) => {
@@ -343,6 +348,12 @@ export class HanaEngine {
     // 事件系统
     this._listeners = new Set();
     this._eventBus = null;
+    this._usageLedger = createUsageLedger({
+      eventBus: {
+        emit: (event, sessionPath) => this._emitEvent(event, sessionPath),
+      },
+      logger: moduleLog,
+    });
 
     // 首次剥媒体通知去重：sessionPath → 已通知。由 context extension handler 维护，
     // 避免每一轮对话都重复广播 stripped_notice 事件。
@@ -376,6 +387,7 @@ export class HanaEngine {
 
   /** @ui-focus-only 返回 UI 焦点 agent 实例，后端逻辑应通过 getAgent(agentId) 查询 */
   get agent() { return this._agentMgr.agent; }
+  get usageLedger() { return this._usageLedger; }
   getAgent(agentId) { return this._agentMgr.getAgent(agentId); }
   async ensureAgentRuntime(agentId, opts = {}) {
     const targetId = agentId || this.currentAgentId;
@@ -754,7 +766,15 @@ export class HanaEngine {
   setSearchConfig(p) { return this._configCoord.setSearchConfig(p); }
   getUtilityApi() { return this._configCoord.getUtilityApi(); }
   setUtilityApi(p) { return this._configCoord.setUtilityApi(p); }
-  resolveUtilityConfig(options) { return this._configCoord.resolveUtilityConfig(options); }
+  resolveUtilityConfig(options = {}) {
+    const config = this._configCoord.resolveUtilityConfig(options);
+    return {
+      ...config,
+      usageLedger: this._usageLedger,
+      usageAgentId: options?.agentId || this.currentAgentId || null,
+      usageSessionPath: options?.sessionPath || null,
+    };
+  }
   resolveUtilityConfigForAgent(agentId) { return this.resolveUtilityConfig({ agentId }); }
   readAgentOrder() { return this._configCoord.readAgentOrder(); }
   saveAgentOrder(o) { return this._configCoord.saveAgentOrder(o); }
@@ -1732,10 +1752,10 @@ export class HanaEngine {
   }
 
   _utilityOptionsForContext(opts = {}) {
-    if (opts?.agentId) return { agentId: opts.agentId };
+    if (opts?.agentId) return { agentId: opts.agentId, sessionPath: opts.sessionPath || null };
     if (opts?.sessionPath) {
       const agentId = this.agentIdFromSessionPath(opts.sessionPath);
-      if (agentId) return { agentId };
+      if (agentId) return { agentId, sessionPath: opts.sessionPath };
     }
     return undefined;
   }

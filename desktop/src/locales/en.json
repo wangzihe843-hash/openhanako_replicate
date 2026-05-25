@@ -986,6 +986,51 @@
       "remove": "Remove",
       "deleteConfirm": "Delete provider {name}? Associated models will be removed."
     },
+    "usage": {
+      "title": "Usage",
+      "note": "Usage is for reference only. Final totals are determined by the provider.",
+      "refresh": "Refresh usage",
+      "total": "All usage",
+      "requests": "Requests",
+      "totalTokens": "Total tokens",
+      "cacheRead": "Cache read",
+      "cacheHitRate": "Hit rate",
+      "estimatedCost": "Estimated cost",
+      "uncached": "Uncached",
+      "modelMix": "Model mix",
+      "dailyUsage": "Daily usage",
+      "requestLedger": "Request ledger",
+      "loading": "Loading usage…",
+      "empty": "No usage records yet",
+      "groupMeta": "{requests} requests · {errors} errors",
+      "cacheShort": "cache {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "Cache {cache} · uncached {uncached}",
+      "view": {
+        "overall": "Overall",
+        "daily": "By date",
+        "category": "Category",
+        "model": "Model"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "Memory",
+        "automation": "Automation",
+        "subagent": "Subagent",
+        "compaction": "Compaction",
+        "plugin": "Plugin",
+        "utility": "Utility",
+        "vision": "Vision",
+        "unknown": "Unknown"
+      },
+      "status": {
+        "ok": "Ok",
+        "error": "Error",
+        "aborted": "Aborted",
+        "usage_missing": "No usage"
+      }
+    },
     "media": {
       "imageGeneration": "Image Generation",
       "defaultModel": "Default Image Model",

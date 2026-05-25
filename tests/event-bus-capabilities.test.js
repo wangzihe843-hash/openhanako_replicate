@@ -55,5 +55,19 @@ describe("EventBus capability directory", () => {
 
     expect(bus.getCapability("agent:config").inputSchema.properties.agentId.type).toBe("string");
   });
-});
 
+  it("declares usage:list as an experimental usage read capability", () => {
+    const bus = new EventBus();
+
+    expect(bus.getCapability("usage:list")).toMatchObject({
+      type: "usage:list",
+      permission: "usage.read",
+      stability: "experimental",
+      available: false,
+    });
+
+    const off = bus.handle("usage:list", () => ({ entries: [], nextCursor: null }));
+    expect(bus.getCapability("usage:list").available).toBe(true);
+    off();
+  });
+});

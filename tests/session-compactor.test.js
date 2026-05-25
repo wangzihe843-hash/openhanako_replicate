@@ -32,6 +32,7 @@ import {
   createCachePreservingCompactionResult,
   runCachePreservingCompactionForSession,
 } from "../core/session-compactor.js";
+import { createUsageLedger } from "../lib/llm/usage-ledger.js";
 
 describe("session-compactor", () => {
   beforeEach(() => {
@@ -114,6 +115,67 @@ describe("session-compactor", () => {
       details: {
         readFiles: ["/tmp/read.md"],
         modifiedFiles: ["/tmp/edited.md", "/tmp/written.md"],
+      },
+    });
+  });
+
+  it("records cache-preserving compaction usage in the usage ledger", async () => {
+    const ledger = createUsageLedger({ requestIdFactory: () => "compact-usage-1" });
+    const resultStream = {
+      result: vi.fn(async () => ({
+        stopReason: "stop",
+        content: [{ type: "text", text: " checkpoint summary " }],
+        usage: {
+          input_tokens: 100,
+          output_tokens: 25,
+          cache_read_input_tokens: 80,
+        },
+      })),
+    };
+
+    await createCachePreservingCompactionResult({
+      preparation: {
+        firstKeptEntryId: "entry-keep",
+        tokensBefore: 1234,
+        settings: { reserveTokens: 1000 },
+      },
+      model: {
+        id: "gpt-5",
+        provider: "openai",
+        api: "openai-responses",
+        reasoning: false,
+      },
+      systemPrompt: "system prompt",
+      messages: [{ role: "user", content: "hello" }],
+      streamFn: vi.fn(async () => resultStream),
+      convertToLlm: vi.fn(async (messages) => messages),
+      usageLedger: ledger,
+      usageContext: {
+        source: {
+          subsystem: "compaction",
+          operation: "compact",
+          surface: "desktop",
+          trigger: "overflow",
+        },
+        attribution: {
+          kind: "session",
+          agentId: "agent-1",
+          sessionPath: "/sessions/current.jsonl",
+        },
+      },
+    });
+
+    const [entry] = ledger.list({ subsystem: "compaction" }).entries;
+    expect(entry).toMatchObject({
+      requestId: "compact-usage-1",
+      status: "ok",
+      source: { subsystem: "compaction", operation: "compact" },
+      attribution: { kind: "session", sessionPath: "/sessions/current.jsonl" },
+      model: { provider: "openai", modelId: "gpt-5", api: "openai-responses" },
+      usage: {
+        input: { totalTokens: 100, uncachedTokens: 20 },
+        output: { totalTokens: 25 },
+        cache: { readTokens: 80, hit: true },
       },
     });
   });

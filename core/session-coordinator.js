@@ -97,6 +97,41 @@ function buildPromptMediaOptions(opts) {
   };
 }
 
+function recordAssistantUsage({ ledger, event, sessionPath, agentId, model, source, attribution }) {
+  if (!ledger || event?.type !== "message_end" || event.message?.role !== "assistant") return null;
+  const usageContext = {
+    source,
+    attribution: attribution || {
+      kind: "session",
+      agentId: agentId || null,
+      sessionPath,
+    },
+  };
+  const modelMeta = {
+    provider: model?.provider ?? null,
+    modelId: model?.id ?? null,
+    api: model?.api ?? null,
+  };
+  if (event.message?.usage) {
+    return ledger.record({
+      model: modelMeta,
+      usage: event.message.usage,
+      usageContext,
+      costRates: model?.cost,
+    });
+  }
+  const errorMessage = event.message?.errorMessage || event.message?.error?.message || null;
+  if (event.message?.stopReason === "error" || errorMessage) {
+    const request = ledger.start({
+      model: modelMeta,
+      usageContext,
+      costRates: model?.cost,
+    });
+    return ledger.recordError(request.requestId, new Error(errorMessage || "provider request failed"));
+  }
+  return null;
+}
+
 function collectAssistantTextFromMessage(message) {
   if (!message) return "";
   if (typeof message.text === "string") return message.text;
@@ -659,6 +694,19 @@ export class SessionCoordinator {
     }
     const creatingAgentId = ownerAgentId;
     const unsub = session.subscribe((event) => {
+      recordAssistantUsage({
+        ledger: this._d.getUsageLedger?.(),
+        event,
+        sessionPath,
+        agentId: creatingAgentId,
+        model: resolvedModel,
+        source: {
+          subsystem: "session",
+          operation: "reply",
+          surface: "desktop",
+          trigger: "user",
+        },
+      });
       this._d.emitEvent(
         event.agentId ? event : { ...event, agentId: creatingAgentId },
         sessionPath,
@@ -1235,6 +1283,7 @@ export class SessionCoordinator {
    * @private
    */
   async _compactWithModel(session, effectiveWindow, model) {
+    const sessionPath = session?.sessionManager?.getSessionFile?.() || this.currentSessionPath;
     return await runCachePreservingCompactionForSession(session, {
       model,
       settings: {
@@ -1244,6 +1293,20 @@ export class SessionCoordinator {
       },
       emitLifecycle: true,
       lifecycleReason: "model_switch",
+      usageLedger: this._d.getUsageLedger?.(),
+      usageContext: {
+        source: {
+          subsystem: "compaction",
+          operation: "compact",
+          surface: "desktop",
+          trigger: "overflow",
+        },
+        attribution: {
+          kind: "session",
+          agentId: this._d.agentIdFromSessionPath?.(sessionPath) || this._d.getActiveAgentId?.() || null,
+          sessionPath,
+        },
+      },
     });
   }
 
@@ -2613,6 +2676,46 @@ export class SessionCoordinator {
       const sessionFiles = [];
       const toolErrors = [];
       const unsub = session.subscribe((event) => {
+        const parentSessionPath = typeof opts.parentSessionPath === "string" && opts.parentSessionPath.trim()
+          ? opts.parentSessionPath
+          : null;
+        recordAssistantUsage({
+          ledger: this._d.getUsageLedger?.(),
+          event,
+          sessionPath: childSessionPath,
+          agentId: targetAgent.id,
+          model: execModel,
+          source: {
+            subsystem: opts.subagentContext ? "subagent" : "automation",
+            operation: "run",
+            surface: opts.subagentContext ? "desktop" : "system",
+            trigger: opts.subagentContext ? "tool" : "scheduled",
+            ...(opts.subagentContext ? {
+              actor: {
+                kind: "subagent",
+                agentId: targetAgent.id || null,
+                sessionPath: childSessionPath,
+                taskId: opts.subagentTaskId || null,
+              },
+            } : {}),
+            ...(parentSessionPath ? {
+              parent: {
+                kind: "session",
+                sessionPath: parentSessionPath,
+              },
+            } : {}),
+          },
+          attribution: parentSessionPath
+            ? {
+                kind: "session",
+                agentId: this._d.agentIdFromSessionPath?.(parentSessionPath) || null,
+                sessionPath: parentSessionPath,
+                childAgentId: opts.subagentContext ? targetAgent.id || null : undefined,
+                childSessionPath: opts.subagentContext ? childSessionPath : undefined,
+                taskId: opts.subagentContext ? opts.subagentTaskId || null : undefined,
+              }
+            : { kind: opts.subagentContext ? "utility" : "automation", agentId: targetAgent.id || null },
+        });
         if (event.type === "message_update") {
           const sub = event.assistantMessageEvent;
           if (sub?.type === "text_delta") {

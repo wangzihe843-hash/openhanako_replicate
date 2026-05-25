@@ -986,6 +986,51 @@
       "remove": "제거",
       "deleteConfirm": "Provider {name}을(를) 삭제할까요? 연결된 모델도 함께 제거돼요."
     },
+    "usage": {
+      "title": "사용량",
+      "note": "사용량은 참고용이며, 정확한 집계는 제공자의 통계를 기준으로 합니다.",
+      "refresh": "사용량 새로고침",
+      "total": "전체",
+      "requests": "요청",
+      "totalTokens": "총 Tokens",
+      "cacheRead": "캐시 읽기",
+      "cacheHitRate": "히트율",
+      "estimatedCost": "예상 비용",
+      "uncached": "비캐시 사용",
+      "modelMix": "모델 분포",
+      "dailyUsage": "일별 사용량",
+      "requestLedger": "요청 내역",
+      "loading": "사용량을 불러오는 중…",
+      "empty": "아직 사용량 기록이 없습니다",
+      "groupMeta": "{requests}회 · 오류 {errors}개",
+      "cacheShort": "cache {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "캐시 {cache} · 비캐시 {uncached}",
+      "view": {
+        "overall": "전체",
+        "daily": "날짜별",
+        "category": "카테고리",
+        "model": "모델"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "Memory",
+        "automation": "Automation",
+        "subagent": "Subagent",
+        "compaction": "Compaction",
+        "plugin": "Plugin",
+        "utility": "Utility",
+        "vision": "Vision",
+        "unknown": "Unknown"
+      },
+      "status": {
+        "ok": "완료",
+        "error": "오류",
+        "aborted": "중단",
+        "usage_missing": "사용량 없음"
+      }
+    },
     "media": {
       "imageGeneration": "이미지 생성",
       "defaultModel": "기본 이미지 모델",

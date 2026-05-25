@@ -898,6 +898,19 @@ export class ChannelRouter {
         }],
         temperature: 0.3,
         maxTokens: 200,
+        usageLedger: engine.usageLedger,
+        usageContext: {
+          source: {
+            subsystem: "memory",
+            operation: "channel_memory_summary",
+            surface: "channel",
+            trigger: "scheduled",
+          },
+          attribution: {
+            kind: "memory",
+            agentId,
+          },
+        },
       });
       const summaryText = this._normalizeChannelMemorySummary(rawSummary);
 

@@ -54,6 +54,8 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
     const text = await _safeCall({
       api: utilConfig.api, model: utilConfig.utility,
       apiKey: utilConfig.api_key, baseUrl: utilConfig.base_url,
+      usageLedger: utilConfig.usageLedger ?? engine.usageLedger,
+      usageContext: usageContextForRc(agent, sessionPath, "rc_summary_utility"),
       messages,
     }, "utility");
     if (text) return text;
@@ -64,6 +66,8 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
     const text = await _safeCall({
       api: utilConfig.large_api, model: utilConfig.utility_large,
       apiKey: utilConfig.large_api_key, baseUrl: utilConfig.large_base_url,
+      usageLedger: utilConfig.usageLedger ?? engine.usageLedger,
+      usageContext: usageContextForRc(agent, sessionPath, "rc_summary_utility_large"),
       messages,
     }, "utility_large");
     if (text) return text;
@@ -78,6 +82,8 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
         const text = await _safeCall({
           api: resolved.api, model: resolved.model,
           apiKey: resolved.api_key, baseUrl: resolved.base_url,
+          usageLedger: engine.usageLedger,
+          usageContext: usageContextForRc(agent, sessionPath, "rc_summary_chat"),
           messages,
         }, "chat");
         if (text) return text;
@@ -90,7 +96,21 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
   return null;
 }
 
-async function _safeCall({ api, model, apiKey, baseUrl, messages }, tierLabel) {
+function usageContextForRc(agent, sessionPath, operation) {
+  return {
+    source: {
+      subsystem: "phone",
+      operation,
+      surface: "bridge",
+      trigger: "user",
+    },
+    attribution: sessionPath
+      ? { kind: "session", sessionPath, agentId: agent?.id ?? null }
+      : { kind: "utility", agentId: agent?.id ?? null },
+  };
+}
+
+async function _safeCall({ api, model, apiKey, baseUrl, messages, usageLedger, usageContext }, tierLabel) {
   try {
     const text = await callText({
       api, model, apiKey, baseUrl,
@@ -98,6 +118,8 @@ async function _safeCall({ api, model, apiKey, baseUrl, messages }, tierLabel) {
       temperature: 0.3,
       maxTokens: SUMMARY_MAX_TOKENS,
       timeoutMs: SUMMARY_TIMEOUT_MS,
+      usageLedger,
+      usageContext,
     });
     return text?.trim() || null;
   } catch (err) {

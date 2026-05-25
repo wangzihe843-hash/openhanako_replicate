@@ -260,7 +260,11 @@ export class Agent {
         configPath: this.configPath,
         factStore: this._factStore,
         // 现场 resolve：每次 tick 拿到 yaml 最新凭证
-        getResolvedMemoryModel: () => this._resolveModel(this._memoryModel, this._config),
+        getResolvedMemoryModel: () => ({
+          ...this._resolveModel(this._memoryModel, this._config),
+          usageLedger: this._cb?.getEngine?.()?.usageLedger,
+          usageAgentId: this.id,
+        }),
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
         getTimezone: () => this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,

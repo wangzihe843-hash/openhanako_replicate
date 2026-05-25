@@ -62,6 +62,7 @@ import { createCheckpointsRoute } from "./routes/checkpoints.js";
 import { createCommandsRoute } from "./routes/commands.js";
 import { createServerIdentityRoute } from "./routes/server-identity.js";
 import { createResourcesRoute } from "./routes/resources.js";
+import { createUsageRoute } from "./routes/usage.js";
 import { createWebAuthRoute } from "./routes/web-auth.js";
 import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
@@ -478,11 +479,51 @@ hub.eventBus.handle("session:get-titles", async ({ paths }) => {
   const titles = await coord.getTitlesForPaths(paths);
   return { titles };
 });
+hub.eventBus.handle("usage:list", (filter = {}) => {
+  return engine.usageLedger.list(filter);
+});
 
 // Register Pi SDK extension factory
 await engine.registerExtensionFactory(createDeferredResultExtension(deferredResultStore));
 // Cache-preserving compaction — 接管 Pi auto/manual compact，避免原生 summarizer 冷读上下文
-await engine.registerExtensionFactory(createCompactionGuardExtension());
+await engine.registerExtensionFactory(createCompactionGuardExtension({
+  usageLedger: engine.usageLedger,
+  buildUsageContext: ({ ctx }) => {
+    const sessionPath = ctx?.sessionManager?.getSessionFile?.() || null;
+    const bridgeContext = sessionPath ? engine.getBridgeContextForSessionPath(sessionPath) : null;
+    if (bridgeContext?.isBridgeSession) {
+      const conversationType = bridgeContext.chatType === "channel" ? "channel" : "dm";
+      return {
+        source: {
+          subsystem: "compaction",
+          operation: "fresh_compact",
+          surface: conversationType,
+          trigger: "threshold",
+        },
+        attribution: {
+          kind: "phone_conversation",
+          agentId: bridgeContext.agentId || null,
+          conversationId: bridgeContext.sessionKey || bridgeContext.chatId || sessionPath,
+          conversationType,
+          sessionPath,
+        },
+      };
+    }
+    return {
+      source: {
+        subsystem: "compaction",
+        operation: "compact",
+        surface: "desktop",
+        trigger: "threshold",
+      },
+      attribution: {
+        kind: "session",
+        agentId: sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null,
+        sessionPath,
+      },
+    };
+  },
+}));
 
 // ── 启动默认 session ──
 // Desktop 会显式跳过：renderer 首屏就是 pending-new-session，首次发送消息时
@@ -610,6 +651,7 @@ app.route("/api", createPluginsRoute(engine));
 app.route("/api", createCheckpointsRoute(engine));
 app.route("/api", createCommandsRoute(engine));
 app.route("/api", createResourcesRoute(engine));
+app.route("/api", createUsageRoute(engine));
 app.route("/api", createServerIdentityRoute({
   hanakoHome: engine.hanakoHome,
   appVersion,

@@ -69,6 +69,64 @@ function getProviderMessageEndError(event) {
   return event.message.errorMessage || event.message.error?.message || "Unknown error";
 }
 
+function recordBridgeAssistantUsage({ ledger, event, sessionPath, agent, model, bridgeContext }) {
+  if (!ledger || event?.type !== "message_end" || event.message?.role !== "assistant") return null;
+  const conversationType = bridgeContext?.chatType === "channel" ? "channel" : "dm";
+  const conversationId = bridgeContext?.sessionKey || bridgeContext?.chatId || sessionPath || "unknown";
+  const usageContext = bridgeContext?.isBridgeSession
+    ? {
+        source: {
+          subsystem: "phone",
+          operation: "reply",
+          surface: conversationType,
+          trigger: "user",
+        },
+        attribution: {
+          kind: "phone_conversation",
+          agentId: agent?.id || bridgeContext?.agentId || null,
+          conversationId,
+          conversationType,
+          sessionPath,
+        },
+      }
+    : {
+        source: {
+          subsystem: "session",
+          operation: "reply",
+          surface: "bridge",
+          trigger: "user",
+        },
+        attribution: {
+          kind: "session",
+          agentId: agent?.id || null,
+          sessionPath,
+        },
+      };
+  const modelMeta = {
+    provider: model?.provider ?? null,
+    modelId: model?.id ?? null,
+    api: model?.api ?? null,
+  };
+  if (event.message?.usage) {
+    return ledger.record({
+      model: modelMeta,
+      usage: event.message.usage,
+      usageContext,
+      costRates: model?.cost,
+    });
+  }
+  const errorMessage = getProviderMessageEndError(event);
+  if (errorMessage) {
+    const request = ledger.start({
+      model: modelMeta,
+      usageContext,
+      costRates: model?.cost,
+    });
+    return ledger.recordError(request.requestId, new Error(errorMessage));
+  }
+  return null;
+}
+
 function zeroUsage() {
   return {
     input: 0,
@@ -738,6 +796,14 @@ export class BridgeSessionManager {
       let capturedText = "";
       let providerErrorMessage = null;
       const unsub = session.subscribe((event) => {
+        recordBridgeAssistantUsage({
+          ledger: this._deps.getUsageLedger?.(),
+          event,
+          sessionPath: activeSessionPath,
+          agent,
+          model: session.model,
+          bridgeContext,
+        });
         if (event.type === "message_update") {
           const sub = event.assistantMessageEvent;
           if (sub?.type === "text_delta") {

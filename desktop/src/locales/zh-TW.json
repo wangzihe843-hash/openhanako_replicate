@@ -986,6 +986,51 @@
       "remove": "移除",
       "deleteConfirm": "確定刪除供應商 {name}？相關模型將一併清除。"
     },
+    "usage": {
+      "title": "用量統計",
+      "note": "用量僅供參考，具體以供應商的統計為準。",
+      "refresh": "重新整理用量",
+      "total": "全部",
+      "requests": "請求數",
+      "totalTokens": "Tokens",
+      "cacheRead": "快取命中",
+      "cacheHitRate": "命中率",
+      "estimatedCost": "預估成本",
+      "uncached": "未快取消耗",
+      "modelMix": "模型分佈",
+      "dailyUsage": "每日用量",
+      "requestLedger": "請求明細",
+      "loading": "正在讀取用量…",
+      "empty": "暫無用量記錄",
+      "groupMeta": "{requests} 次 · {errors} 錯誤",
+      "cacheShort": "快取 {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "快取 {cache} · 未快取 {uncached}",
+      "view": {
+        "overall": "總覽",
+        "daily": "按日期",
+        "category": "按類別",
+        "model": "按模型"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "記憶",
+        "automation": "自動化",
+        "subagent": "Subagent",
+        "compaction": "壓縮",
+        "plugin": "外掛",
+        "utility": "工具",
+        "vision": "視覺",
+        "unknown": "未知"
+      },
+      "status": {
+        "ok": "完成",
+        "error": "錯誤",
+        "aborted": "中止",
+        "usage_missing": "無用量"
+      }
+    },
     "media": {
       "imageGeneration": "圖片生成",
       "defaultModel": "預設圖片模型",

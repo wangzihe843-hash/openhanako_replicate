@@ -221,6 +221,8 @@ export async function createCachePreservingCompactionResult({
   streamFn,
   streamOptions = {},
   convertToLlm = convertAgentMessagesToLlm,
+  usageLedger,
+  usageContext,
 }) {
   if (!preparation) throw new Error("Cache-preserving compaction requires preparation");
   if (!model) throw new Error("Cache-preserving compaction requires a model");
@@ -244,13 +246,35 @@ export async function createCachePreservingCompactionResult({
     systemPrompt,
     messages: llmMessages,
   };
-  const response = streamFn
-    ? await (await streamFn(model, context, options)).result()
-    : await completeSimple(model, context, options);
+  const usageRequest = usageLedger?.start?.({
+    model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+    usageContext,
+    costRates: model?.cost,
+  }) || null;
+  let response;
+  try {
+    response = streamFn
+      ? await (await streamFn(model, context, options)).result()
+      : await completeSimple(model, context, options);
+  } catch (error) {
+    if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error);
+    throw error;
+  }
 
   if (isErrorResponse(response)) {
+    if (usageRequest?.requestId) {
+      usageLedger?.recordError?.(
+        usageRequest.requestId,
+        new Error(response.errorMessage || response.stopReason || "compaction failed"),
+      );
+    }
     throw new Error(`Cache-preserving compaction failed: ${response.errorMessage || response.stopReason || "unknown error"}`);
   }
+  usageLedger?.finish?.(usageRequest?.requestId, {
+    usage: response?.usage,
+    model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+    costRates: model?.cost,
+  });
 
   const text = extractSummaryText(response);
   if (!text) {
@@ -283,6 +307,8 @@ export async function runCachePreservingCompactionForSession(session, {
   hardTruncateThreshold = DEFAULT_HARD_TRUNCATE_THRESHOLD,
   emitLifecycle = false,
   lifecycleReason = "manual",
+  usageLedger,
+  usageContext,
 } = {}) {
   if (!session?.sessionManager) throw new Error("runCachePreservingCompactionForSession: missing session manager");
   if (!session?.agent) throw new Error("runCachePreservingCompactionForSession: missing agent");
@@ -359,6 +385,8 @@ export async function runCachePreservingCompactionForSession(session, {
         maxRetryDelayMs: session.agent.maxRetryDelayMs,
       },
       convertToLlm: session.agent.convertToLlm,
+      usageLedger,
+      usageContext,
     });
 
     const saved = await appendCompactionResultToSession(session, result, { fromExtension: true });
