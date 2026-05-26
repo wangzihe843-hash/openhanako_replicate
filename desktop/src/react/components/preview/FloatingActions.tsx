@@ -19,6 +19,54 @@ interface Props {
   onToggleMarkdownPreview?: () => void;
 }
 
+function CoverArtboardIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="12" rx="1.5" />
+      <path d="M8.5 20l2-4" />
+      <path d="M15.5 20l-2-4" />
+      <path d="M9 20h6" />
+      <circle cx="8.5" cy="8.5" r="1.2" />
+      <path d="M6.8 14l3.4-3.1 2.6 2 2-2.2 2.4 3.3" />
+    </svg>
+  );
+}
+
+function GenerateCoverIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3l1.2 3.3L16.5 7.5l-3.3 1.2L12 12l-1.2-3.3-3.3-1.2 3.3-1.2L12 3z" />
+      <path d="M18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8L18 13z" />
+      <path d="M6 14l.6 1.6L8.2 16.2l-1.6.6L6 18.4l-.6-1.6-1.6-.6 1.6-.6L6 14z" />
+    </svg>
+  );
+}
+
+function GalleryCoverIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="4" width="14" height="12" rx="1.5" />
+      <path d="M8 20h8" />
+      <path d="M12 16v4" />
+      <path d="M8 12.8l2.5-2.4 2 1.8 2-2.2L17 12.8" />
+    </svg>
+  );
+}
+
+function UploadCoverIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 15V4" />
+      <path d="M8 8l4-4 4 4" />
+      <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" />
+    </svg>
+  );
+}
+
 export function FloatingActions({
   content,
   filePath,
@@ -130,7 +178,7 @@ export function FloatingActions({
 
   const handlePresetCover = useCallback(() => {
     setCoverMenuOpen(false);
-    dispatchCoverNotice('系统预制头图稍后开放。', 'error');
+    dispatchCoverNotice('小花美术馆稍后开放。', 'error');
   }, []);
 
   const t = window.t ?? ((p: string) => p);
@@ -153,18 +201,22 @@ export function FloatingActions({
             aria-label="制作 cover"
             disabled={coverBusy}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 20h5l10-10a3 3 0 0 0-5-5L4 15v5z" />
-              <path d="M13.5 6.5l4 4" />
-              <path d="M4 15l5 5" />
-            </svg>
+            <CoverArtboardIcon />
           </button>
           {coverMenuOpen && (
             <div className={styles.coverMenu}>
-              <button type="button" onClick={handleGenerateCover}>AI 生成</button>
-              <button type="button" onClick={handlePresetCover}>系统预制</button>
-              <button type="button" onClick={handleUploadCover}>自己上传</button>
+              <button type="button" onClick={handleGenerateCover}>
+                <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
+                <span>生成</span>
+              </button>
+              <button type="button" onClick={handlePresetCover}>
+                <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
+                <span>小花美术馆</span>
+              </button>
+              <button type="button" onClick={handleUploadCover}>
+                <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
+                <span>自己上传</span>
+              </button>
             </div>
           )}
         </div>
