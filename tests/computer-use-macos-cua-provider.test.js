@@ -27,7 +27,7 @@ function makeRunner(handler) {
   };
 }
 
-describe("macos Cua provider", () => {
+describe.skipIf(process.platform !== "darwin")("macos Cua provider", () => {
   it("resolves a configured Cua Driver command before common locations", () => {
     const command = resolveCuaDriverCommand({
       env: { HANA_CUA_DRIVER_PATH: "/opt/cua-driver" },

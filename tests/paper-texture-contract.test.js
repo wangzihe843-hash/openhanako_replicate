@@ -34,7 +34,9 @@ describe('paper texture contract', () => {
   });
 
   it('turns off card texture brightness compensation in both dark themes', () => {
-    const styles = fs.readFileSync(path.join(ROOT, 'desktop/src/styles.css'), 'utf8');
+    // 仓库里 styles.css 在 Windows checkout 下是 CRLF；断言时统一成 LF，
+    // 避免 Windows 上的 contract 测试因行尾差异误报。
+    const styles = fs.readFileSync(path.join(ROOT, 'desktop/src/styles.css'), 'utf8').replace(/\r\n/g, '\n');
 
     expect(styles).toContain('--paper-texture-card-blend-mode: lighten;');
     expect(styles).toContain('html[data-theme="midnight"],\nhtml[data-theme="midnight-contrast"]');

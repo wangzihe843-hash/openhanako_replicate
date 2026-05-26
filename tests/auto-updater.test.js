@@ -189,43 +189,61 @@ describe("auto-updater", () => {
   });
 
   it("installDownloadedUpdate enters installing state and schedules quitAndInstall on the next tick", async () => {
+    // 这个 case 断言的是非 win32 平台的 quitAndInstall(isSilent=true, forceRunAfter=true) ——
+    // 生产代码 getQuitAndInstallOptions 在 win32 上返回 isSilent=false（Windows 安装器需要
+    // 显式可见进度，见下方 "uses a visible installer window for Windows updates" 用例）。
+    // 在 Windows 宿主上跑测试要显式 pin 平台到 darwin，否则会撞到 win32 分支。
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    vi.resetModules();
+    mod = await import("../desktop/auto-updater.cjs");
     const shutdownServer = vi.fn(() => new Promise(() => {}));
     const setIsUpdating = vi.fn();
     const win = initWithMockWindow({ shutdownServer, setIsUpdating });
+    try {
+      if (handlers["update-downloaded"]) {
+        handlers["update-downloaded"]({ version: "2.0.0" });
+      }
 
-    if (handlers["update-downloaded"]) {
-      handlers["update-downloaded"]({ version: "2.0.0" });
+      const installPromise = mod.installDownloadedUpdate("manual");
+      await Promise.resolve();
+
+      expect(setIsUpdating).toHaveBeenCalledWith(true);
+      expect(shutdownServer).not.toHaveBeenCalled();
+      expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      await new Promise(resolve => setImmediate(resolve));
+      expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
+      expect(mod.getState()).toEqual(expect.objectContaining({ status: "installing", version: "2.0.0" }));
+      expect(win.webContents.send).toHaveBeenCalledWith("auto-update-state", expect.objectContaining({ status: "installing" }));
+      await expect(installPromise).resolves.toBe(true);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
     }
-
-    const installPromise = mod.installDownloadedUpdate("manual");
-    await Promise.resolve();
-
-    expect(setIsUpdating).toHaveBeenCalledWith(true);
-    expect(shutdownServer).not.toHaveBeenCalled();
-    expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled();
-    await new Promise(resolve => setImmediate(resolve));
-    expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
-    expect(mod.getState()).toEqual(expect.objectContaining({ status: "installing", version: "2.0.0" }));
-    expect(win.webContents.send).toHaveBeenCalledWith("auto-update-state", expect.objectContaining({ status: "installing" }));
-    await expect(installPromise).resolves.toBe(true);
   });
 
   it("manual install IPC uses the same immediate install path", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    vi.resetModules();
+    mod = await import("../desktop/auto-updater.cjs");
     const shutdownServer = vi.fn(() => new Promise(() => {}));
     initWithMockWindow({ shutdownServer });
+    try {
+      if (handlers["update-downloaded"]) {
+        handlers["update-downloaded"]({ version: "2.0.0" });
+      }
 
-    if (handlers["update-downloaded"]) {
-      handlers["update-downloaded"]({ version: "2.0.0" });
+      const installPromise = ipcHandlers["auto-update-install"]();
+      await Promise.resolve();
+
+      expect(shutdownServer).not.toHaveBeenCalled();
+      expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      await new Promise(resolve => setImmediate(resolve));
+      expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
+      await expect(installPromise).resolves.toBe(true);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
     }
-
-    const installPromise = ipcHandlers["auto-update-install"]();
-    await Promise.resolve();
-
-    expect(shutdownServer).not.toHaveBeenCalled();
-    expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled();
-    await new Promise(resolve => setImmediate(resolve));
-    expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
-    await expect(installPromise).resolves.toBe(true);
   });
 
   it("uses a visible installer window for Windows updates", async () => {

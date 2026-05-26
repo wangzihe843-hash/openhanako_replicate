@@ -31,7 +31,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("createSandboxedTools on Linux", () => {
+describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", () => {
   it("fails closed for bash when bwrap is unavailable while sandbox remains enabled", async () => {
     const { createSandboxedTools } = await import("../lib/sandbox/index.js");
     const result = createSandboxedTools("/work", [], {

@@ -32,7 +32,8 @@ describe("fs route", () => {
     return app;
   }
 
-  it("rejects symlink escapes from an allowed workspace", async () => {
+  // Real fs.symlinkSync requires admin/Developer Mode on Windows; covered on POSIX runners.
+  it.skipIf(process.platform === "win32")("rejects symlink escapes from an allowed workspace", async () => {
     const hanakoHome = path.join(tempRoot, "hanako");
     const workspace = path.join(tempRoot, "workspace");
     const outsideDir = path.join(tempRoot, "outside");

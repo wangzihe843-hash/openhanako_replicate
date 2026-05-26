@@ -1,7 +1,11 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { retryImageTask } from "../plugins/image-gen/lib/image-task-runner.js";
 import registerTaskRoutes from "../plugins/image-gen/routes/tasks.js";
+
+const IMAGE_GEN_DATA_DIR = "/tmp/image-gen";
+const IMAGE_GEN_GENERATED_DIR = path.join(IMAGE_GEN_DATA_DIR, "generated");
 
 async function flushBackgroundSubmits() {
   await Promise.resolve();
@@ -66,7 +70,7 @@ function makeCtx(task, adapterOverrides = {}) {
   };
   const ctx = {
     _mediaGen: { registry, store, poller },
-    dataDir: "/tmp/image-gen",
+    dataDir: IMAGE_GEN_DATA_DIR,
     bus,
     config: { get: vi.fn() },
     log: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -121,7 +125,7 @@ describe("image generation retry", () => {
     await flushBackgroundSubmits();
 
     expect(adapter.submit).toHaveBeenCalledWith(task.params, expect.objectContaining({
-      generatedDir: "/tmp/image-gen/generated",
+      generatedDir: IMAGE_GEN_GENERATED_DIR,
       bus,
       log: ctx.log,
       config: ctx.config,

@@ -1,7 +1,12 @@
+import os from "os";
 import path from "path";
 import { describe, expect, it, vi } from "vitest";
 import { wrapReadImageWithVisionBridge } from "../lib/sandbox/read-image-vision.js";
 import { VISION_CONTEXT_END, VISION_CONTEXT_START } from "../core/vision-bridge.js";
+
+// Use a real OS-native absolute path as workspace cwd so that the production
+// path-resolution (path.win32.resolve on Win, path.resolve on POSIX) round-trips cleanly.
+const WORKSPACE_CWD = path.join(os.tmpdir(), "hana-read-image-workspace");
 
 function makeReadTool(result) {
   return {
@@ -34,7 +39,7 @@ describe("wrapReadImageWithVisionBridge", () => {
     const base = makeReadTool(imageResult);
     const prepareResources = vi.fn();
     const recordFileOperation = vi.fn();
-    const wrapped = wrapReadImageWithVisionBridge(base, "/workspace", {
+    const wrapped = wrapReadImageWithVisionBridge(base, WORKSPACE_CWD, {
       getVisionBridge: () => ({ prepareResources }),
       isVisionAuxiliaryEnabled: () => true,
       getSessionPath: () => "/sessions/read.jsonl",
@@ -56,7 +61,10 @@ describe("wrapReadImageWithVisionBridge", () => {
 
   it("returns persisted auxiliary vision text for text-only models when auxiliary vision is enabled", async () => {
     const sessionPath = "/sessions/read.jsonl";
-    const filePath = path.join("/workspace", "shot.png");
+    // Mirror the production resolution: on win32 it's path.win32.resolve, on POSIX path.resolve.
+    const filePath = process.platform === "win32"
+      ? path.win32.resolve(WORKSPACE_CWD, "shot.png")
+      : path.resolve(WORKSPACE_CWD, "shot.png");
     const base = makeReadTool(imageResult);
     const prepareResources = vi.fn(async () => ({
       notes: [{
@@ -75,7 +83,7 @@ describe("wrapReadImageWithVisionBridge", () => {
       kind: "image",
       status: "available",
     }));
-    const wrapped = wrapReadImageWithVisionBridge(base, "/workspace", {
+    const wrapped = wrapReadImageWithVisionBridge(base, WORKSPACE_CWD, {
       getVisionBridge: () => ({ prepareResources }),
       isVisionAuxiliaryEnabled: () => true,
       getSessionPath: () => sessionPath,
@@ -122,7 +130,7 @@ describe("wrapReadImageWithVisionBridge", () => {
     const base = makeReadTool(imageResult);
     const prepareResources = vi.fn();
     const recordFileOperation = vi.fn();
-    const wrapped = wrapReadImageWithVisionBridge(base, "/workspace", {
+    const wrapped = wrapReadImageWithVisionBridge(base, WORKSPACE_CWD, {
       getVisionBridge: () => ({ prepareResources }),
       isVisionAuxiliaryEnabled: () => false,
       getSessionPath: () => "/sessions/read.jsonl",

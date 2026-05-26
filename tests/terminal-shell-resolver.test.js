@@ -17,16 +17,20 @@ describe("resolveTerminalShell", () => {
   it("uses PowerShell for Windows interactive terminals", () => {
     const resolveWin32ShellRuntime = vi.fn();
 
+    // 显式给 SystemRoot，避免 win32SystemRoot 回退到宿主 process.env.SystemRoot
+    // —— 在 Windows 上跑 CI 时宿主 SystemRoot 大小写可能是 "C:\WINDOWS"
+    // (Windows 11 China region) 导致与测试期望的 "C:\Windows" mismatch。
+    const env = { ComSpec: "C:\\Windows\\System32\\cmd.exe", SystemRoot: "C:\\Windows" };
     const resolved = resolveTerminalShell("", {
       platform: "win32",
-      env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      env,
       resolveWin32ShellRuntime,
     });
 
     expect(resolved).toEqual({
       file: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"],
-      env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      env,
     });
     expect(resolveWin32ShellRuntime).not.toHaveBeenCalled();
   });
@@ -36,7 +40,7 @@ describe("resolveTerminalShell", () => {
 
     const resolved = resolveTerminalShell('powershell -Command "Write-Output \\"name\\""', {
       platform: "win32",
-      env: { COMSPEC: "C:\\Windows\\System32\\cmd.exe" },
+      env: { COMSPEC: "C:\\Windows\\System32\\cmd.exe", SystemRoot: "C:\\Windows" },
       resolveWin32ShellRuntime,
     });
 

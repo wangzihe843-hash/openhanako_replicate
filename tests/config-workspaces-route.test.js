@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { normalizeWorkspacePath } from "../shared/workspace-history.js";
 
 describe("config workspace routes", () => {
   let tmpDir;
@@ -38,9 +39,12 @@ describe("config workspace routes", () => {
 
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.cwd_history).toEqual([nextWorkspace, oldWorkspace]);
+    // cwd_history is stored after normalizeWorkspacePath: backslashes folded to forward slashes
+    // so the same config file is portable across platforms.
+    const expectedHistory = [normalizeWorkspacePath(nextWorkspace), normalizeWorkspacePath(oldWorkspace)];
+    expect(data.cwd_history).toEqual(expectedHistory);
     expect(engine.updateConfig).toHaveBeenCalledWith({
-      cwd_history: [nextWorkspace, oldWorkspace],
+      cwd_history: expectedHistory,
     });
   });
 

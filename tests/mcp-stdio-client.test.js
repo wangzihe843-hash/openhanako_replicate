@@ -42,34 +42,42 @@ class FakeProcess extends EventEmitter {
 }
 
 describe("MCP stdio client", () => {
-  it("passes connector env and registry settings to spawned stdio servers", async () => {
-    const proc = new FakeProcess();
-    spawnMock.mockReturnValueOnce(proc);
+  // 这个 case 断言的是「非 win32 平台上 spawn 拿到的就是原 command + args」——
+  // 在 Windows 上 McpStdioClient.start() 会经过 resolveMcpStdioSpawnSpec，
+  // 把 `npx` 解析成 `.cmd` shim 再用 cmd.exe /d /s /c 包一层（见下方
+  // "wraps Windows .cmd shims with cmd.exe ..." 用例）。env 合并行为在
+  // win32 包装路径也有自己的覆盖，不会因为跳过这条而失测。
+  it.skipIf(process.platform === "win32")(
+    "passes connector env and registry settings to spawned stdio servers (non-win32 direct spawn)",
+    async () => {
+      const proc = new FakeProcess();
+      spawnMock.mockReturnValueOnce(proc);
 
-    const client = new McpStdioClient({
-      id: "local",
-      command: "npx",
-      args: ["-y", "mcp-server-example"],
-      env: { API_KEY: "secret" },
-      registryUrl: "https://registry.npmmirror.com",
-    }, { log: console });
+      const client = new McpStdioClient({
+        id: "local",
+        command: "npx",
+        args: ["-y", "mcp-server-example"],
+        env: { API_KEY: "secret" },
+        registryUrl: "https://registry.npmmirror.com",
+      }, { log: console });
 
-    await client.start();
+      await client.start();
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      "npx",
-      ["-y", "mcp-server-example"],
-      expect.objectContaining({
-        env: expect.objectContaining({
-          API_KEY: "secret",
-          NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com",
+      expect(spawnMock).toHaveBeenCalledWith(
+        "npx",
+        ["-y", "mcp-server-example"],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            API_KEY: "secret",
+            NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com",
+          }),
+          windowsHide: true,
         }),
-        windowsHide: true,
-      }),
-    );
+      );
 
-    await client.stop();
-  });
+      await client.stop();
+    },
+  );
 
   it("wraps Windows .cmd shims with cmd.exe while preserving registry env", () => {
     const spec = resolveMcpStdioSpawnSpec({

@@ -19,7 +19,9 @@ describe("upload route", () => {
     }
   });
 
-  it("rejects a symlink root path", async () => {
+  // Real fs.symlinkSync requires admin/Developer Mode on Windows (EPERM otherwise).
+  // The symlink-rejection logic itself is OS-agnostic and exercised on POSIX runners.
+  it.skipIf(process.platform === "win32")("rejects a symlink root path", async () => {
     tmpDir = mktemp();
     const targetFile = path.join(tmpDir, "real.txt");
     const linkPath = path.join(tmpDir, "link.txt");
@@ -43,7 +45,7 @@ describe("upload route", () => {
     });
   });
 
-  it("rejects directories that contain symlinks", async () => {
+  it.skipIf(process.platform === "win32")("rejects directories that contain symlinks", async () => {
     tmpDir = mktemp();
     const dirPath = path.join(tmpDir, "cycle");
     fs.mkdirSync(dirPath, { recursive: true });

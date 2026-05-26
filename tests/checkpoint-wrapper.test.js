@@ -1,5 +1,13 @@
+import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { wrapWithCheckpoint } from "../lib/checkpoint-wrapper.js";
+
+// On Windows path.resolve("/project", "src/foo.js") yields "<DRIVE>:\project\src\foo.js"; on POSIX it's "/project/src/foo.js".
+// Mirror the production resolution so assertions remain OS-agnostic.
+const PROJECT_CWD = "/project";
+function resolved(rel) {
+  return path.resolve(PROJECT_CWD, rel);
+}
 
 function makeTool(name, execute) {
   return { name, execute: execute || vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
@@ -21,7 +29,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([writeTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => "sessions/test",
     });
 
@@ -32,7 +40,7 @@ describe("wrapWithCheckpoint", () => {
       tool: "write",
       source: "llm",
       reason: "tool-write",
-      filePath: "/project/src/foo.js",
+      filePath: resolved("src/foo.js"),
       maxSizeKb: 1024,
     });
     expect(writeTool.execute).toHaveBeenCalled();
@@ -43,7 +51,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([editTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => null,
     });
 
@@ -64,7 +72,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([bashTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => null,
     });
 
@@ -75,7 +83,7 @@ describe("wrapWithCheckpoint", () => {
         tool: "bash:rm",
         source: "llm",
         reason: "tool-bash-rm",
-        filePath: "/project/src/old.js",
+        filePath: resolved("src/old.js"),
       }),
     );
   });
@@ -85,7 +93,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([bashTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => null,
     });
 
@@ -96,7 +104,7 @@ describe("wrapWithCheckpoint", () => {
         tool: "bash:mv",
         source: "llm",
         reason: "tool-bash-mv",
-        filePath: "/project/src/a.js",
+        filePath: resolved("src/a.js"),
       }),
     );
   });
@@ -106,7 +114,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([grepTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => null,
     });
 
@@ -120,7 +128,7 @@ describe("wrapWithCheckpoint", () => {
     const [wrapped] = wrapWithCheckpoint([writeTool], {
       store,
       maxFileSizeKb: 1024,
-      cwd: "/project",
+      cwd: PROJECT_CWD,
       getSessionPath: () => null,
     });
 
