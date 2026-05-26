@@ -2295,19 +2295,39 @@ export class SessionCoordinator {
         expected: summarizeCachePrefixContract(expected),
         actual: summarizeCachePrefixContract(actual),
       };
-      log.error(`cache_contract_violation ${JSON.stringify(record)}`);
+      // 校验分两层：
+      //  1) HARD（model / tools）：cache prefix 真正的稳定不变量。这里漂移意味着 provider /
+      //     API key / tool schema 发生了我们没记录的切换，必须阻断 — 否则后续请求会带着错的
+      //     auth 头或工具定义打出去。
+      //  2) SOFT（systemPrompt）：实测会因为 prompt 里嵌入的 per-request 动态内容（例如
+      //     agent.buildSystemPrompt 写的 `Current date and time: ... HH:MM`、heartbeat
+      //     等后台任务触发的重建）出现"字节同长度、hash 不同"的合法漂移。这种漂移会让
+      //     prompt cache 命中率下降，但不是"错误"，不应阻断聊天。日志记下来供观测即可。
+      const hardFields = new Set(["modelHash", "toolSchemaHash"]);
+      const hardDiffs = diffs.filter((d) => hardFields.has(d.field));
+      const softOnly = hardDiffs.length === 0;
+      if (softOnly) {
+        // 把 actual 采纳为新基线，避免每分钟时间戳跨越都重复 warn 同一条 diff。
+        log.warn(`cache_contract_soft_drift ${JSON.stringify(record)}`);
+        entry.cachePrefixContract = actual;
+        entry.cachePrefixContractRenewReason = `${entry.cachePrefixContractRenewReason || "renew"}_soft_drift`;
+        entry.cachePrefixContractRenewedAt = Date.now();
+        entry.cachePrefixContractRequestCount = (entry.cachePrefixContractRequestCount || 0) + 1;
+        return actual;
+      }
+      log.error(`cache_contract_violation ${JSON.stringify({ ...record, hardDiffs })}`);
       try {
         this._d.emitEvent?.({
           type: "cache_contract_violation",
           sessionPath,
-          diffs,
+          diffs: hardDiffs,
           expected: summarizeCachePrefixContract(expected),
           actual: summarizeCachePrefixContract(actual),
         }, sessionPath);
       } catch {
         // The provider request must still fail even if UI event delivery fails.
       }
-      throw new Error(`Cache prefix contract violated: ${diffs.map((d) => d.field).join(", ")}`);
+      throw new Error(`Cache prefix contract violated: ${hardDiffs.map((d) => d.field).join(", ")}`);
     }
 
     entry.cachePrefixContractRequestCount = (entry.cachePrefixContractRequestCount || 0) + 1;

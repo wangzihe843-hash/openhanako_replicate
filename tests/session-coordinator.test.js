@@ -1720,6 +1720,10 @@ describe("SessionCoordinator", () => {
       messages: [{ role: "user", content: "hello" }],
     }, {})).resolves.toBe("ok");
 
+    // systemPrompt-only drift is a soft violation: warn, adopt the new baseline,
+    // and let the request through. Our agent.buildSystemPrompt embeds per-minute
+    // timestamps; strict equality on the prompt would block the chat each time
+    // the clock minute rolls over.
     await expect(session.agent.streamFn(model, {
       systemPrompt: "MUTATED CACHE PREFIX",
       tools: [readTool, bashTool],
@@ -1727,8 +1731,202 @@ describe("SessionCoordinator", () => {
         { role: "user", content: "hello" },
         { role: "toolResult", content: [{ type: "text", text: "dynamic" }] },
       ],
+    }, {})).resolves.toBe("ok");
+    expect(originalStreamFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks provider calls when model identity drifts after an eager renew", async () => {
+    const sessionFile = path.join(tempDir, "hana", "sessions", "cache-contract-hard-model.jsonl");
+    const model = {
+      id: "deepseek-v4-pro",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com",
+      contextWindow: 1000000,
+      maxTokens: 32000,
+    };
+    const mutatedModel = { ...model, id: "deepseek-v4-flash" };
+    const readTool = { name: "read", description: "Read files", parameters: { type: "object" } };
+    const activeTools = new Map([["read", readTool]]);
+    const originalStreamFn = vi.fn(async () => "ok");
+    const session = {
+      sessionManager: { getSessionFile: () => sessionFile },
+      subscribe: vi.fn(() => vi.fn()),
+      model,
+      getContextUsage: () => ({ tokens: 0 }),
+      setActiveToolsByName: vi.fn((names) => {
+        session.agent.state.tools = names.map((name) => activeTools.get(name)).filter(Boolean);
+      }),
+      agent: {
+        streamFn: originalStreamFn,
+        state: {
+          model,
+          systemPrompt: "STABLE PROMPT",
+          tools: [readTool],
+          messages: [],
+        },
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "FROZEN BASE",
+      getToolsSnapshot: () => [],
+      config: { tools: {} },
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [readTool], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, "/tmp/workspace", true);
+
+    // First request matches baseline → ok.
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "STABLE PROMPT",
+      tools: [readTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).resolves.toBe("ok");
+
+    // Second request drifts on modelHash (different model id) → hard violation, throws.
+    await expect(session.agent.streamFn(mutatedModel, {
+      systemPrompt: "STABLE PROMPT",
+      tools: [readTool],
+      messages: [{ role: "user", content: "hello" }],
     }, {})).rejects.toThrow(/Cache prefix contract violated/);
     expect(originalStreamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts the actual context as baseline when the first request after eager renew diverges", async () => {
+    const sessionFile = path.join(tempDir, "hana", "sessions", "cache-contract-first-adopt.jsonl");
+    const model = {
+      id: "deepseek-v4-pro",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com",
+      contextWindow: 1000000,
+      maxTokens: 32000,
+    };
+    const readTool = { name: "read", description: "Read files", parameters: { type: "object" } };
+    const bashTool = { name: "bash", description: "Run shell", parameters: { type: "object" } };
+    const activeTools = new Map([["read", readTool], ["bash", bashTool]]);
+    const originalStreamFn = vi.fn(async () => "ok");
+    const session = {
+      sessionManager: { getSessionFile: () => sessionFile },
+      subscribe: vi.fn(() => vi.fn()),
+      model,
+      getContextUsage: () => ({ tokens: 0 }),
+      setActiveToolsByName: vi.fn((names) => {
+        session.agent.state.tools = names.map((name) => activeTools.get(name)).filter(Boolean);
+      }),
+      agent: {
+        streamFn: originalStreamFn,
+        state: {
+          model,
+          // Eager baseline captures this (simulates Pi SDK setting state before the
+          // session's first turn finishes assembling its actual context.systemPrompt).
+          systemPrompt: "EAGER BASELINE",
+          tools: [readTool, bashTool],
+          messages: [],
+        },
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "FROZEN BASE",
+      getToolsSnapshot: () => [],
+      config: { tools: {} },
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [readTool, bashTool], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, "/tmp/workspace", true);
+
+    // First request: actual systemPrompt diverges from the eagerly captured baseline.
+    // Soft drift — adopts the actual as the new baseline and lets the request through.
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "ACTUAL PIPELINE PROMPT",
+      tools: [readTool, bashTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).resolves.toBe("ok");
+
+    // Second request with a further-mutated systemPrompt: also soft drift, adopts again.
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "ANOTHER MINUTE TIMESTAMP PROMPT",
+      tools: [readTool, bashTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).resolves.toBe("ok");
+
+    // Third request drops a hard invariant (tool removed) → hard violation, throws.
+    await expect(session.agent.streamFn(model, {
+      systemPrompt: "ANOTHER MINUTE TIMESTAMP PROMPT",
+      tools: [readTool],
+      messages: [{ role: "user", content: "hello" }],
+    }, {})).rejects.toThrow(/Cache prefix contract violated/);
+    expect(originalStreamFn).toHaveBeenCalledTimes(2);
   });
 
   it("renews the cache prefix contract for an explicit model switch", async () => {
