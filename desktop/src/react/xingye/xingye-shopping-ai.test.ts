@@ -56,6 +56,41 @@ describe('normalizeShoppingDraftResult', () => {
     expect(r?.category).toBe('日用');
     expect(r?.imaginedPrice).toBe('小几百');
     expect(r?.tags?.length).toBeLessThanOrEqual(8);
+    // 「小几百」无法定量，amount + currency 应该留空（fallback 路径）
+    expect(r?.amount).toBeUndefined();
+    expect(r?.currency).toBeUndefined();
+  });
+
+  it('locally parses imaginedPrice → amount + currency (modern, ancient, fantasy, future)', () => {
+    const cases: Array<{ price: string; amount: number; currency: string }> = [
+      { price: '¥1,280', amount: 1280, currency: '¥' },
+      { price: '$35', amount: 35, currency: '$' },
+      { price: '二两银子', amount: 2, currency: '两银子' },
+      { price: '八百文', amount: 800, currency: '文' },
+      { price: '三个大洋', amount: 3, currency: '大洋' },
+      { price: '5 枚金币', amount: 5, currency: '金币' },
+      { price: '120 信用点', amount: 120, currency: '信用点' },
+    ];
+    for (const { price, amount, currency } of cases) {
+      const r = normalizeShoppingDraftResult({
+        itemName: '物件',
+        imaginedPrice: price,
+        content: 'x',
+      });
+      expect(r?.amount, `failed on "${price}"`).toBe(amount);
+      expect(r?.currency, `failed on "${price}"`).toBe(currency);
+    }
+  });
+
+  it('leaves amount + currency undefined for fallback "约/换" writings', () => {
+    const r = normalizeShoppingDraftResult({
+      itemName: '小物件',
+      imaginedPrice: '约一杯奶茶钱',
+      content: 'x',
+    });
+    expect(r?.imaginedPrice).toBe('约一杯奶茶钱');
+    expect(r?.amount).toBeUndefined();
+    expect(r?.currency).toBeUndefined();
   });
 });
 

@@ -2,6 +2,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import { parseImaginedPriceToMoney } from './xingye-money';
 import {
   buildShoppingDraftPrompt,
   buildShoppingPolishPrompt,
@@ -46,6 +47,14 @@ export type XingyeShoppingAiDraft = {
    * 卖家 / 店名（"光阴二手店" / "街口那家成衣"）。虚构小店口吻；非真实电商平台。
    */
   seller?: string;
+  /**
+   * 由 imaginedPrice 本地解析出的数值金额（见 parseImaginedPriceToMoney）。
+   * LLM 只产 imaginedPrice 氛围文本，amount / currency 在 normalize 阶段本地确定性提取，
+   * 让记账模块按币种求和无需回头再做映射。「约一杯奶茶钱」等 fallback 写法解析不出来 → undefined。
+   */
+  amount?: number;
+  /** amount 配对的货币单位（¥ / $ / 两银子 / 金币 / 信用点 …）。 */
+  currency?: string;
   reason?: string;
   tags?: string[];
   content: string;
@@ -233,14 +242,18 @@ export function normalizeShoppingDraftResult(raw: unknown): XingyeShoppingAiDraf
   const itemName = typeof record.itemName === 'string' ? record.itemName.trim() : '';
   const content = typeof record.content === 'string' ? record.content.trim() : '';
   if (!itemName) return null;
+  const imaginedPrice = normalizeOptional(record.imaginedPrice, 60);
+  const money = parseImaginedPriceToMoney(imaginedPrice);
   return {
     itemName: truncateChars(itemName, 80),
     status: normalizeStatus(record.status),
     platformStyle: normalizePlatformStyle(record.platformStyle),
     category: normalizeOptional(record.category, 24),
-    imaginedPrice: normalizeOptional(record.imaginedPrice, 60),
+    imaginedPrice,
     delta: normalizeOptional(record.delta, 32),
     seller: normalizeOptional(record.seller, 24),
+    amount: money?.amount,
+    currency: money?.currency,
     reason: normalizeOptional(record.reason, 200),
     tags: normalizeTags(record.tags),
     content: truncateChars(content, 600),
@@ -379,15 +392,23 @@ export type XingyeShoppingPolishResult = {
   imaginedPrice?: string;
   delta?: string;
   seller?: string;
+  /** 由润色后的 imaginedPrice 本地解析出的数值金额（同 normalizeShoppingDraftResult）。 */
+  amount?: number;
+  /** amount 配对的货币单位。 */
+  currency?: string;
 };
 
 function normalizeShoppingPolishResult(raw: unknown): XingyeShoppingPolishResult | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
+  const imaginedPrice = normalizeOptional(record.imaginedPrice, 60);
+  const money = parseImaginedPriceToMoney(imaginedPrice);
   return {
-    imaginedPrice: normalizeOptional(record.imaginedPrice, 60),
+    imaginedPrice,
     delta: normalizeOptional(record.delta, 32),
     seller: normalizeOptional(record.seller, 24),
+    amount: money?.amount,
+    currency: money?.currency,
   };
 }
 

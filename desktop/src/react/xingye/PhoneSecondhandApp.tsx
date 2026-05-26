@@ -17,6 +17,7 @@ import {
 } from './xingye-secondhand-drafts';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { generateSecondhandDraftWithAI, generateSecondhandPolishWithAI } from './xingye-secondhand-ai';
+import { normalizeAmount, normalizeCurrency, parseAmountText } from './xingye-money';
 
 export interface PhoneSecondhandAppProps {
   ownerAgent: Agent | null;
@@ -56,6 +57,13 @@ export type SecondhandEntryMetadata = {
    * 列表 row-card-foot 和详情 detail-price-row 的次要小字。
    */
   delta?: string;
+  /**
+   * 记账用数值金额。`askingPrice` 是给人看的氛围文本，`amount` 是给记账模块按
+   * 币种求和用的纯数值，与 `currency` 搭配。两者独立，可只填其一。
+   */
+  amount?: number;
+  /** `amount` 的货币单位（¥ / $ / 两银子 / 金币 / 信用点 …）。 */
+  currency?: string;
   tags?: string[];
 };
 
@@ -70,6 +78,8 @@ type SecondhandDraft = {
   platformStyle: NonNullable<SecondhandEntryMetadata['platformStyle']>;
   category: string;
   askingPrice: string;
+  amountText: string;
+  currency: string;
   delta: string;
   buyer: string;
   reason: string;
@@ -167,6 +177,8 @@ function emptyDraft(): SecondhandDraft {
     platformStyle: 'generic',
     category: '',
     askingPrice: '',
+    amountText: '',
+    currency: '',
     delta: '',
     buyer: '',
     reason: '',
@@ -221,6 +233,8 @@ function normalizeSecondhandEntry(entry: AppEntry): SecondhandEntry {
         typeof meta.buyer === 'string' && meta.buyer.trim() ? meta.buyer.trim() : undefined,
       delta:
         typeof meta.delta === 'string' && meta.delta.trim() ? meta.delta.trim() : undefined,
+      amount: normalizeAmount(meta.amount),
+      currency: normalizeCurrency(meta.currency),
       tags: normalizeTags(meta.tags),
     },
   };
@@ -233,6 +247,8 @@ function draftFromEntry(entry: SecondhandEntry): SecondhandDraft {
     platformStyle: entry.metadata.platformStyle ?? 'generic',
     category: entry.metadata.category ?? '',
     askingPrice: entry.metadata.askingPrice ?? '',
+    amountText: entry.metadata.amount != null ? String(entry.metadata.amount) : '',
+    currency: entry.metadata.currency ?? '',
     delta: entry.metadata.delta ?? '',
     buyer: entry.metadata.buyer ?? '',
     reason: entry.metadata.reason ?? '',
@@ -255,19 +271,27 @@ function buildInputFromDraft(draft: SecondhandDraft) {
   };
   const category = draft.category.trim();
   const askingPrice = draft.askingPrice.trim();
+  const amount = parseAmountText(draft.amountText);
+  const currency = normalizeCurrency(draft.currency);
   const delta = draft.delta.trim();
   const buyer = draft.buyer.trim();
   const reason = draft.reason.trim();
   if (category) metadata.category = category;
   if (askingPrice) metadata.askingPrice = askingPrice;
+  if (amount !== undefined) metadata.amount = amount;
+  if (currency) metadata.currency = currency;
   if (delta) metadata.delta = delta;
   if (buyer) metadata.buyer = buyer;
   if (reason) metadata.reason = reason;
   if (tags.length > 0) metadata.tags = tags;
+  /**
+   * 不返回 source 字段：让 appendAppEntry 走 'manual' 兜底（新建路径）、让
+   * updateAppEntry 看到 undefined 保留原 entry.source（编辑路径）。
+   * 老实现硬写 source: 'manual'，会把 xingye-heartbeat-confirmed 等来源溯源洗掉。
+   */
   return {
     title: itemName,
     content: draft.content.trim(),
-    source: 'manual',
     metadata,
   };
 }
@@ -287,6 +311,29 @@ function daysAgo(iso: string): number {
 function formatDayStub(d: number): string {
   if (d >= 100) return String(d);
   return String(d).padStart(2, '0');
+}
+
+/**
+ * ¥/$/€/£/￥ 这类单符号西方货币按习惯前缀（`¥99`、`$5`）；
+ * "两银子"/"信用点"/"金币" 等多字单位按后缀（`99 两银子`）。
+ */
+const WESTERN_PREFIX_CURRENCY = /^[¥$€£￥]$/;
+
+/**
+ * 把 amount + currency 拼成主价位短文本，例如 `¥120` / `2 两银子`。
+ * 整数省小数点；非整数最多两位小数并去掉末尾 0。amount 为 undefined → null（不渲染）。
+ */
+function formatAmountWithCurrency(
+  amount: number | undefined,
+  currency: string | undefined,
+): string | null {
+  if (amount === undefined) return null;
+  const num = Number.isInteger(amount)
+    ? String(amount)
+    : amount.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  if (!currency) return num;
+  if (WESTERN_PREFIX_CURRENCY.test(currency)) return `${currency}${num}`;
+  return `${num} ${currency}`;
 }
 
 /** 详情页 meta 行的动词：「记于 / 挂出于 / 售出于 X 天前」 */
@@ -331,6 +378,8 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
       content: string;
       category: string;
       askingPrice: string;
+      amountText: string;
+      currency: string;
     }>
   >({});
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
@@ -374,6 +423,8 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
         content: d.content ?? '',
         category: d.category ?? '',
         askingPrice: d.askingPrice ?? '',
+        amountText: d.amount != null ? String(d.amount) : '',
+        currency: d.currency ?? '',
       };
     },
     [draftEdits],
@@ -381,7 +432,15 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
 
   const handleDraftFieldChange = (
     draftId: string,
-    patch: Partial<{ itemName: string; status: SecondhandDraftStatus; content: string; category: string; askingPrice: string }>,
+    patch: Partial<{
+      itemName: string;
+      status: SecondhandDraftStatus;
+      content: string;
+      category: string;
+      askingPrice: string;
+      amountText: string;
+      currency: string;
+    }>,
   ) => {
     setDraftEdits((prev) => {
       const d = pendingDrafts.find((entry) => entry.id === draftId);
@@ -392,6 +451,8 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
         content: d.content ?? '',
         category: d.category ?? '',
         askingPrice: d.askingPrice ?? '',
+        amountText: d.amount != null ? String(d.amount) : '',
+        currency: d.currency ?? '',
       };
       return { ...prev, [draftId]: { ...base, ...patch } };
     });
@@ -408,12 +469,15 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
     setDraftError(null);
     try {
       const working = draftWorkingValue(d);
+      const parsedAmount = parseAmountText(working.amountText);
       const entry = await confirmSecondhandDraft(ownerAgentId, d.id, {
         itemName: working.itemName,
         status: working.status,
         content: working.content.trim() ? working.content : null,
         category: working.category.trim() ? working.category : null,
         askingPrice: working.askingPrice.trim() ? working.askingPrice : null,
+        amount: working.amountText.trim() ? (parsedAmount ?? null) : null,
+        currency: working.currency.trim() ? working.currency : null,
       });
       const normalized = normalizeSecondhandEntry(entry);
       setEntries((prev) =>
@@ -465,6 +529,12 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
           buyer: d.buyer,
         },
       });
+      // 优先沿用用户在草稿卡上手填的 amount/currency；用户没填时才用 polish 后的
+      // askingPrice 本地解析结果（在 normalizeSecondhandPolishResult 里完成），避免覆盖
+      // 用户手动改过的金额。
+      const parsedAmount = parseAmountText(working.amountText);
+      const fallbackAmount = polish.amount;
+      const fallbackCurrency = polish.currency;
       const entry = await confirmSecondhandDraft(ownerAgentId, d.id, {
         itemName: working.itemName,
         status: working.status,
@@ -473,6 +543,12 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
         askingPrice: polish.askingPrice ?? (working.askingPrice.trim() ? working.askingPrice : null),
         delta: polish.delta ?? undefined,
         buyer: polish.buyer ?? undefined,
+        amount: working.amountText.trim()
+          ? (parsedAmount ?? null)
+          : (fallbackAmount ?? null),
+        currency: working.currency.trim()
+          ? working.currency
+          : (fallbackCurrency ?? null),
       });
       const normalized = normalizeSecondhandEntry(entry);
       setEntries((prev) =>
@@ -600,6 +676,10 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
         platformStyle: result.platformStyle,
         category: result.category ?? '',
         askingPrice: result.askingPrice ?? '',
+        // amount + currency 由 parseImaginedPriceToMoney 从 askingPrice 本地确定性解析
+        // （见 normalizeSecondhandDraftResult）。解析不出来（fallback 写法）→ 留空，由用户决定。
+        amountText: result.amount != null ? String(result.amount) : '',
+        currency: result.currency ?? '',
         delta: result.delta ?? '',
         buyer: result.buyer ?? '',
         reason: result.reason ?? '',
@@ -796,6 +876,30 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
                 onChange={(e) => updateDraft({ askingPrice: e.target.value })}
               />
             </label>
+            {/**
+             * 金额组：数值 + 货币单位折一行。两者强绑——单独填数值没单位就不知道币种，
+             * 单独填单位没数值也无法求和。填了金额组就视作有明确价格，列表/详情主价位
+             * 槽位会优先显示「¥120」而不是「期望卖价」自由文本。
+             */}
+            <div style={{ display: 'flex', gap: 12 }}>
+              <label className={styles.xyEditorField} style={{ flex: 1.6 }}>
+                <span>记账金额</span>
+                <input
+                  inputMode="decimal"
+                  value={draft.amountText}
+                  placeholder="可选，纯数字（如 120，填了优先于期望卖价显示）"
+                  onChange={(e) => updateDraft({ amountText: e.target.value })}
+                />
+              </label>
+              <label className={styles.xyEditorField} style={{ flex: 1 }}>
+                <span>货币单位</span>
+                <input
+                  value={draft.currency}
+                  placeholder="¥ / 两银子 / 信用点"
+                  onChange={(e) => updateDraft({ currency: e.target.value })}
+                />
+              </label>
+            </div>
             <label className={styles.xyEditorField}>
               <span>价格 delta</span>
               <input
@@ -935,6 +1039,29 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
                           disabled={busy}
                         />
                       </div>
+                      <div className={styles.xyDraftRow}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className={styles.xyDraftInput}
+                          value={working.amountText}
+                          onChange={(e) => handleDraftFieldChange(d.id, { amountText: e.target.value })}
+                          placeholder="记账金额（可选，纯数字给账本求和用）"
+                          aria-label="待确认二手草稿记账金额"
+                          data-testid={`phone-secondhand-draft-amount-${d.id}`}
+                          disabled={busy}
+                        />
+                        <input
+                          type="text"
+                          className={styles.xyDraftInput}
+                          value={working.currency}
+                          onChange={(e) => handleDraftFieldChange(d.id, { currency: e.target.value })}
+                          placeholder="货币单位（可选，¥/两银子/信用点）"
+                          aria-label="待确认二手草稿货币单位"
+                          data-testid={`phone-secondhand-draft-currency-${d.id}`}
+                          disabled={busy}
+                        />
+                      </div>
                       <textarea
                         className={styles.xyDraftTextarea}
                         value={working.content}
@@ -1021,6 +1148,7 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
                   || (entry.metadata.platformStyle && entry.metadata.platformStyle !== 'generic'
                     ? PLATFORM_STYLE_LABELS[entry.metadata.platformStyle]
                     : '');
+                const amountLine = formatAmountWithCurrency(entry.metadata.amount, entry.metadata.currency);
                 return (
                   <button
                     key={entry.id}
@@ -1042,7 +1170,20 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
                         <p className={styles.xyRowCardReason}>{entry.metadata.reason || entry.content}</p>
                       ) : null}
                       <div className={styles.xyRowCardFoot}>
-                        {entry.metadata.askingPrice ? (
+                        {/**
+                         * 主价位槽位二选一：amount/currency 有 → 显示「¥120」（机器可读，
+                         * 也是接记账的语义）；否则降级 askingPrice 文本（"够换一壶酒"
+                         * 这类推不出价格的氛围表达）。delta 始终作为次要小字（"卖不上价"
+                         * 这类对比信息），与主价位独立。
+                         */}
+                        {amountLine ? (
+                          <span
+                            className={styles.xyRowCardPrice}
+                            data-testid={`phone-secondhand-row-amount-${entry.id}`}
+                          >
+                            {amountLine}
+                          </span>
+                        ) : entry.metadata.askingPrice ? (
                           <span className={styles.xyRowCardPrice}>{entry.metadata.askingPrice}</span>
                         ) : null}
                         {entry.metadata.delta ? (
@@ -1128,16 +1269,28 @@ function SecondhandDetailView({
           {metaVerb(status)} {formatDayStub(days)} 天前
         </p>
 
-        {entry.metadata.askingPrice || entry.metadata.delta ? (
-          <div className={styles.xyDetailPriceRow}>
-            {entry.metadata.askingPrice ? (
-              <span className={styles.xyDetailPrice}>{entry.metadata.askingPrice}</span>
-            ) : null}
-            {entry.metadata.delta ? (
-              <span className={styles.xyDetailDelta}>{entry.metadata.delta}</span>
-            ) : null}
-          </div>
-        ) : null}
+        {(() => {
+          const amountLine = formatAmountWithCurrency(entry.metadata.amount, entry.metadata.currency);
+          if (!amountLine && !entry.metadata.askingPrice && !entry.metadata.delta) return null;
+          return (
+            <div className={styles.xyDetailPriceRow}>
+              {/** 主价位槽位：见 row card 同名注释（amount 优先于 askingPrice）。 */}
+              {amountLine ? (
+                <span
+                  className={styles.xyDetailPrice}
+                  data-testid={`phone-secondhand-detail-amount-${entry.id}`}
+                >
+                  {amountLine}
+                </span>
+              ) : entry.metadata.askingPrice ? (
+                <span className={styles.xyDetailPrice}>{entry.metadata.askingPrice}</span>
+              ) : null}
+              {entry.metadata.delta ? (
+                <span className={styles.xyDetailDelta}>{entry.metadata.delta}</span>
+              ) : null}
+            </div>
+          );
+        })()}
 
         {entry.content || entry.metadata.reason ? (
           <div className={styles.xyDetailNote}>

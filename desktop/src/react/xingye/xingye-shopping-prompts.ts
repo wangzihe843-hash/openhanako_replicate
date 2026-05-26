@@ -84,11 +84,16 @@ export function buildShoppingDraftPrompt(args: {
     '如果输入信息不足以判断 TA 想买什么，可以写成「最近想置办点小东西」之类的轻量物件，不要凭空捏造重大购买（车 / 房 / 奢侈品）。',
     '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
+    /**
+     * 注意：status / platformStyle 用「<one of: ...>」占位符，**不要**写成具体合法值
+     * （如 "wanted" / "generic"）—— LLM 会把示例值当默认值，无视下面文字"主动判断"的
+     * 约束。改成枚举占位形式逼模型读完下方字段要求再选。
+     */
     JSON.stringify(
       {
         itemName: 'string',
-        status: 'wanted',
-        platformStyle: 'generic',
+        status: `<one of: ${SHOPPING_AI_STATUSES.join(' | ')}>`,
+        platformStyle: `<one of: ${SHOPPING_AI_PLATFORM_STYLES.join(' | ')}>`,
         category: 'string',
         imaginedPrice: 'string',
         delta: 'string',

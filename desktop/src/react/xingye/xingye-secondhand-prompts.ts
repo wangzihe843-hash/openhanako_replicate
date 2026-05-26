@@ -90,11 +90,16 @@ export function buildSecondhandDraftPrompt(args: {
     '如果输入信息不足以判断 TA 想出掉什么，可以写成「想清一清旧东西」之类的轻量物件，不要凭空捏造重大资产处置（卖车 / 卖房）。',
     '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
+    /**
+     * 注意：status / platformStyle 用「<one of: ...>」占位符，**不要**写成具体合法值
+     * （如 "to_sell" / "generic"）—— LLM 会把示例值当默认值，无视下面文字"主动判断"的
+     * 约束。改成枚举占位形式逼模型读完下方字段要求再选。
+     */
     JSON.stringify(
       {
         itemName: 'string',
-        status: 'to_sell',
-        platformStyle: 'generic',
+        status: `<one of: ${SECONDHAND_AI_STATUSES.join(' | ')}>`,
+        platformStyle: `<one of: ${SECONDHAND_AI_PLATFORM_STYLES.join(' | ')}>`,
         category: 'string',
         askingPrice: 'string',
         delta: 'string',

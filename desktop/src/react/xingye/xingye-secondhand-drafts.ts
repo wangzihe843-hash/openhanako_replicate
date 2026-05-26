@@ -23,6 +23,7 @@ import {
   type AppEntry,
 } from './xingye-app-entry-store';
 import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { normalizeAmount, normalizeCurrency } from './xingye-money';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -79,6 +80,14 @@ export type XingyePendingSecondhandDraft = {
   delta?: string;
   /** 买家 / 接手人口吻，不带真实电商平台；见 SecondhandEntryMetadata.buyer。 */
   buyer?: string;
+  /**
+   * 记账用数值金额（非负），与 currency 搭配；见 SecondhandEntryMetadata.amount。
+   * askingPrice 是给人看的氛围文本，amount 是给记账模块按币种求和用的纯数值，
+   * 两者独立、可只填其一。
+   */
+  amount?: number;
+  /** amount 的货币单位（¥ / $ / 两银子 / 金币 / 信用点 …）。 */
+  currency?: string;
   /** 为什么提议这条草稿（展示给用户帮助决定是否确认）。 */
   reason?: string;
   /** 备注/正文，写入 entries 时落到 AppEntry.content。 */
@@ -158,6 +167,8 @@ function normalizeDraftRow(value: unknown): XingyePendingSecondhandDraft | null 
     askingPrice: normalizeOptionalText(raw.askingPrice, 40),
     delta: normalizeOptionalText(raw.delta, 32),
     buyer: normalizeOptionalText(raw.buyer, 24),
+    amount: normalizeAmount(raw.amount),
+    currency: normalizeCurrency(raw.currency),
     reason: normalizeOptionalText(raw.reason, 500),
     content: normalizeOptionalText(raw.content, 2000),
     tags: normalizeTags(raw.tags),
@@ -212,6 +223,8 @@ export async function appendSecondhandDraft(
     askingPrice?: string;
     delta?: string;
     buyer?: string;
+    amount?: number;
+    currency?: string;
     reason?: string;
     content?: string;
     tags?: string[];
@@ -230,6 +243,8 @@ export async function appendSecondhandDraft(
   const askingPrice = normalizeOptionalText(input.askingPrice, 40);
   const delta = normalizeOptionalText(input.delta, 32);
   const buyer = normalizeOptionalText(input.buyer, 24);
+  const amount = normalizeAmount(input.amount);
+  const currency = normalizeCurrency(input.currency);
   const reason = normalizeOptionalText(input.reason, 500);
   const content = normalizeOptionalText(input.content, 2000);
   const tags = normalizeTags(input.tags);
@@ -248,6 +263,8 @@ export async function appendSecondhandDraft(
     askingPrice,
     delta,
     buyer,
+    amount,
+    currency,
     reason,
     content,
     tags,
@@ -277,6 +294,8 @@ export async function appendSecondhandDraft(
     askingPrice,
     delta,
     buyer,
+    amount,
+    currency,
     reason,
     content,
     tags,
@@ -330,6 +349,8 @@ export async function confirmSecondhandDraft(
     askingPrice?: string | null;
     delta?: string | null;
     buyer?: string | null;
+    amount?: number | null;
+    currency?: string | null;
     content?: string | null;
     reason?: string | null;
     tags?: string[] | null;
@@ -369,6 +390,20 @@ export async function confirmSecondhandDraft(
         }
         return draft.tags;
       };
+      const resolveAmount = (): number | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'amount')) {
+          if (edits.amount === null) return undefined;
+          return normalizeAmount(edits.amount);
+        }
+        return draft.amount;
+      };
+      const resolveCurrency = (): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'currency')) {
+          if (edits.currency === null) return undefined;
+          if (typeof edits.currency === 'string') return normalizeCurrency(edits.currency);
+        }
+        return draft.currency;
+      };
 
       const itemName = ((edits?.itemName ?? draft.itemName) || '').trim().slice(0, 80);
       if (!itemName) throw new Error('确认草稿失败：物品名不能为空。');
@@ -378,6 +413,8 @@ export async function confirmSecondhandDraft(
       const askingPrice = resolveOptional('askingPrice', 40);
       const delta = resolveOptional('delta', 32);
       const buyer = resolveOptional('buyer', 24);
+      const amount = resolveAmount();
+      const currency = resolveCurrency();
       const reason = resolveOptional('reason', 500);
       const content = resolveOptional('content', 2000) ?? '';
       const tags = resolveTags();
@@ -391,6 +428,8 @@ export async function confirmSecondhandDraft(
       if (askingPrice) metadata.askingPrice = askingPrice;
       if (delta) metadata.delta = delta;
       if (buyer) metadata.buyer = buyer;
+      if (amount !== undefined) metadata.amount = amount;
+      if (currency) metadata.currency = currency;
       if (reason) metadata.reason = reason;
       if (tags && tags.length > 0) metadata.tags = tags;
 

@@ -2,6 +2,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import { parseImaginedPriceToMoney } from './xingye-money';
 import {
   buildSecondhandDraftPrompt,
   buildSecondhandPolishPrompt,
@@ -49,6 +50,14 @@ export type XingyeSecondhandAiDraft = {
    * 买家 / 接手人（"巷口的旧书客" / "楼下收旧货的"）。虚构买家口吻；非真实电商平台。
    */
   buyer?: string;
+  /**
+   * 由 askingPrice 本地解析出的数值金额（见 parseImaginedPriceToMoney）。
+   * LLM 只产 askingPrice 氛围文本，amount / currency 在 normalize 阶段本地确定性提取，
+   * 让记账模块按币种求和无需回头再做映射。「约换一只新壶」等 fallback 写法解析不出来 → undefined。
+   */
+  amount?: number;
+  /** amount 配对的货币单位（¥ / $ / 两银子 / 金币 / 信用点 …）。 */
+  currency?: string;
   reason?: string;
   tags?: string[];
   content: string;
@@ -236,14 +245,18 @@ export function normalizeSecondhandDraftResult(raw: unknown): XingyeSecondhandAi
   const itemName = typeof record.itemName === 'string' ? record.itemName.trim() : '';
   const content = typeof record.content === 'string' ? record.content.trim() : '';
   if (!itemName) return null;
+  const askingPrice = normalizeOptional(record.askingPrice, 60);
+  const money = parseImaginedPriceToMoney(askingPrice);
   return {
     itemName: truncateChars(itemName, 80),
     status: normalizeStatus(record.status),
     platformStyle: normalizePlatformStyle(record.platformStyle),
     category: normalizeOptional(record.category, 24),
-    askingPrice: normalizeOptional(record.askingPrice, 60),
+    askingPrice,
     delta: normalizeOptional(record.delta, 32),
     buyer: normalizeOptional(record.buyer, 24),
+    amount: money?.amount,
+    currency: money?.currency,
     reason: normalizeOptional(record.reason, 200),
     tags: normalizeTags(record.tags),
     content: truncateChars(content, 600),
@@ -382,15 +395,23 @@ export type XingyeSecondhandPolishResult = {
   askingPrice?: string;
   delta?: string;
   buyer?: string;
+  /** 由润色后的 askingPrice 本地解析出的数值金额（同 normalizeSecondhandDraftResult）。 */
+  amount?: number;
+  /** amount 配对的货币单位。 */
+  currency?: string;
 };
 
 function normalizeSecondhandPolishResult(raw: unknown): XingyeSecondhandPolishResult | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
+  const askingPrice = normalizeOptional(record.askingPrice, 60);
+  const money = parseImaginedPriceToMoney(askingPrice);
   return {
-    askingPrice: normalizeOptional(record.askingPrice, 60),
+    askingPrice,
     delta: normalizeOptional(record.delta, 32),
     buyer: normalizeOptional(record.buyer, 24),
+    amount: money?.amount,
+    currency: money?.currency,
   };
 }
 

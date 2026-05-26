@@ -21,6 +21,7 @@ import {
   type AppEntry,
 } from './xingye-app-entry-store';
 import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { normalizeAmount, normalizeCurrency } from './xingye-money';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -76,6 +77,14 @@ export type XingyePendingShoppingDraft = {
   delta?: string;
   /** 卖家 / 店名口吻，不带真实电商平台；见 ShoppingEntryMetadata.seller。 */
   seller?: string;
+  /**
+   * 记账用数值金额（非负），与 currency 搭配；见 ShoppingEntryMetadata.amount。
+   * imaginedPrice 是给人看的氛围文本，amount 是给记账模块按币种求和用的纯数值，
+   * 两者独立、可只填其一。
+   */
+  amount?: number;
+  /** amount 的货币单位（¥ / $ / 两银子 / 金币 / 信用点 …）。 */
+  currency?: string;
   /** 为什么提议这条草稿（展示给用户帮助决定是否确认）。 */
   reason?: string;
   /** 备注/正文，写入 entries 时落到 AppEntry.content。 */
@@ -155,6 +164,8 @@ function normalizeDraftRow(value: unknown): XingyePendingShoppingDraft | null {
     imaginedPrice: normalizeOptionalText(raw.imaginedPrice, 40),
     delta: normalizeOptionalText(raw.delta, 32),
     seller: normalizeOptionalText(raw.seller, 24),
+    amount: normalizeAmount(raw.amount),
+    currency: normalizeCurrency(raw.currency),
     reason: normalizeOptionalText(raw.reason, 500),
     content: normalizeOptionalText(raw.content, 2000),
     tags: normalizeTags(raw.tags),
@@ -209,6 +220,8 @@ export async function appendShoppingDraft(
     imaginedPrice?: string;
     delta?: string;
     seller?: string;
+    amount?: number;
+    currency?: string;
     reason?: string;
     content?: string;
     tags?: string[];
@@ -227,6 +240,8 @@ export async function appendShoppingDraft(
   const imaginedPrice = normalizeOptionalText(input.imaginedPrice, 40);
   const delta = normalizeOptionalText(input.delta, 32);
   const seller = normalizeOptionalText(input.seller, 24);
+  const amount = normalizeAmount(input.amount);
+  const currency = normalizeCurrency(input.currency);
   const reason = normalizeOptionalText(input.reason, 500);
   const content = normalizeOptionalText(input.content, 2000);
   const tags = normalizeTags(input.tags);
@@ -245,6 +260,8 @@ export async function appendShoppingDraft(
     imaginedPrice,
     delta,
     seller,
+    amount,
+    currency,
     reason,
     content,
     tags,
@@ -274,6 +291,8 @@ export async function appendShoppingDraft(
     imaginedPrice,
     delta,
     seller,
+    amount,
+    currency,
     reason,
     content,
     tags,
@@ -327,6 +346,8 @@ export async function confirmShoppingDraft(
     imaginedPrice?: string | null;
     delta?: string | null;
     seller?: string | null;
+    amount?: number | null;
+    currency?: string | null;
     content?: string | null;
     reason?: string | null;
     tags?: string[] | null;
@@ -366,6 +387,20 @@ export async function confirmShoppingDraft(
         }
         return draft.tags;
       };
+      const resolveAmount = (): number | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'amount')) {
+          if (edits.amount === null) return undefined;
+          return normalizeAmount(edits.amount);
+        }
+        return draft.amount;
+      };
+      const resolveCurrency = (): string | undefined => {
+        if (edits && Object.prototype.hasOwnProperty.call(edits, 'currency')) {
+          if (edits.currency === null) return undefined;
+          if (typeof edits.currency === 'string') return normalizeCurrency(edits.currency);
+        }
+        return draft.currency;
+      };
 
       const itemName = ((edits?.itemName ?? draft.itemName) || '').trim().slice(0, 80);
       if (!itemName) throw new Error('确认草稿失败：物品名不能为空。');
@@ -375,6 +410,8 @@ export async function confirmShoppingDraft(
       const imaginedPrice = resolveOptional('imaginedPrice', 40);
       const delta = resolveOptional('delta', 32);
       const seller = resolveOptional('seller', 24);
+      const amount = resolveAmount();
+      const currency = resolveCurrency();
       const reason = resolveOptional('reason', 500);
       const content = resolveOptional('content', 2000) ?? '';
       const tags = resolveTags();
@@ -388,6 +425,8 @@ export async function confirmShoppingDraft(
       if (imaginedPrice) metadata.imaginedPrice = imaginedPrice;
       if (delta) metadata.delta = delta;
       if (seller) metadata.seller = seller;
+      if (amount !== undefined) metadata.amount = amount;
+      if (currency) metadata.currency = currency;
       if (reason) metadata.reason = reason;
       if (tags && tags.length > 0) metadata.tags = tags;
 

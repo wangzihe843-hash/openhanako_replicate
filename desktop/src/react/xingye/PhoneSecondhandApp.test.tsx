@@ -99,27 +99,66 @@ describe('PhoneSecondhandApp', () => {
     fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'to_sell' } });
     fireEvent.change(screen.getByLabelText('类别'), { target: { value: '衣物' } });
     fireEvent.change(screen.getByLabelText('期望卖价'), { target: { value: '¥40' } });
+    fireEvent.change(screen.getByLabelText('记账金额'), { target: { value: '40' } });
+    fireEvent.change(screen.getByLabelText('货币单位'), { target: { value: '¥' } });
     fireEvent.change(screen.getByLabelText('记录原因'), { target: { value: '戴过两次就闲置了。' } });
     fireEvent.change(screen.getByLabelText('标签'), { target: { value: '冬天, 软' } });
     fireEvent.change(screen.getByLabelText('备注'), { target: { value: '想出给用得上的人。' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }));
 
+    /**
+     * 注意：input 不再硬写 source: 'manual'，让 appendAppEntry 走自有 fallback、
+     * updateAppEntry 看到 undefined 保留原 entry.source（不再洗掉 heartbeat 溯源）。
+     */
     await waitFor(() => {
       expect(appEntryStoreMock.appendAppEntry).toHaveBeenCalledWith('linwu', 'secondhand', {
         title: '灰蓝色围巾',
         content: '想出给用得上的人。',
-        source: 'manual',
         metadata: {
           status: 'to_sell',
           platformStyle: 'generic',
           itemName: '灰蓝色围巾',
           category: '衣物',
           askingPrice: '¥40',
+          amount: 40,
+          currency: '¥',
           reason: '戴过两次就闲置了。',
           tags: ['冬天', '软'],
         },
       });
     });
+  });
+
+  it('edit save does not overwrite the entry source (preserves heartbeat-confirmed origin)', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'from-draft-y',
+        agentId: 'linwu',
+        appId: 'secondhand',
+        title: '旧胶片相机',
+        content: '想卖。',
+        metadata: {
+          status: 'to_sell',
+          platformStyle: 'generic',
+          itemName: '旧胶片相机',
+        },
+        source: 'xingye-heartbeat-confirmed',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderSecondhandApp();
+    fireEvent.click(await screen.findByRole('button', { name: /旧胶片相机/ }));
+    fireEvent.click(screen.getByRole('button', { name: '编辑记录' }));
+    fireEvent.change(screen.getByLabelText('记录原因'), { target: { value: '换了数码不再用。' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(appEntryStoreMock.updateAppEntry).toHaveBeenCalled();
+    });
+    const patch = appEntryStoreMock.updateAppEntry.mock.calls[0][3];
+    expect(patch).not.toHaveProperty('source');
   });
 
   it('filters, opens details, edits, and deletes one secondhand record without trade actions', async () => {
@@ -209,7 +248,7 @@ describe('PhoneSecondhandApp · pending draft section', () => {
     secondhandDraftsMock.listSecondhandDrafts.mockResolvedValue([]);
   });
 
-  it('renders draft from listSecondhandDrafts and confirm forwards fields to confirmSecondhandDraft', async () => {
+  it('renders draft from listSecondhandDrafts and confirm forwards fields (incl. amount/currency) to confirmSecondhandDraft', async () => {
     secondhandDraftsMock.listSecondhandDrafts.mockResolvedValueOnce([
       {
         id: 'd-1',
@@ -237,6 +276,8 @@ describe('PhoneSecondhandApp · pending draft section', () => {
         itemName: '旧胶片相机',
         category: '旧物',
         askingPrice: '¥800',
+        amount: 800,
+        currency: '¥',
       },
       createdAt: '2026-05-17T12:30:00.000Z',
       updatedAt: '2026-05-17T12:30:00.000Z',
@@ -246,6 +287,10 @@ describe('PhoneSecondhandApp · pending draft section', () => {
 
     const draftCard = await screen.findByTestId('phone-secondhand-draft-d-1');
     expect(within(draftCard).getByText(/巡检里看到角色反复说用不上了/)).toBeInTheDocument();
+
+    /** 在草稿卡上补金额，confirm 时一并落到 confirmSecondhandDraft 入参。 */
+    fireEvent.change(screen.getByTestId('phone-secondhand-draft-amount-d-1'), { target: { value: '800' } });
+    fireEvent.change(screen.getByTestId('phone-secondhand-draft-currency-d-1'), { target: { value: '¥' } });
 
     fireEvent.click(screen.getByTestId('phone-secondhand-draft-confirm-d-1'));
 
@@ -258,6 +303,8 @@ describe('PhoneSecondhandApp · pending draft section', () => {
           status: 'to_sell',
           category: '旧物',
           askingPrice: '¥800',
+          amount: 800,
+          currency: '¥',
         }),
       );
     });
@@ -265,6 +312,94 @@ describe('PhoneSecondhandApp · pending draft section', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('phone-secondhand-draft-d-1')).not.toBeInTheDocument();
     });
+  });
+
+  it('list and detail render amount as main price using western prefix (¥800)', async () => {
+    /**
+     * 注意：标题用独特字符串「记账显示样本-resell」，因为这个 describe 块没有
+     * afterEach cleanup，前一个 confirm 测试残留的 entry 会和新测试在同一 DOM 里——
+     * 若同名会让 getByRole 撞到多个。共用 entry 的测试用 testid 隔离即可。
+     */
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'amt-1',
+        agentId: 'linwu',
+        appId: 'secondhand',
+        title: '记账显示样本-resell',
+        content: '',
+        metadata: {
+          status: 'sold',
+          platformStyle: 'generic',
+          itemName: '记账显示样本-resell',
+          amount: 800,
+          currency: '¥',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderSecondhandApp();
+    /** 单符号 ¥ 走前缀化（formatAmountWithCurrency 检测西方货币），不是「800 ¥」。 */
+    expect(await screen.findByTestId('phone-secondhand-row-amount-amt-1')).toHaveTextContent('¥800');
+
+    fireEvent.click(screen.getByRole('button', { name: /记账显示样本-resell/ }));
+    expect(await screen.findByTestId('phone-secondhand-detail-amount-amt-1')).toHaveTextContent('¥800');
+  });
+
+  it('amount/currency wins the main price slot over askingPrice when both present', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'both-1',
+        agentId: 'linwu',
+        appId: 'secondhand',
+        title: '价位优先样本-resell',
+        content: '',
+        metadata: {
+          status: 'sold',
+          platformStyle: 'generic',
+          itemName: '价位优先样本-resell',
+          askingPrice: '够换一壶酒',
+          amount: 50,
+          currency: '¥',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderSecondhandApp();
+    /** amount 优先：主价位显示 ¥50，氛围文本「够换一壶酒」不再出现在主槽。 */
+    expect(await screen.findByTestId('phone-secondhand-row-amount-both-1')).toHaveTextContent('¥50');
+    expect(screen.queryByText('够换一壶酒')).not.toBeInTheDocument();
+  });
+
+  it('falls back to askingPrice when amount is absent ("够换一壶酒" 这类推不出价格的氛围)', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'ask-1',
+        agentId: 'linwu',
+        appId: 'secondhand',
+        title: '氛围价样本-resell',
+        content: '',
+        metadata: {
+          status: 'to_sell',
+          platformStyle: 'generic',
+          itemName: '氛围价样本-resell',
+          askingPrice: '够换一壶酒',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderSecondhandApp();
+    /** 无 amount → 主价位降级显示 askingPrice 原文。 */
+    expect(await screen.findByText('够换一壶酒')).toBeInTheDocument();
+    expect(screen.queryByTestId('phone-secondhand-row-amount-ask-1')).not.toBeInTheDocument();
   });
 
   it('discard calls discardSecondhandDraft and never leaks into appendAppEntry / confirm', async () => {

@@ -98,27 +98,67 @@ describe('PhoneShoppingApp', () => {
     fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'wanted' } });
     fireEvent.change(screen.getByLabelText('类别'), { target: { value: '衣物' } });
     fireEvent.change(screen.getByLabelText('价格感'), { target: { value: '像是要攒一阵子的小贵' } });
+    fireEvent.change(screen.getByLabelText('记账金额'), { target: { value: '¥99' } });
+    fireEvent.change(screen.getByLabelText('货币单位'), { target: { value: '¥' } });
     fireEvent.change(screen.getByLabelText('记录原因'), { target: { value: '觉得适合冬天出门时戴。' } });
     fireEvent.change(screen.getByLabelText('标签'), { target: { value: '冬天, 软' } });
     fireEvent.change(screen.getByLabelText('备注'), { target: { value: '先放在想买清单里。' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }));
 
+    /**
+     * 注意：input 不再硬写 source: 'manual'，让 appendAppEntry 走自有 fallback、
+     * updateAppEntry 看到 undefined 保留原 entry.source（不再洗掉 heartbeat 溯源）。
+     * `¥99` 被 parseAmountText 解析为 99（兼容币种前缀）。
+     */
     await waitFor(() => {
       expect(appEntryStoreMock.appendAppEntry).toHaveBeenCalledWith('linwu', 'shopping', {
         title: '灰蓝色围巾',
         content: '先放在想买清单里。',
-        source: 'manual',
         metadata: {
           status: 'wanted',
           platformStyle: 'generic',
           itemName: '灰蓝色围巾',
           category: '衣物',
           imaginedPrice: '像是要攒一阵子的小贵',
+          amount: 99,
+          currency: '¥',
           reason: '觉得适合冬天出门时戴。',
           tags: ['冬天', '软'],
         },
       });
     });
+  });
+
+  it('edit save does not overwrite the entry source (preserves heartbeat-confirmed origin)', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'from-draft-x',
+        agentId: 'linwu',
+        appId: 'shopping',
+        title: '通勤保温杯',
+        content: '想喝热的。',
+        metadata: {
+          status: 'wanted',
+          platformStyle: 'generic',
+          itemName: '通勤保温杯',
+        },
+        source: 'xingye-heartbeat-confirmed',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderShoppingApp();
+    fireEvent.click(await screen.findByRole('button', { name: /通勤保温杯/ }));
+    fireEvent.click(screen.getByRole('button', { name: '编辑记录' }));
+    fireEvent.change(screen.getByLabelText('记录原因'), { target: { value: '改一下原因' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(appEntryStoreMock.updateAppEntry).toHaveBeenCalled();
+    });
+    const patch = appEntryStoreMock.updateAppEntry.mock.calls[0][3];
+    expect(patch).not.toHaveProperty('source');
   });
 
   it('filters, opens details, edits, and deletes one shopping record without purchase actions', async () => {
@@ -208,7 +248,7 @@ describe('PhoneShoppingApp · pending draft section', () => {
     shoppingDraftsMock.listShoppingDrafts.mockResolvedValue([]);
   });
 
-  it('renders draft from listShoppingDrafts and confirm forwards fields to confirmShoppingDraft', async () => {
+  it('renders draft from listShoppingDrafts and confirm forwards fields (incl. amount/currency) to confirmShoppingDraft', async () => {
     shoppingDraftsMock.listShoppingDrafts.mockResolvedValueOnce([
       {
         id: 'd-1',
@@ -236,6 +276,8 @@ describe('PhoneShoppingApp · pending draft section', () => {
         itemName: '便携咖啡杯',
         category: '日用',
         imaginedPrice: '￥99',
+        amount: 120,
+        currency: '¥',
       },
       createdAt: '2026-05-17T12:30:00.000Z',
       updatedAt: '2026-05-17T12:30:00.000Z',
@@ -245,6 +287,10 @@ describe('PhoneShoppingApp · pending draft section', () => {
 
     const draftCard = await screen.findByTestId('phone-shopping-draft-d-1');
     expect(within(draftCard).getByText(/巡检里看到角色反复提通勤/)).toBeInTheDocument();
+
+    /** 在草稿卡上补金额，confirm 时一并落到 confirmShoppingDraft 入参。 */
+    fireEvent.change(screen.getByTestId('phone-shopping-draft-amount-d-1'), { target: { value: '120' } });
+    fireEvent.change(screen.getByTestId('phone-shopping-draft-currency-d-1'), { target: { value: '¥' } });
 
     fireEvent.click(screen.getByTestId('phone-shopping-draft-confirm-d-1'));
 
@@ -257,6 +303,8 @@ describe('PhoneShoppingApp · pending draft section', () => {
           status: 'wanted',
           category: '日用',
           imaginedPrice: '￥99',
+          amount: 120,
+          currency: '¥',
         }),
       );
     });
@@ -264,6 +312,95 @@ describe('PhoneShoppingApp · pending draft section', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('phone-shopping-draft-d-1')).not.toBeInTheDocument();
     });
+  });
+
+  it('list and detail render amount as main price using western prefix (¥120)', async () => {
+    /**
+     * 注意：标题用独特字符串「记账显示样本-shop」，因为这个 describe 块没有 afterEach
+     * cleanup，前一个 confirm 测试残留的 entry 会和新测试在同一 DOM 里——若同名会让
+     * getByRole 撞到多个。共用 entry 的测试用 testid 隔离即可。
+     */
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'amt-1',
+        agentId: 'linwu',
+        appId: 'shopping',
+        title: '记账显示样本-shop',
+        content: '',
+        metadata: {
+          status: 'received',
+          platformStyle: 'generic',
+          itemName: '记账显示样本-shop',
+          amount: 120,
+          currency: '¥',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderShoppingApp();
+    /** 单符号 ¥ 走前缀化（formatAmountWithCurrency 检测西方货币），不是「120 ¥」。 */
+    expect(await screen.findByTestId('phone-shopping-row-amount-amt-1')).toHaveTextContent('¥120');
+
+    fireEvent.click(screen.getByRole('button', { name: /记账显示样本-shop/ }));
+    expect(await screen.findByTestId('phone-shopping-detail-amount-amt-1')).toHaveTextContent('¥120');
+  });
+
+  it('amount/currency wins the main price slot over imaginedPrice when both present', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'both-1',
+        agentId: 'linwu',
+        appId: 'shopping',
+        title: '价位优先样本-shop',
+        content: '',
+        metadata: {
+          status: 'received',
+          platformStyle: 'generic',
+          itemName: '价位优先样本-shop',
+          imaginedPrice: '约一杯奶茶钱',
+          amount: 25,
+          currency: '¥',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderShoppingApp();
+    /** amount 优先：主价位显示 ¥25，氛围文本「约一杯奶茶钱」不再出现在主槽。 */
+    expect(await screen.findByTestId('phone-shopping-row-amount-both-1')).toHaveTextContent('¥25');
+    expect(screen.queryByText('约一杯奶茶钱')).not.toBeInTheDocument();
+  });
+
+  it('falls back to imaginedPrice when amount is absent ("约一杯奶茶钱" 这类推不出价格的氛围)', async () => {
+    appEntryStoreMock.listAppEntries.mockResolvedValueOnce([
+      {
+        id: 'imp-1',
+        agentId: 'linwu',
+        appId: 'shopping',
+        title: '氛围价样本-shop',
+        content: '',
+        metadata: {
+          status: 'wanted',
+          platformStyle: 'generic',
+          itemName: '氛围价样本-shop',
+          imaginedPrice: '约一杯奶茶钱',
+        },
+        source: 'manual',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        updatedAt: '2026-05-15T10:00:00.000Z',
+      },
+    ]);
+
+    renderShoppingApp();
+    /** 无 amount → 主价位降级显示 imaginedPrice 原文。 */
+    expect(await screen.findByText('约一杯奶茶钱')).toBeInTheDocument();
+    /** 没有 amount，行金额 testid 不会渲染。 */
+    expect(screen.queryByTestId('phone-shopping-row-amount-imp-1')).not.toBeInTheDocument();
   });
 
   it('discard calls discardShoppingDraft and never leaks into appendAppEntry / confirm', async () => {

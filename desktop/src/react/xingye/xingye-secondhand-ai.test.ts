@@ -60,6 +60,41 @@ describe('normalizeSecondhandDraftResult', () => {
     expect(r?.delta).toBe('卖不上价');
     expect(r?.buyer).toBe('楼下收旧货的');
     expect(r?.tags?.length).toBeLessThanOrEqual(8);
+    // 「小几百」无法定量，amount + currency 应该留空（fallback 路径）
+    expect(r?.amount).toBeUndefined();
+    expect(r?.currency).toBeUndefined();
+  });
+
+  it('locally parses askingPrice → amount + currency (modern, ancient, fantasy, future)', () => {
+    const cases: Array<{ price: string; amount: number; currency: string }> = [
+      { price: '¥820', amount: 820, currency: '¥' },
+      { price: '$22', amount: 22, currency: '$' },
+      { price: '一两银子', amount: 1, currency: '两银子' },
+      { price: '三百文', amount: 300, currency: '文' },
+      { price: '两个大洋', amount: 2, currency: '大洋' },
+      { price: '2 枚金币', amount: 2, currency: '金币' },
+      { price: '80 信用点', amount: 80, currency: '信用点' },
+    ];
+    for (const { price, amount, currency } of cases) {
+      const r = normalizeSecondhandDraftResult({
+        itemName: '旧物',
+        askingPrice: price,
+        content: 'x',
+      });
+      expect(r?.amount, `failed on "${price}"`).toBe(amount);
+      expect(r?.currency, `failed on "${price}"`).toBe(currency);
+    }
+  });
+
+  it('leaves amount + currency undefined for fallback "约/换" writings', () => {
+    const r = normalizeSecondhandDraftResult({
+      itemName: '旧物',
+      askingPrice: '约换一只新壶',
+      content: 'x',
+    });
+    expect(r?.askingPrice).toBe('约换一只新壶');
+    expect(r?.amount).toBeUndefined();
+    expect(r?.currency).toBeUndefined();
   });
 });
 
