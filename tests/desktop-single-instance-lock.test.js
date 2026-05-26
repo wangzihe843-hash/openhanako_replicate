@@ -46,7 +46,7 @@ describe("desktop client single instance lock", () => {
     );
   });
 
-  it("keeps production in Electron's default userData namespace", () => {
+  it("keeps production in the legacy Electron userData namespace", () => {
     const { app } = makeApp();
     const defaultHome = path.join("C:", "Users", "me", ".hanako");
 
@@ -57,7 +57,10 @@ describe("desktop client single instance lock", () => {
     });
 
     expect(acquired).toBe(true);
-    expect(app.setPath).not.toHaveBeenCalled();
+    expect(app.setPath).toHaveBeenCalledWith(
+      "userData",
+      path.join("C:", "Users", "me", "AppData", "Roaming", "Hanako"),
+    );
     expect(app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 

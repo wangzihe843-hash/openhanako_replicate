@@ -49,6 +49,35 @@ describe("Qwen utility 路径端到端：quirks 合入 model 后被 qwen.js 识�
     expect(Object.prototype.hasOwnProperty.call(result, "enable_thinking")).toBe(false);
   });
 
+  it("dashscope chat mode + reasoningLevel off → enable_thinking: false", () => {
+    const payload = {
+      model: "qwen3.5-plus",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const model = {
+      id: "qwen3.5-plus",
+      provider: "dashscope",
+      reasoning: true,
+      quirks: ["enable_thinking"],
+    };
+    const result = normalizeProviderPayload(payload, model, { mode: "chat", reasoningLevel: "off" });
+    expect(result.enable_thinking).toBe(false);
+  });
+
+  it("non-Qwen chat mode + reasoningLevel off → 不注入 enable_thinking", () => {
+    const payload = {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const model = {
+      id: "gpt-5.4",
+      provider: "openai",
+      reasoning: true,
+    };
+    const result = normalizeProviderPayload(payload, model, { mode: "chat", reasoningLevel: "off" });
+    expect(Object.prototype.hasOwnProperty.call(result, "enable_thinking")).toBe(false);
+  });
+
   it("siliconflow + Qwen 思考模型 + utility mode → enable_thinking: false（覆盖原本被遗漏的 16 个模型）", () => {
     const payload = {
       model: "qwen3-plus",

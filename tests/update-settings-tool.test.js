@@ -35,6 +35,7 @@ function makeMockPrefs(initial = {}) {
 function makeMockEngine(overrides = {}) {
   const prefs = makeMockPrefs(overrides.prefsData || {});
   const focusAgentId = overrides.currentAgentId || "focus";
+  const eventBus = overrides.eventBus || { request: vi.fn() };
   return {
     preferences: prefs,
     _prefs: prefs,
@@ -64,6 +65,7 @@ function makeMockEngine(overrides = {}) {
     setBridgeMediaPublicBaseUrl: vi.fn(function (v) { prefs.setBridgeMediaPublicBaseUrl(v); }),
     setThinkingLevel: vi.fn(function (v) { prefs.setThinkingLevel(v); }),
     setDefaultModel: vi.fn(),
+    getEventBus: vi.fn(() => eventBus),
     currentSessionPath: "/sessions/test",
     emitSessionEvent: vi.fn(),
   };
@@ -75,22 +77,6 @@ function makeMockConfirmStore(action = "confirmed", value = undefined) {
       confirmId: "test-confirm-id",
       promise: Promise.resolve({ action, value }),
     })),
-  };
-}
-
-function makeDeferredConfirmStore() {
-  let resolve;
-  const promise = new Promise((res) => { resolve = res; });
-  return {
-    store: {
-      create: vi.fn(() => ({
-        confirmId: "test-confirm-id",
-        promise,
-      })),
-    },
-    resolve(result) {
-      resolve(result);
-    },
   };
 }
 
@@ -115,6 +101,37 @@ describe("update-settings-tool", () => {
     });
     return { tool, engine, confirmStore };
   }
+
+  it("apply locale executes directly and returns a settings_update payload without confirmation", async () => {
+    const emitEvent = vi.fn();
+    const { tool, engine, confirmStore } = buildTool({ prefsData: { locale: "zh-CN" } });
+    tool.execute = createUpdateSettingsTool({
+      getEngine: () => engine,
+      getAgent: () => engine.agent,
+      getConfirmStore: () => confirmStore,
+      getSessionPath: () => "/sessions/test",
+      emitEvent,
+    }).execute;
+
+    const result = await tool.execute("c-direct", { action: "apply", key: "locale", value: "en" });
+
+    expect(confirmStore.create).not.toHaveBeenCalled();
+    expect(emitEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settings_confirmation" }), expect.anything());
+    expect(engine.setLocale).toHaveBeenCalledWith("en");
+    expect(result.details.settingsUpdate).toMatchObject({
+      status: "applied",
+      action: "core.apply",
+      key: "locale",
+      changes: [
+        expect.objectContaining({
+          key: "locale",
+          before: "zh-CN",
+          after: "en",
+        }),
+      ],
+    });
+    expect(result.content[0].text).toContain("Locale");
+  });
 
   describe("sandbox toggle — this 绑定 + boolean 转换", () => {
     it("apply sandbox=false 实际关闭沙盒", async () => {
@@ -218,8 +235,7 @@ describe("update-settings-tool", () => {
       expect(engine.agent.updateConfig).not.toHaveBeenCalled();
     });
 
-    it("确认期间切焦点后，models.chat 仍写回工具所属 agent", async () => {
-      const deferred = makeDeferredConfirmStore();
+    it("models.chat 仍写回工具所属 agent，而不是当前 focus agent", async () => {
       const ownerAgent = {
         id: "owner",
         memoryMasterEnabled: true,
@@ -237,15 +253,13 @@ describe("update-settings-tool", () => {
       const tool = createUpdateSettingsTool({
         getEngine: () => engine,
         getAgent: () => ownerAgent,
-        getConfirmStore: () => deferred.store,
+        getConfirmStore: () => makeMockConfirmStore(),
         getSessionPath: () => "/sessions/test",
         emitEvent: vi.fn(),
       });
 
-      const run = tool.execute("c-model-switch", { action: "apply", key: "models.chat", value: "openai/gpt-4o" });
       engine.currentAgentId = "other";
-      deferred.resolve({ action: "confirmed" });
-      await run;
+      await tool.execute("c-model-switch", { action: "apply", key: "models.chat", value: "openai/gpt-4o" });
 
       expect(engine.setDefaultModel).toHaveBeenCalledWith("gpt-4o", "openai", { agentId: "owner" });
     });
@@ -253,7 +267,6 @@ describe("update-settings-tool", () => {
 
   describe("agent-scoped routing", () => {
     it("home_folder apply 使用工具所属 agent，而不是当前 focus agent", async () => {
-      const deferred = makeDeferredConfirmStore();
       const ownerAgent = {
         id: "owner",
         memoryMasterEnabled: true,
@@ -270,15 +283,13 @@ describe("update-settings-tool", () => {
       const tool = createUpdateSettingsTool({
         getEngine: () => engine,
         getAgent: () => ownerAgent,
-        getConfirmStore: () => deferred.store,
+        getConfirmStore: () => makeMockConfirmStore(),
         getSessionPath: () => "/sessions/test",
         emitEvent: vi.fn(),
       });
 
-      const run = tool.execute("c-home-folder", { action: "apply", key: "home_folder", value: "/tmp/owner-home" });
       engine.currentAgentId = "other";
-      deferred.resolve({ action: "confirmed" });
-      await run;
+      await tool.execute("c-home-folder", { action: "apply", key: "home_folder", value: "/tmp/owner-home" });
 
       expect(engine.setHomeFolder).toHaveBeenCalledWith("owner", "/tmp/owner-home");
     });
@@ -335,19 +346,51 @@ describe("update-settings-tool", () => {
     });
   });
 
-  describe("confirmation rejected/aborted", () => {
-    it("rejected 返回取消消息", async () => {
-      const { tool } = buildTool({}, "rejected");
-      const result = await tool.execute("c7", { action: "apply", key: "locale", value: "en" });
-      const text = result.content[0].text;
-      expect(text).not.toContain("已将");
-    });
+  describe("MCP settings actions", () => {
+    it("routes MCP connector add through the backend event bus with the tool owner agent", async () => {
+      const request = vi.fn(async () => ({
+        settingsUpdate: {
+          status: "applied",
+          action: "mcp.connector.add",
+          key: "mcp.connector.github",
+          title: "MCP connector added",
+          summary: "Added GitHub.",
+          changes: [{ key: "mcp.connector.github", label: "GitHub", before: "", after: "added" }],
+        },
+      }));
+      const { tool, confirmStore } = buildTool({
+        agentId: "owner",
+        eventBus: { request },
+      });
 
-    it("aborted（session 关闭）不返回成功消息", async () => {
-      const { tool } = buildTool({}, "aborted");
-      const result = await tool.execute("c8", { action: "apply", key: "locale", value: "en" });
-      const text = result.content[0].text;
-      expect(text).not.toContain("已将");
+      const result = await tool.execute("c-mcp-add", {
+        action: "apply",
+        key: "mcp.connector.add",
+        value: JSON.stringify({
+          name: "GitHub",
+          transport: "remote",
+          url: "https://mcp.github.com/mcp",
+          authType: "bearer",
+          authorizationToken: "secret-token",
+        }),
+      });
+
+      expect(confirmStore.create).not.toHaveBeenCalled();
+      expect(request).toHaveBeenCalledWith("mcp:settings-action", {
+        action: "mcp.connector.add",
+        agentId: "owner",
+        payload: {
+          name: "GitHub",
+          transport: "remote",
+          url: "https://mcp.github.com/mcp",
+          authType: "bearer",
+          authorizationToken: "secret-token",
+        },
+      });
+      expect(result.details.settingsUpdate).toMatchObject({
+        action: "mcp.connector.add",
+        status: "applied",
+      });
     });
   });
 });

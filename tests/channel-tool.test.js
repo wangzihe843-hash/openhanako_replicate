@@ -51,6 +51,28 @@ describe("channel tool membership contract", () => {
     expect(fs.readdirSync(channelsDir)).toEqual([]);
   });
 
+  it("rejects create when a requested member has no agent directory", async () => {
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    });
+
+    const result = await tool.execute("call-missing-member", {
+      action: "create",
+      name: "mixed",
+      members: ["bob", "ghost"],
+    });
+
+    expect(result.details).toMatchObject({
+      action: "create",
+      error: "Agent not found: ghost",
+    });
+    expect(fs.readdirSync(channelsDir)).toEqual([]);
+  });
+
   it("rejects read when the agent is not a channel member", async () => {
     const { id } = await createChannel(channelsDir, {
       id: "team",

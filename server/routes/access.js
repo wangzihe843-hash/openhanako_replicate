@@ -85,12 +85,8 @@ export function createAccessRoute({
         listenHost,
         listenPort,
       }, { now: now() });
-      if (typeof runtimeState.applyNetworkConfig === "function") {
-        runtimeState.applyNetworkConfig(network);
-      } else {
-        runtimeState.mode = network.mode;
-        runtimeState.listenHost = network.listenHost;
-      }
+      runtimeState.configuredMode = network.mode;
+      runtimeState.configuredListenHost = network.listenHost;
       recordSecurityAuditEvent(c, engine, {
         action: "access.network.update",
         target: "server-network",
@@ -231,12 +227,13 @@ function createNetworkSummary(network, runtimeState, listLanAddresses) {
   const lanAddresses = listLanAddresses();
   const localServerUrl = buildServerUrl("127.0.0.1", actualPort);
   const candidateLanServerUrl = buildLanServerUrl(lanAddresses, network.listenPort);
-  const lanServerUrl = network.mode === "lan" && lanAddresses.length > 0
+  const lanRuntimeActive = runtimeMode === "lan" && runtimeHost === "0.0.0.0";
+  const lanServerUrl = lanRuntimeActive && lanAddresses.length > 0
     ? buildServerUrl(lanAddresses[0], actualPort)
     : null;
   const localMobileUrl = buildMobileUrl("127.0.0.1", actualPort);
   const candidateLanMobileUrl = buildLanMobileUrl(lanAddresses, network.listenPort);
-  const lanMobileUrl = network.mode === "lan" && lanAddresses.length > 0
+  const lanMobileUrl = lanRuntimeActive && lanAddresses.length > 0
     ? buildMobileUrl(lanAddresses[0], actualPort)
     : null;
   return {

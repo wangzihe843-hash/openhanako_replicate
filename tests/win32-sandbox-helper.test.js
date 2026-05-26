@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWin32SandboxTokenDiagnosticArgs,
   buildWin32HanaWriteAclCleanupArgs,
   buildWin32LegacyAclDiagnosticArgs,
   buildWin32LegacyProfileCleanupArgs,
@@ -44,6 +45,34 @@ describe("buildWin32SandboxHelperArgs", () => {
       "C:\\work",
       "--diagnose-legacy-acl",
       "C:\\Users\\Hana\\.hanako\\.ephemeral",
+    ]);
+  });
+
+  it("builds token diagnostic args without changing the executable contract", () => {
+    expect(buildWin32SandboxTokenDiagnosticArgs({
+      cwd: "C:\\work",
+      executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      args: ["-NoLogo", "-Command", "Write-Output ok"],
+      grants: {
+        writePaths: ["C:\\work"],
+        optionalWritePaths: ["C:\\Users\\Hana\\.hanako\\.ephemeral"],
+        denyWritePaths: ["C:\\work\\protected-cache"],
+      },
+    })).toEqual([
+      "--diagnose-token",
+      "--cwd",
+      "C:\\work",
+      "--writable-root",
+      "C:\\work",
+      "--writable-root-optional",
+      "C:\\Users\\Hana\\.hanako\\.ephemeral",
+      "--deny-write",
+      "C:\\work\\protected-cache",
+      "--",
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "-NoLogo",
+      "-Command",
+      "Write-Output ok",
     ]);
   });
 

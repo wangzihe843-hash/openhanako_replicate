@@ -12,6 +12,18 @@ describe("MCP runtime policy", () => {
     expect(toMcpToolId("github.com", "search/repositories")).toBe("github_com_search_repositories");
   });
 
+  it("marks MCP dynamic tools as legacy Pi-signature tools", () => {
+    const tool = createMcpToolDefinition({
+      connectorId: "github",
+      toolName: "search",
+      getGlobalEnabled: () => true,
+      getAgentConfig: vi.fn(async () => ({})),
+      callTool: vi.fn(),
+    });
+
+    expect(tool.invocationStyle).toBe("pi_tool");
+  });
+
   it("requires global, server, and tool-level agent enablement before exposing a tool", () => {
     const enabledAgent = {
       mcp: {
@@ -253,6 +265,99 @@ describe("MCP runtime policy", () => {
     });
     expect(connector.authorizationToken).toBe("********");
     expect(connector.oauthClientSecret).toBe("********");
+  });
+
+  it("surfaces connector start errors in public state", async () => {
+    const stored = {
+      enabled: true,
+      connectors: [
+        {
+          id: "local",
+          name: "Local",
+          command: "npx",
+          args: ["-y", "broken-mcp"],
+        },
+      ],
+    };
+    const runtime = new McpRuntime({
+      dataDir: "/tmp/mcp-test",
+      config: {
+        get: vi.fn(() => stored),
+        set: vi.fn(),
+      },
+      registerTool: vi.fn(() => () => {}),
+      bus: { request: vi.fn() },
+      log: console,
+    }, {
+      clientFactory: () => ({
+        running: false,
+        start: vi.fn(async () => {
+          throw new Error("spawn EINVAL");
+        }),
+        stop: vi.fn(async () => {}),
+      }),
+    });
+
+    await expect(runtime.startConnector("local")).rejects.toThrow("spawn EINVAL");
+
+    expect(runtime.getState().connectors[0]).toMatchObject({
+      id: "local",
+      status: "stopped",
+      error: "spawn EINVAL",
+    });
+  });
+
+  it("executes settings actions through the runtime and returns a settings update", async () => {
+    let stored = { enabled: false, connectors: [] };
+    const runtime = new McpRuntime({
+      dataDir: "/tmp/mcp-test",
+      config: {
+        get: vi.fn(() => stored),
+        set: vi.fn((_key, value) => {
+          stored = value;
+        }),
+      },
+      registerTool: vi.fn(() => () => {}),
+      bus: { request: vi.fn() },
+      log: console,
+    });
+
+    const result = await runtime.handleSettingsAction({
+      action: "mcp.connector.add",
+      agentId: "hana",
+      payload: {
+        name: "GitHub",
+        transport: "remote",
+        url: "https://mcp.github.com/mcp",
+        authType: "bearer",
+        authorizationToken: "secret-token",
+        enableGlobal: true,
+      },
+    });
+
+    expect(stored.enabled).toBe(true);
+    expect(stored.connectors[0]).toMatchObject({
+      id: "GitHub",
+      name: "GitHub",
+      url: "https://mcp.github.com/mcp",
+      authorizationToken: "secret-token",
+    });
+    expect(result.settingsUpdate).toMatchObject({
+      status: "applied",
+      action: "mcp.connector.add",
+      key: "mcp.connector.GitHub",
+      changes: [
+        expect.objectContaining({
+          key: "mcp.connector.GitHub",
+          after: "added",
+        }),
+        expect.objectContaining({
+          key: "mcp.enabled",
+          after: "true",
+        }),
+      ],
+    });
+    expect(result.settingsUpdate.summary).not.toContain("secret-token");
   });
 
   it("returns an explicit tool error when MCP is globally disabled at call time", async () => {

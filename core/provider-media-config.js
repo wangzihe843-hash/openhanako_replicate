@@ -17,14 +17,36 @@ function modelType(providerId, model) {
   return model.type || lookupKnown(providerId, model.id)?.type || "chat";
 }
 
-function normalizeMediaModelEntry(model) {
-  if (!isPlainObject(model)) return null;
-  const id = typeof model.id === "string" ? model.id.trim() : "";
+function inferImageProtocolId(providerId, modelId) {
+  if (providerId === "openai-codex-oauth") return "openai-codex-responses-image";
+  if (providerId === "openai" && String(modelId || "").startsWith("gpt-image")) return "openai-images";
+  if (providerId === "openai" && String(modelId || "").startsWith("dall-e")) return "openai-images";
+  if (providerId === "volcengine" && String(modelId || "").includes("seedream")) return "volcengine-images";
+  if (providerId === "dashscope" && String(modelId || "").startsWith("wan")) return "dashscope-wan-images";
+  if (providerId === "dashscope" && String(modelId || "").startsWith("qwen-image-2")) return "dashscope-qwen-multimodal-image";
+  if (providerId === "dashscope" && String(modelId || "").startsWith("qwen-image")) return "dashscope-qwen-text2image";
+  if (providerId === "minimax") return "minimax-images";
+  if (providerId === "gemini") return "gemini-generate-content-image";
+  return "";
+}
+
+function normalizeMediaModelEntry(providerId, model) {
+  const id = isPlainObject(model) ? (typeof model.id === "string" ? model.id.trim() : "") : String(model || "").trim();
   if (!id) return null;
+  if (!isPlainObject(model)) {
+    const next = { id };
+    const protocolId = inferImageProtocolId(providerId, id);
+    if (protocolId) next.protocolId = protocolId;
+    return next;
+  }
   const { type: _type, display_name: displayName, ...rest } = model;
   const next = { ...rest, id };
   if (displayName !== undefined && next.displayName === undefined && next.name === undefined) {
     next.name = displayName;
+  }
+  if (!next.protocolId && !next.protocol_id) {
+    const protocolId = inferImageProtocolId(providerId, id);
+    if (protocolId) next.protocolId = protocolId;
   }
   return next;
 }
@@ -60,7 +82,7 @@ export function normalizeProviderMediaConfigMap(rawProviders) {
 
     for (const model of models) {
       if (modelType(providerId, model) === "image") {
-        const mediaModel = normalizeMediaModelEntry(model);
+        const mediaModel = normalizeMediaModelEntry(providerId, model);
         if (mediaModel) imageModels.push(mediaModel);
         changed = true;
       } else {
@@ -94,7 +116,7 @@ export function migrateProviderMediaConfig(hanakoHome, log = () => {}) {
   if (!changed) return false;
 
   const header =
-    "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+    "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
     "# 由设置页面管理\n\n";
   const data = { ...existing, providers };
   const yamlStr = header + YAML.dump(data, {

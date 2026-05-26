@@ -1,6 +1,6 @@
 ---
 name: hana-plugin-creator
-description: Create Hana plugin scaffolds and guide users through beginner or developer plugin planning, capability checks, manifest setup, runtime tools, iframe UI, SDK templates, and install-ready plugin directories. Use when Hanako/Codex needs to explain what Hana plugins can do, help a user describe a plugin idea, check whether the SDK supports it, or generate/update a Hana plugin with @hana/plugin-runtime, @hana/plugin-sdk, and @hana/plugin-components.
+description: Create Hana plugin scaffolds and guide users through beginner or developer plugin planning, capability checks, manifest setup, runtime tools, iframe UI, SDK templates, and install-ready plugin directories. Use when HanaAgent/Codex needs to explain what Hana plugins can do, help a user describe a plugin idea, check whether the SDK supports it, or generate/update a Hana plugin with @hana/plugin-runtime, @hana/plugin-sdk, and @hana/plugin-components.
 metadata:
   default-enabled: false
 ---
@@ -19,9 +19,9 @@ Choose the user mode this way:
 - If the user explicitly asks for SDK/API/build details or gives code-level requirements, use developer mode.
 - If memory is unavailable, disabled, or uncertain, ask: `你想我用哪种方式帮你创建插件？A. 边讲边做 B. 开发者模式`
 
-Beginner mode tone: encouraging, concrete, and guided. Say that the user can describe the feature in plain language, Hanako will help turn it into a plugin plan and scaffold, and Hanako can answer questions at any step. Ask:
+Beginner mode tone: encouraging, concrete, and guided. Say that the user can describe the feature in plain language, HanaAgent will help turn it into a plugin plan and scaffold, and HanaAgent can answer questions at any step. Ask:
 
-1. 你希望 Hanako 多一个什么能力？
+1. 你希望 HanaAgent 多一个什么能力？
 2. 这个能力是让 Agent 自动调用，还是让你点界面使用？
 3. 它需要界面、文件、联网、外部平台、账号权限吗？
 

@@ -200,7 +200,7 @@ describe('DeskSection workspace watching', () => {
     expect(screen.getByRole('tree')).toBeTruthy();
     fireEvent.click(screen.getByRole('treeitem', { name: /notes/ }));
 
-    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes');
+    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
     expect(useStore.getState().deskExpandedPaths).toEqual(['notes']);
 
     act(() => {
@@ -216,6 +216,59 @@ describe('DeskSection workspace watching', () => {
     });
 
     expect(screen.getByText('chapter.md')).toBeTruthy();
+  });
+
+  it('force-refreshes cached folders when expanding them again', async () => {
+    useStore.setState({
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [{ name: 'notes', isDir: true }],
+        notes: [{ name: 'old.md', isDir: false }],
+      },
+      deskExpandedPaths: [],
+    } as never);
+    const { DeskSection } = await import('../../components/DeskSection');
+
+    render(<DeskSection />);
+
+    fireEvent.click(screen.getByRole('treeitem', { name: /notes/ }));
+
+    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
+  });
+
+  it('matches Windows workspace watch events case-insensitively', async () => {
+    const { DeskSection } = await import('../../components/DeskSection');
+    const { WorkspaceFileWatchBridge } = await import('../../components/right-workspace/WorkspaceFileWatchBridge');
+
+    useStore.setState({
+      deskBasePath: 'C:\\Users\\me\\Desk',
+      deskCurrentPath: '',
+      deskTreeFilesByPath: {
+        '': [{ name: 'Notes', isDir: true }],
+        Notes: [],
+      },
+      deskExpandedPaths: ['Notes'],
+      deskDirtyTreePaths: [],
+    } as never);
+
+    render(
+      <>
+        <WorkspaceFileWatchBridge />
+        <DeskSection />
+      </>,
+    );
+    mocks.loadDeskTreeFiles.mockClear();
+
+    await act(async () => {
+      emitWorkspaceChanged?.({
+        rootPath: 'c:\\users\\me\\desk\\notes',
+        changedPath: 'c:\\users\\me\\desk\\notes\\new.md',
+        affectedDir: 'c:\\users\\me\\desk\\notes',
+        eventType: 'add',
+      });
+    });
+
+    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('Notes', { force: true });
   });
 
   it('starts an app file drag from tree rows so workspace files can be moved or attached', async () => {

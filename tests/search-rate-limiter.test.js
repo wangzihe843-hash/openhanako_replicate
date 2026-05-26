@@ -57,6 +57,44 @@ describe("SearchRateLimiter", () => {
     ]);
   });
 
+  it("allows a small concurrent burst for AnySearch free searches", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const limiter = createSearchRateLimiter({ random: () => 0 });
+    const starts = [];
+    const releases = [];
+
+    const calls = Array.from({ length: 4 }, (_, index) => (
+      limiter.run("anysearch_free", "api", async () => {
+        starts.push([index, Date.now()]);
+        await new Promise((resolve) => {
+          releases[index] = resolve;
+        });
+        return index;
+      })
+    ));
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+    ]);
+
+    releases[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ]);
+
+    releases[1]();
+    releases[2]();
+    releases[3]();
+    await expect(Promise.all(calls)).resolves.toEqual([0, 1, 2, 3]);
+  });
+
   it("holds subsequent calls after a rate limit error until Retry-After plus jitter", async () => {
     vi.useFakeTimers({ now: 0 });
     const limiter = createSearchRateLimiter({ random: () => 0.5 });

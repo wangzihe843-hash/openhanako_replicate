@@ -1,5 +1,8 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { toSlash, baseName, parseCSV, isImageFile, parseMoodFromContent } from '../../utils/format';
+import { toSlash, baseName, parseCSV, isImageFile, parseMoodFromContent, injectCopyButtons } from '../../utils/format';
 
 describe('toSlash', () => {
   it('反斜杠转正斜杠', () => {
@@ -88,5 +91,39 @@ describe('parseMoodFromContent (format.ts)', () => {
     const result = parseMoodFromContent('plain text');
     expect(result.mood).toBeNull();
     expect(result.text).toBe('plain text');
+  });
+});
+
+describe('injectCopyButtons', () => {
+  it('adds an icon-only copy button and shows copied state after click', async () => {
+    window.t = ((key: string) => {
+      if (key === 'attach.copy') return '复制';
+      if (key === 'attach.copied') return '已复制';
+      return key;
+    }) as typeof window.t;
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const container = document.createElement('div');
+    container.innerHTML = '<pre><code>const x = 1;</code></pre>';
+
+    injectCopyButtons(container);
+
+    const button = container.querySelector<HTMLButtonElement>('.copy-btn');
+    expect(button).toBeInstanceOf(HTMLButtonElement);
+    expect(button?.querySelector('svg.copy-btn-icon')).toBeInstanceOf(SVGSVGElement);
+    expect(button?.textContent).toBe('');
+    expect(button?.dataset.copied).toBe('false');
+    expect(button?.dataset.copiedLabel).toBe('已复制');
+    expect(button?.getAttribute('aria-label')).toBe('复制');
+
+    button?.click();
+    await Promise.resolve();
+
+    expect(writeText).toHaveBeenCalledWith('const x = 1;');
+    expect(button?.dataset.copied).toBe('true');
+    expect(button?.getAttribute('aria-label')).toBe('已复制');
   });
 });

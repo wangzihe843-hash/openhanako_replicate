@@ -23,7 +23,7 @@ function readJson(filePath) {
 
 function writeProvidersYaml(filePath, raw, providers) {
   const header =
-    "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+    "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
     "# 由设置页面管理\n\n";
   atomicWriteSync(
     filePath,

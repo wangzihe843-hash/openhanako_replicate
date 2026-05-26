@@ -6,6 +6,7 @@ import { loadModels } from '../utils/ui-helpers';
 import { activateWorkspaceDesk } from '../stores/desk-actions';
 import { loadChannels } from '../stores/channel-actions';
 import { applyEditorTypography } from '../editor/typography';
+import { refreshPreviewItemsFromFile } from '../utils/preview-file-refresh';
 // @ts-expect-error — shared JS module
 import { mergeWorkspaceHistory } from '../../../../shared/workspace-history.js';
 
@@ -154,6 +155,16 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
       }
       break;
     }
+    case 'skills-changed': {
+      useStore.setState((state: any) => ({
+        skillCatalogVersion: (Number(state.skillCatalogVersion) || 0) + 1,
+      }));
+      window.dispatchEvent(new CustomEvent('hana-skills-changed', { detail: data || {} }));
+      if (options.source === 'server') {
+        window.platform?.settingsChanged?.('skills-changed', data || {});
+      }
+      break;
+    }
     case 'agent-created':
     case 'agent-deleted':
       loadAgents();
@@ -192,6 +203,11 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
     }
     case 'agent-workspace-changed':
       handleAgentWorkspaceChanged(data);
+      break;
+    case 'markdown-cover-updated':
+      if (typeof data.filePath === 'string' && data.filePath) {
+        void refreshPreviewItemsFromFile(data.filePath);
+      }
       break;
     case 'theme-changed':
       window.setTheme(data.theme);

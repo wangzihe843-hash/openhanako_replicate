@@ -16,7 +16,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-input, 4px);
   padding: 0.45rem 0.65rem;
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transition: border-color var(--duration-slow) var(--ease-out);
 }
@@ -86,7 +86,7 @@
   color: var(--text-light);
   background: none;
   border: none;
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transition: background var(--duration-fast);
 }
@@ -123,6 +123,6 @@
   background-image: url(../../assets/textures/rice-paper.png);
   background-repeat: repeat;
   background-size: 160px;
-  background-attachment: fixed;
+  background-attachment: var(--paper-texture-attachment, fixed);
   background-blend-mode: var(--paper-texture-card-blend-mode);
 }

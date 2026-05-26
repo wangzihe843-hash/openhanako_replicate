@@ -18,7 +18,7 @@ describe('PreferencesManager editor typography preferences', () => {
 
     expect(prefs.getEditor()).toEqual({
       markdown: {
-        bodyFontSize: 16,
+        bodyFontSize: 15,
         heading1FontSize: 24,
         heading2FontSize: 20,
         heading3FontSize: 18,

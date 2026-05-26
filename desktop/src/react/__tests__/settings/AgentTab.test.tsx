@@ -63,9 +63,7 @@ vi.mock('../../settings/tabs/agent/YuanSelector', () => ({
 }));
 
 vi.mock('../../settings/tabs/agent/AgentMemory', () => ({
-  MemorySection: ({ isViewingOther }: { isViewingOther: boolean }) => (
-    <div data-testid="is-viewing-other">{String(isViewingOther)}</div>
-  ),
+  MemorySection: () => <div data-testid="memory-section" />,
 }));
 
 vi.mock('../../settings/tabs/agent/AgentToolsSection', () => ({
@@ -114,14 +112,13 @@ describe('AgentTab settings agent selection', () => {
     render(<AgentTab />);
 
     expect(screen.getByTestId('selected-agent')).toHaveTextContent('hana');
-    expect(screen.getByTestId('is-viewing-other')).toHaveTextContent('false');
+    expect(screen.getByTestId('memory-section')).toBeInTheDocument();
 
     act(() => {
       useSettingsStore.setState({ settingsAgentId: 'deepseek' });
     });
 
     expect(screen.getByTestId('selected-agent')).toHaveTextContent('deepseek');
-    expect(screen.getByTestId('is-viewing-other')).toHaveTextContent('true');
   });
 
   it('confirms character-card export from the live preview overlay', async () => {

@@ -81,6 +81,7 @@ function makePoller(overrides = {}) {
     store: mockStore,
     registry: mockRegistry,
     bus: mockBus,
+    dataDir: "/tmp/image-gen-data",
     generatedDir: "/tmp/image-gen-generated",
     log,
     registerSessionFile: overrides.registerSessionFile,
@@ -129,6 +130,39 @@ describe("Poller", () => {
     poller.start();
     poller.add("task1");
     expect(poller.hasPending("task1")).toBe(true);
+    poller.stop();
+  });
+
+  it("re-adding a cancelled task clears the cancellation fence for retry", async () => {
+    const task = {
+      taskId: "task1",
+      adapterId: "test-adapter",
+      status: "pending",
+      submitState: "submitted",
+      adapterTaskId: "provider-task-1",
+      files: [],
+      createdAt: new Date().toISOString(),
+      sessionPath: "/sessions/main.jsonl",
+    };
+    const { poller, mockStore, mockAdapter } = makePoller({
+      adapter: makeAdapter({ query: vi.fn(async () => ({ status: "success", files: [] })) }),
+      store: {
+        get: vi.fn(() => task),
+        update: vi.fn(() => task),
+      },
+    });
+
+    poller.start();
+    poller.add("task1");
+    poller.cancel("task1");
+    poller.add("task1");
+
+    await poller.checkNow("task1");
+
+    expect(mockAdapter.query).toHaveBeenCalledWith("provider-task-1", expect.any(Object));
+    expect(mockStore.update).toHaveBeenCalledWith("task1", expect.objectContaining({
+      status: "done",
+    }));
     poller.stop();
   });
 
@@ -199,7 +233,73 @@ describe("Poller", () => {
 
     expect(mockAdapter.query).toHaveBeenCalledWith(
       "task1",
-      expect.objectContaining({ generatedDir: "/tmp/image-gen-generated" })
+      expect.objectContaining({
+        dataDir: "/tmp/image-gen-data",
+        generatedDir: "/tmp/image-gen-generated",
+      })
+    );
+
+    poller.stop();
+  });
+
+  it("does not query while submit is still running and no provider taskId exists", async () => {
+    const mockAdapter = makeAdapter({
+      query: vi.fn(async () => ({ status: "pending" })),
+    });
+    const { poller, mockStore } = makePoller({ adapter: mockAdapter });
+
+    mockStore.get.mockReturnValue({
+      taskId: "local-task",
+      adapterId: "test-adapter",
+      adapterTaskId: null,
+      submitState: "submitting",
+      status: "pending",
+      files: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    poller.start();
+    poller.add("local-task");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(mockAdapter.query).not.toHaveBeenCalled();
+    expect(poller.hasPending("local-task")).toBe(true);
+
+    poller.stop();
+  });
+
+  it("queries provider taskId while preserving the local taskId for deferred delivery", async () => {
+    const mockAdapter = makeAdapter({
+      query: vi.fn(async () => ({ status: "success", files: ["abc.png"] })),
+    });
+    const { poller, mockStore, mockBus } = makePoller({ adapter: mockAdapter });
+
+    mockStore.get.mockReturnValue({
+      taskId: "local-task",
+      adapterId: "test-adapter",
+      adapterTaskId: "remote-task",
+      submitState: "submitted",
+      status: "pending",
+      files: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    poller.start();
+    poller.add("local-task");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      "remote-task",
+      expect.objectContaining({
+        dataDir: "/tmp/image-gen-data",
+        generatedDir: "/tmp/image-gen-generated",
+      }),
+    );
+    expect(mockBus.request).toHaveBeenCalledWith(
+      "deferred:resolve",
+      expect.objectContaining({ taskId: "local-task", files: ["abc.png"] }),
     );
 
     poller.stop();
@@ -495,11 +595,27 @@ describe("Poller", () => {
   // ── recover pending from store on start ───────────────────────────────────
 
   it("recovers pending tasks from the store on start", () => {
-    const { poller, mockStore } = makePoller({
+    const { poller, mockStore, mockBus } = makePoller({
       store: {
         listPending: vi.fn(() => [
-          { taskId: "recovered1", adapterId: "test-adapter", status: "pending", createdAt: new Date().toISOString() },
-          { taskId: "recovered2", adapterId: "test-adapter", status: "pending", createdAt: new Date().toISOString() },
+          {
+            taskId: "recovered1",
+            adapterId: "test-adapter",
+            status: "pending",
+            type: "image",
+            prompt: "moon",
+            sessionPath: "/sessions/main.jsonl",
+            createdAt: new Date().toISOString(),
+          },
+          {
+            taskId: "recovered2",
+            adapterId: "test-adapter",
+            status: "pending",
+            type: "image",
+            prompt: "sun",
+            sessionPath: "/sessions/main.jsonl",
+            createdAt: new Date().toISOString(),
+          },
         ]),
         get: vi.fn(() => null),
         update: vi.fn(),
@@ -510,6 +626,16 @@ describe("Poller", () => {
 
     expect(poller.hasPending("recovered1")).toBe(true);
     expect(poller.hasPending("recovered2")).toBe(true);
+    expect(mockBus.request).toHaveBeenCalledWith("deferred:register", expect.objectContaining({
+      taskId: "recovered1",
+      sessionPath: "/sessions/main.jsonl",
+      meta: expect.objectContaining({
+        type: "image-generation",
+        deliveryIntent: "ui_only",
+        triggerParentTurn: false,
+        notifyAgentOnFailure: true,
+      }),
+    }));
 
     poller.stop();
   });

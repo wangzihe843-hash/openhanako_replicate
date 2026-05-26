@@ -22,11 +22,10 @@ export const MODEL_CATALOG = {
     { id: "doubao-seedream-5-0-lite-260128", name: "Seedream 5.0 Lite", aliases: ["5.0", "5.0-lite"] },
   ],
   openai: [
-    { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },
+    { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"] },
+    { id: "gpt-image-1-mini", name: "GPT Image 1 Mini", aliases: ["1-mini", "mini"] },
     { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"] },
     { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"] },
-    { id: "gpt-image-1-mini", name: "GPT Image 1 Mini", aliases: ["1-mini", "mini"] },
-    { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"] },
   ],
   "openai-codex-oauth": [
     { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },

@@ -28,7 +28,8 @@ let _wsRetryDelay = 1000;
 const WS_RETRY_MAX = 30000;
 let _wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let _wsResumeVersion = 0;
-const WS_MAX_RETRIES = 20;
+const WS_FAST_RETRY_LIMIT = 20;
+const WS_SLOW_RETRY_DELAY = 60_000;
 let _wsRetryCount = 0;
 
 // 注入循环依赖的 handlers
@@ -67,13 +68,14 @@ export function connectWebSocket(port?: string, token?: string): void {
     useStore.setState({ wsState: 'connected', wsReconnectAttempt: 0, compactingSessions: [] });
 
     const s = useStore.getState();
-    if (s.currentSessionPath && s.streamingSessions.includes(s.currentSessionPath)) {
+    const streamingPaths = Array.from(new Set((s.streamingSessions || []).filter(Boolean)));
+    if (streamingPaths.length > 0) {
       const myVersion = ++_wsResumeVersion;
-      const targetPath = s.currentSessionPath;
       Promise.resolve().then(async () => {
         if (myVersion !== _wsResumeVersion) return;
-        if (useStore.getState().currentSessionPath !== targetPath) return;
-        requestStreamResume(targetPath);
+        for (const targetPath of streamingPaths) {
+          requestStreamResume(targetPath);
+        }
       }).catch((err) => {
         console.error('[ws] reconnect resume failed:', err);
       });
@@ -100,13 +102,14 @@ export function connectWebSocket(port?: string, token?: string): void {
     setStatus('status.disconnected', false);
     _wsRetryCount++;
 
-    if (_wsRetryCount <= WS_MAX_RETRIES) {
-      useStore.setState({ wsState: 'reconnecting', wsReconnectAttempt: _wsRetryCount });
+    useStore.setState({ wsState: 'reconnecting', wsReconnectAttempt: _wsRetryCount });
+    if (_wsRetryCount <= WS_FAST_RETRY_LIMIT) {
       _wsRetryTimer = setTimeout(() => connectWebSocket(), _wsRetryDelay);
       _wsRetryDelay = Math.min(_wsRetryDelay * 2, WS_RETRY_MAX);
     } else {
-      useStore.setState({ wsState: 'disconnected' });
+      _wsRetryTimer = setTimeout(() => connectWebSocket(), WS_SLOW_RETRY_DELAY);
     }
+    (_wsRetryTimer as unknown as { unref?: () => void })?.unref?.();
   };
 
   _ws.onerror = () => {

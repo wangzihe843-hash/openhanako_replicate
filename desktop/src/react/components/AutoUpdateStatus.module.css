@@ -65,7 +65,7 @@
   background: transparent;
   border: 1px solid var(--overlay-medium, rgba(0, 0, 0, 0.12));
   border-radius: 2px;
-  cursor: pointer;
+  cursor: default;
   display: inline-flex;
   align-items: center;
   justify-content: center;

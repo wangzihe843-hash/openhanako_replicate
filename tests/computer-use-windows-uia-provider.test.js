@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWindowsUiaProvider } from "../core/computer-use/providers/windows-uia-provider.js";
+import { WINDOWS_UIA_HELPER_SCRIPT } from "../core/computer-use/providers/windows-uia-script.js";
 import { COMPUTER_USE_ERRORS } from "../core/computer-use/errors.js";
 
 function helperResult(data) {
@@ -20,6 +21,73 @@ function makeRunner(handler) {
 }
 
 describe("Windows UIA provider", () => {
+  it("does not assign PowerShell automatic variables in the UIA helper", () => {
+    const automaticVariables = new Set([
+      "$$",
+      "$?",
+      "$^",
+      "$_",
+      "args",
+      "consolefilename",
+      "enabledexperimentalfeatures",
+      "error",
+      "event",
+      "eventargs",
+      "eventsubscriber",
+      "executioncontext",
+      "false",
+      "foreach",
+      "home",
+      "host",
+      "input",
+      "iscoreclr",
+      "islinux",
+      "ismacos",
+      "iswindows",
+      "lastexitcode",
+      "matches",
+      "myinvocation",
+      "nestedpromptlevel",
+      "null",
+      "pid",
+      "profile",
+      "psboundparameters",
+      "pscmdlet",
+      "pscommandpath",
+      "psculture",
+      "psdebugcontext",
+      "psedition",
+      "pshome",
+      "psitem",
+      "psscriptroot",
+      "pssenderinfo",
+      "psuiculture",
+      "psversiontable",
+      "pwd",
+      "sender",
+      "shellid",
+      "stacktrace",
+      "switch",
+      "this",
+      "true",
+    ]);
+    const assignmentPattern = /(?:^|[^\w])(?:\[[^\]]+\]\s*)?\$([A-Za-z_][\w]*)\s*(?:=|\+=|-=|\*=|\/=|%=|\+\+|--)/g;
+    const violations = [];
+
+    for (const [index, rawLine] of WINDOWS_UIA_HELPER_SCRIPT.split(/\r?\n/).entries()) {
+      const line = rawLine.replace(/#.*/, "");
+      let match = assignmentPattern.exec(line);
+      while (match) {
+        if (automaticVariables.has(match[1].toLowerCase())) {
+          violations.push(`${index + 1}: ${rawLine.trim()}`);
+        }
+        match = assignmentPattern.exec(line);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   it("reports unavailable on non-Windows platforms", async () => {
     const provider = createWindowsUiaProvider({ platform: "darwin" });
 

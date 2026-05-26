@@ -77,4 +77,37 @@ describe("sandbox workspace roots", () => {
     expect(guard.check(snapshotSkill, "write").allowed).toBe(false);
     expect(guard.check(sessionFile, "write").allowed).toBe(false);
   });
+
+  it("treats cwd and explicit runtime roots as scoped write roots", () => {
+    const agentDir = path.join(tempRoot, "agents", "hana");
+    const hanakoHome = path.join(tempRoot, "home");
+    const workspace = path.join(tempRoot, "project");
+    const cwd = path.join(tempRoot, "scratch");
+    const runtimeRoot = path.join(tempRoot, "runtime-cache");
+    for (const dir of [agentDir, hanakoHome, workspace, cwd, runtimeRoot]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      hanakoHome,
+      workspace,
+      workspaceFolders: [],
+      cwd,
+      runtimeWritablePaths: [runtimeRoot],
+      mode: "standard",
+    });
+    const guard = new PathGuard(policy);
+
+    expect(policy.access).toEqual({
+      read: "all",
+      write: "scoped",
+      network: "on",
+    });
+    expect(policy.workspaceRoots).toContain(path.resolve(cwd));
+    expect(policy.writablePaths).toContain(path.resolve(cwd));
+    expect(policy.writablePaths).toContain(runtimeRoot);
+    expect(guard.check(path.join(cwd, "generated.py"), "write").allowed).toBe(true);
+    expect(guard.check(path.join(runtimeRoot, "tool-cache.tmp"), "write").allowed).toBe(true);
+  });
 });

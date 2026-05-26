@@ -2,7 +2,7 @@
  * AssistantMessage — 助手消息，遍历 ContentBlock 按类型渲染
  */
 
-import { memo, useCallback, useMemo, useState } from 'react';
+import { Component, memo, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { StreamingMarkdownContent } from './StreamingMarkdownContent';
 import { MoodBlock } from './MoodBlock';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -10,6 +10,7 @@ import { ToolGroupBlock } from './ToolGroupBlock';
 import { PluginCardBlock } from './PluginCardBlock';
 import { SubagentCard } from './SubagentCard';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
+import { SettingsUpdateCard } from './SettingsUpdateCard';
 import { MessageActions } from './MessageActions';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { BLOCK_RENDERERS } from './block-renderers';
@@ -45,6 +46,10 @@ interface Props {
   messageRef?: (element: HTMLDivElement | null) => void;
 }
 
+function isContentBlockCandidate(block: unknown): block is ContentBlock {
+  return !!block && typeof block === 'object' && typeof (block as { type?: unknown }).type === 'string';
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   showAvatar,
@@ -74,7 +79,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   const displayYuan = displayInfo.yuan || globalYuan;
 
   const blocks = useMemo(
-    () => (message.blocks || []).filter(block => block.type !== 'session_confirmation' || block.surface !== 'input'),
+    () => (message.blocks || [])
+      .filter(isContentBlockCandidate)
+      .filter(block => block.type !== 'session_confirmation' || block.surface !== 'input'),
     [message.blocks],
   );
 
@@ -145,17 +152,24 @@ export const AssistantMessage = memo(function AssistantMessage({
       )}
       <div className={`${styles.message} ${styles.messageAssistant}`}>
         {blocks.map((block, i) => (
-          <ContentBlockView
+          <ContentBlockErrorBoundary
             key={`block-${i}`}
-            block={block}
-            agentName={displayName}
-            agentId={agentId}
-            yuan={displayYuan}
-            sessionPath={sessionPath}
             messageId={message.id}
+            blockType={block.type}
             blockIdx={i}
-            isStreaming={isStreaming}
-          />
+          >
+            <ContentBlockView
+              block={block}
+              agentName={displayName}
+              agentId={agentId}
+              yuan={displayYuan}
+              sessionPath={sessionPath}
+              messageId={message.id}
+              blockIdx={i}
+              isStreaming={isStreaming}
+              readOnly={readOnly}
+            />
+          </ContentBlockErrorBoundary>
         ))}
       </div>
       {!readOnly && (
@@ -190,9 +204,47 @@ function RegenerateIcon() {
   );
 }
 
+class ContentBlockErrorBoundary extends Component<{
+  messageId: string;
+  blockType: string;
+  blockIdx: number;
+  children: ReactNode;
+}, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[AssistantMessage] content block render failed', {
+      messageId: this.props.messageId,
+      blockType: this.props.blockType,
+      blockIdx: this.props.blockIdx,
+      componentStack: info.componentStack,
+    }, error);
+  }
+
+  componentDidUpdate(prevProps: Readonly<{ messageId: string; blockType: string; blockIdx: number; children: ReactNode }>) {
+    if (!this.state.hasError) return;
+    if (
+      prevProps.messageId !== this.props.messageId ||
+      prevProps.blockIdx !== this.props.blockIdx ||
+      prevProps.blockType !== this.props.blockType
+    ) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
 // ── ContentBlock 分发 ──
 
-const ContentBlockView = memo(function ContentBlockView({ block, agentName, agentId, yuan: _yuan, sessionPath, messageId, blockIdx, isStreaming }: {
+const ContentBlockView = memo(function ContentBlockView({ block, agentName, agentId, yuan: _yuan, sessionPath, messageId, blockIdx, isStreaming, readOnly }: {
   block: ContentBlock;
   agentName: string;
   agentId?: string | null;
@@ -201,6 +253,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
   messageId: string;
   blockIdx: number;
   isStreaming: boolean;
+  readOnly: boolean;
 }) {
   switch (block.type) {
     case 'thinking':
@@ -230,7 +283,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
         />
       );
     case 'media_generation':
-      return <MediaGenerationBlock block={block} />;
+      return <MediaGenerationBlock block={block} sessionPath={sessionPath} readOnly={readOnly} />;
     default: {
       const Renderer = BLOCK_RENDERERS[block.type];
       return Renderer ? <Renderer block={block} agentId={agentId} /> : null;
@@ -251,29 +304,73 @@ const EXT_LABELS: Record<string, string> = {
   png: 'Image', jpg: 'Image', jpeg: 'Image', gif: 'Image', webp: 'Image',
 };
 
-const MediaGenerationBlock = memo(function MediaGenerationBlock({ block }: { block: any }) {
-  const failed = block.status === 'failed' || block.status === 'aborted';
-  const kindLabel = block.kind === 'video' ? '视频' : '图片';
-  const title = failed
+const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, sessionPath, readOnly }: { block: any; sessionPath: string; readOnly: boolean }) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
+  const [localBlock, setLocalBlock] = useState<any | null>(null);
+  const viewBlock = localBlock?.taskId === block.taskId ? { ...block, ...localBlock } : block;
+  const failed = viewBlock.status === 'failed' || viewBlock.status === 'aborted';
+  const kindLabel = viewBlock.kind === 'video' ? '视频' : '图片';
+  const canRetry = failed && viewBlock.kind !== 'video' && !readOnly && typeof viewBlock.taskId === 'string';
+  const titleText = failed
     ? `${kindLabel}生成失败`
     : `${kindLabel}生成中`;
-  const reason = typeof block.reason === 'string' ? block.reason : '';
-  const prompt = typeof block.prompt === 'string' ? block.prompt : '';
+  const reason = retryError || (typeof viewBlock.reason === 'string' ? viewBlock.reason : '');
+  const prompt = typeof viewBlock.prompt === 'string' ? viewBlock.prompt : '';
+
+  useEffect(() => {
+    setLocalBlock(null);
+    setRetrying(false);
+    setRetryError('');
+  }, [block]);
+
+  const handleRetry = useCallback(async () => {
+    if (!canRetry || retrying) return;
+    setRetrying(true);
+    setRetryError('');
+    try {
+      const res = await hanaFetch(`/api/plugins/image-gen/tasks/${encodeURIComponent(viewBlock.taskId)}/retry`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => null);
+      const placeholder = data?.placeholder || {
+        type: 'media_generation',
+        taskId: viewBlock.taskId,
+        kind: 'image',
+        status: 'pending',
+        ...(prompt ? { prompt } : {}),
+      };
+      setLocalBlock(placeholder);
+      useStore.getState().resolveBlockByTaskId(sessionPath, viewBlock.taskId, placeholder);
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : '重新生成失败');
+      setRetrying(false);
+    }
+  }, [canRetry, prompt, retrying, sessionPath, viewBlock.taskId]);
 
   return (
     <div className={`${styles.mediaGenerationCard}${failed ? ` ${styles.mediaGenerationCardFailed}` : ''}`}>
-      <div className={styles.mediaGenerationSurface} aria-hidden="true">
-        <div className={styles.mediaGenerationFrame}>
-          <span />
-          <span />
-          <span />
+      <div className={styles.mediaGenerationSurface}>
+        <div className={styles.mediaGenerationText}>
+          <div className={styles.mediaGenerationTitle} aria-label={failed ? titleText : `${titleText}...`}>
+            <span>{titleText}</span>
+            {!failed && <span className={styles.mediaGenerationDots} aria-hidden="true" />}
+          </div>
+          {(failed ? reason : prompt) && (
+            <div className={styles.mediaGenerationPrompt}>{failed ? reason : prompt}</div>
+          )}
+          {canRetry && (
+            <button
+              type="button"
+              className={styles.mediaGenerationRetryButton}
+              onClick={handleRetry}
+              disabled={retrying}
+              aria-label={`重新生成${kindLabel}`}
+            >
+              {retrying ? '提交中' : '重新生成'}
+            </button>
+          )}
         </div>
-      </div>
-      <div className={styles.mediaGenerationText}>
-        <div className={styles.mediaGenerationTitle}>{title}</div>
-        {(failed ? reason : prompt) && (
-          <div className={styles.mediaGenerationPrompt}>{failed ? reason : prompt}</div>
-        )}
       </div>
     </div>
   );
@@ -325,7 +422,7 @@ const ImageOutputCard = memo(function ImageOutputCard({ fileId, filePath, label,
         fileId,
         blockIdx: ctx.blockIdx,
       })}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'default' }}
     >
       {downloadUrl && (
         <a
@@ -523,7 +620,7 @@ const LegacyArtifactBlock = memo(function LegacyArtifactBlock({ block }: { block
   const expired = block.status === 'expired';
 
   return (
-    <div className={styles.legacyArtifactCard} onClick={handleClick} style={{ cursor: 'pointer' }}>
+    <div className={styles.legacyArtifactCard} onClick={handleClick} style={{ cursor: 'default' }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="9" x2="21" y2="9" />
@@ -570,7 +667,7 @@ const ScreenshotBlock = memo(function ScreenshotBlock({ block, sessionPath, mess
   };
 
   return (
-    <div className={styles.browserScreenshot} onClick={handleClick} style={{ cursor: 'pointer' }}>
+    <div className={styles.browserScreenshot} onClick={handleClick} style={{ cursor: 'default' }}>
       <img src={`data:${block.mimeType};base64,${block.base64}`} alt={window.t('chat.browserScreenshot')} />
     </div>
   );
@@ -583,7 +680,7 @@ const SkillBlock = memo(function SkillBlock({ block }: { block: any }) {
     ? block.installedSkillSource.filePath
     : block.skillFilePath;
   return (
-    <div className={styles.skillCard} onClick={() => openSkillPreview(block.skillName, skillFilePath)} style={{ cursor: 'pointer' }}>
+    <div className={styles.skillCard} onClick={() => openSkillPreview(block.skillName, skillFilePath)} style={{ cursor: 'default' }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2L2 7l10 5 10-5-10-5z" />
         <path d="M2 17l10 5 10-5" />
@@ -660,6 +757,10 @@ const SettingsConfirmBlock = memo(function SettingsConfirmBlock({ block }: { blo
   return <SettingsConfirmCard {...block} />;
 });
 
+const SettingsUpdateBlock = memo(function SettingsUpdateBlock({ block }: { block: any }) {
+  return <SettingsUpdateCard update={block.update} />;
+});
+
 // ── 注册所有物种 B 渲染器 ──
 // 注：`file` 与 `screenshot` 需 session 上下文（sessionPath/messageId/blockIdx），
 // 统一走 ContentBlockView 的 switch 内联分发，不注册到全局表中。
@@ -669,3 +770,4 @@ BLOCK_RENDERERS['plugin_card'] = PluginCardWrapper;
 BLOCK_RENDERERS['skill'] = SkillBlock;
 BLOCK_RENDERERS['cron_confirm'] = CronConfirmBlock;
 BLOCK_RENDERERS['settings_confirm'] = SettingsConfirmBlock;
+BLOCK_RENDERERS['settings_update'] = SettingsUpdateBlock;

@@ -123,13 +123,44 @@ export function injectCopyButtons(container: HTMLElement): void {
     if (pre.querySelector('.copy-btn')) continue;
     const btn = document.createElement('button');
     btn.className = 'copy-btn';
-    btn.textContent = t('attach.copy');
+    btn.type = 'button';
+    btn.title = t('attach.copy');
+    btn.setAttribute('aria-label', t('attach.copy'));
+    btn.dataset.copied = 'false';
+    btn.dataset.copiedLabel = t('attach.copied');
+
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'copy-btn-icon');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '1.7');
+    icon.setAttribute('stroke-linecap', 'round');
+    icon.setAttribute('stroke-linejoin', 'round');
+    icon.setAttribute('aria-hidden', 'true');
+    const rectBack = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rectBack.setAttribute('x', '8');
+    rectBack.setAttribute('y', '8');
+    rectBack.setAttribute('width', '10');
+    rectBack.setAttribute('height', '10');
+    rectBack.setAttribute('rx', '1.5');
+    const pathFront = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathFront.setAttribute('d', 'M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');
+    icon.append(rectBack, pathFront);
+    btn.appendChild(icon);
+
     btn.addEventListener('click', () => {
       const code = pre.querySelector('code');
       const text = code ? code.textContent : pre.textContent;
       navigator.clipboard.writeText(text || '').then(() => {
-        btn.textContent = t('attach.copied');
-        setTimeout(() => { btn.textContent = t('attach.copy'); }, 1500);
+        btn.dataset.copied = 'true';
+        btn.title = t('attach.copied');
+        btn.setAttribute('aria-label', t('attach.copied'));
+        setTimeout(() => {
+          btn.dataset.copied = 'false';
+          btn.title = t('attach.copy');
+          btn.setAttribute('aria-label', t('attach.copy'));
+        }, 1500);
       });
     });
     pre.style.position = 'relative';

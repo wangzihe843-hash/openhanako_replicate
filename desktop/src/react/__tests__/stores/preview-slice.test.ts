@@ -45,7 +45,10 @@ function createTestStore() {
     currentSessionPath: null,
     previewOpen: false,
     setPreviewOpen: (open: boolean) => set({ previewOpen: open }),
+    quoteCandidate: null,
+    quotedSelections: [],
     quotedSelection: null,
+    clearQuoteCandidate: () => set({ quoteCandidate: null }),
     clearQuotedSelection: () => set({ quotedSelection: null }),
   };
 

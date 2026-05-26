@@ -27,7 +27,7 @@ export async function execute(input) {
 }
 ```
 
-2. 打开 Hanako → 设置 → 插件，把文件夹拖进安装区（或压缩成 .zip 拖入）
+2. 打开 HanaAgent → 设置 → 插件，把文件夹拖进安装区（或压缩成 .zip 拖入）
 3. 安装后 Agent 立即可以调用 `my-plugin_hello` 工具
 4. 卸载：在插件页面点删除按钮
 
@@ -173,7 +173,7 @@ restricted 插件的 tool/command 代码在主进程运行，有完整的 Node.j
 }
 ```
 
-`minAppVersion`（可选）声明插件运行所需的最低 Hanako 版本。如果当前 app 版本低于该值，插件不会加载，状态标记为 `incompatible`。建议所有插件都声明此字段，避免用户在旧版本上遇到不兼容问题。
+`minAppVersion`（可选）声明插件运行所需的最低 HanaAgent 版本。如果当前 app 版本低于该值，插件不会加载，状态标记为 `incompatible`。建议所有插件都声明此字段，避免用户在旧版本上遇到不兼容问题。
 
 用户需要在设置 → 插件页面开启"允许全权插件"开关。**开关关着时，full-access 插件完全不会加载**（不会部分加载），直到用户主动打开开关。
 
@@ -210,6 +210,7 @@ export async function execute(input, toolCtx) {  // 必须
 - 自动加命名空间前缀：`pluginId_name`（如 `my-plugin_search`）
 - restricted 插件的 `toolCtx.bus` 只有 `emit/subscribe/request`，没有 `handle`
 - 新插件可以使用 `@hana/plugin-runtime` 的 `defineTool()` 获得类型和默认参数；当前静态 `tools/*.js` loader 仍读取命名导出。
+- 定时自动化的 `plugin_action` v0 复用工具入口：`pluginId/actionId` 会映射到 `pluginId_actionId` 工具。cron 只保存 `pluginId`、`actionId` 和 JSON 参数；插件作者写的静态 `tools/*.js` 与动态 `ctx.registerTool()` 工具都会收到 SDK 风格的 `(input, ctx)` 调用；插件缺失、工具缺失或插件被禁用时，任务执行失败并记录运行历史，不会自动降级成 Agent 会话。
 
 ```js
 import { defineTool } from '@hana/plugin-runtime';
@@ -503,8 +504,8 @@ CLI provider 必须使用结构化参数绑定。不要拼 shell 字符串；Han
 per-agent 和 per-session 配置要显式传归属：
 
 ```js
-await ctx.config.set("agentMode", "strict", { scope: "per-agent", agentId: "hanako" });
-const value = await ctx.config.get("agentMode", { scope: "per-agent", agentId: "hanako" });
+await ctx.config.set("agentMode", "strict", { scope: "per-agent", agentId: "agent-123" });
+const value = await ctx.config.get("agentMode", { scope: "per-agent", agentId: "agent-123" });
 ```
 
 ### Page（插件页面）⚡ full-access
@@ -836,7 +837,7 @@ this.register(this.ctx.registerTool({
 }));
 ```
 
-工具名自动加 `pluginId_` 前缀，通过 `register()` 在卸载时自动移除。
+工具名自动加 `pluginId_` 前缀，通过 `register()` 在卸载时自动移除。Hana 自己触发这类工具（例如定时自动化或 dev smoke test）时，也会按 `execute(input, ctx)` 调用动态工具。Hana 内部桥接层如果已经暴露 Pi 工具签名，可以显式设置 `invocationStyle: "pi_tool"` 保留旧调用约定。
 
 ### 后台任务（Background Tasks） ⚡ full-access
 

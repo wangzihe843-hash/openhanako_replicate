@@ -366,6 +366,33 @@ describe("persistence", () => {
     expect(t2.adapterId).toBe("midjourney");
   });
 
+  it("migrates old image-gen task rows to provider/model/protocol metadata", () => {
+    const dir = makeTmpDir();
+    fs.writeFileSync(path.join(dir, "tasks.json"), JSON.stringify([
+      {
+        taskId: "old-codex",
+        adapterId: "openai-codex-oauth",
+        batchId: "batch-1",
+        type: "image",
+        prompt: "a desk",
+        params: { prompt: "a desk", model: "gpt-image-2" },
+        status: "pending",
+      },
+    ]));
+
+    const store = new TaskStore(dir);
+    const task = store.get("old-codex");
+
+    expect(task.providerId).toBe("openai-codex-oauth");
+    expect(task.modelId).toBe("gpt-image-2");
+    expect(task.protocolId).toBe("openai-codex-responses-image");
+    expect(task.params).toMatchObject({
+      providerId: "openai-codex-oauth",
+      modelId: "gpt-image-2",
+      protocolId: "openai-codex-responses-image",
+    });
+  });
+
   it("starts with empty store when tasks.json does not exist", () => {
     const dir = makeTmpDir();
     const store = new TaskStore(dir);

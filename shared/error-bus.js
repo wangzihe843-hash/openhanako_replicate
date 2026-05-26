@@ -1,8 +1,7 @@
 // shared/error-bus.js
 import { AppError } from './errors.js';
-import redactor from './log-redactor.cjs';
+import { redactLogText, redactLogValue } from './log-redactor.js';
 
-const { redactLogText, redactLogValue } = redactor;
 
 export class ErrorBus {
   constructor() {

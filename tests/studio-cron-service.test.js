@@ -109,6 +109,37 @@ describe("StudioCronService", () => {
     }));
   });
 
+  it("imports legacy per-agent cron jobs with automation executor fields", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const agentsDir = path.join(root, "agents");
+    writeLegacyJobs(root, "agent-a", [
+      {
+        id: "job_1",
+        type: "cron",
+        schedule: "0 9 * * *",
+        prompt: "legacy prompt",
+        enabled: true,
+        model: "",
+      },
+    ]);
+
+    const service = new StudioCronService({
+      hanakoHome: root,
+      agentsDir,
+      getStudioId: () => "default",
+    });
+
+    const [job] = service.listJobs();
+    expect(job.trigger).toEqual({ kind: "cron", expression: "0 9 * * *" });
+    expect(job.executor).toMatchObject({
+      kind: "agent_session",
+      agentId: "agent-a",
+      prompt: "legacy prompt",
+    });
+    expect(job.createdBy).toEqual({ kind: "agent", agentId: "agent-a" });
+  });
+
   it("does not duplicate imported legacy jobs on later reads or service instances", () => {
     const root = makeRoot();
     roots.push(root);

@@ -64,7 +64,7 @@
     border: none;
     border-radius: var(--radius-md);
     padding: 0.4rem 1rem;
-    cursor: pointer;
+    cursor: default;
     transition: opacity var(--duration-fast);
 }
 
@@ -100,7 +100,7 @@
     color: var(--text-muted);
     font-size: 0.7rem;
     font-family: inherit;
-    cursor: pointer;
+    cursor: default;
     transition: color var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast);
     flex-shrink: 0;
 }
@@ -368,7 +368,7 @@
     font-size: 0.65rem;
     font-family: inherit;
     line-height: 1;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
     white-space: nowrap;
 }
@@ -474,7 +474,7 @@
     color: var(--text);
     font-family: inherit;
     text-align: left;
-    cursor: pointer;
+    cursor: default;
 }
 
 .searchResult:hover {
@@ -518,7 +518,7 @@
     color: var(--text-muted);
     font-size: 0.65rem;
     font-family: inherit;
-    cursor: pointer;
+    cursor: default;
     white-space: nowrap;
     flex-shrink: 0;
     transition: color var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast);
@@ -606,7 +606,7 @@
     color: var(--text);
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     text-align: left;
 }
 
@@ -661,7 +661,7 @@
     flex-direction: column;
     padding: 0.2rem 0.3rem;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant);
 }
 
@@ -702,7 +702,7 @@
     color: var(--accent);
     font-size: 0.68rem;
     font-family: inherit;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast);
     max-width: 100%;
     overflow: hidden;
@@ -884,13 +884,23 @@
     content: "— ";
 }
 
+.execLogRaw {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: 0.66rem;
+    line-height: 1.45;
+    color: var(--text-light);
+}
+
 .execLogDelete {
     margin-left: auto;
     flex-shrink: 0;
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     font-size: 0.72rem;
     padding: 0 0.2em;
     opacity: 0;

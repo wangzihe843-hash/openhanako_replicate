@@ -17,6 +17,7 @@ import { createTodoTool } from "../lib/tools/todo.js";
 import { createDeskManager } from "../lib/desk/desk-manager.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { createCronTool } from "../lib/tools/cron-tool.js";
+import { createAutomationTool } from "../lib/tools/automation-tool.js";
 import { createWebFetchTool } from "../lib/tools/web-fetch.js";
 import { createStageFilesTool } from "../lib/tools/output-file-tool.js";
 import { createArtifactTool } from "../lib/tools/artifact-tool.js";
@@ -113,6 +114,7 @@ export class Agent {
     this._deskManager = null;
     this._cronStore = null;
     this._cronTool = null;
+    this._automationTool = null;
     this._stageFilesTool = null;
     // Legacy compatibility only. Fresh sessions should write files and stage
     // them via stage_files; restored old sessions may still need this schema.
@@ -265,7 +267,11 @@ export class Agent {
         configPath: this.configPath,
         factStore: this._factStore,
         // 现场 resolve：每次 tick 拿到 yaml 最新凭证
-        getResolvedMemoryModel: () => this._resolveModel(this._memoryModel, this._config),
+        getResolvedMemoryModel: () => ({
+          ...this._resolveModel(this._memoryModel, this._config),
+          usageLedger: this._cb?.getEngine?.()?.usageLedger,
+          usageAgentId: this.id,
+        }),
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
         getTimezone: () => this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -328,6 +334,16 @@ export class Agent {
       getSessionWorkspaceFolders: (sp) => this._cb?.getSessionWorkspaceFolders?.(sp) || [],
       getHomeCwd: (agentId) => this._cb?.getHomeCwd?.(agentId),
     });
+    this._automationTool = createAutomationTool(this._cronStore, {
+      getAutoApprove: () => this._config?.desk?.cron_auto_approve !== false,
+      confirmStore: this._cb?.getConfirmStore?.(),
+      emitEvent: (event, sp) => { if (sp) this._cb?.emitEvent?.(event, sp); },
+      getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      getAgentId: () => this.id,
+      getSessionCwd: (sp) => this._cb?.getSessionCwd?.(sp),
+      getSessionWorkspaceFolders: (sp) => this._cb?.getSessionWorkspaceFolders?.(sp) || [],
+      getHomeCwd: (agentId) => this._cb?.getHomeCwd?.(agentId),
+    });
     this._stageFilesTool = createStageFilesTool({
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
@@ -361,6 +377,7 @@ export class Agent {
     this._currentStatusTool = createCurrentStatusTool({
       getTimezone: () => this._cb?.getTimezone?.() || "",
       getAgent: () => this,
+      getVisionBridge: () => this._cb?.getEngine?.()?.getVisionBridge?.() || null,
       getSessionModel: (sessionPath) => this._cb?.getEngine?.()?.getSessionByPath?.(sessionPath)?.model || null,
       getCurrentModel: () => this._cb?.getEngine?.()?.currentModel || null,
       getUiContext: (sessionPath) => this._cb?.getEngine?.()?.getUiContext?.(sessionPath) || null,
@@ -631,6 +648,7 @@ export class Agent {
       this._webFetchTool,
       this._todoTool,
       this._cronTool,
+      this._automationTool,
       this._stageFilesTool,
       ...legacyArtifactTools,
       this._channelTool,
@@ -849,6 +867,59 @@ export class Agent {
     return fill(raw);
   }
 
+  _formatTeamRoster(isZh, options = {}) {
+    const includeSelf = options.includeSelf !== false;
+    if (!this._listAgents) return "";
+    const allAgents = this._listAgents();
+    const others = allAgents.filter(a => a.id !== this.id);
+    if (others.length === 0) return "";
+    const rosterAgents = includeSelf ? allAgents : others;
+    return rosterAgents.map(a => {
+      const tag = a.id === this.id ? (isZh ? "（你）" : " (you)") : "";
+      const model = a.model ? ` [${a.model}]` : "";
+      const desc = a.summary ? ` — ${a.summary}` : "";
+      const nameLabel = a.name && a.name !== a.id ? `（${a.name}）` : "";
+      return `- \`${a.id}\`${nameLabel}${tag}${model}${desc}`;
+    }).join("\n");
+  }
+
+  buildMemoryReflectionSnapshot(options = {}) {
+    const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
+      ? options.forceMemoryEnabled
+      : null;
+    const memoryEnabled = typeof forceMemoryEnabled === "boolean"
+      ? forceMemoryEnabled
+      : this.memoryEnabled;
+    const isZh = String(this._config.locale || "").startsWith("zh");
+    const readFile = (filePath) => safeReadFile(filePath, "");
+
+    const pinnedMd = readFile(path.join(this.agentDir, "pinned.md")).trim();
+    const memoryMd = readFile(this.memoryMdPath).trim();
+    const hasMemory = memoryMd && memoryMd !== "（暂无记忆）" && memoryMd !== "(No memory yet)";
+    const existingMemory = memoryEnabled
+      ? [
+        pinnedMd
+          ? (isZh ? `# 置顶记忆\n\n${pinnedMd}` : `# Pinned Memories\n\n${pinnedMd}`)
+          : "",
+        hasMemory
+          ? (isZh ? `# 长期记忆\n\n${memoryMd}` : `# Long-Term Memory\n\n${memoryMd}`)
+          : "",
+      ].filter(Boolean).join("\n\n")
+      : "";
+
+    return {
+      version: 1,
+      locale: this._config.locale || "",
+      agentId: this.id,
+      agentName: this.agentName,
+      userName: this.userName,
+      identityAndPersonality: this.personality.trim(),
+      userProfile: readFile(path.join(this.userDir, "user.md")).trim(),
+      existingMemory,
+      roster: this._formatTeamRoster(isZh, { includeSelf: false }),
+    };
+  }
+
   /**
    * 组装 system prompt
    * @param {object} [options]
@@ -907,8 +978,8 @@ export class Agent {
     // 叙事顺序上先告诉模型"用户是谁"，再告诉它"你是谁、你和用户什么关系"。
     const parts = [
       isZh
-        ? "你运行在 OpenHanako 平台上，由 liliMozi 开发。项目主页：https://github.com/liliMozi/openhanako"
-        : "You are running on the OpenHanako platform, developed by liliMozi. Project page: https://github.com/liliMozi/openhanako",
+        ? "你运行在 HanaAgent 平台上（原名 OpenHanako），由 liliMozi 开发。项目主页：https://github.com/liliMozi/openhanako"
+        : "You are running on the HanaAgent platform (formerly OpenHanako), developed by liliMozi. Project page: https://github.com/liliMozi/openhanako",
     ];
     const platformPrompt = getPlatformPromptNote({ platform: process.platform });
     if (platformPrompt) {
@@ -1106,15 +1177,19 @@ export class Agent {
         "**Do not** launch the browser when web_search or web_fetch can do the job. Browser startup is expensive and opens a window that interrupts the user."
     );
 
-    // 设置工具路由
-    parts.push(isZh
-      ? "\n## 设置修改\n\n" +
-        "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
-        "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，不确定时先 search。"
-      : "\n## Settings Changes\n\n" +
-        "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
-        "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first."
-    );
+    // 设置工具路由只在工具可用时注入，用户关闭后 prompt 层也消失。
+    const disabledTools = Array.isArray(this._config?.tools?.disabled) ? this._config.tools.disabled : [];
+    const updateSettingsEnabled = !disabledTools.includes("update_settings");
+    if (updateSettingsEnabled) {
+      parts.push(isZh
+        ? "\n## 设置修改\n\n" +
+          "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
+          "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录、MCP 连接器）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，执行后用一句话报告修改结果；不确定时先 search。"
+        : "\n## Settings Changes\n\n" +
+          "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
+          "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory, MCP connectors), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly and report the result in one sentence; when unsure, search first."
+      );
+    }
 
     // 主动技能获取引导（仅在 allow_github_fetch 开启时注入）
     // learn_skills 从全局 preferences 读取
@@ -1154,18 +1229,9 @@ export class Agent {
 
     // 团队协作（仅当存在其他 agent 时注入）
     // Subagent 场景下跳过：subagent 没有 subagent 工具，知道其他 agent 也使不上
-    if (this._listAgents && !forSubagent) {
-      const myId = this.id;
-      const allAgents = this._listAgents();
-      const others = allAgents.filter(a => a.id !== myId);
-      if (others.length > 0) {
-        const roster = allAgents.map(a => {
-          const tag = a.id === myId ? (isZh ? "（你）" : " (you)") : "";
-          const model = a.model ? ` [${a.model}]` : "";
-          const desc = a.summary ? ` — ${a.summary}` : "";
-          const nameLabel = a.name && a.name !== a.id ? `（${a.name}）` : "";
-          return `- \`${a.id}\`${nameLabel}${tag}${model}${desc}`;
-        }).join("\n");
+    if (!forSubagent) {
+      const roster = this._formatTeamRoster(isZh);
+      if (roster) {
         parts.push(isZh
           ? `\n## 团队\n\n` +
             `你不是独自工作。当前环境中有多个 agent，各有不同的专长和模型：\n\n${roster}\n\n` +
@@ -1211,10 +1277,23 @@ export class Agent {
     );
 
     parts.push(isZh
+      ? "\n## 文件与命令工具使用\n\n" +
+        "查看文件和目录时优先用 read/grep/find/ls。\n" +
+        "修改已有源码文件时优先用 edit，新建完整文件或全量替换时用 write。\n" +
+        "运行测试、构建、包脚本、生成器和命令行工具时用 shell。\n" +
+        "结构化文件工具可用时，避免用 shell 重定向修改源码文件。"
+      : "\n## Tool Use For Files And Commands\n\n" +
+        "Use read/grep/find/ls to inspect files.\n" +
+        "Use edit for source-code changes to existing files and write for new complete files.\n" +
+        "Use shell for builds, tests, package scripts, generators, and command-line tools.\n" +
+        "Avoid shell redirection to modify source files when structured file tools are available."
+    );
+
+    parts.push(isZh
       ? "\n## 技能文件身份\n\n" +
-        "技能的运行时位置可能是会话冻结的源文件指针，也可能是旧会话遗留的快照副本。指针只冻结本次会话可见的技能身份；如果源文件已不存在，该技能视为不可用。`sessions/.skill-snapshots` 与 `session-files` 下的技能副本不是源文件，不能编辑。用户要求修改技能时，先定位真实源文件：工作台技能通常在当前工作目录的 `.agents/skills/<name>/SKILL.md`；安装后的用户技能或自学技能以安装工具返回的 `skill_source` 为准。找不到源文件时显式说明。"
+        "技能的运行时位置可能是会话冻结的源文件指针，也可能是旧会话遗留的快照副本。指针只冻结本次会话可见的技能身份；如果源文件已不存在，该技能视为不可用。`sessions/.skill-snapshots` 与 `session-files` 下的技能副本不是源文件，不能编辑。用户要求修改技能时，先定位真实源文件：工作台技能通常在当前工作目录的 `.agents/skills/<name>/SKILL.md`；安装后的用户技能以安装工具返回的 `skill_source` 为准。找不到源文件时显式说明。"
       : "\n## Skill File Identity\n\n" +
-        "A skill's runtime location may be a per-session source pointer, or a legacy snapshot copy from older sessions. A pointer freezes only the skill identity visible to this session; if the source file no longer exists, that skill is unavailable. Skill copies under `sessions/.skill-snapshots` and `session-files` are not source files and must not be edited. When the user asks to modify a skill, locate the real source file first: workspace skills usually live at `.agents/skills/<name>/SKILL.md` under the current working directory; installed user or learned skills should use the `skill_source` returned by install tools. If the source cannot be resolved, say so explicitly."
+        "A skill's runtime location may be a per-session source pointer, or a legacy snapshot copy from older sessions. A pointer freezes only the skill identity visible to this session; if the source file no longer exists, that skill is unavailable. Skill copies under `sessions/.skill-snapshots` and `session-files` are not source files and must not be edited. When the user asks to modify a skill, locate the real source file first: workspace skills usually live at `.agents/skills/<name>/SKILL.md` under the current working directory; installed user skills should use the `skill_source` returned by install tools. If the source cannot be resolved, say so explicitly."
     );
 
     // 记忆规则 + 置顶记忆 + 记忆（动态，后台 compile 会更新；按 session 快照）

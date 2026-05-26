@@ -18,6 +18,7 @@ interface SkillInfo {
 export function useSkillSlashItems({ enabled = true }: { enabled?: boolean } = {}): SlashItem[] {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const agentId = useStore(s => s.currentAgentId);
+  const skillCatalogVersion = useStore(s => s.skillCatalogVersion);
 
   useEffect(() => {
     if (!enabled) {
@@ -37,7 +38,7 @@ export function useSkillSlashItems({ enabled = true }: { enabled?: boolean } = {
       .catch(() => {});
     return () => { cancelled = true; };
     // skills 是 per-agent 的，不随 session 切换变化
-  }, [agentId, enabled]);
+  }, [agentId, enabled, skillCatalogVersion]);
 
   return useMemo(() =>
     skills

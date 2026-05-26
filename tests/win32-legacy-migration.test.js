@@ -5,7 +5,10 @@ import { EventEmitter } from "events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   collectWin32LegacySandboxMigrationTargets,
+  runWin32LegacySandboxProfileCleanup,
+  runWin32LegacySandboxRootCleanup,
   runWin32LegacySandboxMigration,
+  Win32LegacySandboxCleanupQueue,
 } from "../lib/sandbox/win32-legacy-migration.js";
 
 function dirent(name, directory = true) {
@@ -194,7 +197,7 @@ describe("Windows legacy sandbox migration", () => {
   it("skips once the cleanup marker has been written", async () => {
     const markerPath = path.join(makeTempDir(), "marker.json");
     fs.mkdirSync(path.dirname(markerPath), { recursive: true });
-    fs.writeFileSync(markerPath, JSON.stringify({ version: 2, status: "completed", completedAt: "2026-05-21T00:00:00.000Z" }));
+    fs.writeFileSync(markerPath, JSON.stringify({ version: 3, status: "completed", completedAt: "2026-05-22T00:00:00.000Z" }));
     const spawn = vi.fn();
 
     const result = await runWin32LegacySandboxMigration({
@@ -211,6 +214,32 @@ describe("Windows legacy sandbox migration", () => {
 
     expect(result).toMatchObject({ status: "skipped", reason: "already-completed" });
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("reruns cleanup for v2 markers so legacy capability SID ACLs are migrated", async () => {
+    const markerPath = path.join(makeTempDir(), "marker.json");
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    fs.writeFileSync(markerPath, JSON.stringify({ version: 2, status: "completed", completedAt: "2026-05-21T00:00:00.000Z" }));
+    const spawn = fakeSpawnFactory({ code: 0 });
+
+    const result = await runWin32LegacySandboxMigration({
+      platform: "win32",
+      cleanup: true,
+      helperPath: "C:\\Hanako\\hana-win-sandbox.exe",
+      markerPath,
+      targets: {
+        aclPaths: ["C:\\work"],
+        profileNames: [],
+      },
+      spawn,
+    });
+
+    expect(result.status).toBe("clean");
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf8"))).toMatchObject({
+      version: 3,
+      status: "completed",
+    });
   });
 
   it("maps helper exit codes and startup failures to stable statuses", async () => {
@@ -278,5 +307,118 @@ describe("Windows legacy sandbox migration", () => {
       platform: "win32",
       resolveHelper: () => null,
     })).resolves.toMatchObject({ status: "skipped", reason: "helper-unavailable" });
+  });
+
+  it("cleans a used sandbox root without deleting legacy profiles", async () => {
+    const markerPath = path.join(makeTempDir(), "cleanup-v4.json");
+    const spawn = fakeSpawnFactory({
+      code: 3,
+      stderr: "hana-win-sandbox: hana-write-acl-cleaned path=\"C:\\\\work\"",
+    });
+
+    const result = await runWin32LegacySandboxRootCleanup({
+      platform: "win32",
+      roots: ["C:\\work"],
+      profileNames: ["com.hanako.sandbox.1288.475900"],
+      cleanup: true,
+      helperPath: "C:\\Hanako\\hana-win-sandbox.exe",
+      markerPath,
+      spawn,
+      now: () => new Date("2026-05-25T06:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("findings");
+    expect(result.rootResults).toHaveLength(1);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledWith(
+      "C:\\Hanako\\hana-win-sandbox.exe",
+      [
+        "--cleanup-hana-write-acl",
+        "C:\\work",
+        "--legacy-appcontainer-profile",
+        "com.hanako.sandbox.1288.475900",
+        "--cleanup-legacy-acl",
+        "--diagnose-legacy-acl",
+        "C:\\work",
+      ],
+      expect.objectContaining({ windowsHide: true })
+    );
+    expect(spawn.mock.calls[0][1]).not.toContain("--cleanup-legacy-profile");
+    const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+    expect(Object.values(marker.roots)[0]).toMatchObject({
+      pathHash: expect.any(String),
+      status: "completed",
+      completedAt: "2026-05-25T06:00:00.000Z",
+    });
+    expect(JSON.stringify(marker)).not.toContain("C:\\work");
+  });
+
+  it("skips sandbox roots that already have a v4 cleanup marker", async () => {
+    const markerPath = path.join(makeTempDir(), "cleanup-v4.json");
+    await runWin32LegacySandboxRootCleanup({
+      platform: "win32",
+      roots: ["C:\\work"],
+      helperPath: "C:\\Hanako\\hana-win-sandbox.exe",
+      markerPath,
+      spawn: fakeSpawnFactory({ code: 0 }),
+      now: () => new Date("2026-05-25T06:00:00.000Z"),
+    });
+    const spawn = vi.fn();
+
+    const result = await runWin32LegacySandboxRootCleanup({
+      platform: "win32",
+      roots: ["C:\\work"],
+      helperPath: "C:\\Hanako\\hana-win-sandbox.exe",
+      markerPath,
+      spawn,
+    });
+
+    expect(result.status).toBe("skipped");
+    expect(result.rootResults).toEqual([
+      expect.objectContaining({ status: "skipped", reason: "already-completed" }),
+    ]);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("does not mark legacy profiles completed when the helper is unavailable", async () => {
+    const markerPath = path.join(makeTempDir(), "cleanup-v4.json");
+
+    const result = await runWin32LegacySandboxProfileCleanup({
+      platform: "win32",
+      profileNames: ["com.hanako.sandbox.1288.475900"],
+      markerPath,
+      resolveHelper: () => null,
+    });
+
+    expect(result).toMatchObject({ status: "skipped", reason: "helper-unavailable" });
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("defers queued cleanup while a sandbox root lease is active", async () => {
+    const markerPath = path.join(makeTempDir(), "cleanup-v4.json");
+    const spawn = fakeSpawnFactory({ code: 0 });
+    const queue = new Win32LegacySandboxCleanupQueue({
+      platform: "win32",
+      helperPath: "C:\\Hanako\\hana-win-sandbox.exe",
+      markerPath,
+      spawn,
+      schedule: false,
+    });
+
+    const lease = queue.beginRootUse(["C:\\work"]);
+    queue.enqueueRoots(["C:\\work"]);
+    await queue.drain();
+    expect(spawn).not.toHaveBeenCalled();
+
+    queue.endRootUse(lease);
+    await queue.drain();
+
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      "--cleanup-hana-write-acl",
+      "C:\\work",
+      "--diagnose-legacy-acl",
+      "C:\\work",
+    ]));
   });
 });

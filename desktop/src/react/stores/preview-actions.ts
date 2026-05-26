@@ -159,10 +159,7 @@ export function togglePreviewPanel(forceOpen?: boolean): void {
   const s = useStore.getState();
   const open = forceOpen ?? !s.previewOpen;
   if (open === s.previewOpen) return;
-  // 收起预览面板时只清「锚定在预览里的浮动划词引用」（带 anchorRect）。
-  // 不带 anchorRect 的引用是别处刻意放进来的（如秘密空间「去和 TA 聊聊」），
-  // 与预览无关，面板开合不能把它吃掉。
-  if (!open && s.quotedSelection?.anchorRect) s.clearQuotedSelection();
+  if (!open && s.quoteCandidate?.sourceKind === 'preview') s.clearQuoteCandidate();
   s.setPreviewOpen(open);
   updateLayout();
   schedulePersistCurrentWorkspaceUiState();

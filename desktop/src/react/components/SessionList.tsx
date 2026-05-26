@@ -27,6 +27,12 @@ interface BrowserSessionState {
   unavailableReason: string | null;
 }
 
+interface SessionSearchResult extends Session {
+  matchKind: 'title' | 'content';
+  snippet: string;
+  score?: number;
+}
+
 function normalizeBrowserSessionStates(data: unknown): Record<string, BrowserSessionState> {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
   const result: Record<string, BrowserSessionState> = {};
@@ -52,6 +58,34 @@ function normalizeBrowserSessionStates(data: unknown): Record<string, BrowserSes
   return result;
 }
 
+function normalizeSessionSearchResults(data: unknown): SessionSearchResult[] {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const results = (data as { results?: unknown }).results;
+  if (!Array.isArray(results)) return [];
+
+  return results.flatMap((raw): SessionSearchResult[] => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const item = raw as Partial<SessionSearchResult>;
+    if (typeof item.path !== 'string' || !item.path) return [];
+    return [{
+      path: item.path,
+      title: typeof item.title === 'string' ? item.title : null,
+      firstMessage: typeof item.firstMessage === 'string' ? item.firstMessage : '',
+      modified: typeof item.modified === 'string' ? item.modified : '',
+      messageCount: typeof item.messageCount === 'number' ? item.messageCount : 0,
+      agentId: typeof item.agentId === 'string' ? item.agentId : null,
+      agentName: typeof item.agentName === 'string' ? item.agentName : null,
+      cwd: typeof item.cwd === 'string' ? item.cwd : null,
+      pinnedAt: typeof item.pinnedAt === 'string' ? item.pinnedAt : null,
+      hasSummary: item.hasSummary === true,
+      rcAttachment: null,
+      matchKind: item.matchKind === 'content' ? 'content' : 'title',
+      snippet: typeof item.snippet === 'string' ? item.snippet : '',
+      score: typeof item.score === 'number' ? item.score : undefined,
+    }];
+  });
+}
+
 
 // ── 主组件 ──
 
@@ -72,7 +106,15 @@ function SessionListInner() {
   const browserBySession = useStore(s => s.browserBySession);
 
   const [browserSessions, setBrowserSessions] = useState<Record<string, BrowserSessionState>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [titleResults, setTitleResults] = useState<SessionSearchResult[]>([]);
+  const [contentResults, setContentResults] = useState<SessionSearchResult[]>([]);
+  const [searchStatus, setSearchStatus] = useState<'idle' | 'title' | 'content' | 'done' | 'error'>('idle');
   const closingBrowserSessionsRef = useRef(new Set<string>());
+  const searchQueryTrimmed = searchQuery.trim();
+  const sessionsSignature = useMemo(() => (
+    sessions.map(s => `${s.path}:${s.title || ''}:${s.modified || ''}:${s.messageCount}`).join('\n')
+  ), [sessions]);
 
   const setVisibleBrowserSessions = useCallback((data: unknown) => {
     const states = normalizeBrowserSessionStates(data);
@@ -100,6 +142,54 @@ function SessionListInner() {
     };
   }, [sessions, browserBySession, setVisibleBrowserSessions]);
 
+  useEffect(() => {
+    if (!searchQueryTrimmed) {
+      setTitleResults([]);
+      setContentResults([]);
+      setSearchStatus('idle');
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setTitleResults([]);
+    setContentResults([]);
+    setSearchStatus('title');
+
+    const timer = window.setTimeout(async () => {
+      const encodedQuery = encodeURIComponent(searchQueryTrimmed);
+      try {
+        const titleRes = await hanaFetch(`/api/sessions/search?q=${encodedQuery}&phase=title&limit=20`, {
+          signal: controller.signal,
+          timeout: 12_000,
+        });
+        const titleData = await titleRes.json();
+        if (cancelled) return;
+        setTitleResults(normalizeSessionSearchResults(titleData));
+        setSearchStatus('content');
+
+        const contentRes = await hanaFetch(`/api/sessions/search?q=${encodedQuery}&phase=content&limit=20`, {
+          signal: controller.signal,
+          timeout: 12_000,
+        });
+        const contentData = await contentRes.json();
+        if (cancelled) return;
+        setContentResults(normalizeSessionSearchResults(contentData));
+        setSearchStatus('done');
+      } catch (err) {
+        if (controller.signal.aborted || cancelled) return;
+        console.warn('[sessions] search failed:', err);
+        setSearchStatus('error');
+      }
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQueryTrimmed, sessionsSignature]);
+
   const handleCloseBrowserSession = useCallback(async (sessionPath: string) => {
     closingBrowserSessionsRef.current.add(sessionPath);
     setBrowserSessions(prev => {
@@ -125,56 +215,246 @@ function SessionListInner() {
     }
   }, []);
 
-  if (sessions.length === 0) {
-    return <div className={styles.sessionEmpty}>{t('sidebar.empty')}</div>;
-  }
-
   const sections = buildSessionSections(sessions, { mode: 'time' });
   const activeSessionPath = pendingSessionSwitchPath || currentSessionPath;
+  const titleResultPaths = new Set(titleResults.map(result => result.path));
+  const visibleContentResults = contentResults.filter(result => !titleResultPaths.has(result.path));
+  const hasSearchResults = titleResults.length > 0 || visibleContentResults.length > 0;
+  const isSearching = !!searchQueryTrimmed;
+  const showEmptyState = sessions.length === 0 && !isSearching;
+  const content = showEmptyState ? (
+    <div className={styles.sessionEmpty}>{t('sidebar.empty')}</div>
+  ) : isSearching ? (
+    <SessionSearchResults
+      titleResults={titleResults}
+      contentResults={visibleContentResults}
+      status={searchStatus}
+      hasResults={hasSearchResults}
+      agents={agents}
+      activeSessionPath={activeSessionPath}
+      pendingNewSession={pendingNewSession}
+    />
+  ) : sections.map(section => {
+    const items = section.items.map(s => (
+      <SessionItem
+        key={s.path}
+        session={s}
+        isActive={!pendingNewSession && s.path === activeSessionPath}
+        isStreaming={streamingSessions.includes(s.path)}
+        isPinned={!!s.pinnedAt}
+        agents={agents}
+        browserState={browserSessions[s.path] || null}
+        onCloseBrowser={handleCloseBrowserSession}
+      />
+    ));
+
+    if (section.kind === 'pinned') {
+      return (
+        <section key={section.id} className={styles.pinnedSection}>
+          <div className={`${styles.sessionSectionTitle} ${styles.pinnedSectionTitle}`}>
+            <span>{t(section.titleKey)}</span>
+            <svg className={styles.pinnedTitleIcon} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 17v5" />
+              <path d="M5 17h14" />
+              <path d="M7 3h10l-2 9H9L7 3z" />
+              <path d="M9 12l-2 5h10l-2-5" />
+            </svg>
+          </div>
+          {items}
+        </section>
+      );
+    }
+
+    return (
+      <Fragment key={section.id}>
+        <div className={styles.sessionSectionTitle}>{t(section.titleKey)}</div>
+        {items}
+      </Fragment>
+    );
+  });
 
   return (
     <>
-      {sections.map(section => {
-        const items = section.items.map(s => (
-          <SessionItem
-            key={s.path}
-            session={s}
-            isActive={!pendingNewSession && s.path === activeSessionPath}
-            isStreaming={streamingSessions.includes(s.path)}
-            isPinned={!!s.pinnedAt}
-            agents={agents}
-            browserState={browserSessions[s.path] || null}
-            onCloseBrowser={handleCloseBrowserSession}
-          />
-        ));
-
-        if (section.kind === 'pinned') {
-          return (
-            <section key={section.id} className={styles.pinnedSection}>
-              <div className={`${styles.sessionSectionTitle} ${styles.pinnedSectionTitle}`}>
-                <span>{t(section.titleKey)}</span>
-                <svg className={styles.pinnedTitleIcon} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 17v5" />
-                  <path d="M5 17h14" />
-                  <path d="M7 3h10l-2 9H9L7 3z" />
-                  <path d="M9 12l-2 5h10l-2-5" />
-                </svg>
-              </div>
-              {items}
-            </section>
-          );
-        }
-
-        return (
-          <Fragment key={section.id}>
-            <div className={styles.sessionSectionTitle}>{t(section.titleKey)}</div>
-            {items}
-          </Fragment>
-        );
-      })}
+      <SessionSearchBox
+        value={searchQuery}
+        onChange={setSearchQuery}
+        onClear={() => setSearchQuery('')}
+      />
+      <div className={styles.sessionListScroller}>
+        {content}
+      </div>
     </>
   );
 }
+
+function SessionSearchBox({
+  value,
+  onChange,
+  onClear,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onClear: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className={styles.sessionSearchBox}>
+      <svg className={styles.sessionSearchIcon} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.3-4.3" />
+      </svg>
+      <input
+        className={styles.sessionSearchInput}
+        value={value}
+        placeholder={t('sidebar.searchPlaceholder')}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value && (
+        <button
+          type="button"
+          className={styles.sessionSearchClear}
+          aria-label={t('sidebar.searchClear')}
+          onClick={onClear}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SessionSearchResults({
+  titleResults,
+  contentResults,
+  status,
+  hasResults,
+  agents,
+  activeSessionPath,
+  pendingNewSession,
+}: {
+  titleResults: SessionSearchResult[];
+  contentResults: SessionSearchResult[];
+  status: 'idle' | 'title' | 'content' | 'done' | 'error';
+  hasResults: boolean;
+  agents: Agent[];
+  activeSessionPath: string | null;
+  pendingNewSession: boolean;
+}) {
+  const { t } = useI18n();
+
+  if (status === 'error') {
+    return <div className={styles.sessionSearchEmpty}>{t('sidebar.searchFailed')}</div>;
+  }
+
+  return (
+    <>
+      {titleResults.length > 0 && (
+        <SessionSearchSection
+          title={t('sidebar.searchTitleMatches')}
+          results={titleResults}
+          agents={agents}
+          activeSessionPath={activeSessionPath}
+          pendingNewSession={pendingNewSession}
+        />
+      )}
+      {status === 'title' && (
+        <div className={styles.sessionSearchStatus}>{t('sidebar.searchingTitles')}</div>
+      )}
+      {(contentResults.length > 0 || status === 'content') && (
+        <SessionSearchSection
+          title={t('sidebar.searchContentMatches')}
+          results={contentResults}
+          agents={agents}
+          activeSessionPath={activeSessionPath}
+          pendingNewSession={pendingNewSession}
+          placeholder={status === 'content' && contentResults.length === 0 ? t('sidebar.searchingContent') : null}
+        />
+      )}
+      {status === 'done' && !hasResults && (
+        <div className={styles.sessionSearchEmpty}>{t('sidebar.searchNoResults')}</div>
+      )}
+    </>
+  );
+}
+
+function SessionSearchSection({
+  title,
+  results,
+  agents,
+  activeSessionPath,
+  pendingNewSession,
+  placeholder = null,
+}: {
+  title: string;
+  results: SessionSearchResult[];
+  agents: Agent[];
+  activeSessionPath: string | null;
+  pendingNewSession: boolean;
+  placeholder?: string | null;
+}) {
+  return (
+    <section className={styles.sessionSearchSection}>
+      <div className={styles.sessionSearchSectionTitle}>{title}</div>
+      {placeholder ? (
+        <div className={styles.sessionSearchStatus}>{placeholder}</div>
+      ) : results.map(result => (
+        <SessionSearchItem
+          key={`${result.matchKind}:${result.path}`}
+          result={result}
+          isActive={!pendingNewSession && result.path === activeSessionPath}
+          agents={agents}
+        />
+      ))}
+    </section>
+  );
+}
+
+const SessionSearchItem = memo(function SessionSearchItem({
+  result,
+  isActive,
+  agents,
+}: {
+  result: SessionSearchResult;
+  isActive: boolean;
+  agents: Agent[];
+}) {
+  const { t } = useI18n();
+  const parts: string[] = [];
+  if (result.agentName || result.agentId) parts.push(result.agentName || result.agentId!);
+  if (result.cwd) {
+    const dirName = result.cwd.split(/[/\\]/).filter(Boolean).pop();
+    if (dirName) parts.push(dirName);
+  }
+  if (result.modified) parts.push(formatSessionDate(result.modified));
+
+  const handleClick = useCallback(() => {
+    switchSession(result.path);
+  }, [result.path]);
+
+  return (
+    <button
+      className={`${styles.sessionSearchItem}${isActive ? ` ${styles.sessionSearchItemActive}` : ''}`}
+      data-session-path={result.path}
+      onClick={handleClick}
+    >
+      <div className={styles.sessionItemHeader}>
+        {result.agentId && (
+          <AgentBadge agentId={result.agentId} agentName={result.agentName} agents={agents} />
+        )}
+        <div className={styles.sessionItemTitle}>
+          {result.title || result.firstMessage || t('session.untitled')}
+        </div>
+      </div>
+      <div className={styles.sessionItemMeta}>{parts.join(' · ')}</div>
+      {result.snippet && (
+        <div className={styles.sessionSearchSnippet}>{result.snippet}</div>
+      )}
+    </button>
+  );
+});
 
 // ── Session Item ──
 

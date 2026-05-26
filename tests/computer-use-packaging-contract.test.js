@@ -21,13 +21,13 @@ function makeMacAfterPackContext(appOutDir) {
     arch: 3,
     packager: {
       platform: { name: "mac" },
-      appInfo: { productFilename: "Hanako" },
+      appInfo: { productFilename: "HanaAgent" },
     },
   };
 }
 
 function resourcesDir(appOutDir) {
-  return path.join(appOutDir, "Hanako.app", "Contents", "Resources");
+  return path.join(appOutDir, "HanaAgent.app", "Contents", "Resources");
 }
 
 afterEach(() => {

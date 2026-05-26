@@ -7,11 +7,11 @@ import os from "os";
 import path from "path";
 import YAML from "js-yaml";
 import { runMigrations } from "../core/migrations.js";
-import { getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-projection.js";
+import { getAgentPhoneProjectionPath, safeConversationStem } from "../lib/conversations/agent-phone-projection.js";
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 29;
+const LATEST_DATA_VERSION = 33;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -194,6 +194,161 @@ describe("migration #11: repairCronJobModelRefs", () => {
     expect(jobs[1].model).toEqual({ id: "MiniMax-M2.7", provider: "minimax" });
     expect(jobs[2].model).toEqual({ id: "gpt-4o", provider: "openai" });
     expect(jobs[3].model).toBe("unknown-model");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #30: cron jobs to automation read model", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function writeStudioCronJobs(studioId, jobs) {
+    const deskDir = path.join(tmpDir, "studios", studioId, "desk");
+    fs.mkdirSync(deskDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(deskDir, "cron-jobs.json"),
+      JSON.stringify({ jobs, nextNum: jobs.length + 1 }, null, 2) + "\n",
+      "utf-8",
+    );
+  }
+
+  function readStudioCronJobs(studioId) {
+    return JSON.parse(fs.readFileSync(
+      path.join(tmpDir, "studios", studioId, "desk", "cron-jobs.json"),
+      "utf-8",
+    )).jobs;
+  }
+
+  it("adds automation fields to existing studio cron jobs while preserving legacy fields", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 29 });
+    writeStudioCronJobs("default", [{
+      schemaVersion: 1,
+      id: "studio_job_1",
+      type: "cron",
+      schedule: "0 9 * * *",
+      prompt: "summarize",
+      label: "Daily",
+      enabled: true,
+      model: { id: "gpt-4o", provider: "openai" },
+      actorAgentId: "hana",
+      executionContext: {
+        kind: "legacy_agent_home",
+        cwd: null,
+        workspaceFolders: [],
+        sourceSessionPath: null,
+        createdByAgentId: "hana",
+      },
+    }]);
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+
+    const [job] = readStudioCronJobs("default");
+    expect(job.schemaVersion).toBe(2);
+    expect(job.type).toBe("cron");
+    expect(job.prompt).toBe("summarize");
+    expect(job.trigger).toEqual({ kind: "cron", expression: "0 9 * * *" });
+    expect(job.executor).toMatchObject({
+      kind: "agent_session",
+      agentId: "hana",
+      prompt: "summarize",
+      model: { id: "gpt-4o", provider: "openai" },
+      executionContext: {
+        kind: "legacy_agent_home",
+        cwd: null,
+        workspaceFolders: [],
+        sourceSessionPath: null,
+        createdByAgentId: "hana",
+      },
+    });
+    expect(job.createdBy).toEqual({ kind: "agent", agentId: "hana" });
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #31: learned skills converge into the global skill pool", () => {
+  let tmpDir, agentsDir, userDir, skillsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(skillsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function writeSkill(dir, content) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf-8");
+  }
+
+  it("moves each agent learned skill into the global pool and enables only the source agent", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 30 });
+    writeAgentConfig(agentsDir, "agent-a", {
+      agent: { name: "Agent A" },
+      skills: { enabled: ["existing"] },
+    });
+    writeAgentConfig(agentsDir, "agent-b", {
+      agent: { name: "Agent B" },
+      skills: { enabled: [] },
+    });
+
+    const sharedContent = "---\nname: shared-skill\n---\n# Shared\n";
+    writeSkill(path.join(skillsDir, "shared-skill"), sharedContent);
+    writeSkill(path.join(agentsDir, "agent-a", "learned-skills", "shared-skill"), sharedContent);
+    writeSkill(
+      path.join(agentsDir, "agent-b", "learned-skills", "shared-skill"),
+      "---\nname: shared-skill\n---\n# Different\n",
+    );
+    writeSkill(
+      path.join(agentsDir, "agent-b", "learned-skills", "solo-skill"),
+      "---\nname: solo-skill\nmetadata:\n  default-enabled: true\n---\n# Solo\n",
+    );
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+
+    expect(fs.existsSync(path.join(agentsDir, "agent-a", "learned-skills"))).toBe(false);
+    expect(fs.existsSync(path.join(agentsDir, "agent-b", "learned-skills"))).toBe(false);
+    expect(fs.readFileSync(path.join(skillsDir, "shared-skill", "SKILL.md"), "utf-8")).toBe(sharedContent);
+
+    const renamedPath = path.join(skillsDir, "shared-skill-agent-b", "SKILL.md");
+    expect(fs.existsSync(renamedPath)).toBe(true);
+    expect(fs.readFileSync(renamedPath, "utf-8")).toContain("name: shared-skill-agent-b");
+    expect(fs.readFileSync(renamedPath, "utf-8")).toContain("default-enabled: false");
+
+    const soloPath = path.join(skillsDir, "solo-skill", "SKILL.md");
+    expect(fs.existsSync(soloPath)).toBe(true);
+    expect(fs.readFileSync(soloPath, "utf-8")).toContain("default-enabled: false");
+
+    expect(readAgentConfig(agentsDir, "agent-a").skills.enabled).toEqual(["existing", "shared-skill"]);
+    expect(readAgentConfig(agentsDir, "agent-b").skills.enabled).toEqual([
+      "shared-skill-agent-b",
+      "solo-skill",
+    ]);
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 });
@@ -2832,6 +2987,148 @@ describe("migration #29 — heartbeat default is explicit opt-in", () => {
     expect(readAgentConfig(agentsDir, "missing").desk.heartbeat_enabled).toBe(false);
     expect(readAgentConfig(agentsDir, "enabled").desk.heartbeat_enabled).toBe(true);
     expect(readAgentConfig(agentsDir, "disabled").desk.heartbeat_enabled).toBe(false);
-    expect(prefs.getPreferences()._dataVersion).toBe(29);
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #32 — move Agent Phone runtime out of projection", () => {
+  let tmpDir, userDir, agentsDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    userDir = path.join(tmpDir, "user");
+    agentsDir = path.join(tmpDir, "agents");
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("moves session runtime fields to a sidecar and removes stale toolNames from projection", () => {
+    const agentDir = path.join(agentsDir, "hana");
+    const projectionPath = getAgentPhoneProjectionPath(agentDir, "ch_legacy");
+    fs.mkdirSync(path.dirname(projectionPath), { recursive: true });
+    fs.writeFileSync(
+      projectionPath,
+      [
+        "---",
+        "agentId: hana",
+        "conversationId: ch_legacy",
+        "conversationType: channel",
+        "state: idle",
+        "summary: Replied",
+        "lastViewedTimestamp: 2026-05-25 12:00:00",
+        "phoneSessionFile: phone/sessions/ch_legacy/old.jsonl",
+        "lastPhoneSessionUsedAt: 2026-05-25T12:10:00.000Z",
+        "phoneSessionStartedAt: 2026-05-25T12:00:00.000Z",
+        `promptSnapshot: ${encodeURIComponent(JSON.stringify({ version: 1, systemPrompt: "old prompt" }))}`,
+        `toolNames: ${encodeURIComponent(JSON.stringify(["search_memory"]))}`,
+        "---",
+        "",
+        "# Agent Phone",
+        "",
+        "## Activity",
+        "- 2026-05-25T12:11:00.000Z [idle] Replied",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 31 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const projectionRaw = fs.readFileSync(projectionPath, "utf-8");
+    expect(projectionRaw).toContain("state: idle");
+    expect(projectionRaw).toContain("lastViewedTimestamp: 2026-05-25 12:00:00");
+    expect(projectionRaw).toContain("[idle] Replied");
+    expect(projectionRaw).not.toContain("phoneSessionFile");
+    expect(projectionRaw).not.toContain("lastPhoneSessionUsedAt");
+    expect(projectionRaw).not.toContain("phoneSessionStartedAt");
+    expect(projectionRaw).not.toContain("promptSnapshot");
+    expect(projectionRaw).not.toContain("toolNames");
+
+    const runtimePath = path.join(
+      agentDir,
+      "phone",
+      "session-runtime",
+      `${safeConversationStem("ch_legacy")}.json`,
+    );
+    const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf-8"));
+    expect(runtime).toMatchObject({
+      agentId: "hana",
+      conversationId: "ch_legacy",
+      conversationType: "channel",
+      phoneSessionFile: "phone/sessions/ch_legacy/old.jsonl",
+      lastPhoneSessionUsedAt: "2026-05-25T12:10:00.000Z",
+      phoneSessionStartedAt: "2026-05-25T12:00:00.000Z",
+      promptSnapshot: { version: 1, systemPrompt: "old prompt" },
+    });
+    expect(runtime.toolNames).toBeUndefined();
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #33 — beautify default is explicit opt-in", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runFrom32() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 32 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("adds beautify to existing disabled lists without changing explicit choices", () => {
+    writeAgentConfig(agentsDir, "empty-disabled", {
+      agent: { name: "Empty" },
+      tools: { disabled: [] },
+    });
+    writeAgentConfig(agentsDir, "dm-disabled", {
+      agent: { name: "DM" },
+      tools: { disabled: ["dm"] },
+    });
+    writeAgentConfig(agentsDir, "already", {
+      agent: { name: "Already" },
+      tools: { disabled: ["dm", "beautify"] },
+    });
+
+    const prefs = runFrom32();
+
+    expect(readAgentConfig(agentsDir, "empty-disabled").tools.disabled).toEqual(["beautify"]);
+    expect(readAgentConfig(agentsDir, "dm-disabled").tools.disabled).toEqual(["dm", "beautify"]);
+    expect(readAgentConfig(agentsDir, "already").tools.disabled).toEqual(["dm", "beautify"]);
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("materializes the full current default when tools.disabled is missing", () => {
+    writeAgentConfig(agentsDir, "missing", {
+      agent: { name: "Missing" },
+    });
+
+    runFrom32();
+
+    expect(readAgentConfig(agentsDir, "missing").tools.disabled).toEqual(["dm", "beautify"]);
   });
 });

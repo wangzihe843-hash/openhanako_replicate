@@ -1,38 +1,57 @@
 import { describe, expect, it } from "vitest";
 import { getPlatformPromptNote } from "../core/platform-prompt.js";
+import { SANDBOX_MODE_LABEL } from "../lib/sandbox/policy.js";
 
 const baseOpts = { osType: "TestOS", osRelease: "1.2.3" };
 
 describe("getPlatformPromptNote", () => {
-  it("emits Platform/Shell/OS Version on darwin", () => {
-    const out = getPlatformPromptNote({ ...baseOpts, platform: "darwin" });
-    expect(out).toBe("Platform: darwin\nShell: bash\nOS Version: TestOS 1.2.3");
+  it("emits a Codex-like environment context on darwin", () => {
+    const out = getPlatformPromptNote({
+      ...baseOpts,
+      platform: "darwin",
+      cwd: "/workspace/project-hana",
+      env: { SHELL: "/bin/zsh" },
+    });
+    expect(out).toContain("<environment_context>");
+    expect(out).toContain("<platform>darwin</platform>");
+    expect(out).toContain("<cwd>/workspace/project-hana</cwd>");
+    expect(out).toContain("<shell>zsh</shell>");
+    expect(out).toContain("<os>TestOS 1.2.3</os>");
+    expect(out).toContain(`<sandbox_mode>${SANDBOX_MODE_LABEL}</sandbox_mode>`);
+    expect(out).toContain("Use structured file tools for source edits.");
+    expect(out).toContain("</environment_context>");
   });
 
-  it("emits Platform/Shell/OS Version on linux", () => {
-    const out = getPlatformPromptNote({ ...baseOpts, platform: "linux" });
-    expect(out).toBe("Platform: linux\nShell: bash\nOS Version: TestOS 1.2.3");
+  it("falls back to bash in the Linux environment context", () => {
+    const out = getPlatformPromptNote({
+      ...baseOpts,
+      platform: "linux",
+      cwd: "/workspace/project-hana",
+      env: {},
+    });
+    expect(out).toContain("<platform>linux</platform>");
+    expect(out).toContain("<shell>bash</shell>");
+    expect(out).toContain("<cwd>/workspace/project-hana</cwd>");
   });
 
-  it("keeps the model-facing bash shell contract on win32", () => {
-    const out = getPlatformPromptNote({ ...baseOpts, platform: "win32" });
-    expect(out).toBe(
-      "Platform: win32\n" +
-      "Shell: bash\n" +
-      "OS Version: TestOS 1.2.3\n" +
-      "Host OS is Windows, but the bash tool accepts POSIX shell-style commands.\n" +
-      "Hanako may internally route simple git commands through bundled git.exe and explicit cmd.exe/powershell.exe commands through Windows-native runners.\n" +
-      "Prefer POSIX syntax for pipes, paths, environment variables, and redirection when writing shell-style commands.\n" +
-      "Use cmd.exe /c or powershell.exe -NoProfile -Command only when you explicitly need a Windows-native shell.\n" +
-      "Discard POSIX command output with /dev/null; use CMD's nul device only inside an explicit cmd.exe command."
-    );
+  it("emits PowerShell as the Windows native shell", () => {
+    const out = getPlatformPromptNote({ ...baseOpts, platform: "win32", cwd: "C:\\work" });
+    expect(out).toContain("<platform>win32</platform>");
+    expect(out).toContain("<cwd>C:\\work</cwd>");
+    expect(out).toContain("<shell>powershell</shell>");
+    expect(out).toContain(`<sandbox_mode>${SANDBOX_MODE_LABEL}</sandbox_mode>`);
+    expect(out).not.toContain("Shell: bash");
+    expect(out).not.toContain("Prefer POSIX syntax");
     expect(out).not.toContain("platform-adaptive");
   });
 
-  it("keeps Shell: bash on POSIX platforms regardless of $SHELL", () => {
-    const out = getPlatformPromptNote({ ...baseOpts, platform: "darwin" });
-    expect(out).toContain("Shell: bash");
-    expect(out).not.toContain("zsh");
-    expect(out).not.toContain("fish");
+  it("uses the basename of the POSIX user shell", () => {
+    const out = getPlatformPromptNote({
+      ...baseOpts,
+      platform: "darwin",
+      env: { SHELL: "/opt/homebrew/bin/fish" },
+    });
+    expect(out).toContain("<shell>fish</shell>");
+    expect(out).not.toContain("Shell: bash");
   });
 });

@@ -61,6 +61,25 @@ describe("DeferredResultStore", () => {
     });
   });
 
+  describe("retry", () => {
+    it("reopens a failed task as pending with fresh metadata", () => {
+      store.defer("t1", "/s/a", { type: "image-generation", prompt: "old" });
+      store.fail("t1", "API returned no images");
+
+      store.retry("t1", "/s/a", { type: "image-generation", prompt: "new" });
+
+      expect(store.query("t1")).toMatchObject({
+        status: "pending",
+        sessionPath: "/s/a",
+        meta: { type: "image-generation", prompt: "new" },
+        result: null,
+        reason: null,
+        delivered: false,
+      });
+      expect(store.listPending("/s/a").map((task) => task.taskId)).toEqual(["t1"]);
+    });
+  });
+
   describe("listPending", () => {
     it("returns only pending tasks for the given session", () => {
       store.defer("t1", "/s/a", {});

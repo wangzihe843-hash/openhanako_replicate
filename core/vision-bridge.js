@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { callText as defaultCallText } from "./llm-client.js";
+import { normalizeModelImageInput } from "./model-image-preprocess.js";
 import { modelSupportsImage } from "./message-sanitizer.js";
 import { getVisionCapabilities, modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
 
@@ -381,12 +382,16 @@ export class VisionBridge {
   constructor({
     resolveVisionConfig,
     callText = defaultCallText,
+    getUsageLedger = null,
+    getActiveAgentId = null,
     now = () => Date.now(),
     maxCacheEntries = MAX_CACHE_ENTRIES,
     visionMaxTokens = DEFAULT_VISION_MAX_TOKENS,
   } = {}) {
     this._resolveVisionConfig = resolveVisionConfig || (() => null);
     this._callText = callText;
+    this._getUsageLedger = typeof getUsageLedger === "function" ? getUsageLedger : () => null;
+    this._getActiveAgentId = typeof getActiveAgentId === "function" ? getActiveAgentId : () => null;
     this._now = now;
     this._maxCacheEntries = maxCacheEntries;
     this._visionMaxTokens = positiveInteger(visionMaxTokens) || DEFAULT_VISION_MAX_TOKENS;
@@ -413,7 +418,7 @@ export class VisionBridge {
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
       throwIfAborted(signal);
-      const note = await this._analyzeImage(config, img, i, userRequest, signal);
+      const note = await this._analyzeImage(config, img, i, userRequest, signal, sessionPath);
       const imagePath = paths[i];
       if (imagePath) {
         const entry = {
@@ -438,6 +443,27 @@ export class VisionBridge {
   async prepareResources({ sessionPath, targetModel, userRequest, text, resources, signal } = {}) {
     if (!resources?.length) return { notes: [] };
     if (!requiresAuxiliaryVision(targetModel)) return { notes: [] };
+    return this._summarizeResources({
+      sessionPath,
+      targetModel,
+      userRequest: userRequest ?? text,
+      resources,
+      signal,
+    });
+  }
+
+  async summarizeResources({ sessionPath, userRequest, text, resources, signal } = {}) {
+    if (!resources?.length) return { notes: [] };
+    return this._summarizeResources({
+      sessionPath,
+      targetModel: null,
+      userRequest: userRequest ?? text,
+      resources,
+      signal,
+    });
+  }
+
+  async _summarizeResources({ sessionPath, targetModel, userRequest, resources, signal } = {}) {
     throwIfAborted(signal);
 
     const config = this._resolveVisionConfig?.();
@@ -448,7 +474,7 @@ export class VisionBridge {
       throw new Error("vision auxiliary model must support image input");
     }
 
-    const request = normalizeUserRequest(userRequest ?? text);
+    const request = normalizeUserRequest(userRequest);
     const notes = [];
     for (let i = 0; i < resources.length; i++) {
       const resource = resources[i];
@@ -468,7 +494,7 @@ export class VisionBridge {
       }
 
       throwIfAborted(signal);
-      const note = await this._analyzeImage(config, img, i, request, signal);
+      const note = await this._analyzeImage(config, img, i, request, signal, sessionPath);
       const entry = {
         note,
         sessionPath: sessionPath || null,
@@ -582,10 +608,11 @@ export class VisionBridge {
     return limit ? Math.min(this._visionMaxTokens, limit) : this._visionMaxTokens;
   }
 
-  async _analyzeImage(config, img, index, userRequest, signal) {
+  async _analyzeImage(config, img, index, userRequest, signal, sessionPath = null) {
+    const normalizedImg = normalizeModelImageInput(img, index);
     const visionCapabilities = getVisionCapabilities(config.model);
     const key = imagePromptCacheKey(
-      img,
+      normalizedImg,
       userRequest,
       visionModelCacheSignature(config.model, visionCapabilities),
     );
@@ -596,8 +623,8 @@ export class VisionBridge {
     }
 
     const note = visionCapabilities
-      ? await this._analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal)
-      : await this._analyzeImageAsNote(config, img, userRequest, signal);
+      ? await this._analyzeImageWithPrimitives(config, normalizedImg, userRequest, visionCapabilities, signal, sessionPath)
+      : await this._analyzeImageAsNote(config, normalizedImg, userRequest, signal, sessionPath);
 
     this._analysisByPrompt.set(key, {
       note,
@@ -609,7 +636,22 @@ export class VisionBridge {
     return note;
   }
 
-  async _analyzeImageAsNote(config, img, userRequest, signal) {
+  _usageContextForImageAnalysis(sessionPath) {
+    const agentId = this._getActiveAgentId?.() ?? null;
+    return {
+      source: {
+        subsystem: "vision",
+        operation: "analyze_image",
+        surface: sessionPath ? "session" : "tool",
+        trigger: "user",
+      },
+      attribution: sessionPath
+        ? { kind: "session", sessionPath, agentId }
+        : { kind: "utility", agentId },
+    };
+  }
+
+  async _analyzeImageAsNote(config, img, userRequest, signal, sessionPath = null) {
     return truncate(await this._callText({
       api: config.api,
       apiKey: config.api_key,
@@ -642,10 +684,12 @@ export class VisionBridge {
       maxTokens: this._maxTokensForModel(config.model),
       timeoutMs: VISION_ANALYSIS_TIMEOUT_MS,
       signal,
+      usageLedger: this._getUsageLedger?.(),
+      usageContext: this._usageContextForImageAnalysis(sessionPath),
     }));
   }
 
-  async _analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal) {
+  async _analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal, sessionPath = null) {
     const primitiveShape = primitivePromptShape(visionCapabilities);
     const responseText = await this._callText({
       api: config.api,
@@ -688,6 +732,8 @@ export class VisionBridge {
       maxTokens: this._maxTokensForModel(config.model),
       timeoutMs: VISION_ANALYSIS_TIMEOUT_MS,
       signal,
+      usageLedger: this._getUsageLedger?.(),
+      usageContext: this._usageContextForImageAnalysis(sessionPath),
     });
 
     const analysis = extractJsonObject(responseText);

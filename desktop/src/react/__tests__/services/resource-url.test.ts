@@ -60,14 +60,14 @@ describe('resolveFileRefUrl', () => {
   it('keeps the local desktop file URL fast path when a local path is available', () => {
     const platform = { getFileUrl: vi.fn((p: string) => `file:///mock${p}`) };
 
-    const result = resolveFileRefUrl(fileRef(), {
+    const result = resolveFileRefUrl(fileRef({ version: { mtimeMs: 11, size: 22 } }), {
       connection: localConnection,
       platform,
     });
 
     expect(result).toEqual({
       mode: 'local-file',
-      url: 'file:///mock/workspace/asset.png',
+      url: 'file:///mock/workspace/asset.png?v=11-22',
     });
     expect(platform.getFileUrl).toHaveBeenCalledWith('/workspace/asset.png');
   });
@@ -75,14 +75,14 @@ describe('resolveFileRefUrl', () => {
   it('uses the resource content URL for a remote connection instead of exposing local paths', () => {
     const platform = { getFileUrl: vi.fn((p: string) => `file:///mock${p}`) };
 
-    const result = resolveFileRefUrl(fileRef(), {
+    const result = resolveFileRefUrl(fileRef({ version: { mtimeMs: 11, size: 22 } }), {
       connection: remoteConnection,
       platform,
     });
 
     expect(result).toEqual({
       mode: 'resource-content',
-      url: 'https://hana.example/api/resources/res_sf_asset/content',
+      url: 'https://hana.example/api/resources/res_sf_asset/content?v=11-22',
     });
     expect(platform.getFileUrl).not.toHaveBeenCalled();
   });

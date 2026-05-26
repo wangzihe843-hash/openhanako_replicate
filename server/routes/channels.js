@@ -432,6 +432,12 @@ export function createChannelsRoute(engine, hub) {
       const channelsDir = engine.channelsDir;
       fs.mkdirSync(channelsDir, { recursive: true });
 
+      for (const memberId of normalizedMembers) {
+        if (!safeAgentDir(memberId)) {
+          return c.json({ error: `Agent not found: ${memberId}`, code: "CHANNEL_AGENT_NOT_FOUND" }, 404);
+        }
+      }
+
       const { id: channelId } = await createChannel(channelsDir, {
         name,
         description: description || undefined,
@@ -549,6 +555,11 @@ export function createChannelsRoute(engine, hub) {
       if (agentDir) {
         await removeBookmarkEntry(path.join(agentDir, "channels.md"), name);
       }
+      hub?.abortAgentPhoneSessions?.("channel-member-removed", {
+        agentId: memberId,
+        conversationId: name,
+        conversationType: "channel",
+      });
 
       debugLog()?.log("api", `DELETE /channels/${name}/members/${memberId}`);
       return c.json({ ok: true, members: nextMembers });

@@ -59,7 +59,6 @@ export function AgentTab() {
     }
   }, [settingsConfig]);
 
-  const isViewingOther = selectedSettingsAgentId !== currentAgentId;
   const currentYuan = settingsConfig?.agent?.yuan || 'hanako';
 
   // 用 "provider/id" 复合键作为 SelectWidget 的 value，区分多 provider 下同名模型。
@@ -343,7 +342,6 @@ export function AgentTab() {
       <MemorySection
         hasUtilityModel={hasUtilityModel}
         memoryEnabled={memoryEnabled}
-        isViewingOther={isViewingOther}
         currentPins={currentPins}
       />
 
@@ -388,10 +386,10 @@ export function AgentTab() {
         </div>
       </SettingsSection>
 
-      {/* 默认关闭 update_settings 和 dm，与后端 DEFAULT_DISABLED_TOOL_NAMES 保持同步 */}
+      {/* 默认关闭 dm / beautify，与后端 DEFAULT_DISABLED_TOOL_NAMES 保持同步 */}
       <AgentToolsSection
         availableTools={availableTools}
-        disabled={settingsConfig?.tools?.disabled ?? ["update_settings", "dm"]}
+        disabled={settingsConfig?.tools?.disabled ?? ["dm", "beautify"]}
       />
 
       {exportPlanningAgentId && createPortal((

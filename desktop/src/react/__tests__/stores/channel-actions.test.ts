@@ -612,6 +612,27 @@ describe('channel-actions', () => {
     });
   });
 
+  describe('createChannel', () => {
+    it('reads backend JSON errors instead of losing them to the fetch wrapper', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          code: 'CHANNEL_AGENT_NOT_FOUND',
+          error: 'Agent not found: ghost',
+        }),
+      } as Response);
+
+      const { createChannel } = await import('../../stores/channel-actions');
+
+      await expect(createChannel('mixed', ['alice', 'ghost'])).rejects.toThrow('Agent not found: ghost');
+      expect(mockFetch).toHaveBeenCalledWith('/api/channels', expect.objectContaining({
+        method: 'POST',
+        throwOnHttpError: false,
+      }));
+    });
+  });
+
   describe('toggleChannelsEnabled', () => {
     it('切换开关状态', async () => {
       mockState.channelsEnabled = true;

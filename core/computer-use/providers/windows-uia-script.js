@@ -202,14 +202,14 @@ function List-Apps() {
   $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
   $items = @()
   foreach ($win in $wins) {
-    $pid = [int]$win.Current.ProcessId
+    $processId = [int]$win.Current.ProcessId
     $name = $win.Current.Name
     $handle = [int]$win.Current.NativeWindowHandle
-    if ($pid -le 0 -or $handle -le 0) { continue }
+    if ($processId -le 0 -or $handle -le 0) { continue }
     $items += [pscustomobject]@{
-      appId = "pid:$pid"
+      appId = "pid:$processId"
       name = $name
-      processId = $pid
+      processId = $processId
       windows = @([pscustomobject]@{
         windowId = "$handle"
         title = $name

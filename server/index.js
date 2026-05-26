@@ -1,5 +1,5 @@
 /**
- * Hanako Server — HTTP + WebSocket API
+ * HanaAgent Server — HTTP + WebSocket API
  *
  * 启动方式：
  *   node server/index.js              （独立运行）
@@ -21,16 +21,11 @@ import { HanaEngine } from "../core/engine.js";
 import { ensureFirstRun } from "../core/first-run.js";
 import { initDebugLog, createModuleLogger } from "../lib/debug-log.js";
 import { redactLogLabel, redactLogText } from "../lib/log-redactor.js";
-import {
-  runWin32LegacySandboxMigration,
-  summarizeWin32LegacySandboxMigration,
-} from "../lib/sandbox/win32-legacy-migration.js";
 import { safeJson } from "./hono-helpers.js";
 
 const log = createModuleLogger("server");
 const checkpointLog = createModuleLogger("checkpoint");
 const sessionFilesLog = createModuleLogger("session-files");
-const win32SandboxMigrationLog = createModuleLogger("win32-sandbox-migration");
 import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.js";
 import { createServerAuthService } from "../core/server-auth.js";
 import { resolveServerListenOptions } from "../core/server-network-config.js";
@@ -69,9 +64,11 @@ import { createServerIdentityRoute } from "./routes/server-identity.js";
 import { createXingyeRoute } from "./routes/xingye.js";
 import { createXingyeStorageRoute } from "./routes/xingye-storage.js";
 import { createResourcesRoute } from "./routes/resources.js";
+import { createUsageRoute } from "./routes/usage.js";
 import { createWebAuthRoute } from "./routes/web-auth.js";
 import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
+import { createHtmlPreviewRoute } from "./routes/html-preview.js";
 import { createAccessRoute } from "./routes/access.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
@@ -85,6 +82,7 @@ import { createCompactionGuardExtension } from "../lib/extensions/compaction-gua
 import { Hub } from "../hub/index.js";
 import { startCLI } from "./cli.js";
 import { fromRoot } from "../shared/hana-root.js";
+import { callText } from "../core/llm-client.js";
 
 const productDir = fromRoot("lib");
 
@@ -110,8 +108,10 @@ async function bindServerTransportOwnership(server, { host, port, listenHost, ne
   } catch (err) {
     const startupError = isAddressInUseError(err)
       ? createPortInUseStartupError(err, { host, port, listenHost, networkMode })
+      : isListenPermissionError(err)
+      ? createListenPermissionStartupError(err, { host, port, listenHost, networkMode })
       : err;
-    if (startupError.code === "PORT_IN_USE") {
+    if (startupError.startupPayload) {
       log.error(`startup-error ${JSON.stringify(startupError.startupPayload)}`);
     }
     log.error(`启动失败: ${startupError.message}`);
@@ -121,6 +121,10 @@ async function bindServerTransportOwnership(server, { host, port, listenHost, ne
 
 function isAddressInUseError(err) {
   return err?.code === "EADDRINUSE";
+}
+
+function isListenPermissionError(err) {
+  return err?.code === "EACCES";
 }
 
 function createPortInUseStartupError(cause, { host, port, listenHost, networkMode }) {
@@ -140,6 +144,28 @@ function createPortInUseStartupError(cause, { host, port, listenHost, networkMod
     `PORT_IN_USE: ${host}:${port} is already in use (network mode: ${networkMode}, configured host: ${listenHost}).`
   );
   err.code = "PORT_IN_USE";
+  err.startupPayload = payload;
+  err.cause = cause;
+  return err;
+}
+
+function createListenPermissionStartupError(cause, { host, port, listenHost, networkMode }) {
+  const payload = {
+    code: "LISTEN_PERMISSION_DENIED",
+    host,
+    port,
+    listenHost,
+    networkMode,
+    suggestions: [
+      `Check whether Windows reserved port policy or security software blocks listening on ${host}:${port}.`,
+      "Use loopback mode for local-only access, or enable LAN from Access & Devices and restart.",
+      "To use a different port, change the port in Access & Devices and restart.",
+    ],
+  };
+  const err = new Error(
+    `LISTEN_PERMISSION_DENIED: ${host}:${port} cannot be listened on (network mode: ${networkMode}, configured host: ${listenHost}).`
+  );
+  err.code = "LISTEN_PERMISSION_DENIED";
   err.startupPayload = payload;
   err.cause = cause;
   return err;
@@ -166,11 +192,11 @@ const port = Number.isInteger(envPort) && envPort >= 0 ? envPort : serverNetwork
 const serverRuntimeState = {
   mode: serverNetwork.mode,
   listenHost: serverNetwork.host,
-  bindHost: "0.0.0.0",
+  bindHost: serverNetwork.host,
   actualPort: null,
   applyNetworkConfig(network) {
-    this.mode = network.mode;
-    this.listenHost = network.listenHost;
+    this.configuredMode = network.mode;
+    this.configuredListenHost = network.listenHost;
   },
 };
 const host = serverRuntimeState.bindHost;
@@ -241,29 +267,7 @@ dlog.header(appVersion, {
   channelsDir: engine.channelsDir,
 });
 
-if (process.platform === "win32") {
-  const workspaceRoots = [
-    engine.homeCwd,
-    ...(Array.isArray(engine.config?.cwd_history) ? engine.config.cwd_history : []),
-  ].filter(Boolean);
-  runWin32LegacySandboxMigration({
-    hanakoHome,
-    workspaceRoots,
-    cleanup: true,
-  }).then((result) => {
-    const summary = summarizeWin32LegacySandboxMigration(result);
-    if (result.status === "failed") {
-      const detail = result.error || result.stderr || `exit=${result.exitCode ?? "unknown"}`;
-      win32SandboxMigrationLog.warn(`legacy migration failed: ${summary}; ${detail}`);
-      return;
-    }
-    if (result.status !== "skipped") {
-      win32SandboxMigrationLog.log(`legacy migration ${summary}`);
-    }
-  }).catch((err) => {
-    win32SandboxMigrationLog.warn(`legacy migration crashed: ${err?.message || String(err)}`);
-  });
-}
+if (process.platform === "win32") engine.startWin32LegacySandboxMaintenance();
 
 // ── 初始化 Hub（调度中枢，包装 engine） ──
 const hub = new Hub({ engine });
@@ -400,6 +404,11 @@ hub.eventBus.handle("deferred:register", ({ taskId, sessionPath, meta }) => {
   deferredResultStore.defer(taskId, sessionPath, meta);
   return { ok: true, sessionPath };
 });
+hub.eventBus.handle("deferred:retry", ({ taskId, sessionPath, meta }) => {
+  if (!sessionPath) return { ok: false, error: "sessionPath is required" };
+  deferredResultStore.retry(taskId, sessionPath, meta);
+  return { ok: true, sessionPath };
+});
 hub.eventBus.handle("deferred:resolve", ({ taskId, result, files, sessionFiles }) => {
   deferredResultStore.resolve(taskId, normalizeDeferredResolveResult({ result, files, sessionFiles }));
   return { ok: true };
@@ -473,11 +482,83 @@ hub.eventBus.handle("session:get-titles", async ({ paths }) => {
   const titles = await coord.getTitlesForPaths(paths);
   return { titles };
 });
+hub.eventBus.handle("utility:call-text", async (payload = {}) => {
+  const sessionPath = typeof payload.sessionPath === "string" && payload.sessionPath.trim()
+    ? payload.sessionPath.trim()
+    : null;
+  const agentId = typeof payload.agentId === "string" && payload.agentId.trim()
+    ? payload.agentId.trim()
+    : (sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null);
+  const utility = engine.resolveUtilityConfig({ agentId, sessionPath });
+  const text = await callText({
+    api: utility.api,
+    apiKey: utility.api_key,
+    baseUrl: utility.base_url,
+    model: utility.utility,
+    systemPrompt: payload.systemPrompt || "",
+    messages: Array.isArray(payload.messages) ? payload.messages : [],
+    temperature: payload.temperature,
+    maxTokens: payload.maxTokens,
+    usageLedger: utility.usageLedger,
+    usageContext: {
+      source: {
+        subsystem: "utility",
+        operation: payload.operation || "call-text",
+        surface: sessionPath ? "desktop" : "system",
+        trigger: "tool",
+      },
+      attribution: sessionPath
+        ? { kind: "session", agentId: utility.usageAgentId || agentId || null, sessionPath }
+        : { kind: "utility", agentId: utility.usageAgentId || agentId || null },
+    },
+  });
+  return { text };
+});
+hub.eventBus.handle("usage:list", (filter = {}) => {
+  return engine.usageLedger.list(filter);
+});
 
 // Register Pi SDK extension factory
 await engine.registerExtensionFactory(createDeferredResultExtension(deferredResultStore));
-// Compaction guard — 防 session 因上下文超限死锁（issue#437）
-await engine.registerExtensionFactory(createCompactionGuardExtension());
+// Cache-preserving compaction — 接管 Pi auto/manual compact，避免原生 summarizer 冷读上下文
+await engine.registerExtensionFactory(createCompactionGuardExtension({
+  usageLedger: engine.usageLedger,
+  buildUsageContext: ({ ctx }) => {
+    const sessionPath = ctx?.sessionManager?.getSessionFile?.() || null;
+    const bridgeContext = sessionPath ? engine.getBridgeContextForSessionPath(sessionPath) : null;
+    if (bridgeContext?.isBridgeSession) {
+      const conversationType = bridgeContext.chatType === "channel" ? "channel" : "dm";
+      return {
+        source: {
+          subsystem: "compaction",
+          operation: "fresh_compact",
+          surface: conversationType,
+          trigger: "threshold",
+        },
+        attribution: {
+          kind: "phone_conversation",
+          agentId: bridgeContext.agentId || null,
+          conversationId: bridgeContext.sessionKey || bridgeContext.chatId || sessionPath,
+          conversationType,
+          sessionPath,
+        },
+      };
+    }
+    return {
+      source: {
+        subsystem: "compaction",
+        operation: "compact",
+        surface: "desktop",
+        trigger: "threshold",
+      },
+      attribution: {
+        kind: "session",
+        agentId: sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null,
+        sessionPath,
+      },
+    };
+  },
+}));
 
 // ── 启动默认 session ──
 // Desktop 会显式跳过：renderer 首屏就是 pending-new-session，首次发送消息时
@@ -568,6 +649,7 @@ const bridgeManagerRef = {
 
 const { restRoute: chatRestRoute, wsRoute: chatWsRoute } = createChatRoute(engine, hub, { upgradeWebSocket });
 app.route("", createMobileStaticRoute({ distDir: fromRoot("desktop", "dist-renderer") }));
+app.route("", createHtmlPreviewRoute());
 app.route("/api", chatRestRoute);
 app.route("", chatWsRoute);
 app.route("/api", createWebAuthRoute({
@@ -593,7 +675,7 @@ app.route("/api", createDeskRoute(engine, hub));
 app.route("/api", createMobileWorkbenchRoute(engine));
 app.route("/api", createSkillsRoute(engine));
 app.route("/api", createChannelsRoute(engine, hub));
-app.route("/api", createDmRoute(engine));
+app.route("/api", createDmRoute(engine, hub));
 app.route("/api", createFsRoute(engine));
 app.route("/api", createPreferencesRoute(engine));
 app.route("/api", createBridgeRoute(engine, bridgeManagerRef));
@@ -604,6 +686,7 @@ app.route("/api", createPluginsRoute(engine));
 app.route("/api", createCheckpointsRoute(engine));
 app.route("/api", createCommandsRoute(engine));
 app.route("/api", createResourcesRoute(engine));
+app.route("/api", createUsageRoute(engine));
 app.route("/api", createServerIdentityRoute({
   hanakoHome: engine.hanakoHome,
   appVersion,
@@ -844,7 +927,7 @@ try {
   const actualPort = address.port;
   serverRuntimeState.actualPort = actualPort;
 
-  log.log(`Hanako Server 运行在 http://${host}:${actualPort}`);
+  log.log(`HanaAgent Server 运行在 http://${host}:${actualPort}`);
   dlog.log("server", `listening on :${actualPort}`);
 
   // 写 server-info 文件，供 Electron 检测复用或外部工具查询。
@@ -862,6 +945,8 @@ try {
       networkMode: serverRuntimeState.mode,
       token: SERVER_TOKEN,
       version: appVersion,
+      ownerKind: process.env.HANA_SERVER_OWNER === "desktop" ? "desktop" : "standalone",
+      ownerPid: Number.parseInt(process.env.HANA_SERVER_OWNER_PID || "", 10) || null,
       serverId: runtimeContext.serverId || null,
       serverNodeId: runtimeContext.serverNodeId || runtimeContext.serverId || null,
       studioId: runtimeContext.studioId || null,

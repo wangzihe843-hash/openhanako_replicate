@@ -15,7 +15,9 @@
 //              rather than per-agent tool toggles.
 //
 // Plugin-contributed tools (flagged with _pluginId) are NOT part of this
-// categorization. Plugin lifecycle is managed by PluginsTab.
+// categorization. Plugin lifecycle is managed by PluginsTab. A plugin-backed
+// product feature may expose a synthetic OPTIONAL category when it needs a
+// per-agent switch; concrete plugin tools then implement runtime availability.
 
 export const CORE_TOOL_NAMES = [
   "read", "bash", "edit", "write", "grep", "find", "ls",
@@ -45,6 +47,8 @@ export const GLOBAL_TOOL_NAMES = [
 ];
 
 export const OPTIONAL_TOOL_NAMES = [
+  "automation",
+  "beautify",
   "browser",
   "cron",
   "dm",
@@ -60,6 +64,10 @@ export const OPTIONAL_TOOL_NAMES = [
   "xingye_propose_draft",
 ];
 
+export const PLUGIN_BACKED_OPTIONAL_TOOL_IDS = {
+  beautify: "beautify",
+};
+
 const OPTIONAL_TOOL_NAMES_SET = new Set(OPTIONAL_TOOL_NAMES);
 
 /**
@@ -72,12 +80,12 @@ const OPTIONAL_TOOL_NAMES_SET = new Set(OPTIONAL_TOOL_NAMES);
  * two from drifting.
  *
  * Rationale:
- *   update_settings — lets the agent modify app configuration; off by default
- *                     because silent config drift is surprising.
+ *   beautify        — aesthetic generation is new and model/provider-costly;
+ *                     off by default until the feature has baked for a few versions.
  *   dm              — direct-messages between agents; off by default because
  *                     single-agent setups have no peers and it adds context.
  */
-export const DEFAULT_DISABLED_TOOL_NAMES = ["update_settings", "dm"];
+export const DEFAULT_DISABLED_TOOL_NAMES = ["dm", "beautify"];
 
 export function uniqueToolNames(names) {
   const seen = new Set();
@@ -88,6 +96,28 @@ export function uniqueToolNames(names) {
     result.push(name);
   }
   return result;
+}
+
+/**
+ * Settings needs a stable per-agent tool configuration surface even when an
+ * agent is only config-loaded and its runtime tools have not been initialized.
+ * Runtime tool names are preserved for compatibility, while built-in optional
+ * categories are exposed from the central whitelist. Plugin-backed optional
+ * categories only appear when their plugin tools are actually registered.
+ *
+ * @param {string[]} runtimeToolNames
+ * @param {{ pluginTools?: Array<{ _pluginId?: string }> }} [options]
+ * @returns {string[]}
+ */
+export function computeSettingsAvailableToolNames(runtimeToolNames, options = {}) {
+  const result = new Set(uniqueToolNames(runtimeToolNames));
+  const pluginTools = Array.isArray(options.pluginTools) ? options.pluginTools : [];
+  for (const name of OPTIONAL_TOOL_NAMES) {
+    const pluginId = PLUGIN_BACKED_OPTIONAL_TOOL_IDS[name];
+    if (pluginId && !pluginTools.some((tool) => tool?._pluginId === pluginId)) continue;
+    result.add(name);
+  }
+  return [...result];
 }
 
 /**

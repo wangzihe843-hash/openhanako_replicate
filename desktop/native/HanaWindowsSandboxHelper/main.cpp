@@ -42,6 +42,7 @@ struct Options {
     std::vector<std::wstring> legacyProfileNames;
     std::vector<std::wstring> legacyProfileCleanupNames;
     bool cleanupLegacyAcl = false;
+    bool diagnoseToken = false;
     std::wstring executable;
     std::vector<std::wstring> args;
 };
@@ -81,6 +82,8 @@ static const DWORD WRITE_ALLOW_MASK =
     FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD;
 static const DWORD WRITE_DENY_MASK =
     FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE | FILE_DELETE_CHILD;
+static const wchar_t* EVERYONE_SID = L"S-1-1-0";
+static const wchar_t* WRITE_RESTRICTED_CODE_SID = L"S-1-5-33";
 
 static void fail(const std::wstring& message) {
     std::wcerr << L"hana-win-sandbox: " << message << std::endl;
@@ -200,6 +203,10 @@ static std::wstring hashSidForWritableRoot(const std::wstring& root, const std::
 }
 
 static std::wstring sidForWritableRoot(const std::wstring& root) {
+    return hashSidForWritableRoot(root, L"S-1-5-21-", L"hana-win32-write-root-v3:");
+}
+
+static std::wstring sidForWritableRootLegacyCapabilityNamespace(const std::wstring& root) {
     return hashSidForWritableRoot(root, L"S-1-15-3-4096-", L"hana-win32-write-root-v2:");
 }
 
@@ -254,6 +261,10 @@ static Options parseArgs(int argc, wchar_t** argv) {
             opts.legacyProfileCleanupNames.push_back(argv[++i]);
             continue;
         }
+        if (arg == L"--diagnose-token") {
+            opts.diagnoseToken = true;
+            continue;
+        }
         if (arg == L"--network" || arg == L"--grant-read" || arg == L"--grant-read-optional" ||
             arg == L"--grant-write" || arg == L"--grant-write-optional" || arg == L"--deny-read") {
             throw std::runtime_error("legacy AppContainer helper argument is no longer supported");
@@ -267,7 +278,7 @@ static Options parseArgs(int argc, wchar_t** argv) {
         !opts.legacyProfileCleanupNames.empty() ||
         opts.cleanupLegacyAcl;
     if (maintenanceMode) {
-        if (!opts.cwd.empty() || !opts.executable.empty() || !opts.writableRoots.empty() || !opts.denyWritePaths.empty()) {
+        if (!opts.cwd.empty() || !opts.executable.empty() || !opts.writableRoots.empty() || !opts.denyWritePaths.empty() || opts.diagnoseToken) {
             throw std::runtime_error("maintenance arguments cannot be combined with sandbox execution arguments");
         }
         return opts;
@@ -518,22 +529,124 @@ static PACL buildDaclWithRootSids(const std::vector<WritableRoot>& roots, PACL b
     return dacl;
 }
 
-static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots) {
-    std::vector<SID_AND_ATTRIBUTES> restrictingSids;
-    for (const auto& root : roots) {
-        if (!root.sid) continue;
-        SID_AND_ATTRIBUTES attr = {};
-        attr.Sid = root.sid;
-        attr.Attributes = 0;
-        restrictingSids.push_back(attr);
+static bool sidAlreadyListed(const std::vector<SID_AND_ATTRIBUTES>& sids, PSID sid) {
+    if (!sid) return true;
+    return std::any_of(sids.begin(), sids.end(), [sid](const SID_AND_ATTRIBUTES& existing) {
+        return existing.Sid && EqualSid(existing.Sid, sid);
+    });
+}
+
+static bool appendRestrictingSid(std::vector<SID_AND_ATTRIBUTES>& sids, PSID sid) {
+    if (!sid || sidAlreadyListed(sids, sid)) return true;
+    SID_AND_ATTRIBUTES attr = {};
+    attr.Sid = sid;
+    attr.Attributes = 0;
+    sids.push_back(attr);
+    return true;
+}
+
+static bool appendRestrictingSid(
+    std::vector<SID_AND_ATTRIBUTES>& sids,
+    const std::wstring& sidString,
+    std::vector<PSID>& ownedSids
+) {
+    PSID sid = nullptr;
+    if (!ConvertStringSidToSidW(sidString.c_str(), &sid)) {
+        fail(L"cannot create restricting SID " + sidString + L": " + win32Message(GetLastError()));
+        return false;
     }
-    if (restrictingSids.empty()) {
-        fail(L"no writable root SIDs available for restricted token");
+    if (sidAlreadyListed(sids, sid)) {
+        LocalFree(sid);
+        return true;
+    }
+    ownedSids.push_back(sid);
+    return appendRestrictingSid(sids, sid);
+}
+
+static void freeOwnedSids(std::vector<PSID>& sids) {
+    for (PSID sid : sids) {
+        if (sid) LocalFree(sid);
+    }
+    sids.clear();
+}
+
+static PSID copySidToLocalAlloc(PSID source) {
+    if (!source || !IsValidSid(source)) return nullptr;
+    DWORD length = GetLengthSid(source);
+    PSID copy = LocalAlloc(LMEM_FIXED, length);
+    if (!copy) return nullptr;
+    if (!CopySid(length, copy, source)) {
+        LocalFree(copy);
         return nullptr;
     }
+    return copy;
+}
 
+static bool appendEveryoneRestrictingSid(
+    std::vector<SID_AND_ATTRIBUTES>& sids,
+    std::vector<PSID>& ownedSids
+) {
+    return appendRestrictingSid(sids, EVERYONE_SID, ownedSids);
+}
+
+static bool appendCurrentLogonRestrictingSid(
+    std::vector<SID_AND_ATTRIBUTES>& sids,
+    HANDLE token,
+    std::vector<PSID>& ownedSids
+) {
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
+    if (needed == 0 && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        debug(L"GetTokenInformation(TokenGroups) size failed: " + win32Message(GetLastError()));
+        return true;
+    }
+
+    std::vector<BYTE> buffer(needed, 0);
+    if (!GetTokenInformation(token, TokenGroups, buffer.data(), needed, &needed)) {
+        debug(L"GetTokenInformation(TokenGroups) failed: " + win32Message(GetLastError()));
+        return true;
+    }
+
+    auto* groups = reinterpret_cast<TOKEN_GROUPS*>(buffer.data());
+    for (DWORD i = 0; groups && i < groups->GroupCount; i++) {
+        SID_AND_ATTRIBUTES& group = groups->Groups[i];
+        if ((group.Attributes & SE_GROUP_LOGON_ID) != SE_GROUP_LOGON_ID) continue;
+        PSID copy = copySidToLocalAlloc(group.Sid);
+        if (!copy) {
+            fail(L"cannot copy current logon SID");
+            return false;
+        }
+        ownedSids.push_back(copy);
+        return appendRestrictingSid(sids, copy);
+    }
+
+    debug(L"current logon SID was not present in TokenGroups");
+    return true;
+}
+
+static bool buildRestrictingSids(
+    const std::vector<WritableRoot>& roots,
+    HANDLE baseToken,
+    std::vector<SID_AND_ATTRIBUTES>& restrictingSids,
+    std::vector<PSID>& ownedRestrictingSids
+) {
+    if (!appendEveryoneRestrictingSid(restrictingSids, ownedRestrictingSids)) return false;
+    if (!appendCurrentLogonRestrictingSid(restrictingSids, baseToken, ownedRestrictingSids)) return false;
+    for (const auto& root : roots) {
+        if (!root.sid) continue;
+        appendRestrictingSid(restrictingSids, root.sid);
+    }
+    if (!appendRestrictingSid(restrictingSids, WRITE_RESTRICTED_CODE_SID, ownedRestrictingSids)) return false;
+    if (restrictingSids.empty()) {
+        fail(L"no restricting SIDs available for restricted token");
+        return false;
+    }
+    return true;
+}
+
+static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots) {
     HANDLE baseToken = nullptr;
-    DWORD desired = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY |
+    DWORD desired = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_IMPERSONATE |
         TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
     if (!OpenProcessToken(GetCurrentProcess(), desired, &baseToken)) {
         fail(L"OpenProcessToken failed: " + win32Message(GetLastError()));
@@ -541,6 +654,14 @@ static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots)
     }
     TokenDefaultDaclSnapshot baseDefaultDacl;
     queryTokenDefaultDacl(baseToken, baseDefaultDacl);
+
+    std::vector<SID_AND_ATTRIBUTES> restrictingSids;
+    std::vector<PSID> ownedRestrictingSids;
+    if (!buildRestrictingSids(roots, baseToken, restrictingSids, ownedRestrictingSids)) {
+        CloseHandle(baseToken);
+        freeOwnedSids(ownedRestrictingSids);
+        return nullptr;
+    }
 
     HANDLE restrictedToken = nullptr;
     DWORD flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED;
@@ -556,6 +677,7 @@ static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots)
         &restrictedToken
     );
     CloseHandle(baseToken);
+    freeOwnedSids(ownedRestrictingSids);
     if (!ok) {
         fail(L"CreateRestrictedToken failed: " + win32Message(GetLastError()));
         return nullptr;
@@ -812,6 +934,77 @@ static std::wstring sidToString(PSID sid) {
     return sidString;
 }
 
+static std::wstring probeNamedObjectNamespace(HANDLE restrictedToken) {
+    if (!ImpersonateLoggedOnUser(restrictedToken)) {
+        return L"impersonate-failed:" + std::to_wstring(GetLastError()) + L":" + win32Message(GetLastError());
+    }
+
+    std::wstring name = L"Local\\hana-win-sandbox-diagnose-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+    DWORD rc = mutex ? ERROR_SUCCESS : GetLastError();
+    if (mutex) CloseHandle(mutex);
+    RevertToSelf();
+
+    if (rc == ERROR_SUCCESS || rc == ERROR_ALREADY_EXISTS) return L"ok";
+    return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+}
+
+static int diagnoseRestrictedToken(const Options& opts) {
+    HANDLE baseToken = nullptr;
+    DWORD desired = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_IMPERSONATE |
+        TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+    if (!OpenProcessToken(GetCurrentProcess(), desired, &baseToken)) {
+        fail(L"OpenProcessToken failed: " + win32Message(GetLastError()));
+        return 1;
+    }
+
+    std::vector<SID_AND_ATTRIBUTES> restrictingSids;
+    std::vector<PSID> ownedRestrictingSids;
+    bool ok = buildRestrictingSids(opts.writableRoots, baseToken, restrictingSids, ownedRestrictingSids);
+    CloseHandle(baseToken);
+    if (!ok) {
+        freeOwnedSids(ownedRestrictingSids);
+        return 1;
+    }
+
+    std::wcerr
+        << L"hana-win-sandbox: diagnose-token"
+        << L" cwd=\"" << opts.cwd << L"\""
+        << L" executable=\"" << opts.executable << L"\""
+        << L" writable-root-count=\"" << opts.writableRoots.size() << L"\""
+        << L" restricting-sid-count=\"" << restrictingSids.size() << L"\""
+        << std::endl;
+    for (const auto& root : opts.writableRoots) {
+        std::wcerr
+            << L"hana-win-sandbox: diagnose-token-writable-root"
+            << L" required=\"" << (root.required ? L"true" : L"false") << L"\""
+            << L" path=\"" << root.path << L"\""
+            << L" sid=\"" << root.sidString << L"\""
+            << std::endl;
+    }
+    for (const auto& sid : restrictingSids) {
+        std::wcerr
+            << L"hana-win-sandbox: diagnose-token-restricting-sid"
+            << L" sid=\"" << sidToString(sid.Sid) << L"\""
+            << std::endl;
+    }
+
+    HANDLE token = createRestrictedWriteToken(opts.writableRoots);
+    if (!token) {
+        freeOwnedSids(ownedRestrictingSids);
+        return 1;
+    }
+    std::wcerr
+        << L"hana-win-sandbox: diagnose-token-base-named-objects-probe"
+        << L" result=\"" << probeNamedObjectNamespace(token) << L"\""
+        << std::endl;
+    CloseHandle(token);
+    freeOwnedSids(ownedRestrictingSids);
+    return 0;
+}
+
 static bool isLegacyAppContainerSid(PSID sid, std::wstring* sidStringOut = nullptr) {
     std::wstring sidString = sidToString(sid);
     if (sidString.empty()) return false;
@@ -925,6 +1118,7 @@ static MigrationResult cleanupHanaWriteAcls(const std::vector<std::wstring>& pat
     for (const auto& path : paths) {
         std::vector<std::wstring> sidStrings = {
             sidForWritableRoot(path),
+            sidForWritableRootLegacyCapabilityNamespace(path),
             sidForWritableRootLegacyAccountNamespace(path),
         };
         std::vector<PSID> ownedSids;
@@ -1167,6 +1361,11 @@ int wmain(int argc, wchar_t** argv) {
     if (!convertRootSids(opts.writableRoots)) {
         freeRootSids(opts.writableRoots);
         return 1;
+    }
+    if (opts.diagnoseToken) {
+        int diagnosticExitCode = diagnoseRestrictedToken(opts);
+        freeRootSids(opts.writableRoots);
+        return diagnosticExitCode;
     }
     if (!applyWriteAcls(opts.writableRoots, opts.denyWritePaths, aclRestores)) {
         restoreAcls(aclRestores);

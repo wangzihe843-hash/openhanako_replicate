@@ -1,22 +1,13 @@
-import { useState } from 'react';
 import { useStore } from '../../stores';
 import { selectPreviewItems, selectOpenTabs, selectActiveTabId } from '../../stores/preview-slice';
-import { closeTab, closePreview, setActiveTab, canSpawnViewer, spawnViewer } from '../../stores/preview-actions';
+import { closeTab, closePreview, setActiveTab } from '../../stores/preview-actions';
 import type { PreviewItem } from '../../types';
-import { ContextMenu, type ContextMenuItem } from '../../ui';
 import styles from './TabBar.module.css';
-
-interface TabContextMenuState {
-  id: string;
-  x: number;
-  y: number;
-}
 
 export function TabBar() {
   const openTabs = useStore(selectOpenTabs);
   const activeTabId = useStore(selectActiveTabId);
   const previewItems = useStore(selectPreviewItems);
-  const [ctxMenu, setCtxMenu] = useState<TabContextMenuState | null>(null);
 
   const getPreviewItem = (id: string): PreviewItem | undefined =>
     previewItems.find((item: PreviewItem) => item.id === id);
@@ -37,27 +28,6 @@ export function TabBar() {
     setActiveTab(id);
   };
 
-  const handleContextMenu = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setCtxMenu({ id, x: e.clientX, y: e.clientY });
-  };
-
-  const ctxItems: ContextMenuItem[] = (() => {
-    if (!ctxMenu) return [];
-    const previewItem = getPreviewItem(ctxMenu.id);
-    const supported = canSpawnViewer(previewItem ?? null);
-    const t = window.t ?? ((p: string) => p);
-    return [
-      {
-        label: supported
-          ? t('preview.openInNewWindow')
-          : t('preview.openInNewWindowUnsupported'),
-        action: supported && previewItem ? () => spawnViewer(previewItem) : undefined,
-      },
-    ];
-  })();
-
   return (
     <div className={styles.tabBar}>
       <div className={styles.tabList}>
@@ -66,7 +36,6 @@ export function TabBar() {
             key={id}
             className={`${styles.tab}${id === activeTabId ? ` ${styles.tabActive}` : ''}`}
             onClick={() => handleSetActive(id)}
-            onContextMenu={(e) => handleContextMenu(e, id)}
           >
             <span className={styles.tabTitle}>{getTitle(id)}</span>
             <span className={styles.tabClose} onClick={e => handleCloseTab(e, id)}>
@@ -82,13 +51,6 @@ export function TabBar() {
           <polyline points="9 18 15 12 9 6" />
         </svg>
       </button>
-      {ctxMenu && (
-        <ContextMenu
-          items={ctxItems}
-          position={{ x: ctxMenu.x, y: ctxMenu.y }}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
     </div>
   );
 }

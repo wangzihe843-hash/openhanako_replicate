@@ -22,6 +22,7 @@ describe("serializeSessionFile", () => {
       status: "available",
       missingAt: null,
       createdAt: 123,
+      mtimeMs: 456,
     }, { studioId: "studio_response" });
 
     expect(serialized).toMatchObject({
@@ -31,6 +32,9 @@ describe("serializeSessionFile", () => {
       filePath: "/tmp/work/report.md",
       realPath: "/private/tmp/work/report.md",
       label: "report.md",
+      mtimeMs: 456,
+      size: 42,
+      version: { mtimeMs: 456, size: 42 },
       resource: {
         resourceId: "res_sf_response",
         name: "studios/studio_response/resources/res_sf_response",

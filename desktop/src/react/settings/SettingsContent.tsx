@@ -146,6 +146,16 @@ export function SettingsContent({
   }, [listenToWindowTabSwitch, set]);
 
   useEffect(() => {
+    const platform = window.platform;
+    if (!platform?.onSettingsChanged) return;
+    const unsubscribe = platform.onSettingsChanged((type: string, data: unknown) => {
+      if (type !== 'skills-changed') return;
+      window.dispatchEvent(new CustomEvent('hana-skills-changed', { detail: data || {} }));
+    });
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, []);
+
+  useEffect(() => {
     const nextTab = normalizeNativeTabForPlatform(activeTab, platformName);
     if (nextTab !== activeTab) {
       set({ activeTab: nextTab });
@@ -222,7 +232,7 @@ export function SettingsContent({
     || AgentTab;
   const isModal = variant === 'modal';
   const activeTabTitle = TAB_TITLES[effectiveActiveTab] || titleToLabel(dynamicTab?.title);
-  const isWideTab = effectiveActiveTab === 'plugin-marketplace';
+  const isWideTab = effectiveActiveTab === 'plugin-marketplace' || effectiveActiveTab === 'providers';
 
   const reportActiveTabChange = useCallback((tab: string) => {
     const nextTab = normalizeNativeTabForPlatform(tab, platformName);

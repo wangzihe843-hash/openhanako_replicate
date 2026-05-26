@@ -5,7 +5,6 @@ import { t } from '../helpers';
 import { SkillBundleTree, type SkillBundleInfo } from './skills/SkillBundleTree';
 import { SkillCapabilities } from './skills/SkillCapabilities';
 import { CompatPathDrawer } from './skills/CompatPathDrawer';
-import { LearnedSkillsBlock } from './skills/LearnedSkillsBlock';
 import { AgentSelect } from './bridge/AgentSelect';
 import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
@@ -85,9 +84,17 @@ export function SkillsTab() {
     loadExternalPaths();
   }, [loadSkills, loadExternalPaths, skillsViewAgentId]);
 
+  useEffect(() => {
+    const refresh = () => {
+      void loadSkills();
+      void loadExternalPaths();
+    };
+    window.addEventListener('hana-skills-changed', refresh);
+    return () => window.removeEventListener('hana-skills-changed', refresh);
+  }, [loadSkills, loadExternalPaths]);
+
   const visible = skillsList.filter(s => !s.hidden);
-  const userSkills = visible.filter(s => s.source !== 'learned' && s.source !== 'external');
-  const learnedSkills = visible.filter(s => s.source === 'learned');
+  const userSkills = visible.filter(s => s.source !== 'external');
   const externalSkills = visible.filter(s => s.source === 'external');
 
   // 后台翻译技能名
@@ -440,7 +447,7 @@ export function SkillsTab() {
     }
   };
 
-  const learnCfg = settingsConfig?.capabilities?.learn_skills || {};
+  const skillInstallCfg = settingsConfig?.capabilities?.learn_skills || {};
   const discoveredPaths = externalPathsData.discovered;
   const configuredOnlyPaths = externalPathsData.configured.filter(
     p => !discoveredPaths.some(d => d.dirPath === p),
@@ -488,7 +495,7 @@ export function SkillsTab() {
       </SettingsSection>
 
       {/* Section 2: 全局能力（子组件，保持原样） */}
-      <SkillCapabilities learnCfg={learnCfg} />
+      <SkillCapabilities installCfg={skillInstallCfg} />
 
       {/* Section 3A: Agent Skills 开关（per-Agent 开关）
        * AgentSelect 作为 section context；skill list 直接作为 section body children，
@@ -517,16 +524,6 @@ export function SkillsTab() {
             onToggleBundle={toggleBundle}
           />
         )}
-      </SettingsSection>
-
-      {/* Section 3B: 自学 Skill（per-Agent 资产，同受 AgentSelect 影响） */}
-      <SettingsSection title={t('settings.skills.learnedSkillsTitle')}>
-        <LearnedSkillsBlock
-          learnedSkills={learnedSkills}
-          nameHints={nameHints}
-          onDelete={deleteSkill}
-          onToggle={toggleSkill}
-        />
       </SettingsSection>
 
       {/* Section 4: 外部兼容

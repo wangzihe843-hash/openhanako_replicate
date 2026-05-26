@@ -21,7 +21,7 @@
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant), color var(--duration-instant);
 }
 
@@ -33,4 +33,60 @@
 .actionBtnActive {
     background: var(--overlay-light);
     color: var(--text);
+}
+
+.actionBtn:disabled {
+    opacity: 0.68;
+}
+
+.actionBtnBusy svg {
+    animation: coverToolPulse 1.2s ease-in-out infinite;
+}
+
+.coverActionWrap {
+    position: relative;
+    display: flex;
+}
+
+.coverMenu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 20;
+    min-width: 112px;
+    padding: 4px;
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card, var(--bg));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    animation: hana-popout var(--duration-fast) var(--ease-out);
+    transform-origin: top right;
+}
+
+.coverMenu button {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-size: 0.7rem;
+    text-align: left;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.coverMenu button:hover:not(:disabled) {
+    background: var(--overlay-light);
+}
+
+.coverMenu button:disabled {
+    color: var(--text-muted);
+    opacity: 0.55;
+}
+
+@keyframes coverToolPulse {
+    0%, 100% { opacity: 0.45; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-1px); }
 }

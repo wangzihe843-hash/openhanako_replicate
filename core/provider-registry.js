@@ -38,6 +38,11 @@ const MEDIA_CAPABILITY_KEYS = {
   speech_generation: "speechGeneration",
   speech: "speechGeneration",
 };
+const MEDIA_USER_CONFIG_KEYS = {
+  imageGeneration: "image_generation",
+  videoGeneration: "video_generation",
+  speechGeneration: "speech_generation",
+};
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -101,6 +106,11 @@ function stripProviderRuntimeMetaMap(providers) {
 
 function capabilityKey(capability) {
   return MEDIA_CAPABILITY_KEYS[capability] || capability;
+}
+
+function mediaUserConfigKey(capability) {
+  const key = capabilityKey(capability);
+  return MEDIA_USER_CONFIG_KEYS[key] || capability;
 }
 
 function defaultChatCapability(providerId) {
@@ -199,6 +209,34 @@ function getModelId(modelEntry) {
   return typeof modelEntry === "object" && modelEntry !== null ? modelEntry.id : modelEntry;
 }
 
+function inferImageGenerationProtocolId(providerId, modelId) {
+  const id = String(modelId || "");
+  if (providerId === "openai-codex-oauth") return "openai-codex-responses-image";
+  if (providerId === "openai" && (id.startsWith("gpt-image") || id.startsWith("dall-e"))) return "openai-images";
+  if (providerId === "volcengine" && id.includes("seedream")) return "volcengine-images";
+  if (providerId === "dashscope" && id.startsWith("wan")) return "dashscope-wan-images";
+  if (providerId === "dashscope" && id.startsWith("qwen-image-2")) return "dashscope-qwen-multimodal-image";
+  if (providerId === "dashscope" && id.startsWith("qwen-image")) return "dashscope-qwen-text2image";
+  if (providerId === "minimax" && id.startsWith("image-")) return "minimax-images";
+  if (providerId === "gemini" && id.includes("image")) return "gemini-generate-content-image";
+  return "";
+}
+
+function inferMediaProtocolId(providerId, capability, modelId) {
+  if (capabilityKey(capability) === "imageGeneration") {
+    return inferImageGenerationProtocolId(providerId, modelId);
+  }
+  return "";
+}
+
+function omitUndefined(value) {
+  const result = {};
+  for (const [key, item] of Object.entries(value || {})) {
+    if (item !== undefined) result[key] = item;
+  }
+  return result;
+}
+
 function getModelType(providerId, modelEntry) {
   const isObj = typeof modelEntry === "object" && modelEntry !== null;
   const id = getModelId(modelEntry);
@@ -220,7 +258,7 @@ function normalizeUserMediaModels(providerId, userConfig, capabilityName, declar
   const seen = new Set();
   for (const raw of rawModels) {
     const id = getModelId(raw);
-    const fallback = declaredById.get(id) || { protocolId: runtime?.protocolId };
+    const fallback = declaredById.get(id) || { protocolId: inferMediaProtocolId(providerId, capabilityName, id) || runtime?.protocolId };
     const model = normalizeMediaModel(raw, fallback);
     if (!model || seen.has(model.id)) continue;
     seen.add(model.id);
@@ -239,6 +277,7 @@ import { geminiPlugin } from "../lib/providers/gemini.js";
 import { openrouterPlugin } from "../lib/providers/openrouter.js";
 import { ollamaPlugin } from "../lib/providers/ollama.js";
 import { minimaxPlugin } from "../lib/providers/minimax.js";
+import { minimaxTokenPlanPlugin } from "../lib/providers/minimax-token-plan.js";
 import { openaiCodexOAuthPlugin } from "../lib/providers/openai-codex-oauth.js";
 // 中国
 import { siliconflowPlugin } from "../lib/providers/siliconflow.js";
@@ -273,6 +312,7 @@ const BUILTIN_PLUGINS = [
   openrouterPlugin,
   ollamaPlugin,
   minimaxPlugin,
+  minimaxTokenPlanPlugin,
   openaiCodexOAuthPlugin,
   // 中国
   siliconflowPlugin,
@@ -431,7 +471,7 @@ export class ProviderRegistry {
         if (Object.keys(overrides).length === 0) {
           delete cfg.models.overrides;
         }
-        const header = "# Hanako Agent 配置\n# 由设置页面管理，手动编辑也可以\n\n";
+        const header = "# HanaAgent 助手配置\n# 由设置页面管理，手动编辑也可以\n\n";
         const yamlStr = header + YAML.dump(cfg, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '"', forceQuotes: false });
         atomicWriteSync(cfgPath, yamlStr);
       }
@@ -466,7 +506,7 @@ export class ProviderRegistry {
     // 读取现有文件以保留 _migrated 等顶层元数据
     const existing = safeReadYAMLSync(ymlPath, {}, YAML) || {};
     const header =
-      "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+      "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
       "# 由设置页面管理\n\n";
     const data = { ...existing, providers: stripProviderRuntimeMetaMap(providers) };
     const yamlStr = header + YAML.dump(data, {
@@ -910,6 +950,11 @@ export class ProviderRegistry {
     }
   }
 
+  clearAuthCache() {
+    this._authJsonCache = null;
+    this._authJsonMtime = 0;
+  }
+
   /**
    * 读取某 provider 在 added-models.yaml 中的模型 ID 列表
    * 模型条目可以是字符串或 {id, name?, context?, maxOutput?} 对象，统一提取 id
@@ -1026,6 +1071,81 @@ export class ProviderRegistry {
 
     validateProviderModels(providerId, nextModels, { baseUrl: uc.base_url });
     uc.models = nextModels;
+    this._saveAddedModels(userConfig);
+    this._entries.clear();
+  }
+
+  _ensureMediaConfig(userConfig, providerId, capability) {
+    if (!userConfig[providerId]) userConfig[providerId] = {};
+    const provider = userConfig[providerId];
+    if (!isPlainObject(provider.media)) provider.media = {};
+    const mediaKey = mediaUserConfigKey(capability);
+    if (!isPlainObject(provider.media[mediaKey])) provider.media[mediaKey] = {};
+    if (!Array.isArray(provider.media[mediaKey].models)) provider.media[mediaKey].models = [];
+    return provider.media[mediaKey];
+  }
+
+  _mediaModelFallback(providerId, capability, modelId) {
+    const entry = this.get(providerId);
+    const key = capabilityKey(capability);
+    const declared = entry?.capabilities?.media?.[key]?.models || [];
+    return declared.find((model) => model.id === modelId)
+      || { protocolId: inferMediaProtocolId(providerId, capability, modelId) || entry?.runtime?.protocolId };
+  }
+
+  addMediaModel(providerId, capability, model) {
+    const userConfig = this._loadAddedModels();
+    const modelId = getModelId(model);
+    if (!modelId) throw new Error("media model id is required");
+    const mediaConfig = this._ensureMediaConfig(userConfig, providerId, capability);
+    const exists = mediaConfig.models.some((item) => getModelId(item) === modelId);
+    if (exists) return;
+
+    const fallback = this._mediaModelFallback(providerId, capability, modelId);
+    const normalized = normalizeMediaModel(model, fallback);
+    if (!normalized?.protocolId) {
+      throw new Error(`Media model "${providerId}/${modelId}" missing protocolId`);
+    }
+    mediaConfig.models = [...mediaConfig.models, normalized];
+    this._saveAddedModels(userConfig);
+    this._entries.clear();
+  }
+
+  updateMediaModelEntry(providerId, capability, modelId, patch) {
+    if (!modelId) throw new Error("media model id is required");
+    const userConfig = this._loadAddedModels();
+    const mediaConfig = this._ensureMediaConfig(userConfig, providerId, capability);
+    const fallback = this._mediaModelFallback(providerId, capability, modelId);
+    const safePatch = omitUndefined(patch);
+    let found = false;
+    mediaConfig.models = mediaConfig.models.map((item) => {
+      if (getModelId(item) !== modelId) return item;
+      found = true;
+      const base = typeof item === "object" && item !== null ? item : { id: modelId };
+      const normalized = normalizeMediaModel({ ...base, ...safePatch, id: modelId }, fallback);
+      if (!normalized?.protocolId) {
+        throw new Error(`Media model "${providerId}/${modelId}" missing protocolId`);
+      }
+      return normalized;
+    });
+    if (!found) {
+      const normalized = normalizeMediaModel({ id: modelId, ...safePatch }, fallback);
+      if (!normalized?.protocolId) {
+        throw new Error(`Media model "${providerId}/${modelId}" missing protocolId`);
+      }
+      mediaConfig.models.push(normalized);
+    }
+    this._saveAddedModels(userConfig);
+    this._entries.clear();
+  }
+
+  removeMediaModel(providerId, capability, modelId) {
+    const userConfig = this._loadAddedModels();
+    const provider = userConfig[providerId];
+    const mediaKey = mediaUserConfigKey(capability);
+    const mediaConfig = provider?.media?.[mediaKey];
+    if (!Array.isArray(mediaConfig?.models)) return;
+    mediaConfig.models = mediaConfig.models.filter((item) => getModelId(item) !== modelId);
     this._saveAddedModels(userConfig);
     this._entries.clear();
   }

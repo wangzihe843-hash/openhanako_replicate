@@ -181,4 +181,160 @@ describe('chat-slice', () => {
       expect(slice.chatSessions['/a']?.items).toHaveLength(1);
     });
   });
+
+  describe('resolveBlockByTaskId', () => {
+    it('按 sessionPath + taskId 替换任意 assistant 消息里的媒体生成占位', () => {
+      slice.initSession('/a', [
+        { type: 'message', data: { id: 'u1', role: 'user', text: 'draw' } },
+        {
+          type: 'message',
+          data: {
+            id: 'a1',
+            role: 'assistant',
+            blocks: [{
+              type: 'media_generation',
+              taskId: 'task-img',
+              kind: 'image',
+              status: 'pending',
+              prompt: 'a moonlit room',
+            }],
+          },
+        },
+        { type: 'message', data: { id: 'u2', role: 'user', text: 'next' } },
+      ], false);
+
+      expect(slice.resolveBlockByTaskId('/a', 'task-img', {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_img',
+        filePath: '/tmp/generated.png',
+        label: 'generated.png',
+        ext: 'png',
+        mime: 'image/png',
+        kind: 'image',
+      })).toBe(true);
+
+      const message = slice.chatSessions['/a']?.items[1];
+      expect(message?.type).toBe('message');
+      if (message?.type !== 'message') throw new Error('expected message item');
+      expect(message.data.blocks).toEqual([
+        expect.objectContaining({
+          type: 'file',
+          fileId: 'sf_img',
+          filePath: '/tmp/generated.png',
+        }),
+      ]);
+      expect(slice.chatSessions['/a']?.items).toHaveLength(3);
+    });
+
+    it('重复收到同一个 taskId 的完成块时视为已消费，不追加重复文件', () => {
+      slice.initSession('/a', [{
+        type: 'message',
+        data: {
+          id: 'a1',
+          role: 'assistant',
+          blocks: [{
+            type: 'file',
+            replacesTaskId: 'task-img',
+            fileId: 'sf_img',
+            filePath: '/tmp/generated.png',
+            label: 'generated.png',
+            ext: 'png',
+          }],
+        },
+      }], false);
+
+      expect(slice.resolveBlockByTaskId('/a', 'task-img', {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_img_2',
+        filePath: '/tmp/generated-2.png',
+        label: 'generated-2.png',
+        ext: 'png',
+      })).toBe(true);
+
+      const message = slice.chatSessions['/a']?.items[0];
+      expect(message?.type).toBe('message');
+      if (message?.type !== 'message') throw new Error('expected message item');
+      expect(message.data.blocks).toEqual([
+        expect.objectContaining({
+          type: 'file',
+          fileId: 'sf_img',
+          filePath: '/tmp/generated.png',
+        }),
+      ]);
+    });
+
+    it('允许重试后的完成块替换失败的媒体生成块', () => {
+      slice.initSession('/a', [{
+        type: 'message',
+        data: {
+          id: 'a1',
+          role: 'assistant',
+          blocks: [{
+            type: 'media_generation',
+            taskId: 'task-img',
+            kind: 'image',
+            status: 'failed',
+            reason: 'API returned no images',
+            prompt: 'a moonlit room',
+          }],
+        },
+      }], false);
+
+      expect(slice.resolveBlockByTaskId('/a', 'task-img', {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_retry',
+        filePath: '/tmp/retry.png',
+        label: 'retry.png',
+        ext: 'png',
+      })).toBe(true);
+
+      const message = slice.chatSessions['/a']?.items[0];
+      expect(message?.type).toBe('message');
+      if (message?.type !== 'message') throw new Error('expected message item');
+      expect(message.data.blocks).toEqual([
+        expect.objectContaining({
+          type: 'file',
+          fileId: 'sf_retry',
+          filePath: '/tmp/retry.png',
+        }),
+      ]);
+    });
+
+    it('不在错误 session 或非 assistant 消息里替换', () => {
+      slice.initSession('/a', [{
+        type: 'message',
+        data: {
+          id: 'u1',
+          role: 'user',
+          blocks: [{
+            type: 'media_generation',
+            taskId: 'task-img',
+            kind: 'image',
+            status: 'pending',
+          }],
+        } as never,
+      }], false);
+      slice.initSession('/b', [], false);
+
+      expect(slice.resolveBlockByTaskId('/b', 'task-img', {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_img',
+        filePath: '/tmp/generated.png',
+        label: 'generated.png',
+        ext: 'png',
+      })).toBe(false);
+      expect(slice.resolveBlockByTaskId('/a', 'task-img', {
+        type: 'file',
+        replacesTaskId: 'task-img',
+        fileId: 'sf_img',
+        filePath: '/tmp/generated.png',
+        label: 'generated.png',
+        ext: 'png',
+      })).toBe(false);
+    });
+  });
 });

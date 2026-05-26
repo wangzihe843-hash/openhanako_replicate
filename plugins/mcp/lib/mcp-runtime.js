@@ -10,6 +10,7 @@ import {
   createMcpOAuthAuthorization,
   exchangeMcpOAuthCode,
 } from "./mcp-oauth.js";
+import { createSettingsUpdate } from "../../../lib/tools/settings-update-result.js";
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -153,6 +154,7 @@ export function createMcpToolDefinition({
     name,
     description: description || `MCP connector tool ${connectorId}/${toolName}`,
     parameters: inputSchema || { type: "object", properties: {} },
+    invocationStyle: "pi_tool",
     metadata: { kind: "mcp", connectorId, serverId: connectorId, toolName },
     isEnabledForAgentConfig: (agentConfig) => isMcpToolEnabledForAgentConfig(agentConfig, {
       globalEnabled: getGlobalEnabled(),
@@ -204,6 +206,7 @@ export class McpRuntime {
       this.Client ? new this.Client(connector, opts) : createDefaultClient(connector, opts)
     ));
     this.clients = new Map();
+    this.clientErrors = new Map();
     this.toolDisposers = [];
     this.oauthSessions = new Map();
   }
@@ -229,6 +232,7 @@ export class McpRuntime {
       await client.stop().catch(() => {});
     }
     this.clients.clear();
+    this.clientErrors.clear();
     this.oauthSessions.clear();
   }
 
@@ -250,6 +254,7 @@ export class McpRuntime {
     const connectors = config.connectors.map((connector) => publicConnector({
       connector,
       status: this.clients.get(connector.id)?.running ? "running" : "stopped",
+      error: this.clientErrors.get(connector.id) || "",
     }));
     return {
       enabled: config.enabled,
@@ -299,6 +304,7 @@ export class McpRuntime {
     config.connectors[index] = next;
     const saved = this.saveConfig(config);
     if (changedClient) await this.stopConnector(id);
+    this.clientErrors.delete(id);
     this.registerCachedTools();
     return saved.connectors[index];
   }
@@ -330,12 +336,14 @@ export class McpRuntime {
 
     const client = this.clientFactory(connector, { log: this.ctx.log, fetchImpl: this.fetchImpl });
     this.clients.set(id, client);
+    this.clientErrors.delete(id);
     try {
       await client.start();
       await this.refreshTools(id);
       return this.getConfig().connectors.find((s) => s.id === id);
     } catch (err) {
       this.clients.delete(id);
+      this.clientErrors.set(id, err.message || "MCP connector failed to start");
       await client.stop().catch(() => {});
       throw err;
     }
@@ -349,6 +357,7 @@ export class McpRuntime {
     const client = this.clients.get(id);
     if (!client) return;
     this.clients.delete(id);
+    this.clientErrors.delete(id);
     await client.stop();
   }
 
@@ -438,6 +447,137 @@ export class McpRuntime {
     return this.updateAgentMcpConnector(agentId, serverId, patch);
   }
 
+  async handleSettingsAction({ action, payload = {}, agentId = null } = {}) {
+    const input = isPlainObject(payload) ? payload : {};
+    const changes = [];
+    let key = action || "mcp";
+    let title = "MCP settings updated";
+    let summary = "MCP settings were updated.";
+
+    switch (action) {
+      case "mcp.global.enabled": {
+        const before = this.getConfig().enabled === true;
+        const enabled = normalizeBoolean(input.enabled ?? input.value, "enabled");
+        await this.setEnabled(enabled);
+        key = "mcp.enabled";
+        title = enabled ? "MCP enabled" : "MCP disabled";
+        summary = enabled ? "MCP connectors are enabled globally." : "MCP connectors are disabled globally.";
+        changes.push({ key, label: "MCP", before: String(before), after: String(enabled) });
+        break;
+      }
+
+      case "mcp.connector.add": {
+        const beforeEnabled = this.getConfig().enabled === true;
+        if (input.enableGlobal === true && !beforeEnabled) {
+          await this.setEnabled(true);
+        }
+        const connector = this.addConnector(connectorInputFromPayload(input));
+        key = `mcp.connector.${connector.id}`;
+        title = "MCP connector added";
+        summary = `Added MCP connector ${connector.name || connector.id}.`;
+        changes.push({ key, label: connector.name || connector.id, before: "", after: "added" });
+        if (input.enableGlobal === true && !beforeEnabled) {
+          changes.push({ key: "mcp.enabled", label: "MCP", before: "false", after: "true" });
+        }
+        break;
+      }
+
+      case "mcp.connector.update": {
+        const connectorId = connectorIdFromPayload(input);
+        const connector = await this.updateConnector(connectorId, connectorPatchFromPayload(input));
+        key = `mcp.connector.${connector.id}`;
+        title = "MCP connector updated";
+        summary = `Updated MCP connector ${connector.name || connector.id}.`;
+        changes.push({ key, label: connector.name || connector.id, before: "configured", after: "updated" });
+        break;
+      }
+
+      case "mcp.connector.remove": {
+        const connectorId = connectorIdFromPayload(input);
+        const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+        await this.removeConnector(connectorId);
+        key = `mcp.connector.${connectorId}`;
+        title = "MCP connector removed";
+        summary = `Removed MCP connector ${connector?.name || connectorId}.`;
+        changes.push({ key, label: connector?.name || connectorId, before: "present", after: "removed" });
+        break;
+      }
+
+      case "mcp.connector.start": {
+        const connectorId = connectorIdFromPayload(input);
+        const connector = await this.startConnector(connectorId);
+        key = `mcp.connector.${connector.id}`;
+        title = "MCP connector started";
+        summary = `Started MCP connector ${connector.name || connector.id}.`;
+        changes.push({ key, label: connector.name || connector.id, before: "stopped", after: "running" });
+        break;
+      }
+
+      case "mcp.connector.stop": {
+        const connectorId = connectorIdFromPayload(input);
+        const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+        await this.stopConnector(connectorId);
+        key = `mcp.connector.${connectorId}`;
+        title = "MCP connector stopped";
+        summary = `Stopped MCP connector ${connector?.name || connectorId}.`;
+        changes.push({ key, label: connector?.name || connectorId, before: "running", after: "stopped" });
+        break;
+      }
+
+      case "mcp.connector.refresh_tools": {
+        const connectorId = connectorIdFromPayload(input);
+        const tools = await this.refreshTools(connectorId);
+        const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+        key = `mcp.connector.${connectorId}.tools`;
+        title = "MCP tools refreshed";
+        summary = `Refreshed ${tools.length} MCP tools for ${connector?.name || connectorId}.`;
+        changes.push({ key, label: `${connector?.name || connectorId} tools`, before: "cached", after: String(tools.length) });
+        break;
+      }
+
+      case "mcp.agent.connector.enable": {
+        const targetAgentId = agentId || stringOrEmpty(input.agentId);
+        const connectorId = connectorIdFromPayload(input);
+        const enabled = normalizeBoolean(input.enabled ?? input.value, "enabled");
+        await this.updateAgentMcpConnector(targetAgentId, connectorId, { enabled });
+        const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+        key = `mcp.agent.${targetAgentId}.connector.${connectorId}`;
+        title = enabled ? "MCP connector enabled for agent" : "MCP connector disabled for agent";
+        summary = `${connector?.name || connectorId} is ${enabled ? "enabled" : "disabled"} for this agent.`;
+        changes.push({ key, label: connector?.name || connectorId, before: "", after: String(enabled) });
+        break;
+      }
+
+      case "mcp.agent.tool.enable": {
+        const targetAgentId = agentId || stringOrEmpty(input.agentId);
+        const connectorId = connectorIdFromPayload(input);
+        const toolName = stringOrEmpty(input.toolName || input.name);
+        if (!toolName) throw new Error("toolName is required");
+        const enabled = normalizeBoolean(input.enabled ?? input.value, "enabled");
+        await this.updateAgentMcpConnector(targetAgentId, connectorId, { tools: { [toolName]: enabled } });
+        key = `mcp.agent.${targetAgentId}.connector.${connectorId}.tool.${toolName}`;
+        title = enabled ? "MCP tool enabled for agent" : "MCP tool disabled for agent";
+        summary = `${connectorId}/${toolName} is ${enabled ? "enabled" : "disabled"} for this agent.`;
+        changes.push({ key, label: `${connectorId}/${toolName}`, before: "", after: String(enabled) });
+        break;
+      }
+
+      default:
+        throw new Error(`Unknown MCP settings action: ${action}`);
+    }
+
+    return {
+      settingsUpdate: createSettingsUpdate({
+        status: "applied",
+        action,
+        key,
+        title,
+        summary,
+        changes,
+      }),
+    };
+  }
+
   async startOAuth(connectorId, redirectUri) {
     const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
     if (!connector) throw new Error(`MCP connector "${connectorId}" not found`);
@@ -513,6 +653,41 @@ export class McpRuntime {
     await this.stopConnector(connectorId);
     return saved.connectors.find((item) => item.id === connectorId);
   }
+}
+
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function normalizeBoolean(value, fieldName) {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  throw new Error(`${fieldName} must be boolean`);
+}
+
+function connectorIdFromPayload(payload) {
+  const id = sanitizeId(payload.connectorId || payload.serverId || payload.id);
+  if (!id) throw new Error("connectorId is required");
+  return id;
+}
+
+function connectorInputFromPayload(payload) {
+  const source = isPlainObject(payload.connector) ? payload.connector : payload;
+  return omitKeys(source, ["connector", "connectorId", "serverId", "enableGlobal", "enabled", "value"]);
+}
+
+function connectorPatchFromPayload(payload) {
+  const source = isPlainObject(payload.patch) ? payload.patch : payload;
+  return omitKeys(source, ["connectorId", "serverId", "id", "patch", "value"]);
+}
+
+function omitKeys(source, keys) {
+  const blocked = new Set(keys);
+  return Object.fromEntries(
+    Object.entries(source || {}).filter(([key]) => !blocked.has(key)),
+  );
 }
 
 function createDefaultClient(connector, opts) {
@@ -592,10 +767,11 @@ function connectorClientFingerprint(connector) {
   });
 }
 
-function publicConnector({ connector, status }) {
+function publicConnector({ connector, status, error = "" }) {
   return {
     ...connector,
     status,
+    error,
     env: redactRecord(connector.env),
     headers: redactRecord(connector.headers),
     authorizationToken: connector.authorizationToken ? "********" : "",

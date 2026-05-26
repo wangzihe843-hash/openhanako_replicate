@@ -13,6 +13,37 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DEBOUNCE_MS = 300;
+const LEGACY_PROTOCOL_BY_ADAPTER = {
+  openai: "openai-images",
+  "openai-codex-oauth": "openai-codex-responses-image",
+  volcengine: "volcengine-images",
+  "volcengine-coding": "volcengine-images",
+  dashscope: "dashscope-images",
+  minimax: "minimax-images",
+  gemini: "gemini-generate-content-image",
+};
+
+function normalizeLoadedTask(task) {
+  if (!task || typeof task.taskId !== "string") return null;
+  const providerId = task.providerId || task.adapterId || task.params?.providerId || null;
+  const modelId = task.modelId || task.params?.modelId || task.params?.model || null;
+  const protocolId = task.protocolId || task.params?.protocolId || LEGACY_PROTOCOL_BY_ADAPTER[providerId] || null;
+  const params = {
+    ...(task.params || {}),
+    ...(providerId ? { providerId } : {}),
+    ...(modelId ? { modelId, model: task.params?.model || modelId } : {}),
+    ...(protocolId ? { protocolId } : {}),
+    ...(task.credentialLaneId ? { credentialLaneId: task.credentialLaneId } : {}),
+  };
+  return {
+    ...task,
+    providerId,
+    modelId,
+    protocolId,
+    credentialLaneId: task.credentialLaneId || task.params?.credentialLaneId || null,
+    params,
+  };
+}
 
 export class TaskStore {
   /**
@@ -34,20 +65,28 @@ export class TaskStore {
   /**
    * Add a new task. Throws if taskId already exists.
    *
-   * @param {{ taskId: string, adapterId: string, batchId: string, type: string, prompt: string, params: object, sessionPath?: string }} opts
+   * @param {{ taskId: string, adapterId: string, providerId?: string|null, modelId?: string|null, protocolId?: string|null, credentialLaneId?: string|null, batchId: string, type: string, prompt: string, params: object, sessionPath?: string, deliveryTarget?: object|null, metadata?: object|null, adapterTaskId?: string|null, submitState?: string }} opts
    */
-  add({ taskId, adapterId, batchId, type, prompt, params, sessionPath }) {
+  add({ taskId, adapterId, providerId = null, modelId = null, protocolId = null, credentialLaneId = null, batchId, type, prompt, params, sessionPath, deliveryTarget = null, metadata = null, adapterTaskId = null, submitState = "submitted" }) {
     if (this._tasks.has(taskId)) {
       throw new Error(`TaskStore: duplicate taskId "${taskId}"`);
     }
     const task = {
       taskId,
       adapterId,
+      providerId: providerId || adapterId || null,
+      modelId: modelId || params?.modelId || params?.model || null,
+      protocolId: protocolId || params?.protocolId || null,
+      credentialLaneId: credentialLaneId || params?.credentialLaneId || null,
       batchId,
       type,
       prompt,
       params,
       sessionPath: sessionPath || null,
+      deliveryTarget: deliveryTarget || null,
+      metadata: metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : null,
+      adapterTaskId: adapterTaskId || null,
+      submitState,
       status: "pending",
       failReason: null,
       files: [],
@@ -214,11 +253,17 @@ export class TaskStore {
         const raw = fs.readFileSync(this._filePath, "utf8");
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
+          let changed = false;
           for (const task of arr) {
-            if (task && typeof task.taskId === "string") {
-              this._tasks.set(task.taskId, task);
+            const normalized = normalizeLoadedTask(task);
+            if (normalized) {
+              if (normalized.providerId !== task.providerId || normalized.protocolId !== task.protocolId) {
+                changed = true;
+              }
+              this._tasks.set(normalized.taskId, normalized);
             }
           }
+          if (changed) this._writeSync();
         }
       }
     } catch {

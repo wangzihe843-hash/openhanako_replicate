@@ -1,5 +1,5 @@
 import type { FileRef } from '../../types/file-ref';
-import type { DeskFile } from '../../types';
+import type { DeskFile, FileVersion } from '../../types';
 import type { ChatListItem, ContentBlock, ResourceEnvelope, SessionRegistryFile } from '../chat-types';
 import { inferKindByExt, buildFileRefId } from '../../utils/file-kind';
 
@@ -53,6 +53,7 @@ export function selectDeskFiles(state: StateShape): FileRef[] {
       name: f.name,
       path,
       ext,
+      version: versionFromDeskFile(f),
     });
   }
   cachedDesk = { files: deskFiles, basePath: deskBasePath, currentPath: deskCurrentPath, result };
@@ -126,6 +127,7 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
       operations: file.operations,
       createdAt: file.createdAt,
       timestamp: file.createdAt,
+      version: versionFromSessionFile(file),
       resource: compactResourceRef(file.resource),
     });
   }
@@ -181,6 +183,8 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
             mime: b.mime,
             status: b.status,
             missingAt: b.missingAt,
+            resource: compactResourceRef(b.resource),
+            version: versionFromSessionFile(b),
             timestamp: msg.timestamp,
             sessionMessageId: msg.id,
             sessionBlockIdx: i,
@@ -201,6 +205,8 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
             mime: b.mime,
             status: b.status,
             missingAt: b.missingAt,
+            resource: compactResourceRef(b.resource),
+            version: versionFromSessionFile(b),
             timestamp: msg.timestamp,
             sessionMessageId: msg.id,
             sessionBlockIdx: i,
@@ -232,6 +238,42 @@ export function selectSessionFiles(state: SessionStateShape, sessionPath: string
 
 function basenameOf(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
+}
+
+function versionFromDeskFile(file: DeskFile): FileVersion | undefined {
+  const mtimeMs = typeof file.mtime === 'string' ? Date.parse(file.mtime) : NaN;
+  if (!Number.isFinite(mtimeMs) || typeof file.size !== 'number') return undefined;
+  return { mtimeMs, size: file.size };
+}
+
+function versionFromSessionFile(file: {
+  version?: FileVersion | null;
+  mtimeMs?: number;
+  size?: number | null;
+  resource?: ResourceEnvelope;
+}): FileVersion | undefined {
+  if (isFileVersion(file.version)) return file.version;
+  const mtimeMs = typeof file.mtimeMs === 'number'
+    ? file.mtimeMs
+    : typeof file.resource?.mtimeMs === 'number'
+      ? file.resource.mtimeMs
+      : NaN;
+  const size = typeof file.size === 'number'
+    ? file.size
+    : typeof file.resource?.size === 'number'
+      ? file.resource.size
+      : NaN;
+  if (!Number.isFinite(mtimeMs) || !Number.isFinite(size)) return undefined;
+  return { mtimeMs, size };
+}
+
+function isFileVersion(value: unknown): value is FileVersion {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<FileVersion>;
+  return typeof candidate.mtimeMs === 'number'
+    && Number.isFinite(candidate.mtimeMs)
+    && typeof candidate.size === 'number'
+    && Number.isFinite(candidate.size);
 }
 
 function compactResourceRef(resource: ResourceEnvelope | undefined): FileRef['resource'] | undefined {

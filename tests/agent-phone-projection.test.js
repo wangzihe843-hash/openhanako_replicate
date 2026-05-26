@@ -7,6 +7,7 @@ import {
   ensureAgentPhoneProjection,
   recordAgentPhoneActivity,
   readAgentPhoneProjection,
+  resetAgentPhoneProjection,
   updateAgentPhoneProjectionMeta,
 } from "../lib/conversations/agent-phone-projection.js";
 
@@ -83,7 +84,7 @@ describe("agent phone projection", () => {
     ]);
   });
 
-  it("updates phone session metadata without removing activity history", async () => {
+  it("updates projection metadata without removing activity history", async () => {
     const agentDir = path.join(tmpDir, "agents", "hana");
     await recordAgentPhoneActivity({
       agentDir,
@@ -100,11 +101,46 @@ describe("agent phone projection", () => {
       agentId: "hana",
       conversationId: "ch_crew",
       conversationType: "channel",
-      patch: { phoneSessionFile: "phone/sessions/ch_crew/session.jsonl" },
+      patch: { toolMode: "write" },
     });
 
     const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, "ch_crew"));
-    expect(projection.meta.phoneSessionFile).toBe("phone/sessions/ch_crew/session.jsonl");
+    expect(projection.meta.toolMode).toBe("write");
     expect(projection.activities.map((activity) => activity.state)).toEqual(["viewed"]);
+  });
+
+  it("resets a projection visibility boundary and clears the old phone session snapshot", async () => {
+    const agentDir = path.join(tmpDir, "agents", "hana");
+    await updateAgentPhoneProjectionMeta({
+      agentDir,
+      agentId: "hana",
+      conversationId: "dm:yui",
+      conversationType: "dm",
+      patch: {
+        phoneSessionFile: "phone/sessions/dm_yui/old.jsonl",
+        promptSnapshot: { version: 1, systemPrompt: "old" },
+        toolNames: ["read"],
+      },
+    });
+
+    await resetAgentPhoneProjection({
+      agentDir,
+      agentId: "hana",
+      conversationId: "dm:yui",
+      conversationType: "dm",
+      visibleAfterTimestamp: "2026-05-24 11:00:00",
+      resetBy: "hana",
+      timestamp: "2026-05-24T03:00:00.000Z",
+    });
+
+    const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, "dm:yui"));
+    expect(projection.meta).toMatchObject({
+      visibleAfterTimestamp: "2026-05-24 11:00:00",
+      resetAt: "2026-05-24T03:00:00.000Z",
+      resetBy: "hana",
+    });
+    expect(projection.meta.phoneSessionFile).toBeUndefined();
+    expect(projection.meta.promptSnapshot).toBeUndefined();
+    expect(projection.meta.toolNames).toBeUndefined();
   });
 });

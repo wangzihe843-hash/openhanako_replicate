@@ -19,13 +19,13 @@
     "createTitle": "新しいチャンネル",
     "createName": "チャンネル名",
     "createNamePlaceholder": "例: design-team",
-    "createMembers": "メンバー",
+    "createMembers": "Agent メンバー",
     "createIntro": "説明",
     "createIntroPlaceholder": "このチャンネルの用途を書いてください...",
     "createCancel": "キャンセル",
     "createConfirm": "作成",
     "nameRequired": "チャンネル名を入力してください",
-    "minMembers": "メンバーを2人以上選んでください",
+    "minMembers": "Agent メンバーを2人以上選んでください",
     "created": "チャンネル #{name} を作成しました ✿",
     "createFailed": "作成に失敗しました",
     "alreadyExists": "チャンネルはすでに存在します",
@@ -81,7 +81,18 @@
     "bridge": "ソーシャル連携",
     "toggle": "サイドバー",
     "bridgeShort": "連携",
-    "pinned": "ピン留め"
+    "pinned": "ピン留め",
+    "searchPlaceholder": "チャットを検索",
+    "searchClear": "検索をクリア",
+    "searchTitleMatches": "タイトル",
+    "searchContentMatches": "本文",
+    "searchingTitles": "タイトルを検索中…",
+    "searchingContent": "本文を検索中…",
+    "searchNoResults": "一致するチャットがありません",
+    "searchFailed": "検索に失敗しました"
+  },
+  "titlebar": {
+    "currentChatTitle": "現在のチャットタイトル"
   },
   "session": {
     "untitled": "新しいチャット",
@@ -690,7 +701,7 @@
     "editor": {
       "title": "エディター",
       "markdownBodyFontSize": "本文サイズ",
-      "markdownBodyFontSizeHint": "Markdown エディターの本文は、Notion に近い 16px を既定にします。",
+      "markdownBodyFontSizeHint": "Markdown エディターの本文は、15px を既定にします。",
       "markdownHeading1FontSize": "見出し 1 サイズ",
       "markdownHeading1FontSizeHint": "# 見出しに使用します。",
       "markdownHeading2FontSize": "見出し 2 サイズ",
@@ -763,6 +774,8 @@
         "title": "ツール",
         "description": "ツールの切り替えは、会話を再開するか新しく始めた後に反映されます。進行中の会話は開始時のツールセットを使い続けます。",
         "items": {
+          "automation": { "label": "自動化", "summary": "通知とプラグインのスケジュール動作を Agent が作成できるようにします" },
+          "beautify": { "label": "小花美术", "summary": "Agent にドキュメントカバーと美的な強化を生成させます" },
           "browser": { "label": "ブラウザ", "summary": "ヘッドレスブラウザを操作してウェブを閲覧" },
           "computer": { "label": "Computer Use", "summary": "承認済みのデスクトップアプリを操作し、動作カーソルを表示します" },
           "cron": { "label": "定期実行", "summary": "指定した時刻にタスクを自動実行" },
@@ -797,14 +810,15 @@
       "updateChecking": "アップデートを確認中…",
       "updateDownloading": "{agentName}が新しいお家を準備中 {percent}%",
       "updateReadyInstall": "v{version} インストール準備完了",
-      "updateInstalling": "アップデートをインストール中です。Hanako は自動で再起動します…",
+      "updateInstalling": "アップデートをインストール中です。HanaAgent は自動で再起動します…",
       "updateInstallManualHint": "「再起動して更新」を押すとインストールします。終了だけでは自動インストールしません",
       "updateInstall": "再起動して更新",
+      "updateInstallNow": "今すぐ再起動して更新",
       "updateProgress": "{percent}%",
       "updateError": "アップデートの確認に失敗しました",
       "updateLatest": "最新バージョンです",
       "updateCheckBtn": "アップデートを確認",
-      "updateNeedInstall": "先に Hanako をアプリケーションフォルダに移動してください",
+      "updateNeedInstall": "先に HanaAgent をアプリケーションフォルダに移動してください",
       "updateDiskSpace": "ディスク容量不足のため、アップデートをダウンロードできません",
       "launchAtLogin": "ログイン時に起動",
       "betaUpdates": "ベータ版アップデートを受け取る",
@@ -815,7 +829,7 @@
       "mobileAccess": "モバイルアクセス",
       "desktopAccess": "コンピューターアクセス",
       "lanToggle": "LAN デバイスを許可",
-      "lanHint": "同じ LAN 上のスマートフォンやコンピューターからこの Hana Server にアクセスできます",
+      "lanHint": "同じ LAN 上のスマートフォンやコンピューターからこの HanaAgent Server にアクセスできます",
       "port": "固定ポート",
       "portHint": "ブックマークと QR コードに使います。変更後は Hana の再起動が必要です",
       "mobileUrl": "モバイル URL",
@@ -850,7 +864,7 @@
       "desktopKeyFailed": "生成に失敗しました",
       "connectLanServer": "LAN サーバーに接続",
       "remoteServerUrl": "サーバー URL",
-      "remoteServerUrlHint": "別のコンピューターまたは NAS の Hana Server URL を入力します",
+      "remoteServerUrlHint": "別のコンピューターまたは NAS の HanaAgent Server URL を入力します",
       "remoteServerKey": "アクセスキー",
       "remoteServerKeyHint": "そのサーバーの設定ページで生成したコンピューターアクセスキーを入力します",
       "remoteServerConnected": "LAN サーバーに接続しました",
@@ -905,6 +919,9 @@
       "networkProxyWss": "WSS proxy、省略可",
       "networkProxyNoProxy": "プロキシ除外 例: localhost, 127.0.0.1, ::1",
       "networkProxySave": "プロキシ設定を保存",
+      "archivedChats": "アーカイブ済み会話",
+      "archivedChatsDesc": "アーカイブ済みのチャットを確認し、必要な会話を復元したり、不要な記録を完全に削除したりできます",
+      "viewArchivedChats": "アーカイブ済み会話を表示",
       "fileBackup": "ファイルバックアップ",
       "fileBackupDesc": "AIがファイルを変更・削除する前に元の内容を自動保存します",
       "retention": "保持期間",
@@ -970,6 +987,51 @@
       "noKey": "未設定",
       "remove": "削除",
       "deleteConfirm": "プロバイダー {name} を削除しますか？関連するモデルも削除されます。"
+    },
+    "usage": {
+      "title": "使用量",
+      "note": "使用量は参考値です。正確な集計はプロバイダー側の統計を基準にしてください。",
+      "refresh": "使用量を更新",
+      "total": "すべて",
+      "requests": "リクエスト",
+      "totalTokens": "合計 Tokens",
+      "cacheRead": "キャッシュ読込",
+      "cacheHitRate": "ヒット率",
+      "estimatedCost": "推定コスト",
+      "uncached": "非キャッシュ",
+      "modelMix": "モデル分布",
+      "dailyUsage": "日別使用量",
+      "requestLedger": "リクエスト明細",
+      "loading": "使用量を読み込み中…",
+      "empty": "使用量の記録はまだありません",
+      "groupMeta": "{requests} 件 · {errors} エラー",
+      "cacheShort": "cache {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "キャッシュ {cache} · 非キャッシュ {uncached}",
+      "view": {
+        "overall": "概要",
+        "daily": "日別",
+        "category": "カテゴリ",
+        "model": "モデル"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "Memory",
+        "automation": "Automation",
+        "subagent": "Subagent",
+        "compaction": "Compaction",
+        "plugin": "Plugin",
+        "utility": "Utility",
+        "vision": "Vision",
+        "unknown": "Unknown"
+      },
+      "status": {
+        "ok": "完了",
+        "error": "エラー",
+        "aborted": "中止",
+        "usage_missing": "使用量なし"
+      }
     },
     "media": {
       "imageGeneration": "画像生成",
@@ -1177,7 +1239,7 @@
       "homeFolderBrowse": "参照"
     },
     "toolCaps": {
-      "title": "自律学習スキル"
+      "title": "スキルインストール権限"
     },
     "skills": {
       "title": "スキル",
@@ -1186,8 +1248,6 @@
       "agentConfigTitle": "Agent Skill Configuration",
       "configureFor": "Configuring:",
       "userSkillsTitle": "Agent Skill Toggles",
-      "learnedSkillsTitle": "Learned Skills",
-      "learnedEmpty": "This agent hasn't learned any skills yet",
       "user": "ユーザースキル",
       "system": "システムスキル",
       "add": "スキルを追加",
@@ -1198,8 +1258,6 @@
       "enabled": "有効",
       "disabled": "無効",
       "noSkills": "利用可能なスキルはありません",
-      "learned": "エージェントが学習済み",
-      "noLearned": "エージェントはまだスキルを学習していません",
       "noUser": "カスタムスキルはありません",
       "copyToSkills": "スキルにコピー",
       "copied": "コピーしました ✓",
@@ -1216,7 +1274,7 @@
       "compatAutoDiscovered": "自動検出",
       "compatNotInstalled": "未インストール",
       "learnCreate": "スキルを作成 / インストール",
-      "learnCreateDesc": "エージェントが新しいスキルを作成したり、ツール呼び出しでインストールすることを許可します",
+      "learnCreateDesc": "エージェントが新しいスキルを作成したり、共有スキルプールへインストールすることを許可します。デフォルトでは現在の Agent のみ有効になります",
       "fetchRemote": "GitHub / ClawHub からスキルを取得",
       "fetchRemoteDesc": "有効にすると、エージェントは専門タスクの実行時にスキルを検索してインストールします。慎重にご使用ください",
       "safetyReview": "インストール前の安全審査",
@@ -1461,9 +1519,14 @@
       "failed": "LAN サーバーへの接続に失敗しました"
     },
     "name": {
-      "title": "なんとお呼びすればいいですか？",
-      "subtitle": "会話がより自然になります",
-      "placeholder": "お名前を入力",
+      "title": "名前とメモリ",
+      "subtitle": "あなたをどう呼べばいいか、この Agent の名前も教えてください。",
+      "userLabel": "なんとお呼びすればいいですか？",
+      "placeholder": "あなたの名前",
+      "agentLabel": "この Agent の名前は？",
+      "agentPlaceholder": "Hanako",
+      "memoryTitle": "メモリシステム",
+      "memoryHint": "オンにすると、システムは会話終了時に内容を整理してメモリにします。メモリはよく更新されるため、モデルのキャッシュヒット率が下がることがあります。オフにすると通常はより安くなります。",
       "back": "戻る",
       "next": "次へ"
     },
@@ -1579,6 +1642,12 @@
     "title": "スケジュールタスク",
     "empty": "スケジュールタスクはまだありません。\n必要に応じてアシスタントが作成します。",
     "defaultModel": "デフォルトモデル",
+    "executor": {
+      "agentSession": "エージェント実行",
+      "notify": "通知",
+      "pluginAction": "プラグインアクション",
+      "directAction": "直接アクション"
+    },
     "edit": "編集",
     "delete": "削除"
   },
@@ -1807,7 +1876,7 @@
     "skillMissingName": "SKILL.md に name フィールドがありません",
     "skillNameInvalid": "スキル名が無効です（\"{name}\"）。英字、数字、アンダースコア、ハイフンのみ使用できます。",
     "skillPathMustBeAbsolute": "パスは絶対パスである必要があります: {path}",
-    "skillCannotAddSelfDir": "Hanako 自身のスキルディレクトリは追加できません",
+    "skillCannotAddSelfDir": "HanaAgent 自身のスキルディレクトリは追加できません",
     "skillInvalidName": "無効なスキル名です",
     "skillExternalCannotDelete": "外部互換スキルはここからは削除できません",
     "skillNotExists": "スキルが存在しません",
@@ -1880,7 +1949,7 @@
     "subagentStopReason": "サブエージェントは正常に完了しませんでした（stopReason: {reason}）。",
     "subagentToolFailed": "サブエージェントのツール実行に失敗しました: {msg}",
     "subagentDispatched": "サブタスクを送信しました (task-id: {taskId})。完了後、結果は自動的に届きます。",
-    "installSkillDisabled": "自己学習スキル機能が有効になっていません。設定で「Agent のスキル作成/インストールを許可」を有効にしてください。",
+    "installSkillDisabled": "スキルのインストール機能が有効になっていません。設定で「Agent のスキル作成/インストールを許可」を有効にしてください。",
     "installSkillGithubDisabled": "GitHub スキル取得が有効になっていません。設定で「GitHub からのスキル取得を許可」を有効にしてください。",
     "installSkillInvalidGithubUrl": "無効な GitHub URL：{url}",
     "installSkillGithubApiFailed": "リポジトリ情報を取得できません（HTTP {status}）。URL を確認してください。",
@@ -1976,7 +2045,7 @@
   },
   "main": {
     "tray": {
-      "show": "Hanako を表示",
+      "show": "HanaAgent を表示",
       "settings": "設定",
       "quit": "終了"
     },
@@ -1984,17 +2053,17 @@
       "selectFolder": "作業フォルダを選択",
       "selectSkill": "スキルを選択",
       "selectPlugin": "プラグインを選択",
-      "launchFailedTitle": "Hanako の起動に失敗しました",
-      "launchFailedBody": "Hanako v{version}\n\n{detail}\n\n詳細ログの保存先：\n{logPath}\n\nこのスクリーンショットまたはログファイルを開発者にお送りください。",
-      "serverRestartFailed": "Hanako v{version}\n\nServer がクラッシュし、再起動に失敗しました。\n{error}\n\nアプリケーションを再起動してください。",
-      "serverMultipleCrash": "Hanako v{version}\n\nServer が複数回クラッシュしました ({reason})。\n\nアプリケーションを再起動してください。",
+      "launchFailedTitle": "HanaAgent の起動に失敗しました",
+      "launchFailedBody": "HanaAgent v{version}\n\n{detail}\n\n詳細ログの保存先：\n{logPath}\n\nこのスクリーンショットまたはログファイルを開発者にお送りください。",
+      "serverRestartFailed": "HanaAgent v{version}\n\nServer がクラッシュし、再起動に失敗しました。\n{error}\n\nアプリケーションを再起動してください。",
+      "serverMultipleCrash": "HanaAgent v{version}\n\nServer が複数回クラッシュしました ({reason})。\n\nアプリケーションを再起動してください。",
       "serverStartTimeout": "Server の起動がタイムアウトしました",
       "serverKilledBySignal": "Server がシグナルで終了しました ({signal})",
       "serverExitedWithCode": "Server が終了しました。コード: {code}",
-      "serverFilesNotReady": "自動アップデートが完了したばかりで、新バージョンのファイルがまだディスクに書き込まれていません（{missing} が見つかりません）。{waited} 秒待機しましたが完了しませんでした。しばらくしてから Hanako を再起動してください。",
-      "serverModuleMissing": "Server 起動失敗：モジュール {module} が見つかりません。\n通常、自動アップデート完了直後にファイルがまだディスクに書き込み中の場合に発生します。\n推奨：1〜2 分待ってから Hanako を再起動してください。問題が続く場合は GitHub で報告してください。",
-      "installFailedTitle": "Hanako アップデート",
-      "installFailedBody": "アップデートのインストールに失敗しました：\n{error}\n\nHanako を再起動してからもう一度お試しください。または設定ページで手動でアップデートを確認してください。"
+      "serverFilesNotReady": "自動アップデートが完了したばかりで、新バージョンのファイルがまだディスクに書き込まれていません（{missing} が見つかりません）。{waited} 秒待機しましたが完了しませんでした。しばらくしてから HanaAgent を再起動してください。",
+      "serverModuleMissing": "Server 起動失敗：モジュール {module} が見つかりません。\n通常、自動アップデート完了直後にファイルがまだディスクに書き込み中の場合に発生します。\n推奨：1〜2 分待ってから HanaAgent を再起動してください。問題が続く場合は GitHub で報告してください。",
+      "installFailedTitle": "HanaAgent アップデート",
+      "installFailedBody": "アップデートのインストールに失敗しました：\n{error}\n\nHanaAgent を再起動してからもう一度お試しください。または設定ページで手動でアップデートを確認してください。"
     },
     "notification": {
       "ready": "通知が有効になりました"
@@ -2162,16 +2231,15 @@
     },
     "installSkill": {
       "label": "スキルをインストール",
-      "description": "自分用に新しいスキルをインストールします。モード A：GitHub リポジトリ URL（SKILL.md を含む）を指定して自動取得・インストール。モード B：skill_content + skill_name を直接指定、自作スキル向け。インストール後すぐに有効になります。",
+      "description": "新しいスキルを共有スキルプールへインストールし、デフォルトでは現在の Agent のみ有効にします。モード A：GitHub リポジトリ URL（SKILL.md を含む）を指定して自動取得・インストール。モード B：skill_content + skill_name を直接指定、自作スキル向け。",
       "githubUrlDesc": "GitHub リポジトリ URL（モード A）",
       "skillContentDesc": "SKILL.md の完全な内容（モード B）",
       "skillNameDesc": "スキル名（モード B の場合必須）",
-      "reasonDesc": "このスキルが必要な理由の説明（監査用、必須）",
-      "userRequestedDesc": "ユーザーが明示的にインストールを要求したか（true = ユーザースキル、false = 学習スキル）"
+      "reasonDesc": "このスキルが必要な理由の説明（監査用、必須）"
     },
     "updateSettings": {
       "label": "設定",
-      "description": "Hanako の設定を変更します。2つの操作があります：\n- search + query：キーワードで設定項目を検索し、現在の値と選択肢を確認\n- apply + key + value：指定した設定を変更（ユーザー確認が必要）\n\n正確なキーが分かっている場合は、検索をスキップして直接 apply できます。",
+      "description": "HanaAgent の設定を変更します。2つの操作があります：\n- search + query：キーワードで設定項目を検索し、現在の値と選択肢を確認\n- apply + key + value：指定した設定を変更（ユーザー確認が必要）\n\n正確なキーが分かっている場合は、検索をスキップして直接 apply できます。",
       "actionDesc": "操作タイプ：search で設定を検索 / apply で設定を変更",
       "queryDesc": "検索キーワード（search 時に必須）",
       "keyDesc": "設定キー（search で取得）",
@@ -2260,7 +2328,7 @@
     "inputHelp": "/help でコマンド一覧を表示"
   },
   "sandbox": {
-    "blocked": "[セキュリティ] {reason}\n\nこの操作は Hanako のサンドボックスセキュリティポリシーによりブロックされました。これはコマンドがパスまたは権限の境界を越えたことを示します。まず現在のワークスペース、具体的なパス表記、対象ファイルが許可されたワークスペースまたは session パスに属するべきかを確認してください。ブロックされたパスと理由をユーザーに説明し、サンドボックス設定の変更はユーザーが明示的に決めた場合にだけ相談してください。",
+    "blocked": "[セキュリティ] {reason}\n\nこの操作は HanaAgent のサンドボックスセキュリティポリシーによりブロックされました。これはコマンドがパスまたは権限の境界を越えたことを示します。まず現在のワークスペース、具体的なパス表記、対象ファイルが許可されたワークスペースまたは session パスに属するべきかを確認してください。ブロックされたパスと理由をユーザーに説明し、サンドボックス設定の変更はユーザーが明示的に決めた場合にだけ相談してください。",
     "noSudo": "sudo の使用は禁止されています",
     "noSu": "su によるユーザー切り替えは禁止されています",
     "noChmod": "ファイル権限の変更は禁止されています",
@@ -2315,7 +2383,6 @@
   "preview.toggle": "プレビューパネル",
   "preview.markdownPreview": "プレビュー",
   "preview.exitMarkdownPreview": "編集に戻る",
-  "preview.openInNewWindow": "新しいウィンドウで表示",
-  "preview.openInNewWindowUnsupported": "このファイル形式は対応していません",
-  "preview.markdownEditorStatus": "選択 {selected} 文字 · 合計 {total} 文字"
+  "preview.markdownEditorStatus": "選択 {selected} 文字 · 合計 {total} 文字",
+  "preview.markdownAttachmentInsertFailed": "添付ファイルの挿入に失敗しました"
 }

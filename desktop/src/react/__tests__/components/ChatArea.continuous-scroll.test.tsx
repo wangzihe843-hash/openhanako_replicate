@@ -9,7 +9,19 @@ import type { ChatListItem } from '../../stores/chat-types';
 
 vi.mock('../../components/chat/ChatTranscript', () => ({
   ChatTranscript: ({ items }: { items: ChatListItem[] }) => (
-    <div data-testid="transcript">{items.map((item) => item.type === 'message' ? item.data.id : 'c').join(',')}</div>
+    <div data-testid="transcript">
+      {items.map((item) => {
+        if (item.type !== 'message') return <span key={item.id}>c</span>;
+        const text = item.data.role === 'user'
+          ? item.data.text
+          : item.data.blocks?.map((block) => block.type === 'text' ? (block.source || block.html) : '').join('');
+        return (
+          <article key={item.data.id} data-message-id={item.data.id}>
+            <span id={`message-${item.data.id}`}>{text}</span>
+          </article>
+        );
+      })}
+    </div>
   ),
 }));
 
@@ -57,6 +69,9 @@ describe('ChatArea continuous bottom scroll', () => {
     useStore.setState({
       currentSessionPath: '/chat/scroll.jsonl',
       welcomeVisible: false,
+      quoteCandidate: null,
+      quotedSelections: [],
+      quotedSelection: null,
       chatSessions: {
         '/chat/scroll.jsonl': {
           items: [message('u-1', 'user')],
@@ -68,10 +83,12 @@ describe('ChatArea continuous bottom scroll', () => {
       streamingSessions: ['/chat/scroll.jsonl'],
       agents: [{ id: 'hana', name: 'Hana', yuan: 'hanako' }],
     } as never);
+    window.getSelection()?.removeAllRanges();
   });
 
   afterEach(() => {
     cleanup();
+    window.getSelection()?.removeAllRanges();
     vi.restoreAllMocks();
   });
 
@@ -115,4 +132,47 @@ describe('ChatArea continuous bottom scroll', () => {
 
     expect(metrics.scrollTop).toBe(500);
   });
+
+  it('captures chat text selection from the active panel on mouseup', async () => {
+    useStore.setState({
+      currentSessionPath: '/chat/scroll.jsonl',
+      chatSessions: {
+        '/chat/scroll.jsonl': {
+          items: [{
+            type: 'message',
+            data: {
+              id: 'a-quote',
+              role: 'assistant',
+              blocks: [{ type: 'text', html: '<p>可以引用的话</p>', source: '可以引用的话' }],
+            },
+          }],
+          hasMore: false,
+          loadingMore: false,
+        },
+      },
+    } as never);
+    const { container } = render(<ChatArea />);
+
+    await waitFor(() => {
+      expect(container.querySelector('[class*="sessionPanel"]')).toBeTruthy();
+    });
+
+    selectElementText(document.getElementById('message-a-quote')!);
+    fireEvent.mouseUp(container.querySelector('[class*="sessionPanel"]') as HTMLElement);
+
+    expect(useStore.getState().quoteCandidate).toMatchObject({
+      text: '可以引用的话',
+      sourceKind: 'chat',
+      sourceMessageId: 'a-quote',
+      sourceSessionPath: '/chat/scroll.jsonl',
+    });
+  });
 });
+
+function selectElementText(element: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}

@@ -30,7 +30,6 @@ describe("Windows sandbox policy projection", () => {
       externalDir,
       path.join(agentDir, "memory"),
       path.join(agentDir, "sessions"),
-      path.join(agentDir, "learned-skills"),
       path.join(hanakoHome, "user"),
       path.join(hanakoHome, "skills"),
       path.join(hanakoHome, "session-files"),
@@ -121,6 +120,49 @@ describe("Windows sandbox policy projection", () => {
     expect(grants.writePaths).not.toContain(real(externalDir));
     expect(grants.optionalWritePaths).not.toContain(real(externalDir));
     expect(grants.denyReadPaths).toEqual([]);
+  });
+
+  it("keeps non-Git protected paths inside write roots as deny-write grants", () => {
+    const { hanakoHome, agentDir, workspace } = makeTree();
+    const protectedBuildCache = path.join(workspace, "protected-cache");
+    fs.mkdirSync(protectedBuildCache, { recursive: true });
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      workspace,
+      workspaceFolders: [],
+      hanakoHome,
+      mode: "standard",
+    });
+    policy.protectedPaths.push(protectedBuildCache);
+
+    const grants = buildWin32SandboxGrants({
+      policy,
+      cwd: workspace,
+    });
+
+    expect(grants.writePaths).toContain(real(workspace));
+    expect(grants.denyWritePaths).toContain(real(protectedBuildCache));
+  });
+
+  it("projects explicit runtime writable roots for language caches and bundled runtimes", () => {
+    const { hanakoHome, agentDir, workspace } = makeTree();
+    const runtimeRoot = path.join(hanakoHome, ".ephemeral", "runtime-cache");
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      workspace,
+      workspaceFolders: [],
+      hanakoHome,
+      runtimeWritablePaths: [runtimeRoot],
+      mode: "standard",
+    });
+
+    const grants = buildWin32SandboxGrants({
+      policy,
+      cwd: workspace,
+    });
+
+    expect(grants.optionalWritePaths).toContain(real(runtimeRoot));
   });
 
   it("keeps read-only Hana prompt files out of Windows ACL projection", () => {

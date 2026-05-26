@@ -1,11 +1,3 @@
-import fs from "fs";
-import {
-  listAgentPhoneProjectionFiles,
-  readAgentPhoneProjection,
-  resolveAgentPhoneStoredSessionPath,
-} from "../lib/conversations/agent-phone-projection.js";
-import { shouldRunFreshCompact } from "../lib/fresh-compact/policy.js";
-import { freshCompactAgentPhoneSession } from "./agent-executor.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 
 const log = createModuleLogger("fresh-compact");
@@ -35,28 +27,6 @@ export class FreshCompactMaintainer {
     return [];
   }
 
-  _listPhoneTargets(agent, now) {
-    const targets = [];
-    for (const filePath of listAgentPhoneProjectionFiles(agent.agentDir)) {
-      const projection = readAgentPhoneProjection(filePath);
-      const meta = projection.meta || {};
-      const conversationId = meta.conversationId;
-      const conversationType = meta.conversationType;
-      if (!conversationId || !conversationType) continue;
-      const sessionPath = resolveAgentPhoneStoredSessionPath(agent.agentDir, meta.phoneSessionFile);
-      if (!sessionPath || !fs.existsSync(sessionPath)) continue;
-      const decision = shouldRunFreshCompact({ meta, now });
-      if (!decision.run) continue;
-      targets.push({
-        agentId: agent.id,
-        conversationId,
-        conversationType,
-        reason: decision.reason || "daily",
-      });
-    }
-    return targets;
-  }
-
   async runDaily({ now = new Date() } = {}) {
     if (this._running) return { retry: true, staleRemaining: 1 };
     this._running = true;
@@ -73,6 +43,22 @@ export class FreshCompactMaintainer {
           ?.listDailyFreshCompactTargets?.(agent, { now }) || [];
         for (const target of bridgeTargets) {
           try {
+            const alreadySatisfied = this._engine.bridgeSessionManager
+              ?.isFreshCompactAlreadySatisfied?.(target.sessionKey, {
+                agentId: agent.id,
+                sessionPath: target.sessionPath,
+              });
+            if (alreadySatisfied?.satisfied) {
+              await this._engine.bridgeSessionManager.markFreshCompactSatisfied(target.sessionKey, {
+                agentId: agent.id,
+                reason: "daily",
+                now,
+                noopReason: alreadySatisfied.reason,
+              });
+              result.bridgeCompacted += 1;
+              await sleep(this._delayBetweenJobsMs);
+              continue;
+            }
             if (target.sessionPath && typeof agent.memoryTicker?.flushSessionAndCompile === "function") {
               await agent.memoryTicker.flushSessionAndCompile(target.sessionPath);
             }
@@ -90,24 +76,6 @@ export class FreshCompactMaintainer {
           await sleep(this._delayBetweenJobsMs);
         }
 
-        const phoneTargets = this._listPhoneTargets(agent, now);
-        for (const target of phoneTargets) {
-          try {
-            await freshCompactAgentPhoneSession(target.agentId, {
-              engine: this._engine,
-              conversationId: target.conversationId,
-              conversationType: target.conversationType,
-              now,
-              reason: target.reason,
-            });
-            result.phoneCompacted += 1;
-          } catch (err) {
-            result.failed += 1;
-            result.staleRemaining += 1;
-            log.warn(`phone ${target.agentId}/${target.conversationId} skipped: ${err?.message || err}`);
-          }
-          await sleep(this._delayBetweenJobsMs);
-        }
       }
       return result;
     } finally {

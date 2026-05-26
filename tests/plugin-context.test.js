@@ -67,6 +67,48 @@ describe("createPluginContext", () => {
     });
   });
 
+  it("registers plugin session files with resource content links when runtime scope is available", () => {
+    const bus = { emit() {}, subscribe() {}, request() {}, hasHandler() {} };
+    const registerSessionFile = vi.fn((entry) => ({
+      id: "sf_plugin_output",
+      ...entry,
+      ext: "png",
+      mime: "image/png",
+      kind: "image",
+      status: "available",
+    }));
+    const ctx = createPluginContext({
+      pluginId: "image-gen",
+      pluginDir: "/plugins/image-gen",
+      dataDir: "/plugin-data/image-gen",
+      bus,
+      registerSessionFile,
+      runtimeContext: {
+        serverId: "server_scope",
+        serverNodeId: "node_scope",
+        userId: "user_scope",
+        studioId: "studio_scope",
+        connectionKind: "local",
+        credentialKind: "loopback_token",
+      },
+    });
+
+    const file = ctx.registerSessionFile({
+      sessionPath: "/sessions/a.jsonl",
+      filePath: "/plugin-data/image-gen/generated.png",
+      label: "generated.png",
+    });
+
+    expect(file.resource).toMatchObject({
+      resourceId: "res_sf_plugin_output",
+      studioId: "studio_scope",
+      links: {
+        self: "/api/resources/res_sf_plugin_output",
+        content: "/api/resources/res_sf_plugin_output/content",
+      },
+    });
+  });
+
   it("config.get/set reads and writes plugin-data config.json", async () => {
     const fs = await import("fs");
     const os = await import("os");
@@ -162,5 +204,52 @@ describe("createPluginContext with accessLevel", () => {
       dataDir: "/tmp/data", bus,
     });
     expect(ctx.bus.handle).toBeUndefined();
+  });
+
+  it("requires usage.read before a restricted plugin can request usage entries", async () => {
+    const bus = await makeBus();
+    bus.handle("usage:list", () => ({ entries: [], nextCursor: null }));
+    const ctx = createPluginContext({
+      pluginId: "test", pluginDir: "/tmp/test",
+      dataDir: "/tmp/data", bus, accessLevel: "restricted",
+    });
+
+    await expect(ctx.bus.request("usage:list", {})).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      permission: "usage.read",
+    });
+  });
+
+  it("allows usage.read restricted plugins to request and subscribe to usage entries", async () => {
+    const bus = await makeBus();
+    bus.handle("usage:list", () => ({ entries: [{ requestId: "req-1" }], nextCursor: null }));
+    const ctx = createPluginContext({
+      pluginId: "test", pluginDir: "/tmp/test",
+      dataDir: "/tmp/data", bus, accessLevel: "restricted",
+      permissions: ["usage.read"],
+    });
+
+    await expect(ctx.bus.request("usage:list", {})).resolves.toMatchObject({
+      entries: [{ requestId: "req-1" }],
+    });
+    const events = [];
+    const off = ctx.bus.subscribe((event) => events.push(event), { types: ["llm_usage"] });
+    bus.emit({ type: "llm_usage", entry: { requestId: "req-2" } }, null);
+    off();
+    expect(events).toEqual([{ type: "llm_usage", entry: { requestId: "req-2" } }]);
+  });
+
+  it("filters llm_usage out of global restricted subscriptions without usage.read", async () => {
+    const bus = await makeBus();
+    const ctx = createPluginContext({
+      pluginId: "test", pluginDir: "/tmp/test",
+      dataDir: "/tmp/data", bus, accessLevel: "restricted",
+    });
+    const events = [];
+    const off = ctx.bus.subscribe((event) => events.push(event));
+    bus.emit({ type: "llm_usage", entry: { requestId: "req-1" } }, null);
+    bus.emit({ type: "other_event" }, null);
+    off();
+    expect(events).toEqual([{ type: "other_event" }]);
   });
 });

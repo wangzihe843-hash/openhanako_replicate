@@ -16,7 +16,21 @@ describe("provider media config migration", () => {
     expect(changed).toBe(true);
     expect(providers["openai-codex-oauth"].models).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(providers["openai-codex-oauth"].media.image_generation.models).toEqual([
-      { id: "gpt-image-2", name: "GPT Image 2" },
+      { id: "gpt-image-2", name: "GPT Image 2", protocolId: "openai-codex-responses-image" },
+    ]);
+  });
+
+  it("moves legacy string image models when known-model metadata marks them as image", () => {
+    const { providers, changed } = normalizeProviderMediaConfigMap({
+      openai: {
+        models: ["gpt-5.5", "gpt-image-1.5"],
+      },
+    });
+
+    expect(changed).toBe(true);
+    expect(providers.openai.models).toEqual(["gpt-5.5"]);
+    expect(providers.openai.media.image_generation.models).toEqual([
+      { id: "gpt-image-1.5", protocolId: "openai-images" },
     ]);
   });
 

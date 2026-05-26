@@ -4,7 +4,7 @@
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildMarkdownDecorations,
   collectLivePreviewRanges,
@@ -148,6 +148,45 @@ describe('collectLivePreviewRanges', () => {
     view.destroy();
   });
 
+  it('keeps standard markdown image previews visible below the source on active lines', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const doc = 'intro\n![Cover](./assets/cover.png)';
+    const imageLine = doc.indexOf('![Cover]');
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: imageLine + 2 },
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/chapter.md',
+            getFileUrl: (filePath) => `file://${filePath}`,
+          }),
+          markdownDecoPlugin,
+          markdownBlockDecoField,
+        ],
+      }),
+    });
+
+    const img = parent.querySelector('.cm-image-widget img');
+    const blockSpecs: unknown[] = [];
+    view.state.field(markdownBlockDecoField).between(0, view.state.doc.length, (from, to, deco) => {
+      if (from === view.state.doc.line(2).to && to === view.state.doc.line(2).to) {
+        blockSpecs.push(deco.spec);
+      }
+    });
+
+    expect(parent.textContent).toContain('![Cover](./assets/cover.png)');
+    expect(img?.getAttribute('src')).toBe('file:///vault/notes/assets/cover.png');
+    expect(blockSpecs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ block: true }),
+    ]));
+
+    view.destroy();
+  });
+
   it('renders Obsidian image embeds in live preview', () => {
     const parent = document.createElement('div');
     document.body.appendChild(parent);
@@ -170,6 +209,92 @@ describe('collectLivePreviewRanges', () => {
 
     expect(img?.getAttribute('src')).toBe('file:///vault/notes/attachments/diagram.png');
     expect(img?.getAttribute('alt')).toBe('diagram.png');
+
+    view.destroy();
+  });
+
+  it('keeps Obsidian image previews visible below the source on active lines', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const doc = 'intro\n![[attachments/diagram.png|120]]';
+    const imageLine = doc.indexOf('![[attachments');
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: imageLine + 3 },
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/chapter.md',
+            getFileUrl: (filePath) => `file://${filePath}`,
+          }),
+          markdownDecoPlugin,
+          markdownBlockDecoField,
+        ],
+      }),
+    });
+
+    const img = parent.querySelector('.cm-image-widget img');
+    const blockSpecs: unknown[] = [];
+    view.state.field(markdownBlockDecoField).between(0, view.state.doc.length, (from, to, deco) => {
+      if (from === view.state.doc.line(2).to && to === view.state.doc.line(2).to) {
+        blockSpecs.push(deco.spec);
+      }
+    });
+
+    expect(parent.textContent).toContain('![[attachments/diagram.png|120]]');
+    expect(img?.getAttribute('src')).toBe('file:///vault/notes/attachments/diagram.png');
+    expect(blockSpecs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ block: true }),
+    ]));
+
+    view.destroy();
+  });
+
+  it('shows a copy button on inactive fenced code blocks in the markdown editor', async () => {
+    window.t = ((key: string) => {
+      if (key === 'attach.copy') return '复制';
+      if (key === 'attach.copied') return '已复制';
+      return key;
+    }) as typeof window.t;
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: [
+          'intro',
+          '```ts',
+          'const x = 1;',
+          '```',
+        ].join('\n'),
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownDecoPlugin,
+        ],
+      }),
+    });
+
+    const button = parent.querySelector<HTMLButtonElement>('.cm-codeblock-copy-btn');
+
+    expect(button).toBeInstanceOf(HTMLButtonElement);
+    expect(button?.querySelector('svg.cm-codeblock-copy-icon')).toBeInstanceOf(SVGSVGElement);
+    expect(button?.querySelector('.cm-codeblock-copy-label')?.textContent).toBe('复制');
+    expect(button?.getAttribute('aria-label')).toBe('复制');
+    button?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    button?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    expect(writeText).toHaveBeenCalledWith('const x = 1;');
+    expect(button?.dataset.copied).toBe('true');
+    expect(button?.querySelector('.cm-codeblock-copy-label')?.textContent).toBe('已复制');
+    expect(button?.getAttribute('aria-label')).toBe('已复制');
 
     view.destroy();
   });

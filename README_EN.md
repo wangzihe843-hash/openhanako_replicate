@@ -1,12 +1,12 @@
 <p align="center">
-  <img src=".github/assets/banner.jpg" width="100%" alt="OpenHanako Banner">
+  <img src=".github/assets/banner.jpg" width="100%" alt="HanaAgent Banner">
 </p>
 
 <p align="center">
-  <img src=".github/assets/Hanako-280.png" width="80" alt="Hanako">
+  <img src=".github/assets/HanaAgent-280.png" width="80" alt="HanaAgent">
 </p>
 
-<h1 align="center">OpenHanako</h1>
+<h1 align="center">HanaAgent</h1>
 
 <p align="center">A personal AI agent with memory and soul</p>
 
@@ -17,11 +17,11 @@
 
 ---
 
-## What is Hanako
+## What is HanaAgent
 
-OpenHanako is a personal AI agent that is easier to use than traditional coding agents. It has memory, personality, and can act autonomously. Multiple agents can work together on your machine.
+HanaAgent is a personal AI agent that is easier to use than traditional coding agents. It has memory, personality, and can act autonomously. Multiple agents can work together on your machine.
 
-As an assistant, it is gentle: no complex configuration files, no obscure jargon. Hanako is designed not just for coders, but for everyone who works at a computer.
+As an assistant, it is gentle: no complex configuration files, no obscure jargon. HanaAgent is designed not just for coders, but for everyone who works at a computer.
 As a tool, it is powerful: it remembers everything you've said, operates your computer, browses the web, searches for information, reads and writes files, executes code, manages schedules, and can even learn new skills on its own.
 
 ## Features
@@ -30,7 +30,7 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 **Personality** — Not a generic "AI assistant". Each agent has its own voice and behavior through personality templates. Agents are self-contained folders, easy to back up and manage.
 
-**Tools** — Read/write files, run one-shot commands or persistent terminal sessions, browse the web, search the internet through browser-backed or API providers, take screenshots and segmented long screenshots, preview media, and inspect pages. Covers the vast majority of daily work scenarios. A server-first CLI can also attach to the same Hana Server to show status, list sessions, and continue chats from a terminal.
+**Tools** — Read/write files, run one-shot commands or persistent terminal sessions, browse the web, search the internet through browser-backed or API providers, take screenshots and segmented long screenshots, preview media, and inspect pages. Covers the vast majority of daily work scenarios. A server-first CLI can also attach to the same HanaAgent Server to show status, list sessions, and continue chats from a terminal.
 
 **Skills** — Built-in compatibility with the community Skills ecosystem. Agents can also install skills from GitHub or write their own. Strict safety review enabled by default.
 
@@ -42,7 +42,9 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 **Full-Screen Media Viewer** — Click any image, SVG, or video from chat or the desk to open a dark-overlay viewer with wheel-zoom, drag-to-pan, `+` / `−` / `0` shortcuts, and left/right navigation between sibling media in the same session or folder.
 
-**Cron & Heartbeat** — Agents can run scheduled tasks and periodically check for file changes on the desk. They work autonomously even when you're away.
+**Session Management** — The sidebar can search chat history, prioritizing title matches and then searching message content. Old sessions can be archived, restored, or permanently deleted from settings. Selecting text in a chat message turns it into a composer quote card so follow-up questions keep the original context.
+
+**Cron & Heartbeat** — Agents can run scheduled tasks and periodically check for file changes on the desk. The current automation executor separates "when to run" from "what to do": complex tasks still run as background Agent sessions, lightweight reminders can send direct notifications, and plugin actions can be scheduled too.
 
 **Sandbox** — Two-layer isolation: application-level PathGuard with four access tiers + OS-level sandboxing (macOS Seatbelt / Linux Bubblewrap / Windows restricted token). Agents can read ordinary system files, while writes and deletes stay limited to the workspace and managed data folders. On Windows, the command sandbox is a write-isolation model: reads use the current user's normal permissions, and network access keeps the current user's network permissions. macOS and Linux continue to use the network behavior provided by their platform sandbox backends. External network access can use system proxy, manual proxy, or direct mode.
 
@@ -50,14 +52,14 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 **Multi-Platform Bridge** — A single agent can connect to Telegram, Feishu, QQ, and WeChat bots simultaneously. Chat from any platform and remotely operate your computer. Bridge sessions carry platform context, and notifications can be delivered back to the current external platform.
 
-**Mobile & LAN Frontends** — Hana Server can host the `/mobile/` PWA. Phones can sign in with a device access key or local account, view sessions, chat, and manage workbench files. Another desktop frontend can also connect to an existing LAN Hana Server with a LAN URL and access key.
+**Mobile & LAN Frontends** — HanaAgent Server can host the `/mobile/` PWA. Phones can sign in with a device access key or local account, view sessions, chat, and manage workbench files. Another desktop frontend can also connect to an existing LAN HanaAgent Server with a LAN URL and access key.
 
 **i18n** — Interface available in 5 languages: Chinese, English, Japanese, Korean, and Traditional Chinese.
 
 ## Screenshots
 
 <p align="center">
-  <img src=".github/assets/screenshot-main.jpg" width="100%" alt="Hanako Main Interface">
+  <img src=".github/assets/screenshot-main.jpg" width="100%" alt="HanaAgent Main Interface">
 </p>
 
 ## Quick Start
@@ -76,7 +78,7 @@ The app is signed and notarized with an Apple Developer ID. macOS should allow i
 
 ### First Run
 
-On first launch, an onboarding wizard will guide you through setup: choose a language, enter your name, connect a model provider (API key + base URL), and select three models — a **chat model** (main conversation), a **utility model** (lightweight tasks), and a **utility large model** (memory compilation and deep analysis). In settings you can also choose a **vision model** that lets text-only chat models work with image attachments through Vision Bridge. Hanako supports OpenAI-compatible providers, Anthropic-style providers, OAuth providers, and local models via Ollama.
+On first launch, an onboarding wizard will guide you through setup: choose a language, enter your name, connect a model provider (API key + base URL), and select three models — a **chat model** (main conversation), a **utility model** (lightweight tasks), and a **utility large model** (memory compilation and deep analysis). In settings you can also choose a **vision model** that lets text-only chat models work with image attachments through Vision Bridge. HanaAgent supports OpenAI-compatible providers, Anthropic-style providers, OAuth providers, and local models via Ollama.
 
 ## Architecture
 
@@ -93,7 +95,7 @@ scripts/        Build tools (server bundler, launcher, signing)
 tests/          Vitest test suite
 ```
 
-The engine layer coordinates multiple managers (Agent, Session, Model, Preferences, Skill, Channel, BridgeSession, Plugin, etc.) and exposes them through a unified facade. The Hub handles background tasks (heartbeat, cron, channel routing, agent messaging, DM routing) independently of the active chat session.
+The engine layer coordinates multiple managers (Agent, Session, Model, Preferences, Skill, Channel, BridgeSession, Plugin, etc.) and exposes them through a unified facade. The Hub handles background tasks (heartbeat, automation / cron, channel routing, agent messaging, DM routing) independently of the active chat session.
 
 User-visible files inside a session are registered through `SessionFile` sidecars. Desktop, Bridge, Mobile PWA, and other remote frontends consume the same file identity according to their own capabilities. Bridge media delivery rules live in `.docs/BRIDGE-MEDIA-CAPABILITIES.md`; plugin file contribution rules live in `PLUGINS.md`.
 
@@ -123,7 +125,7 @@ User data is rooted at `HANA_HOME` (`~/.hanako` in production, `~/.hanako-dev` i
 | macOS (Intel) | Supported |
 | Windows | Beta |
 | Linux | Supported (AppImage / deb) |
-| Mobile (PWA) | v0: phone sessions and workbench access through the same Hana Server |
+| Mobile (PWA) | v0: phone sessions and workbench access through the same HanaAgent Server |
 
 ## Development
 
@@ -155,6 +157,8 @@ npm run typecheck
 [Apache License 2.0](LICENSE)
 
 ## Links
+
+> The repository and release URLs intentionally remain under the legacy `openhanako` path during the current migration. The repository rename is a separate later step.
 
 - [Homepage](https://openhanako.com)
 - [Report an Issue](https://github.com/liliMozi/openhanako/issues)

@@ -275,6 +275,35 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const [pushPinnedBusyKey, setPushPinnedBusyKey] = useState<string | null>(null);
   const [pushPinnedFlash, setPushPinnedFlash] = useState<string | null>(null);
 
+  /**
+   * 「去和 TA 聊聊」：把 draft_reply 记录正文暂存到 stagedChatQuote，不导航——目的地
+   * 由用户自己挑（新开对话或翻旧 session 都行）。不直接写 quotedSelection：用户从
+   * 秘密空间走到聊天必经一次 session 切换，而 switchSession 会清 quotedSelection，
+   * 直接写会被清掉。stagedChatQuote 跨切换保留，进入任意聊天后由 redeemStagedChatQuote
+   * 兑换成输入框引用。sharedToChatKey 仅用于给刚点过的那条记录显示一句确认文案，
+   * 4s 后自动复位。
+   */
+  const [sharedToChatKey, setSharedToChatKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sharedToChatKey) return undefined;
+    const timer = setTimeout(() => setSharedToChatKey(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatKey]);
+
+  const handleShareDraftToChat = useCallback((record: SecretSpaceSampleRecord) => {
+    const text = (record.body || record.summary || record.title || '').trim();
+    if (!text) return;
+    useStore.getState().stageChatQuote({
+      text,
+      sourceTitle: '秘密空间 · TA 的草稿箱',
+      sourceKind: 'chat',
+      charCount: text.length,
+      updatedAt: Date.now(),
+    });
+    setSharedToChatKey(record.key);
+  }, []);
+
   useEffect(() => {
     if (!agent?.id) {
       setManualContent('');
@@ -1275,34 +1304,6 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       : activeCategory === 'interview'
       ? interviewFooter
       : addRecordFooter;
-
-  /**
-   * 「去和 TA 聊聊」：把 draft_reply 记录正文暂存到 stagedChatQuote，不导航——目的地
-   * 由用户自己挑（新开对话或翻旧 session 都行）。不直接写 quotedSelection：用户从
-   * 秘密空间走到聊天必经一次 session 切换，而 switchSession 会清 quotedSelection，
-   * 直接写会被清掉。stagedChatQuote 跨切换保留，进入任意聊天后由 redeemStagedChatQuote
-   * 兑换成输入框引用。sharedToChatKey 仅用于给刚点过的那条记录显示一句确认文案，
-   * 4s 后自动复位。
-   */
-  const [sharedToChatKey, setSharedToChatKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sharedToChatKey) return undefined;
-    const timer = setTimeout(() => setSharedToChatKey(null), 4000);
-    return () => clearTimeout(timer);
-  }, [sharedToChatKey]);
-
-  const handleShareDraftToChat = useCallback((record: SecretSpaceSampleRecord) => {
-    const text = (record.body || record.summary || record.title || '').trim();
-    if (!text) return;
-    useStore.getState().stageChatQuote({
-      text,
-      sourceTitle: '秘密空间 · TA 的草稿箱',
-      charCount: text.length,
-      updatedAt: Date.now(),
-    });
-    setSharedToChatKey(record.key);
-  }, []);
 
   /**
    * 分类内页的"列表渲染器"：每个分类用各自的标志性版式（便签 / 书签卡 / 朋友圈

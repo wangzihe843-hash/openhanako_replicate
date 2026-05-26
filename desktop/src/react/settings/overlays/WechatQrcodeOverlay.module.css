@@ -30,7 +30,7 @@
   right: var(--space-sm);
   background: none;
   border: none;
-  cursor: pointer;
+  cursor: default;
   padding: 4px;
   color: var(--text-secondary);
   opacity: 0.6;

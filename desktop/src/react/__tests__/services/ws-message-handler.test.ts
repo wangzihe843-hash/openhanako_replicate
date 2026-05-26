@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../hooks/use-stream-buffer', () => ({
   streamBufferManager: {
     handle: vi.fn(),
+    beginTurn: vi.fn(),
+    finishTurn: vi.fn(),
   },
 }));
 
@@ -285,6 +287,49 @@ describe('ws-message-handler session-scoped desktop events', () => {
     ]);
   });
 
+  it('content_block 文件事件把 resource envelope 同步进 session registry', () => {
+    handleServerMessage({
+      type: 'content_block',
+      sessionPath: '/session/a.jsonl',
+      block: {
+        type: 'file',
+        fileId: 'sf_generated',
+        filePath: '/generated/image.png',
+        label: 'image.png',
+        ext: 'png',
+        mime: 'image/png',
+        kind: 'image',
+        resource: {
+          schemaVersion: 1,
+          resourceId: 'res_sf_generated',
+          name: 'studios/studio_1/resources/res_sf_generated',
+          studioId: 'studio_1',
+          type: 'file',
+          source: 'session_file',
+          fileId: 'sf_generated',
+          lifecycle: { status: 'available', missingAt: null },
+          storage: { provider: 'session_file', localOnly: true },
+          links: {
+            self: '/api/resources/res_sf_generated',
+            content: '/api/resources/res_sf_generated/content',
+          },
+        },
+      },
+    });
+
+    expect(useStore.getState().sessionRegistryFilesByPath['/session/a.jsonl']).toEqual([
+      expect.objectContaining({
+        fileId: 'sf_generated',
+        resource: expect.objectContaining({
+          resourceId: 'res_sf_generated',
+          links: expect.objectContaining({
+            content: '/api/resources/res_sf_generated/content',
+          }),
+        }),
+      }),
+    ]);
+  });
+
   it('todo_write 全部 completed 时按生命周期移除当前 session todo', () => {
     useStore.setState({
       currentSessionPath: '/session/a.jsonl',
@@ -552,7 +597,73 @@ describe('ws-message-handler turn_end side effects', () => {
       }],
       chatSessions: {},
       streamingSessions: [],
+      inputFocusTrigger: 0,
     } as never);
+  });
+
+  it('turn_end requests input focus for the current session', () => {
+    handleServerMessage({
+      type: 'turn_end',
+      sessionPath: '/session/a.jsonl',
+    });
+
+    expect(useStore.getState().inputFocusTrigger).toBe(1);
+  });
+
+  it('background turn_end does not request input focus', () => {
+    useStore.setState({
+      sessions: [
+        ...useStore.getState().sessions,
+        {
+          path: '/session/b.jsonl',
+          title: 'B',
+          firstMessage: 'background',
+          modified: '2026-04-24T10:01:00.000Z',
+          messageCount: 1,
+          agentId: 'a1',
+          agentName: 'Hana',
+          cwd: null,
+        },
+      ],
+    } as never);
+
+    handleServerMessage({
+      type: 'turn_end',
+      sessionPath: '/session/b.jsonl',
+    });
+
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
+  });
+
+  it('status=false requests input focus when the focused session was streaming', () => {
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'status',
+      sessionPath: '/session/a.jsonl',
+      isStreaming: false,
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual([]);
+    expect(useStore.getState().inputFocusTrigger).toBe(1);
+  });
+
+  it('background status=false does not request input focus', () => {
+    useStore.setState({
+      streamingSessions: ['/session/b.jsonl'],
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'status',
+      sessionPath: '/session/b.jsonl',
+      isStreaming: false,
+    });
+
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
   it('turn_end requests context usage through the injected callback', () => {

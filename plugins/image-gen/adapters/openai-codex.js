@@ -167,6 +167,7 @@ async function getCredentials(ctx) {
 
 export const openaiCodexImageAdapter = {
   id: PROVIDER_ID,
+  protocolId: "openai-codex-responses-image",
   name: "OpenAI Codex (OAuth)",
   types: ["image"],
   capabilities: {

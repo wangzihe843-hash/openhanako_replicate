@@ -6,6 +6,8 @@ import { VisionBridge, VISION_CONTEXT_END, VISION_CONTEXT_START } from "../core/
 import { adaptVisualContextMessages } from "../core/visual-context-pipeline.js";
 
 const tempDirs = [];
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_BASE64 = PNG_BYTES.toString("base64");
 
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-visual-context-"));
@@ -54,7 +56,7 @@ describe("VisualContextPipeline", () => {
         role: "toolResult",
         content: [
           { type: "text", text: "browser screenshot captured" },
-          { type: "image", mimeType: "image/png", data: "SCREENSHOT_BASE64" },
+          { type: "image", mimeType: "image/png", data: PNG_BASE64 },
         ],
       },
     ];
@@ -74,7 +76,7 @@ describe("VisualContextPipeline", () => {
     expect(result.messages[1].content[0].text).toContain("image_overview");
     expect(result.messages[1].content[0].text).toContain(VISION_CONTEXT_END);
     expect(result.messages[1].content[2]).toEqual(
-      expect.objectContaining({ type: "image", data: "SCREENSHOT_BASE64" }),
+      expect.objectContaining({ type: "image", data: PNG_BASE64 }),
     );
   });
 
@@ -82,7 +84,7 @@ describe("VisualContextPipeline", () => {
     const dir = makeTempDir();
     const sessionPath = path.join(dir, "session.jsonl");
     const imagePath = path.join(dir, "generated.png");
-    fs.writeFileSync(imagePath, Buffer.from("GENERATED_IMAGE_BYTES"));
+    fs.writeFileSync(imagePath, PNG_BYTES);
     const { bridge, callText } = makeBridge();
     const sessionFile = {
       id: "sf_generated",
@@ -129,7 +131,7 @@ describe("VisualContextPipeline", () => {
     const dir = makeTempDir();
     const sessionPath = path.join(dir, "session.jsonl");
     const imagePath = path.join(dir, "browser.png");
-    const bytes = Buffer.from("SAME_BROWSER_IMAGE");
+    const bytes = PNG_BYTES;
     fs.writeFileSync(imagePath, bytes);
     const base64 = bytes.toString("base64");
     const { bridge, callText } = makeBridge();
@@ -177,7 +179,7 @@ describe("VisualContextPipeline", () => {
     const { bridge, callText } = makeBridge();
     const messages = [{
       role: "toolResult",
-      content: [{ type: "image", mimeType: "image/png", data: "SCREENSHOT_BASE64" }],
+      content: [{ type: "image", mimeType: "image/png", data: PNG_BASE64 }],
     }];
 
     const result = await adaptVisualContextMessages({

@@ -86,7 +86,7 @@ export class ErrorBoundary extends Component<Props, State> {
               border: '1px solid var(--border-light, #ddd)',
               borderRadius: '4px',
               padding: '4px 12px',
-              cursor: 'pointer',
+              cursor: 'default',
               color: 'inherit',
               fontSize: '12px',
             }}

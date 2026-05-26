@@ -129,6 +129,12 @@ export const BLOCK_EXTRACTORS = {
   },
 
   update_settings: (details) => {
+    if (details.settingsUpdate) {
+      return [{
+        type: "settings_update",
+        update: details.settingsUpdate,
+      }];
+    }
     if (!details.settingKey) return null;
     const status = details.confirmed === "timeout"
       ? "timeout"
@@ -187,6 +193,7 @@ function sessionFileFields(file) {
     ...(file.storageKind ? { storageKind: file.storageKind } : {}),
     ...(file.status ? { status: file.status } : {}),
     ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+    ...(file.resource ? { resource: file.resource } : {}),
   };
 }
 
@@ -242,6 +249,7 @@ function sessionFileToContentBlock(file, extra = undefined) {
     ...(file.storageKind ? { storageKind: file.storageKind } : {}),
     ...(file.status ? { status: file.status } : {}),
     ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+    ...(file.resource ? { resource: file.resource } : {}),
   };
 }
 

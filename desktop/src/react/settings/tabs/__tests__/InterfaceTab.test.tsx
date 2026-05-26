@@ -107,4 +107,16 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.getByText('settings.interface.hardwareAcceleration')).toBeTruthy();
     expect(screen.getAllByRole('switch')[3].getAttribute('aria-checked')).toBe('false');
   });
+
+  it('hides fourth through sixth heading typography controls', () => {
+    render(React.createElement(InterfaceTab));
+
+    expect(screen.getByText('settings.editor.markdownBodyFontSize')).toBeTruthy();
+    expect(screen.getByText('settings.editor.markdownHeading1FontSize')).toBeTruthy();
+    expect(screen.getByText('settings.editor.markdownHeading2FontSize')).toBeTruthy();
+    expect(screen.getByText('settings.editor.markdownHeading3FontSize')).toBeTruthy();
+    expect(screen.queryByText('settings.editor.markdownHeading4FontSize')).toBeNull();
+    expect(screen.queryByText('settings.editor.markdownHeading5FontSize')).toBeNull();
+    expect(screen.queryByText('settings.editor.markdownHeading6FontSize')).toBeNull();
+  });
 });

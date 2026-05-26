@@ -22,6 +22,9 @@ export interface ScreenshotPayload {
   mode: 'article' | 'conversation';
   theme: string;
   markdown?: string;          // article mode from Markdown editor
+  filePath?: string | null;    // source file for resolving relative article attachments
+  articleType?: string | null; // markdown / code / future preview item types
+  language?: string | null;    // code article language
   messages?: ScreenshotMessage[];
 }
 

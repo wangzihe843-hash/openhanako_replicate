@@ -11,10 +11,6 @@ function hasMount(args, op, source, target) {
   return false;
 }
 
-function hasRootReadonlyMount(args) {
-  return hasMount(args, "--ro-bind", "/", "/");
-}
-
 describe("Linux bwrap sandbox policy projection", () => {
   let tempRoot;
 
@@ -26,7 +22,7 @@ describe("Linux bwrap sandbox policy projection", () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it("uses explicit allowlist mounts instead of exposing the whole host filesystem", () => {
+  it("uses a read-all root mount while keeping writes scoped to explicit roots", () => {
     const workspace = path.join(tempRoot, "workspace");
     const agentSessions = path.join(tempRoot, "hanako", "agents", "hana", "sessions");
     const sessionFiles = path.join(tempRoot, "hanako", "session-files");
@@ -47,15 +43,15 @@ describe("Linux bwrap sandbox policy projection", () => {
       externalReadPaths: [externalFile],
     });
 
-    expect(hasRootReadonlyMount(args)).toBe(false);
-    expect(args).toContain("--unshare-net");
+    expect(hasMount(args, "--ro-bind", "/", "/")).toBe(true);
+    expect(args).not.toContain("--unshare-net");
     expect(hasMount(args, "--bind", workspace, workspace)).toBe(true);
     expect(hasMount(args, "--bind", agentSessions, agentSessions)).toBe(true);
     expect(hasMount(args, "--ro-bind", sessionFiles, sessionFiles)).toBe(true);
     expect(hasMount(args, "--ro-bind", externalFile, externalFile)).toBe(true);
   });
 
-  it("keeps network isolated by default and omits net namespace isolation when sandbox network is allowed", () => {
+  it("keeps network enabled by default and isolates it only when explicitly disabled", () => {
     const policy = {
       mode: "standard",
       writablePaths: [],
@@ -64,7 +60,8 @@ describe("Linux bwrap sandbox policy projection", () => {
       denyReadPaths: [],
     };
 
-    expect(buildBwrapArgs(policy)).toContain("--unshare-net");
+    expect(buildBwrapArgs(policy)).not.toContain("--unshare-net");
     expect(buildBwrapArgs(policy, { allowNetwork: true })).not.toContain("--unshare-net");
+    expect(buildBwrapArgs(policy, { allowNetwork: false })).toContain("--unshare-net");
   });
 });

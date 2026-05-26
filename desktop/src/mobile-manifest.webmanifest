@@ -1,6 +1,6 @@
 {
-  "name": "Hana Mobile",
-  "short_name": "Hana",
+  "name": "HanaAgent",
+  "short_name": "HanaAgent",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

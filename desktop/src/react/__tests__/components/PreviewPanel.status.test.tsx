@@ -46,6 +46,8 @@ describe('PreviewPanel markdown editor status', () => {
       openTabs: ['note'],
       activeTabId: 'note',
       markdownPreviewIds: [],
+      quoteCandidate: null,
+      quotedSelections: [],
       quotedSelection: null,
     } as Partial<StoreState>);
   });
@@ -58,11 +60,41 @@ describe('PreviewPanel markdown editor status', () => {
       openTabs: [],
       activeTabId: null,
       markdownPreviewIds: [],
+      quoteCandidate: null,
+      quotedSelections: [],
       quotedSelection: null,
     } as Partial<StoreState>);
   });
 
   it('shows selected and total character counts for editable markdown', () => {
+    render(<PreviewPanel />);
+
+    expect(screen.getByTestId('markdown-editor-status')).toHaveTextContent('选中 0 字 · 共 4 字');
+  });
+
+  it('treats remote workbench markdown files as editable', () => {
+    useStore.setState({
+      previewItems: [{
+        id: 'remote-note',
+        type: 'markdown',
+        title: 'remote.md',
+        content: '远程ab',
+        ext: 'md',
+        storageKind: 'remote-content',
+        remoteContentRef: {
+          kind: 'mobile-workbench',
+          rootId: 'default',
+          subdir: '',
+          name: 'remote.md',
+          contentPath: '/api/mobile/workbench/content?rootId=default&subdir=&name=remote.md',
+          version: { mtimeMs: 10, size: 8 },
+        },
+      }],
+      openTabs: ['remote-note'],
+      activeTabId: 'remote-note',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
     render(<PreviewPanel />);
 
     expect(screen.getByTestId('markdown-editor-status')).toHaveTextContent('选中 0 字 · 共 4 字');

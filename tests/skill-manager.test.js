@@ -23,11 +23,11 @@ describe("SkillManager._skillsVisibleToAgent", () => {
     expect(sm._skillsVisibleToAgent(agentA).map(s => s.name)).toEqual(["pdf", "docx"]);
   });
 
-  it("returns learned skills only to their owning agent", () => {
+  it("does not use legacy _agentId fields as a skill source boundary", () => {
     sm._allSkills = [
       makeSkill("global-skill"),
-      makeSkill("learned-a", { source: "learned", _agentId: "agent-a" }),
-      makeSkill("learned-b", { source: "learned", _agentId: "agent-b" }),
+      makeSkill("migrated-a", { _agentId: "agent-a" }),
+      makeSkill("migrated-b", { _agentId: "agent-b" }),
     ];
     const agentA = makeAgent("agent-a");
     const agentB = makeAgent("agent-b");
@@ -35,8 +35,8 @@ describe("SkillManager._skillsVisibleToAgent", () => {
     const visibleA = sm._skillsVisibleToAgent(agentA).map(s => s.name);
     const visibleB = sm._skillsVisibleToAgent(agentB).map(s => s.name);
 
-    expect(visibleA).toEqual(["global-skill", "learned-a"]);
-    expect(visibleB).toEqual(["global-skill", "learned-b"]);
+    expect(visibleA).toEqual(["global-skill", "migrated-a", "migrated-b"]);
+    expect(visibleB).toEqual(["global-skill", "migrated-a", "migrated-b"]);
   });
 
   it("excludes plugin skills by default", () => {
@@ -60,26 +60,24 @@ describe("SkillManager._skillsVisibleToAgent", () => {
   });
 });
 
-describe("SkillManager.getAllSkills — per-agent isolation", () => {
+describe("SkillManager.getAllSkills", () => {
   let sm;
 
   beforeEach(() => {
     sm = new SkillManager({ skillsDir: "/tmp/hana-test-skills" });
     sm._allSkills = [
       makeSkill("global-skill"),
-      makeSkill("learned-a", { source: "learned", _agentId: "agent-a" }),
-      makeSkill("learned-b", { source: "learned", _agentId: "agent-b" }),
+      makeSkill("migrated-skill", { _agentId: "agent-b" }),
       makeSkill("plugin-x", { _pluginSkill: true }),
       makeSkill("ws-skill", { _workspaceSkill: true }),
     ];
   });
 
-  it("does not leak agent-b learned skills to agent-a", () => {
-    const result = sm.getAllSkills(makeAgent("agent-a", ["global-skill", "learned-a"]));
+  it("returns global skill-pool entries regardless of source agent", () => {
+    const result = sm.getAllSkills(makeAgent("agent-a", ["global-skill"]));
     const names = result.map(s => s.name);
     expect(names).toContain("global-skill");
-    expect(names).toContain("learned-a");
-    expect(names).not.toContain("learned-b");
+    expect(names).toContain("migrated-skill");
   });
 
   it("excludes plugin and workspace skills", () => {
@@ -90,25 +88,21 @@ describe("SkillManager.getAllSkills — per-agent isolation", () => {
   });
 });
 
-describe("SkillManager.getRuntimeSkillInfos — per-agent isolation", () => {
+describe("SkillManager.getRuntimeSkillInfos", () => {
   let sm;
 
   beforeEach(() => {
     sm = new SkillManager({ skillsDir: "/tmp/hana-test-skills" });
     sm._allSkills = [
       makeSkill("global-skill"),
-      makeSkill("learned-a", { source: "learned", _agentId: "agent-a" }),
-      makeSkill("learned-b", { source: "learned", _agentId: "agent-b" }),
       makeSkill("ws-skill", { _workspaceSkill: true }),
     ];
   });
 
-  it("does not leak agent-b learned skills to agent-a", () => {
-    const result = sm.getRuntimeSkillInfos(makeAgent("agent-a"));
-    const names = result.map(s => s.name);
-    expect(names).toContain("global-skill");
-    expect(names).toContain("learned-a");
-    expect(names).not.toContain("learned-b");
+  it("marks global skills enabled from the agent config", () => {
+    const result = sm.getRuntimeSkillInfos(makeAgent("agent-a", ["global-skill"]));
+    const globalSkill = result.find(s => s.name === "global-skill");
+    expect(globalSkill?.enabled).toBe(true);
   });
 
   it("includes workspace skills", () => {
@@ -117,19 +111,19 @@ describe("SkillManager.getRuntimeSkillInfos — per-agent isolation", () => {
   });
 });
 
-describe("SkillManager.syncAgentSkills — per-agent isolation", () => {
+describe("SkillManager.syncAgentSkills", () => {
   let sm;
 
   beforeEach(() => {
     sm = new SkillManager({ skillsDir: "/tmp/hana-test-skills" });
     sm._allSkills = [
       makeSkill("shared-name", { source: "user" }),
-      makeSkill("shared-name", { source: "learned", _agentId: "agent-a" }),
-      makeSkill("shared-name", { source: "learned", _agentId: "agent-b" }),
+      makeSkill("plugin-x", { _pluginSkill: true }),
+      makeSkill("ws-skill", { _workspaceSkill: true }),
     ];
   });
 
-  it("does not inject agent-b learned skill into agent-a", () => {
+  it("injects enabled global skills and runtime-only plugin/workspace skills", () => {
     let injected = [];
     const fakeAgent = {
       id: "agent-a",
@@ -138,8 +132,7 @@ describe("SkillManager.syncAgentSkills — per-agent isolation", () => {
     };
     sm.syncAgentSkills(fakeAgent);
 
-    const agentIds = injected.filter(s => s._agentId).map(s => s._agentId);
-    expect(agentIds).not.toContain("agent-b");
+    expect(injected.map(s => s.name)).toEqual(["shared-name", "plugin-x", "ws-skill"]);
   });
 
   it("does not build prompts for config-only agents during global skill sync", () => {
@@ -170,27 +163,23 @@ describe("SkillManager.syncAgentSkills — per-agent isolation", () => {
   });
 });
 
-describe("SkillManager.getSkillsForAgent — baseline (unchanged)", () => {
+describe("SkillManager.getSkillsForAgent", () => {
   let sm;
 
   beforeEach(() => {
     sm = new SkillManager({ skillsDir: "/tmp/hana-test-skills" });
     sm._allSkills = [
       makeSkill("global-skill"),
-      makeSkill("learned-a", { source: "learned", _agentId: "agent-a" }),
-      makeSkill("learned-b", { source: "learned", _agentId: "agent-b" }),
       makeSkill("plugin-x", { _pluginSkill: true }),
     ];
   });
 
-  it("filters learned skills by agentId and includes plugins", () => {
-    const agentA = makeAgent("agent-a", ["global-skill", "learned-a", "plugin-x"]);
+  it("includes enabled global skills and plugins", () => {
+    const agentA = makeAgent("agent-a", ["global-skill", "plugin-x"]);
     const result = sm.getSkillsForAgent(agentA);
     const names = result.skills.map(s => s.name);
     expect(names).toContain("global-skill");
-    expect(names).toContain("learned-a");
     expect(names).toContain("plugin-x");
-    expect(names).not.toContain("learned-b");
   });
 });
 
@@ -209,12 +198,12 @@ describe("SkillManager.computeDefaultEnabledForNewAgent", () => {
     expect(sm.computeDefaultEnabledForNewAgent()).toEqual(["pdf", "docx"]);
   });
 
-  it("excludes learned source skills", () => {
+  it("includes migrated user skills when they do not opt out", () => {
     sm._allSkills = [
       { name: "pdf", source: "user" },
-      { name: "my-learned", source: "learned", _agentId: "agent-a" },
+      { name: "migrated-skill", source: "user" },
     ];
-    expect(sm.computeDefaultEnabledForNewAgent()).toEqual(["pdf"]);
+    expect(sm.computeDefaultEnabledForNewAgent()).toEqual(["pdf", "migrated-skill"]);
   });
 
   it("excludes external source skills (covers plugin and workspace sub-categories)", () => {
@@ -243,7 +232,7 @@ describe("SkillManager.computeDefaultEnabledForNewAgent", () => {
   it("preserves skill order from _allSkills", () => {
     sm._allSkills = [
       { name: "a", source: "user" },
-      { name: "b", source: "learned", _agentId: "x" },
+      { name: "b", source: "user", defaultEnabled: false },
       { name: "c", source: "user" },
     ];
     expect(sm.computeDefaultEnabledForNewAgent()).toEqual(["a", "c"]);

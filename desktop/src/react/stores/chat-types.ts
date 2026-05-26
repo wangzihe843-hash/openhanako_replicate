@@ -6,6 +6,7 @@
  * 不按流式到达顺序。
  */
 
+import type { FileVersion } from '../types';
 
 // ── 工具调用 ──
 
@@ -54,6 +55,9 @@ export interface SessionRegistryFile {
   origin?: string;
   operations?: string[];
   createdAt?: number;
+  mtimeMs?: number;
+  size?: number | null;
+  version?: FileVersion | null;
   isDirectory?: boolean;
   resource?: ResourceEnvelope;
 }
@@ -115,6 +119,28 @@ export interface SessionConfirmationBlock {
   payload?: Record<string, unknown>;
 }
 
+export interface SettingsUpdateChange {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+  sensitive?: boolean;
+}
+
+export interface SettingsUpdatePayload {
+  status: 'applied' | 'failed' | 'skipped' | 'needs_action' | string;
+  action: string;
+  key: string;
+  title: string;
+  summary: string;
+  target?: {
+    type?: string;
+    id?: string | null;
+    label?: string | null;
+  };
+  changes?: SettingsUpdateChange[];
+}
+
 // 物种 A：文本装饰器（流式组装，upsert 到 blocks 数组）
 export type TextDecorator =
   | { type: 'thinking'; content: string; sealed: boolean }
@@ -124,14 +150,15 @@ export type TextDecorator =
 
 // 物种 B：富内容块（通过 content_block 事件 push，不 upsert）
 export type RichBlock =
-  | { type: 'file'; fileId?: string; filePath: string; label: string; ext: string; mime?: string; kind?: string; storageKind?: string; status?: 'available' | 'expired' | string; missingAt?: number | null; replacesTaskId?: string }
+  | { type: 'file'; fileId?: string; filePath: string; label: string; ext: string; mime?: string; kind?: string; storageKind?: string; status?: 'available' | 'expired' | string; missingAt?: number | null; resource?: ResourceEnvelope; mtimeMs?: number; size?: number | null; version?: FileVersion | null; replacesTaskId?: string }
   | { type: 'media_generation'; taskId: string; kind: 'image' | 'video' | string; status: 'pending' | 'failed' | 'aborted' | string; prompt?: string; batchId?: string; reason?: string }
   // COMPAT(create_artifact, remove no earlier than v0.133 after legacy sessions are migrated)
-  | { type: 'artifact'; artifactId: string; artifactType: string; title: string; content: string; language?: string | null; fileId?: string; filePath?: string; label?: string; ext?: string; mime?: string; kind?: string; storageKind?: string; status?: 'available' | 'expired' | string; missingAt?: number | null }
+  | { type: 'artifact'; artifactId: string; artifactType: string; title: string; content: string; language?: string | null; fileId?: string; filePath?: string; label?: string; ext?: string; mime?: string; kind?: string; storageKind?: string; status?: 'available' | 'expired' | string; missingAt?: number | null; resource?: ResourceEnvelope; mtimeMs?: number; size?: number | null; version?: FileVersion | null }
   | { type: 'screenshot'; base64: string; mimeType: string }
   | { type: 'skill'; skillName: string; skillFilePath: string; fileId?: string; installedFile?: Record<string, unknown>; installedSkillSource?: Record<string, unknown> }
   | { type: 'cron_confirm'; confirmId?: string; jobData: Record<string, unknown>; status: 'pending' | 'approved' | 'rejected' }
   | { type: 'settings_confirm'; confirmId?: string; settingKey: string; cardType: 'toggle' | 'list' | 'text'; currentValue: string; proposedValue: string; options?: string[]; optionLabels?: Record<string, string>; label: string; description?: string; frontend?: boolean; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' }
+  | { type: 'settings_update'; update: SettingsUpdatePayload }
   | SessionConfirmationBlock
   | {
     type: 'subagent';

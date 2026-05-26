@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import { isToolCallBlock, getToolArgs } from "./llm-utils.js";
 import { SessionManager } from "../lib/pi-sdk/index.js";
+import { DEFERRED_RESULT_RECORD_TYPE } from "../lib/deferred-result-notification.js";
 
 /**
  * 工具调用参数摘要键列表
@@ -142,6 +143,17 @@ function historyMessageFromEntry(entry) {
       content: entry.content || "",
       display: entry.display,
       ...(entry.details !== undefined ? { details: entry.details } : {}),
+    };
+    if (entry.id) message.id = entry.id;
+    if (entry.timestamp) message.timestamp = entry.timestamp;
+    return message;
+  }
+  if (entry?.type === "custom" && entry.customType === DEFERRED_RESULT_RECORD_TYPE) {
+    const message = {
+      role: "custom",
+      customType: entry.customType,
+      data: entry.data,
+      display: false,
     };
     if (entry.id) message.id = entry.id;
     if (entry.timestamp) message.timestamp = entry.timestamp;

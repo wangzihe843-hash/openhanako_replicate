@@ -19,6 +19,7 @@ import { updateLayout } from './components/SidebarLayout';
 import { initErrorBusBridge } from './errors/error-bus-bridge';
 import { refreshPluginUI } from './stores/plugin-ui-actions';
 import { openSettingsModal } from './stores/settings-modal-actions';
+import { initQuotedSelectionLifecycle } from './stores/selection-actions';
 import { configureAppEventActions, handleAppEvent, readConfigCwdHistory, readConfigHomeFolder, readConfigMemoryMasterEnabled } from './services/app-event-actions';
 import { configureWsMessageHandler } from './services/ws-message-handler';
 import { applyEditorTypography } from './editor/typography';
@@ -70,6 +71,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 export async function initApp(): Promise<void> {
   const platform = window.platform;
+  initQuotedSelectionLifecycle();
 
   const requestContextUsage = (sessionPath: string) => {
     const ws = getWebSocket();

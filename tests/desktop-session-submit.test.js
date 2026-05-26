@@ -5,7 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMediaDetails = null } = {}) {
+function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMediaDetails = null, settingsUpdate = null } = {}) {
   const subs = [];
   return {
     subscribe: (fn) => {
@@ -32,6 +32,13 @@ function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMedi
             result: { details: { media: { mediaUrls: [url] } } },
           });
         }
+        if (settingsUpdate) {
+          fn({
+            type: "tool_execution_end",
+            isError: false,
+            result: { details: { settingsUpdate } },
+          });
+        }
       }
     }),
     model: null,
@@ -39,6 +46,38 @@ function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMedi
 }
 
 describe("submitDesktopSessionMessage", () => {
+  it("rejects concurrent submissions for the same session before streaming status is emitted", async () => {
+    const session = makeFakeSession();
+    const ready = Promise.withResolvers();
+    const engine = {
+      ensureSessionLoaded: vi.fn(() => ready.promise),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      isSessionStreaming: vi.fn(() => false),
+    };
+
+    const first = submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "first",
+      displayMessage: { text: "first" },
+    });
+    await Promise.resolve();
+
+    await expect(submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "second",
+      displayMessage: { text: "second" },
+    })).rejects.toThrow("session_busy");
+
+    ready.resolve(session);
+    await expect(first).resolves.toMatchObject({ text: "desktop reply" });
+    expect(engine.emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session_status", isStreaming: true }),
+      "/tmp/desk.jsonl",
+    );
+  });
+
   it("emits a session-scoped user message, toggles streaming status, and returns captured assistant output", async () => {
     const session = makeFakeSession({
       replyText: "desktop reply",
@@ -107,6 +146,35 @@ describe("submitDesktopSessionMessage", () => {
     });
 
     expect(result.toolMedia).toEqual([item]);
+  });
+
+  it("appends settings update summaries into captured bridge text", async () => {
+    const session = makeFakeSession({
+      replyText: "",
+      settingsUpdate: {
+        status: "applied",
+        action: "core.apply",
+        key: "locale",
+        title: "Locale updated",
+        summary: "Locale changed.",
+        changes: [{ key: "locale", label: "Locale", before: "zh-CN", after: "en" }],
+      },
+    });
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const result = await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "change locale",
+      displayMessage: { text: "change locale" },
+    });
+
+    expect(result.text).toContain("Locale updated");
+    expect(result.text).toContain("Locale: zh-CN -> en");
   });
 
   it("still emits session_status=false when promptSession throws", async () => {

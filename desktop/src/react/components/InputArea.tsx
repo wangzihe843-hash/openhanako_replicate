@@ -44,6 +44,8 @@ import {
   notifyTextModelVideoBlocked,
 } from '../utils/chat-image-send-preflight';
 import { openProviderModelSettings } from '../utils/model-settings-navigation';
+import { shouldShowThinkingControl } from '../utils/model-thinking';
+import { shouldAllowInputFocus } from '../utils/input-focus-policy';
 import { calculateInputCardBottomInset, parseCssPixels } from '../utils/input-card-layout';
 import {
   XING_PROMPT, executeDiary, executeCompact, buildSlashCommands, getSlashMatches,
@@ -190,7 +192,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const sessionFiles = useStore(s => (s.currentSessionPath ? selectSessionFiles(s, s.currentSessionPath) : EMPTY_FILE_REFS));
   const attachedFiles = useStore(s => s.attachedFiles);
   const docContextAttached = useStore(s => s.docContextAttached);
-  const quotedSelection = useStore(s => s.quotedSelection);
+  const quotedSelections = useStore(s => s.quotedSelections);
   const deskFiles = useStore(s => s.deskFiles);
   const deskBasePath = useStore(s => s.deskBasePath);
   const deskCurrentPath = useStore(s => s.deskCurrentPath);
@@ -210,6 +212,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const currentModelInfo = sessionModel || globalModelInfo;
   // input 数组缺失视为未知；只有显式 text-only 的模型才在 UI 上标记“辅助视觉”。
   const supportsVision = !Array.isArray(currentModelInfo?.input) || currentModelInfo.input.includes("image");
+  const showThinkingControl = useMemo(
+    () => shouldShowThinkingControl(currentModelInfo, models),
+    [currentModelInfo, models],
+  );
   const modelSwitching = useStore(s => s.modelSwitching);
   const currentSessionItems = useStore(s => s.currentSessionPath ? s.chatSessions[s.currentSessionPath]?.items : undefined);
   const pendingSessionConfirmation = useMemo(() => {
@@ -418,7 +424,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
   useEffect(() => {
-    if (inputFocusTrigger > 0) editor?.commands.focus();
+    if (inputFocusTrigger > 0 && shouldAllowInputFocus({ inputRoot: inputSurfaceRef.current })) {
+      editor?.commands.focus();
+    }
   }, [inputFocusTrigger, editor]);
 
   // Doc context
@@ -704,19 +712,28 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [fileMenuOpen]);
 
   // Can send?
-  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached || !!quotedSelection
+  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached || quotedSelections.length > 0
     || editorHasInlineNode(editor, 'skillBadge')
     || editorHasInlineNode(editor, 'fileBadge');
   const canSend = hasContent && connected && !isStreaming && !modelSwitching && !pendingSessionSwitchPath;
 
   const loadVisionAuxiliaryConfig = useCallback(async () => {
+    if (surface === 'mobile') {
+      const res = await hanaFetch('/api/models/auxiliary-vision');
+      const data = await res.json();
+      const auxiliaryVision = data?.auxiliaryVision;
+      return {
+        enabled: auxiliaryVision?.available === true,
+        model: auxiliaryVision?.model || null,
+      };
+    }
     const res = await hanaFetch('/api/preferences/models');
     const data = await res.json();
     return {
       enabled: data?.models?.vision_enabled === true,
       model: data?.models?.vision || null,
     };
-  }, []);
+  }, [surface]);
 
   // ── Paste image ──
   // 与拖拽对齐：剪贴板图片同样落盘到 uploads 目录，入 store 的形态和拖拽完全一致
@@ -855,7 +872,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
     const inputFiles = mergeEditorFileRefs(attachedFiles, fileRefs);
     const hasFiles = inputFiles.length > 0;
-    if ((!text && !hasFiles && !docContextAttached && !useStore.getState().quotedSelection) || !connected) return;
+    if ((!text && !hasFiles && !docContextAttached && useStore.getState().quotedSelections.length === 0) || !connected) return;
     if (isStreaming) return;
     if (sending) return;
     if (modelSwitching) return;
@@ -968,9 +985,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (docContextAttached) setDocContextAttached(false);
 
       // 引用片段
-      const qs = useStore.getState().quotedSelection;
-      if (qs) {
-        const quoteStr = formatQuotedSelectionForPrompt(qs);
+      const quotes = useStore.getState().quotedSelections;
+      if (quotes.length > 0) {
+        const quoteStr = quotes.map(formatQuotedSelectionForPrompt).join('\n\n');
         finalText = finalText ? `${finalText}\n\n${quoteStr}` : quoteStr;
       }
 
@@ -980,8 +997,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       editor.commands.clearContent();
       if (currentSessionPath) clearDraft(currentSessionPath);
       clearAttachedFiles();
-      const qs2 = useStore.getState().quotedSelection;
-      if (qs2) useStore.getState().clearQuotedSelection();
+      if (useStore.getState().quotedSelections.length > 0) useStore.getState().clearQuotedSelections();
 
       const ws = getWebSocket();
       const wsMsg: Record<string, unknown> = {
@@ -992,7 +1008,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         displayMessage: {
           text,
           skills: skills.length > 0 ? skills : undefined,
-          quotedText: qs?.text,
+          quotedText: quotes.length > 0 ? quotes.map(q => q.text).join('\n\n') : undefined,
           attachments: allFiles.length > 0 ? allFiles.map(f => {
             const cached = imageBase64Map.get(f.path);
             const cachedVideo = videoBase64Map.get(f.path);
@@ -1150,6 +1166,14 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       className={`${styles['input-surface']}${surface === 'mobile' ? ` ${styles['input-surface-mobile']}` : ''}`}
       ref={inputSurfaceRef}
     >
+      <InputContextRow
+        attachedFiles={attachedFiles}
+        removeAttachedFile={removeAttachedFile}
+        hasQuotedSelection={quotedSelections.length > 0}
+        sessionTodos={sessionTodos}
+        onCompleteTodos={handleCompleteTodos}
+        completingTodos={completingTodos}
+      />
       <InputStatusBars
         slashBusy={slashBusy}
         slashBusyLabel={slashCommands.find(c => c.name === slashBusy)?.busyLabel || t('common.executing')}
@@ -1167,14 +1191,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         inlineError={inlineError}
         slashResult={slashResult}
         onResultClick={slashResult?.deskDir ? handleSlashResultClick : undefined}
-      />
-      <InputContextRow
-        attachedFiles={attachedFiles}
-        removeAttachedFile={removeAttachedFile}
-        hasQuotedSelection={!!quotedSelection}
-        sessionTodos={sessionTodos}
-        onCompleteTodos={handleCompleteTodos}
-        completingTodos={completingTodos}
       />
       <div className={styles['slash-menu-anchor']} ref={slashMenuRef}>
         {slashMenuOpen && filteredCommands.length > 0 && (
@@ -1226,7 +1242,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             permissionMode={permissionMode}
             onPermissionModeChange={setPermissionMode}
             planModeLocked={false}
-            showThinking={currentModelInfo?.reasoning !== false}
+            showThinking={showThinkingControl}
             thinkingLevel={thinkingLevel}
             onThinkingChange={setThinkingLevel}
             modelXhigh={(sessionModel ? (sessionModel.xhigh ?? models.find(m => m.id === sessionModel.id && m.provider === sessionModel.provider)?.xhigh) : globalModelInfo?.xhigh) ?? false}

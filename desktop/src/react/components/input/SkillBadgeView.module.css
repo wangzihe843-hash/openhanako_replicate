@@ -36,7 +36,7 @@
   background: none;
   color: inherit;
   opacity: 0.45;
-  cursor: pointer;
+  cursor: default;
   transition: opacity var(--duration-instant);
 }
 

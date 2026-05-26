@@ -33,6 +33,7 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
 
   if (isMobileStaticRoute(verb, routePath)) return PUBLIC;
   if (isWebAuthBootstrapRoute(verb, routePath)) return PUBLIC;
+  if (isHtmlPreviewDocumentRoute(verb, routePath)) return PUBLIC;
 
   if (routePath === "/api/health") return AUTHENTICATED_ONLY;
   if (routePath === "/api/server/identity") return AUTHENTICATED_ONLY;
@@ -65,8 +66,12 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
     if (verb === "PUT") return scoped("files.write");
     return LOCAL_ONLY;
   }
+  if (routePath === "/api/preview/html") {
+    return verb === "POST" ? scoped("files.read") : LOCAL_ONLY;
+  }
   if (isDeskFileReadRoute(verb, routePath)) return scoped("files.read");
   if (isDeskFileWriteRoute(verb, routePath)) return scoped("files.write");
+  if (routePath === "/api/usage/llm") return verb === "GET" ? LOCAL_ONLY : LOCAL_ONLY;
   if (isSettingsReadRoute(verb, routePath)) return scoped("settings.read");
   if (isSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isProviderManagementRoute(verb, routePath)) return scoped("providers.manage");
@@ -84,6 +89,9 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   if (routePath === "/api/models") {
     return verb === "GET" ? scoped("chat") : LOCAL_ONLY;
   }
+  if (routePath === "/api/models/auxiliary-vision") {
+    return verb === "GET" ? scoped("chat") : LOCAL_ONLY;
+  }
   if (routePath === "/api/models/set" || routePath === "/api/models/switch") {
     return verb === "POST" ? scoped("chat") : LOCAL_ONLY;
   }
@@ -91,6 +99,9 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
     return (verb === "GET" || verb === "POST") ? scoped("chat") : LOCAL_ONLY;
   }
   if (routePath === "/api/session-thinking-level") {
+    return verb === "POST" ? scoped("chat") : LOCAL_ONLY;
+  }
+  if (/^\/api\/confirm\/[^/]+$/.test(routePath)) {
     return verb === "POST" ? scoped("chat") : LOCAL_ONLY;
   }
   if (routePath === "/api/browser/session-states") {
@@ -174,6 +185,11 @@ function isWebAuthBootstrapRoute(verb, routePath) {
   if (routePath === "/api/web-auth/session") return verb === "GET";
   if (routePath === "/api/web-auth/logout") return verb === "POST";
   return false;
+}
+
+function isHtmlPreviewDocumentRoute(verb, routePath) {
+  if (verb !== "GET" && verb !== "HEAD") return false;
+  return /^\/preview\/html\/[^/]+$/.test(routePath);
 }
 
 function isSettingsReadRoute(verb, routePath) {

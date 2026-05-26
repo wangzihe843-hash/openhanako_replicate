@@ -38,4 +38,44 @@ describe("image-gen provider discovery", () => {
       models: [{ id: "plugin-model", name: "Plugin Model" }],
     });
   });
+
+  it("adds and removes image models through media provider bus handlers", async () => {
+    const calls = [];
+    const app = new Hono();
+    mediaRoute(app, {
+      dataDir: "/tmp/hana-image-gen-test",
+      config: { get: () => ({}) },
+      bus: {
+        async request(type, payload) {
+          calls.push([type, payload]);
+          return { ok: true };
+        },
+      },
+    });
+
+    const addRes = await app.request("/providers/dashscope/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: { id: "wan2.7-image-pro", protocolId: "dashscope-images" } }),
+    });
+    expect(addRes.status).toBe(200);
+
+    const deleteRes = await app.request("/providers/dashscope/models/wan2.7-image-pro", {
+      method: "DELETE",
+    });
+    expect(deleteRes.status).toBe(200);
+
+    expect(calls).toEqual([
+      ["provider:add-media-model", {
+        providerId: "dashscope",
+        capability: "image_generation",
+        model: { id: "wan2.7-image-pro", protocolId: "dashscope-images" },
+      }],
+      ["provider:remove-media-model", {
+        providerId: "dashscope",
+        capability: "image_generation",
+        modelId: "wan2.7-image-pro",
+      }],
+    ]);
+  });
 });

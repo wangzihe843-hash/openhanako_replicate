@@ -273,7 +273,7 @@ export function AgentCardStack({
                   </div>
                 )}
               </div>
-              {agent.id === currentAgentId && <div className={styles['agent-card-badge']} />}
+              {agent.isPrimary && <div className={styles['agent-card-badge']} />}
               <span className={styles['agent-card-name']}>{agent.name}</span>
             </div>
           );

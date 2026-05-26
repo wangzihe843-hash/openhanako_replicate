@@ -145,6 +145,8 @@ function seedSession() {
       }],
     },
     docContextAttached: false,
+    quoteCandidate: null,
+    quotedSelections: [],
     quotedSelection: null,
     models: [{
       id: 'deepseek-chat',
@@ -207,6 +209,37 @@ describe('InputArea media send', () => {
       mimeType: 'image/png',
       visionAuxiliary: true,
     });
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/preferences/models', undefined);
+  });
+
+  it('uses the chat-scoped auxiliary vision route for mobile image preflight', async () => {
+    mocks.hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/models/auxiliary-vision') {
+        return new Response(JSON.stringify({
+          auxiliaryVision: {
+            enabled: true,
+            configured: true,
+            available: true,
+            unavailableReason: null,
+            model: { id: 'qwen-vl', provider: 'dashscope' },
+          },
+        }), { status: 200 });
+      }
+      if (path === '/api/preferences/models') {
+        throw new Error('mobile preflight must not read settings preferences');
+      }
+      throw new Error(`unexpected fetch path ${path}`);
+    });
+
+    render(<InputArea surface="mobile" />);
+
+    fireEvent.click(screen.getByTestId('send'));
+
+    await waitFor(() => {
+      expect(mocks.wsSend).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/models/auxiliary-vision', undefined);
+    expect(mocks.hanaFetch.mock.calls.some(([path]) => path === '/api/preferences/models')).toBe(false);
   });
 
   it('does not send while an agent switch session is still pending', async () => {

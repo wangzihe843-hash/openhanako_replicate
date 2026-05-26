@@ -13,7 +13,7 @@ interface Props {
   provider: {
     displayName?: string;
     hasCredentials: boolean;
-    models: { id: string; name: string }[];
+    models: { id: string; name: string; protocolId?: string }[];
     availableModels: { id: string; name: string }[];
   };
   config: { defaultImageModel?: { id: string; provider: string }; providerDefaults?: Record<string, any> };
@@ -33,19 +33,19 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
     onSaveConfig({ providerDefaults: { ...current, [providerId]: provDefaults } });
   };
 
-  // ── Model add/remove (same PUT /api/config path as Provider page) ──
+  // ── Model add/remove through the image-gen media provider routes ──
 
   const addModel = async (modelId: string) => {
     try {
-      const res = await hanaFetch('/api/providers/summary');
-      const summary = await res.json();
-      const currentModels = summary.providers?.[providerId]?.models || [];
-      await hanaFetch('/api/config', {
-        method: 'PUT',
+      const candidate = allModels.find(m => m.id === modelId) || { id: modelId };
+      await hanaFetch(`/api/plugins/image-gen/providers/${encodeURIComponent(providerId)}/models`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: { models: [...currentModels, { id: modelId, type: 'image' }] } } }),
+        body: JSON.stringify({ model: candidate }),
       });
       invalidateConfigCache();
+      setSearch('');
+      setDropdownOpen(false);
       await onRefresh();
     } catch (err: any) {
       showToast(err.message || 'Failed', 'error');
@@ -54,14 +54,8 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
 
   const removeModel = async (modelId: string) => {
     try {
-      const res = await hanaFetch('/api/providers/summary');
-      const summary = await res.json();
-      const currentModels = summary.providers?.[providerId]?.models || [];
-      const filtered = currentModels.filter((m: any) => (typeof m === 'object' ? m.id : m) !== modelId);
-      await hanaFetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: { models: filtered } } }),
+      await hanaFetch(`/api/plugins/image-gen/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
+        method: 'DELETE',
       });
       invalidateConfigCache();
       await onRefresh();
@@ -80,8 +74,11 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
 
   const addedIds = new Set(provider.models.map(m => m.id));
   const allModels = [...provider.models, ...provider.availableModels];
-  const query = search.toLowerCase();
+  const trimmedSearch = search.trim();
+  const query = trimmedSearch.toLowerCase();
   const filtered = query ? allModels.filter(m => m.id.toLowerCase().includes(query) || m.name.toLowerCase().includes(query)) : allModels;
+  const hasExactCandidate = allModels.some(m => m.id.toLowerCase() === query);
+  const canAddCustom = !!trimmedSearch && !hasExactCandidate && !addedIds.has(trimmedSearch);
 
   const panelStyle = useAnchoredDropdown({
     open: dropdownOpen,
@@ -183,6 +180,14 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
               })}
               {filtered.length === 0 && (
                 <div className={styles['pv-model-dropdown-empty']}>{t('settings.providers.noModels')}</div>
+              )}
+              {canAddCustom && (
+                <button
+                  className={styles['pv-model-dropdown-option']}
+                  onClick={() => addModel(trimmedSearch)}
+                >
+                  <span className={styles['pv-model-dropdown-option-name']}>{trimmedSearch}</span>
+                </button>
               )}
             </div>
           </div>,

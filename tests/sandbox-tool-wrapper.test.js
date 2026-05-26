@@ -69,6 +69,46 @@ describe("wrapBashTool Windows PathGuard preflight", () => {
   });
 });
 
+describe("wrapBashTool POSIX redirection preflight", () => {
+  it("allows redirection to the POSIX null device without treating it as a workspace write", async () => {
+    const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
+    const tool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
+    const guard = {
+      check: vi.fn((_filePath, operation) => (
+        operation === "write"
+          ? { allowed: false, reason: "blocked" }
+          : { allowed: true }
+      )),
+    };
+
+    const wrapped = wrapBashTool(tool, guard, "/workspace");
+    const result = await wrapped.execute("call-dev-null", {
+      command: "true 2>/dev/null",
+    });
+
+    expect(guard.check).not.toHaveBeenCalledWith("/dev/null", "write");
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toBe("ok");
+  });
+
+  it("still checks destructive operations targeting the POSIX null device", async () => {
+    const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
+    const tool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
+    const guard = {
+      check: vi.fn(() => ({ allowed: false, reason: "blocked" })),
+    };
+
+    const wrapped = wrapBashTool(tool, guard, "/workspace");
+    const result = await wrapped.execute("call-dev-null-rm", {
+      command: "rm /dev/null",
+    });
+
+    expect(guard.check).toHaveBeenCalledWith("/dev/null", "delete");
+    expect(tool.execute).not.toHaveBeenCalled();
+    expect(result.content[0].text).toBeTruthy();
+  });
+});
+
 describe("sandbox wrapper dynamic external read grants", () => {
   it("bypasses PathGuard for path tools when sandbox is disabled", async () => {
     const { wrapPathTool } = await import("../lib/sandbox/tool-wrapper.js");

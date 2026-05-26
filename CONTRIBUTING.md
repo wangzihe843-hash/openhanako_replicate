@@ -1,6 +1,6 @@
-# Contributing to Hanako
+# Contributing to HanaAgent
 
-感谢你对 Hanako 的关注！
+感谢你对 HanaAgent 的关注！
 
 ## 开发环境
 

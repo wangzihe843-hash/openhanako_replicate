@@ -495,6 +495,82 @@ describe("model sync related routes", () => {
     expect(allData.models[1].xhigh).toBe(true);
   });
 
+  it("auxiliary vision route exposes availability without settings secrets", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.js");
+    const app = new Hono();
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      getSharedModels: vi.fn(() => ({
+        vision_enabled: true,
+        vision: { id: "qwen-vl", provider: "dashscope" },
+      })),
+      resolveModelWithCredentials: vi.fn(() => ({
+        model: {
+          id: "qwen-vl",
+          provider: "dashscope",
+          name: "Qwen VL",
+          input: ["text", "image"],
+        },
+        provider: "dashscope",
+        api: "openai-completions",
+        api_key: "sk-test-secret",
+        base_url: "https://dashscope.example/v1",
+      })),
+    };
+
+    app.route("/api", createModelsRoute(engine));
+
+    const res = await app.request("/api/models/auxiliary-vision");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toEqual({
+      auxiliaryVision: {
+        enabled: true,
+        configured: true,
+        available: true,
+        unavailableReason: null,
+        model: { id: "qwen-vl", provider: "dashscope" },
+      },
+    });
+    expect(JSON.stringify(data)).not.toContain("sk-test-secret");
+    expect(JSON.stringify(data)).not.toContain("dashscope.example");
+  });
+
+  it("auxiliary vision route reports text-only configured models as unavailable", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.js");
+    const app = new Hono();
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      getSharedModels: vi.fn(() => ({
+        vision_enabled: true,
+        vision: { id: "deepseek-chat", provider: "deepseek" },
+      })),
+      resolveModelWithCredentials: vi.fn(() => ({
+        model: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+        provider: "deepseek",
+      })),
+    };
+
+    app.route("/api", createModelsRoute(engine));
+
+    const res = await app.request("/api/models/auxiliary-vision");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.auxiliaryVision).toEqual({
+      enabled: true,
+      configured: true,
+      available: false,
+      unavailableReason: "model_without_image_input",
+      model: { id: "deepseek-chat", provider: "deepseek" },
+    });
+  });
+
   it("model health accepts explicit model refs and uses the utility LLM path", async () => {
     const { createModelsRoute } = await import("../server/routes/models.js");
     const app = new Hono();
@@ -567,7 +643,7 @@ describe("model sync related routes", () => {
       resolveModelWithCredentials: vi.fn(() => resolved),
     };
     callText.mockRejectedValue(new AppError("LLM_EMPTY_RESPONSE", {
-      message: "LLM returned only thinking content without visible text",
+      message: "模型未回复正文，请检查思考内容或稍后重试。",
       context: { model: "MiniMax-M2.7", reason: "empty_after_thinking" },
     }));
 
@@ -585,7 +661,55 @@ describe("model sync related routes", () => {
       ok: false,
       code: "LLM_EMPTY_RESPONSE",
       reason: "empty_after_thinking",
-      error: "LLM returned only thinking content without visible text",
+      error: "模型未回复正文，请检查思考内容或稍后重试。",
+    });
+  });
+
+  it("classifies expected session model switch failures instead of returning a generic 500", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.js");
+    const app = new Hono();
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      isSessionStreaming: vi.fn(() => false),
+      switchSessionModel: vi.fn()
+        .mockRejectedValueOnce(new Error("Model not found: minimax-token-plan/MiniMax-M2.7"))
+        .mockRejectedValueOnce(new Error("No API key configured for provider minimax-token-plan"))
+        .mockRejectedValueOnce(new Error("cannot switch model during compaction")),
+      getSessionByPath: vi.fn(),
+    };
+    app.route("/api", createModelsRoute(engine));
+
+    const request = () => app.request("/api/models/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionPath: "/tmp/session.jsonl",
+        modelId: "MiniMax-M2.7",
+        provider: "minimax-token-plan",
+      }),
+    });
+
+    const missingModel = await request();
+    expect(missingModel.status).toBe(404);
+    expect(await missingModel.json()).toMatchObject({
+      code: "MODEL_NOT_FOUND",
+      error: expect.stringContaining("MiniMax-M2.7"),
+    });
+
+    const missingCredentials = await request();
+    expect(missingCredentials.status).toBe(422);
+    expect(await missingCredentials.json()).toMatchObject({
+      code: "MODEL_CREDENTIALS_MISSING",
+      error: expect.stringContaining("minimax-token-plan"),
+    });
+
+    const conflict = await request();
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      code: "MODEL_SWITCH_CONFLICT",
+      error: expect.stringContaining("compaction"),
     });
   });
 

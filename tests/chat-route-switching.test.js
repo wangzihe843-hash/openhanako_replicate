@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { createChatRoute } from "../server/routes/chat.js";
+import {
+  DEFAULT_DISCONNECT_ABORT_GRACE_MS,
+  createChatRoute,
+  resolveDisconnectAbortGraceMs,
+} from "../server/routes/chat.js";
 
 describe("chat route model switch guard", () => {
+  it("uses a minute-scale default WS disconnect abort grace and allows disabling it", () => {
+    expect(DEFAULT_DISCONNECT_ABORT_GRACE_MS).toBeGreaterThanOrEqual(60_000);
+    expect(resolveDisconnectAbortGraceMs(undefined)).toBe(DEFAULT_DISCONNECT_ABORT_GRACE_MS);
+    expect(resolveDisconnectAbortGraceMs("0")).toBe(0);
+    expect(resolveDisconnectAbortGraceMs("45000")).toBe(45_000);
+    expect(resolveDisconnectAbortGraceMs("-1")).toBe(DEFAULT_DISCONNECT_ABORT_GRACE_MS);
+    expect(resolveDisconnectAbortGraceMs("bad")).toBe(DEFAULT_DISCONNECT_ABORT_GRACE_MS);
+  });
+
   it("rejects prompts through the engine public switching API", async () => {
     let createHandlers;
     const upgradeWebSocket = vi.fn((factory) => {

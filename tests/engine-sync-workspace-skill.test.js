@@ -50,7 +50,14 @@ describe("HanaEngine.syncWorkspaceSkillPaths", () => {
     expect(result).toBe(true);
     expect(engine._skills.setExternalPaths).toHaveBeenCalledWith(paths);
     expect(engine.reloadSkills).toHaveBeenCalledTimes(1);
-    expect(engine._emitEvent).toHaveBeenCalledWith({ type: "skills-changed" }, null);
+    expect(engine._emitEvent).toHaveBeenCalledWith({
+      type: "app_event",
+      event: {
+        type: "skills-changed",
+        payload: { agentId: null },
+        source: "server",
+      },
+    }, null);
   });
 
   it("force: true 但 reload: false 只触发 setExternalPaths，不触发 reload", async () => {

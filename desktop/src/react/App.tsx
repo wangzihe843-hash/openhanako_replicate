@@ -23,8 +23,8 @@ import { ToastContainer } from './components/ToastContainer';
 import { InputContextMenu } from './components/InputContextMenu';
 import { StatusBar } from './components/StatusBar';
 import { LeavesOverlay } from './components/LeavesOverlay';
+import { SelectionQuoteActionSurface } from './components/selection/SelectionQuoteActionSurface';
 import { MediaViewer } from './components/shared/MediaViewer/MediaViewer';
-import { SelectionFloatingInput } from './components/floating-input/SelectionFloatingInput';
 import { SettingsModalShell } from './components/SettingsModalShell';
 import { initTheme, initDragPrevention } from './bootstrap';
 import { initApp } from './app-init';
@@ -146,14 +146,14 @@ function App() {
       {/* Media viewer overlay */}
       <MediaViewer />
 
-      {/* Selection floating input */}
-      <SelectionFloatingInput />
-
       {/* In-window settings overlay */}
       <SettingsModalShell />
 
       {/* Input context menu (cut/copy/paste) */}
       <InputContextMenu />
+
+      {/* Selection quote action */}
+      <SelectionQuoteActionSurface />
 
       {/* Toast notifications */}
       <ToastContainer />

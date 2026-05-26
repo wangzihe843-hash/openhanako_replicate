@@ -150,4 +150,29 @@ describe("SessionCoordinator deferred custom delivery", () => {
       { triggerTurn: false },
     );
   });
+
+  it("records non-context custom entries on a live session manager without sending a custom message", () => {
+    const coord = makeCoordinator();
+    const session = makeSession({ isStreaming: false });
+    session.sessionManager = {
+      appendCustomEntry: vi.fn(),
+    };
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/a.jsonl";
+    coord.sessions.set(sessionPath, {
+      session,
+      agentId: "test-agent",
+      lastTouchedAt: 0,
+    });
+
+    const result = coord.recordCustomEntry(sessionPath, "hana-deferred-result", {
+      taskId: "task-img",
+    });
+
+    expect(result).toMatchObject({ ok: true, mode: "live" });
+    expect(session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      "hana-deferred-result",
+      { taskId: "task-img" },
+    );
+    expect(session.sendCustomMessage).not.toHaveBeenCalled();
+  });
 });

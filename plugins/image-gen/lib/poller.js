@@ -12,7 +12,7 @@
  * and marks the task successful immediately.
  */
 
-import { join as pathJoin } from "node:path";
+import { dirname, join as pathJoin } from "node:path";
 import { readImageSize } from "./image-size.js";
 
 const TICK_MS = 5_000;
@@ -39,15 +39,17 @@ export class Poller {
    *   store: import("./task-store.js").TaskStore,
    *   registry: import("./adapter-registry.js").AdapterRegistry,
  *   bus: object,
- *   generatedDir: string,
- *   log: object,
- *   registerSessionFile?: Function,
- * }} opts
- */
-  constructor({ store, registry, bus, generatedDir, log, registerSessionFile }) {
+	 *   dataDir?: string,
+	 *   generatedDir: string,
+	 *   log: object,
+	 *   registerSessionFile?: Function,
+	 * }} opts
+	 */
+  constructor({ store, registry, bus, dataDir, generatedDir, log, registerSessionFile }) {
     this._store        = store;
     this._registry     = registry;
     this._bus          = bus;
+    this._dataDir      = dataDir || dirname(generatedDir);
     this._generatedDir = generatedDir;
     this._log          = log;
     this._registerSessionFile = registerSessionFile || null;
@@ -73,6 +75,8 @@ export class Poller {
    * @param {string} taskId
    */
   add(taskId) {
+    this._cancelled.delete(taskId);
+    this._errorCounts.delete(taskId);
     this._active.add(taskId);
   }
 
@@ -110,19 +114,42 @@ export class Poller {
   start() {
     const pending = this._store.listPending();
     for (const task of pending) {
+      if (task.submitState === "submitting" && !task.adapterTaskId && !(task.files?.length)) {
+        const reason = "generation interrupted before provider submission completed";
+        this._store.update(task.taskId, {
+          status: "failed",
+          failReason: reason,
+          submitState: "failed",
+          completedAt: new Date().toISOString(),
+        });
+        this._bus.request("deferred:fail", { taskId: task.taskId, error: { message: reason } }).catch(() => {});
+        this._bus.request("task:remove", { taskId: task.taskId }).catch(() => {});
+        continue;
+      }
       this._active.add(task.taskId);
       // Re-register in DeferredResultStore so resolve/fail notifications work after restart
       this._bus.request("deferred:register", {
         taskId: task.taskId,
         sessionPath: task.sessionPath,
-        meta: { type: task.type === "video" ? "video-generation" : "image-generation", prompt: task.prompt },
+        meta: {
+          type: task.type === "video" ? "video-generation" : "image-generation",
+          mediaKind: task.type === "video" ? "video" : "image",
+          deliveryIntent: "ui_only",
+          triggerParentTurn: false,
+          ...(task.type === "image" ? { notifyAgentOnFailure: true } : {}),
+          prompt: task.prompt,
+          ...(task.deliveryTarget ? { deliveryTarget: task.deliveryTarget } : {}),
+        },
       }).catch(() => {}); // ignore if no active session yet
       // Re-register in TaskRegistry so the task is visible and cancellable
       this._bus.request("task:register", {
         taskId: task.taskId,
         type: "media-generation",
         parentSessionPath: task.sessionPath,
-        meta: { type: task.type === "video" ? "video-generation" : "image-generation" },
+        meta: {
+          type: task.type === "video" ? "video-generation" : "image-generation",
+          ...(task.deliveryTarget ? { deliveryTarget: task.deliveryTarget } : {}),
+        },
       }).catch(() => {});
     }
     if (pending.length > 0) {
@@ -139,6 +166,23 @@ export class Poller {
     if (this._timer !== null) {
       clearInterval(this._timer);
       this._timer = null;
+    }
+  }
+
+  /**
+   * Immediately check a task outside the interval, useful when a background
+   * submit just produced local files and the UI can be updated without waiting
+   * for the next 5s tick.
+   * @param {string} taskId
+   */
+  async checkNow(taskId) {
+    if (!this._active.has(taskId)) return;
+    const task = this._store.get(taskId);
+    if (!task || task.status !== "pending") return;
+    try {
+      await this._checkTask(taskId, task);
+    } catch (err) {
+      this._log.error(`[image-gen] checkNow unexpected error for ${taskId}:`, err);
     }
   }
 
@@ -172,6 +216,26 @@ export class Poller {
       }
     }
     return sessionFiles;
+  }
+
+  _emitTaskDone(task, files, dims, sessionFiles) {
+    const latest = this._store.get(task.taskId) || task;
+    this._bus.emit({
+      type: "media-gen:task-done",
+      taskId: task.taskId,
+      batchId: task.batchId || null,
+      kind: task.type === "video" ? "video" : "image",
+      files: Array.isArray(files) ? files : [],
+      generatedDir: this._generatedDir,
+      sessionFiles: Array.isArray(sessionFiles) ? sessionFiles : [],
+      imageWidth: dims?.imageWidth ?? latest.imageWidth ?? null,
+      imageHeight: dims?.imageHeight ?? latest.imageHeight ?? null,
+      providerId: latest.providerId || null,
+      modelId: latest.modelId || null,
+      protocolId: latest.protocolId || null,
+      metadata: latest.metadata || null,
+      task: latest,
+    }, task.sessionPath || null);
   }
 
   _tick() {
@@ -227,11 +291,18 @@ export class Poller {
         files: task.files,
         ...(sessionFiles.length ? { sessionFiles } : {}),
       });
+      this._emitTaskDone(task, task.files, dims, sessionFiles);
+      return;
+    }
+
+    if (task.submitState === "submitting" && !task.adapterTaskId) {
       return;
     }
 
     // Real async: delegate to the adapter.
-    const adapter = this._registry.get(task.adapterId);
+    const adapter = (task.protocolId && this._registry.getProtocol?.(task.protocolId))
+      || this._registry.get(task.adapterId)
+      || this._registry.get(task.providerId);
     if (!adapter) {
       const err = new Error(`[image-gen] no adapter registered for "${task.adapterId}"`);
       this._store.update(taskId, {
@@ -246,6 +317,7 @@ export class Poller {
     }
 
     const ctx = {
+      dataDir: this._dataDir,
       generatedDir: this._generatedDir,
       bus: this._bus,
       log: this._log,
@@ -253,7 +325,7 @@ export class Poller {
 
     let result;
     try {
-      result = await adapter.query(taskId, ctx);
+      result = await adapter.query(task.adapterTaskId || taskId, ctx);
       // Re-check cancellation fence after await — cancel() may have fired while query was in-flight
       if (this._cancelled.has(taskId)) return;
     } catch (err) {
@@ -299,6 +371,7 @@ export class Poller {
         files,
         ...(sessionFiles.length ? { sessionFiles } : {}),
       });
+      this._emitTaskDone(task, files, dims, sessionFiles);
       return;
     }
 

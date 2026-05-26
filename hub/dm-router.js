@@ -27,6 +27,10 @@ import {
   readAgentPhoneProjection,
   recordAgentPhoneActivity,
 } from "../lib/conversations/agent-phone-projection.js";
+import {
+  readAgentPhoneRuntime,
+  resolveAgentPhoneRuntimeSessionPath,
+} from "../lib/conversations/agent-phone-runtime.js";
 import { normalizeAgentPhoneToolMode } from "../lib/conversations/agent-phone-session.js";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
@@ -97,13 +101,7 @@ export class DmRouter {
     try {
       const agent = this._engine.getAgent(agentId);
       const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
-      const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, `dm:${peerId}`));
-      const stored = projection.meta.phoneSessionFile;
-      if (!stored || typeof stored !== "string") return null;
-      const resolved = path.resolve(agentDir, ...stored.split("/").filter(Boolean));
-      const base = path.resolve(agentDir);
-      if (!resolved.startsWith(base + path.sep) && resolved !== base) return null;
-      return resolved;
+      return resolveAgentPhoneRuntimeSessionPath(agentDir, readAgentPhoneRuntime(agentDir, `dm:${peerId}`));
     } catch {
       return null;
     }

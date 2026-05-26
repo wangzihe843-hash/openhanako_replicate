@@ -55,6 +55,25 @@ afterEach(() => {
 // ── getCredentials ───────────────────────────────────────────────────────────
 
 describe("getCredentials", () => {
+  it("registers MiniMax Token Plan as an OpenAI-compatible provider boundary", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    const entry = reg.get("minimax-token-plan");
+
+    expect(entry).toMatchObject({
+      id: "minimax-token-plan",
+      displayName: "MiniMax Token Plan",
+      authType: "api-key",
+      baseUrl: "https://api.minimax.io/v1",
+      api: "openai-completions",
+      isBuiltin: true,
+    });
+    expect(reg.getDefaultModels("minimax-token-plan")).toEqual(
+      expect.arrayContaining(["MiniMax-M2.7"])
+    );
+  });
+
   it("返回已配置 provider 的 apiKey/baseUrl/api", () => {
     writeAddedModels({
       "test-provider": {
@@ -721,6 +740,98 @@ describe("updateModelEntry type field", () => {
       m => (typeof m === "object" ? m.id : m) === "model-a"
     );
     expect(entry).toEqual({ id: "model-a", type: "image" });
+  });
+});
+
+// ── media model CRUD ─────────────────────────────────────────────────────────
+
+describe("media model CRUD", () => {
+  it("adds image models to media.image_generation instead of chat models", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: ["chat-model"],
+      },
+    });
+    const reg = makeRegistry({
+      runtime: { kind: "http", protocolId: "test-images" },
+      capabilities: {
+        media: {
+          imageGeneration: {
+            models: [],
+          },
+        },
+      },
+    });
+
+    reg.addMediaModel("test-provider", "image_generation", {
+      id: "image-model",
+      displayName: "Image Model",
+      protocolId: "test-images",
+    });
+
+    const raw = readAddedModels();
+    expect(raw["test-provider"].models).toEqual(["chat-model"]);
+    expect(raw["test-provider"].media.image_generation.models).toEqual([
+      { id: "image-model", displayName: "Image Model", protocolId: "test-images" },
+    ]);
+  });
+
+  it("updates and removes image models from media.image_generation", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: ["chat-model"],
+        media: {
+          image_generation: {
+            models: [{ id: "image-model", protocolId: "test-images" }],
+          },
+        },
+      },
+    });
+    const reg = makeRegistry({
+      runtime: { kind: "http", protocolId: "test-images" },
+      capabilities: {
+        media: {
+          imageGeneration: {
+            models: [],
+          },
+        },
+      },
+    });
+
+    reg.updateMediaModelEntry("test-provider", "image_generation", "image-model", {
+      displayName: "Renamed Image Model",
+      inputs: ["text", "image"],
+    });
+    expect(readAddedModels()["test-provider"].media.image_generation.models).toEqual([
+      {
+        id: "image-model",
+        protocolId: "test-images",
+        displayName: "Renamed Image Model",
+        inputs: ["text", "image"],
+      },
+    ]);
+
+    reg.removeMediaModel("test-provider", "image_generation", "image-model");
+    expect(readAddedModels()["test-provider"].media.image_generation.models).toEqual([]);
+  });
+
+  it("infers the media protocol for custom model ids added from settings", () => {
+    writeAddedModels({
+      dashscope: {
+        api_key: "dash-key",
+      },
+    });
+    const reg = makeRegistry();
+
+    reg.addMediaModel("dashscope", "image_generation", {
+      id: "qwen-image-2.0-pro",
+    });
+
+    expect(readAddedModels().dashscope.media.image_generation.models).toEqual([
+      { id: "qwen-image-2.0-pro", displayName: "qwen-image-2.0-pro", protocolId: "dashscope-qwen-multimodal-image" },
+    ]);
   });
 });
 

@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld("hana", {
   readFileSnapshot: (path) => ipcRenderer.invoke("read-file-snapshot", path),
   writeFileIfUnchanged: (filePath, content, expectedVersion) => ipcRenderer.invoke("write-file-if-unchanged", filePath, content, expectedVersion),
   writeFileBinary: (filePath, base64Data) => ipcRenderer.invoke("write-file-binary", filePath, base64Data),
+  copyFile: (sourcePath, destinationPath) => ipcRenderer.invoke("copy-file", sourcePath, destinationPath),
   screenshotRender: (payload) => ipcRenderer.invoke("screenshot-render", payload),
   watchFile: (filePath) => ipcRenderer.invoke("watch-file", filePath),
   unwatchFile: (filePath) => ipcRenderer.invoke("unwatch-file", filePath),

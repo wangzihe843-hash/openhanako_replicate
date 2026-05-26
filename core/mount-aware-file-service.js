@@ -104,11 +104,31 @@ export class MountAwareFileService {
     const name = normalizePlainNameOrThrow(body.name);
     const target = resolveFileTarget(root.path, dir, name);
     if (!target) throw fileError("invalid path", "invalid_path", 400);
+    const expectedVersion = normalizeExpectedVersionOrNull(body.expectedVersion);
+    if (expectedVersion) {
+      const currentVersion = statFileVersionOrNull(target);
+      if (!currentVersion || !fileVersionsMatch(currentVersion, expectedVersion)) {
+        return {
+          ok: false,
+          action: body.action,
+          rootId: root.id,
+          conflict: true,
+          version: currentVersion,
+          files: await listFiles(dir),
+        };
+      }
+    }
     if (fs.existsSync(target) && this._createCheckpoint) {
       await this._createCheckpoint({ filePath: target, reason: "mobile-workbench-edit" }).catch(() => null);
     }
     fs.writeFileSync(target, String(body.content ?? ""), "utf-8");
-    return { ok: true, action: body.action, rootId: root.id, files: await listFiles(dir) };
+    return {
+      ok: true,
+      action: body.action,
+      rootId: root.id,
+      version: statFileVersionOrNull(target),
+      files: await listFiles(dir),
+    };
   }
 
   async rename(rootId, subdir, body = {}) {
@@ -264,6 +284,41 @@ async function listFiles(dir) {
     if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     return a.name.localeCompare(b.name, "zh");
   });
+}
+
+function statFileVersionOrNull(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    return {
+      mtimeMs: stat.mtime.getTime(),
+      size: stat.size,
+    };
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn(`stat version failed: ${err.message}`);
+    return null;
+  }
+}
+
+function normalizeExpectedVersionOrNull(value) {
+  if (value == null) return null;
+  const mtimeMs = Number(value.mtimeMs);
+  const size = Number(value.size);
+  if (!Number.isFinite(mtimeMs) || !Number.isFinite(size)) {
+    throw fileError("invalid expected version", "invalid_expected_version", 400);
+  }
+  return {
+    mtimeMs,
+    size,
+    sha256: typeof value.sha256 === "string" ? value.sha256 : undefined,
+  };
+}
+
+function fileVersionsMatch(current, expected) {
+  if (current.mtimeMs !== expected.mtimeMs) return false;
+  if (current.size !== expected.size) return false;
+  if (expected.sha256 && current.sha256 !== expected.sha256) return false;
+  return true;
 }
 
 async function searchFiles(rootPath, query) {

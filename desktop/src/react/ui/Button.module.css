@@ -10,7 +10,7 @@
     line-height: 1;
     border: 1px solid transparent;
     border-radius: var(--radius-card);
-    cursor: pointer;
+    cursor: default;
     user-select: none;
     -webkit-app-region: no-drag;
     transition:

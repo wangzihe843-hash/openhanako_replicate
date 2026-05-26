@@ -139,6 +139,8 @@ function seedInputState(overrides: Partial<ReturnType<typeof useStore.getState>>
     attachedFiles: [],
     attachedFilesBySession: {},
     docContextAttached: false,
+    quoteCandidate: null,
+    quotedSelections: [],
     quotedSelection: null,
     models: [{
       id: 'deepseek-chat',

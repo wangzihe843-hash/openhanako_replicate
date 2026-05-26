@@ -40,7 +40,7 @@
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  cursor: pointer;
+  cursor: default;
   font-size: 0.8rem;
 }
 .retryBtn:hover {

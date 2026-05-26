@@ -113,6 +113,22 @@ describe("splitByScope", () => {
     expect(agent.name).toBe("Alice");
   });
 
+  it("keeps tools.disabled in agent scope", () => {
+    const partial = {
+      tools: { disabled: ["browser", "cron"] },
+      locale: "zh-CN",
+    };
+    const { global: g, agent } = splitByScope(partial);
+
+    expect(g).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "locale", value: "zh-CN" }),
+    ]));
+    expect(g).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "tools.disabled" }),
+    ]));
+    expect(agent.tools).toEqual({ disabled: ["browser", "cron"] });
+  });
+
   it("returns empty agent when only global fields present", () => {
     const partial = { locale: "en", sandbox: true, update_channel: "beta" };
     const { global: g, agent } = splitByScope(partial);

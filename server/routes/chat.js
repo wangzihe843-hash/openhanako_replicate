@@ -12,6 +12,7 @@ import { wsSend, wsParse, wsSendSerialized } from "../ws-protocol.js";
 import { debugLog, createModuleLogger } from "../../lib/debug-log.js";
 import { t } from "../i18n.js";
 import { getLastAssistantUsage } from "../../lib/pi-sdk/index.js";
+import { compactSessionWithCachePreservation, isStaleExtensionContextError } from "../../core/session-compactor.js";
 import { logLlmUsage } from "../../lib/llm/usage-observer.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
 import {
@@ -94,6 +95,10 @@ function sessionFileToContentBlock(file, extra = undefined) {
     ...(file.storageKind ? { storageKind: file.storageKind } : {}),
     ...(file.status ? { status: file.status } : {}),
     ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+    ...(file.mtimeMs !== undefined ? { mtimeMs: file.mtimeMs } : {}),
+    ...(file.size !== undefined ? { size: file.size } : {}),
+    ...(file.version ? { version: file.version } : {}),
+    ...(file.resource ? { resource: file.resource } : {}),
   };
 }
 
@@ -135,13 +140,22 @@ export function toCompactionLifecycleWsMessage(event, sessionPath, getSessionByP
   };
 }
 
+export const DEFAULT_DISCONNECT_ABORT_GRACE_MS = 5 * 60_000;
+
+export function resolveDisconnectAbortGraceMs(value = process.env.HANA_WS_DISCONNECT_ABORT_GRACE_MS) {
+  if (value === undefined || value === null || value === "") return DEFAULT_DISCONNECT_ABORT_GRACE_MS;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DISCONNECT_ABORT_GRACE_MS;
+  return Math.floor(parsed);
+}
+
 export function createChatRoute(engine, hub, { upgradeWebSocket }) {
   const restRoute = new Hono();
   const wsRoute = new Hono();
 
   let activeWsClients = 0;
   let disconnectAbortTimer = null;
-  const DISCONNECT_ABORT_GRACE_MS = 15_000;
+  const disconnectAbortGraceMs = resolveDisconnectAbortGraceMs();
   const sessionState = new Map(); // sessionPath -> shared stream state
 
   function cancelDisconnectAbort() {
@@ -153,15 +167,17 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
   function scheduleDisconnectAbort() {
     if (disconnectAbortTimer || activeWsClients > 0) return;
+    if (disconnectAbortGraceMs === 0) return;
     disconnectAbortTimer = setTimeout(() => {
       disconnectAbortTimer = null;
       if (activeWsClients > 0) return;
 
       // 中断所有正在 streaming 的 owner session（焦点 + 后台）
       for (const [, ss] of sessionState) ss.isAborted = true;
-      debugLog()?.log("ws", `no clients for ${DISCONNECT_ABORT_GRACE_MS}ms, aborting all streaming`);
+      debugLog()?.log("ws", `no clients for ${disconnectAbortGraceMs}ms, aborting all streaming`);
       engine.abortAllStreaming().catch(() => {});
-    }, DISCONNECT_ABORT_GRACE_MS);
+    }, disconnectAbortGraceMs);
+    disconnectAbortTimer.unref?.();
   }
 
   const MAX_SESSION_STATES = 100;
@@ -471,7 +487,11 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       });
 
       // Unified content_block emission for all tool results
-      const blocks = extractBlocks(event.toolName, event.result?.details, event.result);
+      const blocks = enrichSessionFileBlocks(
+        extractBlocks(event.toolName, event.result?.details, event.result),
+        engine,
+        sessionPath,
+      );
       for (const block of blocks) {
         emitStreamEvent(sessionPath, ss, { type: "content_block", block });
       }
@@ -754,7 +774,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         meta: event.meta,
       });
       if (event.status === "success") {
-        for (const block of deferredResultFileBlocks(event.result, event.taskId)) {
+        for (const block of enrichSessionFileBlocks(deferredResultFileBlocks(event.result, event.taskId), engine, sessionPath)) {
           emitStreamEvent(sessionPath, ss, { type: "content_block", block });
         }
       } else {
@@ -921,7 +941,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
             if (msg.type === "compact") {
               const compactPath = requireSessionPath(msg, ws); if (!compactPath) return;
-              const session = engine.getSessionByPath(compactPath)
+              let session = engine.getSessionByPath(compactPath)
                 || await engine.ensureSessionLoaded?.(compactPath);
               if (!session) {
                 wsSend(ws, { type: "error", message: t("error.noActiveSession"), sessionPath: compactPath });
@@ -936,7 +956,14 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
                 return;
               }
               try {
-                await session.compact();
+                try {
+                  await compactSessionWithCachePreservation(session);
+                } catch (err) {
+                  if (!isStaleExtensionContextError(err)) throw err;
+                  session = await engine.reloadSessionRuntime?.(compactPath);
+                  if (!session) throw err;
+                  await compactSessionWithCachePreservation(session);
+                }
               } catch (err) {
                 const errMsg = err.message || "";
                 if (!errMsg.includes("Already compacted") && !errMsg.includes("Nothing to compact")) {
@@ -1063,6 +1090,53 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
   );
 
   return { restRoute, wsRoute };
+}
+
+function enrichSessionFileBlocks(blocks, engine, sessionPath) {
+  if (!Array.isArray(blocks) || blocks.length === 0 || !sessionPath) return blocks || [];
+  return blocks.map((block) => {
+    const patch = sessionFileBlockPatch(block, engine, sessionPath);
+    if (!patch) return block;
+    const next = { ...block, ...patch };
+    if (next.type === "skill" && next.installedFile) {
+      next.installedFile = { ...next.installedFile, ...patch };
+    }
+    return next;
+  });
+}
+
+function sessionFileBlockPatch(block, engine, sessionPath) {
+  if (!block || typeof block !== "object") return null;
+  if (!["file", "artifact", "skill"].includes(block.type)) return null;
+  let file = null;
+  if (block.fileId && typeof engine?.getSessionFile === "function") {
+    file = engine.getSessionFile(block.fileId, { sessionPath });
+  }
+  if (!file && block.filePath && typeof engine?.getSessionFileByPath === "function") {
+    file = engine.getSessionFileByPath(block.filePath, { sessionPath });
+  }
+  if (!file) return null;
+  const serialized = typeof engine?.serializeSessionFile === "function"
+    ? engine.serializeSessionFile(file)
+    : file;
+  return sessionFileFields(serialized || file);
+}
+
+function sessionFileFields(file) {
+  if (!file || typeof file !== "object") return null;
+  const fileId = file.fileId || file.id || null;
+  return {
+    ...(fileId ? { fileId } : {}),
+    ...(file.filePath ? { filePath: file.filePath } : {}),
+    ...(file.label || file.displayName || file.filename ? { label: file.label || file.displayName || file.filename } : {}),
+    ...(file.ext !== undefined ? { ext: file.ext } : {}),
+    ...(file.mime ? { mime: file.mime } : {}),
+    ...(file.kind ? { kind: file.kind } : {}),
+    ...(file.storageKind ? { storageKind: file.storageKind } : {}),
+    ...(file.status ? { status: file.status } : {}),
+    ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
+    ...(file.resource ? { resource: file.resource } : {}),
+  };
 }
 
 /**

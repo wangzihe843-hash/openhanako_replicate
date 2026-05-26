@@ -27,6 +27,46 @@ describe("isAnthropicModel", () => {
   });
 });
 
+describe("Anthropic Max effort normalization", () => {
+  it("maps Hana's unified Max level to Anthropic max effort", () => {
+    const result = normalizeProviderPayload({
+      model: "claude-opus-4-7",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "xhigh" },
+      max_tokens: 42666,
+    }, {
+      id: "claude-opus-4-7",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+      maxTokens: 128000,
+    }, { mode: "chat", reasoningLevel: "xhigh" });
+
+    expect(result.output_config).toEqual({ effort: "max" });
+    expect(result.max_tokens).toBe(64000);
+  });
+
+  it("does not overwrite an explicit non-default Anthropic output cap", () => {
+    const result = normalizeProviderPayload({
+      model: "claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "high" },
+      max_tokens: 12000,
+    }, {
+      id: "claude-sonnet-4-6",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+      maxTokens: 64000,
+    }, { mode: "chat", reasoningLevel: "xhigh" });
+
+    expect(result.output_config).toEqual({ effort: "max" });
+    expect(result.max_tokens).toBe(12000);
+  });
+});
+
 describe("getThinkingFormat", () => {
   it("优先读取模型显式 thinkingFormat 声明", () => {
     expect(getThinkingFormat({

@@ -1,9 +1,10 @@
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { createHeartbeatMock, heartbeatInstances } = vi.hoisted(() => ({
+const { createHeartbeatMock, heartbeatInstances, heartbeatOptions } = vi.hoisted(() => ({
   createHeartbeatMock: vi.fn(),
   heartbeatInstances: [],
+  heartbeatOptions: [],
 }));
 
 vi.mock("../lib/desk/heartbeat.js", () => ({
@@ -37,12 +38,14 @@ describe("Scheduler heartbeat defaults", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     heartbeatInstances.length = 0;
-    createHeartbeatMock.mockImplementation(() => {
+    heartbeatOptions.length = 0;
+    createHeartbeatMock.mockImplementation((opts) => {
       const hb = {
         start: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
       };
       heartbeatInstances.push(hb);
+      heartbeatOptions.push(opts);
       return hb;
     });
   });
@@ -77,5 +80,39 @@ describe("Scheduler heartbeat defaults", () => {
     expect(createHeartbeatMock).toHaveBeenCalledTimes(2);
     expect(heartbeatInstances[0].start).toHaveBeenCalledOnce();
     expect(heartbeatInstances[1].start).not.toHaveBeenCalled();
+  });
+
+  it("passes Jian-scoped custom tools into heartbeat isolated execution", () => {
+    const root = "/tmp/hana-heartbeat-jian-tools";
+    const agent = {
+      id: "agent-a",
+      agentName: "Agent A",
+      deskDir: path.join(root, "agents", "agent-a", "desk"),
+      config: { desk: { heartbeat_enabled: true, heartbeat_interval: 31 } },
+    };
+    const engine = {
+      agents: new Map([[agent.id, agent]]),
+      getHeartbeatMaster: () => true,
+      getHomeCwd: () => path.join(root, "home", agent.id),
+      emitDevLog: vi.fn(),
+    };
+    const scheduler = new Scheduler({ hub: { engine } });
+    scheduler._executeActivityForAgent = vi.fn();
+    scheduler.startHeartbeat();
+
+    const scopedTool = { name: "jian_update_status", execute: vi.fn() };
+    const cwd = path.join(root, "desk", "task-a");
+    heartbeatOptions[0].onJianBeat("jian prompt", cwd, { customTools: [scopedTool] });
+
+    expect(scheduler._executeActivityForAgent).toHaveBeenCalledWith(
+      "agent-a",
+      "jian prompt",
+      "heartbeat",
+      expect.any(String),
+      {
+        cwd,
+        extraCustomTools: [scopedTool],
+      },
+    );
   });
 });

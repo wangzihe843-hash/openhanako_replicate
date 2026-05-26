@@ -19,13 +19,13 @@
     "createTitle": "New Channel",
     "createName": "Channel name",
     "createNamePlaceholder": "e.g. design-team",
-    "createMembers": "Members",
+    "createMembers": "Agent members",
     "createIntro": "Description",
     "createIntroPlaceholder": "Describe what this channel is for...",
     "createCancel": "Cancel",
     "createConfirm": "Create",
     "nameRequired": "Please enter a channel name",
-    "minMembers": "Select at least 2 members",
+    "minMembers": "Select at least 2 Agent members",
     "created": "Channel #{name} created ✿",
     "createFailed": "Create failed",
     "alreadyExists": "Channel already exists",
@@ -81,7 +81,18 @@
     "bridge": "Social Platforms",
     "toggle": "Sidebar",
     "bridgeShort": "Bridge",
-    "pinned": "Pinned"
+    "pinned": "Pinned",
+    "searchPlaceholder": "Search chats",
+    "searchClear": "Clear search",
+    "searchTitleMatches": "Titles",
+    "searchContentMatches": "Content",
+    "searchingTitles": "Searching titles…",
+    "searchingContent": "Searching content…",
+    "searchNoResults": "No matching chats",
+    "searchFailed": "Search failed"
+  },
+  "titlebar": {
+    "currentChatTitle": "Current chat title"
   },
   "session": {
     "untitled": "New Chat",
@@ -667,7 +678,7 @@
     "editor": {
       "title": "Editor",
       "markdownBodyFontSize": "Body Size",
-      "markdownBodyFontSizeHint": "Markdown body text defaults to a Notion-like 16px.",
+      "markdownBodyFontSizeHint": "Markdown body text defaults to 15px.",
       "markdownHeading1FontSize": "Heading 1 Size",
       "markdownHeading1FontSizeHint": "Used for # headings.",
       "markdownHeading2FontSize": "Heading 2 Size",
@@ -763,6 +774,8 @@
         "title": "Tools",
         "description": "Tool switches take effect after restarting or starting a conversation. Active conversations keep using the tool set they started with.",
         "items": {
+          "automation": { "label": "Automation", "summary": "Let the agent create scheduled notifications and plugin actions" },
+          "beautify": { "label": "小花美术", "summary": "Let the agent generate document covers and aesthetic enhancements" },
           "browser": { "label": "Browser", "summary": "Control a headless browser to navigate web pages" },
           "computer": { "label": "Computer Use", "summary": "Control approved desktop apps with a visible action overlay" },
           "cron": { "label": "Scheduled Tasks", "summary": "Run tasks automatically at specified times" },
@@ -797,14 +810,15 @@
       "updateChecking": "Checking for updates…",
       "updateDownloading": "{agentName} is preparing a new home {percent}%",
       "updateReadyInstall": "v{version} ready to install",
-      "updateInstalling": "Installing update. Hanako will restart automatically…",
+      "updateInstalling": "Installing update. HanaAgent will restart automatically…",
       "updateInstallManualHint": "Install after clicking Restart to update; quitting will not install automatically",
       "updateInstall": "Restart to update",
+      "updateInstallNow": "Restart and update now",
       "updateProgress": "{percent}%",
       "updateError": "Update check failed",
       "updateLatest": "You're up to date",
       "updateCheckBtn": "Check for updates",
-      "updateNeedInstall": "Please move Hanako to the Applications folder first",
+      "updateNeedInstall": "Please move HanaAgent to the Applications folder first",
       "updateDiskSpace": "Not enough disk space to download update",
       "launchAtLogin": "Launch at login",
       "betaUpdates": "Receive beta updates",
@@ -815,7 +829,7 @@
       "mobileAccess": "Mobile Access",
       "desktopAccess": "Computer Access",
       "lanToggle": "Allow LAN devices",
-      "lanHint": "Allow phones and computers on the same LAN to reach this Hana Server",
+      "lanHint": "Allow phones and computers on the same LAN to reach this HanaAgent Server",
       "port": "Fixed Port",
       "portHint": "Used by bookmarks and QR codes. Restart Hana after changing it",
       "mobileUrl": "Mobile URL",
@@ -850,7 +864,7 @@
       "desktopKeyFailed": "Creation failed",
       "connectLanServer": "Connect LAN Server",
       "remoteServerUrl": "Server URL",
-      "remoteServerUrlHint": "Enter the Hana Server URL on another computer or NAS",
+      "remoteServerUrlHint": "Enter the HanaAgent Server URL on another computer or NAS",
       "remoteServerKey": "Access key",
       "remoteServerKeyHint": "Enter the computer access key generated on that server",
       "remoteServerConnected": "LAN server connected",
@@ -905,6 +919,9 @@
       "networkProxyWss": "WSS proxy, optional",
       "networkProxyNoProxy": "Bypass proxy, for example localhost, 127.0.0.1, ::1",
       "networkProxySave": "Save Proxy Settings",
+      "archivedChats": "Archived Conversations",
+      "archivedChatsDesc": "Review archived chats, restore conversations you need again, or permanently delete records you no longer want",
+      "viewArchivedChats": "View Archived Conversations",
       "fileBackup": "File Backup",
       "fileBackupDesc": "Automatically save original file content before AI modifications or deletions",
       "retention": "Retention",
@@ -970,6 +987,51 @@
       "noKey": "Not configured",
       "remove": "Remove",
       "deleteConfirm": "Delete provider {name}? Associated models will be removed."
+    },
+    "usage": {
+      "title": "Usage",
+      "note": "Usage is for reference only. Final totals are determined by the provider.",
+      "refresh": "Refresh usage",
+      "total": "All usage",
+      "requests": "Requests",
+      "totalTokens": "Total tokens",
+      "cacheRead": "Cache read",
+      "cacheHitRate": "Hit rate",
+      "estimatedCost": "Estimated cost",
+      "uncached": "Uncached",
+      "modelMix": "Model mix",
+      "dailyUsage": "Daily usage",
+      "requestLedger": "Request ledger",
+      "loading": "Loading usage…",
+      "empty": "No usage records yet",
+      "groupMeta": "{requests} requests · {errors} errors",
+      "cacheShort": "cache {tokens}",
+      "tokensShort": "{tokens} tok",
+      "cacheSummary": "Cache {cache} · uncached {uncached}",
+      "view": {
+        "overall": "Overall",
+        "daily": "By date",
+        "category": "Category",
+        "model": "Model"
+      },
+      "category": {
+        "session": "Session",
+        "phone": "Phone",
+        "memory": "Memory",
+        "automation": "Automation",
+        "subagent": "Subagent",
+        "compaction": "Compaction",
+        "plugin": "Plugin",
+        "utility": "Utility",
+        "vision": "Vision",
+        "unknown": "Unknown"
+      },
+      "status": {
+        "ok": "Ok",
+        "error": "Error",
+        "aborted": "Aborted",
+        "usage_missing": "No usage"
+      }
     },
     "media": {
       "imageGeneration": "Image Generation",
@@ -1177,7 +1239,7 @@
       "homeFolderBrowse": "Browse"
     },
     "toolCaps": {
-      "title": "Self-learning Skills"
+      "title": "Skill Installation Permissions"
     },
     "skills": {
       "title": "Skills",
@@ -1186,8 +1248,6 @@
       "agentConfigTitle": "Agent Skill Configuration",
       "configureFor": "Configuring:",
       "userSkillsTitle": "Agent Skill Toggles",
-      "learnedSkillsTitle": "Learned Skills",
-      "learnedEmpty": "This agent hasn't learned any skills yet",
       "user": "User Skills",
       "system": "System Skills",
       "add": "Add Skill",
@@ -1198,8 +1258,6 @@
       "enabled": "Enabled",
       "disabled": "Disabled",
       "noSkills": "No skills available",
-      "learned": "Agent Learned",
-      "noLearned": "Agent has not learned any skills yet",
       "noUser": "No custom skills",
       "copyToSkills": "Copy to your skills",
       "copied": "Copied ✓",
@@ -1216,7 +1274,7 @@
       "compatAutoDiscovered": "Auto-discovered",
       "compatNotInstalled": "Not installed",
       "learnCreate": "Create / install skills",
-      "learnCreateDesc": "Allow the Agent to write new skills or install them via tool calls",
+      "learnCreateDesc": "Allow the Agent to write new skills or install them into the shared skill pool, enabled only for the current Agent by default",
       "fetchRemote": "Fetch skills from GitHub / ClawHub",
       "fetchRemoteDesc": "When enabled, the Agent will proactively search and install suitable skills for specialized tasks. Use with caution",
       "safetyReview": "Safety review before install",
@@ -1461,9 +1519,14 @@
       "failed": "Failed to connect to LAN server"
     },
     "name": {
-      "title": "What should I call you?",
-      "subtitle": "This makes our conversations more natural",
-      "placeholder": "Enter your name",
+      "title": "Names and Memory",
+      "subtitle": "Tell me what to call you, and give this Agent a name.",
+      "userLabel": "What should I call you?",
+      "placeholder": "Your name",
+      "agentLabel": "What should this Agent be called?",
+      "agentPlaceholder": "Hanako",
+      "memoryTitle": "Memory system",
+      "memoryHint": "When enabled, the system reviews chats after they end and turns them into memory. Because memory updates often, model cache hit rates may be lower. Turning memory off is usually cheaper.",
       "back": "Back",
       "next": "Next"
     },
@@ -1579,6 +1642,12 @@
     "title": "Scheduled Tasks",
     "empty": "No scheduled tasks yet.\nThe assistant will create them when needed.",
     "defaultModel": "Default model",
+    "executor": {
+      "agentSession": "Agent",
+      "notify": "Notify",
+      "pluginAction": "Plugin action",
+      "directAction": "Direct action"
+    },
     "edit": "Edit",
     "delete": "Delete"
   },
@@ -1807,7 +1876,7 @@
     "skillMissingName": "Missing name field in SKILL.md",
     "skillNameInvalid": "Invalid skill name (\"{name}\"). Only letters, numbers, underscores, and hyphens are allowed.",
     "skillPathMustBeAbsolute": "Path must be absolute: {path}",
-    "skillCannotAddSelfDir": "Cannot add Hanako's own skills directory",
+    "skillCannotAddSelfDir": "Cannot add HanaAgent's own skills directory",
     "skillInvalidName": "Invalid skill name",
     "skillExternalCannotDelete": "External skills cannot be deleted from here",
     "skillNotExists": "Skill does not exist",
@@ -1880,7 +1949,7 @@
     "subagentStopReason": "Sub-agent did not finish cleanly (stopReason: {reason}).",
     "subagentToolFailed": "Sub-agent tool failed: {msg}",
     "subagentDispatched": "Sub-task dispatched (task-id: {taskId}). Results will be delivered when ready.",
-    "installSkillDisabled": "Self-learning skills not enabled. Please enable \"Allow Agent to create/install skills\" in settings.",
+    "installSkillDisabled": "Skill installation is not enabled. Please enable \"Allow Agent to create/install skills\" in settings.",
     "installSkillGithubDisabled": "GitHub skill fetching not enabled. Please enable \"Allow fetching skills from GitHub\" in settings.",
     "installSkillInvalidGithubUrl": "Invalid GitHub URL: {url}",
     "installSkillGithubApiFailed": "Cannot retrieve repo info (HTTP {status}). Please check the URL.",
@@ -1976,7 +2045,7 @@
   },
   "main": {
     "tray": {
-      "show": "Show Hanako",
+      "show": "Show HanaAgent",
       "settings": "Settings",
       "quit": "Quit"
     },
@@ -1984,17 +2053,17 @@
       "selectFolder": "Select Working Folder",
       "selectSkill": "Select Skill",
       "selectPlugin": "Select Plugin",
-      "launchFailedTitle": "Hanako Launch Failed",
-      "launchFailedBody": "Hanako v{version}\n\n{detail}\n\nDetailed log saved to:\n{logPath}\n\nPlease send this screenshot or log file to the developer.",
-      "serverRestartFailed": "Hanako v{version}\n\nServer crashed and failed to restart.\n{error}\n\nPlease restart the application.",
-      "serverMultipleCrash": "Hanako v{version}\n\nServer crashed multiple times ({reason}).\n\nPlease restart the application.",
+      "launchFailedTitle": "HanaAgent Launch Failed",
+      "launchFailedBody": "HanaAgent v{version}\n\n{detail}\n\nDetailed log saved to:\n{logPath}\n\nPlease send this screenshot or log file to the developer.",
+      "serverRestartFailed": "HanaAgent v{version}\n\nServer crashed and failed to restart.\n{error}\n\nPlease restart the application.",
+      "serverMultipleCrash": "HanaAgent v{version}\n\nServer crashed multiple times ({reason}).\n\nPlease restart the application.",
       "serverStartTimeout": "Server start timed out",
       "serverKilledBySignal": "Server killed by signal ({signal})",
       "serverExitedWithCode": "Server exited with code {code}",
-      "serverFilesNotReady": "Auto-update just completed; new version files still landing on disk (missing {missing}). Waited {waited}s without success. Please restart Hanako shortly.",
-      "serverModuleMissing": "Server startup failed: cannot find module {module}.\nThis typically happens right after an auto-update, while new files are still being written to disk.\nRecommendation: wait 1-2 minutes and restart Hanako. Report on GitHub if it persists.",
-      "installFailedTitle": "Hanako Update",
-      "installFailedBody": "Update installation failed:\n{error}\n\nPlease restart Hanako and try again, or check for updates manually in Settings."
+      "serverFilesNotReady": "Auto-update just completed; new version files still landing on disk (missing {missing}). Waited {waited}s without success. Please restart HanaAgent shortly.",
+      "serverModuleMissing": "Server startup failed: cannot find module {module}.\nThis typically happens right after an auto-update, while new files are still being written to disk.\nRecommendation: wait 1-2 minutes and restart HanaAgent. Report on GitHub if it persists.",
+      "installFailedTitle": "HanaAgent Update",
+      "installFailedBody": "Update installation failed:\n{error}\n\nPlease restart HanaAgent and try again, or check for updates manually in Settings."
     },
     "notification": {
       "ready": "Notifications enabled"
@@ -2162,16 +2231,15 @@
     },
     "installSkill": {
       "label": "Install Skill",
-      "description": "Install a new skill for yourself. Mode A: Provide a GitHub repo URL (containing SKILL.md) to auto-fetch and install. Mode B: Directly provide skill_content + skill_name, for self-authored skills. The skill takes effect immediately after installation.",
+      "description": "Install a new skill into the shared skill pool, enabled only for the current Agent by default. Mode A: Provide a GitHub repo URL (containing SKILL.md) to auto-fetch and install. Mode B: Directly provide skill_content + skill_name, for self-authored skills.",
       "githubUrlDesc": "GitHub repo URL (Mode A)",
       "skillContentDesc": "Full content of SKILL.md (Mode B)",
       "skillNameDesc": "Skill name (required for Mode B)",
-      "reasonDesc": "Explain why this skill is needed (for audit, required)",
-      "userRequestedDesc": "Whether the user explicitly requested installation (true = user skill, false = learned skill)"
+      "reasonDesc": "Explain why this skill is needed (for audit, required)"
     },
     "updateSettings": {
       "label": "Settings",
-      "description": "Modify Hanako's settings. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly.",
+      "description": "Modify HanaAgent's settings. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly.",
       "actionDesc": "Action: search to find settings / apply to change a setting",
       "queryDesc": "Search keyword (required for search)",
       "keyDesc": "Setting key (found via search)",
@@ -2260,7 +2328,7 @@
     "inputHelp": "Type /help to see commands"
   },
   "sandbox": {
-    "blocked": "[Security] {reason}\n\nThis operation was blocked by Hanako's sandbox security policy. This means the command crossed a path or permission boundary. Check the current workspace, the exact path syntax, and whether the target file belongs in an allowed workspace or session path. Explain the blocked path and reason to the user; discuss changing sandbox settings only if the user explicitly decides to do that.",
+    "blocked": "[Security] {reason}\n\nThis operation was blocked by HanaAgent's sandbox security policy. This means the command crossed a path or permission boundary. Check the current workspace, the exact path syntax, and whether the target file belongs in an allowed workspace or session path. Explain the blocked path and reason to the user; discuss changing sandbox settings only if the user explicitly decides to do that.",
     "noSudo": "sudo is not allowed",
     "noSu": "su user switching is not allowed",
     "noChmod": "Changing file permissions is not allowed",
@@ -2315,7 +2383,6 @@
   "preview.toggle": "Preview panel",
   "preview.markdownPreview": "Preview",
   "preview.exitMarkdownPreview": "Back to editing",
-  "preview.openInNewWindow": "Open in new window",
-  "preview.openInNewWindowUnsupported": "Not supported for this type",
-  "preview.markdownEditorStatus": "Selected {selected} chars · Total {total} chars"
+  "preview.markdownEditorStatus": "Selected {selected} chars · Total {total} chars",
+  "preview.markdownAttachmentInsertFailed": "Failed to insert attachment"
 }

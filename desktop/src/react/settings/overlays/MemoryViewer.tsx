@@ -64,6 +64,7 @@ export function MemoryViewer() {
       backdrop="blur"
       zIndex={100}
       className={styles['memory-viewer']}
+      backdropClassName={styles['memory-viewer-backdrop']}
       disableContainerAnimation
     >
         <div className={styles['memory-viewer-header']}>

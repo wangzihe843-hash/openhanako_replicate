@@ -25,6 +25,8 @@ export interface AutoLaunchStatus {
 
 // ── 核心数据结构 ──
 
+export type SessionPermissionMode = 'operate' | 'ask' | 'read_only';
+
 export interface Session {
   path: string;
   title: string | null;
@@ -34,6 +36,7 @@ export interface Session {
   agentId: string | null;
   agentName: string | null;
   cwd: string | null;
+  permissionMode?: SessionPermissionMode | null;
   pinnedAt?: string | null;
   hasSummary?: boolean;
   rcAttachment?: {
@@ -143,6 +146,7 @@ export interface PreviewItem {
   status?: 'available' | 'expired' | string;
   missingAt?: number | null;
   fileVersion?: FileVersion | null;
+  remoteContentRef?: RemoteContentRef | null;
 }
 
 export interface DeskFile {
@@ -198,6 +202,17 @@ export interface VersionedWriteResult {
   version?: FileVersion | null;
 }
 
+export interface RemoteWorkbenchContentRef {
+  kind: 'mobile-workbench';
+  rootId: string;
+  subdir: string;
+  name: string;
+  contentPath: string;
+  version?: FileVersion | null;
+}
+
+export type RemoteContentRef = RemoteWorkbenchContentRef;
+
 // ── Plugin Card Protocol ──
 
 export interface PluginCardDetails {
@@ -245,6 +260,8 @@ export interface PlatformApi {
   selectPlugin?(): Promise<string | null>;
   readFile(path: string): Promise<string | null>;
   writeFile(filePath: string, content: string): Promise<boolean>;
+  writeFileBinary?(filePath: string, base64Data: string): Promise<boolean>;
+  copyFile?(sourcePath: string, destinationPath: string): Promise<boolean>;
   readFileSnapshot?(path: string): Promise<TextFileSnapshot | null>;
   writeFileIfUnchanged?(filePath: string, content: string, expectedVersion?: FileVersion | null): Promise<VersionedWriteResult>;
   watchFile(filePath: string): Promise<boolean>;

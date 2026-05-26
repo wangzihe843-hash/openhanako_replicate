@@ -11,8 +11,12 @@
     <style>
         /* 窗口级覆盖：settings-panel 填满整个窗口 */
         body {
+            --paper-texture-attachment: scroll;
             background-color: var(--bg);
             overflow: hidden;
+        }
+        body.paper-texture {
+            background-attachment: scroll;
         }
         .settings-panel {
             position: fixed;

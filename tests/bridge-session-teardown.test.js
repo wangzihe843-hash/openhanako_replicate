@@ -14,6 +14,7 @@ const emitSessionShutdownMock = vi.fn(async (session) => {
   }
   return false;
 });
+const PNG_BASE64 = "iVBORw0KGgo=";
 
 vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -115,6 +116,19 @@ describe("BridgeSessionManager teardown", () => {
 
   afterEach(() => {
     fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("passes bridge steer text to the SDK without adding an internal prefix", () => {
+    const agent = makeAgent(rootDir);
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    const session = {
+      isStreaming: true,
+      steer: vi.fn(),
+    };
+    manager.activeSessions.set("telegram:dm:owner", session);
+
+    expect(manager.steerSession("telegram:dm:owner", "先停一下，直接回答这个")).toBe(true);
+    expect(session.steer).toHaveBeenCalledWith("先停一下，直接回答这个");
   });
 
   it("executeExternalMessage 结束后走 emit -> unsub -> dispose", async () => {
@@ -293,10 +307,10 @@ describe("BridgeSessionManager teardown", () => {
       dispose: vi.fn(),
       sessionManager: { getSessionFile: () => sessionFile },
       getContextUsage: usage,
-      extensionRunner: { hasHandlers: vi.fn(() => false) },
+      extensionRunner: { hasHandlers: vi.fn(() => true), emit: vi.fn(async () => {}) },
     };
     createAgentSessionMock.mockImplementation(async (options) => {
-      expect(options.resourceLoader.getSystemPrompt()).toBe("system prompt v2");
+      expect(options.resourceLoader.getSystemPrompt()).toContain("system prompt v2");
       return { session };
     });
 
@@ -322,6 +336,109 @@ describe("BridgeSessionManager teardown", () => {
       freshCompactTokensAfter: 4200,
     });
     expect(index["tg_dm_fresh@agent-a"].name).toBe("Owner");
+  });
+
+  it("freshCompactSession records daily freshness when the bridge session is already compacted", async () => {
+    const agent = makeAgent(rootDir);
+    agent.buildSystemPrompt = vi.fn(() => "system prompt v3");
+    const sessionFile = path.join(agent.sessionDir, "bridge", "owner", "already.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, [
+      JSON.stringify({ type: "message", role: "user", content: "hello" }),
+      JSON.stringify({ type: "compaction", summary: "earlier bridge turns" }),
+      "",
+    ].join("\n"), "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    manager.writeIndex({
+      "tg_dm_already@agent-a": {
+        file: "owner/already.jsonl",
+        name: "Owner",
+        freshCompact: { lastFreshCompactDate: "2026-05-14" },
+      },
+    }, agent);
+    sessionManagerOpenMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    const usage = vi.fn(() => ({ tokens: 4200, contextWindow: 128000 }));
+    const session = {
+      compact: vi.fn(async () => { throw new Error("Already compacted"); }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: usage,
+      extensionRunner: { hasHandlers: vi.fn(() => true), emit: vi.fn(async () => {}) },
+    };
+    createAgentSessionMock.mockImplementation(async (options) => {
+      expect(options.resourceLoader.getSystemPrompt()).toContain("system prompt v3");
+      return { session };
+    });
+
+    const result = await manager.freshCompactSession("tg_dm_already@agent-a", {
+      agentId: "agent-a",
+      reason: "daily",
+      now: new Date("2026-05-15T09:00:00.000Z"),
+    });
+
+    expect(session.compact).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      fresh: true,
+      reason: "daily",
+      noop: true,
+      noopReason: "already_compacted",
+      tokensBefore: 4200,
+      tokensAfter: 4200,
+      contextWindow: 128000,
+    });
+    const index = manager.readIndex(agent);
+    expect(index["tg_dm_already@agent-a"].freshCompact).toMatchObject({
+      lastFreshCompactDate: "2026-05-15",
+      freshCompactReason: "daily",
+      freshCompactTokensBefore: 4200,
+      freshCompactTokensAfter: 4200,
+    });
+    expect(index["tg_dm_already@agent-a"].promptSnapshot.systemPrompt).toContain("system prompt v3");
+  });
+
+  it("freshCompactSession records daily freshness when the bridge session is too small to compact", async () => {
+    const agent = makeAgent(rootDir);
+    agent.buildSystemPrompt = vi.fn(() => "system prompt small");
+    const sessionFile = path.join(agent.sessionDir, "bridge", "owner", "small.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, JSON.stringify({ type: "message", role: "user", content: "hi" }) + "\n", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    manager.writeIndex({
+      "tg_dm_small@agent-a": {
+        file: "owner/small.jsonl",
+        freshCompact: { lastFreshCompactDate: "2026-05-14" },
+      },
+    }, agent);
+    sessionManagerOpenMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    const session = {
+      compact: vi.fn(async () => { throw new Error("Nothing to compact (session too small)"); }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: vi.fn(() => ({ tokens: 300, contextWindow: 128000 })),
+      extensionRunner: { hasHandlers: vi.fn(() => true), emit: vi.fn(async () => {}) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const result = await manager.freshCompactSession("tg_dm_small@agent-a", {
+      agentId: "agent-a",
+      reason: "daily",
+      now: new Date("2026-05-15T09:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      fresh: true,
+      noop: true,
+      noopReason: "nothing_to_compact",
+      tokensBefore: 300,
+      tokensAfter: 300,
+    });
+    expect(manager.readIndex(agent)["tg_dm_small@agent-a"].freshCompact).toMatchObject({
+      lastFreshCompactDate: "2026-05-15",
+      freshCompactTokensBefore: 300,
+      freshCompactTokensAfter: 300,
+    });
   });
 
   it("executeExternalMessage does not fresh-compact inline for an existing owner bridge session", async () => {
@@ -354,7 +471,7 @@ describe("BridgeSessionManager teardown", () => {
       getContextUsage: vi.fn()
         .mockReturnValueOnce({ tokens: 9000, contextWindow: 128000 })
         .mockReturnValueOnce({ tokens: 3600, contextWindow: 128000 }),
-      extensionRunner: { hasHandlers: vi.fn(() => false) },
+      extensionRunner: { hasHandlers: vi.fn(() => true), emit: vi.fn(async () => {}) },
     };
     createAgentSessionMock
       .mockResolvedValueOnce({ session: liveSession })
@@ -394,7 +511,7 @@ describe("BridgeSessionManager teardown", () => {
       getContextUsage: vi.fn()
         .mockReturnValueOnce({ tokens: 7000, contextWindow: 128000 })
         .mockReturnValueOnce({ tokens: 3000, contextWindow: 128000 }),
-      extensionRunner: { hasHandlers: vi.fn(() => false) },
+      extensionRunner: { hasHandlers: vi.fn(() => true), emit: vi.fn(async () => {}) },
     };
     createAgentSessionMock.mockResolvedValue({ session: compactSession });
 
@@ -409,6 +526,61 @@ describe("BridgeSessionManager teardown", () => {
     expect(manager.listDailyFreshCompactTargets(agent, {
       now: new Date("2026-05-15T09:00:00"),
     })).toEqual([{ sessionKey: "tg_dm_assistant@agent-a", sessionPath: sessionFile, reason: "daily" }]);
+  });
+
+  it("records non-context custom entries into an existing bridge session file", () => {
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.sessionDir, "bridge", "owner", "assistant.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    manager.writeIndex({
+      "tg_dm_assistant@agent-a": { file: "owner/assistant.jsonl" },
+    }, agent);
+
+    const appendCustomEntry = vi.fn();
+    sessionManagerOpenMock.mockReturnValueOnce({ appendCustomEntry });
+
+    const result = manager.recordCustomEntryForSessionPath(
+      sessionFile,
+      "hana-deferred-result",
+      { taskId: "task-img" },
+      { agentId: "agent-a" },
+    );
+
+    expect(result).toMatchObject({ ok: true, mode: "bridge-file" });
+    expect(sessionManagerOpenMock).toHaveBeenCalledWith(sessionFile, path.dirname(sessionFile));
+    expect(appendCustomEntry).toHaveBeenCalledWith("hana-deferred-result", { taskId: "task-img" });
+  });
+
+  it("records non-context custom entries through the live bridge session manager when loaded", () => {
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.sessionDir, "bridge", "owner", "assistant.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    manager.writeIndex({
+      "tg_dm_assistant@agent-a": { file: "owner/assistant.jsonl" },
+    }, agent);
+
+    const appendCustomEntry = vi.fn();
+    manager.activeSessions.set("tg_dm_assistant@agent-a", {
+      sessionManager: {
+        getSessionFile: () => sessionFile,
+        appendCustomEntry,
+      },
+    });
+
+    const result = manager.recordCustomEntryForSessionPath(
+      sessionFile,
+      "hana-deferred-result",
+      { taskId: "task-img" },
+      { agentId: "agent-a" },
+    );
+
+    expect(result).toMatchObject({ ok: true, mode: "bridge-live" });
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(appendCustomEntry).toHaveBeenCalledWith("hana-deferred-result", { taskId: "task-img" });
   });
 
   it("registers bridge inbound image files after the bridge session path exists", async () => {
@@ -556,6 +728,80 @@ describe("BridgeSessionManager teardown", () => {
     const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
     expect(createArgs.cwd).toBe(rootCwd);
     expect(createArgs.resourceLoader.getSystemPrompt()).toBe(`system prompt @ ${rootCwd}`);
+  });
+
+  it("owner bridge sessions persist and reuse their prompt snapshot", async () => {
+    const agent = makeAgent(rootDir);
+    agent.buildSystemPrompt = vi.fn()
+      .mockReturnValueOnce("owner prompt v1")
+      .mockReturnValueOnce("owner prompt v2");
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "snapshot.jsonl");
+    fs.mkdirSync(path.dirname(mgrPath), { recursive: true });
+    fs.writeFileSync(mgrPath, "", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+    sessionManagerOpenMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const makeSession = () => ({
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    });
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: makeSession() })
+      .mockResolvedValueOnce({ session: makeSession() });
+
+    await manager.executeExternalMessage("hello", "tg_dm_snapshot@agent-a", null, { agentId: "agent-a" });
+    const snapshot = manager.readIndex(agent)["tg_dm_snapshot@agent-a"].promptSnapshot;
+    expect(snapshot?.systemPrompt).toContain("owner prompt v1");
+    expect(snapshot?.systemPrompt).not.toContain("owner prompt v2");
+
+    await manager.executeExternalMessage("hello again", "tg_dm_snapshot@agent-a", null, { agentId: "agent-a" });
+    const secondCreateArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(secondCreateArgs.resourceLoader.getSystemPrompt()).toBe(snapshot.systemPrompt);
+    expect(agent.buildSystemPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("guest bridge sessions persist and reuse their prompt snapshot", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "guests", "guest-snapshot.jsonl");
+    fs.mkdirSync(path.dirname(mgrPath), { recursive: true });
+    fs.writeFileSync(mgrPath, "", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+    sessionManagerOpenMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const makeSession = () => ({
+      model: { input: ["text"] },
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    });
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: makeSession() })
+      .mockResolvedValueOnce({ session: makeSession() });
+
+    await manager.executeExternalMessage("hello", "fs_group_guest-snapshot@agent-a", {
+      userId: "guest-user",
+      chatId: "guest-chat",
+    }, { agentId: "agent-a", guest: true, contextTag: "group v1" });
+    const snapshot = manager.readIndex(agent)["fs_group_guest-snapshot@agent-a"].promptSnapshot;
+    expect(snapshot?.systemPrompt).toContain("public-ishiki");
+    expect(snapshot?.systemPrompt).toContain("group v1");
+
+    agent.publicIshiki = "public-ishiki v2";
+    await manager.executeExternalMessage("hello again", "fs_group_guest-snapshot@agent-a", {
+      userId: "guest-user",
+      chatId: "guest-chat",
+    }, { agentId: "agent-a", guest: true, contextTag: "group v2" });
+    const secondCreateArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(secondCreateArgs.resourceLoader.getSystemPrompt()).toBe(snapshot.systemPrompt);
+    expect(secondCreateArgs.resourceLoader.getSystemPrompt()).not.toContain("group v2");
   });
 
   it("adds a low-salience platform line and records bridge context metadata for owner sessions", async () => {
@@ -707,6 +953,38 @@ describe("BridgeSessionManager teardown", () => {
     expect(buildOpts.getPermissionMode()).toBe("operate");
   });
 
+  it("owner bridge tools expose the bridge session path instead of relying on desktop focus", async () => {
+    const agent = makeAgent(rootDir);
+    const buildTools = vi.fn(() => ({
+      tools: [],
+      customTools: [],
+    }));
+    const deps = {
+      ...makeDeps(agent),
+      buildTools,
+    };
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s-owner-tools.jsonl");
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        model: { input: ["text"] },
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => mgrPath },
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await manager.executeExternalMessage("hello", "bridge-k-owner-tools", null, { agentId: "agent-a" });
+
+    expect(buildTools).toHaveBeenCalledOnce();
+    const buildOpts = buildTools.mock.calls[0][2];
+    expect(buildOpts.getSessionPath()).toBe(mgrPath);
+  });
+
   it("guest bridge sessions pass canonical off thinking level to the SDK", async () => {
     const agent = makeAgent(rootDir);
     agent.config.models.chat = { id: "minimax-m2.5", provider: "scnet" };
@@ -852,7 +1130,7 @@ describe("BridgeSessionManager teardown", () => {
       extensionRunner: { hasHandlers: vi.fn(() => false) },
     };
     createAgentSessionMock.mockResolvedValue({ session });
-    const images = [{ type: "image", data: "BASE64", mimeType: "image/png" }];
+    const images = [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }];
 
     await manager.executeExternalMessage("hello", "bridge-k-vision", null, {
       agentId: "agent-a",
@@ -893,7 +1171,7 @@ describe("BridgeSessionManager teardown", () => {
       sessionPath: sessionFile,
       targetModel: textOnlyModel,
       text: `[attached_image: ${imagePath}]\nwhat is this?`,
-      images: [{ type: "image", data: "BASE64", mimeType: "image/png" }],
+      images: [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }],
       imageAttachmentPaths: [imagePath],
     });
     const deps = {
@@ -1016,7 +1294,7 @@ describe("BridgeSessionManager teardown", () => {
 
     expect(sessionManagerOpenMock).toHaveBeenCalledOnce();
     expect(sessionManagerCreateMock).toHaveBeenCalledOnce();
-    expect(manager.readIndex(agent)["bridge-k3"]).toEqual({
+    expect(manager.readIndex(agent)["bridge-k3"]).toMatchObject({
       file: "owner/fresh.jsonl",
       name: "Alice",
       userId: "u-1",

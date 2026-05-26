@@ -27,8 +27,8 @@ describe("resolveModelId", () => {
   it("returns exact match when given a full model ID", () => {
     expect(resolveModelId("volcengine", "doubao-seedream-3-0-t2i"))
       .toBe("doubao-seedream-3-0-t2i");
-    expect(resolveModelId("openai", "gpt-image-2"))
-      .toBe("gpt-image-2");
+    expect(resolveModelId("openai", "gpt-image-1.5"))
+      .toBe("gpt-image-1.5");
   });
 
   it("resolves short aliases to full IDs", () => {
@@ -41,8 +41,8 @@ describe("resolveModelId", () => {
   });
 
   it("resolves OpenAI short aliases", () => {
-    expect(resolveModelId("openai", "2"))
-      .toBe("gpt-image-2");
+    expect(resolveModelId("openai", "1.5"))
+      .toBe("gpt-image-1.5");
     expect(resolveModelId("openai", "mini"))
       .toBe("gpt-image-1-mini");
   });
@@ -58,7 +58,7 @@ describe("resolveModelId", () => {
     expect(resolveModelId("volcengine", undefined))
       .toBe("doubao-seedream-5-0-lite-260128");
     expect(resolveModelId("openai", null))
-      .toBe("dall-e-3");
+      .toBe("gpt-image-1.5");
   });
 
   it("falls back to the latest model for unrecognized strings", () => {
@@ -94,7 +94,7 @@ describe("getKnownModels", () => {
 describe("getDefaultModelId", () => {
   it("returns the last catalog entry (latest model)", () => {
     expect(getDefaultModelId("volcengine")).toBe("doubao-seedream-5-0-lite-260128");
-    expect(getDefaultModelId("openai")).toBe("dall-e-3");
+    expect(getDefaultModelId("openai")).toBe("gpt-image-1.5");
   });
 
   it("returns null for unknown providers", () => {

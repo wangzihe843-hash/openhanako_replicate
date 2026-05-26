@@ -263,6 +263,49 @@ export class ModelManager {
   }
 
   /**
+   * OAuth-aware provider credential resolution for non-chat runtimes.
+   *
+   * Chat execution goes through Pi SDK ModelRegistry, whose AuthStorage path
+   * refreshes OAuth tokens. Media adapters historically bypassed that path by
+   * reading ProviderRegistry credentials directly, so they could keep using an
+   * expired access token until a chat request refreshed it. This method makes
+   * the refresh boundary explicit without moving adapter-specific semantics into
+   * ProviderRegistry.
+   *
+   * @param {string} provider
+   * @returns {Promise<{ api_key: string, base_url: string, api: string, accountId?: string }>}
+   */
+  async resolveProviderCredentialsFresh(provider) {
+    if (!provider) return { api_key: "", base_url: "", api: "" };
+    const entry = this.providerRegistry.get(provider);
+    let refreshedOAuthKey = null;
+    if (entry && this.providerRegistry.getAuthType(provider) === "oauth" && this._authStorage) {
+      const authKey = this.providerRegistry.getAuthJsonKey(provider);
+      refreshedOAuthKey = await this._authStorage.getApiKey?.(authKey);
+      this._authStorage.reload?.();
+      this.providerRegistry.clearAuthCache?.();
+    }
+    const cred = this.providerRegistry.getCredentials(provider);
+    if (entry && this.providerRegistry.getAuthType(provider) === "oauth" && !refreshedOAuthKey) {
+      return {
+        api_key: "",
+        base_url: cred?.baseUrl || entry.baseUrl || "",
+        api: cred?.api || entry.api || "",
+        ...(cred?.accountId ? { accountId: cred.accountId } : {}),
+      };
+    }
+    if (cred) {
+      return {
+        api_key: refreshedOAuthKey || cred.apiKey || "",
+        base_url: cred.baseUrl || "",
+        api: cred.api || "",
+        ...(cred.accountId ? { accountId: cred.accountId } : {}),
+      };
+    }
+    return { api_key: "", base_url: "", api: "" };
+  }
+
+  /**
    * Provider 配置变更后 reload registry + 重新同步模型。
    * 由 engine.onProviderChanged() 调用，不要直接用。
    */

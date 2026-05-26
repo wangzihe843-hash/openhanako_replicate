@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  AGENT_PHONE_COMPACTION,
   filterAgentPhoneTools,
   getAgentPhoneSessionDir,
   isAgentPhoneSessionPath,
-  shouldCompactAgentPhoneSession,
+  shouldReuseAgentPhoneSession,
 } from "../lib/conversations/agent-phone-session.js";
 
 describe("agent phone session policy", () => {
@@ -20,22 +19,26 @@ describe("agent phone session policy", () => {
     expect(isAgentPhoneSessionPath("/agents/hana/sessions/session.jsonl")).toBe(false);
   });
 
-  it("compacts immediately at the hard 180K limit even when active", () => {
-    expect(shouldCompactAgentPhoneSession({
-      tokens: AGENT_PHONE_COMPACTION.HARD_TOKENS,
-      isActive: true,
-    })).toBe("hard");
+  it("reuses phone sessions only inside the active window", () => {
+    const now = new Date("2026-05-25T12:00:00.000Z");
+    expect(shouldReuseAgentPhoneSession({
+      meta: { lastPhoneSessionUsedAt: "2026-05-25T11:45:00.000Z" },
+      sessionExists: true,
+      now,
+    })).toBe(true);
+    expect(shouldReuseAgentPhoneSession({
+      meta: { lastPhoneSessionUsedAt: "2026-05-25T11:20:00.000Z" },
+      sessionExists: true,
+      now,
+    })).toBe(false);
   });
 
-  it("only idle-compacts at 120K when not active", () => {
-    expect(shouldCompactAgentPhoneSession({
-      tokens: AGENT_PHONE_COMPACTION.IDLE_TOKENS,
-      isActive: true,
-    })).toBe(null);
-    expect(shouldCompactAgentPhoneSession({
-      tokens: AGENT_PHONE_COMPACTION.IDLE_TOKENS,
-      isActive: false,
-    })).toBe("idle");
+  it("does not reopen legacy phone sessions that lack explicit last-used metadata", () => {
+    expect(shouldReuseAgentPhoneSession({
+      meta: { lastRefreshedDate: "2026-05-25" },
+      sessionExists: true,
+      now: new Date("2026-05-25T12:00:00.000Z"),
+    })).toBe(false);
   });
 
   it("keeps phone write mode from opening recursive communication or browser tools", () => {

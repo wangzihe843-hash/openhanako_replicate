@@ -18,8 +18,45 @@ const OPENAI_RATIO_TO_SIZE = {
   "3:2": "1536x1024", "2:3": "1024x1536",
 };
 
+function normalizeImages(image) {
+  if (!image) return [];
+  return (Array.isArray(image) ? image : [image]).filter((item) => typeof item === "string" && item.trim());
+}
+
+function imageMime(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[ext] || "image/png";
+}
+
+function imageJsonRef(image) {
+  if (/^https?:\/\//i.test(image)) return { image_url: image };
+  if (/^file-[A-Za-z0-9_-]+/.test(image)) return { file_id: image };
+  return null;
+}
+
+function buildEditJsonBody(body, images) {
+  const refs = images.map(imageJsonRef);
+  if (refs.every(Boolean)) return { ...body, images: refs };
+  return null;
+}
+
+function buildEditMultipartBody(body, images) {
+  if (!images.every((img) => path.isAbsolute(img) && fs.existsSync(img))) return null;
+  const form = new FormData();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  }
+  for (const image of images) {
+    const buf = fs.readFileSync(image);
+    form.append("image[]", new Blob([buf], { type: imageMime(image) }), path.basename(image));
+  }
+  return form;
+}
+
 export const openaiImageAdapter = {
   id: "openai",
+  protocolId: "openai-images",
   name: "OpenAI Image",
   types: ["image"],
   capabilities: {
@@ -41,15 +78,16 @@ export const openaiImageAdapter = {
 
   async submit(params, ctx) {
     // 1. Fetch credentials
-    const creds = await ctx.bus.request("provider:credentials", { providerId: "openai" });
+    const providerId = params.credentialProviderId || params.providerId || "openai";
+    const creds = await ctx.bus.request("provider:credentials", { providerId });
     if (creds.error || !creds.apiKey) {
-      throw new Error(`Provider "openai" 未配置 API Key。请在设置 → Providers 中配置。`);
+      throw new Error(`Provider "${providerId}" 未配置 API Key。请在设置 → Providers 中配置。`);
     }
 
     const { apiKey, baseUrl } = creds;
 
     // 2. Resolve model — short names resolved via shared catalog
-    const rawModel = params.model || ctx.config?.get?.("defaultImageModel")?.id;
+    const rawModel = params.modelId || params.model || ctx.config?.get?.("defaultImageModel")?.id || "gpt-image-1.5";
     const modelId = resolveModelId("openai", rawModel);
 
     // 3. Get provider defaults
@@ -80,33 +118,28 @@ export const openaiImageAdapter = {
 
     if (providerDefaults?.background) body.background = providerDefaults.background;
 
-    // 5. Handle reference image (local path → base64 data URL) for image-to-image
-    if (params.image) {
-      const images = Array.isArray(params.image) ? params.image : [params.image];
-      body.image = images.map(img => {
-        if (path.isAbsolute(img) && fs.existsSync(img)) {
-          const buf = fs.readFileSync(img);
-          const ext = path.extname(img).slice(1).toLowerCase();
-          const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[ext] || "image/png";
-          return `data:${mime};base64,${buf.toString("base64")}`;
-        }
-        return img;
-      });
-    }
+    const images = normalizeImages(params.image);
 
     // 6. Call HTTP API — OpenAI gpt-image 用 /images/edits 做图生图
     const base = baseUrl.replace(/\/+$/, "");
-    const endpoint = body.image
+    const endpoint = images.length > 0
       ? `${base}/images/edits`
       : `${base}/images/generations`;
+    const jsonEditBody = images.length > 0 ? buildEditJsonBody(body, images) : null;
+    const multipartEditBody = images.length > 0 && !jsonEditBody ? buildEditMultipartBody(body, images) : null;
+    if (images.length > 0 && !jsonEditBody && !multipartEditBody) {
+      throw new Error("OpenAI image edit reference must be an HTTP(S) URL, file_id, or local image file path");
+    }
+    const requestBody = images.length > 0 ? (multipartEditBody || JSON.stringify(jsonEditBody)) : JSON.stringify(body);
+    const headers = {
+      "Authorization": `Bearer ${apiKey}`,
+    };
+    if (!multipartEditBody) headers["Content-Type"] = "application/json";
 
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
+      headers,
+      body: requestBody,
     });
 
     if (!res.ok) {
@@ -128,8 +161,8 @@ export const openaiImageAdapter = {
 
     // Note revised_prompt in log if present (not surfaced to caller)
     const revisedPrompt = responseImages[0]?.revised_prompt;
-    if (revisedPrompt && ctx.log) {
-      ctx.log(`[openai-image] revised_prompt: ${revisedPrompt}`);
+    if (revisedPrompt) {
+      ctx.log?.info?.(`[openai-image] revised_prompt: ${revisedPrompt}`);
     }
 
     // 7. Save files using saveImage() — it appends /generated/ internally, so pass ctx.dataDir

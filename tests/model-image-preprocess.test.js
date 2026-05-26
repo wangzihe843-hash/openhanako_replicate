@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { prepareModelImageInputsForPrompt } from "../core/model-image-preprocess.js";
+import {
+  normalizeModelImageInput,
+  prepareModelImageInputsForPrompt,
+} from "../core/model-image-preprocess.js";
+
+const PNG_BASE64 = "iVBORw0KGgo=";
+const JPEG_BASE64 = "/9j/2wBD";
 
 describe("prepareModelImageInputsForPrompt", () => {
   it("resizes images before the model boundary and keeps dimension notes in the prompt", async () => {
     const resizeImage = vi.fn(async (image, options) => ({
-      data: `compressed-${image.data}`,
+      data: JPEG_BASE64,
       mimeType: "image/jpeg",
       originalWidth: 4000,
       originalHeight: 3000,
@@ -20,7 +26,7 @@ describe("prepareModelImageInputsForPrompt", () => {
     const result = await prepareModelImageInputsForPrompt({
       text: "[attached_image: /tmp/design.png]\n你挑刺把，这个设计",
       opts: {
-        images: [{ type: "image", data: "raw-base64", mimeType: "image/png" }],
+        images: [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }],
         imageAttachmentPaths: ["/tmp/design.png"],
       },
       resizeImage,
@@ -28,7 +34,7 @@ describe("prepareModelImageInputsForPrompt", () => {
     });
 
     expect(resizeImage).toHaveBeenCalledWith(
-      { type: "image", data: "raw-base64", mimeType: "image/png" },
+      { type: "image", data: PNG_BASE64, mimeType: "image/png" },
       expect.objectContaining({
         maxWidth: 2000,
         maxHeight: 2000,
@@ -37,7 +43,7 @@ describe("prepareModelImageInputsForPrompt", () => {
       })
     );
     expect(result.opts.images).toEqual([
-      { type: "image", data: "compressed-raw-base64", mimeType: "image/jpeg" },
+      { type: "image", data: JPEG_BASE64, mimeType: "image/jpeg" },
     ]);
     expect(result.opts.imageAttachmentPaths).toEqual(["/tmp/design.png"]);
     expect(result.opts.modelImageInputsPrepared).toBe(true);
@@ -61,21 +67,21 @@ describe("prepareModelImageInputsForPrompt", () => {
       text: "compare",
       opts: {
         images: [
-          { type: "image", data: "a", mimeType: "image/png" },
-          { type: "image", data: "b", mimeType: "image/png" },
-          { type: "image", data: "c", mimeType: "image/png" },
+          { type: "image", data: PNG_BASE64, mimeType: "image/png" },
+          { type: "image", data: PNG_BASE64, mimeType: "image/png" },
+          { type: "image", data: PNG_BASE64, mimeType: "image/png" },
         ],
       },
       imagePolicy: {
         maxImageBase64Bytes: 100,
-        totalBase64BudgetBytes: 9,
+        totalBase64BudgetBytes: 36,
       },
       resizeImage,
       formatDimensionNote: vi.fn(),
     });
 
     expect(resizeImage).toHaveBeenCalledTimes(3);
-    expect(resizeImage.mock.calls.map(([, options]) => options.maxBytes)).toEqual([3, 3, 3]);
+    expect(resizeImage.mock.calls.map(([, options]) => options.maxBytes)).toEqual([12, 12, 12]);
   });
 
   it("fails closed when an image cannot be normalized", async () => {
@@ -85,6 +91,28 @@ describe("prepareModelImageInputsForPrompt", () => {
       resizeImage: vi.fn(async () => null),
       formatDimensionNote: vi.fn(),
     })).rejects.toThrow(/image input preprocessing failed/i);
+  });
+
+  it("sniffs image bytes and corrects a mismatched declared mime type", () => {
+    const normalized = normalizeModelImageInput({
+      type: "image",
+      data: `data:image/png;base64,${JPEG_BASE64}`,
+      mimeType: "image/png",
+    }, 0);
+
+    expect(normalized).toEqual({
+      type: "image",
+      data: JPEG_BASE64,
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("rejects malformed base64 before provider serialization", () => {
+    expect(() => normalizeModelImageInput({
+      type: "image",
+      data: "not-valid-base64!!!",
+      mimeType: "image/png",
+    }, 0)).toThrow(/image input preprocessing failed/i);
   });
 
   it("does not preprocess the same prompt twice", async () => {

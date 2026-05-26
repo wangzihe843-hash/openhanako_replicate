@@ -296,14 +296,14 @@ export class PreferencesManager {
     return prefs.computer_use;
   }
 
-  /** 读取自学技能配置（全局，跨 agent） */
+  /** 读取技能安装配置（全局，跨 agent） */
   getLearnSkills() {
     const cfg = this._cache.learn_skills;
     if (!cfg) return { enabled: true, safety_review: true };
     return cfg;
   }
 
-  /** 合并写入自学技能配置 */
+  /** 合并写入技能安装配置 */
   setLearnSkills(partial) {
     const prefs = this._mutableCopy();
     prefs.learn_skills = { ...(prefs.learn_skills || {}), ...partial };

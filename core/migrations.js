@@ -10,7 +10,7 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { safeReadYAMLSync } from "../shared/safe-fs.js";
+import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.js";
 import {
   ensureLocalIdentityRegistries,
   ensureRemoteAccessFoundationRegistries,
@@ -31,6 +31,10 @@ import { lookupKnown } from "../shared/known-models.js";
 import { SESSION_PREFIX_MAP } from "../lib/bridge/session-key.js";
 import { migrateLegacyApiKeyAuthToProviders } from "./provider-auth-migration.js";
 import { createModuleLogger } from "../lib/debug-log.js";
+import { patchAutomationJobForMigration } from "../lib/desk/automation-normalizer.js";
+import { parseSkillMetadata } from "../lib/skills/skill-metadata.js";
+import { safeConversationStem } from "../lib/conversations/agent-phone-projection.js";
+import { DEFAULT_DISABLED_TOOL_NAMES } from "../shared/tool-categories.js";
 
 const moduleLog = createModuleLogger("migrations");
 
@@ -98,6 +102,14 @@ const migrations = {
   28: migrateDurableSubagentRunRegistry,
   // 巡检显式 opt-in：历史缺省值统一落盘为 false，避免旧配置被运行时当成开启
   29: migrateHeartbeatDefaultExplicitOff,
+  // cron → automation read model：补齐 trigger / executor / createdBy，保留旧字段兼容
+  30: migrateCronJobsToAutomationReadModel,
+  // learned-skills 收敛进全局 skill pool，并只为来源 agent 默认启用
+  31: migrateLearnedSkillsToGlobalSkillPool,
+  // Agent Phone runtime 状态从 projection 迁入独立 sidecar
+  32: migrateAgentPhoneRuntimeOutOfProjection,
+  // 小花美术默认显式关闭；旧 Agent 配置只有用户手动开启后才可用
+  33: migrateBeautifyDefaultExplicitOff,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -900,6 +912,37 @@ function migrateHeartbeatDefaultExplicitOff(ctx) {
 }
 
 /**
+ * #33 — 小花美术默认显式关闭
+ *
+ * Beautify 是新加入的低频审美生成工具，默认先 opt-in。老配置若已经
+ * 写过 tools.disabled: []，运行时无法判断它是否代表用户想开启这个
+ * 未来工具，所以迁移显式把 beautify 补进 disabled。用户之后手动开关
+ * 会正常覆盖这个值。
+ */
+function migrateBeautifyDefaultExplicitOff(ctx) {
+  const { agentsDir, log } = ctx;
+  let dirs;
+  try {
+    dirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return;
+  }
+
+  for (const dir of dirs) {
+    const cfgPath = path.join(agentsDir, dir.name, "config.yaml");
+    if (!fs.existsSync(cfgPath)) continue;
+    const config = safeReadYAMLSync(cfgPath, null, YAML);
+    if (!config) continue;
+    const existing = Array.isArray(config.tools?.disabled)
+      ? config.tools.disabled
+      : DEFAULT_DISABLED_TOOL_NAMES.filter((name) => name !== "beautify");
+    if (existing.includes("beautify")) continue;
+    saveConfig(cfgPath, { tools: { disabled: [...existing, "beautify"] } });
+    log(`[migrations] #33: beautify defaulted to disabled for "${dir.name}"`);
+  }
+}
+
+/**
  * #7 — 模型能力字段 vision → image 全量重命名
  *
  * 历史包袱：项目早期在 Pi SDK Model 对象上挂了一份自定义的 vision:boolean 字段，
@@ -937,7 +980,7 @@ function migrateVisionToImage(ctx) {
     }
     if (changed) {
       const header =
-        "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+        "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
         "# 由设置页面管理\n\n";
       const yamlStr = header + YAML.dump(raw, {
         indent: 2,
@@ -1089,6 +1132,362 @@ function repairCronJobModelRefs(ctx) {
   }
 
   log(`[migrations] #11: cron model refs repaired (${patched})`);
+}
+
+/**
+ * #30 — cron job 补齐 automation read model 字段
+ *
+ * v0 Automation Executor 把旧 cron job 的 "什么时候" 与 "做什么" 拆成
+ * trigger + executor。迁移只补字段，不删除 type / schedule / prompt 等旧字段。
+ */
+function migrateCronJobsToAutomationReadModel(ctx) {
+  const { hanakoHome, agentsDir, log } = ctx;
+  const paths = [];
+
+  const studiosDir = path.join(hanakoHome, "studios");
+  try {
+    for (const entry of fs.readdirSync(studiosDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      paths.push(path.join(studiosDir, entry.name, "desk", "cron-jobs.json"));
+    }
+  } catch {}
+
+  try {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      paths.push(path.join(agentsDir, entry.name, "desk", "cron-jobs.json"));
+    }
+  } catch {}
+
+  let patchedFiles = 0;
+  let patchedJobs = 0;
+  for (const jobsPath of paths) {
+    const result = patchCronJobsFileForAutomation(jobsPath, log);
+    if (!result.changed) continue;
+    patchedFiles++;
+    patchedJobs += result.patchedJobs;
+  }
+
+  log?.(`[migrations] #30: cron automation fields patched (${patchedJobs} jobs in ${patchedFiles} files)`);
+}
+
+function patchCronJobsFileForAutomation(jobsPath, log) {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(jobsPath, "utf-8"));
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      log?.(`[migrations] #30 skipped invalid cron-jobs.json at ${jobsPath} (${err.message})`);
+    }
+    return { changed: false, patchedJobs: 0 };
+  }
+  if (!Array.isArray(data.jobs)) return { changed: false, patchedJobs: 0 };
+
+  let patchedJobs = 0;
+  const jobs = data.jobs.map((job) => {
+    const next = patchAutomationJobForMigration(job);
+    if (JSON.stringify(next) !== JSON.stringify(job)) patchedJobs++;
+    return next;
+  });
+  if (!patchedJobs) return { changed: false, patchedJobs: 0 };
+
+  atomicWriteSync(jobsPath, JSON.stringify({ ...data, jobs }, null, 2) + "\n");
+  return { changed: true, patchedJobs };
+}
+
+const MIGRATION_SAFE_SKILL_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+function sanitizeMigrationSkillName(raw, fallback = "skill") {
+  const candidate = typeof raw === "string" ? raw.trim() : "";
+  if (MIGRATION_SAFE_SKILL_NAME.test(candidate)) return candidate;
+  const slug = candidate
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^[^a-zA-Z0-9]+/, "")
+    .replace(/-+/g, "-")
+    .slice(0, 64)
+    .replace(/[-_]+$/, "");
+  if (MIGRATION_SAFE_SKILL_NAME.test(slug)) return slug;
+  const fallbackCandidate = typeof fallback === "string" ? fallback.trim() : "skill";
+  if (MIGRATION_SAFE_SKILL_NAME.test(fallbackCandidate)) return fallbackCandidate;
+  return "skill";
+}
+
+function escapeYamlScalar(value) {
+  const text = String(value);
+  return MIGRATION_SAFE_SKILL_NAME.test(text) ? text : JSON.stringify(text);
+}
+
+function upsertFrontmatterLine(frontmatter, key, value) {
+  const line = `${key}: ${value}`;
+  const re = new RegExp(`(^|\\r?\\n)${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*.*(?=\\r?\\n|$)`, "m");
+  if (re.test(frontmatter)) {
+    return frontmatter.replace(re, (match, prefix = "") => `${prefix}${line}`);
+  }
+  const trimmed = frontmatter.replace(/\s*$/, "");
+  return `${trimmed}${trimmed ? "\n" : ""}${line}`;
+}
+
+function rewriteSkillContentForGlobalPool(content, skillName) {
+  const body = typeof content === "string" ? content : "";
+  const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(\r?\n|$)([\s\S]*)$/);
+  if (!match) {
+    return [
+      "---",
+      `name: ${escapeYamlScalar(skillName)}`,
+      "default-enabled: false",
+      "---",
+      "",
+      body,
+    ].join("\n");
+  }
+
+  let frontmatter = match[1] || "";
+  frontmatter = upsertFrontmatterLine(frontmatter, "name", escapeYamlScalar(skillName));
+  frontmatter = upsertFrontmatterLine(frontmatter, "default-enabled", "false");
+  return `---\n${frontmatter}\n---${match[2] || "\n"}${match[3] || ""}`;
+}
+
+function skillFileContent(dirPath) {
+  return fs.readFileSync(path.join(dirPath, "SKILL.md"), "utf-8");
+}
+
+function skillContentsEquivalent(a, b) {
+  return String(a) === String(b);
+}
+
+function uniqueMigratedSkillName(skillsDir, preferredName, sourceContent, agentId) {
+  const preferredPath = path.join(skillsDir, preferredName, "SKILL.md");
+  if (!fs.existsSync(preferredPath)) {
+    return { name: preferredName, copy: true };
+  }
+  const existingContent = fs.readFileSync(preferredPath, "utf-8");
+  if (skillContentsEquivalent(existingContent, sourceContent)) {
+    return { name: preferredName, copy: false };
+  }
+
+  const suffixBase = sanitizeMigrationSkillName(agentId, "agent");
+  let index = 0;
+  while (index < 1000) {
+    const suffix = index === 0 ? suffixBase : `${suffixBase}-${index + 1}`;
+    const stemMax = Math.max(1, 64 - suffix.length - 1);
+    const stem = preferredName.slice(0, stemMax).replace(/[-_]+$/, "") || "skill";
+    const candidate = sanitizeMigrationSkillName(`${stem}-${suffix}`, `${stem}-agent`);
+    const candidatePath = path.join(skillsDir, candidate, "SKILL.md");
+    const rewritten = rewriteSkillContentForGlobalPool(sourceContent, candidate);
+    if (!fs.existsSync(candidatePath)) {
+      return { name: candidate, copy: true };
+    }
+    const existing = fs.readFileSync(candidatePath, "utf-8");
+    if (skillContentsEquivalent(existing, rewritten)) {
+      return { name: candidate, copy: false };
+    }
+    index += 1;
+  }
+
+  throw new Error(`unable to find a free skill name for migrated skill "${preferredName}"`);
+}
+
+function copyMigratedSkillDir(srcDir, dstDir, skillName, content) {
+  fs.mkdirSync(path.dirname(dstDir), { recursive: true });
+  const tmpDir = `${dstDir}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.cpSync(srcDir, tmpDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "SKILL.md"),
+      rewriteSkillContentForGlobalPool(content, skillName),
+      "utf-8",
+    );
+    fs.renameSync(tmpDir, dstDir);
+  } catch (err) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+function enableSkillForAgentConfig(configPath, skillNames) {
+  if (!fs.existsSync(configPath)) return false;
+  const cfg = safeReadYAMLSync(configPath, null, YAML) || {};
+  const current = Array.isArray(cfg.skills?.enabled) ? cfg.skills.enabled : [];
+  const next = [...current];
+  let changed = false;
+  for (const name of skillNames) {
+    if (!next.includes(name)) {
+      next.push(name);
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  saveConfig(configPath, { skills: { enabled: next } });
+  return true;
+}
+
+/**
+ * #31 — learned-skills 收敛到全局 skill pool
+ *
+ * 旧结构把 Agent 自学技能放在 `agents/<id>/learned-skills/`，这会让“经验”、
+ * “反省”和“技能安装”混在一起，也让列表刷新出现多条来源链。新结构只有一个
+ * 全局 skill pool：迁移时复制旧技能到 `{HANA_HOME}/skills`，并只把复制后的
+ * skill name 写入来源 Agent 的 enabled 列表。为避免未来新 Agent 默认打开这些
+ * 个性化技能，迁移出的 SKILL.md 会显式写入 `default-enabled: false`。
+ */
+function migrateLearnedSkillsToGlobalSkillPool(ctx) {
+  const { hanakoHome, agentsDir, log } = ctx;
+  const skillsDir = path.join(hanakoHome, "skills");
+  fs.mkdirSync(skillsDir, { recursive: true });
+
+  let migrated = 0;
+  let reused = 0;
+  let renamed = 0;
+  let agentsPatched = 0;
+
+  let agentDirs;
+  try {
+    agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return;
+  }
+
+  for (const agentEntry of agentDirs) {
+    const agentId = agentEntry.name;
+    const agentDir = path.join(agentsDir, agentId);
+    const learnedDir = path.join(agentDir, "learned-skills");
+    if (!fs.existsSync(learnedDir)) continue;
+
+    const enableNames = [];
+    const skillEntries = fs.readdirSync(learnedDir, { withFileTypes: true }).filter(d => d.isDirectory());
+    for (const skillEntry of skillEntries) {
+      const srcDir = path.join(learnedDir, skillEntry.name);
+      const skillFile = path.join(srcDir, "SKILL.md");
+      if (!fs.existsSync(skillFile)) continue;
+
+      const sourceContent = skillFileContent(srcDir);
+      const meta = parseSkillMetadata(sourceContent, skillEntry.name);
+      const baseName = sanitizeMigrationSkillName(meta.name || skillEntry.name, skillEntry.name);
+      const target = uniqueMigratedSkillName(skillsDir, baseName, sourceContent, agentId);
+      const dstDir = path.join(skillsDir, target.name);
+
+      if (target.copy) {
+        copyMigratedSkillDir(srcDir, dstDir, target.name, sourceContent);
+        migrated += 1;
+        if (target.name !== baseName) renamed += 1;
+      } else {
+        reused += 1;
+      }
+      enableNames.push(target.name);
+    }
+
+    if (enableNames.length > 0) {
+      const configPath = path.join(agentDir, "config.yaml");
+      if (enableSkillForAgentConfig(configPath, enableNames)) {
+        agentsPatched += 1;
+      }
+    }
+
+    fs.rmSync(learnedDir, { recursive: true, force: true });
+  }
+
+  log?.(`[migrations] #31: learned skills migrated to global pool (copied=${migrated}, reused=${reused}, renamed=${renamed}, agents=${agentsPatched})`);
+}
+
+const AGENT_PHONE_RUNTIME_KEYS = new Set([
+  "phoneSessionFile",
+  "lastPhoneSessionUsedAt",
+  "phoneSessionStartedAt",
+  "promptSnapshot",
+]);
+
+const AGENT_PHONE_PROJECTION_RUNTIME_KEYS = new Set([
+  ...AGENT_PHONE_RUNTIME_KEYS,
+  "toolNames",
+  "lastRefreshedDate",
+]);
+
+/**
+ * #32 — Agent Phone runtime 状态从 projection 迁入 sidecar
+ *
+ * projection 是每个 Agent 的手机视图记录，不应该决定下一次 session 如何恢复。
+ * 老版本把 session file、prompt snapshot、toolNames 等运行时字段写进 projection，
+ * 会让旧工具面和旧 prompt 反过来污染新一轮执行。迁移把可复用 session 所需字段
+ * 搬到 `phone/session-runtime/*.json`，并从 projection 删除 runtime 残留。
+ */
+function migrateAgentPhoneRuntimeOutOfProjection(ctx) {
+  const { agentsDir, log } = ctx;
+  let moved = 0;
+  let cleaned = 0;
+
+  let agentEntries;
+  try {
+    agentEntries = fs.readdirSync(agentsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  } catch {
+    log?.("[migrations] #32: no agents dir");
+    return;
+  }
+
+  for (const agentEntry of agentEntries) {
+    const agentDir = path.join(agentsDir, agentEntry.name);
+    const conversationsDir = path.join(agentDir, "phone", "conversations");
+    let projectionEntries;
+    try {
+      projectionEntries = fs.readdirSync(conversationsDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".md"));
+    } catch {
+      continue;
+    }
+
+    for (const projectionEntry of projectionEntries) {
+      const projectionPath = path.join(conversationsDir, projectionEntry.name);
+      let raw;
+      try {
+        raw = fs.readFileSync(projectionPath, "utf-8");
+      } catch {
+        continue;
+      }
+      const frontmatter = parseAgentPhoneProjectionFrontmatter(raw);
+      if (!frontmatter) continue;
+
+      const runtimePatch = agentPhoneRuntimePatchFromMeta(frontmatter.meta);
+      const nextProjection = removeFrontmatterKeys(raw, AGENT_PHONE_PROJECTION_RUNTIME_KEYS);
+      if (nextProjection !== raw) {
+        atomicWriteSync(projectionPath, nextProjection);
+        cleaned += 1;
+      }
+
+      if (!Object.keys(runtimePatch).length) continue;
+      const conversationId = frontmatter.meta.get("conversationId");
+      if (!conversationId || typeof conversationId !== "string") continue;
+
+      const runtimeDir = path.join(agentDir, "phone", "session-runtime");
+      const runtimePath = path.join(runtimeDir, `${safeConversationStem(conversationId)}.json`);
+      fs.mkdirSync(runtimeDir, { recursive: true });
+
+      let existing = {};
+      try {
+        const parsed = fs.existsSync(runtimePath)
+          ? JSON.parse(fs.readFileSync(runtimePath, "utf-8"))
+          : {};
+        existing = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        existing = {};
+      }
+
+      const nextRuntime = {
+        ...existing,
+        agentId: frontmatter.meta.get("agentId") || existing.agentId || agentEntry.name,
+        conversationId,
+        conversationType: frontmatter.meta.get("conversationType")
+          || existing.conversationType
+          || (conversationId.startsWith("dm:") ? "dm" : "channel"),
+        ...runtimePatch,
+        updatedAt: existing.updatedAt || new Date().toISOString(),
+      };
+      delete nextRuntime.toolNames;
+      atomicWriteSync(runtimePath, JSON.stringify(nextRuntime, null, 2) + "\n");
+      moved += 1;
+    }
+  }
+
+  log?.(`[migrations] #32: agent phone runtime moved (runtime=${moved}, projections=${cleaned})`);
 }
 
 /**
@@ -1310,7 +1709,7 @@ function migrateGeminiOpenAICompatToNative(ctx) {
 
   if (patched > 0) {
     const header =
-      "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+      "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
       "# 由设置页面管理\n\n";
     const yamlStr = header + YAML.dump(raw, {
       indent: 2,
@@ -1654,7 +2053,7 @@ function promoteAgentVideoOverrides(ctx) {
 
   if (addedModelsChanged) {
     const header =
-      "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+      "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
       "# 由设置页面管理\n\n";
     const tmp = ymlPath + ".tmp";
     fs.writeFileSync(
@@ -1845,7 +2244,7 @@ function repairLegacyDeepSeekProviderModelIds(ctx) {
 
   if (patched > 0) {
     const header =
-      "# Hanako 供应商配置（全局，跨 agent 共享）\n" +
+      "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
       "# 由设置页面管理\n\n";
     const tmp = ymlPath + ".tmp";
     fs.writeFileSync(
@@ -2353,6 +2752,57 @@ function removeFrontmatterKeys(raw, keys) {
   }
   if (!changed) return raw;
   return ["---", ...nextFm, "---", ...lines.slice(end + 1)].join("\n");
+}
+
+function parseAgentPhoneProjectionFrontmatter(raw) {
+  const lines = raw.split("\n");
+  if (lines[0]?.trim() !== "---") return null;
+  const meta = new Map();
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === "---") return { meta };
+    const idx = lines[i].indexOf(":");
+    if (idx < 0) continue;
+    meta.set(lines[i].slice(0, idx).trim(), lines[i].slice(idx + 1).trim());
+  }
+  return null;
+}
+
+function agentPhoneRuntimePatchFromMeta(meta) {
+  const patch = {};
+  for (const key of AGENT_PHONE_RUNTIME_KEYS) {
+    if (!meta.has(key)) continue;
+    const value = meta.get(key);
+    if (key === "promptSnapshot") {
+      const parsed = parseEncodedFrontmatterJson(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        patch.promptSnapshot = parsed;
+      }
+      continue;
+    }
+    if (typeof value === "string" && value.trim()) {
+      patch[key] = value.trim();
+    }
+  }
+  return patch;
+}
+
+function parseEncodedFrontmatterJson(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const candidates = [value.trim()];
+  try {
+    const decoded = decodeURIComponent(value.trim());
+    if (decoded !== value.trim()) candidates.unshift(decoded);
+  } catch {
+    // Raw JSON remains a valid candidate.
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next representation.
+    }
+  }
+  return null;
 }
 
 function patchChannelGuardLimitFrontmatter(raw) {

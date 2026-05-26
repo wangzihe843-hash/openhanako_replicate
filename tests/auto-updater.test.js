@@ -15,7 +15,7 @@ const mockAutoUpdater = {
 };
 
 const mockWindows = [];
-let mockExePath = "/Applications/Hanako.app/Contents/MacOS/Hanako";
+let mockExePath = "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent";
 
 vi.mock("electron", () => ({
   ipcMain: { handle: vi.fn() },
@@ -55,7 +55,7 @@ describe("auto-updater", () => {
     mockAutoUpdater.autoInstallOnAppQuit = true;
     mockAutoUpdater.allowPrerelease = false;
     mockAutoUpdater.installDirectory = undefined;
-    mockExePath = "/Applications/Hanako.app/Contents/MacOS/Hanako";
+    mockExePath = "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent";
 
     ({ ipcMain } = await import("electron"));
     ipcMain.handle.mockImplementation((name, handler) => {
@@ -98,12 +98,12 @@ describe("auto-updater", () => {
     try {
       Object.defineProperty(process, "platform", { value: "win32" });
       vi.resetModules();
-      mockExePath = "/tmp/Hanako/Hanako.exe";
+      mockExePath = "/tmp/HanaAgent/HanaAgent.exe";
       mod = await import("../desktop/auto-updater.cjs");
 
       initWithMockWindow();
 
-      expect(mockAutoUpdater.installDirectory).toBe("/tmp/Hanako");
+      expect(mockAutoUpdater.installDirectory).toBe("/tmp/HanaAgent");
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
@@ -233,7 +233,7 @@ describe("auto-updater", () => {
     try {
       Object.defineProperty(process, "platform", { value: "win32" });
       vi.resetModules();
-      mockExePath = "/tmp/Hanako/Hanako.exe";
+      mockExePath = "/tmp/HanaAgent/HanaAgent.exe";
       mod = await import("../desktop/auto-updater.cjs");
 
       initWithMockWindow();

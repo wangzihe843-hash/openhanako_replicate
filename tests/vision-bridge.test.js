@@ -10,7 +10,9 @@ import {
   VISION_CONTEXT_START,
 } from "../core/vision-bridge.js";
 
-const image = { type: "image", data: "BASE64", mimeType: "image/png" };
+const PNG_BASE64 = "iVBORw0KGgo=";
+const JPEG_BASE64 = "/9j/2wBD";
+const image = { type: "image", data: PNG_BASE64, mimeType: "image/png" };
 const pathA = "/tmp/upload-a.png";
 const tempDirs = [];
 
@@ -151,6 +153,45 @@ describe("VisionBridge", () => {
     });
   });
 
+  it("summarizes resources on explicit request without requiring a text-only target model", async () => {
+    const dir = makeTempDir();
+    const sessionPath = path.join(dir, "session.jsonl");
+    const resourceKey = "visual-resource:appearance:user";
+    const { bridge, callText } = makeBridge();
+
+    const prepared = await bridge.summarizeResources({
+      sessionPath,
+      userRequest: "Summarize this avatar appearance.",
+      resources: [{
+        key: resourceKey,
+        label: "user custom avatar",
+        image,
+      }],
+    });
+
+    expect(callText).toHaveBeenCalledTimes(1);
+    expect(prepared.notes).toEqual([
+      expect.objectContaining({
+        key: resourceKey,
+        label: "user custom avatar",
+        note: expect.stringContaining("image_overview"),
+      }),
+    ]);
+
+    const restored = new VisionBridge({
+      resolveVisionConfig: () => null,
+      callText: vi.fn(),
+    });
+    const entry = restored.lookupNote(sessionPath, resourceKey);
+
+    expect(entry).toMatchObject({
+      imagePath: resourceKey,
+      note: expect.stringContaining("image_overview"),
+      visionModel: { id: "qwen-vl", provider: "dashscope" },
+      targetModel: null,
+    });
+  });
+
   it("bounds the in-memory note cache while keeping evicted notes recoverable from sidecar", async () => {
     const dir = makeTempDir();
     const firstSession = path.join(dir, "first.jsonl");
@@ -185,7 +226,7 @@ describe("VisionBridge", () => {
       sessionPath: secondSession,
       targetModel,
       text: `[attached_image: ${secondImage}]\nsecond`,
-      images: [{ ...image, data: "BASE64-2" }],
+      images: [{ ...image, data: JPEG_BASE64, mimeType: "image/jpeg" }],
       imageAttachmentPaths: [secondImage],
     });
 
@@ -199,6 +240,35 @@ describe("VisionBridge", () => {
     expect(injected.messages[0].content[0].text).toContain(VISION_CONTEXT_START);
     expect(injected.messages[0].content[0].text).toContain("image_overview");
     expect(bridge._noteByPath.size).toBeLessThanOrEqual(1);
+  });
+
+  it("normalizes auxiliary vision image bytes before calling DashScope-compatible models", async () => {
+    const dir = makeTempDir();
+    const sessionPath = path.join(dir, "session.jsonl");
+    const { bridge, callText } = makeBridge(undefined, () => ({
+      model: { id: "qwen3-vl-plus", provider: "dashscope", input: ["text", "image"] },
+      api: "openai-completions",
+      api_key: "sk-test",
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    }));
+
+    await bridge.prepareResources({
+      sessionPath,
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      userRequest: "inspect generated image",
+      resources: [{
+        key: `visual-resource:mismatch:${path.basename(dir)}`,
+        label: "mismatched image",
+        image: { type: "image", data: `data:image/png;base64,${JPEG_BASE64}`, mimeType: "image/png" },
+      }],
+    });
+
+    const content = callText.mock.calls[0][0].messages[0].content;
+    expect(content[1]).toMatchObject({
+      type: "image",
+      data: JPEG_BASE64,
+      mimeType: "image/jpeg",
+    });
   });
 
   it("routes Gemini family models through their native box_2d format", async () => {

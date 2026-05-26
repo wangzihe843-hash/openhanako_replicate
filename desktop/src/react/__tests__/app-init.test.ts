@@ -34,6 +34,7 @@ vi.mock('../stores', () => ({
       const next = typeof patch === 'function' ? patch(mockState) : patch;
       Object.assign(mockState, next);
     },
+    subscribe: vi.fn(() => vi.fn()),
   },
 }));
 

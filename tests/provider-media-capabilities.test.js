@@ -16,6 +16,34 @@ afterEach(() => {
 });
 
 describe("ProviderRegistry media capabilities", () => {
+  it("exposes built-in official image providers from media capabilities", () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.reload();
+
+    const providers = registry.getMediaProviders("image_generation");
+    const byId = new Map(providers.map((provider) => [provider.providerId, provider]));
+
+    expect(byId.get("openai")?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "gpt-image-1.5", protocolId: "openai-images" }),
+    ]));
+    expect(byId.get("openai")?.models).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "gpt-image-2" }),
+    ]));
+    expect(byId.get("dashscope")?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "wan2.7-image-pro", protocolId: "dashscope-wan-images" }),
+      expect.objectContaining({ id: "qwen-image-2.0-pro", protocolId: "dashscope-qwen-multimodal-image" }),
+      expect.objectContaining({ id: "qwen-image-plus", protocolId: "dashscope-qwen-text2image" }),
+    ]));
+    expect(byId.get("minimax")?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "image-01", protocolId: "minimax-images" }),
+      expect.objectContaining({ id: "image-01-live", protocolId: "minimax-images" }),
+    ]));
+    expect(byId.get("gemini")?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "gemini-2.5-flash-image", protocolId: "gemini-generate-content-image" }),
+      expect.objectContaining({ id: "gemini-3.1-flash-image-preview", protocolId: "gemini-generate-content-image" }),
+    ]));
+  });
+
   it("exposes OAuth GPT Image 2 as image_generation without projecting the OAuth alias into chat", () => {
     const registry = new ProviderRegistry(tmpHome);
     registry.reload();

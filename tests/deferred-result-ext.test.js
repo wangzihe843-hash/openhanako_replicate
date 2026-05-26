@@ -63,6 +63,62 @@ describe("DeferredResultExtension", () => {
     expect(opts.triggerTurn).toBe(true);
   });
 
+  it("does not session-start deliver UI-only media results into the agent context", async () => {
+    store.defer("t1", "/s/a", {
+      type: "image-generation",
+      deliveryIntent: "ui_only",
+      triggerParentTurn: false,
+    });
+    store.resolve("t1", { files: ["img.png"] });
+
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(pi.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "hana-background-result" }),
+      expect.anything(),
+    );
+    expect(store.query("t1")).toMatchObject({ delivered: false });
+  });
+
+  it("session-start delivers failed UI-only image results when failure notification is enabled", async () => {
+    store.defer("t1", "/s/a", {
+      type: "image-generation",
+      deliveryIntent: "ui_only",
+      triggerParentTurn: false,
+      notifyAgentOnFailure: true,
+    });
+    store.fail("t1", "quota exhausted");
+
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    await vi.advanceTimersByTimeAsync(500);
+
+    const [msg, opts] = pi.sendMessage.mock.calls.find(([message]) => (
+      message.customType === "hana-background-result"
+    ));
+    expect(msg.content).toContain("status=\"failed\"");
+    expect(msg.content).toContain("quota exhausted");
+    expect(opts).toMatchObject({ deliverAs: "steer", triggerTurn: true });
+    expect(store.query("t1")).toMatchObject({ delivered: true });
+  });
+
+  it("does not fallback-deliver bridge-owned tasks through Pi session_start", async () => {
+    store.defer("t1", "/s/a", {
+      type: "image-generation",
+      deliveryTarget: { kind: "bridge", platform: "wechat", chatId: "wx-user" },
+    });
+    store.resolve("t1", { files: ["img.png"] });
+
+    pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(pi.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "hana-background-result" }),
+      expect.anything(),
+    );
+    expect(store.query("t1").delivered).toBe(false);
+  });
+
   it("does NOT send notification for a different session", () => {
     pi._trigger("session_start", {}, { sessionManager: { getSessionFile: () => "/s/a" } });
     store.defer("t1", "/s/b", { type: "image-generation" });

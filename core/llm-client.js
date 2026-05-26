@@ -3,6 +3,8 @@ import { errorBus } from '../shared/error-bus.js';
 import { normalizeProviderPayload } from './provider-compat.js';
 import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.js';
 
+const EMPTY_AFTER_THINKING_MESSAGE = "模型未回复正文，请检查思考内容或稍后重试。";
+
 /**
  * core/llm-client.js — 统一的非流式 LLM 调用入口
  *
@@ -149,6 +151,8 @@ function convertContentForApi(content, api) {
  * @param {number} [opts.timeoutMs]    超时毫秒 (default 60000)
  * @param {AbortSignal} [opts.signal]  外部取消信号
  * @param {boolean} [opts.returnUsage] 返回 { text, usage }，默认保持旧接口返回纯文本
+ * @param {object} [opts.usageContext] 用量归属和诊断来源
+ * @param {object} [opts.usageLedger]  用量账本
  * @returns {Promise<string|{text: string, usage: object|null}>} 生成的文本
  */
 export async function callText({
@@ -165,6 +169,8 @@ export async function callText({
   timeoutMs = 60_000,
   signal,
   returnUsage = false,
+  usageContext,
+  usageLedger,
 }) {
   // 同时接受完整 model 对象和裸 id。modelObj 用于 provider-compat 决策；modelId 入 payload。
   const modelObj = typeof model === "object" && model !== null ? model : null;
@@ -265,6 +271,14 @@ export async function callText({
   });
 
   // ── 4. 发送请求 ──
+  const usageRequest = usageLedger?.start?.({
+    model: { provider, modelId, api },
+    usageContext,
+    costRates: modelObj?.cost,
+  }) || null;
+  let observedUsagePayload = null;
+  let usageRequestClosed = false;
+  try {
   const SLOW_THRESHOLD_MS = 15_000;
   const slowTimer = setTimeout(() => {
     errorBus.report(new AppError('LLM_SLOW_RESPONSE', {
@@ -297,6 +311,7 @@ export async function callText({
   } catch {
     throw new Error(`LLM returned invalid JSON (status=${res.status})`);
   }
+  observedUsagePayload = data?.usage ?? null;
 
   if (!res.ok) {
     const message = data?.error?.message || data?.message || rawText || `HTTP ${res.status}`;
@@ -353,7 +368,7 @@ export async function callText({
     }
     throw new AppError('LLM_EMPTY_RESPONSE', {
       message: emptyAfterThinking
-        ? "LLM returned only thinking content without visible text"
+        ? EMPTY_AFTER_THINKING_MESSAGE
         : undefined,
       context: {
         model: modelId,
@@ -371,6 +386,23 @@ export async function callText({
     usage: data?.usage,
     costRates: modelObj?.cost,
   });
+  usageLedger?.finish?.(usageRequest?.requestId, {
+    usage: data?.usage,
+    model: { provider, modelId, api },
+    costRates: modelObj?.cost,
+  });
+  usageRequestClosed = true;
 
   return returnUsage ? { text, usage } : text;
+  } catch (err) {
+    if (usageRequest?.requestId && !usageRequestClosed) {
+      const status = err?.name === "AbortError" || err?.type === "aborted" ? "aborted" : "error";
+      usageLedger?.recordError?.(usageRequest.requestId, err, status, {
+        usage: observedUsagePayload,
+        model: { provider, modelId, api },
+        costRates: modelObj?.cost,
+      });
+    }
+    throw err;
+  }
 }

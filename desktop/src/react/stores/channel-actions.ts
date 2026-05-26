@@ -608,9 +608,10 @@ export async function createChannel(name: string, members: string[], intro?: str
         members,
         intro: intro || undefined,
       }),
+      throwOnHttpError: false,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     if (data.error) throw new Error(data.error);
 
     await loadChannels();

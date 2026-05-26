@@ -26,7 +26,7 @@ export function injectHandlers(
 }
 
 // ── 流恢复版本计数 ──
-let _streamResumeRebuildVersion = 0;
+const _streamResumeRebuildVersions: Record<string, number> = {};
 let _streamResumeRebuildingFor: string | null = null;
 
 // ── Session 流元数据（module-level，不走 Zustand） ──
@@ -88,27 +88,53 @@ export function requestStreamResume(sessionPath?: string, opts: any = {}): void 
 
 // ── 流恢复 / 重建 ──
 
-async function rebuildCurrentSessionFromResume(msg: any): Promise<void> {
+function nextResumeRebuildVersion(sessionPath: string): number {
+  const next = (_streamResumeRebuildVersions[sessionPath] ?? 0) + 1;
+  _streamResumeRebuildVersions[sessionPath] = next;
+  return next;
+}
+
+function isLatestResumeRebuild(sessionPath: string, version: number): boolean {
+  return _streamResumeRebuildVersions[sessionPath] === version;
+}
+
+function shouldHydrateCompletedEmptyResume(msg: any): boolean {
+  if (msg.isStreaming) return false;
+  if (!msg.streamId) return false;
+  if (Array.isArray(msg.events) && msg.events.length > 0) return false;
+  return Number.isFinite(msg.nextSeq) && msg.nextSeq > 1;
+}
+
+async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrate?: boolean } = {}): Promise<void> {
   const currentSessionPath = useStore.getState().currentSessionPath;
   const sessionPath = msg.sessionPath || currentSessionPath;
-  if (!sessionPath || sessionPath !== currentSessionPath) return;
+  if (!sessionPath) return;
 
-  const myVersion = ++_streamResumeRebuildVersion;
-  _streamResumeRebuildingFor = sessionPath;
+  const isCurrentSession = sessionPath === currentSessionPath;
+  const myVersion = nextResumeRebuildVersion(sessionPath);
+  if (isCurrentSession) _streamResumeRebuildingFor = sessionPath;
   try {
-    // 清掉旧 buffer 防止脏写
-    streamBufferManager.clear(sessionPath);
+    if (opts.finishTurnBeforeHydrate) {
+      streamBufferManager.finishTurn(sessionPath);
+    } else {
+      // 清掉旧 buffer 防止脏写
+      streamBufferManager.clear(sessionPath);
+    }
 
-    clearChat();
+    if (isCurrentSession) {
+      clearChat();
+    } else {
+      useStore.getState().clearSession?.(sessionPath);
+    }
     await loadMessages(sessionPath);
 
-    if (myVersion !== _streamResumeRebuildVersion) return;
-    if (useStore.getState().currentSessionPath !== sessionPath) return;
+    if (!isLatestResumeRebuild(sessionPath, myVersion)) return;
+    if (isCurrentSession && useStore.getState().currentSessionPath !== sessionPath) return;
 
     const meta = getSessionStreamMeta(sessionPath);
     if (meta) {
       meta.streamId = msg.streamId || null;
-      meta.lastSeq = 0;
+      meta.lastSeq = Number.isFinite(msg.nextSeq) ? Math.max(0, msg.nextSeq - 1) : 0;
     }
 
     for (const entry of msg.events || []) {
@@ -124,11 +150,11 @@ async function rebuildCurrentSessionFromResume(msg: any): Promise<void> {
     _applyStreamingStatus?.(msg.isStreaming, sessionPath);
 
     const ws = getWebSocket();
-    if (useStore.getState().currentSessionPath === sessionPath && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
+    if (isCurrentSession && useStore.getState().currentSessionPath === sessionPath && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
       requestStreamResume(sessionPath);
     }
   } finally {
-    if (myVersion === _streamResumeRebuildVersion && _streamResumeRebuildingFor === sessionPath) {
+    if (isLatestResumeRebuild(sessionPath, myVersion) && _streamResumeRebuildingFor === sessionPath) {
       _streamResumeRebuildingFor = null;
     }
   }
@@ -137,10 +163,11 @@ async function rebuildCurrentSessionFromResume(msg: any): Promise<void> {
 export function replayStreamResume(msg: any): void {
   const currentSessionPath = useStore.getState().currentSessionPath;
   const sessionPath = msg.sessionPath || currentSessionPath;
-  if (!sessionPath || sessionPath !== currentSessionPath) return;
+  if (!sessionPath) return;
 
-  if (msg.reset || msg.truncated) {
-    rebuildCurrentSessionFromResume(msg).catch((err) => {
+  const completedEmptyResume = shouldHydrateCompletedEmptyResume(msg);
+  if (msg.reset || msg.truncated || completedEmptyResume) {
+    rebuildSessionFromResume(msg, { finishTurnBeforeHydrate: completedEmptyResume }).catch((err) => {
       console.error('[stream] rebuild failed:', err);
       _streamResumeRebuildingFor = null;
     });
@@ -154,6 +181,9 @@ export function replayStreamResume(msg: any): void {
       meta.lastSeq = 0;
     }
     meta.streamId = msg.streamId;
+    if (Number.isFinite(msg.nextSeq)) {
+      meta.lastSeq = Math.max(meta.lastSeq || 0, msg.nextSeq - 1);
+    }
   }
 
   for (const entry of msg.events || []) {

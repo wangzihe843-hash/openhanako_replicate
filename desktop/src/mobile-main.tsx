@@ -21,7 +21,7 @@ void import('./react/mobile/MobileApp').then(({ MobileApp }) => {
   );
 }).catch((err) => {
   console.error('[mobile] failed to boot renderer:', err);
-  root.textContent = 'Hana Mobile 启动失败';
+  root.textContent = 'HanaAgent 启动失败';
 });
 
 if ('serviceWorker' in navigator && window.isSecureContext) {

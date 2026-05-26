@@ -17,6 +17,7 @@ const customImageDeclaredModel = {
   baseUrl: "https://api.example.com/v1",
   input: ["text", "image"],
 };
+const passthroughPrepareModelImages = async ({ text, opts }) => ({ text, opts });
 
 describe("prepareVisionInputForTextOnlyModel", () => {
   it("uses auxiliary vision for official DeepSeek even when the model is user-declared image capable", async () => {
@@ -32,11 +33,50 @@ describe("prepareVisionInputForTextOnlyModel", () => {
       sessionPath: "/tmp/session.jsonl",
       getVisionBridge: () => ({ prepare }),
       visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
+      prepareModelImages: passthroughPrepareModelImages,
     });
 
     expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
       targetModel: deepseekImageDeclaredModel,
       images: [{ type: "image", data: "b64", mimeType: "image/png" }],
+    }));
+    expect(result.text).toBe("vision notes\n\nwhat is this?");
+    expect(result.opts.images).toBeUndefined();
+  });
+
+  it("prepares image inputs before sending them to auxiliary vision", async () => {
+    const prepareModelImages = vi.fn(async ({ text, opts }) => ({
+      text: `dimension note\n${text}`,
+      opts: {
+        ...opts,
+        images: [{ type: "image", data: "compressed-b64", mimeType: "image/jpeg" }],
+        modelImageInputsPrepared: true,
+      },
+    }));
+    const prepare = vi.fn(async () => ({
+      text: "vision notes\n\nwhat is this?",
+      images: undefined,
+    }));
+
+    const result = await prepareVisionInputForTextOnlyModel({
+      targetModel: textOnlyModel,
+      text: "what is this?",
+      opts: { images: [{ type: "image", data: "large-b64", mimeType: "image/png" }] },
+      sessionPath: "/tmp/session.jsonl",
+      getVisionBridge: () => ({ prepare }),
+      visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
+      prepareModelImages,
+    });
+
+    expect(prepareModelImages).toHaveBeenCalledWith(expect.objectContaining({
+      text: "what is this?",
+      opts: expect.objectContaining({
+        images: [{ type: "image", data: "large-b64", mimeType: "image/png" }],
+      }),
+    }));
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      text: "dimension note\nwhat is this?",
+      images: [{ type: "image", data: "compressed-b64", mimeType: "image/jpeg" }],
     }));
     expect(result.text).toBe("vision notes\n\nwhat is this?");
     expect(result.opts.images).toBeUndefined();
@@ -73,6 +113,7 @@ describe("prepareVisionInputForTextOnlyModel", () => {
       }),
       visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
       warn,
+      prepareModelImages: passthroughPrepareModelImages,
     });
 
     expect(result.opts.images).toEqual([]);
@@ -107,6 +148,7 @@ describe("prepareVisionInputForTextOnlyModel", () => {
       }),
       visionPolicyTarget: { isVisionAuxiliaryEnabled: () => true },
       signal: controller.signal,
+      prepareModelImages: passthroughPrepareModelImages,
     });
 
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });

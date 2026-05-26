@@ -38,7 +38,7 @@ interface DetailState {
 }
 
 const FLEX_COLUMN_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 };
-const CURSOR_POINTER_STYLE: React.CSSProperties = { cursor: 'pointer' };
+const CURSOR_POINTER_STYLE: React.CSSProperties = { cursor: 'default' };
 const DANGER_COLOR_STYLE: React.CSSProperties = { color: 'var(--danger)' };
 
 export function ActivityPanel() {

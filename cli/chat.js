@@ -7,7 +7,7 @@ export async function printStatus(client, connection) {
     client.identity().catch(() => null),
   ]);
   const theme = createTerminalTheme(health.agentYuan);
-  console.log(`${paint(theme, theme.symbol)} Hana Server`);
+  console.log(`${paint(theme, theme.symbol)} HanaAgent Server`);
   console.log(`  ${ansi.dim}URL${ansi.reset}       ${connection.baseUrl}`);
   console.log(`  ${ansi.dim}Version${ansi.reset}   ${identity?.version || health.version || "unknown"}`);
   console.log(`  ${ansi.dim}Studio${ansi.reset}    ${identity?.studioLabel || identity?.studioId || "local"}`);

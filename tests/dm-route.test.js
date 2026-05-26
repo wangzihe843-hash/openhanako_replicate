@@ -1,10 +1,11 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createDmRoute } from "../server/routes/dm.js";
 import { appendMessage } from "../lib/channels/channel-store.js";
+import { getAgentPhoneRuntimePath, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.js";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-dm-route-test-"));
@@ -26,6 +27,7 @@ describe("dm route owner resolution", () => {
   let app;
   let agents;
   let channelsEnabled;
+  let abortAgentPhoneSessions;
 
   beforeEach(async () => {
     tmpDir = mktemp();
@@ -49,9 +51,10 @@ describe("dm route owner resolution", () => {
       listAgents: () => Array.from(agents.values()),
       isChannelsEnabled: () => channelsEnabled,
     };
+    abortAgentPhoneSessions = vi.fn();
 
     app = new Hono();
-    app.route("/api", createDmRoute(engine));
+    app.route("/api", createDmRoute(engine, { abortAgentPhoneSessions }));
   });
 
   afterEach(() => {
@@ -84,6 +87,10 @@ describe("dm route owner resolution", () => {
     const detailRes = await app.request("/api/dm/bob");
     expect(detailRes.status).toBe(503);
     expect((await detailRes.json()).error).toMatch(/disabled/i);
+
+    const resetRes = await app.request("/api/dm/bob/reset", { method: "POST" });
+    expect(resetRes.status).toBe(503);
+    expect((await resetRes.json()).error).toMatch(/disabled/i);
   });
 
   it("opens the primary agent DM by default and keeps explicit owner override available", async () => {
@@ -103,5 +110,56 @@ describe("dm route owner resolution", () => {
     const explicitData = await explicitRes.json();
     expect(explicitData.ownerAgentId).toBe("dana");
     expect(explicitData.messages.map((msg) => msg.body)).toEqual(["focus-owned thread"]);
+  });
+
+  it("resets one owner projection without deleting the shared DM truth", async () => {
+    const alice = agents.get("alice");
+    await updateAgentPhoneRuntime({
+      agentDir: alice.agentDir,
+      agentId: "alice",
+      conversationId: "dm:bob",
+      conversationType: "dm",
+      patch: {
+        phoneSessionFile: "phone/sessions/dm_bob/old.jsonl",
+        lastPhoneSessionUsedAt: "2026-05-25T12:00:00.000Z",
+      },
+    });
+    const runtimePath = getAgentPhoneRuntimePath(alice.agentDir, "dm:bob");
+    expect(fs.existsSync(runtimePath)).toBe(true);
+
+    const resetRes = await app.request("/api/dm/bob/reset?agentId=alice", {
+      method: "POST",
+    });
+    expect(resetRes.status).toBe(200);
+    const resetData = await resetRes.json();
+    expect(resetData).toMatchObject({
+      ok: true,
+      ownerAgentId: "alice",
+      peerId: "bob",
+      visibleAfterTimestamp: expect.any(String),
+    });
+
+    const hiddenRes = await app.request("/api/dm/bob?agentId=alice");
+    expect(hiddenRes.status).toBe(200);
+    expect((await hiddenRes.json()).messages).toEqual([]);
+
+    const listRes = await app.request("/api/dm?agentId=alice");
+    const listData = await listRes.json();
+    expect(listData.dms.find((dm) => dm.peerId === "bob")).toMatchObject({
+      messageCount: 0,
+      lastMessage: "",
+    });
+
+    const truthFile = path.join(agents.get("alice").agentDir, "dm", "bob.md");
+    expect(fs.readFileSync(truthFile, "utf-8")).toContain("primary-owned thread");
+    expect(abortAgentPhoneSessions).toHaveBeenCalledWith("dm-reset", {
+      agentId: "alice",
+      conversationId: "dm:bob",
+      conversationType: "dm",
+    });
+    expect(fs.existsSync(runtimePath)).toBe(false);
+
+    const otherOwnerRes = await app.request("/api/dm/bob?agentId=dana");
+    expect((await otherOwnerRes.json()).messages.map((msg) => msg.body)).toEqual(["focus-owned thread"]);
   });
 });

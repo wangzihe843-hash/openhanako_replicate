@@ -2,7 +2,7 @@
  * chat-slice.ts — Per-session 消息数据 + 滚动位置
  */
 
-import type { ChatListItem, ChatMessage, SessionMessages, SessionModel, SessionRegistryFile } from './chat-types';
+import type { ChatListItem, ChatMessage, ContentBlock, SessionMessages, SessionModel, SessionRegistryFile } from './chat-types';
 import { invalidateSessionCache } from './selectors/file-refs';
 import { invalidateStreamBuffer } from './stream-invalidator';
 import { clearMessageLiveVersion } from './message-live-version';
@@ -28,6 +28,7 @@ export interface ChatSlice {
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (path: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => boolean;
   truncateSessionFromMessage: (path: string, messageId: string) => boolean;
+  resolveBlockByTaskId: (sessionPath: string, taskId: string, resolution: ContentBlock) => boolean;
   patchBlockByTaskId: (sessionPath: string, taskId: string, patch: Record<string, any>) => void;
   _pendingBlockPatches: Record<string, Record<string, any>>;
   setSessionRegistryFiles: (path: string, files: SessionRegistryFile[]) => void;
@@ -195,6 +196,49 @@ export const createChatSlice = (
   // 缓存：block_update 到达时 block 可能还没添加到 store（时序竞争）
   _pendingBlockPatches: {} as Record<string, Record<string, any>>,
 
+  resolveBlockByTaskId: (sessionPath, taskId, resolution) => {
+    if (!get().chatSessions[sessionPath]) return false;
+
+    let consumed = false;
+    set((s) => {
+      const session = s.chatSessions[sessionPath];
+      if (!session) return {};
+      const items = [...session.items];
+
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.type !== 'message' || item.data.role !== 'assistant') continue;
+        const blocks = item.data.blocks;
+        if (!blocks) continue;
+        const blockIdx = blocks.findIndex((block) => (
+          isPendingMediaGenerationBlock(block, taskId) ||
+          isResolvedTaskBlock(block, taskId)
+        ));
+        if (blockIdx < 0) continue;
+
+        consumed = true;
+        if (isResolvedFileTaskBlock(blocks[blockIdx], taskId)) {
+          return {};
+        }
+
+        const nextBlocks = [...blocks];
+        nextBlocks[blockIdx] = resolution;
+        items[i] = { ...item, data: { ...item.data, blocks: nextBlocks } };
+        invalidateSessionCache(sessionPath);
+        return {
+          chatSessions: {
+            ...s.chatSessions,
+            [sessionPath]: { ...session, items },
+          },
+        };
+      }
+
+      return {};
+    });
+
+    return consumed;
+  },
+
   setSessionRegistryFiles: (path, files) => set((s) => {
     invalidateSessionCache(path);
     return {
@@ -326,4 +370,21 @@ function registryFileKey(file: SessionRegistryFile): string | null {
   if (fileId) return `id:${fileId}`;
   const filePath = file.filePath || file.realPath;
   return filePath ? `path:${filePath}` : null;
+}
+
+function isPendingMediaGenerationBlock(block: ContentBlock, taskId: string): boolean {
+  return block.type === 'media_generation' &&
+    block.taskId === taskId &&
+    block.status === 'pending';
+}
+
+function isResolvedTaskBlock(block: ContentBlock, taskId: string): boolean {
+  if (block.type === 'file') return block.replacesTaskId === taskId;
+  return block.type === 'media_generation' &&
+    block.taskId === taskId &&
+    block.status !== 'pending';
+}
+
+function isResolvedFileTaskBlock(block: ContentBlock, taskId: string): boolean {
+  return block.type === 'file' && block.replacesTaskId === taskId;
 }

@@ -206,7 +206,7 @@ option,
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-light, #888);
-    cursor: pointer;
+    cursor: default;
     opacity: 0.8;
     transition: background var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
 }
@@ -265,7 +265,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     background: transparent;
     color: var(--text-secondary, #888);
-    cursor: pointer;
+    cursor: default;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -364,7 +364,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border-radius: var(--radius-sm);
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;
 }
@@ -387,7 +387,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     font: inherit;
     font-size: 0.78rem;
-    cursor: pointer;
+    cursor: default;
     flex-shrink: 0;
     transition: all var(--duration-fast) var(--ease-out);
 }
@@ -437,7 +437,10 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .session-list {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
     padding: 0 var(--space-sm);
     -webkit-app-region: no-drag;
 }
@@ -473,7 +476,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
     border-radius: 5px;
     background: var(--overlay-medium);
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-slow);
 }
 
@@ -560,28 +563,63 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: var(--space-sm) var(--space-md);
     overflow-x: auto;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--overlay-subtle);
     line-height: 1.5;
 }
 
 .md-content pre .copy-btn {
     position: absolute;
-    top: 0.35rem;
-    right: 0.35rem;
-    padding: 0.15rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-card);
+    top: 0;
+    right: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    border-radius: 0 var(--radius-md) 0 var(--radius-sm);
+    background: transparent;
     color: var(--text-muted);
     font: inherit;
     font-size: 0.68rem;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast);
+    cursor: default;
+    opacity: 0.45;
+    transition: opacity var(--duration-fast), color var(--duration-fast);
 }
 
-.md-content pre:hover .copy-btn {
+.md-content pre .copy-btn-icon {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex: 0 0 auto;
+}
+
+.md-content pre .copy-btn::after {
+    content: attr(data-copied-label);
+    position: absolute;
+    top: 50%;
+    right: calc(100% + var(--space-xs));
+    transform: translateY(-50%);
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-glass, var(--bg-card));
+    color: var(--accent);
+    font-size: 0.68rem;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--duration-fast);
+}
+
+.md-content pre .copy-btn:hover,
+.md-content pre .copy-btn:focus-visible,
+.md-content pre .copy-btn[data-copied="true"] {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.md-content pre .copy-btn[data-copied="true"]::after {
     opacity: 1;
 }
 
@@ -745,7 +783,7 @@ html[data-platform="linux"] .tb-toggle-right {
 .main-content.welcome-mode .chat-area {
     flex: 0 0 auto;
     overflow: visible;
-    padding-top: calc(18vh + 1.6em);
+    padding-top: calc(18vh + 1.6em + 1lh);
     padding-bottom: var(--space-md);
 }
 
@@ -904,7 +942,7 @@ body.resizing .jian-sidebar-inner {
 .hana-toast-action {
     font: inherit;
     color: inherit;
-    cursor: pointer;
+    cursor: default;
 }
 
 .hana-toast-close {
@@ -1016,7 +1054,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: 14px;
     background-color: var(--bg-card, var(--bg));
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.09), 0 2px 6px rgba(0, 0, 0, 0.06);
-    cursor: pointer;
+    cursor: default;
     transition: box-shadow var(--duration-fast);
     -webkit-app-region: no-drag;
     animation: hana-card-slide-down var(--duration-slow) var(--ease-out) both;
@@ -1089,7 +1127,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: 6px;
     background: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     opacity: 0;
     transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast);
 }
@@ -1112,7 +1150,7 @@ body.resizing .jian-sidebar-inner {
     max-width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
-    cursor: pointer;
+    cursor: default;
     transition: opacity var(--duration-fast);
 }
 
@@ -1209,7 +1247,7 @@ body.resizing .jian-sidebar-inner {
     border-radius: var(--radius-md, 8px);
     font: inherit;
     font-size: 0.85rem;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 
@@ -1270,7 +1308,7 @@ body.resizing .jian-sidebar-inner {
     font: inherit;
     font-size: 0.8rem;
     text-align: center;
-    cursor: pointer;
+    cursor: default;
     user-select: none;
     transition: all var(--duration-fast);
 }

@@ -9,7 +9,7 @@ import { configureWsMessageHandler } from '../services/ws-message-handler';
 import { createBrowserServerConnection, upsertServerConnection, type ServerIdentity } from '../services/server-connection';
 import { loadModels } from '../utils/ui-helpers';
 import { applySyncedAppearancePreferences, type SyncedAppearancePreferences } from '../services/appearance-sync';
-import type { Agent, Session } from '../types';
+import type { Agent, Session, SessionPermissionMode } from '../types';
 
 export interface MobilePrincipal {
   kind?: string | null;
@@ -72,6 +72,13 @@ export async function initializeMobileRuntime(principal: MobilePrincipal): Promi
     serverPort: window.location.port || null,
     serverToken: null,
     currentTab: 'chat',
+    sidebarOpen: false,
+    jianOpen: false,
+    previewOpen: false,
+    currentSessionPath: null,
+    pendingSessionSwitchPath: null,
+    pendingNewSession: true,
+    welcomeVisible: true,
   });
 
   const bootstrapRes = await hanaFetch('/api/mobile/bootstrap');
@@ -114,7 +121,8 @@ export async function initializeMobileRuntime(principal: MobilePrincipal): Promi
 
   await Promise.all([
     loadModels(),
-    loadMobileSessions({ selectFirst: true }),
+    loadMobileSessions({ selectFirst: false }),
+    activateMobileWelcomeDesk(),
   ]);
 
   connectWebSocket();
@@ -144,9 +152,11 @@ export async function loadMobileSessions({
   if (target && target !== state.currentSessionPath) {
     await switchMobileSession(target, targetSession);
   } else if (target && !useStore.getState().chatSessions[target]) {
+    syncMobilePermissionMode(targetSession);
     await activateMobileSessionDesk(targetSession);
     await loadMessages(target);
   } else if (target) {
+    syncMobilePermissionMode(targetSession);
     await activateMobileSessionDesk(targetSession);
   } else if (!target) {
     useStore.setState({
@@ -160,13 +170,14 @@ export async function loadMobileSessions({
   return next;
 }
 
-export async function switchMobileSession(path: string, session?: Pick<Session, 'cwd'> | null): Promise<void> {
+export async function switchMobileSession(path: string, session?: Pick<Session, 'cwd' | 'permissionMode'> | null): Promise<void> {
   useStore.setState({
     currentSessionPath: path,
     pendingSessionSwitchPath: path,
     pendingNewSession: false,
     welcomeVisible: false,
   });
+  syncMobilePermissionMode(session || null);
   try {
     await activateMobileSessionDesk(session || null);
     await loadMessages(path);
@@ -201,6 +212,7 @@ export async function createMobileSession(): Promise<string | null> {
     workspaceFolders?: string[];
     agentId?: string | null;
     agentName?: string | null;
+    permissionMode?: SessionPermissionMode | null;
   };
   if (!data.path) return null;
   const patch: Record<string, unknown> = {
@@ -216,6 +228,7 @@ export async function createMobileSession(): Promise<string | null> {
     if (data.agentName) patch.agentName = data.agentName;
   }
   useStore.setState(patch);
+  syncMobilePermissionMode(data);
   useStore.getState().initSession(data.path, [], false);
   await activateMobileSessionDesk({ cwd: data.cwd || null });
   await loadMobileSessions();
@@ -225,6 +238,27 @@ export async function createMobileSession(): Promise<string | null> {
 
 async function activateMobileSessionDesk(session: Pick<Session, 'cwd'> | null | undefined): Promise<void> {
   await activateWorkspaceDesk(session?.cwd || null);
+}
+
+async function activateMobileWelcomeDesk(): Promise<void> {
+  const state = useStore.getState();
+  await activateWorkspaceDesk(state.selectedFolder || state.homeFolder || null);
+  useStore.setState({ previewOpen: false });
+}
+
+function syncMobilePermissionMode(session: Pick<Session, 'permissionMode'> | null | undefined): void {
+  const mode = session?.permissionMode;
+  if (!isSessionPermissionMode(mode)) return;
+  window.dispatchEvent(new CustomEvent('hana-plan-mode', {
+    detail: {
+      enabled: mode === 'read_only',
+      mode,
+    },
+  }));
+}
+
+function isSessionPermissionMode(value: unknown): value is SessionPermissionMode {
+  return value === 'operate' || value === 'ask' || value === 'read_only';
 }
 
 function configureMobileMessageHandlers(): void {

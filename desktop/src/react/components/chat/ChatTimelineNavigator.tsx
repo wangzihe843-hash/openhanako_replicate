@@ -15,6 +15,7 @@ interface Props {
   contentRef: RefObject<HTMLDivElement | null>;
   messageElementsRef: RefObject<Map<string, HTMLDivElement>>;
   active: boolean;
+  railVisible: boolean;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -27,10 +28,12 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   contentRef,
   messageElementsRef,
   active,
+  railVisible,
 }: Props) {
   const [layouts, setLayouts] = useState<Record<string, MarkerLayout>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [cardOpen, setCardOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [cardHover, setCardHover] = useState(false);
   const rafRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -142,16 +145,22 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   const cardVars: CSSProperties & { '--timeline-visible-rows': number } = {
     '--timeline-visible-rows': Math.max(1, visibleRows),
   };
+  const cardOpen = focusOpen || cardHover;
+  const navVisible = railVisible || cardOpen;
+  const navClassName = [
+    styles.timelineNav,
+    navVisible ? styles.timelineNavVisible : '',
+    cardOpen ? styles.timelineNavExpanded : '',
+  ].filter(Boolean).join(' ');
 
   return (
     <nav
-      className={`${styles.timelineNav}${cardOpen ? ` ${styles.timelineNavExpanded}` : ''}`}
+      className={navClassName}
       aria-label="对话轮次导航"
-      onMouseLeave={() => setCardOpen(false)}
       onBlur={(event) => {
         const nextFocus = event.relatedTarget;
         if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) return;
-        setCardOpen(false);
+        setFocusOpen(false);
       }}
     >
       <div
@@ -172,14 +181,16 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
                 style={markerStyle}
                 aria-label={`跳转到 ${anchor.label}`}
                 title={anchor.label}
-                onFocus={() => setCardOpen(true)}
+                onFocus={() => setFocusOpen(true)}
+                onMouseEnter={() => setCardHover(true)}
+                onMouseLeave={() => setCardHover(false)}
                 onClick={() => jumpTo(anchor)}
               >
                 <span className={styles.timelineLabel}>{anchor.label}</span>
                 <span
                   className={styles.timelineLine}
                   aria-hidden="true"
-                  onMouseEnter={() => setCardOpen(true)}
+                  onMouseEnter={() => setCardHover(true)}
                 />
               </button>
             );

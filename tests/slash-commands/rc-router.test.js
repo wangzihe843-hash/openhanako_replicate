@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { promptAttachedDesktopSession } from "../../core/slash-commands/rc-router.js";
 
 function makeFakeSession({ model = null, deltas = ["hel", "lo"], toolMediaOnEnd = [], toolMediaDetails = null } = {}) {
@@ -153,5 +153,40 @@ describe("promptAttachedDesktopSession", () => {
     const r = await promptAttachedDesktopSession(engine, "/p.jsonl", "q");
     expect(r.text).toContain("text");
     expect(r.text).toContain("card note");
+  });
+
+  it("appends settings update summaries into captured text", async () => {
+    const session = {
+      subscribe: (fn) => {
+        setTimeout(() => {
+          fn({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "text" } });
+          fn({
+            type: "tool_execution_end",
+            isError: false,
+            result: {
+              details: {
+                settingsUpdate: {
+                  status: "applied",
+                  action: "core.apply",
+                  key: "locale",
+                  title: "Locale updated",
+                  summary: "Locale changed.",
+                  changes: [{ key: "locale", label: "Locale", before: "zh-CN", after: "en" }],
+                },
+              },
+            },
+          });
+        }, 0);
+        return () => {};
+      },
+      prompt: vi.fn(async () => {
+        await new Promise(r => setTimeout(r, 5));
+      }),
+      model: null,
+    };
+    const engine = { ensureSessionLoaded: async () => session };
+    const r = await promptAttachedDesktopSession(engine, "/p.jsonl", "q");
+    expect(r.text).toContain("Locale updated");
+    expect(r.text).toContain("Locale: zh-CN -> en");
   });
 });

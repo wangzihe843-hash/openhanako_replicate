@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifySessionPermission } from "../core/session-permission-mode.js";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
 
@@ -14,7 +17,29 @@ function makeCtx(sessionPath = "/tmp/agents/hana/sessions/s1.jsonl") {
   };
 }
 
+const tempDirs = [];
+
+function makeTempDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-current-status-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeAvatar(baseDir, role, content = `${role}-avatar`) {
+  const dir = path.join(baseDir, "avatars");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${role}.png`);
+  fs.writeFileSync(filePath, Buffer.from(content));
+  return filePath;
+}
+
 describe("current_status tool", () => {
+  afterEach(() => {
+    while (tempDirs.length) {
+      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
   it("describes time and logical_date as distinct lookup contracts", () => {
     const tool = createCurrentStatusTool();
 
@@ -38,6 +63,7 @@ describe("current_status tool", () => {
       "time",
       "logical_date",
       "agent",
+      "appearance",
       "model",
       "ui_context",
       "session_files",
@@ -103,6 +129,148 @@ describe("current_status tool", () => {
         name: "Hana",
       },
     });
+  });
+
+  it("returns no appearance image when only the Yuan default avatar exists", async () => {
+    const root = makeTempDir();
+    const userDir = path.join(root, "user");
+    const agentDir = path.join(root, "agents", "hana");
+    fs.mkdirSync(path.join(root, "desktop", "src", "assets"), { recursive: true });
+    fs.writeFileSync(path.join(root, "desktop", "src", "assets", "Hanako.png"), Buffer.from("yuan-default"));
+
+    const tool = createCurrentStatusTool({
+      getAgent: () => ({
+        id: "hana",
+        agentName: "Hana",
+        userName: "User",
+        userDir,
+        agentDir,
+        productDir: root,
+        config: { agent: { name: "Hana", yuan: "hanako" } },
+      }),
+      getCurrentModel: () => ({ id: "gpt-4o", provider: "openai", input: ["text", "image"] }),
+    });
+
+    const result = await tool.execute("call_1", { action: "get", key: "appearance" }, null, null, makeCtx());
+    const payload = textPayload(result);
+
+    expect(result.content).toHaveLength(1);
+    expect(payload.appearance.mode).toBe("unavailable");
+    expect(payload.appearance.agent.avatar.available).toBe(false);
+    expect(payload.appearance.agent.summary).toBeNull();
+    expect(payload.appearance.agent.directImage.included).toBe(false);
+  });
+
+  it("returns direct avatar image blocks when no auxiliary summary is available but the current model supports images", async () => {
+    const root = makeTempDir();
+    const userDir = path.join(root, "user");
+    const agentDir = path.join(root, "agents", "hana");
+    writeAvatar(userDir, "user", "user image bytes");
+    writeAvatar(agentDir, "agent", "agent image bytes");
+
+    const tool = createCurrentStatusTool({
+      getAgent: () => ({
+        id: "hana",
+        agentName: "Hana",
+        userName: "Sample User",
+        userDir,
+        agentDir,
+      }),
+      getCurrentModel: () => ({ id: "gpt-4o", provider: "openai", input: ["text", "image"] }),
+    });
+
+    const result = await tool.execute("call_1", { action: "get", key: "appearance" }, null, null, makeCtx());
+    const payload = textPayload(result);
+    const serializedJson = result.content[0].text;
+
+    expect(payload.appearance.mode).toBe("direct_image");
+    expect(payload.appearance.user.directImage).toMatchObject({ included: true, contentIndex: 1 });
+    expect(payload.appearance.agent.directImage).toMatchObject({ included: true, contentIndex: 2 });
+    expect(result.content.slice(1)).toEqual([
+      { type: "image", mimeType: "image/png", data: Buffer.from("user image bytes").toString("base64") },
+      { type: "image", mimeType: "image/png", data: Buffer.from("agent image bytes").toString("base64") },
+    ]);
+    expect(serializedJson).not.toContain(userDir);
+    expect(serializedJson).not.toContain(agentDir);
+    expect(serializedJson).not.toContain(Buffer.from("user image bytes").toString("base64"));
+  });
+
+  it("returns explicit unavailable appearance when avatars exist but neither auxiliary vision nor direct image input is available", async () => {
+    const root = makeTempDir();
+    const userDir = path.join(root, "user");
+    const agentDir = path.join(root, "agents", "hana");
+    writeAvatar(userDir, "user", "user image bytes");
+    writeAvatar(agentDir, "agent", "agent image bytes");
+
+    const tool = createCurrentStatusTool({
+      getAgent: () => ({
+        id: "hana",
+        agentName: "Hana",
+        userName: "Sample User",
+        userDir,
+        agentDir,
+      }),
+      getCurrentModel: () => ({ id: "deepseek-chat", provider: "deepseek", input: ["text"] }),
+    });
+
+    const result = await tool.execute("call_1", { action: "get", key: "appearance" }, null, null, makeCtx());
+    const payload = textPayload(result);
+
+    expect(result.content).toHaveLength(1);
+    expect(payload.appearance.mode).toBe("unavailable");
+    expect(payload.appearance.user.avatar.available).toBe(true);
+    expect(payload.appearance.user.summary).toBeNull();
+    expect(payload.appearance.user.vision.status).toBe("not_configured");
+    expect(payload.appearance.user.directImage.included).toBe(false);
+    expect(payload.appearance.agent.avatar.available).toBe(true);
+    expect(payload.appearance.agent.summary).toBeNull();
+    expect(payload.appearance.agent.vision.status).toBe("not_configured");
+    expect(payload.appearance.agent.directImage.included).toBe(false);
+  });
+
+  it("summarizes custom avatars through the auxiliary vision bridge when available", async () => {
+    const root = makeTempDir();
+    const userDir = path.join(root, "user");
+    const agentDir = path.join(root, "agents", "hana");
+    writeAvatar(userDir, "user", "user image bytes");
+    writeAvatar(agentDir, "agent", "agent image bytes");
+    const summarizeResources = vi.fn(async ({ resources }) => ({
+      notes: resources.map((resource) => ({
+        key: resource.key,
+        label: resource.label,
+        note: `${resource.label}: calm portrait summary`,
+        reused: false,
+      })),
+    }));
+
+    const tool = createCurrentStatusTool({
+      getAgent: () => ({
+        id: "hana",
+        agentName: "Hana",
+        userName: "Sample User",
+        userDir,
+        agentDir,
+      }),
+      getVisionBridge: () => ({ summarizeResources }),
+      getCurrentModel: () => ({ id: "deepseek-chat", provider: "deepseek", input: ["text"] }),
+    });
+
+    const result = await tool.execute("call_1", { action: "get", key: "appearance" }, null, null, makeCtx());
+    const payload = textPayload(result);
+
+    expect(summarizeResources).toHaveBeenCalledWith(expect.objectContaining({
+      sessionPath: "/tmp/agents/hana/sessions/s1.jsonl",
+      userRequest: expect.stringContaining("appearance"),
+      resources: [
+        expect.objectContaining({ label: "user custom avatar" }),
+        expect.objectContaining({ label: "agent custom avatar" }),
+      ],
+    }));
+    expect(result.content).toHaveLength(1);
+    expect(payload.appearance.mode).toBe("vision_summary");
+    expect(payload.appearance.user.summary).toContain("user custom avatar: calm portrait summary");
+    expect(payload.appearance.agent.summary).toContain("agent custom avatar: calm portrait summary");
+    expect(payload.appearance.user.directImage.included).toBe(false);
   });
 
   it("returns the current session model for get model", async () => {

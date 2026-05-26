@@ -210,4 +210,47 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       }),
     ]);
   });
+
+  it('deferred 文件结果在 turn 结束后仍按 taskId 替换上一条消息的占位块', () => {
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'media_generation',
+        taskId: 'task-late-img',
+        kind: 'image',
+        status: 'pending',
+        prompt: 'a late night room',
+      },
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath: PATH });
+
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'file',
+        replacesTaskId: 'task-late-img',
+        fileId: 'sf_late_img',
+        filePath: '/tmp/late-generated.png',
+        label: 'late-generated.png',
+        ext: 'png',
+        mime: 'image/png',
+        kind: 'image',
+      },
+    });
+
+    const assistantItems = getItems().filter((item) => item.type === 'message' && item.data.role === 'assistant');
+    expect(assistantItems).toHaveLength(1);
+    const assistant = assistantItems[0];
+    expect(assistant?.type).toBe('message');
+    if (assistant?.type !== 'message') throw new Error('expected assistant message');
+    expect(assistant.data.blocks).toEqual([
+      expect.objectContaining({
+        type: 'file',
+        fileId: 'sf_late_img',
+        filePath: '/tmp/late-generated.png',
+      }),
+    ]);
+  });
 });

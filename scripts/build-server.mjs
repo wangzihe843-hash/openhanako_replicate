@@ -49,9 +49,16 @@ import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { builtinModules } from "module";
 import {
+  buildBetterSqliteRuntimeSmokeScript,
+  buildJiebaRuntimeSmokeScript,
   buildExternalPackage,
+  collectInstalledOptionalDependencyDirs,
   verifyExternalEntrypoints,
 } from "./build-server-deps.mjs";
+import {
+  collectBundledPluginPackageDependencies,
+  copyBundledPluginRuntimeDependencies,
+} from "./build-server-plugin-runtime-deps.mjs";
 import { copyServerRuntimeAssets } from "./build-server-runtime-assets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +163,28 @@ function ensureNodePtySpawnHelperExecutable(baseDir) {
       fs.chmodSync(helperPath, mode | 0o755);
       console.log(`[build-server] node-pty executable bit fixed: ${path.relative(baseDir, helperPath)}`);
     }
+  }
+}
+
+function runJiebaRuntimeSmokeIfNeeded() {
+  if (!externalPkg.dependencies["@node-rs/jieba"]) return;
+  const smokeScript = path.join(outDir, ".jieba-smoke.mjs");
+  fs.writeFileSync(smokeScript, buildJiebaRuntimeSmokeScript());
+  try {
+    runWithTargetNode(path.basename(smokeScript));
+  } finally {
+    fs.rmSync(smokeScript, { force: true });
+  }
+}
+
+function runBetterSqliteRuntimeSmokeIfNeeded() {
+  if (!externalPkg.dependencies["better-sqlite3"]) return;
+  const smokeScript = path.join(outDir, ".better-sqlite3-smoke.mjs");
+  fs.writeFileSync(smokeScript, buildBetterSqliteRuntimeSmokeScript());
+  try {
+    runWithTargetNode(path.basename(smokeScript));
+  } finally {
+    fs.rmSync(smokeScript, { force: true });
   }
 }
 
@@ -264,6 +293,12 @@ if (fs.existsSync(pluginsSrc)) {
   console.log("[build-server]   plugins/");
 }
 
+// 内置插件以源码形式动态 import。插件跨出 plugins/ 引用宿主侧共享运行期模块时，
+// 这些模块必须按原相对路径落到 packaged server root，否则开发环境和安装包会分裂。
+for (const copiedDependency of await copyBundledPluginRuntimeDependencies({ rootDir: ROOT, outDir })) {
+  console.log(`[build-server]   ${copiedDependency}`);
+}
+
 console.log("[build-server] resource files copied");
 
 // ── 4. External dependencies ──
@@ -295,6 +330,20 @@ for (const ext of viteExternals) {
   }
 }
 
+const pluginPackageDeps = await collectBundledPluginPackageDependencies({ rootDir: ROOT });
+for (const packageName of pluginPackageDeps) {
+  if (deps[packageName]) {
+    externalDeps[packageName] = deps[packageName];
+  }
+}
+const undeclaredPluginDeps = pluginPackageDeps.filter((packageName) => !deps[packageName]);
+if (undeclaredPluginDeps.length > 0) {
+  throw new Error(
+    "[build-server] bundled plugin imports npm packages missing from root dependencies: "
+      + undeclaredPluginDeps.join(", "),
+  );
+}
+
 console.log(`[build-server] derived external deps: ${Object.keys(externalDeps).join(", ")}`);
 
 const rootLock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf-8"));
@@ -322,7 +371,7 @@ fs.writeFileSync(
 // package.json 中的 server external 依赖来自根 lockfile 的精确版本，避免
 // CI fresh install 把直接 external 依赖解析到尚未验证的新版本。
 console.log("[build-server] installing external dependencies...");
-runWithTargetNode(`"${cachedNpmCli}" install --omit=dev --no-audit --no-fund`);
+runWithTargetNode(`"${cachedNpmCli}" install --omit=dev --no-audit --no-fund --ignore-scripts=false`);
 ensureNodePtySpawnHelperExecutable(outDir);
 
 // ── 5b. 验证所有 Vite external 在 node_modules 中可达 ──
@@ -419,6 +468,9 @@ for (const packageName of Object.keys(externalPkg.dependencies)) {
     protectedDirs.add(pkgDir);
   }
 }
+for (const pkgDir of collectInstalledOptionalDependencyDirs(nmDir, Object.keys(externalPkg.dependencies))) {
+  protectedDirs.add(pkgDir);
+}
 
 if (protectedDirs.size > 0) {
   const names = [...protectedDirs].map(d => path.relative(nmDir, d));
@@ -467,6 +519,8 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
+runBetterSqliteRuntimeSmokeIfNeeded();
+runJiebaRuntimeSmokeIfNeeded();
 
 // ── 8b. 删除 koffi 多余平台二进制 ──
 // koffi 带了 18 个平台的 .node 文件，nft 全部追踪到了（因为 require 路径指向包根）。

@@ -16,11 +16,12 @@ describe('PreviewEditor file sync', () => {
   let fileChangedHandler: ((filePath: string) => void) | null;
   let platform: Pick<
     PlatformApi,
-    'readFile' | 'writeFile' | 'writeFileIfUnchanged' | 'watchFile' | 'unwatchFile' | 'onFileChanged'
+    'readFile' | 'writeFile' | 'writeFileIfUnchanged' | 'writeFileBinary' | 'copyFile' | 'watchFile' | 'unwatchFile' | 'onFileChanged' | 'getFilePath'
   >;
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-22T01:02:03Z'));
     fileChangedHandler = null;
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
@@ -43,6 +44,9 @@ describe('PreviewEditor file sync', () => {
         conflict: false,
         version: { mtimeMs: 2, size: 10, sha256: 'next' },
       })),
+      writeFileBinary: vi.fn(async () => true),
+      copyFile: vi.fn(async () => true),
+      getFilePath: vi.fn(() => null),
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
       onFileChanged: vi.fn((handler: (filePath: string) => void) => {
@@ -125,6 +129,44 @@ describe('PreviewEditor file sync', () => {
     expect(platform.writeFile).not.toHaveBeenCalled();
   });
 
+  it('saves remote editable documents through the injected save handler', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 10, size: 8, sha256: 'loaded' };
+    const nextVersion = { mtimeMs: 20, size: 11, sha256: 'next' };
+    const saveDocument = vi.fn(async () => ({
+      ok: true,
+      conflict: false,
+      version: nextVersion,
+    }));
+    const onContentChange = vi.fn();
+
+    render(
+      <PreviewEditor
+        ref={ref}
+        content="original"
+        fileVersion={loadedVersion}
+        mode="markdown"
+        saveDocument={saveDocument}
+        onContentChange={onContentChange}
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'original'.length, insert: 'remote edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      vi.advanceTimersByTime(700);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(saveDocument).toHaveBeenCalledWith('remote edit', loadedVersion);
+    expect(platform.writeFileIfUnchanged).not.toHaveBeenCalled();
+    expect(platform.writeFile).not.toHaveBeenCalled();
+    expect(onContentChange).toHaveBeenLastCalledWith('remote edit', nextVersion);
+  });
+
   it('preserves the cursor when parent content is refreshed', async () => {
     const ref = createRef<PreviewEditorHandle>();
 
@@ -195,6 +237,76 @@ describe('PreviewEditor file sync', () => {
 
     expect(view.scrollDOM.scrollTop).toBe(240);
     expect(view.scrollDOM.scrollLeft).toBe(16);
+  });
+
+  it('merges cover-only refresh into unsaved markdown edits instead of replacing them', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 1, size: 20, sha256: 'loaded' };
+    const coverVersion = { mtimeMs: 2, size: 80, sha256: 'cover' };
+    const saved = '# Demo\n\nBody';
+    const coverUpdated = [
+      '---',
+      'cover:',
+      '  image: 文本附件/cover.png',
+      '  displayHeight: 320',
+      '---',
+      '# Demo',
+      '',
+      'Body',
+    ].join('\n');
+    const onContentChange = vi.fn();
+
+    const { rerender } = render(
+      <PreviewEditor
+        ref={ref}
+        content={saved}
+        filePath="/tmp/hana-note.md"
+        fileVersion={loadedVersion}
+        mode="markdown"
+        onContentChange={onContentChange}
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: saved.length, insert: '# Demo\n\nBody with local draft' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content={coverUpdated}
+          filePath="/tmp/hana-note.md"
+          fileVersion={coverVersion}
+          mode="markdown"
+          onContentChange={onContentChange}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const merged = [
+      '---',
+      'cover:',
+      '  image: 文本附件/cover.png',
+      '  displayHeight: 320',
+      '---',
+      '# Demo',
+      '',
+      'Body with local draft',
+    ].join('\n');
+
+    expect(ref.current?.getView()?.state.doc.toString()).toBe(merged);
+    expect(onContentChange).toHaveBeenCalledWith(merged);
+    expect(platform.writeFileIfUnchanged).toHaveBeenCalledWith(
+      '/tmp/hana-note.md',
+      merged,
+      coverVersion,
+    );
   });
 
   it('reports total and selected character counts', async () => {
@@ -297,5 +409,90 @@ describe('PreviewEditor file sync', () => {
 
     expect(onContentChange).not.toHaveBeenCalledWith('first edit', firstVersion);
     expect(onContentChange).toHaveBeenLastCalledWith('second edit', secondVersion);
+  });
+
+  it('pastes clipboard images into the markdown attachment folder at the cursor', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+
+    const { container } = render(
+      <PreviewEditor
+        ref={ref}
+        content={'Hello\n'}
+        filePath="/tmp/note.md"
+        mode="markdown"
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({ selection: { anchor: 'Hello\n'.length } });
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'clip image.png', { type: 'image/png' });
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [file],
+        getData: vi.fn(() => ''),
+        types: ['Files'],
+      },
+    });
+
+    await act(async () => {
+      container.querySelector('.cm-content')?.dispatchEvent(paste);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(platform.writeFileBinary).toHaveBeenCalledWith(
+      '/tmp/文本附件/clip image-20260522-010203.png',
+      'AQID',
+    );
+    expect(ref.current?.getView()?.state.doc.toString()).toBe(
+      'Hello\n![clip image](<文本附件/clip image-20260522-010203.png>)',
+    );
+  });
+
+  it('drops external files into the markdown attachment folder without reading them into renderer memory', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    vi.mocked(platform.getFilePath!).mockReturnValue('/source/drop.png');
+
+    const { container } = render(
+      <PreviewEditor
+        ref={ref}
+        content={'Start\n'}
+        filePath="/tmp/note.md"
+        mode="markdown"
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({ selection: { anchor: 'Start\n'.length } });
+    });
+
+    const file = new File([new Uint8Array([4, 5, 6])], 'drop.png', { type: 'image/png' });
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', {
+      value: {
+        files: [file],
+        types: ['Files'],
+        dropEffect: 'copy',
+        getData: vi.fn(() => ''),
+      },
+    });
+
+    await act(async () => {
+      container.querySelector('.cm-content')?.dispatchEvent(drop);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(platform.copyFile).toHaveBeenCalledWith(
+      '/source/drop.png',
+      '/tmp/文本附件/drop-20260522-010203.png',
+    );
+    expect(platform.writeFileBinary).not.toHaveBeenCalled();
+    expect(ref.current?.getView()?.state.doc.toString()).toBe(
+      'Start\n![drop](<文本附件/drop-20260522-010203.png>)',
+    );
   });
 });

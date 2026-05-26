@@ -7,6 +7,7 @@ import { t } from "../i18n.js";
 import { modelRefEquals, parseModelRef } from "../../shared/model-ref.js";
 import { lookupKnown } from "../../shared/known-models.js";
 import {
+  modelSupportsImageInput,
   modelSupportsDirectVideoInput,
   modelSupportsVideoInput,
   resolveModelVideoInputTransport,
@@ -40,6 +41,34 @@ function parseHealthModelRef(body) {
   return { id: parsed.id, provider };
 }
 
+function classifyModelSwitchError(err) {
+  const message = err?.message || String(err || "");
+  const lower = message.toLowerCase();
+  if (lower.includes("model not found") || (lower.includes("模型") && lower.includes("不存在"))) {
+    return { status: 404, code: "MODEL_NOT_FOUND", message };
+  }
+  if (
+    lower.includes("api key") ||
+    lower.includes("api_key") ||
+    lower.includes("credential") ||
+    lower.includes("credentials") ||
+    lower.includes("凭证") ||
+    lower.includes("密钥")
+  ) {
+    return { status: 422, code: "MODEL_CREDENTIALS_MISSING", message };
+  }
+  if (
+    lower.includes("streaming") ||
+    lower.includes("compaction") ||
+    lower.includes("compacting") ||
+    lower.includes("in progress") ||
+    lower.includes("busy")
+  ) {
+    return { status: 409, code: "MODEL_SWITCH_CONFLICT", message };
+  }
+  return { status: 500, code: "MODEL_SWITCH_FAILED", message };
+}
+
 function serializeModelInfo(model, { current = null, overrides = null } = {}) {
   if (!model) return null;
   const videoTransport = resolveModelVideoInputTransport(model);
@@ -59,6 +88,87 @@ function serializeModelInfo(model, { current = null, overrides = null } = {}) {
   };
 }
 
+function serializeAuxiliaryVisionModel(model, fallbackRef = null) {
+  const parsedFallback = parseModelRef(fallbackRef);
+  const id = typeof model?.id === "string" && model.id.trim()
+    ? model.id.trim()
+    : parsedFallback?.id;
+  const provider = typeof model?.provider === "string" && model.provider.trim()
+    ? model.provider.trim()
+    : parsedFallback?.provider;
+  if (!id || !provider) return null;
+  return { id, provider };
+}
+
+function buildAuxiliaryVisionStatus(engine) {
+  const shared = engine.getSharedModels?.() || {};
+  const enabled = shared.vision_enabled === true;
+  const configured = !!shared.vision;
+  const configuredModel = serializeAuxiliaryVisionModel(null, shared.vision);
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      configured,
+      available: false,
+      unavailableReason: "disabled",
+      model: configuredModel,
+    };
+  }
+
+  if (!configured) {
+    return {
+      enabled: true,
+      configured: false,
+      available: false,
+      unavailableReason: "not_configured",
+      model: null,
+    };
+  }
+
+  let resolved = null;
+  try {
+    resolved = engine.resolveModelWithCredentials?.(shared.vision) || null;
+  } catch {
+    return {
+      enabled: true,
+      configured: true,
+      available: false,
+      unavailableReason: "model_not_found",
+      model: configuredModel,
+    };
+  }
+
+  const model = serializeAuxiliaryVisionModel(resolved?.model, shared.vision);
+  if (!resolved?.model) {
+    return {
+      enabled: true,
+      configured: true,
+      available: false,
+      unavailableReason: "model_not_found",
+      model,
+    };
+  }
+
+  if (!modelSupportsImageInput(resolved.model)) {
+    return {
+      enabled: true,
+      configured: true,
+      available: false,
+      unavailableReason: "model_without_image_input",
+      model,
+    };
+  }
+
+  return {
+    enabled: true,
+    configured: true,
+    available: true,
+    unavailableReason: null,
+    model,
+  };
+}
+
 export function createModelsRoute(engine) {
   const route = new Hono();
 
@@ -74,6 +184,15 @@ export function createModelsRoute(engine) {
         current: cur?.id || null,
         activeModel: activeModel ? { id: activeModel.id, provider: activeModel.provider } : null,
       });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // 只暴露辅助视觉可用性给 chat surface；不返回设置页的搜索/API 配置。
+  route.get("/models/auxiliary-vision", async (c) => {
+    try {
+      return c.json({ auxiliaryVision: buildAuxiliaryVisionStatus(engine) });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -103,6 +222,19 @@ export function createModelsRoute(engine) {
         messages: [{ role: "user", content: HEALTH_CHECK_PROMPT }],
         maxTokens: HEALTH_CHECK_MAX_TOKENS,
         timeoutMs: 15_000,
+        usageLedger: engine.usageLedger,
+        usageContext: {
+          source: {
+            subsystem: "utility",
+            operation: "model_health",
+            surface: "settings",
+            trigger: "user",
+          },
+          attribution: {
+            kind: "utility",
+            agentId: engine.currentAgentId ?? null,
+          },
+        },
       });
 
       return c.json({ ok: true, status: 200, provider: resolved.provider });
@@ -144,7 +276,7 @@ export function createModelsRoute(engine) {
       if (!provider) return c.json({ error: t("error.missingParam", { param: "provider" }) }, 400);
 
       if (engine.isSessionStreaming(sessionPath)) {
-        return c.json({ error: "cannot switch model while streaming" }, 409);
+        return c.json({ error: "cannot switch model while streaming", code: "MODEL_SWITCH_CONFLICT" }, 409);
       }
 
       const result = await engine.switchSessionModel(sessionPath, modelId, provider);
@@ -157,7 +289,8 @@ export function createModelsRoute(engine) {
 
       return c.json({ ok: true, model: modelInfo, adaptations: result.adaptations, thinkingLevel: result.thinkingLevel });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      const classified = classifyModelSwitchError(err);
+      return c.json({ error: classified.message, code: classified.code }, classified.status);
     }
   });
 

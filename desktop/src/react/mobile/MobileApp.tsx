@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AppTitlebar } from '../components/app/AppTitlebar';
 import { ChatPage } from '../components/app/ChatPage';
@@ -13,6 +13,7 @@ import { useStore } from '../stores';
 import { createNewSession } from '../stores/session-actions';
 import {
   initializeMobileRuntime,
+  loadMobileSessions,
   readMobileAuthSession,
   type MobilePrincipal,
 } from './mobile-init';
@@ -131,16 +132,57 @@ function MobileDesktopShell({
   const previewOpen = useStore(s => s.previewOpen);
   const mediaViewer = useStore(s => s.mediaViewer);
   const currentTab = useStore(s => s.currentTab);
+  const sessions = useStore(s => s.sessions);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
+  const pendingNewSession = useStore(s => s.pendingNewSession);
+  const wsState = useStore(s => s.wsState);
   const isNarrow = useNarrowMobileViewport();
   const edgeGestureRef = useRef<MobileEdgeGesture | null>(null);
+  const previousWsStateRef = useRef(wsState);
+  const t = window.t ?? ((p: string) => p);
+
+  const titlebarTitle = useMemo(() => {
+    if (pendingNewSession) return t('sidebar.newChat');
+    const currentSession = sessions.find(session => session.path === currentSessionPath);
+    return currentSession?.title || currentSession?.firstMessage || t('session.untitled');
+  }, [currentSessionPath, pendingNewSession, sessions, t]);
 
   useEffect(() => {
     useStore.setState({ currentTab: 'chat' });
   }, []);
 
   useEffect(() => {
-    if (isNarrow) useStore.setState({ sidebarOpen: false, jianOpen: false });
+    if (isNarrow) useStore.setState({ sidebarOpen: false, jianOpen: false, previewOpen: false });
   }, [isNarrow]);
+
+  const refreshMobileSessions = useCallback(() => {
+    void loadMobileSessions().catch((err) => {
+      console.warn('[mobile] refresh sessions failed', err);
+    });
+  }, []);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      refreshMobileSessions();
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    window.addEventListener('online', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible);
+      window.removeEventListener('online', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [refreshMobileSessions]);
+
+  useEffect(() => {
+    const previous = previousWsStateRef.current;
+    previousWsStateRef.current = wsState;
+    if (wsState === 'connected' && previous && previous !== 'connected') {
+      refreshMobileSessions();
+    }
+  }, [refreshMobileSessions, wsState]);
 
   const showDrawerScrim = (sidebarOpen || jianOpen) && isNarrow;
   const openMobileDrawerFromGesture = useCallback((edge: MobileEdgeGesture['edge']) => {
@@ -230,8 +272,11 @@ function MobileDesktopShell({
         jianOpen={jianOpen}
         previewOpen={previewOpen}
         showPreviewToggle
+        showNewSessionButton
         showChannelTabs={false}
         showWidgetButtons={false}
+        centerTitle={titlebarTitle}
+        onNewSession={() => void createNewSession()}
         onToggleSidebar={() => {
           if (!sidebarOpen) useStore.setState({ jianOpen: false });
           toggleSidebar(!sidebarOpen);
@@ -295,7 +340,7 @@ function MobileLoadingScreen() {
     <main className="onboarding">
       <section className="onboarding-step active">
         <img className="onboarding-avatar" src="./icon.png" alt="" />
-        <h1 className="onboarding-title">Hana Mobile</h1>
+        <h1 className="onboarding-title">HanaAgent</h1>
         <p className="onboarding-subtitle">正在连接 Hana...</p>
       </section>
     </main>

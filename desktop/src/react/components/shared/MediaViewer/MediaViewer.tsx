@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../../stores';
 import { isMediaKind } from '../../../utils/file-kind';
+import { fileRefVersionToken } from '../../../services/resource-url';
 import { ImageStage } from './ImageStage';
 import { VideoStage } from './VideoStage';
 import styles from './MediaViewer.module.css';
@@ -171,7 +172,7 @@ export function MediaViewer() {
             viewport={viewport}
             neighbors={{ prev, next }}
             zoomCmd={zoomCmd}
-            key={current.id}
+            key={`${current.id}:${fileRefVersionToken(current) || ''}`}
           />
         )}
       </div>

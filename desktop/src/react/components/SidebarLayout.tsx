@@ -10,9 +10,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from '../stores';
 import { createNewSession } from '../stores/session-actions';
 import { closePreview } from '../stores/preview-actions';
-
-const CHAT_MIN_WIDTH = 400;
-
+import { CHAT_MIN_WIDTH } from '../layout-constants';
 
 function getSidebarWidth(): number {
   return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 240;

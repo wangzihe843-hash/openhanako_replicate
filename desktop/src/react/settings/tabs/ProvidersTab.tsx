@@ -7,6 +7,7 @@ import { loadSettingsConfig } from '../actions';
 import { ProviderDetail } from './providers/ProviderDetail';
 import { AddCustomButton, AddProviderOverlay } from './providers/ProviderList';
 import { OtherModelsSection } from './providers/OtherModelsSection';
+import { UsageLedgerSection } from './providers/UsageLedgerSection';
 import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
 
@@ -178,6 +179,8 @@ export function ProvidersTab() {
       <SettingsSection title={t('settings.api.otherModelSection')}>
         <OtherModelsSection providers={providers} />
       </SettingsSection>
+
+      <UsageLedgerSection />
     </div>
   );
 }

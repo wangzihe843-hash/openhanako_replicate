@@ -114,5 +114,46 @@ describe('ModelSelector', () => {
         dedupeKey: 'model-switch-streaming',
       });
     });
+    expect(hanaFetch).toHaveBeenCalledWith('/api/models/switch', expect.objectContaining({
+      throwOnHttpError: false,
+    }));
+  });
+
+  it('surfaces the model-switch response body when the server rejects an unavailable provider model', async () => {
+    storeState.currentSessionPath = '/sessions/a.jsonl';
+    storeState.pendingNewSession = false;
+    storeState.chatSessions = {
+      '/sessions/a.jsonl': { items: [{ type: 'message' }] },
+    };
+    storeState.sessionModelsByPath = {
+      '/sessions/a.jsonl': {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        provider: 'deepseek',
+      },
+    };
+    vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({
+      code: 'MODEL_NOT_FOUND',
+      error: 'Model not found: minimax-token-plan/MiniMax-M2.7',
+    }, false));
+
+    render(
+      <ModelSelector
+        models={[
+          ...models,
+          { id: 'MiniMax-M2.7', name: 'MiniMax M2.7', provider: 'minimax-token-plan' },
+        ]}
+        sessionModel={storeState.sessionModelsByPath['/sessions/a.jsonl'] as any}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek V4 Flash/ }));
+    fireEvent.click(screen.getByRole('button', { name: /MiniMax M2.7/ }));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith('Model not found: minimax-token-plan/MiniMax-M2.7', 'error');
+    });
+    expect(hanaFetch).toHaveBeenCalledWith('/api/models/switch', expect.objectContaining({
+      throwOnHttpError: false,
+    }));
   });
 });

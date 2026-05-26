@@ -10,7 +10,7 @@
  * - 独立窗口由下阶段的 viewer spawn 机制负责（单向只读副本），本面板不做 detach/dock
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import { selectPreviewItems, selectActiveTabId, selectMarkdownPreviewIds } from '../stores/preview-slice';
 import { setMarkdownPreviewActive, upsertPreviewItem } from '../stores/preview-actions';
@@ -20,13 +20,15 @@ import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
 import { captureSelection, clearSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
+import { saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
 import previewStyles from './Preview.module.css';
 
 const EDITABLE_TYPES = new Set(['markdown', 'code', 'csv']);
 
 function isEditable(previewItem: PreviewItem | null): boolean {
   if (!previewItem) return false;
-  return !!previewItem.filePath && EDITABLE_TYPES.has(previewItem.type);
+  return EDITABLE_TYPES.has(previewItem.type)
+    && (!!previewItem.filePath || previewItem.remoteContentRef?.kind === 'mobile-workbench');
 }
 
 function isMarkdownFile(previewItem: PreviewItem | null): boolean {
@@ -63,6 +65,12 @@ export function PreviewPanel() {
   const markdownPreviewActive = !!previewItem && markdownPreviewIds.includes(previewItem.id);
   const editable = isEditable(previewItem) && !markdownPreviewActive;
   const showMarkdownEditorStatus = editable && previewItem?.type === 'markdown';
+  const saveDocument = useMemo(() => {
+    const remoteRef = previewItem?.remoteContentRef;
+    if (remoteRef?.kind !== 'mobile-workbench') return undefined;
+    return (content: string, expectedVersion?: PreviewItem['fileVersion']) =>
+      saveRemoteWorkbenchContent(remoteRef, content, expectedVersion ?? null);
+  }, [previewItem?.remoteContentRef]);
 
   const handleToggleMarkdownPreview = useCallback(() => {
     if (!previewItem || !isMarkdownFile(previewItem)) return;
@@ -90,7 +98,7 @@ export function PreviewPanel() {
 
   // 切换 tab 时清除选区
   useEffect(() => {
-    clearSelection();
+    clearSelection({ sourceKind: 'preview' });
     setEditorStats({
       selectedChars: 0,
       totalChars: previewItem?.type === 'markdown' ? countPreviewChars(previewItem.content) : 0,
@@ -110,6 +118,9 @@ export function PreviewPanel() {
           {previewOpen && previewItem && (
             <FloatingActions
               content={previewItem.content}
+              filePath={previewItem.filePath}
+              contentType={previewItem.type}
+              language={previewItem.language}
               showMarkdownPreviewToggle={isMarkdownFile(previewItem)}
               markdownPreviewActive={markdownPreviewActive}
               onToggleMarkdownPreview={handleToggleMarkdownPreview}
@@ -123,7 +134,8 @@ export function PreviewPanel() {
               <PreviewEditor
                 content={previewItem.content}
                 filePath={previewItem.filePath}
-                fileVersion={previewItem.fileVersion}
+                fileVersion={previewItem.fileVersion ?? previewItem.remoteContentRef?.version ?? null}
+                saveDocument={saveDocument}
                 mode={getEditorMode(previewItem)}
                 language={previewItem.language}
                 onSelectionChange={(view) => {

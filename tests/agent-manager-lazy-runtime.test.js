@@ -131,6 +131,18 @@ describe("AgentManager lazy runtime initialization", () => {
     expect(byId.third.init).not.toHaveBeenCalled();
   });
 
+  it("does not require startup logger objects to expose error()", async () => {
+    skills.syncAgentSkills = vi.fn(() => {
+      throw new Error("sync failed");
+    });
+    const logger = vi.fn();
+
+    await expect(manager.initAllAgents(logger, "focus")).resolves.toBeUndefined();
+
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining('焦点 agent "focus" init 失败'));
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("[init]"));
+  });
+
   it("runtime activation is single-flight for concurrent callers", async () => {
     await manager.initAllAgents(() => {}, "focus");
     const background = manager.getAgent("background");

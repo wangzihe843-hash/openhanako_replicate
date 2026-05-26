@@ -10,7 +10,7 @@ function extractMacro(source, name) {
 }
 
 describe("Windows NSIS installer contract", () => {
-  it("does not let stale old-uninstaller failures abort a Hana-owned overlay", () => {
+  it("does not let stale old-uninstaller failures abort a HanaAgent-owned overlay", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const macro = extractMacro(source, "customUnInstallCheck");
 
@@ -81,7 +81,7 @@ describe("Windows NSIS installer contract", () => {
     }
   });
 
-  it("future uninstallers remove Hana-owned install surfaces without atomic old-install staging", () => {
+  it("future uninstallers remove HanaAgent-owned install surfaces without atomic old-install staging", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const macro = extractMacro(source, "customRemoveFiles");
 
@@ -91,10 +91,11 @@ describe("Windows NSIS installer contract", () => {
     expect(macro).not.toContain("un.atomicRMDir");
   });
 
-  it("overrides app-running detection to close Hanako and its bundled server explicitly", () => {
+  it("overrides app-running detection to close HanaAgent, legacy Hanako, and the bundled server explicitly", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const macro = extractMacro(source, "customCheckAppRunning");
 
+    expect(macro).toContain("HanaAgent.exe");
     expect(macro).toContain("Hanako.exe");
     expect(macro).toContain("hana-server.exe");
     expect(macro).toContain("appCannotBeClosed");
@@ -121,7 +122,7 @@ describe("Windows NSIS installer contract", () => {
     const verify = extractMacro(source, "hanakoVerifyInstallSurface");
 
     expect(customInstall).toContain("hanakoVerifyInstallSurface");
-    expect(verify).toContain('hanako-install-diagnostics.log');
+    expect(verify).toContain('hanaagent-install-diagnostics.log');
     expect(verify).toContain('$INSTDIR\\${APP_EXECUTABLE_FILENAME}');
     expect(verify).toContain('$INSTDIR\\resources\\app.asar');
     expect(verify).toContain('$INSTDIR\\resources\\app-update.yml');

@@ -62,6 +62,7 @@ describe("ChannelRouter reply tool boundary", () => {
       conversationType: "channel",
       toolMode: "read_only",
     });
+    expect(options).not.toHaveProperty("allowedBaseToolNames");
     expect(options.extraCustomTools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["channel_read_context", "channel_reply", "channel_pass"]),
     );
@@ -255,7 +256,8 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(phonePrompt).toContain("较早的 5 条未读消息没有放入本次投递窗口");
     expect(phonePrompt).toContain("channel_read_context");
     expect(phonePrompt).toContain("频道 Truth");
-    expect(phonePrompt).toContain("结合此前 Phone Session");
+    expect(phonePrompt).toContain("此前 Phone Session");
+    expect(phonePrompt).not.toContain("频道视角摘要");
   });
 
   it("emits a complete incremental message from the channel_reply tool, not raw model text", async () => {
@@ -317,6 +319,57 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(emit.mock.calls[0][0].message.timestamp).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).toContain("工具发出的 OK");
     expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("RAW MODEL TEXT SHOULD NOT BE POSTED");
+  });
+
+  it("refuses channel_reply when the running agent has been removed from the channel", async () => {
+    runAgentSessionMock.mockClear();
+    runAgentPhoneSessionMock.mockClear();
+    runAgentPhoneSessionMock.mockImplementationOnce(async (_agentId, _rounds, options) => {
+      const replyTool = options.extraCustomTools.find((tool) => tool.name === "channel_reply");
+      const result = await replyTool.execute("tool-call-1", {
+        content: "这条幽灵消息不应该写入频道",
+      });
+      expect(result.details).toMatchObject({ action: "reply", error: "not a channel member" });
+      return "";
+    });
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-removed-reply-"));
+    const channelsDir = path.join(root, "channels");
+    const agentsDir = path.join(root, "agents");
+    const userDir = path.join(root, "user");
+    const productDir = path.join(root, "product");
+    fs.mkdirSync(path.join(agentsDir, "hanako"), { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(path.join(productDir, "yuan"), { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, "hanako", "config.yaml"), "agent:\n  name: Hanako\n", "utf-8");
+    fs.writeFileSync(path.join(channelsDir, "ch_crew.md"), "---\nid: ch_crew\nmembers: [yui]\n---\n", "utf-8");
+
+    const router = new ChannelRouter({
+      hub: {
+        engine: {
+          channelsDir,
+          agentsDir,
+          userDir,
+          productDir,
+          isChannelsEnabled: () => true,
+        },
+        eventBus: { emit: vi.fn() },
+        agentPhoneActivities: { record: vi.fn() },
+      },
+    });
+
+    const result = await router._executeCheck(
+      "hanako",
+      "ch_crew",
+      [{ sender: "user", timestamp: "2026-05-07 17:00:00", body: "@Hanako ping" }],
+      [],
+    );
+
+    expect(result).toMatchObject({ replied: false, missingDecision: true });
+    expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("这条幽灵消息不应该写入频道");
+
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
   it("treats channel_pass as an explicit viewed-without-reply decision", async () => {

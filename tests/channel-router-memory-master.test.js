@@ -78,7 +78,7 @@ function writeAgentConfig(agentsDir, agentId, name) {
   );
 }
 
-function makeRouter(paths) {
+function makeRouter(paths, options = {}) {
   return new ChannelRouter({
     hub: {
       engine: {
@@ -88,6 +88,7 @@ function makeRouter(paths) {
         userDir: paths.userDir,
         userName: "黎",
         agents: undefined,
+        usageLedger: options.usageLedger ?? null,
         getAgent: () => null,
         resolveUtilityConfig: () => ({
           utility: "test-model",
@@ -167,6 +168,10 @@ describe("ChannelRouter memory master fallback", () => {
 
     const request = callTextMock.mock.calls[0][0];
     expect(request.systemPrompt).toMatch(/谁做了什么|who did what/i);
+    expect(request.usageContext).toMatchObject({
+      source: { subsystem: "memory", operation: "channel_memory_summary", surface: "channel" },
+      attribution: { kind: "memory", agentId: "hana" },
+    });
     expect(request.systemPrompt).toContain("NO_MEMORY");
     expect(request.messages[0].content).toContain("黎: 请把摘要洗干净。");
     expect(request.messages[0].content).toContain("Butter: 先把摘要洗干净。");
@@ -214,5 +219,22 @@ describe("ChannelRouter memory master fallback", () => {
 
     expect(factDeleteMock).toHaveBeenCalledWith(8);
     expect(factAddMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the engine usage ledger to channel memory summarization", async () => {
+    const paths = writeAgentFixture(true);
+    const usageLedger = { start: vi.fn() };
+    const router = makeRouter(paths, { usageLedger });
+    callTextMock.mockResolvedValue("summary");
+
+    await router._memorySummarize("hana", "general", "context");
+
+    expect(callTextMock.mock.calls[0][0]).toMatchObject({
+      usageLedger,
+      usageContext: {
+        source: { subsystem: "memory", operation: "channel_memory_summary" },
+        attribution: { kind: "memory", agentId: "hana" },
+      },
+    });
   });
 });

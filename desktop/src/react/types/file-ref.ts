@@ -1,3 +1,5 @@
+import type { FileVersion } from '../types';
+
 export type FileKind =
   | 'image'
   | 'svg'
@@ -33,6 +35,7 @@ export interface FileRef {
   operations?: string[];
   createdAt?: number;
   timestamp?: number;
+  version?: FileVersion | null;
   sessionMessageId?: string;
   sessionBlockIdx?: number;
   inlineData?: { base64: string; mimeType: string };

@@ -125,16 +125,6 @@ vi.mock('../skills/SkillCapabilities', () => ({
 vi.mock('../skills/CompatPathDrawer', () => ({
   CompatPathDrawer: () => <div data-testid="compat-path-drawer" />,
 }));
-vi.mock('../skills/LearnedSkillsBlock', () => ({
-  LearnedSkillsBlock: ({
-    learnedSkills,
-  }: {
-    learnedSkills: Array<{ name: string }>;
-  }) => (
-    <div data-testid="learned-skills-block" data-count={learnedSkills.length} />
-  ),
-}));
-
 // ─── Real imports (after mocks so the mocked modules win) ─────────────────────
 
 import { SkillsTab } from '../SkillsTab';
@@ -367,6 +357,46 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       names: ['literary-craft', 'quiet-musing'],
       lang: 'zh',
     });
+  });
+
+  it('does not render a separate learned-skills section and refreshes from the shared skills-changed event', async () => {
+    seedStore({ currentAgentId: 'agent-a' });
+    let skillName = 'writer';
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/api/skills/external-paths')) {
+        return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
+      }
+      if (url.includes('/api/skills/bundles')) {
+        return Promise.resolve(jsonResponse({ bundles: [] }));
+      }
+      if (url.includes('/api/skills?agentId=agent-a')) {
+        return Promise.resolve(jsonResponse({
+          skills: [{ name: skillName, enabled: true, source: 'user' }],
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<SkillsTab />);
+    await flushMicrotasks(6);
+
+    expect(screen.queryByTestId('learned-skills-block')).toBeNull();
+    expect(document.querySelector('[data-skill-name="writer"]')).toBeTruthy();
+    fetchMock.mockClear();
+
+    skillName = 'reflected-workflow';
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('hana-skills-changed', {
+        detail: { agentId: 'agent-a' },
+      }));
+    });
+    await flushMicrotasks(6);
+
+    expect(document.querySelector('[data-skill-name="reflected-workflow"]')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(
+      (c) => typeof c[0] === 'string' && c[0].includes('/api/skills?agentId=agent-a'),
+    )).toBe(true);
   });
 
   // ── Test 4: toggleSkill race guard — stale write result must not refresh UI ─

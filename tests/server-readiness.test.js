@@ -185,6 +185,21 @@ describe("startup root error extraction", () => {
     });
   });
 
+  it("parses structured LISTEN_PERMISSION_DENIED startup errors from server stderr", () => {
+    const parsed = parsePortInUseStartupError([
+      '[stderr] [server] startup-error {"code":"LISTEN_PERMISSION_DENIED","host":"0.0.0.0","port":14500,"networkMode":"loopback","listenHost":"127.0.0.1","suggestions":["Use loopback mode or check Windows reserved port policy."]}\n',
+    ]);
+
+    expect(parsed).toEqual({
+      code: "LISTEN_PERMISSION_DENIED",
+      host: "0.0.0.0",
+      port: 14500,
+      networkMode: "loopback",
+      listenHost: "127.0.0.1",
+      suggestions: ["Use loopback mode or check Windows reserved port policy."],
+    });
+  });
+
   it("extracts EADDRINUSE as the root server startup error before diagnostics tails", () => {
     const root = extractRootServerStartupError([
       "[stderr] Error: listen EADDRINUSE: address already in use 0.0.0.0:14500\n",
@@ -193,6 +208,18 @@ describe("startup root error extraction", () => {
     ]);
 
     expect(root).toContain("EADDRINUSE");
+    expect(root).toContain("0.0.0.0:14500");
+    expect(root).not.toContain("GPU startup marker");
+  });
+
+  it("extracts EACCES listen failures as the root server startup error", () => {
+    const root = extractRootServerStartupError([
+      "[stderr] Error: listen EACCES: permission denied 0.0.0.0:14500\n",
+      "--- GPU Startup ---\n",
+      'GPU startup marker: {"status":"failed","reason":"previous-startup-incomplete"}\n',
+    ]);
+
+    expect(root).toContain("LISTEN_PERMISSION_DENIED");
     expect(root).toContain("0.0.0.0:14500");
     expect(root).not.toContain("GPU startup marker");
   });

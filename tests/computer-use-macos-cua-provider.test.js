@@ -41,17 +41,17 @@ describe("macos Cua provider", () => {
   it("prefers a Hana-bundled Computer Use helper over an external Cua Driver install", () => {
     const command = resolveCuaDriverCommand({
       env: {
-        HANA_ROOT: "/Applications/Hanako.app/Contents/Resources/server",
+        HANA_ROOT: "/Applications/HanaAgent.app/Contents/Resources/server",
         HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
       },
-      existsSync: (p) => p === "/Applications/Hanako.app/Contents/Resources/computer-use/macos/hana-computer-use-helper"
+      existsSync: (p) => p === "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper"
         || p === "/opt/cua-driver",
       homeDir: "/Users/hana",
       arch: "arm64",
       cwd: "/Users/hana/project-hana",
     });
 
-    expect(command).toBe("/Applications/Hanako.app/Contents/Resources/computer-use/macos/hana-computer-use-helper");
+    expect(command).toBe("/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper");
   });
 
   it("resolves the development helper build output before falling back to PATH", () => {

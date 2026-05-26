@@ -138,7 +138,7 @@ describe("access route", () => {
     expect(JSON.stringify(data)).not.toContain("secretHash");
   });
 
-  it("enables LAN access immediately when the port is unchanged", async () => {
+  it("requires restart when enabling LAN changes the listening host", async () => {
     tmpDir = makeTmpDir();
     writeIdentity(tmpDir);
     const app = await makeApp(tmpDir, { mode: "loopback", listenHost: "127.0.0.1", actualPort: 14500 });
@@ -156,9 +156,13 @@ describe("access route", () => {
         mode: "lan",
         listenHost: "0.0.0.0",
         configuredPort: 14500,
-        restartRequired: false,
-        lanServerUrl: "http://192.168.31.75:14500/",
-        lanMobileUrl: "http://192.168.31.75:14500/mobile/",
+        runtimeMode: "loopback",
+        runtimeHost: "127.0.0.1",
+        restartRequired: true,
+        candidateLanServerUrl: "http://192.168.31.75:14500/",
+        candidateLanMobileUrl: "http://192.168.31.75:14500/mobile/",
+        lanServerUrl: null,
+        lanMobileUrl: null,
       },
     });
     expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "server-network.json"), "utf-8")))
@@ -184,8 +188,8 @@ describe("access route", () => {
         actualPort: 14500,
         restartRequired: true,
         candidateLanServerUrl: "http://192.168.31.75:14550/",
-        lanServerUrl: "http://192.168.31.75:14500/",
-        lanMobileUrl: "http://192.168.31.75:14500/mobile/",
+        lanServerUrl: null,
+        lanMobileUrl: null,
       },
     });
   });

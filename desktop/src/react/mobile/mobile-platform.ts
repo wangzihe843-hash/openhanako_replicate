@@ -17,6 +17,8 @@ export function installMobilePlatform(): void {
     selectSkill: async () => null,
     readFile: async () => null,
     writeFile: async () => false,
+    writeFileBinary: async () => false,
+    copyFile: async () => false,
     readFileSnapshot: async () => null,
     writeFileIfUnchanged: async () => ({ ok: false }),
     watchFile: async () => false,

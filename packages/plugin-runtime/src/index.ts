@@ -148,6 +148,8 @@ export interface HanaToolDefinition<Input = unknown, Output = unknown> {
   parameters?: JsonSchema;
   promptSnippet?: string;
   promptGuidelines?: string;
+  metadata?: Record<string, unknown>;
+  invocationStyle?: 'sdk_tool' | 'pi_tool';
   execute(input: Input, ctx: HanaToolContext): MaybePromise<Output>;
 }
 
@@ -306,6 +308,82 @@ export interface HanaEventBusCapability {
   owner: string;
   since?: string;
   available?: boolean;
+}
+
+export interface HanaNormalizedUsage {
+  input: {
+    totalTokens: number | null;
+    uncachedTokens: number | null;
+  };
+  output: {
+    totalTokens: number | null;
+    reasoningTokens: number | null;
+  };
+  cache: {
+    readTokens: number | null;
+    writeTokens: number | null;
+    missTokens: number | null;
+    hit: boolean | null;
+    created: boolean | null;
+    hitRatio: number | null;
+    support: 'reported' | 'not_reported' | 'not_supported';
+  };
+  totalTokens: number | null;
+  costTotal: number | null;
+}
+
+export type HanaUsageAttribution =
+  | { kind: 'session'; agentId: string | null; sessionPath: string }
+  | { kind: 'phone_conversation'; agentId: string; conversationId: string; conversationType: 'channel' | 'dm'; sessionPath?: string | null }
+  | { kind: 'memory'; agentId: string | null }
+  | { kind: 'automation'; jobId?: string | null; runId?: string | null; agentId?: string | null }
+  | { kind: 'plugin'; pluginId: string; agentId?: string | null; sessionPath?: string | null }
+  | { kind: 'utility'; agentId?: string | null; sessionPath?: string | null }
+  | { kind: 'unknown' };
+
+export interface HanaUsageSource {
+  subsystem: 'session' | 'phone' | 'memory' | 'automation' | 'subagent' | 'compaction' | 'plugin' | 'utility' | 'vision' | 'unknown' | string;
+  operation: string;
+  surface: 'desktop' | 'mobile' | 'bridge' | 'channel' | 'dm' | 'cron' | 'heartbeat' | 'system' | 'plugin' | 'unknown' | string;
+  trigger: 'user' | 'manual' | 'threshold' | 'overflow' | 'daily' | 'scheduled' | 'startup' | 'tool' | 'unknown' | string;
+  actor?: {
+    kind: 'session' | 'phone_conversation' | 'automation' | 'plugin' | 'subagent' | 'unknown' | string;
+    agentId?: string | null;
+    sessionPath?: string | null;
+    taskId?: string | null;
+    [key: string]: unknown;
+  };
+  parent?: {
+    kind: 'session' | 'phone_conversation' | 'automation' | 'plugin' | 'unknown' | string;
+    sessionPath?: string;
+    conversationId?: string;
+    conversationType?: 'channel' | 'dm';
+    taskId?: string;
+    pluginId?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface HanaUsageLedgerEntry {
+  schemaVersion: 1;
+  requestId: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  status: 'ok' | 'error' | 'aborted' | 'usage_missing';
+  source: HanaUsageSource;
+  attribution: HanaUsageAttribution;
+  model: {
+    provider: string | null;
+    modelId: string | null;
+    api: string | null;
+  };
+  usage: HanaNormalizedUsage | null;
+  rawUsageShape: string | null;
+  error: {
+    name: string | null;
+    message: string | null;
+  } | null;
 }
 
 export interface HanaPluginLogger {

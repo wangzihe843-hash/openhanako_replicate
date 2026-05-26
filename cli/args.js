@@ -52,14 +52,14 @@ export function helpText() {
   return `Hana CLI
 
 Usage:
-  hana serve [-- server args]        Start a headless Hana Server
+  hana serve [-- server args]        Start a headless HanaAgent Server
   hana status                       Show local server and agent status
   hana sessions                     List recent sessions
   hana continue [index|path]        Continue a recent session
   hana chat [--plain]               Open chat
 
 Connection options:
-  --url <baseUrl>                   Connect to a specific Hana Server
+  --url <baseUrl>                   Connect to a specific HanaAgent Server
   --token <token>                   Bearer token for that server
   --session <path>                  Chat in a specific session
 `;

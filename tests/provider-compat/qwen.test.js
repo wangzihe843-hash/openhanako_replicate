@@ -93,6 +93,25 @@ describe("provider-compat/qwen — apply", () => {
     expect(result).toBe(payload);
   });
 
+  it("chat mode + thinking off → 显式发送 enable_thinking: false", () => {
+    const payload = {
+      model: "qwen3.5-plus",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const result = qwen.apply(payload, qwenModel, { mode: "chat", reasoningLevel: "off" });
+    expect(result.enable_thinking).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(payload, "enable_thinking")).toBe(false);
+  });
+
+  it("chat mode + qwen reasoning=false default → 显式发送 enable_thinking: false", () => {
+    const payload = {
+      model: "qwen3.5-plus",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const result = qwen.apply(payload, { ...qwenModel, reasoning: false }, { mode: "chat", reasoningLevel: "auto" });
+    expect(result.enable_thinking).toBe(false);
+  });
+
   it("默认 mode（不传 options）当 chat 处理", () => {
     const payload = {
       model: "qwen3.5-plus",

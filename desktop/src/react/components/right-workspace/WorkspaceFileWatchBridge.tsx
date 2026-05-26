@@ -5,8 +5,9 @@ import type { WorkspaceChangePayload } from '../../types';
 
 function normalizeDirectoryPath(value: string): string {
   const slashed = value.replace(/\\/g, '/');
-  if (/^[A-Za-z]:\/?$/.test(slashed)) return slashed.endsWith('/') ? slashed : `${slashed}/`;
-  return slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
+  const normalized = slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
+  const withDriveRootSlash = /^[A-Za-z]:$/.test(normalized) ? `${normalized}/` : normalized;
+  return /^[A-Za-z]:/.test(withDriveRootSlash) ? withDriveRootSlash.toLowerCase() : withDriveRootSlash;
 }
 
 function normalizeSubdir(value: string): string {

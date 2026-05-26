@@ -41,13 +41,13 @@ describe("desktop launch integrity helper", () => {
     const tmp = makeTempDir();
     const resourcesPath = path.join(tmp, "resources");
     const result = helper.checkWindowsInstallSurface({
-      execPath: path.join(tmp, "Hanako.exe"),
+      execPath: path.join(tmp, "HanaAgent.exe"),
       resourcesPath,
     });
 
     expect(result.ok).toBe(false);
     expect(result.missing.map(item => item.id)).toEqual([
-      "hanako-exe",
+      "app-exe",
       "app-asar",
       "app-update-yml",
       "server-exe",
@@ -57,7 +57,7 @@ describe("desktop launch integrity helper", () => {
       "portable-git",
     ]);
     expect(result.missing.map(item => item.relativePath)).toEqual([
-      "Hanako.exe",
+      "HanaAgent.exe",
       "resources/app.asar",
       "resources/app-update.yml",
       "resources/server/hana-server.exe",
@@ -74,7 +74,7 @@ describe("desktop launch integrity helper", () => {
 
     const tmp = makeTempDir();
     const resourcesPath = path.join(tmp, "resources");
-    writeFile(tmp, "Hanako.exe");
+    writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
     writeFile(resourcesPath, "server/hana-server.exe");
@@ -85,13 +85,13 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "git/usr/bin/bash.exe");
 
     const result = helper.checkWindowsInstallSurface({
-      execPath: path.join(tmp, "Hanako.exe"),
+      execPath: path.join(tmp, "HanaAgent.exe"),
       resourcesPath,
     });
 
     expect(result).toMatchObject({ ok: true, missing: [] });
     expect(result.checked.map(item => item.id)).toEqual([
-      "hanako-exe",
+      "app-exe",
       "app-asar",
       "app-update-yml",
       "server-exe",
@@ -108,7 +108,7 @@ describe("desktop launch integrity helper", () => {
 
     const tmp = makeTempDir();
     const resourcesPath = path.join(tmp, "resources");
-    writeFile(tmp, "Hanako.exe");
+    writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app/desktop/bootstrap.cjs");
     writeFile(resourcesPath, "app/package.json");
     writeFile(resourcesPath, "app-update.yml");
@@ -120,7 +120,7 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "git/usr/bin/bash.exe");
 
     const result = helper.checkWindowsInstallSurface({
-      execPath: path.join(tmp, "Hanako.exe"),
+      execPath: path.join(tmp, "HanaAgent.exe"),
       resourcesPath,
     });
 
@@ -144,7 +144,7 @@ describe("desktop launch integrity helper", () => {
     const tmp = makeTempDir();
     const diagnosticsDir = path.join(tmp, "diagnostics");
     const result = helper.checkWindowsInstallSurface({
-      execPath: path.join(tmp, "Hanako.exe"),
+      execPath: path.join(tmp, "HanaAgent.exe"),
       resourcesPath: path.join(tmp, "resources"),
     });
 
@@ -159,7 +159,7 @@ describe("desktop launch integrity helper", () => {
     const written = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(written.event).toBe("install-surface-check-failed");
     expect(written.payload.ok).toBe(false);
-    expect(written.payload.missing[0].id).toBe("hanako-exe");
+    expect(written.payload.missing[0].id).toBe("app-exe");
   });
 });
 

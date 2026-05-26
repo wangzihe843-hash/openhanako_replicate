@@ -60,8 +60,9 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionPath: currentSessionPath, modelId, provider }),
+          throwOnHttpError: false,
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'switch failed');
 
         if (data.model) {

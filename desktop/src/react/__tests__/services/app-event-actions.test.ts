@@ -13,6 +13,7 @@ const mockLoadModels = vi.fn(async () => {});
 const mockActivateWorkspaceDesk = vi.fn(async () => {});
 const mockLoadChannels = vi.fn(async () => {});
 const mockApplyEditorTypography = vi.fn();
+const mockRefreshPreviewItemsFromFile = vi.fn(async () => {});
 
 vi.mock('../../stores', () => ({
   useStore: {
@@ -54,6 +55,10 @@ vi.mock('../../editor/typography', () => ({
   applyEditorTypography: mockApplyEditorTypography,
 }));
 
+vi.mock('../../utils/preview-file-refresh', () => ({
+  refreshPreviewItemsFromFile: mockRefreshPreviewItemsFromFile,
+}));
+
 function jsonResponse(body: unknown): Response {
   return { json: async () => body } as unknown as Response;
 }
@@ -75,6 +80,7 @@ describe('handleAppEvent', () => {
     mockActivateWorkspaceDesk.mockReset();
     mockLoadChannels.mockReset();
     mockApplyEditorTypography.mockReset();
+    mockRefreshPreviewItemsFromFile.mockReset();
     vi.resetModules();
 
     (globalThis as Record<string, unknown>).window = {
@@ -158,6 +164,19 @@ describe('handleAppEvent', () => {
 
     expect(mockLoadModels).toHaveBeenCalledTimes(1);
     expect(requestContextUsage).toHaveBeenCalledWith('/session/a.jsonl');
+  });
+
+  it('skills-changed increments the skill catalog revision and emits a browser event', async () => {
+    Object.assign(mockState, { skillCatalogVersion: 2 });
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('skills-changed', { agentId: 'agent-a' });
+
+    expect(mockState.skillCatalogVersion).toBe(3);
+    expect((globalThis as any).window.dispatchEvent).toHaveBeenCalledTimes(1);
+    const event = ((globalThis as any).window.dispatchEvent as any).mock.calls[0][0] as CustomEvent;
+    expect(event.type).toBe('hana-skills-changed');
+    expect(event.detail).toEqual({ agentId: 'agent-a' });
   });
 
   it('agent-updated for a non-current agent refreshes the agent list without applying identity', async () => {
@@ -318,5 +337,13 @@ describe('handleAppEvent', () => {
     expect(mockState.selectedFolder).toBe('/new-home');
     expect(mockState.cwdHistory).toEqual(['/old-home']);
     expect(mockActivateWorkspaceDesk).not.toHaveBeenCalled();
+  });
+
+  it('refreshes open preview items when a markdown cover is updated by a tool', async () => {
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('markdown-cover-updated', { filePath: '/notes/demo.md' });
+
+    expect(mockRefreshPreviewItemsFromFile).toHaveBeenCalledWith('/notes/demo.md');
   });
 });

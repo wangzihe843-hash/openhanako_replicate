@@ -13,7 +13,7 @@ interface MediaProvider {
   displayName?: string;
   hasCredentials: boolean;
   unavailableReason?: string | null;
-  models: { id: string; name: string }[];
+  models: { id: string; name: string; protocolId?: string }[];
   availableModels: { id: string; name: string }[];
 }
 

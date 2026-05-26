@@ -20,6 +20,13 @@ function createMockPi() {
     on: vi.fn((event, handler) => {
       handlers[event] = handler;
     }),
+    getThinkingLevel: vi.fn(() => "off"),
+    getActiveTools: vi.fn(() => ["read"]),
+    getAllTools: vi.fn(() => [{
+      name: "read",
+      description: "Read files",
+      parameters: { type: "object", properties: {} },
+    }]),
     trigger(event, ...args) {
       return handlers[event]?.(...args);
     },
@@ -31,14 +38,23 @@ function createMockPi() {
 
 describe("CompactionGuardExtension", () => {
   let pi;
+  let cacheCompactor;
 
   beforeEach(() => {
     vi.clearAllMocks();
     pi = createMockPi();
-    createCompactionGuardExtension()(pi);
+    cacheCompactor = vi.fn(async ({ preparation }) => ({
+      summary: "cache summary",
+      firstKeptEntryId: preparation.firstKeptEntryId || "uuid-42",
+      tokensBefore: preparation.tokensBefore ?? 90_000,
+      details: { readFiles: [], modifiedFiles: [] },
+    }));
+    createCompactionGuardExtension({ cacheCompactor })(pi);
   });
 
-  it("registers tool_result and session_before_compact handlers", () => {
+  it("registers context, message_end, tool_result and session_before_compact handlers", () => {
+    expect(pi.on).toHaveBeenCalledWith("context", expect.any(Function));
+    expect(pi.on).toHaveBeenCalledWith("message_end", expect.any(Function));
     expect(pi.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
     expect(pi.on).toHaveBeenCalledWith("session_before_compact", expect.any(Function));
   });
@@ -130,21 +146,132 @@ describe("CompactionGuardExtension", () => {
   });
 
   describe("L3: session_before_compact preemptive hard truncate", () => {
-    const model = { contextWindow: 128_000 };
+    const model = { id: "m", provider: "p", contextWindow: 128_000 };
     const preparation = {
+      firstKeptEntryId: "uuid-42",
       messagesToSummarize: [{ role: "user", content: "..." }],
+      tokensBefore: 90_000,
       settings: { keepRecentTokens: 20_000 },
     };
+    const ctx = {
+      model,
+      modelRegistry: {
+        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "key", headers: { "x-test": "1" } })),
+      },
+      getSystemPrompt: vi.fn(() => "system prompt"),
+      sessionManager: {
+        getBranch: () => [],
+        buildSessionContext: () => ({
+          thinkingLevel: "off",
+          messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+        }),
+      },
+    };
 
-    it("returns undefined when summarize tokens within threshold (let pi SDK LLM summarize)", async () => {
+    it("returns cache-preserving compaction when summarize tokens are within threshold", async () => {
       estimatePreparationTokens.mockReturnValue(50_000); // < 128K * 0.85 = 108,800
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model, sessionManager: { getBranch: () => [] } },
+        ctx,
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({
+        compaction: {
+          summary: "cache summary",
+          firstKeptEntryId: "uuid-42",
+          tokensBefore: 90_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        },
+      });
+      expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
+        preparation,
+        model,
+        systemPrompt: "system prompt",
+        customInstructions: undefined,
+        thinkingLevel: "off",
+      }));
+      expect(cacheCompactor.mock.calls[0][0].tools).toBeUndefined();
       expect(computeHardTruncation).not.toHaveBeenCalled();
+    });
+
+    it("uses the latest transformed context plus final assistant message", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      await pi.trigger("context", {
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+      });
+      await pi.trigger("message_end", {
+        message: { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 2 },
+      });
+
+      await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        ctx,
+      );
+
+      expect(cacheCompactor.mock.calls[0][0].messages).toHaveLength(2);
+      expect(cacheCompactor.mock.calls[0][0].messages[1]).toMatchObject({ role: "assistant" });
+    });
+
+    it("does not read stale session-bound pi helpers during compaction", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      pi.getThinkingLevel.mockImplementation(() => {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      });
+
+      const res = await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        ctx,
+      );
+
+      expect(res).toMatchObject({ compaction: expect.any(Object) });
+      expect(pi.getThinkingLevel).not.toHaveBeenCalled();
+      expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
+        thinkingLevel: "off",
+      }));
+    });
+
+    it("returns hard truncation when the full cache-preserving request would exceed the budget", async () => {
+      estimatePreparationTokens.mockReturnValue(100); // old Pi summarizer estimate fits
+      computeHardTruncation.mockReturnValue({
+        summary: "[hard truncated for full request]",
+        firstKeptEntryId: "uuid-42",
+        tokensBefore: 90_000,
+        details: { reason: "compaction-guard-hard-truncate" },
+      });
+      const branch = [{ type: "message", id: "a" }, { type: "message", id: "b" }];
+      const tinyModel = { ...model, contextWindow: 1000 };
+      const res = await pi.trigger(
+        "session_before_compact",
+        { preparation: { ...preparation, settings: { keepRecentTokens: 100, reserveTokens: 512 } }, signal: { aborted: false } },
+        {
+          ...ctx,
+          model: tinyModel,
+          getSystemPrompt: vi.fn(() => "system " + "x".repeat(1000)),
+          sessionManager: {
+            ...ctx.sessionManager,
+            getBranch: () => branch,
+            buildSessionContext: () => ({
+              thinkingLevel: "off",
+              messages: [{ role: "user", content: [{ type: "text", text: "x".repeat(6000) }], timestamp: 1 }],
+            }),
+          },
+        },
+      );
+
+      expect(res).toEqual({
+        compaction: {
+          summary: "[hard truncated for full request]",
+          firstKeptEntryId: "uuid-42",
+          tokensBefore: 90_000,
+          details: { reason: "compaction-guard-hard-truncate" },
+        },
+      });
+      expect(computeHardTruncation).toHaveBeenCalledWith(branch, 100, expect.objectContaining({
+        reason: "compaction-guard-hard-truncate",
+      }));
+      expect(cacheCompactor).not.toHaveBeenCalled();
     });
 
     it("returns hard truncation when summarize tokens exceed threshold", async () => {
@@ -159,7 +286,7 @@ describe("CompactionGuardExtension", () => {
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model, sessionManager: { getBranch: () => branch } },
+        { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => branch } },
       );
       expect(res).toEqual({
         compaction: {
@@ -172,65 +299,66 @@ describe("CompactionGuardExtension", () => {
       expect(computeHardTruncation).toHaveBeenCalledWith(branch, 20_000, expect.objectContaining({
         reason: "compaction-guard-hard-truncate",
       }));
+      expect(cacheCompactor).not.toHaveBeenCalled();
     });
 
-    it("returns undefined when hard truncate itself fails (let pi SDK try its own path)", async () => {
+    it("cancels when hard truncate itself fails", async () => {
       estimatePreparationTokens.mockReturnValue(120_000);
       computeHardTruncation.mockReturnValue(null); // 无法截断
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model, sessionManager: { getBranch: () => [] } },
+        ctx,
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({ cancel: true });
     });
 
-    it("returns undefined when signal already aborted", async () => {
+    it("cancels when signal already aborted", async () => {
       estimatePreparationTokens.mockReturnValue(120_000);
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: true } },
-        { model, sessionManager: { getBranch: () => [] } },
+        ctx,
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({ cancel: true });
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
-    it("returns undefined when model is missing", async () => {
+    it("cancels when model is missing", async () => {
       estimatePreparationTokens.mockReturnValue(120_000);
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model: undefined, sessionManager: { getBranch: () => [] } },
+        { ...ctx, model: undefined },
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({ cancel: true });
     });
 
-    it("returns undefined when contextWindow is 0", async () => {
+    it("cancels when contextWindow is 0", async () => {
       estimatePreparationTokens.mockReturnValue(120_000);
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model: { contextWindow: 0 }, sessionManager: { getBranch: () => [] } },
+        { ...ctx, model: { ...model, contextWindow: 0 } },
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({ cancel: true });
     });
 
-    it("swallows hook exceptions and returns undefined", async () => {
+    it("swallows hook exceptions and cancels", async () => {
       estimatePreparationTokens.mockImplementation(() => {
         throw new Error("boom");
       });
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model, sessionManager: { getBranch: () => [] } },
+        ctx,
       );
-      expect(res).toBeUndefined();
+      expect(res).toEqual({ cancel: true });
     });
 
     it("honors custom hardTruncateThreshold option", async () => {
       pi = createMockPi();
-      createCompactionGuardExtension({ hardTruncateThreshold: 0.5 })(pi);
+      createCompactionGuardExtension({ hardTruncateThreshold: 0.5, cacheCompactor })(pi);
       // 50% * 128K = 64K
       estimatePreparationTokens.mockReturnValue(70_000); // > 64K 应触发
       computeHardTruncation.mockReturnValue({
@@ -239,7 +367,7 @@ describe("CompactionGuardExtension", () => {
       const res = await pi.trigger(
         "session_before_compact",
         { preparation, signal: { aborted: false } },
-        { model, sessionManager: { getBranch: () => [] } },
+        ctx,
       );
       expect(res).toMatchObject({ compaction: expect.any(Object) });
     });

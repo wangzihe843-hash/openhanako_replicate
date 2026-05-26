@@ -188,6 +188,84 @@ describe("sessions route", () => {
     expect(data[0].pinnedAt).toBe(pinnedAt);
   });
 
+  it("searches sessions without exposing the cached full transcript", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const sessions = [
+      {
+        path: "/tmp/agents/hana/sessions/title.jsonl",
+        title: "聊天记录搜索",
+        firstMessage: "hello",
+        modified: new Date("2026-05-22T07:00:00.000Z"),
+        messageCount: 2,
+        cwd: "/tmp/work",
+        agentId: "hana",
+        agentName: "Hana",
+        allMessagesText: "标题命中时不需要扫正文。",
+      },
+      {
+        path: "/tmp/agents/hana/sessions/content.jsonl",
+        title: "无关主题",
+        firstMessage: "hello",
+        modified: new Date("2026-05-22T08:00:00.000Z"),
+        messageCount: 4,
+        cwd: "/tmp/work",
+        agentId: "hana",
+        agentName: "Hana",
+        allMessagesText: "这里记录了和其他 Agent 的聊天记录排查。",
+      },
+    ];
+
+    app.route("/api", createSessionsRoute({
+      listSessions: vi.fn(async () => sessions),
+      rcState: null,
+    }));
+
+    const titleRes = await app.request("/api/sessions/search?q=%E8%81%8A%E5%A4%A9%E8%AE%B0%E5%BD%95&phase=title");
+    const titleData = await titleRes.json();
+    expect(titleRes.status).toBe(200);
+    expect(titleData.results).toEqual([
+      expect.objectContaining({
+        path: "/tmp/agents/hana/sessions/title.jsonl",
+        matchKind: "title",
+      }),
+    ]);
+
+    const contentRes = await app.request("/api/sessions/search?q=%E8%81%8A%E5%A4%A9%E8%AE%B0%E5%BD%95&phase=content");
+    const contentData = await contentRes.json();
+    expect(contentRes.status).toBe(200);
+    expect(contentData.results).toEqual([
+      expect.objectContaining({
+        path: "/tmp/agents/hana/sessions/content.jsonl",
+        matchKind: "content",
+        snippet: expect.stringContaining("聊天记录"),
+      }),
+    ]);
+    expect(contentData.results[0]).not.toHaveProperty("allMessagesText");
+  });
+
+  it("rejects overly long session search queries before scanning session text", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const listSessions = vi.fn(async () => {
+      throw new Error("should not scan sessions for invalid query");
+    });
+
+    app.route("/api", createSessionsRoute({
+      listSessions,
+      rcState: null,
+    }));
+
+    const res = await app.request(`/api/sessions/search?q=${encodeURIComponent("记".repeat(513))}`);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "query_too_long",
+      maxLength: 512,
+    });
+    expect(listSessions).not.toHaveBeenCalled();
+  });
+
   it("projects the same default Studio sessions to a paired device principal", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const app = new Hono();
@@ -242,6 +320,38 @@ describe("sessions route", () => {
       title: session.title,
       messageCount: 2,
     })]);
+  });
+
+  it("includes each session's permission mode in the session list projection", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const session = {
+      path: "/tmp/agents/hana/sessions/a.jsonl",
+      title: "Read only chat",
+      firstMessage: "",
+      modified: new Date("2026-05-16T08:00:00.000Z"),
+      messageCount: 1,
+      cwd: "/tmp/work",
+      agentId: "hana",
+      agentName: "Hana",
+    };
+    const getSessionPermissionMode = vi.fn(() => "read_only");
+
+    app.route("/api", createSessionsRoute({
+      listSessions: vi.fn(async () => [session]),
+      getSessionPermissionMode,
+      rcState: null,
+    }));
+
+    const res = await app.request("/api/sessions");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data[0]).toMatchObject({
+      path: session.path,
+      permissionMode: "read_only",
+    });
+    expect(getSessionPermissionMode).toHaveBeenCalledWith(session.path);
   });
 
   it("rejects session projection when the authenticated Studio differs from the server Studio", async () => {
@@ -652,6 +762,42 @@ describe("sessions route", () => {
     ]);
   });
 
+  it("hydrates only the requested display window for long session history", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+    const sourceMessages = Array.from({ length: 120 }, (_, i) => ({
+      role: "assistant",
+      content: `message ${i}`,
+    }));
+
+    vi.mocked(msgUtils.extractTextContent).mockClear();
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce(sourceMessages);
+    vi.mocked(msgUtils.extractTextContent).mockImplementation((content) => ({
+      text: String(content),
+      images: [],
+      thinking: "",
+      toolUses: [],
+    }));
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hana/sessions/long.jsonl",
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages?limit=20");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.messages).toHaveLength(20);
+    expect(data.messages[0]).toMatchObject({ id: "100", content: "message 100" });
+    expect(data.messages[19]).toMatchObject({ id: "119", content: "message 119" });
+    expect(msgUtils.extractTextContent).toHaveBeenCalledTimes(20);
+  });
+
   it("does not return path-backed inline image base64 in session history", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const msgUtils = await import("../core/message-utils.js");
@@ -945,6 +1091,78 @@ describe("sessions route", () => {
         role: "custom",
         customType: "hana-background-result",
         content: `<hana-background-result task-id="task-img" status="success" type="image-generation">\n${resultBody}\n</hana-background-result>`,
+        display: false,
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks).toEqual([{
+      type: "file",
+      afterIndex: 0,
+      replacesTaskId: "task-img",
+      fileId: "sf_img",
+      filePath: "/cache/generated.png",
+      label: "generated.png",
+      ext: "png",
+      mime: "image/png",
+      kind: "image",
+      storageKind: "plugin_data",
+      status: "available",
+    }]);
+  });
+
+  it("restores completed image generation from a non-context deferred result record", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/image-gen-ledger.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "submitted image", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "submitted image" },
+      {
+        role: "toolResult",
+        toolName: "image-gen_generate-image",
+        details: {
+          mediaGeneration: {
+            kind: "image",
+            tasks: [{ taskId: "task-img" }],
+          },
+        },
+      },
+      {
+        role: "custom",
+        customType: "hana-deferred-result",
+        data: {
+          schemaVersion: 1,
+          taskId: "task-img",
+          status: "success",
+          type: "image-generation",
+          result: {
+            sessionFiles: [{
+              fileId: "sf_img",
+              filePath: "/cache/generated.png",
+              label: "generated.png",
+              ext: "png",
+              mime: "image/png",
+              kind: "image",
+              storageKind: "plugin_data",
+              status: "available",
+            }],
+          },
+        },
         display: false,
       },
     ]);

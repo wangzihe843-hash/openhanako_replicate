@@ -29,6 +29,34 @@ function normalizeSubdir(value: string): string {
   return (value || '').replace(/^\/+|\/+$/g, '');
 }
 
+function isWindowsWorkspacePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function normalizeSubdirCompareKey(basePath: string, value: string): string {
+  const normalized = normalizeSubdir(value).replace(/\\/g, '/');
+  return isWindowsWorkspacePath(basePath) ? normalized.toLowerCase() : normalized;
+}
+
+function visibleDirtyTreeReloads(basePath: string, dirtyPaths: string[], expandedPaths: string[]): {
+  reloadSubdirs: string[];
+  clearSubdirs: string[];
+} {
+  const visibleByKey = new Map<string, string>();
+  for (const subdir of ['', ...expandedPaths]) {
+    visibleByKey.set(normalizeSubdirCompareKey(basePath, subdir), subdir);
+  }
+  const reloadSubdirs: string[] = [];
+  const clearSubdirs: string[] = [];
+  for (const dirtySubdir of dirtyPaths) {
+    const visibleSubdir = visibleByKey.get(normalizeSubdirCompareKey(basePath, dirtySubdir));
+    if (visibleSubdir === undefined) continue;
+    reloadSubdirs.push(visibleSubdir);
+    clearSubdirs.push(dirtySubdir);
+  }
+  return { reloadSubdirs, clearSubdirs };
+}
+
 function uniqueDraftName(baseName: string, files: Array<{ name: string }>): string {
   const existing = new Set(files.map(file => file.name));
   if (!existing.has(baseName)) return baseName;
@@ -80,10 +108,9 @@ export function DeskSection({
 
   useEffect(() => {
     if (!deskBasePath || deskDirtyTreePaths.length === 0) return;
-    const visibleTreeKeys = new Set(['', ...deskExpandedPaths]);
-    const reloadSubdirs = deskDirtyTreePaths.filter(subdir => visibleTreeKeys.has(subdir));
+    const { reloadSubdirs, clearSubdirs } = visibleDirtyTreeReloads(deskBasePath, deskDirtyTreePaths, deskExpandedPaths);
     if (reloadSubdirs.length === 0) return;
-    clearDeskTreeDirty(reloadSubdirs);
+    clearDeskTreeDirty(clearSubdirs);
     for (const subdir of reloadSubdirs) {
       void loadDeskTreeFiles(subdir, { force: true });
     }

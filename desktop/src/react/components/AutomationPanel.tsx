@@ -15,6 +15,14 @@ interface CronJob {
   schedule: string | number;
   model?: string | ModelRef;
   actorAgentId?: string;
+  executor?: {
+    kind?: string;
+    action?: string;
+    agentId?: string | null;
+    pluginId?: string;
+    actionId?: string;
+    params?: Record<string, unknown>;
+  };
 }
 
 interface ModelRef {
@@ -166,6 +174,16 @@ function parseCronJobModel(model?: CronJob['model']): { id: string; provider?: s
   return { id: value };
 }
 
+function automationExecutorLabel(job: CronJob): string {
+  const t = window.t ?? ((p: string) => p);
+  if (job.executor?.kind === 'direct_action') {
+    if (job.executor.action === 'notify') return t('automation.executor.notify');
+    return t('automation.executor.directAction');
+  }
+  if (job.executor?.kind === 'plugin_action') return t('automation.executor.pluginAction');
+  return t('automation.executor.agentSession');
+}
+
 function AutomationItem({
   job,
   availableModels,
@@ -198,6 +216,8 @@ function AutomationItem({
   const modelPanelRef = useRef<HTMLDivElement>(null);
 
   const labelText = job.label || job.prompt?.slice(0, 40) || job.id;
+  const isAgentSession = !job.executor || job.executor.kind === 'agent_session';
+  const executorLabel = automationExecutorLabel(job);
 
   const startEdit = useCallback(() => {
     setEditValue(labelText);
@@ -228,7 +248,7 @@ function AutomationItem({
   });
 
   // 构建模型选项
-  const jobModelRef = parseCronJobModel(job.model);
+  const jobModelRef = isAgentSession ? parseCronJobModel(job.model) : null;
   const jobModelId = jobModelRef?.id || '';
   const modelOptions = useMemo(() => {
     const opts: ModelOption[] = [];
@@ -308,9 +328,10 @@ function AutomationItem({
               className={fp.autoItemExecutorAvatar}
             />
             <span className={fp.autoItemExecutorName}>{displayInfo.displayName}</span>
+            <span className={fp.autoItemExecutorBadge}>{executorLabel}</span>
           </div>
           <span className={fp.autoItemSchedule}>{cronToHuman(job.schedule)}</span>
-          {availableModels.length > 0 && (
+          {isAgentSession && availableModels.length > 0 && (
             <span className={`${fp.autoItemModelWrap}${modelOpen ? ` ${fp.autoModelOpen}` : ''}`}>
               <button
                 ref={modelTriggerRef}

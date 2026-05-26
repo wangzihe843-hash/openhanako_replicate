@@ -64,6 +64,28 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<code class="language-mermaid"');
   });
 
+  it('trims CJK punctuation from auto-linkified URLs', () => {
+    const html = renderMarkdown('看 https://example.com/path。再看 https://example.com/next，');
+
+    expect(html).toContain('<a href="https://example.com/path">https://example.com/path</a>。');
+    expect(html).toContain('<a href="https://example.com/next">https://example.com/next</a>，');
+    expect(html).not.toContain('%E3%80%82');
+    expect(html).not.toContain('%EF%BC%8C');
+  });
+
+  it('trims invisible suffix characters from auto-linkified URLs', () => {
+    const html = renderMarkdown('看 https://example.com/path\u200b');
+
+    expect(html).toContain('<a href="https://example.com/path">https://example.com/path</a>\u200b');
+    expect(html).not.toContain('%E2%80%8B');
+  });
+
+  it('keeps punctuation inside explicit markdown link destinations', () => {
+    const html = renderMarkdown('[链接](https://example.com/path。)');
+
+    expect(html).toContain('<a href="https://example.com/path%E3%80%82">链接</a>');
+  });
+
   it('renders filtered HTML in markdown preview mode', () => {
     const html = renderMarkdownPreview([
       '<div style="background: #f0f7ff; border: 1px solid #bee1e6; border-radius: 8px; padding: 16px; margin: 12px 0;">',

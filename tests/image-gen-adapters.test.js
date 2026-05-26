@@ -234,6 +234,46 @@ describe("openai adapter", () => {
     expect(typeof result.taskId).toBe("string");
   });
 
+  it("uses official OpenAI image default model when no model is provided", async () => {
+    const { openaiImageAdapter } = await import("../plugins/image-gen/adapters/openai.js");
+
+    const fakeB64 = Buffer.from("img").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    const ctx = makeBusCtx("key", "https://api.openai.com/v1", "openai");
+    await openaiImageAdapter.submit({ prompt: "test" }, ctx);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.model).toBe("gpt-image-1.5");
+  });
+
+  it("uses JSON images references for OpenAI URL edits", async () => {
+    const { openaiImageAdapter } = await import("../plugins/image-gen/adapters/openai.js");
+
+    const fakeB64 = Buffer.from("edited").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    const ctx = makeBusCtx("key", "https://api.openai.com/v1", "openai");
+    await openaiImageAdapter.submit({
+      prompt: "make it warmer",
+      model: "gpt-image-1.5",
+      image: "https://example.com/input.png",
+    }, ctx);
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/images/edits");
+    expect(opts.headers["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(opts.body);
+    expect(body).not.toHaveProperty("image");
+    expect(body.images).toEqual([{ image_url: "https://example.com/input.png" }]);
+  });
+
   it("applies providerDefaults (background)", async () => {
     const { openaiImageAdapter } = await import("../plugins/image-gen/adapters/openai.js");
 
@@ -412,5 +452,237 @@ describe("openai codex oauth adapter", () => {
     await expect(openaiCodexImageAdapter.submit({
       prompt: "test",
     }, ctx)).rejects.toThrow(/account/i);
+  });
+});
+
+describe("minimax adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("calls MiniMax image_generation and saves base64 images", async () => {
+    const { minimaxImageAdapter } = await import("../plugins/image-gen/adapters/minimax.js");
+
+    const fakeB64 = Buffer.from("minimax-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: { image_base64: [fakeB64] },
+        base_resp: { status_code: 0, status_msg: "success" },
+      }),
+    });
+
+    const ctx = makeBusCtx("minimax-key", "https://api.minimaxi.com/anthropic", "minimax");
+    const result = await minimaxImageAdapter.submit({
+      prompt: "a glass teapot",
+      modelId: "image-01",
+      ratio: "16:9",
+      providerId: "minimax",
+    }, ctx);
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.minimaxi.com/v1/image_generation");
+    expect(opts.headers.Authorization).toBe("Bearer minimax-key");
+    const body = JSON.parse(opts.body);
+    expect(body).toMatchObject({
+      model: "image-01",
+      prompt: "a glass teapot",
+      aspect_ratio: "16:9",
+      response_format: "base64",
+    });
+    expect(result.files).toHaveLength(1);
+  });
+});
+
+describe("gemini image adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("calls Gemini generateContent and saves inlineData images", async () => {
+    const { geminiImageAdapter } = await import("../plugins/image-gen/adapters/gemini.js");
+
+    const fakeB64 = Buffer.from("gemini-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{ inlineData: { mimeType: "image/png", data: fakeB64 } }],
+          },
+        }],
+      }),
+    });
+
+    const ctx = makeBusCtx("gemini-key", "https://generativelanguage.googleapis.com/v1beta", "gemini");
+    const result = await geminiImageAdapter.submit({
+      prompt: "a quiet library",
+      modelId: "gemini-3.1-flash-image-preview",
+      ratio: "4:3",
+      size: "2K",
+      providerId: "gemini",
+    }, ctx);
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent");
+    expect(opts.headers["x-goog-api-key"]).toBe("gemini-key");
+    const body = JSON.parse(opts.body);
+    expect(body.contents[0].parts[0].text).toBe("a quiet library");
+    expect(body.generationConfig.responseFormat.image).toEqual({
+      aspectRatio: "4:3",
+      imageSize: "2K",
+    });
+    expect(result.files).toHaveLength(1);
+  });
+
+  it("downloads ordinary image URLs and sends Gemini reference images as inline data", async () => {
+    const { geminiImageAdapter } = await import("../plugins/image-gen/adapters/gemini.js");
+
+    const fakeB64 = Buffer.from("gemini-image").toString("base64");
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => "image/png" },
+        arrayBuffer: async () => Buffer.from("input-image"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [{ inlineData: { mimeType: "image/png", data: fakeB64 } }],
+            },
+          }],
+        }),
+      });
+
+    const ctx = makeBusCtx("gemini-key", "https://generativelanguage.googleapis.com/v1beta", "gemini");
+    await geminiImageAdapter.submit({
+      prompt: "use this pose",
+      modelId: "gemini-3.1-flash-image-preview",
+      image: "https://example.com/ref.png",
+      providerId: "gemini",
+    }, ctx);
+
+    expect(mockFetch.mock.calls[0][0]).toBe("https://example.com/ref.png");
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(body.contents[0].parts[1]).toEqual({
+      inline_data: {
+        mime_type: "image/png",
+        data: Buffer.from("input-image").toString("base64"),
+      },
+    });
+  });
+});
+
+describe("dashscope image adapter", () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it("submits async Wan image tasks and queries result URLs", async () => {
+    const { dashscopeImageAdapter } = await import("../plugins/image-gen/adapters/dashscope.js");
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: { task_id: "dash-task-1", task_status: "PENDING" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: {
+            task_status: "SUCCEEDED",
+            choices: [{
+              message: { content: [{ image: "https://dashscope-result.example/image.png" }] },
+            }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => "image/png" },
+        arrayBuffer: async () => Buffer.from("dashscope-image"),
+      });
+
+    const ctx = makeBusCtx("dash-key", "https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope");
+    const submitted = await dashscopeImageAdapter.submit({
+      prompt: "a flower shop",
+      modelId: "wan2.7-image-pro",
+      size: "2K",
+      providerId: "dashscope",
+    }, ctx);
+
+    expect(submitted).toEqual({ taskId: "dash-task-1" });
+    expect(mockFetch.mock.calls[0][0]).toBe("https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation");
+    expect(mockFetch.mock.calls[0][1].headers["X-DashScope-Async"]).toBe("enable");
+
+    const queried = await dashscopeImageAdapter.query("dash-task-1", ctx);
+    expect(mockFetch.mock.calls[1][0]).toBe("https://dashscope.aliyuncs.com/api/v1/tasks/dash-task-1");
+    expect(queried.status).toBe("done");
+    expect(queried.files).toHaveLength(1);
+  });
+
+  it("submits Qwen 2 image models through the DashScope multimodal endpoint", async () => {
+    const { dashscopeImageAdapter } = await import("../plugins/image-gen/adapters/dashscope.js");
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: {
+            choices: [{
+              message: { content: [{ image: "https://dashscope-result.example/qwen.png" }] },
+            }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => "image/png" },
+        arrayBuffer: async () => Buffer.from("qwen-image"),
+      });
+
+    const ctx = makeBusCtx("dash-key", "https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope");
+    const submitted = await dashscopeImageAdapter.submit({
+      prompt: "a bilingual poster",
+      modelId: "qwen-image-2.0-pro",
+      size: "2048*2048",
+      providerId: "dashscope",
+    }, ctx);
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+    expect(opts.headers).not.toHaveProperty("X-DashScope-Async");
+    const body = JSON.parse(opts.body);
+    expect(body.model).toBe("qwen-image-2.0-pro");
+    expect(body.input.messages[0].content).toEqual([{ text: "a bilingual poster" }]);
+    expect(submitted.files).toHaveLength(1);
+  });
+
+  it("submits Qwen async text-to-image models with input.prompt", async () => {
+    const { dashscopeImageAdapter } = await import("../plugins/image-gen/adapters/dashscope.js");
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output: { task_id: "qwen-task-1", task_status: "PENDING" },
+      }),
+    });
+
+    const ctx = makeBusCtx("dash-key", "https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope");
+    const submitted = await dashscopeImageAdapter.submit({
+      prompt: "a product poster",
+      modelId: "qwen-image-plus",
+      size: "1664*928",
+      providerId: "dashscope",
+    }, ctx);
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis");
+    expect(opts.headers["X-DashScope-Async"]).toBe("enable");
+    const body = JSON.parse(opts.body);
+    expect(body).toMatchObject({
+      model: "qwen-image-plus",
+      input: { prompt: "a product poster" },
+      parameters: { size: "1664*928", n: 1 },
+    });
+    expect(submitted).toEqual({ taskId: "qwen-task-1" });
   });
 });

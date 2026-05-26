@@ -6,10 +6,28 @@
  * contract available through normalizeProviderPayload.
  */
 
+import { modelSupportsAnthropicMaxEffort } from "../session-thinking-level.js";
+
 const CACHE_CONTROL = { type: "ephemeral" };
+const MAX_EFFORT_MIN_OUTPUT_TOKENS = 64000;
 
 function lower(value) {
   return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function positiveInteger(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function getModelOutputLimit(model) {
+  return positiveInteger(model?.maxTokens || model?.maxOutput);
+}
+
+function isImplicitAnthropicOutputCap(value, model) {
+  const modelLimit = getModelOutputLimit(model);
+  if (!modelLimit) return false;
+  return positiveInteger(value) === Math.floor(modelLimit / 3);
 }
 
 function hasCacheControl(block) {
@@ -128,7 +146,44 @@ export function matches(model) {
   return model.compat?.cacheControlFormat === "anthropic";
 }
 
-export function apply(payload) {
+function shouldUseAnthropicMaxEffort(model, options) {
+  return options?.reasoningLevel === "xhigh" && modelSupportsAnthropicMaxEffort(model);
+}
+
+function withMaxEffort(payload) {
+  const next = { ...payload };
+  const thinking = payload.thinking && typeof payload.thinking === "object"
+    ? payload.thinking
+    : {};
+  if (thinking.type !== "adaptive") {
+    next.thinking = {
+      type: "adaptive",
+      display: thinking.display || "summarized",
+    };
+  }
+  next.output_config = { ...(payload.output_config || {}), effort: "max" };
+  return next;
+}
+
+function withMaxEffortOutputBudget(payload, model, options) {
+  const current = positiveInteger(payload.max_tokens);
+  const modelLimit = getModelOutputLimit(model);
+  if (!current || !modelLimit) return payload;
+  if (!isImplicitAnthropicOutputCap(current, model)) return payload;
+  const source = lower(options?.outputBudgetSource || options?.maxTokensSource);
+  if (source === "user" || source === "system") return payload;
+
+  const target = Math.min(modelLimit, MAX_EFFORT_MIN_OUTPUT_TOKENS);
+  if (current >= target) return payload;
+  return { ...payload, max_tokens: target };
+}
+
+function normalizeMaxEffort(payload, model, options) {
+  if (!shouldUseAnthropicMaxEffort(model, options)) return payload;
+  return withMaxEffortOutputBudget(withMaxEffort(payload), model, options);
+}
+
+export function apply(payload, model, options = {}) {
   let result = payload;
 
   if (Object.prototype.hasOwnProperty.call(payload, "system")) {
@@ -138,6 +193,8 @@ export function apply(payload) {
 
   const messages = normalizeRecentUserMessages(result.messages);
   if (messages.changed) result = { ...result, messages: messages.value };
+
+  result = normalizeMaxEffort(result, model, options);
 
   return result;
 }

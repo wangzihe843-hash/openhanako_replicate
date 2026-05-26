@@ -1,9 +1,9 @@
 /**
- * Hanako Desktop — Electron 主进程
+ * HanaAgent Desktop — Electron 主进程
  *
  * 职责：
  * 1. 创建启动窗口（splash）
- * 2. spawn() 启动 Hanako Server
+ * 2. spawn() 启动 HanaAgent Server
  * 3. 等待 server 就绪 + 主窗口初始化完成
  * 4. 关闭 splash，显示主窗口
  * 5. 优雅关闭
@@ -74,6 +74,12 @@ const {
 const {
   sanitizeWindowState,
 } = require("./src/shared/window-state.cjs");
+const {
+  decorateScreenshotMarkdownIt,
+  escapeAttr,
+  renderScreenshotMarkdownArticle,
+  renderScreenshotCodeArticle,
+} = require("./src/shared/screenshot-markdown.cjs");
 
 const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json build.appId.
 
@@ -83,7 +89,7 @@ const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json bu
   const preloadPath = path.join(__dirname, "preload.bundle.cjs");
   if (!fs.existsSync(preloadPath)) {
     const msg = `Missing preload bundle:\n${preloadPath}\n\nBuild is incomplete. Run 'npm run build:preload' or rebuild the installer.`;
-    try { dialog.showErrorBox("Hanako failed to start", msg); } catch {}
+    try { dialog.showErrorBox("HanaAgent failed to start", msg); } catch {}
     console.error("[desktop] " + redactLogText(msg));
     process.exit(1);
   }
@@ -208,7 +214,7 @@ async function serverEnvironmentForNetworkProxy(baseEnv) {
 }
 
 // 按 HANA_HOME 隔离 Electron userData（localStorage / cache / session）
-// 生产: ~/Library/Application Support/Hanako
+// 生产: ~/Library/Application Support/Hanako（历史目录，随 HanaAgent 显示名保留）
 // 开发: ~/Library/Application Support/Hanako-dev
 const defaultHome = path.join(os.homedir(), ".hanako");
 configureClientSingleInstance(app, {
@@ -238,6 +244,7 @@ if (process.platform === "win32") {
     platform: process.platform,
     phase: "electron-starting",
     startupId: desktopStartupId,
+    policy: gpuStartupPolicy,
   });
 }
 
@@ -322,7 +329,8 @@ let serverPort = null;
 let serverToken = null;
 let isQuitting = false;  // 区分关窗口（hide）和真正退出（quit）
 let tray = null;
-let reusedServerPid = null; // 复用已有 server 时记录其 PID，退出时发 SIGTERM
+let reusedServerPid = null; // 复用已有 server 时记录其 PID，用 owner 字段决定是否关闭
+let reusedServerOwned = false; // 仅 desktop-owned 的复用 server 才由 desktop 退出时关闭
 let isExitingServer = false; // 只有托盘"退出"时才 kill server，其余路径仅关前端
 let _isUpdating = false;  // auto-updater 正在执行 quitAndInstall，before-quit 跳过 server 清理
 let _autoUpdaterInitialized = false;
@@ -711,6 +719,10 @@ async function verifyReusableServerInfo(existingInfo) {
   return { reusable: true, trusted: true, terminate: false, reason: "ok", health, identity };
 }
 
+function isDesktopOwnedServerInfo(info) {
+  return info?.ownerKind === "desktop";
+}
+
 async function startServer() {
   const serverInfoPath = path.join(hanakoHome, "server-info.json");
 
@@ -732,6 +744,7 @@ async function startServer() {
         serverPort = existingInfo.port;
         serverToken = existingInfo.token;
         reusedServerPid = existingInfo.pid;
+        reusedServerOwned = isDesktopOwnedServerInfo(existingInfo);
         return; // 跳过启动
       }
 
@@ -819,8 +832,15 @@ async function startServer() {
 async function _spawnServerOnce(serverInfoPath) {
   _serverLogs = [];
   _lastServerProgressAtMs = null;
+  reusedServerPid = null;
+  reusedServerOwned = false;
 
-  let serverEnv = { ...withHanaPiSdkEnv(process.env, hanakoHome), HANA_HOME: hanakoHome };
+  let serverEnv = {
+    ...withHanaPiSdkEnv(process.env, hanakoHome),
+    HANA_HOME: hanakoHome,
+    HANA_SERVER_OWNER: "desktop",
+    HANA_SERVER_OWNER_PID: String(process.pid),
+  };
   serverEnv = await serverEnvironmentForNetworkProxy(serverEnv);
 
   // Windows: 注入 PortableGit 路径，并从注册表补齐当前系统 / 用户 PATH。
@@ -961,14 +981,14 @@ function monitorServer() {
       } catch (err) {
         console.error("[desktop] Server 重启失败:", err.message);
         writeCrashLog(`Server 重启失败: ${err.message}`);
-        dialog.showErrorBox("Hanako Server", mt("dialog.serverRestartFailed", {
+        dialog.showErrorBox("HanaAgent Server", mt("dialog.serverRestartFailed", {
           version: app?.getVersion?.() || "unknown",
           error: err.message,
         }));
       }
     } else {
       writeCrashLog(`Server 多次崩溃 (${reason})，放弃重启`);
-      dialog.showErrorBox("Hanako Server", mt("dialog.serverMultipleCrash", {
+      dialog.showErrorBox("HanaAgent Server", mt("dialog.serverMultipleCrash", {
         version: app?.getVersion?.() || "unknown",
         reason,
       }));
@@ -994,7 +1014,7 @@ function showPrimaryWindow() {
 /**
  * 创建系统托盘图标
  * - 双击：显示主窗口
- * - 右键菜单：显示 Hanako / 设置 / 退出
+ * - 右键菜单：显示 HanaAgent / 设置 / 退出
  */
 function createTray() {
   const isDev = !app.isPackaged;
@@ -1016,10 +1036,10 @@ function createTray() {
     if (process.platform === "darwin") icon.setTemplateImage(true);
   }
   tray = new Tray(icon);
-  tray.setToolTip(isDev ? "Hanako (dev)" : "Hanako");
+  tray.setToolTip(isDev ? "HanaAgent (dev)" : "HanaAgent");
 
   const buildMenu = () => Menu.buildFromTemplate([
-    { label: mt("tray.show", null, "Show Hanako"), click: () => showPrimaryWindow() },
+    { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
     { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
     { type: "separator" },
     { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
@@ -1112,8 +1132,8 @@ function writeCrashLog(errorMessage) {
   const diagnostics = buildServerCrashDiagnostics();
 
   const content = redactMainLogText([
-    `=== Hanako Crash Log ===`,
-    `Hanako: v${app?.getVersion?.() || "unknown"}`,
+    `=== HanaAgent Crash Log ===`,
+    `HanaAgent: v${app?.getVersion?.() || "unknown"}`,
     `Time: ${timestamp}`,
     `Error: ${errorMessage}`,
     `Platform: ${process.platform} ${process.arch}`,
@@ -1153,7 +1173,7 @@ function createSplashWindow() {
     height: 280,
     resizable: false,
     frame: false,
-    title: "Hanako",
+    title: "HanaAgent",
     ...titleBarOpts({ x: 12, y: 12 }),
     transparent: true,
     show: false,
@@ -1228,7 +1248,7 @@ function createMainWindow() {
     height: saved?.height || 820,
     minWidth: 420,
     minHeight: 500,
-    title: "Hanako",
+    title: "HanaAgent",
     ...titleBarOpts({ x: 16, y: 16 }),
     backgroundColor: getThemeBackgroundColor(initialTheme),
     show: false,
@@ -2391,7 +2411,7 @@ function createOnboardingWindow(query = {}) {
     height: 780,
     resizable: false,
     frame: false,
-    title: "Hanako",
+    title: "HanaAgent",
     ...titleBarOpts({ x: 16, y: 16 }),
     backgroundColor: getThemeBackgroundColor(initialTheme),
     show: false,
@@ -2524,6 +2544,7 @@ function _getScreenshotMd() {
     const taskLists = require("markdown-it-task-lists");
     _screenshotMd.use(taskLists, { enabled: false, label: true });
   } catch { /* task-lists not available */ }
+  decorateScreenshotMarkdownIt(_screenshotMd);
   return _screenshotMd;
 }
 
@@ -2563,6 +2584,14 @@ function buildScreenshotHTML(payload) {
     const flowerUrl = pathToFileURL(getScreenshotResourcePath("sakura", flowerFile)).href;
     extraCSS += `\n:root { --sakura-branch-url: url('${branchUrl}'); --sakura-flower-url: url('${flowerUrl}'); }`;
   }
+  const isDesktopScreenshotTheme = themeName.endsWith("-desktop");
+  const coverBleedX = themeName.startsWith("sakura-")
+    ? (isDesktopScreenshotTheme ? "2.5rem" : "0.85rem")
+    : (isDesktopScreenshotTheme ? "3rem" : "0.85rem");
+  const coverBleedTop = themeName.startsWith("sakura-")
+    ? "5rem"
+    : (isDesktopScreenshotTheme ? "2rem" : "5rem");
+  extraCSS += `\n:root { --screenshot-cover-bleed-x: ${coverBleedX}; --screenshot-cover-bleed-top: ${coverBleedTop}; }`;
 
   // Logo 内联为 base64 data URL（asar 内文件无法被离屏窗口的 file:// 加载）
   let logoUrl = "";
@@ -2576,14 +2605,17 @@ function buildScreenshotHTML(payload) {
 
   function renderBlock(b) {
     if (b.type === "html") return b.content;
-    if (b.type === "markdown") return md.render(b.content);
-    if (b.type === "image") return `<img src="${b.content}" class="chat-image" />`;
+    if (b.type === "markdown") return md.render(b.content, { sourceFilePath: payload.filePath || null });
+    if (b.type === "image") return `<img src="${escapeAttr(b.content)}" class="chat-image" />`;
     return "";
   }
 
   let bodyHTML = "";
   if (payload.mode === "article" && payload.markdown) {
-    bodyHTML = `<article>${md.render(payload.markdown)}</article>`;
+    const articleHTML = payload.articleType === "code"
+      ? renderScreenshotCodeArticle(payload.markdown, payload.language)
+      : renderScreenshotMarkdownArticle(md, payload.markdown, { sourceFilePath: payload.filePath || null });
+    bodyHTML = `<article>${articleHTML}</article>`;
   } else if (payload.messages) {
     const parts = [];
     for (const msg of payload.messages) {
@@ -2618,6 +2650,21 @@ function buildScreenshotHTML(payload) {
     .chat-body { padding-left: 0; }
     .chat-body p:last-child { margin-bottom: 0; }
     .chat-image { width: ${themeName.endsWith("-desktop") ? "66.666%" : "100%"}; max-width: 100%; height: auto; border-radius: 6px; margin: 0.8em 0; display: block; }
+    .screenshot-cover {
+      width: calc(100% + var(--screenshot-cover-bleed-x) + var(--screenshot-cover-bleed-x));
+      overflow: visible;
+      margin: calc(0px - var(--screenshot-cover-bleed-top)) calc(0px - var(--screenshot-cover-bleed-x)) 1.35em;
+      border-radius: 0;
+      background: transparent;
+    }
+    .screenshot-cover-frame {
+      width: var(--screenshot-cover-display-width, 100%);
+      height: var(--screenshot-cover-height, 320px);
+      overflow: hidden;
+      margin: 0 auto;
+      background: transparent;
+    }
+    .screenshot-cover-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .watermark {
       display: flex; align-items: center; justify-content: center;
       gap: 0.5em; padding: 1.5em 0 1em; opacity: 0.5;
@@ -2641,7 +2688,7 @@ function buildScreenshotHTML(payload) {
   ${bodyHTML}
   <footer class="watermark">
     <img class="watermark-logo" src="${logoUrl}" />
-    <span class="watermark-text">OpenHanako</span>
+    <span class="watermark-text">HanaAgent</span>
   </footer>
 </body>
 </html>`;
@@ -2663,6 +2710,15 @@ async function screenshotCapture(htmlContent, width) {
     await offscreen.webContents.executeJavaScript(
       `document.fonts.ready.then(() => true)`
     );
+    await offscreen.webContents.executeJavaScript(`
+      Promise.all(Array.from(document.images).map((img) => {
+        if (img.complete) return true;
+        return new Promise((resolve) => {
+          img.addEventListener('load', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+        });
+      })).then(() => true)
+    `);
     await new Promise(r => setTimeout(r, 300));
 
     const totalHeight = await offscreen.webContents.executeJavaScript(`
@@ -2824,10 +2880,14 @@ wrapIpcOn("window-theme-changed", (event, theme) => {
   applyWindowThemeColors(win, theme);
 });
 
-// 设置窗口 → 主窗口的消息转发
+// 设置窗口 / 主窗口之间的设置事件转发
 wrapIpcOn("settings-changed", (_event, type, data) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  const sender = _event?.sender || null;
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents !== sender) {
     mainWindow.webContents.send("settings-changed", type, data);
+  }
+  if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.webContents !== sender) {
+    settingsWindow.webContents.send("settings-changed", type, data);
   }
   if (type === "theme-changed" && data?.theme) {
     const name = data.theme;
@@ -2846,7 +2906,7 @@ wrapIpcOn("settings-changed", (_event, type, data) => {
     // 重建托盘菜单，使标签跟随新 locale
     if (tray && !tray.isDestroyed()) {
       const buildMenu = () => Menu.buildFromTemplate([
-        { label: mt("tray.show", null, "Show Hanako"), click: () => showPrimaryWindow() },
+        { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
         { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
         { type: "separator" },
         { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
@@ -3151,6 +3211,20 @@ wrapIpcBestEffortHandler("write-file-binary", (_event, filePath, base64Data) => 
   } catch { return false; }
 });
 
+wrapIpcBestEffortHandler("copy-file", (_event, sourcePath, destinationPath) => {
+  if (!sourcePath || !destinationPath) return false;
+  if (!path.isAbsolute(sourcePath) || !path.isAbsolute(destinationPath)) return false;
+  try {
+    const stat = fs.lstatSync(sourcePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 wrapIpcHandler("screenshot-render", (_event, payload) => {
   return withScreenshotLock(async () => {
     try {
@@ -3432,7 +3506,7 @@ app.whenReady().then(async () => {
         startupId: desktopStartupId,
       });
     }
-    console.log("[desktop] 启动 Hanako Server...");
+    console.log("[desktop] 启动 HanaAgent Server...");
     await startServer();
     if (process.platform === "win32") {
       markGpuStartupPhase({
@@ -3520,7 +3594,7 @@ app.whenReady().then(async () => {
     const crashInfo = writeCrashLog(err.message);
     const detail = buildLaunchFailureDialogDetail(err, crashInfo);
     dialog.showErrorBox(
-      mt("dialog.launchFailedTitle", null, "Hanako Launch Failed"),
+      mt("dialog.launchFailedTitle", null, "HanaAgent Launch Failed"),
       mt("dialog.launchFailedBody", {
         version: app?.getVersion?.() || "unknown",
         detail,
@@ -3591,8 +3665,16 @@ async function shutdownServer() {
 
     if (serverProcess === proc) serverProcess = null;
   } else if (reusedServerPid) {
-    console.log("[desktop] shutdownServer: 正在关闭 reused server...");
     const pid = reusedServerPid;
+    if (!reusedServerOwned) {
+      console.log("[desktop] shutdownServer: detached from external server");
+      reusedServerPid = null;
+      reusedServerOwned = false;
+      removeServerInfo = false;
+      return;
+    }
+
+    console.log("[desktop] shutdownServer: 正在关闭 reused server...");
     try {
       await fetch(`http://127.0.0.1:${serverPort}/api/shutdown`, {
         method: "POST",
@@ -3612,7 +3694,10 @@ async function shutdownServer() {
         removeServerInfo = false;
       }
     }
-    if (reusedServerPid === pid) reusedServerPid = null;
+    if (reusedServerPid === pid) {
+      reusedServerPid = null;
+      reusedServerOwned = false;
+    }
   }
   // 清理 server-info.json，防止更新后新版 Electron 误连旧 server
   if (removeServerInfo) {
@@ -3644,7 +3729,7 @@ app.on("before-quit", async (event) => {
   _currentBrowserSession = null;
 
   // server 清理
-  if ((serverProcess && !hasChildExitObserved(serverProcess)) || reusedServerPid) {
+  if ((serverProcess && !hasChildExitObserved(serverProcess)) || (reusedServerPid && reusedServerOwned)) {
     event.preventDefault();
     await shutdownServer();
     app.quit();

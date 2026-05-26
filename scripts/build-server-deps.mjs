@@ -35,6 +35,67 @@ export function buildExternalPackage(
   };
 }
 
+export function collectInstalledOptionalDependencyDirs(nmDir, packageNames) {
+  const dirs = [];
+
+  for (const packageName of packageNames) {
+    const packageJsonPath = path.join(nmDir, packageName, "package.json");
+    let pkg;
+    try {
+      pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    } catch {
+      continue;
+    }
+
+    for (const optionalName of Object.keys(pkg.optionalDependencies || {})) {
+      const optionalDir = path.join(nmDir, optionalName);
+      if (fs.existsSync(optionalDir)) {
+        dirs.push(path.resolve(optionalDir));
+      }
+    }
+  }
+
+  return dirs;
+}
+
+export function buildJiebaRuntimeSmokeScript() {
+  return [
+    "import { createRequire } from 'node:module';",
+    "const require = createRequire(new URL('./package.json', import.meta.url));",
+    "const { Jieba } = require('@node-rs/jieba');",
+    "const { dict } = require('@node-rs/jieba/dict');",
+    "const jieba = Jieba.withDict(dict);",
+    "jieba.loadDict(Buffer.from('session_search 1000 nz\\nA2A通信 1000 nz\\n聊天记录 1000 nz', 'utf8'));",
+    "const tokens = jieba.cutForSearch('聊天记录 A2A通信 session_search', true);",
+    "for (const token of ['聊天记录', 'A2A通信', 'session_search']) {",
+    "  if (!tokens.includes(token)) {",
+    "    throw new Error(`@node-rs/jieba runtime smoke failed: missing ${token} from ${tokens.join('|')}`);",
+    "  }",
+    "}",
+    "console.log('[build-server] jieba runtime smoke passed');",
+    "",
+  ].join("\n");
+}
+
+export function buildBetterSqliteRuntimeSmokeScript() {
+  return [
+    "import { createRequire } from 'node:module';",
+    "const require = createRequire(new URL('./package.json', import.meta.url));",
+    "const Database = require('better-sqlite3');",
+    "const db = new Database(':memory:');",
+    "try {",
+    "  const row = db.prepare('select 1 as ok').get();",
+    "  if (row?.ok !== 1) {",
+    "    throw new Error(`better-sqlite3 runtime smoke failed: ${JSON.stringify(row)}`);",
+    "  }",
+    "} finally {",
+    "  db.close();",
+    "}",
+    "console.log('[build-server] better-sqlite3 runtime smoke passed');",
+    "",
+  ].join("\n");
+}
+
 function collectRuntimeExportTargets(exportValue, targets = []) {
   if (typeof exportValue === "string") {
     targets.push(exportValue);

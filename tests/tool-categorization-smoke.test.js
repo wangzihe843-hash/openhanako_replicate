@@ -1,5 +1,5 @@
 /**
- * CI-level safety net: every OpenHanako tool defined under lib/tools/ and
+ * CI-level safety net: every HanaAgent tool defined under lib/tools/ and
  * lib/memory/ must be categorized in shared/tool-categories.js.
  *
  * Static source scan (no engine boot). Handles both string-literal names

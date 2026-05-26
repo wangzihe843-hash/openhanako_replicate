@@ -6,6 +6,7 @@
  * 端点：
  * GET  /api/dm           — 列出主 agent 的所有 DM 对话
  * GET  /api/dm/:peerId   — 获取主 agent 与某个 agent 的 DM 消息
+ * POST /api/dm/:peerId/reset — 重置当前 agent 对该 DM 的 phone projection 可见边界
  */
 
 import fs from "fs";
@@ -13,6 +14,12 @@ import path from "path";
 import { Hono } from "hono";
 import { parseChannel } from "../../lib/channels/channel-store.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
+import {
+  getAgentPhoneProjectionPath,
+  readAgentPhoneProjection,
+  resetAgentPhoneProjection,
+} from "../../lib/conversations/agent-phone-projection.js";
+import { resetAgentPhoneRuntime } from "../../lib/conversations/agent-phone-runtime.js";
 
 function requestedAgentId(c) {
   const value = c.req.query("agentId");
@@ -36,7 +43,7 @@ function resolveDmOwnerAgent(engine, c) {
   return agent;
 }
 
-export function createDmRoute(engine) {
+export function createDmRoute(engine, hub = null) {
   const route = new Hono();
 
   function isPhoneEnabled() {
@@ -45,6 +52,24 @@ export function createDmRoute(engine) {
 
   function phoneDisabledResponse(c) {
     return c.json({ error: "Agent phone is disabled" }, 503);
+  }
+
+  function invalidPeerId(peerId) {
+    return !peerId || /[\/\\]|\.\./.test(peerId);
+  }
+
+  function dmProjectionMeta(agent, peerId) {
+    try {
+      return readAgentPhoneProjection(getAgentPhoneProjectionPath(agent.agentDir, `dm:${peerId}`)).meta;
+    } catch {
+      return {};
+    }
+  }
+
+  function filterVisibleDmMessages(agent, peerId, messages) {
+    const visibleAfterTimestamp = dmProjectionMeta(agent, peerId).visibleAfterTimestamp;
+    if (!visibleAfterTimestamp || typeof visibleAfterTimestamp !== "string") return messages;
+    return messages.filter((message) => !message.timestamp || message.timestamp > visibleAfterTimestamp);
   }
 
   // ── 列出所有 DM 对话（包含未聊过的 agent 作为占位） ──
@@ -67,13 +92,14 @@ export function createDmRoute(engine) {
           const filePath = path.join(dmDir, f);
           const content = fs.readFileSync(filePath, "utf-8");
           const { messages } = parseChannel(content);
-          const lastMsg = messages[messages.length - 1];
+          const visibleMessages = filterVisibleDmMessages(agent, peerId, messages);
+          const lastMsg = visibleMessages[visibleMessages.length - 1];
 
           existingDms.set(peerId, {
             lastMessage: lastMsg?.body?.slice(0, 60) || "",
             lastSender: lastMsg?.sender || "",
             lastTimestamp: lastMsg?.timestamp || "",
-            messageCount: messages.length,
+            messageCount: visibleMessages.length,
           });
         }
       }
@@ -121,7 +147,7 @@ export function createDmRoute(engine) {
       const ownerAgentId = agent.id;
 
       // 安全校验
-      if (/[\/\\]|\.\./.test(peerId)) {
+      if (invalidPeerId(peerId)) {
         return c.json({ error: "Invalid peerId" }, 400);
       }
 
@@ -131,7 +157,8 @@ export function createDmRoute(engine) {
       }
 
       const content = fs.readFileSync(dmFile, "utf-8");
-      const { meta, messages } = parseChannel(content);
+      const { messages } = parseChannel(content);
+      const visibleMessages = filterVisibleDmMessages(agent, peerId, messages);
 
       const peerAgent = engine.getAgent(peerId);
       const peerName = peerAgent?.agentName || peerAgent?.name || peerId;
@@ -140,7 +167,57 @@ export function createDmRoute(engine) {
         ownerAgentId,
         peerId,
         peerName,
-        messages,
+        messages: visibleMessages,
+      });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.post("/dm/:peerId/reset", async (c) => {
+    try {
+      if (!isPhoneEnabled()) return phoneDisabledResponse(c);
+      const peerId = c.req.param("peerId");
+      if (invalidPeerId(peerId)) {
+        return c.json({ error: "Invalid peerId" }, 400);
+      }
+
+      const agent = resolveDmOwnerAgent(engine, c);
+      if (!agent) {
+        return c.json({ error: "No active agent" }, 400);
+      }
+      const ownerAgentId = agent.id;
+      const dmFile = path.join(agent.agentDir, "dm", `${peerId}.md`);
+      let visibleAfterTimestamp = "";
+      if (fs.existsSync(dmFile)) {
+        const content = fs.readFileSync(dmFile, "utf-8");
+        const { messages } = parseChannel(content);
+        visibleAfterTimestamp = messages[messages.length - 1]?.timestamp || "";
+      }
+
+      await resetAgentPhoneProjection({
+        agentDir: agent.agentDir,
+        agentId: ownerAgentId,
+        conversationId: `dm:${peerId}`,
+        conversationType: "dm",
+        visibleAfterTimestamp,
+        resetBy: ownerAgentId,
+      });
+      await resetAgentPhoneRuntime({
+        agentDir: agent.agentDir,
+        conversationId: `dm:${peerId}`,
+      });
+      hub?.abortAgentPhoneSessions?.("dm-reset", {
+        agentId: ownerAgentId,
+        conversationId: `dm:${peerId}`,
+        conversationType: "dm",
+      });
+
+      return c.json({
+        ok: true,
+        ownerAgentId,
+        peerId,
+        visibleAfterTimestamp,
       });
     } catch (err) {
       return c.json({ error: err.message }, 500);

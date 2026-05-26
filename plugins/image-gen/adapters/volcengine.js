@@ -58,7 +58,11 @@ function getModelCapabilities(modelId) {
   };
 }
 
-async function resolveVolcengineCredentials(ctx) {
+async function resolveVolcengineCredentials(ctx, preferredProviderId = null) {
+  if (preferredProviderId) {
+    const preferred = await ctx.bus.request("provider:credentials", { providerId: preferredProviderId });
+    if (!preferred.error && preferred.apiKey) return preferred;
+  }
   const primary = await ctx.bus.request("provider:credentials", { providerId: "volcengine" });
   if (!primary.error && primary.apiKey) return primary;
 
@@ -72,6 +76,8 @@ async function resolveVolcengineCredentials(ctx) {
 
 export const volcengineImageAdapter = {
   id: "volcengine",
+  protocolId: "volcengine-images",
+  aliases: ["volcengine-coding"],
   name: "火山引擎 Seedream",
   types: ["image"],
   capabilities: {
@@ -93,7 +99,7 @@ export const volcengineImageAdapter = {
 
   async submit(params, ctx) {
     // 1. Fetch credentials — try volcengine first, fall back to volcengine-coding
-    const creds = await resolveVolcengineCredentials(ctx);
+    const creds = await resolveVolcengineCredentials(ctx, params.credentialProviderId || params.providerId);
     if (creds.error || !creds.apiKey) {
       throw new Error(`Provider "volcengine" 未配置 API Key。请在设置 → Providers 中配置。`);
     }
@@ -101,7 +107,7 @@ export const volcengineImageAdapter = {
     const { apiKey, baseUrl } = creds;
 
     // 2. Resolve model — short names ("5.0") resolved via shared catalog
-    const rawModel = params.model || ctx.config?.get?.("defaultImageModel")?.id;
+    const rawModel = params.modelId || params.model || ctx.config?.get?.("defaultImageModel")?.id;
     const modelId = resolveModelId("volcengine", rawModel);
 
     // 3. Get provider defaults

@@ -17,14 +17,19 @@ describe("LLM usage observer", () => {
     });
 
     expect(usage).toEqual({
-      inputTokens: 1200,
-      outputTokens: 300,
-      cacheReadTokens: 900,
-      cacheWriteTokens: 150,
+      input: { totalTokens: 1200, uncachedTokens: 300 },
+      output: { totalTokens: 300, reasoningTokens: null },
+      cache: {
+        readTokens: 900,
+        writeTokens: 150,
+        missTokens: null,
+        hit: true,
+        created: true,
+        hitRatio: 0.75,
+        support: "reported",
+      },
       totalTokens: 2550,
       costTotal: 0.042,
-      cacheHit: true,
-      cacheCreated: true,
     });
   });
 
@@ -37,13 +42,17 @@ describe("LLM usage observer", () => {
     });
 
     expect(usage).toMatchObject({
-      inputTokens: 100,
-      outputTokens: 20,
-      cacheReadTokens: 80,
-      cacheWriteTokens: 40,
+      input: { totalTokens: 100, uncachedTokens: 20 },
+      output: { totalTokens: 20, reasoningTokens: null },
+      cache: {
+        readTokens: 80,
+        writeTokens: 40,
+        hit: true,
+        created: true,
+        hitRatio: 0.8,
+        support: "reported",
+      },
       totalTokens: 240,
-      cacheHit: true,
-      cacheCreated: true,
     });
   });
 
@@ -56,13 +65,17 @@ describe("LLM usage observer", () => {
     });
 
     expect(usage).toMatchObject({
-      inputTokens: 250,
-      outputTokens: 50,
-      cacheReadTokens: 180,
-      cacheWriteTokens: 0,
+      input: { totalTokens: 250, uncachedTokens: 70 },
+      output: { totalTokens: 50, reasoningTokens: null },
+      cache: {
+        readTokens: 180,
+        writeTokens: 0,
+        hit: true,
+        created: false,
+        hitRatio: 0.72,
+        support: "reported",
+      },
       totalTokens: 300,
-      cacheHit: true,
-      cacheCreated: false,
     });
   });
 
@@ -76,14 +89,40 @@ describe("LLM usage observer", () => {
     });
 
     expect(usage).toMatchObject({
-      inputTokens: 1000,
-      outputTokens: 120,
-      cacheReadTokens: 720,
-      cacheWriteTokens: 0,
-      cacheMissTokens: 280,
+      input: { totalTokens: 1000, uncachedTokens: 280 },
+      output: { totalTokens: 120, reasoningTokens: null },
+      cache: {
+        readTokens: 720,
+        writeTokens: 0,
+        missTokens: 280,
+        hit: true,
+        created: false,
+        hitRatio: 0.72,
+        support: "reported",
+      },
       totalTokens: 1120,
-      cacheHit: true,
-      cacheCreated: false,
+    });
+  });
+
+  it("preserves unknown cache support instead of treating it as zero", () => {
+    const usage = normalizeLlmUsage({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+    }, { cacheSupport: "not_reported" });
+
+    expect(usage).toMatchObject({
+      input: { totalTokens: 10, uncachedTokens: null },
+      output: { totalTokens: 5, reasoningTokens: null },
+      cache: {
+        readTokens: null,
+        writeTokens: null,
+        missTokens: null,
+        hit: null,
+        created: null,
+        hitRatio: null,
+        support: "not_reported",
+      },
+      totalTokens: 15,
     });
   });
 

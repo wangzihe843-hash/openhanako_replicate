@@ -43,6 +43,8 @@ async function callLlm({
   timeoutMs,
   signal,
   quirks,
+  usageLedger,
+  usageContext,
 }) {
   return callText({
     api, model,
@@ -53,7 +55,25 @@ async function callLlm({
     ...(timeoutMs != null && { timeoutMs }),
     ...(signal != null && { signal }),
     ...(quirks != null && { quirks }),
+    ...(usageLedger != null && { usageLedger }),
+    ...(usageContext != null && { usageContext }),
   });
+}
+
+function utilityUsageContext(utilConfig, operation, trigger = "tool") {
+  const agentId = utilConfig?.usageAgentId || null;
+  const sessionPath = utilConfig?.usageSessionPath || null;
+  return {
+    source: {
+      subsystem: "utility",
+      operation,
+      surface: "system",
+      trigger,
+    },
+    attribution: sessionPath
+      ? { kind: "session", agentId, sessionPath }
+      : { kind: "utility", agentId },
+  };
 }
 
 /**
@@ -149,6 +169,8 @@ Rules:
       max_tokens: 50,
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "title", "user"),
     });
   } catch (err) {
     // AbortError（超时）不算失败，静默返回 null 让调用方走 fallback
@@ -182,6 +204,8 @@ export async function translateSkillNames(utilConfig, names, lang) {
       ],
       temperature: 0,
       max_tokens: 200,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "translate_skill_names", "startup"),
     });
     if (!text) return {};
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -260,6 +284,8 @@ Rules:
       ],
       temperature: 0.3,
       maxTokens: 150,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "activity_summary", "scheduled"),
     });
 
     return text;
@@ -307,6 +333,8 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
       ],
       temperature: 0.3,
       maxTokens: 80,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "activity_summary_quick", "scheduled"),
     });
   } catch (err) {
     log.error(`summarizeActivityQuick failed: ${err.message}`);
@@ -398,6 +426,8 @@ Examples:
         { role: "user", content: name },
       ],
       max_tokens: 20,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "generate_agent_id", "manual"),
     });
 
     base = sanitizeAgentId(text);
@@ -448,6 +478,8 @@ export async function generateDescription(utilConfig, personality, locale) {
       ],
       temperature: 0.3,
       max_tokens: 200,
+      usageLedger: utilConfig.usageLedger,
+      usageContext: utilityUsageContext(utilConfig, "generate_description", "manual"),
     });
     if (!raw) return null;
 

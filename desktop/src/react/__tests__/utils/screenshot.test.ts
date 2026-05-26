@@ -73,6 +73,44 @@ describe('screenshot utils', () => {
     ]);
   });
 
+  it('Markdown article screenshots carry source file context for relative attachments', async () => {
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+    };
+
+    await expect(takeArticleScreenshot('![](<文本附件/a.png>)', {
+      filePath: '/vault/note.md',
+      articleType: 'markdown',
+    })).resolves.toBeUndefined();
+
+    expect((window as any).hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'article',
+      markdown: '![](<文本附件/a.png>)',
+      filePath: '/vault/note.md',
+      articleType: 'markdown',
+    }));
+  });
+
+  it('code article screenshots carry type and language so code files render as code blocks', async () => {
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+    };
+
+    await expect(takeArticleScreenshot('const x = 1;', {
+      filePath: '/vault/app.ts',
+      articleType: 'code',
+      language: 'ts',
+    })).resolves.toBeUndefined();
+
+    expect((window as any).hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'article',
+      markdown: 'const x = 1;',
+      filePath: '/vault/app.ts',
+      articleType: 'code',
+      language: 'ts',
+    }));
+  });
+
   it('按截图页更新页码，并按选中的消息块数推进总进度', async () => {
     const sessionPath = '/session/a.jsonl';
     storeMock.state = {

@@ -4,9 +4,9 @@ import { createPluginConfigStore } from "./plugin-config.js";
 
 /**
  * Create a PluginContext for a plugin.
- * @param {{ pluginId: string, pluginKey?: string, source?: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
+ * @param {{ pluginId: string, pluginKey?: string, source?: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", permissions?: string[], registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
  */
-export function createPluginContext({ pluginId, pluginKey, source, pluginDir, dataDir, bus, accessLevel, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
+export function createPluginContext({ pluginId, pluginKey, source, pluginDir, dataDir, bus, accessLevel, permissions, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
   const config = createPluginConfigStore({ dataDir, schema: configSchema });
   const runtimeScope = runtimeContext ? {
     serverId: runtimeContext.serverId,
@@ -21,16 +21,10 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
   } : {};
 
   const resolvedAccess = accessLevel || "restricted";
+  const grantedPermissions = normalizePermissions(permissions);
   const pluginBus = resolvedAccess === "full-access"
     ? bus
-    : Object.freeze({
-        emit: bus.emit.bind(bus),
-        subscribe: bus.subscribe.bind(bus),
-        request: bus.request.bind(bus),
-        hasHandler: bus.hasHandler.bind(bus),
-        listCapabilities: typeof bus.listCapabilities === "function" ? bus.listCapabilities.bind(bus) : () => [],
-        getCapability: typeof bus.getCapability === "function" ? bus.getCapability.bind(bus) : () => null,
-      });
+    : createRestrictedBusProxy(bus, grantedPermissions);
 
   const prefix = `[plugin:${pluginId}]`;
   const recordLog = (level, args) => {
@@ -64,7 +58,7 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
       label,
       origin,
       storageKind,
-    }));
+    }), { runtimeContext: runtimeScope });
   }
 
   function toMediaItem(file) {
@@ -99,6 +93,73 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
     registerSessionFile,
     stageFile,
   };
+}
+
+function createRestrictedBusProxy(bus, grantedPermissions) {
+  const canReadUsage = hasPermission(grantedPermissions, "usage.read");
+  const getCapability = typeof bus.getCapability === "function"
+    ? bus.getCapability.bind(bus)
+    : () => null;
+  const assertUsagePermission = (type, action) => {
+    const capability = getCapability(type);
+    if (capability?.permission !== "usage.read") return;
+    if (canReadUsage) return;
+    throw forbiddenBusError(type, action, "usage.read");
+  };
+
+  return Object.freeze({
+    emit(event, sessionPath) {
+      if (event?.type === "llm_usage") {
+        throw forbiddenBusError("llm_usage", "emit", "usage.read");
+      }
+      return bus.emit(event, sessionPath);
+    },
+    subscribe(callback, filter = {}) {
+      const requestedTypes = typesFromFilter(filter);
+      if (!canReadUsage && requestedTypes?.has("llm_usage")) {
+        throw forbiddenBusError("llm_usage", "subscribe", "usage.read");
+      }
+      const wrapped = (event, sessionPath) => {
+        if (!canReadUsage && event?.type === "llm_usage") return;
+        return callback(event, sessionPath);
+      };
+      return bus.subscribe(wrapped, filter);
+    },
+    async request(type, payload, options) {
+      assertUsagePermission(type, "request");
+      return bus.request(type, payload, options);
+    },
+    hasHandler: bus.hasHandler.bind(bus),
+    listCapabilities: typeof bus.listCapabilities === "function" ? bus.listCapabilities.bind(bus) : () => [],
+    getCapability,
+  });
+}
+
+function normalizePermissions(permissions) {
+  if (!Array.isArray(permissions)) return new Set();
+  return new Set(permissions.filter((permission) => typeof permission === "string" && permission.trim()).map((permission) => permission.trim()));
+}
+
+function hasPermission(grantedPermissions, permission) {
+  if (grantedPermissions.has("*")) return true;
+  if (grantedPermissions.has(permission)) return true;
+  const [namespace] = permission.split(".");
+  return grantedPermissions.has(`${namespace}.*`);
+}
+
+function typesFromFilter(filter) {
+  const types = filter?.types;
+  if (types instanceof Set) return types;
+  if (Array.isArray(types)) return new Set(types);
+  return null;
+}
+
+function forbiddenBusError(type, action, permission) {
+  const err = new Error(`Plugin bus ${action} "${type}" requires permission "${permission}"`);
+  err.code = "FORBIDDEN";
+  err.type = type;
+  err.permission = permission;
+  return err;
 }
 
 function clonePlain(value) {

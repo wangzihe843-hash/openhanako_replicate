@@ -61,6 +61,11 @@ const ABSOLUTE_WINDOWS_PATH_RE = /^[A-Za-z]:[\\/]/;
 const EXPLICIT_PROTOCOL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const SAFE_IMAGE_URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const IMAGE_SIZE_RE = /^([1-9]\d{0,4})(?:x([1-9]\d{0,4}))?$/i;
+const AUTO_LINK_SUFFIX_BOUNDARY_CHARS = new Set([
+  '\u200b', '\u200c', '\u200d', '\ufeff',
+  '。', '、', '，', '；', '：', '！', '？',
+  '）', '】', '］', '｝', '》', '〉', '」', '』', '〕', '〗',
+]);
 
 const CALLOUT_ALIASES: Record<string, string> = {
   note: 'note',
@@ -396,6 +401,66 @@ function obsidianCallouts(md: MarkdownItInstance): void {
   });
 }
 
+function splitAutoLinkSuffix(text: string): { linkText: string; suffix: string } | null {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!AUTO_LINK_SUFFIX_BOUNDARY_CHARS.has(text[index])) continue;
+    return {
+      linkText: text.slice(0, index),
+      suffix: text.slice(index),
+    };
+  }
+  return null;
+}
+
+function stripHrefSuffix(href: string, suffix: string): string {
+  for (const candidate of [encodeURI(suffix), encodeURIComponent(suffix), suffix]) {
+    if (!candidate) continue;
+    if (href.toLowerCase().endsWith(candidate.toLowerCase())) {
+      return href.slice(0, href.length - candidate.length);
+    }
+  }
+  return href;
+}
+
+function isAutoLinkifyToken(token: Token | undefined, type: 'link_open' | 'link_close'): boolean {
+  return token?.type === type && token.markup === 'linkify' && token.info === 'auto';
+}
+
+function trimAutoLinkifiedSuffixes(md: MarkdownItInstance): void {
+  md.core.ruler.after('inline', 'trim_auto_linkified_suffixes', (state: StateCore) => {
+    for (const blockToken of state.tokens) {
+      const children = blockToken.children;
+      if (!children?.length) continue;
+
+      for (let index = 0; index < children.length - 2; index += 1) {
+        const open = children[index];
+        const text = children[index + 1];
+        const close = children[index + 2];
+        if (!isAutoLinkifyToken(open, 'link_open') || text?.type !== 'text' || !isAutoLinkifyToken(close, 'link_close')) {
+          continue;
+        }
+
+        const split = splitAutoLinkSuffix(text.content);
+        if (!split || !split.linkText) continue;
+
+        text.content = split.linkText;
+        const href = open.attrGet('href');
+        if (href) open.attrSet('href', stripHrefSuffix(href, split.suffix));
+
+        const next = children[index + 3];
+        if (next?.type === 'text') {
+          next.content = `${split.suffix}${next.content}`;
+        } else {
+          const suffixToken = new state.Token('text', '', 0);
+          suffixToken.content = split.suffix;
+          children.splice(index + 3, 0, suffixToken);
+        }
+        index += 2;
+      }
+    }
+  });
+}
+
 function normalizeSafeBackgroundColor(raw: string): string | null {
   const color = raw.trim();
   if (HEX_COLOR_RE.test(color)) return color;
@@ -559,6 +624,7 @@ function applyMarkdownPlugins(md: MarkdownItInstance): void {
   md.use(obsidianImageEmbeds);
   md.use(obsidianHighlights);
   md.use(obsidianCallouts);
+  md.use(trimAutoLinkifiedSuffixes);
   md.use(mermaidFences);
   md.use(markdownImageRenderer);
 }

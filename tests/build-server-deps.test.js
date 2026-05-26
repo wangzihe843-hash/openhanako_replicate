@@ -1,9 +1,13 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { execFileSync } from "child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildBetterSqliteRuntimeSmokeScript,
   buildExternalPackage,
+  buildJiebaRuntimeSmokeScript,
+  collectInstalledOptionalDependencyDirs,
   verifyExternalEntrypoints,
 } from "../scripts/build-server-deps.mjs";
 
@@ -80,6 +84,78 @@ describe("build-server external dependency packaging", () => {
         "lru-cache": "11.2.7",
       },
     });
+  });
+
+  it("protects installed optional runtime packages owned by server externals", () => {
+    const outDir = makeTempDir();
+    const nmDir = path.join(outDir, "node_modules");
+    const rootPackageDir = path.join(nmDir, "@node-rs", "jieba");
+    const nativePackageDir = path.join(nmDir, "@node-rs", "jieba-darwin-arm64");
+    fs.mkdirSync(rootPackageDir, { recursive: true });
+    fs.mkdirSync(nativePackageDir, { recursive: true });
+    fs.writeFileSync(path.join(rootPackageDir, "package.json"), JSON.stringify({
+      name: "@node-rs/jieba",
+      optionalDependencies: {
+        "@node-rs/jieba-darwin-arm64": "2.0.1",
+        "@node-rs/jieba-linux-x64-gnu": "2.0.1",
+      },
+    }));
+
+    const dirs = collectInstalledOptionalDependencyDirs(nmDir, ["@node-rs/jieba"]);
+
+    expect(dirs).toEqual([nativePackageDir]);
+  });
+
+  it("generates a runtime smoke script that requires jieba, dict, and custom dictionary terms", () => {
+    const outDir = makeTempDir();
+    const rootPackageDir = path.join(outDir, "node_modules", "@node-rs", "jieba");
+    fs.mkdirSync(rootPackageDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.writeFileSync(path.join(rootPackageDir, "dict.js"), "module.exports.dict = Buffer.from('dict')\n");
+    fs.writeFileSync(path.join(rootPackageDir, "index.js"), [
+      "class Jieba {",
+      "  static withDict(dict) { if (!Buffer.isBuffer(dict)) throw new Error('missing dict'); return new Jieba(); }",
+      "  loadDict(dict) { this.customDict = dict.toString('utf8'); }",
+      "  cutForSearch() {",
+      "    if (!this.customDict.includes('session_search')) throw new Error('missing custom dict');",
+      "    return ['聊天记录', 'A2A通信', 'session_search'];",
+      "  }",
+      "}",
+      "module.exports = { Jieba };",
+    ].join("\n"));
+
+    const scriptPath = path.join(outDir, ".jieba-smoke.mjs");
+    fs.writeFileSync(scriptPath, buildJiebaRuntimeSmokeScript());
+
+    expect(() => execFileSync(process.execPath, [scriptPath], { cwd: outDir }))
+      .not.toThrow();
+  });
+
+  it("generates a better-sqlite3 smoke script that opens a database", () => {
+    const outDir = makeTempDir();
+    const packageDir = path.join(outDir, "node_modules", "better-sqlite3");
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.writeFileSync(path.join(packageDir, "index.js"), [
+      "module.exports = class Database {",
+      "  constructor(filename) { if (filename !== ':memory:') throw new Error('unexpected filename'); }",
+      "  prepare(sql) {",
+      "    if (sql !== 'select 1 as ok') throw new Error('unexpected sql');",
+      "    return { get: () => ({ ok: 1 }) };",
+      "  }",
+      "  close() { this.closed = true; }",
+      "}",
+    ].join("\n"));
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+      name: "better-sqlite3",
+      main: "index.js",
+    }));
+
+    const scriptPath = path.join(outDir, ".better-sqlite3-smoke.mjs");
+    fs.writeFileSync(scriptPath, buildBetterSqliteRuntimeSmokeScript());
+
+    expect(() => execFileSync(process.execPath, [scriptPath], { cwd: outDir }))
+      .not.toThrow();
   });
 
   it("fails fast when an installed external package export resolves to a missing file", () => {

@@ -9,7 +9,7 @@ import { hrDecoration } from './widgets/hr';
 import { handleCheckbox } from './widgets/checkbox';
 import { handleBlockquote } from './widgets/blockquote';
 import { handleCodeBlock } from './widgets/code-block';
-import { handleImage, ImageWidget } from './widgets/image';
+import { addImageDecoration, addStandardMarkdownImageDecoration, handleImage } from './widgets/image';
 import { handleLink } from './widgets/link';
 import {
   parseObsidianImageEmbed,
@@ -331,13 +331,13 @@ function livePreviewDeco(range: LivePreviewRange): DecoRange {
 function buildMarkdownBlockDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const activeLines = collectActiveLinesFromState(state);
-  const ranges = collectLivePreviewRanges(state.doc.toString(), activeLines)
-    .filter((range): range is Extract<LivePreviewRange, { kind: 'blockMath' }> => range.kind === 'blockMath');
+  const ranges: DecoRange[] = collectLivePreviewRanges(state.doc.toString(), activeLines)
+    .filter((range): range is Extract<LivePreviewRange, { kind: 'blockMath' }> => range.kind === 'blockMath')
+    .map(livePreviewDeco);
 
-  for (const range of ranges) {
-    const { from, to, deco } = livePreviewDeco(range);
-    builder.add(from, to, deco);
-  }
+  ranges.push(...collectActiveImageBlockDecorations(state, activeLines));
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  for (const { from, to, deco } of ranges) builder.add(from, to, deco);
 
   return builder.finish();
 }
@@ -387,14 +387,16 @@ export function buildMarkdownDecorations(view: EditorView): DecorationSet {
             return false; // don't traverse children
         }
 
-        // ── 活跃行：跳过所有 conceal / replace ──
+        if (node.name === 'Image') {
+          handleImage({ view, node, activeLines, ranges, imageContext });
+          return;
+        }
+
+        // ── 活跃行：跳过其他 conceal / replace ──
         if (isActive) return;
 
         // ── 非活跃行：按节点类型处理 ──
         switch (node.name) {
-          case 'Image':
-            handleImage({ view, node, activeLines, ranges, imageContext });
-            break;
           case 'Link':
             handleLink({ view, node, activeLines, ranges });
             break;
@@ -450,6 +452,43 @@ export function buildMarkdownDecorations(view: EditorView): DecorationSet {
   return builder.finish();
 }
 
+function collectActiveImageBlockDecorations(
+  state: EditorState,
+  activeLines: Set<number>,
+): DecoRange[] {
+  const ranges: DecoRange[] = [];
+  const imageContext = state.facet(markdownImageContextFacet);
+  const fencedLines = collectFenceLineNumbers(state.doc.toString());
+
+  syntaxTree(state).iterate({
+    enter(node) {
+      if (node.name !== 'Image') return;
+      const line = state.doc.lineAt(node.from);
+      if (!activeLines.has(line.number)) return;
+      if (fencedLines.has(line.number)) return;
+      if (state.doc.lineAt(node.to).number !== line.number) return;
+
+      addStandardMarkdownImageDecoration({
+        source: state.doc.sliceString(node.from, node.to),
+        ranges,
+        from: node.from,
+        to: node.to,
+        lineTo: line.to,
+        imageContext,
+        placement: 'below-source-line',
+      });
+    },
+  });
+
+  for (let lineNo = 1; lineNo <= state.doc.lines; lineNo += 1) {
+    if (!activeLines.has(lineNo) || fencedLines.has(lineNo)) continue;
+    const line = state.doc.line(lineNo);
+    collectObsidianImagesInLine(line.text, line.from, imageContext, ranges, true);
+  }
+
+  return ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+}
+
 function collectObsidianImageDecorations(
   view: EditorView,
   activeLines: Set<number>,
@@ -462,7 +501,13 @@ function collectObsidianImageDecorations(
     let line = view.state.doc.lineAt(from);
     while (line.from <= to) {
       if (!activeLines.has(line.number) && !fencedLines.has(line.number)) {
-        collectObsidianImagesInLine(line.text, line.from, imageContext, ranges);
+        collectObsidianImagesInLine(
+          line.text,
+          line.from,
+          imageContext,
+          ranges,
+          false,
+        );
       }
       if (line.to >= view.state.doc.length) break;
       line = view.state.doc.line(line.number + 1);
@@ -475,6 +520,7 @@ function collectObsidianImagesInLine(
   lineOffset: number,
   imageContext: MarkdownImageContext,
   ranges: DecoRange[],
+  isActiveLine: boolean,
 ): void {
   const inlineCodeRanges = collectInlineCodeRanges(line);
   let from = 0;
@@ -488,13 +534,16 @@ function collectObsidianImagesInLine(
     const parsed = parseObsidianImageEmbed(line.slice(start + 3, close));
     if (parsed) {
       const src = resolveMarkdownImageSrc(parsed.src, imageContext);
-      if (src.startsWith('/') || src.startsWith('http://') || src.startsWith('https://') || src.startsWith('file://')) {
-        ranges.push({
-          from: lineOffset + start,
-          to: lineOffset + close + 2,
-          deco: Decoration.replace({ widget: new ImageWidget(src, parsed.alt, parsed.dimensions) }),
-        });
-      }
+      addImageDecoration({
+        ranges,
+        from: lineOffset + start,
+        to: lineOffset + close + 2,
+        lineTo: lineOffset + line.length,
+        url: src,
+        alt: parsed.alt,
+        dimensions: parsed.dimensions,
+        placement: isActiveLine ? 'below-source-line' : 'replace-source',
+      });
     }
 
     from = close + 2;

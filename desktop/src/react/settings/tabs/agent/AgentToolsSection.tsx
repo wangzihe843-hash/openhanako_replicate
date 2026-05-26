@@ -10,6 +10,8 @@ import { SettingsRow } from "../../components/SettingsRow";
 // shared/tool-categories.js is caught by tests/optional-tool-names-drift.test.js
 // (Task 10b) which imports both and asserts equality.
 const OPTIONAL_TOOL_NAMES = [
+  "automation",
+  "beautify",
   "browser",
   "cron",
   "dm",

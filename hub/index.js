@@ -99,16 +99,19 @@ export class Hub {
     };
   }
 
-  abortAgentPhoneSessions(reason = "phone-disabled") {
+  abortAgentPhoneSessions(reason = "phone-disabled", filter = null) {
     const entries = [...this._agentPhoneAbortHandlers];
-    for (const { handler } of entries) {
+    let aborted = 0;
+    for (const { handler, meta } of entries) {
+      if (!matchesAgentPhoneAbortFilter(meta, filter)) continue;
       try {
         handler(reason);
+        aborted += 1;
       } catch (err) {
         log.warn(`agent phone abort handler failed: ${err.message}`);
       }
     }
-    return entries.length;
+    return aborted;
   }
 
   // ──────────── 订阅 ────────────
@@ -434,7 +437,12 @@ export class Hub {
     // ── provider & agent handlers ──
 
     this._sessionHandlerCleanups.push(bus.handle("provider:credentials", async ({ providerId }) => {
-      const creds = engine.providerRegistry.getCredentials(providerId);
+      const fresh = typeof engine.resolveProviderCredentialsFresh === "function"
+        ? await engine.resolveProviderCredentialsFresh(providerId)
+        : null;
+      const creds = fresh
+        ? { apiKey: fresh.api_key, baseUrl: fresh.base_url, api: fresh.api, accountId: fresh.accountId }
+        : engine.providerRegistry.getCredentials(providerId);
       if (!creds?.apiKey) return { error: "no_credentials" };
       return {
         apiKey: creds.apiKey,
@@ -475,6 +483,68 @@ export class Hub {
       return { providers };
     }));
 
+    this._sessionHandlerCleanups.push(bus.handle("provider:resolve-media-model", async ({
+      providerId,
+      provider,
+      modelId,
+      model,
+      capability = "image_generation",
+      credentialLaneId,
+    } = {}) => {
+      try {
+        const resolved = engine.providerRegistry.resolveMediaModel({
+          providerId: providerId || provider,
+          modelId: modelId || model,
+          capability,
+          credentialLaneId,
+        });
+        const status = engine.providerRegistry.getMediaProviderCredentialStatus(resolved.providerId, capability);
+        const lane = resolved.credentialLane || null;
+        const credentialProviderId = lane?.providerId || status.activeProviderId || resolved.providerId;
+        if (!status.hasCredentials && resolved.provider.authType !== "none") {
+          return { error: status.unavailableReason || "no_credentials" };
+        }
+        return {
+          providerId: resolved.providerId,
+          modelId: resolved.model.id,
+          protocolId: resolved.model.protocolId,
+          capability: resolved.capability,
+          credentialLaneId: lane?.id || status.activeLaneId || null,
+          credentialProviderId,
+        };
+      } catch (err) {
+        return { error: err.message || String(err) };
+      }
+    }));
+
+    this._sessionHandlerCleanups.push(bus.handle("provider:add-media-model", async ({
+      providerId,
+      capability = "image_generation",
+      model,
+    } = {}) => {
+      try {
+        engine.providerRegistry.addMediaModel(providerId, capability, model);
+        await engine.onProviderChanged?.();
+        return { ok: true };
+      } catch (err) {
+        return { error: err.message || String(err) };
+      }
+    }));
+
+    this._sessionHandlerCleanups.push(bus.handle("provider:remove-media-model", async ({
+      providerId,
+      capability = "image_generation",
+      modelId,
+    } = {}) => {
+      try {
+        engine.providerRegistry.removeMediaModel(providerId, capability, modelId);
+        await engine.onProviderChanged?.();
+        return { ok: true };
+      } catch (err) {
+        return { error: err.message || String(err) };
+      }
+    }));
+
     this._sessionHandlerCleanups.push(bus.handle("agent:config", async ({ agentId }) => {
       const { agent, error } = resolveAgentForBus(engine, agentId);
       if (error) return { error };
@@ -500,6 +570,16 @@ export class Hub {
     }
   }
 
+}
+
+function matchesAgentPhoneAbortFilter(meta = {}, filter = null) {
+  if (!filter) return true;
+  if (typeof filter === "function") return filter(meta);
+  for (const [key, value] of Object.entries(filter)) {
+    if (value === undefined || value === null) continue;
+    if (meta?.[key] !== value) return false;
+  }
+  return true;
 }
 
 function resolveAgentForBus(engine, agentId) {

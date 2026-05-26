@@ -140,6 +140,21 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("identity.studioId");
   });
 
+  it("does not terminate standalone servers that desktop only attached to", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const serverSource = fs.readFileSync(path.join(root, "server", "index.js"), "utf-8");
+
+    expect(serverSource).toContain('ownerKind: process.env.HANA_SERVER_OWNER === "desktop" ? "desktop" : "standalone"');
+    expect(mainSource).toContain('HANA_SERVER_OWNER: "desktop"');
+    expect(mainSource).toContain("HANA_SERVER_OWNER_PID: String(process.pid)");
+    expect(mainSource).toContain("let reusedServerOwned = false");
+    expect(mainSource).toContain("reusedServerOwned = isDesktopOwnedServerInfo(existingInfo)");
+    expect(mainSource).toContain("if (!reusedServerOwned)");
+    expect(mainSource).toContain("shutdownServer: detached from external server");
+    expect(mainSource).toContain("removeServerInfo = false");
+    expect(mainSource).toContain("|| (reusedServerPid && reusedServerOwned)");
+  });
+
   it("surfaces structured port conflicts instead of burying them under GPU diagnostics", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
 

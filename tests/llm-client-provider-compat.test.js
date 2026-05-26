@@ -327,12 +327,14 @@ describe("callText provider-compat routing", () => {
     expect(detailedResult).toEqual({
       text: "ok",
       usage: expect.objectContaining({
-        inputTokens: 100,
-        outputTokens: 20,
-        cacheReadTokens: 80,
-        cacheWriteTokens: 40,
-        cacheHit: true,
-        cacheCreated: true,
+        input: { totalTokens: 100, uncachedTokens: 20 },
+        output: { totalTokens: 20, reasoningTokens: null },
+        cache: expect.objectContaining({
+          readTokens: 80,
+          writeTokens: 40,
+          hit: true,
+          created: true,
+        }),
       }),
     });
   });
@@ -354,7 +356,7 @@ describe("callText provider-compat routing", () => {
       timeoutMs: 5_000,
     })).rejects.toMatchObject({
       code: "LLM_EMPTY_RESPONSE",
-      message: "LLM returned only thinking content without visible text",
+      message: "模型未回复正文，请检查思考内容或稍后重试。",
       context: expect.objectContaining({ reason: "empty_after_thinking" }),
     });
   });
@@ -399,7 +401,7 @@ describe("callText provider-compat routing", () => {
       timeoutMs: 5_000,
     })).rejects.toMatchObject({
       code: "LLM_EMPTY_RESPONSE",
-      message: "LLM returned only thinking content without visible text",
+      message: "模型未回复正文，请检查思考内容或稍后重试。",
       context: expect.objectContaining({ reason: "empty_after_thinking" }),
     });
   });

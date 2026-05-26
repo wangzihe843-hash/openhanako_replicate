@@ -22,7 +22,8 @@
  *   - Qwen-style 协议改成 reasoning_effort（不再用 enable_thinking 字段）
  *   - 或 hana 的 quirks 系统重构（known-models.json 数据格式变更）
  *
- * 不可变契约：chat mode 返回 input 同一引用；utility mode 返回新对象（浅拷贝 + 强制覆盖 enable_thinking）。
+ * 不可变契约：chat mode 默认返回 input 同一引用；需要显式关闭 thinking 时返回新对象
+ * （浅拷贝 + 强制覆盖 enable_thinking）。utility mode 始终强制关 thinking。
  *
  * 接口契约：见 ./README.md
  */
@@ -47,12 +48,27 @@ export function matches(model) {
 
 export function apply(payload, model, options = {}) {
   let result = normalizeDashScopeVideoPayload(payload, model);
-  // chat 路径让 Pi SDK 自己处理（compat.thinkingFormat="qwen" 路径），不动 payload
+  // chat 路径默认让 Pi SDK 自己处理（compat.thinkingFormat="qwen" 路径），不动 payload。
+  // 当用户明确选择 off，或模型默认声明 reasoning=false 时，Pi SDK 没有 Qwen-style 的
+  // "关闭 thinking" 语义，必须按 DashScope/OpenAI-compatible 协议显式发送 enable_thinking=false。
   // utility 路径强制关思考（短输出不需要思考链 + 省 token）
-  if (options?.mode === "utility") {
+  if (shouldDisableThinking(model, options)) {
     return { ...result, enable_thinking: false };
   }
   return result;
+}
+
+function shouldDisableThinking(model, options) {
+  if (options?.mode === "utility") return true;
+  if (options?.mode !== "chat") return false;
+  return isDisabledThinkingLevel(options?.reasoningLevel) || model?.reasoning === false;
+}
+
+function isDisabledThinkingLevel(value) {
+  if (value === false) return true;
+  if (value == null) return false;
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "" || normalized === "none" || normalized === "off" || normalized === "disabled";
 }
 
 function normalizeDashScopeVideoPayload(payload, model) {

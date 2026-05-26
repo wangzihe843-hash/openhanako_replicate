@@ -163,6 +163,60 @@ describe("mobile workbench route", () => {
       .toMatchObject({ originalName: "draft.txt", rootId: "default" });
   });
 
+  it("returns a new version for text writes and rejects stale expected versions", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    const target = path.join(workspace, "note.md");
+    fs.writeFileSync(target, "old", "utf-8");
+    const before = fs.statSync(target);
+    const app = await makeApp({
+      hanakoHome: path.join(tmpDir, "hana"),
+      deskCwd: workspace,
+      homeCwd: workspace,
+    });
+
+    const stale = await app.request("/api/mobile/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "writeText",
+        name: "note.md",
+        content: "should not write",
+        expectedVersion: { mtimeMs: before.mtime.getTime() - 1, size: before.size },
+      }),
+    });
+
+    expect(stale.status).toBe(200);
+    expect(await stale.json()).toMatchObject({
+      ok: false,
+      conflict: true,
+      version: { mtimeMs: before.mtime.getTime(), size: before.size },
+    });
+    expect(fs.readFileSync(target, "utf-8")).toBe("old");
+
+    const saved = await app.request("/api/mobile/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "writeText",
+        name: "note.md",
+        content: "new body",
+        expectedVersion: { mtimeMs: before.mtime.getTime(), size: before.size },
+      }),
+    });
+
+    expect(saved.status).toBe(200);
+    const data = await saved.json();
+    expect(data).toMatchObject({
+      ok: true,
+      action: "writeText",
+      version: { size: Buffer.byteLength("new body") },
+    });
+    expect(typeof data.version.mtimeMs).toBe("number");
+    expect(fs.readFileSync(target, "utf-8")).toBe("new body");
+  });
+
   it("rejects path traversal in mobile file names and subdirectories", async () => {
     tmpDir = makeTmpDir();
     const workspace = path.join(tmpDir, "workspace");

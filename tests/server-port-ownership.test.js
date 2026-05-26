@@ -29,11 +29,26 @@ describe("server transport ownership", () => {
     expect(source).toContain("startup-error");
   });
 
+  it("uses the configured server network host as the transport bind host", () => {
+    const source = fs.readFileSync(path.join(root, "server", "index.js"), "utf-8");
+
+    expect(source).toContain("bindHost: serverNetwork.host");
+    expect(source).not.toContain("bindHost: \"0.0.0.0\"");
+  });
+
+  it("reports LISTEN_PERMISSION_DENIED for EACCES listen failures", () => {
+    const source = fs.readFileSync(path.join(root, "server", "index.js"), "utf-8");
+
+    expect(source).toContain("code: \"LISTEN_PERMISSION_DENIED\"");
+    expect(source).toContain("isListenPermissionError");
+    expect(source).toContain("EACCES");
+  });
+
   it("exits on port conflict before first-run or engine initialization", async () => {
     const blocker = net.createServer();
     await new Promise((resolve, reject) => {
       blocker.once("error", reject);
-      blocker.listen(0, "0.0.0.0", resolve);
+      blocker.listen(0, "127.0.0.1", resolve);
     });
     const port = blocker.address().port;
     const hanaHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-port-conflict-test-"));

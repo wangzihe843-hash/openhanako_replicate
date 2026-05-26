@@ -127,8 +127,8 @@ try {
     error: serializeError(err),
   });
   showBootstrapError(
-    "Hanako Launch Failed",
-    `Hanako failed before HANA_HOME could be resolved.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`,
+    "HanaAgent Launch Failed",
+    `HanaAgent failed before HANA_HOME could be resolved.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`,
   );
   exitAfterBootstrapFailure();
 }
@@ -165,7 +165,7 @@ function verifyWindowsInstallSurfaceBeforeMain() {
     diagnosticPath,
   });
   const detail = launchIntegrity.formatInstallSurfaceError(result, diagnosticPath);
-  showBootstrapError("Hanako Launch Failed", detail);
+  showBootstrapError("HanaAgent Launch Failed", detail);
   exitAfterBootstrapFailure();
   return false;
 }
@@ -194,8 +194,8 @@ function loadDesktopMain() {
     appendLaunchLog("desktop-main-load-failed", { ...payload, diagnosticPath });
     writeLaunchMarker("desktop-main-load-failed", { diagnosticPath });
     showBootstrapError(
-      "Hanako Launch Failed",
-      `Hanako failed before the desktop main process finished loading.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`,
+      "HanaAgent Launch Failed",
+      `HanaAgent failed before the desktop main process finished loading.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`,
     );
     exitAfterBootstrapFailure();
   }

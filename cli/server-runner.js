@@ -75,7 +75,7 @@ export async function startLocalServerAndWait({
     await delay(intervalMs);
   }
 
-  throw new Error(`Hana Server did not become ready within ${Math.round(timeoutMs / 1000)}s`);
+  throw new Error(`HanaAgent Server did not become ready within ${Math.round(timeoutMs / 1000)}s`);
 }
 
 function delay(ms) {

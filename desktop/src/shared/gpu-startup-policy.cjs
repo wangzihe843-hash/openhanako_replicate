@@ -6,10 +6,23 @@ const STATE_FILE = path.join("user", "gpu-startup.json");
 const PREFERENCES_FILE = path.join("user", "preferences.json");
 const GPU_MODE_HARDWARE = "hardware";
 const GPU_MODE_GPU_SANDBOX_COMPAT = "gpu-sandbox-compat";
+const GPU_MODE_GPU_BACKEND_COMPAT = "gpu-backend-compat";
 const GPU_MODE_SOFTWARE_SAFE = "software-safe";
 const GPU_MODE_DEEP_COMPAT = "deep-compat";
 const GPU_MODE_DIAGNOSTIC_FAILED = "diagnostic-failed";
 const GPU_SANDBOX_COMPAT_DISABLE_FEATURES = ["GpuSandbox"];
+const GPU_BACKEND_COMPAT_DISABLE_FEATURES = ["GpuSandbox", "Vulkan", "SkiaGraphite"];
+const GPU_RECOVERY_STARTUP_PHASES = new Set([
+  "electron-starting",
+  "launching-splash",
+  "splash-ready",
+  "main-window-created",
+  "onboarding-window-created",
+]);
+const NON_GPU_STARTUP_PHASES = new Set([
+  "server-starting",
+  "server-ready",
+]);
 const LEGACY_AUTO_SAFE_MODE_REASONS = new Set([
   "previous-startup-incomplete",
 ]);
@@ -97,6 +110,11 @@ function isExplicitGpuSandboxCompatibility(argv, env) {
   return hasArg(argv, "hana-gpu-sandbox-compat");
 }
 
+function isExplicitGpuBackendCompatibility(argv, env) {
+  if (boolFromSetting(env?.HANA_GPU_BACKEND_COMPAT, false)) return true;
+  return hasArg(argv, "hana-gpu-backend-compat");
+}
+
 function isExplicitUnsafeNoSandbox(argv, env) {
   if (boolFromSetting(env?.HANA_GPU_UNSAFE_NO_SANDBOX, false)) return true;
   return hasArg(argv, "hana-gpu-unsafe-no-sandbox");
@@ -113,6 +131,7 @@ function policyForMode(mode, reason, extra = {}) {
     hardwareAccelerationEnabled: !shouldDisableHardwareAcceleration,
     shouldDisableHardwareAcceleration,
     shouldApplyGpuSandboxCompatSwitches: normalizedMode === GPU_MODE_GPU_SANDBOX_COMPAT,
+    shouldApplyGpuBackendCompatSwitches: normalizedMode === GPU_MODE_GPU_BACKEND_COMPAT,
     shouldApplyDeepCompatSwitches: normalizedMode === GPU_MODE_DEEP_COMPAT || normalizedMode === GPU_MODE_DIAGNOSTIC_FAILED,
     shouldApplyUnsafeNoSandboxSwitch: false,
     reason: reason || "default",
@@ -170,6 +189,7 @@ function resolveStoredAutoGpuMode(state) {
   const mode = state?.autoGpuMode?.mode;
   if (
     mode === GPU_MODE_GPU_SANDBOX_COMPAT ||
+    mode === GPU_MODE_GPU_BACKEND_COMPAT ||
     mode === GPU_MODE_SOFTWARE_SAFE ||
     mode === GPU_MODE_DEEP_COMPAT ||
     mode === GPU_MODE_DIAGNOSTIC_FAILED
@@ -190,6 +210,7 @@ function resolveStoredAutoGpuMode(state) {
 
 function currentPolicyMode(policy, prefs) {
   if (policy?.mode) return policy.mode;
+  if (policy?.shouldApplyGpuBackendCompatSwitches) return GPU_MODE_GPU_BACKEND_COMPAT;
   if (policy?.shouldApplyGpuSandboxCompatSwitches) return GPU_MODE_GPU_SANDBOX_COMPAT;
   if (policy?.shouldApplyDeepCompatSwitches) return GPU_MODE_DEEP_COMPAT;
   if (policy?.shouldDisableHardwareAcceleration) return GPU_MODE_SOFTWARE_SAFE;
@@ -201,15 +222,88 @@ function nextModeAfterGpuFailure(mode) {
   if (mode === GPU_MODE_DEEP_COMPAT || mode === GPU_MODE_DIAGNOSTIC_FAILED) {
     return GPU_MODE_DIAGNOSTIC_FAILED;
   }
-  if (mode === GPU_MODE_GPU_SANDBOX_COMPAT) return GPU_MODE_SOFTWARE_SAFE;
+  if (mode === GPU_MODE_GPU_BACKEND_COMPAT) return GPU_MODE_SOFTWARE_SAFE;
+  if (mode === GPU_MODE_GPU_SANDBOX_COMPAT) return GPU_MODE_GPU_BACKEND_COMPAT;
   if (mode === GPU_MODE_SOFTWARE_SAFE) return GPU_MODE_DEEP_COMPAT;
   return GPU_MODE_GPU_SANDBOX_COMPAT;
 }
 
-function isIncompleteStartup(state) {
+function sanitizeStartupPolicy(policy) {
+  if (!policy || typeof policy !== "object") return null;
+  return {
+    mode: currentPolicyMode(policy, {}),
+    reason: policy.reason || "unknown",
+    hardwareAccelerationEnabled: policy.hardwareAccelerationEnabled !== false,
+    shouldDisableHardwareAcceleration: policy.shouldDisableHardwareAcceleration === true,
+    shouldApplyGpuSandboxCompatSwitches: policy.shouldApplyGpuSandboxCompatSwitches === true,
+    shouldApplyGpuBackendCompatSwitches: policy.shouldApplyGpuBackendCompatSwitches === true,
+    shouldApplyDeepCompatSwitches: policy.shouldApplyDeepCompatSwitches === true,
+    shouldApplyUnsafeNoSandboxSwitch: policy.shouldApplyUnsafeNoSandboxSwitch === true,
+  };
+}
+
+function startupPolicyMode(startup, autoMode, fallbackMode = GPU_MODE_HARDWARE) {
+  const mode = startup?.policy?.mode;
+  if (
+    mode === GPU_MODE_HARDWARE ||
+    mode === GPU_MODE_GPU_SANDBOX_COMPAT ||
+    mode === GPU_MODE_GPU_BACKEND_COMPAT ||
+    mode === GPU_MODE_SOFTWARE_SAFE ||
+    mode === GPU_MODE_DEEP_COMPAT ||
+    mode === GPU_MODE_DIAGNOSTIC_FAILED
+  ) {
+    return mode;
+  }
+  if (autoMode?.mode) return autoMode.mode;
+  return fallbackMode;
+}
+
+function normalizeGpuRecoveryState(value) {
+  if (!value || typeof value !== "object" || typeof value.eligible !== "boolean") return null;
+  return {
+    eligible: value.eligible === true,
+    phase: typeof value.phase === "string" ? value.phase : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+function buildGpuRecoveryState(phase, previousGpuRecovery, timestamp) {
+  const previous = normalizeGpuRecoveryState(previousGpuRecovery);
+  if (GPU_RECOVERY_STARTUP_PHASES.has(phase)) {
+    return {
+      eligible: true,
+      phase,
+      updatedAt: timestamp,
+    };
+  }
+  if (NON_GPU_STARTUP_PHASES.has(phase)) {
+    if (previous?.eligible && previous.phase && previous.phase !== "electron-starting") {
+      return previous;
+    }
+    return {
+      eligible: false,
+      phase: null,
+      updatedAt: timestamp,
+    };
+  }
+  if (previous?.eligible) return previous;
+  return null;
+}
+
+function classifyIncompleteStartup(state) {
   const startup = state?.startup;
-  if (!startup || startup.status !== "pending") return false;
-  return true;
+  if (!startup || startup.status !== "pending") return "none";
+  const recovery = normalizeGpuRecoveryState(startup.gpuRecovery);
+  if (recovery?.eligible) return "gpu-recovery";
+  if (recovery && recovery.eligible === false) return "non-gpu";
+  const phase = startup.phase || "electron-starting";
+  if (NON_GPU_STARTUP_PHASES.has(phase)) return "non-gpu";
+  if (GPU_RECOVERY_STARTUP_PHASES.has(phase)) return "gpu-recovery";
+  return "unknown";
+}
+
+function isGpuRecoveryIncompleteStartup(state) {
+  return classifyIncompleteStartup(state) === "gpu-recovery";
 }
 
 function resolveGpuStartupPolicy({
@@ -232,6 +326,10 @@ function resolveGpuStartupPolicy({
       shouldApplyUnsafeNoSandboxSwitch: true,
     });
   }
+  const explicitGpuBackendCompatibility = isExplicitGpuBackendCompatibility(argv, env);
+  if (explicitGpuBackendCompatibility) {
+    return policyForMode(GPU_MODE_GPU_BACKEND_COMPAT, "explicit");
+  }
   const explicitGpuSandboxCompatibility = isExplicitGpuSandboxCompatibility(argv, env);
   if (explicitGpuSandboxCompatibility) {
     return policyForMode(GPU_MODE_GPU_SANDBOX_COMPAT, "explicit");
@@ -245,6 +343,19 @@ function resolveGpuStartupPolicy({
   if (migratedLegacyPolicy) return migratedLegacyPolicy;
 
   const autoMode = platform === "win32" ? resolveStoredAutoGpuMode(state) : null;
+  if (platform === "win32" && isGpuRecoveryIncompleteStartup(state)) {
+    const fallbackMode = preferenceEnabled ? GPU_MODE_HARDWARE : GPU_MODE_SOFTWARE_SAFE;
+    const previousMode = startupPolicyMode(state.startup, autoMode, fallbackMode);
+    const nextMode = nextModeAfterGpuFailure(previousMode);
+    writeAutoGpuMode(hanakoHome, nextMode, {
+      reason: "previous-startup-incomplete",
+      previousMode,
+      previousStartup: state.startup,
+      now,
+    });
+    return policyForMode(nextMode, "previous-startup-incomplete");
+  }
+
   if (autoMode?.mode === GPU_MODE_DEEP_COMPAT || autoMode?.mode === GPU_MODE_DIAGNOSTIC_FAILED) {
     return policyForMode(autoMode.mode, autoMode.reason || "gpu-child-process-gone", {
       autoGpuMode: autoMode,
@@ -255,17 +366,11 @@ function resolveGpuStartupPolicy({
     return policyForMode(GPU_MODE_SOFTWARE_SAFE, "preference");
   }
 
-  if (platform === "win32" && isIncompleteStartup(state)) {
-    writeAutoGpuMode(hanakoHome, GPU_MODE_GPU_SANDBOX_COMPAT, {
-      reason: "previous-startup-incomplete",
-      previousMode: GPU_MODE_HARDWARE,
-      previousStartup: state.startup,
-      now,
-    });
-    return policyForMode(GPU_MODE_GPU_SANDBOX_COMPAT, "previous-startup-incomplete");
-  }
-
-  if (autoMode?.mode === GPU_MODE_GPU_SANDBOX_COMPAT || autoMode?.mode === GPU_MODE_SOFTWARE_SAFE) {
+  if (
+    autoMode?.mode === GPU_MODE_GPU_SANDBOX_COMPAT ||
+    autoMode?.mode === GPU_MODE_GPU_BACKEND_COMPAT ||
+    autoMode?.mode === GPU_MODE_SOFTWARE_SAFE
+  ) {
     return policyForMode(autoMode.mode, autoMode.reason || "gpu-child-process-gone", {
       autoGpuMode: autoMode,
     });
@@ -313,8 +418,21 @@ function applyGpuSandboxCompatibilitySwitches(app, policy) {
   return { applied: true, unsafeNoSandbox: false };
 }
 
+function applyGpuBackendCompatibilitySwitches(app) {
+  const commandLine = app?.commandLine;
+  if (!commandLine?.appendSwitch) return { applied: false };
+  commandLine.appendSwitch("disable-gpu-sandbox");
+  appendMergedFeatureSwitch(app, "disable-features", GPU_BACKEND_COMPAT_DISABLE_FEATURES);
+  commandLine.appendSwitch("use-angle", "d3d11");
+  commandLine.appendSwitch("disable-direct-composition");
+  return { applied: true };
+}
+
 function applyGpuStartupPolicy(app, policy) {
-  const gpuSandboxCompat = policy?.shouldApplyGpuSandboxCompatSwitches
+  const gpuBackendCompat = policy?.shouldApplyGpuBackendCompatSwitches
+    ? applyGpuBackendCompatibilitySwitches(app)
+    : { applied: false };
+  const gpuSandboxCompat = !gpuBackendCompat.applied && policy?.shouldApplyGpuSandboxCompatSwitches
     ? applyGpuSandboxCompatibilitySwitches(app, policy)
     : { applied: false, unsafeNoSandbox: false };
   if (policy?.shouldDisableHardwareAcceleration && typeof app?.disableHardwareAcceleration === "function") {
@@ -326,6 +444,7 @@ function applyGpuStartupPolicy(app, policy) {
       return {
         applied: true,
         deepCompat: true,
+        gpuBackendCompat: gpuBackendCompat.applied,
         gpuSandboxCompat: gpuSandboxCompat.applied,
         unsafeNoSandbox: gpuSandboxCompat.unsafeNoSandbox,
       };
@@ -333,12 +452,14 @@ function applyGpuStartupPolicy(app, policy) {
     return {
       applied: true,
       deepCompat: false,
+      gpuBackendCompat: gpuBackendCompat.applied,
       gpuSandboxCompat: gpuSandboxCompat.applied,
       unsafeNoSandbox: gpuSandboxCompat.unsafeNoSandbox,
     };
   }
   return {
-    applied: gpuSandboxCompat.applied,
+    applied: gpuBackendCompat.applied || gpuSandboxCompat.applied,
+    gpuBackendCompat: gpuBackendCompat.applied,
     gpuSandboxCompat: gpuSandboxCompat.applied,
     unsafeNoSandbox: gpuSandboxCompat.unsafeNoSandbox,
   };
@@ -349,11 +470,14 @@ function markGpuStartupPending({
   platform = process.platform,
   phase = "electron-starting",
   startupId = `${Date.now()}-${process.pid}`,
+  policy = null,
   now,
 } = {}) {
   if (!hanakoHome) throw new Error("markGpuStartupPending requires hanakoHome");
   const timestamp = nowIso(now);
   const state = readState(hanakoHome);
+  const startupPolicy = sanitizeStartupPolicy(policy);
+  const gpuRecovery = buildGpuRecoveryState(phase, null, timestamp);
   const next = {
     ...state,
     startup: {
@@ -363,6 +487,8 @@ function markGpuStartupPending({
       platform,
       startedAt: timestamp,
       updatedAt: timestamp,
+      ...(startupPolicy ? { policy: startupPolicy } : {}),
+      ...(gpuRecovery ? { gpuRecovery } : {}),
     },
   };
   writeState(hanakoHome, next);
@@ -381,6 +507,7 @@ function markGpuStartupPhase({
   if (!state.startup || state.startup.status !== "pending") return null;
   if (startupId && state.startup.startupId && state.startup.startupId !== startupId) return null;
   const timestamp = nowIso(now);
+  const gpuRecovery = buildGpuRecoveryState(phase, state.startup.gpuRecovery, timestamp);
   state.startup = {
     ...state.startup,
     startupId: startupId || state.startup.startupId,
@@ -388,6 +515,11 @@ function markGpuStartupPhase({
     phase,
     updatedAt: timestamp,
   };
+  if (gpuRecovery) {
+    state.startup.gpuRecovery = gpuRecovery;
+  } else {
+    delete state.startup.gpuRecovery;
+  }
   writeState(hanakoHome, state);
   return state.startup;
 }
@@ -510,6 +642,8 @@ function buildGpuStartupDiagnostics({ hanakoHome, policy, app } = {}) {
     `Startup policy: ${policy?.reason || "unknown"}`,
     `Startup policy mode: ${policy?.mode || "unknown"}`,
     `GPU sandbox compatibility switches enabled: ${policy?.shouldApplyGpuSandboxCompatSwitches === true}`,
+    `GPU backend compatibility switches enabled: ${policy?.shouldApplyGpuBackendCompatSwitches === true}`,
+    `GPU sandbox disabled by policy: ${policy?.shouldApplyGpuSandboxCompatSwitches === true || policy?.shouldApplyGpuBackendCompatSwitches === true}`,
     `Deep compatibility switches enabled: ${policy?.shouldApplyDeepCompatSwitches === true}`,
     `Unsafe no-sandbox diagnostic enabled: ${policy?.shouldApplyUnsafeNoSandboxSwitch === true}`,
     `Hardware acceleration enabled by policy: ${policy?.hardwareAccelerationEnabled !== false}`,
@@ -525,6 +659,7 @@ function buildGpuStartupDiagnostics({ hanakoHome, policy, app } = {}) {
     }
   } catch {}
   const state = readState(hanakoHome);
+  items.push(`Incomplete startup classification: ${classifyIncompleteStartup(state)}`);
   if (state.startup) items.push(`GPU startup marker: ${JSON.stringify(state.startup)}`);
   if (state.autoGpuMode) items.push(`GPU auto mode: ${JSON.stringify(state.autoGpuMode)}`);
   if (state.safeMode) items.push(`GPU safe mode: ${JSON.stringify(state.safeMode)}`);

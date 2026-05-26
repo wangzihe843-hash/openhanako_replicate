@@ -66,7 +66,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     padding: 4px;
     border-radius: var(--radius-sm);
     transition: color var(--duration-fast), background var(--duration-fast);
@@ -107,7 +107,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     font-size: 0.75rem;
     padding: 3px 6px;
     border-radius: var(--radius-sm);
@@ -221,7 +221,7 @@
     font-size: 0.72rem;
     padding: 3px 10px;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     margin-left: auto;
     margin-right: var(--space-sm);
     transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
@@ -339,6 +339,15 @@
     color: var(--text-muted);
 }
 
+.autoItemExecutorBadge {
+    font-size: 0.58rem;
+    line-height: 1;
+    color: var(--accent);
+    border: 1px solid rgba(var(--accent-rgb), 0.28);
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+}
+
 .autoItemModelWrap::before {
     content: "\b7";
     margin-right: 8px;
@@ -362,7 +371,7 @@
     border: 1px solid transparent;
     border-radius: 4px;
     padding: 1px 5px;
-    cursor: pointer;
+    cursor: default;
     max-width: 130px;
     white-space: nowrap;
     overflow: hidden;
@@ -408,7 +417,7 @@
     background: none;
     color: var(--text-light);
     border-radius: 3px;
-    cursor: pointer;
+    cursor: default;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -441,7 +450,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     padding: 3px;
     border-radius: var(--radius-sm);
     display: flex;
@@ -596,7 +605,7 @@
     color: var(--text-muted);
     font-size: 0.72rem;
     padding: 3px 10px;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--duration-fast);
 }
 
@@ -630,7 +639,7 @@
     background: var(--overlay-light);
     border: none;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default;
     font-size: 0.78rem;
     color: var(--text);
     transition: background var(--duration-fast);
@@ -685,7 +694,7 @@
     padding: 6px 10px;
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     font-size: 0.78rem;
     color: var(--text);
     text-align: left;
@@ -716,7 +725,7 @@
     color: var(--text-muted);
     background: none;
     border: none;
-    cursor: pointer;
+    cursor: default;
     border-radius: var(--radius-sm);
     transition: color var(--duration-fast), background var(--duration-fast);
 }
@@ -769,7 +778,7 @@
     align-items: center;
     gap: var(--space-sm);
     padding: 8px 12px;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-instant);
 }
 
@@ -849,7 +858,7 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    cursor: pointer;
+    cursor: default;
     padding: 2px 6px;
     border-radius: 4px;
     display: flex;
@@ -983,7 +992,7 @@
     background: color-mix(in srgb, var(--text-muted) 10%, transparent);
     color: var(--text-muted);
     font-size: 0.8rem;
-    cursor: pointer;
+    cursor: default;
     transition: background var(--duration-fast);
 }
 

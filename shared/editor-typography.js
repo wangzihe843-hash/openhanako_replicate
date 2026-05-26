@@ -1,5 +1,5 @@
 const DEFAULT_MARKDOWN_TYPOGRAPHY = Object.freeze({
-  bodyFontSize: 16,
+  bodyFontSize: 15,
   heading1FontSize: 24,
   heading2FontSize: 20,
   heading3FontSize: 18,

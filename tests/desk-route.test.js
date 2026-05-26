@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const extractZipMock = vi.fn(async (zipPath, destDir) => {
   const skillDir = path.join(destDir, "sample-skill");
   fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(path.join(skillDir, "references"), { recursive: true });
   fs.writeFileSync(path.join(skillDir, "SKILL.md"), `---\nname: sample-skill\n---\nfrom: ${zipPath}\n`, "utf-8");
+  fs.writeFileSync(path.join(skillDir, "references", "guide.md"), "# Guide\n", "utf-8");
 });
 
 vi.mock("../lib/extract-zip.js", () => ({
@@ -106,8 +108,43 @@ describe("desk route", () => {
         },
       });
       expect(extractZipMock).toHaveBeenCalledTimes(1);
-      expect(extractZipMock).toHaveBeenCalledWith(zipPath, expect.stringMatching(/_tmp_/));
+      expect(extractZipMock).toHaveBeenCalledWith(zipPath, expect.stringContaining(".tmp-install-"));
       expect(fs.existsSync(path.join(cwd, ".agents", "skills", "sample-skill", "SKILL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(cwd, ".agents", "skills", "sample-skill", "references", "guide.md"))).toBe(true);
+      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true });
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("desk/delete-skill forces workspace skill reload even when the skill path list is unchanged", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
+    try {
+      const cwd = path.join(tempRoot, "workspace");
+      const skillDir = path.join(cwd, ".agents", "skills", "old-skill");
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: old-skill\n---\n", "utf-8");
+
+      const syncWorkspaceSkillPaths = vi.fn(async () => {});
+      const engine = {
+        deskCwd: cwd,
+        homeCwd: cwd,
+        syncWorkspaceSkillPaths,
+      };
+
+      const { createDeskRoute } = await import("../server/routes/desk.js");
+      const app = new Hono();
+      app.route("/api", createDeskRoute(engine, null));
+
+      const res = await app.request("/api/desk/delete-skill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillDir }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(fs.existsSync(skillDir)).toBe(false);
       expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });

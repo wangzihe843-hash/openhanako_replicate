@@ -55,6 +55,40 @@ describe("cron-scheduler", () => {
     expect(done).toEqual([{ id: "job_1", result: { status: "success" } }]);
   });
 
+  it("执行成功时把 executor 结果写入 run history 和 done event", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const job = {
+      id: "job_direct",
+      label: "通知任务",
+      enabled: true,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    const { store, calls } = createStore(job);
+    const done = [];
+    const executionResult = {
+      executorKind: "direct_action",
+      action: "notify",
+      delivery: { ok: true, deliveries: [{ channel: "desktop", status: "sent" }] },
+    };
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob: async () => executionResult,
+      onJobDone: (j, result) => done.push({ id: j.id, result }),
+    });
+
+    await scheduler.checkJobs();
+
+    expect(calls.runs[0].run).toMatchObject({
+      status: "success",
+      executorKind: "direct_action",
+      action: "notify",
+      delivery: { ok: true, deliveries: [{ channel: "desktop", status: "sent" }] },
+    });
+    expect(done).toEqual([{ id: "job_direct", result: { status: "success", ...executionResult } }]);
+  });
+
   it("执行抛错时记录 error 和错误信息", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});

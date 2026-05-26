@@ -16,7 +16,7 @@ function installResizeDom() {
     <div id="sidebar"><div class="sidebar-inner"></div></div>
     <div id="jianSidebar"><div class="jian-sidebar-inner"></div></div>
     <div id="channelInspector"></div>
-    <div id="previewPanel"><div class="preview-panel-inner"></div></div>
+    <div id="previewPanel"><div data-preview-panel-inner=""></div></div>
     <div id="sidebarResizeHandle"></div>
     <div id="jianResizeHandle"></div>
     <div id="channelInspectorResizeHandle"></div>
@@ -81,5 +81,19 @@ describe('useSidebarResize', () => {
     expect(document.documentElement.style.getPropertyValue('--channel-inspector-width')).toBe('310px');
     expect(document.documentElement.style.getPropertyValue('--jian-sidebar-width')).not.toBe('310px');
     expect(storage.setItem).toHaveBeenCalledWith('hana-channel-inspector-width', '310');
+  });
+
+  it('预览面板宽度上限跟随窗口可用空间，而不是固定 800px', () => {
+    const handle = document.getElementById('previewResizeHandle') as HTMLElement;
+    const storage = window.localStorage as unknown as { setItem: ReturnType<typeof vi.fn> };
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 2200 });
+
+    render(<Harness />);
+    fireEvent.mouseDown(handle, { clientX: 1200, clientY: 80 });
+    fireEvent.mouseMove(document, { clientX: 700, clientY: 82 });
+    fireEvent.mouseUp(document);
+
+    expect(document.documentElement.style.getPropertyValue('--preview-panel-width')).toBe('1080px');
+    expect(storage.setItem).toHaveBeenCalledWith('hana-preview-width', '1080');
   });
 });

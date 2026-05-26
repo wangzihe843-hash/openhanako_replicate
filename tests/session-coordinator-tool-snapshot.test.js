@@ -37,6 +37,7 @@ vi.mock("../lib/debug-log.js", () => ({
 }));
 
 import { SessionCoordinator } from "../core/session-coordinator.js";
+import { isBeautifyEnabledForAgentConfig } from "../plugins/beautify/lib/availability.js";
 
 // Fake tool objects — only needs `.name` to satisfy `.map(t => t.name)` paths
 function makeTool(name) {
@@ -50,7 +51,7 @@ const SDK_BUILTIN_OBJS = [
   "read", "bash", "edit", "write", "grep", "find", "ls",
 ].map(makeTool);
 
-// OpenHanako custom tools — in production these come from agent.tools getter
+// HanaAgent custom tools — in production these come from agent.tools getter
 // and flow through buildTools.customTools. create_artifact is intentionally
 // absent from fresh sessions; it is a restore-only compatibility tool.
 const HANAKO_CUSTOM_OBJS = [
@@ -69,7 +70,7 @@ function allNames() {
 }
 
 function defaultBaselineNames() {
-  return allNames().filter((name) => !["dm", "update_settings"].includes(name));
+  return allNames().filter((name) => name !== "dm");
 }
 
 describe("session-coordinator tool snapshot (createSession)", () => {
@@ -165,12 +166,12 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
   // ── Case C tests ─────────────────────────────────────────────
 
-  it("Case C: new session with NO tools config applies DEFAULT_DISABLED (update_settings + dm off)", async () => {
+  it("Case C: new session with NO tools config applies DEFAULT_DISABLED (dm off, update_settings on)", async () => {
     currentAgentConfig = {}; // fresh agent or upgrade, tools field absent
     const { sessionPath } = await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).not.toContain("update_settings");
+    expect(appliedList).toContain("update_settings");
     expect(appliedList).not.toContain("dm");
     // everything else still on
     expect(appliedList).toContain("browser");
@@ -439,6 +440,44 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(appliedList).not.toContain("mcp_github_search");
     expect(appliedList).toContain("read");
     expect(appliedList).toContain("browser");
+  });
+
+  it("Case C: beautify plugin tools are default-off for fresh configs", async () => {
+    const beautifyTool = {
+      ...makeTool("beautify_create-cover"),
+      _pluginId: "beautify",
+      isEnabledForAgentConfig: isBeautifyEnabledForAgentConfig,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, beautifyTool],
+    });
+    currentAgentConfig = {};
+
+    await coord.createSession(null, tmpDir, true);
+
+    const appliedList = activeToolsSpy.mock.calls[0][0];
+    expect(appliedList).not.toContain("beautify_create-cover");
+    expect(appliedList).toContain("read");
+  });
+
+  it("Case C: beautify plugin tools join fresh sessions after explicit opt-in", async () => {
+    const beautifyTool = {
+      ...makeTool("beautify_create-cover"),
+      _pluginId: "beautify",
+      isEnabledForAgentConfig: isBeautifyEnabledForAgentConfig,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, beautifyTool],
+    });
+    currentAgentConfig = { tools: { disabled: ["dm"] } };
+
+    await coord.createSession(null, tmpDir, true);
+
+    const appliedList = activeToolsSpy.mock.calls[0][0];
+    expect(appliedList).toContain("beautify_create-cover");
+    expect(appliedList).not.toContain("dm");
   });
 
   it("Case C: tampering with core tool name still keeps it (subset tamper protection)", async () => {

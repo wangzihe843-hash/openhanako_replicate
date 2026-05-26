@@ -116,47 +116,61 @@ function parsePortInUseStartupError(stderrLogs) {
     const line = afterMarker.split(/\r?\n/, 1)[0]?.trim();
     try {
       const parsed = JSON.parse(line);
-      if (parsed?.code === "PORT_IN_USE") {
-        return normalizePortInUsePayload(parsed);
+      if (parsed?.code === "PORT_IN_USE" || parsed?.code === "LISTEN_PERMISSION_DENIED") {
+        return normalizeListenStartupPayload(parsed);
       }
     } catch {}
   }
 
   const eaddrMatch = joined.match(/EADDRINUSE[^,\n]*?(?:address already in use\s*)?([^\s:]+):(\d+)/i);
-  if (!eaddrMatch) return null;
-  return normalizePortInUsePayload({
+  if (eaddrMatch) return normalizeListenStartupPayload({
     code: "PORT_IN_USE",
     host: eaddrMatch[1],
     port: Number(eaddrMatch[2]),
     networkMode: "unknown",
     suggestions: [],
   });
+
+  const eaccesMatch = joined.match(/EACCES[^,\n]*?(?:permission denied\s*)?([^\s:]+):(\d+)/i);
+  if (!eaccesMatch) return null;
+  return normalizeListenStartupPayload({
+    code: "LISTEN_PERMISSION_DENIED",
+    host: eaccesMatch[1],
+    port: Number(eaccesMatch[2]),
+    networkMode: "unknown",
+    suggestions: [],
+  });
 }
 
 function extractRootServerStartupError(stderrLogs) {
-  const portInUse = parsePortInUseStartupError(stderrLogs);
-  if (portInUse) {
-    const suggestions = Array.isArray(portInUse.suggestions) && portInUse.suggestions.length
-      ? ` Suggestions: ${portInUse.suggestions.join(" ")}`
+  const listenError = parsePortInUseStartupError(stderrLogs);
+  if (listenError) {
+    const suggestions = Array.isArray(listenError.suggestions) && listenError.suggestions.length
+      ? ` Suggestions: ${listenError.suggestions.join(" ")}`
       : "";
-    const cause = portInUse.networkMode === "unknown" ? " (EADDRINUSE)" : "";
-    return `PORT_IN_USE${cause}: ${portInUse.host}:${portInUse.port} is already in use (network mode: ${portInUse.networkMode}).${suggestions}`;
+    const unknownCause = listenError.networkMode === "unknown"
+      ? (listenError.code === "PORT_IN_USE" ? " (EADDRINUSE)" : " (EACCES)")
+      : "";
+    const detail = listenError.code === "PORT_IN_USE"
+      ? "is already in use"
+      : "cannot be listened on";
+    return `${listenError.code}${unknownCause}: ${listenError.host}:${listenError.port} ${detail} (network mode: ${listenError.networkMode}).${suggestions}`;
   }
 
   if (!Array.isArray(stderrLogs) || stderrLogs.length === 0) return null;
-  const eaddrLine = stderrLogs
+  const listenLine = stderrLogs
     .join("")
     .split(/\r?\n/)
     .map(line => line.replace(/^\[stderr\]\s*/, "").trim())
-    .find(line => /EADDRINUSE/i.test(line));
-  return eaddrLine || null;
+    .find(line => /EADDRINUSE|EACCES/i.test(line));
+  return listenLine || null;
 }
 
-function normalizePortInUsePayload(value) {
-  if (!value || value.code !== "PORT_IN_USE") return null;
+function normalizeListenStartupPayload(value) {
+  if (!value || (value.code !== "PORT_IN_USE" && value.code !== "LISTEN_PERMISSION_DENIED")) return null;
   const port = Number(value.port);
   return {
-    code: "PORT_IN_USE",
+    code: value.code,
     host: typeof value.host === "string" && value.host ? value.host : "unknown",
     port: Number.isInteger(port) ? port : null,
     networkMode: typeof value.networkMode === "string" && value.networkMode ? value.networkMode : "unknown",

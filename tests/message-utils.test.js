@@ -304,6 +304,36 @@ describe("loadSessionHistoryMessages", () => {
     expect(result[1].id).toEqual(expect.any(String));
     expect(result[1].timestamp).toEqual(expect.any(String));
   });
+
+  it("从 Pi session 分支恢复 custom entry 供非上下文后台结果重建 UI 块", async () => {
+    const sessionDir = path.join(tmpDir, "sessions");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "submitted" }] });
+    manager.appendCustomEntry("hana-deferred-result", {
+      schemaVersion: 1,
+      taskId: "task-img",
+      status: "success",
+      type: "image-generation",
+      result: { sessionFiles: [{ filePath: "/tmp/generated.png" }] },
+    });
+
+    const result = await loadSessionHistoryMessages({}, manager.getSessionFile());
+
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      role: "custom",
+      customType: "hana-deferred-result",
+      data: {
+        schemaVersion: 1,
+        taskId: "task-img",
+        status: "success",
+        type: "image-generation",
+      },
+      display: false,
+    });
+    expect(result[1].id).toEqual(expect.any(String));
+    expect(result[1].timestamp).toEqual(expect.any(String));
+  });
 });
 
 describe("loadLatestAssistantSummaryFromSessionFile", () => {

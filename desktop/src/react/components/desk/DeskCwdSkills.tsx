@@ -37,14 +37,15 @@ function useCwdSkillsOpen() {
 
 export function DeskCwdSkillsButton() {
   const deskBasePath = useStore(s => s.deskBasePath);
+  const skillCatalogVersion = useStore(s => s.skillCatalogVersion);
   const { open, skills, toggle } = useCwdSkillsOpen();
   const loadedRef = useRef('');
 
   useEffect(() => {
-    if (deskBasePath && deskBasePath !== loadedRef.current) {
+    if (deskBasePath && (deskBasePath !== loadedRef.current || skillCatalogVersion > 0)) {
       loadCwdSkills().then(() => { loadedRef.current = deskBasePath; });
     }
-  }, [deskBasePath]);
+  }, [deskBasePath, skillCatalogVersion]);
 
   const handleClick = useCallback(() => {
     if (!open) loadCwdSkills();

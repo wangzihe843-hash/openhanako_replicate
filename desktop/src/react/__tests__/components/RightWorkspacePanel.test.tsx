@@ -615,4 +615,45 @@ describe('RightWorkspacePanel', () => {
     expect(drawer).toHaveAttribute('data-open', 'true');
     expect(screen.getByRole('button', { name: '收起笺' })).toHaveAttribute('aria-expanded', 'true');
   });
+
+  it('preserves raw Jian execution status when editing the instruction body', async () => {
+    vi.useFakeTimers();
+    useStore.setState({
+      deskJianContent: [
+        '帮我巡检这个目录，执行五次。',
+        '',
+        '<!-- exec-log -->',
+        '上次任务快照：',
+        '```jian-snapshot',
+        '帮我巡检这个目录，执行五次。',
+        '```',
+        '',
+        '执行状态：',
+        '- 状态：进行中',
+        '- 进度：4/5',
+        '- 说明：已完成第 4 次巡检。',
+        '<!-- /exec-log -->',
+      ].join('\n'),
+    } as never);
+
+    try {
+      render(<RightWorkspacePanel />);
+
+      fireEvent.change(screen.getByPlaceholderText('写点什么...'), {
+        target: { value: '帮我巡检这个目录，执行五次。 ' },
+      });
+      await vi.advanceTimersByTimeAsync(850);
+
+      const saveCall = vi.mocked(hanaFetch).mock.calls.find(([url, init]) => (
+        url === '/api/desk/jian' && init && typeof init === 'object' && init.method === 'POST'
+      ));
+      expect(saveCall).toBeTruthy();
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body));
+      expect(body.content).toContain('帮我巡检这个目录，执行五次。 ');
+      expect(body.content).toContain('上次任务快照：');
+      expect(body.content).toContain('- 进度：4/5');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

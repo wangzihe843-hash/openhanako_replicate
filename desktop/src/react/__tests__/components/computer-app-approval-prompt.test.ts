@@ -129,6 +129,8 @@ function seedSession() {
     inlineErrors: {},
     attachedFiles: [],
     docContextAttached: false,
+    quoteCandidate: null,
+    quotedSelections: [],
     quotedSelection: null,
     models: [],
     previewItems: [],

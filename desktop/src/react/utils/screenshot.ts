@@ -28,6 +28,12 @@ type ScreenshotRenderPayload = ScreenshotPayload & {
   segmentTotal?: number;
 };
 
+export interface ArticleScreenshotOptions {
+  filePath?: string | null;
+  articleType?: string | null;
+  language?: string | null;
+}
+
 interface ScreenshotRenderResult {
   success: boolean;
   error?: string;
@@ -212,7 +218,7 @@ export async function takeScreenshot(targetMessageId: string, sessionPath: strin
 /**
  * Markdown 编辑器截图（纯文章模式）。
  */
-export async function takeArticleScreenshot(markdown: string): Promise<void> {
+export async function takeArticleScreenshot(markdown: string, options: ArticleScreenshotOptions = {}): Promise<void> {
   const color = localStorage.getItem('hana-screenshot-color') || 'light';
   const width = localStorage.getItem('hana-screenshot-width') || 'mobile';
   const theme = buildThemeName(color, width);
@@ -231,6 +237,9 @@ export async function takeArticleScreenshot(markdown: string): Promise<void> {
       mode: 'article',
       theme,
       markdown,
+      filePath: options.filePath || null,
+      articleType: options.articleType || 'markdown',
+      language: options.language || null,
       saveDir: homeFolder,
       locale: window.i18n?.locale || useStore.getState().locale || window.navigator?.language || 'zh',
     });

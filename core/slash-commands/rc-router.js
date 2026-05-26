@@ -1,4 +1,5 @@
 import { collectMediaItems } from "../../lib/tools/media-details.js";
+import { formatSettingsUpdateText } from "../../lib/tools/settings-update-result.js";
 import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.js";
 
 /**
@@ -56,6 +57,10 @@ export async function promptAttachedDesktopSession(engine, sessionPath, text, op
       const card = event.result?.details?.card;
       if (card?.description) {
         captured += (captured ? "\n\n" : "") + card.description;
+      }
+      const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
+      if (settingsUpdateText) {
+        captured += (captured ? "\n\n" : "") + settingsUpdateText;
       }
     }
   });

@@ -326,7 +326,7 @@ function TreeNode({
     if (!file.isDir) return;
     setDeskExpandedPaths(toggleExpanded(expandedPaths, subdir));
     schedulePersistCurrentWorkspaceUiState();
-    if (!expanded) void loadDeskTreeFiles(subdir);
+    if (!expanded) void loadDeskTreeFiles(subdir, { force: true });
   }, [expanded, expandedPaths, file.isDir, setDeskExpandedPaths, subdir]);
 
   const previewFile = useCallback(() => {
@@ -374,7 +374,7 @@ function TreeNode({
             if (file.isDir) {
               setDeskExpandedPaths(expandedPaths.includes(subdir) ? expandedPaths : [...expandedPaths, subdir]);
               schedulePersistCurrentWorkspaceUiState();
-              void loadDeskTreeFiles(subdir);
+              void loadDeskTreeFiles(subdir, { force: true });
             } else {
               if (isWebRuntime()) previewFile();
               else window.platform?.openFile?.(path);

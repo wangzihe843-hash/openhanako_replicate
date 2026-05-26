@@ -1,5 +1,6 @@
 import { getLocale } from "../server/i18n.js";
 import { modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
+import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
 import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";
 
 export function isAbortLikeError(err) {
@@ -53,6 +54,7 @@ export async function prepareVisionInputForTextOnlyModel({
   visionPolicyTarget,
   warn,
   signal,
+  prepareModelImages = prepareModelImageInputsForPrompt,
 }) {
   if (!opts?.images?.length || !requiresAuxiliaryVision(targetModel)) {
     return { text, opts };
@@ -65,6 +67,7 @@ export async function prepareVisionInputForTextOnlyModel({
   }
 
   try {
+    ({ text, opts } = await prepareModelImages({ text, opts, signal }));
     const prepared = await bridge.prepare({
       sessionPath,
       targetModel,
