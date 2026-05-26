@@ -339,11 +339,12 @@ export async function switchSession(path: string): Promise<void> {
       });
     }
 
-    // 切会话时只清「锚定的浮动划词引用」（anchorRect 锚在上一个 session 的内容上，
-    // 换 session 后位置失效）。不带 anchorRect 的引用是别处刻意放进来的（如秘密空间
-    // 「去和 TA 聊聊」），应跨 session 保留，只在发送或用户手动移除（chip 上的 ✕）时消失。
-    const quotedForSwitch = useStore.getState().quotedSelection;
-    if (quotedForSwitch?.anchorRect) useStore.getState().clearQuotedSelection();
+    // 切会话时只清「锚定的浮动划词候选」（quoteCandidate 锚在上一个 session 的内容上，
+    // 换 session 后位置失效）。已 commit 的 quotedSelections（含秘密空间「去和 TA 聊聊」
+    // redeem 进来的 staged quote）应跨 session 保留，只在发送或用户手动移除（chip 上的 ✕）时消失。
+    if (useStore.getState().quoteCandidate?.anchorRect) {
+      useStore.getState().clearQuoteCandidate();
+    }
 
     // Sync plan mode for the switched-to session
     window.dispatchEvent(new CustomEvent('hana-plan-mode', {

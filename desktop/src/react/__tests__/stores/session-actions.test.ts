@@ -198,6 +198,8 @@ function installStoreMethods() {
     if (entry) entry.items.push(item);
   });
   s.clearQuotedSelection = vi.fn();
+  s.clearQuoteCandidate = vi.fn();
+  s.clearQuotedSelections = vi.fn();
   s.setActivePanel = vi.fn((v: unknown) => { mockState.activePanel = v; });
   s.requestInputFocus = vi.fn();
   s.setDeskBasePath = vi.fn((path: string) => { mockState.deskBasePath = path; });
@@ -621,10 +623,13 @@ describe('session-actions', () => {
       expect(deskActionMocks.activateWorkspaceDesk).not.toHaveBeenCalledWith('/workspace-b');
     });
 
-    it('切会话保留无 anchorRect 的暂存引用，清掉带 anchorRect 的浮动引用', async () => {
+    it('切会话只清「锚定的浮动划词候选」（quoteCandidate.anchorRect），保留 quotedSelections 列表里跨 session 的暂存引用', async () => {
       Object.assign(mockState, {
         currentSessionPath: '/current',
-        quotedSelection: { text: '秘密草稿', sourceTitle: '秘密空间 · TA 的草稿箱', charCount: 4 },
+        quoteCandidate: null,
+        quotedSelections: [
+          { text: '秘密草稿', sourceTitle: '秘密空间 · TA 的草稿箱', sourceKind: 'chat', charCount: 4 },
+        ],
         chatSessions: {
           '/keep': { items: [{ type: 'message', data: { id: 'cached-keep' } }], hasMore: false },
         },
@@ -633,13 +638,15 @@ describe('session-actions', () => {
         agentId: null, cwd: '/wk', currentModelId: null, currentModelName: null, currentModelProvider: null,
       }));
       await switchSession('/keep');
+      expect(mockState.clearQuoteCandidate).not.toHaveBeenCalled();
+      expect(mockState.clearQuotedSelections).not.toHaveBeenCalled();
       expect(mockState.clearQuotedSelection).not.toHaveBeenCalled();
 
-      (mockState.clearQuotedSelection as ReturnType<typeof vi.fn>).mockClear();
+      (mockState.clearQuoteCandidate as ReturnType<typeof vi.fn>).mockClear();
       Object.assign(mockState, {
         currentSessionPath: '/keep',
-        quotedSelection: {
-          text: '划词', sourceTitle: 'x', charCount: 2,
+        quoteCandidate: {
+          text: '划词', sourceTitle: 'x', sourceKind: 'preview', charCount: 2,
           anchorRect: { left: 0, right: 1, top: 0, bottom: 1, width: 1, height: 1 },
         },
         chatSessions: {
@@ -650,7 +657,10 @@ describe('session-actions', () => {
         agentId: null, cwd: '/wd', currentModelId: null, currentModelName: null, currentModelProvider: null,
       }));
       await switchSession('/drop');
-      expect(mockState.clearQuotedSelection).toHaveBeenCalled();
+      expect(mockState.clearQuoteCandidate).toHaveBeenCalled();
+      // 不清整列 chips
+      expect(mockState.clearQuotedSelections).not.toHaveBeenCalled();
+      expect(mockState.clearQuotedSelection).not.toHaveBeenCalled();
     });
 
     it('surfaces the server error when switching to an old session fails', async () => {

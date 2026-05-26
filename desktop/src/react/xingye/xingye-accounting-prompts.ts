@@ -130,7 +130,7 @@ export function buildAccountingDraftPrompt(args: {
     '──────────────────',
     '【输出 JSON schema】',
     '──────────────────',
-    '只输出一个 JSON 对象，其中 drafts 字段是 1–3 条草稿的数组：',
+    `只输出一个 JSON 对象，其中 drafts 字段是恰好 ${count} 条草稿的数组：`,
     JSON.stringify(
       {
         drafts: [
@@ -151,7 +151,7 @@ export function buildAccountingDraftPrompt(args: {
     ),
     '',
     '字段要求：',
-    `- drafts 数组长度必须是 ${count}，每条**互不重复**——不要 3 条都是工资，也不要 3 条都是餐饮；`
+    `- drafts 数组长度必须是 ${count}，每条**互不重复**——不要全是工资，也不要全是餐饮；`
     + '至少在收入 / 支出 / 分类 / 对手方四个维度里有差异。',
     '- title 必填，2–24 字的简短摘要，如「五月薪俸」「这个月房租」「巷口面摊午饭」「东家发的奖金」。',
     `- direction 只能是 ${ACCOUNTING_AI_DIRECTIONS.map((d) => `"${d}"`).join(' / ')} 之一；`
