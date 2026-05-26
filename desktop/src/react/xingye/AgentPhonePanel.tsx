@@ -16,6 +16,7 @@ import { PhoneDivinationApp } from './PhoneDivinationApp';
 import { PhoneFilesApp } from './PhoneFilesApp';
 import { PhoneShoppingApp } from './PhoneShoppingApp';
 import { PhoneSecondhandApp } from './PhoneSecondhandApp';
+import { PhoneAccountingApp } from './PhoneAccountingApp';
 import { PhoneReadingNotesApp } from './PhoneReadingNotesApp';
 import { PhoneMailApp } from './PhoneMailApp';
 import { PhoneNewsApp } from './PhoneNewsApp';
@@ -30,7 +31,7 @@ interface AgentPhonePanelProps {
   onOpenGroupChatTab?: () => void;
 }
 
-type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination' | 'files' | 'shopping' | 'secondhand' | 'reading-notes' | 'mail' | 'news' | 'health';
+type PhonePage = 'home' | 'sms' | 'contacts' | 'mm-chat' | 'journal' | 'schedule' | 'divination' | 'files' | 'shopping' | 'secondhand' | 'accounting' | 'reading-notes' | 'mail' | 'news' | 'health';
 
 export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab }: AgentPhonePanelProps) {
   const channels = useStore(state => state.channels);
@@ -65,6 +66,7 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           onOpenFiles={() => setPhonePage('files')}
           onOpenShopping={() => setPhonePage('shopping')}
           onOpenSecondhand={() => setPhonePage('secondhand')}
+          onOpenAccounting={() => setPhonePage('accounting')}
           onOpenReadingNotes={() => setPhonePage('reading-notes')}
           onOpenMail={() => setPhonePage('mail')}
           onOpenNews={() => setPhonePage('news')}
@@ -149,6 +151,15 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
 
       {phonePage === 'secondhand' ? (
         <PhoneSecondhandApp
+          ownerAgent={agent}
+          ownerProfile={profile}
+          displayName={display?.displayName ?? agent?.name ?? 'TA'}
+          onBack={() => setPhonePage('home')}
+        />
+      ) : null}
+
+      {phonePage === 'accounting' ? (
+        <PhoneAccountingApp
           ownerAgent={agent}
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}

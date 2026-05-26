@@ -48,6 +48,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "shopping_polish",
   "secondhand_draft",
   "secondhand_polish",
+  "accounting_draft",
   "news_draft",
   "news_comment",
   "secret_interview_draft",

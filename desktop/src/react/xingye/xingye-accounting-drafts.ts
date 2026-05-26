@@ -359,6 +359,10 @@ export async function confirmAccountingDraft(
         content,
         metadata,
         source: 'xingye-heartbeat-confirmed',
+        // 历史批量草稿带 occurredAt 时，让 entry.createdAt 也回到那一天；
+        // ledger 投影本就读 meta.occurredAt ?? entry.createdAt，但其他地方（按 updatedAt
+        // 排序、event log timestamp）会受影响。这里两边同步避免错位。
+        createdAt: occurredAt,
       });
     } else {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');

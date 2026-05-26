@@ -44,6 +44,51 @@ describe('xingye-app-entry-store', () => {
     await expect(store.listEntries('agent-a', 'shopping')).resolves.toEqual([]);
   });
 
+  it('backdates createdAt/updatedAt when input.createdAt is a valid ISO (历史批量场景)', async () => {
+    const store = createXingyeAppEntryStore(createMemoryXingyeStorageBackend(), {
+      idFactory: () => 'entry-1',
+      now: () => '2026-05-26T10:00:00.000Z',
+    });
+
+    const entry = await store.appendEntry('agent-a', 'shopping', {
+      title: '旧台灯',
+      content: '在巷口杂货店看到的，挺合我的口味。',
+      metadata: { status: 'received', platformStyle: 'generic', itemName: '旧台灯' },
+      source: 'xingye-shopping-init-history',
+      createdAt: '2026-05-19T00:00:00.000Z',
+    });
+
+    expect(entry.createdAt).toBe('2026-05-19T00:00:00.000Z');
+    expect(entry.updatedAt).toBe('2026-05-19T00:00:00.000Z');
+  });
+
+  it('falls back to now when input.createdAt is invalid or missing', async () => {
+    const store = createXingyeAppEntryStore(createMemoryXingyeStorageBackend(), {
+      idFactory: (() => {
+        let n = 0;
+        return () => `entry-${++n}`;
+      })(),
+      now: () => '2026-05-26T10:00:00.000Z',
+    });
+
+    const noOverride = await store.appendEntry('agent-a', 'shopping', {
+      title: 'a', content: '', metadata: {}, source: 'manual',
+    });
+    expect(noOverride.createdAt).toBe('2026-05-26T10:00:00.000Z');
+
+    const badIso = await store.appendEntry('agent-a', 'shopping', {
+      title: 'b', content: '', metadata: {}, source: 'manual',
+      createdAt: 'not-a-date',
+    });
+    expect(badIso.createdAt).toBe('2026-05-26T10:00:00.000Z');
+
+    const empty = await store.appendEntry('agent-a', 'shopping', {
+      title: 'c', content: '', metadata: {}, source: 'manual',
+      createdAt: '',
+    });
+    expect(empty.createdAt).toBe('2026-05-26T10:00:00.000Z');
+  });
+
   it('updates one entry without changing the other entries', async () => {
     const store = createXingyeAppEntryStore(createMemoryXingyeStorageBackend(), {
       idFactory: (() => {

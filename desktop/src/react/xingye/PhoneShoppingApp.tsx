@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import {
@@ -9,6 +9,7 @@ import {
   type AppEntry,
 } from './xingye-app-entry-store';
 import {
+  appendShoppingDraft,
   confirmShoppingDraft,
   discardShoppingDraft,
   listShoppingDrafts,
@@ -16,8 +17,21 @@ import {
   type XingyePendingShoppingDraft,
 } from './xingye-shopping-drafts';
 import type { XingyeRoleProfile } from './xingye-profile-store';
-import { generateShoppingDraftWithAI, generateShoppingPolishWithAI } from './xingye-shopping-ai';
+import {
+  generateShoppingDraftWithAI,
+  generateShoppingHistoryWithAI,
+  generateShoppingPolishWithAI,
+} from './xingye-shopping-ai';
 import { normalizeAmount, normalizeCurrency, parseAmountText } from './xingye-money';
+import {
+  distributeOccurredAtFallback,
+  loadHistoryState,
+  saveHistoryState,
+  planBulkRequest,
+  planInitialBulkRequest,
+  toYmd,
+  type BulkPlan,
+} from './xingye-app-history-state';
 
 export interface PhoneShoppingAppProps {
   ownerAgent: Agent | null;
@@ -388,6 +402,15 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
   const [draftBusyKind, setDraftBusyKind] = useState<'plain' | 'polish' | 'discard' | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  /**
+   * 「批量历史生成」状态：见 PhoneAccountingApp 同名注释。
+   */
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkBusyKind, setBulkBusyKind] = useState<'initial' | 'manual' | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const initialBootstrapTriedRef = useRef<string | null>(null);
+
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
@@ -603,11 +626,138 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
     setEditing(false);
     setSaveError(null);
     setListError(null);
+    setBulkNotice(null);
+    setBulkError(null);
+    initialBootstrapTriedRef.current = null;
   }, [ownerAgentId]);
 
   useEffect(() => {
     void reloadEntries();
   }, [reloadEntries]);
+
+  /**
+   * 历史批量生成的核心实现。
+   * 初始化（kind='initial'）→ 直接写入 entries.jsonl（绕过 draft 流，避免初次打开就被一堆草稿淹没）；
+   * 批量新增（kind='manual'）→ 写入 drafts.jsonl，沿用现有 draft 检查路径。
+   * 任意 kind 成功后都更新 history-state.json，让 init 不再重跑、gap-fill 范围可计算。
+   */
+  const runBulkGeneration = useCallback(
+    async (kind: 'initial' | 'manual') => {
+      if (!ownerAgent || !ownerAgentId) return;
+      const plan: BulkPlan = kind === 'initial'
+        ? planInitialBulkRequest()
+        : planBulkRequest(await loadHistoryState(ownerAgentId, 'shopping'));
+      setBulkBusy(true);
+      setBulkBusyKind(kind);
+      setBulkError(null);
+      setBulkNotice(null);
+      try {
+        const rawDrafts = await generateShoppingHistoryWithAI({
+          agent: ownerAgent,
+          ownerProfile: ownerProfile ?? null,
+          desiredCount: plan.count,
+          historyMode: {
+            kind: kind === 'initial' ? 'initial' : plan.mode === 'gap_fill' ? 'gap_fill' : 'recent',
+            dayRangeHint: plan.hintText,
+            startDays: plan.startDays,
+            endDays: plan.endDays,
+          },
+        });
+        // 见 PhoneAccountingApp 同名注释：填上模型没给的 occurredAt 空槽。
+        const drafts = distributeOccurredAtFallback(rawDrafts, plan.endDays);
+        if (drafts.length === 0) {
+          throw new Error('模型未生成任何可用条目');
+        }
+        if (kind === 'initial') {
+          for (const d of drafts) {
+            const metadata: Record<string, unknown> = {
+              status: d.status,
+              platformStyle: d.platformStyle,
+              itemName: d.itemName,
+            };
+            if (d.category) metadata.category = d.category;
+            if (d.imaginedPrice) metadata.imaginedPrice = d.imaginedPrice;
+            if (d.delta) metadata.delta = d.delta;
+            if (d.seller) metadata.seller = d.seller;
+            if (d.amount !== undefined) metadata.amount = d.amount;
+            if (d.currency) metadata.currency = d.currency;
+            if (d.reason) metadata.reason = d.reason;
+            if (d.tags && d.tags.length > 0) metadata.tags = d.tags;
+            if (d.occurredAt) metadata.occurredAt = d.occurredAt;
+            await appendAppEntry(ownerAgentId, SHOPPING_APP_ID, {
+              title: d.itemName,
+              content: d.content,
+              metadata,
+              source: 'xingye-shopping-init-history',
+              // 行卡「X 天前」用 entry.updatedAt；初始化要让它回到 occurredAt 那一天。
+              createdAt: d.occurredAt,
+            });
+          }
+        } else {
+          for (const d of drafts) {
+            await appendShoppingDraft(ownerAgentId, {
+              itemName: d.itemName,
+              status: d.status,
+              platformStyle: d.platformStyle,
+              category: d.category,
+              imaginedPrice: d.imaginedPrice,
+              delta: d.delta,
+              seller: d.seller,
+              amount: d.amount,
+              currency: d.currency,
+              reason: d.reason,
+              content: d.content,
+              tags: d.tags,
+              occurredAt: d.occurredAt,
+              source: 'xingye-shopping-bulk',
+            });
+          }
+        }
+        const now = new Date();
+        await saveHistoryState(ownerAgentId, 'shopping', {
+          ...(kind === 'initial' ? { initializedAt: now.toISOString() } : {}),
+          lastBulkAt: now.toISOString(),
+          lastCoveredDate: toYmd(now),
+        });
+        setBulkNotice(
+          kind === 'initial'
+            ? `已为 TA 生成 ${drafts.length} 条过去 ${plan.endDays} 天的购物历史`
+            : `已生成 ${drafts.length} 条草稿，请在待确认区检查（${plan.hintText}）`,
+        );
+        await reloadEntries();
+      } catch (err) {
+        setBulkError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBulkBusy(false);
+        setBulkBusyKind(null);
+      }
+    },
+    [ownerAgent, ownerAgentId, ownerProfile, reloadEntries],
+  );
+
+  /**
+   * 首次打开 app 自动初始化：entries 空 + state.initializedAt 缺失 → 跑一次。
+   * 已 init 或已有 entries 都跳过——防止"删光后又自动重灌"。
+   */
+  useEffect(() => {
+    if (!ownerAgent || !ownerAgentId) return;
+    if (loading) return;
+    if (initialBootstrapTriedRef.current === ownerAgentId) return;
+    if (entries.length > 0) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
+    }
+    initialBootstrapTriedRef.current = ownerAgentId;
+    (async () => {
+      try {
+        const state = await loadHistoryState(ownerAgentId, 'shopping');
+        if (state.initializedAt) return;
+        await runBulkGeneration('initial');
+      } catch (err) {
+        console.warn('[PhoneShoppingApp] init bootstrap failed:', err);
+      }
+    })();
+  }, [ownerAgent, ownerAgentId, loading, entries.length, runBulkGeneration]);
 
   const selected = useMemo(
     () => (selectedId ? entries.find((entry) => entry.id === selectedId) ?? null : null),
@@ -970,6 +1120,31 @@ export function PhoneShoppingApp({ ownerAgent, ownerProfile, displayName, onBack
                     </span>
                   ))}
                 </div>
+              ) : null}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className={styles.xyBtnGhost}
+                  onClick={() => void runBulkGeneration('manual')}
+                  disabled={bulkBusy || !ownerAgent}
+                  data-testid="phone-shopping-bulk-button"
+                  title="批量生成最近几天的购物记录，自动补齐上次到今天的空白"
+                >
+                  {bulkBusy && bulkBusyKind === 'manual' ? '批量生成中…' : '批量新增'}
+                </button>
+              </div>
+              {bulkBusy && bulkBusyKind === 'initial' ? (
+                <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }}>
+                  正在为 TA 初始化过去 14 天的购物历史…
+                </p>
+              ) : null}
+              {bulkNotice ? (
+                <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }}>{bulkNotice}</p>
+              ) : null}
+              {bulkError ? (
+                <p className={styles.xyEditorError} role="alert" style={{ margin: '8px 0 0' }}>
+                  批量生成失败：{bulkError}
+                </p>
               ) : null}
             </header>
 

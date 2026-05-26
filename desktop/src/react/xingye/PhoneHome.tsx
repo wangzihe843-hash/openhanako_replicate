@@ -25,6 +25,7 @@ interface PhoneHomeProps {
   onOpenReadingNotes?: () => void;
   onOpenNews?: () => void;
   onOpenHealth?: () => void;
+  onOpenAccounting?: () => void;
 }
 
 const phoneIcons = {
@@ -144,6 +145,15 @@ const phoneIcons = {
       <path d="M4.8 13.3H8.4l1.5-3 2.5 5.6 1.5-3H19.4" />
     </svg>
   ),
+  ledger: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="5" y="3.5" width="14" height="17" rx="2" />
+      <path d="M9 3.5v17" />
+      <path d="M12 8h4" />
+      <path d="M12 12h4" />
+      <path d="M12 16h3" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -155,6 +165,7 @@ const appShortcuts = [
   { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
   { label: '二手', subtitle: 'TA 出掉的旧物', tone: 'shopping', icon: phoneIcons.tag, action: 'secondhand' },
+  { label: '记账', subtitle: '收支与多币种账本', tone: 'journal', icon: phoneIcons.ledger, action: 'accounting' },
   { label: '阅读笔记', subtitle: '本地书目与手动笔记', tone: 'journal', icon: phoneIcons.notebook, action: 'reading-notes' },
   { label: '邮箱', subtitle: 'TA 的私人邮箱', tone: 'mail', icon: phoneIcons.mail, action: 'mail' },
   { label: '报纸', subtitle: '第三方视角的世态与情事', tone: 'news', icon: phoneIcons.newspaper, action: 'news' },
@@ -202,6 +213,7 @@ export function PhoneHome({
   onOpenReadingNotes,
   onOpenNews,
   onOpenHealth,
+  onOpenAccounting,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -269,6 +281,10 @@ export function PhoneHome({
     }
     if (action === 'health') {
       onOpenHealth?.();
+      return;
+    }
+    if (action === 'accounting') {
+      onOpenAccounting?.();
       return;
     }
   };

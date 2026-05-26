@@ -54,6 +54,17 @@ export function buildSecondhandDraftPrompt(args: {
    * 缺省（首次生成 / 历史读取失败）→ 空字符串，prompt 会渲染「（无；这是 TA 第一次写二手记录）」。
    */
   currencyAnchorBlock?: string;
+  /**
+   * 「批量历史生成」模式。无 → 单条 draft（原行为）；有 → 多条 + 强制 occurredAtHint。
+   */
+  historyMode?: {
+    kind: 'initial' | 'recent' | 'gap_fill';
+    dayRangeHint: string;
+    startDays: number;
+    endDays: number;
+  };
+  /** historyMode 启用时的草稿数量（4–10）。默认 4。 */
+  desiredCount?: number;
 }): string {
   const {
     agent,
@@ -66,7 +77,14 @@ export function buildSecondhandDraftPrompt(args: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    historyMode,
+    desiredCount,
   } = args;
+
+  const isHistory = Boolean(historyMode);
+  const count = isHistory
+    ? Math.max(2, Math.min(10, Math.floor(desiredCount ?? 4)))
+    : 1;
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
@@ -79,8 +97,11 @@ export function buildSecondhandDraftPrompt(args: {
   const parts: string[] = [
     '你是星野模式「小手机二手」记录草稿生成器。只返回严格 JSON，不要 Markdown，不要解释。',
     '',
-    '生成目标：这是当前角色自己手机里的二手出售记录，由 TA 自己写出来——TA 想把自己的某件东西出掉 / 转手 / 挂出去卖；'
-    + '只是模拟，不会真的挂平台、成交、收款、接外部二手市场。',
+    isHistory
+      ? `生成目标：这是当前角色自己手机里的二手出售记录。请一次性产出 ${count} 条**互不重复**的二手记录`
+        + `（"历史批量"模式：${historyMode!.dayRangeHint}），由 TA 自己写出来——TA 想把自己的某些东西出掉 / 转手 / 挂出去卖；`
+        + '只是模拟，不会真的挂平台、成交、收款、接外部二手市场。'
+      : '生成目标：这是当前角色自己手机里的二手出售记录，由 TA 自己写出来——TA 想把自己的某件东西出掉 / 转手 / 挂出去卖；只是模拟，不会真的挂平台、成交、收款、接外部二手市场。',
     '这是「卖」，不是「买」（想买的东西归购物模块）。也不是日记，不是日程，不是阅读笔记，不是资料柜条目。',
     '不要出现「根据聊天记录」「用户让我」「系统提示」「模型」「AI」「推荐你」等元叙述。',
     '不要使用 user 视角或第三人称视角；只能是 agent 第一人称想卖 / 在谈 / 舍不得 / 已卖出（虚构的）的口吻。',
@@ -89,7 +110,9 @@ export function buildSecondhandDraftPrompt(args: {
     + '**能给出明确金额时直接写数字 + 货币，不要加「约」**——「约」只在没有明确数字的 fallback 写法里出现（见下方第三步）。',
     '如果输入信息不足以判断 TA 想出掉什么，可以写成「想清一清旧东西」之类的轻量物件，不要凭空捏造重大资产处置（卖车 / 卖房）。',
     '',
-    '输出 JSON schema（仅此结构，字段名必须一致）：',
+    isHistory
+      ? `输出 JSON schema（仅此结构）：一个对象 { "drafts": [ ... ] }，drafts 数组长度必须 = ${count}。每个元素是：`
+      : '输出 JSON schema（仅此结构，字段名必须一致）：',
     /**
      * 注意：status / platformStyle 用「<one of: ...>」占位符，**不要**写成具体合法值
      * （如 "to_sell" / "generic"）—— LLM 会把示例值当默认值，无视下面文字"主动判断"的
@@ -107,6 +130,7 @@ export function buildSecondhandDraftPrompt(args: {
         reason: 'string',
         tags: ['string'],
         content: 'string',
+        ...(isHistory ? { occurredAtHint: 'string' } : {}),
       },
       null,
       2,
@@ -142,6 +166,13 @@ export function buildSecondhandDraftPrompt(args: {
     '- reason 0–80 字一句话，写 TA 为什么想出掉 / 在谈 / 舍不得卖。',
     '- tags 0–5 个 2–6 字中文标签；不要复述 itemName 或 category。',
     '- content 30–200 字 agent 的备忘段落，可以写这件东西的来历、为什么不要了、出掉时的心情，但不要写真实成交动作。',
+    ...(isHistory
+      ? [
+        `- occurredAtHint 0–16 字，TA 心里这条记录发生的时间感（"昨天""三天前""上周二""${Math.min(historyMode!.endDays, 14)} 天前"）。`
+        + `**本次历史批量必填**且必须分布在【${historyMode!.dayRangeHint}】范围内，`
+        + '不同条目日期错开；不要全堆在某一天，也不要写未来时态。',
+      ]
+      : []),
     '',
     '──────────────────',
     '【世界观货币写法指南】（askingPrice / delta 必读）',
@@ -296,6 +327,15 @@ export function buildSecondhandDraftPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（若有；仅作背景参考）】',
     heartbeatBlock.trim() || '（无）',
+    isHistory
+      ? `\n记住：只输出 { drafts: [...] } 一个 JSON 对象；drafts 长度 = ${count}；每条 itemName / status / category 互不重复；`
+        + `occurredAtHint 必填，分布在【${historyMode!.dayRangeHint}】。`
+        + (historyMode!.kind === 'initial'
+          ? '这是 TA 首次使用二手清单，请主要参考【星野核心设定】和【设定库】里的身份 / 职业 / 世界观推断"过去 14 天里 TA 最可能想出掉 / 已经卖掉的旧物"，最近聊天 / 关系 / 心跳作为弱参考。'
+          : historyMode!.kind === 'gap_fill'
+            ? '这是补齐之前几天的空白，请按"日常作息会发生的事"分布，不要全堆在某一天。'
+            : '')
+      : '',
   ];
 
   return parts.join('\n');

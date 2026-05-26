@@ -90,6 +90,11 @@ export type XingyePendingShoppingDraft = {
   /** 备注/正文，写入 entries 时落到 AppEntry.content。 */
   content?: string;
   tags?: string[];
+  /**
+   * 这条购物事件 TA 心里的发生日 ISO（来自历史批量的 occurredAtHint 解析）。
+   * 缺省 → confirm 时 entry.createdAt 回退到 now。
+   */
+  occurredAt?: string;
   /** Producer 标识，例：'xingye-heartbeat-tool'。 */
   source: string;
   /** 触发本草稿的 xingye event id 列表（可空，用于追溯）。 */
@@ -155,6 +160,11 @@ function normalizeDraftRow(value: unknown): XingyePendingShoppingDraft | null {
   const sourceEventIds = Array.isArray(eventIdsRaw)
     ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+  const occurredAtRaw = typeof raw.occurredAt === 'string' ? raw.occurredAt.trim() : '';
+  const occurredAtParsed = occurredAtRaw ? Date.parse(occurredAtRaw) : NaN;
+  const occurredAt = Number.isFinite(occurredAtParsed)
+    ? new Date(occurredAtParsed).toISOString()
+    : undefined;
   return {
     id,
     itemName,
@@ -169,6 +179,7 @@ function normalizeDraftRow(value: unknown): XingyePendingShoppingDraft | null {
     reason: normalizeOptionalText(raw.reason, 500),
     content: normalizeOptionalText(raw.content, 2000),
     tags: normalizeTags(raw.tags),
+    occurredAt,
     createdAt,
     source,
     sourceEventIds,
@@ -225,6 +236,8 @@ export async function appendShoppingDraft(
     reason?: string;
     content?: string;
     tags?: string[];
+    /** TA 心里这条购物事件的发生日 ISO；历史批量会传过去日期，普通新增可不传。 */
+    occurredAt?: string;
     source: string;
     sourceEventIds?: string[];
   },
@@ -245,6 +258,11 @@ export async function appendShoppingDraft(
   const reason = normalizeOptionalText(input.reason, 500);
   const content = normalizeOptionalText(input.content, 2000);
   const tags = normalizeTags(input.tags);
+  const occurredAtRaw = typeof input.occurredAt === 'string' ? input.occurredAt.trim() : '';
+  const occurredAtParsed = occurredAtRaw ? Date.parse(occurredAtRaw) : NaN;
+  const occurredAt = Number.isFinite(occurredAtParsed)
+    ? new Date(occurredAtParsed).toISOString()
+    : undefined;
   const sourceEventIds = Array.isArray(input.sourceEventIds)
     ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
@@ -265,6 +283,7 @@ export async function appendShoppingDraft(
     reason,
     content,
     tags,
+    occurredAt,
     createdAt,
     source,
     sourceEventIds,
@@ -296,6 +315,7 @@ export async function appendShoppingDraft(
     reason,
     content,
     tags,
+    occurredAt,
     createdAt,
     source,
     sourceEventIds,
@@ -429,6 +449,7 @@ export async function confirmShoppingDraft(
       if (currency) metadata.currency = currency;
       if (reason) metadata.reason = reason;
       if (tags && tags.length > 0) metadata.tags = tags;
+      if (draft.occurredAt) metadata.occurredAt = draft.occurredAt;
 
       entry = await appendAppEntry(aid, 'shopping', {
         id: expectedEntryId,
@@ -436,6 +457,9 @@ export async function confirmShoppingDraft(
         content,
         metadata,
         source: 'xingye-heartbeat-confirmed',
+        // 历史批量产出的草稿 confirm 后，让 entry 的 createdAt/updatedAt 回到 occurredAt
+        // 那一天；普通巡检草稿没 occurredAt → 走 now 兜底。
+        createdAt: draft.occurredAt,
       });
     } else {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');

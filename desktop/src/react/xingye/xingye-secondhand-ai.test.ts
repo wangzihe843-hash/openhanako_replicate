@@ -16,7 +16,9 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
   generateSecondhandDraftWithAI,
+  generateSecondhandHistoryWithAI,
   normalizeSecondhandDraftResult,
+  normalizeSecondhandDraftResults,
 } from './xingye-secondhand-ai';
 import {
   buildSecondhandDraftPrompt,
@@ -168,6 +170,92 @@ describe('generateSecondhandDraftWithAI', () => {
   });
 });
 
+describe('normalizeSecondhandDraftResult occurredAtHint', () => {
+  it('parses occurredAtHint to ISO when present', () => {
+    const r = normalizeSecondhandDraftResult({
+      itemName: '旧相机',
+      content: 'x',
+      occurredAtHint: '3 天前',
+    });
+    expect(r?.occurredAt).toBeDefined();
+  });
+
+  it('leaves occurredAt undefined for unparseable hints', () => {
+    const r = normalizeSecondhandDraftResult({
+      itemName: '旧相机',
+      content: 'x',
+      occurredAtHint: '反正最近',
+    });
+    expect(r?.occurredAtHint).toBe('反正最近');
+    expect(r?.occurredAt).toBeUndefined();
+  });
+});
+
+describe('normalizeSecondhandDraftResults', () => {
+  it('accepts { drafts: [...] } envelope and filters invalid items', () => {
+    const out = normalizeSecondhandDraftResults({
+      drafts: [
+        { itemName: '旧相机', content: 'x', occurredAtHint: '2 天前' },
+        { itemName: '', content: 'x' },
+        { itemName: '旧水壶', content: 'x', occurredAtHint: '昨天' },
+      ],
+    });
+    expect(out).toHaveLength(2);
+  });
+
+  it('accepts bare array and returns empty on non-object', () => {
+    expect(normalizeSecondhandDraftResults([{ itemName: 'a', content: 'x' }])).toHaveLength(1);
+    expect(normalizeSecondhandDraftResults(null)).toEqual([]);
+  });
+});
+
+describe('generateSecondhandHistoryWithAI', () => {
+  beforeEach(() => {
+    vi.mocked(postXingyeStorage).mockReset();
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
+  });
+
+  it('returns multiple drafts', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        kind: 'secondhand_draft',
+        result: {
+          drafts: [
+            { itemName: '旧相机', status: 'sold', content: 'x', occurredAtHint: '2 天前' },
+            { itemName: '旧水壶', status: 'listed', content: 'x', occurredAtHint: '昨天' },
+          ],
+        },
+      }),
+    } as Response);
+    const drafts = await generateSecondhandHistoryWithAI({
+      agent: { id: 'agent-r', name: 'A', yuan: '' } as never,
+      ownerProfile: null,
+      historyMode: { kind: 'initial', dayRangeHint: '过去 14 天', startDays: 0, endDays: 14 },
+      desiredCount: 2,
+    });
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].occurredAt).toBeDefined();
+  });
+
+  it('throws when no valid drafts return', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, kind: 'secondhand_draft', result: { drafts: [] } }),
+    } as Response);
+    await expect(
+      generateSecondhandHistoryWithAI({
+        agent: { id: 'agent-r', name: 'A', yuan: '' } as never,
+        ownerProfile: null,
+        historyMode: { kind: 'recent', dayRangeHint: '过去 3 天', startDays: 0, endDays: 3 },
+        desiredCount: 3,
+      }),
+    ).rejects.toThrow(/未生成可用的二手记录草稿/);
+  });
+});
+
 describe('buildSecondhandDraftPrompt', () => {
   it('tells the model all six statuses are valid active generation choices', () => {
     const prompt = buildSecondhandDraftPrompt({
@@ -186,5 +274,24 @@ describe('buildSecondhandDraftPrompt', () => {
     }
     expect(prompt).toContain('所有 6 个 status 都可以主动生成');
     expect(prompt).toContain('不要无脑回退到 "to_sell"');
+  });
+
+  it('injects { drafts: [...] } envelope, occurredAtHint, and dayRange hint in history mode', () => {
+    const prompt = buildSecondhandDraftPrompt({
+      agent: { id: 'agent-r', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      userIntent: '',
+      recentSceneBlock: '',
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      heartbeatBlock: '',
+      historyMode: { kind: 'initial', dayRangeHint: '过去 14 天', startDays: 0, endDays: 14 },
+      desiredCount: 5,
+    });
+    expect(prompt).toContain('drafts');
+    expect(prompt).toContain('occurredAtHint');
+    expect(prompt).toContain('过去 14 天');
+    expect(prompt).toContain('drafts 长度 = 5');
   });
 });

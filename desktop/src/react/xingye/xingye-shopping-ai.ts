@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { parseImaginedPriceToMoney } from './xingye-money';
+import { parseChineseTimeHint } from './xingye-app-history-state';
 import {
   buildShoppingDraftPrompt,
   buildShoppingPolishPrompt,
@@ -58,6 +59,17 @@ export type XingyeShoppingAiDraft = {
   reason?: string;
   tags?: string[];
   content: string;
+  /** 历史批量模式才会回填：「N 天前」/「昨天」等自然语言时间感。 */
+  occurredAtHint?: string;
+  /** 由 occurredAtHint 解析得到的 ISO；不可解析时为 undefined。 */
+  occurredAt?: string;
+};
+
+export type ShoppingHistoryMode = {
+  kind: 'initial' | 'recent' | 'gap_fill';
+  dayRangeHint: string;
+  startDays: number;
+  endDays: number;
 };
 
 function truncateChars(text: string, max: number): string {
@@ -236,6 +248,9 @@ function normalizePlatformStyle(value: unknown): XingyeShoppingAiPlatformStyle {
     : 'generic';
 }
 
+/** 解析时间感自然语言 → ISO（支持中文数字与模糊词；见 parseChineseTimeHint）。 */
+const parseOccurredAtHintShopping = parseChineseTimeHint;
+
 export function normalizeShoppingDraftResult(raw: unknown): XingyeShoppingAiDraft | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
@@ -244,6 +259,8 @@ export function normalizeShoppingDraftResult(raw: unknown): XingyeShoppingAiDraf
   if (!itemName) return null;
   const imaginedPrice = normalizeOptional(record.imaginedPrice, 60);
   const money = parseImaginedPriceToMoney(imaginedPrice);
+  const occurredAtHint = normalizeOptional(record.occurredAtHint, 32);
+  const occurredAt = parseOccurredAtHintShopping(occurredAtHint);
   return {
     itemName: truncateChars(itemName, 80),
     status: normalizeStatus(record.status),
@@ -257,7 +274,30 @@ export function normalizeShoppingDraftResult(raw: unknown): XingyeShoppingAiDraf
     reason: normalizeOptional(record.reason, 200),
     tags: normalizeTags(record.tags),
     content: truncateChars(content, 600),
+    occurredAtHint,
+    occurredAt,
   };
+}
+
+/**
+ * 解析 historyMode 下模型返回的 `{ drafts: [...] }` 包络结构。
+ * 兼容裸数组兜底。无效项被丢弃；调用方拿空数组时再决定是否报错。
+ */
+export function normalizeShoppingDraftResults(raw: unknown): XingyeShoppingAiDraft[] {
+  if (!raw) return [];
+  let items: unknown[] = [];
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else if (typeof raw === 'object') {
+    const drafts = (raw as Record<string, unknown>).drafts;
+    if (Array.isArray(drafts)) items = drafts;
+  }
+  const out: XingyeShoppingAiDraft[] = [];
+  for (const item of items) {
+    const normalized = normalizeShoppingDraftResult(item);
+    if (normalized) out.push(normalized);
+  }
+  return out;
 }
 
 /**
@@ -381,6 +421,135 @@ export async function generateShoppingDraftWithAI(params: {
     throw new Error('模型返回无效：缺少 itemName 或 JSON 解析失败');
   }
   return normalized;
+}
+
+/**
+ * 「批量历史生成」入口，返回多条 draft。
+ *
+ * 与 generateShoppingDraftWithAI 的区别：
+ *  - prompt 强制 occurredAtHint 必填且分布在过去；
+ *  - kind 用 'shopping_draft'，但 result 是 { drafts: [...] } 包络；
+ *  - 单条解析失败不会让整批失败，只过滤掉无效条。
+ */
+export async function generateShoppingHistoryWithAI(params: {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  userIntent?: string;
+  userName?: string;
+  historyMode: ShoppingHistoryMode;
+  desiredCount: number;
+  timeoutMs?: number;
+}): Promise<XingyeShoppingAiDraft[]> {
+  const { agent, ownerProfile, historyMode } = params;
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const userIntent = params.userIntent?.trim() ?? '';
+  const desiredCount = Math.max(2, Math.min(10, Math.floor(params.desiredCount ?? 4)));
+  const userName = await resolveXingyeSpeakerUserName(params.userName);
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
+
+  let recentContext;
+  try {
+    recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  } catch {
+    recentContext = { messages: [], summaryText: '' } as unknown as ReturnType<typeof collectRecentContextForAgent>;
+  }
+
+  let recentSceneBlock = '';
+  try {
+    const recentChatExcerpts = buildXingyeRecentChatExcerpts({
+      context: recentContext,
+      userName,
+      agentName,
+    });
+    recentSceneBlock = formatXingyeRecentChatExcerptsForPrompt(recentChatExcerpts)
+      || describeRecentContextForPrompt(recentContext);
+  } catch {
+    try {
+      recentSceneBlock = describeRecentContextForPrompt(recentContext);
+    } catch {
+      recentSceneBlock = '';
+    }
+  }
+
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+  const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
+  const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    userName,
+    agentName,
+    userIntent,
+    typeof recentContext.summaryText === 'string' ? recentContext.summaryText : '',
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    heartbeatLine ?? '',
+  ]);
+
+  let keywordLoreBlock = '';
+  try {
+    const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+      purpose: 'generic',
+      queryText,
+      maxChars: 2000,
+      includeAlways: false,
+      includeKeyword: true,
+    });
+    keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+  } catch {
+    keywordLoreBlock = '';
+  }
+
+  const prompt = buildShoppingDraftPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    userIntent,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    currencyAnchorBlock,
+    historyMode,
+    desiredCount,
+  });
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'shopping_draft',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const drafts = normalizeShoppingDraftResults(data?.result);
+  if (drafts.length === 0) {
+    throw new Error('模型返回无效：未生成可用的购物记录草稿');
+  }
+  return drafts;
 }
 
 /**

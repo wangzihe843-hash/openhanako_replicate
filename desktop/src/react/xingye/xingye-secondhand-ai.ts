@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { parseImaginedPriceToMoney } from './xingye-money';
+import { parseChineseTimeHint } from './xingye-app-history-state';
 import {
   buildSecondhandDraftPrompt,
   buildSecondhandPolishPrompt,
@@ -31,6 +32,13 @@ import { postXingyeStorage } from './xingye-storage-api';
 
 export type XingyeSecondhandAiStatus = (typeof SECONDHAND_AI_STATUSES)[number];
 export type XingyeSecondhandAiPlatformStyle = (typeof SECONDHAND_AI_PLATFORM_STYLES)[number];
+
+export type SecondhandHistoryMode = {
+  kind: 'initial' | 'recent' | 'gap_fill';
+  dayRangeHint: string;
+  startDays: number;
+  endDays: number;
+};
 
 export type XingyeSecondhandAiDraft = {
   itemName: string;
@@ -61,6 +69,10 @@ export type XingyeSecondhandAiDraft = {
   reason?: string;
   tags?: string[];
   content: string;
+  /** 历史批量模式才会回填：「N 天前」/「昨天」等自然语言时间感。 */
+  occurredAtHint?: string;
+  /** 由 occurredAtHint 解析得到的 ISO；不可解析时为 undefined。 */
+  occurredAt?: string;
 };
 
 function truncateChars(text: string, max: number): string {
@@ -239,6 +251,9 @@ function normalizePlatformStyle(value: unknown): XingyeSecondhandAiPlatformStyle
     : 'generic';
 }
 
+/** 解析时间感自然语言 → ISO（支持中文数字与模糊词；见 parseChineseTimeHint）。 */
+const parseOccurredAtHintSecondhand = parseChineseTimeHint;
+
 export function normalizeSecondhandDraftResult(raw: unknown): XingyeSecondhandAiDraft | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
@@ -247,6 +262,8 @@ export function normalizeSecondhandDraftResult(raw: unknown): XingyeSecondhandAi
   if (!itemName) return null;
   const askingPrice = normalizeOptional(record.askingPrice, 60);
   const money = parseImaginedPriceToMoney(askingPrice);
+  const occurredAtHint = normalizeOptional(record.occurredAtHint, 32);
+  const occurredAt = parseOccurredAtHintSecondhand(occurredAtHint);
   return {
     itemName: truncateChars(itemName, 80),
     status: normalizeStatus(record.status),
@@ -260,7 +277,27 @@ export function normalizeSecondhandDraftResult(raw: unknown): XingyeSecondhandAi
     reason: normalizeOptional(record.reason, 200),
     tags: normalizeTags(record.tags),
     content: truncateChars(content, 600),
+    occurredAtHint,
+    occurredAt,
   };
+}
+
+/** 解析 historyMode 下模型返回的 `{ drafts: [...] }` 包络结构。无效项被丢弃。 */
+export function normalizeSecondhandDraftResults(raw: unknown): XingyeSecondhandAiDraft[] {
+  if (!raw) return [];
+  let items: unknown[] = [];
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else if (typeof raw === 'object') {
+    const drafts = (raw as Record<string, unknown>).drafts;
+    if (Array.isArray(drafts)) items = drafts;
+  }
+  const out: XingyeSecondhandAiDraft[] = [];
+  for (const item of items) {
+    const normalized = normalizeSecondhandDraftResult(item);
+    if (normalized) out.push(normalized);
+  }
+  return out;
 }
 
 /**
@@ -384,6 +421,131 @@ export async function generateSecondhandDraftWithAI(params: {
     throw new Error('模型返回无效：缺少 itemName 或 JSON 解析失败');
   }
   return normalized;
+}
+
+/**
+ * 「批量历史生成」入口，返回多条二手 draft。
+ * 与 generateSecondhandDraftWithAI 区别同 shopping 镜像版。
+ */
+export async function generateSecondhandHistoryWithAI(params: {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  userIntent?: string;
+  userName?: string;
+  historyMode: SecondhandHistoryMode;
+  desiredCount: number;
+  timeoutMs?: number;
+}): Promise<XingyeSecondhandAiDraft[]> {
+  const { agent, ownerProfile, historyMode } = params;
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const userIntent = params.userIntent?.trim() ?? '';
+  const desiredCount = Math.max(2, Math.min(10, Math.floor(params.desiredCount ?? 4)));
+  const userName = await resolveXingyeSpeakerUserName(params.userName);
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const currencyAnchorBlock = await buildSecondhandCurrencyAnchorBlock(agent.id);
+
+  let recentContext;
+  try {
+    recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  } catch {
+    recentContext = { messages: [], summaryText: '' } as unknown as ReturnType<typeof collectRecentContextForAgent>;
+  }
+
+  let recentSceneBlock = '';
+  try {
+    const recentChatExcerpts = buildXingyeRecentChatExcerpts({
+      context: recentContext,
+      userName,
+      agentName,
+    });
+    recentSceneBlock = formatXingyeRecentChatExcerptsForPrompt(recentChatExcerpts)
+      || describeRecentContextForPrompt(recentContext);
+  } catch {
+    try {
+      recentSceneBlock = describeRecentContextForPrompt(recentContext);
+    } catch {
+      recentSceneBlock = '';
+    }
+  }
+
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+  const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
+  const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    userName,
+    agentName,
+    userIntent,
+    typeof recentContext.summaryText === 'string' ? recentContext.summaryText : '',
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    heartbeatLine ?? '',
+  ]);
+
+  let keywordLoreBlock = '';
+  try {
+    const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+      purpose: 'generic',
+      queryText,
+      maxChars: 2000,
+      includeAlways: false,
+      includeKeyword: true,
+    });
+    keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+  } catch {
+    keywordLoreBlock = '';
+  }
+
+  const prompt = buildSecondhandDraftPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    userIntent,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    currencyAnchorBlock,
+    historyMode,
+    desiredCount,
+  });
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'secondhand_draft',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const drafts = normalizeSecondhandDraftResults(data?.result);
+  if (drafts.length === 0) {
+    throw new Error('模型返回无效：未生成可用的二手记录草稿');
+  }
+  return drafts;
 }
 
 /**

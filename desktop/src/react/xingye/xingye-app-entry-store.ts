@@ -55,6 +55,12 @@ export type AppEntryInput = {
    * idFactory 生成的随机 id。
    */
   id?: string;
+  /**
+   * 可选的 createdAt override。当历史批量生成把"过去某天发生的事"补进 entries 时，
+   * 让 entry.createdAt/updatedAt 也回到那一天——否则列表行卡的「X 天前」会全是 00。
+   * 不传 → 走 getNow() 默认。传一个不可解析的 ISO 也会被忽略（safe fallback）。
+   */
+  createdAt?: string;
 };
 
 export type AppEntryPatch = Partial<AppEntryInput>;
@@ -226,7 +232,12 @@ export function createXingyeAppEntryStore(
     ): Promise<AppEntry> {
       const aid = requireSafeXingyeAgentId(agentId);
       const simpleAppId = requireSimpleAppId(appId);
-      const timestamp = getNow();
+      const now = getNow();
+      // 历史批量传 createdAt='过去 ISO' 时，让 createdAt/updatedAt 都回到那一天；
+      // 不可解析或为空 → 安全回退到 now。
+      const overrideRaw = typeof input.createdAt === 'string' ? input.createdAt.trim() : '';
+      const overrideParsed = overrideRaw ? Date.parse(overrideRaw) : NaN;
+      const timestamp = Number.isFinite(overrideParsed) ? new Date(overrideParsed).toISOString() : now;
       const entry: AppEntry = {
         id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : idFactory(),
         agentId: aid,
