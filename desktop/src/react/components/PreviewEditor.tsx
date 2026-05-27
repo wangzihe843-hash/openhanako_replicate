@@ -45,7 +45,12 @@ import {
 import {
   isMarkdownCoverOnlyUpdate,
   mergeMarkdownCoverIntoDocument,
+  parseMarkdownCover,
 } from '../utils/markdown-cover';
+import {
+  applyMarkdownCoverImageDrop,
+  hasMarkdownCoverDropImage,
+} from '../utils/markdown-cover-drop';
 import type { FileVersion, VersionedWriteResult } from '../types';
 
 /* ── Types ── */
@@ -233,6 +238,26 @@ function dropPosition(view: EditorView, event: DragEvent): number | null {
   } catch {
     return null;
   }
+}
+
+function dragEventElement(event: DragEvent): Element | null {
+  return event.target instanceof Element ? event.target : null;
+}
+
+function editorCoverElementFromEvent(event: DragEvent): HTMLElement | null {
+  return dragEventElement(event)?.closest('.cm-markdown-cover') as HTMLElement | null;
+}
+
+function clearEditorCoverDropState(view: EditorView): void {
+  view.dom.classList.remove('cm-markdown-cover-rail-active');
+  view.dom.querySelector('.cm-markdown-cover-drop-active')?.classList.remove('cm-markdown-cover-drop-active');
+}
+
+function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
+  if (parseMarkdownCover(view.state.doc.toString())) return false;
+  const rect = view.scrollDOM.getBoundingClientRect();
+  const y = Number.isFinite(event.clientY) ? event.clientY : rect.top;
+  return y >= rect.top && y <= rect.top + 40;
 }
 
 /* ── File change emitter (global singleton) ── */
@@ -575,6 +600,53 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
 
       const state = EditorState.create({ doc: content, extensions });
       const view = new EditorView({ state, parent: containerRef.current });
+      const onCoverDragOver = (event: DragEvent) => {
+        const coverElement = editorCoverElementFromEvent(event);
+        if (coverElement && filePathRef.current && hasMarkdownCoverDropImage(event.dataTransfer)) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+          coverElement.classList.add('cm-markdown-cover-drop-active');
+          view.dom.classList.remove('cm-markdown-cover-rail-active');
+          return;
+        }
+
+        if (filePathRef.current && hasMarkdownCoverDropImage(event.dataTransfer) && isEditorCoverRailDrop(view, event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+          view.dom.classList.add('cm-markdown-cover-rail-active');
+          return;
+        }
+
+        clearEditorCoverDropState(view);
+      };
+      const onCoverDragLeave = (event: DragEvent) => {
+        const coverElement = editorCoverElementFromEvent(event);
+        if (coverElement && !(event.relatedTarget instanceof Node && coverElement.contains(event.relatedTarget))) {
+          coverElement.classList.remove('cm-markdown-cover-drop-active');
+        }
+        if (!(event.relatedTarget instanceof Node && view.dom.contains(event.relatedTarget))) {
+          clearEditorCoverDropState(view);
+        }
+      };
+      const onCoverDrop = (event: DragEvent) => {
+        const coverElement = editorCoverElementFromEvent(event);
+        const isCoverTarget = Boolean(coverElement)
+          || (hasMarkdownCoverDropImage(event.dataTransfer) && isEditorCoverRailDrop(view, event));
+        if (!filePathRef.current || !isCoverTarget || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        clearEditorCoverDropState(view);
+        void applyMarkdownCoverImageDrop({
+          filePath: filePathRef.current,
+          dataTransfer: event.dataTransfer,
+        });
+      };
+      view.dom.addEventListener('dragover', onCoverDragOver, true);
+      view.dom.addEventListener('dragleave', onCoverDragLeave, true);
+      view.dom.addEventListener('drop', onCoverDrop, true);
       viewRef.current = view;
       lastStatsRef.current = null;
       emitStatsIfChanged(view);
@@ -585,6 +657,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           saveTimerRef.current = null;
           saveToFile(view.state.doc.toString(), docRevisionRef.current);
         }
+        view.dom.removeEventListener('dragover', onCoverDragOver, true);
+        view.dom.removeEventListener('dragleave', onCoverDragLeave, true);
+        view.dom.removeEventListener('drop', onCoverDrop, true);
         view.destroy();
         viewRef.current = null;
       };

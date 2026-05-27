@@ -4,8 +4,14 @@ export const codeTheme = EditorView.theme({
   '&': { fontSize: '0.84rem' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
+    overflow: 'auto',
     fontFamily: 'var(--font-mono)',
     lineHeight: '1.7',
+    padding: 'var(--space-lg) 0',
+  },
+  '.cm-content': {
+    width: '100%',
+    padding: '0 var(--space-md)',
   },
 });
 
@@ -13,11 +19,18 @@ export const markdownTheme = EditorView.theme({
   '&': { fontSize: 'var(--editor-markdown-font-size)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
+    overflow: 'auto',
     fontFamily: 'var(--font-serif)',
     lineHeight: 'var(--editor-markdown-line-height)',
     padding: 'var(--space-md) 0',
   },
-  '.cm-content': { padding: '0 var(--editor-markdown-content-padding-x)' },
+  '&.cm-markdown-has-top-cover .cm-scroller': {
+    paddingTop: '0',
+  },
+  '.cm-content': {
+    width: '100%',
+    padding: '0 var(--editor-markdown-content-padding-x)',
+  },
   '.cm-activeLine': { backgroundColor: 'transparent' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent' },
   '.cm-cursor': { borderLeftColor: 'var(--text)' },
@@ -45,10 +58,33 @@ export const markdownTheme = EditorView.theme({
     maxHeight: '720px',
     margin: '0 auto var(--space-md)',
     overflow: 'hidden',
-    backgroundColor: 'var(--bg-card)',
-    borderBottom: '1px solid var(--overlay-light)',
+    backgroundColor: 'transparent',
     userSelect: 'none',
     touchAction: 'none',
+  },
+  '.cm-markdown-cover.cm-markdown-cover-top': {
+    marginTop: '0',
+  },
+  '.cm-markdown-cover.cm-markdown-cover-bleed-x': {
+    marginLeft: 'calc(0px - var(--editor-markdown-content-padding-x))',
+    marginRight: 'calc(0px - var(--editor-markdown-content-padding-x))',
+    width: 'calc(100% + var(--editor-markdown-content-padding-x) + var(--editor-markdown-content-padding-x))',
+  },
+  '.cm-markdown-cover::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '0',
+    pointerEvents: 'none',
+    border: '1px solid color-mix(in srgb, var(--accent) 58%, transparent)',
+    boxShadow: [
+      'inset 0 0 0 999px color-mix(in srgb, var(--accent) 8%, transparent)',
+      'inset 0 -2px 0 color-mix(in srgb, var(--accent) 72%, transparent)',
+    ].join(', '),
+    opacity: '0',
+    transition: 'opacity var(--duration-fast) var(--ease-out)',
+  },
+  '.cm-markdown-cover.cm-markdown-cover-drop-active::after': {
+    opacity: '1',
   },
   '.cm-markdown-cover img': {
     display: 'block',

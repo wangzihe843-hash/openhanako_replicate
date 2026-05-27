@@ -57,7 +57,6 @@ export function buildFileMentionItems({
   sessionFiles,
   deskFiles,
   deskBasePath,
-  deskCurrentPath,
   searchResults,
   limit = 20,
 }: BuildFileMentionItemsParams): FileMentionItem[] {
@@ -102,9 +101,9 @@ export function buildFileMentionItems({
     }))
     : deskFiles.map((file) => ({
       name: file.name,
-      path: joinWorkspacePath(deskBasePath, deskCurrentPath, file.name),
+      path: joinWorkspacePath(deskBasePath, '', file.name),
       isDirectory: file.isDir,
-      detail: deskCurrentPath || '/',
+      detail: '/',
     }));
 
   for (const file of workspaceItems) {

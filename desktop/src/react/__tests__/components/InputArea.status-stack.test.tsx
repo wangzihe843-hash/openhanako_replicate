@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InputArea } from '../../components/InputArea';
 import { useStore } from '../../stores';
+
+const deskActionMocks = vi.hoisted(() => ({
+  loadDeskFiles: vi.fn(),
+  revealDeskDirectory: vi.fn(async () => true),
+  searchDeskFiles: vi.fn(async () => []),
+  toggleJianSidebar: vi.fn(),
+}));
 
 vi.mock('@tiptap/react', () => ({
   useEditor: () => ({
@@ -73,9 +80,10 @@ vi.mock('../../stores/session-actions', () => ({
 }));
 
 vi.mock('../../stores/desk-actions', () => ({
-  loadDeskFiles: vi.fn(),
-  searchDeskFiles: vi.fn(async () => []),
-  toggleJianSidebar: vi.fn(),
+  loadDeskFiles: deskActionMocks.loadDeskFiles,
+  revealDeskDirectory: deskActionMocks.revealDeskDirectory,
+  searchDeskFiles: deskActionMocks.searchDeskFiles,
+  toggleJianSidebar: deskActionMocks.toggleJianSidebar,
 }));
 
 vi.mock('../../services/websocket', () => ({
@@ -101,15 +109,21 @@ vi.mock('../../components/input/InputStatusBars', () => ({
     screenshotBusy,
     inlineError,
     slashResult,
+    onResultClick,
   }: {
     slashBusy?: string | null;
     compacting?: boolean;
     screenshotBusy?: boolean;
     inlineError?: string | null;
     slashResult?: unknown;
+    onResultClick?: () => void;
   }) => (
     slashBusy || compacting || screenshotBusy || inlineError || slashResult
-      ? React.createElement('div', { 'data-testid': 'input-status-bars' })
+      ? React.createElement('button', {
+        'data-testid': 'input-status-bars',
+        onClick: onResultClick,
+        type: 'button',
+      })
       : null
   ),
 }));
@@ -255,5 +269,23 @@ describe('InputArea status stack', () => {
     expectBefore(contextRow, statusBars);
     expectBefore(statusBars, approvalPrompt);
     expectBefore(approvalPrompt, editor);
+  });
+
+  it('reveals screenshot notice directories in the workspace tree without replacing the desk root', async () => {
+    render(React.createElement(InputArea));
+
+    window.dispatchEvent(new CustomEvent('hana-inline-notice', {
+      detail: {
+        text: '截图已保存到工作目录下的「OH-Works」文件夹',
+        type: 'success',
+        deskDir: '/workspace/OH-Works',
+      },
+    }));
+
+    fireEvent.click(await screen.findByTestId('input-status-bars'));
+
+    expect(deskActionMocks.toggleJianSidebar).toHaveBeenCalledWith(true);
+    expect(deskActionMocks.revealDeskDirectory).toHaveBeenCalledWith('/workspace/OH-Works');
+    expect(deskActionMocks.loadDeskFiles).not.toHaveBeenCalled();
   });
 });

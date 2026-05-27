@@ -58,6 +58,30 @@ export async function applyMarkdownCoverImage({
   return { ok: true, cover: data?.cover };
 }
 
+export async function applyMarkdownCoverPreset({
+  filePath,
+  presetId,
+}: {
+  filePath: string;
+  presetId: string;
+}): Promise<{ ok: true; cover?: unknown } | { ok: false; error: string }> {
+  const res = await hanaFetch('/api/desk/beautify/cover/preset/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filePath,
+      presetId,
+      agentId: useStore.getState().currentAgentId || undefined,
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data?.error) {
+    return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  }
+  await refreshPreviewItemsFromFile(filePath);
+  return { ok: true, cover: data?.cover };
+}
+
 export function dispatchCoverNotice(text: string, type: 'success' | 'error' = 'success'): void {
   window.dispatchEvent(new CustomEvent('hana-inline-notice', {
     detail: { text, type },

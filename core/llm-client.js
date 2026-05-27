@@ -86,6 +86,46 @@ function outputContainsReasoning(output) {
   });
 }
 
+function isResponsesAssistantMessage(item) {
+  if (!item || typeof item !== "object") return false;
+  if (item.type !== "message") return false;
+  return typeof item.role !== "string" || item.role === "" || item.role === "assistant";
+}
+
+function extractResponsesMessageText(item) {
+  if (!Array.isArray(item?.content)) return [];
+  const parts = [];
+  for (const block of item.content) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type !== "output_text" && block.type !== "text") continue;
+    if (typeof block.text === "string" && block.text.trim()) {
+      parts.push(block.text.trim());
+    }
+  }
+  return parts;
+}
+
+function extractResponsesText(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return {
+      text: data.output_text.trim(),
+      removedThinking: outputContainsReasoning(data?.output),
+    };
+  }
+
+  const output = Array.isArray(data?.output) ? data.output : [];
+  const text = output
+    .filter(isResponsesAssistantMessage)
+    .flatMap(extractResponsesMessageText)
+    .join("\n")
+    .trim();
+
+  return {
+    text,
+    removedThinking: outputContainsReasoning(output),
+  };
+}
+
 function throwAbortOrTimeout(err, signal, modelId) {
   if (err.name === "AbortError" || err.name === "TimeoutError") {
     if (signal?.aborted) throw createUserAbortError();
@@ -332,15 +372,9 @@ export async function callText({
     text = extracted.text;
     removedStructuredThinking = extracted.removedThinking;
   } else if (api === "openai-responses" || api === "openai-codex-responses") {
-    if (typeof data?.output_text === "string") {
-      text = data.output_text.trim();
-    } else {
-      text = (data?.output || [])
-        .filter(item => item?.type === "message" && item?.role === "assistant")
-        .flatMap(item => (item.content || []).filter(c => typeof c?.text === "string").map(c => c.text.trim()))
-        .join("\n").trim();
-    }
-    removedStructuredThinking = outputContainsReasoning(data?.output);
+    const extracted = extractResponsesText(data);
+    text = extracted.text;
+    removedStructuredThinking = extracted.removedThinking;
   } else {
     const message = data?.choices?.[0]?.message;
     text = (typeof message?.content === "string")

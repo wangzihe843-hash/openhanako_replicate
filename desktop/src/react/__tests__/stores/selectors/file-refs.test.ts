@@ -37,13 +37,13 @@ describe('selectDeskFiles', () => {
     expect(refs.find(r => r.name === 'mystery')?.kind).toBe('other');
   });
 
-  it('路径拼接 = basePath + currentPath + name', () => {
+  it('路径拼接只消费 CWD 根目录，忽略旧的 currentPath 导航字段', () => {
     const state = makeState(
       [{ name: 'a.png', isDir: false }],
       '/root',
       'sub/dir',
     );
-    expect(selectDeskFiles(state)[0].path).toBe('/root/sub/dir/a.png');
+    expect(selectDeskFiles(state)[0].path).toBe('/root/a.png');
   });
 
   it('currentPath 为空时路径 = basePath + name', () => {
@@ -62,7 +62,7 @@ describe('selectDeskFiles', () => {
       'sub',
     );
     // 关键：前导 // 不能被折叠成 /，否则 pathToFileUrl 的 UNC 分支匹配不上
-    expect(selectDeskFiles(state)[0].path).toBe('//server/share/sub/a.png');
+    expect(selectDeskFiles(state)[0].path).toBe('//server/share/a.png');
   });
 
   it('Windows 盘符风格 basePath（仅正斜杠）保留', () => {
@@ -80,7 +80,7 @@ describe('selectDeskFiles', () => {
       '/root/',
       '/sub/',
     );
-    expect(selectDeskFiles(state)[0].path).toBe('/root/sub/a.png');
+    expect(selectDeskFiles(state)[0].path).toBe('/root/a.png');
   });
 
   it('同一输入多次调用返回引用稳定（memoization）', () => {

@@ -26,9 +26,10 @@ describe("server runtime assets", () => {
     for (const dirName of SERVER_RUNTIME_ASSET_DIRS) {
       const dir = path.join(assetsDir, dirName);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "yuan-hanako-card-back.png"), "card-back\n");
-      fs.writeFileSync(path.join(dir, "yuan-hanako-emblem.png"), "emblem\n");
+      fs.writeFileSync(path.join(dir, `${dirName}-fixture.txt`), `${dirName}\n`);
     }
+    fs.writeFileSync(path.join(assetsDir, "character-cards", "yuan-hanako-card-back.png"), "card-back\n");
+    fs.writeFileSync(path.join(assetsDir, "character-cards", "yuan-hanako-emblem.png"), "emblem\n");
 
     const rendererDir = path.join(rootDir, "desktop", "dist-renderer");
     fs.mkdirSync(path.join(rendererDir, "assets"), { recursive: true });
@@ -78,9 +79,14 @@ describe("server runtime assets", () => {
       path.join(outDir, "desktop", "src", "assets", "character-cards", "yuan-hanako-emblem.png"),
       "utf-8",
     )).toBe("emblem\n");
+    expect(fs.readFileSync(
+      path.join(outDir, "desktop", "src", "assets", "cover-gallery", "cover-gallery-fixture.txt"),
+      "utf-8",
+    )).toBe("cover-gallery\n");
     expect(copied).toEqual(expect.arrayContaining([
       path.join("desktop", "src", "assets", "Hanako.png"),
       path.join("desktop", "src", "assets", "character-cards") + path.sep,
+      path.join("desktop", "src", "assets", "cover-gallery") + path.sep,
     ]));
   });
 

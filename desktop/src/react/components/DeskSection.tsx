@@ -13,7 +13,7 @@ import { loadDeskTreeFiles } from '../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../stores/workspace-ui-state-actions';
 import { ContextMenu } from '../ui';
 import { DESK_SORT_KEY, type SortMode, type CtxMenuState, type FileTypeFilter } from './desk/desk-types';
-import { DeskFilterButton, DeskOpenIconButton, DeskSearchBox, DeskSortButton } from './desk/DeskToolbar';
+import { DeskFilterButton, DeskOpenIconButton, DeskPreviewIconButton, DeskSearchBox, DeskSortButton } from './desk/DeskToolbar';
 import { DeskTree, type InlineCreateKind, type InlineTreeEdit } from './desk/DeskTree';
 import { DeskDropZone } from './desk/DeskDropZone';
 import { DeskEmptyOverlay } from './desk/DeskEmptyOverlay';
@@ -181,6 +181,7 @@ export function DeskSection({
         <DeskSearchBox />
         <div className={s.toolbar}>
           <div className={s.toolbarActions}>
+            <DeskPreviewIconButton />
             <DeskOpenIconButton />
             <DeskFilterButton filters={typeFilters} onFiltersChange={handleTypeFiltersChange} onShowMenu={handleShowMenu} />
             <DeskSortButton sortMode={sortMode} onSort={setSortMode} onShowMenu={handleShowMenu} />

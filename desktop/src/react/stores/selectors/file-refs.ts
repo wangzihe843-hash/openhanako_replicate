@@ -29,22 +29,21 @@ function extOf(name: string): string | undefined {
 
 // ── Desk ──
 
-let cachedDesk: { files: DeskFile[]; basePath: string; currentPath: string; result: FileRef[] } | null = null;
+let cachedDesk: { files: DeskFile[]; basePath: string; result: FileRef[] } | null = null;
 
 export function selectDeskFiles(state: StateShape): FileRef[] {
-  const { deskFiles, deskBasePath, deskCurrentPath } = state;
+  const { deskFiles, deskBasePath } = state;
   if (
     cachedDesk
     && cachedDesk.files === deskFiles
     && cachedDesk.basePath === deskBasePath
-    && cachedDesk.currentPath === deskCurrentPath
   ) {
     return cachedDesk.result;
   }
   const result: FileRef[] = [];
   for (const f of deskFiles) {
     if (f.isDir) continue;
-    const path = joinPath(deskBasePath, deskCurrentPath, f.name);
+    const path = joinPath(deskBasePath, '', f.name);
     const ext = extOf(f.name);
     result.push({
       id: buildFileRefId({ source: 'desk', path }),
@@ -56,7 +55,7 @@ export function selectDeskFiles(state: StateShape): FileRef[] {
       version: versionFromDeskFile(f),
     });
   }
-  cachedDesk = { files: deskFiles, basePath: deskBasePath, currentPath: deskCurrentPath, result };
+  cachedDesk = { files: deskFiles, basePath: deskBasePath, result };
   return result;
 }
 

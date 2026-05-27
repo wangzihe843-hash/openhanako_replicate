@@ -1,7 +1,11 @@
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('screenshot markdown renderer helpers', () => {
   it('resolves relative markdown image paths from the source markdown file', () => {
@@ -43,11 +47,29 @@ describe('screenshot markdown renderer helpers', () => {
     ].join('\n'), { sourceFilePath: '/vault/notes/day.md' });
 
     expect(md.render).toHaveBeenCalledWith('# Demo', { sourceFilePath: '/vault/notes/day.md' });
-    expect(html).toContain('class="screenshot-cover"');
-    expect(html).toContain('--screenshot-cover-display-width:72%');
+    expect(html.startsWith('<figure class="screenshot-cover screenshot-cover-bleed-x screenshot-cover-top"')).toBe(true);
+    expect(html).toContain('class="screenshot-cover screenshot-cover-bleed-x screenshot-cover-top"');
+    expect(html).not.toContain('--screenshot-cover-display-width');
     expect(html).toContain('--screenshot-cover-height:280px');
     expect(html).toContain('class="screenshot-cover-frame"');
     expect(html).toContain('object-position:50% 64%');
     expect(html).toContain('file:///vault/notes/%E6%96%87%E6%9C%AC%E9%99%84%E4%BB%B6/cover.png');
+  });
+
+  it('keeps screenshot cover bleed as an explicit layout contract', () => {
+    const mainSource = fs.readFileSync(path.resolve(__dirname, '../desktop/main.cjs'), 'utf-8');
+
+    expect(mainSource).toContain('.screenshot-cover.screenshot-cover-bleed-x');
+    expect(mainSource).toContain('.screenshot-cover.screenshot-cover-top');
+  });
+
+  it('bleeds screenshot covers to the screenshot canvas edges, not theme padding edges', () => {
+    const mainSource = fs.readFileSync(path.resolve(__dirname, '../desktop/main.cjs'), 'utf-8');
+
+    expect(mainSource).not.toContain('const coverBleedX');
+    expect(mainSource).not.toContain('--screenshot-cover-bleed-x');
+    expect(mainSource).toContain('width: 100vw;');
+    expect(mainSource).toContain('margin-left: calc((100% - 100vw) / 2);');
+    expect(mainSource).toContain('margin-right: calc((100% - 100vw) / 2);');
   });
 });

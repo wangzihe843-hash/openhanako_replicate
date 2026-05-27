@@ -10,6 +10,7 @@ export const SERVER_RUNTIME_ASSET_FILES = [
 
 export const SERVER_RUNTIME_ASSET_DIRS = [
   "character-cards",
+  "cover-gallery",
 ];
 
 export const SERVER_RUNTIME_RENDERER_REQUIRED_FILES = [

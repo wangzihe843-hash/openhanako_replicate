@@ -98,12 +98,13 @@ describe('editor typography settings', () => {
     expect(css).toMatch(/:global\(\.preview-markdown\) strong\s*\{[\s\S]*font-weight:\s*700/);
   });
 
-  it('lets preview editor content use the full panel width', () => {
+  it('leaves CodeMirror editor layout to the editor themes', () => {
     const css = readPreviewStyles();
     const contentRule = css.match(/:global\(\.preview-editor \.cm-content\)\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? '';
 
-    expect(contentRule).toMatch(/width:\s*100%/);
     expect(contentRule).not.toMatch(/max-width/);
     expect(contentRule).not.toMatch(/margin:\s*0 auto/);
+    expect(css).not.toMatch(/:global\(\.preview-editor \.cm-scroller\)\s*\{/);
+    expect(css).not.toMatch(/:global\(\.preview-editor \.cm-content\)\s*\{/);
   });
 });

@@ -431,4 +431,87 @@ describe("callText provider-compat routing", () => {
       timeoutMs: 5_000,
     })).resolves.toBe("OK");
   });
+
+  it("extracts Responses output_text content from message items without relying on role", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        output: [{
+          type: "message",
+          content: [{ type: "output_text", text: "OK from Responses" }],
+        }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-codex-responses",
+      baseUrl: "https://example.test/v1",
+      model: { id: "gpt-5.4-codex", provider: "openai-codex" },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("OK from Responses");
+  });
+
+  it("preserves Responses top-level output_text extraction", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ output_text: "Top-level OK" }),
+    });
+
+    await expect(callText({
+      api: "openai-responses",
+      baseUrl: "https://example.test/v1",
+      model: { id: "gpt-5", provider: "openai" },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("Top-level OK");
+  });
+
+  it("preserves Responses assistant role message text extraction", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "Assistant role OK" }],
+        }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-responses",
+      baseUrl: "https://example.test/v1",
+      model: { id: "gpt-5", provider: "openai" },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("Assistant role OK");
+  });
+
+  it("does not treat Responses non-message output as visible text", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        output: [{
+          type: "reasoning",
+          content: [{ type: "output_text", text: "Hidden reasoning is not a reply." }],
+        }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-codex-responses",
+      baseUrl: "https://example.test/v1",
+      model: { id: "gpt-5.4-codex", provider: "openai-codex", reasoning: true },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).rejects.toMatchObject({
+      code: "LLM_EMPTY_RESPONSE",
+      context: expect.objectContaining({ reason: "empty_after_thinking" }),
+    });
+  });
 });

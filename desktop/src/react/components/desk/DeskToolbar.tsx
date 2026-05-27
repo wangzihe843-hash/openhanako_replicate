@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { jumpToDeskSearchResult, loadDeskFiles, searchDeskFiles } from '../../stores/desk-actions';
+import { togglePreviewPanel } from '../../stores/preview-actions';
 import type { DeskSearchResult } from '../../types';
 import {
   ICONS,
@@ -24,10 +25,7 @@ export function DeskOpenButton() {
   const handleClick = useCallback(() => {
     const s = useStore.getState();
     if (!s.deskBasePath) return;
-    const target = s.deskCurrentPath
-      ? s.deskBasePath + '/' + s.deskCurrentPath
-      : s.deskBasePath;
-    window.platform?.openFolder?.(target);
+    window.platform?.openFolder?.(s.deskBasePath);
   }, []);
 
   return (
@@ -44,10 +42,7 @@ export function DeskOpenIconButton() {
   const handleClick = useCallback(() => {
     const s = useStore.getState();
     if (!s.deskBasePath) return;
-    const target = s.deskCurrentPath
-      ? s.deskBasePath + '/' + s.deskCurrentPath
-      : s.deskBasePath;
-    window.platform?.openFolder?.(target);
+    window.platform?.openFolder?.(s.deskBasePath);
   }, []);
 
   return (
@@ -57,31 +52,37 @@ export function DeskOpenIconButton() {
   );
 }
 
+export function DeskPreviewIconButton() {
+  const previewOpen = useStore(s => s.previewOpen);
+  const label = (window.t ?? ((p: string) => p))('preview.toggle');
+  const handleClick = useCallback(() => {
+    togglePreviewPanel();
+  }, []);
+
+  return (
+    <button
+      className={`${s.sortBtn} ${s.iconBtn}`}
+      type="button"
+      onClick={handleClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={previewOpen}
+    >
+      <span aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6.5 3.7h7.8c.5 0 .9.2 1.2.5l3.1 3.1c.3.3.5.8.5 1.2v9.1c0 1.4-1.1 2.6-2.6 2.6h-10c-1.4 0-2.6-1.1-2.6-2.6V6.3c0-1.4 1.1-2.6 2.6-2.6z" />
+          <path d="M14.5 4.2v3c0 .8.6 1.4 1.4 1.4h3" />
+          <path d="M8.1 12.4h7.8M8.1 15.8h6.1" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
 // ── 面包屑导航 ──
 
 export function DeskBreadcrumb() {
-  const deskCurrentPath = useStore(s => s.deskCurrentPath);
-
-  const handleBack = useCallback(() => {
-    const s = useStore.getState();
-    const cur = s.deskCurrentPath;
-    if (!cur) return;
-    const parent = cur.includes('/')
-      ? cur.substring(0, cur.lastIndexOf('/'))
-      : '';
-    loadDeskFiles(parent);
-  }, []);
-
-  if (!deskCurrentPath) return null;
-
-  return (
-    <div className={s.nav}>
-      <button className={s.backBtn} onClick={handleBack}>
-        <span dangerouslySetInnerHTML={{ __html: ICONS.back }} />
-        <span>{deskCurrentPath}</span>
-      </button>
-    </div>
-  );
+  return null;
 }
 
 // ── 手动刷新按钮 ──

@@ -38,11 +38,17 @@ function parseCssNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+interface MarkdownCoverEditorState {
+  decorations: DecorationSet;
+  hasTopCover: boolean;
+}
+
 class MarkdownCoverWidget extends WidgetType {
   constructor(
     readonly cover: MarkdownCover,
     readonly markdownFilePath?: string,
     readonly getFileUrl?: (path: string) => string | undefined,
+    readonly isTopCover = false,
   ) {
     super();
   }
@@ -53,12 +59,14 @@ class MarkdownCoverWidget extends WidgetType {
       && this.cover.displayHeight === other.cover.displayHeight
       && this.cover.positionX === other.cover.positionX
       && this.cover.positionY === other.cover.positionY
-      && this.markdownFilePath === other.markdownFilePath;
+      && this.markdownFilePath === other.markdownFilePath
+      && this.isTopCover === other.isTopCover;
   }
 
   toDOM(view: EditorView): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'cm-markdown-cover';
+    if (this.isTopCover) wrapper.classList.add('cm-markdown-cover-top');
     wrapper.contentEditable = 'false';
 
     const displayWidth = clamp(this.cover.displayWidth, 40, 100, 100);
@@ -66,7 +74,11 @@ class MarkdownCoverWidget extends WidgetType {
     const positionX = clamp(this.cover.positionX, 0, 100, 50);
     const positionY = clamp(this.cover.positionY, 0, 100, 50);
 
-    wrapper.style.width = `${displayWidth}%`;
+    if (displayWidth >= 100) {
+      wrapper.classList.add('cm-markdown-cover-bleed-x');
+    } else {
+      wrapper.style.width = `${displayWidth}%`;
+    }
     wrapper.style.height = `${displayHeight}px`;
 
     const src = resolveCoverImageUrl(this.cover, this.markdownFilePath, this.getFileUrl);
@@ -146,33 +158,42 @@ class MarkdownCoverWidget extends WidgetType {
   }
 }
 
-function buildMarkdownCoverDecorations(state: EditorState): DecorationSet {
+function buildMarkdownCoverEditorState(state: EditorState): MarkdownCoverEditorState {
   const source = state.doc.toString();
   const cover = parseMarkdownCover(source);
   const range = cover ? findMarkdownCoverRenderRange(source) : null;
   const builder = new RangeSetBuilder<Decoration>();
-  if (!cover || !range) return builder.finish();
+  if (!cover || !range) {
+    return { decorations: builder.finish(), hasTopCover: false };
+  }
 
   const imageContext = state.facet(markdownImageContextFacet);
+  const hasTopCover = range.from === 0;
   builder.add(range.from, range.to, Decoration.replace({
     block: true,
     widget: new MarkdownCoverWidget(
       cover,
       imageContext.filePath || undefined,
       imageContext.getFileUrl || undefined,
+      hasTopCover,
     ),
   }));
 
-  return builder.finish();
+  return { decorations: builder.finish(), hasTopCover };
 }
 
-export const markdownCoverField = StateField.define<DecorationSet>({
+export const markdownCoverField = StateField.define<MarkdownCoverEditorState>({
   create(state) {
-    return buildMarkdownCoverDecorations(state);
+    return buildMarkdownCoverEditorState(state);
   },
   update(value, tr) {
-    if (tr.docChanged) return buildMarkdownCoverDecorations(tr.state);
+    if (tr.docChanged) return buildMarkdownCoverEditorState(tr.state);
     return value;
   },
-  provide: field => EditorView.decorations.from(field),
+  provide: field => [
+    EditorView.decorations.from(field, value => value.decorations),
+    EditorView.editorAttributes.computeN([field], state => (
+      state.field(field).hasTopCover ? [{ class: 'cm-markdown-has-top-cover' }] : []
+    )),
+  ],
 });

@@ -16,6 +16,7 @@ import { installSkillPackageFromPath } from "../../lib/skills/skill-package-inst
 import { WORKSPACE_SKILL_DIRS } from "../../shared/workspace-skill-paths.js";
 import { DEFAULT_DISABLED_TOOL_NAMES } from "../../shared/tool-categories.js";
 import { applyMarkdownCoverFromGeneratedFile } from "../../plugins/beautify/lib/markdown-cover-service.js";
+import { resolveCoverGalleryPresetImagePath } from "../../plugins/beautify/lib/cover-gallery-assets.js";
 import { buildCoverStyleGuideForAgent } from "../../plugins/beautify/lib/cover-style-guide.js";
 import { emitAppEvent } from "../app-events.js";
 import { t } from "../i18n.js";
@@ -353,6 +354,35 @@ export function createDeskRoute(engine, hub) {
       : typeof body?.generatedFilePath === "string" ? body.generatedFilePath : "";
     if (!imageFilePath || !path.isAbsolute(imageFilePath)) {
       return c.json({ error: "imageFilePath must be an absolute image file path" }, 400);
+    }
+
+    try {
+      const result = await applyMarkdownCoverFromGeneratedFile({
+        markdownFilePath: filePath,
+        generatedFilePath: imageFilePath,
+      });
+      emitAppEvent(engine, "markdown-cover-updated", { filePath });
+      return c.json({ ok: true, cover: result.cover, beautifyCover: result });
+    } catch (err) {
+      return c.json({ error: err?.message || String(err) }, 400);
+    }
+  });
+
+  route.post("/desk/beautify/cover/preset/apply", async (c) => {
+    const body = await safeJson(c);
+    const filePath = typeof body?.filePath === "string" ? body.filePath : "";
+    const fileError = validateBeautifyMarkdownFilePath(filePath);
+    if (fileError) return c.json({ error: fileError }, 400);
+
+    const access = validateBeautifyAccess(body);
+    if (access.error) return c.json({ error: access.error }, access.status);
+
+    const presetId = typeof body?.presetId === "string" ? body.presetId : "";
+    let imageFilePath;
+    try {
+      imageFilePath = resolveCoverGalleryPresetImagePath(presetId);
+    } catch (err) {
+      return c.json({ error: err?.message || String(err) }, 400);
     }
 
     try {

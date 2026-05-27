@@ -57,6 +57,7 @@ const tMap: Record<string, string> = {
   'desk.openInFinder': '打开文件夹',
   'desk.sort.nameAscShort': '名称↑',
   'desk.sort.label': '排序',
+  'preview.toggle': '预览面板',
   'common.noFiles': '没有文件',
   'settings.bridge.feishu': '飞书',
 };
@@ -161,6 +162,21 @@ describe('RightWorkspacePanel', () => {
 
     expect((tabList as HTMLElement).style.getPropertyValue('--right-workspace-active-tab-index')).toBe('0');
     expect(screen.getByRole('tab', { name: '对话文件' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('places the preview toggle before the open-folder icon in the workspace toolbar', () => {
+    render(<RightWorkspacePanel />);
+
+    const previewToggle = screen.getByRole('button', { name: '预览面板' });
+    const openFolder = screen.getByRole('button', { name: '打开文件夹' });
+
+    expect(previewToggle.compareDocumentPosition(openFolder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(previewToggle).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(previewToggle);
+
+    expect(useStore.getState().previewOpen).toBe(true);
+    expect(previewToggle).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('uses natural empty copy without a duplicate session files heading', () => {

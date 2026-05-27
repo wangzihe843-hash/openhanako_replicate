@@ -212,7 +212,6 @@ describe('desk-actions workspace roots', () => {
       workspace: '/workspace',
       surface: 'electron',
       state: {
-        deskCurrentPath: 'src',
         deskExpandedPaths: ['src'],
         deskSelectedPath: 'src/App.tsx',
         rightWorkspaceTab: 'workspace',
@@ -232,6 +231,7 @@ describe('desk-actions workspace roots', () => {
         }],
       },
     });
+    expect(body.state).not.toHaveProperty('deskCurrentPath');
   });
 
   it('persists the workspace snapshot captured before switching roots', async () => {
@@ -270,7 +270,6 @@ describe('desk-actions workspace roots', () => {
       expect(body).toMatchObject({
         workspace: '/workspace-a',
         state: {
-          deskCurrentPath: 'notes',
           deskExpandedPaths: ['notes'],
           deskSelectedPath: 'notes/a.md',
           jianDrawerOpen: true,
@@ -284,6 +283,7 @@ describe('desk-actions workspace roots', () => {
           }],
         },
       });
+      expect(body.state).not.toHaveProperty('deskCurrentPath');
     } finally {
       vi.useRealTimers();
     }
@@ -344,7 +344,7 @@ describe('desk-actions workspace roots', () => {
     await activateWorkspaceDesk('/workspace-a', { reload: false });
 
     expect(useStore.getState().deskBasePath).toBe('/workspace-a');
-    expect(useStore.getState().deskCurrentPath).toBe('notes/daily');
+    expect(useStore.getState().deskCurrentPath).toBe('');
     expect(useStore.getState().deskFiles).toEqual([]);
     expect(useStore.getState().deskTreeFilesByPath).toEqual({
       '': [{ name: 'notes', isDir: true }],
@@ -363,6 +363,7 @@ describe('desk-actions workspace roots', () => {
   it('restores persisted workspace preview state from the backend when memory has no entry', async () => {
     mockHanaFetch.mockResolvedValueOnce(jsonResponse({
       state: {
+        deskCurrentPath: 'src/react',
         deskExpandedPaths: ['src', 'src/react'],
         deskSelectedPath: 'src/react/App.tsx',
         jianDrawerOpen: true,
@@ -391,6 +392,7 @@ describe('desk-actions workspace roots', () => {
     await activateWorkspaceDesk('/workspace', { reload: false });
 
     expect(mockHanaFetch).toHaveBeenCalledWith('/api/preferences/workspace-ui-state?workspace=%2Fworkspace&surface=electron');
+    expect(useStore.getState().deskCurrentPath).toBe('');
     expect(useStore.getState().deskExpandedPaths).toEqual(['src', 'src/react']);
     expect(useStore.getState().deskSelectedPath).toBe('src/react/App.tsx');
     expect(useStore.getState().jianDrawerOpen).toBe(true);
@@ -473,7 +475,7 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskFiles).toEqual([{ name: 'notes', isDir: true }]);
   });
 
-  it('creates a folder by explicit parent subdir and updates visible desk files when it is current', async () => {
+  it('creates a folder by explicit parent subdir without replacing the root desk files', async () => {
     useStore.setState({
       deskBasePath: '/workspace',
       deskCurrentPath: 'notes',
@@ -501,7 +503,7 @@ describe('desk-actions workspace roots', () => {
       }),
     }));
     expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([{ name: 'drafts', isDir: true }]);
-    expect(useStore.getState().deskFiles).toEqual([{ name: 'drafts', isDir: true }]);
+    expect(useStore.getState().deskFiles).toEqual([]);
   });
 
   it('renames expanded folder cache keys when a tree folder is renamed', async () => {
@@ -657,7 +659,7 @@ describe('desk-actions workspace roots', () => {
         dir: '/workspace',
         items: [{ sourceSubdir: 'notes', name: 'chapter.md', isDirectory: false }],
         destSubdir: 'archive',
-        currentSubdir: 'drafts',
+        currentSubdir: '',
       }),
     }));
     expect(useStore.getState().deskCurrentPath).toBe('drafts');
@@ -708,5 +710,68 @@ describe('desk-actions workspace roots', () => {
     expect(mockHanaFetch).toHaveBeenNthCalledWith(2, '/api/desk/files?dir=%2Fworkspace&subdir=src%2Fcomponents');
     expect(useStore.getState().deskExpandedPaths).toEqual(['src', 'src/components']);
     expect(useStore.getState().deskSelectedPath).toBe('src/components/DeskTree.tsx');
+  });
+
+  it('reveals an absolute workspace directory by expanding tree paths without replacing the desk root', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskCurrentPath: 'legacy/current-dir',
+      deskFiles: [{ name: 'old.md', isDir: false }],
+      deskTreeFilesByPath: {
+        '': [{ name: 'existing.md', isDir: false }],
+      },
+      deskExpandedPaths: [],
+      deskSelectedPath: '',
+      rightWorkspaceTab: 'session-files',
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({
+        files: [{ name: 'OH-Works', isDir: true }],
+        basePath: '/workspace',
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        files: [{ name: 'Screenshots', isDir: true }],
+        basePath: '/workspace',
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        files: [{ name: 'hana.png', isDir: false }],
+        basePath: '/workspace',
+      }));
+
+    const { revealDeskDirectory } = await import('../../stores/desk-actions');
+    const ok = await revealDeskDirectory('/workspace/OH-Works/Screenshots');
+
+    expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(1, '/api/desk/files?dir=%2Fworkspace');
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(2, '/api/desk/files?dir=%2Fworkspace&subdir=OH-Works');
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(3, '/api/desk/files?dir=%2Fworkspace&subdir=OH-Works%2FScreenshots');
+    expect(useStore.getState().deskBasePath).toBe('/workspace');
+    expect(useStore.getState().deskCurrentPath).toBe('');
+    expect(useStore.getState().deskFiles).toEqual([{ name: 'OH-Works', isDir: true }]);
+    expect(useStore.getState().deskTreeFilesByPath).toMatchObject({
+      '': [{ name: 'OH-Works', isDir: true }],
+      'OH-Works': [{ name: 'Screenshots', isDir: true }],
+      'OH-Works/Screenshots': [{ name: 'hana.png', isDir: false }],
+    });
+    expect(useStore.getState().deskExpandedPaths).toEqual(['OH-Works', 'OH-Works/Screenshots']);
+    expect(useStore.getState().deskSelectedPath).toBe('OH-Works/Screenshots');
+    expect(useStore.getState().rightWorkspaceTab).toBe('workspace');
+  });
+
+  it('does not reveal a directory outside the active desk root', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskCurrentPath: '',
+      deskExpandedPaths: [],
+      deskSelectedPath: '',
+    } as never);
+
+    const { revealDeskDirectory } = await import('../../stores/desk-actions');
+    const ok = await revealDeskDirectory('/other/OH-Works');
+
+    expect(ok).toBe(false);
+    expect(mockHanaFetch).not.toHaveBeenCalled();
+    expect(useStore.getState().deskExpandedPaths).toEqual([]);
+    expect(useStore.getState().deskSelectedPath).toBe('');
   });
 });

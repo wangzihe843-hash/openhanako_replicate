@@ -20,7 +20,7 @@ export interface UiContextPayload {
 }
 
 export function collectUiContext(state: StoreState): UiContextPayload | null {
-  const currentViewed = state.deskCurrentPath || null;
+  const currentViewed = state.deskBasePath || null;
 
   const activeTab: PreviewItem | undefined = state.previewItems.find(
     (a: PreviewItem) => a.id === state.activeTabId,

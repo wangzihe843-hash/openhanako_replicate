@@ -5,7 +5,7 @@
  * 每种 previewItem 类型对应一个 JSX 分支或子组件。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { renderMarkdownPreview } from '../../utils/markdown';
 import {
   parseMarkdownCover,
@@ -19,6 +19,10 @@ import {
   dispatchCoverNotice,
   requestMarkdownCoverGeneration,
 } from '../../utils/markdown-cover-generation';
+import {
+  applyMarkdownCoverImageDrop,
+  hasMarkdownCoverDropImage,
+} from '../../utils/markdown-cover-drop';
 import { parseCSV, injectCopyButtons } from '../../utils/format';
 import { fileIconSvg } from '../../utils/icons';
 import { openFilePreview } from '../../utils/file-preview';
@@ -154,6 +158,7 @@ function joinLocalPath(dirPath: string, fileName: string): string {
 function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; cover: MarkdownCover }) {
   const [layout, setLayout] = useState(() => coverLayout(cover));
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [coverDropActive, setCoverDropActive] = useState(false);
   const layoutRef = useRef(layout);
   const dragRef = useRef<null | {
     kind: 'position' | 'height';
@@ -272,11 +277,35 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
     dispatchCoverNotice(result.ok ? '已提交新的 cover 生成任务。' : `Cover 生成失败：${result.error}`, result.ok ? 'success' : 'error');
   }, [previewItem.filePath]);
 
+  const handleCoverDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!previewItem.filePath || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setCoverDropActive(true);
+  }, [previewItem.filePath]);
+
+  const handleCoverDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    setCoverDropActive(false);
+  }, []);
+
+  const handleCoverDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!previewItem.filePath || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setCoverDropActive(false);
+    void applyMarkdownCoverImageDrop({
+      filePath: previewItem.filePath,
+      dataTransfer: event.dataTransfer,
+    });
+  }, [previewItem.filePath]);
+
   if (!imageUrl) return null;
 
   return (
     <div
-      className="markdown-cover"
+      className={`markdown-cover${coverDropActive ? ' markdown-cover-drop-active' : ''}`}
       style={{
         width: `${layout.displayWidth}%`,
         height: `${layout.displayHeight}px`,
@@ -287,6 +316,9 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
         event.preventDefault();
         setMenu({ x: event.clientX, y: event.clientY });
       }}
+      onDragOver={handleCoverDragOver}
+      onDragLeave={handleCoverDragLeave}
+      onDrop={handleCoverDrop}
     >
       <img
         src={imageUrl}
@@ -311,6 +343,65 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
           <button type="button" onClick={regenerateWithPrompt}>自定义提示词生成图片</button>
         </div>
       )}
+    </div>
+  );
+}
+
+function isMarkdownTopCoverDrop(event: DragEvent<HTMLElement>): boolean {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const y = Number.isFinite(event.clientY) ? event.clientY : rect.top;
+  return y >= rect.top && y <= rect.top + 40;
+}
+
+function MarkdownCoverDropRail({ active }: { active: boolean }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`markdown-cover-drop-rail${active ? ' markdown-cover-drop-rail-active' : ''}`}
+    />
+  );
+}
+
+function MarkdownNoCoverDropHost({ filePath, children }: { filePath?: string; children: ReactNode }) {
+  const [active, setActive] = useState(false);
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!filePath || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) {
+      setActive(false);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setActive(true);
+  }, [filePath]);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    setActive(false);
+  }, []);
+
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!filePath || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setActive(false);
+    void applyMarkdownCoverImageDrop({
+      filePath,
+      dataTransfer: event.dataTransfer,
+    });
+  }, [filePath]);
+
+  if (!filePath) return <>{children}</>;
+  return (
+    <div
+      className="markdown-cover-drop-host"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <MarkdownCoverDropRail active={active} />
+      {children}
     </div>
   );
 }
@@ -355,16 +446,31 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
   return (
     <>
       {cover && <MarkdownCoverView previewItem={previewItem} cover={cover} />}
-      <div
-        ref={divRef}
-        className="preview-markdown md-content"
-        dangerouslySetInnerHTML={{
-          __html: renderMarkdownPreview(body, {
-            filePath: previewItem.filePath,
-            getFileUrl: window.platform?.getFileUrl,
-          }),
-        }}
-      />
+      {cover ? (
+        <div
+          ref={divRef}
+          className="preview-markdown md-content"
+          dangerouslySetInnerHTML={{
+            __html: renderMarkdownPreview(body, {
+              filePath: previewItem.filePath,
+              getFileUrl: window.platform?.getFileUrl,
+            }),
+          }}
+        />
+      ) : (
+        <MarkdownNoCoverDropHost filePath={previewItem.filePath}>
+          <div
+            ref={divRef}
+            className="preview-markdown md-content"
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdownPreview(body, {
+                filePath: previewItem.filePath,
+                getFileUrl: window.platform?.getFileUrl,
+              }),
+            }}
+          />
+        </MarkdownNoCoverDropHost>
+      )}
     </>
   );
 }

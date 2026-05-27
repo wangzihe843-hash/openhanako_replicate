@@ -15,7 +15,7 @@ import { isImageFile, isVideoFile } from '../utils/format';
 import { fetchConfig } from '../hooks/use-config';
 import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
-import { loadDeskFiles, searchDeskFiles, toggleJianSidebar } from '../stores/desk-actions';
+import { revealDeskDirectory, searchDeskFiles, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
 import { formatQuotedSelectionForPrompt } from '../utils/quoted-selection';
@@ -195,7 +195,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const quotedSelections = useStore(s => s.quotedSelections);
   const deskFiles = useStore(s => s.deskFiles);
   const deskBasePath = useStore(s => s.deskBasePath);
-  const deskCurrentPath = useStore(s => s.deskCurrentPath);
   const previewItems = useStore(selectPreviewItems);
   const activeTabId = useStore(selectActiveTabId);
   const previewOpen = useStore(s => s.previewOpen);
@@ -507,12 +506,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     sessionFiles,
     deskFiles,
     deskBasePath,
-    deskCurrentPath,
+    deskCurrentPath: '',
     searchResults: fileMentionSearchResults,
   }), [
     attachedFiles,
     deskBasePath,
-    deskCurrentPath,
     deskFiles,
     fileMentionQuery,
     fileMentionSearchResults,
@@ -1138,7 +1136,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const handleSlashResultClick = useCallback(() => {
     if (!slashResult?.deskDir) return;
     toggleJianSidebar(true);
-    loadDeskFiles('', slashResult.deskDir);
+    void revealDeskDirectory(slashResult.deskDir);
   }, [slashResult?.deskDir]);
 
   const handleCompleteTodos = useCallback(async () => {
