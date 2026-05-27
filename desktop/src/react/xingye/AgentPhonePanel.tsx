@@ -40,10 +40,27 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
   const display = agent ? getXingyeRoleProfileDisplay(agent, profile) : null;
   const [phonePage, setPhonePage] = useState<PhonePage>('home');
   const [smsTarget, setSmsTarget] = useState<{ targetType: 'agent' | 'virtual_contact' | 'user'; targetId: string } | null>(null);
+  /**
+   * 跨模块跳转：账本里点开购物/二手投影行时，记下目标 entryId，
+   * 然后切到对应 app。被跳转的 app mount 时把这个 id 作为 selectedId 初值，
+   * 直接展开对应详情。读完一次后清空，避免来回 toggle 时残留旧选中。
+   */
+  const [shoppingInitialId, setShoppingInitialId] = useState<string | null>(null);
+  const [secondhandInitialId, setSecondhandInitialId] = useState<string | null>(null);
 
   const handleOpenSms = (targetType: 'agent' | 'virtual_contact' | 'user' = 'agent', targetId?: string) => {
     setSmsTarget(targetId ? { targetType, targetId } : null);
     setPhonePage('sms');
+  };
+
+  const handleNavigateFromAccountingToShopping = (entryId: string) => {
+    setShoppingInitialId(entryId);
+    setPhonePage('shopping');
+  };
+
+  const handleNavigateFromAccountingToSecondhand = (entryId: string) => {
+    setSecondhandInitialId(entryId);
+    setPhonePage('secondhand');
   };
 
   return (
@@ -145,7 +162,11 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           ownerAgent={agent}
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
-          onBack={() => setPhonePage('home')}
+          initialSelectedId={shoppingInitialId}
+          onBack={() => {
+            setShoppingInitialId(null);
+            setPhonePage('home');
+          }}
         />
       ) : null}
 
@@ -154,7 +175,11 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           ownerAgent={agent}
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
-          onBack={() => setPhonePage('home')}
+          initialSelectedId={secondhandInitialId}
+          onBack={() => {
+            setSecondhandInitialId(null);
+            setPhonePage('home');
+          }}
         />
       ) : null}
 
@@ -164,6 +189,8 @@ export function AgentPhonePanel({ agent, agents, onNavigate, onOpenGroupChatTab 
           ownerProfile={profile}
           displayName={display?.displayName ?? agent?.name ?? 'TA'}
           onBack={() => setPhonePage('home')}
+          onNavigateToShopping={handleNavigateFromAccountingToShopping}
+          onNavigateToSecondhand={handleNavigateFromAccountingToSecondhand}
         />
       ) : null}
 
