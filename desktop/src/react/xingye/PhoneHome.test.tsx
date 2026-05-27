@@ -19,6 +19,10 @@ vi.mock('./XingyeAgentAvatar', () => ({
   XingyeAgentAvatar: ({ alt }: { alt: string }) => <div>{alt}</div>,
 }));
 
+vi.mock('./xingye-files-secret-heartbeat', () => ({
+  tryRelockHiddenFolderAfterHeartbeat: vi.fn().mockResolvedValue({ relocked: false, state: null }),
+}));
+
 const agent: Agent = {
   id: 'agent-a',
   name: 'Agent A',
