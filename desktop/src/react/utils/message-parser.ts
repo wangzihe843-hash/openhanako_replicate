@@ -5,7 +5,7 @@
  * 供 React 组件和 history-builder 共用。
  */
 
-import { QUOTE_ORIGINAL_END, QUOTE_ORIGINAL_START } from './quoted-selection';
+import { QUOTE_ORIGINAL_END, QUOTE_ORIGINAL_START, QUOTE_SOURCE_PREFIX } from './quoted-selection';
 import { moodLabelForYuan } from '../../../../shared/yuan-visuals.js';
 
 // ── Mood 解析 ──
@@ -84,6 +84,13 @@ export function parseUserAttachments(content: string): ParsedAttachments {
     if (pendingQuoteOriginal && line === QUOTE_ORIGINAL_START) {
       inQuoteOriginal = true;
       quoteOriginalLines = [];
+      continue;
+    }
+
+    // 在 [引用片段] 和 [引用原文] 之间允许夹一行 [来源] …（各 app 用来告诉
+    // agent 这段引用所属模块的语义）。这一行不属于用户文字，要消化掉但保留
+    // pendingQuoteOriginal，让下一行的 [引用原文] 仍能进块。
+    if (pendingQuoteOriginal && line.startsWith(`${QUOTE_SOURCE_PREFIX} `)) {
       continue;
     }
 

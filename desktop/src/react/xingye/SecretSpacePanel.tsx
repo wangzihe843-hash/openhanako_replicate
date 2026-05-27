@@ -297,7 +297,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     useStore.getState().stageChatQuote({
       text,
       sourceTitle: '秘密空间 · TA 的草稿箱',
-      sourceKind: 'chat',
+      sourceKind: 'secret-space',
       charCount: text.length,
       updatedAt: Date.now(),
     });

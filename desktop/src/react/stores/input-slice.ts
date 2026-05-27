@@ -22,10 +22,21 @@ export interface FloatingAnchorRect {
   height: number;
 }
 
+export type QuotedSourceKind =
+  | 'preview'
+  | 'chat'
+  | 'accounting'
+  | 'news'
+  | 'secondhand'
+  | 'shopping'
+  | 'secret-space'
+  | 'files'
+  | 'secret-drawer';
+
 export interface QuotedSelection {
   text: string;
   sourceTitle: string;
-  sourceKind: 'preview' | 'chat';
+  sourceKind: QuotedSourceKind;
   sourceFilePath?: string;
   sourceSessionPath?: string;
   sourceMessageId?: string;
