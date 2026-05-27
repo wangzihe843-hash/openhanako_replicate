@@ -178,6 +178,77 @@ describe("appendSmsDraftServer", () => {
     });
     expect(draft.content.length).toBe(240);
   });
+
+  describe("dedupe (24h 同对方 exact_dup)", () => {
+    it("命中 exact_dup → 不写新行，返回原草稿 + duplicateOf", async () => {
+      const first = await appendSmsDraftServer({
+        agentDir,
+        agentId: "agent-a",
+        input: {
+          targetType: "virtual_contact",
+          targetId: "vc-linwu",
+          content: "在吗？",
+          source: "s",
+        },
+      });
+      expect(first.duplicateOf).toBeUndefined();
+
+      const second = await appendSmsDraftServer({
+        agentDir,
+        agentId: "agent-a",
+        input: {
+          targetType: "virtual_contact",
+          targetId: "vc-linwu",
+          content: "在吗？",
+          source: "s",
+        },
+      });
+      expect(second.duplicateOf).toBe(first.id);
+      expect(second.id).toBe(first.id);
+
+      /** 文件只有一行——dup 没追加。 */
+      const rows = readJsonl(path.join(agentDir, "xingye", "apps", "sms", "drafts.jsonl"));
+      expect(rows).toHaveLength(1);
+    });
+
+    it("normalize 后相同（全角/标点）也算 exact_dup", async () => {
+      const first = await appendSmsDraftServer({
+        agentDir,
+        agentId: "agent-a",
+        input: {
+          targetType: "virtual_contact",
+          targetId: "vc-linwu",
+          content: "在吗?",
+          source: "s",
+        },
+      });
+      const second = await appendSmsDraftServer({
+        agentDir,
+        agentId: "agent-a",
+        input: {
+          targetType: "virtual_contact",
+          targetId: "vc-linwu",
+          content: "在吗？", // 全角问号
+          source: "s",
+        },
+      });
+      expect(second.duplicateOf).toBe(first.id);
+    });
+
+    it("跨对方不算重（同句话给不同对方各写一条）", async () => {
+      await appendSmsDraftServer({
+        agentDir, agentId: "agent-a",
+        input: { targetType: "virtual_contact", targetId: "vc-linwu", content: "在吗？", source: "s" },
+      });
+      const second = await appendSmsDraftServer({
+        agentDir, agentId: "agent-a",
+        input: { targetType: "virtual_contact", targetId: "vc-master", content: "在吗？", source: "s" },
+      });
+      expect(second.duplicateOf).toBeUndefined();
+      const rows = readJsonl(path.join(agentDir, "xingye", "apps", "sms", "drafts.jsonl"));
+      expect(rows).toHaveLength(2);
+    });
+  });
 });
 
 describe("createProposeDraftTool · module=sms", () => {
