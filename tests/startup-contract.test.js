@@ -30,6 +30,18 @@ describe("local startup contract", () => {
     expect(env.HANA_DEV_NODE_BIN).toBe("/tmp/hana-node");
   });
 
+  it("applyDevEnvironment respects an externally provided HANA_HOME and only fills the dev default when unset", () => {
+    // Regression guard: an earlier upstream refactor silently turned this into an
+    // unconditional overwrite, which clobbered developers' persistent HANA_HOME on every
+    // dev launch and forced them through Onboarding against the wrong data dir.
+    const explicit = applyDevEnvironment({ HANA_HOME: "D:\\custom\\hana" });
+    expect(explicit.HANA_HOME).toBe("D:\\custom\\hana");
+
+    const blank = applyDevEnvironment({});
+    expect(blank.HANA_HOME).toBeTruthy();
+    expect(blank.HANA_HOME).not.toBe("D:\\custom\\hana");
+  });
+
   it("server configures Pi SDK from HANA_HOME and CLI stays server-first", () => {
     const cliSource = fs.readFileSync(path.join(ROOT, "index.js"), "utf-8");
     const cliEntrySource = fs.readFileSync(path.join(ROOT, "cli", "entry.js"), "utf-8");

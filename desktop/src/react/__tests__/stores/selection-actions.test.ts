@@ -279,6 +279,39 @@ describe('captureSelection', () => {
     expect(useStore.getState().quoteCandidate).toBeNull();
   });
 
+  it('keeps committed quotedSelections untouched when clearSelection scope matches a transient candidate', () => {
+    // Regression guard: fork's earlier "committed quotes survive clearSelection" invariant.
+    // Now structurally enforced because clearSelection(scope) only touches quoteCandidate,
+    // but if anyone ever rebroadens it to also clear quotedSelections, this test catches it.
+    useStore.getState().addQuotedSelection({
+      text: '已提交的引用',
+      sourceTitle: 'Assistant message',
+      sourceKind: 'chat',
+      sourceSessionPath: '/session/a.jsonl',
+      sourceMessageId: 'assistant-1',
+      sourceRole: 'assistant',
+      charCount: 6,
+    });
+    useStore.getState().setQuoteCandidate({
+      text: 'transient candidate',
+      sourceTitle: 'Assistant message',
+      sourceKind: 'chat',
+      sourceSessionPath: '/session/a.jsonl',
+      sourceMessageId: 'assistant-1',
+      sourceRole: 'assistant',
+      charCount: 19,
+    });
+
+    clearSelection({ sourceKind: 'chat', sourceSessionPath: '/session/a.jsonl' });
+
+    expect(useStore.getState().quoteCandidate).toBeNull();
+    expect(useStore.getState().quotedSelections).toHaveLength(1);
+    expect(useStore.getState().quotedSelections[0]).toMatchObject({
+      text: '已提交的引用',
+      sourceKind: 'chat',
+    });
+  });
+
   it('clears an existing candidate when chat capture sees an empty selection', () => {
     useStore.getState().setQuoteCandidate({
       text: 'old quote',
