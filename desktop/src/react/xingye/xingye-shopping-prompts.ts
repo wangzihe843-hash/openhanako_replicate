@@ -1,6 +1,7 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
+import { SHARED_SPENDING_BUCKETS } from './xingye-spending-categories';
 
 /**
  * 与 PhoneShoppingApp 的 ShoppingEntryStatus 对齐。
@@ -147,7 +148,18 @@ export function buildShoppingDraftPrompt(args: {
     + '信号完全模糊、只是 TA 在想某件物件的存在时，才回退 "wanted"。',
     `- platformStyle 只能是 ${SHOPPING_AI_PLATFORM_STYLES.map((s) => `"${s}"`).join(' / ')} 之一；不确定时用 "generic"。`,
     '- itemName 必填，2–24 字的中文物品名；不要写品牌型号 SKU。',
-    '- category 0–8 字（如「日用 / 文具 / 衣物 / 食物 / 礼物」），不确定可空字符串。',
+    '- category 0–8 字，**按"这笔花费属于哪类支出"选**，不要写成物品本身的类型：'
+    + `优先从这份列表里选——${SHARED_SPENDING_BUCKETS.join(' / ')}。`
+    + '**严格用列表里的原词**，不要写同义词变体——"家电"不要写成"电器"、"服饰"不要写成"衣物"、'
+    + '"交通"不要写成"出租车"。同概念两种写法会让账本聚合裂成两个 bucket，金额算不对。'
+    + '示例：「买面包」→ "餐饮"（不是"食物"）；「买大衣」→ "服饰"（不是"衣物"）；'
+    + '「买耳机」→ "数码"；「买吹风机」→ "家电"（不是"电器"）；「买沙发 / 书架」→ "家具"；'
+    + '「买床单被罩 / 抱枕 / 香薰」→ "家居"（不是"软装"）；「买手办 / 玩偶 / 桌游」→ "玩具"；'
+    + '「买马克笔」→ "文具"；「买电影票」→ "娱乐"；「买机票」→ "旅行"。'
+    + '这样在记账模块按 category 聚合时，购物花费才能和记账的 expense（"巷口面摊午饭"也归"餐饮"）'
+    + '合并到同一个 bucket。'
+    + '世界观非现代（古风 / 西幻 / 未来）可用对应口吻替换（"药资 / 法术耗材 / 能量配给"），'
+    + '只要同一 agent 内三模块（购物 / 二手 / 记账）口径自洽。不确定时可空字符串。',
     '- imaginedPrice 0–28 字；**必须用 TA 所在世界观对应的货币写法**（见下方「世界观货币写法指南」）。'
     + '**首选 · 明确金额**（能想出具体数字时一律走这条，不要加「约」）：'
     + '现代中国「¥1,280」/「168 ¥」；现代美国「$35」；西幻「5 枚金币」；中国古代「二两银子」/「八百文」；民国「三个大洋」；'

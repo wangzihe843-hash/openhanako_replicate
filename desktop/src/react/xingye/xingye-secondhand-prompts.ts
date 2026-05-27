@@ -1,6 +1,7 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
+import { SHARED_SPENDING_BUCKETS } from './xingye-spending-categories';
 
 /**
  * 与 PhoneSecondhandApp 的 SecondhandEntryStatus 对齐。
@@ -149,7 +150,17 @@ export function buildSecondhandDraftPrompt(args: {
     + '只有信号完全模糊、只是 TA 泛泛想清旧物时，才回退 "to_sell"。',
     `- platformStyle 只能是 ${SECONDHAND_AI_PLATFORM_STYLES.map((s) => `"${s}"`).join(' / ')} 之一；不确定时用 "generic"。`,
     '- itemName 必填，2–24 字的中文物品名；不要写品牌型号 SKU。',
-    '- category 0–8 字（如「日用 / 文具 / 衣物 / 食物 / 旧物」），不确定可空字符串。',
+    '- category 0–8 字，**按"这件东西属于哪类支出"选**（即同一物品在购物模块买入时该归哪类）：'
+    + `优先从这份列表里选——${SHARED_SPENDING_BUCKETS.join(' / ')}。`
+    + '**严格用列表里的原词**，不要写同义词变体——"家电"不要写成"电器"、"服饰"不要写成"衣物"、'
+    + '"家居"不要写成"软装"。同概念两种写法会让账本聚合裂成两个 bucket，金额算不对。'
+    + '示例：「转手大衣」→ "服饰"（不是"衣物"）；「卖旧手机」→ "数码"；「转让吹风机」→ "家电"（不是"电器"）；'
+    + '「转让书架 / 沙发」→ "家具"；「卖陶罐 / 旧抱枕」→ "家居"；'
+    + '「转让闲置手办 / 玩偶 / 桌游」→ "玩具"；「卖闲置书」→ "书报"；「转让游戏机」→ "娱乐"。'
+    + '这样在记账模块按 category 聚合时，二手回血和购物花费、记账支出能在同一 bucket 里抵销——'
+    + '"服饰净支出 = 衣服购物支出 - 衣服二手回血"。'
+    + '世界观非现代（古风 / 西幻 / 未来）可用对应口吻替换（"药资 / 法术耗材 / 能量配给"），'
+    + '只要同一 agent 内三模块（购物 / 二手 / 记账）口径自洽。不确定时可空字符串。',
     '- askingPrice 0–28 字；TA 想象里这件东西能卖出的价格感，**必须用 TA 所在世界观对应的货币写法**（见下方「世界观货币写法指南」）。'
     + '**首选 · 明确金额**（能想出具体数字时一律走这条，不要加「约」）：'
     + '现代中国「¥1,280」/「168 ¥」；现代美国「$35」；西幻「5 枚金币」；中国古代「二两银子」/「八百文」；民国「三个大洋」；'

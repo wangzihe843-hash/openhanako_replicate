@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
 import styles from './XingyeShell.module.css';
 import {
   appendAppEntry,
@@ -38,6 +39,12 @@ export interface PhoneSecondhandAppProps {
   ownerProfile?: XingyeRoleProfile | null;
   displayName: string;
   onBack: () => void;
+  /**
+   * 跨模块跳转锚点：账本里点开二手投影行时，父级把这条 entryId 传进来，
+   * mount 时作为 selectedId 初值直接展开对应详情视图。
+   * mount-once 语义即可——切换页面会重新 mount 这个组件。
+   */
+  initialSelectedId?: string | null;
 }
 
 export type SecondhandEntryStatus =
@@ -328,13 +335,16 @@ function formatDayStub(d: number): string {
 }
 
 /**
- * ¥/$/€/£/￥ 这类单符号西方货币按习惯前缀（`¥99`、`$5`）；
- * "两银子"/"信用点"/"金币" 等多字单位按后缀（`99 两银子`）。
+ * ¥/$/€/£/₩/₽/₹ 这类单符号西方货币按习惯前缀（`¥99`、`$5`）；
+ * "两银子"/"信用点"/"金币" 等 CJK 单位后缀紧贴（`99两银子`，不留空格）；
+ * Eddies / USD / R$ 这类拉丁多字符后缀留空格（`99 Eddies`）。
  */
-const WESTERN_PREFIX_CURRENCY = /^[¥$€£￥]$/;
+const WESTERN_PREFIX_CURRENCY = /^[¥$€£￥₩₽₹]$/;
+/** 含 CJK 字符的货币单位 → 后缀紧贴。 */
+const HAS_CJK = /[一-鿿]/;
 
 /**
- * 把 amount + currency 拼成主价位短文本，例如 `¥120` / `2 两银子`。
+ * 把 amount + currency 拼成主价位短文本，例如 `¥120` / `2两银子` / `100 Eddies`。
  * 整数省小数点；非整数最多两位小数并去掉末尾 0。amount 为 undefined → null（不渲染）。
  */
 function formatAmountWithCurrency(
@@ -347,6 +357,7 @@ function formatAmountWithCurrency(
     : amount.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
   if (!currency) return num;
   if (WESTERN_PREFIX_CURRENCY.test(currency)) return `${currency}${num}`;
+  if (HAS_CJK.test(currency)) return `${num}${currency}`;
   return `${num} ${currency}`;
 }
 
@@ -363,13 +374,20 @@ function StatusChip({ status, solid }: { status: SecondhandEntryStatus; solid?: 
   return <span className={`${styles.xyChip} ${variantCls}`}>{STATUS_LABELS[status]}</span>;
 }
 
-export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneSecondhandAppProps) {
+export function PhoneSecondhandApp({
+  ownerAgent,
+  ownerProfile,
+  displayName,
+  onBack,
+  initialSelectedId,
+}: PhoneSecondhandAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [entries, setEntries] = useState<SecondhandEntry[]>([]);
   const [pendingDrafts, setPendingDrafts] = useState<XingyePendingSecondhandDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 从账本跳来的预选 id 作为 useState 初值；后续行为完全和手动 setSelectedId 一致。
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId ?? null);
   const [filter, setFilter] = useState<'all' | SecondhandEntryStatus>('all');
   const [composeOpen, setComposeOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -380,6 +398,12 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /**
+   * 「去和 TA 聊聊」入口的轻量确认提示。点完按钮 4s 自动复位。
+   * 走 stagedChatQuote 槽：见 memory `feedback_share_to_chat_no_navigation` —
+   * 不能直接写 quotedSelection，跨 session 会被清。
+   */
+  const [sharedToChatId, setSharedToChatId] = useState<string | null>(null);
   /**
    * 「待确认草稿」行内编辑缓冲。Key = draft.id。
    * 用户在小手机里改了字、还没按「确认生成」前先在内存里保留改动；
@@ -870,6 +894,39 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
     }
   };
 
+  useEffect(() => {
+    if (!sharedToChatId) return undefined;
+    const timer = setTimeout(() => setSharedToChatId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatId]);
+
+  const handleShareSecondhandToChat = useCallback(
+    (entry: SecondhandEntry) => {
+      const meta = entry.metadata;
+      const days = daysAgo(entry.updatedAt);
+      const amountLine = formatAmountWithCurrency(meta.amount, meta.currency);
+      const priceText = amountLine ?? meta.askingPrice ?? '—';
+      const lines: string[] = [];
+      lines.push(`${meta.itemName}（${meta.category ?? '记录'}）· 状态：${STATUS_LABELS[meta.status]}`);
+      lines.push(`价格：${priceText}${meta.delta ? `（${meta.delta}）` : ''}`);
+      if (meta.buyer) lines.push(`买家：${meta.buyer}`);
+      lines.push(`${metaVerb(meta.status)} ${formatDayStub(days)} 天前`);
+      if (meta.reason) lines.push(`理由：${meta.reason}`);
+      if (entry.content) lines.push(`记下的话：\n${entry.content}`);
+      const text = lines.join('\n').trim();
+      if (!text) return;
+      useStore.getState().stageChatQuote({
+        text,
+        sourceTitle: `二手 · ${meta.itemName}`,
+        sourceKind: 'secondhand',
+        charCount: text.length,
+        updatedAt: Date.now(),
+      });
+      setSharedToChatId(entry.id);
+    },
+    [],
+  );
+
   const handleDeleteSelected = async () => {
     if (!selected || !ownerAgentId) return;
     if (!window.confirm('确定删除这条二手记录？此操作不可恢复。')) return;
@@ -1095,6 +1152,8 @@ export function PhoneSecondhandApp({ ownerAgent, ownerProfile, displayName, onBa
             onEdit={openEdit}
             onDelete={handleDeleteSelected}
             deleteBusy={deleteBusy}
+            onShareToChat={() => handleShareSecondhandToChat(selected)}
+            sharedNotice={sharedToChatId === selected.id}
           />
         ) : (
           <div className={styles.xyScroll}>
@@ -1384,12 +1443,16 @@ function SecondhandDetailView({
   onEdit,
   onDelete,
   deleteBusy,
+  onShareToChat,
+  sharedNotice,
 }: {
   entry: SecondhandEntry;
   ta: string;
   onEdit: () => void;
   onDelete: () => void;
   deleteBusy: boolean;
+  onShareToChat: () => void;
+  sharedNotice: boolean;
 }) {
   const platform = entry.metadata.platformStyle ?? 'generic';
   const toneCls = PLATFORM_COVER_TONE[platform];
@@ -1470,6 +1533,29 @@ function SecondhandDetailView({
             ) : null}
           </div>
         ) : null}
+
+        <div style={{ padding: '0 18px 4px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <button
+            type="button"
+            className={styles.xyBtnGhost}
+            onClick={onShareToChat}
+            data-testid={`phone-secondhand-share-to-chat-${entry.id}`}
+            title={`把这条带到和 ${ta} 的聊天里`}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            去和 {ta} 聊聊这条
+          </button>
+          {sharedNotice ? (
+            <p
+              className={styles.phoneAppHint}
+              role="status"
+              data-testid={`phone-secondhand-share-to-chat-notice-${entry.id}`}
+              style={{ margin: 0 }}
+            >
+              已放进聊天输入框引用 —— 打开任意对话即可发出
+            </p>
+          ) : null}
+        </div>
 
         <div className={styles.xyDetailSection}>
           <p className={styles.xyDetailSecTitle}>状态时间线</p>
