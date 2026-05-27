@@ -1,6 +1,12 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
+import {
+  ACCOUNTING_ALL_CATEGORY_HINTS,
+  ACCOUNTING_ONLY_CATEGORIES,
+  SHARED_SPENDING_BUCKETS,
+  STRICT_MONTHLY_CATEGORIES,
+} from './xingye-spending-categories';
 
 /**
  * 与 xingye-accounting-drafts 的 AccountingDirection 对齐。
@@ -8,17 +14,14 @@ import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 export const ACCOUNTING_AI_DIRECTIONS = ['income', 'expense'] as const;
 
 /**
- * 推荐分类候选；模型可以挑或自由发挥，不强约束（agent 可能在仙侠 / 废土
- * 等奇特世界观里，硬枚举就限死了语感）。这只是用来给模型"暖身"的灵感清单，
- * 同时也作为「不要重复购物 / 二手覆盖范围」的反面 anchor。
+ * 推荐分类候选 = SHARED_SPENDING_BUCKETS ∪ ACCOUNTING_ONLY_CATEGORIES。
+ * 三模块共用的「物品 ↔ 支出场景」双语义类目 + 记账独有的"非物品现金流"。
+ *
+ * 模型可以挑或在世界观非现代时自由替换（俸禄 / 药资 / 法术耗材 …），
+ * 但**同一 agent 内**记账 / 购物 / 二手必须口径一致，账本聚合才能合并到同一 bucket。
+ * 详见 xingye-spending-categories.ts 顶部说明。
  */
-export const ACCOUNTING_AI_CATEGORY_HINTS = [
-  '工资', '稿费', '红包', '利息', '分红', '退款',
-  '房租', '水电', '通讯', '订阅', '保险',
-  '餐饮', '咖啡', '打车', '交通', '加油',
-  '医疗', '药费', '学费', '书报', '理发',
-  '人情', '请客', '生日礼', '随份子',
-] as const;
+export const ACCOUNTING_AI_CATEGORY_HINTS = ACCOUNTING_ALL_CATEGORY_HINTS;
 
 /**
  * 构造「记账原生草稿」prompt：让模型扮演当前 agent，把最近聊天 / 状态 / 设定里
@@ -57,6 +60,33 @@ export function buildAccountingDraftPrompt(args: {
    * 防止 LLM 又生成出"买了相机 ¥1200"这种和购物模块重复的记录。
    */
   coveredByOthersBlock?: string;
+  /**
+   * 「每个自然月已记录的严格月度类目」清单（房租 / 水电 / 通讯 / 保险 / 工资 …）。
+   * 由 xingye-accounting-ai.ts 的 buildMonthlyCoverageBlock 计算后传入。
+   *
+   * Why：现实里一个月只交一次房租、领一次工资。反复点「批量新增」时若不告诉
+   * 模型这些月份已经记过哪些月度类目，会被反复塞「这个月房租」给同一个月两次。
+   * 入库前还有一道 dedupe 兜底（见 PhoneAccountingApp.runBulkGeneration），
+   * 但 prompt 端告知能减少浪费、提高用户实际拿到的有效条数。
+   */
+  monthlyCoverageBlock?: string;
+  /**
+   * 「近 14 天每天已记的 title 摘要」。由 buildRecentTitlesBlock 计算后传入。
+   *
+   * Why：用户反复点「批量新增」时，AI 在两次独立调用里偶尔会各自生成
+   * `"巷口面摊午饭 / 餐饮 / ¥18"` —— 同标题同金额，等于一天吃了两顿一模一样的午饭。
+   * 把"这天已经记过这些 title"告诉模型，让它从源头避开。
+   * 入库前还有 filterSameDayDuplicates 做硬兜底。
+   */
+  recentTitlesBlock?: string;
+  /**
+   * agent 是否有兼职 / 倒班 / 跑单 / 外卖员等"一天多次通勤"职业。
+   * true → prompt 端不强求"一天一次通勤"约束，让模型自由生成；
+   * false / 未传 → 加上"通勤一天最多去班 1 次 + 下班 1 次"硬规则。
+   *
+   * 由 hasMultipleJobsByProfile(ownerProfile) 在调用方算好后传入。
+   */
+  agentHasMultipleJobs?: boolean;
   /** 期望生成几条草稿。默认 3，常规调用上限 3；historyMode 时上限 12。 */
   desiredCount?: number;
   /**
@@ -87,6 +117,9 @@ export function buildAccountingDraftPrompt(args: {
     heartbeatBlock,
     anchorBlock,
     coveredByOthersBlock,
+    monthlyCoverageBlock,
+    recentTitlesBlock,
+    agentHasMultipleJobs,
     desiredCount = 3,
     historyMode,
   } = args;
@@ -156,10 +189,22 @@ export function buildAccountingDraftPrompt(args: {
     '- title 必填，2–24 字的简短摘要，如「五月薪俸」「这个月房租」「巷口面摊午饭」「东家发的奖金」。',
     `- direction 只能是 ${ACCOUNTING_AI_DIRECTIONS.map((d) => `"${d}"`).join(' / ')} 之一；`
     + 'income = 钱进（工资 / 利息 / 红包 / 退款），expense = 钱出（房租 / 餐饮 / 订阅 / 人情）。',
-    '- category 0–12 字，分类名，按 TA 世界观自由文本，但**不要复述 title**。'
-    + '现代背景灵感清单（仅参考，可超出）：'
-    + `${ACCOUNTING_AI_CATEGORY_HINTS.join(' / ')}。`
-    + '古风 / 西幻 / 未来背景下用对应口吻（"俸禄""房钱""药资""法术耗材"等）。',
+    '- category 0–12 字，分类名，**不要复述 title**。**优先从下面这份共用词表里选**，'
+    + '让记账聚合时能和购物 / 二手按 category 合并到同一 bucket：'
+    + ''
+    + `  ◆ 涉及具体物品消费的 expense（餐厅 / 咖啡馆 / 打车 / 看电影 / 买票），从 SHARED 选——${SHARED_SPENDING_BUCKETS.join(' / ')}；`
+    + `  ◆ 人生现金流（工资 / 房租 / 水电这类**不是买东西**的），从 ACCOUNTING-ONLY 选——${ACCOUNTING_ONLY_CATEGORIES.join(' / ')}。`
+    + ''
+    + '判断要点：「巷口面摊午饭」→ "餐饮"（SHARED，因为是吃喝消费）；'
+    + '「电话费」→ "通讯"（ACCOUNTING-ONLY，周期性账单不是物品）；'
+    + '「房东收的房租」→ "房租"（ACCOUNTING-ONLY）；'
+    + '「打车去医院」→ "交通"（SHARED）；'
+    + '「公司发的工资」→ "工资"（ACCOUNTING-ONLY income）。'
+    + '不要新造词覆盖已有 bucket，**严格用列表里的原词**：'
+    + '"吃饭"→"餐饮"、"出租车 / 打车"→"交通"、"电器"→"家电"、"衣物"→"服饰"、"通讯费"→"通讯"——'
+    + '同概念两种写法会让账本按 category 聚合时裂成两个 bucket，金额算不对。'
+    + '世界观非现代时可用对应口吻替换（古风「俸禄 / 房钱 / 药资」、西幻「法术耗材」、未来「能量配给」），'
+    + '只要同一 agent 内三模块（购物 / 二手 / 记账）口径自洽。',
     '- imaginedAmount 必填，0–28 字；**必须用 TA 所在世界观对应的货币写法**'
     + '（见下方「世界观货币写法指南」）。'
     + '**首选 · 明确金额**：现代「¥3,500」/「168 ¥」/「$2,800」；古代「八两银子」/「三百文」；'
@@ -224,6 +269,49 @@ export function buildAccountingDraftPrompt(args: {
       : '（无；这是 TA 第一次记账，请按 Layer 3 规则挑货币体系并锁定）',
     '',
     '──────────────────',
+    '【月度账单类目防重复 · 重要】',
+    '──────────────────',
+    `下列 category **每个自然月最多 1 条**——现实里一个月只交一次房租 / 水电 / 电话费 / 保险，只领一次工资：${STRICT_MONTHLY_CATEGORIES.join(' / ')}。`,
+    '下方"已记录"列出过去几个月里 TA 账本中已存在的 (年-月, 月度类目) 组合，**生成时绕开这些组合**——',
+    '不要再给同一个 (年-月) 塞一条相同 category 的草稿，否则会被入库前的去重过滤丢弃。',
+    monthlyCoverageBlock && monthlyCoverageBlock.trim()
+      ? monthlyCoverageBlock.trim()
+      : '（无；过去几个月里 TA 还没记过房租 / 水电 / 通讯 / 保险 / 工资 这类月度类目）',
+    '',
+    '──────────────────',
+    '【近 14 天每天已记的 title · 同天去重双重规则】',
+    '──────────────────',
+    '下方列出近 14 天里每天 TA 已经记过的 title。生成时**两条硬规则**：',
+    '',
+    '  ◆ **规则 1 · 同 title 不重复**：同一天里不要再生成与列出 title 完全相同的草稿——',
+    '    AI 反复批量生成时最容易出现「同一天两顿一模一样的午饭」（同 title + 同金额 + 同对手方）。',
+    '',
+    '  ◆ **规则 2 · 早 / 午 / 晚饭一天最多 1 顿**：检查列出 title 里是否已经有当天的「早饭 /',
+    '    早餐 / 早点」「午饭 / 午餐 / 中饭」「晚饭 / 晚餐」——如果某一餐已经记过，**不要再生成**',
+    '    同一天同一餐的草稿，哪怕换了餐厅 / title / 金额。',
+    '    例：当天已有「巷口面摊午饭」→ 不要再生成「卤肉饭午饭」「公司食堂午餐」「外卖盖饭」（都是 lunch）。',
+    '    例外（不算三餐，可同日多次）：咖啡 / 奶茶 / 下午茶 / 宵夜 / 零食 / 水果——这些独立频次自由。',
+    '',
+    agentHasMultipleJobs
+      ? '  ◆ **规则 3 · 通勤无限制（TA 有兼职 / 倒班 / 跑单）**：TA 的身份是跑单类'
+        + '（外卖员 / 配送员 / 网约车 / 代驾 / 倒班工 …），一天会通勤好几趟，'
+        + '所以"打车去上班 + 地铁去上班 + 共享单车去上班"在同一天是允许的，'
+        + '不要刻意避开。'
+      : '  ◆ **规则 3 · 通勤一天最多去班 1 次 + 下班 1 次**：检查列出 title 里是否已经有当天的'
+        + '「上班 / 上学 / 去公司 / 去办公室」或「下班 / 放学 / 收工」。'
+        + '如果"去班"已经记过，**不要再生成**同一天另一条"去班"的草稿，哪怕换了交通方式 /'
+        + ' 金额——「打车去上班」「骑共享单车去上班」「地铁去上班」同一天只能留 1 条。'
+        + '同理"下班 / 放学 / 收工"也只能 1 条。'
+        + '例外：去开会 / 出差 / 出门办事 / 接送朋友 / 周末逛街——这些不算通勤，不受限制。',
+    '',
+    '违反规则的草稿会被入库前去重过滤丢弃，浪费生成。',
+    '一天能吃三顿、喝两杯咖啡都没问题；只是每个 slot（餐次、通勤段）只占一次。',
+    '',
+    recentTitlesBlock && recentTitlesBlock.trim()
+      ? recentTitlesBlock.trim()
+      : '（无；近 14 天 TA 还没记过账）',
+    '',
+    '──────────────────',
     '【已被购物 / 二手覆盖的记录 · 不要重复这些 itemName 主题】',
     '──────────────────',
     coveredByOthersBlock && coveredByOthersBlock.trim()
@@ -269,11 +357,20 @@ export function buildAccountingDraftPrompt(args: {
     isHistory
       ? `**历史批量额外要求**：所有 ${count} 条 occurredAtHint 必填，分布在【${historyMode!.dayRangeHint}】，`
         + '不同条目日期错开。'
+        + ''
+        + `**类目多样性硬指标**：${count} 条草稿至少覆盖 ${Math.max(3, Math.ceil(count / 2))} 个**不同**的 category；`
+        + '收入 / 支出两个方向都要有（除非 TA 设定明确没有收入来源，比如学生 / 退休）；'
+        + `不要 ${count} 条全是"餐饮"或全是"工资"——这是账本，不是日记。`
         + (historyMode!.kind === 'initial'
           ? '这是 TA 首次使用账本，请主要参考【星野核心设定】和【设定库】里的身份 / 职业 / 世界观'
             + '推断"过去 14 天里 TA 最有可能发生的现金流"，最近聊天 / 关系 / 心跳作为弱参考。'
+            + '**典型分布参考**（按 TA 身份调整）：1–2 条收入（工资 / 稿费 / 红包）、'
+            + '2–3 条固定支出（房租 / 水电 / 通讯 / 订阅）、'
+            + '4–6 条日常消费（餐饮 / 咖啡 / 交通 / 服饰 / 娱乐 / 医疗 …各挑不同 bucket）、'
+            + '1–2 条人情支出（礼物 / 请客 / 随份子）。'
           : historyMode!.kind === 'gap_fill'
-            ? '这是补齐之前几天的空白，请按"日常作息会发生的事"分布，不要全堆在某一天。'
+            ? '这是补齐之前几天的空白，请按"日常作息会发生的事"分布，不要全堆在某一天，'
+              + '也不要全押在同一类目上——TA 这几天既会吃饭也会通勤还会偶尔买东西。'
             : '')
       : '',
   ];

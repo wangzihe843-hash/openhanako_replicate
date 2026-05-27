@@ -33,6 +33,25 @@ const ledgerMock = vi.hoisted(() => ({
     entries: [],
     summary: { byCurrency: [], missingAmountCount: 0 },
   }),
+  /**
+   * 老测试不关心 fx 折算，给个 passthrough：byCurrency 走简单分桶但 unified 留 undefined
+   * 也合法（UI 会退化到老的多卡显示）。这里直接返回空 summary，因为测试只断言
+   * 草稿区行为，不查 summary。
+   */
+  summarizeLedger: vi.fn(() => ({ byCurrency: [], missingAmountCount: 0 })),
+}));
+
+const fxRatesMock = vi.hoisted(() => ({
+  FX_ANCHOR_CURRENCY: '¥',
+  FX_CURRENCY_GROUPS: [],
+  DEFAULT_FX_RATES: {},
+  loadFxConfig: vi.fn().mockResolvedValue({ version: 1, displayCurrency: '', rates: {} }),
+  saveFxConfig: vi.fn().mockResolvedValue({ version: 1, displayCurrency: '', rates: {} }),
+  resolveFxState: vi.fn(() => ({
+    displayCurrency: '¥',
+    effectiveRates: { '¥': 1 },
+    raw: { version: 1, displayCurrency: '', rates: {} },
+  })),
 }));
 
 const historyStateMock = vi.hoisted(() => ({
@@ -52,6 +71,7 @@ vi.mock('./xingye-app-entry-store', () => appEntryStoreMock);
 vi.mock('./xingye-accounting-drafts', () => accountingDraftsMock);
 vi.mock('./xingye-accounting-ai', () => accountingAiMock);
 vi.mock('./xingye-accounting-ledger', () => ledgerMock);
+vi.mock('./xingye-accounting-fx-rates', () => fxRatesMock);
 vi.mock('./xingye-app-history-state', () => historyStateMock);
 
 import { PhoneAccountingApp } from './PhoneAccountingApp';

@@ -19,6 +19,7 @@ import {
   buildAccountingDraftPrompt,
 } from './xingye-accounting-prompts';
 import type { AccountingDirection } from './xingye-accounting-drafts';
+import { hasMultipleJobsByProfile } from './xingye-accounting-dedupe';
 import { parseChineseTimeHint } from './xingye-app-history-state';
 import {
   buildXingyeLoreRuntimeQueryText,
@@ -27,6 +28,10 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { listAppEntries } from './xingye-app-entry-store';
+import {
+  isStrictMonthlyCategory,
+  normalizeCategory,
+} from './xingye-spending-categories';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -167,6 +172,108 @@ async function buildAccountingAnchorBlock(agentId: string): Promise<string> {
       lines.push(`- 已用对手方：${counterpartySamples.map((c) => `「${c}」`).join('、')}`);
     }
     return lines.join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 读取已有记账 entries，按 (年-月, 严格月度类目) 聚合，喂回 prompt 作为「这些月里
+ * 这些月度类目已经记过、不要再生成」锚点。
+ *
+ * 严格月度类目（房租 / 水电 / 通讯 / 保险 / 工资 …）在现实里就是一个月最多 1 条——
+ * 反复点「批量新增」时，如果不告诉模型已经生成过哪一月的房租，它会乐此不疲地塞
+ * 「这个月房租」「这个月房租」给同一个月两次。
+ *
+ * 只回望最近 6 个自然月，避免 prompt 体积失控。
+ * 落地的入库 dedupe 在 PhoneAccountingApp.runBulkGeneration 里做硬过滤兜底。
+ */
+async function buildMonthlyCoverageBlock(agentId: string): Promise<string> {
+  try {
+    const rows = await listAppEntries(agentId, 'accounting');
+    if (!rows.length) return '';
+    const byMonth = new Map<string, Set<string>>();
+    const now = new Date();
+    const sixMonthsAgoMs = new Date(
+      now.getFullYear(), now.getMonth() - 5, 1,
+    ).getTime();
+    for (const row of rows) {
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const rawCategory = typeof meta.category === 'string' ? meta.category : '';
+      const category = normalizeCategory(rawCategory);
+      if (!category || !isStrictMonthlyCategory(category)) continue;
+      const occurredRaw = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
+      const parsed = Date.parse(occurredRaw);
+      if (!Number.isFinite(parsed)) continue;
+      if (parsed < sixMonthsAgoMs) continue;
+      const d = new Date(parsed);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      let set = byMonth.get(ym);
+      if (!set) {
+        set = new Set<string>();
+        byMonth.set(ym, set);
+      }
+      set.add(category);
+    }
+    if (byMonth.size === 0) return '';
+    const ordered = [...byMonth.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
+    return ordered
+      .map(([ym, cats]) => `- ${ym}：已记【${[...cats].join(' / ')}】`)
+      .join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 读取近 14 天的 accounting entries，按 YYYY-MM-DD 把每天已记过的 title 列出来，
+ * 喂回 prompt 作为「这一天已经发生过这些条目，不要再生成」反面锚点。
+ *
+ * 解决场景：用户反复点「批量新增」，AI 在两次独立调用里各自生成了
+ *   `"2026-05-27 巷口面摊午饭 / 餐饮 / ¥18"`——同标题、同金额，等于一天吃了
+ * 两顿一模一样的午饭。Prompt 端把已记的 title-by-day 喂回去，让模型从源头避开。
+ *
+ * 入库前还有 filterSameDayDuplicates 做硬兜底（同 title 或 同四元组），
+ * 但 prompt 提示能减少 token 浪费——模型一开始就不要生成重复的。
+ *
+ * 体积控制：每天最多 6 个 title，整体最多 14 天，单 title 截到 24 字。
+ */
+async function buildRecentTitlesBlock(agentId: string): Promise<string> {
+  try {
+    const rows = await listAppEntries(agentId, 'accounting');
+    if (!rows.length) return '';
+    const now = new Date();
+    const cutoffMs = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 14,
+    ).getTime();
+    const byDay = new Map<string, string[]>();
+    for (const row of rows) {
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const occurredRaw = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
+      const parsed = Date.parse(occurredRaw);
+      if (!Number.isFinite(parsed)) continue;
+      if (parsed < cutoffMs) continue;
+      const d = new Date(parsed);
+      const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const title = typeof meta.title === 'string' && meta.title.trim()
+        ? meta.title.trim()
+        : row.title.trim();
+      if (!title) continue;
+      const trimmed = title.length > 24 ? `${title.slice(0, 23)}…` : title;
+      let arr = byDay.get(ymd);
+      if (!arr) {
+        arr = [];
+        byDay.set(ymd, arr);
+      }
+      if (arr.length < 6 && !arr.includes(trimmed)) arr.push(trimmed);
+    }
+    if (byDay.size === 0) return '';
+    const ordered = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
+    return ordered
+      .map(([ymd, titles]) => `- ${ymd}：${titles.map((t) => `「${t}」`).join('、')}`)
+      .join('\n');
   } catch {
     return '';
   }
@@ -370,10 +477,18 @@ export async function generateAccountingDraftsWithAI(params: {
   const userName = await resolveXingyeSpeakerUserName(params.userName);
   const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
 
-  const [stableLoreBlock, anchorBlock, coveredByOthersBlock] = await Promise.all([
+  const [
+    stableLoreBlock,
+    anchorBlock,
+    coveredByOthersBlock,
+    monthlyCoverageBlock,
+    recentTitlesBlock,
+  ] = await Promise.all([
     buildStableLoreBlock(agent.id),
     buildAccountingAnchorBlock(agent.id),
     buildCoveredByOthersBlock(agent.id),
+    buildMonthlyCoverageBlock(agent.id),
+    buildRecentTitlesBlock(agent.id),
   ]);
 
   let recentContext;
@@ -430,6 +545,10 @@ export async function generateAccountingDraftsWithAI(params: {
     keywordLoreBlock = '';
   }
 
+  // 检查 agent 是否有兼职 / 倒班 / 跑单等"一天通勤多次"职业；
+  // 是 → prompt 端不强求"通勤一天 1 次"约束，入库前的 commute slot 去重也跳过。
+  const agentHasMultipleJobs = hasMultipleJobsByProfile(ownerProfile ?? null);
+
   const prompt = buildAccountingDraftPrompt({
     agent,
     userName,
@@ -442,6 +561,9 @@ export async function generateAccountingDraftsWithAI(params: {
     heartbeatBlock,
     anchorBlock,
     coveredByOthersBlock,
+    monthlyCoverageBlock,
+    recentTitlesBlock,
+    agentHasMultipleJobs,
     desiredCount,
     historyMode,
   });
