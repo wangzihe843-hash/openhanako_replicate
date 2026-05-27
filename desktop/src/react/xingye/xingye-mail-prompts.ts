@@ -49,6 +49,11 @@ export function buildMailInitPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /**
+   * 跨期反重复锚点：列出已有邮箱里最近的邮件（按发件人聚合，同发件人最多 2 条），
+   * 由调用方用 buildMailContinuityAnchorBlock 生成。可空。
+   */
+  continuityAnchorBlock?: string;
 }): string {
   const {
     agent,
@@ -61,6 +66,7 @@ export function buildMailInitPrompt(args: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock = '',
   } = args;
 
   const currentUserName = userName?.trim() || '用户';
@@ -170,6 +176,9 @@ export function buildMailInitPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（若有；仅作背景参考）】',
     heartbeatBlock.trim() || '（无）',
+    '',
+    '【已有邮箱里的最近邮件（跨期防重复，必读；同一发件人不要再发雷同主题，整体上换主题/换笔调）】',
+    continuityAnchorBlock.trim() || '（无；这是 TA 第一次整理邮箱）',
   ];
 
   return parts.join('\n');

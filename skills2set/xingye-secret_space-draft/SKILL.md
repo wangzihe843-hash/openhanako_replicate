@@ -64,6 +64,39 @@ display-name-ko: 호시노 비밀 공간 초안
 | `body` | ✅ | 正文，必填，trim 后不能为空。第一人称、贴角色口吻。≤4000 字符。 |
 | `tags` | 可选 | 标签。`dream` 用作意象关键词（「水」「回不去的车」），`saved_item` 用作分类（「句子 / 对话 / 瞬间 / 片段」），`draft_reply` 可放收件人/对象（「给 user」「给师父」——会显示在便签纸顶部），`unsent_moment` 一般留空。最多 8 个，每个 ≤32 字符。 |
 | `reason` | 强烈建议 | 给用户看——一句话说清「为什么 TA 想私下记下来」「源头是哪段聊天 / 哪个事件」。 |
+| `revisions` | **仅 draft_reply，强烈建议** | TA 写这条草稿时的「涂改痕迹」。详见下一节。其它 category 即便误传也会被服务端丢弃。 |
+
+## 关于 `revisions`（仅 `draft_reply`）
+
+`draft_reply` 的内核是「写了又删、改了又改、终究没发出去」。光给 `body` 等于只画了"最终落笔的那一稿"——少了那种纠结感。`revisions` 让 agent 同时交出「TA 起头几次没能落笔的句子」「夹在段间的改稿批注」「右侧空白处的小字」，阅读器会把这些渲染成横线信笺上真的划掉/改稿/边角批注。
+
+```json
+{
+  "struck": [
+    { "text": "其实那天我想说……", "reason": "太直接了，会让她为难" },
+    { "text": "在吗？", "reason": "这种开头太敷衍" },
+    { "text": "我想了你很久", "reason": "太重了，吓人" }
+  ],
+  "patches": [
+    {
+      "afterParagraphIndex": 0,
+      "text": "这里改了三遍",
+      "reason": "想表达想念但又怕显得软弱"
+    }
+  ],
+  "marginNotes": ["……", "别发", "改天吧"]
+}
+```
+
+**重点约束**：
+
+- `struck[].text` 是 TA 起头**真写出来又划掉**的那行字（≤80），不是元说明、不是"这条草稿要……"。语气和 `body` 同一个人物，可以是不同尝试。
+- `struck[].reason`（≤200）是 **TA 自己**为什么划掉，第一人称内心活动。"太矫情了 / 这话不该我先说 / 怕她笑话"——而**不是**"草稿想表达 X"这种第三人称分析。
+- `patches[].afterParagraphIndex`：body 按 `\n\n` 分段；0 = 第一段后，1 = 第二段后。越界会被前端 clamp 到末尾段。
+- `patches[].text` ≤80；`patches[].reason` ≤200 同样第一人称。
+- `marginNotes` 每条 ≤40，**最多 3 条**——是 TA 在纸边随手写的"……" / "别发" / "?" 这种小字，不要写长句子。
+- 全部不确定就**省略整个 `revisions` 字段**（阅读器有装饰兜底；硬塞反而 OOC）。
+- 数量上限：`struck` ≤ 4，`patches` ≤ 3，`marginNotes` ≤ 3。超出会被服务端截断。
 
 ## 调用样例（state）
 
@@ -109,6 +142,13 @@ secret_space:
   category: "draft_reply"
   body: "其实那天我也很想说，只是后来想想算了。等你愿意先开口的那一天吧。"
   tags: ["给 user"]
+  revisions:
+    struck:
+      - { text: "其实那天我也很想你", reason: "太直接了，会让她不知怎么回" }
+      - { text: "在吗？", reason: "这种开头太敷衍，不像我会说的" }
+    patches:
+      - { afterParagraphIndex: 0, text: "这一句改了三遍", reason: "怕显得软弱" }
+    marginNotes: ["……", "别发"]
 ```
 
 ## 调用样例（unsent_moment）

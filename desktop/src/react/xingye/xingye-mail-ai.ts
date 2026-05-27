@@ -3,6 +3,10 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import {
+  buildMailContinuityAnchorBlock,
+  filterMailDraftsByDuplicates,
+} from './xingye-mail-dedupe';
+import {
   buildMailInitPrompt,
   MAIL_AI_FROM_KINDS,
   MAIL_AI_MAILBOXES,
@@ -29,7 +33,7 @@ import {
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
 import { getVirtualContacts } from './xingye-phone-store';
-import type { XingyeMailMessageDraft } from './xingye-mail-store';
+import { listMailMessages, type XingyeMailMessageDraft } from './xingye-mail-store';
 
 export type XingyeMailAiDraft = {
   mailbox: XingyeMailAiMailbox;
@@ -251,6 +255,16 @@ export async function generateMailInitDraftsWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
 
+  // 跨期反重复锚点：拉已有邮箱 messages，按发件人聚合抽样塞 prompt。
+  // listMailMessages 失败 → 走空数组（不阻断生成；首次 init 也是空的）。
+  let existingMailMessages: Awaited<ReturnType<typeof listMailMessages>> = [];
+  try {
+    existingMailMessages = await listMailMessages(agent.id);
+  } catch {
+    existingMailMessages = [];
+  }
+  const continuityAnchorBlock = buildMailContinuityAnchorBlock(existingMailMessages);
+
   let recentContext;
   try {
     recentContext = collectRecentContextForAgent({ agentId: agent.id });
@@ -331,6 +345,7 @@ export async function generateMailInitDraftsWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -364,7 +379,31 @@ export async function generateMailInitDraftsWithAI(params: {
   if (!normalized.length) {
     throw new Error('模型返回无效：未生成任何模拟邮件');
   }
-  return normalized;
+
+  // 后置硬过滤：anchor block 已经提示过模型按发件人换主题，但模型仍可能复读
+  // 同一封 newsletter 主题、或批内自重复。按 fromAddress 分桶比对主题，丢掉
+  // exact_dup；similar 保留（避免把整批过滤光，邮件列表本来就允许相近主题）。
+  const { kept, dropped } = filterMailDraftsByDuplicates(
+    normalized.map((d) => ({
+      from: { address: d.from.address, name: d.from.name },
+      subject: d.subject,
+      body: d.body,
+      __original: d,
+    })),
+    existingMailMessages,
+  );
+  if (dropped.length > 0) {
+    console.warn(
+      `[xingye-mail-ai] 丢弃 ${dropped.length} 封与已有邮箱重复的草稿（同发件人 + 同/近主题）。`,
+    );
+  }
+  const keptDrafts = kept.map((k) => k.__original);
+  if (!keptDrafts.length) {
+    // 全部都被判为 exact_dup 的极端情况：直接返回原列表，避免阻塞 init 流程。
+    // anchor block 下一次会更严，模型应该会换主题；如果还不换，用户可以手动整理。
+    return normalized;
+  }
+  return keptDrafts;
 }
 
 /**

@@ -31,6 +31,14 @@ export type BuildGroupChatReplyPromptArgs = {
   stableLoreBlock?: string;
   keywordLoreBlock?: string;
   relationshipBlock?: string;
+  /**
+   * 流式反重复锚点：当前 agent 在本群聊最近自己说过的几句（由 buildGroupChatOwnReplyContinuityAnchorBlock 生成）。
+   * 空串 → 渲染「（无；这是 TA 在本群第一次发言）」。
+   *
+   * 与 historyBlock 的关系：history 给的是「全员近期对话」（供承接话题），
+   * 这里专门抽 agent 自己的发言做反重复——避免模型把上一两轮自己的话再说一遍。
+   */
+  ownReplyAnchorBlock?: string;
 };
 
 export type GroupChatReplyAiDecision = 'reply' | 'skip';
@@ -129,6 +137,7 @@ export function buildGroupChatReplyPrompt(args: BuildGroupChatReplyPromptArgs): 
   const stableLoreBlock = safeText(args.stableLoreBlock);
   const keywordLoreBlock = safeText(args.keywordLoreBlock);
   const relationshipBlock = safeText(args.relationshipBlock);
+  const ownReplyAnchorBlock = safeText(args.ownReplyAnchorBlock);
 
   const profileLines: string[] = [];
   if (profile) {
@@ -180,6 +189,9 @@ export function buildGroupChatReplyPrompt(args: BuildGroupChatReplyPromptArgs): 
     '',
     '【群聊最近消息（自上而下，时间从早到晚）】',
     historyBlock,
+    '',
+    '【你自己在本群最近说过的话（流式反重复锚点；请避免再写几乎相同的话，让对话向前推进）】',
+    ownReplyAnchorBlock || '（无；这是 TA 在本群第一次发言）',
     '',
     '【最近发生的事（仅作 TA 的背景情绪参考，不要在 reply 中复述来源）】',
     recentSceneBlock || '（无）',

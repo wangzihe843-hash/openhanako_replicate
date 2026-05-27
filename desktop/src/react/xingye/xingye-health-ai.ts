@@ -18,7 +18,9 @@ import {
   type HealthAdvice,
   type HealthScenario,
 } from './xingye-health-data';
+import { buildHealthContinuityAnchorBlock as buildSlotAwareHealthAnchorBlock } from './xingye-health-dedupe';
 import { buildHealthDayPrompt } from './xingye-health-prompts';
+import { listHealthDays } from './xingye-health-store';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -185,6 +187,16 @@ export async function generateHealthDayWithAI(params: {
   const isoDate = params.isoDate ?? todayIsoDate();
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  // 反套路 anchor：从 health store 拉历史 advice，让 dedupe 模块根据 slot
+  // 识别（喝水 / 睡眠 / 运动 / 步数 / 压力）+ 摘录构造 anchor。
+  // 历史为空（首次生成）→ 返回 ''，prompt 端会显示「（无）」占位。
+  let healthHistory: Awaited<ReturnType<typeof listHealthDays>> = [];
+  try {
+    healthHistory = await listHealthDays(agent.id);
+  } catch {
+    healthHistory = [];
+  }
+  const continuityAnchorBlock = buildSlotAwareHealthAnchorBlock(healthHistory);
   const userName = await resolveXingyeSpeakerUserName();
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
@@ -219,6 +231,7 @@ export async function generateHealthDayWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

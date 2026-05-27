@@ -68,9 +68,18 @@ export function buildMmChatGenerationPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /**
+   * 跨会话反重复锚点（由 buildMmChatContinuityAnchorBlock 渲染）。
+   * 抽 TA 最近几个 session 的 title + 首问，让模型在生成 new 会话时换不同切口，
+   * 不要短时间内连开几个几乎一模一样的咨询。
+   *
+   * 空串 → 渲染「（无；这是 TA 第一次咨询通用助手）」。
+   */
+  continuityAnchorBlock?: string;
 }): string {
   const { agent, profile, recentSceneBlock, stableLoreBlock, keywordLoreBlock, relationshipBlock, heartbeatBlock } =
     args;
+  const continuityAnchorBlock = (args.continuityAnchorBlock ?? '').trim();
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
@@ -113,6 +122,9 @@ export function buildMmChatGenerationPrompt(args: {
     ),
     '',
     speakerContextBlock,
+    '',
+    '【近期已咨询过的会话（跨会话反重复锚点；请换不同切口，不要短时间内重复发起几乎相同的咨询）】',
+    continuityAnchorBlock || '（无；这是 TA 第一次咨询通用助手）',
     '',
   ];
   appendContextTail(parts, {

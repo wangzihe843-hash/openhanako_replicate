@@ -11,8 +11,22 @@ export function buildJournalDraftPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /**
+   * 跨期连续性锚点（防止反复写"今天又…"）：列出最近 8 篇日记的标题 + 开头 30 字。
+   * 调用方用 buildJournalContinuityAnchorBlock 生成；可空。
+   */
+  continuityAnchorBlock?: string;
 }): string {
-  const { agent, profile, recentSceneBlock, stableLoreBlock, keywordLoreBlock, relationshipBlock, heartbeatBlock } = args;
+  const {
+    agent,
+    profile,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    continuityAnchorBlock = '',
+  } = args;
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
     userName: args.userName,
     agentName: profile?.displayName ?? agent.name,
@@ -62,6 +76,9 @@ export function buildJournalDraftPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（若有；仅作情绪参考，勿照抄套话）】',
     heartbeatBlock.trim() || '（无）',
+    '',
+    '【最近写过的日记（跨期防重复，必读；今天请换主题/换笔调/换角度，不要复读"今天又…"）】',
+    continuityAnchorBlock.trim() || '（无；这是 TA 写的第一篇日记）',
   ];
 
   return parts.join('\n');

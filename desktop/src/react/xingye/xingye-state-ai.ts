@@ -11,6 +11,7 @@ import {
   buildRelationshipStatePrompt,
   type XingyeRelationshipStateTrigger,
 } from './xingye-state-prompts';
+import { buildStateContinuityAnchorBlock } from './xingye-state-dedupe';
 import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 
 export type XingyeRelationshipStateSuggestion = Required<XingyeRelationshipStatePatch>;
@@ -107,12 +108,14 @@ export async function generateRelationshipStateSuggestion(
       state: args.state,
       recentChatSummary,
     });
+  const continuityAnchorBlock = buildStateContinuityAnchorBlock(args.state);
   const prompt = buildRelationshipStatePrompt({
     ...args,
     userName,
     recentChatSummary,
     loreContextText,
     trigger: args.trigger ?? 'manual_refresh',
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

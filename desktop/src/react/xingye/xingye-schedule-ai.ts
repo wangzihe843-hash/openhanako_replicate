@@ -23,7 +23,16 @@ import {
 } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
-import type { XingyeScheduleStatus } from './xingye-schedule-store';
+import { listScheduleEntries, type XingyeScheduleStatus } from './xingye-schedule-store';
+import {
+  buildScheduleContinuityAnchorBlock,
+  detectScheduleDuplicate,
+  filterSameDayScheduleDuplicates,
+} from './xingye-schedule-dedupe';
+
+// Re-export so legacy callers that previously imported these names from xingye-schedule-ai
+// continue to compile; the canonical home is xingye-schedule-dedupe.
+export { detectScheduleDuplicate, filterSameDayScheduleDuplicates };
 
 export type XingyeScheduleAiDraft = {
   title: string;
@@ -99,6 +108,38 @@ async function buildStableLoreBlock(agentId: string): Promise<string> {
   return buildStableLoreFromAlwaysEntries(agentId, 2800).trim();
 }
 
+/**
+ * 跨期连续性锚点：从 listScheduleEntries 拉最近若干条已落库日程，让
+ * xingye-schedule-dedupe 的纯函数 buildScheduleContinuityAnchorBlock 渲染
+ * 列表 + 反重复提示。详见该模块的 docstring。
+ *
+ * 无历史 → 返回空字符串；生成入口会把它替换成「（无）」占位文案。
+ *
+ * 与 accounting 的「日内独占 slot」不同：日程没有「一天只能 1 个早会」这种
+ * 自然资源上限（理论上一天可以多个会），所以这里走「软提示反重复」+
+ * filterSameDayScheduleDuplicates 硬过滤（精确同日同 title）双层防御。
+ */
+async function buildScheduleContinuityAnchorBlockForAgent(agentId: string): Promise<string> {
+  try {
+    const rows = await listScheduleEntries(agentId);
+    if (!rows.length) return '';
+    // 按 updatedAt 倒序取最近 20 条；listScheduleEntries 默认按 dateLabel + updatedAt 排，
+    // 这里手动按 updatedAt 再 sort 一遍，保证「最近写入」优先（dateLabel 是自然语言时间，
+    // 字典序不一定 = 时间序）。
+    const recent = [...rows]
+      .sort((a, b) => {
+        const ta = Date.parse(a.updatedAt);
+        const tb = Date.parse(b.updatedAt);
+        if (Number.isFinite(ta) && Number.isFinite(tb)) return tb - ta;
+        return 0;
+      })
+      .slice(0, 20);
+    return buildScheduleContinuityAnchorBlock(recent);
+  } catch {
+    return '';
+  }
+}
+
 function formatRelationshipBlock(agentId: string): string {
   const storage = getXingyePersistenceStorage();
   const state = getRelationshipState(agentId, storage);
@@ -172,6 +213,9 @@ export async function generateScheduleDraftWithAI(params: {
   const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  // 反重复锚点：把最近 10 条已有日程的 title/dateLabel/timeText 喂给模型，
+  // 让它避免反复生成「今天约 XX 喝咖啡」这种近邻条目。无历史 → 空串。
+  const continuityAnchorBlock = await buildScheduleContinuityAnchorBlockForAgent(agent.id);
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentChatExcerpts = buildScheduleRecentChatExcerpts({
     context: recentContext,
@@ -214,6 +258,7 @@ export async function generateScheduleDraftWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
   logScheduleAiDebugSnapshot(buildScheduleAiDebugSnapshot({
     userName,
@@ -258,5 +303,28 @@ export async function generateScheduleDraftWithAI(params: {
   if (!normalized) {
     throw new Error('模型返回无效：缺少明确日程安排或 JSON 解析失败');
   }
+
+  // 落库前的「同日同事件」硬过滤兜底（continuity anchor 是软提示，模型仍可能
+  // 复读同一天同一题；这里拦在调用方落库之前）。匹配现有日程 → 抛错让 UI
+  // 提示用户重生成或换主题，而不是悄悄写入一条重复条目。
+  try {
+    const existing = await listScheduleEntries(agent.id);
+    const dedupResult = filterSameDayScheduleDuplicates([normalized], existing);
+    if (dedupResult.length === 0) {
+      const verdict = detectScheduleDuplicate(
+        { title: normalized.title, dateLabel: normalized.dateLabel },
+        existing,
+      );
+      const dupTitle = verdict.kind === 'exact_dup' || verdict.kind === 'similar'
+        ? verdict.existingTitle
+        : normalized.title;
+      throw new Error(`这条日程与已有「${dupTitle}」(${normalized.dateLabel}) 重复，换一个时间或主题再试一次。`);
+    }
+  } catch (err) {
+    // listScheduleEntries 读盘失败 → 不阻塞主路径，仍然返回 normalized
+    // 让用户继续；硬重复在 confirm 阶段还有 from-draft-id 幂等兜底。
+    if (err instanceof Error && err.message.startsWith('这条日程与已有')) throw err;
+  }
+
   return normalized;
 }

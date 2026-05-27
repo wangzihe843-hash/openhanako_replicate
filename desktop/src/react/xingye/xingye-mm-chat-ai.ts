@@ -24,6 +24,7 @@ import {
 import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
+import { listMmChatSessions, type XingyeMmChatSession } from './xingye-mm-chat-store';
 
 function truncateChars(text: string, max: number): string {
   const t = text.trim();
@@ -159,6 +160,63 @@ export function normalizeMmChatFollowupAssistantAnswer(raw: unknown): string | n
   const a = (raw as Record<string, unknown>).assistantAnswer;
   if (typeof a !== 'string' || !a.trim()) return null;
   return clampCodePoints(a.trim(), 3500);
+}
+
+/**
+ * MM Chat 跨会话「连续性反重复锚点」。
+ *
+ * 用途：当 agent 又点「再问助手一个新问题」（mode='new'）时，让模型看一眼
+ * TA 最近问过哪些 session 主题——避免短时间内连开两三个几乎一模一样的会话
+ * （典型 case：「我下一步该怎么开口」连续生成三次）。
+ *
+ * 设计取舍：
+ * - 只在 mode='new' 路径下用。followup 模式已经把整个 session history 喂给了
+ *   模型（formatMmChatSessionHistoryForPrompt），它已经知道"刚才说过什么"，
+ *   不需要再叠一层 anchor。
+ * - 抽样维度：最近 6 个 session 的 title + ta 提问首句首 30 字。title 是会话主轴，
+ *   ta 第一句话给主题以更具体的语义（光看 title 太抽象）。
+ * - 失败/读盘异常 → 返回空串（与其他模块一致的优雅降级）。
+ */
+const MM_CHAT_CONTINUITY_ANCHOR_LIMIT = 6;
+const MM_CHAT_CONTINUITY_SNIPPET_CHARS = 30;
+
+export function buildMmChatContinuityAnchorBlockFromSessions(
+  sessions: XingyeMmChatSession[],
+): string {
+  if (!Array.isArray(sessions) || sessions.length === 0) return '';
+  // listMmChatSessions 已按 updatedAt 倒序；这里直接 take。
+  const picked = sessions.slice(0, MM_CHAT_CONTINUITY_ANCHOR_LIMIT);
+  const lines: string[] = [];
+  for (const s of picked) {
+    const title = (s.title ?? '').trim().slice(0, 40);
+    if (!title) continue;
+    let firstTaQ = '';
+    for (const m of s.messages ?? []) {
+      if (m?.role === 'ta' && typeof m.text === 'string' && m.text.trim()) {
+        firstTaQ = m.text.trim().replace(/\s+/g, ' ').slice(0, MM_CHAT_CONTINUITY_SNIPPET_CHARS);
+        break;
+      }
+    }
+    if (firstTaQ) {
+      lines.push(`  · 《${title}》— ${firstTaQ}`);
+    } else {
+      lines.push(`  · 《${title}》`);
+    }
+  }
+  if (lines.length === 0) return '';
+  return [
+    '- 最近你（TA）已经向助手问过这些主题（请换不同切口，不要短时间内重复发起几乎相同的咨询）:',
+    ...lines,
+  ].join('\n');
+}
+
+async function buildMmChatContinuityAnchorBlock(agentId: string): Promise<string> {
+  try {
+    const sessions = await listMmChatSessions(agentId);
+    return buildMmChatContinuityAnchorBlockFromSessions(sessions);
+  } catch {
+    return '';
+  }
 }
 
 function lastAiAssistantText(messages: XingyeMmChatTurn[]): string {
@@ -341,6 +399,9 @@ export async function generateMmChatRoundWithAI(params: GenerateMmChatRoundWithA
     };
   }
 
+  // 跨会话反重复锚点：仅 new 模式需要——followup 已经把整 session history 喂给模型了。
+  const continuityAnchorBlock = await buildMmChatContinuityAnchorBlock(agent.id);
+
   const prompt = buildMmChatGenerationPrompt({
     agent,
     userName,
@@ -350,6 +411,7 @@ export async function generateMmChatRoundWithAI(params: GenerateMmChatRoundWithA
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
 
   const result = await postMmChatPhoneGenerate({

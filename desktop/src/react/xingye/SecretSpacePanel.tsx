@@ -32,6 +32,8 @@ import {
   type SecretInterviewMetadata,
 } from './xingye-secret-space-interview-types';
 import { SecretInterviewReader } from './SecretInterviewReader';
+import { SecretSpaceDraftReader } from './SecretSpaceDraftReader';
+import { SecretSpaceDreamReader } from './SecretSpaceDreamReader';
 import {
   confirmInterviewDraftWithEntry,
   discardInterviewDraft,
@@ -860,13 +862,22 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
     setAiError(null);
     setAiLoading(true);
     try {
-      const { title, content, meta, tags } = await generateSecretSpaceRecordWithAI({
+      const { title, content, meta, tags, revisions } = await generateSecretSpaceRecordWithAI({
         agent,
         ownerProfile: profile,
         category: activeCategory,
         seedText: activeCategory === 'saved_item' ? savedItemSeed.trim() || undefined : undefined,
       });
       const summary = content.length > 120 ? `${content.slice(0, 120)}…` : content;
+      /**
+       * 仅 draft_reply 把 revisions 落到 metadata.draftRevisions——其它 category
+       * 即使 LLM 误输出 revisions 也会在 normalize 时被丢弃,这里不再二次塞。
+       * 阅读器读 metadata.draftRevisions 渲染真划掉痕迹,缺失时走装饰池兜底。
+       */
+      const metadataExtra =
+        activeCategory === 'draft_reply' && revisions
+          ? { metadata: { draftRevisions: revisions } }
+          : {};
       await appendSecretSpaceRecord(agent.id, activeCategory, {
         title,
         body: content,
@@ -874,6 +885,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
         source: 'ai',
         ...(meta ? { meta } : {}),
         ...(tags && tags.length ? { tags } : {}),
+        ...metadataExtra,
       });
       const records = await listSecretSpaceRecords(agent.id, activeCategory);
       setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
@@ -1528,7 +1540,15 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             records={activeSamples}
             footer={categoryFooter}
             renderRecordList={renderRecordListForCategory}
-            renderRecordDetail={activeCategory === 'interview' ? renderInterviewDetail : undefined}
+            renderRecordDetail={
+              activeCategory === 'interview'
+                ? renderInterviewDetail
+                : activeCategory === 'draft_reply'
+                ? (record) => <SecretSpaceDraftReader record={record} />
+                : activeCategory === 'dream'
+                ? (record) => <SecretSpaceDreamReader record={record} />
+                : undefined
+            }
             renderRecordDetailExtraActions={
               activeCategory === 'draft_reply'
                 ? (record) => (

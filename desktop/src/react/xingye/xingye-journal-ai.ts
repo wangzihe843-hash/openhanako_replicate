@@ -2,7 +2,12 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import {
+  buildJournalContinuityAnchorBlock,
+  detectJournalDuplicate,
+} from './xingye-journal-dedupe';
 import { buildJournalDraftPrompt } from './xingye-journal-prompts';
+import { listJournalEntries } from './xingye-journal-store';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -147,6 +152,17 @@ export async function generateJournalDraftWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const userName = await resolveXingyeSpeakerUserName();
+
+  // 跨期反重复锚点：把最近 8 篇日记的标题 + 开头 30 字塞进 prompt，
+  // 让模型在源头就避开"今天又…"反复主题。listJournalEntries 异常时降级为空（不阻断生成）。
+  let existingJournalEntries: Awaited<ReturnType<typeof listJournalEntries>> = [];
+  try {
+    existingJournalEntries = await listJournalEntries(agent.id);
+  } catch {
+    existingJournalEntries = [];
+  }
+  const continuityAnchorBlock = buildJournalContinuityAnchorBlock(existingJournalEntries);
+
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
   const relationshipBlock = formatRelationshipBlock(agent.id);
@@ -179,6 +195,7 @@ export async function generateJournalDraftWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -218,6 +235,19 @@ export async function generateJournalDraftWithAI(params: {
   const normalized = normalizeJournalDraftResult(data?.result);
   if (!normalized) {
     throw new Error('模型返回无效：缺少正文或 JSON 解析失败');
+  }
+
+  // 后置硬过滤：anchor block 已经提示过模型，但模型仍可能复读"今天又…"。
+  // 命中 exact_dup 直接抛错由上层 UI 决定是否提示用户重试；similar 不拦截
+  // （只是高度相似，让用户自己看到结果决定要不要保留——日记本来就允许相近主题）。
+  const dup = detectJournalDuplicate(
+    { title: normalized.title, body: normalized.body },
+    existingJournalEntries,
+  );
+  if (dup.kind === 'exact_dup') {
+    throw new Error(
+      `生成的日记与最近一篇「${dup.entry.title}」(${dup.entry.dayKey}) 几乎重复（${dup.via === 'title' ? '标题' : '开头'}相同）。请稍后再试，或先删除旧条目。`,
+    );
   }
   return normalized;
 }

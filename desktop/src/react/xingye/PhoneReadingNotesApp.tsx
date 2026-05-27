@@ -477,6 +477,12 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
       const topics = await inferReadingTopicsWithAI({
         agent: ownerAgent,
         ownerProfile: ownerProfile ?? null,
+        // 传书架 anchor：让模型不要反复推同一本/同一作者
+        existingBooks: books.map((b) => ({
+          title: b.title,
+          authors: b.authors,
+          createdAt: b.createdAt,
+        })),
       });
       setDiscoveryTopics(topics);
       setDiscoveryStatus('idle');
@@ -634,6 +640,8 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         },
         passage,
         passageCitation: annotationCitation ?? undefined,
+        // 让 ai 拉同书已有批注做 anchor block，避免反复写相似批注
+        bookId: selectedBook.id,
       });
       setAnnotationDraft(draft);
       setAnnotationStatus('preview');

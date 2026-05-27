@@ -87,4 +87,36 @@ describe('xingye-group-chat-prompts', () => {
     expect(normalizeGroupChatReplyAiResult(null)).toBeNull();
     expect(normalizeGroupChatReplyAiResult([{ decision: 'reply', reply: 'a' }])).toBeNull();
   });
+
+  it('renders ownReplyAnchorBlock into the prompt with the no-repeat instruction', () => {
+    const prompt = buildGroupChatReplyPrompt({
+      agent: baseAgent,
+      profile: null,
+      userName: 'liyu',
+      channelId: 'ch_crew',
+      channelName: 'Crew',
+      channelMembers: ['agent-a', 'agent-b'],
+      recentMessages: [
+        { sender: 'liyu', timestamp: '2026-05-15 09:00', body: '?' },
+      ],
+      ownReplyAnchorBlock: '- 你（Linwu）在这条群聊里最近已经说过的几句:\n  · [2026-05-15 09:01] 体力还撑得住',
+    });
+    expect(prompt).toContain('流式反重复锚点');
+    expect(prompt).toContain('体力还撑得住');
+    expect(prompt).toContain('请避免再写几乎相同的话');
+  });
+
+  it('renders placeholder when ownReplyAnchorBlock is empty', () => {
+    const prompt = buildGroupChatReplyPrompt({
+      agent: baseAgent,
+      profile: null,
+      userName: 'liyu',
+      channelId: 'ch_crew',
+      channelName: 'Crew',
+      channelMembers: ['agent-a', 'agent-b'],
+      recentMessages: [],
+      ownReplyAnchorBlock: '',
+    });
+    expect(prompt).toContain('TA 在本群第一次发言');
+  });
 });

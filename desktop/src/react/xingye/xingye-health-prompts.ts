@@ -26,6 +26,12 @@ export function buildHealthDayPrompt(args: {
   relationshipBlock: string;
   /** 最近一次手机首页巡检结果（辅信号，仅情绪参考）。 */
   heartbeatBlock: string;
+  /**
+   * 反重复锚点：最近若干天的 scenario / advice 标题 / advice 开头摘录。
+   * 由 buildHealthContinuityAnchorBlock 拼好后传入；为空 = TA 还没有历史。
+   * 用来劝退模型反复给出「多喝水 / 早睡 / 适度运动」这类万能套话。
+   */
+  continuityAnchorBlock?: string;
 }): string {
   const {
     agent,
@@ -37,6 +43,7 @@ export function buildHealthDayPrompt(args: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   } = args;
 
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
@@ -103,6 +110,9 @@ export function buildHealthDayPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（辅信号；仅情绪参考，勿照抄套话）】',
     heartbeatBlock.trim() || '（无）',
+    '',
+    '【近期已给出的健康建议样本（请避免重复）】',
+    (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 第一次拿到健康建议）',
   ];
 
   return parts.join('\n');

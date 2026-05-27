@@ -4,6 +4,10 @@ import type { XingyeRoleProfile } from './xingye-profile-store';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
+  buildTopicsContinuityAnchorBlock,
+  type ReadingBookLike,
+} from './xingye-reading-topics-dedupe';
+import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
 } from './xingye-recent-context';
@@ -20,6 +24,11 @@ export type XingyeReadingTopicSuggestion = {
 export type InferReadingTopicsParams = {
   agent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
+  /**
+   * 可选：TA 书架已有的书（用作 anchor block，让模型不要反复推同样的书/同样的类别）。
+   * 调用方应该传 listBooksForAgent(agentId) 的结果——按 createdAt desc。缺省 → 无 anchor。
+   */
+  existingBooks?: readonly ReadingBookLike[];
   timeoutMs?: number;
 };
 
@@ -84,8 +93,13 @@ export function buildReadingTopicsPrompt(args: {
   ownerProfile: XingyeRoleProfile | null | undefined;
   recentSceneBlock: string;
   stableLoreBlock: string;
+  /**
+   * TA 书架已有书的 anchor block，由 buildTopicsContinuityAnchorBlock 生成。
+   * 让模型避免反复推同一本/同一作者。无书架 → 空字符串。
+   */
+  continuityAnchorBlock?: string;
 }): string {
-  const { agent, ownerProfile, recentSceneBlock, stableLoreBlock } = args;
+  const { agent, ownerProfile, recentSceneBlock, stableLoreBlock, continuityAnchorBlock } = args;
   const profileBlock = profileLines(ownerProfile) || '（无可用 profile）';
   const recentBlock = recentSceneBlock?.trim() ? truncateChars(recentSceneBlock, 2200) : '（暂无最近聊天上下文）';
   const loreBlock = stableLoreBlock?.trim() ? truncateChars(stableLoreBlock, 1800) : '（暂无 lore）';
@@ -109,6 +123,9 @@ export function buildReadingTopicsPrompt(args: {
     '',
     '【固定设定 / 常驻 lore】',
     loreBlock,
+    '',
+    '【TA 书架已有的书（请推荐不同类型/不同书名，不要反复推同一本或同一作者）】',
+    (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 第一次发现新书）',
   ].join('\n');
 }
 
@@ -150,18 +167,24 @@ export function normalizeReadingTopicsResult(raw: unknown): XingyeReadingTopicSu
 export async function inferReadingTopicsWithAI(
   params: InferReadingTopicsParams,
 ): Promise<XingyeReadingTopicSuggestion[]> {
-  const { agent, ownerProfile } = params;
+  const { agent, ownerProfile, existingBooks } = params;
   const timeoutMs = params.timeoutMs ?? 60_000;
 
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
   const stableLoreBlock = buildStableLoreBlock(agent.id, 1800);
+  // 书架 anchor：让模型不要反复推同一本/同一作者。调用方可选传 existingBooks；
+  // 不传 → 空 anchor，prompt 端会渲染「（无；这是 TA 第一次发现新书）」。
+  const continuityAnchorBlock = existingBooks && existingBooks.length
+    ? buildTopicsContinuityAnchorBlock(existingBooks)
+    : '';
 
   const prompt = buildReadingTopicsPrompt({
     agent,
     ownerProfile,
     recentSceneBlock,
     stableLoreBlock,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

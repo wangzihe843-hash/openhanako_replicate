@@ -78,6 +78,12 @@ export function buildDivinationReadingPrompt(args: {
   relationshipBlock?: string;
   heartbeatBlock?: string;
   /**
+   * 近期占卜历史抽样（同 method 过滤），由 buildDivinationContinuityAnchorBlock 生成。
+   * 让模型避免短期内反复抽到同一张牌/同一卦象/同一类解读。
+   * 无历史 → 空字符串 → 这里渲染「（无；这是 TA 的第一次占卜）」。
+   */
+  continuityAnchorBlock?: string;
+  /**
    * 「正式加工」路径会传：用户在草稿区已经看过的「心象」原文。模型应在生成结构化
    * reading 时保留这段心象的意象与口吻；agentQuestion 优先承接草稿里 TA 已经写下的
    * 那句话，而不是另起炉灶。普通正式占卜（无草稿）路径不传。
@@ -95,6 +101,7 @@ export function buildDivinationReadingPrompt(args: {
     recentSceneBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
     seedNarrative,
   } = args;
   const theme = getDivinationTheme(methodId);
@@ -194,6 +201,12 @@ export function buildDivinationReadingPrompt(args: {
     '',
     '【最近一次手机首页巡检（仅作情绪参考；不要照抄）】',
     (heartbeatBlock ?? '').trim() || '（无）',
+    '',
+    // 占卜防重复 anchor：同 method 历史抽样。塔罗 78 张 / 易经 64 卦的符号池
+    // 有限，抽多了必然重复，所以这里只在 prompt 端 soft anchor，不在落盘
+    // 端硬拒绝。详见 buildDivinationContinuityAnchorBlock。
+    '【近期占卜记录（请明确避免重复；含同占法的最近抽签）】',
+    (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 的第一次占卜）',
     '',
     '【占法推荐解释（内部参考，不要复述）】',
     (resolverReason ?? '').trim() || '（无）',

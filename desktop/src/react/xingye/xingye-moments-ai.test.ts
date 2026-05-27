@@ -22,9 +22,21 @@ vi.mock('./xingye-phone-store', () => ({
   getPhoneContactMeta: vi.fn(),
 }));
 
+// 内容级去重需要读 agent 自己已发的朋友圈，喂给 anchor block 与硬过滤路径。
+// 仅 mock listXingyeMomentPosts；其他导出保持原模块（actor-level 处理走 normalizePost
+// 等仍是原实现，不影响这层 mock）。
+vi.mock('./xingye-moments-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./xingye-moments-store')>();
+  return {
+    ...actual,
+    listXingyeMomentPosts: vi.fn(),
+  };
+});
+
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import { getPhoneContactMeta, getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
+import { listXingyeMomentPosts } from './xingye-moments-store';
 import {
   generateXingyeMomentDraftWithAI,
   normalizeMomentDraftResult,
@@ -197,6 +209,9 @@ describe('generateXingyeMomentDraftWithAI', () => {
     vi.mocked(getVirtualContacts).mockReset();
     vi.mocked(resolveContactDisplayName).mockReset();
     vi.mocked(getPhoneContactMeta).mockReset();
+    vi.mocked(listXingyeMomentPosts).mockReset();
+    // 默认：无历史朋友圈 → anchor 块为空、内容去重不触发。
+    vi.mocked(listXingyeMomentPosts).mockResolvedValue([]);
     vi.mocked(getPhoneContactMeta).mockReturnValue(null as never);
     vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
     vi.mocked(getVirtualContacts).mockReturnValue([]);
@@ -557,6 +572,157 @@ describe('generateXingyeMomentDraftWithAI', () => {
       const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
       expect(prompt).not.toContain('围观互动生成器');
       expect(prompt).toContain('写作身份：以当前角色身份发一条朋友圈短动态');
+    });
+  });
+
+  /**
+   * 内容级去重叠加在 actor 级去重之上：
+   *   - actor 级去重在 normalizePost / dedupeLikes 里管「谁互动」；
+   *   - 这里测内容级——anchor block 进 prompt + duplicateOfExisting 旁路提示。
+   *
+   * 注意：anchor 拉的是 `listXingyeMomentPosts(agent.id)`，因此 agent 切换天然按 author 隔离；
+   * 这里集中验证 (1) 无历史→占位、(2) 有历史→进 prompt、(3) 命中重复→duplicateOfExisting 被填。
+   */
+  describe('content-level dedup (anchor + duplicateOfExisting)', () => {
+    it('无历史时 prompt 用占位「这是 TA 的第一条朋友圈」，结果无 duplicateOfExisting', async () => {
+      vi.mocked(listXingyeMomentPosts).mockResolvedValue([]);
+      const agent = { id: 'agent-m', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+      });
+      const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+        (call) => call[0] === '/api/xingye/phone-generate',
+      );
+      const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+      expect(prompt).toContain('跨条朋友圈反重复锚点');
+      expect(prompt).toContain('这是 TA 的第一条朋友圈');
+      expect(result.duplicateOfExisting).toBeUndefined();
+    });
+
+    it('有历史时 anchor 进 prompt（开头样本 + 日期 + 作者），生成内容不撞 → 无 duplicateOfExisting', async () => {
+      vi.mocked(listXingyeMomentPosts).mockResolvedValue([
+        {
+          id: 'p1',
+          authorAgentId: 'hanako',
+          authorName: 'Hanako',
+          content: '凌晨三点的便利店，泡面味混着冷气。',
+          imageUrls: [],
+          createdAt: '2026-05-25T03:14:00.000Z',
+          updatedAt: '2026-05-25T03:14:00.000Z',
+          likes: [],
+          comments: [],
+        },
+      ]);
+      // 模型返回的新正文跟历史毫不相关 → 不应当被判重
+      vi.mocked(hanaFetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, result: { content: '今天天气真好，海风温柔。' } }),
+      } as Response);
+      const agent = { id: 'hanako', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+      });
+      const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+        (call) => call[0] === '/api/xingye/phone-generate',
+      );
+      const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+      // anchor 真的灌进了 prompt（开头第一句 + 日期 + 作者名）
+      expect(prompt).toContain('近期朋友圈开头样本');
+      expect(prompt).toContain('凌晨三点的便利店');
+      expect(prompt).toContain('Hanako');
+      expect(prompt).toContain('2026-05-25');
+      // 内容不撞 → 不应当旁路命中
+      expect(result.content).toBe('今天天气真好，海风温柔。');
+      expect(result.duplicateOfExisting).toBeUndefined();
+    });
+
+    it('生成内容与历史同 author 高度相似 → duplicateOfExisting 被填，但 content / seeds 不变', async () => {
+      const existingPost = {
+        id: 'p1',
+        authorAgentId: 'hanako',
+        authorName: 'Hanako',
+        content: '凌晨三点的便利店，泡面味混着冷气，店员在收银台后面打瞌睡。',
+        imageUrls: [],
+        createdAt: '2026-05-25T03:14:00.000Z',
+        updatedAt: '2026-05-25T03:14:00.000Z',
+        likes: [],
+        comments: [],
+      };
+      vi.mocked(listXingyeMomentPosts).mockResolvedValue([existingPost]);
+      // 模型「不听话」：anchor 已经告诉它别复读，它还是写了主题几乎一模一样的正文。
+      // 内容级硬过滤兜底——填充 duplicateOfExisting 让 UI 决定怎么处理。
+      vi.mocked(hanaFetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: {
+            content: '凌晨三点的便利店，泡面味混着冷气，店员在收银台后面打瞌睡呢。',
+          },
+        }),
+      } as Response);
+      const agent = { id: 'hanako', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+      });
+      expect(result.duplicateOfExisting).toBeDefined();
+      expect(result.duplicateOfExisting?.postId).toBe('p1');
+      expect(result.duplicateOfExisting?.authorName).toBe('Hanako');
+      expect(result.duplicateOfExisting?.createdAt).toBe('2026-05-25T03:14:00.000Z');
+      expect(result.duplicateOfExisting?.score).toBeGreaterThanOrEqual(0.75);
+      expect(result.duplicateOfExisting?.contentExcerpt).toContain('凌晨三点的便利店');
+      // 旁路提示不应当篡改正文 / 互动 —— 旁路就是「让 UI 决定」，不替 UI 决定。
+      expect(result.content).toContain('凌晨三点的便利店');
+      expect(result.seedLikes).toEqual([]);
+      expect(result.seedComments).toEqual([]);
+    });
+
+    it('生成内容主题与历史完全不同 → 无 duplicateOfExisting（不要假阳性）', async () => {
+      vi.mocked(listXingyeMomentPosts).mockResolvedValue([
+        {
+          id: 'p1',
+          authorAgentId: 'hanako',
+          authorName: 'Hanako',
+          content: '凌晨三点的便利店，泡面味混着冷气。',
+          imageUrls: [],
+          createdAt: '2026-05-25T03:14:00.000Z',
+          updatedAt: '2026-05-25T03:14:00.000Z',
+          likes: [],
+          comments: [],
+        },
+      ]);
+      vi.mocked(hanaFetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: { content: '今天去爬山了，山顶云海特别美。' },
+        }),
+      } as Response);
+      const agent = { id: 'hanako', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+      });
+      expect(result.duplicateOfExisting).toBeUndefined();
+    });
+
+    it('listXingyeMomentPosts 抛错时优雅降级：anchor 走占位，主流程不抛、不带 duplicateOfExisting', async () => {
+      vi.mocked(listXingyeMomentPosts).mockRejectedValue(new Error('posts.jsonl unreadable'));
+      const agent = { id: 'hanako', name: 'Hanako', yuan: 'y' as const };
+      const result = await generateXingyeMomentDraftWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+      });
+      const generateCall = vi.mocked(hanaFetch).mock.calls.find(
+        (call) => call[0] === '/api/xingye/phone-generate',
+      );
+      const prompt = JSON.parse(String(generateCall?.[1]?.body ?? '{}')).prompt as string;
+      // 读取失败 → 占位字符串仍出现，prompt 不残缺
+      expect(prompt).toContain('这是 TA 的第一条朋友圈');
+      expect(result.content).toBe('今天天有点低'); // beforeEach 的默认返回
+      expect(result.duplicateOfExisting).toBeUndefined();
     });
   });
 });

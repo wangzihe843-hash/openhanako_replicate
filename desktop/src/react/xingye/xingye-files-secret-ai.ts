@@ -4,7 +4,14 @@ import type { XingyeRoleProfile } from './xingye-profile-store';
 import type { XingyeLoreEntry } from './xingye-lore-store';
 import type { XingyeVirtualContact } from './xingye-phone-store';
 import { buildHiddenFolderSeedPrompt } from './xingye-files-secret-prompts';
-import type { XingyeHiddenFileEntryKind } from './xingye-files-secret-store';
+import type {
+  XingyeHiddenFileEntry,
+  XingyeHiddenFileEntryKind,
+} from './xingye-files-secret-store';
+import {
+  buildSecretFilesContinuityAnchorBlock,
+  detectSecretFilesDuplicate,
+} from './xingye-files-secret-dedupe';
 
 export type XingyeHiddenSeedDraft = {
   kind: XingyeHiddenFileEntryKind;
@@ -89,6 +96,11 @@ export async function generateHiddenSeedsWithAI(params: {
   stableLoreBlock?: string;
   loreEntries?: XingyeLoreEntry[] | null;
   virtualContacts?: XingyeVirtualContact[] | null;
+  /**
+   * 「抽屉里已存在的条目」——用于做反重复 anchor 与入库前兜底去重。
+   * 调用方应按时间倒序传（listHiddenEntries 默认就是这个顺序）。
+   */
+  existingEntries?: XingyeHiddenFileEntry[] | null;
   count?: number;
   timeoutMs?: number;
 }): Promise<XingyeHiddenSeedDraft[]> {
@@ -97,6 +109,8 @@ export async function generateHiddenSeedsWithAI(params: {
   const timeoutMs = params.timeoutMs ?? 90_000;
   const stableLoreBlock = (params.stableLoreBlock ?? '').trim();
   const npcSummary = summarizeNpcs(params.loreEntries, params.virtualContacts, 600);
+  const existingEntries = Array.isArray(params.existingEntries) ? params.existingEntries : [];
+  const continuityAnchorBlock = buildSecretFilesContinuityAnchorBlock(existingEntries);
 
   const prompt = buildHiddenFolderSeedPrompt({
     agent,
@@ -104,6 +118,7 @@ export async function generateHiddenSeedsWithAI(params: {
     stableLoreBlock,
     npcSummary,
     count,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -137,7 +152,37 @@ export async function generateHiddenSeedsWithAI(params: {
   if (!normalized.length) {
     throw new Error('模型返回无效：entries 为空或格式不符');
   }
-  return normalized;
+
+  /**
+   * 入库前兜底：即使 prompt 端塞了 anchor，模型仍可能写出与已有条目几乎同名的
+   * 新条目。这里按 kind 维度过 detectSecretFilesDuplicate，命中 exact_dup / similar
+   * 直接丢弃；同时去掉 batch 内自身重复（两条都是 weakness · 手会抖）。
+   *
+   * 全部被滤掉时回退到原始 normalized——把"完全不去重"也算作合法返回，让 UI 自行
+   * 决定降级，而不是抛错（种子生成失败 UX 较差）。
+   */
+  const filtered: XingyeHiddenSeedDraft[] = [];
+  // simulate "已入库" 集合：existingEntries + 已经接受的本批 draft
+  const accumulator: XingyeHiddenFileEntry[] = existingEntries.slice();
+  for (const draft of normalized) {
+    const detection = detectSecretFilesDuplicate(
+      { title: draft.title, kind: draft.kind },
+      accumulator,
+    );
+    if (detection.kind !== 'unique') continue;
+    filtered.push(draft);
+    accumulator.push({
+      id: `__pending-${filtered.length}`,
+      key: `__pending-${filtered.length}`,
+      agentId: agent.id,
+      kind: draft.kind,
+      title: draft.title,
+      body: draft.body,
+      source: 'ai_seed',
+      createdAt: new Date(0).toISOString(),
+    });
+  }
+  return filtered.length ? filtered : normalized;
 }
 
 export { normalizeSeedResult as normalizeHiddenSeedResultForTests };

@@ -52,6 +52,13 @@ export function buildMomentDraftPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /**
+   * 跨条朋友圈反重复 anchor block（由 xingye-moments-dedupe.buildMomentsContinuityAnchorBlock
+   * 本地构造，列出最近 ~12 条 "作者 + 开头第一句 + 日期"）。喂给模型让它在源头换主题、
+   * 不要复读「今天天气好」「凌晨好困」之类的套话。模型**不**回写本字段。
+   * 缺省 / 空串 → prompt 里展示「（无；这是 TA 的第一条朋友圈）」占位。
+   */
+  continuityAnchorBlock?: string;
   virtualContacts?: ReadonlyArray<XingyeMomentVirtualContactHint>;
   peerAgents?: ReadonlyArray<XingyeMomentPeerAgentHint>;
   /**
@@ -236,6 +243,9 @@ export function buildMomentDraftPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（若有；仅作情绪参考，勿照抄套话）】',
     heartbeatBlock.trim() || '（无）',
+    '',
+    '【跨条朋友圈反重复锚点（仅供你换主题用；勿在正文里复述本块文字）】',
+    (args.continuityAnchorBlock ?? '').trim() || '（无；这是 TA 的第一条朋友圈）',
   ];
 
   return parts.join('\n');

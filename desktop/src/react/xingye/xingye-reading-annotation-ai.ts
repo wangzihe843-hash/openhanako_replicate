@@ -1,9 +1,14 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import { listAppEntries } from './xingye-app-entry-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
+import {
+  buildAnnotationContinuityAnchorBlock,
+  type AnnotationLike,
+} from './xingye-reading-annotation-dedupe';
 import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
@@ -25,6 +30,12 @@ export type InferReadingAnnotationParams = {
   passage: string;
   /** 可选：原文出处（来自 Wikiquote 等）。仅用于 prompt 上下文与最终落盘溯源。 */
   passageCitation?: WikiquoteSourceCitation;
+  /**
+   * 用于"反重复"anchor block 的 bookId（与 reading_notes entry 的 metadata.bookId 对齐）。
+   * 调用方传入当前正在批注的那本书的 bookId；ai 会拉同一本书已有的批注列表喂给模型，
+   * 让它避免在同一本书里反复写相似批注。缺省 / 空 → 不做 anchor。
+   */
+  bookId?: string;
   timeoutMs?: number;
 };
 
@@ -107,10 +118,16 @@ export function buildReadingAnnotationPrompt(args: {
   recentSceneBlock: string;
   stableLoreBlock: string;
   heartbeatBlock: string;
+  /**
+   * 同书已有批注 anchor block，由 buildAnnotationContinuityAnchorBlock 生成。
+   * 让模型在同一本书里换切口/换感受。无历史 → 空字符串。
+   */
+  continuityAnchorBlock?: string;
 }): string {
   const {
     agent, ownerProfile, book, passage, passageCitation,
     recentSceneBlock, stableLoreBlock, heartbeatBlock,
+    continuityAnchorBlock,
   } = args;
   const name = safeText(ownerProfile?.displayName) || safeText(agent.name) || 'TA';
   const passageBlock = truncateChars(passage, 600);
@@ -147,6 +164,9 @@ export function buildReadingAnnotationPrompt(args: {
     '【这本书的元信息】',
     bookBlock(book),
     '',
+    '【你在这本书上已经写过的批注（请明确避免重复同样的话；尽量换切口/换感受）】',
+    (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 在这本书上的第一条批注）',
+    '',
     '【要批注的原文】',
     `「${passageBlock}」`,
     citationLine,
@@ -181,7 +201,7 @@ export function normalizeReadingAnnotationResult(raw: unknown): XingyeReadingAnn
 export async function inferReadingAnnotationWithAI(
   params: InferReadingAnnotationParams,
 ): Promise<XingyeReadingAnnotation> {
-  const { agent, ownerProfile, book, passage, passageCitation } = params;
+  const { agent, ownerProfile, book, passage, passageCitation, bookId } = params;
   const timeoutMs = params.timeoutMs ?? 60_000;
 
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
@@ -189,6 +209,33 @@ export async function inferReadingAnnotationWithAI(
   const stableLoreBlock = buildStableLoreBlock(agent.id, 1500);
   const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
   const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+
+  // 同书已有批注 anchor：让模型看到自己在这本书上写过哪些批注，避免反复写相似的话。
+  // 拉 listAppEntries 失败 / 无 bookId → 空字符串，prompt 端会渲染「（无；这是 TA
+  // 在这本书上的第一条批注）」，不阻断生成主流程。
+  let continuityAnchorBlock = '';
+  if (bookId && bookId.trim()) {
+    try {
+      const entries = await listAppEntries(agent.id, 'reading_notes');
+      const annotations: AnnotationLike[] = entries
+        .filter((e) => {
+          const meta = e.metadata ?? {};
+          // 只看 AI 写过的批注（不要把 want_to_read/question 等非批注 noteType 当作历史）
+          const isAnnotation = (meta.annotationSource === 'ai')
+            || (meta.noteType === 'reading_note' && meta.quote);
+          return Boolean(isAnnotation) && typeof meta.bookId === 'string';
+        })
+        .map((e) => ({
+          bookId: (e.metadata?.bookId as string) ?? '',
+          title: e.title,
+          annotation: e.content,
+        }))
+        .filter((a) => a.bookId);
+      continuityAnchorBlock = buildAnnotationContinuityAnchorBlock(annotations, bookId);
+    } catch {
+      continuityAnchorBlock = '';
+    }
+  }
 
   const prompt = buildReadingAnnotationPrompt({
     agent,
@@ -199,6 +246,7 @@ export async function inferReadingAnnotationWithAI(
     recentSceneBlock,
     stableLoreBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

@@ -142,8 +142,13 @@ export function buildSmsHistoryPrompt(params: {
   userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
+  /**
+   * 跨期反重复锚点：按联系人分组列出该 thread 已有 / 待发的短信首段，
+   * 要求模型为每个联系人换不同话题/情绪。空串 → 这批联系人都没历史，第一次生成。
+   */
+  continuityAnchorBlock?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts, loreContextText } = params;
+  const { ownerAgent, ownerProfile, contacts, loreContextText, continuityAnchorBlock } = params;
   const loreSection = renderLoreContextSection(loreContextText);
   const parts: string[] = [
     '你是角色手机短信历史生成器。仅返回严格 JSON，不要 Markdown，不要解释。',
@@ -181,6 +186,10 @@ export function buildSmsHistoryPrompt(params: {
     JSON.stringify(contacts.slice(0, 12).map(contactShape), null, 2),
   ];
   if (loreSection) parts.push(loreSection);
+  // 反重复锚点：放在 prompt 末尾，紧邻输出指令，让模型最后一次看到「这些话题/措辞已经用过」。
+  const anchor = (continuityAnchorBlock ?? '').trim();
+  parts.push('【跨联系人 SMS 反重复锚点（按收件人分组；请避免与下列重复）】');
+  parts.push(anchor || '（无；这批联系人都还没有 SMS 历史）');
   return parts.join('\n');
 }
 
@@ -201,8 +210,13 @@ export function buildSmsIncrementalUpdatePrompt(params: {
   userName?: string;
   /** 来自 `formatXingyeLoreRuntimeContextBlock`；为空/undefined 时不插入该段。 */
   loreContextText?: string;
+  /**
+   * 跨期反重复锚点：按联系人分组列出该 thread 已有 / 待发的短信首段，
+   * 要求模型为每个联系人换不同话题/情绪。空串 → 这批联系人都没历史。
+   */
+  continuityAnchorBlock?: string;
 }) {
-  const { ownerAgent, ownerProfile, changeBundles, recentContext, loreContextText } = params;
+  const { ownerAgent, ownerProfile, changeBundles, recentContext, loreContextText, continuityAnchorBlock } = params;
   const loreSection = renderLoreContextSection(loreContextText);
   const recentBlock = recentContext
     ? describeRecentContextForPrompt(recentContext)
@@ -260,6 +274,10 @@ export function buildSmsIncrementalUpdatePrompt(params: {
     recentBlock,
   ];
   if (loreSection) parts.push(loreSection);
+  // 反重复锚点：放在末尾。即使是「增量更新」，模型仍可能为同一联系人复读已经发过的话术。
+  const anchor = (continuityAnchorBlock ?? '').trim();
+  parts.push('【跨联系人 SMS 反重复锚点（按收件人分组；请避免与下列重复）】');
+  parts.push(anchor || '（无；这批联系人都还没有 SMS 历史）');
   return parts.join('\n');
 }
 

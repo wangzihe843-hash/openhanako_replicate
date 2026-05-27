@@ -110,6 +110,54 @@ function formatRelationshipBlock(agentId: string): string {
   );
 }
 
+/**
+ * 群聊「流式反重复锚点」：从最近窗口里抽出**当前 agent 自己**发过的最近 6–8 条短摘要，
+ * 让模型在生成 reply 时不要复述自己刚说过的话。
+ *
+ * 设计取舍：
+ * - 群聊不是卡片型生成（不像 news/journal/secret_space 那样一期一条），而是
+ *   流式对话。"重复"的形态是「同一 agent 短时间内说类似的话」+「群里反复讨论同一个梗」。
+ *   recentMessages 已经把全员近期发言喂给了模型，但模型容易把自己上一两轮的 reply
+ *   再写一遍——这里专门抽 agent 自己的最近发言做反重复锚点。
+ * - 不把别人的发言也纳入 anchor：那是「对话上下文」（已经在 history block 里），
+ *   不是「我已经表达过的话」。混在一起会让指令含义模糊（变成"避免说任何重复的话"，
+ *   在群聊场景里这会扼杀正常的接话）。
+ * - 每条只取首 30 字 + 时间戳；prompt 端用 ANCHOR_PREFIX 包裹，无历史返回空串。
+ *
+ * 不接 store —— 群聊消息的真相是 `/api/channels/:id`，已经通过 recentMessages
+ * 透传进来；这里只是从入参中抽样。
+ */
+const GROUP_CHAT_OWN_REPLY_ANCHOR_LIMIT = 8;
+const GROUP_CHAT_OWN_REPLY_SNIPPET_CHARS = 30;
+
+export function buildGroupChatOwnReplyContinuityAnchorBlock(args: {
+  agentId: string;
+  agentName: string;
+  recentMessages: GroupChatPromptMessage[];
+}): string {
+  const aid = args.agentId.trim();
+  const aname = args.agentName.trim() || aid;
+  if (!aid) return '';
+  if (!Array.isArray(args.recentMessages) || args.recentMessages.length === 0) return '';
+  // 倒序遍历，挑出 sender === agentId 的最近 N 条；保持倒序展示（最近的在最上面）。
+  const own: GroupChatPromptMessage[] = [];
+  for (let i = args.recentMessages.length - 1; i >= 0 && own.length < GROUP_CHAT_OWN_REPLY_ANCHOR_LIMIT; i -= 1) {
+    const m = args.recentMessages[i];
+    if (!m) continue;
+    if (m.sender === aid || m.sender === aname) own.push(m);
+  }
+  if (own.length === 0) return '';
+  const lines: string[] = [
+    `- 你（${aname}）在这条群聊里最近已经说过的几句（请避免再写几乎相同的话；让对话向前推进，不要原地打转）:`,
+  ];
+  for (const m of own) {
+    const snippet = (m.body ?? '').trim().replace(/\s+/g, ' ').slice(0, GROUP_CHAT_OWN_REPLY_SNIPPET_CHARS);
+    if (!snippet) continue;
+    lines.push(`  · [${m.timestamp}] ${snippet}`);
+  }
+  return lines.join('\n');
+}
+
 function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
   if (!profile) return [];
   return [
@@ -189,6 +237,12 @@ export async function generateGroupChatReplyWithAI(
   });
   const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
 
+  const ownReplyAnchorBlock = buildGroupChatOwnReplyContinuityAnchorBlock({
+    agentId: agent.id,
+    agentName: profile?.displayName ?? agent.name,
+    recentMessages: params.recentMessages,
+  });
+
   const prompt = buildGroupChatReplyPrompt({
     agent,
     profile,
@@ -202,6 +256,7 @@ export async function generateGroupChatReplyWithAI(
     stableLoreBlock,
     keywordLoreBlock,
     relationshipBlock,
+    ownReplyAnchorBlock,
   });
 
   const result = await postPhoneGenerate({ agent, prompt, timeoutMs });

@@ -23,6 +23,10 @@ import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendSecretSpaceRecord, listSecretSpaceRecords } from './xingye-secret-space-store';
 import type { SecretSpaceCategoryId } from './SecretSpaceHome';
 import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import {
+  normalizeSecretSpaceDraftRevisions,
+  type SecretSpaceDraftRevisions,
+} from './secret-space-draft-revisions';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -63,6 +67,12 @@ export type XingyePendingSecretSpaceDraft = {
   source: string;
   sourceEventIds?: string[];
   createdAt: string;
+  /**
+   * 仅 category === 'draft_reply' 会带:TA 写这条时的「涂改痕迹」(划掉的开场白 /
+   * 段间补丁 / 边角批注)。confirm 时落到 record.metadata.draftRevisions。
+   * 其它 category 即使误传也会在 normalize 时被丢弃。
+   */
+  revisions?: SecretSpaceDraftRevisions;
 };
 
 function assertAgentId(agentId: string, action: string): string {
@@ -117,6 +127,13 @@ function normalizeDraftRow(value: unknown): XingyePendingSecretSpaceDraft | null
   const sourceEventIds = Array.isArray(eventIdsRaw)
     ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+  /**
+   * revisions 仅对 draft_reply 有意义;其它 category 即便 jsonl 里塞了脏字段,
+   * normalize 也会因为 category 不匹配而忽略——这里通过 category 守一道。
+   */
+  const revisions = category === 'draft_reply'
+    ? normalizeSecretSpaceDraftRevisions(raw.revisions) ?? undefined
+    : undefined;
   return {
     id,
     category,
@@ -127,6 +144,7 @@ function normalizeDraftRow(value: unknown): XingyePendingSecretSpaceDraft | null
     source,
     sourceEventIds,
     createdAt,
+    ...(revisions ? { revisions } : {}),
   };
 }
 
@@ -173,6 +191,8 @@ export async function appendSecretSpaceDraft(
     reason?: string;
     source: string;
     sourceEventIds?: string[];
+    /** 仅 draft_reply 采纳;其它 category 即使传也会被丢弃。 */
+    revisions?: SecretSpaceDraftRevisions | Record<string, unknown>;
   },
 ): Promise<XingyePendingSecretSpaceDraft> {
   const aid = assertAgentId(agentId, '保存秘密空间草稿');
@@ -189,10 +209,14 @@ export async function appendSecretSpaceDraft(
   const sourceEventIds = Array.isArray(input.sourceEventIds)
     ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+  const revisions = input.category === 'draft_reply'
+    ? normalizeSecretSpaceDraftRevisions(input.revisions) ?? undefined
+    : undefined;
   const id = newDraftId();
   const createdAt = new Date().toISOString();
   const row: XingyePendingSecretSpaceDraft & { key: string } = {
     id, key: id, category: input.category, title, body, tags, createdAt, reason, source, sourceEventIds,
+    ...(revisions ? { revisions } : {}),
   };
   await backend.appendJsonl(aid, XINGYE_SECRET_SPACE_DRAFTS_JSONL, row);
   await appendSecretSpaceDraftEventBestEffort(aid, {
@@ -208,7 +232,18 @@ export async function appendSecretSpaceDraft(
       sourceEventIds: sourceEventIds ?? [],
     },
   });
-  return { id, category: input.category, title, body, tags, createdAt, reason, source, sourceEventIds };
+  return {
+    id,
+    category: input.category,
+    title,
+    body,
+    tags,
+    createdAt,
+    reason,
+    source,
+    sourceEventIds,
+    ...(revisions ? { revisions } : {}),
+  };
 }
 
 export async function discardSecretSpaceDraft(
@@ -315,6 +350,15 @@ export async function confirmSecretSpaceDraft(
         source: 'xingye-heartbeat-confirmed',
       };
       if (tags && tags.length > 0) recordBody.tags = tags;
+
+      /**
+       * 把 draft_reply 的「涂改痕迹」结构化数据搬到 record.metadata.draftRevisions。
+       * 阅读器(SecretSpaceDraftReader)优先读这里;缺失时回退到 record.key hash 出来
+       * 的装饰池(老草稿/手动追加/未带 revisions 的 AI 输出都走兜底)。
+       */
+      if (category === 'draft_reply' && draft.revisions) {
+        recordBody.metadata = { draftRevisions: draft.revisions };
+      }
 
       await appendSecretSpaceRecord(aid, category as SecretSpaceCategoryId, recordBody);
     }

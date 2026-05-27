@@ -63,6 +63,7 @@ import {
   formatXingyeLoreRuntimeContextBlock,
   type XingyeLoreRuntimeContextPurpose,
 } from './xingye-lore-runtime-context';
+import { listSmsDrafts } from './xingye-sms-drafts';
 
 function buildLoreContextForPhone(params: {
   agentId: string;
@@ -696,6 +697,105 @@ export async function rollbackAndUpdateContactsWithAI(params: {
   }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   SMS 反重复连续性锚点
+   ─────────────────────────────────────────────────────────────────────────────
+   SMS 草稿/历史生成容易反复抛同一句「在吗？」「最近怎么样？」「下次约饭」给同
+   一个人。这里抽该联系人最近 5–8 条短信（已发送 + 已确认草稿）的内容首段做样本，
+   塞进 prompt 让模型换不同话题或情绪。
+
+   特别注意：SMS 是「对特定联系人」的对话，**anchor 必须按 targetType+targetId
+   过滤**——A 给 B 写过的内容不应该污染 A 给 C 的草稿生成。
+─────────────────────────────────────────────────────────────────────────── */
+
+type SmsAnchorTarget = {
+  targetType: XingyeContactTargetType;
+  targetId: string;
+};
+
+/**
+ * 单联系人 anchor：按 thread 抽最近 5–8 条消息的 content 首 30 字。
+ *
+ * 数据源：
+ *   - getSmsThread → thread.messages（已发送 + AI 生成 + 心跳 confirm 后写入的草稿）；
+ *   - listSmsDrafts → 同 targetId 还在「待确认」状态的草稿（content 也算预占的话题）。
+ *
+ * 顺序：先 thread.messages（已固化的）后 pending drafts（未来的话题），各取最近，
+ * 总数封顶 8。
+ *
+ * 无任何历史 → 空字符串。
+ */
+export async function buildSmsContinuityAnchorBlock(
+  agentId: string,
+  target: SmsAnchorTarget,
+): Promise<string> {
+  try {
+    const tType = target.targetType;
+    const tId = target.targetId;
+    if (!agentId || !tId) return '';
+    const samples: string[] = [];
+
+    // 1) thread 里的现存消息：按 createdAt 倒序取最近，标 owner/target。
+    const thread = getSmsThread(agentId, tType, tId);
+    if (thread?.messages?.length) {
+      const sorted = [...thread.messages].sort(
+        (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+      );
+      for (const msg of sorted) {
+        if (samples.length >= 6) break;
+        const dir = msg.fromAgentId === agentId ? '己发' : '对方';
+        const text = msg.content.trim().slice(0, 30);
+        if (!text) continue;
+        samples.push(`[${dir}] ${text}`);
+      }
+    }
+
+    // 2) 同 target 的 pending drafts（也算"打算说的话"，避免再开一条几乎相同的草稿）。
+    const pendingDrafts = await listSmsDrafts(agentId);
+    const sameTargetDrafts = pendingDrafts.filter(
+      (d) => d.targetType === tType && d.targetId === tId,
+    );
+    for (const d of sameTargetDrafts) {
+      if (samples.length >= 8) break;
+      const text = d.content.trim().slice(0, 30);
+      if (!text) continue;
+      samples.push(`[草稿待发] ${text}`);
+    }
+
+    if (!samples.length) return '';
+    const lines: string[] = [];
+    lines.push('- 最近发给这个联系人的短信样本（请避免重复同样话题/同样情绪/同样开场）：');
+    for (const s of samples) lines.push(`  · ${s}`);
+    lines.push('- 请换不同的话题切入、不同的情绪基调（关心 / 报备 / 询问 / 试探 / 提醒 / 道歉 …），避免和上面任一条措辞相近。');
+    return lines.join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 批量 anchor：buildSmsHistoryPrompt / buildSmsIncrementalUpdatePrompt 是一次给
+ * 多个联系人生成，所以按 (targetType, targetId) 分别构建 anchor，组合成一个块。
+ *
+ * 输出格式：每个联系人一段，前面带「@<displayName> [<targetType>:<targetId>]」标头。
+ * 无任何联系人有历史 → 空字符串。
+ */
+async function buildSmsBatchContinuityAnchorBlock(
+  agentId: string,
+  targets: ReadonlyArray<{ targetType: XingyeContactTargetType; targetId: string; displayName?: string }>,
+): Promise<string> {
+  const blocks: string[] = [];
+  for (const t of targets) {
+    if (t.targetType === 'user') continue;
+    const single = await buildSmsContinuityAnchorBlock(agentId, { targetType: t.targetType, targetId: t.targetId });
+    if (!single) continue;
+    const header = `@${t.displayName ?? t.targetId} [${t.targetType}:${t.targetId}]`;
+    blocks.push(`${header}\n${single}`);
+  }
+  if (!blocks.length) return '';
+  return blocks.join('\n\n');
+}
+
 export async function generateSmsHistoryWithAI(params: {
   ownerAgent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
@@ -722,7 +822,13 @@ export async function generateSmsHistoryWithAI(params: {
       ownerProfile,
       contacts: smsContacts,
     });
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText });
+    // SMS 反重复连续性锚点：按联系人分组抽样近期已发/已收/待发的短信首段，
+    // 让模型为同一收件人换不同话题/情绪，不再复读「在吗？」「最近怎么样？」。
+    const continuityAnchorBlock = await buildSmsBatchContinuityAnchorBlock(
+      ownerAgent.id,
+      smsContacts.map((c) => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
+    );
+    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText, continuityAnchorBlock });
     const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
@@ -898,6 +1004,12 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     smsSummary: bundles.map(b => ({ latestContent: b.smsSummary.latestContent })),
     reasons: bundles.flatMap(b => b.mergedReasons),
   });
+  // SMS 增量更新同样按 target 分组做反重复锚点：避免对同一联系人反复抛同一句
+  // 「在吗？」/「我也是」/「下次约饭」。
+  const continuityAnchorBlock = await buildSmsBatchContinuityAnchorBlock(
+    ownerAgent.id,
+    bundles.map((b) => ({ targetType: b.targetType, targetId: b.targetId, displayName: b.contact.displayName })),
+  );
   const prompt = buildSmsIncrementalUpdatePrompt({
     ownerAgent,
     ownerProfile,
@@ -905,6 +1017,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     recentContext,
     userName,
     loreContextText,
+    continuityAnchorBlock,
   });
   const { raw } = await requestPhoneAi({
     kind: 'sms_history',

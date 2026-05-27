@@ -802,6 +802,9 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         profile: ownerProfile,
         loreEntries: listLoreEntries(ownerAgentId, storage),
         virtualContacts: getVirtualContacts(ownerAgentId, storage),
+        // 反重复 anchor + 入库前兜底用——首次解锁通常为空，但 markHiddenFolderSeedGenerated
+        // 之外的再次触发（例如未来的「再生成几条」按钮）会有历史条目要避开。
+        existingEntries: hiddenEntries,
         count: 3,
       });
       const appended: XingyeHiddenFileEntry[] = [];

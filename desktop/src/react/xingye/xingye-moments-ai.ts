@@ -33,10 +33,16 @@ import {
   type XingyeMomentUserPostCommentTone,
   type XingyeMomentVirtualContactHint,
 } from './xingye-moments-prompts';
+import { listXingyeMomentPosts } from './xingye-moments-store';
 import type {
   XingyeMomentSeedComment,
   XingyeMomentSeedLike,
 } from './xingye-moments-store';
+import {
+  buildMomentsContinuityAnchorBlock,
+  detectMomentContentDuplicate,
+  type MomentForAnchor,
+} from './xingye-moments-dedupe';
 
 function truncateChars(text: string, max: number): string {
   const t = text.trim();
@@ -139,6 +145,22 @@ export type NormalizedMomentDraft = {
   content: string;
   seedLikes: XingyeMomentSeedLike[];
   seedComments: XingyeMomentSeedComment[];
+  /**
+   * 内容级去重命中信号：当本次生成的 content 与当前 agent 已发的某条朋友圈正文开头
+   * 高度相似时（见 xingye-moments-dedupe.detectMomentContentDuplicate），生成方会把
+   * 命中的对端帖子摘要塞进这里，UI 决定是「换一条」还是「就要这条 / 强制保存」。
+   *
+   * **不影响 content / seedLikes / seedComments 字段**——这只是个旁路提示，不会改写
+   * 已生成的内容。interactionsOnlyMode（用户已写好正文）下不做此检查（用户原话不该被
+   * 我们的 AI dedupe 判重）。
+   */
+  duplicateOfExisting?: {
+    postId: string;
+    authorName: string;
+    contentExcerpt: string;
+    createdAt: string;
+    score: number;
+  };
 };
 
 type ResolvedActorRef =
@@ -452,6 +474,16 @@ export async function generateXingyeMomentDraftWithAI(params: {
   });
   const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
 
+  // 跨条朋友圈反重复 anchor：拉 agent 自己已发的 posts 抽样，喂给 prompt 让模型换主题。
+  // 读取失败静默降级为空串（prompt 端会用「第一条」占位）；与其他上下文一样不影响主流程。
+  let continuityAnchorBlock = '';
+  try {
+    const ownPosts = await listXingyeMomentPosts(agent.id);
+    continuityAnchorBlock = buildMomentsContinuityAnchorBlock(ownPosts);
+  } catch {
+    continuityAnchorBlock = '';
+  }
+
   const prompt = buildMomentDraftPrompt({
     agent,
     userName,
@@ -461,6 +493,7 @@ export async function generateXingyeMomentDraftWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
     virtualContacts,
     peerAgents,
     existingContent: interactionsOnlyMode ? existingContent : undefined,
@@ -520,6 +553,50 @@ export async function generateXingyeMomentDraftWithAI(params: {
   if (interactionsOnlyMode) {
     /** 安全网：不依赖模型守约。哪怕 prompt 写明「逐字回填」也要这一道。 */
     return { ...normalized, content: existingContent };
+  }
+
+  /**
+   * 内容级去重旁路提示。
+   *
+   * AI 自动生成模式下，模型尽管看了 anchor 仍可能写出与某条已发 moment 主题高度
+   * 重叠的正文——这里再做一道内容级 filter（按 author 分桶 + bigram Jaccard ≥ 0.75），
+   * 命中就把对端帖子摘要塞进 duplicateOfExisting，**不影响生成结果**，让 UI/调用方
+   * 决定是「换一条」还是「就要这条」。读取失败静默降级。
+   *
+   * 注意：与 store 里已有的 actor-level 去重职责完全独立——那个管「谁互动」，这里管
+   * 「写了什么」；两层互不冲突。
+   */
+  try {
+    const ownPosts = await listXingyeMomentPosts(agent.id);
+    const verdict = detectMomentContentDuplicate(
+      { authorAgentId: agent.id, content: normalized.content },
+      ownPosts.map((p): MomentForAnchor => ({
+        authorAgentId: p.authorAgentId,
+        authorName: p.authorName,
+        content: p.content,
+        createdAt: p.createdAt,
+      })),
+    );
+    if (verdict.kind === 'similar') {
+      const dup = verdict.existing as typeof verdict.existing & { id?: string };
+      // ownPosts 里有 id；通过 content+createdAt 反查拿一份 id（极小开销，避免修改
+      // MomentForAnchor 把 id 也带上——那个类型故意保持窄）。
+      const matchedFull = ownPosts.find(
+        (p) => p.content === dup.content && p.createdAt === dup.createdAt,
+      );
+      return {
+        ...normalized,
+        duplicateOfExisting: {
+          postId: matchedFull?.id ?? '',
+          authorName: verdict.existing.authorName,
+          contentExcerpt: Array.from(verdict.existing.content.trim()).slice(0, 30).join(''),
+          createdAt: verdict.existing.createdAt,
+          score: verdict.score,
+        },
+      };
+    }
+  } catch {
+    // 旁路检查，失败不影响主流程
   }
   return normalized;
 }

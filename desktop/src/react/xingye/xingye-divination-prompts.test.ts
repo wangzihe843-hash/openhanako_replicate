@@ -152,6 +152,30 @@ describe('buildDivinationReadingPrompt', () => {
     expect(fieldPrompt).toContain('标识色');
   });
 
+  it('continuityAnchorBlock 缺省 → 渲染「第一次占卜」占位文案', () => {
+    const prompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'tarot', methodLabel: '塔罗', symbols: ['◇'],
+    });
+    expect(prompt).toMatch(/【近期占卜记录[^】]*】/);
+    expect(prompt).toMatch(/第一次占卜/);
+  });
+
+  it('continuityAnchorBlock 给定 → 原样嵌入近期占卜记录段', () => {
+    const anchor = [
+      '- 最近抽过这几次（请明确避免再抽到同一张牌/同一卦象/同一类解读切入角度）：',
+      '  · [塔罗]［恋人 愚者］「我是否应该把那封信寄出去？」—风从北边来。',
+    ].join('\n');
+    const prompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'tarot', methodLabel: '塔罗', symbols: ['◇'],
+      continuityAnchorBlock: anchor,
+    });
+    expect(prompt).toContain('最近抽过这几次');
+    expect(prompt).toContain('我是否应该把那封信寄出去？');
+    expect(prompt).toContain('恋人');
+    // 占位文案不应出现（anchor 非空时）
+    expect(prompt).not.toMatch(/这是 TA 的第一次占卜/);
+  });
+
   it('injects seedNarrative block when provided; omits it otherwise', () => {
     const without = buildDivinationReadingPrompt({
       agent, agentLike, methodId: 'oracle_generic', methodLabel: '通用神谕', symbols: ['※'],

@@ -15,6 +15,10 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import {
+  normalizeSecretSpaceDraftRevisions,
+  type SecretSpaceDraftRevisions,
+} from './secret-space-draft-revisions';
+import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
 } from './xingye-recent-context';
@@ -28,6 +32,12 @@ import {
   buildSecretSpaceGenerationPrompt,
   type SecretSpaceAiGenerableCategory,
 } from './xingye-secret-space-prompts';
+import { listSecretSpaceRecords } from './xingye-secret-space-store';
+import {
+  SECRET_SPACE_ANCHOR_BUILDERS,
+  detectSecretSpaceDuplicate,
+  type SecretSpaceDedupeSubtype,
+} from './xingye-secret-space-dedupe';
 
 export type { SecretSpaceAiGenerableCategory } from './xingye-secret-space-prompts';
 export {
@@ -37,7 +47,13 @@ export {
 
 export function normalizeSecretSpaceAiResult(
   raw: unknown,
-): { title: string; content: string; meta?: string; tags?: string[] } | null {
+): {
+  title: string;
+  content: string;
+  meta?: string;
+  tags?: string[];
+  revisions?: SecretSpaceDraftRevisions;
+} | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const contentRaw = record.content;
@@ -69,7 +85,17 @@ export function normalizeSecretSpaceAiResult(
         .map((t) => t.slice(0, 12))
     : undefined;
 
-  return { title, content, meta, tags: tags && tags.length ? tags : undefined };
+  // Optional draft revisions (only meaningful for draft_reply; harmless if absent).
+  // 调用方决定要不要把它落进 metadata.draftRevisions——本 normalizer 只负责提纯。
+  const revisions = normalizeSecretSpaceDraftRevisions(record.revisions) ?? undefined;
+
+  return {
+    title,
+    content,
+    meta,
+    tags: tags && tags.length ? tags : undefined,
+    ...(revisions ? { revisions } : {}),
+  };
 }
 
 /**
@@ -83,7 +109,13 @@ export async function generateSecretSpaceRecordWithAI(params: {
   /** 仅 saved_item：可选种子 */
   seedText?: string | null;
   timeoutMs?: number;
-}): Promise<{ title: string; content: string; meta?: string; tags?: string[] }> {
+}): Promise<{
+  title: string;
+  content: string;
+  meta?: string;
+  tags?: string[];
+  revisions?: SecretSpaceDraftRevisions;
+}> {
   const { agent, ownerProfile, category } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
 
@@ -96,6 +128,19 @@ export async function generateSecretSpaceRecordWithAI(params: {
   const loreCtx = collectXingyeLoreRuntimeContext(agent.id, loreOpts);
   const loreBlock = formatXingyeLoreRuntimeContextBlock(loreCtx);
 
+  // 反重复：拉同子类型最近记录 → 构建 anchor block 喂给模型。
+  // 用户痛点：「梦境也会反复生成相同内容」——5 个子类型都加，dream 是头号目标。
+  let existingRecords: Awaited<ReturnType<typeof listSecretSpaceRecords>> = [];
+  let continuityAnchorBlock = '';
+  try {
+    existingRecords = await listSecretSpaceRecords(agent.id, category);
+    const builder = SECRET_SPACE_ANCHOR_BUILDERS[category as SecretSpaceDedupeSubtype];
+    if (builder) continuityAnchorBlock = builder(existingRecords);
+  } catch {
+    existingRecords = [];
+    continuityAnchorBlock = '';
+  }
+
   const prompt = buildSecretSpaceGenerationPrompt({
     category,
     agent,
@@ -104,6 +149,7 @@ export async function generateSecretSpaceRecordWithAI(params: {
     recentChatBlock,
     loreContextText: loreBlock,
     seedText: category === 'saved_item' ? params.seedText : undefined,
+    continuityAnchorBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -144,5 +190,21 @@ export async function generateSecretSpaceRecordWithAI(params: {
   if (!normalized) {
     throw new Error('模型返回无效：缺少正文或 JSON 解析失败');
   }
+
+  // 入库前兜底：撞 exact_dup 直接抛错，让上层 UI 提示用户「TA 又写了一模一样的，换个时间试试」。
+  // 选择抛错而不是静默丢弃：用户已经按下了"生成"按钮，无声丢弃会让人以为程序坏了。
+  // similar 不拦——可能是同主题但角度不同（尤其 dream），保留。
+  const dupSubtype = category as SecretSpaceDedupeSubtype;
+  if (SECRET_SPACE_ANCHOR_BUILDERS[dupSubtype] && existingRecords.length > 0) {
+    const dup = detectSecretSpaceDuplicate(
+      { title: normalized.title, body: normalized.content },
+      existingRecords,
+      dupSubtype,
+    );
+    if (dup.kind === 'exact_dup') {
+      throw new Error(`模型生成内容与已有记录《${dup.record.title}》完全重复，已自动拦截。请稍后再试或换一个切入点。`);
+    }
+  }
+
   return normalized;
 }

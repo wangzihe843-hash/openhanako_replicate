@@ -1,11 +1,13 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
+import { loadDivinationEntries } from './xingye-app-entry-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import type {
   XingyeDivinationAgentLike,
   XingyeDivinationMethodId,
 } from './xingye-divination-method-resolver';
 import { buildDivinationReadingPrompt } from './xingye-divination-prompts';
+import { normalizeTitleForDedup } from './xingye-files-dedupe';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -51,6 +53,118 @@ function clampLine(value: string, maxChars: number): string {
   const t = value.replace(/\s+/g, ' ').trim();
   if (t.length <= maxChars) return t;
   return `${t.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+/**
+ * 占卜跨次连续性锚点：从已有占卜历史抽样，让模型避免短期内反复抽到
+ * 同一张牌/同一卦象/同一类解读。
+ *
+ * 与 interview / news 的连续性锚点同款思路，但占卜有个特殊的张力：
+ * **卦象/牌面是有限可枚举的**（塔罗 78 张 / 易经 64 卦 / 卢恩 24 符），
+ * 抽多了必然有重复，硬拒绝是不现实的；也不能让"防重复"压过占卜本身
+ * 应有的随机性。
+ *
+ * 所以这里做分层 soft anchor：
+ *  - **硬避免**：最近 5 次的 method+symbol+agentQuestion → 「请明确避免」
+ *  - **软避免**：再往前 3 次 → 「也尽量错开」
+ * 这种分层提示和 news 的「masthead 沿用 vs headline 换主题」是一类做法。
+ *
+ * 不做"模型生成了重复 symbol 就拒收"的硬逻辑——塔罗 78 张抽多了必然
+ * 重复，硬拒绝会让重试风暴；仅在 prompt 端做引导，模型自然就会偏好换牌。
+ *
+ * @param agentId 角色 id
+ * @param opts.method 可选 method 过滤：仅 anchor 同 method 的历史。本次
+ *   占法是 'tarot' 时，传 'tarot' 就只看塔罗历史，让模型在塔罗内部换牌；
+ *   传 undefined 则跨 method 全量 anchor（兜底/未知占法路径）。
+ *   不同 method 的"符号"完全是异质的（塔罗的「恋人牌」和易经的「☰」），
+ *   跨 method 喊"别重复"对模型没指导价值，反而稀释提示。
+ */
+export async function buildDivinationContinuityAnchorBlock(
+  agentId: string,
+  opts?: { method?: XingyeDivinationMethodId | string | null },
+): Promise<string> {
+  const aid = String(agentId ?? '').trim();
+  if (!aid) return '';
+  try {
+    const all = await loadDivinationEntries(aid);
+    if (!all.length) return '';
+    const filterMethod = (opts?.method ?? '').toString().trim();
+    // method 过滤：本次占法明确 → 仅看同 method 历史。注意 oracle_generic
+    // 兼容了「心象提示」草稿，跨 method 喊别重复也没意义。
+    const filtered = filterMethod
+      ? all.filter((e) => (e.metadata?.method ?? '') === filterMethod)
+      : all;
+    if (!filtered.length) return '';
+    // listJsonl 不保证顺序——这里按 createdAt 倒序自己排一遍，取最近 8 条。
+    const sorted = [...filtered].sort((a, b) => {
+      const ta = Date.parse(a.createdAt || '');
+      const tb = Date.parse(b.createdAt || '');
+      const na = Number.isNaN(ta) ? 0 : ta;
+      const nb = Number.isNaN(tb) ? 0 : tb;
+      return nb - na;
+    });
+    const recent = sorted.slice(0, 8);
+
+    type Sample = { method: string; methodLabel: string; symbols: string; topic: string; body: string };
+    const seenTopicKeys = new Set<string>();
+    const samples: Sample[] = [];
+    for (const entry of recent) {
+      const meta = entry.metadata ?? {};
+      const method = (meta.method ?? '').toString().trim();
+      const methodLabel = (meta.methodLabel ?? '').toString().trim();
+      const symbols = Array.isArray(meta.symbols)
+        ? meta.symbols
+            .map((s) => (typeof s === 'string' ? s.trim() : ''))
+            .filter((s) => s.length > 0)
+            .slice(0, 4)
+            .join(' ')
+        : '';
+      const topicRaw = ((meta.agentQuestion ?? meta.question ?? '') as string).toString();
+      const topic = clampLine(topicRaw, 40);
+      const bodyRaw = (entry.content ?? '').toString();
+      const body = clampLine(bodyRaw.replace(/【[^】]+】/g, ' '), 40);
+      // 用 files-dedupe 的 normalizeTitle 给「同题去重」：同一晚连续重抽
+      // 同一问题会写出几乎一样的 agentQuestion，列两条价值不大。
+      const topicKey = normalizeTitleForDedup(topic) || normalizeTitleForDedup(body);
+      if (topicKey && seenTopicKeys.has(topicKey)) continue;
+      if (topicKey) seenTopicKeys.add(topicKey);
+      samples.push({ method, methodLabel, symbols, topic, body });
+      if (samples.length >= 8) break;
+    }
+    if (!samples.length) return '';
+
+    // 分层：硬避免（最近 5）/ 软避免（其后 3）。硬段措辞强一点，让模型
+    // 真的换牌；软段就提一句"也尽量错开"。
+    const hard = samples.slice(0, 5);
+    const soft = samples.slice(5);
+
+    const renderSample = (s: Sample): string => {
+      const methodTag = s.methodLabel || s.method || '占卜';
+      const symbolTag = s.symbols ? `［${s.symbols}］` : '';
+      const topicTag = s.topic ? `「${s.topic}」` : '';
+      const bodyTag = s.body ? `—${s.body}` : '';
+      return `  · [${methodTag}]${symbolTag}${topicTag}${bodyTag}`;
+    };
+
+    const lines: string[] = [];
+    if (hard.length) {
+      lines.push('- 最近抽过这几次（请明确避免再抽到同一张牌/同一卦象/同一类解读切入角度）：');
+      for (const s of hard) lines.push(renderSample(s));
+    }
+    if (soft.length) {
+      lines.push('- 再之前几次（不强制，但也尽量错开符号与切入角度）：');
+      for (const s of soft) lines.push(renderSample(s));
+    }
+    if (filterMethod) {
+      lines.push(
+        `- 注：以上仅列出同占法（${filterMethod}）的历史；本占法的符号池有限（如塔罗 78 张 / 易经 64 卦），允许偶发重复，但不要连续几次都落在同一张/同一卦上。`,
+      );
+    }
+    return lines.join('\n');
+  } catch {
+    // 读历史失败不应阻塞生成主流程，回退到空 anchor。
+    return '';
+  }
 }
 
 function coerceScoreInt(value: unknown): number | null {
@@ -160,6 +274,9 @@ export async function generateDivinationReadingWithAI(
   const relationshipBlock = formatRelationshipBlock(agent.id);
   const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
   const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+  // 跨次连续性锚点：按当前占法过滤同 method 历史，分层告诉模型「最近抽过这几次，请换」。
+  // 失败/无历史 → 空字符串，prompt 端会渲染「（无；这是 TA 的第一次占卜）」。
+  const continuityAnchorBlock = await buildDivinationContinuityAnchorBlock(agent.id, { method: methodId });
 
   const prompt = buildDivinationReadingPrompt({
     agent,
@@ -173,6 +290,7 @@ export async function generateDivinationReadingWithAI(
     recentSceneBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
     seedNarrative,
   });
 

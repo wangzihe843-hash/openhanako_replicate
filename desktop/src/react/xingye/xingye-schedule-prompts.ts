@@ -12,6 +12,8 @@ export function buildScheduleDraftPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /** 跨期连续性锚点：列出近期已有日程，要求模型不要重复同人同事/同日同主题。 */
+  continuityAnchorBlock?: string;
 }): string {
   const {
     agent,
@@ -23,6 +25,7 @@ export function buildScheduleDraftPrompt(args: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    continuityAnchorBlock,
   } = args;
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name;
@@ -92,6 +95,10 @@ export function buildScheduleDraftPrompt(args: {
     '',
     '【最近一次手机首页巡检结果（若有；仅作背景参考）】',
     heartbeatBlock.trim() || '（无）',
+    '',
+    '【跨期连续性锚点（防重复，必读）】',
+    // 已有的近期日程列表 + 「请避免重复」指令。空串 → 第一次生成或暂无历史，给占位。
+    (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 最近的第一条日程，正常生成即可）',
   ];
 
   return parts.join('\n');

@@ -28,6 +28,7 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { addSmsMessage, getSmsThreads, type XingyeContactTargetType } from './xingye-phone-store';
 import { FROM_DRAFT_ID_PREFIX, withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { detectSmsDraftDuplicate, type SmsDraftDuplicateResult } from './xingye-sms-dedupe';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -46,6 +47,26 @@ const MATCH_NAME_MAX = 80;
 const DISPLAY_NAME_MAX = 80;
 const TARGET_ID_MAX = 160;
 const REASON_MAX = 1000;
+
+/**
+ * appendSmsDraft 命中入库前去重时抛出的错误类型。
+ *
+ * UI 决定怎么处理：
+ *   - 心跳路径（agent 自己提议）通常吞掉错误并跳过；
+ *   - 用户手动新建草稿路径可以弹「待确认区已有几乎相同的草稿，先去那边处理」。
+ *
+ * `detection.kind` 区分 exact_dup（彻底相同）/ similar（高度相似）。
+ */
+export class DuplicateSmsDraftError extends Error {
+  detection: Exclude<SmsDraftDuplicateResult, { kind: 'unique' }>;
+  constructor(detection: Exclude<SmsDraftDuplicateResult, { kind: 'unique' }>) {
+    const excerpt = detection.draft.content.slice(0, 40);
+    const reason = detection.kind === 'exact_dup' ? '已有完全相同' : '已有高度相似';
+    super(`短信草稿入库失败：同一对方近 24h 内${reason}的草稿（「${excerpt}」）`);
+    this.name = 'DuplicateSmsDraftError';
+    this.detection = detection;
+  }
+}
 
 export type XingyePendingSmsDraft = {
   id: string;
@@ -168,6 +189,12 @@ export async function appendSmsDraft(
     source: string;
     sourceEventIds?: string[];
   },
+  options: {
+    /** 调用方可以传入已知 drafts 列表跳过 listSmsDrafts 网络往返；默认走一次 list 拉取。 */
+    knownDrafts?: XingyePendingSmsDraft[];
+    /** true → 跳过 detectSmsDraftDuplicate；用户在「强制再发一条」UI 上确认时走这条。 */
+    skipDedupe?: boolean;
+  } = {},
 ): Promise<XingyePendingSmsDraft> {
   const aid = assertAgentId(agentId, '保存短信草稿');
   if (!isAllowedTargetType(input.targetType)) {
@@ -187,6 +214,28 @@ export async function appendSmsDraft(
   const sourceEventIds = Array.isArray(input.sourceEventIds)
     ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+
+  /**
+   * 入库前去重：默认拉一次现有草稿，按 (targetType, targetId/matchName) 桶 + 24h 窗
+   * 比 content 相似度。命中 exact_dup / similar → 抛 DuplicateSmsDraftError；
+   * 调用方决定是吞错（心跳）还是弹提示（手动）。
+   */
+  if (!options.skipDedupe) {
+    const existing = options.knownDrafts ?? (await listSmsDrafts(aid));
+    const detection = detectSmsDraftDuplicate(
+      {
+        targetType: input.targetType,
+        targetId,
+        matchName,
+        content,
+      },
+      existing,
+    );
+    if (detection.kind !== 'unique') {
+      throw new DuplicateSmsDraftError(detection);
+    }
+  }
+
   const id = newDraftId();
   const createdAt = new Date().toISOString();
   const row: XingyePendingSmsDraft & { key: string } = {

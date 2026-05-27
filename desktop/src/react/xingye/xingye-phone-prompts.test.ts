@@ -521,3 +521,95 @@ describe('contact update prompts - user contact updates', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SMS 反重复连续性锚点：prompt 透传测试
+// ─────────────────────────────────────────────────────────────────────────────
+describe('SMS continuityAnchorBlock — prompt 透传', () => {
+  it('buildSmsHistoryPrompt：anchor 内容会被注入 prompt 末段', () => {
+    const anchor = [
+      '@老王 [virtual_contact:vc-active]',
+      '- 最近发给这个联系人的短信样本（请避免重复）：',
+      '  · [己发] 在吗',
+      '  · [对方] 嗯',
+    ].join('\n');
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      continuityAnchorBlock: anchor,
+    });
+    expect(prompt).toContain('SMS 反重复锚点');
+    expect(prompt).toContain('@老王');
+    expect(prompt).toContain('[己发] 在吗');
+    expect(prompt).toContain('[对方] 嗯');
+  });
+
+  it('buildSmsHistoryPrompt：anchor 缺省时显示占位文案', () => {
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+    });
+    expect(prompt).toContain('SMS 反重复锚点');
+    expect(prompt).toMatch(/无；这批联系人都还没有 SMS 历史/);
+  });
+
+  it('buildSmsIncrementalUpdatePrompt：anchor 内容同样会被注入', () => {
+    const anchor = [
+      '@老周 [virtual_contact:vc-1]',
+      '- 最近发给这个联系人的短信样本：',
+      '  · [己发] 上次见什么时候？',
+    ].join('\n');
+    const changeContact = makeContact({
+      targetType: 'virtual_contact',
+      targetId: 'vc-1',
+      displayName: '老周',
+      status: 'active',
+    });
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-1',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['x'],
+        changeLogIds: ['cc-1'],
+        contact: changeContact,
+        smsSummary: { messageCount: 1, latestContent: '上次见什么时候？' },
+      }],
+      recentContext: emptyRecent,
+      continuityAnchorBlock: anchor,
+    });
+    expect(prompt).toContain('SMS 反重复锚点');
+    expect(prompt).toContain('@老周');
+    expect(prompt).toContain('上次见什么时候？');
+  });
+
+  it('buildSmsIncrementalUpdatePrompt：anchor 缺省也走占位（无报错）', () => {
+    const changeContact = makeContact({
+      targetType: 'virtual_contact',
+      targetId: 'vc-1',
+      displayName: '老周',
+      status: 'active',
+    });
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-1',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['x'],
+        changeLogIds: ['cc-1'],
+        contact: changeContact,
+        smsSummary: { messageCount: 0 },
+      }],
+      recentContext: emptyRecent,
+    });
+    expect(prompt).toMatch(/无；这批联系人都还没有 SMS 历史/);
+  });
+});

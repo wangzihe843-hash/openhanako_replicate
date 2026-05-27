@@ -19,6 +19,13 @@ export interface BuildRelationshipStatePromptArgs {
   sourceNotes?: string[];
   /** 由 xingye-state-ai 内构造；可选覆盖（测试用） */
   loreContextText?: string;
+  /**
+   * 反套路 anchor block（由 xingye-state-dedupe.buildStateContinuityAnchorBlock 本地构造，
+   * 列出最近 ~5 次的 mood / stateSummary / lastReason）。喂给模型让它换不同角度描述心绪，
+   * 避免每次都「心情不错，最近聊得很多」之类的复读。模型**不**回写本字段；返回 schema
+   * 不变（仅生成新 patch）。缺省 / 空串 → prompt 里展示「（无；这是首次刷新）」占位。
+   */
+  continuityAnchorBlock?: string;
   trigger: XingyeRelationshipStateTrigger;
 }
 
@@ -92,6 +99,9 @@ export function buildRelationshipStatePrompt(args: BuildRelationshipStatePromptA
     }, null, 2),
     '',
     speakerContextBlock,
+    '',
+    '【反套路锚点（仅供你换角度描述心绪；勿在 stateSummary / reason 里复述本块文字）】',
+    (args.continuityAnchorBlock ?? '').trim() || '（无；这是首次刷新——尚无历史可参考）',
     '',
     '输入：',
     JSON.stringify(context, null, 2),

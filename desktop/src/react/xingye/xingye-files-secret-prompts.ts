@@ -30,10 +30,17 @@ export function buildHiddenFolderSeedPrompt(args: {
   /** 由调用方读取（避免循环 import）；空字符串表示无虚拟人物。 */
   npcSummary: string;
   count: number;
+  /**
+   * 「抽屉里已有秘密条目」反重复锚点（由 xingye-files-secret-dedupe.ts
+   * 的 buildSecretFilesContinuityAnchorBlock 渲染）。
+   * 空字符串 → prompt 端渲染「（无；这是 TA 第一次往抽屉里写东西）」。
+   */
+  continuityAnchorBlock?: string;
 }): string {
   const { agent, profile, stableLoreBlock, npcSummary } = args;
   const count = Math.max(2, Math.min(4, Math.floor(args.count) || 3));
   const agentName = profile?.displayName?.trim() || agent.name || '当前角色';
+  const continuityAnchorBlock = (args.continuityAnchorBlock ?? '').trim();
 
   const personaLines: string[] = [];
   if (profile?.shortBio) personaLines.push(`- 简介：${profile.shortBio}`);
@@ -103,6 +110,9 @@ export function buildHiddenFolderSeedPrompt(args: {
     '',
     '── 周围已经出现过的人物（避免把这些 NPC 当作"秘密对象"，否则会被读者一眼认出） ──',
     npcBlock,
+    '',
+    '── 抽屉里 TA 已经写过的秘密条目（反重复锚点；请换 kind / 主题，不要写几乎同名的） ──',
+    continuityAnchorBlock || '（无；这是 TA 第一次往抽屉里写东西）',
     '',
     '请只输出 JSON。',
   ].join('\n');

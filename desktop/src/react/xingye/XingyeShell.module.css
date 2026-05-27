@@ -5036,6 +5036,259 @@
   letter-spacing: 0.04em;
 }
 
+/* —— 秘密空间 · 梦境详情阅读器（与 feed 同墨晕夜色语言） ———————————————— */
+
+/* 让 dream 详情底层 pane 透明，把夜色直接铺到分类背景上（同 draft_reply 思路） */
+.secretSpaceCategory[data-category='dream'] .secretSpaceRecordDetailPane {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.secretSpaceDreamReader {
+  position: relative;
+  padding: 26px 28px 22px;
+  border-radius: 6px;
+  background:
+    linear-gradient(160deg, rgba(28, 34, 70, 0.55) 0%, rgba(10, 13, 30, 0.92) 55%, rgba(4, 6, 18, 0.98) 100%),
+    #0a0d1c;
+  border: 1px solid rgba(204, 196, 176, 0.18);
+  color: #e6e1d4;
+  overflow: hidden;
+  min-height: 360px;
+  box-shadow:
+    inset 0 0 60px rgba(0, 0, 0, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.secretSpaceDreamReaderInk {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.secretSpaceDreamReaderStars circle {
+  opacity: 0.55;
+  animation: xingye-dream-twinkle 4.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes xingye-dream-twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.9); }
+  50%      { opacity: 0.95; transform: scale(1.4); }
+}
+
+.secretSpaceDreamReaderHead {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.secretSpaceDreamReaderKicker {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: rgba(204, 196, 176, 0.55);
+  text-transform: uppercase;
+}
+
+.secretSpaceDreamReaderReplay {
+  appearance: none;
+  position: relative;
+  border: 1px solid rgba(204, 196, 176, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(230, 225, 212, 0.85);
+  font-family: var(--xingye-font-serif);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.25s ease, background 0.25s ease, color 0.25s ease;
+}
+
+.secretSpaceDreamReaderReplay:hover {
+  border-color: rgba(204, 196, 176, 0.55);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3eedf;
+}
+
+.secretSpaceDreamReaderReplayIcon {
+  font-size: 13px;
+  display: inline-block;
+  transition: transform 0.5s ease;
+}
+
+.secretSpaceDreamReaderReplay:hover .secretSpaceDreamReaderReplayIcon {
+  transform: rotate(180deg);
+}
+
+.secretSpaceDreamReaderReplay:active .secretSpaceDreamReaderReplayIcon {
+  transform: rotate(360deg);
+  transition: transform 0.8s ease;
+}
+
+.secretSpaceDreamReaderTitle {
+  position: relative;
+  margin: 0 0 6px;
+  font-family: var(--xingye-font-brush);
+  font-weight: 400;
+  font-size: 32px;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  color: #f0ead7;
+  text-shadow: 0 0 18px rgba(120, 140, 200, 0.18);
+}
+
+.secretSpaceDreamReaderSubtitle {
+  position: relative;
+  margin: 0 0 18px;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  color: rgba(204, 196, 176, 0.6);
+}
+
+.secretSpaceDreamReaderBody {
+  position: relative;
+  padding: 10px 4px 12px;
+  border-top: 1px dashed rgba(204, 196, 176, 0.18);
+  border-bottom: 1px dashed rgba(204, 196, 176, 0.18);
+  cursor: text;
+  transition: filter 0.45s ease;
+  /* 雾 */
+  filter: blur(0.35px) brightness(0.92);
+}
+
+.secretSpaceDreamReader[data-recall-active='true'] .secretSpaceDreamReaderBody {
+  filter: blur(0) brightness(1.08);
+}
+
+.secretSpaceDreamReaderParagraph {
+  margin: 0 0 12px;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  font-size: 14.5px;
+  line-height: 2;
+  letter-spacing: 0.04em;
+  color: rgba(230, 225, 212, 0.82);
+  white-space: pre-line;
+  opacity: 0;
+  transform: translateY(4px);
+  filter: blur(2px);
+  animation: xingye-dream-paragraph-in 0.85s ease forwards;
+}
+
+.secretSpaceDreamReaderParagraph[data-empty='true'] {
+  font-style: italic;
+  color: rgba(204, 196, 176, 0.45);
+  animation: none;
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.secretSpaceDreamReader[data-recall-active='true'] .secretSpaceDreamReaderParagraph {
+  color: #f3eedf;
+  text-shadow: 0 0 6px rgba(180, 200, 240, 0.25);
+}
+
+@keyframes xingye-dream-paragraph-in {
+  0%   { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+  60%  { opacity: 0.6; filter: blur(1px); }
+  100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+.secretSpaceDreamReaderMistHint {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--xingye-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  color: rgba(204, 196, 176, 0.35);
+  text-align: right;
+  transition: opacity 0.3s ease;
+}
+
+.secretSpaceDreamReader[data-recall-active='true'] .secretSpaceDreamReaderMistHint {
+  opacity: 0;
+}
+
+.secretSpaceDreamReaderTags {
+  position: relative;
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secretSpaceDreamReaderTag {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(204, 196, 176, 0.28);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(230, 225, 212, 0.7);
+  font-family: var(--xingye-font-serif);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 0.25s ease, background 0.25s ease, color 0.25s ease,
+              box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.secretSpaceDreamReaderTag:hover {
+  border-color: rgba(204, 196, 176, 0.5);
+  color: #f3eedf;
+  transform: translateY(-1px);
+}
+
+.secretSpaceDreamReaderTagDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(204, 196, 176, 0.45);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.secretSpaceDreamReaderTag[data-lit='true'] {
+  border-color: rgba(255, 220, 150, 0.65);
+  background: rgba(255, 220, 150, 0.08);
+  color: #fceec0;
+  box-shadow: 0 0 12px rgba(255, 220, 150, 0.18);
+}
+
+.secretSpaceDreamReaderTag[data-lit='true'] .secretSpaceDreamReaderTagDot {
+  background: #ffd97a;
+  box-shadow: 0 0 8px rgba(255, 217, 122, 0.85);
+}
+
+.secretSpaceDreamReaderFootnote {
+  position: relative;
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(204, 196, 176, 0.4);
+  text-transform: uppercase;
+}
+
 /* === 秘密空间分类内页 · draft_reply 便签纸板 ============================= */
 
 .secretSpaceCategory[data-category='draft_reply'] {
@@ -5124,6 +5377,370 @@
 
 .secretSpaceDraftStickyBodySmall {
   font-size: 14px;
+}
+
+/* === 秘密空间分类内页 · draft_reply 单条详情:横线信笺式阅读器 ============ */
+
+.secretSpaceDraftReader {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  /* 让红色装订线 / 笺纸 hover 阴影都能贴到容器边 */
+  isolation: isolate;
+  min-width: 0;
+}
+
+/* 让 draft_reply 详情底层 pane 透明,让信笺纸直接铺到背景上 */
+.secretSpaceCategory[data-category='draft_reply'] .secretSpaceRecordDetailPane {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.draftLetterPaper {
+  position: relative;
+  /* 背景 = 横线笺纸:暖白色 + 28px 间距的浅蓝色规则线 */
+  background:
+    linear-gradient(to right, transparent 0, transparent 56px, rgba(200, 80, 80, 0.55) 56px, rgba(200, 80, 80, 0.55) 57px, transparent 57px) no-repeat,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 27px,
+      rgba(110, 140, 180, 0.32) 27px,
+      rgba(110, 140, 180, 0.32) 28px
+    ),
+    #fbf6e6;
+  border-radius: 3px;
+  box-shadow:
+    0 1px 1px rgba(80, 60, 30, 0.18),
+    0 8px 24px rgba(80, 60, 30, 0.12);
+  padding: 28px 28px 40px 76px;
+  color: #2f2418;
+  font-family: var(--xingye-font-hand);
+  min-height: 320px;
+  overflow: hidden;
+}
+
+/* 顶部一排"划掉的开场白",像 TA 写了又删 */
+.draftLetterStruckLines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  font-family: var(--xingye-font-hand);
+  font-size: 17px;
+  line-height: 28px; /* 对齐到底层横线 */
+  color: rgba(70, 50, 30, 0.55);
+}
+
+.draftLetterStruckLine {
+  position: relative;
+  display: inline-block;
+  width: max-content;
+  max-width: 100%;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(120, 50, 40, 0.65);
+}
+
+/* 每条划掉行轻微歪一点,模拟手写不规整 */
+.draftLetterStruckLine[data-index='0'] {
+  transform: rotate(-0.4deg);
+}
+.draftLetterStruckLine[data-index='1'] {
+  transform: rotate(0.5deg) translateX(8px);
+}
+.draftLetterStruckLine[data-index='2'] {
+  transform: rotate(-0.2deg) translateX(2px);
+}
+.draftLetterStruckLine[data-index='3'] {
+  transform: rotate(0.3deg) translateX(4px);
+}
+
+/* 紧跟划掉行的 reason 小字 ——「—— 太矫情了」 */
+.draftLetterStruckReason {
+  display: inline-block;
+  margin-left: 10px;
+  font-style: italic;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  color: rgba(120, 70, 40, 0.7);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  /* 注意:外层 .draftLetterStruckLine 上是 line-through——子元素同样会被划掉,
+     这是想要的:reason 也是 TA 内心 carved out 的一部分。如果要让 reason 不被
+     划掉,改成不嵌套的兄弟节点;当前选择沿用「划掉一整块」的视觉一致性。 */
+}
+
+/* 抬头「给 XXX,」 */
+.draftLetterSalutation {
+  font-family: var(--xingye-font-brush);
+  font-size: 24px;
+  line-height: 32px;
+  color: #3a2a18;
+  margin-bottom: 10px;
+  letter-spacing: 0.02em;
+}
+
+.draftLetterSalutationComma {
+  margin-left: 2px;
+  opacity: 0.7;
+}
+
+/* 关于:小一号副标 */
+.draftLetterSubject {
+  margin: 0 0 14px;
+  font-family: var(--xingye-font-serif);
+  font-size: 13px;
+  line-height: 28px;
+  color: rgba(70, 50, 30, 0.7);
+  font-style: italic;
+}
+
+.draftLetterSubjectLabel {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px dashed rgba(120, 90, 50, 0.45);
+  border-radius: 4px;
+  font-style: normal;
+  font-size: 11px;
+  color: rgba(120, 90, 50, 0.85);
+  letter-spacing: 0.1em;
+}
+
+/* 正文段落 */
+.draftLetterBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.draftLetterParagraph {
+  margin: 0;
+  font-family: var(--xingye-font-hand);
+  font-size: 18px;
+  line-height: 28px; /* 对齐底层横线 */
+  letter-spacing: 0.02em;
+  color: #2f2418;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.draftLetterParagraph[data-empty='true'] {
+  color: rgba(80, 60, 30, 0.45);
+  font-style: italic;
+}
+
+/* 段落之间的「改稿补丁」批注 */
+.draftLetterPatch {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-family: var(--xingye-font-hand);
+  font-size: 13px;
+  color: rgba(120, 50, 40, 0.85);
+  background: rgba(255, 240, 200, 0.65);
+  border-radius: 4px;
+  transform: rotate(-1deg);
+  align-self: flex-start;
+  border-bottom: 1px dashed rgba(120, 50, 40, 0.5);
+}
+
+.draftLetterPatchArrow {
+  font-size: 16px;
+  color: rgba(120, 50, 40, 0.9);
+}
+
+/* patch 的 reason 小字 ——「· 这话怕你笑话」 */
+.draftLetterPatchReason {
+  font-style: italic;
+  font-family: var(--xingye-font-serif);
+  font-size: 12px;
+  color: rgba(120, 50, 40, 0.65);
+  margin-left: 2px;
+}
+
+/* 落款 */
+.draftLetterFooter {
+  margin-top: 28px;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  font-family: var(--xingye-font-hand);
+  color: rgba(70, 50, 30, 0.85);
+}
+
+.draftLetterSignDots {
+  font-size: 22px;
+  letter-spacing: 0.2em;
+  color: rgba(70, 50, 30, 0.55);
+  line-height: 1;
+}
+
+.draftLetterSignAction {
+  font-size: 14px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: rgba(70, 50, 30, 0.75);
+}
+
+.draftLetterSignAction s {
+  text-decoration-color: rgba(120, 50, 40, 0.7);
+  text-decoration-thickness: 1.5px;
+}
+
+.draftLetterSignAction em {
+  font-style: normal;
+  font-size: 12px;
+  color: rgba(120, 50, 40, 0.85);
+  font-family: var(--xingye-font-serif);
+}
+
+.draftLetterSignDate {
+  font-size: 13px;
+  font-family: var(--xingye-font-serif);
+  letter-spacing: 0.04em;
+  color: rgba(70, 50, 30, 0.6);
+}
+
+/* 回形针(左上,绝对定位,跨在纸的边缘) */
+.draftLetterPaperclip {
+  position: absolute;
+  top: -10px;
+  left: 36px;
+  width: 18px;
+  height: 56px;
+  border: 2.5px solid #8a8d93;
+  border-top-color: #6b6e74;
+  border-radius: 9px 9px 4px 4px;
+  background: transparent;
+  box-shadow:
+    inset -2px 0 0 rgba(255, 255, 255, 0.35),
+    0 2px 3px rgba(0, 0, 0, 0.25);
+  z-index: 3;
+  transform: rotate(-6deg);
+  pointer-events: none;
+}
+
+.draftLetterPaperclip::after {
+  /* 内圈 */
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  right: 4px;
+  bottom: 12px;
+  border: 1.5px solid #8a8d93;
+  border-radius: 6px 6px 2px 2px;
+  border-bottom-color: transparent;
+}
+
+/* "未 · 送 · 出"橡皮印章(右上) */
+.draftLetterStamp {
+  position: absolute;
+  top: 22px;
+  right: 26px;
+  padding: 6px 12px;
+  border: 2.5px solid rgba(160, 40, 40, 0.7);
+  border-radius: 4px;
+  font-family: var(--xingye-font-brush);
+  font-size: 13px;
+  letter-spacing: 0.15em;
+  color: rgba(160, 40, 40, 0.85);
+  background: rgba(255, 240, 230, 0.4);
+  transform: rotate(8deg);
+  z-index: 2;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(160, 40, 40, 0.25);
+  /* 印章手抖感 */
+  text-shadow:
+    0.5px 0.3px 0 rgba(120, 30, 30, 0.4),
+    -0.3px 0.4px 0 rgba(120, 30, 30, 0.3);
+}
+
+/* 右侧空白处竖排批注容器(真数据:1-3 条)。 */
+.draftLetterMarginNotes {
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 单条 margin 批注;独立浮动版(fallback)走 absolute,在容器里时退化为静态。 */
+.draftLetterMarginNote {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%) rotate(0deg);
+  writing-mode: vertical-rl;
+  font-family: var(--xingye-font-hand);
+  font-size: 18px;
+  letter-spacing: 0.2em;
+  color: rgba(120, 70, 40, 0.55);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 在容器内的批注:不要再 absolute,跟着 flex 排;歪一点更像手写。 */
+.draftLetterMarginNotes .draftLetterMarginNote {
+  position: static;
+  transform: none;
+}
+.draftLetterMarginNotes .draftLetterMarginNote[data-index='0'] {
+  transform: rotate(-2deg);
+}
+.draftLetterMarginNotes .draftLetterMarginNote[data-index='1'] {
+  transform: rotate(1.5deg);
+}
+.draftLetterMarginNotes .draftLetterMarginNote[data-index='2'] {
+  transform: rotate(-1deg);
+}
+
+/* 右下角橡皮擦/涂改痕迹 */
+.draftLetterSmudge {
+  position: absolute;
+  right: 24px;
+  bottom: 38px;
+  width: 64px;
+  height: 12px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(140, 110, 60, 0.18) 0%,
+    rgba(140, 110, 60, 0.08) 50%,
+    transparent 80%
+  );
+  transform: rotate(-6deg);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 角落 footnote:来源 / 时间(机械字体,跟手写区拉开层次) */
+.draftLetterFootnote {
+  margin-top: 10px;
+  padding: 0 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: rgba(80, 60, 30, 0.45);
 }
 
 /* === 秘密空间分类内页 · saved_item 书签 + 丝带 =========================== */
