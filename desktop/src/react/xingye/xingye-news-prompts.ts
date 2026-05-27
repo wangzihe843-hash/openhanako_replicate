@@ -11,7 +11,12 @@ import {
   NEWS_SECTION_REGISTRY,
   NEWS_SECTIONS_PER_ISSUE,
   REQUIRED_SECTION_KINDS,
+  type NewsSectionKind,
 } from './xingye-news-types';
+import {
+  WORLD_TIMELINE_SCOPE_LABELS,
+  type WorldTimelineEvent,
+} from './xingye-news-timeline';
 
 /**
  * 构造「小手机报纸」一期内容的 prompt。
@@ -43,6 +48,26 @@ export function buildNewsDraftPrompt(args: {
   era: NewsEraId;
   /** era 对应的笔调描述符。**调用方应**用 getNewsEraStyle(era) 取，与 era 保持一致。 */
   eraStyle: NewsEraStyleDescriptor;
+  /**
+   * 「往期新闻」模式标记。打开后：
+   *  - 篇章基调从「今日报纸」改为「N 天前的旧期，按时间线还原当时世态」
+   *  - 不再要求至少一个 gossip/review；缺失时不报错
+   *  - 现代/未来时代的头版 witness/evidence 仍然要求（保证视觉版面）
+   *  - 调用方应同时传 `excludeKinds` 把感情类 / 关系类板块排除
+   *  - 调用方应同时传 `timelineSeed` 把当期要覆盖的事件列出来
+   */
+  historicalMode?: boolean;
+  /**
+   * 不允许出现的板块 kind。historical 模式下默认 ['gossip_column','review','letters_to_editor']。
+   * 这些 kind 会被从「板块选择规则」「各板块说明」里移除；模型若仍然返回，normalize 不会拒收，
+   * 但 prompt 已尽力告诉它"别选"。
+   */
+  excludeKinds?: readonly NewsSectionKind[];
+  /**
+   * historical 模式下的「时间线种子」：本期报纸**应基于这些事件**展开。
+   * 通常 2-4 条；模型把它们组装成 headline_world / second_news 等世态板块。
+   */
+  timelineSeed?: readonly WorldTimelineEvent[];
 }): string {
   const {
     agent,
@@ -58,10 +83,14 @@ export function buildNewsDraftPrompt(args: {
     continuityAnchorBlock,
     era,
     eraStyle,
+    historicalMode = false,
+    excludeKinds = [],
+    timelineSeed = [],
   } = args;
   // 兜底：万一调用方传的 eraStyle 与 era 不匹配，按 era 重取一次（防止断链）。
   const style = eraStyle ?? getNewsEraStyle(era);
   const eraLabel = NEWS_ERA_LABELS[era] ?? NEWS_ERA_LABELS.modern_or_future;
+  const excludeSet = new Set<NewsSectionKind>(excludeKinds);
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
@@ -72,10 +101,15 @@ export function buildNewsDraftPrompt(args: {
   });
 
   const requiredKindList = REQUIRED_SECTION_KINDS.join(' / ');
-  const relationshipKindList = AT_LEAST_ONE_OF_RELATIONSHIP_SECTION_KINDS.join(' / ');
+  // historical 模式下感情类板块默认被排除，"至少含一个 gossip/review"规则不再适用。
+  const remainingRelationshipKinds = AT_LEAST_ONE_OF_RELATIONSHIP_SECTION_KINDS.filter(
+    (k) => !excludeSet.has(k),
+  );
+  const relationshipKindList = remainingRelationshipKinds.join(' / ');
 
   const sectionGuideLines: string[] = [];
   for (const kind of NEWS_SECTION_KINDS) {
+    if (excludeSet.has(kind)) continue;
     const def = NEWS_SECTION_REGISTRY[kind];
     const titleCands = def.titleCandidates.map((t) => `「${t}」`).join('、');
     const [minC, maxC] = def.targetChars;
@@ -84,6 +118,9 @@ export function buildNewsDraftPrompt(args: {
       + ` 字数 ${minC}-${maxC} 字。标题必须从这些候选里选一个填入：${titleCands}。`,
     );
   }
+  const excludedKindList = excludeKinds.length
+    ? excludeKinds.map((k) => `\`${k}\``).join(' / ')
+    : '';
 
   const schemaExample = {
     masthead: 'string',
@@ -194,13 +231,66 @@ export function buildNewsDraftPrompt(args: {
     ...style.taboos.map((t) => `- ${t}`),
   ];
 
+  /* ── historical 模式专属：时间线种子 block + 开篇说明 ── */
+  // 时间线种子块：当 historicalMode=true 时，把当期要覆盖的事件结构化打印给模型。
+  // 模型应当把这些事件**作为头版/次条/讣告等世态板块的素材**展开，而不是凭空虚构。
+  const historicalIntroLines: string[] = historicalMode
+    ? [
+      '## 「往期新闻」模式（必读）',
+      '本期是按用户请求生成的**往期报纸**——是 TA 所处世界在某个**已过去的时间点**发行的旧期。',
+      '内容应当严格围绕「下方时间线种子」展开，把它们写成当时世态新闻的版面；',
+      '**不要**写成"TA 与用户当下的日常"——往期报纸里**根本没有用户的位置**。',
+      `- ${currentUserName}（用户）一律**不出现**在本期任何板块的正文 / 标题 / byline / witness / evidence 中。`,
+      `- ${currentAgentName} 可以作为当时世界中的某个 NPC 被次要提及（例如「某医师在场救治」），但**不能**作为头版主角。`,
+      '- 报纸笔调与 era 同今日报纸一致（按下方笔调规则走），但时间线背景请贴合下方时间线种子里的时代标签。',
+      '',
+    ]
+    : [];
+
+  // 时间线种子的格式化（仅 historical）。
+  const timelineSeedLines: string[] = historicalMode && timelineSeed.length
+    ? [
+      '## 本期时间线种子（必须基于这些事件展开；按时间升序）',
+      ...timelineSeed.map((evt, i) => {
+        const scopeLabel = WORLD_TIMELINE_SCOPE_LABELS[evt.scope] ?? evt.scope;
+        return `${i + 1}. [${scopeLabel}] ${evt.dateLabel}｜${evt.title}：${evt.summary}`;
+      }),
+      '',
+      '### 用法',
+      '- 头版要闻（headline_world）从上述事件中挑**影响最广**的一条作主线，可整合相关事件补背景。',
+      '- 次条（second_news）选另一条不同主题的事件。',
+      '- 其它世态板块（street_snap / advertisement / weather）可以呼应任一事件做画面 / 物件 / 氛围铺陈。',
+      '- obituary（讣告）参见下方专属约束。',
+      '',
+    ]
+    : [];
+
+  // historical 模式下 obituary 的硬约束：
+  //   - 允许 NPC / 亲朋好友的死亡 / 误会 / 心情，但**不能**涉及 agent-user 互动。
+  //   - 如果 background / lore 没明写 agent 的感情线（前任 / 已故配偶等），
+  //     就**不要**编造任何感情类悼念。
+  const historicalObituaryRule: string[] = historicalMode
+    ? [
+      '## 讣告（obituary）板块在「往期」模式下的硬约束',
+      `- 允许为 ${currentAgentName} 的亲朋好友 / 前同事 / 师门长辈 / 重要 NPC 的死亡 / 误会 / 心情写悼念，但仅限**下方设定库里有明确依据**的对象。`,
+      `- **严禁**写 ${currentAgentName} 与 ${currentUserName} 之间的事件 / 关系 / 互动——往期报纸里没有 ${currentUserName}。`,
+      `- 如果下方"## 当前角色 profile"的 background / personality 字段**没有**提到 ${currentAgentName} 的感情线（前男友/前女友/前夫/前妻/已故恋人等），**禁止**写任何与"TA 的感情关系"相关的讣告或悼念。宁可省略这个板块。`,
+      '- 抽象悼念（"她最后一丝犹豫，殁于昨夜"）这种笔法仍可使用，但抽象对象不能指向用户。',
+      '',
+    ]
+    : [];
+
   const parts: string[] = [
     '你是星野模式「小手机报纸」一期内容生成器。只返回严格 JSON，不要 Markdown，不要解释。',
     '',
+    ...historicalIntroLines,
     '## 生成目标',
-    '生成"当前角色（TA）手机里出现的一张第三方报纸"。这份报纸由虚构的报社记者 / 专栏作者撰写，'
-    + '从外部视角报道 TA 所处的世界、以及 TA 与用户的关系动向。**不是 TA 的日记、不是 TA 的朋友圈、'
-    + '不是 TA 的私人短信**——而是一份对外发行的报刊，TA 只是其中被报道的对象之一。',
+    historicalMode
+      ? '生成 TA 所处世界**某个过往时间点**的一张第三方报纸。由虚构的报社记者 / 专栏作者撰写，'
+        + '内容紧扣下方"## 本期时间线种子"列出的世态事件，**不涉及**用户。'
+      : '生成"当前角色（TA）手机里出现的一张第三方报纸"。这份报纸由虚构的报社记者 / 专栏作者撰写，'
+        + '从外部视角报道 TA 所处的世界、以及 TA 与用户的关系动向。**不是 TA 的日记、不是 TA 的朋友圈、'
+        + '不是 TA 的私人短信**——而是一份对外发行的报刊，TA 只是其中被报道的对象之一。',
     '',
     '## 视角硬约束（违反就重写）',
     `- 全文第三人称。${currentAgentName}（即 TA）应被作为新闻对象提及，**禁止** TA 的第一人称内心独白。`,
@@ -234,7 +324,12 @@ export function buildNewsDraftPrompt(args: {
     '## 板块选择规则',
     `- 本期总共生成 ${NEWS_SECTIONS_PER_ISSUE.min}-${NEWS_SECTIONS_PER_ISSUE.max} 个板块（含必选）。`,
     `- **必含**：${requiredKindList}（头版要闻必须有，且只能有一个）。`,
-    `- **至少含 1 个**：${relationshipKindList}（感情视角是本期必备）。`,
+    ...(remainingRelationshipKinds.length
+      ? [`- **至少含 1 个**：${relationshipKindList}（感情视角是本期必备）。`]
+      : ['- 本期为「往期世界时间线」模式，**不要求**生成感情类板块；如果模型仍想表达"世态人情"，请走 `street_snap`（街角速写）或 `obituary`（讣告 / 纪念），但严守下方铁律。']),
+    ...(excludedKindList
+      ? [`- **禁选**：${excludedKindList}（本期模式下这些板块**禁止出现**——模型若返回，会被系统丢弃）。`]
+      : []),
     '- 其他板块按当期素材自行挑选，但同一 kind **只能出现一次**。',
     '- 选板块时优先选与当期素材匹配的：素材充足时多挑、素材稀薄时只生 2-3 个不要硬凑。',
     '',
@@ -273,6 +368,7 @@ export function buildNewsDraftPrompt(args: {
     JSON.stringify(schemaExample, null, 2),
     '',
     ...modernHeadlineExtraGuide,
+    ...historicalObituaryRule,
     '## 当前角色',
     JSON.stringify(
       {
@@ -287,6 +383,7 @@ export function buildNewsDraftPrompt(args: {
     '',
     speakerContextBlock,
     '',
+    ...timelineSeedLines,
     `## 当期出版日：${issueDateIso}`,
     '',
     '## 用户附言（可空）',
@@ -298,15 +395,19 @@ export function buildNewsDraftPrompt(args: {
     '## 设定库（关键词触发）',
     keywordLoreBlock || '（无）',
     '',
-    '## 最近聊天 / 场景摘要',
-    recentSceneBlock || '（无）',
-    '',
-    '## 当前关系状态',
-    relationshipBlock || '（无）',
-    '',
-    '## 最近一次桌面巡检的 UI 反馈（可空）',
-    heartbeatBlock || '（无）',
-    '',
+    // historical 模式下，下面这三个 block 是「当下状态」——往期报纸不该看到，
+    // 完全屏蔽（连 header 都不打印），避免模型被「最近聊天」误导写成今日报纸。
+    ...(historicalMode ? [] : [
+      '## 最近聊天 / 场景摘要',
+      recentSceneBlock || '（无）',
+      '',
+      '## 当前关系状态',
+      relationshipBlock || '（无）',
+      '',
+      '## 最近一次桌面巡检的 UI 反馈（可空）',
+      heartbeatBlock || '（无）',
+      '',
+    ]),
     '## 跨期连续性锚点（防重复，必读）',
     continuityAnchorBlock || '（无；这是 TA 的第一期报纸）',
     '',

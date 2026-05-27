@@ -51,6 +51,8 @@ const PHONE_GENERATE_KINDS = new Set([
   "accounting_draft",
   "news_draft",
   "news_comment",
+  "news_historical_draft",
+  "news_timeline_extract",
   "secret_interview_draft",
   "health_day",
   "files_secret_seed",

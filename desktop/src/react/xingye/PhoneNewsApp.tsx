@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
 import shell from './XingyeShell.module.css';
 import news from './PhoneNewsApp.module.css';
 import {
@@ -20,7 +21,23 @@ import {
   type NewsSection,
   type NewsSectionKind,
 } from './xingye-news-types';
-import { generateNewsCommentWithAI, generateNewsDraftWithAI } from './xingye-news-ai';
+import {
+  generateHistoricalNewsDraftWithAI,
+  generateNewsCommentWithAI,
+  generateNewsDraftWithAI,
+} from './xingye-news-ai';
+import {
+  TIMELINE_EVENTS_PER_ISSUE_TARGET,
+  WORLD_TIMELINE_SCOPES,
+  WORLD_TIMELINE_SCOPE_LABELS,
+  computeIssueDatesForBackfill,
+  computeTimelineShortfall,
+  expandTimelineWithAI,
+  extractWorldTimelineFromLore,
+  partitionTimelineForIssues,
+  type WorldTimelineEvent,
+  type WorldTimelineScope,
+} from './xingye-news-timeline';
 import {
   confirmNewsDraftWithEntry,
   discardNewsDraft,
@@ -192,6 +209,29 @@ function SectionCommentBlock({
 }
 
 /** 按 sectionKind 把 comments 分组。同一 kind 下可能有多条评论。 */
+/**
+ * 「去和 TA 聊聊」专用：把整期报纸 + TA 已有的批注按段落交织成纯文本引用。
+ * 不复用 flattenNewsMetadataToContent —— 后者只服务存储侧 `content`，
+ * 把批注塞进去会污染历史数据；这里只是 UI 临时拼接。
+ */
+function buildNewsShareText(meta: NewsEntryMetadata): string {
+  const commentsByKind = groupCommentsByKind(meta.comments);
+  const parts: string[] = [meta.masthead];
+  for (const section of meta.sections) {
+    parts.push('');
+    parts.push(`【${section.title}】`);
+    parts.push(section.body);
+    if (section.byline) parts.push(`—— ${section.byline}`);
+    const sectionComments = commentsByKind.get(section.kind);
+    if (sectionComments && sectionComments.length) {
+      for (const c of sectionComments) {
+        parts.push(`（TA 的批注：「${c.highlightText}」→ ${c.comment}）`);
+      }
+    }
+  }
+  return parts.join('\n').trim();
+}
+
 function groupCommentsByKind(comments: NewsComment[] | undefined): Map<NewsSectionKind, NewsComment[]> {
   const map = new Map<NewsSectionKind, NewsComment[]>();
   if (!comments) return map;
@@ -938,6 +978,34 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [drafts, setDrafts] = useState<XingyePendingNewsDraft[]>([]);
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
 
+  /* ── 往期新闻面板状态 ─────────────────────────────────────────────────
+   * 流程：closed → input（填天数/期数）→ review（看时间线、决定补全 / 手动加 / 一键生成）
+   *
+   * 时间线**不持久化**——每次打开「整理往期」都重跑 extractWorldTimelineFromLore。
+   * 用户选择：lore 更新后下次进来会自动跟上。
+   */
+  type HistoryStep = 'closed' | 'input' | 'review';
+  const [historyStep, setHistoryStep] = useState<HistoryStep>('closed');
+  const [historyDaysBack, setHistoryDaysBack] = useState(30);
+  const [historyIssueCount, setHistoryIssueCount] = useState(3);
+  const [timeline, setTimeline] = useState<WorldTimelineEvent[]>([]);
+  const [timelineBusy, setTimelineBusy] = useState<'idle' | 'extracting' | 'expanding' | 'generating'>('idle');
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  // 「一键生成往期」时显示进度：「正在生成第 X / N 期…」
+  const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
+  // 手动添加表单内联展开标志 + 表单字段
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDateLabel, setManualDateLabel] = useState('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualSummary, setManualSummary] = useState('');
+  const [manualScope, setManualScope] = useState<WorldTimelineScope>('region');
+  /**
+   * 「去和 TA 聊聊」点击后短暂显示确认文案的 entry id；4s 自动消失。
+   * 与秘密空间草稿箱保持一致：不导航，引用走 stagedChatQuote 暂存槽，
+   * 进入任意聊天时由 InputArea 挂载 useEffect 兑换。
+   */
+  const [sharedToChatId, setSharedToChatId] = useState<string | null>(null);
+
   const agentDisplayName = ownerProfile?.displayName?.trim() || ownerAgent?.name || displayName || 'TA';
 
   // 「外壳 era」：决定列表头部、列表 actions、空态、外层背景色用哪套主题。
@@ -1071,6 +1139,193 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
     }
   };
 
+  /* ── 往期新闻：handlers ───────────────────────────────────────────── */
+
+  const closeHistoryPanel = () => {
+    setHistoryStep('closed');
+    setTimeline([]);
+    setHistoryError(null);
+    setHistoryProgress(null);
+    setManualOpen(false);
+    setManualDateLabel('');
+    setManualTitle('');
+    setManualSummary('');
+    setManualScope('region');
+    setTimelineBusy('idle');
+  };
+
+  const handleOpenHistoryPanel = () => {
+    if (!ownerAgent) return;
+    setHistoryStep('input');
+    setHistoryError(null);
+    setTimeline([]);
+    setManualOpen(false);
+    setHistoryProgress(null);
+  };
+
+  /**
+   * 「整理时间线」——从 lore 现整理，按 issueCount × 3 作为目标条数。
+   * 失败时停留在 input 步骤，error 显示出来；成功就跳到 review。
+   */
+  const handleExtractTimeline = async () => {
+    if (!ownerAgent || timelineBusy !== 'idle') return;
+    const issueCount = Math.max(1, Math.floor(historyIssueCount));
+    const targetCount = issueCount * TIMELINE_EVENTS_PER_ISSUE_TARGET;
+    setTimelineBusy('extracting');
+    setHistoryError(null);
+    try {
+      const events = await extractWorldTimelineFromLore({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        requestedCount: targetCount,
+      });
+      setTimeline(events);
+      setHistoryStep('review');
+    } catch (err) {
+      setHistoryError(`整理时间线失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setTimelineBusy('idle');
+    }
+  };
+
+  /**
+   * 「AI 补全」——按缺口让模型再补 N 条；新增事件 append 到现有列表后面。
+   */
+  const handleAiExpandTimeline = async () => {
+    if (!ownerAgent || timelineBusy !== 'idle') return;
+    const shortfall = computeTimelineShortfall(timeline.length, historyIssueCount);
+    if (shortfall <= 0) return;
+    setTimelineBusy('expanding');
+    setHistoryError(null);
+    try {
+      const extra = await expandTimelineWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        existing: timeline,
+        neededExtra: shortfall,
+      });
+      if (extra.length === 0) {
+        setHistoryError('AI 没有返回新增事件——可能是 lore 素材已经被穷尽。可以手动添加几条。');
+      } else {
+        setTimeline((prev) => [...prev, ...extra]);
+      }
+    } catch (err) {
+      setHistoryError(`AI 补全失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setTimelineBusy('idle');
+    }
+  };
+
+  const handleManualAddTimeline = () => {
+    const dateLabel = manualDateLabel.trim().slice(0, 32);
+    const title = manualTitle.trim().slice(0, 24);
+    const summary = manualSummary.trim().slice(0, 80);
+    if (!dateLabel || !title || !summary) {
+      setHistoryError('日期 / 标题 / 概述三项都需要填写。');
+      return;
+    }
+    const id = `te_manual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    setTimeline((prev) => [
+      ...prev,
+      { id, dateLabel, title, summary, scope: manualScope },
+    ]);
+    setManualDateLabel('');
+    setManualTitle('');
+    setManualSummary('');
+    setManualScope('region');
+    setManualOpen(false);
+    setHistoryError(null);
+  };
+
+  const handleRemoveTimelineEvent = (id: string) => {
+    setTimeline((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  /**
+   * 内联编辑：保存对某条事件的字段修改。
+   * patch 里只放需要改的字段，其它保留原值；空字符串视为「没填」回退到原值。
+   * 字段长度上限与 normalize 一致（dateLabel 32 / title 24 / summary 80）。
+   */
+  const handleUpdateTimelineEvent = (id: string, patch: Partial<Omit<WorldTimelineEvent, 'id'>>) => {
+    setTimeline((prev) => prev.map((e) => {
+      if (e.id !== id) return e;
+      const dateLabel = patch.dateLabel != null ? patch.dateLabel.trim().slice(0, 32) : e.dateLabel;
+      const title = patch.title != null ? patch.title.trim().slice(0, 24) : e.title;
+      const summary = patch.summary != null ? patch.summary.trim().slice(0, 80) : e.summary;
+      const scope = patch.scope ?? e.scope;
+      // 三个文本字段都不能空——空就回退到原值，避免误清空。
+      return {
+        ...e,
+        dateLabel: dateLabel || e.dateLabel,
+        title: title || e.title,
+        summary: summary || e.summary,
+        scope,
+      };
+    }));
+  };
+
+  /**
+   * 「一键生成往期新闻」——把时间线切成 N 期，按时间从远到近顺序生成。
+   *
+   * 顺序生成（不并发）：每期一个请求；服务器有 timeout 上限，
+   * 并发会增加 503 / 限流风险，对用户体验也没好处（反正都要等到全部完成才能用）。
+   *
+   * 失败时停在已生成的部分——已落地的几期不会回滚，error 文案带"已生成 X / N"。
+   */
+  const handleGenerateHistoricalIssues = async () => {
+    if (!ownerAgent || timelineBusy !== 'idle') return;
+    const issueCount = Math.max(1, Math.floor(historyIssueCount));
+    const daysBack = Math.max(1, Math.floor(historyDaysBack));
+    if (timeline.length === 0) {
+      setHistoryError('时间线是空的——请先整理或手动添加事件。');
+      return;
+    }
+    const partitions = partitionTimelineForIssues(timeline, issueCount);
+    const issueDates = computeIssueDatesForBackfill(daysBack, issueCount);
+    setTimelineBusy('generating');
+    setHistoryError(null);
+    setHistoryProgress({ done: 0, total: issueCount });
+    let succeeded = 0;
+    try {
+      for (let i = 0; i < issueCount; i += 1) {
+        const seed = partitions[i];
+        // 极端情况：某一期没分到事件（issueCount > events.length）—— 跳过该期。
+        if (!seed || seed.length === 0) {
+          setHistoryProgress({ done: i + 1, total: issueCount });
+          continue;
+        }
+        const issueDateIso = issueDates[i];
+        const meta = await generateHistoricalNewsDraftWithAI({
+          agent: ownerAgent,
+          ownerProfile: ownerProfile ?? null,
+          issueDateIso,
+          timelineSeed: seed,
+        });
+        const content = flattenNewsMetadataToContent(meta);
+        const entry = await appendAppEntry(ownerAgentId, NEWS_APP_ID, {
+          title: meta.masthead,
+          content,
+          source: 'user_generated',
+          metadata: meta as unknown as Record<string, unknown>,
+        });
+        const normalized = normalizeNewsEntry(entry);
+        if (normalized) {
+          setEntries((prev) => [normalized, ...prev.filter((e) => e.id !== normalized.id)]);
+        }
+        succeeded += 1;
+        setHistoryProgress({ done: i + 1, total: issueCount });
+      }
+      // 全部完成 → 关掉面板，列表自动按 createdAt 倒序，新生成的会排到前面。
+      closeHistoryPanel();
+    } catch (err) {
+      setHistoryError(
+        `生成往期报纸失败（已成功 ${succeeded} / ${issueCount} 期）：${err instanceof Error ? err.message : String(err)}`,
+      );
+      setTimelineBusy('idle');
+      setHistoryProgress(null);
+    }
+  };
+
   /**
    * 把一份新 metadata（增/删 comment 后的结果）持久化到 entry，并更新本地 state。
    * 这里复用 updateAppEntry——会写 metadata + 同步刷新 content（flatten 后的纯文本）。
@@ -1089,6 +1344,28 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
       }
     },
     [ownerAgentId],
+  );
+
+  useEffect(() => {
+    if (!sharedToChatId) return undefined;
+    const timer = setTimeout(() => setSharedToChatId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatId]);
+
+  const handleShareNewsToChat = useCallback(
+    (entry: NewsEntry) => {
+      const text = buildNewsShareText(entry.metadata);
+      if (!text) return;
+      useStore.getState().stageChatQuote({
+        text,
+        sourceTitle: `${agentDisplayName} 的小报 · ${formatIssueDate(entry.metadata.issueDate)}`,
+        sourceKind: 'news',
+        charCount: text.length,
+        updatedAt: Date.now(),
+      });
+      setSharedToChatId(entry.id);
+    },
+    [agentDisplayName],
   );
 
   const handleGenerateComment = async (entry: NewsEntry) => {
@@ -1206,7 +1483,25 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                     ? `已达上限 (${NEWS_COMMENTS_MAX})`
                     : `让 ${agentDisplayName} 批注一句`}
               </button>
+              <button
+                type="button"
+                className={k('news-comment-action-button')}
+                onClick={() => handleShareNewsToChat(selected)}
+                data-testid="phone-news-share-to-chat"
+                title={`把这期带到和 ${agentDisplayName} 的聊天里`}
+              >
+                去和 {agentDisplayName} 聊聊这期
+              </button>
             </div>
+            {sharedToChatId === selected.id ? (
+              <p
+                className={k('notice')}
+                role="status"
+                data-testid="phone-news-share-to-chat-notice"
+              >
+                已放进聊天输入框引用 —— 打开任意对话即可发出
+              </p>
+            ) : null}
             <div className={k('delete-row')}>
               <button
                 type="button"
@@ -1276,7 +1571,48 @@ export function PhoneNewsApp({ ownerAgent, ownerProfile, displayName, onBack }: 
               >
                 {variant.ghostLabel(showIntentBox)}
               </button>
+              <button
+                type="button"
+                className={k(variant.actionGhostClass)}
+                onClick={handleOpenHistoryPanel}
+                disabled={generating || historyStep !== 'closed'}
+                data-testid="phone-news-open-history"
+                title="按 agent lore 整理时间线，再一键生成几期往期报纸"
+              >
+                整理往期
+              </button>
             </div>
+
+            {historyStep !== 'closed' ? (
+              <HistoryPanel
+                step={historyStep}
+                daysBack={historyDaysBack}
+                issueCount={historyIssueCount}
+                onDaysBackChange={setHistoryDaysBack}
+                onIssueCountChange={setHistoryIssueCount}
+                timeline={timeline}
+                busy={timelineBusy}
+                error={historyError}
+                progress={historyProgress}
+                manualOpen={manualOpen}
+                manualDateLabel={manualDateLabel}
+                manualTitle={manualTitle}
+                manualSummary={manualSummary}
+                manualScope={manualScope}
+                onManualOpenChange={setManualOpen}
+                onManualDateLabelChange={setManualDateLabel}
+                onManualTitleChange={setManualTitle}
+                onManualSummaryChange={setManualSummary}
+                onManualScopeChange={setManualScope}
+                onExtract={() => void handleExtractTimeline()}
+                onAiExpand={() => void handleAiExpandTimeline()}
+                onManualAdd={handleManualAddTimeline}
+                onRemoveEvent={handleRemoveTimelineEvent}
+                onUpdateEvent={handleUpdateTimelineEvent}
+                onGenerate={() => void handleGenerateHistoricalIssues()}
+                onClose={closeHistoryPanel}
+              />
+            ) : null}
 
             {drafts.length > 0 ? (
               <div
@@ -1418,4 +1754,484 @@ function ListCardRenderer({
   if (era === 'oriental_classical') return <OrientalListCard entry={entry} onClick={onClick} />;
   if (era === 'western_fantasy') return <WesternListCard entry={entry} onClick={onClick} />;
   return <ModernListCard entry={entry} onClick={onClick} featured={featured} />;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   往期新闻面板 —— 输入 / 时间线 review / 手动添加 / 一键生成
+───────────────────────────────────────────────────────────────────────────── */
+
+type HistoryPanelProps = {
+  step: 'input' | 'review';
+  daysBack: number;
+  issueCount: number;
+  onDaysBackChange: (n: number) => void;
+  onIssueCountChange: (n: number) => void;
+  timeline: WorldTimelineEvent[];
+  busy: 'idle' | 'extracting' | 'expanding' | 'generating';
+  error: string | null;
+  progress: { done: number; total: number } | null;
+  manualOpen: boolean;
+  manualDateLabel: string;
+  manualTitle: string;
+  manualSummary: string;
+  manualScope: WorldTimelineScope;
+  onManualOpenChange: (v: boolean) => void;
+  onManualDateLabelChange: (v: string) => void;
+  onManualTitleChange: (v: string) => void;
+  onManualSummaryChange: (v: string) => void;
+  onManualScopeChange: (v: WorldTimelineScope) => void;
+  onExtract: () => void;
+  onAiExpand: () => void;
+  onManualAdd: () => void;
+  onRemoveEvent: (id: string) => void;
+  onUpdateEvent: (id: string, patch: Partial<Omit<WorldTimelineEvent, 'id'>>) => void;
+  onGenerate: () => void;
+  onClose: () => void;
+};
+
+function HistoryPanel(props: HistoryPanelProps) {
+  const {
+    step, daysBack, issueCount, onDaysBackChange, onIssueCountChange,
+    timeline, busy, error, progress,
+    manualOpen, manualDateLabel, manualTitle, manualSummary, manualScope,
+    onManualOpenChange, onManualDateLabelChange, onManualTitleChange,
+    onManualSummaryChange, onManualScopeChange,
+    onExtract, onAiExpand, onManualAdd, onRemoveEvent, onUpdateEvent, onGenerate, onClose,
+  } = props;
+
+  // 内联编辑态：editingId 非 null 时，对应那条事件用输入框渲染。
+  // 编辑态草稿存在 HistoryPanel 内（UI-only state，不污染父组件 timeline）；
+  // 点「保存」才同步回父组件，「取消」直接丢弃 draft。
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDateLabel, setEditDateLabel] = useState('');
+  const [editTitle, setEditTitle] = useState('');
+  const [editSummary, setEditSummary] = useState('');
+  const [editScope, setEditScope] = useState<WorldTimelineScope>('region');
+
+  const startEdit = (evt: WorldTimelineEvent) => {
+    setEditingId(evt.id);
+    setEditDateLabel(evt.dateLabel);
+    setEditTitle(evt.title);
+    setEditSummary(evt.summary);
+    setEditScope(evt.scope);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+  };
+  const saveEdit = () => {
+    if (!editingId) return;
+    onUpdateEvent(editingId, {
+      dateLabel: editDateLabel,
+      title: editTitle,
+      summary: editSummary,
+      scope: editScope,
+    });
+    setEditingId(null);
+  };
+
+  const shortfall = computeTimelineShortfall(timeline.length, issueCount);
+  const target = Math.max(1, Math.floor(issueCount)) * TIMELINE_EVENTS_PER_ISSUE_TARGET;
+  const generating = busy === 'generating';
+  const extracting = busy === 'extracting';
+  const expanding = busy === 'expanding';
+  const anyBusy = busy !== 'idle';
+
+  return (
+    <div
+      data-testid="phone-news-history-panel"
+      style={{
+        border: '1px solid currentColor',
+        borderRadius: 10,
+        padding: 12,
+        margin: '12px 0',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <strong style={{ fontSize: 14 }}>整理往期 · 按世界时间线还原</strong>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={generating}
+          aria-label="关闭"
+          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, opacity: 0.6 }}
+        >
+          ×
+        </button>
+      </div>
+
+      {step === 'input' ? (
+        <>
+          <p style={{ fontSize: 12, opacity: 0.75, margin: 0 }}>
+            按 agent 的 lore（设定库 + lore-memory.md）整理出 TA 所处世界的时间线，
+            然后由你确认 / 调整后一键批量生成往期报纸。<br />
+            <strong>不会涉及当下聊天 / 关系状态</strong>，也不会生成感情八卦类板块。
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <span style={{ minWidth: 72 }}>最早几天前</span>
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              value={daysBack}
+              onChange={(e) => onDaysBackChange(Math.max(1, Math.min(3650, Number(e.target.value) || 1)))}
+              disabled={anyBusy}
+              data-testid="phone-news-history-days-input"
+              style={{ width: 80 }}
+            />
+            <span style={{ fontSize: 12, opacity: 0.6 }}>天</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <span style={{ minWidth: 72 }}>生成几期</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={issueCount}
+              onChange={(e) => onIssueCountChange(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              disabled={anyBusy}
+              data-testid="phone-news-history-count-input"
+              style={{ width: 80 }}
+            />
+            <span style={{ fontSize: 12, opacity: 0.6 }}>期（会均匀分布在这段时间里）</span>
+          </label>
+          {error ? <p style={{ color: '#a4231a', fontSize: 12, margin: 0 }}>{error}</p> : null}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              onClick={onExtract}
+              disabled={anyBusy}
+              data-testid="phone-news-history-extract"
+            >
+              {extracting ? '正在整理时间线…' : `整理时间线（目标 ${target} 条）`}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, opacity: 0.75, margin: 0 }}>
+            从 lore 整理出 <strong>{timeline.length}</strong> 条事件，将切成 <strong>{issueCount}</strong> 期、
+            最早一期约 <strong>{daysBack}</strong> 天前。下面是事件列表——你可以删除、补全、或手动添加。
+          </p>
+
+          {shortfall > 0 ? (
+            <div
+              data-testid="phone-news-history-shortfall"
+              style={{
+                border: '1px dashed #a4231a',
+                background: 'rgba(164, 35, 26, 0.06)',
+                color: '#a4231a',
+                borderRadius: 6,
+                padding: '8px 10px',
+                fontSize: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              <span>
+                事件数量不足：每期通常至少 {TIMELINE_EVENTS_PER_ISSUE_TARGET} 块版面（目标 {target} 条），
+                还差 <strong>{shortfall}</strong> 条。
+              </span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={onAiExpand}
+                  disabled={anyBusy}
+                  data-testid="phone-news-history-ai-expand"
+                >
+                  {expanding ? `AI 正在补 ${shortfall} 条…` : `AI 按世界观补 ${shortfall} 条`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onManualOpenChange(!manualOpen)}
+                  disabled={anyBusy}
+                  data-testid="phone-news-history-manual-toggle"
+                >
+                  {manualOpen ? '收起手动添加' : '手动添加一条'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => onManualOpenChange(!manualOpen)}
+                disabled={anyBusy}
+                data-testid="phone-news-history-manual-toggle"
+              >
+                {manualOpen ? '收起手动添加' : '继续手动添加'}
+              </button>
+            </div>
+          )}
+
+          {manualOpen ? (
+            <div
+              data-testid="phone-news-history-manual-form"
+              style={{
+                border: '1px solid currentColor',
+                borderRadius: 6,
+                padding: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                fontSize: 12,
+              }}
+            >
+              <p style={{ margin: 0, opacity: 0.7 }}>
+                填写一条事件。<strong>示例</strong>——日期：「景和七年·秋」｜
+                标题：「北境冰封」｜概述：「严冬封冻三月，商路断绝，灾民南下，朝廷开仓未济。」｜
+                范围：地区级。
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ minWidth: 60 }}>日期</span>
+                <input
+                  type="text"
+                  value={manualDateLabel}
+                  onChange={(e) => onManualDateLabelChange(e.target.value)}
+                  placeholder="景和七年·秋 / 2087-03-15 / 第三纪 217 年"
+                  maxLength={32}
+                  data-testid="phone-news-history-manual-date"
+                  style={{ flex: 1 }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ minWidth: 60 }}>标题</span>
+                <input
+                  type="text"
+                  value={manualTitle}
+                  onChange={(e) => onManualTitleChange(e.target.value)}
+                  placeholder="北境冰封 / 黑塔陨落 / 旧京失守"
+                  maxLength={24}
+                  data-testid="phone-news-history-manual-title"
+                  style={{ flex: 1 }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ minWidth: 60, paddingTop: 4 }}>概述</span>
+                <textarea
+                  value={manualSummary}
+                  onChange={(e) => onManualSummaryChange(e.target.value)}
+                  placeholder="一句话事件经过（≤ 80 字）"
+                  maxLength={80}
+                  rows={2}
+                  data-testid="phone-news-history-manual-summary"
+                  style={{ flex: 1, resize: 'vertical' }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ minWidth: 60 }}>范围</span>
+                <select
+                  value={manualScope}
+                  onChange={(e) => onManualScopeChange(e.target.value as WorldTimelineScope)}
+                  data-testid="phone-news-history-manual-scope"
+                >
+                  {WORLD_TIMELINE_SCOPES.map((s) => (
+                    <option key={s} value={s}>{WORLD_TIMELINE_SCOPE_LABELS[s]}</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={onManualAdd}
+                  data-testid="phone-news-history-manual-add"
+                >
+                  添加到时间线
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div
+            data-testid="phone-news-history-timeline-list"
+            style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}
+          >
+            {timeline.length === 0 ? (
+              <p style={{ fontSize: 12, opacity: 0.6, margin: 0 }}>
+                时间线是空的。lore 里可能没有可整理的世界事件——可以手动添加或返回上一步重试。
+              </p>
+            ) : (
+              timeline.map((evt) => {
+                const isEditing = editingId === evt.id;
+                return (
+                  <div
+                    key={evt.id}
+                    data-testid={`phone-news-history-event-${evt.id}`}
+                    style={{
+                      border: '1px solid currentColor',
+                      borderRadius: 6,
+                      padding: '6px 8px',
+                      fontSize: 12,
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'flex-start',
+                      opacity: 0.92,
+                      background: isEditing ? 'rgba(164, 35, 26, 0.04)' : undefined,
+                    }}
+                  >
+                    {isEditing ? (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ minWidth: 36, opacity: 0.7 }}>日期</span>
+                          <input
+                            type="text"
+                            value={editDateLabel}
+                            onChange={(e) => setEditDateLabel(e.target.value)}
+                            maxLength={32}
+                            data-testid={`phone-news-history-event-${evt.id}-edit-date`}
+                            style={{ flex: 1, fontSize: 12 }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ minWidth: 36, opacity: 0.7 }}>标题</span>
+                          <input
+                            type="text"
+                            value={editTitle}
+                            onChange={(e) => setEditTitle(e.target.value)}
+                            maxLength={24}
+                            data-testid={`phone-news-history-event-${evt.id}-edit-title`}
+                            style={{ flex: 1, fontSize: 12 }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <span style={{ minWidth: 36, opacity: 0.7, paddingTop: 4 }}>概述</span>
+                          <textarea
+                            value={editSummary}
+                            onChange={(e) => setEditSummary(e.target.value)}
+                            maxLength={80}
+                            rows={2}
+                            data-testid={`phone-news-history-event-${evt.id}-edit-summary`}
+                            style={{ flex: 1, fontSize: 12, resize: 'vertical' }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ minWidth: 36, opacity: 0.7 }}>范围</span>
+                          <select
+                            value={editScope}
+                            onChange={(e) => setEditScope(e.target.value as WorldTimelineScope)}
+                            data-testid={`phone-news-history-event-${evt.id}-edit-scope`}
+                            style={{ fontSize: 12 }}
+                          >
+                            {WORLD_TIMELINE_SCOPES.map((s) => (
+                              <option key={s} value={s}>{WORLD_TIMELINE_SCOPE_LABELS[s]}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={saveEdit}
+                            data-testid={`phone-news-history-event-${evt.id}-save`}
+                          >
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            data-testid={`phone-news-history-event-${evt.id}-cancel`}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 600 }}>{evt.title}</span>
+                            <span style={{ opacity: 0.7 }}>· {evt.dateLabel}</span>
+                            <span
+                              style={{
+                                fontSize: 10,
+                                padding: '1px 6px',
+                                borderRadius: 999,
+                                border: '1px solid currentColor',
+                                opacity: 0.6,
+                              }}
+                            >
+                              {WORLD_TIMELINE_SCOPE_LABELS[evt.scope]}
+                            </span>
+                          </div>
+                          <span style={{ opacity: 0.8 }}>{evt.summary}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <button
+                            type="button"
+                            onClick={() => startEdit(evt)}
+                            disabled={anyBusy || editingId !== null}
+                            aria-label="编辑事件"
+                            data-testid={`phone-news-history-event-${evt.id}-edit`}
+                            title="编辑此条事件"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              opacity: 0.7,
+                              fontSize: 12,
+                              padding: '0 4px',
+                            }}
+                          >
+                            改
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveEvent(evt.id)}
+                            disabled={anyBusy || editingId !== null}
+                            aria-label="删除事件"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              opacity: 0.5,
+                              fontSize: 14,
+                              padding: '0 4px',
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {error ? <p style={{ color: '#a4231a', fontSize: 12, margin: 0 }}>{error}</p> : null}
+          {progress ? (
+            <p style={{ fontSize: 12, opacity: 0.8, margin: 0 }} data-testid="phone-news-history-progress">
+              正在生成第 {progress.done} / {progress.total} 期…
+            </p>
+          ) : null}
+
+          {editingId !== null ? (
+            <p style={{ fontSize: 11, opacity: 0.65, margin: 0 }}>
+              有一条事件正在编辑中——请先「保存」或「取消」再继续。
+            </p>
+          ) : null}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={anyBusy || timeline.length === 0 || editingId !== null}
+              data-testid="phone-news-history-generate"
+            >
+              {generating ? '正在生成往期…' : `一键生成 ${issueCount} 期往期报纸`}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={generating}
+            >
+              取消
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

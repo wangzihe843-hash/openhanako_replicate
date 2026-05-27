@@ -22,6 +22,7 @@ import {
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
 } from './xingye-lore-runtime-context';
+import type { WorldTimelineEvent } from './xingye-news-timeline';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { listAppEntries } from './xingye-app-entry-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
@@ -470,6 +471,190 @@ export async function generateNewsDraftWithAI(params: {
   }
   // 兜底：即便 normalize 因为某种原因没写上（理论不应发生，因为我们刚塞了合法的 era），
   // 也手动补上一次，保证存档里**一定**有 era。
+  if (!normalized.era) normalized.era = eraResolution.era;
+  return normalized;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   往期新闻：按 lore + 用户确认过的时间线，生成一张某个过去日期的报纸。
+
+   与 generateNewsDraftWithAI 的差异：
+     - 跳过 recentSceneBlock / relationshipBlock / heartbeatBlock —— 往期报纸不该读"当下状态"
+     - 板块过滤：默认排除 gossip_column / review / letters_to_editor（聚焦世态时间线）
+     - 注入 timelineSeed 作为当期内容素材
+     - issueDateIso 由调用方算好（通常是 N 天前），强制覆盖回 result
+     - era 仍按 profile 算一次，绑死写进 metadata（与今日报纸一致）
+   ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 往期新闻默认排除的板块。理由：
+ *   - gossip_column / review / letters_to_editor 都是关于 TA 与用户当下关系的，
+ *     往期报纸里"用户"根本不存在。
+ *   - obituary 保留：允许写 NPC / 亲朋好友死亡或心情；但 prompt 里有专门铁律
+ *     防止它被滥用成"与用户的感情悼念"。
+ */
+export const HISTORICAL_EXCLUDED_KINDS: readonly NewsSectionKind[] = [
+  'gossip_column',
+  'review',
+  'letters_to_editor',
+];
+
+export type GenerateHistoricalNewsParams = {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  /** 当期出版日（ISO）。调用方按 daysBack / issueCount 算好。 */
+  issueDateIso: string;
+  /** 本期要覆盖的时间线事件（通常 2-4 条）。 */
+  timelineSeed: readonly WorldTimelineEvent[];
+  /** 额外排除的板块；与默认的 HISTORICAL_EXCLUDED_KINDS 取并集。 */
+  extraExcludeKinds?: readonly NewsSectionKind[];
+  timeoutMs?: number;
+};
+
+export async function generateHistoricalNewsDraftWithAI(
+  params: GenerateHistoricalNewsParams,
+): Promise<NewsEntryMetadata> {
+  const { agent, ownerProfile, issueDateIso, timelineSeed } = params;
+  const timeoutMs = params.timeoutMs ?? 90_000;
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+  const userName = agentName; // 占位，historical 模式下 prompt 不会引用用户行为；仍传一份避免空字符串
+
+  // lore + 跨期连续性锚点：往期报纸仍需 lore（世界观素材）和 continuity（沿用同一报名）。
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const continuityAnchorBlock = await buildNewsContinuityAnchorBlock(agent.id);
+
+  // keyword 触发的 lore：用时间线种子的标题 / 概述做查询文本，召回相关条目。
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    ...timelineSeed.map((e) => `${e.title} ${e.summary}`),
+    stableLoreBlock.slice(0, 1500),
+  ]);
+  let keywordLoreBlock = '';
+  try {
+    const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+      purpose: 'generic',
+      queryText,
+      maxChars: 2000,
+      includeAlways: false,
+      includeKeyword: true,
+    });
+    keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+  } catch {
+    keywordLoreBlock = '';
+  }
+
+  // era 解析：与今日报纸完全同源，确保 UI 渲染分发用同一笔调。
+  let eraResolution: NewsEraResolution;
+  try {
+    const eraAgentLike = buildNewsEraAgentLike(agent, ownerProfile ?? null);
+    eraResolution = resolveNewsEra(eraAgentLike);
+  } catch {
+    eraResolution = {
+      era: 'modern_or_future',
+      score: 0,
+      scores: { oriental_classical: 0, western_fantasy: 0, modern_or_future: 0 },
+      matchedTerms: [],
+      reason: 'resolver 异常 fallback。',
+    };
+  }
+  const eraStyle = getNewsEraStyle(eraResolution.era);
+
+  // 排除的板块：默认 + 用户额外提供的。
+  const excludeKinds = Array.from(
+    new Set<NewsSectionKind>([
+      ...HISTORICAL_EXCLUDED_KINDS,
+      ...(params.extraExcludeKinds ?? []),
+    ]),
+  );
+
+  const prompt = buildNewsDraftPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    issueDateIso,
+    userIntent: '', // historical 模式不接受 userIntent；语义由 timelineSeed 承载
+    recentSceneBlock: '', // historical 模式下不注入；prompt 端也跳过 header
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock: '',
+    heartbeatBlock: '',
+    continuityAnchorBlock,
+    era: eraResolution.era,
+    eraStyle,
+    historicalMode: true,
+    excludeKinds,
+    timelineSeed,
+  });
+
+  // 调试落盘（与今日报纸分文件名，便于对照）。fire-and-forget。
+  void postXingyeStorage({
+    action: 'write',
+    agentId: agent.id,
+    relativePath: 'news/.debug/last-historical-prompt.txt',
+    content: [
+      `# 时间：${new Date().toISOString()}`,
+      `# agentId：${agent.id}`,
+      `# issueDateIso：${issueDateIso}`,
+      `# excludeKinds：${excludeKinds.join(', ')}`,
+      `# timelineSeed：${timelineSeed.length} 条`,
+      ...timelineSeed.map((e, i) => `  ${i + 1}. ${e.dateLabel} | ${e.title} | ${e.summary} | scope=${e.scope}`),
+      '',
+      '## prompt',
+      prompt,
+    ].join('\n'),
+    encoding: 'utf8',
+  }).catch(() => {});
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'news_historical_draft',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((it) => it.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  // 强制覆盖 issueDate + era + 过滤掉被排除的 kind（模型仍可能违反 prompt 返回它们）。
+  const rawResult = (data?.result && typeof data.result === 'object' && !Array.isArray(data.result))
+    ? (() => {
+        const r = data.result as Record<string, unknown>;
+        // 过滤 sections 里被排除的 kind
+        const rawSections = Array.isArray(r.sections) ? r.sections : [];
+        const filtered = rawSections.filter((s) => {
+          if (!s || typeof s !== 'object') return false;
+          const kind = (s as Record<string, unknown>).kind;
+          return typeof kind === 'string' && !excludeKinds.includes(kind as NewsSectionKind);
+        });
+        return {
+          ...r,
+          sections: filtered,
+          issueDate: issueDateIso,
+          era: eraResolution.era,
+        };
+      })()
+    : null;
+
+  const normalized = normalizeNewsEntryMetadata(rawResult);
+  if (!normalized) {
+    throw new Error('模型返回无效：缺少 masthead / sections 或字段不合规。');
+  }
   if (!normalized.era) normalized.era = eraResolution.era;
   return normalized;
 }
