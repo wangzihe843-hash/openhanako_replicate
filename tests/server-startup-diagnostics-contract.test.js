@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { createRequire } from "module";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { spawnSync } from "child_process";
 
+const require = createRequire(import.meta.url);
 const root = process.cwd();
+
+const {
+  buildLaunchFailureDialogDetail,
+  formatPortInUseStartupError,
+  isDesktopOwnedServerInfo,
+  verifyReusableServerInfo,
+} = require("../desktop/src/shared/server-lifecycle.cjs");
 
 describe("server startup diagnostics contract", () => {
   it("records child process identity when server startup times out without output", () => {
@@ -132,12 +141,16 @@ describe("server startup diagnostics contract", () => {
 
   it("reuses only trusted server-info after token health and server identity checks", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const lifecycleSource = fs.readFileSync(
+      path.join(root, "desktop", "src", "shared", "server-lifecycle.cjs"),
+      "utf-8",
+    );
 
     expect(mainSource).toContain("verifyReusableServerInfo");
-    expect(mainSource).toContain("/api/health");
-    expect(mainSource).toContain("/api/server/identity");
-    expect(mainSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
-    expect(mainSource).toContain("identity.studioId");
+    expect(lifecycleSource).toContain("/api/health");
+    expect(lifecycleSource).toContain("/api/server/identity");
+    expect(lifecycleSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
+    expect(lifecycleSource).toContain("identity.studioId");
   });
 
   it("does not terminate standalone servers that desktop only attached to", () => {
@@ -157,12 +170,17 @@ describe("server startup diagnostics contract", () => {
 
   it("surfaces structured port conflicts instead of burying them under GPU diagnostics", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const lifecycleSource = fs.readFileSync(
+      path.join(root, "desktop", "src", "shared", "server-lifecycle.cjs"),
+      "utf-8",
+    );
 
     expect(mainSource).toContain("parsePortInUseStartupError");
     expect(mainSource).toContain("extractRootServerStartupError");
     expect(mainSource).toContain("buildLaunchFailureDialogDetail");
-    expect(mainSource).toContain("const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs)");
-    expect(mainSource).toContain("return `${rootServerError}\\n\\n${tail}`");
+    expect(lifecycleSource).toContain("const rootServerError = structuredPortConflict");
+    expect(lifecycleSource).toContain("extractRootServerStartupError(serverLogs)");
+    expect(lifecycleSource).toContain("return `${rootServerError}\\n\\n${tail}`");
   });
 
   it("keeps native SQLite out of the server static import graph", () => {
@@ -175,5 +193,129 @@ describe("server startup diagnostics contract", () => {
     expect(agentSource.indexOf("[agent] 4. FactStore...")).toBeLessThan(
       agentSource.indexOf("new FactStore("),
     );
+  });
+
+  it("isDesktopOwnedServerInfo identifies desktop-owned vs standalone server-info", () => {
+    expect(isDesktopOwnedServerInfo({ ownerKind: "desktop", pid: 123 })).toBe(true);
+    expect(isDesktopOwnedServerInfo({ ownerKind: "standalone", pid: 123 })).toBe(false);
+    expect(isDesktopOwnedServerInfo({})).toBe(false);
+    expect(isDesktopOwnedServerInfo(null)).toBe(false);
+  });
+
+  it("formatPortInUseStartupError renders host/port/suggestions for the dialog", () => {
+    expect(formatPortInUseStartupError({
+      host: "127.0.0.1",
+      port: 14500,
+      networkMode: "loopback",
+      suggestions: ["Stop the other HanaAgent", "Free port 14500"],
+    })).toContain("PORT_IN_USE: 127.0.0.1:14500");
+    expect(formatPortInUseStartupError({
+      host: "0.0.0.0",
+      port: 14500,
+      networkMode: "lan",
+      suggestions: ["Bind to loopback"],
+    })).toMatch(/Bind to loopback/);
+  });
+
+  it("buildLaunchFailureDialogDetail prefers structured PORT_IN_USE over generic crash tail", () => {
+    const extractRootServerStartupError = () => null;
+    const err = {
+      startupError: {
+        code: "PORT_IN_USE",
+        host: "127.0.0.1",
+        port: 14500,
+        networkMode: "loopback",
+        suggestions: [],
+      },
+    };
+    const out = buildLaunchFailureDialogDetail({
+      err,
+      crashInfo: "tail of crash",
+      serverLogs: [],
+      extractRootServerStartupError,
+    });
+    expect(out).toContain("PORT_IN_USE: 127.0.0.1:14500");
+    expect(out).toContain("tail of crash");
+  });
+
+  it("buildLaunchFailureDialogDetail falls back to extractor when err lacks startupError", () => {
+    const extractRootServerStartupError = () => "EADDRINUSE: 0.0.0.0:14500";
+    const out = buildLaunchFailureDialogDetail({
+      err: new Error("server died"),
+      crashInfo: "x".repeat(1500),
+      serverLogs: ["[stderr] something"],
+      extractRootServerStartupError,
+    });
+    expect(out).toContain("EADDRINUSE: 0.0.0.0:14500");
+    expect(out).toMatch(/^EADDRINUSE/);
+  });
+
+  it("buildLaunchFailureDialogDetail keeps the tail alone when no root error available", () => {
+    const out = buildLaunchFailureDialogDetail({
+      err: new Error("anything"),
+      crashInfo: "raw tail",
+      serverLogs: [],
+      extractRootServerStartupError: () => null,
+    });
+    expect(out).toBe("raw tail");
+  });
+
+  it("verifyReusableServerInfo rejects info shapes that lack port/token/pid", async () => {
+    const v = await verifyReusableServerInfo({}, { currentVersion: "0.171.5" });
+    expect(v.reusable).toBe(false);
+    expect(v.reason).toMatch(/shape/);
+  });
+
+  it("verifyReusableServerInfo flags version mismatch as terminate-eligible", async () => {
+    const fetchFn = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => url.includes("/api/health")
+        ? { version: "0.99.0" }
+        : { studioId: "studio-x", version: "0.99.0" },
+    });
+    const v = await verifyReusableServerInfo(
+      { port: 14500, token: "tok", pid: 123, studioId: "studio-x", version: "0.99.0" },
+      { currentVersion: "0.171.5", fetchFn },
+    );
+    expect(v.reusable).toBe(false);
+    expect(v.trusted).toBe(true);
+    expect(v.terminate).toBe(true);
+    expect(v.reason).toMatch(/version/);
+  });
+
+  it("verifyReusableServerInfo flags studio identity mismatch but does not terminate", async () => {
+    const fetchFn = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => url.includes("/api/health")
+        ? { version: "0.171.5" }
+        : { studioId: "studio-DIFFERENT", version: "0.171.5" },
+    });
+    const v = await verifyReusableServerInfo(
+      { port: 14500, token: "tok", pid: 123, studioId: "studio-x", version: "0.171.5" },
+      { currentVersion: "0.171.5", fetchFn },
+    );
+    expect(v.reusable).toBe(false);
+    expect(v.trusted).toBe(true);
+    expect(v.terminate).toBe(false);
+    expect(v.reason).toMatch(/studio/);
+  });
+
+  it("verifyReusableServerInfo accepts matching version + studio", async () => {
+    const fetchFn = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => url.includes("/api/health")
+        ? { version: "0.171.5" }
+        : { studioId: "studio-x", version: "0.171.5" },
+    });
+    const v = await verifyReusableServerInfo(
+      { port: 14500, token: "tok", pid: 123, studioId: "studio-x", version: "0.171.5" },
+      { currentVersion: "0.171.5", fetchFn },
+    );
+    expect(v.reusable).toBe(true);
+    expect(v.trusted).toBe(true);
+    expect(v.terminate).toBe(false);
   });
 });

@@ -80,8 +80,20 @@ const {
   renderScreenshotMarkdownArticle,
   renderScreenshotCodeArticle,
 } = require("./src/shared/screenshot-markdown.cjs");
-
-const APP_USER_MODEL_ID = "com.hanako.app"; // Keep in sync with package.json build.appId.
+const {
+  buildSelectFilesDialogOptions,
+} = require("./src/shared/select-files-dialog.cjs");
+const {
+  buildLaunchFailureDialogDetail,
+  formatPortInUseStartupError,
+  isDesktopOwnedServerInfo,
+  verifyReusableServerInfo,
+} = require("./src/shared/server-lifecycle.cjs");
+const {
+  APP_USER_MODEL_ID,
+  titleBarOpts: titleBarOptsShared,
+  windowIconOpts: windowIconOptsShared,
+} = require("./src/shared/window-chrome.cjs");
 
 // preload 缺失时 Electron 会静默忽略，renderer 拿不到 window.hana →
 // onboarding/主窗口白屏且无前端报错。此处硬崩，拒绝以不可用状态启动。
@@ -408,13 +420,7 @@ function killPid(pid, force = false) {
 
 /** 跨平台标题栏选项：macOS hiddenInset + 红绿灯，Windows/Linux 无框 */
 function windowIconOpts() {
-  if (process.platform === "win32") {
-    return { icon: path.join(__dirname, "src", "icon.ico") };
-  }
-  if (process.platform === "linux") {
-    return { icon: path.join(__dirname, "src", "icon.png") };
-  }
-  return {};
+  return windowIconOptsShared({ desktopDir: __dirname });
 }
 
 function framelessWindowOpts() {
@@ -422,11 +428,10 @@ function framelessWindowOpts() {
 }
 
 function titleBarOpts(trafficLight = { x: 16, y: 16 }) {
-  if (process.platform === "darwin") {
-    return { titleBarStyle: "hiddenInset", trafficLightPosition: trafficLight };
-  }
-  // Windows/Linux：无框窗口 + 前端自绘 window controls
-  return framelessWindowOpts();
+  const base = titleBarOptsShared({ trafficLight });
+  if (process.platform === "darwin") return base;
+  // Windows/Linux：无框窗口 + 前端自绘 window controls，并把 BrowserWindow icon 一起带上
+  return { ...base, ...windowIconOpts() };
 }
 
 function resolveConcreteTheme(rawTheme) {
@@ -660,69 +665,6 @@ function pollServerInfo(infoPath, {
   });
 }
 
-async function verifyReusableServerInfo(existingInfo) {
-  const port = Number(existingInfo?.port);
-  const token = typeof existingInfo?.token === "string" ? existingInfo.token : "";
-  const pid = Number(existingInfo?.pid);
-  if (!Number.isInteger(port) || port <= 0 || !token || !Number.isInteger(pid)) {
-    return { reusable: false, trusted: false, terminate: false, reason: "invalid server-info shape" };
-  }
-
-  const currentVersion = app.getVersion();
-  const headers = { Authorization: `Bearer ${existingInfo.token}` };
-  let health = null;
-  let identity = null;
-  try {
-    const healthRes = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      headers,
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!healthRes.ok) {
-      return { reusable: false, trusted: false, terminate: false, reason: `health returned ${healthRes.status}` };
-    }
-    health = await healthRes.json().catch(() => null);
-  } catch (err) {
-    return { reusable: false, trusted: false, terminate: false, reason: `health failed: ${err.message}` };
-  }
-
-  try {
-    const identityRes = await fetch(`http://127.0.0.1:${port}/api/server/identity`, {
-      headers,
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!identityRes.ok) {
-      return { reusable: false, trusted: false, terminate: false, reason: `identity returned ${identityRes.status}` };
-    }
-    identity = await identityRes.json().catch(() => null);
-  } catch (err) {
-    return { reusable: false, trusted: false, terminate: false, reason: `identity failed: ${err.message}` };
-  }
-
-  if (!identity || !identity.studioId) {
-    return { reusable: false, trusted: false, terminate: false, reason: "identity missing studioId" };
-  }
-
-  const healthVersion = health?.version;
-  const identityVersion = identity?.version;
-  const serverInfoVersion = existingInfo.version;
-  const versionMatches = (!serverInfoVersion || serverInfoVersion === currentVersion)
-    && (!healthVersion || healthVersion === currentVersion)
-    && (!identityVersion || identityVersion === currentVersion);
-  if (!versionMatches) {
-    return { reusable: false, trusted: true, terminate: true, reason: "version mismatch", health, identity };
-  }
-
-  if (existingInfo.studioId && existingInfo.studioId !== identity.studioId) {
-    return { reusable: false, trusted: true, terminate: false, reason: "studio identity mismatch", health, identity };
-  }
-
-  return { reusable: true, trusted: true, terminate: false, reason: "ok", health, identity };
-}
-
-function isDesktopOwnedServerInfo(info) {
-  return info?.ownerKind === "desktop";
-}
-
 async function startServer() {
   const serverInfoPath = path.join(hanakoHome, "server-info.json");
 
@@ -738,7 +680,7 @@ async function startServer() {
     })();
 
     if (pidAlive) {
-      const verification = await verifyReusableServerInfo(existingInfo);
+      const verification = await verifyReusableServerInfo(existingInfo, { currentVersion: app.getVersion() });
       if (verification.reusable) {
         console.log(`[desktop] 复用已运行的 server，端口: ${existingInfo.port}, 版本: ${existingInfo.version || "unknown"}, studio: ${verification.identity.studioId}`);
         serverPort = existingInfo.port;
@@ -1103,27 +1045,6 @@ function buildServerCrashDiagnostics() {
   items.push(buildGpuStartupDiagnostics({ hanakoHome, policy: gpuStartupPolicy, app }));
 
   return items.join("\n");
-}
-
-function formatPortInUseStartupError(conflict) {
-  const host = conflict?.host || "unknown";
-  const port = conflict?.port ?? "unknown";
-  const networkMode = conflict?.networkMode || "unknown";
-  const suggestions = Array.isArray(conflict?.suggestions) && conflict.suggestions.length
-    ? `\n\n${conflict.suggestions.map(item => `- ${item}`).join("\n")}`
-    : "";
-  return `PORT_IN_USE: ${host}:${port} is already in use (network mode: ${networkMode}).${suggestions}`;
-}
-
-function buildLaunchFailureDialogDetail(err, crashInfo) {
-  const structuredPortConflict = err?.startupError?.code === "PORT_IN_USE"
-    ? formatPortInUseStartupError(err.startupError)
-    : null;
-  const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs);
-  const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
-  if (!rootServerError) return tail;
-  if (tail.includes(rootServerError)) return tail;
-  return `${rootServerError}\n\n${tail}`;
 }
 
 function writeCrashLog(errorMessage) {
@@ -2971,10 +2892,9 @@ wrapIpcBestEffortHandler("select-folder", async (event) => {
 wrapIpcBestEffortHandler("select-files", async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   if (!win) return [];
-  const result = await dialog.showOpenDialog(win, {
-    properties: ["openFile", "multiSelections"],
+  const result = await dialog.showOpenDialog(win, buildSelectFilesDialogOptions({
     title: mt("dialog.selectFiles", null, "Select Files"),
-  });
+  }));
   if (result.canceled || !result.filePaths.length) return [];
   return result.filePaths;
 });
@@ -3592,7 +3512,12 @@ app.whenReady().then(async () => {
     }
     // 写入 crash.log 并获取详细日志
     const crashInfo = writeCrashLog(err.message);
-    const detail = buildLaunchFailureDialogDetail(err, crashInfo);
+    const detail = buildLaunchFailureDialogDetail({
+      err,
+      crashInfo,
+      serverLogs: _serverLogs,
+      extractRootServerStartupError,
+    });
     dialog.showErrorBox(
       mt("dialog.launchFailedTitle", null, "HanaAgent Launch Failed"),
       mt("dialog.launchFailedBody", {

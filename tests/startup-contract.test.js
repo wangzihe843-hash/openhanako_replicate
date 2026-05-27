@@ -1,13 +1,47 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "node:module";
 import viteServerConfig from "../vite.config.server.js";
 import { applyDevEnvironment } from "../scripts/dev-env.js";
+import { ensureHanaPiSdkDirs } from "../shared/hana-runtime-paths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
+
+const requireCjs = createRequire(import.meta.url);
+const { configureClientSingleInstance } = requireCjs(
+  "../desktop/src/shared/single-instance-lock.cjs",
+);
+
+function listDirsRecursive(root) {
+  const out = [];
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        out.push(path.relative(root, path.join(dir, entry.name)));
+        walk(path.join(dir, entry.name));
+      }
+    }
+  }
+  walk(root);
+  return out.sort();
+}
+
+const tmpDirsToCleanup = [];
+afterEach(() => {
+  while (tmpDirsToCleanup.length) {
+    const dir = tmpDirsToCleanup.pop();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup; Windows can race file handles
+    }
+  }
+});
 
 describe("local startup contract", () => {
   it("start scripts build theme bundle before launching Electron", () => {
@@ -108,5 +142,105 @@ describe("local startup contract", () => {
 
     expect(buildServer).toContain("--ignore-scripts=false");
     expect(buildServer).toContain("runBetterSqliteRuntimeSmokeIfNeeded()");
+  });
+
+  it("applyDevEnvironment writes HANA_DEV_NODE_BIN from opts.nodeBin and overrides any inherited value", () => {
+    // dev-env.js intentionally treats opts.nodeBin (defaulting to process.execPath) as
+    // authoritative so the spawned main process always runs against the launcher's Node,
+    // not whatever the parent shell happened to inherit. Document that contract here
+    // because an `||` fallback would silently re-introduce a stale child runtime.
+    const withOpts = applyDevEnvironment(
+      { HANA_DEV_NODE_BIN: "/stale/inherited/node" },
+      { nodeBin: "/tmp/hana-node" },
+    );
+    expect(withOpts.HANA_DEV_NODE_BIN).toBe("/tmp/hana-node");
+
+    const defaulted = applyDevEnvironment({});
+    expect(defaulted.HANA_DEV_NODE_BIN).toBe(process.execPath);
+  });
+
+  it("configureClientSingleInstance triggers onSecondInstance when Electron emits second-instance", () => {
+    const calls = [];
+    const handlers = {};
+    const fakeApp = {
+      setPath: (key, value) => {
+        calls.push(["setPath", key, value]);
+      },
+      getPath: (key) => (key === "appData" ? "/tmp/appdata" : ""),
+      requestSingleInstanceLock: () => true,
+      on: (event, fn) => {
+        handlers[event] = fn;
+      },
+      exit: () => {
+        calls.push(["exit"]);
+      },
+      quit: () => {
+        calls.push(["quit"]);
+      },
+    };
+    let secondInstanceCalls = 0;
+    const got = configureClientSingleInstance(fakeApp, {
+      hanakoHome: "/tmp/hana-home",
+      defaultHome: "/home/user/.hanako",
+      onSecondInstance: () => {
+        secondInstanceCalls += 1;
+      },
+    });
+    expect(got).toBe(true);
+    expect(typeof handlers["second-instance"]).toBe("function");
+    expect(calls.some((c) => c[0] === "exit" || c[0] === "quit")).toBe(false);
+
+    handlers["second-instance"]();
+    handlers["second-instance"]();
+    expect(secondInstanceCalls).toBe(2);
+  });
+
+  it("configureClientSingleInstance exits the duplicate client when the lock cannot be acquired", () => {
+    const calls = [];
+    const fakeApp = {
+      setPath: () => {},
+      getPath: () => "/tmp/appdata",
+      requestSingleInstanceLock: () => false,
+      on: () => {
+        throw new Error("should not subscribe when no lock");
+      },
+      exit: () => {
+        calls.push(["exit"]);
+      },
+      quit: () => {
+        calls.push(["quit"]);
+      },
+    };
+    let secondInstanceCalls = 0;
+    const got = configureClientSingleInstance(fakeApp, {
+      hanakoHome: "/tmp/hana-home",
+      defaultHome: "/home/user/.hanako",
+      onSecondInstance: () => {
+        secondInstanceCalls += 1;
+      },
+    });
+    expect(got).toBe(false);
+    expect(calls.some((c) => c[0] === "exit")).toBe(true);
+    expect(secondInstanceCalls).toBe(0);
+  });
+
+  it("ensureHanaPiSdkDirs creates the .pi/agent and .pi/project subdirs under HANA_HOME and is idempotent", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-pi-sdk-dirs-"));
+    tmpDirsToCleanup.push(tmpHome);
+
+    ensureHanaPiSdkDirs(tmpHome);
+
+    const agentDir = path.join(tmpHome, ".pi", "agent");
+    const projectDir = path.join(tmpHome, ".pi", "project");
+    expect(fs.statSync(agentDir).isDirectory()).toBe(true);
+    expect(fs.statSync(projectDir).isDirectory()).toBe(true);
+
+    const before = listDirsRecursive(tmpHome);
+    expect(before).toEqual([".pi", path.join(".pi", "agent"), path.join(".pi", "project")].sort());
+
+    // Second call must be a no-op: must not throw and must not change the tree.
+    expect(() => ensureHanaPiSdkDirs(tmpHome)).not.toThrow();
+    const after = listDirsRecursive(tmpHome);
+    expect(after).toEqual(before);
   });
 });
