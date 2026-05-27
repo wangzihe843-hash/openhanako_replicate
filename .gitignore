@@ -33,6 +33,7 @@ dist/
 dist-server/
 dist-server-bundle/
 dist-computer-use/
+dist-sandbox/
 desktop/main.bundle.cjs
 desktop/preload.bundle.cjs
 .cache/
@@ -40,6 +41,9 @@ desktop/dist-renderer/
 desktop/native/**/.build/
 vendor/
 inbox/
+# MSVC 编译副产物（HanaWindowsSandboxHelper 编译时落在 repo 根）
+/main.obj
+*.pdb
 
 # 运行时 / 依赖
 # ═══════════════════════════════════════════
