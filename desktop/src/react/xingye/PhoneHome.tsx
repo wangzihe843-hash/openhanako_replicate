@@ -4,6 +4,7 @@ import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import { tryRelockHiddenFolderAfterHeartbeat } from './xingye-files-secret-heartbeat';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -307,6 +308,11 @@ export function PhoneHome({
       const composed = [statusLine, detail, eventsSummary].filter(Boolean).join(' · ');
       setHeartbeatStatus(composed);
       rememberDeskHeartbeatUiOutcome(agent.id, composed);
+      /**
+       * 心跳成功后让隐藏文件夹以极小概率自动重锁（搭车 agent 的"巡检"节奏）。
+       * best-effort：内部已 swallow 所有错误，不阻塞心跳 UI。
+       */
+      void tryRelockHiddenFolderAfterHeartbeat(agent);
     } catch (error) {
       const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
       setHeartbeatStatus(fail);
@@ -392,10 +398,6 @@ export function PhoneHome({
               </span>
             </button>
           ))}
-        </section>
-
-        <section className={styles.phoneEmptyStateCard}>
-          日记、占卜与 MM Chat 会话列表为按角色本地持久化；MM Chat 仍未接模型。相册/音频仍为占位；短信与通讯录保持原有本地模拟逻辑。
         </section>
       </div>
     </div>

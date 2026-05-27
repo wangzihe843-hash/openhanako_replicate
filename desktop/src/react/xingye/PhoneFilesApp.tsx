@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
 import styles from './XingyeShell.module.css';
 import { generateFilesDraftWithAI } from './xingye-files-ai';
 import {
@@ -7,18 +8,47 @@ import {
   confirmFileDraft,
   deleteFileEntry,
   discardFileDraft,
+  DuplicateFileEntryError,
   ensureDefaultFileFolders,
   listFileDrafts,
   listFileEntries,
   listFileFolders,
   resolveFolderIdFromHint,
+  resolveTargetEntry,
   updateFileEntry,
+  type XingyeFileDraftPatch,
   type XingyePendingFileDraft,
   type XingyeFileEntry,
   type XingyeFileEntryDraft,
   type XingyeFileFolder,
 } from './xingye-files-store';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import { listLoreEntries } from './xingye-lore-store';
+import { getVirtualContacts } from './xingye-phone-store';
+import { getXingyePersistenceStorage } from './xingye-persistence';
+import {
+  collectHiddenPasswordCandidates,
+  pickRandomCandidate,
+} from './xingye-files-secret-passwords';
+import {
+  appendHiddenEntry,
+  attemptUnlock,
+  deleteHiddenEntry,
+  listHiddenEntries,
+  markHiddenFolderSeedGenerated,
+  readHiddenFolderState,
+  setHiddenFolderPassword,
+  type XingyeHiddenFileEntry,
+  type XingyeHiddenFileEntryKind,
+  type XingyeHiddenFolderState,
+} from './xingye-files-secret-store';
+import { generateHiddenSeedsWithAI } from './xingye-files-secret-ai';
+import {
+  HiddenFolderRow,
+  HiddenFolderView,
+  HiddenPasswordModal,
+  getWrongPasswordReaction,
+} from './PhoneFilesHiddenFolder';
 
 export interface PhoneFilesAppProps {
   ownerAgent: Agent | null;
@@ -209,6 +239,19 @@ function bodyLineCount(body: string): number {
 }
 
 /**
+ * 隐藏文件夹 entry「去和 TA 聊聊」拼 chat text 时用的 kind 中文短语。
+ * 内部独立维护一份是为了把 chat text 的措辞和 PhoneFilesHiddenFolder 内的 UI badge
+ * 解耦——两边在将来可能分化（badge 要短，chat text 可以更具语义）。
+ */
+const HIDDEN_KIND_CHAT_LABEL: Record<XingyeHiddenFileEntryKind, string> = {
+  weakness: '弱点',
+  guilty_pleasure: '不光彩的喜好',
+  secret_taste: '说不出口的偏好',
+  secret_plan: '不可告人的计划',
+  manual: '手记',
+};
+
+/**
  * 把 body 按 \n\n 切段渲染成 <p>；以 `> ` 开头的行包成 <blockquote>。
  */
 function renderPaperBody(body: string): ReactNode {
@@ -266,14 +309,68 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFolderName, setAiFolderName] = useState<string | null>(null);
   /**
-   * 「待确认草稿」行内编辑缓冲。Key = draft.id。
+   * 「待确认草稿」行内编辑缓冲（**仅 action='add' 用**）。Key = draft.id。
    * folderId 可由用户改（下拉选 folder）；title/body 也能编辑。
    */
   const [pendingDraftEdits, setPendingDraftEdits] = useState<
     Record<string, { title: string; body: string; folderId: string }>
   >({});
+  /**
+   * 「待确认草稿」行内编辑缓冲（**仅 action='update' 用**）。Key = draft.id。
+   * 用户可在 update 卡片里编辑 patch 字段（bodyAppend / summary / title / tags / folderId）。
+   */
+  const [pendingDraftUpdateEdits, setPendingDraftUpdateEdits] = useState<
+    Record<string, XingyeFileDraftPatch>
+  >({});
   const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
   const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
+  /**
+   * 手动新建命中已有 entry 时，存被命中的老 entry；UI 据此弹 modal 让用户决定
+   * 「打开那条编辑 / 仍然新建一条 / 取消」。null 表示无冲突。
+   */
+  const [duplicateHit, setDuplicateHit] = useState<XingyeFileEntry | null>(null);
+  /**
+   * 用户在 duplicate modal 上点「仍然新建一条」时设为 true，让随后的 handleSave
+   * 用 skipDedupe=true 调 appendFileEntry。**用 ref 不用 state**：React state
+   * 异步、setForceCreateOverride 后立即 handleSave() 闭包里仍是旧值；ref 立即同步。
+   * 一次性开关：handleSave 读到 true 后 reset 回 false。
+   */
+  const forceCreateOverrideRef = useRef(false);
+
+  // ── 隐藏文件夹（抽屉最底层）状态 ──
+  const userName = useStore((s) => s.userName);
+  const [hiddenState, setHiddenState] = useState<XingyeHiddenFolderState | null>(null);
+  const [hiddenEntries, setHiddenEntries] = useState<XingyeHiddenFileEntry[]>([]);
+  const [hiddenPwModalOpen, setHiddenPwModalOpen] = useState(false);
+  const [hiddenAttemptCount, setHiddenAttemptCount] = useState(0);
+  const [hiddenReaction, setHiddenReaction] = useState<string | null>(null);
+  const [hiddenShake, setHiddenShake] = useState(false);
+  const [hiddenPwBusy, setHiddenPwBusy] = useState(false);
+  const [hiddenPwError, setHiddenPwError] = useState<string | null>(null);
+  const [inHiddenView, setInHiddenView] = useState(false);
+  const [hiddenSeedBusy, setHiddenSeedBusy] = useState(false);
+  const [hiddenSeedError, setHiddenSeedError] = useState<string | null>(null);
+  /** 「我也想加一条」弹窗状态。 */
+  const [hiddenManualOpen, setHiddenManualOpen] = useState(false);
+  const [hiddenManualTitle, setHiddenManualTitle] = useState('');
+  const [hiddenManualBody, setHiddenManualBody] = useState('');
+  const [hiddenManualKind, setHiddenManualKind] = useState<XingyeHiddenFileEntryKind>('manual');
+  const [hiddenManualBusy, setHiddenManualBusy] = useState(false);
+  const [hiddenManualError, setHiddenManualError] = useState<string | null>(null);
+
+  /**
+   * 「去和 TA 聊聊」入口的反馈状态。和购物/记账同款：点完按钮后 4s 自动复位。
+   * 同一个 state 既给主资料柜的文件详情用，也给隐藏文件夹列表里的 entry 卡用——
+   * 两边互斥（主资料柜进了详情就看不到抽屉列表，反之亦然），不会冲突。
+   * value = `'file:' + entryId` 或 `'hidden:' + entryId`，让两边的 UI 各认各的。
+   */
+  const [sharedToChatKey, setSharedToChatKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sharedToChatKey) return undefined;
+    const timer = setTimeout(() => setSharedToChatKey(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatKey]);
 
   const reload = useCallback(async () => {
     if (!ownerAgentId) {
@@ -281,6 +378,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setEntries([]);
       setPendingDrafts([]);
       setPendingDraftEdits({});
+      setPendingDraftUpdateEdits({});
       return;
     }
     setListLoading(true);
@@ -301,20 +399,80 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     }
   }, [ownerAgentId]);
 
+  /**
+   * 读取隐藏文件夹 state + entries。如果 state 还没有密码（首次进入），
+   * 用一条随机候选自动锁定——这样用户进来就有「上锁」感，需要先猜对密码。
+   *
+   * 候选池为空（极端情况：没角色名、没用户名、没 NPC、没联系人）→ 跳过锁定，
+   * 让 UI 显示一个 disabled 的"暂无可用候选密码"提示。
+   */
+  const reloadHidden = useCallback(async () => {
+    if (!ownerAgentId) {
+      setHiddenState(null);
+      setHiddenEntries([]);
+      setInHiddenView(false);
+      return;
+    }
+    try {
+      const [state, entries] = await Promise.all([
+        readHiddenFolderState(ownerAgentId),
+        listHiddenEntries(ownerAgentId),
+      ]);
+      let stateOut = state;
+      if (!state.passwordHash) {
+        const storage = getXingyePersistenceStorage();
+        const candidates = collectHiddenPasswordCandidates({
+          agent: ownerAgent,
+          profile: ownerProfile,
+          userName,
+          loreEntries: listLoreEntries(ownerAgentId, storage),
+          virtualContacts: getVirtualContacts(ownerAgentId, storage),
+        });
+        const picked = pickRandomCandidate(candidates);
+        if (picked) {
+          try {
+            stateOut = await setHiddenFolderPassword(ownerAgentId, {
+              password: picked.value,
+              candidateLabel: picked.label,
+            });
+          } catch (err) {
+            console.warn('[PhoneFilesApp] init hidden lock failed:', err);
+          }
+        }
+      }
+      setHiddenState(stateOut);
+      setHiddenEntries(entries);
+    } catch (err) {
+      console.warn('[PhoneFilesApp] reloadHidden failed:', err);
+    }
+  }, [ownerAgentId, ownerAgent, ownerProfile, userName]);
+
+  /**
+   * 草稿编辑缓冲的统一访问入口。
+   *
+   * - action='add'：返回 `{ kind: 'add', title, body, folderId }`，沿用既有渲染逻辑。
+   * - action='update'：返回 `{ kind: 'update', patch, target }`，patch 是用户在 UI 上
+   *   编辑过的最终态（缺省取 draft.patch）；target 是 resolveTargetEntry 解析出的老 entry
+   *   （可能为 null —— 草稿写入后用户手动删了 target；UI 据此显示提示）。
+   */
   const pendingDraftWorkingValue = useCallback(
     (d: XingyePendingFileDraft) => {
+      if (d.action === 'update') {
+        const editedPatch = pendingDraftUpdateEdits[d.id] ?? d.patch ?? {};
+        const target = resolveTargetEntry(entries, d);
+        return { kind: 'update' as const, patch: editedPatch, target };
+      }
       const edit = pendingDraftEdits[d.id];
-      if (edit) return edit;
-      const resolvedFolderId = folders.length > 0
-        ? resolveFolderIdFromHint(folders, d.folderHint)
-        : '';
+      const folderId = edit?.folderId
+        ?? (folders.length > 0 ? resolveFolderIdFromHint(folders, d.folderHint) : '');
       return {
-        title: d.title,
-        body: d.body,
-        folderId: resolvedFolderId,
+        kind: 'add' as const,
+        title: edit?.title ?? d.title,
+        body: edit?.body ?? d.body,
+        folderId,
       };
     },
-    [pendingDraftEdits, folders],
+    [pendingDraftEdits, pendingDraftUpdateEdits, folders, entries],
   );
 
   const handlePendingDraftFieldChange = (
@@ -333,24 +491,47 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     });
   };
 
+  const handlePendingDraftPatchChange = (
+    draftId: string,
+    patchDelta: Partial<XingyeFileDraftPatch>,
+  ) => {
+    setPendingDraftUpdateEdits((prev) => {
+      const d = pendingDrafts.find((entry) => entry.id === draftId);
+      if (!d || d.action !== 'update') return prev;
+      const base = prev[draftId] ?? d.patch ?? {};
+      return { ...prev, [draftId]: { ...base, ...patchDelta } };
+    });
+  };
+
+  const clearDraftEdits = (draftId: string) => {
+    setPendingDraftEdits((prev) => {
+      if (!(draftId in prev)) return prev;
+      const { [draftId]: _omitted, ...rest } = prev;
+      return rest;
+    });
+    setPendingDraftUpdateEdits((prev) => {
+      if (!(draftId in prev)) return prev;
+      const { [draftId]: _omitted, ...rest } = prev;
+      return rest;
+    });
+  };
+
   const handleConfirmPendingDraft = async (d: XingyePendingFileDraft) => {
     if (!ownerAgentId) return;
     setPendingDraftBusyId(d.id);
     setPendingDraftError(null);
     try {
       const working = pendingDraftWorkingValue(d);
-      const entry = await confirmFileDraft(ownerAgentId, d.id, {
-        folderId: working.folderId || undefined,
-        title: working.title,
-        body: working.body,
-      });
+      const entry = working.kind === 'update'
+        ? await confirmFileDraft(ownerAgentId, d.id, { patch: working.patch })
+        : await confirmFileDraft(ownerAgentId, d.id, {
+            folderId: working.folderId || undefined,
+            title: working.title,
+            body: working.body,
+          });
       setEntries((prev) => [entry, ...prev.filter((p) => p.id !== entry.id)]);
       setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
-      setPendingDraftEdits((prev) => {
-        if (!(d.id in prev)) return prev;
-        const { [d.id]: _omitted, ...rest } = prev;
-        return rest;
-      });
+      clearDraftEdits(d.id);
       if (folders.length === 0) {
         await reload();
       }
@@ -372,11 +553,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       const ok = await discardFileDraft(ownerAgentId, d.id);
       if (ok) {
         setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
-        setPendingDraftEdits((prev) => {
-          if (!(d.id in prev)) return prev;
-          const { [d.id]: _omitted, ...rest } = prev;
-          return rest;
-        });
+        clearDraftEdits(d.id);
       } else {
         await reload();
       }
@@ -398,6 +575,23 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    void reloadHidden();
+  }, [reloadHidden]);
+
+  /** 切换 agent 时也要重置隐藏文件夹 UI 状态。 */
+  useEffect(() => {
+    setHiddenPwModalOpen(false);
+    setHiddenAttemptCount(0);
+    setHiddenReaction(null);
+    setHiddenShake(false);
+    setHiddenPwError(null);
+    setInHiddenView(false);
+    setHiddenSeedError(null);
+    setHiddenManualOpen(false);
+    setHiddenManualError(null);
+  }, [ownerAgentId]);
 
   const selectedFolder = useMemo(
     () => (selectedFolderId ? folders.find((f) => f.id === selectedFolderId) ?? null : null),
@@ -490,6 +684,12 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
           name: f.name,
           description: f.description,
         })),
+        existingEntries: entries.map((e) => ({
+          id: e.id,
+          folderName: folders.find((f) => f.id === e.folderId)?.name ?? '（其它）',
+          title: e.title,
+          summary: e.summary,
+        })),
         userIntent: draftIntent.trim(),
       });
       setDraftTitle(result.title);
@@ -502,6 +702,173 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
       setAiBusy(false);
+    }
+  };
+
+  // ── 隐藏文件夹 handlers ──
+
+  const openHiddenPasswordModal = () => {
+    setHiddenPwModalOpen(true);
+    setHiddenReaction(null);
+    setHiddenPwError(null);
+  };
+
+  const closeHiddenPasswordModal = () => {
+    setHiddenPwModalOpen(false);
+    setHiddenPwError(null);
+  };
+
+  const handleHiddenPasswordAttempt = async (attempt: string) => {
+    if (!ownerAgentId) return;
+    setHiddenPwBusy(true);
+    setHiddenPwError(null);
+    try {
+      const { ok, state } = await attemptUnlock(ownerAgentId, attempt);
+      if (ok) {
+        setHiddenState(state);
+        setHiddenPwModalOpen(false);
+        setHiddenReaction(null);
+        setHiddenAttemptCount(0);
+        setInHiddenView(true);
+      } else {
+        const nextAttempt = hiddenAttemptCount + 1;
+        setHiddenAttemptCount(nextAttempt);
+        const reaction = getWrongPasswordReaction({
+          agentName: ownerProfile?.displayName?.trim() || ownerAgent?.name || 'TA',
+          attemptCount: nextAttempt,
+          gender: ownerProfile?.gender,
+        });
+        setHiddenReaction(reaction);
+        setHiddenShake(true);
+        window.setTimeout(() => setHiddenShake(false), 500);
+      }
+    } catch (err) {
+      setHiddenPwError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHiddenPwBusy(false);
+    }
+  };
+
+  const handleHiddenRelock = async () => {
+    if (!ownerAgentId || !ownerAgent) return;
+    const storage = getXingyePersistenceStorage();
+    const candidates = collectHiddenPasswordCandidates({
+      agent: ownerAgent,
+      profile: ownerProfile,
+      userName,
+      loreEntries: listLoreEntries(ownerAgentId, storage),
+      virtualContacts: getVirtualContacts(ownerAgentId, storage),
+    });
+    const picked = pickRandomCandidate(candidates, {
+      excludeValue: undefined,
+    });
+    if (!picked) {
+      /** 没有候选密码——把状态置回锁定但不换密码（保留旧 hash）。 */
+      try {
+        const previous = await readHiddenFolderState(ownerAgentId);
+        if (previous.passwordHash) {
+          const reloaded = await setHiddenFolderPassword(ownerAgentId, {
+            password: '__none__',
+            candidateLabel: previous.candidateLabel,
+          });
+          setHiddenState(reloaded);
+        }
+      } catch (err) {
+        console.warn('relock without candidates failed:', err);
+      }
+      setInHiddenView(false);
+      return;
+    }
+    try {
+      const next = await setHiddenFolderPassword(ownerAgentId, {
+        password: picked.value,
+        candidateLabel: picked.label,
+      });
+      setHiddenState(next);
+      setInHiddenView(false);
+    } catch (err) {
+      console.warn('manual relock failed:', err);
+    }
+  };
+
+  const handleGenerateHiddenSeeds = async () => {
+    if (!ownerAgentId || !ownerAgent || hiddenSeedBusy) return;
+    setHiddenSeedBusy(true);
+    setHiddenSeedError(null);
+    try {
+      const storage = getXingyePersistenceStorage();
+      const drafts = await generateHiddenSeedsWithAI({
+        agent: ownerAgent,
+        profile: ownerProfile,
+        loreEntries: listLoreEntries(ownerAgentId, storage),
+        virtualContacts: getVirtualContacts(ownerAgentId, storage),
+        count: 3,
+      });
+      const appended: XingyeHiddenFileEntry[] = [];
+      for (const draft of drafts) {
+        const entry = await appendHiddenEntry(ownerAgentId, {
+          kind: draft.kind,
+          title: draft.title,
+          body: draft.body,
+          source: 'ai_seed',
+        });
+        appended.push(entry);
+      }
+      const next = await markHiddenFolderSeedGenerated(ownerAgentId);
+      setHiddenState(next);
+      setHiddenEntries((prev) => [...appended, ...prev]);
+    } catch (err) {
+      setHiddenSeedError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHiddenSeedBusy(false);
+    }
+  };
+
+  const openHiddenManual = () => {
+    setHiddenManualOpen(true);
+    setHiddenManualTitle('');
+    setHiddenManualBody('');
+    setHiddenManualKind('manual');
+    setHiddenManualError(null);
+  };
+
+  const handleSaveHiddenManual = async () => {
+    if (!ownerAgentId || hiddenManualBusy) return;
+    const title = hiddenManualTitle.trim();
+    if (!title) {
+      setHiddenManualError('标题不能为空。');
+      return;
+    }
+    setHiddenManualBusy(true);
+    setHiddenManualError(null);
+    try {
+      const entry = await appendHiddenEntry(ownerAgentId, {
+        kind: hiddenManualKind,
+        title,
+        body: hiddenManualBody,
+        source: 'manual',
+      });
+      setHiddenEntries((prev) => [entry, ...prev]);
+      setHiddenManualOpen(false);
+    } catch (err) {
+      setHiddenManualError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHiddenManualBusy(false);
+    }
+  };
+
+  const handleDeleteHiddenEntry = async (entry: XingyeHiddenFileEntry) => {
+    if (!ownerAgentId) return;
+    if (!window.confirm('确定删掉这条？删了 TA 也不会写回来。')) return;
+    try {
+      const ok = await deleteHiddenEntry(ownerAgentId, entry.id);
+      if (ok) {
+        setHiddenEntries((prev) => prev.filter((e) => e.id !== entry.id));
+      } else {
+        await reloadHidden();
+      }
+    } catch (err) {
+      console.warn('delete hidden entry failed:', err);
     }
   };
 
@@ -537,7 +904,22 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
           tags: parseTagsInput(draftTags),
           source: draftSource.trim() || undefined,
         };
-        const row = await appendFileEntry(ownerAgentId, draft);
+        const shouldSkipDedupe = forceCreateOverrideRef.current;
+        let row: XingyeFileEntry;
+        try {
+          row = await appendFileEntry(ownerAgentId, draft, {
+            knownEntries: entries,
+            skipDedupe: shouldSkipDedupe,
+          });
+        } catch (err) {
+          if (err instanceof DuplicateFileEntryError) {
+            setDuplicateHit(err.existing);
+            setSaveBusy(false);
+            return;
+          }
+          throw err;
+        }
+        if (shouldSkipDedupe) forceCreateOverrideRef.current = false;
         setEntries((prev) => [row, ...prev.filter((p) => p.id !== row.id)]);
         setSelectedEntryId(row.id);
       } else {
@@ -566,6 +948,64 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setSaveBusy(false);
     }
   };
+
+  /**
+   * 主资料柜文件详情「去和 TA 聊聊」：把当前条目的「所属文件夹路径 + 标题 + tags +
+   * 修改时间 + source + 全量正文」拼成 quote text，写到 stagedChatQuote 全局槽。
+   * sourceKind: 'files'。不导航——用户自己挑聊天目的地。
+   */
+  const handleShareFileToChat = useCallback(
+    (entry: XingyeFileEntry) => {
+      const folderName = folders.find((f) => f.id === entry.folderId)?.name ?? '—';
+      const lines: string[] = [];
+      lines.push(`资料柜 › ${folderName}`);
+      lines.push(`《${entry.title}》`);
+      if (entry.tags && entry.tags.length > 0) {
+        lines.push(`标签：${entry.tags.map((t) => `#${t}`).join(' ')}`);
+      }
+      if (entry.source) lines.push(`来源：${entry.source}`);
+      lines.push(`修改于 ${relativeTime(entry.updatedAt ?? entry.createdAt)}`);
+      if (entry.body) {
+        lines.push('');
+        lines.push(entry.body);
+      }
+      const text = lines.join('\n').trim();
+      if (!text) return;
+      useStore.getState().stageChatQuote({
+        text,
+        sourceTitle: `资料柜 · ${entry.title}`,
+        sourceKind: 'files',
+        charCount: text.length,
+        updatedAt: Date.now(),
+      });
+      setSharedToChatKey(`file:${entry.id}`);
+    },
+    [folders],
+  );
+
+  /**
+   * 抽屉最底层 entry「去和 TA 聊聊」：拼「[kind 中文] 《标题》 + 正文」。
+   * sourceKind: 'secret-drawer' —— agent 拿到引用时会读到底牌级 hint，
+   * 知道这是用户通过解锁翻到的私密档案，不是闲聊素材。
+   */
+  const handleShareHiddenEntryToChat = useCallback((entry: XingyeHiddenFileEntry) => {
+    const lines: string[] = [];
+    lines.push(`[${HIDDEN_KIND_CHAT_LABEL[entry.kind]}] 《${entry.title}》`);
+    if (entry.body) {
+      lines.push('');
+      lines.push(entry.body);
+    }
+    const text = lines.join('\n').trim();
+    if (!text) return;
+    useStore.getState().stageChatQuote({
+      text,
+      sourceTitle: `抽屉 · ${entry.title}`,
+      sourceKind: 'secret-drawer',
+      charCount: text.length,
+      updatedAt: Date.now(),
+    });
+    setSharedToChatKey(`hidden:${entry.id}`);
+  }, []);
 
   const handleDeleteSelected = async () => {
     if (!selectedEntry || !ownerAgentId) return;
@@ -610,6 +1050,10 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const inEntryDetail = Boolean(selectedEntry);
 
   const handleBack = () => {
+    if (inHiddenView) {
+      setInHiddenView(false);
+      return;
+    }
     if (inEntryDetail) {
       setSelectedEntryId(null);
       return;
@@ -621,7 +1065,13 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     onBack();
   };
 
-  const backLabel = inEntryDetail ? '返回文件列表' : inFolderDetail ? '返回文件夹列表' : '返回首页';
+  const backLabel = inHiddenView
+    ? '返回资料柜'
+    : inEntryDetail
+      ? '返回文件列表'
+      : inFolderDetail
+        ? '返回文件夹列表'
+        : '返回首页';
 
   const totalEntries = entries.length;
 
@@ -645,7 +1095,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         ) : null}
 
         {/* 资料柜首页 */}
-        {!inFolderDetail && !inEntryDetail ? (
+        {!inFolderDetail && !inEntryDetail && !inHiddenView ? (
           <div className={styles.xyScroll}>
             <header className={styles.xyFilesHero}>
               <div>
@@ -678,12 +1128,123 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                 {pendingDrafts.map((d) => {
                   const working = pendingDraftWorkingValue(d);
                   const busy = pendingDraftBusyId === d.id;
+                  if (working.kind === 'update') {
+                    const target = working.target;
+                    const patch = working.patch;
+                    const targetMissing = !target;
+                    return (
+                      <div
+                        key={d.id}
+                        className={styles.xyDraftCard}
+                        data-testid={`phone-files-pending-draft-${d.id}`}
+                        data-action="update"
+                      >
+                        <p className={styles.xyDraftHint}>
+                          <em className={styles.xyDraftKindBadge}>更新</em>
+                          {targetMissing
+                            ? '目标条目已不存在（可能被用户手动删除）'
+                            : '将把以下补丁应用到老条目。'}
+                        </p>
+                        <div className={styles.xyDraftTargetBox}>
+                          {target ? (
+                            <>
+                              <div><b>目标条目：</b>《{target.title}》</div>
+                              <div className={styles.xyDraftHint}>
+                                文件夹：{folders.find((f) => f.id === target.folderId)?.name ?? '（未知）'}
+                              </div>
+                              {target.summary ? (
+                                <div className={styles.xyDraftHint}>摘要：{target.summary}</div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <div className={styles.xyDraftHint}>
+                              targetEntryId / matchTitle：
+                              {d.targetEntryId || d.matchTitle || '（未提供）'}
+                            </div>
+                          )}
+                        </div>
+                        {patch.bodyAppend !== undefined ? (
+                          <>
+                            <span className={styles.xyDraftHint}>将追加到正文末尾的段落：</span>
+                            <textarea
+                              className={styles.xyDraftTextarea}
+                              value={patch.bodyAppend ?? ''}
+                              onChange={(e) => handlePendingDraftPatchChange(d.id, { bodyAppend: e.target.value })}
+                              rows={4}
+                              aria-label="待确认资料柜草稿追加段落"
+                              data-testid={`phone-files-pending-draft-bodyappend-${d.id}`}
+                              disabled={busy || targetMissing}
+                            />
+                          </>
+                        ) : null}
+                        {patch.title !== undefined ? (
+                          <>
+                            <span className={styles.xyDraftHint}>新标题：</span>
+                            <input
+                              type="text"
+                              className={styles.xyDraftInput}
+                              value={patch.title ?? ''}
+                              onChange={(e) => handlePendingDraftPatchChange(d.id, { title: e.target.value })}
+                              aria-label="待确认资料柜草稿新标题"
+                              disabled={busy || targetMissing}
+                            />
+                          </>
+                        ) : null}
+                        {patch.summary !== undefined ? (
+                          <>
+                            <span className={styles.xyDraftHint}>新摘要：</span>
+                            <input
+                              type="text"
+                              className={styles.xyDraftInput}
+                              value={patch.summary ?? ''}
+                              onChange={(e) => handlePendingDraftPatchChange(d.id, { summary: e.target.value })}
+                              aria-label="待确认资料柜草稿新摘要"
+                              disabled={busy || targetMissing}
+                            />
+                          </>
+                        ) : null}
+                        {patch.tags !== undefined && patch.tags.length > 0 ? (
+                          <p className={styles.xyDraftHint}>
+                            标签将整体替换为：{patch.tags.join('、')}
+                          </p>
+                        ) : null}
+                        {d.reason ? (
+                          <p className={styles.xyDraftReason}>理由：{d.reason}</p>
+                        ) : null}
+                        <div className={styles.xyDraftActions}>
+                          <button
+                            type="button"
+                            className={styles.xyDraftConfirm}
+                            onClick={() => void handleConfirmPendingDraft(d)}
+                            disabled={busy || targetMissing}
+                            data-testid={`phone-files-pending-draft-confirm-${d.id}`}
+                          >
+                            {busy ? '处理中…' : '确认更新'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.xyDraftDiscard}
+                            onClick={() => void handleDiscardPendingDraft(d)}
+                            disabled={busy}
+                            data-testid={`phone-files-pending-draft-discard-${d.id}`}
+                          >
+                            丢弃
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={d.id}
                       className={styles.xyDraftCard}
                       data-testid={`phone-files-pending-draft-${d.id}`}
+                      data-action="add"
                     >
+                      <p className={styles.xyDraftHint}>
+                        <em className={styles.xyDraftKindBadge}>新增</em>
+                        新条目草稿。
+                      </p>
                       <input
                         type="text"
                         className={styles.xyDraftInput}
@@ -820,6 +1381,22 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                       </button>
                     );
                   })}
+                  {hiddenState ? (
+                    <HiddenFolderRow
+                      hiddenState={hiddenState}
+                      entryCount={hiddenEntries.length}
+                      disabled={!hiddenState.passwordHash}
+                      onClickLocked={openHiddenPasswordModal}
+                      onClickUnlocked={() => setInHiddenView(true)}
+                      rowClassName={styles.xyFilesRow}
+                      iconWrapClassName={styles.xyFilesRowIcon}
+                      mainClassName={styles.xyFilesRowMain}
+                      nameClassName={styles.xyFilesRowName}
+                      descClassName={styles.xyFilesRowDesc}
+                      countClassName={styles.xyFilesRowCount}
+                      timeClassName={styles.xyFilesRowTime}
+                    />
+                  ) : null}
                 </div>
 
                 {recentEntries.length > 0 ? (
@@ -968,6 +1545,28 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
               <hr className={styles.xyDetailPaperRule} />
               <div className={styles.xyDetailPaperBody}>{renderPaperBody(selectedEntry.body)}</div>
               <hr className={styles.xyDetailPaperRule} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                <button
+                  type="button"
+                  className={styles.xyBtnGhost}
+                  onClick={() => handleShareFileToChat(selectedEntry)}
+                  data-testid={`phone-files-share-to-chat-${selectedEntry.id}`}
+                  title={`把这条带到和 ${ta} 的聊天里`}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  去和 {ta} 聊聊这条
+                </button>
+                {sharedToChatKey === `file:${selectedEntry.id}` ? (
+                  <p
+                    className={styles.phoneAppHint}
+                    role="status"
+                    data-testid={`phone-files-share-to-chat-notice-${selectedEntry.id}`}
+                    style={{ margin: 0 }}
+                  >
+                    已放进聊天输入框引用 —— 打开任意对话即可发出
+                  </p>
+                ) : null}
+              </div>
               <div className={styles.xyDetailPaperFoot}>
                 <button
                   type="button"
@@ -990,7 +1589,133 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
             </article>
           </div>
         ) : null}
+
+        {/* 隐藏文件夹：解锁后视图 */}
+        {inHiddenView ? (
+          <HiddenFolderView
+            agent={ownerAgent}
+            profile={ownerProfile}
+            entries={hiddenEntries}
+            hiddenState={hiddenState}
+            seedBusy={hiddenSeedBusy}
+            seedError={hiddenSeedError}
+            onGenerateSeeds={() => void handleGenerateHiddenSeeds()}
+            onAddManual={openHiddenManual}
+            onDelete={(entry) => void handleDeleteHiddenEntry(entry)}
+            onRelock={() => void handleHiddenRelock()}
+            onShareEntryToChat={handleShareHiddenEntryToChat}
+            sharedEntryKey={sharedToChatKey}
+            displayName={ta}
+            scrollClassName={styles.xyScroll}
+            cardClassName={styles.xyNoteCard}
+            titleClassName={styles.xyNoteCardTitle}
+            bodyClassName={styles.xyNoteCardBody}
+            footClassName={styles.xyNoteCardFoot}
+            emptyClassName={styles.xyFilesEmpty}
+            hintClassName={styles.phoneAppHint}
+          />
+        ) : null}
       </div>
+
+      {hiddenPwModalOpen ? (
+        <HiddenPasswordModal
+          agent={ownerAgent}
+          profile={ownerProfile}
+          busy={hiddenPwBusy}
+          error={hiddenPwError}
+          attemptCount={hiddenAttemptCount}
+          lastReaction={hiddenReaction}
+          shaking={hiddenShake}
+          onClose={closeHiddenPasswordModal}
+          onSubmit={(attempt) => void handleHiddenPasswordAttempt(attempt)}
+        />
+      ) : null}
+
+      {hiddenManualOpen ? (
+        <div
+          className={styles.phoneModalOverlay}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !hiddenManualBusy) {
+              setHiddenManualOpen(false);
+            }
+          }}
+        >
+          <div
+            className={styles.phoneModalSheet}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="phone-files-hidden-manual-title"
+          >
+            <h3
+              id="phone-files-hidden-manual-title"
+              className={styles.phoneModalTitle}
+            >
+              加一条到抽屉里
+            </h3>
+            <div className={styles.phoneModalBody}>
+              <label className={styles.xyEditorField}>
+                <span>类型</span>
+                <select
+                  value={hiddenManualKind}
+                  onChange={(e) => setHiddenManualKind(e.target.value as XingyeHiddenFileEntryKind)}
+                  disabled={hiddenManualBusy}
+                  data-testid="phone-files-hidden-manual-kind"
+                >
+                  <option value="manual">手记</option>
+                  <option value="weakness">弱点</option>
+                  <option value="guilty_pleasure">不光彩的喜好</option>
+                  <option value="secret_taste">说不出口的偏好</option>
+                  <option value="secret_plan">不可告人的计划</option>
+                </select>
+              </label>
+              <label className={styles.xyEditorField}>
+                <span>标题</span>
+                <input
+                  value={hiddenManualTitle}
+                  onChange={(e) => setHiddenManualTitle(e.target.value)}
+                  placeholder="这条叫什么"
+                  disabled={hiddenManualBusy}
+                  data-testid="phone-files-hidden-manual-title"
+                />
+              </label>
+              <label className={styles.xyEditorField}>
+                <span>正文</span>
+                <textarea
+                  value={hiddenManualBody}
+                  onChange={(e) => setHiddenManualBody(e.target.value)}
+                  rows={5}
+                  placeholder="写下来——抽屉锁上的时候只有 TA 自己能看到。"
+                  disabled={hiddenManualBusy}
+                  data-testid="phone-files-hidden-manual-body"
+                />
+              </label>
+              {hiddenManualError ? (
+                <p className={styles.xyEditorError} role="alert">{hiddenManualError}</p>
+              ) : null}
+            </div>
+            <div className={styles.phoneModalActions}>
+              <button
+                type="button"
+                className={styles.xyBtnGhost}
+                onClick={() => setHiddenManualOpen(false)}
+                disabled={hiddenManualBusy}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={styles.xyEditorPrimary}
+                onClick={() => void handleSaveHiddenManual()}
+                disabled={hiddenManualBusy}
+                data-testid="phone-files-hidden-manual-save"
+              >
+                {hiddenManualBusy ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {composeMode ? (
         <div
@@ -1104,6 +1829,90 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                 style={{ flex: '0 0 auto', padding: '10px 18px' }}
               >
                 {saveBusy ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {duplicateHit ? (
+        <div
+          className={styles.phoneModalOverlay}
+          role="presentation"
+          data-testid="phone-files-duplicate-modal"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDuplicateHit(null);
+          }}
+        >
+          <div
+            className={styles.phoneModalSheet}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="phone-files-duplicate-title"
+          >
+            <h3 id="phone-files-duplicate-title" className={styles.phoneModalTitle}>
+              资料柜里已有相似条目
+            </h3>
+            <div className={styles.phoneModalBody}>
+              <p>
+                《{duplicateHit.title}》
+                {(() => {
+                  const folder = folders.find((f) => f.id === duplicateHit.folderId);
+                  return folder ? <span className={styles.xyDraftHint}>（{folder.name}）</span> : null;
+                })()}
+              </p>
+              {duplicateHit.summary ? (
+                <p className={styles.xyDraftHint}>摘要：{duplicateHit.summary}</p>
+              ) : null}
+              {duplicateHit.body ? (
+                <p className={styles.xyDraftHint}>
+                  片段：{duplicateHit.body.slice(0, 120)}
+                  {duplicateHit.body.length > 120 ? '…' : ''}
+                </p>
+              ) : null}
+              <p className={styles.xyDraftHint}>
+                是不是想找的就是这条？打开它在原条目上编辑通常比新建一份相似的条目更合适。
+              </p>
+            </div>
+            <div className={styles.phoneModalActions}>
+              <button
+                type="button"
+                className={styles.xyBtnGhost}
+                onClick={() => setDuplicateHit(null)}
+                data-testid="phone-files-duplicate-cancel"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={styles.xyDraftDiscard}
+                onClick={() => {
+                  forceCreateOverrideRef.current = true;
+                  setDuplicateHit(null);
+                  void handleSave();
+                }}
+                data-testid="phone-files-duplicate-force-create"
+              >
+                仍然新建一条
+              </button>
+              <button
+                type="button"
+                className={styles.xyEditorPrimary}
+                onClick={() => {
+                  const target = duplicateHit;
+                  setDuplicateHit(null);
+                  setComposeMode({ kind: 'edit', entry: target });
+                  setSelectedEntryId(target.id);
+                  setSelectedFolderId(target.folderId);
+                  setDraftTitle(target.title);
+                  setDraftBody(target.body);
+                  setDraftTags(target.tags?.join(', ') ?? '');
+                  setDraftSource(target.source ?? '');
+                  setSaveError(null);
+                }}
+                data-testid="phone-files-duplicate-open-target"
+              >
+                打开那条编辑
               </button>
             </div>
           </div>

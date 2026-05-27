@@ -2,7 +2,12 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
-import { buildFilesDraftPrompt, type FilesDraftFolderHint } from './xingye-files-prompts';
+import {
+  FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT,
+  buildFilesDraftPrompt,
+  type FilesDraftExistingEntry,
+  type FilesDraftFolderHint,
+} from './xingye-files-prompts';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -171,6 +176,13 @@ export async function generateFilesDraftWithAI(params: {
   targetFolder?: FilesDraftFolderHint | null;
   /** 当前角色已有的所有资料文件夹（可空数组）。 */
   folderOptions?: FilesDraftFolderHint[];
+  /**
+   * 当前角色已归档的 entries 摘要（按时间倒序）。喂给 prompt 让模型在生成前
+   * 看一眼已有条目，避免再写一份几乎同名的新 entry——典型 case：「师父说过的几句话」
+   * 已经存在，模型应该在 body 里追加新段落（让用户后续合并），而不是生成「师父说的几句话」。
+   * 调用方通常用 PhoneFilesApp 里的 `entries` state 映射后传入；缺省视为暂无条目。
+   */
+  existingEntries?: FilesDraftExistingEntry[];
   userIntent?: string;
   userName?: string;
   timeoutMs?: number;
@@ -249,6 +261,9 @@ export async function generateFilesDraftWithAI(params: {
     userIntent,
     targetFolder,
     folderOptions,
+    existingEntries: Array.isArray(params.existingEntries)
+      ? params.existingEntries.slice(0, FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT)
+      : [],
     recentSceneBlock,
     stableLoreBlock,
     keywordLoreBlock,

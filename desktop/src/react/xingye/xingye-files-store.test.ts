@@ -14,15 +14,18 @@ import {
   appendFileEntry,
   confirmFileDraft,
   deleteFileEntry,
+  DuplicateFileEntryError,
   ensureDefaultFileFolders,
   listFileEntries,
   listFileEntriesByFolder,
   listFileFolders,
+  resolveTargetEntry,
   updateFileEntry,
   XINGYE_FILES_DRAFTS_JSONL,
   XINGYE_FILES_ENTRIES_JSONL,
   XINGYE_FILES_FOLDERS_JSON,
   DEFAULT_FILE_FOLDER_BLUEPRINTS,
+  type XingyeFileEntry,
 } from './xingye-files-store';
 import { __resetDraftConfirmLockForTests } from './xingye-draft-confirm-lock';
 
@@ -368,5 +371,226 @@ describe('xingye-files-store', () => {
     postMock.mockResolvedValueOnce({ ok: true, records: [] });
     const result = await updateFileEntry('agent-x', 'missing', { title: 'x' });
     expect(result).toBeNull();
+  });
+
+  describe('appendFileEntry dedupe', () => {
+    function makeEntry(partial: Partial<XingyeFileEntry> & { id: string; title: string; folderId: string }): XingyeFileEntry {
+      return {
+        key: partial.id,
+        agentId: 'agent-x',
+        body: '',
+        createdAt: '2026-05-15T10:00:00.000Z',
+        ...partial,
+      };
+    }
+
+    it('throws DuplicateFileEntryError on exact title dup in same folder (knownEntries)', async () => {
+      const existing = [makeEntry({ id: 'e1', title: '师父的话', folderId: 'fold-1' })];
+      let err: unknown;
+      try {
+        await appendFileEntry(
+          'agent-x',
+          { folderId: 'fold-1', title: '师父的话', body: 'b', source: 'manual' },
+          { knownEntries: existing },
+        );
+      } catch (e) { err = e; }
+      expect(err).toBeInstanceOf(DuplicateFileEntryError);
+      if (err instanceof DuplicateFileEntryError) expect(err.existing.id).toBe('e1');
+      // 不应该写 entries
+      const appends = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
+      expect(appends).toHaveLength(0);
+    });
+
+    it('does not dedupe across different folders', async () => {
+      const existing = [makeEntry({ id: 'e1', title: '师父的话', folderId: 'fold-other' })];
+      postMock.mockResolvedValue({ ok: true });
+      const row = await appendFileEntry(
+        'agent-x',
+        { folderId: 'fold-1', title: '师父的话', body: 'b', source: 'manual' },
+        { knownEntries: existing },
+      );
+      expect(row.title).toBe('师父的话');
+      const append = lastCall('appendJsonl');
+      expect(append.relativePath).toBe(XINGYE_FILES_ENTRIES_JSONL);
+    });
+
+    it('skipDedupe=true bypasses dedupe (user clicked "still create")', async () => {
+      const existing = [makeEntry({ id: 'e1', title: '师父的话', folderId: 'fold-1' })];
+      postMock.mockResolvedValue({ ok: true });
+      const row = await appendFileEntry(
+        'agent-x',
+        { folderId: 'fold-1', title: '师父的话', body: 'b', source: 'manual' },
+        { knownEntries: existing, skipDedupe: true },
+      );
+      expect(row.title).toBe('师父的话');
+    });
+
+    it('without knownEntries reads listJsonl(entries) once', async () => {
+      // (1) listFileEntries inside appendFileEntry's dedupe path
+      postMock.mockResolvedValueOnce({ ok: true, records: [] });
+      // (2) appendJsonl
+      postMock.mockResolvedValueOnce({ ok: true });
+      // (3) bumpFolderUpdatedAtBestEffort → readJson(folders); make it fail-safe
+      postMock.mockResolvedValueOnce({ ok: true, missing: true });
+      await appendFileEntry('agent-x', { folderId: 'fold-1', title: '新条目', body: 'b' });
+      const lists = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'listJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
+      expect(lists).toHaveLength(1);
+    });
+  });
+
+  describe('resolveTargetEntry', () => {
+    const entries: XingyeFileEntry[] = [
+      {
+        id: 'e1', key: 'e1', agentId: 'agent-x', folderId: 'fold-1',
+        title: '师父说过的几句话', body: '', createdAt: '',
+      },
+    ];
+
+    it('matches by targetEntryId', () => {
+      expect(resolveTargetEntry(entries, { targetEntryId: 'e1' })?.id).toBe('e1');
+    });
+
+    it('matches by matchTitle (normalized exact)', () => {
+      expect(resolveTargetEntry(entries, { matchTitle: '《师父说过的几句话》' })?.id).toBe('e1');
+    });
+
+    it('returns null when neither matches', () => {
+      expect(resolveTargetEntry(entries, { matchTitle: '完全不相干' })).toBeNull();
+    });
+
+    it('returns null when nothing provided', () => {
+      expect(resolveTargetEntry(entries, {})).toBeNull();
+    });
+  });
+
+  describe('confirmFileDraft action=update', () => {
+    const TARGET_ENTRY = {
+      id: 'e-target', key: 'e-target', agentId: 'agent-x', folderId: 'fold-1',
+      title: '师父的话', body: '老段落 1', createdAt: '2026-05-15T10:00:00.000Z',
+      updatedAt: '2026-05-15T10:00:00.000Z', source: 'manual',
+    };
+
+    it('appends bodyAppend to target entry and removes draft', async () => {
+      const draftRow = {
+        id: 'd-upd', action: 'update', targetEntryId: 'e-target',
+        patch: { bodyAppend: '新段落 2' },
+        title: '', body: '', createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        // listFileEntries (initial)
+        .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
+        // listFileDrafts
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] })
+        // updateFileEntry → listFileEntries again
+        .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
+        // updateFileEntry → deleteJsonlRecord(entries)
+        .mockResolvedValueOnce({ ok: true, deleted: true })
+        // updateFileEntry → appendJsonl(entries)
+        .mockResolvedValueOnce({ ok: true })
+        // bumpFolderUpdatedAtBestEffort → readJson(folders)
+        .mockResolvedValueOnce({ ok: true, missing: true })
+        // deleteJsonlRecord(drafts)
+        .mockResolvedValueOnce({ ok: true, deleted: true })
+        // event log appendJsonl
+        .mockResolvedValue({ ok: true });
+
+      const entry = await confirmFileDraft('agent-x', 'd-upd');
+      expect(entry.id).toBe('e-target');
+      expect(entry.body).toBe('老段落 1\n\n新段落 2');
+
+      // 不应该有 from-draft-* entry append
+      const entryAppends = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
+      // 1 个 append（来自 updateFileEntry 的"删旧 + appen 新"）
+      expect(entryAppends).toHaveLength(1);
+      const data = entryAppends[0].data as { id: string; body: string };
+      expect(data.id).toBe('e-target');
+      expect(data.body).toBe('老段落 1\n\n新段落 2');
+
+      // drafts 应该被删
+      const draftDeletes = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_FILES_DRAFTS_JSONL);
+      expect(draftDeletes).toHaveLength(1);
+    });
+
+    it('throws when target entry not found', async () => {
+      const draftRow = {
+        id: 'd-missing', action: 'update', targetEntryId: 'e-nope',
+        patch: { bodyAppend: 'x' },
+        title: '', body: '', createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] });
+      await expect(confirmFileDraft('agent-x', 'd-missing')).rejects.toThrow(/目标条目已不存在/);
+    });
+
+    it('resolves matchTitle when targetEntryId not given', async () => {
+      const draftRow = {
+        id: 'd-by-name', action: 'update', matchTitle: '《师父的话》',
+        patch: { summary: '新摘要' },
+        title: '', body: '', createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] })
+        .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
+        .mockResolvedValueOnce({ ok: true, deleted: true })
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValueOnce({ ok: true, missing: true })
+        .mockResolvedValue({ ok: true, deleted: true });
+      const entry = await confirmFileDraft('agent-x', 'd-by-name');
+      expect(entry.id).toBe('e-target');
+      expect(entry.summary).toBe('新摘要');
+    });
+  });
+
+  describe('confirmFileDraft action=add + dedupe', () => {
+    const SEEDED_FOLDER = {
+      id: 'fold-1', agentId: 'agent-x', name: '人际关系', order: 0,
+      createdAt: '2026-05-15T10:00:00.000Z', updatedAt: '2026-05-15T10:00:00.000Z',
+    };
+
+    it('throws DuplicateFileEntryError when an entry with same title was added after draft was written', async () => {
+      const conflictingEntry = {
+        id: 'e-existing', key: 'e-existing', agentId: 'agent-x', folderId: 'fold-1',
+        title: '师父的话', body: '', createdAt: '2026-05-16T10:00:00.000Z',
+      };
+      const draftRow = {
+        id: 'd-conflict', action: 'add', title: '师父的话', body: 'b',
+        folderHint: '人际关系', createdAt: '2026-05-17T12:00:00.000Z',
+        source: 'xingye-heartbeat-tool',
+      };
+      postMock
+        // listFileEntries → 已有冲突 entry
+        .mockResolvedValueOnce({ ok: true, records: [conflictingEntry] })
+        // listFileDrafts
+        .mockResolvedValueOnce({ ok: true, records: [draftRow] })
+        // ensureDefaultFileFolders → readJson(folders)
+        .mockResolvedValueOnce({ ok: true, data: { folders: [SEEDED_FOLDER] } });
+
+      let err: unknown;
+      try { await confirmFileDraft('agent-x', 'd-conflict'); } catch (e) { err = e; }
+      expect(err).toBeInstanceOf(DuplicateFileEntryError);
+
+      // 不应该写 entry，也不应该删 draft（让用户决定）
+      const entryAppends = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
+      expect(entryAppends).toHaveLength(0);
+      const draftDeletes = postMock.mock.calls
+        .map((c) => c[0] as Call)
+        .filter((c) => c.action === 'deleteJsonlRecord' && c.relativePath === XINGYE_FILES_DRAFTS_JSONL);
+      expect(draftDeletes).toHaveLength(0);
+    });
   });
 });

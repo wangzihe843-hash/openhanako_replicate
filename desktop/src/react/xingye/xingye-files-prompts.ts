@@ -9,6 +9,31 @@ export type FilesDraftFolderHint = {
 };
 
 /**
+ * 喂给 prompt 的已有条目摘要——只放最相关字段，不放 body（body 太长会撑爆上下文）。
+ * id 是给 propose-draft action='update' 的 targetEntryId 用的（agent 看到 id 就能引用）。
+ */
+export type FilesDraftExistingEntry = {
+  id: string;
+  folderName: string;
+  title: string;
+  summary?: string;
+};
+
+/** prompt 里最多列出多少条已有 entry。 */
+export const FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT = 30;
+
+function formatExistingEntriesBlock(entries: FilesDraftExistingEntry[]): string {
+  if (!entries.length) return '（资料柜里暂无已归档条目）';
+  return entries
+    .slice(0, FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT)
+    .map((e) => {
+      const tail = e.summary ? ` — ${e.summary.slice(0, 60)}` : '';
+      return `- [${e.id}] ${e.folderName} · 《${e.title}》${tail}`;
+    })
+    .join('\n');
+}
+
+/**
  * 构造「文件管理草稿」prompt：让模型扮演当前 agent，整理一条放进资料柜的文件。
  *
  * 重要约束：
@@ -27,6 +52,13 @@ export function buildFilesDraftPrompt(args: {
   targetFolder: FilesDraftFolderHint | null;
   /** 当前角色已有的所有资料文件夹，供模型从中选 folderName，避免发明新分类。 */
   folderOptions: FilesDraftFolderHint[];
+  /**
+   * 已有 entries 摘要（id / folder / title / summary）。模型据此判定
+   * 当前要整理的主题**是不是已经有 entry 了**：是 → 在 body 里追加补充（用户后续合并）；
+   * 不是 → 才新建。本字段缺省视为「资料柜暂无已归档条目」。
+   * 调用方应按时间倒序传，prompt 端只取前 FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT 条。
+   */
+  existingEntries?: FilesDraftExistingEntry[];
   recentSceneBlock: string;
   stableLoreBlock: string;
   keywordLoreBlock: string;
@@ -40,6 +72,7 @@ export function buildFilesDraftPrompt(args: {
     userIntent,
     targetFolder,
     folderOptions,
+    existingEntries,
     recentSceneBlock,
     stableLoreBlock,
     keywordLoreBlock,
@@ -103,6 +136,14 @@ export function buildFilesDraftPrompt(args: {
     '',
     '【资料柜里已有文件夹（folderName 必须从中选一个完整复制；无目标文件夹时尤其重要）】',
     folderListing,
+    '',
+    '【资料柜里已有的条目（id · 文件夹 · 标题 — 摘要；最多 30 条）】',
+    formatExistingEntriesBlock(existingEntries ?? []),
+    '',
+    '**重要去重原则**：',
+    '- 翻阅上面已有条目；如果当前要整理的内容**和某条已有 entry 是同一主题** —— 不要新建，而是在 body 里追加新的补充段落（让用户后续决定是否合并）。',
+    '- 真正全新主题才新建；宁可不写也不要写一条几乎同名的新条目。',
+    '- 如果你确认要新建，title 要明显区别于已有同 folder 的所有 title（不要 "师父说过的几句话" vs "师父说的几句话" 这种几乎同名）。',
     '',
     '当前角色（基础身份）：',
     JSON.stringify(

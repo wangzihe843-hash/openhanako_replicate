@@ -7448,6 +7448,31 @@
   color: var(--xy-terracotta);
 }
 
+/* 「待确认草稿」卡片顶部 badge：区分新增 / 更新草稿。 */
+.xyDraftKindBadge {
+  display: inline-block;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--xy-ink-mute);
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+}
+
+/* update 卡片里"目标条目"那行的浅底高亮，让用户一眼看出要改的是哪条。 */
+.xyDraftTargetBox {
+  background: var(--xy-paper-soft);
+  border: 1px dashed var(--xy-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--xy-ink);
+}
+
 /* ---------- 编辑器（compose / edit）卡片化容器 ---------- */
 .xyEditorWrap {
   padding: 4px 16px 20px;

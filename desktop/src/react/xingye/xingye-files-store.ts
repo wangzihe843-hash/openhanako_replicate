@@ -2,6 +2,7 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
+import { detectFilesDuplicate, normalizeTitleForDedup, type FilesDuplicateResult } from './xingye-files-dedupe';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
@@ -319,16 +320,36 @@ function buildEntry(
 /**
  * `options.id`：心跳 confirm 流程会传 `from-draft-${draft.id}` 走幂等路径
  * （见 confirmFileDraft 注释）。用户手动新建 entry 时不传，沿用随机 id。
+ *
+ * `options.skipDedupe`：跳过 dedupe（默认 false）。两个场景需要 true：
+ *   1. UI 用户已经在 duplicate modal 上点了「仍然新建一条」，明确 override；
+ *   2. confirmFileDraft 从 draft 进 entry（已经在 confirm 阶段过完 dedupe；
+ *      避免双层拦截 / 加锁顺序问题）。
+ *
+ * `options.knownEntries`：调用方已经有 entries 列表时直接传，避免 dedupe
+ * 内部再读一次 jsonl。UI 入口（PhoneFilesApp）天然有 entries state，正好用。
+ *
+ * 命中 dedupe 抛 `DuplicateFileEntryError`，调用方按 instanceof 分支处理。
  */
 export async function appendFileEntry(
   agentId: string,
   input: XingyeFileEntryDraft,
-  options: { id?: string } = {},
+  options: { id?: string; skipDedupe?: boolean; knownEntries?: XingyeFileEntry[] } = {},
 ): Promise<XingyeFileEntry> {
   const aid = assertAgentId(agentId, '保存');
   const nowIso = new Date().toISOString();
   const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : newFileEntryId();
   const entry = buildEntry(aid, input, nowIso, id);
+  if (!options.skipDedupe) {
+    const existingEntries = options.knownEntries ?? (await listFileEntries(aid));
+    const detection = detectFilesDuplicate(
+      { title: entry.title, folderId: entry.folderId },
+      existingEntries,
+    );
+    if (detection.kind !== 'unique') {
+      throw new DuplicateFileEntryError(detection);
+    }
+  }
   await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, entry);
   await bumpFolderUpdatedAtBestEffort(aid, entry.folderId, nowIso);
   await appendFileEventBestEffort(aid, {
@@ -382,14 +403,46 @@ export async function deleteFileEntry(agentId: string, entryId: string): Promise
 
 export const FILES_FALLBACK_FOLDER_NAME = '待确认';
 
+export type XingyeFileDraftAction = 'add' | 'update';
+
+/**
+ * action='update' 时的更新补丁。
+ *
+ * 字段语义：
+ *  - title：罕用——通常仅修笔误，整体替换。
+ *  - bodyAppend：**追加到现有 body 末尾的段落**（不是替换原文）。files 笔记是
+ *    累积式的，模型误判时只追加一段比覆写整篇代价小一个数量级。
+ *  - summary：整体改写。
+ *  - tags：整体替换（与 phone_contact patch.tags 同语义，空数组在 server
+ *    normalizeFilesDraftPatch 里已经被丢弃）。
+ *  - folderId：仅 UI 在 confirm 阶段提供（"挪柜子"）；AI 路径不传。
+ */
+export type XingyeFileDraftPatch = {
+  title?: string;
+  bodyAppend?: string;
+  summary?: string;
+  tags?: string[];
+  folderId?: string;
+};
+
 export type XingyePendingFileDraft = {
   id: string;
+  /** 'add'（新增 entry）或 'update'（把 patch 应用到 targetEntryId 指向的 entry）。 */
+  action: XingyeFileDraftAction;
+  /** action='update' 时定位的目标 entry id（与 matchTitle 至少其一）。 */
+  targetEntryId?: string;
+  /** action='update' 时备用按 title 名字匹配（trim + 归一后精确比较）。 */
+  matchTitle?: string;
+  /** action='update' 时的更新补丁；至少含一个非空字段。 */
+  patch?: XingyeFileDraftPatch;
+  /** action='add' 时的标题。update 时缺省。 */
   title: string;
+  /** action='add' 时的正文。update 不用本字段，正文修改走 patch.bodyAppend。 */
   body: string;
   summary?: string;
   /**
    * Suggested folder NAME (not id). UI 在 confirm 时按名字匹配同名 folder，
-   * 匹配不上回退到「待确认」folder。
+   * 匹配不上回退到「待确认」folder。仅 action='add' 用。
    */
   folderHint?: string;
   tags?: string[];
@@ -399,13 +452,55 @@ export type XingyePendingFileDraft = {
   createdAt: string;
 };
 
+/**
+ * `appendFileEntry` 检测到候选与已有 entry 重复时抛出。
+ *
+ * UI 层 `catch (err) { if (err instanceof DuplicateFileEntryError) ... }` 据此弹
+ * "已有相似条目《X》，是否改为更新它 / 仍然新建" 的 modal。
+ */
+export class DuplicateFileEntryError extends Error {
+  readonly existing: XingyeFileEntry;
+  readonly detection: FilesDuplicateResult;
+  constructor(detection: FilesDuplicateResult & { kind: 'exact_dup' | 'similar' }) {
+    super(`资料柜里已有相似条目《${detection.entry.title}》`);
+    this.name = 'DuplicateFileEntryError';
+    this.existing = detection.entry;
+    this.detection = detection;
+  }
+}
+
+/**
+ * 归一 update 用的 patch（与 server lib/xingye/files-drafts.js#normalizeFilesDraftPatch
+ * 字段允许列表对齐：title / bodyAppend / summary / tags；外加 UI 路径允许的
+ * folderId（"挪柜子"）。空数组 tags 丢弃。
+ */
+function normalizeFilesDraftPatch(value: unknown): XingyeFileDraftPatch | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const patch: XingyeFileDraftPatch = {};
+  const title = normalizeOptionalText(raw.title, 160);
+  if (title !== undefined) patch.title = title;
+  if (typeof raw.bodyAppend === 'string') {
+    const trimmed = raw.bodyAppend.trim();
+    if (trimmed) patch.bodyAppend = trimmed.slice(0, 8000);
+  }
+  const summary = normalizeOptionalText(raw.summary, 300);
+  if (summary !== undefined) patch.summary = summary;
+  const tags = normalizeTags(raw.tags);
+  if (tags && tags.length > 0) patch.tags = tags;
+  const folderId = typeof raw.folderId === 'string' ? raw.folderId.trim() : '';
+  if (folderId) patch.folderId = folderId;
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 function normalizeFileDraftRow(value: unknown): XingyePendingFileDraft | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
   if (!id) return null;
+  const rawAction = typeof raw.action === 'string' ? raw.action.trim() : '';
+  const action: XingyeFileDraftAction = rawAction === 'update' ? 'update' : 'add';
   const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 160) : '';
-  if (!title) return null;
   const body = typeof raw.body === 'string' ? raw.body.slice(0, 8000) : '';
   const createdAt = typeof raw.createdAt === 'string' && raw.createdAt
     ? raw.createdAt
@@ -417,8 +512,27 @@ function normalizeFileDraftRow(value: unknown): XingyePendingFileDraft | null {
   const sourceEventIds = Array.isArray(eventIdsRaw)
     ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+
+  let targetEntryId: string | undefined;
+  let matchTitle: string | undefined;
+  let patch: XingyeFileDraftPatch | undefined;
+  if (action === 'update') {
+    targetEntryId = normalizeOptionalText(raw.targetEntryId, 120);
+    matchTitle = normalizeOptionalText(raw.matchTitle, 160);
+    if (!targetEntryId && !matchTitle) return null;
+    const normalized = normalizeFilesDraftPatch(raw.patch);
+    if (!normalized) return null;
+    patch = normalized;
+  } else {
+    if (!title) return null;
+  }
+
   return {
     id,
+    action,
+    targetEntryId,
+    matchTitle,
+    patch,
     title,
     body,
     summary: normalizeOptionalText(raw.summary, 300),
@@ -459,10 +573,23 @@ function newFileDraftId(): string {
   return `fil-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * 渲染端 append 一条资料柜草稿。
+ *
+ * 心跳侧的 draft 由 server `lib/xingye/files-drafts.js#appendFilesDraftServer`
+ * 写入；本函数主要给"渲染端自身想生成草稿"的场景（极少用，与 server 对称保留）。
+ *
+ * 支持 action='add' / 'update' 两种形态——参数与 server 同 schema：update 必须
+ * 含 targetEntryId 或 matchTitle 之一，加非空 patch。
+ */
 export async function appendFileDraft(
   agentId: string,
   input: {
-    title: string;
+    action?: XingyeFileDraftAction;
+    targetEntryId?: string;
+    matchTitle?: string;
+    patch?: XingyeFileDraftPatch;
+    title?: string;
     body?: string;
     summary?: string;
     folderHint?: string;
@@ -473,10 +600,10 @@ export async function appendFileDraft(
   },
 ): Promise<XingyePendingFileDraft> {
   const aid = assertAgentId(agentId, '保存资料柜草稿');
-  const title = (input.title ?? '').trim().slice(0, 160);
-  if (!title) throw new Error('草稿标题不能为空。');
-  const source = input.source.trim();
+  const source = (input.source ?? '').trim();
   if (!source) throw new Error('草稿来源 (source) 不能为空。');
+  const action: XingyeFileDraftAction = input.action === 'update' ? 'update' : 'add';
+  const title = (input.title ?? '').trim().slice(0, 160);
   const body = (typeof input.body === 'string' ? input.body : '').slice(0, 8000);
   const summary = normalizeOptionalText(input.summary, 300);
   const folderHint = normalizeOptionalText(input.folderHint, 80);
@@ -485,10 +612,28 @@ export async function appendFileDraft(
   const sourceEventIds = Array.isArray(input.sourceEventIds)
     ? input.sourceEventIds.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+
+  let targetEntryId: string | undefined;
+  let matchTitle: string | undefined;
+  let patch: XingyeFileDraftPatch | undefined;
+  if (action === 'update') {
+    targetEntryId = normalizeOptionalText(input.targetEntryId, 120);
+    matchTitle = normalizeOptionalText(input.matchTitle, 160);
+    if (!targetEntryId && !matchTitle) {
+      throw new Error("草稿动作为 'update' 时需要 targetEntryId 或 matchTitle。");
+    }
+    const normalized = normalizeFilesDraftPatch(input.patch);
+    if (!normalized) throw new Error("草稿动作为 'update' 时需要非空 patch。");
+    patch = normalized;
+  } else {
+    if (!title) throw new Error('草稿标题不能为空。');
+  }
+
   const id = newFileDraftId();
   const createdAt = new Date().toISOString();
   const row: XingyePendingFileDraft & { key: string } = {
-    id, key: id, title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds,
+    id, key: id, action, targetEntryId, matchTitle, patch,
+    title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds,
   };
   await backend.appendJsonl(aid, XINGYE_FILES_DRAFTS_JSONL, row);
   await appendFileEventBestEffort(aid, {
@@ -497,14 +642,21 @@ export async function appendFileDraft(
     subjectId: id,
     payload: {
       draftId: id,
-      title,
+      action,
+      targetEntryId: targetEntryId ?? null,
+      matchTitle: matchTitle ?? null,
+      patchFields: patch ? Object.keys(patch) : [],
+      title: title || null,
       folderHint: folderHint ?? null,
       hasBody: Boolean(body.trim()),
       reason: reason ?? null,
       sourceEventIds: sourceEventIds ?? [],
     },
   });
-  return { id, title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds };
+  return {
+    id, action, targetEntryId, matchTitle, patch,
+    title, body, summary, folderHint, tags, createdAt, reason, source, sourceEventIds,
+  };
 }
 
 export async function discardFileDraft(agentId: string, draftId: string): Promise<boolean> {
@@ -554,57 +706,148 @@ function fileEntryIdFromDraftId(draftId: string): string {
 }
 
 /**
- * 用户在「待确认草稿」区点「确认生成」时调用：
- *   1. entry id 用 `from-draft-${draftId}`；先 list entries 查重，发现已有
- *      同 id 的 entry（说明上一次 confirm 写完 entry 但 delete draft 失败）
- *      → 复用，跳过 appendFileEntry；
- *   2. 否则解析 folderId（edits 优先，再按 hint，再回退「待确认」folder），
- *      appendFileEntry 写入 entries（发 file.entry_appended）；
- *   3. 从 drafts 删掉；删除失败仅 warn——重试时 (1) 兜底防重；
- *   4. 发 file.draft_confirmed。
+ * 把 draft.targetEntryId / matchTitle 解析成现存 entry。
  *
- * folderId 解析顺序（参考 resolveFolderIdFromHint）：
- *   edits.folderId 显式指定 → 用之
- *   否则按 draft.folderHint 在现有 folders 里匹配 → 用之
- *   都匹配不上 → 「待确认」folder，再不行用第一个 folder
+ * 顺序：
+ *   1. targetEntryId 精确匹配 entry.id
+ *   2. matchTitle normalize 后 == entry.title normalize
+ *   3. matchTitle normalize startsWith / 反向 startsWith（与 resolveFolderIdFromHint 同思路）
+ *
+ * 找不到 → null（confirm 时调用方需要给用户报错"目标条目已不存在"）。
+ */
+export function resolveTargetEntry(
+  entries: XingyeFileEntry[],
+  draft: Pick<XingyePendingFileDraft, 'targetEntryId' | 'matchTitle'>,
+): XingyeFileEntry | null {
+  const id = draft.targetEntryId?.trim();
+  if (id) {
+    const hit = entries.find((e) => e.id === id);
+    if (hit) return hit;
+  }
+  const matchTitle = draft.matchTitle?.trim();
+  if (matchTitle) {
+    const target = normalizeTitleForDedup(matchTitle);
+    if (target) {
+      const exact = entries.find((e) => normalizeTitleForDedup(e.title) === target);
+      if (exact) return exact;
+      const prefix = entries.find((e) => {
+        const t = normalizeTitleForDedup(e.title);
+        return t.startsWith(target) || target.startsWith(t);
+      });
+      if (prefix) return prefix;
+    }
+  }
+  return null;
+}
+
+export type ConfirmFileDraftEdits = {
+  /** 仅 action='add' 有效；'update' 路径请通过 patch.folderId 指定（用于挪柜子）。 */
+  folderId?: string;
+  /** 仅 action='add' 有效；'update' 改名请通过 patch.title。 */
+  title?: string;
+  /** 仅 action='add' 有效；'update' 追加请通过 patch.bodyAppend。 */
+  body?: string;
+  /** 仅 action='add' 有效；'update' 重写请通过 patch.summary。 */
+  summary?: string | null;
+  /** 仅 action='add' 有效；'update' 改 tags 请通过 patch.tags。 */
+  tags?: string[] | null;
+  /**
+   * action='update' 时 UI 收集的最终 patch（用户在 confirm 弹窗里改过的最终态）。
+   * 与 draft.patch 合并：edits.patch 覆盖 draft.patch 同名字段。
+   */
+  patch?: XingyeFileDraftPatch;
+};
+
+function resolveAddFolderId(
+  folders: XingyeFileFolder[],
+  edits: ConfirmFileDraftEdits | undefined,
+  draft: XingyePendingFileDraft,
+): string {
+  const explicit = edits?.folderId?.trim() || '';
+  if (explicit && folders.some((f) => f.id === explicit)) return explicit;
+  return resolveFolderIdFromHint(folders, draft.folderHint);
+}
+
+/**
+ * 用户在「待确认草稿」区点「确认生成」时调用。两条主路径：
+ *
+ * **action='add'（默认 / 向后兼容）**：
+ *   1. entry id 用 `from-draft-${draftId}`；先 list entries 查同 id 的 entry
+ *      （上一次 confirm 写完 entry 但 delete draft 失败的重试） → 复用；
+ *   2. 否则解析 folderId（edits 优先 / draft.folderHint / 「待确认」folder），
+ *      过一遍 dedupe（命中抛 DuplicateFileEntryError），调 appendFileEntry
+ *      （skipDedupe=true：本函数已亲自过过了，避免重复读 entries）；
+ *   3. 从 drafts 删掉；删除失败仅 warn——重试时步骤 1 兜底防重；
+ *   4. 发 file.draft_confirmed（payload.action='add'）。
+ *
+ * **action='update'**：
+ *   1. resolveTargetEntry 找老 entry；找不到 → 抛"目标条目已不存在"；
+ *   2. 合并 draft.patch + edits.patch（后者覆盖前者）；
+ *   3. bodyAppend 追加到老 entry.body 末尾（≤8000 截断），其它字段按 patch 替换；
+ *   4. 调 updateFileEntry 写入；
+ *   5. 从 drafts 删掉；发 file.draft_confirmed（payload.action='update'）。
  *
  * 进程内 per-draft 锁防止 UI 双击/多窗口产生并发 confirm。
  */
 export async function confirmFileDraft(
   agentId: string,
   draftId: string,
-  edits?: {
-    folderId?: string;
-    title?: string;
-    body?: string;
-    summary?: string | null;
-    tags?: string[] | null;
-  },
+  edits?: ConfirmFileDraftEdits,
 ): Promise<XingyeFileEntry> {
   const aid = assertAgentId(agentId, '确认资料柜草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
   return withDraftConfirmLock(`files::${aid}::${did}`, async () => {
+    const entries = await listFileEntries(aid);
     const expectedEntryId = fileEntryIdFromDraftId(did);
-    const existingEntry = (await listFileEntries(aid)).find((e) => e.id === expectedEntryId);
+    const existingFromDraft = entries.find((e) => e.id === expectedEntryId);
 
     const draft = (await listFileDrafts(aid)).find((d) => d.id === did);
-    if (!draft && !existingEntry) {
+    if (!draft && !existingFromDraft) {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
 
     let entry: XingyeFileEntry;
-    if (existingEntry) {
-      entry = existingEntry;
-    } else if (draft) {
-      /** 用户可能从未初始化过文件夹；先确保有默认蓝图。 */
-      const folders = await ensureDefaultFileFolders(aid);
-      let folderId = edits?.folderId?.trim() || '';
-      if (folderId) {
-        /** 显式指定的 folderId 必须真实存在；否则回退到 hint 解析。 */
-        if (!folders.some((f) => f.id === folderId)) folderId = '';
+    let resolvedAction: XingyeFileDraftAction = 'add';
+
+    if (existingFromDraft) {
+      /** 幂等重试：上次 confirm 写完 entry 但 delete draft 失败。 */
+      entry = existingFromDraft;
+      resolvedAction = draft?.action ?? 'add';
+    } else if (draft && draft.action === 'update') {
+      resolvedAction = 'update';
+      const target = resolveTargetEntry(entries, draft);
+      if (!target) {
+        throw new Error('确认草稿失败：目标条目已不存在；请丢弃此草稿后重新整理。');
       }
-      if (!folderId) folderId = resolveFolderIdFromHint(folders, draft.folderHint);
+      const mergedPatch: XingyeFileDraftPatch = { ...(draft.patch ?? {}), ...(edits?.patch ?? {}) };
+      const nextTitle = (mergedPatch.title ?? target.title).trim().slice(0, 160) || target.title;
+      const nextBody = mergedPatch.bodyAppend
+        ? `${target.body ? `${target.body}\n\n` : ''}${mergedPatch.bodyAppend}`.slice(0, 8000)
+        : target.body;
+      const nextSummary = Object.prototype.hasOwnProperty.call(mergedPatch, 'summary')
+        ? normalizeOptionalText(mergedPatch.summary, 300)
+        : target.summary;
+      const nextTags = Object.prototype.hasOwnProperty.call(mergedPatch, 'tags')
+        ? normalizeTags(mergedPatch.tags)
+        : target.tags;
+      const nextFolderId = mergedPatch.folderId?.trim() || target.folderId;
+      const updated = await updateFileEntry(aid, target.id, {
+        folderId: nextFolderId,
+        title: nextTitle,
+        body: nextBody,
+        summary: nextSummary,
+        tags: nextTags,
+        source: target.source,
+      });
+      if (!updated) {
+        throw new Error('确认草稿失败：updateFileEntry 未找到目标条目（并发删除）。');
+      }
+      entry = updated;
+    } else if (draft) {
+      resolvedAction = 'add';
+      const folders = await ensureDefaultFileFolders(aid);
+      const folderId = resolveAddFolderId(folders, edits, draft);
 
       const title = (edits?.title ?? draft.title).trim().slice(0, 160) || '无标题';
       const body = (edits?.body ?? draft.body).slice(0, 8000);
@@ -623,6 +866,11 @@ export async function confirmFileDraft(
         return draft.tags;
       };
 
+      const detection = detectFilesDuplicate({ title, folderId }, entries);
+      if (detection.kind !== 'unique') {
+        throw new DuplicateFileEntryError(detection);
+      }
+
       entry = await appendFileEntry(
         aid,
         {
@@ -633,7 +881,7 @@ export async function confirmFileDraft(
           tags: resolveTags(),
           source: 'xingye-heartbeat-confirmed',
         },
-        { id: expectedEntryId },
+        { id: expectedEntryId, skipDedupe: true, knownEntries: entries },
       );
     } else {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
@@ -648,7 +896,12 @@ export async function confirmFileDraft(
       type: 'file.draft_confirmed',
       source: 'xingye-files-store',
       subjectId: did,
-      payload: { draftId: did, entryId: entry.id, folderId: entry.folderId },
+      payload: {
+        draftId: did,
+        action: resolvedAction,
+        entryId: entry.id,
+        folderId: entry.folderId,
+      },
     });
     return entry;
   });
