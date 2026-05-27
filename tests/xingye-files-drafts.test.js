@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { appendFilesDraftServer } from "../lib/xingye/files-drafts.js";
+import { appendFilesDraftServer, normalizeFilesDraftPatch } from "../lib/xingye/files-drafts.js";
 import { createProposeDraftTool } from "../lib/tools/xingye-propose-draft-tool.js";
 
 function mktemp() {
@@ -153,6 +153,153 @@ describe("createProposeDraftTool · module=files", () => {
     expect(res.details.ok).toBe(false);
     expect(res.details.module).toBe("files");
     expect(res.details.reason).toBe("empty_title");
+    expect(fs.existsSync(path.join(agentDir, "xingye", "files", "drafts.jsonl"))).toBe(false);
+  });
+});
+
+describe("normalizeFilesDraftPatch", () => {
+  it("returns null on non-object", () => {
+    expect(normalizeFilesDraftPatch(null)).toBeNull();
+    expect(normalizeFilesDraftPatch("x")).toBeNull();
+    expect(normalizeFilesDraftPatch([])).toBeNull();
+  });
+
+  it("returns null when no allowed field is present", () => {
+    expect(normalizeFilesDraftPatch({})).toBeNull();
+    expect(normalizeFilesDraftPatch({ folderId: "f1", source: "s" })).toBeNull();
+    expect(normalizeFilesDraftPatch({ tags: [] })).toBeNull();
+    expect(normalizeFilesDraftPatch({ bodyAppend: "   " })).toBeNull();
+  });
+
+  it("keeps title / bodyAppend / summary / tags only", () => {
+    const patch = normalizeFilesDraftPatch({
+      title: "  new title  ",
+      bodyAppend: "  追加段落  ",
+      summary: "新摘要",
+      tags: [" t1 ", "", "t2"],
+      folderId: "ignored",
+      source: "ignored",
+    });
+    expect(patch).toEqual({
+      title: "new title",
+      bodyAppend: "追加段落",
+      summary: "新摘要",
+      tags: ["t1", "t2"],
+    });
+  });
+});
+
+describe("appendFilesDraftServer · action='update'", () => {
+  it("writes update draft with targetEntryId + patch.bodyAppend", async () => {
+    const draft = await appendFilesDraftServer({
+      agentDir,
+      agentId: "agent-a",
+      input: {
+        action: "update",
+        targetEntryId: "fil-abc",
+        patch: { bodyAppend: "今天又听到一句：「先稳住自己」。" },
+        reason: "再聊师父",
+        source: "xingye-heartbeat-tool",
+      },
+    });
+    expect(draft).not.toBeNull();
+    expect(draft.action).toBe("update");
+    expect(draft.targetEntryId).toBe("fil-abc");
+    expect(draft.patch).toEqual({ bodyAppend: "今天又听到一句：「先稳住自己」。" });
+    const rows = readJsonl(path.join(agentDir, "xingye", "files", "drafts.jsonl"));
+    expect(rows[0].action).toBe("update");
+  });
+
+  it("update path emits event with action + patchFields", async () => {
+    const draft = await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: {
+        action: "update", matchTitle: "师父的话",
+        patch: { summary: "新摘要", tags: ["师父"] },
+        source: "xingye-heartbeat-tool",
+      },
+    });
+    const log = readJson(path.join(agentDir, "xingye", "events", "log.json"));
+    const proposed = log.events.find((e) => e.type === "file.draft_proposed" && e.subjectId === draft.id);
+    expect(proposed.payload.action).toBe("update");
+    expect(proposed.payload.matchTitle).toBe("师父的话");
+    expect(proposed.payload.patchFields.sort()).toEqual(["summary", "tags"]);
+  });
+
+  it("update requires targetEntryId OR matchTitle", async () => {
+    expect(await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", patch: { summary: "x" }, source: "s" },
+    })).toBeNull();
+  });
+
+  it("update requires non-empty patch", async () => {
+    expect(await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", targetEntryId: "fil-x", patch: {}, source: "s" },
+    })).toBeNull();
+    expect(await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", targetEntryId: "fil-x", source: "s" },
+    })).toBeNull();
+  });
+
+  it("missing action defaults to 'add' (back-compat for old callers)", async () => {
+    const draft = await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { title: "T", body: "B", source: "s" },
+    });
+    expect(draft.action).toBe("add");
+  });
+
+  it("invalid action value falls back to 'add'", async () => {
+    const draft = await appendFilesDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "block", title: "T", source: "s" },
+    });
+    expect(draft.action).toBe("add");
+  });
+});
+
+describe("createProposeDraftTool · module=files action='update'", () => {
+  it("dispatches update + emits structured details", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "files",
+      reason: "再聊师父",
+      files: {
+        action: "update",
+        targetEntryId: "fil-abc",
+        patch: { bodyAppend: "今天又听到一句：「先稳住自己」。" },
+      },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.action).toBe("update");
+    expect(res.details.targetEntryId).toBe("fil-abc");
+    expect(res.details.patchFields).toEqual(["bodyAppend"]);
+    const rows = readJsonl(path.join(agentDir, "xingye", "files", "drafts.jsonl"));
+    expect(rows[0]).toMatchObject({ action: "update", targetEntryId: "fil-abc" });
+  });
+
+  it("rejects update without targetEntryId / matchTitle", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "files",
+      files: { action: "update", patch: { summary: "x" } },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.reason).toBe("missing_target_identifier");
+    expect(fs.existsSync(path.join(agentDir, "xingye", "files", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("rejects update without patch", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "files",
+      files: { action: "update", targetEntryId: "fil-x" },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.reason).toBe("missing_patch");
     expect(fs.existsSync(path.join(agentDir, "xingye", "files", "drafts.jsonl"))).toBe(false);
   });
 });
