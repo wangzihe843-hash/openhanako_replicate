@@ -4372,56 +4372,157 @@
   border-color: rgba(201, 168, 90, 0.32);
 }
 
+/* === Home 入口卡 · 独家专访（B · 片头计数器） ============================
+ *
+ * 三层布局（绝对 / 相对组合）：
+ *   .secretSpaceHomePeek_interview 是 peek 槽，relative 容器。
+ *   ├─ secretSpaceHomePeekInterviewTopRow      flex-row 顶部
+ *   ├─ secretSpaceHomePeekInterviewCenter      absolute 居中 - 十字 + 大数字
+ *   └─ secretSpaceHomePeekInterviewMetaLine    mono 底部三段
+ *
+ * 中央大数字「5」用 opacity 0.18 衬底，搭配虚线圆 + 十字 leader cross，
+ * 营造电影片头倒计时的味道。
+ * ===================================================================== */
 .secretSpaceHomePeek_interview {
   flex: 1;
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 14px 12px 22px;
+  justify-content: space-between;
+  padding: 14px 14px 12px;
   overflow: hidden;
+  background:
+    radial-gradient(ellipse at 30% 25%, rgba(232, 67, 67, 0.07) 0%, transparent 55%),
+    radial-gradient(circle at 70% 80%, rgba(201, 168, 90, 0.08) 0%, transparent 60%);
 }
 
-.secretSpaceHomePeek_interview svg {
-  width: 70%;
-  height: auto;
-  max-height: 64%;
-  opacity: 0.85;
+.secretSpaceHomePeekInterviewTopRow {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
 }
-
-.secretSpaceHomePeekCaption_interview {
-  position: absolute;
-  bottom: 10px;
-  left: 0;
-  right: 0;
-  text-align: center;
+.secretSpaceHomePeekInterviewKickers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.secretSpaceHomePeekInterviewKicker {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 0.28em;
+  font-size: 11px;
+  letter-spacing: 0.24em;
   color: #c9a85a;
   text-transform: uppercase;
 }
+.secretSpaceHomePeekInterviewSubKicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: rgba(140, 131, 119, 0.85);
+  text-transform: uppercase;
+}
 
-.secretSpaceHomePeekInterviewDanmaku {
-  position: absolute;
-  top: 14%;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+.secretSpaceHomePeekInterviewRecPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
-  color: rgba(232, 216, 178, 0.7);
-  text-align: center;
+  letter-spacing: 0.18em;
+  color: #e84343;
+  padding: 3px 8px;
+  border: 1px solid rgba(232, 67, 67, 0.35);
+  border-radius: 999px;
+  background: rgba(232, 67, 67, 0.08);
+  flex-shrink: 0;
+}
+.secretSpaceHomePeekInterviewRecDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e84343;
+  box-shadow: 0 0 6px rgba(255, 119, 102, 0.9);
+  animation: xingyeRecBlink 1.4s ease-in-out infinite;
+}
+@keyframes xingyeRecBlink {
+  0%, 50%, 100% { opacity: 1; }
+  60%, 90%      { opacity: 0.25; }
+}
+
+.secretSpaceHomePeekInterviewCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
   pointer-events: none;
 }
-.secretSpaceHomePeekInterviewDanmaku span {
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+.secretSpaceHomePeekInterviewLeaderCross {
+  position: absolute;
+  width: 56%;
+  aspect-ratio: 1 / 1;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px solid rgba(201, 168, 90, 0.22);
 }
-.secretSpaceHomePeekInterviewDanmaku span:nth-child(2) { color: #f4b5c8; }
-.secretSpaceHomePeekInterviewDanmaku span:nth-child(3) { color: #c9a85a; font-style: italic; }
+.secretSpaceHomePeekInterviewLeaderCross::before,
+.secretSpaceHomePeekInterviewLeaderCross::after {
+  content: '';
+  position: absolute;
+  background: rgba(201, 168, 90, 0.22);
+}
+.secretSpaceHomePeekInterviewLeaderCross::before {
+  left: 50%;
+  top: -8%;
+  bottom: -8%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+.secretSpaceHomePeekInterviewLeaderCross::after {
+  top: 50%;
+  left: -8%;
+  right: -8%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+.secretSpaceHomePeekInterviewBigDigit {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 120px;
+  line-height: 1;
+  color: #f2ecdd;
+  opacity: 0.18;
+  letter-spacing: -0.04em;
+  user-select: none;
+}
+
+.secretSpaceHomePeekInterviewMetaLine {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgba(140, 131, 119, 0.85);
+  text-transform: uppercase;
+}
+.secretSpaceHomePeekInterviewMetaSep {
+  opacity: 0.35;
+}
+.secretSpaceHomePeekInterviewMetaAccent {
+  color: #c9a85a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .secretSpaceHomePeekInterviewRecDot { animation: none; }
+}
 
 /* === Peek 内容样式 ==================================================== */
 
@@ -8990,3 +9091,385 @@
   font-style: italic;
 }
 
+/* =========================================================================
+ * 秘密空间 · 独家专访 · "录制控制台" footer
+ *
+ * 走 film-noir 暗色基调（#14110d / #c9a85a 金 / #e84343 红），独立于周围浅色 panel。
+ * 类型签名与 testid 与原 footer 完全一致；只是把 form 视觉改造成"控制台"卡。
+ * ========================================================================= */
+.secretSpaceInterviewConsole {
+  background: linear-gradient(180deg, #14110d 0%, #0a0907 100%);
+  border: 1px solid rgba(201, 168, 90, 0.22);
+  border-radius: 6px;
+  padding: 22px 24px;
+  color: #d6cdba;
+  font-family: 'Noto Sans SC', -apple-system, system-ui, sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+/* 独家专访 console 内的浅色 form 默认背景透明，让暗底贯穿 */
+.secretSpaceInterviewConsole label,
+.secretSpaceInterviewConsole p {
+  color: inherit;
+}
+
+.secretSpaceInterviewConsoleHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.secretSpaceInterviewConsoleHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.secretSpaceInterviewConsoleStandbyPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #e84343;
+  padding: 4px 10px;
+  border: 1px solid rgba(232, 67, 67, 0.35);
+  border-radius: 999px;
+  background: rgba(232, 67, 67, 0.08);
+}
+.secretSpaceInterviewConsoleStandbyDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e84343;
+  box-shadow: 0 0 8px rgba(255, 119, 102, 0.9);
+  animation: xingyeRecBlink 1.4s ease-in-out infinite;
+}
+.secretSpaceInterviewConsoleLabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(140, 131, 119, 0.85);
+  text-transform: uppercase;
+}
+.secretSpaceInterviewConsoleTimecode {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(140, 131, 119, 0.85);
+}
+
+.secretSpaceInterviewConsoleDescription {
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+  font-size: 14px;
+  line-height: 1.9;
+  color: #d6cdba;
+  margin: 0 0 18px;
+}
+.secretSpaceInterviewConsoleAccent { color: #c9a85a; }
+.secretSpaceInterviewConsoleAccentRed { color: #e84343; }
+
+.secretSpaceInterviewConsoleField {
+  display: block;
+  margin-bottom: 14px;
+}
+.secretSpaceInterviewConsoleFieldLabel {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(140, 131, 119, 0.85);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.secretSpaceInterviewConsoleTextarea {
+  display: block;
+  width: 100%;
+  background: #0a0907;
+  border: 1px solid rgba(201, 168, 90, 0.18);
+  border-radius: 2px;
+  color: #f2ecdd;
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+  font-size: 14px;
+  line-height: 1.8;
+  padding: 12px 14px;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.secretSpaceInterviewConsoleTextarea:focus {
+  border-color: rgba(201, 168, 90, 0.6);
+  background: #110e09;
+}
+.secretSpaceInterviewConsoleTextarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.secretSpaceInterviewConsoleTextarea::placeholder {
+  color: rgba(140, 131, 119, 0.55);
+}
+
+.secretSpaceInterviewConsoleError {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #ff9494;
+  background: rgba(232, 67, 67, 0.08);
+  border: 1px solid rgba(232, 67, 67, 0.3);
+  border-radius: 2px;
+}
+
+.secretSpaceInterviewConsoleSubmitRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.secretSpaceInterviewConsoleQPosition {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.secretSpaceInterviewConsoleQPosLabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(140, 131, 119, 0.85);
+}
+.secretSpaceInterviewConsoleQPosValue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #c9a85a;
+}
+
+.secretSpaceInterviewConsoleBtn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #c9a85a;
+  background: transparent;
+  border: 1px solid rgba(201, 168, 90, 0.22);
+  padding: 10px 18px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 180ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.secretSpaceInterviewConsoleBtn:hover:not(:disabled) {
+  border-color: #c9a85a;
+  color: #f2ecdd;
+  background: rgba(201, 168, 90, 0.08);
+}
+.secretSpaceInterviewConsoleBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.secretSpaceInterviewConsoleBtn_primary {
+  color: #0a0907;
+  background: #c9a85a;
+  border-color: #c9a85a;
+  font-weight: 600;
+}
+.secretSpaceInterviewConsoleBtn_primary:hover:not(:disabled) {
+  background: #e8d9a3;
+  color: #0a0907;
+  border-color: #e8d9a3;
+}
+.secretSpaceInterviewConsoleSubmitDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e84343;
+  box-shadow: 0 0 8px rgba(255, 119, 102, 0.7);
+}
+
+/* —— Console 内嵌的"待确认草稿"区 —— */
+.secretSpaceInterviewConsoleDrafts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed rgba(201, 168, 90, 0.18);
+}
+.secretSpaceInterviewConsoleDraftsTitle {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #c9a85a;
+  text-transform: uppercase;
+}
+.secretSpaceInterviewConsoleDraftCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: rgba(20, 17, 13, 0.6);
+  border: 1px dashed rgba(201, 168, 90, 0.35);
+  border-radius: 4px;
+}
+.secretSpaceInterviewConsoleDraftQ {
+  margin: 0;
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+  font-size: 14px;
+  color: #f2ecdd;
+}
+.secretSpaceInterviewConsoleDraftReason {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: rgba(140, 131, 119, 0.85);
+}
+.secretSpaceInterviewConsoleDraftActions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .secretSpaceInterviewConsoleStandbyDot { animation: none; }
+}
+
+/* =========================================================================
+ * 秘密空间 · 独家专访 · 多期 Poster Grid
+ * 4 列网格，每张卡 3:4 海报：sprocket + 单麦剪影 + 顶部 NO.xx + 底部 INTERVIEW 标题
+ * ========================================================================= */
+.secretSpaceInterviewGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 18px;
+  padding: 4px 0 12px;
+}
+@media (min-width: 1200px) {
+  .secretSpaceInterviewGrid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.secretSpaceInterviewPoster {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: linear-gradient(180deg, #1c1813 0%, #0a0907 100%);
+  border: 1px solid rgba(201, 168, 90, 0.22);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+  padding: 0;
+  display: block;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+}
+.secretSpaceInterviewPoster:hover {
+  transform: translateY(-2px);
+  border-color: rgba(201, 168, 90, 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.secretSpaceInterviewPoster:focus-visible {
+  outline: 2px solid #c9a85a;
+  outline-offset: -2px;
+}
+
+.secretSpaceInterviewPosterSprocket {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  padding: 10px 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.secretSpaceInterviewPosterSprocket_left { left: 4px; }
+.secretSpaceInterviewPosterSprocket_right { right: 4px; }
+.secretSpaceInterviewPosterSprocket > span {
+  display: block;
+  width: 8px;
+  height: 10px;
+  margin: 0 auto;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(201, 168, 90, 0.18);
+  border-radius: 2px;
+}
+
+.secretSpaceInterviewPosterArt {
+  position: absolute;
+  inset: 0;
+  opacity: 0.55;
+  z-index: 1;
+  pointer-events: none;
+}
+.secretSpaceInterviewPosterArt > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.secretSpaceInterviewPosterTopRow {
+  position: absolute;
+  top: 12px;
+  left: 22px;
+  right: 22px;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.secretSpaceInterviewPosterNo {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(140, 131, 119, 0.85);
+}
+
+.secretSpaceInterviewPosterBottom {
+  position: absolute;
+  bottom: 16px;
+  left: 22px;
+  right: 22px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.secretSpaceInterviewPosterKicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: rgba(140, 131, 119, 0.85);
+  text-transform: uppercase;
+}
+.secretSpaceInterviewPosterTitle {
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', serif;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #f2ecdd;
+  /* clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.secretSpaceInterviewPosterMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: rgba(140, 131, 119, 0.85);
+  margin-top: 2px;
+}
+.secretSpaceInterviewPosterMetaSep { opacity: 0.4; }

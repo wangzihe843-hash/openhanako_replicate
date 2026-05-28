@@ -9,6 +9,7 @@
 import type { ReactNode } from 'react';
 import type { Agent } from '../types';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
+import { normalizeSecretInterviewMetadata } from './xingye-secret-space-interview-types';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
 
@@ -426,6 +427,98 @@ function nightLabel(iso: string): string {
   } catch {
     return '——';
   }
+}
+
+// =============================================================================
+// 6. interview — film-noir poster wall
+//    多期专访的归档墙。每张海报 3:4 抽屉式封面，自带 sprocket 片孔 + 单麦剪影。
+// =============================================================================
+
+function formatInterviewDate(iso: string | undefined): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}.${m}.${day}`;
+  } catch {
+    return '';
+  }
+}
+
+export function SecretSpaceInterviewGrid({ records, onOpen }: CategoryRendererProps): ReactNode {
+  return (
+    <div className={styles.secretSpaceInterviewGrid}>
+      {records.map((rec, idx) => {
+        /*
+         * record.metadata 是 SecretInterviewMetadata 的 jsonl 行——可能字段缺失或损坏；
+         * normalize 失败时退到 record 本身的 title / createdAt 字段，确保海报始终能渲染。
+         */
+        const meta = rec.metadata ? normalizeSecretInterviewMetadata(rec.metadata) : null;
+        const title = meta?.title || rec.title || '未命名一期';
+        const hostName = meta?.hostName || '本刊记者';
+        const dateLabel = formatInterviewDate(meta?.recordedAt || rec.createdAt);
+        // 期数：用最新的在前 → records.length - idx
+        const no = String(records.length - idx).padStart(2, '0');
+        const gradientId = `xingye-poster-spot-${rec.key.replace(/[^a-z0-9]/gi, '')}`;
+        return (
+          <button
+            key={rec.key}
+            type="button"
+            className={styles.secretSpaceInterviewPoster}
+            onClick={() => onOpen(rec.key)}
+            data-testid={`secret-space-record-row-${rec.key}`}
+          >
+            {/* sprocket holes 左右两列（视觉装饰）*/}
+            <span className={`${styles.secretSpaceInterviewPosterSprocket} ${styles.secretSpaceInterviewPosterSprocket_left}`} aria-hidden>
+              {Array.from({ length: 8 }).map((_, i) => <span key={i} />)}
+            </span>
+            <span className={`${styles.secretSpaceInterviewPosterSprocket} ${styles.secretSpaceInterviewPosterSprocket_right}`} aria-hidden>
+              {Array.from({ length: 8 }).map((_, i) => <span key={i} />)}
+            </span>
+
+            {/* 单麦特写 + 顶部光圈 */}
+            <span className={styles.secretSpaceInterviewPosterArt} aria-hidden>
+              <svg viewBox="0 0 200 280" preserveAspectRatio="xMidYMid slice">
+                <defs>
+                  <radialGradient id={gradientId} cx="0.5" cy="0.25" r="0.6">
+                    <stop offset="0%" stopColor="#c9a85a" stopOpacity="0.45" />
+                    <stop offset="100%" stopColor="#c9a85a" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                <rect width="200" height="280" fill={`url(#${gradientId})`} />
+                <g stroke="#c9a85a" fill="none" strokeWidth="1.1" opacity="0.7">
+                  <ellipse cx="100" cy="80" rx="22" ry="28" />
+                  <path d="M 100 108 L 100 200" />
+                  <path d="M 80 205 L 120 205" />
+                </g>
+              </svg>
+            </span>
+
+            <span className={styles.secretSpaceInterviewPosterTopRow}>
+              <span className={styles.secretSpaceInterviewPosterNo}>NO.{no}</span>
+            </span>
+
+            <span className={styles.secretSpaceInterviewPosterBottom}>
+              <span className={styles.secretSpaceInterviewPosterKicker}>INTERVIEW</span>
+              <span className={styles.secretSpaceInterviewPosterTitle}>{title}</span>
+              <span className={styles.secretSpaceInterviewPosterMeta}>
+                <span>{hostName}</span>
+                {dateLabel ? (
+                  <>
+                    <span className={styles.secretSpaceInterviewPosterMetaSep}>·</span>
+                    <span>{dateLabel}</span>
+                  </>
+                ) : null}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export function SecretSpaceDreamFeed({ records, onOpen }: CategoryRendererProps): ReactNode {

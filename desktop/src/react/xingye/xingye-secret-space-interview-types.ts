@@ -44,6 +44,46 @@ export const SECRET_INTERVIEW_LIMITS = {
   backstageMax: 320,
 } as const;
 
+/**
+ * "相机关了"页可点击的现场物证（backstageProps）。
+ * 0..3 件，可选；模型生成不出来或与正文矛盾时宁可留空。
+ */
+export const SECRET_INTERVIEW_PROPS_PER_RECORD = { min: 0, max: 3 } as const;
+export const SECRET_INTERVIEW_PROP_LIMITS = {
+  /** id 只允许 [a-z0-9_]，去掉其它字符；截断到 24 字。 */
+  idMax: 24,
+  labelMax: 8,
+  snippetMax: 60,
+} as const;
+
+/**
+ * 固定 icon 集合。UI 走预置 SVG，不接 LLM 自由绘——避免模型给出阅读器画不出来的 icon。
+ * 新增 icon 必须同步更新 SecretInterviewReader.tsx 里的 PropIcon switch。
+ */
+export const SECRET_INTERVIEW_PROP_ICONS = [
+  'button',
+  'cup',
+  'cable',
+  'note',
+  'lighter',
+  'card',
+] as const;
+export type SecretInterviewPropIcon = (typeof SECRET_INTERVIEW_PROP_ICONS)[number];
+
+export interface SecretInterviewProp {
+  /** 稳定 id（仅 [a-z0-9_]），用于 React key 与"已揭开"持久化。 */
+  id: string;
+  /** 物件名，≤ 8 字（显示在浮卡 kicker 旁）。 */
+  label: string;
+  /** 简笔 icon 枚举；UI 用固定 SVG。 */
+  icon: SecretInterviewPropIcon;
+  /** 物件在 backstage 画面里的百分比坐标（8..92，避免贴边）。 */
+  x: number;
+  y: number;
+  /** 点击后浮现的旁白，≤ 60 字。 */
+  snippet: string;
+}
+
 export interface SecretInterviewDanmaku {
   text: string;
   tag: SecretInterviewDanmakuTag;
@@ -73,6 +113,11 @@ export interface SecretInterviewMetadata {
    * 用户没出题时不写。
    */
   userQuestionIndex?: number;
+  /**
+   * 「相机关了」页可点击的现场物证（0..3 件，可选）。
+   * 模型生成不出来或与 backstage 正文矛盾时省略；阅读器降级为无物件交互。
+   */
+  backstageProps?: SecretInterviewProp[];
 }
 
 function truncateChars(text: string, max: number): string {
@@ -118,6 +163,57 @@ function normalizeQuestion(value: unknown): SecretInterviewQuestion | null {
   const a = normalizeString(raw.a, SECRET_INTERVIEW_LIMITS.answerMax);
   if (!q || !a) return null;
   return { q, a, danmaku: normalizeDanmakuList(raw.danmaku) };
+}
+
+function isPropIcon(value: unknown): value is SecretInterviewPropIcon {
+  return typeof value === 'string'
+    && (SECRET_INTERVIEW_PROP_ICONS as readonly string[]).includes(value);
+}
+
+/**
+ * 把任意输入夹到 [8, 92] 区间的有限百分比；非数 / 非有限 → fallback。
+ * 8/92 留 8% 边距，避免物件贴边或被 sprocket 装饰盖住。
+ */
+function clampPropPct(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(8, Math.min(92, n));
+}
+
+function normalizeBackstageProp(value: unknown): SecretInterviewProp | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+
+  const rawId = typeof raw.id === 'string' ? raw.id : '';
+  const id = rawId.replace(/[^a-z0-9_]/gi, '').slice(0, SECRET_INTERVIEW_PROP_LIMITS.idMax).toLowerCase();
+  if (!id) return null;
+
+  const label = normalizeString(raw.label, SECRET_INTERVIEW_PROP_LIMITS.labelMax);
+  if (!label) return null;
+
+  const snippet = normalizeString(raw.snippet, SECRET_INTERVIEW_PROP_LIMITS.snippetMax);
+  if (!snippet) return null;
+
+  const icon: SecretInterviewPropIcon = isPropIcon(raw.icon) ? raw.icon : 'note';
+  const x = clampPropPct(raw.x, 50);
+  const y = clampPropPct(raw.y, 50);
+
+  return { id, label, icon, x, y, snippet };
+}
+
+function normalizeBackstageProps(value: unknown): SecretInterviewProp[] {
+  if (!Array.isArray(value)) return [];
+  const out: SecretInterviewProp[] = [];
+  const seenIds = new Set<string>();
+  for (const item of value) {
+    const prop = normalizeBackstageProp(item);
+    if (!prop) continue;
+    if (seenIds.has(prop.id)) continue; // 去重：id 冲突时只留第一个
+    seenIds.add(prop.id);
+    out.push(prop);
+    if (out.length >= SECRET_INTERVIEW_PROPS_PER_RECORD.max) break;
+  }
+  return out;
 }
 
 /**
@@ -174,6 +270,12 @@ export function normalizeSecretInterviewMetadata(value: unknown): SecretIntervie
       && raw.userQuestionIndex >= 0
       && raw.userQuestionIndex < SECRET_INTERVIEW_QUESTIONS_PER_RECORD) {
     out.userQuestionIndex = raw.userQuestionIndex;
+  }
+
+  // backstageProps 是可选字段：缺 / 全坏 → 不写；有部分有效项 → 只保留有效项
+  const backstageProps = normalizeBackstageProps(raw.backstageProps);
+  if (backstageProps.length > 0) {
+    out.backstageProps = backstageProps;
   }
 
   return out;

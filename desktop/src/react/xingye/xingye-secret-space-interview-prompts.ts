@@ -18,6 +18,9 @@ import {
   SECRET_INTERVIEW_DANMAKU_PER_QUESTION,
   SECRET_INTERVIEW_DANMAKU_TAGS,
   SECRET_INTERVIEW_LIMITS,
+  SECRET_INTERVIEW_PROP_ICONS,
+  SECRET_INTERVIEW_PROP_LIMITS,
+  SECRET_INTERVIEW_PROPS_PER_RECORD,
   SECRET_INTERVIEW_QUESTIONS_PER_RECORD,
 } from './xingye-secret-space-interview-types';
 
@@ -70,7 +73,7 @@ export function buildSecretInterviewPrompt(args: {
   const schemaExample = {
     title: 'string（≤ 40 字；如「专访 · 林雾：在边境医院的第七年」）',
     hostName: 'string（≤ 24 字；虚构主持人/记者笔名）',
-    hostIntro: `string（${limits.hostIntroMin}-${limits.hostIntroMax} 字；演播室 / 录音室 / 后台描述 + 主持人开场白）`,
+    hostIntro: `string（${limits.hostIntroMin}-${limits.hostIntroMax} 字；以**主持人/记者直接开口讲的话**为主体——欢迎语 + 引介 TA + 抛话题铺垫；可夹极少量舞台括注但不要写成小说环境描写）`,
     questions: [
       {
         q: `string（≤ ${limits.questionTextMax} 字；主持人提问）`,
@@ -83,8 +86,18 @@ export function buildSecretInterviewPrompt(args: {
         ],
       },
     ],
-    backstage: `string（${limits.backstageMin}-${limits.backstageMax} 字；"相机关了"的彩蛋）`,
+    backstage: `string（${limits.backstageMin}-${limits.backstageMax} 字；"相机关了"的彩蛋——必须包含至少一位现场工作人员（场记/摄影/导演/音控/化妆 任选）跟 TA 的互动调侃，以及 TA 的反应；反应方式必须严格 fit TA 的人设）`,
     userQuestionIndex: 'number（仅当用户出了题时填，标记该题是 questions 里第几个，0..4；用户没出题时省略）',
+    backstageProps: [
+      {
+        id: `string（仅 [a-z0-9_]，≤ ${SECRET_INTERVIEW_PROP_LIMITS.idMax} 字符；如 "button" / "yellow_cup"）`,
+        label: `string（≤ ${SECRET_INTERVIEW_PROP_LIMITS.labelMax} 字；纯物件名，如「黄铜纽扣」「没动过的水」，不要加修饰）`,
+        icon: `'${SECRET_INTERVIEW_PROP_ICONS.join("' | '")}'`,
+        x: 'number（百分比 8..92；横坐标）',
+        y: 'number（百分比 8..92；纵坐标）',
+        snippet: `string（≤ ${SECRET_INTERVIEW_PROP_LIMITS.snippetMax} 字；主持人/旁观视角的一句没说出口的注脚，补 backstage 没明说的层次，不要复述正文）`,
+      },
+    ],
   };
 
   const parts: string[] = [
@@ -98,8 +111,15 @@ export function buildSecretInterviewPrompt(args: {
     '## 视角硬约束（违反就重写）',
     `- **Q&A 部分**：q 是主持人提问，第三人称问 TA；a 是 ${currentAgentName} 用**第一人称**回答（"我……"），语气、用词、节奏都要符合 TA 平时的说话风格。`,
     `- **不要写成对话剧本**：每个 a 是 TA 的一段独白式回答，里面可以引述用户但**不要让 ${currentUserName} 直接出场说话**。`,
-    `- **hostIntro**：第三人称场景描述（演播室、TA 进门、灯光、神态），可以含主持人开场白一两句；不是 TA 自述。`,
-    `- **backstage**：第三人称场景描述为主，可以引用 TA 一两句"以为相机关了之后"的话。**关键点**：与 Q&A 期间的"公开人设"形成微妙落差——TA 在镜头前是一种样子，相机关了又是另一种样子。**不要**直接揭穿、不要写成反转独白；用动作 / 神态 / 一句没头没尾的话来透。`,
+    `- **hostIntro**：**主体是主持人/记者直接开口讲的开场白**（电视/电台/podcast 主持的口吻），不是小说式环境白描。结构上应当包含：欢迎语 → 简短自我介绍/栏目名 → 引介本期嘉宾（TA）是谁、为什么请到 TA → 抛一句话题铺垫，把话题交到 TA 手里。**不要在 hostIntro 里直接问出 Q1**——那是下一页的事。**不要让 TA 在 hostIntro 里开口**——TA 的第一次发声留到 Q1 的 a。允许夹极少量舞台括注（如「（笑）」「（看向镜头）」「（翻开手卡）」），但占比要小；环境描写如果要有，最多一两句话作背景，**不要让场景描写盖过主持人的话**。`,
+    `- **backstage**：第三人称场景小段，**必须出现至少一位现场工作人员**（场记 / 摄影 / 导演 / 音控 / 化妆师 / 实习生 任选其一）跟 TA 的互动——通常是工作人员拿刚才录制中的某个点调侃 TA（某题答得太"装"、某句话太硬、某个表情、TA 自己提过的某件糗事），TA **必须**有反应。**关键硬约束：TA 的反应方式必须严格贴合人设**，根据 profile.personalitySummary / speakingStyle / relationshipMode 综合判断：`,
+    '  · 温柔 / 内敛 / 守礼型 → 嗔怪一句、耳根发红、装没听见、转移话题、低头笑一下；**不会发火**。',
+    '  · 傲娇 / 嘴硬 / 别扭型 → 假装恼火、嘴硬反击、摔个小道具、扭头不理；表面凶但藏不住情绪。',
+    '  · 冷淡 / 高冷 / 寡言型 → 淡淡一句不痛不痒的回敬、瞥一眼、不接话；**不会真情绪外露**。',
+    '  · 活泼 / 外放 / 没架子型 → 才可能真"恼羞成怒"地拍一下工作人员、笑着追打两句、放话报复回去。',
+    '  · 其它（沉稳 / 油滑 / 病娇 / 痞气…）依此类推——核心是"这个反应放在 TA 身上要让人觉得自然"。**写出一个明显错位的反应（例如温柔角色突然爆粗、冷淡角色拍桌）= 重写**。',
+    `- **backstage 的灵魂**：与 Q&A 期间的"公开人设"形成微妙落差——TA 在镜头前是一种样子，相机关了被熟人调侃时又是另一种。**不要**直接揭穿、不要写成"原来 TA 真实的一面是 xxx"这种反转独白；用工作人员的一两句对话 + TA 的动作 / 神态 / 一句没头没尾的回话来透。`,
+    '- **backstage 写法格式**：场景化叙述，可以直接写工作人员的话（用引号或破折号引出，并交代是哪个工种在说，如「场记探头进来：『……』」「摄影一边收线一边嘟囔：『……』」），紧跟 TA 的动作或一句回应。**不要写成纯独白也不要写成纯环境白描**。',
     '- 不要出现「根据聊天记录」「用户让我」「系统提示」「模型」「AI」「prompt」「OpenHanako」「设定库」等元叙述。',
     '',
     '## 题数与结构硬约束',
@@ -132,6 +152,20 @@ export function buildSecretInterviewPrompt(args: {
     `- title：≤ ${limits.titleMax} 字。`,
     `- hostName：≤ ${limits.hostNameMax} 字（虚构笔名即可）。`,
     '- 超长会被系统截断成省略号，所以**写到接近 max 但不超过 max** 是理想区间。',
+    '',
+    `## 现场物证 backstageProps（可选 ${SECRET_INTERVIEW_PROPS_PER_RECORD.min}-${SECRET_INTERVIEW_PROPS_PER_RECORD.max} 件）`,
+    '从你刚写的 backstage 段落里，挑出 1-3 个具体的物件细节，让用户在「相机关了之后」那一页上点击点亮它们，触发一句额外旁白。这是"可选字段"——但有它能让幕后页明显更有"现场感"，尽量给。',
+    '',
+    '硬约束：',
+    '- 每件物件**必须**在 backstage 正文里至少出现一次（或正文里有明确暗示其存在的细节），不许凭空新加物件。',
+    `- icon 从固定 ${SECRET_INTERVIEW_PROP_ICONS.length} 类中选：${SECRET_INTERVIEW_PROP_ICONS.map((i) => `\`${i}\``).join(' / ')}（分别对应：纽扣 / 水杯 / 线材 / 纸条 / 打火机 / 卡片）。找不到合适的 icon 就**不要加这件**——宁缺毋滥。`,
+    `- label ≤ ${SECRET_INTERVIEW_PROP_LIMITS.labelMax} 字，**只写物件名**（"黄铜纽扣"对，"林雾的黄铜纽扣"或"她口袋里的旧纽扣"错——形容词留给 snippet）。`,
+    `- snippet ≤ ${SECRET_INTERVIEW_PROP_LIMITS.snippetMax} 字，用主持人/旁观第三方视角写的一句**没说出口的注脚**：补 backstage 没明说的层次（来历、习惯、未言之意），**不要复述正文里已经写过的话**。`,
+    '- x / y 是百分比坐标（8..92），把物件错开摆放——**不要全挤在 x ∈ [30, 70] 且 y ∈ [30, 60] 的正文区域**；优先靠近画面四角或两侧。',
+    '- id 用 [a-z0-9_]，简短可读（如 "button" / "cup" / "cable" / "yellow_card"），同一期 id 不要重复。',
+    '- 物件之间应有不同切面：不要 3 件都是同类小物（如 3 个水杯）；理想是物 + 物 + 物各自指向不同细节。',
+    '',
+    '**降级规则：若 backstage 正文里没有合适的具体物件，或挑出来与正文矛盾，请省略 backstageProps 或返回空数组——不要凭空造。** 阅读器会优雅降级到无物件交互。',
     '',
     '## 跨期连续性（必读）',
     continuityAnchorBlock || '（无；这是 TA 的第一期独家专访——可以新设定一个栏目名 / 主持人名，后续期数应当沿用同一组）',

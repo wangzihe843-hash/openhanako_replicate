@@ -166,38 +166,41 @@ function MemoryPeek() {
 }
 
 function InterviewPeek() {
+  /*
+   * 「片头计数器」B 方案（film noir）：
+   *   顶部行  - 左：INTERVIEW · TAKE 01 + 副 mono；右：REC pill 红灯
+   *   中央    - 大数字「5」(opacity 0.18) + 十字 leader cross
+   *   底部行  - REEL 07 · STUDIO · UNSEEN 三段 mono 元信息（mood 字眼，不是实数据）
+   *
+   * 抽屉外层 .secretSpaceHomeCard_interview 已经是暗色底，这里只填充 peek 槽。
+   * 父组件 SecretSpaceHomeCard 仍在下方渲染 label（TA 的独家专访）+ hint，
+   * peek 内不要再写 title，避免重复。
+   */
   return (
     <div className={styles.secretSpaceHomePeek_interview}>
-      <svg viewBox="0 0 100 100" aria-hidden focusable="false">
-        {/* 立麦 + 舞台聚光圈：构图暗示"录制中" */}
-        <defs>
-          <radialGradient id="xingye-interview-spot" cx="0.5" cy="0.35" r="0.6">
-            <stop offset="0%" stopColor="#f0d896" stopOpacity="0.7" />
-            <stop offset="70%" stopColor="#c9a85a" stopOpacity="0.15" />
-            <stop offset="100%" stopColor="#c9a85a" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <circle cx="50" cy="40" r="36" fill="url(#xingye-interview-spot)" />
-        <g stroke="#e8d8b2" strokeWidth="1.4" fill="none" opacity="0.95">
-          <path d="M 50 48 L 50 86" />
-          <ellipse cx="50" cy="34" rx="9" ry="13" />
-          <path d="M 42 86 L 58 86" />
-          <path d="M 38 92 L 62 92" />
-        </g>
-        <g fill="#e8d8b2" opacity="0.55">
-          <circle cx="46" cy="30" r="0.9" />
-          <circle cx="54" cy="30" r="0.9" />
-          <circle cx="46" cy="36" r="0.9" />
-          <circle cx="54" cy="36" r="0.9" />
-          <circle cx="50" cy="42" r="0.9" />
-        </g>
-      </svg>
-      <div className={styles.secretSpaceHomePeekInterviewDanmaku} aria-hidden>
-        <span>「这一题答得真心虚」</span>
-        <span>「姐姐永远是我心头朱砂痣」</span>
-        <span>「TA 看了一眼摄像机」</span>
+      <div className={styles.secretSpaceHomePeekInterviewTopRow}>
+        <div className={styles.secretSpaceHomePeekInterviewKickers}>
+          <span className={styles.secretSpaceHomePeekInterviewKicker}>INTERVIEW · TAKE 01</span>
+          <span className={styles.secretSpaceHomePeekInterviewSubKicker}>5 Q · 弹幕 · 幕后</span>
+        </div>
+        <span className={styles.secretSpaceHomePeekInterviewRecPill} aria-hidden>
+          <span className={styles.secretSpaceHomePeekInterviewRecDot} />
+          REC
+        </span>
       </div>
-      <div className={styles.secretSpaceHomePeekCaption_interview}>INTERVIEW</div>
+
+      <div className={styles.secretSpaceHomePeekInterviewCenter} aria-hidden>
+        <div className={styles.secretSpaceHomePeekInterviewLeaderCross} />
+        <div className={styles.secretSpaceHomePeekInterviewBigDigit}>5</div>
+      </div>
+
+      <div className={styles.secretSpaceHomePeekInterviewMetaLine}>
+        <span>REEL 07</span>
+        <span className={styles.secretSpaceHomePeekInterviewMetaSep}>·</span>
+        <span>STUDIO</span>
+        <span className={styles.secretSpaceHomePeekInterviewMetaSep}>·</span>
+        <span className={styles.secretSpaceHomePeekInterviewMetaAccent}>UNSEEN</span>
+      </div>
     </div>
   );
 }

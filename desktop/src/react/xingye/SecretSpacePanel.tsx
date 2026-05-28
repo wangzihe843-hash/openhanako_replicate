@@ -22,6 +22,7 @@ import {
   SecretSpaceMomentsFeed,
   SecretSpaceMemoryGrid,
   SecretSpaceDreamFeed,
+  SecretSpaceInterviewGrid,
 } from './SecretSpaceCategoryRenderers';
 import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { generateSecretSpaceRecordWithAI, isSecretSpaceAiGenerableCategory } from './xingye-secret-space-ai';
@@ -1227,40 +1228,39 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
 
   const interviewFooter =
     activeCategory === 'interview' && agent?.id ? (
-      <div className={styles.profileForm} data-testid="secret-space-interview-footer">
+      <div
+        className={`${styles.profileForm} ${styles.secretSpaceInterviewConsole}`}
+        data-testid="secret-space-interview-footer"
+      >
+        {/* 心跳待确认草稿区：保持原有交互；仅外观随 console 暗色风走 */}
         {interviewDrafts.length > 0 ? (
           <div
             data-testid="secret-space-interview-drafts"
-            style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}
+            className={styles.secretSpaceInterviewConsoleDrafts}
           >
-            <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0, fontWeight: 600 }}>
+            <p className={styles.secretSpaceInterviewConsoleDraftsTitle}>
               待确认草稿 · TA 想接受一次专访
             </p>
             {interviewDrafts.map((draft) => (
               <div
                 key={draft.id}
                 data-testid={`secret-space-interview-draft-${draft.id}`}
-                style={{
-                  border: '1px dashed currentColor',
-                  borderRadius: 8,
-                  padding: 10,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
+                className={styles.secretSpaceInterviewConsoleDraftCard}
               >
-                <p style={{ fontSize: 13, margin: 0 }}>
+                <p className={styles.secretSpaceInterviewConsoleDraftQ}>
                   {draft.userQuestion
                     ? `想被问到：${draft.userQuestion}`
                     : '（没有指定题目，由生成端自拟全部 5 题）'}
                 </p>
                 {draft.reason ? (
-                  <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>缘由：{draft.reason}</p>
+                  <p className={styles.secretSpaceInterviewConsoleDraftReason}>
+                    缘由：{draft.reason}
+                  </p>
                 ) : null}
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div className={styles.secretSpaceInterviewConsoleDraftActions}>
                   <button
                     type="button"
-                    className={styles.secondaryButton}
+                    className={styles.secretSpaceInterviewConsoleBtn}
                     onClick={() => void handleConfirmInterviewDraft(draft)}
                     disabled={interviewDraftBusyId !== null || interviewLoading}
                     data-testid={`secret-space-interview-draft-confirm-${draft.id}`}
@@ -1269,7 +1269,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
                   </button>
                   <button
                     type="button"
-                    className={styles.secondaryButton}
+                    className={styles.secretSpaceInterviewConsoleBtn}
                     onClick={() => void handleDiscardInterviewDraft(draft)}
                     disabled={interviewDraftBusyId !== null}
                     data-testid={`secret-space-interview-draft-discard-${draft.id}`}
@@ -1281,32 +1281,67 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             ))}
           </div>
         ) : null}
-        <p className={styles.secretSpacePlaceholder} style={{ marginTop: 0 }}>
-          录一期专访：模型一次性生成 5 个 Q&A、每题 4-6 条弹幕、加一段「相机关了之后」的彩蛋。
+
+        {/* CONSOLE header：STANDBY pill + 标签 + mono 倒计时 */}
+        <div className={styles.secretSpaceInterviewConsoleHeader}>
+          <div className={styles.secretSpaceInterviewConsoleHeaderLeft}>
+            <span className={styles.secretSpaceInterviewConsoleStandbyPill}>
+              <span className={styles.secretSpaceInterviewConsoleStandbyDot} />
+              STANDBY
+            </span>
+            <span className={styles.secretSpaceInterviewConsoleLabel}>
+              CONSOLE · 录制控制台
+            </span>
+          </div>
+          <span className={styles.secretSpaceInterviewConsoleTimecode}>00 : 00 : 00</span>
+        </div>
+
+        <p className={styles.secretSpaceInterviewConsoleDescription}>
+          录一期专访：模型一次性生成
+          <span className={styles.secretSpaceInterviewConsoleAccent}>5 个 Q&amp;A</span>、每题
+          <span className={styles.secretSpaceInterviewConsoleAccent}>4-6 条弹幕</span>，加一段
+          <span className={styles.secretSpaceInterviewConsoleAccentRed}>「相机关了之后」</span>的彩蛋。
           也可以给一题你想问的，让它落在第 3 或第 4 题位置；不出题模型自己决定 5 题。
         </p>
-        <label className={styles.profileField}>
-          <span>你想问 TA 的一题（可空）</span>
+
+        <label className={styles.secretSpaceInterviewConsoleField}>
+          <span className={styles.secretSpaceInterviewConsoleFieldLabel}>
+            你想问 TA 的一题（可空）
+          </span>
           <textarea
             value={interviewUserQuestion}
             onChange={(e) => setInterviewUserQuestion(e.target.value)}
-            rows={2}
+            rows={3}
             placeholder="例：在你过去那么多年里，有没有过想放弃的时刻？"
             aria-label="独家专访用户出题"
             disabled={interviewLoading}
             data-testid="secret-space-interview-user-question"
+            className={styles.secretSpaceInterviewConsoleTextarea}
           />
         </label>
-        {interviewError ? <p className={styles.saveStatus}>{interviewError}</p> : null}
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={() => void handleGenerateInterview()}
-          disabled={interviewLoading}
-          data-testid="secret-space-interview-generate"
-        >
-          {interviewLoading ? '正在录制本期…' : '录一期专访'}
-        </button>
+
+        {interviewError ? (
+          <p className={styles.secretSpaceInterviewConsoleError}>{interviewError}</p>
+        ) : null}
+
+        <div className={styles.secretSpaceInterviewConsoleSubmitRow}>
+          <div className={styles.secretSpaceInterviewConsoleQPosition}>
+            <span className={styles.secretSpaceInterviewConsoleQPosLabel}>Q POSITION</span>
+            <span className={styles.secretSpaceInterviewConsoleQPosValue}>
+              AUTO · 第 3 或第 4 题
+            </span>
+          </div>
+          <button
+            type="button"
+            className={`${styles.secretSpaceInterviewConsoleBtn} ${styles.secretSpaceInterviewConsoleBtn_primary}`}
+            onClick={() => void handleGenerateInterview()}
+            disabled={interviewLoading}
+            data-testid="secret-space-interview-generate"
+          >
+            <span className={styles.secretSpaceInterviewConsoleSubmitDot} />
+            {interviewLoading ? '正在录制本期…' : '录一期专访'}
+          </button>
+        </div>
       </div>
     ) : null;
 
@@ -1350,6 +1385,10 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       : activeCategory === 'dream'
       ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
           <SecretSpaceDreamFeed records={records} onOpen={onOpen} />
+        )
+      : activeCategory === 'interview'
+      ? ({ records, onOpen }: { records: SecretSpaceSampleRecord[]; onOpen: (key: string) => void }) => (
+          <SecretSpaceInterviewGrid records={records} onOpen={onOpen} />
         )
       : undefined
     : undefined;

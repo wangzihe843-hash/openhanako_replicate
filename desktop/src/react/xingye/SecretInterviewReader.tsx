@@ -6,16 +6,33 @@
  *   q0..q4    → 5 个 Q&A，每页背景飘弹幕
  *   backstage → "相机关了"彩蛋（隐藏页：只能从 Q5 末尾点「相机关了之后…」按钮进入）
  *
- * 弹幕：每页对应 question.danmaku 列表，CSS animation 横向滚动；进入页面时
- * 重新挂载 key 让动画 from 0 重启，避免上一页弹幕残留视觉。
+ * 视觉系统：Film Noir 暗色胶片
+ *  - .reader 根上叠加 grain / scanlines / sweep / vignette + 左右 sprocket
+ *  - REC pill 在 header 右上；backstage 进场动画推进时 REC 闪烁→熄灭
+ *  - 弹幕 toggle：默认 true，进 backstage 时强制 false；状态持久化到 localStorage
  *
- * 不读 / 不写存储；只渲染传入的 metadata。删除按钮由父组件（CategoryView 的 footer）处理。
+ * Backstage 进场状态机：
+ *   idle → recBlinking → recOff → dim → text → done
+ *   节奏 100ms / 900ms / 1600ms / 2400ms / 4000ms
+ *   离开 backstage 页时重置；下次再进重新跑一次。
+ *
+ * Backstage 物件互动（仅当 metadata.backstageProps 非空时）：
+ *  - 物件按 x/y 百分比绝对定位；pulse 动画提示可点
+ *  - 点击 → 浮卡显示 snippet；再点同物件关闭；已点物件保留"已揭开"描边
+ *  - phase 推进到 text/done 才挂载物件，避免文字未出场就被物件干扰
+ *
+ * 鼠标晃动 / 散景：phase=done 且鼠标在 stage 内时启用；rAF 节流，避免 setState 风暴。
+ *
+ * 不读 / 不写"专访存储"；只渲染传入的 metadata。删除按钮由父组件（CategoryView 的 footer）处理。
+ * 唯一持久化：弹幕开关 localStorage('xingye.interview.danmakuOn')。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import readerStyles from './SecretInterviewReader.module.css';
 import type {
   SecretInterviewDanmaku,
   SecretInterviewMetadata,
+  SecretInterviewProp,
+  SecretInterviewPropIcon,
   SecretInterviewQuestion,
 } from './xingye-secret-space-interview-types';
 
@@ -30,9 +47,30 @@ type Page =
   | { kind: 'qna'; index: number }
   | { kind: 'backstage' };
 
+/**
+ * Backstage 进场状态机。
+ *  idle        - 初始静止（尚未进 backstage）
+ *  recBlinking - 红色 REC 急促闪烁，提示"录制即将结束"
+ *  recOff      - REC 灯熄灭
+ *  dim         - 灯光收暗（黑色幕 opacity 上抬）
+ *  text        - 文字开始浮现（CSS 控制 fade-in）
+ *  done        - 文字到位 + 物件可点 + 鼠标晃动启用
+ */
+type BackstagePhase = 'idle' | 'recBlinking' | 'recOff' | 'dim' | 'text' | 'done';
+
+const BACKSTAGE_PHASE_SCHEDULE: ReadonlyArray<{ phase: BackstagePhase; at: number }> = [
+  { phase: 'recBlinking', at: 100 },
+  { phase: 'recOff', at: 900 },
+  { phase: 'dim', at: 1600 },
+  { phase: 'text', at: 2400 },
+  { phase: 'done', at: 4000 },
+];
+
 const DANMAKU_LANE_COUNT = 5;
 // 整体周期 22-30 秒；CSS 里 55%/100% 让每条弹幕"飘 12-16s + 歇 10-14s"再来下一轮。
 const DANMAKU_DURATION_RANGE = [22, 30] as const; // 秒
+
+const DANMAKU_ON_STORAGE_KEY = 'xingye.interview.danmakuOn';
 
 function pickLane(index: number): number {
   return index % DANMAKU_LANE_COUNT;
@@ -128,10 +166,188 @@ function StudioBackdrop({ variant }: { variant: 'studio' | 'aftermath' }) {
   );
 }
 
+/** 现场物证 icon。所有 icon 都走 currentColor，便于配合 .backstageProp 的 revealed 态切色。 */
+function PropIcon({ kind }: { kind: SecretInterviewPropIcon }) {
+  switch (kind) {
+    case 'button':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+          <circle cx="10" cy="10" r="1" fill="currentColor" />
+          <circle cx="14" cy="10" r="1" fill="currentColor" />
+          <circle cx="10" cy="14" r="1" fill="currentColor" />
+          <circle cx="14" cy="14" r="1" fill="currentColor" />
+        </svg>
+      );
+    case 'cup':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <path d="M 6 6 L 7 20 L 17 20 L 18 6 Z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M 7 12 L 17 12" stroke="currentColor" strokeWidth="0.8" strokeDasharray="2 2" />
+        </svg>
+      );
+    case 'cable':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <path d="M 2 16 Q 6 10 10 16 T 18 16 Q 20 14 22 16" fill="none" stroke="currentColor" strokeWidth="1.4" />
+          <circle cx="22" cy="16" r="1.4" fill="currentColor" />
+        </svg>
+      );
+    case 'note':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <path d="M 6 4 L 16 4 L 19 7 L 19 20 L 6 20 Z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M 16 4 L 16 7 L 19 7" fill="none" stroke="currentColor" strokeWidth="1" />
+          <path d="M 9 11 L 16 11 M 9 14 L 16 14 M 9 17 L 13 17" stroke="currentColor" strokeWidth="0.9" />
+        </svg>
+      );
+    case 'lighter':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <rect x="7" y="11" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M 12 11 L 12 7 Q 12 4 14 4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M 11 8 Q 12 5 14 6 Q 13 8 12 7" fill="currentColor" opacity="0.8" />
+        </svg>
+      );
+    case 'card':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <rect x="3" y="7" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M 3 10 L 21 10" stroke="currentColor" strokeWidth="0.9" />
+          <path d="M 7 14 L 12 14" stroke="currentColor" strokeWidth="0.9" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+/** 安全读 localStorage（SSR / disabled storage 都不要崩）。 */
+function readDanmakuOnFromStorage(defaultValue: boolean): boolean {
+  if (typeof window === 'undefined') return defaultValue;
+  try {
+    const raw = window.localStorage.getItem(DANMAKU_ON_STORAGE_KEY);
+    if (raw === null) return defaultValue;
+    return raw === '1' || raw === 'true';
+  } catch {
+    return defaultValue;
+  }
+}
+
+function writeDanmakuOnToStorage(value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(DANMAKU_ON_STORAGE_KEY, value ? '1' : '0');
+  } catch {
+    // 忽略：私密模式 / 配额满 / disabled 都不该影响阅读
+  }
+}
+
 export function SecretInterviewReader({ meta, renderFooterActions }: SecretInterviewReaderProps) {
   const [page, setPage] = useState<Page>({ kind: 'intro' });
   const [backstageVisited, setBackstageVisited] = useState(false);
 
+  /* —— 弹幕开关 —— */
+  // 默认开；用户手动切换持久化到 localStorage；进 backstage 强制关（剧情不应被打断）。
+  const [danmakuOn, setDanmakuOn] = useState<boolean>(() => readDanmakuOnFromStorage(true));
+  const toggleDanmaku = useCallback(() => {
+    setDanmakuOn((prev) => {
+      const next = !prev;
+      writeDanmakuOnToStorage(next);
+      return next;
+    });
+  }, []);
+
+  /* —— Backstage 进场状态机 —— */
+  const [backstagePhase, setBackstagePhase] = useState<BackstagePhase>('idle');
+
+  useEffect(() => {
+    if (page.kind !== 'backstage') {
+      // 离开 backstage → 重置 phase，下次再进重新播一遍
+      setBackstagePhase('idle');
+      return undefined;
+    }
+    setBackstagePhase('idle');
+    const timers = BACKSTAGE_PHASE_SCHEDULE.map(({ phase, at }) =>
+      setTimeout(() => setBackstagePhase(phase), at),
+    );
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [page.kind]);
+
+  /* —— 鼠标跟随：仅 backstage phase=done 时启用 —— */
+  // 用 ref 持有 raw cursor 百分比，state 只写最终用于 CSS 变量的值；rAF 节流。
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [cursor, setCursor] = useState<{ x: number; y: number; inside: boolean }>({
+    x: 0.5,
+    y: 0.5,
+    inside: false,
+  });
+  const cursorRafRef = useRef<number | null>(null);
+  const cursorLatestRef = useRef<{ x: number; y: number; inside: boolean }>({
+    x: 0.5,
+    y: 0.5,
+    inside: false,
+  });
+
+  const flushCursor = useCallback(() => {
+    cursorRafRef.current = null;
+    setCursor(cursorLatestRef.current);
+  }, []);
+
+  const handleStageMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    cursorLatestRef.current = { x, y, inside: true };
+    if (cursorRafRef.current === null) {
+      cursorRafRef.current = requestAnimationFrame(flushCursor);
+    }
+  }, [flushCursor]);
+
+  const handleStageMouseLeave = useCallback(() => {
+    cursorLatestRef.current = { ...cursorLatestRef.current, inside: false };
+    if (cursorRafRef.current === null) {
+      cursorRafRef.current = requestAnimationFrame(flushCursor);
+    }
+  }, [flushCursor]);
+
+  useEffect(() => {
+    return () => {
+      if (cursorRafRef.current !== null) {
+        cancelAnimationFrame(cursorRafRef.current);
+        cursorRafRef.current = null;
+      }
+    };
+  }, []);
+
+  /* —— 物件互动：已揭开集合 + 当前激活物件 —— */
+  const [revealedProps, setRevealedProps] = useState<Set<string>>(() => new Set());
+  const [activeProp, setActiveProp] = useState<string | null>(null);
+
+  const togglePropReveal = useCallback((id: string) => {
+    setActiveProp((cur) => (cur === id ? null : id));
+    setRevealedProps((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Esc 关闭浮卡
+  useEffect(() => {
+    if (!activeProp) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveProp(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeProp]);
+
+  /* —— 翻页 —— */
   const totalQuestions = meta.questions.length;
 
   const pageKey = useMemo(() => {
@@ -164,6 +380,8 @@ export function SecretInterviewReader({ meta, renderFooterActions }: SecretInter
 
   const revealBackstage = useCallback(() => {
     setBackstageVisited(true);
+    setActiveProp(null);
+    setRevealedProps(new Set());
     setPage({ kind: 'backstage' });
   }, []);
 
@@ -193,20 +411,96 @@ export function SecretInterviewReader({ meta, renderFooterActions }: SecretInter
   const currentQ: SecretInterviewQuestion | null = page.kind === 'qna' ? meta.questions[page.index] ?? null : null;
   const currentDanmaku = currentQ?.danmaku ?? [];
 
+  /* —— Backstage 派生量 —— */
+  const backstageProps: SecretInterviewProp[] = meta.backstageProps ?? [];
+  const hasProps = backstageProps.length > 0;
+
+  const dimAmount = (() => {
+    if (!isBackstage) return 0;
+    switch (backstagePhase) {
+      case 'idle': return 0;
+      case 'recBlinking': return 0.1;
+      case 'recOff': return 0.25;
+      case 'dim': return 0.55;
+      case 'text':
+      case 'done':
+      default:
+        return 0.7;
+    }
+  })();
+
+  // REC 状态：intro/qna 一直 on（保持录制感）；backstage 走 phase
+  const recOn = !isBackstage || backstagePhase === 'idle' || backstagePhase === 'recBlinking';
+  const recBlinkingFast = isBackstage && backstagePhase === 'recBlinking';
+
+  // 物件挂载条件：phase 推进到 text 或 done 才显示物件锚点
+  const propsMounted = isBackstage
+    && hasProps
+    && (backstagePhase === 'text' || backstagePhase === 'done');
+
+  // 鼠标晃动：phase=done + cursor inside + backstage 才生效
+  const shakeEnabled = isBackstage && backstagePhase === 'done' && cursor.inside;
+  const shakeX = shakeEnabled ? (cursor.x - 0.5) * 4 : 0;
+  const shakeY = shakeEnabled ? (cursor.y - 0.5) * 3 : 0;
+
+  // 散景跟随：同上
+  const bokehVisible = shakeEnabled;
+
+  // backstage 渲染时弹幕强制关（剧情不应被打断）；UI 上保留 toggle 显示当前用户设置
+  const showDanmaku = danmakuOn && page.kind === 'qna';
+
+  // 当前激活物件的浮卡位置 / 方向（左半屏 → 浮卡向右；右半屏 → 浮卡向左）
+  const activePropData = activeProp
+    ? backstageProps.find((p) => p.id === activeProp) ?? null
+    : null;
+  const activePropSide: 'left' | 'right' = activePropData
+    ? (activePropData.x < 60 ? 'right' : 'left')
+    : 'right';
+
   return (
     <article
       className={readerStyles.reader}
       data-page={isBackstage ? 'backstage' : isFirst ? 'intro' : 'qna'}
+      data-backstage-phase={isBackstage ? backstagePhase : 'idle'}
       data-testid="secret-interview-reader"
     >
       <StudioBackdrop variant={isBackstage ? 'aftermath' : 'studio'} />
       <div className={readerStyles.nameWatermark} aria-hidden>{meta.hostName}</div>
 
-      {/* 弹幕层：仅 Q&A 页渲染（intro / backstage 用 CSS visibility 隐藏） */}
-      <DanmakuFloater key={`danmaku-${pageKey}`} danmaku={currentDanmaku} />
+      {/* 弹幕层：仅 Q&A 页 + 弹幕开关 = on 时挂载（backstage 整体不挂，省 GPU） */}
+      {showDanmaku ? (
+        <DanmakuFloater key={`danmaku-${pageKey}`} danmaku={currentDanmaku} />
+      ) : null}
 
       <header className={readerStyles.header}>
-        <div className={readerStyles.kicker}>INTERVIEW · 独家专访</div>
+        <div className={readerStyles.headerRow}>
+          <div className={readerStyles.kicker}>INTERVIEW · 独家专访</div>
+          <div className={readerStyles.headerControls}>
+            <button
+              type="button"
+              className={readerStyles.danmakuToggle}
+              onClick={toggleDanmaku}
+              data-testid="interview-toggle-danmaku"
+              aria-pressed={danmakuOn}
+              title={danmakuOn ? '关弹幕' : '开弹幕'}
+            >
+              {danmakuOn ? '关弹幕' : '开弹幕'}
+            </button>
+            <span
+              className={`${readerStyles.recPill} ${recOn ? '' : readerStyles.recPill_off}`}
+              aria-hidden
+            >
+              <span
+                className={[
+                  readerStyles.recDot,
+                  recOn ? '' : readerStyles.recDot_off,
+                  recBlinkingFast ? readerStyles.recDot_fast : '',
+                ].filter(Boolean).join(' ')}
+              />
+              {recOn ? 'REC' : '—— OFF'}
+            </span>
+          </div>
+        </div>
         <h3 className={readerStyles.title}>{meta.title}</h3>
         <div className={readerStyles.subtitle}>
           主持 / {meta.hostName} · 录于 {recordedDateLabel}
@@ -224,11 +518,13 @@ export function SecretInterviewReader({ meta, renderFooterActions }: SecretInter
         {page.kind === 'qna' && currentQ && (
           <>
             <div className={readerStyles.qBlock} data-testid={`interview-q-${page.index}`}>
-              <span className={readerStyles.qLabel}>Q{page.index + 1}</span>
-              {meta.userQuestionIndex === page.index ? (
-                <span className={readerStyles.userQuestionBadge}>你出的题</span>
-              ) : null}
-              <p className={readerStyles.qText}>{currentQ.q}</p>
+              <div className={readerStyles.qHeader}>
+                <span className={readerStyles.qLabelBig}>Q{page.index + 1}</span>
+                {meta.userQuestionIndex === page.index ? (
+                  <span className={readerStyles.qBadgeUserQuestion}>你出的题</span>
+                ) : null}
+              </div>
+              <p className={readerStyles.qTextBig}>{currentQ.q}</p>
             </div>
             <div className={readerStyles.aBlock} data-testid={`interview-a-${page.index}`}>
               <span className={readerStyles.aLabel}>A · TA 的回答</span>
@@ -238,11 +534,104 @@ export function SecretInterviewReader({ meta, renderFooterActions }: SecretInter
         )}
 
         {page.kind === 'backstage' && (
-          <>
-            <div className={readerStyles.backstageMark}>OFF THE RECORD · 相机关了之后</div>
-            <h4 className={readerStyles.backstageHeading}>TA 以为我们已经收工了——</h4>
-            <p className={readerStyles.backstageBody} data-testid="interview-backstage-body">{meta.backstage}</p>
-          </>
+          <div
+            ref={stageRef}
+            className={readerStyles.stageShell}
+            style={{
+              // CSS 变量驱动晃动 / 散景位置；inline style 不进 React state 树
+              '--shake-x': `${shakeX}px`,
+              '--shake-y': `${shakeY}px`,
+              '--bokeh-x': `${cursor.x * 100}%`,
+              '--bokeh-y': `${cursor.y * 100}%`,
+            } as React.CSSProperties}
+            onMouseMove={handleStageMouseMove}
+            onMouseLeave={handleStageMouseLeave}
+          >
+            {/* 灯光收暗的黑色幕 */}
+            <div
+              className={readerStyles.backstageDim}
+              style={{ '--dim-amount': dimAmount } as React.CSSProperties}
+              aria-hidden
+            />
+
+            {/* 跟随鼠标的散景光斑 */}
+            <div
+              className={`${readerStyles.bokehFollow} ${bokehVisible ? readerStyles.bokehFollow_visible : ''}`}
+              aria-hidden
+            />
+
+            <div className={readerStyles.offRecordBadge}>
+              <span className={readerStyles.offRecordBadge_label}>OFF THE RECORD</span>
+              <span className={readerStyles.offRecordBadge_sub}>· 相机关了之后</span>
+            </div>
+            <h4 className={`${readerStyles.backstageHeading} ${readerStyles.backstageHeadingFade}`}>
+              TA 以为我们已经收工了——
+            </h4>
+            <p
+              className={`${readerStyles.backstageBody} ${readerStyles.backstageBodyFade}`}
+              data-testid="interview-backstage-body"
+            >
+              {meta.backstage}
+            </p>
+            {hasProps ? (
+              <p className={readerStyles.backstageRevealHint}>
+                · 点亮房间里的物件，看看主持人没说的细节 ·
+              </p>
+            ) : null}
+
+            {/* 物件锚点 */}
+            {propsMounted
+              ? backstageProps.map((p) => {
+                const revealed = revealedProps.has(p.id);
+                const active = activeProp === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={readerStyles.backstageProp}
+                    style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                    data-revealed={revealed ? 'true' : 'false'}
+                    data-active={active ? 'true' : 'false'}
+                    data-testid={`interview-backstage-prop-${p.id}`}
+                    aria-label={p.label}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePropReveal(p.id);
+                    }}
+                  >
+                    <PropIcon kind={p.icon} />
+                  </button>
+                );
+              })
+              : null}
+
+            {/* 浮卡：activeProp 存在时才挂载 */}
+            {activePropData ? (
+              <div
+                className={[
+                  readerStyles.propSnippet,
+                  activePropSide === 'right'
+                    ? readerStyles.propSnippet_right
+                    : readerStyles.propSnippet_left,
+                ].join(' ')}
+                style={{
+                  '--snippet-x': `${activePropData.x}%`,
+                  '--snippet-y': `${activePropData.y}%`,
+                } as React.CSSProperties}
+                data-testid={`interview-backstage-snippet-${activePropData.id}`}
+                role="dialog"
+                aria-label={`物证 · ${activePropData.label}`}
+              >
+                <div className={readerStyles.propSnippet_kicker}>
+                  现场物证 · {activePropData.label}
+                </div>
+                <p className={readerStyles.propSnippet_text}>{activePropData.snippet}</p>
+                <div className={readerStyles.propSnippet_footer}>
+                  {revealedProps.size}/{backstageProps.length} 已揭开 · 再点关闭
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
 
@@ -307,8 +696,24 @@ export function SecretInterviewReader({ meta, renderFooterActions }: SecretInter
         <div className={readerStyles.backstageHint}>· 似乎还有什么没结束 ·</div>
       ) : null}
 
+      {/* —— 胶片视觉层：颗粒 / 扫描线 / 扫光 / 暗角 / sprocket —— */}
+      <div className={readerStyles.filmVignette} aria-hidden />
+      <div className={readerStyles.filmScanSweep} aria-hidden />
+      <div className={readerStyles.filmScanlines} aria-hidden />
+      <div className={readerStyles.filmGrain} aria-hidden />
+      <div className={`${readerStyles.sprocketColumn} ${readerStyles.sprocketColumn_left}`} aria-hidden>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <span key={i} className={readerStyles.sprocketHole} />
+        ))}
+      </div>
+      <div className={`${readerStyles.sprocketColumn} ${readerStyles.sprocketColumn_right}`} aria-hidden>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <span key={i} className={readerStyles.sprocketHole} />
+        ))}
+      </div>
+
       {renderFooterActions ? (
-        <div style={{ position: 'relative', zIndex: 2, paddingTop: 8 }}>{renderFooterActions()}</div>
+        <div style={{ position: 'relative', zIndex: 10, paddingTop: 8 }}>{renderFooterActions()}</div>
       ) : null}
     </article>
   );

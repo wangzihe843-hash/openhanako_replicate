@@ -4,6 +4,8 @@ import {
   normalizeSecretInterviewMetadata,
   SECRET_INTERVIEW_DANMAKU_PER_QUESTION,
   SECRET_INTERVIEW_LIMITS,
+  SECRET_INTERVIEW_PROP_LIMITS,
+  SECRET_INTERVIEW_PROPS_PER_RECORD,
   SECRET_INTERVIEW_QUESTIONS_PER_RECORD,
 } from './xingye-secret-space-interview-types';
 
@@ -126,6 +128,116 @@ describe('normalizeSecretInterviewMetadata', () => {
     const meta = normalizeSecretInterviewMetadata(makeValidPayload({ recordedAt: undefined }));
     expect(meta).not.toBeNull();
     expect(Number.isNaN(Date.parse(meta!.recordedAt))).toBe(false);
+  });
+});
+
+describe('normalizeSecretInterviewMetadata · backstageProps', () => {
+  it('缺 backstageProps → metadata 仍有效，字段缺省（向后兼容）', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload());
+    expect(meta).not.toBeNull();
+    expect(meta?.backstageProps).toBeUndefined();
+  });
+
+  it('合法 1-3 件物件 → 全部保留', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [
+        { id: 'button', label: '黄铜纽扣', icon: 'button', x: 72, y: 42, snippet: '岑姨给的。' },
+        { id: 'cup', label: '没动过的水', icon: 'cup', x: 20, y: 64, snippet: '一口没喝。' },
+      ],
+    }));
+    expect(meta?.backstageProps).toHaveLength(2);
+    expect(meta?.backstageProps?.[0].id).toBe('button');
+  });
+
+  it('超出 max 件 → 截到前 max 件', () => {
+    const overshoot = SECRET_INTERVIEW_PROPS_PER_RECORD.max + 2;
+    const props = Array.from({ length: overshoot }, (_, i) => ({
+      id: `prop_${i}`,
+      label: `物件 ${i}`,
+      icon: 'note',
+      x: 30,
+      y: 30,
+      snippet: `这是第 ${i} 件注脚。`,
+    }));
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({ backstageProps: props }));
+    expect(meta?.backstageProps).toHaveLength(SECRET_INTERVIEW_PROPS_PER_RECORD.max);
+  });
+
+  it('单件含坏数据 → 该件被丢弃，其它件保留；其它字段不受影响', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [
+        { id: 'good', label: '好物件', icon: 'cup', x: 30, y: 30, snippet: '能用。' },
+        // 缺 label → 丢弃
+        { id: 'bad_no_label', icon: 'cup', x: 30, y: 30, snippet: '没标签。' },
+        // 缺 snippet → 丢弃
+        { id: 'bad_no_snippet', label: '没注脚', icon: 'cup', x: 30, y: 30 },
+        // id 含非法字符 → 仅剩合法字符
+        { id: '中文/!@#button', label: 'X', icon: 'button', x: 50, y: 50, snippet: 'ok' },
+      ],
+    }));
+    expect(meta).not.toBeNull();
+    expect(meta?.title).toContain('专访'); // 其它字段不受影响
+    const props = meta?.backstageProps ?? [];
+    expect(props.map((p) => p.id)).toContain('good');
+    expect(props.find((p) => p.id === 'bad_no_label')).toBeUndefined();
+    expect(props.find((p) => p.id === 'bad_no_snippet')).toBeUndefined();
+    // 中文被去掉，剩 'button'
+    expect(props.find((p) => p.id === 'button')).toBeDefined();
+  });
+
+  it('全部 props 都坏 → backstageProps 字段省略（不写空数组）', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [
+        { id: '', label: '', icon: 'foo', x: 'no', y: NaN, snippet: '' },
+        'not an object',
+        null,
+      ],
+    }));
+    expect(meta?.backstageProps).toBeUndefined();
+  });
+
+  it('未知 icon → fallback 到 note', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [{ id: 'a', label: '物', icon: 'unknown_kind', x: 50, y: 50, snippet: '注。' }],
+    }));
+    expect(meta?.backstageProps?.[0].icon).toBe('note');
+  });
+
+  it('x/y 越界 → clamp 到 [8, 92]', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [
+        { id: 'a', label: '物 A', icon: 'cup', x: -50, y: 200, snippet: '注。' },
+        { id: 'b', label: '物 B', icon: 'cup', x: 'bad', y: undefined, snippet: '注。' },
+      ],
+    }));
+    expect(meta?.backstageProps?.[0].x).toBe(8);
+    expect(meta?.backstageProps?.[0].y).toBe(92);
+    expect(meta?.backstageProps?.[1].x).toBe(50); // clampPropPct fallback
+    expect(meta?.backstageProps?.[1].y).toBe(50);
+  });
+
+  it('label / snippet 超长 → 截断 + 省略号', () => {
+    const longLabel = '黄'.repeat(SECRET_INTERVIEW_PROP_LIMITS.labelMax + 8);
+    const longSnippet = '注'.repeat(SECRET_INTERVIEW_PROP_LIMITS.snippetMax + 12);
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [{ id: 'p1', label: longLabel, icon: 'cup', x: 50, y: 50, snippet: longSnippet }],
+    }));
+    const p = meta?.backstageProps?.[0];
+    expect(p?.label).toHaveLength(SECRET_INTERVIEW_PROP_LIMITS.labelMax);
+    expect(p?.label.endsWith('…')).toBe(true);
+    expect(p?.snippet).toHaveLength(SECRET_INTERVIEW_PROP_LIMITS.snippetMax);
+    expect(p?.snippet.endsWith('…')).toBe(true);
+  });
+
+  it('id 重复 → 只保留第一件', () => {
+    const meta = normalizeSecretInterviewMetadata(makeValidPayload({
+      backstageProps: [
+        { id: 'dup', label: '第一件', icon: 'cup', x: 30, y: 30, snippet: '一。' },
+        { id: 'dup', label: '第二件', icon: 'cup', x: 50, y: 50, snippet: '二。' },
+      ],
+    }));
+    expect(meta?.backstageProps).toHaveLength(1);
+    expect(meta?.backstageProps?.[0].label).toBe('第一件');
   });
 });
 
