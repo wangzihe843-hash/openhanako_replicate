@@ -141,6 +141,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   const [generatePhase, setGeneratePhase] = useState<MmChatGeneratePhase>('idle');
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [followUpDraft, setFollowUpDraft] = useState('');
+  const [followupOpen, setFollowupOpen] = useState(false);
   /**
    * 与 sessions.json 顶层 initializedAt 同步；null 表示 backlog 还没 bootstrap 过。
    * 写盘时与 sessions 一起序列化（auto-save / flushPersist 都要带上），否则会被擦掉。
@@ -370,6 +371,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   const openSession = (id: string) => {
     setGenerateError(null);
     setFollowUpDraft('');
+    setFollowupOpen(false);
     setSessionId(id);
     setView('detail');
   };
@@ -377,6 +379,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   const backToList = () => {
     setGenerateError(null);
     setFollowUpDraft('');
+    setFollowupOpen(false);
     setView('list');
     setSessionId('');
   };
@@ -519,56 +522,83 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
                   </div>
                 </div>
                 <div className={styles.mmChatDetailFollowup}>
-                  <p className={styles.mmChatDetailFollowupLabel}>继续追问（同一会话）</p>
-                  <p className={styles.mmChatComposerHint}>
-                    选择或填写<strong>追问方向</strong>（可选；仅影响首轮）；系统会代入当前角色，自然延展数轮（随机 3–5 轮）追问与助手回复，一次性追加进同一会话。
-                  </p>
-                  <div className={styles.mmChatChipsRow} aria-label="追问方向快捷填入">
-                    {(
-                      [
-                        '想要更具体的话术',
-                        '担心这样显得太低姿态',
-                        '没理解第二步',
-                        '希望更像当前角色会说的话',
-                      ] as const
-                    ).map((label) => (
+                  {!(followupOpen || generatePhase === 'followup') ? (
+                    <div className={styles.mmChatDetailFollowupActions}>
                       <button
-                        key={label}
                         type="button"
-                        className={styles.mmChatChip}
-                        disabled={!canFollowUpBase || generateRunning}
-                        onClick={() => setFollowUpDraft(label)}
+                        className={styles.mmChatFollowupButton}
+                        data-testid="mm-chat-followup-open"
+                        onClick={() => setFollowupOpen(true)}
                       >
-                        {label}
+                        去追问
                       </button>
-                    ))}
-                  </div>
-                  <div className={styles.mmChatComposer}>
-                    <textarea
-                      data-testid="mm-chat-followup-input"
-                      value={followUpDraft}
-                      onChange={(e) => setFollowUpDraft(e.target.value)}
-                      placeholder={
-                        canFollowUpBase
-                          ? '例如：想要更具体的话术 / 担心这样显得太低姿态 / 没理解第二步 / 希望更像当前角色会说的话（可留空直接追问）'
-                          : '请等待上一条为助手回复后再追问。'
-                      }
-                      disabled={!canFollowUpBase || generateRunning}
-                      rows={3}
-                      aria-label="追问方向提示（可选）"
-                    />
-                  </div>
-                  <div className={styles.mmChatDetailFollowupActions}>
-                    <button
-                      type="button"
-                      className={canFollowUpSend ? styles.mmChatFollowupButton : styles.mmChatSendDisabled}
-                      disabled={!canFollowUpSend}
-                      data-testid="mm-chat-followup-send"
-                      onClick={() => void handleFollowUp()}
-                    >
-                      {generatePhase === 'followup' ? '正在生成追问…' : '继续追问'}
-                    </button>
-                  </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className={styles.mmChatDetailFollowupHeader}>
+                        <p className={styles.mmChatDetailFollowupLabel}>继续追问（同一会话）</p>
+                        {generatePhase !== 'followup' ? (
+                          <button
+                            type="button"
+                            className={styles.mmChatFollowupCollapseButton}
+                            onClick={() => setFollowupOpen(false)}
+                            data-testid="mm-chat-followup-collapse"
+                          >
+                            收起
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className={styles.mmChatComposerHint}>
+                        选择或填写<strong>追问方向</strong>（可选；仅影响首轮）；系统会代入当前角色，自然延展数轮（随机 3–5 轮）追问与助手回复，一次性追加进同一会话。
+                      </p>
+                      <div className={styles.mmChatChipsRow} aria-label="追问方向快捷填入">
+                        {(
+                          [
+                            '想要更具体的话术',
+                            '担心这样显得太低姿态',
+                            '没理解第二步',
+                            '希望更像当前角色会说的话',
+                          ] as const
+                        ).map((label) => (
+                          <button
+                            key={label}
+                            type="button"
+                            className={styles.mmChatChip}
+                            disabled={!canFollowUpBase || generateRunning}
+                            onClick={() => setFollowUpDraft(label)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className={styles.mmChatComposer}>
+                        <textarea
+                          data-testid="mm-chat-followup-input"
+                          value={followUpDraft}
+                          onChange={(e) => setFollowUpDraft(e.target.value)}
+                          placeholder={
+                            canFollowUpBase
+                              ? '例如：想要更具体的话术 / 担心这样显得太低姿态 / 没理解第二步 / 希望更像当前角色会说的话（可留空直接追问）'
+                              : '请等待上一条为助手回复后再追问。'
+                          }
+                          disabled={!canFollowUpBase || generateRunning}
+                          rows={3}
+                          aria-label="追问方向提示（可选）"
+                        />
+                      </div>
+                      <div className={styles.mmChatDetailFollowupActions}>
+                        <button
+                          type="button"
+                          className={canFollowUpSend ? styles.mmChatFollowupButton : styles.mmChatSendDisabled}
+                          disabled={!canFollowUpSend}
+                          data-testid="mm-chat-followup-send"
+                          onClick={() => void handleFollowUp()}
+                        >
+                          {generatePhase === 'followup' ? '正在生成追问…' : '继续追问'}
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {generateError ? (
                     <p className={styles.mmChatComposerHint} role="alert">
                       {generateError}

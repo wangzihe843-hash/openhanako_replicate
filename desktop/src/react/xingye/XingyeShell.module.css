@@ -3277,6 +3277,29 @@
   color: var(--text);
 }
 
+.mmChatDetailFollowupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mmChatFollowupCollapseButton {
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.mmChatFollowupCollapseButton:hover {
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.16);
+}
+
 .mmChatDetailFollowupActions {
   display: flex;
   justify-content: flex-end;
