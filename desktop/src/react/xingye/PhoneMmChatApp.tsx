@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
-import { generateMmChatRoundWithAI } from './xingye-mm-chat-ai';
+import {
+  distributeMmChatBacklogTimestamps,
+  generateMmChatInitialBacklogWithAI,
+  generateMmChatRoundsWithAI,
+  pickRandomMmChatInitialBacklogSize,
+  type XingyeMmChatAiRoundQA,
+  type XingyeMmChatBacklogTimestampedSession,
+} from './xingye-mm-chat-ai';
 import {
   appendMmChatTurnsToSession,
   createEmptyMmChatPersisted,
@@ -35,6 +42,41 @@ function previewFromUserText(text: string): string {
   return one.length > 48 ? `${one.slice(0, 47)}…` : one;
 }
 
+/**
+ * 把 LLM 一次性返回的多轮 rounds 摊平成存储用的 turn 数组，依次 ta/ai/ta/ai…。
+ *
+ * - 同一批 turn 共享一个 createdAt（一次写盘的语义边界）；
+ * - 仅第一轮的 ta 提问允许携带 followUpUserHint meta（对应用户填的 directionHint），
+ *   后续轮是模型自然延展，不该挂用户提示。
+ */
+function flattenRoundsToTurns(
+  rounds: XingyeMmChatAiRoundQA[],
+  opts?: { firstTaMeta?: XingyeMmChatTurn['meta'] },
+): XingyeMmChatTurn[] {
+  const now = new Date().toISOString();
+  const turns: XingyeMmChatTurn[] = [];
+  rounds.forEach((round, i) => {
+    const isFirst = i === 0;
+    const taTurn: XingyeMmChatTurn = {
+      id: newLocalMessageId(),
+      role: 'ta',
+      text: round.question,
+      createdAt: now,
+    };
+    if (isFirst && opts?.firstTaMeta) {
+      taTurn.meta = opts.firstTaMeta;
+    }
+    turns.push(taTurn);
+    turns.push({
+      id: newLocalMessageId(),
+      role: 'ai',
+      text: round.answer,
+      createdAt: now,
+    });
+  });
+  return turns;
+}
+
 function formatSessionTime(iso: string | undefined): string {
   if (!iso || !iso.trim()) return '';
   const t = Date.parse(iso);
@@ -53,7 +95,42 @@ function formatSessionTime(iso: string | undefined): string {
 
 type MmChatView = 'list' | 'detail';
 
-type MmChatGeneratePhase = 'idle' | 'new_chat' | 'followup';
+type MmChatGeneratePhase = 'idle' | 'new_chat' | 'followup' | 'bootstrap';
+
+/**
+ * 把 backlog 一条 session（带 occurredAt 与 rounds[]）落到 XingyeMmChatSession 形态。
+ * session.createdAt / updatedAt 与所有 turn.createdAt 共用同一个 occurredAt——
+ * 列表里 formatSessionTime 也只取一个时间点。
+ */
+function buildBacklogSessionRecord(
+  s: XingyeMmChatBacklogTimestampedSession,
+): XingyeMmChatSession {
+  const occurredAt = s.occurredAt;
+  const messages: XingyeMmChatTurn[] = [];
+  s.rounds.forEach((round) => {
+    messages.push({
+      id: newLocalMessageId(),
+      role: 'ta',
+      text: round.question,
+      createdAt: occurredAt,
+    });
+    messages.push({
+      id: newLocalMessageId(),
+      role: 'ai',
+      text: round.answer,
+      createdAt: occurredAt,
+    });
+  });
+  const lastAnswer = s.rounds[s.rounds.length - 1]?.answer ?? '';
+  return {
+    id: newLocalMessageId(),
+    title: s.title.slice(0, 200) || '咨询',
+    preview: previewFromUserText(lastAnswer),
+    messages,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+  };
+}
 
 export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
@@ -64,8 +141,17 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   const [generatePhase, setGeneratePhase] = useState<MmChatGeneratePhase>('idle');
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [followUpDraft, setFollowUpDraft] = useState('');
+  /**
+   * 与 sessions.json 顶层 initializedAt 同步；null 表示 backlog 还没 bootstrap 过。
+   * 写盘时与 sessions 一起序列化（auto-save / flushPersist 都要带上），否则会被擦掉。
+   */
+  const [initializedAt, setInitializedAt] = useState<string | null>(null);
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  const initializedAtRef = useRef<string | null>(initializedAt);
+  initializedAtRef.current = initializedAt;
+  /** 防止 bootstrap 同一 agent 多次触发；切角色后置空。 */
+  const initialBootstrapTriedRef = useRef<string | null>(null);
 
   const generateRunning = generatePhase !== 'idle';
 
@@ -74,10 +160,13 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
       setSessions(createEmptyMmChatPersisted().sessions);
       setSessionId('');
       setView('list');
+      setInitializedAt(null);
+      initialBootstrapTriedRef.current = null;
       setPersistReady(true);
       return;
     }
     setPersistReady(false);
+    initialBootstrapTriedRef.current = null;
     let cancelled = false;
     void (async () => {
       try {
@@ -85,14 +174,17 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
         if (cancelled) return;
         if (fromDisk) {
           setSessions(fromDisk.sessions);
+          setInitializedAt(fromDisk.initializedAt ?? null);
         } else {
           const empty = createEmptyMmChatPersisted();
           setSessions(empty.sessions);
+          setInitializedAt(null);
           await saveMmChatPersistence(ownerAgentId, empty);
         }
       } catch {
         if (!cancelled) {
           setSessions(createEmptyMmChatPersisted().sessions);
+          setInitializedAt(null);
         }
       } finally {
         if (!cancelled) setPersistReady(true);
@@ -106,16 +198,77 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
   useEffect(() => {
     if (!ownerAgentId || !persistReady) return;
     const t = window.setTimeout(() => {
+      const initAt = initializedAtRef.current;
       void saveMmChatPersistence(ownerAgentId, {
         version: 1,
         activeSessionId: '',
         sessions: sessionsRef.current,
+        ...(initAt ? { initializedAt: initAt } : {}),
       }).catch((err) => {
         console.warn('[xingye-mm-chat] save failed:', err);
       });
     }, 450);
     return () => window.clearTimeout(t);
-  }, [ownerAgentId, persistReady, sessions]);
+  }, [ownerAgentId, persistReady, sessions, initializedAt]);
+
+  /**
+   * 首次打开 MM Chat：sessions 空 + initializedAt 缺失 → 跑一次 backlog 生成。
+   *
+   * 已 init 或已经有 sessions（含用户手动建过又删剩） → 跳过；
+   * 防止"删光后又自动重灌"——与 PhoneShoppingApp 同名 useEffect 同语义。
+   *
+   * generateRunning 期间不发起；失败不写 initializedAt，下次进入再试；
+   * initialBootstrapTriedRef 防本次 mount 内反复触发（避免 sessions 触发的 re-render 重入）。
+   */
+  useEffect(() => {
+    if (!ownerAgent || !ownerAgentId || !persistReady) return;
+    if (initialBootstrapTriedRef.current === ownerAgentId) return;
+    if (generateRunning) return;
+    if (initializedAt) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
+    }
+    if (sessions.length > 0) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
+    }
+    initialBootstrapTriedRef.current = ownerAgentId;
+    const agentForBootstrap = ownerAgent;
+    const aidForBootstrap = ownerAgentId;
+    setGeneratePhase('bootstrap');
+    setGenerateError(null);
+    void (async () => {
+      try {
+        const backlog = await generateMmChatInitialBacklogWithAI({
+          agent: agentForBootstrap,
+          ownerProfile,
+          sessionCount: pickRandomMmChatInitialBacklogSize(),
+        });
+        const dated = distributeMmChatBacklogTimestamps(backlog.sessions);
+        const sessionRecords = dated.map(buildBacklogSessionRecord);
+        const now = new Date().toISOString();
+        // 单次写盘：sessions + initializedAt 原子落盘。
+        // 注意：不复用 createMmChatSession（它强制写 now 当 createdAt）。
+        await saveMmChatPersistence(aidForBootstrap, {
+          version: 1,
+          activeSessionId: '',
+          sessions: sessionRecords,
+          initializedAt: now,
+        });
+        // 回读一次，让 React state 与盘上 normalize 后结果一致。
+        const row = await readMmChatPersistence(aidForBootstrap);
+        setSessions(row?.sessions ?? sessionRecords);
+        setInitializedAt(row?.initializedAt ?? now);
+      } catch (err) {
+        // 不写 initializedAt → 下次进入会重试；同时让用户能看到错误。
+        setGenerateError(err instanceof Error ? err.message : String(err));
+        // 允许下次 mount 再试一次（清掉 tried 标记）。
+        initialBootstrapTriedRef.current = null;
+      } finally {
+        setGeneratePhase('idle');
+      }
+    })();
+  }, [ownerAgent, ownerAgentId, persistReady, sessions.length, initializedAt, ownerProfile, generateRunning]);
 
   const sortedSessions = useMemo(() => sortMmChatSessionsByUpdatedAtDesc(sessions), [sessions]);
 
@@ -131,10 +284,12 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
 
   const flushPersist = async () => {
     if (!ownerAgentId || !persistReady) return;
+    const initAt = initializedAtRef.current;
     await saveMmChatPersistence(ownerAgentId, {
       version: 1,
       activeSessionId: '',
       sessions: sessionsRef.current,
+      ...(initAt ? { initializedAt: initAt } : {}),
     });
   };
 
@@ -144,19 +299,17 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
     setGeneratePhase('new_chat');
     try {
       await flushPersist();
-      const round = await generateMmChatRoundWithAI({ agent: ownerAgent, ownerProfile });
-      const now = new Date().toISOString();
-      const turns: XingyeMmChatTurn[] = [
-        { id: newLocalMessageId(), role: 'ta', text: round.question, createdAt: now },
-        { id: newLocalMessageId(), role: 'ai', text: round.answer, createdAt: now },
-      ];
+      const result = await generateMmChatRoundsWithAI({ agent: ownerAgent, ownerProfile });
+      const turns = flattenRoundsToTurns(result.rounds);
+      const lastAnswer = result.rounds[result.rounds.length - 1]?.answer ?? '';
       const created = await createMmChatSession(ownerAgentId, {
-        title: round.title.slice(0, 200),
-        preview: previewFromUserText(round.answer),
+        title: result.title.slice(0, 200),
+        preview: previewFromUserText(lastAnswer),
         messages: turns,
       });
       const row = await readMmChatPersistence(ownerAgentId);
       setSessions(row?.sessions ?? []);
+      setInitializedAt(row?.initializedAt ?? initializedAtRef.current);
       setSessionId(created.id);
       setView('detail');
     } catch (err) {
@@ -185,7 +338,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
     setGeneratePhase('followup');
     try {
       await flushPersist();
-      const round = await generateMmChatRoundWithAI({
+      const result = await generateMmChatRoundsWithAI({
         agent: ownerAgent,
         ownerProfile,
         mode: 'followup',
@@ -195,23 +348,17 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
           directionHint,
         },
       });
-      const now = new Date().toISOString();
-      const taMeta = directionHint ? { followUpUserHint: directionHint } : undefined;
-      const turns: XingyeMmChatTurn[] = [
-        {
-          id: newLocalMessageId(),
-          role: 'ta',
-          text: round.question,
-          createdAt: now,
-          ...(taMeta ? { meta: taMeta } : {}),
-        },
-        { id: newLocalMessageId(), role: 'ai', text: round.answer, createdAt: now },
-      ];
+      // 仅第一轮的 ta 提问携带 followUpUserHint meta（与用户填的 directionHint 对应）。
+      const turns = flattenRoundsToTurns(result.rounds, {
+        firstTaMeta: directionHint ? { followUpUserHint: directionHint } : undefined,
+      });
+      const lastAnswer = result.rounds[result.rounds.length - 1]?.answer ?? '';
       await appendMmChatTurnsToSession(ownerAgentId, session.id, turns, {
-        preview: previewFromUserText(round.answer),
+        preview: previewFromUserText(lastAnswer),
       });
       const row = await readMmChatPersistence(ownerAgentId);
       setSessions(row?.sessions ?? []);
+      setInitializedAt(row?.initializedAt ?? initializedAtRef.current);
       setFollowUpDraft('');
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : String(err));
@@ -242,6 +389,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
       await deleteMmChatSession(ownerAgentId, sessionId);
       const row = await readMmChatPersistence(ownerAgentId);
       setSessions(row?.sessions ?? []);
+      setInitializedAt(row?.initializedAt ?? initializedAtRef.current);
       backToList();
     } catch (err) {
       console.warn('[xingye-mm-chat] delete failed:', err);
@@ -275,7 +423,9 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
                 ? '正在生成新会话…'
                 : generatePhase === 'followup'
                   ? '其它生成任务进行中…'
-                  : '+ 新聊天'}
+                  : generatePhase === 'bootstrap'
+                    ? '正在为 TA 铺历史咨询…'
+                    : '+ 新聊天'}
             </button>
             {generateError ? (
               <p className={styles.mmChatComposerHint} role="alert">
@@ -286,8 +436,14 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
             <div className={styles.mmChatListScroll} role="list" aria-label="历史咨询列表">
               {sortedSessions.length === 0 ? (
                 <div className={styles.mmChatEmpty} data-testid="mm-chat-list-empty">
-                  <p className={styles.mmChatEmptyTitle}>暂无咨询记录</p>
-                  <p className={styles.mmChatEmptyBody}>点击上方「新聊天」生成一轮角色向通用助手的问答，并保存为独立会话。</p>
+                  <p className={styles.mmChatEmptyTitle}>
+                    {generatePhase === 'bootstrap' ? '正在为 TA 生成历史咨询…' : '暂无咨询记录'}
+                  </p>
+                  <p className={styles.mmChatEmptyBody}>
+                    {generatePhase === 'bootstrap'
+                      ? '首次打开会一次性铺 3–5 条历史会话（每条按话题重要度生成 1–5 轮）；完成后可在此查看，也可继续追问或新聊天。'
+                      : '点击上方「新聊天」一次性生成数轮角色向通用助手的问答（系统随机 3–5 轮），并保存为独立会话。'}
+                  </p>
                 </div>
               ) : (
                 sortedSessions.map((s) => {
@@ -365,7 +521,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
                 <div className={styles.mmChatDetailFollowup}>
                   <p className={styles.mmChatDetailFollowupLabel}>继续追问（同一会话）</p>
                   <p className={styles.mmChatComposerHint}>
-                    选择或填写<strong>追问方向</strong>（可选）；系统会代入当前角色自己继续向助手提问，并生成助手回复。
+                    选择或填写<strong>追问方向</strong>（可选；仅影响首轮）；系统会代入当前角色，自然延展数轮（随机 3–5 轮）追问与助手回复，一次性追加进同一会话。
                   </p>
                   <div className={styles.mmChatChipsRow} aria-label="追问方向快捷填入">
                     {(

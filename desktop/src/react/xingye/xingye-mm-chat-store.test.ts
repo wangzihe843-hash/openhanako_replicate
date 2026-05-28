@@ -13,6 +13,7 @@ vi.mock('./xingye-storage-api', () => ({
 import {
   appendMmChatTurnsToSession,
   createMmChatSession,
+  deleteMmChatSession,
   readMmChatPersistence,
   saveMmChatPersistence,
   sortMmChatSessionsByUpdatedAtDesc,
@@ -218,5 +219,104 @@ describe('xingye-mm-chat-store', () => {
     await expect(
       appendMmChatTurnsToSession('agent-x', 'missing', [{ id: 'x', role: 'ta', text: 'a' }]),
     ).resolves.toBeNull();
+  });
+
+  describe('initializedAt preservation', () => {
+    const INIT_AT = '2026-05-20T08:00:00.000Z';
+
+    it('readMmChatPersistence parses initializedAt from disk', async () => {
+      postMock.mockResolvedValueOnce({
+        data: {
+          version: 1,
+          activeSessionId: '',
+          sessions: [],
+          initializedAt: INIT_AT,
+        },
+      });
+      const row = await readMmChatPersistence('agent-x');
+      expect(row?.initializedAt).toBe(INIT_AT);
+    });
+
+    it('readMmChatPersistence drops invalid initializedAt silently', async () => {
+      postMock.mockResolvedValueOnce({
+        data: {
+          version: 1,
+          activeSessionId: '',
+          sessions: [],
+          initializedAt: 'not-a-date',
+        },
+      });
+      const row = await readMmChatPersistence('agent-x');
+      expect(row?.initializedAt).toBeUndefined();
+    });
+
+    it('createMmChatSession preserves initializedAt from disk', async () => {
+      postMock
+        .mockResolvedValueOnce({
+          data: { version: 1, activeSessionId: '', sessions: [], initializedAt: INIT_AT },
+        })
+        .mockResolvedValueOnce({ ok: true });
+      await createMmChatSession('agent-x', {
+        title: 'T',
+        preview: 'P',
+        messages: [{ id: 'm1', role: 'ta', text: 'q' }, { id: 'm2', role: 'ai', text: 'a' }],
+      });
+      const writeCall = postMock.mock.calls.find((c) => (c[0] as { action?: string }).action === 'writeJson');
+      const payload = (writeCall![0] as { data: { initializedAt?: string } }).data;
+      expect(payload.initializedAt).toBe(INIT_AT);
+    });
+
+    it('appendMmChatTurnsToSession preserves initializedAt from disk', async () => {
+      const sid = 's1';
+      postMock
+        .mockResolvedValueOnce({
+          data: {
+            version: 1,
+            activeSessionId: '',
+            sessions: [
+              {
+                id: sid,
+                title: 'T',
+                preview: 'P',
+                messages: [
+                  { id: 'm1', role: 'ta', text: 'Q', createdAt: '2026-01-01T00:00:00.000Z' },
+                  { id: 'm2', role: 'ai', text: 'A', createdAt: '2026-01-01T00:00:00.000Z' },
+                ],
+              },
+            ],
+            initializedAt: INIT_AT,
+          },
+        })
+        .mockResolvedValueOnce({ ok: true });
+      await appendMmChatTurnsToSession('agent-x', sid, [
+        { id: 'm3', role: 'ta', text: 'Q2' },
+        { id: 'm4', role: 'ai', text: 'A2' },
+      ]);
+      const writeCall = postMock.mock.calls.find((c) => (c[0] as { action?: string }).action === 'writeJson');
+      const payload = (writeCall![0] as { data: { initializedAt?: string } }).data;
+      expect(payload.initializedAt).toBe(INIT_AT);
+    });
+
+    it('deleteMmChatSession preserves initializedAt even after deleting all sessions', async () => {
+      const sid = 's-only';
+      postMock
+        .mockResolvedValueOnce({
+          data: {
+            version: 1,
+            activeSessionId: '',
+            sessions: [
+              { id: sid, title: 'T', preview: 'P', messages: [{ id: 'm1', role: 'ta', text: 'q' }] },
+            ],
+            initializedAt: INIT_AT,
+          },
+        })
+        .mockResolvedValueOnce({ ok: true });
+      await deleteMmChatSession('agent-x', sid);
+      const writeCall = postMock.mock.calls.find((c) => (c[0] as { action?: string }).action === 'writeJson');
+      const payload = (writeCall![0] as { data: { initializedAt?: string; sessions: unknown[] } }).data;
+      expect(payload.sessions).toHaveLength(0);
+      // 删光后仍保留 initializedAt → 防止"删光 → 自动重 bootstrap"。
+      expect(payload.initializedAt).toBe(INIT_AT);
+    });
   });
 });

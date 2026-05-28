@@ -6,6 +6,9 @@ import {
   buildMmChatFollowupAgentQuestionPrompt,
   buildMmChatFollowupAssistantAnswerPrompt,
   buildMmChatGenerationPrompt,
+  buildMmChatInitialBacklogPrompt,
+  buildMmChatMultiRoundFollowupPrompt,
+  buildMmChatMultiRoundNewPrompt,
   formatMmChatSessionHistoryForPrompt,
   type MmChatGenerationMode,
 } from './xingye-mm-chat-prompts';
@@ -424,6 +427,374 @@ export async function generateMmChatRoundWithAI(params: GenerateMmChatRoundWithA
   const normalized = normalizeMmChatRoundResult(result);
   if (!normalized) {
     throw new Error('模型返回无效：缺少 question/answer 或 JSON 解析失败');
+  }
+  return normalized;
+}
+
+// ---------------------------------------------------------------------------
+// 多轮一次性生成（UI 默认走这条路径）
+// ---------------------------------------------------------------------------
+
+export type XingyeMmChatAiRoundQA = { question: string; answer: string };
+
+export type XingyeMmChatAiMultiResult = {
+  /** new 模式：本会话标题；followup 模式：空串（沿用既有会话标题）。 */
+  title: string;
+  rounds: XingyeMmChatAiRoundQA[];
+};
+
+/**
+ * 随机轮数：3-5。
+ *
+ * 抽成具名函数，便于测试 spy/stub。范围本身写死，因为 UI 不再暴露选择器——
+ * 用户的需求是"每次点一下就随机展开 3-5 轮"，没必要做成可配置。
+ */
+export function pickRandomMmChatRoundCount(): number {
+  return Math.floor(Math.random() * 3) + 3;
+}
+
+/** 数组中每个 round 单独 normalize；缺一不可。 */
+function normalizeMmChatRoundsArray(raw: unknown): XingyeMmChatAiRoundQA[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: XingyeMmChatAiRoundQA[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const rec = item as Record<string, unknown>;
+    const q = typeof rec.question === 'string' ? rec.question.trim() : '';
+    const a = typeof rec.answer === 'string' ? rec.answer.trim() : '';
+    if (!q || !a) return null;
+    out.push({
+      question: clampCodePoints(q, 3500),
+      answer: clampCodePoints(a, 3500),
+    });
+  }
+  return out;
+}
+
+export function normalizeMmChatMultiRoundResult(
+  raw: unknown,
+  opts: { requireTitle: boolean },
+): XingyeMmChatAiMultiResult | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const rounds = normalizeMmChatRoundsArray(rec.rounds);
+  if (!rounds) return null;
+  let title = '';
+  const titleRaw = rec.title;
+  if (typeof titleRaw === 'string' && titleRaw.trim()) {
+    title = titleRaw.trim().slice(0, 200);
+  } else if (opts.requireTitle) {
+    // 兜底：从第一轮 question 截取
+    title = truncateChars(rounds[0].question, 48);
+  }
+  return { title, rounds };
+}
+
+export type GenerateMmChatRoundsWithAIParams = {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  timeoutMs?: number;
+  /** 不传则走 pickRandomMmChatRoundCount()（3-5 随机）。 */
+  roundCount?: number;
+  mode?: MmChatGenerationMode;
+  followUp?: {
+    sessionTitle: string;
+    sessionMessages: XingyeMmChatTurn[];
+    /** 仅作用于本批 rounds[0].question 的方向提示。 */
+    directionHint?: string;
+  };
+};
+
+/**
+ * MM Chat 多轮一次性生成。
+ *
+ * - new 模式：返回 `{title, rounds[]}`，UI 拿到后 flatten 成 (ta, ai, ta, ai, ...) 交给
+ *   createMmChatSession 一次性入库。
+ * - followup 模式：返回 `{title:'', rounds[]}`，UI 调 appendMmChatTurnsToSession 追加。
+ *
+ * followup 不再走 2-step 拆分——多轮单调用，prompt 内已 inline 了"角色式判断点"等约束。
+ */
+export async function generateMmChatRoundsWithAI(
+  params: GenerateMmChatRoundsWithAIParams,
+): Promise<XingyeMmChatAiMultiResult> {
+  const { agent, ownerProfile } = params;
+  const timeoutMs = params.timeoutMs ?? 90_000;
+  const mode: MmChatGenerationMode = params.mode ?? 'new';
+  const roundCount = Math.max(1, Math.floor(params.roundCount ?? pickRandomMmChatRoundCount()));
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const userName = await resolveXingyeSpeakerUserName();
+  const recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  const recentSceneBlock = describeRecentContextForPrompt(recentContext);
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+  const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
+  const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+
+  const fu = params.followUp;
+  const directionHint = (fu?.directionHint ?? '').trim();
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    recentContext.summaryText,
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    heartbeatLine ?? '',
+    mode === 'followup' ? directionHint : '',
+    mode === 'followup' ? lastAiAssistantText(fu?.sessionMessages ?? []) : '',
+  ]);
+
+  const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+    purpose: 'mm_chat',
+    queryText,
+    maxChars: 2000,
+    includeAlways: false,
+    includeKeyword: true,
+  });
+  const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+
+  const taMoniker = (ownerProfile?.displayName ?? agent.name).trim() || agent.name;
+
+  if (mode === 'followup') {
+    if (!fu || !fu.sessionMessages?.length) {
+      throw new Error('追问模式需要有效的会话历史。');
+    }
+    const last = fu.sessionMessages[fu.sessionMessages.length - 1];
+    if (!last || last.role !== 'ai' || !String(last.text ?? '').trim()) {
+      throw new Error('追问须接在助手回复之后：请等待上一轮生成完成，或检查会话内容。');
+    }
+    const previousAi = lastAiAssistantText(fu.sessionMessages);
+    const sessionHistoryBlock = formatMmChatSessionHistoryForPrompt({
+      taMoniker,
+      lines: fu.sessionMessages.map((m) => ({ role: m.role, text: m.text })),
+      maxChars: 9000,
+    });
+
+    const prompt = buildMmChatMultiRoundFollowupPrompt({
+      agent,
+      userName,
+      profile: ownerProfile,
+      recentSceneBlock,
+      stableLoreBlock,
+      keywordLoreBlock,
+      relationshipBlock,
+      heartbeatBlock,
+      sessionTitle: fu.sessionTitle,
+      sessionHistoryBlock,
+      previousAiAnswer: previousAi,
+      firstRoundDirectionHint: directionHint,
+      roundCount,
+    });
+
+    const raw = await postMmChatPhoneGenerate({
+      agent,
+      prompt,
+      timeoutMs,
+      mmChatMode: `followup_multi_${roundCount}`,
+    });
+    const normalized = normalizeMmChatMultiRoundResult(raw, { requireTitle: false });
+    if (!normalized || normalized.rounds.length === 0) {
+      throw new Error('模型返回无效：缺少 rounds 数组或 JSON 解析失败');
+    }
+    return normalized;
+  }
+
+  // new 模式：注入跨会话反重复锚点。
+  const continuityAnchorBlock = await buildMmChatContinuityAnchorBlock(agent.id);
+
+  const prompt = buildMmChatMultiRoundNewPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    continuityAnchorBlock,
+    roundCount,
+  });
+
+  const raw = await postMmChatPhoneGenerate({
+    agent,
+    prompt,
+    timeoutMs,
+    mmChatMode: `new_multi_${roundCount}`,
+  });
+  const normalized = normalizeMmChatMultiRoundResult(raw, { requireTitle: true });
+  if (!normalized || normalized.rounds.length === 0) {
+    throw new Error('模型返回无效：缺少 rounds 数组或 JSON 解析失败');
+  }
+  return normalized;
+}
+
+// ---------------------------------------------------------------------------
+// 首次打开 MM Chat 的 backlog 初始化（一次调用产出 N 条独立 session）
+// ---------------------------------------------------------------------------
+
+/** 模型可返回的重要度档位，约束轮数（与 prompt 内规则对齐）。 */
+export type XingyeMmChatBacklogImportanceTag = 'high' | 'medium' | 'low';
+
+export type XingyeMmChatBacklogSession = {
+  title: string;
+  importanceTag: XingyeMmChatBacklogImportanceTag;
+  rounds: XingyeMmChatAiRoundQA[];
+};
+
+export type XingyeMmChatBacklogResult = {
+  sessions: XingyeMmChatBacklogSession[];
+};
+
+/** 客户端随机的初始化 session 条数（3-5）。抽成具名函数便于测试 spy。 */
+export function pickRandomMmChatInitialBacklogSize(): number {
+  return Math.floor(Math.random() * 3) + 3;
+}
+
+const MM_CHAT_BACKLOG_MIN_ROUNDS = 1;
+const MM_CHAT_BACKLOG_MAX_ROUNDS = 5;
+const MM_CHAT_BACKLOG_SPAN_DAYS = 10;
+
+function normalizeBacklogImportance(raw: unknown): XingyeMmChatBacklogImportanceTag {
+  if (raw === 'high' || raw === 'medium' || raw === 'low') return raw;
+  return 'medium';
+}
+
+/**
+ * Backlog 结果归一化。
+ *
+ * 不严格校验"轮数与 importanceTag 是否自洽"——prompt 已经向模型讲清规则，
+ * 真出现错档，落地后用户看着也合理（一条短话题的 high 标签不至于报错）。
+ * 只做几件确定性兜底：rounds 至少 1 条 + 最多 5 条 + question/answer 非空。
+ */
+export function normalizeMmChatInitialBacklogResult(raw: unknown): XingyeMmChatBacklogResult | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const sessionsRaw = rec.sessions;
+  if (!Array.isArray(sessionsRaw) || sessionsRaw.length === 0) return null;
+  const sessions: XingyeMmChatBacklogSession[] = [];
+  for (const item of sessionsRaw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const r = item as Record<string, unknown>;
+    const titleRaw = typeof r.title === 'string' ? r.title.trim() : '';
+    const rounds = normalizeMmChatRoundsArray(r.rounds);
+    if (!rounds || rounds.length === 0) continue;
+    const clamped = rounds.slice(0, MM_CHAT_BACKLOG_MAX_ROUNDS);
+    if (clamped.length < MM_CHAT_BACKLOG_MIN_ROUNDS) continue;
+    const title = titleRaw ? titleRaw.slice(0, 200) : truncateChars(clamped[0].question, 48);
+    sessions.push({
+      title,
+      importanceTag: normalizeBacklogImportance(r.importanceTag),
+      rounds: clamped,
+    });
+  }
+  if (sessions.length === 0) return null;
+  return { sessions };
+}
+
+export type XingyeMmChatBacklogTimestampedSession = XingyeMmChatBacklogSession & {
+  /** 整条 session 的发生时间——session.createdAt/updatedAt 和所有 turn 都用同一个值。 */
+  occurredAt: string;
+};
+
+/**
+ * 把 N 条 backlog session 的"发生时间"确定性铺到过去 [1, MM_CHAT_BACKLOG_SPAN_DAYS] 天里：
+ * 第 0 条 ≈ 10 天前，最后一条 ≈ 1 天前，让列表里时间从远到近自然递增。
+ *
+ * 时间不交给 LLM 编（[[feedback_ai_payload_minimization]]：数值/批量数据本地确定性生成）。
+ * 同 distributeOccurredAtFallback 的思路，但 MM Chat 不需要保留 LLM 自己写的 occurredAt——
+ * 整条 session 一个时间足够，UI 列表里 formatSessionTime 也只用一个时间。
+ *
+ * 接受可选 referenceNow：测试可注入固定时间。
+ */
+export function distributeMmChatBacklogTimestamps(
+  sessions: XingyeMmChatBacklogSession[],
+  referenceNow?: Date,
+): XingyeMmChatBacklogTimestampedSession[] {
+  if (sessions.length === 0) return [];
+  const now = referenceNow ?? new Date();
+  const todayMs = now.getTime();
+  const span = MM_CHAT_BACKLOG_SPAN_DAYS;
+  const total = Math.max(1, sessions.length);
+  return sessions.map((s, i) => {
+    // i=0 → 最远（span 天前）；i=last → 最近（1 天前）
+    const offsetDays = Math.max(1, Math.round(span - (i / total) * (span - 1)));
+    const past = new Date(todayMs - offsetDays * 24 * 3600 * 1000);
+    return { ...s, occurredAt: past.toISOString() };
+  });
+}
+
+export type GenerateMmChatInitialBacklogParams = {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  timeoutMs?: number;
+  /** 不传则走 pickRandomMmChatInitialBacklogSize()（3-5 随机）。 */
+  sessionCount?: number;
+};
+
+/**
+ * 首次打开 MM Chat：一次性产出 N 条独立 session 的 backlog。
+ *
+ * 不写盘——由调用方（PhoneMmChatApp 的 bootstrap effect）拿到结果后：
+ *  1) 走 distributeMmChatBacklogTimestamps 给每条 session 派一个"发生时间"；
+ *  2) flatten 成 turn 数组、组装成 XingyeMmChatSession[]；
+ *  3) 单次 saveMmChatPersistence 写入 sessions.json，并设置 initializedAt。
+ */
+export async function generateMmChatInitialBacklogWithAI(
+  params: GenerateMmChatInitialBacklogParams,
+): Promise<XingyeMmChatBacklogResult> {
+  const { agent, ownerProfile } = params;
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const sessionCount = Math.max(
+    1,
+    Math.floor(params.sessionCount ?? pickRandomMmChatInitialBacklogSize()),
+  );
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const userName = await resolveXingyeSpeakerUserName();
+  const recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  const recentSceneBlock = describeRecentContextForPrompt(recentContext);
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+  const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
+  const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    recentContext.summaryText,
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    heartbeatLine ?? '',
+  ]);
+
+  const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+    purpose: 'mm_chat',
+    queryText,
+    maxChars: 2000,
+    includeAlways: false,
+    includeKeyword: true,
+  });
+  const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+
+  const prompt = buildMmChatInitialBacklogPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    recentSceneBlock,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    sessionCount,
+  });
+
+  const raw = await postMmChatPhoneGenerate({
+    agent,
+    prompt,
+    timeoutMs,
+    mmChatMode: `initial_backlog_${sessionCount}`,
+  });
+
+  const normalized = normalizeMmChatInitialBacklogResult(raw);
+  if (!normalized) {
+    throw new Error('模型返回无效：缺少 sessions 数组或 JSON 解析失败');
   }
   return normalized;
 }

@@ -16,10 +16,17 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
   buildMmChatContinuityAnchorBlockFromSessions,
+  distributeMmChatBacklogTimestamps,
+  generateMmChatInitialBacklogWithAI,
   generateMmChatRoundWithAI,
+  generateMmChatRoundsWithAI,
   normalizeMmChatFollowupAgentQuestion,
   normalizeMmChatFollowupAssistantAnswer,
+  normalizeMmChatInitialBacklogResult,
+  normalizeMmChatMultiRoundResult,
   normalizeMmChatRoundResult,
+  pickRandomMmChatInitialBacklogSize,
+  pickRandomMmChatRoundCount,
 } from './xingye-mm-chat-ai';
 
 describe('buildMmChatContinuityAnchorBlockFromSessions', () => {
@@ -279,5 +286,374 @@ describe('generateMmChatRoundWithAI', () => {
         },
       }),
     ).rejects.toThrow(/助手回复之后/);
+  });
+});
+
+describe('pickRandomMmChatRoundCount', () => {
+  it('returns integer in [3, 5]', () => {
+    for (let i = 0; i < 64; i += 1) {
+      const n = pickRandomMmChatRoundCount();
+      expect(Number.isInteger(n)).toBe(true);
+      expect(n).toBeGreaterThanOrEqual(3);
+      expect(n).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
+describe('normalizeMmChatMultiRoundResult', () => {
+  it('rejects missing rounds', () => {
+    expect(normalizeMmChatMultiRoundResult({ title: 'T' }, { requireTitle: true })).toBeNull();
+  });
+
+  it('rejects empty rounds array', () => {
+    expect(normalizeMmChatMultiRoundResult({ title: 'T', rounds: [] }, { requireTitle: true })).toBeNull();
+  });
+
+  it('rejects round with missing question or answer', () => {
+    expect(
+      normalizeMmChatMultiRoundResult(
+        { title: 'T', rounds: [{ question: 'q', answer: '' }] },
+        { requireTitle: true },
+      ),
+    ).toBeNull();
+  });
+
+  it('fills title fallback from first question when requireTitle and title missing', () => {
+    const out = normalizeMmChatMultiRoundResult(
+      { rounds: [{ question: '一二三四五六七八九十', answer: 'A' }] },
+      { requireTitle: true },
+    );
+    expect(out?.title.length).toBeGreaterThan(0);
+    expect(out?.rounds).toEqual([{ question: '一二三四五六七八九十', answer: 'A' }]);
+  });
+
+  it('allows empty title in followup mode (requireTitle:false)', () => {
+    const out = normalizeMmChatMultiRoundResult(
+      { rounds: [{ question: 'Q1', answer: 'A1' }, { question: 'Q2', answer: 'A2' }] },
+      { requireTitle: false },
+    );
+    expect(out).not.toBeNull();
+    expect(out?.title).toBe('');
+    expect(out?.rounds).toHaveLength(2);
+  });
+});
+
+describe('generateMmChatRoundsWithAI', () => {
+  beforeEach(() => {
+    vi.mocked(postXingyeStorage).mockReset();
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
+  });
+
+  it('new mode posts a single phone-generate with multi-round schema and target N in prompt', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          title: '睡眠',
+          rounds: [
+            { question: 'Q1', answer: 'A1' },
+            { question: 'Q2', answer: 'A2' },
+            { question: 'Q3', answer: 'A3' },
+          ],
+        },
+      }),
+    } as Response);
+
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    const out = await generateMmChatRoundsWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      roundCount: 3,
+    });
+    expect(out.title).toBe('睡眠');
+    expect(out.rounds).toHaveLength(3);
+
+    const calls = vi.mocked(hanaFetch).mock.calls.filter((c) => c[0] === '/api/xingye/phone-generate');
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(String(calls[0][1]?.body ?? '{}')) as { kind?: string; prompt?: string; mmChatMode?: string };
+    expect(body.kind).toBe('mm_chat');
+    expect(body.mmChatMode).toBe('new_multi_3');
+    expect(body.prompt).toContain('恰好 3 轮');
+    expect(body.prompt).toContain('rounds');
+  });
+
+  it('followup mode is a single call (not 2-step) and injects direction hint into first round', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          rounds: [
+            { question: 'Q-follow-1', answer: 'A-follow-1' },
+            { question: 'Q-follow-2', answer: 'A-follow-2' },
+          ],
+        },
+      }),
+    } as Response);
+
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    const out = await generateMmChatRoundsWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      mode: 'followup',
+      roundCount: 2,
+      followUp: {
+        sessionTitle: '睡眠',
+        sessionMessages: [
+          { id: 'a', role: 'ta' as const, text: '怎么睡？', createdAt: '2026-01-01T00:00:00.000Z' },
+          { id: 'b', role: 'ai' as const, text: '关灯试试。', createdAt: '2026-01-01T00:00:01.000Z' },
+        ],
+        directionHint: '没理解第二步',
+      },
+    });
+    expect(out.title).toBe(''); // followup 不带 title
+    expect(out.rounds).toHaveLength(2);
+
+    const calls = vi.mocked(hanaFetch).mock.calls.filter((c) => c[0] === '/api/xingye/phone-generate');
+    expect(calls).toHaveLength(1); // 单调用，不再 2-step
+    const body = JSON.parse(String(calls[0][1]?.body ?? '{}')) as { mmChatMode?: string; prompt?: string };
+    expect(body.mmChatMode).toBe('followup_multi_2');
+    expect(body.prompt).toContain('没理解第二步');
+    expect(body.prompt).toContain('恰好 2 轮');
+  });
+
+  it('followup rejects when last message is not assistant', async () => {
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    await expect(
+      generateMmChatRoundsWithAI({
+        agent: agent as never,
+        ownerProfile: null,
+        mode: 'followup',
+        roundCount: 3,
+        followUp: {
+          sessionTitle: 'T',
+          sessionMessages: [{ id: 'a', role: 'ta' as const, text: '仅提问', createdAt: '2026-01-01T00:00:00.000Z' }],
+        },
+      }),
+    ).rejects.toThrow(/助手回复之后/);
+    // 校验在调用模型前就发生：
+    expect(
+      vi.mocked(hanaFetch).mock.calls.filter((c) => c[0] === '/api/xingye/phone-generate'),
+    ).toHaveLength(0);
+  });
+
+  it('new mode injects mm-chat continuity anchor when prior sessions exist', async () => {
+    vi.mocked(postXingyeStorage).mockReset();
+    vi.mocked(postXingyeStorage).mockImplementation(async (input) => {
+      const arg = input as { action?: string; relativePath?: string };
+      if (arg?.action === 'readJson' && arg?.relativePath === 'mm-chat/sessions.json') {
+        return {
+          data: {
+            version: 1,
+            activeSessionId: '',
+            sessions: [
+              {
+                id: 's1',
+                title: '入睡步骤',
+                preview: '',
+                createdAt: '2026-05-01T00:00:00.000Z',
+                updatedAt: '2026-05-26T00:00:00.000Z',
+                messages: [
+                  { id: 'm1', role: 'ta', text: '怎么入睡更轻松？', createdAt: '2026-05-26T00:00:00.000Z' },
+                  { id: 'm2', role: 'ai', text: '关灯。', createdAt: '2026-05-26T00:00:01.000Z' },
+                ],
+              },
+            ],
+          },
+        } as never;
+      }
+      return { missing: true } as never;
+    });
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          title: 't',
+          rounds: [{ question: 'q', answer: 'a' }],
+        },
+      }),
+    } as Response);
+
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    await generateMmChatRoundsWithAI({ agent: agent as never, ownerProfile: null, roundCount: 1 });
+    const call = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/phone-generate');
+    const prompt = JSON.parse(String(call?.[1]?.body ?? '{}')).prompt as string;
+    expect(prompt).toContain('跨会话反重复锚点');
+    expect(prompt).toContain('《入睡步骤》');
+  });
+
+  it('throws when model returns malformed result', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, result: { title: 't', rounds: [{ question: 'q' /* missing answer */ }] } }),
+    } as Response);
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    await expect(
+      generateMmChatRoundsWithAI({ agent: agent as never, ownerProfile: null, roundCount: 1 }),
+    ).rejects.toThrow(/rounds/);
+  });
+});
+
+describe('pickRandomMmChatInitialBacklogSize', () => {
+  it('returns integer in [3, 5]', () => {
+    for (let i = 0; i < 64; i += 1) {
+      const n = pickRandomMmChatInitialBacklogSize();
+      expect(Number.isInteger(n)).toBe(true);
+      expect(n).toBeGreaterThanOrEqual(3);
+      expect(n).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
+describe('normalizeMmChatInitialBacklogResult', () => {
+  it('rejects missing sessions array', () => {
+    expect(normalizeMmChatInitialBacklogResult({})).toBeNull();
+    expect(normalizeMmChatInitialBacklogResult({ sessions: [] })).toBeNull();
+    expect(normalizeMmChatInitialBacklogResult(null)).toBeNull();
+  });
+
+  it('drops sessions with no usable rounds, keeps the rest', () => {
+    const out = normalizeMmChatInitialBacklogResult({
+      sessions: [
+        { title: '坏', importanceTag: 'high', rounds: [{ question: 'q', answer: '' }] },
+        { title: '好', importanceTag: 'medium', rounds: [{ question: 'Q1', answer: 'A1' }] },
+      ],
+    });
+    expect(out?.sessions).toHaveLength(1);
+    expect(out?.sessions[0].title).toBe('好');
+  });
+
+  it('clamps rounds to max 5 per session', () => {
+    const tooMany = Array.from({ length: 8 }, (_, i) => ({ question: `Q${i}`, answer: `A${i}` }));
+    const out = normalizeMmChatInitialBacklogResult({
+      sessions: [{ title: 'x', importanceTag: 'high', rounds: tooMany }],
+    });
+    expect(out?.sessions[0].rounds).toHaveLength(5);
+  });
+
+  it('defaults importanceTag to medium when missing or unknown', () => {
+    const out = normalizeMmChatInitialBacklogResult({
+      sessions: [
+        { title: 'a', rounds: [{ question: 'q', answer: 'a' }] },
+        { title: 'b', importanceTag: 'cosmic', rounds: [{ question: 'q', answer: 'a' }] },
+      ],
+    });
+    expect(out?.sessions[0].importanceTag).toBe('medium');
+    expect(out?.sessions[1].importanceTag).toBe('medium');
+  });
+
+  it('fills title fallback from first question when title empty', () => {
+    const out = normalizeMmChatInitialBacklogResult({
+      sessions: [{ title: '', importanceTag: 'low', rounds: [{ question: '一二三四五六七八九十', answer: 'A' }] }],
+    });
+    expect(out?.sessions[0].title.length).toBeGreaterThan(0);
+  });
+});
+
+describe('distributeMmChatBacklogTimestamps', () => {
+  it('returns empty for empty input', () => {
+    expect(distributeMmChatBacklogTimestamps([])).toEqual([]);
+  });
+
+  it('spans roughly [1, 10] days back, earliest first → most recent last', () => {
+    const now = new Date('2026-05-28T12:00:00.000Z');
+    const sessions = Array.from({ length: 5 }, (_, i) => ({
+      title: `t${i}`,
+      importanceTag: 'medium' as const,
+      rounds: [{ question: `q${i}`, answer: `a${i}` }],
+    }));
+    const out = distributeMmChatBacklogTimestamps(sessions, now);
+    expect(out).toHaveLength(5);
+    const ages = out.map((s) => (now.getTime() - Date.parse(s.occurredAt)) / (24 * 3600 * 1000));
+    // i=0 最远（~10 天）；i=last 最近（~1 天）
+    expect(ages[0]).toBeGreaterThan(ages[ages.length - 1]);
+    for (const age of ages) {
+      expect(age).toBeGreaterThanOrEqual(1);
+      expect(age).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it('single session lands at the most-recent end (not today)', () => {
+    const now = new Date('2026-05-28T12:00:00.000Z');
+    const out = distributeMmChatBacklogTimestamps(
+      [{ title: 't', importanceTag: 'medium', rounds: [{ question: 'q', answer: 'a' }] }],
+      now,
+    );
+    const ageDays = (now.getTime() - Date.parse(out[0].occurredAt)) / (24 * 3600 * 1000);
+    // 单条不应停在今天（occurredAt=0 days）——bootstrap 的本意是"有历史感"
+    expect(ageDays).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('generateMmChatInitialBacklogWithAI', () => {
+  beforeEach(() => {
+    vi.mocked(postXingyeStorage).mockReset();
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
+  });
+
+  it('posts a single phone-generate with kind=mm_chat and sessionCount-bearing prompt', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          sessions: [
+            {
+              title: '与老李拒绝措辞',
+              importanceTag: 'high',
+              rounds: [
+                { question: 'Q1', answer: 'A1' },
+                { question: 'Q2', answer: 'A2' },
+                { question: 'Q3', answer: 'A3' },
+              ],
+            },
+            {
+              title: '入睡步骤',
+              importanceTag: 'medium',
+              rounds: [{ question: 'Q1', answer: 'A1' }, { question: 'Q2', answer: 'A2' }],
+            },
+            {
+              title: '突然失神片刻',
+              importanceTag: 'low',
+              rounds: [{ question: 'Q', answer: 'A' }],
+            },
+          ],
+        },
+      }),
+    } as Response);
+
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    const out = await generateMmChatInitialBacklogWithAI({
+      agent: agent as never,
+      ownerProfile: null,
+      sessionCount: 3,
+    });
+
+    expect(out.sessions).toHaveLength(3);
+    expect(out.sessions[0].rounds).toHaveLength(3);
+    expect(out.sessions[2].rounds).toHaveLength(1);
+
+    const calls = vi.mocked(hanaFetch).mock.calls.filter((c) => c[0] === '/api/xingye/phone-generate');
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(String(calls[0][1]?.body ?? '{}')) as { kind?: string; prompt?: string; mmChatMode?: string };
+    expect(body.kind).toBe('mm_chat');
+    expect(body.mmChatMode).toBe('initial_backlog_3');
+    expect(body.prompt).toContain('恰好 3 条');
+    expect(body.prompt).toContain('importanceTag');
+  });
+
+  it('throws when model returns no sessions', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, result: { sessions: [] } }),
+    } as Response);
+    const agent = { id: 'agent-m', name: 'Lin', yuan: 'y' as const };
+    await expect(
+      generateMmChatInitialBacklogWithAI({ agent: agent as never, ownerProfile: null, sessionCount: 3 }),
+    ).rejects.toThrow(/sessions/);
   });
 });

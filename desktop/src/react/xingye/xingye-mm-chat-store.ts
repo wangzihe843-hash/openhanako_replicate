@@ -50,6 +50,13 @@ export type XingyeMmChatPersistedV1 = {
   /** 空字符串表示未选中会话（列表态）；非空时应对应 `sessions` 中某条 id（兼容旧数据）。 */
   activeSessionId: string;
   sessions: XingyeMmChatSession[];
+  /**
+   * 仅在「首次打开 MM Chat」自动触发的 backlog 初始化成功后写入。
+   * 之后即使删光 sessions 也不会再触发初始化——避免"删光后又被自动重灌"，
+   * 与 accounting/shopping/secondhand 的 initializedAt 同义（只是这边不复用
+   * history-state.json，因为 MM Chat 是 sessions.json 单文件、gap-fill 概念用不上）。
+   */
+  initializedAt?: string;
 };
 
 function newSessionId(): string {
@@ -142,15 +149,17 @@ function normalizePersisted(value: unknown): XingyeMmChatPersistedV1 | null {
     const sess = normalizeSession(s);
     if (sess) sessions.push(sess);
   }
+  const initializedAtRaw = typeof raw.initializedAt === 'string' ? raw.initializedAt.trim() : '';
+  const initializedAt = initializedAtRaw && isIsoLike(initializedAtRaw) ? initializedAtRaw : undefined;
   if (sessions.length === 0) {
-    return { version: 1, activeSessionId: '', sessions: [] };
+    return { version: 1, activeSessionId: '', sessions: [], ...(initializedAt ? { initializedAt } : {}) };
   }
   const ids = new Set(sessions.map((s) => s.id));
   let activeSessionId = activeRaw;
   if (!activeSessionId || !ids.has(activeSessionId)) {
     activeSessionId = '';
   }
-  return { version: 1, activeSessionId, sessions };
+  return { version: 1, activeSessionId, sessions, ...(initializedAt ? { initializedAt } : {}) };
 }
 
 export function sortMmChatSessionsByUpdatedAtDesc(sessions: XingyeMmChatSession[]): XingyeMmChatSession[] {
@@ -236,6 +245,7 @@ export async function createMmChatSession(
     version: 1,
     activeSessionId: '',
     sessions,
+    ...(existing.initializedAt ? { initializedAt: existing.initializedAt } : {}),
   });
   return session;
 }
@@ -251,13 +261,15 @@ export async function deleteMmChatSession(agentId: string, sessionId: string): P
   const sessions = existing.sessions.filter((s) => s.id !== sid);
   let activeSessionId = existing.activeSessionId;
   if (activeSessionId === sid) activeSessionId = '';
+  const preserveInit = existing.initializedAt ? { initializedAt: existing.initializedAt } : {};
   if (sessions.length === 0) {
-    await saveMmChatPersistence(aid, { version: 1, activeSessionId: '', sessions: [] });
+    // 即便用户删光，也保留 initializedAt——防止删光 → 自动重新 bootstrap 灌入。
+    await saveMmChatPersistence(aid, { version: 1, activeSessionId: '', sessions: [], ...preserveInit });
     return;
   }
   const ids = new Set(sessions.map((s) => s.id));
   if (activeSessionId && !ids.has(activeSessionId)) activeSessionId = '';
-  await saveMmChatPersistence(aid, { version: 1, activeSessionId, sessions });
+  await saveMmChatPersistence(aid, { version: 1, activeSessionId, sessions, ...preserveInit });
 }
 
 /**
@@ -311,6 +323,7 @@ export async function appendMmChatTurnsToSession(
     version: 1,
     activeSessionId: row.activeSessionId,
     sessions,
+    ...(row.initializedAt ? { initializedAt: row.initializedAt } : {}),
   });
   await appendMmChatEventBestEffort(aid, {
     type: 'mm_chat.turns_appended',
