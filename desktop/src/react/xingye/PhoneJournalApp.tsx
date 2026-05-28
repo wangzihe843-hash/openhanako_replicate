@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import { useStore } from '../stores';
+import { loadHistoryState, saveHistoryState } from './xingye-app-history-state';
 import styles from './XingyeShell.module.css';
-import { generateJournalDraftWithAI } from './xingye-journal-ai';
+import { generateJournalDraftWithAI, generateJournalHistoryWithAI } from './xingye-journal-ai';
 import {
   appendJournalEntry,
   confirmJournalDraft,
@@ -50,6 +51,9 @@ function chineseMonth(m: number): string {
 
 /**
  * 设计稿风格的日组标题："今天 · 五月十四  星期四" / "五月十二  星期二"。
+ *
+ * 整组都是 dateSmudged 时，列表分组渲染层直接走「时间已模糊」走另一路，
+ * 不进这里——所以这里假设 dayKey 都是真实日期。
  */
 function formatGroupHeading(dayKey: string): string {
   const [y, m, d] = dayKey.split('-').map(Number);
@@ -63,6 +67,11 @@ function formatGroupHeading(dayKey: string): string {
   const weekday = `星期${CN_WEEKDAYS[date.getDay()]}`;
   return isToday ? `今天 · ${cnDate}  ${weekday}` : `${cnDate}  ${weekday}`;
 }
+
+/** dateSmudged 条目共用的分组标签——"墨迹模糊·年代不可考"。 */
+const SMUDGED_GROUP_HEADING = '墨迹模糊 · 年代不可考';
+/** 详情页 meta 行的污损替代文案。 */
+const SMUDGED_DETAIL_LABEL = '· · ·  墨迹模糊  · · ·';
 
 /**
  * 详情页 meta 行的日期格式："2026 · 05 · 14 · THU"。
@@ -123,6 +132,17 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
    */
   const [sharedToChatId, setSharedToChatId] = useState<string | null>(null);
 
+  /**
+   * 首次打开日记 app 的一次性初始化（按 lore 生成 3–5 篇过去日记）。
+   * - initBusy / initError / initNotice 控制 UI 状态。
+   * - initialBootstrapTriedRef 在 ownerAgentId 切换时复位；同一 owner 一个 mount 周期
+   *   最多尝试一次，失败也不会无限重试（不写 initializedAt → 下次重新打开会再试）。
+   */
+  const initialBootstrapTriedRef = useRef<string | null>(null);
+  const [initBusy, setInitBusy] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [initNotice, setInitNotice] = useState<string | null>(null);
+
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
@@ -153,11 +173,108 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setListError(null);
     setDraftError(null);
     setDraftEdits({});
+    initialBootstrapTriedRef.current = null;
+    setInitError(null);
+    setInitNotice(null);
   }, [ownerAgentId]);
 
   useEffect(() => {
     void reloadEntries();
   }, [reloadEntries]);
+
+  /**
+   * 「首次打开日记」初始化：按 lore 生成 3–5 篇过去日记，直接写入 entries.jsonl
+   * （走 appendJournalEntry，不走 draft 流——和购物 init 一致；首次打开不该被 5 条
+   * 待确认草稿淹没）。条数从 [3,5] 内随机；模型给的 dayKey 跨期分布，缺失/无效项
+   * 由 normalizeJournalHistoryResults 兜底撒在过去 30–360 天范围。
+   *
+   * 成功才写 history-state.initializedAt——失败时不写，用户下次打开会重试，但
+   * 同一个 mount 周期不会反复触发（initialBootstrapTriedRef）。
+   */
+  const runInitialBootstrap = useCallback(async () => {
+    if (!ownerAgent || !ownerAgentId) return;
+    setInitBusy(true);
+    setInitError(null);
+    setInitNotice(null);
+    try {
+      const desiredCount = 3 + Math.floor(Math.random() * 3);
+      const drafts = await generateJournalHistoryWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        desiredCount,
+      });
+      if (drafts.length === 0) {
+        throw new Error('模型未生成任何历史日记');
+      }
+      /** 按 dayKey 升序 append，让 entries.jsonl 行序和真实时间序一致；列表显示靠
+       *  内存里的 sortJournalEntries 重新按 dayKey 倒序，跟当前用户写的日记走同一条路。
+       *  dateSmudged 条目用哨兵 0001-01-01，会自然排到最末。 */
+      const sorted = [...drafts].sort((a, b) => (a.dayKey < b.dayKey ? -1 : 1));
+      for (const d of sorted) {
+        await appendJournalEntry(ownerAgentId, {
+          title: d.title,
+          body: d.body,
+          dayKey: d.dayKey,
+          mood: d.mood,
+          dateSmudged: d.dateSmudged,
+        });
+      }
+      await saveHistoryState(ownerAgentId, 'journal', {
+        initializedAt: new Date().toISOString(),
+      });
+      setInitNotice(`已为 TA 整理出 ${drafts.length} 篇过去的日记`);
+      await reloadEntries();
+    } catch (e) {
+      setInitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInitBusy(false);
+    }
+  }, [ownerAgent, ownerAgentId, ownerProfile, reloadEntries]);
+
+  useEffect(() => {
+    if (!ownerAgent || !ownerAgentId) return;
+    if (listLoading) return;
+    if (initBusy) return;
+    if (initialBootstrapTriedRef.current === ownerAgentId) return;
+    // 已经有 entries 或 pendingDrafts → 视为已初始化过（或 agent 心跳已经垫了草稿），跳过。
+    if (entries.length > 0 || pendingDrafts.length > 0) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
+    }
+    initialBootstrapTriedRef.current = ownerAgentId;
+    (async () => {
+      try {
+        const state = await loadHistoryState(ownerAgentId, 'journal');
+        if (state.initializedAt) return;
+        /**
+         * 二次确认：初次 mount 时 reloadEntries 还没跑完，外层 entries.length=0 不能
+         * 当真——直接落盘问一次。也覆盖老用户场景（在加这个功能之前已经写过日记但没
+         * initializedAt marker）：发现有内容就只补 marker、不真的跑生成。
+         */
+        const [freshEntries, freshDrafts] = await Promise.all([
+          listJournalEntries(ownerAgentId),
+          listJournalDrafts(ownerAgentId),
+        ]);
+        if (freshEntries.length > 0 || freshDrafts.length > 0) {
+          await saveHistoryState(ownerAgentId, 'journal', {
+            initializedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        await runInitialBootstrap();
+      } catch (err) {
+        console.warn('[PhoneJournalApp] init bootstrap failed:', err);
+      }
+    })();
+  }, [
+    ownerAgent,
+    ownerAgentId,
+    listLoading,
+    initBusy,
+    entries.length,
+    pendingDrafts.length,
+    runInitialBootstrap,
+  ]);
 
   const draftWorkingValue = useCallback(
     (draft: XingyeJournalDraft) => {
@@ -326,7 +443,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     (entry: XingyeJournalEntry) => {
       const lines: string[] = [];
       lines.push(`《${entry.title}》`);
-      lines.push(dayLabelForDetail(entry.dayKey));
+      lines.push(entry.dateSmudged ? SMUDGED_DETAIL_LABEL : dayLabelForDetail(entry.dayKey));
       if (entry.mood) lines.push(`心情：「${entry.mood}」`);
       lines.push('');
       lines.push(entry.body);
@@ -405,6 +522,33 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
           </p>
         ) : null}
         {listLoading && entries.length === 0 ? <p className={styles.phoneAppHint}>加载中…</p> : null}
+        {initBusy ? (
+          <p
+            className={styles.phoneAppHint}
+            role="status"
+            data-testid="phone-journal-init-busy"
+          >
+            正在为 {ta} 翻找过去几页旧日记…（首次打开根据背景设定生成 3–5 篇过去日记）
+          </p>
+        ) : null}
+        {initError ? (
+          <p
+            className={styles.phoneAppHint}
+            role="alert"
+            data-testid="phone-journal-init-error"
+          >
+            初始化历史日记失败：{initError}（下次打开会重试；也可以先点「记」自己写一条）
+          </p>
+        ) : null}
+        {initNotice && !initBusy ? (
+          <p
+            className={styles.phoneAppHint}
+            role="status"
+            data-testid="phone-journal-init-notice"
+          >
+            {initNotice}
+          </p>
+        ) : null}
 
         {!selected ? (
           <div className={styles.phoneJournalLayout}>
@@ -519,42 +663,55 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               </p>
             ) : null}
             {grouped.length > 0
-              ? grouped.map(([dayKey, list]) => (
-                  <div key={dayKey} className={styles.phoneJournalGroup}>
-                    <div className={styles.phoneJournalGroupLabel}>
-                      <span aria-hidden className={styles.phoneJournalGroupDash} />
-                      <span>{formatGroupHeading(dayKey)}</span>
+              ? grouped.map(([dayKey, list]) => {
+                  // 整组都是污损条目 → 用「墨迹模糊」分组标签代替正常日期；
+                  // 真实写入哨兵 0001-01-01 的条目会自然聚集到这里（最末），
+                  // 不再按编造日期散落到真实年份里。
+                  const groupSmudged = list.every((e) => e.dateSmudged);
+                  return (
+                    <div
+                      key={dayKey}
+                      className={styles.phoneJournalGroup}
+                      data-smudged={groupSmudged ? 'true' : undefined}
+                      data-testid={groupSmudged ? 'phone-journal-smudged-group' : undefined}
+                    >
+                      <div className={styles.phoneJournalGroupLabel}>
+                        <span aria-hidden className={styles.phoneJournalGroupDash} />
+                        <span>{groupSmudged ? SMUDGED_GROUP_HEADING : formatGroupHeading(dayKey)}</span>
+                      </div>
+                      <div className={styles.phoneJournalGroupCards}>
+                        {list.map((e, idx) => {
+                          const tapeColor = WASHI_TAPE_COLORS[idx % WASHI_TAPE_COLORS.length];
+                          const slant = idx % 2 === 0 ? styles.phoneJournalCardSlant0 : styles.phoneJournalCardSlant1;
+                          return (
+                            <button
+                              key={e.id}
+                              type="button"
+                              className={`${styles.phoneJournalCard} ${slant}`}
+                              data-smudged={e.dateSmudged ? 'true' : undefined}
+                              data-testid={e.dateSmudged ? `phone-journal-smudged-card-${e.id}` : undefined}
+                              onClick={() => setSelectedId(e.id)}
+                            >
+                              <span aria-hidden className={styles.phoneJournalTape} style={{ background: tapeColor }} />
+                              <div className={styles.phoneJournalCardHead}>
+                                <h4 className={styles.phoneJournalCardTitle}>{e.title}</h4>
+                                {e.mood ? (
+                                  <span
+                                    className={styles.phoneJournalMoodChip}
+                                    data-testid={`phone-journal-mood-${e.id}`}
+                                  >
+                                    「{e.mood}」
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className={styles.phoneJournalGroupCards}>
-                      {list.map((e, idx) => {
-                        const tapeColor = WASHI_TAPE_COLORS[idx % WASHI_TAPE_COLORS.length];
-                        const slant = idx % 2 === 0 ? styles.phoneJournalCardSlant0 : styles.phoneJournalCardSlant1;
-                        return (
-                          <button
-                            key={e.id}
-                            type="button"
-                            className={`${styles.phoneJournalCard} ${slant}`}
-                            onClick={() => setSelectedId(e.id)}
-                          >
-                            <span aria-hidden className={styles.phoneJournalTape} style={{ background: tapeColor }} />
-                            <div className={styles.phoneJournalCardHead}>
-                              <h4 className={styles.phoneJournalCardTitle}>{e.title}</h4>
-                              {e.mood ? (
-                                <span
-                                  className={styles.phoneJournalMoodChip}
-                                  data-testid={`phone-journal-mood-${e.id}`}
-                                >
-                                  「{e.mood}」
-                                </span>
-                              ) : null}
-                            </div>
-                            <p className={styles.phoneJournalCardExcerpt}>{excerptForJournalList(e.body)}</p>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               : null}
 
             <button
@@ -570,7 +727,13 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         ) : (
           <div className={styles.phoneJournalDetail}>
             <div aria-hidden className={styles.phoneJournalDetailRules} />
-            <p className={styles.phoneJournalDetailMeta}>{dayLabelForDetail(selected.dayKey)}</p>
+            <p
+              className={styles.phoneJournalDetailMeta}
+              data-smudged={selected.dateSmudged ? 'true' : undefined}
+              data-testid={selected.dateSmudged ? 'phone-journal-detail-smudged' : undefined}
+            >
+              {selected.dateSmudged ? SMUDGED_DETAIL_LABEL : dayLabelForDetail(selected.dayKey)}
+            </p>
             <h2 className={styles.phoneJournalDetailTitle}>{selected.title}</h2>
             {selected.mood ? (
               <p className={styles.phoneJournalMoodChip} data-testid="phone-journal-detail-mood">

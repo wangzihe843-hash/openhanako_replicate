@@ -4900,6 +4900,135 @@
   text-align: center;
 }
 
+/* === 日记 · "墨迹模糊" 污损视觉 ==========================================
+ *
+ * 应用对象：dateSmudged=true 的条目（首次打开 app 时 LLM 给的旧日记里
+ * 日期字段不可解析的那些）。设计意图：让用户**一眼看出"这页是从老本子里
+ * 翻出来的、字迹糊了"**，但不要喧宾夺主——内容（标题/正文/心情）依然清晰
+ * 可读，被"污损"的只是日期字段。
+ *
+ * 视觉手法（全部静态，无动画、无字体抖动）：
+ *  - 卡片：稍微泛黄的纸面 + 角落水渍渐变 + 几粒虫斑（foxing）；
+ *  - 胶带：sepia 滤镜让 washi tape 看上去褪色发褐；
+ *  - 分组标签：把 hairline dash 换成短小不规则的墨痕，文字带轻微 ink-bleed；
+ *  - 详情页 meta 行：用多层 radial-gradient 拼出一团不规则墨渍铺在文字底下，
+ *    文字本身保留可读（"墨迹模糊"几个字告诉用户发生了什么）。
+ *
+ * 所有效果都通过 data-smudged 属性选择器挂在已有的 phoneJournal* 上，
+ * 没污损的条目零代价。 */
+
+.phoneJournalCard[data-smudged='true'] {
+  /* 多层 radial-gradient 拼出"角落水渍 + 中部褪色" 的纸面老化效果；
+   * 最底层叠原本的 fdf7e6→f7eed5 渐变，但整体加点棕调（往黄褐推）。 */
+  background:
+    radial-gradient(ellipse 68px 44px at 96% 6%, rgba(86, 54, 24, 0.22) 0%, rgba(86, 54, 24, 0.08) 45%, transparent 75%),
+    radial-gradient(ellipse 54px 38px at 4% 92%, rgba(120, 78, 38, 0.18) 0%, rgba(120, 78, 38, 0.06) 50%, transparent 80%),
+    radial-gradient(ellipse 80px 60px at 50% 50%, rgba(150, 110, 70, 0.06) 0%, transparent 60%),
+    linear-gradient(180deg, #f1e4c2 0%, #e7d5ad 100%);
+  border-color: rgba(110, 80, 50, 0.32);
+  box-shadow:
+    0 4px 10px rgba(91, 79, 58, 0.12),
+    0 1px 2px rgba(91, 79, 58, 0.08),
+    inset 0 0 18px rgba(120, 80, 40, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+/* Foxing 虫斑 —— 老纸最招牌的"零散棕点"。位置写死，每条卡同位，
+ * 不需要随机，整本子里看不出规律就够。 */
+.phoneJournalCard[data-smudged='true']::before {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle 2.5px at 18% 28%, rgba(96, 56, 22, 0.32) 0%, rgba(96, 56, 22, 0.12) 60%, transparent 100%),
+    radial-gradient(circle 1.8px at 72% 18%, rgba(86, 50, 18, 0.28) 0%, transparent 100%),
+    radial-gradient(circle 3.5px at 45% 78%, rgba(108, 62, 26, 0.22) 0%, rgba(108, 62, 26, 0.08) 60%, transparent 100%),
+    radial-gradient(circle 1.5px at 88% 62%, rgba(72, 42, 16, 0.34) 0%, transparent 100%),
+    radial-gradient(circle 2px at 8% 64%, rgba(90, 54, 22, 0.26) 0%, transparent 100%);
+}
+
+/* 胶带也"老"一点：sepia + 降明度，让颜色像褪了几年。 */
+.phoneJournalCard[data-smudged='true'] .phoneJournalTape {
+  filter: sepia(0.55) brightness(0.82) contrast(0.92);
+  opacity: 0.7;
+}
+
+/* 整组都是污损（分组标签是"墨迹模糊·年代不可考"那一组）→ 把分组的破折号
+ * 换成短墨痕、文字调到带 ink-bleed 的褐色。 */
+.phoneJournalGroup[data-smudged='true'] .phoneJournalGroupLabel {
+  color: #6b431e;
+  font-family: var(--xingye-font-script, var(--xingye-font-mono));
+  font-style: italic;
+  letter-spacing: 0.18em;
+  /* 0.5px 的浅褐扩散给一点"墨晕"感，但量很小，不影响清晰度。 */
+  text-shadow:
+    0 0 0.5px rgba(80, 50, 20, 0.45),
+    0.6px 0 0.8px rgba(80, 50, 20, 0.25);
+}
+
+/* 把原本的细线 dash 替换成一团不规则的小墨痕——表示这一组的"日期被涂掉了"。
+ * 用 radial-gradient 在 16x10 的小方块里堆 3 个不同大小的圆，错开位置，
+ * 形成"墨水点开了"的轮廓。 */
+.phoneJournalGroup[data-smudged='true'] .phoneJournalGroupDash {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 10px;
+  background:
+    radial-gradient(circle 3.5px at 30% 55%, rgba(45, 28, 12, 0.78) 0%, rgba(45, 28, 12, 0.4) 55%, transparent 90%),
+    radial-gradient(circle 2px at 70% 35%, rgba(60, 38, 16, 0.7) 0%, transparent 90%),
+    radial-gradient(circle 1.5px at 85% 70%, rgba(60, 38, 16, 0.5) 0%, transparent 95%);
+}
+
+/* 卡片本身（带 data-smudged='true' 的 phoneJournalCard）—— 标题保留可读，
+ * 但稍微加一点褐色调，提示"内容是旧的"。 */
+.phoneJournalCard[data-smudged='true'] .phoneJournalCardTitle {
+  color: #46301c;
+}
+.phoneJournalCard[data-smudged='true'] .phoneJournalCardExcerpt {
+  color: #6b4f37;
+}
+
+/* 详情页 meta 行（"· · ·  墨迹模糊  · · ·"）—— 这里是核心戏码：
+ * 用 4 层 radial-gradient 在一个内联块里堆出一团不规则墨渍，
+ * 文字直接贴在墨渍上面，对比不至于看不见，但视觉上明显是"渗了墨的位置"。
+ * 文字本身是浅米色，反衬墨色背景；轻微的 text-shadow 模拟"字陷在墨里"。 */
+.phoneJournalDetailMeta[data-smudged='true'] {
+  display: inline-block;
+  position: relative;
+  padding: 6px 18px 6px 18px;
+  margin: 2px 0 6px;
+  color: #f3e6c6;
+  font-family: var(--xingye-font-script, var(--xingye-font-brush));
+  font-style: italic;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  /* 墨水块本体：4 层椭圆 radial 在水平方向铺一团，左右两侧渐淡，
+   * 边缘故意不齐——像真墨水在纸上渗开。 */
+  background:
+    radial-gradient(ellipse 18% 70% at 12% 52%, rgba(38, 22, 8, 0.85) 0%, rgba(38, 22, 8, 0.55) 60%, transparent 100%),
+    radial-gradient(ellipse 30% 90% at 38% 48%, rgba(28, 16, 6, 0.92) 0%, rgba(28, 16, 6, 0.7) 55%, transparent 100%),
+    radial-gradient(ellipse 26% 82% at 64% 56%, rgba(28, 16, 6, 0.9) 0%, rgba(28, 16, 6, 0.65) 60%, transparent 100%),
+    radial-gradient(ellipse 18% 68% at 88% 48%, rgba(38, 22, 8, 0.82) 0%, rgba(38, 22, 8, 0.5) 60%, transparent 100%);
+  background-color: transparent;
+  /* 文字"陷"进墨里的微光：字内侧极弱的暖光。 */
+  text-shadow:
+    0 0 1px rgba(28, 16, 6, 0.8),
+    0 0 6px rgba(243, 230, 198, 0.18);
+  /* 墨渍轮廓微微扩到 meta 行外，让它看上去不是规整矩形。 */
+  border-radius: 60% 50% 55% 45% / 80% 70% 85% 75%;
+}
+
+/* 详情页 detail rules 不变（蓝色坐标线还在），但污损条目在 rules 之上
+ * 加一层很淡的"水渍痕迹"，告诉用户"这页本身就脏了"。 */
+.phoneJournalDetail:has(.phoneJournalDetailMeta[data-smudged='true']) {
+  background:
+    radial-gradient(ellipse 90px 60px at 100% 0%, rgba(86, 54, 24, 0.12) 0%, transparent 75%),
+    radial-gradient(ellipse 70px 50px at 0% 100%, rgba(120, 78, 38, 0.1) 0%, transparent 80%),
+    #f6eedd;
+}
+
 /* === 秘密空间分类内页 · 统一 kicker / header ============================== */
 
 .secretSpaceCategoryKicker {

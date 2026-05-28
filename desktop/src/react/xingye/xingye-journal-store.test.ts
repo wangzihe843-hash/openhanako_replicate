@@ -348,4 +348,67 @@ describe('xingye-journal-store', () => {
       expect(append.data.key).toBe('from-draft-xyz');
     });
   });
+
+  describe('dateSmudged 污损标记', () => {
+    it('appendJournalEntry with dateSmudged=true 强制写哨兵 dayKey 0001-01-01', async () => {
+      postMock.mockResolvedValueOnce({ ok: true });
+      // 即使调用方传了一个真实的 dayKey，dateSmudged=true 也会被强制改写成哨兵
+      const entry = await appendJournalEntry('agent-x', {
+        title: '不可考的一篇',
+        body: '某段文字。',
+        dayKey: '2024-06-01',
+        dateSmudged: true,
+      });
+      expect(entry.dayKey).toBe('0001-01-01');
+      expect(entry.dateSmudged).toBe(true);
+      const append = postMock.mock.calls.find(
+        (c) => (c[0] as { action?: string }).action === 'appendJsonl',
+      )?.[0] as { data: Record<string, unknown> };
+      expect(append.data.dayKey).toBe('0001-01-01');
+      expect(append.data.dateSmudged).toBe(true);
+    });
+
+    it('appendJournalEntry without dateSmudged 不写出 dateSmudged 字段', async () => {
+      postMock.mockResolvedValueOnce({ ok: true });
+      const entry = await appendJournalEntry('agent-x', {
+        title: '一篇正常的',
+        body: '正文。',
+        dayKey: '2024-06-01',
+      });
+      expect(entry.dayKey).toBe('2024-06-01');
+      expect(entry.dateSmudged).toBeUndefined();
+      const append = postMock.mock.calls.find(
+        (c) => (c[0] as { action?: string }).action === 'appendJsonl',
+      )?.[0] as { data: Record<string, unknown> };
+      expect(append.data.dateSmudged).toBeUndefined();
+    });
+
+    it('listJournalEntries 读出来时保留 dateSmudged 标记', async () => {
+      postMock.mockResolvedValueOnce({
+        ok: true,
+        records: [
+          {
+            id: 's-1',
+            dayKey: '0001-01-01',
+            title: '不可考',
+            body: '糊了。',
+            createdAt: '2026-05-28T10:00:00.000Z',
+            dateSmudged: true,
+          },
+          {
+            id: 'n-1',
+            dayKey: '2024-06-01',
+            title: '正常',
+            body: '清楚。',
+            createdAt: '2024-06-01T10:00:00.000Z',
+          },
+        ],
+      });
+      const rows = await listJournalEntries('agent-x');
+      const smudged = rows.find((r) => r.id === 's-1');
+      const normal = rows.find((r) => r.id === 'n-1');
+      expect(smudged?.dateSmudged).toBe(true);
+      expect(normal?.dateSmudged).toBeUndefined();
+    });
+  });
 });

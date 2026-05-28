@@ -34,15 +34,39 @@ export const XINGYE_JOURNAL_DRAFTS_JSONL = 'journal/drafts.jsonl';
 /** 与 server/routes/xingye-storage.js SAFE_AGENT_ID_RE 一致 */
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
+/**
+ * 「时间已模糊」哨兵 dayKey。
+ *
+ * 用在首次打开 app 时模型生成的旧日记里——LLM 对某些条目给不出可解析的日期
+ * （"去年某天" / 格式错乱 / 直接漏字段），与其编造数字假装精确，不如承认
+ * 「这页字迹糊了」。所有 dateSmudged 条目共用这个哨兵，自动聚合到列表底部
+ * 的「时间已模糊」分组（因为 dayKey 越小排越后，0001 比所有真实年份都小）。
+ *
+ * 哨兵自身仍是合法 YYYY-MM-DD，能通过 appendJournalEntry / normalizeRow
+ * 的格式校验；UI 通过 dateSmudged 标记决定是否渲染污损贴，不能仅靠 dayKey
+ * 字面值判断（哨兵也是合法日期）。
+ */
+export const XINGYE_JOURNAL_SMUDGED_DAY_KEY = '0001-01-01';
+
 export type XingyeJournalEntry = {
   id: string;
-  /** ISO 日期（YYYY-MM-DD，按创建时刻本地日历） */
+  /** ISO 日期（YYYY-MM-DD，按创建时刻本地日历）。
+   *  dateSmudged=true 时按约定写入 XINGYE_JOURNAL_SMUDGED_DAY_KEY 哨兵。 */
   dayKey: string;
   title: string;
   body: string;
   createdAt: string;
   /** 心情短语（2–6 字），如「平淡 / 想他 / 安静」；可选 */
   mood?: string;
+  /**
+   * 「字迹模糊 / 时间不可考」标记。true 时 UI 渲染污损贴纸代替日期：
+   *  - 首次打开 app 时 LLM 给的旧日记里，某些条目说不清是哪天写的；
+   *  - 也可能未来从老存档迁移进来的孤儿条目。
+   *
+   * 与 dayKey 解耦——dateSmudged=true 时 dayKey 写哨兵 0001-01-01，但 UI 不去
+   * 读这个字面值，只看 dateSmudged 标记。
+   */
+  dateSmudged?: boolean;
 };
 
 export type XingyeJournalDraft = {
@@ -84,7 +108,8 @@ function normalizeRow(value: unknown): XingyeJournalEntry | null {
   const createdAt = typeof raw.createdAt === 'string' && raw.createdAt ? raw.createdAt : new Date(0).toISOString();
   const moodRaw = raw.mood;
   const mood = typeof moodRaw === 'string' && moodRaw.trim() ? moodRaw.trim().slice(0, 24) : undefined;
-  return { id, dayKey, title, body, createdAt, mood };
+  const dateSmudged = raw.dateSmudged === true ? true : undefined;
+  return { id, dayKey, title, body, createdAt, mood, dateSmudged };
 }
 
 function sortJournalEntries(a: XingyeJournalEntry, b: XingyeJournalEntry): number {
@@ -119,7 +144,7 @@ export async function listJournalEntries(agentId: string): Promise<XingyeJournal
  */
 export async function appendJournalEntry(
   agentId: string,
-  input: { title: string; body: string; dayKey?: string; mood?: string; id?: string },
+  input: { title: string; body: string; dayKey?: string; mood?: string; id?: string; dateSmudged?: boolean },
 ): Promise<XingyeJournalEntry> {
   const aid = agentId.trim();
   if (!aid) {
@@ -133,20 +158,32 @@ export async function appendJournalEntry(
     throw new Error('正文不能为空。');
   }
   const now = new Date();
-  const dayKey = input.dayKey && /^\d{4}-\d{2}-\d{2}$/.test(input.dayKey) ? input.dayKey : localDayKey(now);
+  const dateSmudged = input.dateSmudged === true ? true : undefined;
+  /**
+   * 三档优先级：
+   *  1. dateSmudged=true → 强制写哨兵 0001-01-01，忽略调用方传的 dayKey
+   *     （避免污损条目散落在真实日期里）；
+   *  2. 调用方给了合法 YYYY-MM-DD → 用它；
+   *  3. 都没给 → 用今天本地日期。
+   */
+  const dayKey = dateSmudged
+    ? XINGYE_JOURNAL_SMUDGED_DAY_KEY
+    : (input.dayKey && /^\d{4}-\d{2}-\d{2}$/.test(input.dayKey) ? input.dayKey : localDayKey(now));
   const title = input.title.trim() || '无标题';
   const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : newJournalId();
   const createdAt = now.toISOString();
   const mood = typeof input.mood === 'string' && input.mood.trim() ? input.mood.trim().slice(0, 24) : undefined;
-  const row: XingyeJournalEntry & { key: string } = { id, key: id, dayKey, title, body, createdAt, mood };
+  const row: XingyeJournalEntry & { key: string } = {
+    id, key: id, dayKey, title, body, createdAt, mood, dateSmudged,
+  };
   await backend.appendJsonl(aid, XINGYE_JOURNAL_ENTRIES_JSONL, row);
   await appendJournalEventBestEffort(aid, {
     type: 'journal.entry_appended',
     source: 'xingye-journal-store',
     subjectId: id,
-    payload: { entryId: id, dayKey, title, hasMood: Boolean(mood), origin: originFromEntryId(id) },
+    payload: { entryId: id, dayKey, title, hasMood: Boolean(mood), dateSmudged: Boolean(dateSmudged), origin: originFromEntryId(id) },
   });
-  return { id, dayKey, title, body, createdAt, mood };
+  return { id, dayKey, title, body, createdAt, mood, dateSmudged };
 }
 
 function normalizeDraftRow(value: unknown): XingyeJournalDraft | null {

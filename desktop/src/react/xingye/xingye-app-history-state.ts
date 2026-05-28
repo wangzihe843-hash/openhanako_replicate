@@ -1,8 +1,10 @@
 /**
- * 三个手机原生模块（accounting / shopping / secondhand）共享的「历史批量生成」状态。
+ * 手机原生模块（accounting / shopping / secondhand / journal）共享的「历史批量生成」状态。
  *
  * 设计要点：
- *  - 落到 `apps/{appId}/history-state.json`，与 entries.jsonl / drafts.jsonl 同目录、按 agent 隔离；
+ *  - 落到 `apps/{appId}/history-state.json`，按 agent 隔离；journal 的 entries.jsonl
+ *    在 `journal/`（不在 `apps/journal/`），但状态文件复用 `apps/journal/history-state.json`
+ *    路径，仅用于记 initializedAt 这种 marker，跟 entries 解耦没问题。
  *  - 三个语义字段：
  *    - initializedAt: 仅在「首次打开 app」自动触发的初始化批量生成成功后写入；
  *      之后即使删光 entries 也不会再触发初始化，避免反复 bootstrap 把记录灌爆。
@@ -10,11 +12,12 @@
  *      和上一次的间隔是否足够长，让 manual 批量自动转成 gap-fill。
  *    - lastCoveredDate: YYYY-MM-DD，最近一次批量覆盖到的最远「今天/昨天」边界，
  *      给下一次 gap-fill 选 dayRange 用（不需要扫 entries.jsonl 计算）。
+ *      journal 当前只用 initializedAt，gap-fill 字段保留以备未来扩展。
  *
  * 与短信历史 generation state 的关键区别：
  *  - 短信是 setSmsHistoryGenerationState 落到 localStorage（前端单机），因为短信
- *    是渲染端纯前端模拟；这里的 accounting/shopping/secondhand 数据已经走盘存
- *    （HANA_HOME/agents/{aid}/xingye/apps/.../entries.jsonl），所以历史状态也跟着
+ *    是渲染端纯前端模拟；这里的 accounting/shopping/secondhand/journal 数据已经走盘存
+ *    （HANA_HOME/agents/{aid}/xingye/...），所以历史状态也跟着
  *    落盘，方便服务端工具链 / 跨机同步看到。
  */
 
@@ -23,8 +26,15 @@ import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
-/** 三个支持「初始化 / 批量 / 补齐」流程的 appId。 */
-export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand'] as const;
+/**
+ * 支持「初始化 / 批量 / 补齐」流程的 appId。
+ *
+ * journal 只用 initializedAt 字段做首次初始化 marker；planBulkRequest /
+ * planInitialBulkRequest（14 天窗口）专给 accounting/shopping/secondhand 用，
+ * journal 自己有 buildJournalHistoryPrompt / generateJournalHistoryWithAI 走
+ * 跨期分布的策略，不调用这俩 planner。
+ */
+export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand', 'journal'] as const;
 export type HistoryAppId = (typeof HISTORY_APP_IDS)[number];
 
 export type XingyeAppHistoryState = {
