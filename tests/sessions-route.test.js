@@ -159,6 +159,53 @@ describe("sessions route", () => {
     );
   });
 
+  it("assigns a new session to the requested project before broadcasting it", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const hub = { eventBus: { emit: vi.fn() } };
+
+    const engine = {
+      currentAgentId: "hana",
+      config: {},
+      cwd: "/tmp/work",
+      memoryEnabled: true,
+      planMode: false,
+      memoryModelUnavailableReason: null,
+      normalizeSessionProjectAssignmentId: vi.fn(() => "project-hana"),
+      createSession: vi.fn(async () => ({ sessionPath: "/tmp/agents/hana/sessions/new.jsonl", agentId: "hana" })),
+      createSessionForAgent: vi.fn(),
+      setSessionProjectAssignment: vi.fn(async ({ sessionPath, projectId }) => ({ sessionPath, projectId })),
+      persistSessionMeta: vi.fn(),
+      updateConfig: vi.fn(async (patch) => Object.assign(engine.config, patch)),
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getSessionWorkspaceFolders: vi.fn(() => []),
+    };
+
+    app.route("/api", createSessionsRoute(engine, hub));
+
+    const res = await app.request("/api/sessions/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp/work", projectId: "project-hana" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.normalizeSessionProjectAssignmentId).toHaveBeenCalledWith("project-hana");
+    expect(engine.setSessionProjectAssignment).toHaveBeenCalledWith({
+      sessionPath: "/tmp/agents/hana/sessions/new.jsonl",
+      projectId: "project-hana",
+    });
+    expect(data.projectId).toBe("project-hana");
+    expect(hub.eventBus.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session_created",
+        session: expect.objectContaining({ projectId: "project-hana" }),
+      }),
+      "/tmp/agents/hana/sessions/new.jsonl",
+    );
+  });
+
   it("includes pinnedAt in the session list response", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const app = new Hono();
@@ -186,6 +233,34 @@ describe("sessions route", () => {
 
     expect(res.status).toBe(200);
     expect(data[0].pinnedAt).toBe(pinnedAt);
+  });
+
+  it("includes explicit projectId in the session list response", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+
+    const engine = {
+      listSessions: vi.fn(async () => [{
+        path: "/tmp/agents/hana/sessions/a.jsonl",
+        title: "Project thread",
+        firstMessage: "hello",
+        modified: new Date("2026-05-28T07:00:00.000Z"),
+        messageCount: 2,
+        cwd: "/tmp/work",
+        agentId: "hana",
+        agentName: "Hana",
+        projectId: "project-hana",
+      }]),
+      rcState: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data[0].projectId).toBe("project-hana");
   });
 
   it("searches sessions without exposing the cached full transcript", async () => {

@@ -148,6 +148,26 @@ describe("TerminalSessionManager", () => {
     }).status).toBe("running");
   });
 
+  it("uses the backend dispose contract before falling back to kill", async () => {
+    const manager = new TerminalSessionManager({
+      hanakoHome: tmpDir,
+      createBackend: () => backend,
+    });
+    const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "s1.jsonl");
+    const started = await manager.start({ sessionPath, agentId: "hana", cwd: tmpDir });
+    const handle = backend.handles[0];
+    handle.dispose = vi.fn();
+
+    manager.close({ sessionPath, terminalId: started.terminalId });
+
+    expect(handle.dispose).toHaveBeenCalledWith({
+      terminalId: started.terminalId,
+      sessionPath,
+      reason: "close",
+    });
+    expect(handle.killed).toBe(false);
+  });
+
   it("marks previously running terminals stale after manager restart and preserves transcript", async () => {
     const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "s1.jsonl");
     const manager = new TerminalSessionManager({

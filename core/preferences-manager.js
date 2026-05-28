@@ -21,6 +21,10 @@ import {
   getWorkspaceUiStateEntry,
   upsertWorkspaceUiState,
 } from "../shared/workspace-ui-state.js";
+import {
+  mergeSidebarUiPrefs,
+  normalizeSidebarUiPrefs,
+} from "../shared/sidebar-ui-state.js";
 import { normalizeWorkspacePath } from "../shared/workspace-history.js";
 import { normalizeNetworkProxyConfig } from "../shared/network-proxy.js";
 import { createModuleLogger } from "../lib/debug-log.js";
@@ -387,6 +391,19 @@ export class PreferencesManager {
     );
     this.savePreferences(prefs);
     return getWorkspaceUiStateEntry(prefs.workspace_ui_state, workspace, { surface });
+  }
+
+  /** 读取侧边栏 UI 偏好（项目视图展开、展开全部等）。 */
+  getSidebarUiPrefs() {
+    return normalizeSidebarUiPrefs(this._cache.sidebar_ui || {});
+  }
+
+  /** 合并写入侧边栏 UI 偏好，按 UI 类型独立存储。 */
+  setSidebarUiPrefs(partial) {
+    const prefs = this._mutableCopy();
+    prefs.sidebar_ui = mergeSidebarUiPrefs(prefs.sidebar_ui || {}, partial || {});
+    this.savePreferences(prefs);
+    return this.getSidebarUiPrefs();
   }
 
   /** 读取时区偏好（全局） */

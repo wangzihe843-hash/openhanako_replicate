@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from '../../types';
-import { buildSessionSections } from '../../components/session-sections';
+import {
+  autoProjectIdForCwd,
+  buildSessionProjectView,
+  buildSessionSections,
+  type SessionProjectCatalog,
+} from '../../components/session-sections';
+import { UNCATEGORIZED_PROJECT_ID } from '../../../../../shared/session-projects.js';
 
 function makeSession(overrides: Partial<Session>): Session {
   return {
@@ -137,5 +143,141 @@ describe('buildSessionSections', () => {
       '/sessions/z-same-time.jsonl',
     ]);
     expect(earlierSection!.items.map(i => i.path)).toEqual(['/sessions/bad-date.jsonl']);
+  });
+});
+
+describe('buildSessionProjectView', () => {
+  it('excludes pinned sessions and groups unassigned sessions by derived cwd project', () => {
+    const cwd = '/Users/test/Desktop/project-hana';
+    const sections = buildSessionProjectView([
+      makeSession({
+        path: '/sessions/pinned.jsonl',
+        firstMessage: 'pinned',
+        cwd,
+        pinnedAt: '2026-05-28T08:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/a.jsonl',
+        firstMessage: 'a',
+        cwd,
+        modified: '2026-05-28T07:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/b.jsonl',
+        firstMessage: 'b',
+        cwd,
+        modified: '2026-05-28T09:00:00.000Z',
+      }),
+    ], { projects: [] });
+
+    expect(sections.pinned.map(item => item.path)).toEqual(['/sessions/pinned.jsonl']);
+    expect(sections.rootProjects).toHaveLength(1);
+    expect(sections.rootProjects[0]).toMatchObject({
+      id: autoProjectIdForCwd(cwd),
+      name: 'project-hana',
+      source: 'cwd',
+      folderId: null,
+    });
+    expect(sections.rootProjects[0].items.map(item => item.path)).toEqual([
+      '/sessions/b.jsonl',
+      '/sessions/a.jsonl',
+    ]);
+  });
+
+  it('keeps catalog folders and places assigned projects under their folder', () => {
+    const catalog = {
+      folders: [
+        { id: 'folder-work', name: '作品集', order: 0 },
+      ],
+      projects: [
+        { id: 'project-resume', name: '简历和作品集', folderId: 'folder-work', order: 0 },
+        { id: 'project-root', name: '手帐本', folderId: null, order: 1 },
+      ],
+    } as unknown as SessionProjectCatalog;
+
+    const sections = buildSessionProjectView([
+      makeSession({
+        path: '/sessions/resume.jsonl',
+        title: '作品集整理',
+        cwd: '/Users/test/Desktop/project-hana',
+        projectId: 'project-resume',
+      }),
+      makeSession({
+        path: '/sessions/root.jsonl',
+        title: '手帐本',
+        cwd: '/Users/test/Desktop/notes',
+        projectId: 'project-root',
+      }),
+    ], catalog);
+
+    expect(sections.rootProjects).toEqual([
+      expect.objectContaining({
+        id: 'project-root',
+        folderId: null,
+        items: [expect.objectContaining({ path: '/sessions/root.jsonl' })],
+      }),
+    ]);
+    expect(sections.folders).toEqual([
+      expect.objectContaining({
+        id: 'folder-work',
+        name: '作品集',
+        projects: [
+          expect.objectContaining({
+            id: 'project-resume',
+            folderId: 'folder-work',
+            items: [expect.objectContaining({ path: '/sessions/resume.jsonl' })],
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('falls back to cwd project when a session references a missing custom project', () => {
+    const sections = buildSessionProjectView([
+      makeSession({
+        path: '/sessions/orphan.jsonl',
+        cwd: '/Users/test/Desktop/orphan-cwd',
+        projectId: 'missing-project',
+      }),
+    ], { projects: [] });
+
+    expect(sections.rootProjects).toHaveLength(1);
+    expect(sections.rootProjects[0]).toMatchObject({
+      id: autoProjectIdForCwd('/Users/test/Desktop/orphan-cwd'),
+      name: 'orphan-cwd',
+    });
+  });
+
+  it('keeps explicitly uncategorized sessions out of cwd-derived projects', () => {
+    const sections = buildSessionProjectView([
+      makeSession({
+        path: '/sessions/uncategorized.jsonl',
+        cwd: '/Users/test/Desktop/project-hana',
+        projectId: UNCATEGORIZED_PROJECT_ID,
+      }),
+    ], { projects: [] });
+
+    expect(sections.rootProjects).toHaveLength(1);
+    expect(sections.rootProjects[0]).toMatchObject({
+      id: UNCATEGORIZED_PROJECT_ID,
+      name: '未归类',
+      source: 'cwd',
+    });
+  });
+
+  it('surfaces empty catalog folders so users can drag projects into them', () => {
+    const sections = buildSessionProjectView([], {
+      folders: [{ id: 'folder-empty', name: '稍后整理', order: 0 }],
+      projects: [],
+    } as unknown as SessionProjectCatalog);
+
+    expect(sections.rootProjects).toEqual([]);
+    expect(sections.folders).toEqual([
+      expect.objectContaining({
+        id: 'folder-empty',
+        name: '稍后整理',
+        projects: [],
+      }),
+    ]);
   });
 });

@@ -41,6 +41,7 @@ export class ModelManager {
     this._authStorage = AuthStorage.create(path.join(this._hanakoHome, "auth.json"));
     this.providerRegistry.reload();
     this._removeApiKeyProviderAuthEntries();
+    this._applyRuntimeApiKeyOverrides(this.providerRegistry.getAllProvidersRaw());
     this._modelRegistry = createModelRegistry(
       this._authStorage,
       path.join(this._hanakoHome, "models.json"),
@@ -143,12 +144,24 @@ export class ModelManager {
       oauthKeyMap: this._buildOAuthKeyMap(),
       chatProjectionMap: this._buildChatProjectionMap(),
     });
+    this._applyRuntimeApiKeyOverrides(providers);
     if (changed) {
       this._modelRegistry.refresh();
       await this.refreshAvailable();
       this._rebindDefaultModel();
     }
     return changed;
+  }
+
+  _applyRuntimeApiKeyOverrides(providers) {
+    if (!this._authStorage?.setRuntimeApiKey) return;
+    for (const [providerId, provider] of Object.entries(providers || {})) {
+      if (typeof provider?.api_key === "string" && provider.api_key.length > 0) {
+        this._authStorage.setRuntimeApiKey(providerId, provider.api_key);
+      } else {
+        this._authStorage.removeRuntimeApiKey?.(providerId);
+      }
+    }
   }
 
   /**

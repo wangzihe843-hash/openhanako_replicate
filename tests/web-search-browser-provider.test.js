@@ -160,6 +160,75 @@ describe("web_search browser providers", () => {
     });
   });
 
+  it("fetches a broader AnySearch candidate set by default while formatting ten results", async () => {
+    const anySearchResults = Array.from({ length: 20 }, (_, index) => ({
+      title: `AnySearch Result ${index + 1}`,
+      url: `https://example.com/anysearch-${index + 1}`,
+      description: `AnySearch description ${index + 1}`,
+      content: `AnySearch content ${index + 1}`,
+      score: 100 - index,
+      quality_score: 90 - index,
+    }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        message: "success",
+        data: {
+          results: anySearchResults,
+          metadata: {
+            total_results: 20,
+            search_time_ms: 123,
+            request_id: "req-anysearch-broad",
+            cached: false,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "auto", api_keys: {} }),
+    });
+    const result = await tool.execute("call-anysearch-broad-default", {
+      query: "hana broad default",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      query: "hana broad default",
+      max_results: 20,
+    });
+    expect(result.details.results).toHaveLength(20);
+    expect(result.content[0].text).toContain("10. **AnySearch Result 10**");
+    expect(result.content[0].text).not.toContain("11. **AnySearch Result 11**");
+  });
+
+  it("clamps Tavily requests to its official result ceiling", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        results: [
+          { title: "Tavily Result", url: "https://example.com/tavily", content: "Tavily snippet" },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "tavily", api_key: "tvly-key" }),
+    });
+    await tool.execute("call-tavily-clamp", {
+      query: "hana tavily clamp",
+      maxResults: 50,
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      query: "hana tavily clamp",
+      max_results: 20,
+      search_depth: "basic",
+    });
+  });
+
   it("defaults to auto search and uses AnySearch free before browser providers", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({

@@ -91,6 +91,7 @@ function resolveChannelsEnabledForToolAvailability(engine) {
 
 import { PreferencesManager } from "./preferences-manager.js";
 import { ModelManager } from "./model-manager.js";
+import { SessionProjectCatalogStore } from "./session-project-catalog-store.js";
 import { SkillManager } from "./skill-manager.js";
 import { BridgeSessionManager } from "./bridge-session-manager.js";
 import { createSlashSystem } from "./slash-commands/index.js";
@@ -138,10 +139,25 @@ import {
   translateSkillNamesWithCache,
 } from "../lib/skills/skill-name-translation-cache.js";
 import { createUsageLedger } from "../lib/llm/usage-ledger.js";
+import {
+  autoProjectIdForCwd,
+  isAutoProjectId,
+  normalizeSessionProjectId,
+  UNCATEGORIZED_PROJECT_ID,
+} from "../shared/session-projects.js";
 
 const moduleLog = createModuleLogger("engine");
 const toolAvailabilityLog = createModuleLogger("tool-availability");
 const win32SandboxCleanupLog = createModuleLogger("win32-sandbox-cleanup");
+
+function sessionBelongsToProject(projectId) {
+  return (session) => {
+    const explicitProjectId = normalizeSessionProjectId(session?.projectId);
+    if (explicitProjectId) return explicitProjectId === projectId;
+    if (!isAutoProjectId(projectId)) return false;
+    return autoProjectIdForCwd(session?.cwd || null) === projectId;
+  };
+}
 
 export class HanaEngine {
   /**
@@ -179,6 +195,7 @@ export class HanaEngine {
     // ── Core managers ──
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
     this._models = new ModelManager({ hanakoHome });
+    this._sessionProjects = new SessionProjectCatalogStore({ userDir: this.userDir });
 
     // 确定启动时焦点 agent
     const startId = agentId || this._prefs.getPrimaryAgent() || this._prefs.findFirstAgent();
@@ -611,6 +628,49 @@ export class HanaEngine {
   isSessionSwitching(p) { return this._sessionCoord.isSessionSwitching(p); }
   async abortSessionByPath(p) { return this._sessionCoord.abortSessionByPath(p); }
   async listSessions() { return this._sessionCoord.listSessions(); }
+  getSessionProjectCatalog() { return this._sessionProjects.getCatalog(); }
+  createSessionProjectFolder(input) { return this._sessionProjects.createFolder(input); }
+  updateSessionProjectFolder(id, patch) { return this._sessionProjects.updateFolder(id, patch); }
+  deleteSessionProjectFolder(id) { return this._sessionProjects.deleteFolder(id); }
+  reorderSessionProjectFolders(input) { return this._sessionProjects.reorderFolders(input); }
+  createSessionProject(input) { return this._sessionProjects.createProject(input); }
+  updateSessionProject(id, patch) { return this._sessionProjects.updateProject(id, patch); }
+  async deleteSessionProject(id) {
+    const projectId = normalizeSessionProjectId(id);
+    if (!projectId) throw new Error("project not found");
+    const sessions = await this._sessionCoord.listSessions();
+    const affectedSessions = sessions.filter(sessionBelongsToProject(projectId));
+    const catalog = this._sessionProjects.deleteProject(projectId);
+    await Promise.all(affectedSessions.map(session => (
+      this._sessionCoord.writeSessionMeta(session.path, { projectId: UNCATEGORIZED_PROJECT_ID })
+    )));
+    return {
+      catalog,
+      assignment: {
+        projectId: UNCATEGORIZED_PROJECT_ID,
+        sessionPaths: affectedSessions.map(session => session.path),
+      },
+    };
+  }
+  reorderSessionProjects(input) { return this._sessionProjects.reorderProjects(input); }
+  normalizeSessionProjectAssignmentId(projectId) {
+    const normalizedProjectId = normalizeSessionProjectId(projectId);
+    if (!normalizedProjectId) return null;
+    const catalog = this._sessionProjects.getCatalog();
+    if (
+      !isAutoProjectId(normalizedProjectId)
+      && !catalog.projects.some(project => project.id === normalizedProjectId)
+    ) {
+      throw new Error("project not found");
+    }
+    return normalizedProjectId;
+  }
+  async setSessionProjectAssignment({ sessionPath, projectId }) {
+    if (!sessionPath || typeof sessionPath !== "string") throw new Error("sessionPath is required");
+    const normalizedProjectId = this.normalizeSessionProjectAssignmentId(projectId);
+    await this._sessionCoord.writeSessionMeta(sessionPath, { projectId: normalizedProjectId });
+    return { sessionPath, projectId: normalizedProjectId };
+  }
   async listArchivedSessions() { return this._sessionCoord.listArchivedSessions(); }
   async saveSessionTitle(p, t) { return this._sessionCoord.saveSessionTitle(p, t); }
   async clearSessionTitle(p) { return this._sessionCoord.clearSessionTitle(p); }
@@ -844,6 +904,8 @@ export class HanaEngine {
   setAppearance(p) { return this._prefs.setAppearance(p); }
   getWorkspaceUiState(workspaceRoot, surface) { return this._prefs.getWorkspaceUiState(workspaceRoot, surface); }
   setWorkspaceUiState(workspaceRoot, surface, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, surface, state); }
+  getSidebarUiPrefs() { return this._prefs.getSidebarUiPrefs(); }
+  setSidebarUiPrefs(partial) { return this._prefs.setSidebarUiPrefs(partial); }
   getPluginUiPrefs() { return this._prefs.getPluginUiPrefs(); }
   setPluginUiPrefs(partial) { return this._prefs.setPluginUiPrefs(partial); }
   getPluginDevToolsEnabled() { return this._prefs.getPluginDevToolsEnabled(); }

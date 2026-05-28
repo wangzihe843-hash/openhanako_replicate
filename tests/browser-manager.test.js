@@ -27,6 +27,24 @@ describe("BrowserManager URL tracking (per-session)", () => {
     expect(text).toBe("snapshot");
     expect(manager.currentUrl(SP1)).toBe("https://after.example.com");
   });
+
+  it("wait() forwards the requested readiness state to the desktop browser host", async () => {
+    const manager = new BrowserManager();
+    manager._sessions.set(SP1, { running: true, url: "https://before.example.com", headless: false });
+    manager._sendCmd = vi.fn().mockResolvedValue({
+      currentUrl: "https://after.example.com",
+      text: "snapshot",
+    });
+
+    await manager.wait({ timeout: 250, state: "stable" }, SP1);
+
+    expect(manager._sendCmd).toHaveBeenCalledWith("wait", {
+      timeout: 250,
+      state: "stable",
+      sessionPath: SP1,
+    });
+    expect(manager.currentUrl(SP1)).toBe("https://after.example.com");
+  });
 });
 
 describe("BrowserManager explicit sessionPath", () => {

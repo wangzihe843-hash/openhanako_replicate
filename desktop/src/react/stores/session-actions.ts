@@ -315,6 +315,7 @@ export async function switchSession(path: string): Promise<void> {
       currentSessionPath: path,
       pendingSessionSwitchPath: null,
       pendingNewSession: false,
+      pendingProjectId: null,
       selectedFolder: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       selectedAgentId: null,
@@ -416,7 +417,12 @@ export async function switchSession(path: string): Promise<void> {
 // 新建 Session
 // ══════════════════════════════════════════════════════
 
-export async function createNewSession(): Promise<void> {
+interface CreateNewSessionOptions {
+  projectId?: string | null;
+  cwd?: string | null;
+}
+
+export async function createNewSession(options: CreateNewSessionOptions = {}): Promise<void> {
   // Entering the pending new-session workspace is a navigation boundary.
   // Any in-flight switchSession response now belongs to the previous view.
   invalidateSessionSwitches();
@@ -427,7 +433,11 @@ export async function createNewSession(): Promise<void> {
   }
 
   const s = useStore.getState();
-  const defaultFolder = s.homeFolder || s.deskBasePath || null;
+  const requestedFolder = typeof options.cwd === 'string' && options.cwd.trim() ? options.cwd.trim() : null;
+  const defaultFolder = requestedFolder || s.homeFolder || s.deskBasePath || null;
+  const pendingProjectId = typeof options.projectId === 'string' && options.projectId.trim()
+    ? options.projectId.trim()
+    : null;
 
   useStore.setState({
     welcomeVisible: true,
@@ -439,6 +449,7 @@ export async function createNewSession(): Promise<void> {
     workspaceFolders: [],
     selectedAgentId: null,
     pendingNewSession: true,
+    pendingProjectId,
     attachedFiles: [],
     deskContextAttached: false,
     docContextAttached: false,
@@ -481,6 +492,9 @@ export async function ensureSession(): Promise<boolean> {
     if (s.workspaceFolders?.length) {
       body.workspaceFolders = s.workspaceFolders;
     }
+    if (s.pendingProjectId) {
+      body.projectId = s.pendingProjectId;
+    }
     if (s.selectedAgentId && s.selectedAgentId !== s.currentAgentId) {
       body.agentId = s.selectedAgentId;
     }
@@ -505,6 +519,7 @@ export async function ensureSession(): Promise<boolean> {
       pendingNewSession: false,
       pendingSessionSwitchPath: null,
       selectedFolder: null,
+      pendingProjectId: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       selectedAgentId: null,
     };

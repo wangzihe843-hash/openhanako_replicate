@@ -12,9 +12,14 @@ import { atomicWriteSync } from "../shared/safe-fs.js";
 import { normalizeVisionCapabilities, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.js";
 import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
+import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.js";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const PI_BUILTIN_PROVIDER_REUSE = new Set(["kimi-coding"]);
+
+function isPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
 
 /**
  * 模型 ID → 人类可读名
@@ -128,7 +133,10 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   // 3. Gemini OpenAI 兼容层（/v1beta/openai）严格校验，不识别 store 字段会 400。
   //    Native google-generative-ai 不走 Chat Completions，不需要这组 OpenAI 字段兼容。
   if (provider !== "openai") {
-    const compat = { supportsDeveloperRole: false };
+    const explicitCompat = isObj && isPlainObject(modelEntry.compat)
+      ? modelEntry.compat
+      : {};
+    const compat = { ...explicitCompat, supportsDeveloperRole: false };
     if (api === "openai-completions" && (
       provider === "gemini"
       || baseUrl.includes("generativelanguage.googleapis.com")
@@ -192,6 +200,7 @@ export function syncModels(providers, opts = {}) {
     validateProviderModels(name, p.models, { baseUrl: p.base_url });
 
     let apiKey = p.api_key || "";
+    const hasLiteralApiKey = typeof p.api_key === "string" && p.api_key.length > 0;
 
     // 无 api_key 时尝试 OAuth 查找
     if (!apiKey) {
@@ -224,7 +233,7 @@ export function syncModels(providers, opts = {}) {
     const providerConfig = {
       baseUrl: p.base_url,
       api: effectiveApi,
-      apiKey: effectiveApiKey,
+      apiKey: hasLiteralApiKey ? buildRuntimeApiKeyRef(name) : effectiveApiKey,
     };
     if (customModels.length > 0) providerConfig.models = customModels;
     if (Object.keys(modelOverrides).length > 0) providerConfig.modelOverrides = modelOverrides;

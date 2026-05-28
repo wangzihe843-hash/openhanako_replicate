@@ -80,6 +80,53 @@ describe("workspace UI preference routes", () => {
     await expect(getRes.json()).resolves.toEqual({ state: putBody.state });
   });
 
+  it("persists sidebar UI state as a separate typed preference", async () => {
+    let sidebarUi = null;
+    const engine = {
+      getSharedModels: vi.fn(() => ({})),
+      getSearchConfig: vi.fn(() => ({})),
+      getUtilityApi: vi.fn(() => ({})),
+      getSidebarUiPrefs: vi.fn(() => sidebarUi),
+      setSidebarUiPrefs: vi.fn((patch) => {
+        sidebarUi = patch;
+        return patch;
+      }),
+    };
+    const app = makeApp(engine);
+
+    const putRes = await app.request("/api/preferences/sidebar-ui", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectView: {
+          collapsedProjectIds: ["project-a", "", "project-a"],
+          collapsedFolderIds: ["folder-a"],
+          showAllProjectIds: ["project-b"],
+        },
+      }),
+    });
+    const putBody = await putRes.json();
+
+    expect(putRes.status).toBe(200);
+    expect(engine.setSidebarUiPrefs).toHaveBeenCalledWith({
+      projectView: {
+        collapsedProjectIds: ["project-a"],
+        collapsedFolderIds: ["folder-a"],
+        showAllProjectIds: ["project-b"],
+      },
+    });
+    expect(putBody.sidebarUi.projectView).toEqual({
+      collapsedProjectIds: ["project-a"],
+      collapsedFolderIds: ["folder-a"],
+      showAllProjectIds: ["project-b"],
+    });
+
+    const getRes = await app.request("/api/preferences/sidebar-ui");
+    expect(getRes.status).toBe(200);
+    expect(engine.getSidebarUiPrefs).toHaveBeenCalledTimes(1);
+    await expect(getRes.json()).resolves.toEqual({ sidebarUi: putBody.sidebarUi });
+  });
+
   it("separates workspace UI state by requested surface", async () => {
     const states = {};
     const engine = {

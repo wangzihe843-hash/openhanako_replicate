@@ -58,6 +58,28 @@ async function getDeepseekApiKey(manager) {
 }
 
 describe("ModelManager AuthStorage ownership", () => {
+  it("injects added-models API keys as runtime overrides before Pi SDK env resolution", async () => {
+    const originalPublic = process.env.PUBLIC;
+    process.env.PUBLIC = "C:\\Users\\Public";
+    try {
+      writeAuth({});
+      writeAddedModels({
+        deepseek: deepseekProvider("public"),
+      });
+
+      const manager = new ModelManager({ hanakoHome: tmpDir });
+      manager.init();
+      await manager.syncAndRefresh();
+
+      await expect(getDeepseekApiKey(manager)).resolves.toBe("public");
+      const projected = JSON.parse(fs.readFileSync(path.join(tmpDir, "models.json"), "utf-8"));
+      expect(projected.providers.deepseek.apiKey).toBe("hana-runtime-api-key:deepseek");
+    } finally {
+      if (originalPublic === undefined) delete process.env.PUBLIC;
+      else process.env.PUBLIC = originalPublic;
+    }
+  });
+
   it("migrates legacy API-key auth into added-models before clearing auth.json", async () => {
     writeAuth({
       deepseek: { type: "api_key", key: "sk-legacy-4d2a" },

@@ -3,6 +3,7 @@ import {
   downloadImageUrls,
   normalizeBaseUrl,
   normalizeImageInput,
+  saveBase64Images,
 } from "./common.js";
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/api/v1";
@@ -27,23 +28,60 @@ async function getCredentials(ctx, params = {}) {
 
 function collectDashScopeUrls(data) {
   const urls = [];
+  forDashScopeImageValues(data, (value) => {
+    const parsed = parseDashScopeImageValue(value);
+    if (parsed?.kind === "url") urls.push(parsed.value);
+  });
+  return [...new Set(urls)];
+}
+
+function collectDashScopeBase64Images(data) {
+  const images = [];
+  forDashScopeImageValues(data, (value) => {
+    const parsed = parseDashScopeImageValue(value);
+    if (parsed?.kind === "base64") images.push(parsed.value);
+  });
+  return images;
+}
+
+function forDashScopeImageValues(data, visit) {
   for (const item of data?.output?.results || []) {
-    if (item?.url) urls.push(item.url);
-    if (item?.image) urls.push(item.image);
+    visit(item?.url);
+    visit(item?.image);
+    visit(item?.b64_json);
+    visit(item?.base64);
+    visit(item?.image_base64);
   }
   for (const choice of data?.output?.choices || []) {
     for (const part of choice?.message?.content || []) {
-      if (part?.image) urls.push(part.image);
-      if (part?.image_url) urls.push(part.image_url);
+      visit(part?.image);
+      visit(part?.image_url);
+      visit(part?.b64_json);
+      visit(part?.base64);
+      visit(part?.image_base64);
     }
   }
   if (Array.isArray(data?.output?.images)) {
     for (const item of data.output.images) {
-      if (typeof item === "string") urls.push(item);
-      else if (item?.url) urls.push(item.url);
+      if (typeof item === "string") visit(item);
+      else {
+        visit(item?.url);
+        visit(item?.b64_json);
+        visit(item?.base64);
+        visit(item?.image_base64);
+      }
     }
   }
-  return [...new Set(urls)];
+}
+
+function parseDashScopeImageValue(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return { kind: "url", value: trimmed };
+  const dataUrl = trimmed.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
+  if (dataUrl) return { kind: "base64", value: dataUrl[1] };
+  return { kind: "base64", value: trimmed };
 }
 
 function buildMessages(prompt, images) {
@@ -150,6 +188,11 @@ export const dashscopeImageAdapter = {
       const files = await downloadImageUrls(urls, ctx.dataDir, params.filename);
       return { taskId, files };
     }
+    const base64Images = collectDashScopeBase64Images(data);
+    if (base64Images.length > 0) {
+      const files = await saveBase64Images(base64Images, "image/png", ctx.dataDir, params.filename);
+      return { taskId, files };
+    }
     return { taskId };
   },
 
@@ -168,8 +211,11 @@ export const dashscopeImageAdapter = {
       return { status: "failed", error: data?.message || status };
     }
     const urls = collectDashScopeUrls(data);
-    if (urls.length === 0) return { status: "pending" };
-    const files = await downloadImageUrls(urls, ctx.dataDir);
+    const base64Images = collectDashScopeBase64Images(data);
+    if (urls.length === 0 && base64Images.length === 0) return { status: "pending" };
+    const files = urls.length > 0
+      ? await downloadImageUrls(urls, ctx.dataDir)
+      : await saveBase64Images(base64Images, "image/png", ctx.dataDir);
     return { status: "done", files };
   },
 };

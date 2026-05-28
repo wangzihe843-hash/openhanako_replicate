@@ -40,9 +40,9 @@ body {
 
 /* article 做居中限宽，承担原来 body 的排版职责 */
 article {
-  max-width: 400px;
+  max-width: 416px;
   margin: 0 auto;
-  padding: 5rem 0.85rem 0.67rem 0.85rem;
+  padding: 5rem 0.5rem 0.67rem 0.5rem;
 }
 
 /* 顶部 header：文件名紧贴花，整体靠右 */
@@ -50,9 +50,9 @@ article {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  max-width: 400px;
+  max-width: 416px;
   margin: 0 auto;
-  padding: 1.5rem 0.85rem 0.5rem 0.85rem;
+  padding: 1.5rem 0.5rem 0.5rem 0.5rem;
 }
 
 .page-title {

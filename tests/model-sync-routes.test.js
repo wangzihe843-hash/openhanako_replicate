@@ -1346,6 +1346,41 @@ describe("model sync related routes", () => {
     expect(data.models.map(m => m.id)).toEqual(["kimi-k2.6", "kimi-k2.5"]);
   });
 
+  it("normalizes MiniMax CN v1 base URLs for Anthropic-compatible model discovery", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "MiniMax-M2.7", display_name: "MiniMax M2.7" }],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({ apiKey: "sk-test", baseUrl: "https://api.minimaxi.com/v1", api: "anthropic-messages" }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "minimax" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.minimaxi.com/anthropic/v1/models?limit=1000");
+    const data = await res.json();
+    expect(data.models.map(m => m.id)).toEqual(["MiniMax-M2.7"]);
+  });
+
   it("request body api_key overrides saved credentials", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.js");
     const app = new Hono();

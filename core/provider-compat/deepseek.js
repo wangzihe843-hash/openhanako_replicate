@@ -23,7 +23,7 @@
  * 接口契约：见 ./README.md
  */
 
-import { getReasoningProfile } from "../../shared/model-capabilities.js";
+import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capabilities.js";
 import {
   ensureAssistantContentForToolCalls,
   ensureReasoningContentForToolCalls as ensureReasoningContentForToolCallsBase,
@@ -53,6 +53,7 @@ function positiveInteger(value) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
+  if (getThinkingFormat(model) === "deepseek") return true;
   const provider = lower(model.provider);
   // base_url: 兼容上游 SDK 偶发的 snake_case 别名（pi-ai SDK / 用户自定 model 配置）
   const baseUrl = lower(model.baseUrl || model.base_url);

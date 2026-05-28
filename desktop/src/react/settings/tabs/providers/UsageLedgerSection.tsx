@@ -12,10 +12,11 @@ import {
   formatCompactNumber,
   formatCost,
   formatPercent,
-  groupDailyEntries,
+  groupDateWindowEntries,
   groupEntries,
   modelKey,
   modelLabel,
+  type UsagePeriod,
   type UsageAggregate,
   type UsageView,
 } from './usage-ledger-model';
@@ -25,6 +26,7 @@ type CssVars = CSSProperties & Record<string, string | number>;
 export function UsageLedgerSection() {
   const [entries, setEntries] = useState<UsageLedgerEntry[]>([]);
   const [view, setView] = useState<UsageView>('overall');
+  const [period, setPeriod] = useState<UsagePeriod>('week');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +47,7 @@ export function UsageLedgerSection() {
   const totals = useMemo(() => aggregateEntries('total', t('settings.usage.total'), entries), [entries]);
   const modelGroups = useMemo(() => groupEntries(entries, modelKey, modelLabel), [entries]);
   const categoryGroups = useMemo(() => groupEntries(entries, categoryKey, entry => categoryLabel(entry, t)), [entries]);
-  const dailyGroups = useMemo(() => groupDailyEntries(entries), [entries]);
+  const dateWindowGroups = useMemo(() => groupDateWindowEntries(entries, period), [entries, period]);
   const latestEntries = useMemo(() => [...entries].reverse(), [entries]);
 
   return (
@@ -60,7 +62,7 @@ export function UsageLedgerSection() {
           {!error && entries.length > 0 && (
             <>
               {view === 'overall' && <OverallView totals={totals} models={modelGroups} requests={latestEntries} />}
-              {view === 'daily' && <DailyView groups={dailyGroups} totals={totals} />}
+              {view === 'daily' && <DailyView groups={dateWindowGroups} period={period} onPeriodChange={setPeriod} />}
               {view === 'category' && <GroupView groups={categoryGroups} totals={totals} />}
               {view === 'model' && <GroupView groups={modelGroups} totals={totals} />}
             </>
@@ -147,11 +149,27 @@ function UsageHeroStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DailyView({ groups, totals }: { groups: UsageAggregate[]; totals: UsageAggregate }) {
+function DailyView({
+  groups,
+  period,
+  onPeriodChange,
+}: {
+  groups: UsageAggregate[];
+  period: UsagePeriod;
+  onPeriodChange: (period: UsagePeriod) => void;
+}) {
+  const activeGroups = groups.filter(group => group.requests > 0 || group.totalTokens > 0);
+  const title = t(`settings.usage.window.${period}`);
+  const periodTotals = aggregateEntries(`date-window-${period}`, title, groups.flatMap(group => group.entries));
   return (
     <div className={styles['usage-daily']}>
-      <DailyBars groups={groups.slice(-31)} />
-      <UsageRankList title={t('settings.usage.dailyUsage')} groups={[...groups].reverse()} totalTokens={totals.totalTokens} />
+      <DailyBars
+        groups={groups}
+        title={title}
+        period={period}
+        onPeriodChange={onPeriodChange}
+      />
+      <UsageRankList title={title} groups={[...activeGroups].reverse()} totalTokens={periodTotals.totalTokens} />
     </div>
   );
 }

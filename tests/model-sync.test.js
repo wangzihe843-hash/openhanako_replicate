@@ -202,9 +202,27 @@ describe("syncModels", () => {
     expect(result.providers.dashscope).toBeDefined();
     expect(result.providers.dashscope.baseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1");
     expect(result.providers.dashscope.api).toBe("openai-completions");
-    expect(result.providers.dashscope.apiKey).toBe("sk-test");
+    expect(result.providers.dashscope.apiKey).toBe("hana-runtime-api-key:dashscope");
     expect(result.providers.dashscope.models).toHaveLength(1);
     expect(result.providers.dashscope.models[0].id).toBe("qwen3.5-flash");
+  });
+
+  it("projects user-entered api keys as runtime refs so Pi SDK does not resolve env names", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      custom: {
+        base_url: "https://custom.api.com/v1",
+        api: "openai-completions",
+        api_key: "public",
+        models: ["my-custom-model"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.custom.apiKey).toBe("hana-runtime-api-key:custom");
   });
 
   it("skips providers without api_key (and not localhost/OAuth)", async () => {
@@ -415,7 +433,7 @@ describe("syncModels", () => {
     expect(result.providers["kimi-coding"]).toMatchObject({
       baseUrl: "https://api.kimi.com/coding/",
       api: "anthropic-messages",
-      apiKey: "sk-test",
+      apiKey: "hana-runtime-api-key:kimi-coding",
     });
     expect(result.providers["kimi-coding"].models).toBeUndefined();
     expect(result.providers["kimi-coding"].modelOverrides).toBeUndefined();
@@ -1164,5 +1182,30 @@ describe("syncModels", () => {
     expect(model.input).toEqual(["text"]); // unknown model defaults to text-only
     expect(model.vision).toBeUndefined();
     expect(model.reasoning).toBe(false);
+  });
+
+  it("preserves explicit model compat declarations from custom provider config", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "opencode-go": {
+        base_url: "https://opencode.example.test/v1",
+        api: "openai-completions",
+        api_key: "sk-custom",
+        models: [{
+          id: "deepseek-v4-pro",
+          reasoning: true,
+          compat: { thinkingFormat: "deepseek" },
+        }],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["opencode-go"].models[0].compat).toMatchObject({
+      supportsDeveloperRole: false,
+      thinkingFormat: "deepseek",
+    });
   });
 });

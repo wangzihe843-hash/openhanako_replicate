@@ -966,6 +966,25 @@ describe("normalizeProviderPayload — DeepSeek utility 模式", () => {
     const result = normalizeProviderPayload(payload, deepseekV4);
     expect(result.max_tokens).toBe(65536);
   });
+
+  it("utility 模式尊重自定义 provider 显式声明的 DeepSeek thinking format", () => {
+    const payload = {
+      model: "deepseek-v4-pro",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 80,
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "deepseek-v4-pro",
+      provider: "opencode-go",
+      api: "openai-completions",
+      reasoning: true,
+      maxTokens: 384000,
+      compat: { thinkingFormat: "deepseek" },
+    }, { mode: "utility" });
+
+    expect(result).toMatchObject({ thinking: { type: "disabled" } });
+    expect(result.max_tokens).toBe(80);
+  });
 });
 
 describe("normalizeProviderPayload — 边界条件", () => {

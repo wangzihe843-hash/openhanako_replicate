@@ -31,10 +31,14 @@ vi.mock('../../settings/helpers', () => ({
       'settings.usage.modelMix': 'Model mix',
       'settings.usage.dailyUsage': 'Daily usage',
       'settings.usage.requestLedger': 'Request ledger',
+      'settings.usage.window.week': 'Last 7 days',
+      'settings.usage.window.month': 'Last 30 days',
       'settings.usage.view.overall': 'Overall',
       'settings.usage.view.daily': 'Date',
       'settings.usage.view.category': 'Category',
       'settings.usage.view.model': 'Model',
+      'settings.usage.period.week': 'Week',
+      'settings.usage.period.month': 'Month',
       'settings.usage.category.session': 'Session',
       'settings.usage.category.compaction': 'Compaction',
       'settings.usage.status.ok': 'Ok',
@@ -116,6 +120,43 @@ describe('UsageLedgerSection', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Date' }));
 
-    expect(await screen.findAllByText('Daily usage')).toHaveLength(2);
+    expect((await screen.findAllByText('Last 7 days')).length).toBeGreaterThan(0);
+  });
+
+  it('shows a weekly date window by default and switches to a monthly window', async () => {
+    mocks.loadLlmUsageEntries.mockResolvedValue([
+      {
+        requestId: 'req-1',
+        startedAt: '2026-05-28T00:00:00.000Z',
+        endedAt: '2026-05-28T00:00:01.000Z',
+        durationMs: 1000,
+        status: 'ok',
+        source: { subsystem: 'session', operation: 'reply' },
+        attribution: { kind: 'session', agentId: 'hana', sessionPath: '/s/a.jsonl' },
+        model: { provider: 'openai', modelId: 'gpt-5', api: 'openai-responses' },
+        usage: {
+          input: { totalTokens: 100 },
+          output: { totalTokens: 0 },
+          cache: { readTokens: 0, hit: false },
+          totalTokens: 100,
+          costTotal: 0,
+        },
+        error: null,
+      },
+    ]);
+
+    render(<UsageLedgerSection />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Date' }));
+
+    expect(await screen.findByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByTitle(/·/)).toHaveLength(7);
+    expect(screen.getAllByText('Last 7 days').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Month' }));
+
+    expect(screen.getByRole('button', { name: 'Month' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByTitle(/·/)).toHaveLength(30);
+    expect(screen.getAllByText('Last 30 days').length).toBeGreaterThan(0);
   });
 });

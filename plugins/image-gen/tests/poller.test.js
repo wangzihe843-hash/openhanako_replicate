@@ -341,6 +341,42 @@ describe("Poller", () => {
     poller.stop();
   });
 
+  it("treats adapter done status as a completed result", async () => {
+    const mockAdapter = makeAdapter({
+      query: vi.fn(async () => ({
+        status: "done",
+        files: ["dashscope.png"],
+      })),
+    });
+
+    const { poller, mockStore, mockBus } = makePoller({ adapter: mockAdapter });
+
+    mockStore.get.mockReturnValue({
+      taskId: "task1",
+      adapterId: "test-adapter",
+      status: "pending",
+      files: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    poller.start();
+    poller.add("task1");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(mockStore.update).toHaveBeenCalledWith(
+      "task1",
+      expect.objectContaining({ status: "done", files: ["dashscope.png"] })
+    );
+    expect(mockBus.request).toHaveBeenCalledWith(
+      "deferred:resolve",
+      expect.objectContaining({ taskId: "task1", files: ["dashscope.png"] })
+    );
+    expect(poller.hasPending("task1")).toBe(false);
+
+    poller.stop();
+  });
+
   it("registers completed generated files as session files when the task has a sessionPath", async () => {
     const registerSessionFile = vi.fn(({ sessionPath, filePath, label, origin, storageKind }) => ({
       id: "sf_generated",

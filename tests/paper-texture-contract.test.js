@@ -25,6 +25,8 @@ const SETTINGS_TEXTURE_FILES = [
   'desktop/src/settings.html',
 ];
 
+const SETTINGS_MODAL_CSS = 'desktop/src/react/components/SettingsModalShell.module.css';
+
 describe('paper texture contract', () => {
   it.each(STYLE_FILES)('%s opts into texture with body.paper-texture', (rel) => {
     const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -61,5 +63,14 @@ describe('paper texture contract', () => {
 
     expect(settingsHtml).toContain('--paper-texture-attachment: scroll;');
     expect(selectCss).toContain('background-attachment: var(--paper-texture-attachment, fixed);');
+  });
+
+  it('keeps the settings modal backdrop out of the animated path on Windows', () => {
+    const content = fs.readFileSync(path.join(ROOT, SETTINGS_MODAL_CSS), 'utf8');
+
+    expect(content).not.toMatch(/transition:[^;]*(?:-webkit-)?backdrop-filter/s);
+    expect(content).toContain(':global(html[data-platform="win32"]) .overlay.open');
+    expect(content).toMatch(/:global\(html\[data-platform="win32"\]\) \.overlay\.open\s*{[^}]*backdrop-filter:\s*none;/s);
+    expect(content).toMatch(/:global\(html\[data-platform="win32"\]\) \.overlay\.open\s*{[^}]*-webkit-backdrop-filter:\s*none;/s);
   });
 });

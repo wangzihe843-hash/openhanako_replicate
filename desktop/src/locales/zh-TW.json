@@ -89,7 +89,33 @@
     "searchingTitles": "正在搜尋標題…",
     "searchingContent": "正在搜尋正文…",
     "searchNoResults": "沒有找到相關會話",
-    "searchFailed": "搜尋失敗"
+    "searchFailed": "搜尋失敗",
+    "view": {
+      "time": "按時間排序",
+      "project": "按項目排序",
+      "sort": "排序方式"
+    },
+    "projects": {
+      "title": "項目",
+      "more": "項目視圖",
+      "create": "新建項目",
+      "newProject": "新建項目",
+      "newFolder": "新建資料夾",
+      "renameProject": "重新命名項目",
+      "renameFolder": "重新命名資料夾",
+      "deleteProject": "刪除項目",
+      "deleteFolder": "刪除資料夾",
+      "deleteProjectConfirm": "確定刪除項目「{name}」？裡面的對話會移到未分類。",
+      "deleteFolderConfirm": "確定刪除資料夾「{name}」？裡面的項目會移到項目根層。",
+      "newChatInProject": "在 {name} 中開啟新對話",
+      "newProjectPrompt": "項目名稱",
+      "newFolderPrompt": "資料夾名稱",
+      "createAction": "建立",
+      "save": "儲存",
+      "cancel": "取消",
+      "showMore": "展開顯示",
+      "empty": "還沒有項目"
+    }
   },
   "titlebar": {
     "currentChatTitle": "目前對話標題"
@@ -2117,7 +2143,7 @@
       "label": "搜尋網頁",
       "description": "搜尋網路取得即時資訊。當你需要查找最新消息、技術文件、時事新聞、或任何記憶中沒有的外部知識時使用。",
       "queryDesc": "搜尋關鍵字",
-      "maxResultsDesc": "回傳結果數量，預設 5"
+      "maxResultsDesc": "回傳結果數量，預設 10"
     },
     "webFetch": {
       "label": "擷取網頁",
@@ -2138,7 +2164,7 @@
       "keyDesc": "按鍵名（key 時必填），如 Enter、Escape、Tab、Control+a",
       "expressionDesc": "JavaScript 表達式（evaluate 時必填）",
       "timeoutDesc": "逾時毫秒數（wait 時可選，預設 5000）",
-      "stateDesc": "等待狀態（wait 時可選）：domcontentloaded / idle",
+      "stateDesc": "等待狀態（wait 時可選）：domcontentloaded / load / stable / networkidle（相容 idle）",
       "pressEnterDesc": "輸入後按 Enter（type 時可選）"
     },
     "channel": {

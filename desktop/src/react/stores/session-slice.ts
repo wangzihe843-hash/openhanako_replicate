@@ -6,6 +6,7 @@ export interface SessionSlice {
   pendingSessionSwitchPath: string | null;
   sessionStreams: Record<string, SessionStream>;
   pendingNewSession: boolean;
+  pendingProjectId: string | null;
   memoryEnabled: boolean;
   /** @deprecated 兼容层 — 读取当前 session 的 todos，新代码用 todosBySession */
   sessionTodos: TodoItem[];
@@ -36,6 +37,7 @@ export const createSessionSlice = (
   pendingSessionSwitchPath: null,
   sessionStreams: {},
   pendingNewSession: false,
+  pendingProjectId: null,
   memoryEnabled: true,
   sessionTodos: [],
   todosBySession: {},

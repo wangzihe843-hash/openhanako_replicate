@@ -48,6 +48,9 @@ const {
   buildBrowserSearchUrl,
 } = require("../lib/browser/browser-search-extractors.cjs");
 const {
+  waitForBrowserState,
+} = require("./src/shared/browser-wait.cjs");
+const {
   normalizeNetworkProxyConfig,
   electronProxyRulesForConfig,
   electronProxyBypassRulesForConfig,
@@ -1890,7 +1893,10 @@ async function handleBrowserCommand(cmd, params) {
             reject(new Error(`Search navigation timed out after ${NAV_TIMEOUT / 1000}s: ${searchUrl}`));
           }, NAV_TIMEOUT)),
         ]);
-        await _delay(800);
+        const wait = await waitForBrowserState(view.webContents, {
+          state: params.state || "stable",
+          timeoutMs: Math.min(Number(params.timeout) || 5000, 10000),
+        });
         const extracted = await view.webContents.executeJavaScript(
           buildBrowserSearchExtractionScript(provider, maxResults),
         );
@@ -1908,6 +1914,7 @@ async function handleBrowserCommand(cmd, params) {
             captcha: !!extracted.captcha,
             reason: extracted.reason || "",
             elapsed_ms: Date.now() - started,
+            wait,
           },
         };
       } finally {
@@ -2072,9 +2079,17 @@ async function handleBrowserCommand(cmd, params) {
             reject(new Error(`Navigation timed out after ${NAV_TIMEOUT / 1000}s: ${params.url}`));
           }, NAV_TIMEOUT)),
         ]);
-        await _delay(500);
+        const wait = await waitForBrowserState(wc, {
+          state: params.state || "stable",
+          timeoutMs: Math.min(Number(params.timeout) || 5000, 10000),
+        });
         const snap = await wc.executeJavaScript(SNAPSHOT_SCRIPT);
-        return { url: snap.currentUrl, title: snap.title, snapshot: snap.text };
+        return {
+          url: snap.currentUrl,
+          title: snap.title,
+          snapshot: snap.text,
+          diagnostics: { wait },
+        };
       });
     }
 
@@ -2192,9 +2207,12 @@ async function handleBrowserCommand(cmd, params) {
     case "wait": {
       return await _withLiveWebContents(params.sessionPath, async (wc) => {
         const timeout = Math.min(params.timeout || 5000, 10000);
-        await _delay(timeout);
+        const wait = await waitForBrowserState(wc, {
+          state: params.state || "stable",
+          timeoutMs: timeout,
+        });
         const snap = await wc.executeJavaScript(SNAPSHOT_SCRIPT);
-        return { currentUrl: snap.currentUrl, text: snap.text };
+        return { currentUrl: snap.currentUrl, text: snap.text, diagnostics: { wait } };
       });
     }
 

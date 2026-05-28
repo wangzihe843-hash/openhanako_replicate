@@ -3,6 +3,7 @@ import { t } from '../../helpers';
 import styles from '../../Settings.module.css';
 import type { UsageLedgerEntry } from './usage-ledger-actions';
 import {
+  USAGE_PERIOD_ORDER,
   aggregateEntries,
   formatCompactNumber,
   formatNumber,
@@ -13,6 +14,7 @@ import {
   num,
   requestSourceLabel,
   type UsageAggregate,
+  type UsagePeriod,
 } from './usage-ledger-model';
 
 type CssVars = CSSProperties & Record<string, string | number>;
@@ -46,12 +48,25 @@ export function SplitRing({ group, totalTokens, size }: { group: UsageAggregate;
   );
 }
 
-export function DailyBars({ groups }: { groups: UsageAggregate[] }) {
+export function DailyBars({
+  groups,
+  title,
+  period,
+  onPeriodChange,
+}: {
+  groups: UsageAggregate[];
+  title: string;
+  period: UsagePeriod;
+  onPeriodChange: (period: UsagePeriod) => void;
+}) {
   const maxTotal = Math.max(1, ...groups.map(group => group.totalTokens));
   return (
     <div className={styles['usage-panel']}>
       <div className={styles['usage-panel-head']}>
-        <span className={styles['usage-panel-title']}>{t('settings.usage.dailyUsage')}</span>
+        <div className={styles['usage-panel-title-cluster']}>
+          <span className={styles['usage-panel-title']}>{title}</span>
+          <UsagePeriodToggle period={period} onChange={onPeriodChange} />
+        </div>
         <UsageLegend />
       </div>
       <div className={styles['usage-daily-bars']}>
@@ -72,6 +87,24 @@ export function DailyBars({ groups }: { groups: UsageAggregate[] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function UsagePeriodToggle({ period, onChange }: { period: UsagePeriod; onChange: (period: UsagePeriod) => void }) {
+  return (
+    <div className={styles['usage-period-toggle']} role="group" aria-label={t('settings.usage.dailyUsage')}>
+      {USAGE_PERIOD_ORDER.map(item => (
+        <button
+          key={item}
+          type="button"
+          className={`${styles['usage-period-btn']}${period === item ? ` ${styles.active}` : ''}`}
+          aria-pressed={period === item}
+          onClick={() => onChange(item)}
+        >
+          {t(`settings.usage.period.${item}`)}
+        </button>
+      ))}
     </div>
   );
 }

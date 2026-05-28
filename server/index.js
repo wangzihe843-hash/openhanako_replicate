@@ -39,6 +39,7 @@ setMaxListeners(50);
 import { loadLocale } from "./i18n.js";
 import { createChatRoute } from "./routes/chat.js";
 import { createSessionsRoute } from "./routes/sessions.js";
+import { createSessionProjectsRoute } from "./routes/session-projects.js";
 import { createModelsRoute } from "./routes/models.js";
 import { createConfigRoute } from "./routes/config.js";
 import { createUploadRoute } from "./routes/upload.js";
@@ -663,6 +664,7 @@ app.route("/api", createAccessRoute({
   runtimeState: serverRuntimeState,
 }));
 app.route("/api", createSessionsRoute(engine, hub));
+app.route("/api", createSessionProjectsRoute(engine));
 app.route("/api", createModelsRoute(engine));
 app.route("/api", createConfigRoute(engine));
 app.route("/api", createUploadRoute(engine));

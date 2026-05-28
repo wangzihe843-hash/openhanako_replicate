@@ -89,7 +89,33 @@
     "searchingTitles": "正在搜索标题…",
     "searchingContent": "正在搜索正文…",
     "searchNoResults": "没有找到相关会话",
-    "searchFailed": "搜索失败"
+    "searchFailed": "搜索失败",
+    "view": {
+      "time": "按时间排序",
+      "project": "按项目排序",
+      "sort": "排序方式"
+    },
+    "projects": {
+      "title": "项目",
+      "more": "项目视图",
+      "create": "新建项目",
+      "newProject": "新建项目",
+      "newFolder": "新建文件夹",
+      "renameProject": "重命名项目",
+      "renameFolder": "重命名文件夹",
+      "deleteProject": "删除项目",
+      "deleteFolder": "删除文件夹",
+      "deleteProjectConfirm": "确定删除项目「{name}」？里面的对话会移到未归类。",
+      "deleteFolderConfirm": "确定删除文件夹「{name}」？里面的项目会移到项目根层。",
+      "newChatInProject": "在 {name} 中开启新对话",
+      "newProjectPrompt": "项目名称",
+      "newFolderPrompt": "文件夹名称",
+      "createAction": "创建",
+      "save": "保存",
+      "cancel": "取消",
+      "showMore": "展开显示",
+      "empty": "还没有项目"
+    }
   },
   "titlebar": {
     "currentChatTitle": "当前对话标题"
@@ -1008,6 +1034,14 @@
       "cacheShort": "缓存 {tokens}",
       "tokensShort": "{tokens} tok",
       "cacheSummary": "缓存 {cache} · 未缓存 {uncached}",
+      "window": {
+        "week": "近 7 天",
+        "month": "近 30 天"
+      },
+      "period": {
+        "week": "周",
+        "month": "月"
+      },
       "view": {
         "overall": "总览",
         "daily": "按日期",
@@ -2117,7 +2151,7 @@
       "label": "搜索网页",
       "description": "搜索互联网获取实时信息。当你需要查找最新资讯、技术文档、新闻事件、或任何记忆中没有的外部知识时使用。",
       "queryDesc": "搜索关键词",
-      "maxResultsDesc": "返回结果数量，默认 5"
+      "maxResultsDesc": "返回结果数量，默认 10"
     },
     "webFetch": {
       "label": "抓取网页",
@@ -2138,7 +2172,7 @@
       "keyDesc": "按键名（key 时必填），如 Enter、Escape、Tab、Control+a",
       "expressionDesc": "JavaScript 表达式（evaluate 时必填）",
       "timeoutDesc": "超时毫秒数（wait 时可选，默认 5000）",
-      "stateDesc": "等待状态（wait 时可选）：domcontentloaded / idle",
+      "stateDesc": "等待状态（wait 时可选）：domcontentloaded / load / stable / networkidle（兼容 idle）",
       "pressEnterDesc": "输入后按回车（type 时可选）"
     },
     "channel": {

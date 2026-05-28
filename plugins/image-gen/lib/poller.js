@@ -353,7 +353,7 @@ export class Poller {
 
     const { status } = result ?? {};
 
-    if (status === "success") {
+    if (status === "success" || status === "done") {
       const files = result.files ?? [];
       const dims = await this._readImageDimensions(files);
       const sessionFiles = this._registerGeneratedFiles(task, files);

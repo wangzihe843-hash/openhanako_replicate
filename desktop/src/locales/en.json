@@ -89,7 +89,33 @@
     "searchingTitles": "Searching titles…",
     "searchingContent": "Searching content…",
     "searchNoResults": "No matching chats",
-    "searchFailed": "Search failed"
+    "searchFailed": "Search failed",
+    "view": {
+      "time": "Sort by time",
+      "project": "Sort by project",
+      "sort": "Sort view"
+    },
+    "projects": {
+      "title": "Projects",
+      "more": "Project view",
+      "create": "New project",
+      "newProject": "New project",
+      "newFolder": "New folder",
+      "renameProject": "Rename project",
+      "renameFolder": "Rename folder",
+      "deleteProject": "Delete project",
+      "deleteFolder": "Delete folder",
+      "deleteProjectConfirm": "Delete project \"{name}\"? Its chats will move to Uncategorized.",
+      "deleteFolderConfirm": "Delete folder \"{name}\"? Its projects will move to the project root.",
+      "newChatInProject": "Start a new chat in {name}",
+      "newProjectPrompt": "Project name",
+      "newFolderPrompt": "Folder name",
+      "createAction": "Create",
+      "save": "Save",
+      "cancel": "Cancel",
+      "showMore": "Show more",
+      "empty": "No projects yet"
+    }
   },
   "titlebar": {
     "currentChatTitle": "Current chat title"
@@ -1008,6 +1034,14 @@
       "cacheShort": "cache {tokens}",
       "tokensShort": "{tokens} tok",
       "cacheSummary": "Cache {cache} · uncached {uncached}",
+      "window": {
+        "week": "Last 7 days",
+        "month": "Last 30 days"
+      },
+      "period": {
+        "week": "Week",
+        "month": "Month"
+      },
       "view": {
         "overall": "Overall",
         "daily": "By date",
@@ -2117,7 +2151,7 @@
       "label": "Web Search",
       "description": "Search the internet for real-time information. Use when you need the latest news, technical docs, current events, or any external knowledge not in memory.",
       "queryDesc": "Search keywords",
-      "maxResultsDesc": "Number of results to return, default 5"
+      "maxResultsDesc": "Number of results to return, default 10"
     },
     "webFetch": {
       "label": "Fetch Web Page",
@@ -2138,7 +2172,7 @@
       "keyDesc": "Key name (required for key), e.g. Enter, Escape, Tab, Control+a",
       "expressionDesc": "JavaScript expression (required for evaluate)",
       "timeoutDesc": "Timeout in milliseconds (optional for wait, default 5000)",
-      "stateDesc": "Wait state (optional for wait): domcontentloaded / idle",
+      "stateDesc": "Wait state (optional for wait): domcontentloaded / load / stable / networkidle (idle is accepted)",
       "pressEnterDesc": "Press Enter after typing (optional for type)"
     },
     "channel": {

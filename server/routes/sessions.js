@@ -399,6 +399,7 @@ export function createSessionsRoute(engine, hub = null) {
           cwd: s.cwd || null,
           agentId: s.agentId || null,
           agentName: s.agentName || null,
+          projectId: s.projectId || null,
           modelId: s.modelId || null,
           modelProvider: s.modelProvider || null,
           permissionMode: typeof engine.getSessionPermissionMode === "function"
@@ -458,6 +459,7 @@ export function createSessionsRoute(engine, hub = null) {
         cwd: s.cwd || null,
         agentId: s.agentId || null,
         agentName: s.agentName || null,
+        projectId: s.projectId || null,
         modelId: s.modelId || null,
         modelProvider: s.modelProvider || null,
         pinnedAt: s.pinnedAt || null,
@@ -826,6 +828,13 @@ export function createSessionsRoute(engine, hub = null) {
       const workspaceFolders = Array.isArray(body.workspaceFolders)
         ? body.workspaceFolders.filter(p => typeof p === "string" && p.trim())
         : [];
+      const projectId = Object.prototype.hasOwnProperty.call(body, "projectId")
+        ? (
+            typeof engine.normalizeSessionProjectAssignmentId === "function"
+              ? engine.normalizeSessionProjectAssignmentId(body.projectId)
+              : (typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null)
+          )
+        : null;
       const memFlag = memoryEnabled !== false; // 默认 true
       log.log(`新建 session ${JSON.stringify({
         hasCwd: !!cwd,
@@ -858,6 +867,9 @@ export function createSessionsRoute(engine, hub = null) {
         ));
       }
       engine.persistSessionMeta();
+      if (projectId && typeof engine.setSessionProjectAssignment === "function") {
+        await engine.setSessionProjectAssignment({ sessionPath: newSessionPath, projectId });
+      }
 
       // 记住工作目录 + 更新历史
       if (cwd) {
@@ -873,6 +885,7 @@ export function createSessionsRoute(engine, hub = null) {
         workspaceFolders: engine.getSessionWorkspaceFolders?.(newSessionPath) || [],
         agentId: newAgentId,
         agentName: engine.getAgent(newAgentId)?.agentName || engine.agentName,
+        projectId,
         planMode: engine.planMode,
         permissionMode: engine.permissionMode,
         accessMode: engine.accessMode,

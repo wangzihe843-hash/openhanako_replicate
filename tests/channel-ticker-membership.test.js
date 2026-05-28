@@ -316,6 +316,47 @@ describe("channel-ticker membership source", () => {
     ]);
   });
 
+  it("advances the bookmark after a missing channel decision without summarizing memory", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    const agentDir = path.join(agentsDir, "hana");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n- ch_crew (last: never)\n", "utf-8");
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    await appendMessage(channelFile, "user", "这条消息不应该无限重投");
+
+    const executeCheck = vi.fn(async () => ({ replied: false, missingDecision: true }));
+    const onMemorySummarize = vi.fn();
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana"],
+      executeCheck,
+      onMemorySummarize,
+    });
+
+    ticker.start();
+    try {
+      await ticker.triggerImmediate(channelId);
+      await ticker.triggerImmediate(channelId);
+    } finally {
+      await ticker.stop();
+    }
+
+    expect(executeCheck).toHaveBeenCalledOnce();
+    expect(readBookmarks(path.join(agentDir, "channels.md")).get(channelId)).toMatch(
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
+    );
+    expect(onMemorySummarize).not.toHaveBeenCalled();
+  });
+
   it("prioritizes mentioned agents while still delivering mention context to other members", async () => {
     tmpDir = mktemp();
     const channelsDir = path.join(tmpDir, "channels");

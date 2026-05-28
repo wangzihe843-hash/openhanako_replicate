@@ -89,7 +89,33 @@
     "searchingTitles": "제목 검색 중…",
     "searchingContent": "본문 검색 중…",
     "searchNoResults": "일치하는 채팅이 없습니다",
-    "searchFailed": "검색 실패"
+    "searchFailed": "검색 실패",
+    "view": {
+      "time": "시간순 정렬",
+      "project": "프로젝트순 정렬",
+      "sort": "정렬 방식"
+    },
+    "projects": {
+      "title": "프로젝트",
+      "more": "프로젝트 보기",
+      "create": "새 프로젝트",
+      "newProject": "새 프로젝트",
+      "newFolder": "새 폴더",
+      "renameProject": "프로젝트 이름 바꾸기",
+      "renameFolder": "폴더 이름 바꾸기",
+      "deleteProject": "프로젝트 삭제",
+      "deleteFolder": "폴더 삭제",
+      "deleteProjectConfirm": "\"{name}\" 프로젝트를 삭제할까요? 안의 대화는 미분류로 이동합니다.",
+      "deleteFolderConfirm": "\"{name}\" 폴더를 삭제할까요? 안의 프로젝트는 루트로 이동합니다.",
+      "newChatInProject": "{name}에서 새 대화 시작",
+      "newProjectPrompt": "프로젝트 이름",
+      "newFolderPrompt": "폴더 이름",
+      "createAction": "만들기",
+      "save": "저장",
+      "cancel": "취소",
+      "showMore": "더 보기",
+      "empty": "아직 프로젝트가 없습니다"
+    }
   },
   "titlebar": {
     "currentChatTitle": "현재 대화 제목"
@@ -1008,6 +1034,14 @@
       "cacheShort": "cache {tokens}",
       "tokensShort": "{tokens} tok",
       "cacheSummary": "캐시 {cache} · 비캐시 {uncached}",
+      "window": {
+        "week": "최근 7일",
+        "month": "최근 30일"
+      },
+      "period": {
+        "week": "주",
+        "month": "월"
+      },
       "view": {
         "overall": "전체",
         "daily": "날짜별",
@@ -2117,7 +2151,7 @@
       "label": "웹 검색",
       "description": "인터넷을 검색해서 실시간 정보를 가져와요. 최신 뉴스, 기술 문서, 시사, 또는 기억에 없는 외부 지식이 필요할 때 사용해요.",
       "queryDesc": "검색 키워드",
-      "maxResultsDesc": "반환할 결과 수, 기본값 5"
+      "maxResultsDesc": "반환할 결과 수, 기본값 10"
     },
     "webFetch": {
       "label": "웹페이지 가져오기",
@@ -2138,7 +2172,7 @@
       "keyDesc": "키 이름 (key에 필수), 예: Enter, Escape, Tab, Control+a",
       "expressionDesc": "JavaScript 표현식 (evaluate에 필수)",
       "timeoutDesc": "타임아웃 밀리초 (wait에 선택, 기본값 5000)",
-      "stateDesc": "대기 상태 (wait에 선택): domcontentloaded / idle",
+      "stateDesc": "대기 상태 (wait에 선택): domcontentloaded / load / stable / networkidle (idle도 허용)",
       "pressEnterDesc": "입력 후 Enter 누르기 (type에 선택)"
     },
     "channel": {

@@ -36,6 +36,7 @@ export interface Session {
   agentId: string | null;
   agentName: string | null;
   cwd: string | null;
+  projectId?: string | null;
   permissionMode?: SessionPermissionMode | null;
   pinnedAt?: string | null;
   hasSummary?: boolean;

@@ -22,6 +22,7 @@ import {
   normalizeWorkspaceUiEntry,
   normalizeWorkspaceUiSurface,
 } from "../../shared/workspace-ui-state.js";
+import { normalizeSidebarUiPrefs } from "../../shared/sidebar-ui-state.js";
 import {
   SEARCH_API_PROVIDER_IDS,
   normalizeSearchApiKeys,
@@ -266,6 +267,30 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       }
       const state = engine.setWorkspaceUiState(workspace, surface, normalizeWorkspaceUiEntry(body.state || {}));
       return c.json({ ok: true, state });
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  route.get("/preferences/sidebar-ui", async (c) => {
+    try {
+      return c.json({ sidebarUi: engine.getSidebarUiPrefs?.() || normalizeSidebarUiPrefs({}) });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/preferences/sidebar-ui", async (c) => {
+    try {
+      const body = await safeJson(c);
+      if (!body || typeof body !== "object") {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      if (typeof engine.setSidebarUiPrefs !== "function") {
+        return c.json({ error: "sidebar UI preferences unavailable" }, 500);
+      }
+      const sidebarUi = engine.setSidebarUiPrefs(normalizeSidebarUiPrefs(body.sidebarUi || body));
+      return c.json({ ok: true, sidebarUi });
     } catch (err) {
       return c.json({ error: err.message }, 400);
     }

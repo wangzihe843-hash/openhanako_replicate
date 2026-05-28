@@ -20,6 +20,7 @@ const initialStateFactory = (): MockState => ({
   currentSessionPath: null,
   pendingSessionSwitchPath: null,
   pendingNewSession: false,
+  pendingProjectId: null,
   sessions: [] as Array<{ path: string }>,
   chatSessions: {} as Record<string, unknown>,
   sessionRegistryFilesByPath: {} as Record<string, unknown>,
@@ -400,6 +401,33 @@ describe('session-actions', () => {
         }),
       );
       expect(mockState.workspaceFolders).toEqual(['/reference-a']);
+    });
+
+    it('carries an explicit project id from the new-session draft into session creation', async () => {
+      await createNewSession({ projectId: 'project-hana', cwd: '/workspace/project-hana' });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        path: '/session/new.jsonl',
+        cwd: '/workspace/project-hana',
+        projectId: 'project-hana',
+        workspaceFolders: [],
+      }));
+      mockFetch.mockResolvedValueOnce(jsonResponse([]));
+
+      await expect(ensureSession()).resolves.toBe(true);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/sessions/new',
+        expect.objectContaining({
+          body: JSON.stringify({
+            memoryEnabled: true,
+            cwd: '/workspace/project-hana',
+            projectId: 'project-hana',
+            currentSessionPath: null,
+          }),
+        }),
+      );
+      expect(mockState.pendingProjectId).toBeNull();
     });
 
     it('surfaces the server error when pending session creation fails', async () => {

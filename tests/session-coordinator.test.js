@@ -35,6 +35,8 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { VisionBridge, VISION_CONTEXT_START } from "../core/vision-bridge.js";
+import { createUsageLedger } from "../lib/llm/usage-ledger.js";
+import { BrowserManager } from "../lib/browser/browser-manager.js";
 
 const PNG_BASE64 = "iVBORw0KGgo=";
 
@@ -104,6 +106,192 @@ describe("SessionCoordinator", () => {
     expect(agent.setMemoryEnabled).toHaveBeenCalledWith(false);
     expect(createAgentSessionMock).toHaveBeenCalledOnce();
     expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe("MEMORY OFF");
+  });
+
+  it("attributes assistant usage to the model recorded on the message after a session model switch", async () => {
+    const sessionPath = path.join(tempDir, "usage-model-switch.jsonl");
+    const initialModel = {
+      id: "model-a",
+      provider: "provider-a",
+      api: "openai-completions",
+      cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    };
+    const switchedModel = {
+      id: "model-b",
+      provider: "provider-b",
+      api: "openai-completions",
+      cost: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0 },
+    };
+    const subscribers = [];
+    const ledger = createUsageLedger({ requestIdFactory: () => `usage-${subscribers.length}` });
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      config: {},
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "BASE",
+      tools: [],
+    };
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        sessionManager: { getSessionFile: () => sessionPath },
+        subscribe: vi.fn((fn) => {
+          subscribers.push(fn);
+          return vi.fn();
+        }),
+        setActiveToolsByName: vi.fn(),
+        model: initialModel,
+      },
+    });
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: initialModel,
+        availableModels: [initialModel, switchedModel],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+      getUsageLedger: () => ledger,
+    });
+
+    await coordinator.createSession(null, tempDir, true, initialModel);
+    subscribers[0]({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        api: "openai-completions",
+        provider: "provider-b",
+        model: "model-b",
+        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+        stopReason: "stop",
+      },
+    });
+
+    const entry = ledger.list({}).entries[0];
+    expect(entry).toMatchObject({
+      model: {
+        provider: "provider-b",
+        modelId: "model-b",
+        api: "openai-completions",
+      },
+      usage: {
+        input: { totalTokens: 100 },
+        output: { totalTokens: 10 },
+        costTotal: 0.00023,
+      },
+    });
+  });
+
+  it("does not use the fallback model cost when the assistant message model cannot be resolved", async () => {
+    const sessionPath = path.join(tempDir, "usage-unresolved-message-model.jsonl");
+    const initialModel = {
+      id: "model-a",
+      provider: "provider-a",
+      api: "openai-completions",
+      cost: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 },
+    };
+    const subscribers = [];
+    const ledger = createUsageLedger({ requestIdFactory: () => `usage-unresolved-${subscribers.length}` });
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      config: {},
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "BASE",
+      tools: [],
+    };
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        sessionManager: { getSessionFile: () => sessionPath },
+        subscribe: vi.fn((fn) => {
+          subscribers.push(fn);
+          return vi.fn();
+        }),
+        setActiveToolsByName: vi.fn(),
+        model: initialModel,
+      },
+    });
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: initialModel,
+        availableModels: [initialModel],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+      getUsageLedger: () => ledger,
+    });
+
+    await coordinator.createSession(null, tempDir, true, initialModel);
+    subscribers[0]({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        api: "openai-completions",
+        provider: "provider-b",
+        model: "model-b",
+        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+        stopReason: "stop",
+      },
+    });
+
+    const entry = ledger.list({}).entries[0];
+    expect(entry).toMatchObject({
+      model: {
+        provider: "provider-b",
+        modelId: "model-b",
+        api: "openai-completions",
+      },
+      usage: {
+        input: { totalTokens: 100 },
+        output: { totalTokens: 10 },
+        costTotal: null,
+      },
+    });
   });
 
   it("injects restored vision sidecar notes without reading stale Pi context getters", async () => {
@@ -2282,6 +2470,81 @@ describe("SessionCoordinator", () => {
       "search_memory",
     ]);
     expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toContain("search_memory");
+  });
+
+  it("executeIsolated closes the browser owned by its temporary session without sweeping other sessions", async () => {
+    const sessionFile = path.join(tempDir, "isolated-browser.jsonl");
+    const otherSessionFile = path.join(tempDir, "other-session.jsonl");
+    const bm = BrowserManager.instance();
+    const hasAnyRunningSpy = vi.spyOn(bm, "hasAnyRunning", "get").mockReturnValue(true);
+    const isRunningSpy = vi.spyOn(bm, "isRunning").mockImplementation((sp) => sp === sessionFile);
+    const setHeadlessSpy = vi.spyOn(bm, "setHeadless").mockImplementation(() => {});
+    const closeBrowserSpy = vi.spyOn(bm, "closeBrowserForSession").mockResolvedValue();
+
+    const agent = {
+      id: "hana",
+      agentDir: tempDir,
+      sessionDir: tempDir,
+      agentName: "hana",
+      memoryMasterEnabled: true,
+      config: { models: { chat: { id: "default-model", provider: "test" } } },
+      systemPrompt: "BACKGROUND PROMPT",
+      tools: [],
+    };
+
+    sessionManagerCreateMock.mockReturnValue({
+      getCwd: () => tempDir,
+      getSessionFile: () => sessionFile,
+    });
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        sessionManager: { getSessionFile: () => sessionFile },
+        subscribe: vi.fn(() => vi.fn()),
+        prompt: vi.fn(async () => {}),
+        abort: vi.fn(),
+      },
+    });
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: "/tmp/agents",
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        authStorage: {},
+        modelRegistry: {},
+        defaultModel: { id: "default-model", provider: "test" },
+        availableModels: [{ id: "default-model", provider: "test" }],
+        resolveExecutionModel: (model) => model,
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({ getSystemPrompt: () => "prompt", getAppendSystemPrompt: () => [] }),
+      getSkills: () => ({ getSkillsForAgent: () => [] }),
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => null,
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => null,
+      listAgents: () => [],
+    });
+
+    try {
+      await coordinator.executeIsolated("background browser task");
+
+      expect(closeBrowserSpy).toHaveBeenCalledWith(sessionFile);
+      expect(closeBrowserSpy).not.toHaveBeenCalledWith(otherSessionFile);
+      expect(setHeadlessSpy).toHaveBeenCalledWith(true);
+      expect(setHeadlessSpy).toHaveBeenCalledWith(false);
+    } finally {
+      hasAnyRunningSpy.mockRestore();
+      isRunningSpy.mockRestore();
+      setHeadlessSpy.mockRestore();
+      closeBrowserSpy.mockRestore();
+    }
   });
 
   it("executeIsolated activates a cold target agent before reading its runtime tools", async () => {

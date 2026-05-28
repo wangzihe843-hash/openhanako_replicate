@@ -89,7 +89,33 @@
     "searchingTitles": "タイトルを検索中…",
     "searchingContent": "本文を検索中…",
     "searchNoResults": "一致するチャットがありません",
-    "searchFailed": "検索に失敗しました"
+    "searchFailed": "検索に失敗しました",
+    "view": {
+      "time": "時間順",
+      "project": "プロジェクト順",
+      "sort": "並び替え"
+    },
+    "projects": {
+      "title": "プロジェクト",
+      "more": "プロジェクト表示",
+      "create": "新規プロジェクト",
+      "newProject": "新規プロジェクト",
+      "newFolder": "新規フォルダ",
+      "renameProject": "プロジェクト名を変更",
+      "renameFolder": "フォルダ名を変更",
+      "deleteProject": "プロジェクトを削除",
+      "deleteFolder": "フォルダを削除",
+      "deleteProjectConfirm": "プロジェクト「{name}」を削除しますか？中のチャットは未分類へ移動します。",
+      "deleteFolderConfirm": "フォルダ「{name}」を削除しますか？中のプロジェクトはルートへ移動します。",
+      "newChatInProject": "{name} で新しいチャットを開始",
+      "newProjectPrompt": "プロジェクト名",
+      "newFolderPrompt": "フォルダ名",
+      "createAction": "作成",
+      "save": "保存",
+      "cancel": "キャンセル",
+      "showMore": "さらに表示",
+      "empty": "プロジェクトはまだありません"
+    }
   },
   "titlebar": {
     "currentChatTitle": "現在のチャットタイトル"
@@ -1008,6 +1034,14 @@
       "cacheShort": "cache {tokens}",
       "tokensShort": "{tokens} tok",
       "cacheSummary": "キャッシュ {cache} · 非キャッシュ {uncached}",
+      "window": {
+        "week": "直近 7 日",
+        "month": "直近 30 日"
+      },
+      "period": {
+        "week": "週",
+        "month": "月"
+      },
       "view": {
         "overall": "概要",
         "daily": "日別",
@@ -2117,7 +2151,7 @@
       "label": "ウェブ検索",
       "description": "インターネットを検索してリアルタイム情報を取得します。最新ニュース、技術ドキュメント、時事、または記憶にない外部知識が必要なときに使用します。",
       "queryDesc": "検索キーワード",
-      "maxResultsDesc": "返す結果の数、デフォルト 5"
+      "maxResultsDesc": "返す結果の数、デフォルト 10"
     },
     "webFetch": {
       "label": "ウェブページ取得",
@@ -2138,7 +2172,7 @@
       "keyDesc": "キー名（key の場合必須）、例：Enter、Escape、Tab、Control+a",
       "expressionDesc": "JavaScript 式（evaluate の場合必須）",
       "timeoutDesc": "タイムアウトのミリ秒数（wait の場合オプション、デフォルト 5000）",
-      "stateDesc": "待機状態（wait の場合オプション）：domcontentloaded / idle",
+      "stateDesc": "待機状態（wait の場合オプション）：domcontentloaded / load / stable / networkidle（idle も可）",
       "pressEnterDesc": "入力後に Enter を押す（type の場合オプション）"
     },
     "channel": {

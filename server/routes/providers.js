@@ -7,7 +7,7 @@ import os from "os";
 import { Hono } from "hono";
 import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
-import { buildProviderAuthHeaders, probeProvider } from "../../lib/llm/provider-client.js";
+import { buildProviderAuthHeaders, normalizeProviderBaseUrlForApi, probeProvider } from "../../lib/llm/provider-client.js";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.js";
 import { clearConfigCache } from "../../lib/memory/config-loader.js";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue } from "../../shared/secret-custody.js";
@@ -316,7 +316,11 @@ export function createProvidersRoute(engine) {
     const effectiveKey = bodyKey
       ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
       : saved.api_key || "";
-    const effectiveBaseUrl = base_url || saved.base_url || "";
+    const effectiveBaseUrl = normalizeProviderBaseUrlForApi({
+      provider: name,
+      baseUrl: base_url || saved.base_url || "",
+      api: explicitApi || saved.api || "",
+    });
     const effectiveApi = explicitApi || saved.api || "";
 
     // ── 2. 远程 list models（baseUrl 为空时跳过）──
@@ -406,8 +410,12 @@ export function createProvidersRoute(engine) {
     const api_key = bodyKey
       ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
       : saved.api_key || "";
-    const base_url = body.base_url || saved.base_url || "";
     const api = body.api || saved.api || "";
+    const base_url = normalizeProviderBaseUrlForApi({
+      provider: name,
+      baseUrl: body.base_url || saved.base_url || "",
+      api,
+    });
 
     if (!base_url) {
       return c.json({ error: "base_url is required" }, 400);

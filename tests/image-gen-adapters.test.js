@@ -619,6 +619,28 @@ describe("dashscope image adapter", () => {
     expect(queried.files).toHaveLength(1);
   });
 
+  it("saves DashScope async base64 image results instead of treating them as URLs", async () => {
+    const { dashscopeImageAdapter } = await import("../plugins/image-gen/adapters/dashscope.js");
+    const fakeB64 = Buffer.from("dashscope-base64-image").toString("base64");
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output: {
+          task_status: "SUCCEEDED",
+          results: [{ b64_json: fakeB64 }],
+        },
+      }),
+    });
+
+    const ctx = makeBusCtx("dash-key", "https://dashscope.aliyuncs.com/compatible-mode/v1", "dashscope");
+    const queried = await dashscopeImageAdapter.query("dash-task-base64", ctx);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(queried.status).toBe("done");
+    expect(queried.files).toEqual(["1234-abc.png"]);
+  });
+
   it("submits Qwen 2 image models through the DashScope multimodal endpoint", async () => {
     const { dashscopeImageAdapter } = await import("../plugins/image-gen/adapters/dashscope.js");
 

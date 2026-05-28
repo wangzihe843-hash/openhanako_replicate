@@ -39,8 +39,8 @@ body {
   line-height: 1.75;
   color: #a8b5b7;
   background-color: var(--base03);
-  padding: 2rem 3rem;
-  max-width: 800px;
+  padding: 2rem 2.25rem;
+  max-width: 832px;
   margin: 0 auto;
 }
 

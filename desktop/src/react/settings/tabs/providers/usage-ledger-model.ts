@@ -1,6 +1,7 @@
 import type { UsageLedgerEntry } from './usage-ledger-actions';
 
 export type UsageView = 'overall' | 'daily' | 'category' | 'model';
+export type UsagePeriod = 'week' | 'month';
 
 export interface UsageAggregate {
   key: string;
@@ -23,6 +24,12 @@ export interface UsageAggregate {
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
 export const USAGE_VIEW_ORDER: UsageView[] = ['overall', 'daily', 'category', 'model'];
+export const USAGE_PERIOD_ORDER: UsagePeriod[] = ['week', 'month'];
+
+const USAGE_PERIOD_DAYS: Record<UsagePeriod, number> = {
+  week: 7,
+  month: 30,
+};
 
 export function aggregateEntries(key: string, label: string, entries: UsageLedgerEntry[]): UsageAggregate {
   const aggregate = entries.reduce<UsageAggregate>((acc, entry) => {
@@ -67,6 +74,25 @@ export function groupEntries(
 export function groupDailyEntries(entries: UsageLedgerEntry[]): UsageAggregate[] {
   return groupEntries(entries, dateKey, (entry) => formatDateLabel(entry.endedAt || entry.startedAt))
     .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export function groupDateWindowEntries(entries: UsageLedgerEntry[], period: UsagePeriod): UsageAggregate[] {
+  const latestTime = latestEntryTime(entries);
+  if (latestTime === null) return groupDailyEntries(entries);
+
+  const dayCount = USAGE_PERIOD_DAYS[period];
+  const end = startOfLocalDay(new Date(latestTime));
+  const start = addLocalDays(end, 1 - dayCount);
+  const existingByKey = new Map(groupDailyEntries(entries).map(group => [group.key, group]));
+  const groups: UsageAggregate[] = [];
+
+  for (let index = 0; index < dayCount; index += 1) {
+    const date = addLocalDays(start, index);
+    const key = localDateKey(date);
+    groups.push(existingByKey.get(key) ?? aggregateEntries(key, formatDateLabelFromDate(date), []));
+  }
+
+  return groups;
 }
 
 export function categoryKey(entry: UsageLedgerEntry) {
@@ -159,7 +185,30 @@ function dateKey(entry: UsageLedgerEntry) {
   const value = entry.endedAt || entry.startedAt;
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return 'unknown';
-  const date = new Date(time);
+  return localDateKey(new Date(time));
+}
+
+function latestEntryTime(entries: UsageLedgerEntry[]) {
+  let latest: number | null = null;
+  for (const entry of entries) {
+    const time = Date.parse(entry.endedAt || entry.startedAt);
+    if (!Number.isFinite(time)) continue;
+    latest = latest === null ? time : Math.max(latest, time);
+  }
+  return latest;
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addLocalDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function localDateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -169,7 +218,11 @@ function dateKey(entry: UsageLedgerEntry) {
 function formatDateLabel(value: string) {
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return '-';
-  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit' }).format(new Date(time));
+  return formatDateLabelFromDate(new Date(time));
+}
+
+function formatDateLabelFromDate(date: Date) {
+  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit' }).format(date);
 }
 
 function trimUnitNumber(value: number) {
