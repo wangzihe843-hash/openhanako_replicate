@@ -69,7 +69,7 @@ describe("wrapBashTool Windows PathGuard preflight", () => {
   });
 });
 
-describe("wrapBashTool POSIX redirection preflight", () => {
+describe.skipIf(process.platform === "win32")("wrapBashTool POSIX redirection preflight", () => {
   it("allows redirection to the POSIX null device without treating it as a workspace write", async () => {
     const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
     const tool = { execute: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })) };
@@ -209,7 +209,7 @@ describe("sandbox wrapper dynamic external read grants", () => {
     }
   });
 
-  it("lets bash read explicitly granted external session files", async () => {
+  it.skipIf(process.platform === "win32")("lets bash read explicitly granted external session files", async () => {
     const { wrapBashTool } = await import("../lib/sandbox/tool-wrapper.js");
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wrapper-bash-grant-"));
     try {

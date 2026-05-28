@@ -13,6 +13,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { memoryTickerTickMock, memoryTickerStartMock } = vi.hoisted(() => ({
@@ -75,7 +76,7 @@ function makeAgent(agentsDir, rootDir) {
     id: "test-agent",
     agentsDir,
     userDir: path.join(rootDir, "user"),
-    productDir: path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "lib"),
+    productDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "lib"),
   });
 }
 

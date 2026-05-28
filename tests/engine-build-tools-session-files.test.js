@@ -69,29 +69,36 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     fs.mkdirSync(agentDir, { recursive: true });
     fs.mkdirSync(workspace, { recursive: true });
 
-    const engine = Object.create(HanaEngine.prototype);
-    engine.hanakoHome = hanakoHome;
-    engine.getAgent = vi.fn(() => ({ id: "hana", agentDir, tools: [] }));
-    engine._pluginManager = null;
-    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
-    let prefs = { sandbox: true, sandbox_network: true };
-    engine._readPreferences = () => prefs;
-    engine._confirmStore = null;
-    engine._emitEvent = vi.fn();
-    engine.getSessionPermissionMode = vi.fn(() => "operate");
-    engine._agentMgr = { agent: { id: "hana", agentDir, tools: [] } };
-    engine.listSessionFiles = vi.fn(() => []);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
 
-    engine.buildTools(workspace, [], {
-      agentDir,
-      workspace,
-      getSessionPath: () => path.join(agentDir, "sessions", "one.jsonl"),
-    });
+    try {
+      const engine = Object.create(HanaEngine.prototype);
+      engine.hanakoHome = hanakoHome;
+      engine.getAgent = vi.fn(() => ({ id: "hana", agentDir, tools: [] }));
+      engine._pluginManager = null;
+      engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+      let prefs = { sandbox: true, sandbox_network: true };
+      engine._readPreferences = () => prefs;
+      engine._confirmStore = null;
+      engine._emitEvent = vi.fn();
+      engine.getSessionPermissionMode = vi.fn(() => "operate");
+      engine._agentMgr = { agent: { id: "hana", agentDir, tools: [] } };
+      engine.listSessionFiles = vi.fn(() => []);
 
-    const sandboxOpts = createSandboxedTools.mock.calls[0][2];
-    expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(true);
-    prefs = { sandbox: true, sandbox_network: false };
-    expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(false);
+      engine.buildTools(workspace, [], {
+        agentDir,
+        workspace,
+        getSessionPath: () => path.join(agentDir, "sessions", "one.jsonl"),
+      });
+
+      const sandboxOpts = createSandboxedTools.mock.calls[0][2];
+      expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(true);
+      prefs = { sandbox: true, sandbox_network: false };
+      expect(sandboxOpts.getSandboxNetworkEnabled()).toBe(false);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
   });
 
   it("keeps Windows restricted-token command sandbox networking enabled at the tool boundary", () => {

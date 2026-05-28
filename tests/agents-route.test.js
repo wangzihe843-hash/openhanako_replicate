@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -207,7 +208,7 @@ describe("agents route", () => {
     const app = new Hono();
     const engine = {
       agentsDir: tempRoot,
-      productDir: path.join(path.dirname(new URL(import.meta.url).pathname), "..", "lib"),
+      productDir: path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib"),
       currentAgentId: agentId,
       providerRegistry: {
         saveProvider: vi.fn(),
@@ -317,7 +318,7 @@ describe("agents route", () => {
     const app = new Hono();
     const engine = {
       agentsDir: tempRoot,
-      productDir: path.join(path.dirname(new URL(import.meta.url).pathname), "..", "lib"),
+      productDir: path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib"),
       currentAgentId: agentId,
       providerRegistry: {
         saveProvider: vi.fn(),

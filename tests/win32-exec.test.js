@@ -53,7 +53,7 @@ describe("createWin32Exec", () => {
       onData: () => {},
       signal: undefined,
       timeout: 5,
-      env: { PATH: "C:\\Windows\\System32" },
+      env: { PATH: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
     });
 
     expect(spawnAndStream).toHaveBeenCalledWith(
@@ -80,6 +80,7 @@ describe("createWin32Exec", () => {
       timeout: 5,
       env: {
         PATH: "C:\\Windows\\System32",
+        SystemRoot: "C:\\Windows",
         PYTHONUTF8: "0",
       },
     });
@@ -115,7 +116,7 @@ describe("createWin32Exec", () => {
       onData: () => {},
       signal: undefined,
       timeout: 5,
-      env: { PATH: "C:\\Windows\\System32" },
+      env: { PATH: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
     });
 
     const helperArgs = spawnAndStream.mock.calls[0][1];
@@ -238,7 +239,7 @@ describe("createWin32Exec", () => {
       onData: () => {},
       signal: undefined,
       timeout: 5,
-      env: { PATH: "C:\\Windows\\System32" },
+      env: { PATH: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
     });
 
     expect(spawnAndStream).toHaveBeenCalledWith(

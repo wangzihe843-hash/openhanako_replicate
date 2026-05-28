@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { join as pathJoin } from "node:path";
 import { shouldCheckThisTick, Poller } from "../lib/poller.js";
 
 // Mock readImageSize so poller tests don't depend on real file I/O.
@@ -412,9 +413,10 @@ describe("Poller", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
 
+    const expectedFilePath = pathJoin("/tmp/image-gen-generated", "abc.png");
     expect(registerSessionFile).toHaveBeenCalledWith({
       sessionPath: "/sessions/image-gen.jsonl",
-      filePath: "/tmp/image-gen-generated/abc.png",
+      filePath: expectedFilePath,
       label: "abc.png",
       origin: "plugin_output",
       storageKind: "plugin_data",
@@ -425,7 +427,7 @@ describe("Poller", () => {
         sessionFiles: [expect.objectContaining({
           fileId: "sf_generated",
           sessionPath: "/sessions/image-gen.jsonl",
-          filePath: "/tmp/image-gen-generated/abc.png",
+          filePath: expectedFilePath,
           storageKind: "plugin_data",
           origin: "plugin_output",
         })],
