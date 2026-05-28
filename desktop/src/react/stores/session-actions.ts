@@ -509,6 +509,7 @@ export async function ensureSession(): Promise<boolean> {
     if (data.error) {
       console.error('[session] create failed:', data.error);
       showSessionCreationError(data.error);
+      useStore.setState({ pendingProjectId: null });
       return false;
     }
 
