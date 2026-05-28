@@ -9738,3 +9738,561 @@
   margin-top: 2px;
 }
 .secretSpaceInterviewPosterMetaSep { opacity: 0.4; }
+
+/* === 秘密空间 · 重要记忆候选 = 笺片视觉 ================================== */
+/* 与秘密空间 saved_item/摘抄笺同源：暖纸底、朱印章、楷书 glyph、mono 元数据。
+   每条候选是一张笺片，状态用左边色条 + 角章 + 小字一并标出。 */
+
+.memoryCandidatePanel {
+  margin-bottom: var(--space-md);
+  padding: 22px 24px 20px;
+  border: 1px solid rgba(120, 90, 60, 0.18);
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(155, 120, 70, 0.05) 0, transparent 40%),
+    radial-gradient(circle at 88% 90%, rgba(120, 80, 40, 0.04) 0, transparent 45%),
+    linear-gradient(180deg, #fbf6e8 0%, #f6efdb 100%);
+  color: #3a2a1a;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 6px 14px rgba(91, 79, 58, 0.10);
+}
+
+.memoryCandidateHeader {
+  position: relative;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed rgba(120, 90, 60, 0.32);
+}
+
+.memoryCandidateKicker {
+  margin: 0 0 4px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(120, 90, 60, 0.72);
+}
+
+.memoryCandidateTitle {
+  margin: 0;
+  font-family: var(--xingye-font-serif);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #2a1d10;
+}
+
+.memoryCandidateWriteTarget {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--xingye-font-serif);
+  font-size: 13px;
+  color: #6b4d2c;
+}
+
+.memoryCandidateWriteTargetArrow {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(120, 90, 60, 0.72);
+}
+
+.memoryCandidateWriteTargetChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid rgba(120, 90, 60, 0.35);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.4);
+  color: #3a2a1a;
+  font-family: var(--xingye-font-serif);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.memoryCandidateNotice {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(155, 28, 46, 0.55);
+  border-radius: 0 4px 4px 0;
+  background: rgba(155, 28, 46, 0.06);
+  color: #6b3a36;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.memoryCandidateError {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid #9b1c2e;
+  border-radius: 0 4px 4px 0;
+  background: rgba(155, 28, 46, 0.10);
+  color: #7a1f2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+}
+
+/* 过滤 chip 行 */
+.memoryCandidateFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.memoryCandidateFilterChip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 4px 11px;
+  border: 1px solid rgba(120, 90, 60, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.memoryCandidateFilterChip:hover {
+  border-color: rgba(120, 90, 60, 0.6);
+  color: #3a2a1a;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.memoryCandidateFilterChip[data-active='true'] {
+  border-color: #6b4d2c;
+  background: #3a2a1a;
+  color: #fbf3df;
+}
+
+.memoryCandidateFilterCount {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(120, 90, 60, 0.14);
+  color: inherit;
+  opacity: 0.85;
+  min-width: 18px;
+  text-align: center;
+}
+
+.memoryCandidateFilterChip[data-active='true'] .memoryCandidateFilterCount {
+  background: rgba(251, 243, 223, 0.18);
+  color: #fbf3df;
+  opacity: 1;
+}
+
+.memoryCandidateSrOnlySelect {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.memoryCandidateFlash {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px dashed rgba(120, 90, 60, 0.4);
+  border-radius: 3px;
+  background: rgba(251, 243, 223, 0.5);
+  color: #4a361f;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  animation: memory-candidate-flash 0.35s ease;
+}
+
+@keyframes memory-candidate-flash {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.memoryCandidateEmpty {
+  margin: 8px 0;
+  padding: 28px 16px;
+  border: 1px dashed rgba(120, 90, 60, 0.3);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.32);
+  color: rgba(120, 90, 60, 0.78);
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  font-size: 13px;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+
+/* 笺片堆 */
+.memoryCandidateStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memoryCandidateSlip {
+  position: relative;
+  padding: 18px 22px 16px;
+  padding-left: 26px;
+  border: 1px solid rgba(120, 90, 60, 0.22);
+  border-left-width: 5px;
+  border-radius: 2px 5px 5px 2px;
+  background: #fbf3df;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 4px 10px rgba(91, 79, 58, 0.10);
+}
+
+/* 左边色条 —— 按状态着色 */
+.memoryCandidateSlip[data-status='pending']  { border-left-color: #c69249; }
+.memoryCandidateSlip[data-status='written']  { border-left-color: #5f8d9c; }
+.memoryCandidateSlip[data-status='rejected'] {
+  border-left-color: rgba(120, 90, 60, 0.45);
+  background: #f4ecd6;
+  opacity: 0.88;
+}
+
+/* 角章 —— 右上斜印 */
+.memoryCandidateStamp {
+  position: absolute;
+  top: -10px;
+  right: 18px;
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-6deg);
+  font-family: var(--xingye-font-brush);
+  font-size: 22px;
+  color: #fbf3df;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  border: 2px solid rgba(255, 230, 200, 0.5);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  user-select: none;
+}
+
+.memoryCandidateSlip[data-status='pending'] .memoryCandidateStamp {
+  background: linear-gradient(135deg, #d09b4a 0%, #9c6a25 100%);
+}
+
+.memoryCandidateSlip[data-status='written'] .memoryCandidateStamp {
+  background: linear-gradient(135deg, #b02030 0%, #8a1424 100%);
+  opacity: 0.92;
+}
+
+.memoryCandidateSlip[data-status='rejected'] .memoryCandidateStamp {
+  background: linear-gradient(135deg, #7a7670 0%, #4a4640 100%);
+  opacity: 0.75;
+  transform: rotate(-3deg);
+}
+
+/* 头部行 —— 状态文字 + 元数据 chip + 重要度 */
+.memoryCandidateSlipHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-right: 56px; /* 让位给右上角章 */
+}
+
+.memoryCandidateStatusText {
+  font-family: var(--xingye-font-serif);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #2a1d10;
+}
+
+.memoryCandidateSlip[data-status='pending']  .memoryCandidateStatusText { color: #7a4f1e; }
+.memoryCandidateSlip[data-status='written']  .memoryCandidateStatusText { color: #2c5a6b; }
+.memoryCandidateSlip[data-status='rejected'] .memoryCandidateStatusText { color: rgba(120, 90, 60, 0.7); }
+
+.memoryCandidateChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px dashed rgba(120, 90, 60, 0.4);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.35);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.memoryCandidateChipWarn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid rgba(155, 28, 46, 0.55);
+  border-radius: 2px;
+  background: rgba(155, 28, 46, 0.10);
+  color: #9b1c2e;
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.memoryCandidateImportance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.memoryCandidateImportanceLabel {
+  font-family: var(--xingye-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(120, 90, 60, 0.7);
+}
+
+.memoryCandidateImportanceTrack {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.memoryCandidateImportanceTrack span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(120, 90, 60, 0.18);
+  border: 1px solid rgba(120, 90, 60, 0.3);
+}
+
+.memoryCandidateImportanceTrack[data-level='low']    span:nth-child(-n + 1),
+.memoryCandidateImportanceTrack[data-level='medium'] span:nth-child(-n + 2),
+.memoryCandidateImportanceTrack[data-level='high']   span:nth-child(-n + 3) {
+  background: #c69249;
+  border-color: #9c6a25;
+}
+
+.memoryCandidateImportanceTrack[data-level='high'] span:nth-child(-n + 3) {
+  background: #b02030;
+  border-color: #7a1422;
+}
+
+.memoryCandidateImportanceText {
+  font-family: var(--xingye-font-serif);
+  font-size: 12px;
+  color: #6b4d2c;
+  letter-spacing: 0.06em;
+}
+
+/* notices */
+.memoryCandidateStaleNote {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(155, 28, 46, 0.55);
+  border-radius: 0 4px 4px 0;
+  background: rgba(155, 28, 46, 0.07);
+  color: #6b3a36;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.memoryCandidateBlocked {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(120, 90, 60, 0.5);
+  border-radius: 0 4px 4px 0;
+  background: rgba(120, 90, 60, 0.08);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.65;
+}
+
+/* 阅读态 —— 当前条已写入或已拒绝，正文像摘抄 */
+.memoryCandidateBodyRead {
+  position: relative;
+}
+
+.memoryCandidateBody {
+  margin: 0;
+  font-family: var(--xingye-font-serif);
+  font-size: 15px;
+  line-height: 1.85;
+  color: #2a1d10;
+  letter-spacing: 0.03em;
+  white-space: pre-wrap;
+}
+
+.memoryCandidateSlip[data-status='rejected'] .memoryCandidateBody {
+  color: rgba(58, 42, 26, 0.55);
+  text-decoration: line-through;
+  text-decoration-color: rgba(120, 90, 60, 0.45);
+  text-decoration-thickness: 1px;
+}
+
+.memoryCandidateReason {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px dashed rgba(120, 90, 60, 0.32);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.4);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.7;
+}
+
+.memoryCandidateReason::before {
+  content: '理由 · ';
+  font-family: var(--xingye-font-mono);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(120, 90, 60, 0.7);
+  margin-right: 2px;
+}
+
+/* 编辑态表单 —— 与笺片底色融合 */
+.memoryCandidateForm {
+  display: grid;
+  gap: 10px;
+}
+
+.memoryCandidateField {
+  display: grid;
+  gap: 4px;
+}
+
+.memoryCandidateField > span {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(120, 90, 60, 0.78);
+}
+
+.memoryCandidateField textarea,
+.memoryCandidateField input,
+.memoryCandidateField select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(120, 90, 60, 0.28);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #2a1d10;
+  font-family: var(--xingye-font-serif);
+  font-size: 14px;
+  line-height: 1.65;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.memoryCandidateField textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.memoryCandidateField textarea:focus,
+.memoryCandidateField input:focus,
+.memoryCandidateField select:focus {
+  border-color: #6b4d2c;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 2px rgba(155, 28, 46, 0.10);
+}
+
+.memoryCandidateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.memoryCandidateAction {
+  appearance: none;
+  padding: 6px 14px;
+  border: 1px solid rgba(120, 90, 60, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.memoryCandidateAction:hover:not(:disabled) {
+  border-color: rgba(120, 90, 60, 0.7);
+  background: rgba(255, 255, 255, 0.75);
+  color: #3a2a1a;
+}
+
+.memoryCandidateAction:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.memoryCandidateActionPrimary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #b02030 0%, #8a1424 100%);
+  color: #fbf3df;
+  box-shadow: 0 2px 4px rgba(155, 28, 46, 0.32);
+}
+
+.memoryCandidateActionPrimary:hover:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, #c4263a 0%, #9a1828 100%);
+  color: #fbf3df;
+  box-shadow: 0 3px 8px rgba(155, 28, 46, 0.4);
+}
+
+.memoryCandidateActionPrimary:disabled {
+  background: rgba(120, 90, 60, 0.25);
+  color: rgba(251, 243, 223, 0.6);
+  box-shadow: none;
+}
+
+/* 页脚 —— mono 小字，仿落款 */
+.memoryCandidateFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(120, 90, 60, 0.28);
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: rgba(120, 90, 60, 0.78);
+  text-transform: uppercase;
+}
+
+.memoryCandidateFooterSep {
+  opacity: 0.45;
+}
