@@ -6070,6 +6070,271 @@
   text-align: right;
 }
 
+/* === 秘密空间 · saved_item 详情阅读器（与 list 同语言：摘抄页 / 书签 / 朱印） === */
+
+/* 让 saved_item 详情底层 pane 透明，让米黄页面直接铺到分类背景上（同 dream / draft 思路） */
+.secretSpaceCategory[data-category='saved_item'] .secretSpaceRecordDetailPane {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.secretSpaceSavedReader {
+  position: relative;
+  margin: 0;
+  padding: 28px 32px 26px;
+  border: 1px solid rgba(120, 90, 60, 0.22);
+  border-left: 6px solid #9b1c2e;
+  border-radius: 2px 6px 6px 2px;
+  background: #fbf3df;
+  color: #3a2a1a;
+  box-shadow:
+    0 6px 16px rgba(91, 79, 58, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -40px 60px rgba(120, 90, 60, 0.06);
+  overflow: visible;
+  min-height: 320px;
+}
+
+/* 纸纹：用径向 gradient 模拟羊皮纸纤维，比贴 SVG 轻 */
+.secretSpaceSavedReader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(155, 120, 70, 0.08) 0, transparent 35%),
+    radial-gradient(circle at 78% 78%, rgba(120, 80, 40, 0.07) 0, transparent 45%),
+    radial-gradient(circle at 65% 12%, rgba(180, 140, 80, 0.05) 0, transparent 30%);
+  border-radius: inherit;
+  mix-blend-mode: multiply;
+}
+
+/* 顶右书签飘带 —— 与列表卡同款 clip-path */
+.secretSpaceSavedReaderRibbon {
+  position: absolute;
+  top: -4px;
+  right: 38px;
+  width: 22px;
+  height: 74px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.22);
+  filter: brightness(0.95);
+}
+
+.secretSpaceSavedReaderHead {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.secretSpaceSavedReaderHeadLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.secretSpaceSavedReaderKind {
+  font-family: var(--xingye-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.secretSpaceSavedReaderNo {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: rgba(120, 90, 60, 0.7);
+}
+
+.secretSpaceSavedReaderCopy {
+  appearance: none;
+  border: 1px solid rgba(120, 90, 60, 0.35);
+  background: rgba(255, 255, 255, 0.35);
+  color: #6b4d2c;
+  font-family: var(--xingye-font-serif);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.25s ease, background 0.25s ease, color 0.25s ease;
+}
+
+.secretSpaceSavedReaderCopy:hover:not(:disabled) {
+  border-color: rgba(120, 90, 60, 0.65);
+  background: rgba(255, 255, 255, 0.6);
+  color: #3a2a1a;
+}
+
+.secretSpaceSavedReaderCopy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.secretSpaceSavedReaderTitle {
+  position: relative;
+  margin: 0 0 14px;
+  font-family: var(--xingye-font-serif);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  color: #3a2a1a;
+}
+
+.secretSpaceSavedReaderBodyWrap {
+  position: relative;
+  padding: 4px 18px 8px;
+}
+
+.secretSpaceSavedReaderQuoteOpen,
+.secretSpaceSavedReaderQuoteClose {
+  position: absolute;
+  font-family: var(--xingye-font-brush, var(--xingye-font-serif));
+  color: rgba(155, 28, 46, 0.22);
+  font-size: 64px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.secretSpaceSavedReaderQuoteOpen {
+  top: -16px;
+  left: -10px;
+}
+
+.secretSpaceSavedReaderQuoteClose {
+  bottom: -36px;
+  right: -6px;
+}
+
+.secretSpaceSavedReaderBody {
+  position: relative;
+  font-family: var(--xingye-font-serif);
+  font-size: 16px;
+  line-height: 1.95;
+  color: #2a1d10;
+  letter-spacing: 0.03em;
+}
+
+.secretSpaceSavedReaderParagraph {
+  margin: 0;
+}
+
+.secretSpaceSavedReaderParagraph + .secretSpaceSavedReaderParagraph {
+  margin-top: 12px;
+}
+
+.secretSpaceSavedReaderParagraph[data-empty='true'] {
+  color: rgba(120, 90, 60, 0.55);
+  font-style: italic;
+}
+
+.secretSpaceSavedReaderAttribution {
+  margin: 22px 4px 0 0;
+  font-family: var(--xingye-font-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: #6b4d2c;
+  text-align: right;
+  letter-spacing: 0.04em;
+}
+
+.secretSpaceSavedReaderTags {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.secretSpaceSavedReaderTag {
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: 1px dashed rgba(120, 90, 60, 0.45);
+  border-radius: 2px;
+  color: #6b4d2c;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.secretSpaceSavedReaderFootnote {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(120, 90, 60, 0.28);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--xingye-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: rgba(120, 90, 60, 0.78);
+  text-transform: uppercase;
+}
+
+.secretSpaceSavedReaderFootnoteDot {
+  opacity: 0.65;
+}
+
+.secretSpaceSavedReaderCopyFlash {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 2px;
+  background: rgba(155, 28, 46, 0.12);
+  color: #9b1c2e;
+  letter-spacing: 0.12em;
+  animation: xingye-saved-copy-flash 0.35s ease;
+}
+
+@keyframes xingye-saved-copy-flash {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 朱印 —— 左下视觉锚点，章面用刻字 + 微旋转 */
+.secretSpaceSavedReaderSeal {
+  position: absolute;
+  left: 22px;
+  bottom: 18px;
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #b02030 0%, #8a1424 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-6deg);
+  box-shadow:
+    0 2px 4px rgba(120, 30, 36, 0.45),
+    inset 0 0 0 2px rgba(255, 230, 200, 0.55);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.secretSpaceSavedReaderSealGlyph {
+  font-family: var(--xingye-font-brush, var(--xingye-font-serif));
+  color: #fbf3df;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
 /* === 秘密空间分类内页 · unsent_moment Moments-app timeline =============== */
 
 .secretSpaceCategory[data-category='unsent_moment'] {

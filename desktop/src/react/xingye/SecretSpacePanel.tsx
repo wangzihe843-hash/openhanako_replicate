@@ -35,6 +35,7 @@ import {
 import { SecretInterviewReader } from './SecretInterviewReader';
 import { SecretSpaceDraftReader } from './SecretSpaceDraftReader';
 import { SecretSpaceDreamReader } from './SecretSpaceDreamReader';
+import { SecretSpaceSavedReader } from './SecretSpaceSavedReader';
 import {
   confirmInterviewDraftWithEntry,
   discardInterviewDraft,
@@ -1586,6 +1587,8 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
                 ? (record) => <SecretSpaceDraftReader record={record} />
                 : activeCategory === 'dream'
                 ? (record) => <SecretSpaceDreamReader record={record} />
+                : activeCategory === 'saved_item'
+                ? (record) => <SecretSpaceSavedReader record={record} />
                 : undefined
             }
             renderRecordDetailExtraActions={
