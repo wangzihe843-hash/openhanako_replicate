@@ -33,6 +33,7 @@ import {
   toYmd,
   type BulkPlan,
 } from './xingye-app-history-state';
+import { SecondhandBuyerChatPanel } from './SecondhandBuyerChatPanel';
 
 export interface PhoneSecondhandAppProps {
   ownerAgent: Agent | null;
@@ -391,6 +392,11 @@ export function PhoneSecondhandApp({
   const [filter, setFilter] = useState<'all' | SecondhandEntryStatus>('all');
   const [composeOpen, setComposeOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  /**
+   * 「与买家的聊天」全屏面板视图：仅 sold / negotiating 详情页可触发。
+   * 非空时盖在详情之上；返回时清空回到详情。
+   */
+  const [chatEntryId, setChatEntryId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SecondhandDraft>(() => emptyDraft());
   const [userIntent, setUserIntent] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
@@ -649,6 +655,7 @@ export function PhoneSecondhandApp({
     setSelectedId(null);
     setComposeOpen(false);
     setEditing(false);
+    setChatEntryId(null);
     setSaveError(null);
     setListError(null);
     setBulkNotice(null);
@@ -780,6 +787,22 @@ export function PhoneSecondhandApp({
     () => (selectedId ? entries.find((entry) => entry.id === selectedId) ?? null : null),
     [entries, selectedId],
   );
+
+  /**
+   * chatActiveEntry：聊天面板的 driver。只有当 chatEntryId 存在、entry 存在、
+   * status 是 sold/negotiating 时才视为有效；任一条件失败都把状态视作未激活，
+   * 让渲染走回详情，避免脏状态卡死视图。
+   *
+   * 定义位置必须在所有 early-return 之前（react-hooks/rules-of-hooks），所以放在这里
+   * 跟其它 useMemo 同层级。
+   */
+  const chatActiveEntry = useMemo(() => {
+    if (!chatEntryId) return null;
+    const entry = entries.find((e) => e.id === chatEntryId);
+    if (!entry) return null;
+    if (entry.metadata.status !== 'sold' && entry.metadata.status !== 'negotiating') return null;
+    return entry;
+  }, [chatEntryId, entries]);
 
   const visibleEntries = useMemo(() => {
     if (filter === 'all') return entries;
@@ -937,6 +960,7 @@ export function PhoneSecondhandApp({
         setEntries((prev) => prev.filter((entry) => entry.id !== selected.id));
         setSelectedId(null);
         setEditing(false);
+        setChatEntryId((prev) => (prev === selected.id ? null : prev));
       } else {
         await reloadEntries();
       }
@@ -977,7 +1001,11 @@ export function PhoneSecondhandApp({
   return (
     <div className={`${styles.phoneShell} ${styles.xyPalette}`} aria-label="二手记录">
       <div className={styles.phoneStatusBar}>
-        {selected && !editorOpen ? (
+        {chatActiveEntry ? (
+          <button type="button" className={styles.phoneBackButton} onClick={() => setChatEntryId(null)}>
+            返回详情
+          </button>
+        ) : selected && !editorOpen ? (
           <button type="button" className={styles.phoneBackButton} onClick={() => setSelectedId(null)}>
             返回列表
           </button>
@@ -1145,6 +1173,14 @@ export function PhoneSecondhandApp({
               </button>
             </div>
           </section>
+        ) : chatActiveEntry && ownerAgent ? (
+          <SecondhandBuyerChatPanel
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile ?? null}
+            entry={chatActiveEntry}
+            taDisplayName={ta}
+            onBack={() => setChatEntryId(null)}
+          />
         ) : selected ? (
           <SecondhandDetailView
             entry={selected}
@@ -1154,6 +1190,11 @@ export function PhoneSecondhandApp({
             deleteBusy={deleteBusy}
             onShareToChat={() => handleShareSecondhandToChat(selected)}
             sharedNotice={sharedToChatId === selected.id}
+            onOpenBuyerChat={
+              selected.metadata.status === 'sold' || selected.metadata.status === 'negotiating'
+                ? () => setChatEntryId(selected.id)
+                : undefined
+            }
           />
         ) : (
           <div className={styles.xyScroll}>
@@ -1445,6 +1486,7 @@ function SecondhandDetailView({
   deleteBusy,
   onShareToChat,
   sharedNotice,
+  onOpenBuyerChat,
 }: {
   entry: SecondhandEntry;
   ta: string;
@@ -1453,6 +1495,11 @@ function SecondhandDetailView({
   deleteBusy: boolean;
   onShareToChat: () => void;
   sharedNotice: boolean;
+  /**
+   * 仅 status === 'sold' / 'negotiating' 时父级会传入，触发 chatEntryId 切换到聊天面板。
+   * undefined 时不渲染入口（其它状态没有买家聊天的语义）。
+   */
+  onOpenBuyerChat?: () => void;
 }) {
   const platform = entry.metadata.platformStyle ?? 'generic';
   const toneCls = PLATFORM_COVER_TONE[platform];
@@ -1535,6 +1582,18 @@ function SecondhandDetailView({
         ) : null}
 
         <div style={{ padding: '0 18px 4px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {onOpenBuyerChat ? (
+            <button
+              type="button"
+              className={styles.xyBtnGhost}
+              onClick={onOpenBuyerChat}
+              data-testid={`phone-secondhand-open-buyer-chat-${entry.id}`}
+              title={`查看 TA 和「${entry.metadata.buyer || '陌生人'}」的聊天记录`}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              查看和{entry.metadata.buyer || '买家'}的聊天 ›
+            </button>
+          ) : null}
           <button
             type="button"
             className={styles.xyBtnGhost}

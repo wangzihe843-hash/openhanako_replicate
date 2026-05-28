@@ -10,6 +10,11 @@ import {
   SECONDHAND_AI_PLATFORM_STYLES,
   SECONDHAND_AI_STATUSES,
 } from './xingye-secondhand-prompts';
+import { buildSecondhandBuyerChatPrompt } from './xingye-secondhand-buyer-chat-prompts';
+import type {
+  SecondhandBuyerChatMessage,
+  SecondhandBuyerChatStatus,
+} from './xingye-secondhand-buyer-chat-store';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -677,6 +682,191 @@ export async function generateSecondhandPolishWithAI(params: {
   const normalized = normalizeSecondhandPolishResult(data?.result);
   if (!normalized) {
     throw new Error('模型返回无效：JSON 解析失败');
+  }
+  return normalized;
+}
+
+export type SecondhandBuyerChatAiResult = {
+  messages: SecondhandBuyerChatMessage[];
+};
+
+function newBuyerChatMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `bc-${crypto.randomUUID()}`;
+  }
+  return `bc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * LLM 只回 `{role, text}`，本地补齐 id / 时间戳：以 endIso（一般 = entry.updatedAt）为
+ * 最后一条，每条往前回拨 30–180 秒，让聊天像「最近发生过的一小段」。
+ * 遵循 LLM 只回定性、数值本地生成的约定。
+ */
+function normalizeSecondhandBuyerChatResult(
+  raw: unknown,
+  opts: { endIso: string; minCount: number },
+): SecondhandBuyerChatAiResult | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const rawMessages = rec.messages;
+  if (!Array.isArray(rawMessages) || rawMessages.length < opts.minCount) return null;
+
+  const deltas: number[] = [];
+  for (let i = 0; i < rawMessages.length; i += 1) {
+    deltas.push(30 + Math.floor(Math.random() * 150));
+  }
+  const endMs = (() => {
+    const t = Date.parse(opts.endIso);
+    return Number.isFinite(t) ? t : Date.now();
+  })();
+  const totalSec = deltas.reduce((a, b) => a + b, 0);
+  let cursorMs = endMs - totalSec * 1000;
+
+  const out: SecondhandBuyerChatMessage[] = [];
+  for (let i = 0; i < rawMessages.length; i += 1) {
+    const item = rawMessages[i];
+    if (!item || typeof item !== 'object') return null;
+    const m = item as Record<string, unknown>;
+    const role = m.role === 'seller' ? 'seller' : m.role === 'buyer' ? 'buyer' : null;
+    const text = typeof m.text === 'string' ? m.text.trim() : '';
+    if (!role || !text) return null;
+    if (i === 0 && role !== 'buyer') return null;
+    cursorMs += deltas[i] * 1000;
+    out.push({
+      id: newBuyerChatMessageId(),
+      role,
+      text: truncateChars(text, 200),
+      at: new Date(cursorMs).toISOString(),
+    });
+  }
+  return { messages: out };
+}
+
+export function pickRandomSecondhandBuyerChatCount(): number {
+  return 8 + Math.floor(Math.random() * 7);
+}
+
+/**
+ * 二手 buyer chat 生成入口。
+ *
+ * - 仅 status === 'sold' / 'negotiating' 才有意义；调用方负责守门。
+ * - kind = 'secondhand_buyer_chat'；需要 server PHONE_GENERATE_KINDS 已注册。
+ * - 失败抛 Error，调用方决定是否提示「重新生成」按钮。
+ */
+export async function generateSecondhandBuyerChatWithAI(params: {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  entry: {
+    id: string;
+    updatedAt: string;
+    metadata: {
+      itemName: string;
+      status: SecondhandBuyerChatStatus;
+      category?: string;
+      askingPrice?: string;
+      delta?: string;
+      buyer?: string;
+      reason?: string;
+      platformStyle?: string;
+      tags?: string[];
+    };
+    content?: string;
+  };
+  userName?: string;
+  desiredMessageCount?: number;
+  timeoutMs?: number;
+}): Promise<SecondhandBuyerChatAiResult> {
+  const { agent, ownerProfile, entry } = params;
+  const timeoutMs = params.timeoutMs ?? 90_000;
+  const userName = await resolveXingyeSpeakerUserName(params.userName);
+  const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+  const desiredMessageCount = params.desiredMessageCount ?? pickRandomSecondhandBuyerChatCount();
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    userName,
+    agentName,
+    entry.metadata.itemName,
+    entry.metadata.category ?? '',
+    entry.metadata.buyer ?? '',
+    entry.metadata.reason ?? '',
+    entry.content ?? '',
+    stableLoreBlock.slice(0, 2000),
+  ]);
+
+  let keywordLoreBlock = '';
+  try {
+    const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+      purpose: 'generic',
+      queryText,
+      maxChars: 1800,
+      includeAlways: false,
+      includeKeyword: true,
+    });
+    keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+  } catch {
+    keywordLoreBlock = '';
+  }
+
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+
+  const prompt = buildSecondhandBuyerChatPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    entry: {
+      itemName: entry.metadata.itemName,
+      status: entry.metadata.status,
+      category: entry.metadata.category,
+      askingPrice: entry.metadata.askingPrice,
+      delta: entry.metadata.delta,
+      buyer: entry.metadata.buyer,
+      reason: entry.metadata.reason,
+      content: entry.content,
+      platformStyle: entry.metadata.platformStyle,
+      tags: entry.metadata.tags,
+    },
+    desiredMessageCount,
+    stableLoreBlock,
+    keywordLoreBlock,
+    relationshipBlock,
+  });
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'secondhand_buyer_chat',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const normalized = normalizeSecondhandBuyerChatResult(data?.result, {
+    endIso: entry.updatedAt,
+    minCount: Math.max(4, Math.min(6, Math.floor(desiredMessageCount / 2))),
+  });
+  if (!normalized) {
+    throw new Error('模型返回的聊天数据无效（messages 缺失或格式错误）');
   }
   return normalized;
 }
