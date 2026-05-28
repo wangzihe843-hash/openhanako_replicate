@@ -31,7 +31,8 @@ export type QuotedSourceKind =
   | 'shopping'
   | 'secret-space'
   | 'files'
-  | 'secret-drawer';
+  | 'secret-drawer'
+  | 'journal';
 
 export interface QuotedSelection {
   text: string;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
 import styles from './XingyeShell.module.css';
 import { generateJournalDraftWithAI } from './xingye-journal-ai';
 import {
@@ -115,6 +116,12 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   >({});
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
+  /**
+   * 「去和 TA 聊聊」入口的轻量确认提示。点完按钮 4s 自动复位。
+   * 走 stagedChatQuote 槽：见 memory `feedback_share_to_chat_no_navigation` —
+   * 不能直接写 quotedSelection，跨 session 会被清。
+   */
+  const [sharedToChatId, setSharedToChatId] = useState<string | null>(null);
 
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
@@ -308,6 +315,34 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       setSaveBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!sharedToChatId) return undefined;
+    const timer = setTimeout(() => setSharedToChatId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [sharedToChatId]);
+
+  const handleShareToChat = useCallback(
+    (entry: XingyeJournalEntry) => {
+      const lines: string[] = [];
+      lines.push(`《${entry.title}》`);
+      lines.push(dayLabelForDetail(entry.dayKey));
+      if (entry.mood) lines.push(`心情：「${entry.mood}」`);
+      lines.push('');
+      lines.push(entry.body);
+      const text = lines.join('\n').trim();
+      if (!text) return;
+      useStore.getState().stageChatQuote({
+        text,
+        sourceTitle: `日记 · ${entry.title}`,
+        sourceKind: 'journal',
+        charCount: text.length,
+        updatedAt: Date.now(),
+      });
+      setSharedToChatId(entry.id);
+    },
+    [],
+  );
 
   const handleDeleteSelected = async () => {
     if (!selected || !ownerAgentId) return;
@@ -550,15 +585,44 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <br />
               之印
             </div>
-            <div style={{ marginTop: 12 }}>
-              <button
-                type="button"
-                className={styles.phoneModalGhostButton}
-                onClick={() => void handleDeleteSelected()}
-                disabled={deleteBusy}
-              >
-                {deleteBusy ? '删除中…' : '删除这条日记'}
-              </button>
+            <div
+              style={{
+                marginTop: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                alignItems: 'flex-start',
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className={styles.phoneModalGhostButton}
+                  onClick={() => handleShareToChat(selected)}
+                  data-testid={`phone-journal-share-to-chat-${selected.id}`}
+                  title={`把这条带到和 ${ta} 的聊天里`}
+                >
+                  去和 {ta} 聊聊这条
+                </button>
+                <button
+                  type="button"
+                  className={styles.phoneModalGhostButton}
+                  onClick={() => void handleDeleteSelected()}
+                  disabled={deleteBusy}
+                >
+                  {deleteBusy ? '删除中…' : '删除这条日记'}
+                </button>
+              </div>
+              {sharedToChatId === selected.id ? (
+                <p
+                  className={styles.phoneAppHint}
+                  role="status"
+                  data-testid={`phone-journal-share-to-chat-notice-${selected.id}`}
+                  style={{ margin: 0 }}
+                >
+                  已放进聊天输入框引用 —— 打开任意对话即可发出
+                </p>
+              ) : null}
             </div>
           </div>
         )}

@@ -30,6 +30,7 @@ vi.mock('./xingye-journal-ai', () => journalAiMock);
 vi.mock('./xingye-profile-store', () => profileMock);
 
 import { PhoneJournalApp } from './PhoneJournalApp';
+import { useStore } from '../stores';
 
 const agent: Agent = {
   id: 'linwu',
@@ -183,5 +184,47 @@ describe('PhoneJournalApp · pending draft section', () => {
     expect(journalStoreMock.confirmJournalDraft).not.toHaveBeenCalled();
     /** Reading the input back, it reflects the user's edit (lives in state, not lost). */
     expect((titleField as HTMLInputElement).value).toBe('改过的标题');
+  });
+});
+
+describe('PhoneJournalApp · 去和 TA 聊聊', () => {
+  beforeEach(() => {
+    useStore.setState({ stagedChatQuote: null });
+  });
+
+  it('stages the selected entry into stagedChatQuote and shows the notice', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValueOnce([
+      {
+        id: 'entry-share-1',
+        dayKey: '2026-05-14',
+        title: '雨夜的小灯',
+        body: '海风吹得灯影歪斜。',
+        mood: '安静',
+        createdAt: '2026-05-14T22:00:00.000Z',
+      },
+    ]);
+
+    renderJournalApp();
+
+    fireEvent.click(await screen.findByText('雨夜的小灯'));
+
+    const shareBtn = await screen.findByTestId(
+      'phone-journal-share-to-chat-entry-share-1',
+    );
+    expect(useStore.getState().stagedChatQuote).toBeNull();
+    fireEvent.click(shareBtn);
+
+    const staged = useStore.getState().stagedChatQuote;
+    expect(staged).toMatchObject({
+      sourceKind: 'journal',
+      sourceTitle: '日记 · 雨夜的小灯',
+    });
+    expect(staged?.text).toContain('《雨夜的小灯》');
+    expect(staged?.text).toContain('心情：「安静」');
+    expect(staged?.text).toContain('海风吹得灯影歪斜。');
+
+    expect(
+      screen.getByTestId('phone-journal-share-to-chat-notice-entry-share-1'),
+    ).toBeInTheDocument();
   });
 });
