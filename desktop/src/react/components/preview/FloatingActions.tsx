@@ -8,7 +8,7 @@ import {
   requestMarkdownCoverGeneration,
 } from '../../utils/markdown-cover-generation';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
-import { useStore } from '../../stores';
+import { Tooltip } from '../../ui';
 import { extOfName, inferKindByExt } from '../../utils/file-kind';
 
 interface Props {
@@ -19,6 +19,42 @@ interface Props {
   showMarkdownPreviewToggle?: boolean;
   markdownPreviewActive?: boolean;
   onToggleMarkdownPreview?: () => void;
+}
+
+type CoverGenerationStatus = {
+  enabled?: boolean;
+  executorAgentId?: string | null;
+  disabledReason?: string | null;
+  message?: string | null;
+  settingsTarget?: string | null;
+};
+
+type CoverStatus = {
+  systemCover?: {
+    available?: boolean;
+  };
+  agentGenerate?: CoverGenerationStatus;
+  available?: boolean;
+  enabled?: boolean;
+  agentId?: string | null;
+};
+
+function getAgentGenerateDisabledText(status: CoverGenerationStatus): string {
+  if (status.message) return status.message;
+  switch (status.disabledReason) {
+    case 'beautify-disabled':
+      return '需要先在主 Agent 的工具设置里开启小花美术。';
+    case 'default-image-model-missing':
+      return '需要先在设置里配置默认生图模型。';
+    case 'default-image-model-invalid':
+      return '默认生图模型不可用，需要在设置里重新配置。';
+    case 'image-gen-unavailable':
+      return '生图工具未启用，需要先在设置里开启。';
+    case 'agent-unavailable':
+      return '主 Agent 暂不可用，无法发起 Agent 生成。';
+    default:
+      return '当前不能使用 Agent 生成。';
+  }
 }
 
 function CoverPaletteIcon() {
@@ -81,9 +117,8 @@ export function FloatingActions({
   const [coverBusy, setCoverBusy] = useState(false);
   const [coverMenuOpen, setCoverMenuOpen] = useState(false);
   const [coverGalleryOpen, setCoverGalleryOpen] = useState(false);
-  const [coverToolEnabled, setCoverToolEnabled] = useState(false);
+  const [coverStatus, setCoverStatus] = useState<CoverStatus | null>(null);
   const [brokenCoverGalleryIds, setBrokenCoverGalleryIds] = useState<ReadonlySet<string>>(() => new Set());
-  const currentAgentId = useStore(s => s.currentAgentId);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverMenuRef = useRef<HTMLDivElement | null>(null);
   const floatingActionsRef = useRef<HTMLDivElement | null>(null);
@@ -102,24 +137,23 @@ export function FloatingActions({
   }, [coverGalleryOpen, coverMenuOpen]);
 
   useEffect(() => {
-    if (contentType !== 'markdown' || !filePath || !currentAgentId) {
-      setCoverToolEnabled(false);
+    if (contentType !== 'markdown' || !filePath) {
+      setCoverStatus(null);
       return;
     }
     let cancelled = false;
-    const params = new URLSearchParams({ agentId: currentAgentId });
-    hanaFetch(`/api/desk/beautify/status?${params.toString()}`)
+    hanaFetch('/api/desk/beautify/status')
       .then((res) => res.json())
       .then((data) => {
-        if (!cancelled) setCoverToolEnabled(Boolean(data?.available && data?.enabled));
+        if (!cancelled) setCoverStatus(data || null);
       })
       .catch(() => {
-        if (!cancelled) setCoverToolEnabled(false);
+        if (!cancelled) setCoverStatus(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [contentType, currentAgentId, filePath]);
+  }, [contentType, filePath]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content).then(() => {
@@ -140,11 +174,14 @@ export function FloatingActions({
   }, [content, contentType, filePath, language]);
 
   const handleGenerateCover = useCallback(async () => {
-    if (!filePath || contentType !== 'markdown') return;
+    const generationStatus = coverStatus?.agentGenerate ?? {};
+    const generationEnabled = Boolean(generationStatus.enabled ?? coverStatus?.enabled);
+    if (!filePath || contentType !== 'markdown' || !generationEnabled) return;
     setCoverMenuOpen(false);
     setCoverBusy(true);
     try {
-      const result = await requestMarkdownCoverGeneration({ filePath });
+      const executorAgentId = generationStatus.executorAgentId || coverStatus?.agentId || undefined;
+      const result = await requestMarkdownCoverGeneration({ filePath, executorAgentId });
       dispatchCoverNotice(
         result.ok ? '已创建 cover 后台任务。' : `Cover 生成失败：${result.error}`,
         result.ok ? 'success' : 'error',
@@ -154,7 +191,7 @@ export function FloatingActions({
     } finally {
       setCoverBusy(false);
     }
-  }, [contentType, filePath]);
+  }, [contentType, coverStatus, filePath]);
 
   const handleUploadCover = useCallback(async () => {
     if (!filePath || contentType !== 'markdown') return;
@@ -208,6 +245,11 @@ export function FloatingActions({
     [brokenCoverGalleryIds],
   );
 
+  const systemCoverAvailable = Boolean(coverStatus?.systemCover?.available ?? coverStatus?.available);
+  const agentGenerateStatus = coverStatus?.agentGenerate ?? {};
+  const agentGenerateEnabled = Boolean(agentGenerateStatus.enabled ?? coverStatus?.enabled);
+  const agentGenerateDisabledText = getAgentGenerateDisabledText(agentGenerateStatus);
+
   const handleCoverGalleryImageError = useCallback((itemId: string) => {
     setBrokenCoverGalleryIds((current) => {
       if (current.has(itemId)) return current;
@@ -228,23 +270,47 @@ export function FloatingActions({
         </svg>
         <span>{copyLabel ?? t('attach.copy')}</span>
       </button>
-      {contentType === 'markdown' && filePath && coverToolEnabled && (
+      {contentType === 'markdown' && filePath && systemCoverAvailable && (
         <div className={styles.coverActionWrap} ref={coverMenuRef}>
-          <button
-            className={`${styles.actionBtn}${coverBusy ? ` ${styles.actionBtnBusy}` : ''}${coverMenuOpen ? ` ${styles.actionBtnActive}` : ''}`}
-            onClick={() => setCoverMenuOpen(open => !open)}
-            title="制作 cover"
-            aria-label="制作 cover"
-            disabled={coverBusy}
-          >
-            <CoverPaletteIcon />
-          </button>
+          <Tooltip content="制作 cover" placement="bottom" align="end">
+            {({ ref, ...tooltipProps }) => (
+              <button
+                ref={(node) => ref(node)}
+                className={`${styles.actionBtn}${coverBusy ? ` ${styles.actionBtnBusy}` : ''}${coverMenuOpen ? ` ${styles.actionBtnActive}` : ''}`}
+                onClick={() => setCoverMenuOpen(open => !open)}
+                aria-label="制作 cover"
+                disabled={coverBusy}
+                {...tooltipProps}
+              >
+                <CoverPaletteIcon />
+              </button>
+            )}
+          </Tooltip>
           {coverMenuOpen && (
             <div className={styles.coverMenu}>
-              <button type="button" onClick={handleGenerateCover}>
-                <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
-                <span>生成</span>
-              </button>
+              <Tooltip
+                content={agentGenerateDisabledText}
+                disabled={agentGenerateEnabled}
+                placement="left"
+                align="center"
+              >
+                {({ ref, ...tooltipProps }) => (
+                  <span
+                    className={styles.coverMenuTooltipAnchor}
+                    ref={(node) => ref(node)}
+                    {...tooltipProps}
+                  >
+                    <button
+                      type="button"
+                      onClick={handleGenerateCover}
+                      disabled={coverBusy || !agentGenerateEnabled}
+                    >
+                      <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
+                      <span>Agent 生成</span>
+                    </button>
+                  </span>
+                )}
+              </Tooltip>
               <button type="button" onClick={handlePresetCover}>
                 <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
                 <span>小花美术馆</span>
@@ -304,26 +370,41 @@ export function FloatingActions({
         </div>
       )}
       {showMarkdownPreviewToggle && (
-        <button
-          className={`${styles.actionBtn}${markdownPreviewActive ? ` ${styles.actionBtnActive}` : ''}`}
-          onClick={onToggleMarkdownPreview}
-          title={t(markdownPreviewActive ? 'preview.exitMarkdownPreview' : 'preview.markdownPreview')}
-          aria-label={t('preview.markdownPreview')}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
+        <Tooltip content={t(markdownPreviewActive ? 'preview.exitMarkdownPreview' : 'preview.markdownPreview')} placement="bottom" align="end">
+          {({ ref, ...tooltipProps }) => (
+            <button
+              ref={(node) => ref(node)}
+              className={`${styles.actionBtn}${markdownPreviewActive ? ` ${styles.actionBtnActive}` : ''}`}
+              onClick={onToggleMarkdownPreview}
+              aria-label={t('preview.markdownPreview')}
+              {...tooltipProps}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          )}
+        </Tooltip>
       )}
-      <button className={styles.actionBtn} onClick={handleScreenshot} title={t('common.screenshot')} aria-label={t('common.screenshot')}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-          <circle cx="12" cy="13" r="4" />
-        </svg>
-      </button>
+      <Tooltip content={t('common.screenshot')} placement="bottom" align="end">
+        {({ ref, ...tooltipProps }) => (
+          <button
+            ref={(node) => ref(node)}
+            className={styles.actionBtn}
+            onClick={handleScreenshot}
+            aria-label={t('common.screenshot')}
+            {...tooltipProps}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+              <circle cx="12" cy="13" r="4" />
+            </svg>
+          </button>
+        )}
+      </Tooltip>
     </div>
   );
 }

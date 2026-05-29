@@ -194,6 +194,123 @@ describe("generate-image tool — adapter resolution", () => {
     expect(store.add).not.toHaveBeenCalled();
   });
 
+  it("does not fall back to Codex when the configured default image model has no protocolId", async () => {
+    const codexAdapter = makeAdapter({
+      id: "openai-codex-oauth",
+      submit: vi.fn(async () => ({ taskId: "task-codex" })),
+    });
+    const registry = {
+      get: vi.fn(() => null),
+      getProtocol: vi.fn(() => null),
+      getByType: vi.fn(() => [codexAdapter]),
+    };
+    const store = { add: vi.fn(), update: vi.fn() };
+    const poller = { add: vi.fn() };
+    const ctx = {
+      ...makeCtx({ registry, store, poller }, {
+        request: vi.fn(async (type) => {
+          if (type === "provider:resolve-media-model") {
+            return { providerId: "axis", modelId: "gpt-image-2" };
+          }
+          return {};
+        }),
+      }),
+      config: {
+        get: vi.fn((key) => key === "defaultImageModel" ? { provider: "axis", id: "gpt-image-2" } : undefined),
+      },
+    };
+
+    const result = await execute({ prompt: "a cat" }, ctx);
+
+    expect(result.content[0].text).toContain('指定的图片生成 provider "axis" 不可用');
+    expect(result.content[0].text).toContain('media model "axis/gpt-image-2" missing protocolId');
+    expect(codexAdapter.submit).not.toHaveBeenCalled();
+    expect(store.add).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back when the configured default image model protocol has no adapter", async () => {
+    const codexAdapter = makeAdapter({
+      id: "openai-codex-oauth",
+      submit: vi.fn(async () => ({ taskId: "task-codex" })),
+    });
+    const registry = {
+      get: vi.fn(() => null),
+      getProtocol: vi.fn(() => null),
+      getByType: vi.fn(() => [codexAdapter]),
+    };
+    const store = { add: vi.fn(), update: vi.fn() };
+    const poller = { add: vi.fn() };
+    const ctx = {
+      ...makeCtx({ registry, store, poller }, {
+        request: vi.fn(async (type) => {
+          if (type === "provider:resolve-media-model") {
+            return { providerId: "axis", modelId: "gpt-image-2", protocolId: "axis-images" };
+          }
+          return {};
+        }),
+      }),
+      config: {
+        get: vi.fn((key) => key === "defaultImageModel" ? { provider: "axis", id: "gpt-image-2" } : undefined),
+      },
+    };
+
+    const result = await execute({ prompt: "a cat" }, ctx);
+
+    expect(result.content[0].text).toContain("没有注册协议 axis-images");
+    expect(codexAdapter.submit).not.toHaveBeenCalled();
+    expect(store.add).not.toHaveBeenCalled();
+  });
+
+  it("uses a custom provider's credentials when its image model is bound to the OpenAI images protocol", async () => {
+    const openaiAdapter = makeAdapter({
+      id: "openai",
+      protocolId: "openai-images",
+      submit: vi.fn(async () => ({ taskId: "task-axis" })),
+    });
+    const registry = {
+      get: vi.fn(() => null),
+      getProtocol: vi.fn((protocolId) => protocolId === "openai-images" ? openaiAdapter : null),
+      getByType: vi.fn(() => []),
+    };
+    const store = { add: vi.fn(), update: vi.fn() };
+    const poller = { add: vi.fn() };
+    const ctx = {
+      ...makeCtx({ registry, store, poller }, {
+        request: vi.fn(async (type) => {
+          if (type === "provider:resolve-media-model") {
+            return {
+              providerId: "axis",
+              modelId: "gpt-image-2",
+              protocolId: "openai-images",
+              credentialProviderId: "axis",
+            };
+          }
+          return {};
+        }),
+      }),
+      config: {
+        get: vi.fn((key) => key === "defaultImageModel" ? { provider: "axis", id: "gpt-image-2" } : undefined),
+      },
+    };
+
+    await execute({ prompt: "a cat" }, ctx);
+
+    expect(openaiAdapter.submit).toHaveBeenCalledOnce();
+    expect(openaiAdapter.submit.mock.calls[0][0]).toMatchObject({
+      providerId: "axis",
+      modelId: "gpt-image-2",
+      model: "gpt-image-2",
+      protocolId: "openai-images",
+      credentialProviderId: "axis",
+    });
+    expect(store.add.mock.calls[0][0]).toMatchObject({
+      adapterId: "openai",
+      providerId: "axis",
+      modelId: "gpt-image-2",
+      protocolId: "openai-images",
+    });
+  });
+
   it("uses last registered adapter when no provider specified", async () => {
     const { registry, store, poller } = makeMediaGen();
     const ctx = makeCtx({ registry, store, poller });

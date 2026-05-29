@@ -31,6 +31,14 @@ import chatStyles from './chat/Chat.module.css';
 const CHANNEL_SCROLL_THRESHOLD = 80;
 const EMPTY_CHAT_ITEMS: ChatListItem[] = [];
 const PHONE_STREAM_MESSAGE_PREFIX = 'agent-phone-stream';
+const CHANNEL_COMPOSER_FOCUS_EVENT = 'hana-channel-composer-focus';
+
+export function requestChannelComposerFocus(channelId: string) {
+  if (!channelId || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(CHANNEL_COMPOSER_FOCUS_EVENT, {
+    detail: { channelId },
+  }));
+}
 
 function resolveDmOwnerId(channel: Channel | undefined, currentAgentId: string | null): string {
   return channel?.isDM ? (channel.dmOwnerId || currentAgentId || '') : (currentAgentId || '');
@@ -271,8 +279,10 @@ export function ChannelMembers() {
     if (!currentChannel || !canRemoveMembers) return;
     const confirmed = confirm(t('channel.removeMemberConfirm', { name: info.displayName }));
     if (!confirmed) return;
+    const channelId = currentChannel;
     setBusyMemberId(memberId);
-    removeChannelMember(currentChannel, memberId)
+    removeChannelMember(channelId, memberId)
+      .then(() => requestChannelComposerFocus(channelId))
       .catch((err) => alert(err?.message || t('channel.removeMemberFailed')))
       .finally(() => setBusyMemberId(null));
   };
@@ -1036,6 +1046,22 @@ export function ChannelInput() {
       inputRef.current.focus();
     });
   }, [mentionStartPos]);
+
+  useEffect(() => {
+    const handleComposerFocus = (event: Event) => {
+      const detail = (event as CustomEvent<{ channelId?: string }>).detail;
+      if (!currentChannel || detail?.channelId !== currentChannel) return;
+      requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        const pos = input.value.length;
+        input.focus();
+        input.setSelectionRange(pos, pos);
+      });
+    };
+    window.addEventListener(CHANNEL_COMPOSER_FOCUS_EVENT, handleComposerFocus);
+    return () => window.removeEventListener(CHANNEL_COMPOSER_FOCUS_EVENT, handleComposerFocus);
+  }, [currentChannel]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as any).isComposing) {

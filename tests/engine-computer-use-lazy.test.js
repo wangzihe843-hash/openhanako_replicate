@@ -54,4 +54,30 @@ describe("HanaEngine Computer Use lazy runtime", () => {
     expect(engine._computerHost).toBeNull();
     expect(engine._computerProviders).toBeNull();
   });
+
+  it("stores usage ledger entries under hanakoHome so engine restarts keep them", () => {
+    const engine = createEngine();
+    engine.usageLedger.record({
+      model: { provider: "openai", modelId: "gpt-5", api: "openai-completions" },
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      usageContext: {
+        source: { subsystem: "session", operation: "reply", surface: "desktop", trigger: "user" },
+        attribution: { kind: "session", agentId: "hana", sessionPath: "/sessions/a.jsonl" },
+      },
+    });
+
+    const restarted = new HanaEngine({
+      hanakoHome: tmpDir,
+      productDir: tmpDir,
+      agentId: "hana",
+    });
+
+    expect(restarted.usageLedger.list({}).entries).toMatchObject([
+      {
+        attribution: { kind: "session", sessionPath: "/sessions/a.jsonl" },
+        usage: { totalTokens: 12 },
+      },
+    ]);
+    expect(fs.existsSync(path.join(tmpDir, "usage-ledger.json"))).toBe(true);
+  });
 });

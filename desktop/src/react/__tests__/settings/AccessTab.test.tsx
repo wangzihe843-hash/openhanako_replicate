@@ -49,6 +49,9 @@ const baseSummary = {
     localMobileUrl: 'http://127.0.0.1:14500/mobile/',
     candidateLanMobileUrl: 'http://192.168.31.75:14500/mobile/',
     lanMobileUrl: null,
+    localDesktopUrl: 'http://127.0.0.1:14500/desktop/',
+    candidateLanDesktopUrl: 'http://192.168.31.75:14500/desktop/',
+    lanDesktopUrl: null,
   },
   account: {
     userId: 'user_owner',
@@ -103,6 +106,8 @@ describe('AccessTab', () => {
             candidateLanServerUrl: 'http://192.168.31.75:14500/',
             lanMobileUrl: 'http://192.168.31.75:14500/mobile/',
             candidateLanMobileUrl: 'http://192.168.31.75:14500/mobile/',
+            lanDesktopUrl: 'http://192.168.31.75:14500/desktop/',
+            candidateLanDesktopUrl: 'http://192.168.31.75:14500/desktop/',
             restartRequired: false,
           },
         }));
@@ -120,7 +125,7 @@ describe('AccessTab', () => {
         return Promise.resolve(jsonResponse({
           ok: true,
           secret: 'hana_dev_desktop_visible_once',
-          accessUrl: 'http://192.168.31.75:14500/',
+          accessUrl: 'http://192.168.31.75:14500/desktop/',
           device: { deviceId: 'device_desktop', displayName: 'Studio Laptop', deviceKind: 'desktop', status: 'active' },
           credential: { credentialId: 'cred_desktop', scopes: ['chat', 'files.read', 'files.write'], status: 'active' },
         }));
@@ -197,12 +202,12 @@ describe('AccessTab', () => {
     expect(screen.getByText('settings.access.runtimeEndpoint')).toBeInTheDocument();
     expect(screen.getByText('127.0.0.1:14500')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('http://127.0.0.1:14500/mobile/')).not.toBeInTheDocument();
-    expect(screen.queryByDisplayValue('http://127.0.0.1:14500/')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('http://127.0.0.1:14500/desktop/')).not.toBeInTheDocument();
     expect(screen.getByDisplayValue('14500')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('switch', { name: 'settings.access.lanToggle' }));
     expect(await screen.findByDisplayValue('http://192.168.31.75:14500/mobile/')).toBeInTheDocument();
-    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/desktop/')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'settings.access.qrCode' })).toHaveAttribute(
       'src',
       expect.stringContaining('/api/access/mobile-qr.svg?port=14500'),
@@ -238,6 +243,8 @@ describe('AccessTab', () => {
             candidateLanServerUrl: 'http://192.168.31.75:14550/',
             lanMobileUrl: 'http://192.168.31.75:14500/mobile/',
             candidateLanMobileUrl: 'http://192.168.31.75:14550/mobile/',
+            lanDesktopUrl: 'http://192.168.31.75:14500/desktop/',
+            candidateLanDesktopUrl: 'http://192.168.31.75:14550/desktop/',
           },
         }));
       }
@@ -248,10 +255,10 @@ describe('AccessTab', () => {
     render(<AccessTab />);
 
     expect(await screen.findByDisplayValue('http://192.168.31.75:14500/mobile/')).toBeInTheDocument();
-    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('http://192.168.31.75:14500/desktop/')).toBeInTheDocument();
     expect(screen.getByDisplayValue('14550')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('http://192.168.31.75:14550/mobile/')).not.toBeInTheDocument();
-    expect(screen.queryByDisplayValue('http://192.168.31.75:14550/')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('http://192.168.31.75:14550/desktop/')).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'settings.access.qrCode' })).not.toBeInTheDocument();
     expect(screen.getAllByText('settings.access.restartRequired').length).toBeGreaterThan(0);
   });

@@ -210,22 +210,6 @@
     align-items: center;
 }
 
-.context-ring-tooltip {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    background: var(--bg-secondary, #f5f0ea);
-    border: 1px solid var(--border);
-    padding: 0.35rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-    line-height: 1.4;
-    pointer-events: none;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-
 /* 思考强度选择器 */
 .thinking-selector {
     position: relative;
@@ -1175,26 +1159,6 @@
 .session-confirmation-menu-item:hover {
     background: var(--accent-light);
     color: var(--accent);
-}
-
-.session-confirmation-tooltip {
-    position: fixed;
-    z-index: 10001;
-    max-width: min(34rem, calc(100vw - 16px));
-    max-height: min(22rem, calc(100vh - 16px));
-    overflow: auto;
-    padding: 0.62rem 0.72rem;
-    font-size: 0.74rem;
-    line-height: 1.45;
-    color: var(--text);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: 0 8px 22px var(--shadow);
-    white-space: pre-wrap;
-    word-break: break-word;
-    animation: hana-fade-up var(--duration-fast) var(--ease-out);
-    -webkit-app-region: no-drag;
 }
 
 .session-confirmation-button-reject {

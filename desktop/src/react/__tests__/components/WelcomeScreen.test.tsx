@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
 
@@ -22,7 +23,12 @@ vi.mock('../../utils/ui-helpers', () => ({
 
 const translations: Record<string, string | string[] | Record<string, { avatar: string }>> = {
   'input.workspace': '工作台：',
+  'input.project': '项目：',
   'input.currentWorkspace': '本次工作台',
+  'input.cwdProject': '工作台项目：{name}',
+  'input.customProjects': '自定义项目',
+  'input.selectProject': '选择项目',
+  'input.noCustomProjects': '暂无自定义项目',
   'input.selectOtherFolder': '选择其他文件夹',
   'input.extraFolders': '额外文件夹',
   'input.addExternalFolder': '添加工作台以外的文件夹',
@@ -37,7 +43,12 @@ const translations: Record<string, string | string[] | Record<string, { avatar: 
 describe('WelcomeScreen workspace picker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    const t = vi.fn((key: string) => translations[key] ?? key);
+    const t = vi.fn((key: string, vars?: Record<string, string | number>) => {
+      const template = translations[key] ?? key;
+      return typeof template === 'string'
+        ? template.replace(/\{(\w+)\}/g, (_match, name) => String(vars?.[name] ?? `{${name}}`))
+        : template;
+    });
     vi.stubGlobal('t', t);
     window.t = t as typeof window.t;
     window.platform = { selectFolder: vi.fn() } as unknown as typeof window.platform;
@@ -54,6 +65,14 @@ describe('WelcomeScreen workspace picker', () => {
       homeFolder: '/workspace/Desktop/project-hana',
       cwdHistory: ['/workspace/Desktop/project-hana'],
       workspaceFolders: ['/workspace/Reference'],
+      pendingProjectId: null,
+      sessionProjectCatalog: {
+        folders: [],
+        projects: [
+          { id: 'project-writing', name: '写作项目', folderId: null, order: 0 },
+        ],
+      },
+      sessionProjectCatalogLoaded: true,
       locale: 'zh',
     } as never);
   });
@@ -77,6 +96,27 @@ describe('WelcomeScreen workspace picker', () => {
     expect(currentLabel.compareDocumentPosition(selectOther) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectOther.compareDocumentPosition(extraLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(extraLabel.compareDocumentPosition(addExternal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows the cwd project as the default new-session project', async () => {
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+
+    expect(screen.getByRole('button', { name: /项目：Desktop/ })).toBeInTheDocument();
+    expect(useStore.getState().pendingProjectId).toBeNull();
+  });
+
+  it('lets the pending new-session draft choose a custom project without changing the workspace', async () => {
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /项目：Desktop/ }));
+    fireEvent.click(screen.getByText('写作项目'));
+
+    expect(useStore.getState().pendingProjectId).toBe('project-writing');
+    expect(useStore.getState().selectedFolder).toBe('/workspace/Desktop');
+    expect(screen.getByRole('button', { name: /项目：写作项目/ })).toBeInTheDocument();
   });
 
   it('disables the memory toggle when the selected agent has memory disabled in settings', async () => {

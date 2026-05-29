@@ -1,5 +1,4 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
-import { useStore } from '../stores';
 import registry from '../../shared/theme-registry';
 import { refreshPreviewItemsFromFile } from './preview-file-refresh';
 
@@ -12,9 +11,11 @@ export function getCoverThemeTone(): CoverThemeTone {
 
 export async function requestMarkdownCoverGeneration({
   filePath,
+  executorAgentId,
   userGuidance,
 }: {
   filePath: string;
+  executorAgentId?: string;
   userGuidance?: string;
 }): Promise<{ ok: true; activity?: unknown } | { ok: false; error: string }> {
   const res = await hanaFetch('/api/desk/beautify/cover', {
@@ -23,7 +24,7 @@ export async function requestMarkdownCoverGeneration({
     body: JSON.stringify({
       filePath,
       themeTone: getCoverThemeTone(),
-      agentId: useStore.getState().currentAgentId || undefined,
+      ...(executorAgentId ? { executorAgentId } : {}),
       ...(userGuidance?.trim() ? { userGuidance: userGuidance.trim() } : {}),
     }),
   });
@@ -47,7 +48,6 @@ export async function applyMarkdownCoverImage({
     body: JSON.stringify({
       filePath,
       imageFilePath,
-      agentId: useStore.getState().currentAgentId || undefined,
     }),
   });
   const data = await res.json().catch(() => null);
@@ -71,7 +71,6 @@ export async function applyMarkdownCoverPreset({
     body: JSON.stringify({
       filePath,
       presetId,
-      agentId: useStore.getState().currentAgentId || undefined,
     }),
   });
   const data = await res.json().catch(() => null);

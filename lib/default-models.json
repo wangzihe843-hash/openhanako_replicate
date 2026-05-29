@@ -62,9 +62,8 @@
   ],
 
   "gemini": [
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash"
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview"
   ],
 
   "groq": [
@@ -178,7 +177,9 @@
   ],
 
   "zhipu": [
+    "glm-5.1",
     "glm-5",
+    "glm-4.7-flash",
     "glm-4-plus",
     "glm-4-flash",
     "glm-4-air"

@@ -101,7 +101,7 @@ contextBridge.exposeInMainWorld("hana", {
     return () => ipcRenderer.removeListener("server-restarted", handler);
   },
   // 浏览器查看器窗口
-  openBrowserViewer: () => ipcRenderer.invoke("open-browser-viewer", resolveTheme()),
+  openBrowserViewer: (url) => ipcRenderer.invoke("open-browser-viewer", resolveTheme(), url),
   onBrowserUpdate: (cb) => ipcRenderer.on("browser-update", (_, data) => cb(data)),
   browserGoBack: () => ipcRenderer.invoke("browser-go-back"),
   browserGoForward: () => ipcRenderer.invoke("browser-go-forward"),

@@ -5,16 +5,19 @@
  * useEffect 注入代码块复制按钮。
  */
 
-import { memo, useRef, useEffect, useLayoutEffect } from 'react';
+import { memo, useCallback, useRef, useEffect, useLayoutEffect, useState, type MouseEvent } from 'react';
 import { injectCopyButtons } from '../../utils/format';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { splitGraphemes } from '../../utils/grapheme';
+import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../../utils/link-open';
+import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 import styles from './Chat.module.css';
 
 interface Props {
   html: string;
   className?: string;
   tailFadeCount?: number;
+  linkContext?: LinkOpenContext;
 }
 
 function shouldSkipTailFadeNode(node: Text): boolean {
@@ -77,9 +80,48 @@ function applyTailFade(root: HTMLElement, count: number): void {
   }
 }
 
-export const MarkdownContent = memo(function MarkdownContent({ html, className, tailFadeCount = 0 }: Props) {
+export const MarkdownContent = memo(function MarkdownContent({ html, className, tailFadeCount = 0, linkContext }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   const classes = className ? `md-content ${className}` : 'md-content';
+
+  const findAnchor = useCallback((event: MouseEvent): HTMLAnchorElement | null => {
+    const root = ref.current;
+    const target = event.target;
+    if (!root || !(target instanceof Element)) return null;
+    const anchor = target.closest<HTMLAnchorElement>('a[href]');
+    if (!anchor || !root.contains(anchor)) return null;
+    return anchor;
+  }, []);
+
+  const handleClick = useCallback((event: MouseEvent) => {
+    const anchor = findAnchor(event);
+    if (!anchor) return;
+    const href = anchor.getAttribute('href') || '';
+    const context = {
+      ...linkContext,
+      label: anchor.textContent?.trim() || linkContext?.label,
+    };
+    if (resolveLinkTarget(href, context).kind === 'anchor') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openInternalLink(href, context);
+  }, [findAnchor, linkContext]);
+
+  const handleContextMenu = useCallback((event: MouseEvent) => {
+    const anchor = findAnchor(event);
+    if (!anchor) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setLinkMenu({
+      href: anchor.getAttribute('href') || '',
+      context: {
+        ...linkContext,
+        label: anchor.textContent?.trim() || linkContext?.label,
+      },
+      position: { x: event.clientX, y: event.clientY },
+    });
+  }, [findAnchor, linkContext]);
 
   useLayoutEffect(() => {
     if (!ref.current) return;
@@ -93,10 +135,20 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
   useMermaidDiagrams(ref, [html]);
 
   return (
-    <div
-      ref={ref}
-      className={classes}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        ref={ref}
+        className={classes}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {linkMenu && (
+        <LinkContextMenu
+          state={linkMenu}
+          onClose={() => setLinkMenu(null)}
+        />
+      )}
+    </>
   );
 });

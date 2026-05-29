@@ -1115,17 +1115,18 @@ describe("model sync related routes", () => {
     expect(data.models).toHaveLength(3);
   });
 
-  it("remote 404 falls back to registry", async () => {
+  it("codex oauth model discovery uses the local catalog and never probes ChatGPT backend /models", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.js");
     const app = new Hono();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" }));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
     const engine = withResolveCreds({
       getRegistryModelsForProvider: vi.fn().mockReturnValue([
         { id: "gpt-5.4", name: "GPT-5.4", provider: "openai-codex", contextWindow: 272000, maxOutputTokens: 128000 },
       ]),
       providerRegistry: {
-        getCredentials: () => ({ apiKey: "oauth-token", baseUrl: "https://api.openai.com/v1", api: "openai-codex-responses" }),
+        getCredentials: () => ({ apiKey: "oauth-token", baseUrl: "https://chatgpt.com/backend-api", api: "openai-codex-responses" }),
         getAuthJsonKey: () => "openai-codex",
         getDefaultModels: () => [],
       },
@@ -1141,9 +1142,72 @@ describe("model sync related routes", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
     const data = await res.json();
     expect(data.source).toBe("registry");
     expect(data.models[0].id).toBe("gpt-5.4");
+  });
+
+  it("codex oauth model discovery reports an explicit empty-catalog error without remote fallback", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({ apiKey: "oauth-token", baseUrl: "https://chatgpt.com/backend-api", api: "openai-codex-responses" }),
+        getAuthJsonKey: () => "openai-codex",
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "openai-codex-oauth" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const data = await res.json();
+    expect(data.error).toContain("No models found");
+    expect(data.models).toEqual([]);
+  });
+
+  it("remote 404 falls back to registry for ordinary remote catalogs", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" }));
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([
+        { id: "custom-chat", name: "Custom Chat", provider: "custom-provider", contextWindow: 128000, maxOutputTokens: 8192 },
+      ]),
+      providerRegistry: {
+        getCredentials: () => ({ apiKey: "sk-test", baseUrl: "https://api.example.com/v1", api: "openai-completions" }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "custom-provider" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.source).toBe("registry");
+    expect(data.models[0].id).toBe("custom-chat");
   });
 
   it("remote 401 returns error without fallback", async () => {
@@ -1315,6 +1379,47 @@ describe("model sync related routes", () => {
         maxOutput: 65536,
       },
     ]);
+  });
+
+  it("zhipu model discovery supplements incomplete remote catalogs with curated current GLM defaults", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "glm-5", context_length: 200000, max_output_tokens: 128000 },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({
+          apiKey: "zhipu-key",
+          baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+          api: "openai-completions",
+        }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: (id) => id === "zhipu" ? ["glm-5.1", "glm-5", "glm-4.7-flash"] : [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "zhipu" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.models.slice(0, 3).map(m => m.id)).toEqual(["glm-5", "glm-5.1", "glm-4.7-flash"]);
+    expect(data.models.map(m => m.id)).toEqual(expect.arrayContaining(["glm-5-turbo", "glm-4-flash"]));
   });
 
   it("anthropic-messages falls back to defaults when remote 404s", async () => {

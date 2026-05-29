@@ -487,8 +487,12 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
     if (secretDenied) return secretDenied;
 
     try {
-      const saved = hasMaskedBridgeCredentials(platform, credentials)
-        ? resolveAgent(engine, c).config?.bridge?.[platform] || {}
+      const usesMaskedCredentials = hasMaskedBridgeCredentials(platform, credentials);
+      if (usesMaskedCredentials && !hasExplicitAgentId(c)) {
+        return c.json({ error: "agentId is required when testing masked bridge credentials" }, 400);
+      }
+      const saved = usesMaskedCredentials
+        ? resolveAgentStrict(engine, c).config?.bridge?.[platform] || {}
         : {};
       const effectiveCredentials = resolveBridgeCredentials(platform, credentials, saved);
       if (platform === "telegram") {
@@ -585,6 +589,10 @@ function resolveBridgeCredentials(platform, credentials, existing) {
 function hasMaskedBridgeCredentials(platform, credentials) {
   const secretKeys = bridgeSecretKeys(platform);
   return secretKeys.some((key) => isMaskedSecretValue(credentials?.[key]));
+}
+
+function hasExplicitAgentId(c) {
+  return Boolean(c.req.query("agentId") || c.req.param("agentId"));
 }
 
 function bridgeSecretKeys(platform) {

@@ -13,7 +13,7 @@ interface MediaProvider {
   displayName?: string;
   hasCredentials: boolean;
   unavailableReason?: string | null;
-  models: { id: string; name: string; protocolId?: string }[];
+  models: { id: string; name: string; protocolId?: string; adapterAvailable?: boolean }[];
   availableModels: { id: string; name: string }[];
 }
 
@@ -166,11 +166,17 @@ export function MediaTab() {
                 { value: '', label: '—' },
                 ...allImageModels.map(m => {
                   const providerHasCredentials = providers[m.provider]?.hasCredentials === true;
+                  const adapterAvailable = m.adapterAvailable !== false;
                   const label = `${m.provider} / ${m.name || m.id}`;
+                  const unavailableReason = !providerHasCredentials
+                    ? t('settings.media.credentialMissing')
+                    : !adapterAvailable
+                      ? t('settings.media.adapterMissing')
+                      : '';
                   return {
                     value: `${m.provider}/${m.id}`,
-                    label: providerHasCredentials ? label : `${label} (${t('settings.media.credentialMissing')})`,
-                    disabled: !providerHasCredentials,
+                    label: unavailableReason ? `${label} (${unavailableReason})` : label,
+                    disabled: !providerHasCredentials || !adapterAvailable,
                   };
                 }),
               ]}

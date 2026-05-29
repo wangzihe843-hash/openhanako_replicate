@@ -31,8 +31,8 @@ const ACCESS_PROFILES = Object.freeze({
     deviceKind: "desktop",
     fallbackDisplayName: "Desktop Frontend",
     auditAction: "access.desktop_credential.issue",
-    urlField: "lanServerUrl",
-    localUrlField: "localServerUrl",
+    urlField: "lanDesktopUrl",
+    localUrlField: "localDesktopUrl",
   }),
 });
 
@@ -236,6 +236,11 @@ function createNetworkSummary(network, runtimeState, listLanAddresses) {
   const lanMobileUrl = lanRuntimeActive && lanAddresses.length > 0
     ? buildMobileUrl(lanAddresses[0], actualPort)
     : null;
+  const localDesktopUrl = buildDesktopUrl("127.0.0.1", actualPort);
+  const candidateLanDesktopUrl = buildLanDesktopUrl(lanAddresses, network.listenPort);
+  const lanDesktopUrl = lanRuntimeActive && lanAddresses.length > 0
+    ? buildDesktopUrl(lanAddresses[0], actualPort)
+    : null;
   return {
     mode: network.mode,
     listenHost: network.listenHost,
@@ -253,6 +258,9 @@ function createNetworkSummary(network, runtimeState, listLanAddresses) {
     localMobileUrl,
     candidateLanMobileUrl,
     lanMobileUrl,
+    localDesktopUrl,
+    candidateLanDesktopUrl,
+    lanDesktopUrl,
   };
 }
 
@@ -264,6 +272,10 @@ function buildMobileUrl(host, port) {
   return `http://${formatUrlHost(host)}:${port}/mobile/`;
 }
 
+function buildDesktopUrl(host, port) {
+  return `http://${formatUrlHost(host)}:${port}/desktop/`;
+}
+
 function buildLanServerUrl(lanAddresses, port) {
   const host = Array.isArray(lanAddresses) ? lanAddresses[0] : null;
   return host ? buildServerUrl(host, port) : null;
@@ -272,6 +284,11 @@ function buildLanServerUrl(lanAddresses, port) {
 function buildLanMobileUrl(lanAddresses, port) {
   const host = Array.isArray(lanAddresses) ? lanAddresses[0] : null;
   return host ? buildMobileUrl(host, port) : null;
+}
+
+function buildLanDesktopUrl(lanAddresses, port) {
+  const host = Array.isArray(lanAddresses) ? lanAddresses[0] : null;
+  return host ? buildDesktopUrl(host, port) : null;
 }
 
 function formatUrlHost(host) {

@@ -553,6 +553,43 @@ describe('SessionList context menu', () => {
     });
   });
 
+  it('starts a new session draft inside a cwd project by carrying only cwd', async () => {
+    useStore.setState({
+      sessions: [{
+        path: '/tmp/agents/hana/sessions/cwd-project.jsonl',
+        title: 'Cwd project item',
+        firstMessage: 'hello',
+        modified: new Date().toISOString(),
+        messageCount: 1,
+        agentId: 'hana',
+        agentName: 'Hana',
+        cwd: '/tmp/project',
+        projectId: null,
+        pinnedAt: null,
+        hasSummary: false,
+      }],
+    });
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/session-projects') {
+        return jsonResponse({ catalog: { folders: [], projects: [] } });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+    await switchToProjectView();
+
+    const projectRow = (await screen.findByText('project')).closest('[role="button"]');
+    if (!projectRow) throw new Error('missing cwd project row');
+    const newChatButton = within(projectRow as HTMLElement).getByTitle('sidebar.projects.newChatInProject');
+    fireEvent.click(newChatButton);
+
+    await waitFor(() => {
+      expect(createNewSessionMock).toHaveBeenCalledWith({ cwd: '/tmp/project' });
+    });
+  });
+
   it('shows five project sessions by default and persists the show-all expansion', async () => {
     useStore.setState({
       sessions: Array.from({ length: 6 }, (_, index) => ({

@@ -19,6 +19,9 @@ describe("classifyWin32Command", () => {
 
   it("routes cmd builtins to cmd", () => {
     expect(classifyWin32Command("dir C:\\", { resolveNativePath }).runner).toBe("cmd");
+    expect(classifyWin32Command("echo test", { resolveNativePath })).toEqual(
+      expect.objectContaining({ runner: "cmd", reason: "cmd-builtin" })
+    );
   });
 
   it("routes Windows find syntax to cmd instead of POSIX find", () => {

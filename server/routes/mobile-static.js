@@ -7,15 +7,25 @@ export function createMobileStaticRoute({ distDir } = {}) {
   if (!distDir) throw new Error("distDir required");
   const route = new Hono();
 
-  route.get("/mobile", (c) => serveMobileFile(c, distDir, ""));
-  route.get("/mobile/", (c) => serveMobileFile(c, distDir, ""));
-  route.get("/mobile/*", (c) => serveMobileFile(c, distDir, c.req.path.replace(/^\/mobile\/?/, "")));
+  registerWebClientRoute(route, "/mobile", distDir, "mobile.html");
+  registerWebClientRoute(route, "/desktop", distDir, "mobile.html");
 
   return route;
 }
 
-function serveMobileFile(c, distDir, requestPath) {
-  const relative = requestPath ? safeRelativePath(requestPath) : "mobile.html";
+function registerWebClientRoute(route, basePath, distDir, entryFile) {
+  route.get(basePath, (c) => serveWebClientFile(c, distDir, "", entryFile));
+  route.get(`${basePath}/`, (c) => serveWebClientFile(c, distDir, "", entryFile));
+  route.get(`${basePath}/*`, (c) => {
+    const pattern = new RegExp(`^${basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\/?`);
+    return serveWebClientFile(c, distDir, c.req.path.replace(pattern, ""), entryFile);
+  });
+}
+
+function serveWebClientFile(c, distDir, requestPath, entryFile) {
+  const relative = !requestPath || requestPath === "index.html"
+    ? entryFile
+    : safeRelativePath(requestPath);
   if (!relative) return c.body(null, 404);
   const filePath = path.join(distDir, relative);
   const safePath = resolveExistingInside(distDir, filePath);
@@ -23,7 +33,7 @@ function serveMobileFile(c, distDir, requestPath) {
   const stat = fs.statSync(safePath);
   if (!stat.isFile()) return c.body(null, 404);
   c.header("Content-Type", guessMime(safePath));
-  c.header("Cache-Control", relative === "mobile.html"
+  c.header("Cache-Control", relative === entryFile
     ? "no-cache"
     : "public, max-age=31536000, immutable");
   return c.body(fs.readFileSync(safePath));

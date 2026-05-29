@@ -371,6 +371,10 @@ describe("builtin default models", () => {
     const reg = new ProviderRegistry(tmpDir);
     expect(reg.get("gemini").baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(reg.get("gemini").api).toBe("google-generative-ai");
+    expect(reg.getDefaultModels("gemini")).toEqual([
+      "gemini-3-pro-preview",
+      "gemini-3-flash-preview",
+    ]);
   });
 });
 

@@ -4,13 +4,36 @@ import path from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-function makeEngine(tmpDir, disabled = []) {
+const PNG_HEADER = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x04, 0x00,
+]);
+
+function makeEngine(tmpDir, options = {}) {
+  const disabled = Array.isArray(options) ? options : (options.disabled || []);
   const agent = {
     id: "agent-1",
     name: "Hana",
+    agentName: "Hana",
     config: { tools: { disabled } },
   };
   const emitEvent = vi.fn();
+  const executeIsolated = vi.fn(async () => ({ sessionPath: path.join(tmpDir, "agents", "agent-1", "activity", "s.jsonl") }));
+  const activityStore = {
+    add: vi.fn((activity) => activity),
+    update: vi.fn((id, patch) => ({ id, ...patch })),
+  };
+  const imageGenCtx = options.imageGenCtx ?? {
+    config: { get: vi.fn(() => undefined) },
+    _mediaGen: {
+      registry: {
+        getProtocol: vi.fn(() => null),
+        get: vi.fn(() => null),
+      },
+    },
+    bus: { request: vi.fn(async () => ({})) },
+  };
   return {
     deskCwd: tmpDir,
     homeCwd: tmpDir,
@@ -18,10 +41,15 @@ function makeEngine(tmpDir, disabled = []) {
     agent,
     agentsDir: path.join(tmpDir, "agents"),
     getAgent: () => agent,
+    getPrimaryAgentId: () => options.primaryAgentId ?? agent.id,
+    getActivityStore: () => activityStore,
+    executeIsolated,
     pluginManager: {
-      getAllTools: () => [{ _pluginId: "beautify", name: "beautify_create-cover" }],
+      getAllTools: () => options.pluginTools ?? [{ _pluginId: "beautify", name: "beautify_create-cover" }],
+      getPlugin: (id) => (id === "image-gen" ? { ctx: imageGenCtx, status: "loaded" } : null),
     },
     emitEvent,
+    _test: { executeIsolated, activityStore, imageGenCtx },
   };
 }
 
@@ -40,11 +68,7 @@ describe("desk beautify cover apply route", () => {
     const notePath = path.join(tmpDir, "note.md");
     const imagePath = path.join(tmpDir, "cover.png");
     fs.writeFileSync(notePath, "# Demo\n", "utf-8");
-    fs.writeFileSync(imagePath, Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-      0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x04, 0x00,
-    ]));
+    fs.writeFileSync(imagePath, PNG_HEADER);
 
     const { createDeskRoute } = await import("../server/routes/desk.js");
     const engine = makeEngine(tmpDir);
@@ -54,7 +78,7 @@ describe("desk beautify cover apply route", () => {
     const res = await app.request("/api/desk/beautify/cover/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filePath: notePath, imageFilePath: imagePath, agentId: "agent-1" }),
+      body: JSON.stringify({ filePath: notePath, imageFilePath: imagePath }),
     });
 
     expect(res.status).toBe(200);
@@ -73,11 +97,11 @@ describe("desk beautify cover apply route", () => {
     }, null);
   });
 
-  it("follows the beautify tool switch for direct UI apply", async () => {
+  it("allows direct UI local image apply when the Agent beautify tool is disabled", async () => {
     const notePath = path.join(tmpDir, "note.md");
     const imagePath = path.join(tmpDir, "cover.png");
     fs.writeFileSync(notePath, "# Demo\n", "utf-8");
-    fs.writeFileSync(imagePath, "png", "utf-8");
+    fs.writeFileSync(imagePath, PNG_HEADER);
 
     const { createDeskRoute } = await import("../server/routes/desk.js");
     const app = new Hono();
@@ -86,11 +110,11 @@ describe("desk beautify cover apply route", () => {
     const res = await app.request("/api/desk/beautify/cover/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filePath: notePath, imageFilePath: imagePath, agentId: "agent-1" }),
+      body: JSON.stringify({ filePath: notePath, imageFilePath: imagePath }),
     });
 
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "beautify tool is disabled for this agent" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
   });
 
   it("applies a built-in cover gallery preset through a whitelist id", async () => {
@@ -109,7 +133,6 @@ describe("desk beautify cover apply route", () => {
       body: JSON.stringify({
         filePath: notePath,
         presetId: COVER_GALLERY_PRESETS[0].id,
-        agentId: "agent-1",
       }),
     });
 
@@ -129,6 +152,70 @@ describe("desk beautify cover apply route", () => {
     }, null);
   });
 
+  it("allows built-in cover gallery preset apply when the Agent beautify tool is disabled", async () => {
+    const notePath = path.join(tmpDir, "note.md");
+    fs.writeFileSync(notePath, "# Demo\n", "utf-8");
+
+    const { COVER_GALLERY_PRESETS } = await import("../shared/cover-gallery-presets.js");
+    const { createDeskRoute } = await import("../server/routes/desk.js");
+    const app = new Hono();
+    app.route("/api", createDeskRoute(makeEngine(tmpDir, { disabled: ["beautify"] }), null));
+
+    const res = await app.request("/api/desk/beautify/cover/preset/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filePath: notePath,
+        presetId: COVER_GALLERY_PRESETS[0].id,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+  });
+
+  it("reports system cover availability separately from primary-Agent generation availability", async () => {
+    const { createDeskRoute } = await import("../server/routes/desk.js");
+    const app = new Hono();
+    app.route("/api", createDeskRoute(makeEngine(tmpDir, { disabled: ["beautify"] }), null));
+
+    const res = await app.request("/api/desk/beautify/status");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      systemCover: { available: true },
+      agentGenerate: {
+        enabled: false,
+        executorAgentId: "agent-1",
+        disabledReason: "beautify-disabled",
+      },
+    });
+  });
+
+  it("rejects Agent cover generation before creating an activity when default image model is missing", async () => {
+    const notePath = path.join(tmpDir, "note.md");
+    fs.writeFileSync(notePath, "# Demo\n", "utf-8");
+
+    const { createDeskRoute } = await import("../server/routes/desk.js");
+    const engine = makeEngine(tmpDir);
+    const app = new Hono();
+    app.route("/api", createDeskRoute(engine, null));
+
+    const res = await app.request("/api/desk/beautify/cover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath: notePath }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "default image model is not configured",
+      reason: "default-image-model-missing",
+    });
+    expect(engine._test.activityStore.add).not.toHaveBeenCalled();
+    expect(engine._test.executeIsolated).not.toHaveBeenCalled();
+  });
+
   it("rejects unknown built-in cover gallery preset ids", async () => {
     const notePath = path.join(tmpDir, "note.md");
     fs.writeFileSync(notePath, "# Demo\n", "utf-8");
@@ -143,7 +230,6 @@ describe("desk beautify cover apply route", () => {
       body: JSON.stringify({
         filePath: notePath,
         presetId: "../private",
-        agentId: "agent-1",
       }),
     });
 

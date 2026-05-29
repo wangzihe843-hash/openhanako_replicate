@@ -23,6 +23,7 @@ export interface SessionSlice {
   setSessionStream: (sessionPath: string, stream: SessionStream) => void;
   removeSessionStream: (sessionPath: string) => void;
   setPendingNewSession: (pending: boolean) => void;
+  setPendingProjectId: (projectId: string | null) => void;
   setMemoryEnabled: (enabled: boolean) => void;
   setSessionTodos: (todos: TodoItem[]) => void;
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
@@ -55,6 +56,7 @@ export const createSessionSlice = (
       return { sessionStreams: rest };
     }),
   setPendingNewSession: (pending) => set({ pendingNewSession: pending }),
+  setPendingProjectId: (projectId) => set({ pendingProjectId: projectId }),
   setMemoryEnabled: (enabled) => set({ memoryEnabled: enabled }),
   // 兼容：旧调用方仍可用，写入当前 session
   setSessionTodos: (todos) =>

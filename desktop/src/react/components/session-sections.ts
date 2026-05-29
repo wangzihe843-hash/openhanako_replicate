@@ -1,4 +1,11 @@
 import type { Session } from '../types';
+import type {
+  SessionProject,
+  SessionProjectCatalog,
+  SessionProjectFolder,
+  SessionProjectFolderGroup,
+  SessionProjectGroup,
+} from '../types/session-projects';
 import {
   UNCATEGORIZED_PROJECT_ID,
   autoProjectIdForCwd as makeAutoProjectIdForCwd,
@@ -6,47 +13,21 @@ import {
   isAutoProjectId,
 } from '../../../../shared/session-projects.js';
 
+export type {
+  SessionProject,
+  SessionProjectCatalog,
+  SessionProjectFolder,
+  SessionProjectFolderGroup,
+  SessionProjectGroup,
+} from '../types/session-projects';
+
 export type SessionViewMode = 'time' | 'project';
 export type DateGroup = 'today' | 'thisWeek' | 'earlier';
-
-export interface SessionProject {
-  id: string;
-  name: string;
-  folderId: string | null;
-  order: number;
-}
-
-export interface SessionProjectFolder {
-  id: string;
-  name: string;
-  order: number;
-}
-
-export interface SessionProjectCatalog {
-  folders?: SessionProjectFolder[];
-  projects: SessionProject[];
-}
-
-export interface SessionProjectGroup {
-  id: string;
-  name: string;
-  folderId: string | null;
-  order: number;
-  source: 'catalog' | 'cwd';
-  items: Session[];
-}
 
 export interface SessionProjectView {
   pinned: Session[];
   rootProjects: SessionProjectGroup[];
   folders: SessionProjectFolderGroup[];
-}
-
-export interface SessionProjectFolderGroup {
-  id: string;
-  name: string;
-  order: number;
-  projects: SessionProjectGroup[];
 }
 
 export type SessionSection =

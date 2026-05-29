@@ -42,7 +42,7 @@ vi.mock('@/ui', () => ({
   SelectWidget: ({ value, onChange, options }: {
     value: string;
     onChange: (value: string) => void;
-    options: Array<{ value: string; label: string }>;
+    options: Array<{ value: string; label: string; disabled?: boolean }>;
   }) => (
     <select
       aria-label="settings.media.defaultModel"
@@ -50,7 +50,7 @@ vi.mock('@/ui', () => ({
       onChange={(event) => onChange(event.target.value)}
     >
       {options.map(option => (
-        <option key={option.value} value={option.value}>{option.label}</option>
+        <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>
       ))}
     </select>
   ),
@@ -171,5 +171,33 @@ describe('MediaTab image-gen config', () => {
     render(<MediaTab />);
 
     expect(await screen.findByTestId('media-provider-detail')).toHaveTextContent('volcengine');
+  });
+
+  it('does not offer image models with missing runtime adapters as selectable defaults', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            axis: {
+              providerId: 'axis',
+              displayName: 'Axis',
+              hasCredentials: true,
+              models: [{ id: 'gpt-image-2', name: 'GPT Image 2', protocolId: 'axis-images', adapterAvailable: false }],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const select = await screen.findByLabelText('settings.media.defaultModel');
+    const option = Array.from(select.querySelectorAll('option')).find((item) => item.value === 'axis/gpt-image-2');
+    expect(option).toBeTruthy();
+    expect(option).toBeDisabled();
+    expect(option?.textContent).toContain('settings.media.adapterMissing');
   });
 });

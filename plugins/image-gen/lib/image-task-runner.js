@@ -164,6 +164,22 @@ async function targetFromMediaRef(input, registry, submitCtx, ref, { strict = fa
   return targetFromAdapter(adapter, input, media);
 }
 
+export async function validateImageModelRef(ref, registry, submitCtx) {
+  const target = await targetFromMediaRef({}, registry, submitCtx, {
+    providerId: ref?.providerId || ref?.provider,
+    modelId: ref?.modelId || ref?.id || ref?.model,
+    credentialLaneId: ref?.credentialLaneId,
+  }, { strict: true });
+  return {
+    providerId: target.providerId,
+    modelId: target.modelId,
+    protocolId: target.protocolId,
+    adapterId: target.adapter?.id || null,
+    credentialLaneId: target.credentialLaneId || null,
+    credentialProviderId: target.credentialProviderId || null,
+  };
+}
+
 async function targetFromExplicitProvider(input, registry, submitCtx) {
   const mediaTarget = await targetFromMediaRef(input, registry, submitCtx, {
     providerId: input.provider,

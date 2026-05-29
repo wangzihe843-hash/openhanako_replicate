@@ -824,6 +824,31 @@ this.register(
 
 **软依赖**：manifest 的 `depends.capabilities` 只是提示，系统不会因缺失而阻止安装。Plugin 代码优先用 `bus.getCapability(type)?.available`，旧插件也可以继续用 `bus.hasHandler()` 在运行时做优雅降级。
 
+### LLM 用量账本
+
+宿主会把 LLM 请求用量持久化到本地账本。插件如需读取历史用量或订阅新增用量，必须在 `manifest.json` 中声明 `usage.read` 权限：
+
+```json
+{
+  "permissions": ["usage.read"]
+}
+```
+
+```js
+import { listUsageEntries, subscribeUsageEvents } from "@hana/plugin-runtime";
+
+const usage = await listUsageEntries(this.ctx, {
+  since: "2026-05-01T00:00:00.000Z",
+  limit: 100,
+});
+
+this.register(subscribeUsageEvents(this.ctx, (entry, meta) => {
+  this.ctx.log.info("new usage", entry.requestId, meta.sessionPath);
+}));
+```
+
+底层能力名是 `usage:list`，实时事件名是 `llm_usage`。受限插件没有 `usage.read` 时，宿主会拒绝请求，并过滤全局订阅里的 `llm_usage` 事件。
+
 ### 动态工具注册 ⚡ full-access
 
 Plugin 可以在 `onload()` 中通过 `ctx.registerTool()` 动态注册工具，适用于运行时才知道有哪些工具的场景（如随包连接器里的 MCP bridge）：

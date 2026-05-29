@@ -43,24 +43,3 @@
     width: 12px;
     height: 12px;
 }
-
-.tooltip {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 7px);
-    transform: translateX(-50%);
-    white-space: nowrap;
-    padding: 5px 8px;
-    color: var(--bg);
-    background: var(--text);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    line-height: 1.2;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.16);
-    pointer-events: none;
-}
-
-.surface[data-origin="top-center"] .tooltip {
-    top: calc(100% + 7px);
-    bottom: auto;
-}

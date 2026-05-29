@@ -77,6 +77,35 @@ export default definePlugin({
 Use `ctx.bus.listCapabilities?.()` or `ctx.bus.getCapability?.(type)` to inspect
 the host EventBus capability directory before making optional requests.
 
+## Usage ledger helpers
+
+Plugins that declare `usage.read` can inspect persisted LLM usage records and
+subscribe to new usage events:
+
+```ts
+import { definePlugin, listUsageEntries, subscribeUsageEvents } from '@hana/plugin-runtime';
+
+export default definePlugin({
+  async onload(ctx, { register }) {
+    const usage = await listUsageEntries(ctx, {
+      since: '2026-05-01T00:00:00.000Z',
+      limit: 100,
+    });
+
+    ctx.log.info('usage records', usage.entries.length);
+
+    register(subscribeUsageEvents(ctx, (entry, meta) => {
+      ctx.log.info('new usage entry', entry.requestId, meta.sessionPath);
+    }));
+  },
+});
+```
+
+`listUsageEntries()` calls the host `usage:list` capability. `subscribeUsageEvents()`
+subscribes to live `llm_usage` events. Restricted plugins must include
+`"permissions": ["usage.read"]` in `manifest.json`; otherwise the host rejects
+the request or subscription.
+
 ## SessionFile media helpers
 
 ```ts

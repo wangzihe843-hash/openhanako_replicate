@@ -32,6 +32,10 @@
     --link: var(--accent, #537D96);
     --link-hover: var(--accent-hover, var(--link));
     --link-rgb: var(--accent-rgb, 83, 125, 150);
+    --tooltip-bg: var(--text);
+    --tooltip-text: var(--bg);
+    --tooltip-border: transparent;
+    --tooltip-shadow: rgba(0, 0, 0, 0.16);
 
     /* 动效 · 时长（三档：所有 transition / 短动画归到这三档） */
     --duration-instant: 0.1s;       /* 瞬：hover、关闭、退场、撤销 */
@@ -84,6 +88,10 @@
 html[data-theme="midnight"],
 html[data-theme="midnight-contrast"] {
     --paper-texture-card-blend-mode: normal;
+    --tooltip-bg: rgba(238, 235, 226, 0.94);
+    --tooltip-text: #26343D;
+    --tooltip-border: rgba(255, 255, 255, 0.24);
+    --tooltip-shadow: rgba(0, 0, 0, 0.34);
 }
 
 /* ① Surface 层：铺底元素直接叠纹理 */

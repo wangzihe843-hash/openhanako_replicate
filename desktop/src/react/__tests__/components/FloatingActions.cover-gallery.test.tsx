@@ -22,6 +22,7 @@ describe('FloatingActions cover gallery', () => {
   beforeEach(() => {
     window.t = ((key: string) => key) as typeof window.t;
     window.platform = {
+      selectFiles: vi.fn(async () => ['/tmp/local-cover.png']),
       readFile: vi.fn(async () => null),
       readFileSnapshot: vi.fn(async () => ({
         content: '---\ncover:\n  image: 文本附件/demo-cover.jpg\n---\n# Demo\n',
@@ -100,7 +101,6 @@ describe('FloatingActions cover gallery', () => {
           body: JSON.stringify({
             filePath: '/tmp/note.md',
             presetId: COVER_GALLERY_PRESETS[0].id,
-            agentId: 'agent-1',
           }),
         }),
       );
@@ -110,6 +110,94 @@ describe('FloatingActions cover gallery', () => {
       const item = useStore.getState().previewItems[0];
       expect(item.content).toContain('cover:');
       expect(item.fileVersion).toBe('v-cover');
+    });
+  });
+
+  it('keeps system cover actions visible when Agent generation is disabled', async () => {
+    mocks.hanaFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/desk/beautify/status')) {
+        return new Response(JSON.stringify({
+          systemCover: { available: true },
+          agentGenerate: {
+            available: true,
+            enabled: false,
+            executorAgentId: 'agent-1',
+            executorAgentName: 'Hana',
+            disabledReason: 'beautify-disabled',
+            message: 'beautify tool is disabled for this agent',
+            settingsTarget: 'agent-tools',
+          },
+          available: true,
+          enabled: false,
+          agentId: 'agent-1',
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, cover: { image: '文本附件/demo-cover.jpg' } }), { status: 200 });
+    });
+
+    render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
+
+    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('制作 cover'));
+
+    expect(screen.getByRole('button', { name: 'Agent 生成' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '小花美术馆' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '自己上传' })).toBeEnabled();
+  });
+
+  it('does not start Agent generation when the generation menu item is disabled', async () => {
+    mocks.hanaFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/desk/beautify/status')) {
+        return new Response(JSON.stringify({
+          systemCover: { available: true },
+          agentGenerate: {
+            available: true,
+            enabled: false,
+            executorAgentId: 'agent-1',
+            disabledReason: 'default-image-model-missing',
+            settingsTarget: 'media',
+          },
+          available: true,
+          enabled: false,
+          agentId: 'agent-1',
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
+
+    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('制作 cover'));
+    const generateButton = screen.getByRole('button', { name: 'Agent 生成' });
+    fireEvent.mouseEnter(generateButton.parentElement as HTMLElement);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('需要先在设置里配置默认生图模型。');
+    fireEvent.click(generateButton);
+
+    expect(mocks.hanaFetch).not.toHaveBeenCalledWith(
+      '/api/desk/beautify/cover',
+      expect.anything(),
+    );
+  });
+
+  it('applies an uploaded cover without sending agent scope', async () => {
+    render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
+
+    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('制作 cover'));
+    fireEvent.click(screen.getByText('自己上传'));
+
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith(
+        '/api/desk/beautify/cover/apply',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            filePath: '/tmp/note.md',
+            imageFilePath: '/tmp/local-cover.png',
+          }),
+        }),
+      );
     });
   });
 });

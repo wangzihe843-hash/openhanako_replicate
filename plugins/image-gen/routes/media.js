@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
+import { createSubmitContext, validateImageModelRef } from "../lib/image-task-runner.js";
 
 const MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", mp4: "video/mp4", mov: "video/quicktime" };
 
@@ -82,7 +83,7 @@ export default function (app, ctx) {
   app.get("/providers", async (c) => {
     try {
       const { providers } = await ctx.bus.request("provider:media-providers", { capability: "image_generation" });
-      return c.json({ providers: providers || {}, config: ctx.config.get() || {} });
+      return c.json({ providers: annotateAdapterAvailability(providers || {}, ctx), config: ctx.config.get() || {} });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -95,6 +96,8 @@ export default function (app, ctx) {
       const values = body?.values && typeof body.values === "object" && !Array.isArray(body.values)
         ? body.values
         : body;
+      const defaultValidationError = await validateDefaultImageModelConfig(values, ctx);
+      if (defaultValidationError) return c.json({ error: defaultValidationError }, 400);
       for (const [key, value] of Object.entries(values || {})) {
         ctx.config.set(key, value === null ? undefined : value);
       }
@@ -136,6 +139,48 @@ export default function (app, ctx) {
       return c.json({ error: err.message }, 500);
     }
   });
+}
+
+function adapterAvailableForModel(providerId, model, ctx) {
+  const registry = ctx?._mediaGen?.registry;
+  if (!registry) return true;
+  if (!model?.protocolId) return false;
+  return Boolean(registry.getProtocol?.(model.protocolId) || registry.get?.(providerId));
+}
+
+function annotateAdapterAvailability(providers, ctx) {
+  const next = {};
+  for (const [providerId, provider] of Object.entries(providers || {})) {
+    next[providerId] = {
+      ...provider,
+      models: (provider?.models || []).map((model) => ({
+        ...model,
+        adapterAvailable: adapterAvailableForModel(providerId, model, ctx),
+      })),
+    };
+  }
+  return next;
+}
+
+async function validateDefaultImageModelConfig(values, ctx) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
+  if (!Object.prototype.hasOwnProperty.call(values, "defaultImageModel")) return null;
+  const value = values.defaultImageModel;
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "defaultImageModel must be an object with provider and id";
+  }
+  const provider = typeof value.provider === "string" ? value.provider.trim() : "";
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  if (!provider || !id) return "defaultImageModel requires provider and id";
+  const registry = ctx?._mediaGen?.registry;
+  if (!registry) return null;
+  try {
+    await validateImageModelRef({ providerId: provider, modelId: id }, registry, createSubmitContext(ctx));
+    return null;
+  } catch (err) {
+    return err?.message || String(err);
+  }
 }
 
 /** Open a file with the system default application (cross-platform). */

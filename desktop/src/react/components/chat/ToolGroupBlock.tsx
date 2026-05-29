@@ -6,6 +6,8 @@ import { memo, useState, useCallback, useEffect } from 'react';
 import styles from './Chat.module.css';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolDetail } from '../../utils/message-parser';
+import { openInternalLink } from '../../utils/link-open';
+import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 
 import type { ToolCall } from '../../stores/chat-types';
 
@@ -81,11 +83,7 @@ function handleDetailClick(e: React.MouseEvent, detail: ToolDetail) {
   e.preventDefault();
   e.stopPropagation();
   if (!detail.href) return;
-  if (detail.hrefType === 'file') {
-    window.platform?.showInFinder?.(detail.href);
-  } else {
-    window.platform?.openExternal?.(detail.href);
-  }
+  void openInternalLink(detail.href, { origin: 'session' });
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -117,6 +115,7 @@ function waitToolDetail(tool: ToolCall, now: number): ToolDetail {
 
 const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
   const [now, setNow] = useState(() => Date.now());
+  const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   useEffect(() => {
     if (tool.name !== 'wait' || tool.done) return;
     if (finiteNumber(tool.args?.startedAt) === null || finiteNumber(tool.args?.durationMs) === null) return;
@@ -144,6 +143,16 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
               className={`${styles.toolDetail} ${styles.toolDetailLink}`}
               title={detailTitle}
               onClick={(e) => handleDetailClick(e, detail)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!detail.href) return;
+                setLinkMenu({
+                  href: detail.href,
+                  context: { origin: 'session', label: detail.text },
+                  position: { x: e.clientX, y: e.clientY },
+                });
+              }}
             >
               {detail.text}
             </span>
@@ -160,6 +169,12 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
           <span className={styles.toolDots} />
         )}
       </div>
+      {linkMenu && (
+        <LinkContextMenu
+          state={linkMenu}
+          onClose={() => setLinkMenu(null)}
+        />
+      )}
     </>
   );
 });

@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createUsageLedger } from "../lib/llm/usage-ledger.js";
 
 function sessionContext(sessionPath = "/tmp/session.jsonl") {
@@ -18,6 +21,13 @@ function sessionContext(sessionPath = "/tmp/session.jsonl") {
 }
 
 describe("Usage ledger", () => {
+  let tmpDir = null;
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
   it("records a completed request with normalized usage and emits llm_usage", () => {
     const events = [];
     const ledger = createUsageLedger({
@@ -132,5 +142,35 @@ describe("Usage ledger", () => {
     });
 
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("unknown usage context"));
+  });
+
+  it("persists completed entries so a new ledger can restore them after restart", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-usage-ledger-"));
+    const storagePath = path.join(tmpDir, "usage-ledger.json");
+    const ledger = createUsageLedger({
+      storagePath,
+      requestIdFactory: () => "req-persisted",
+      now: () => 1_000,
+    });
+
+    ledger.record({
+      model: { provider: "openai", modelId: "gpt-5", api: "openai-completions" },
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      usageContext: sessionContext("/sessions/persisted.jsonl"),
+    });
+
+    const restored = createUsageLedger({ storagePath });
+
+    expect(restored.list({}).entries).toMatchObject([
+      {
+        requestId: "req-persisted",
+        attribution: { kind: "session", sessionPath: "/sessions/persisted.jsonl" },
+        usage: { totalTokens: 12 },
+      },
+    ]);
+    expect(JSON.parse(fs.readFileSync(storagePath, "utf-8"))).toMatchObject({
+      version: 1,
+      entries: [{ requestId: "req-persisted" }],
+    });
   });
 });

@@ -210,6 +210,30 @@ describe('server connection helpers', () => {
     });
   });
 
+  it('normalizes the browser desktop PWA URL when creating a manual LAN connection', () => {
+    const connection = createDeviceServerConnection({
+      baseUrl: '192.168.31.75:14500/desktop/',
+      credential: 'hana_dev_remote_secret',
+      identity: {
+        connectionKind: 'lan',
+        serverId: 'server_lan',
+        serverNodeId: 'node_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Server',
+        trustState: 'lan',
+        authState: 'paired',
+        credentialKind: 'device_credential',
+        capabilities: ['chat', 'resources', 'files'],
+      },
+    });
+
+    expect(connection).toMatchObject({
+      baseUrl: 'http://192.168.31.75:14500',
+      wsUrl: 'ws://192.168.31.75:14500',
+    });
+  });
+
   it('logs in once before creating a manual LAN connection so WebSocket can use the web session cookie', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (url === 'http://192.168.31.75:14500/api/web-auth/login') {

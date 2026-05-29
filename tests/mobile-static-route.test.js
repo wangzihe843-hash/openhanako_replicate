@@ -52,4 +52,30 @@ describe("mobile static route", () => {
     const traversal = await app.request("/mobile/assets/../mobile.html");
     expect(traversal.status).toBe(404);
   });
+
+  it("serves the same PWA shell from /desktop for browser access on another computer", async () => {
+    tmpDir = makeTmpDir();
+    fs.mkdirSync(path.join(tmpDir, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "mobile.html"), "<!doctype html><title>Mobile</title>", "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "assets", "mobile.js"), "console.log('mobile')", "utf-8");
+    const { createMobileStaticRoute } = await import("../server/routes/mobile-static.js");
+    const app = new Hono();
+    app.route("", createMobileStaticRoute({ distDir: tmpDir }));
+
+    const entry = await app.request("/desktop/");
+    expect(entry.status).toBe(200);
+    expect(entry.headers.get("cache-control")).toBe("no-cache");
+    expect(await entry.text()).toContain("<title>Mobile</title>");
+
+    const indexAlias = await app.request("/desktop/index.html");
+    expect(indexAlias.status).toBe(200);
+    expect(await indexAlias.text()).toContain("<title>Mobile</title>");
+
+    const asset = await app.request("/desktop/assets/mobile.js");
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("cache-control")).toContain("immutable");
+
+    const traversal = await app.request("/desktop/assets/../mobile.html");
+    expect(traversal.status).toBe(404);
+  });
 });

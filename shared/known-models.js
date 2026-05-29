@@ -74,3 +74,18 @@ export function lookupKnown(provider, modelId) {
     || (bare ? _lookupCaseInsensitive(_fallbacksCaseInsensitive, bare) : null)
     || null;
 }
+
+/**
+ * 列出某 provider 在词典中显式声明的模型 ID。
+ * 调用方只能拿到 ID 列表，不能依赖 known-models.json 的内部结构。
+ * @param {string} provider
+ * @returns {string[]}
+ */
+export function listKnownProviderModels(provider) {
+  if (typeof provider !== "string" || provider.length === 0) return [];
+  _ensureLoaded();
+  const providerModels = _raw[provider];
+  return providerModels && typeof providerModels === "object"
+    ? Object.keys(providerModels)
+    : [];
+}

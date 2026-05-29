@@ -9,6 +9,7 @@ import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
 import { buildProviderAuthHeaders, normalizeProviderBaseUrlForApi, probeProvider } from "../../lib/llm/provider-client.js";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.js";
+import { listKnownProviderModels, lookupKnown } from "../../shared/known-models.js";
 import { clearConfigCache } from "../../lib/memory/config-loader.js";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue } from "../../shared/secret-custody.js";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
@@ -244,6 +245,33 @@ export function createProvidersRoute(engine) {
     return payload;
   }
 
+  function knownCatalogModel(provider, id) {
+    const known = lookupKnown(provider, id);
+    return {
+      id,
+      name: known?.name || id,
+      context: known?.context ?? null,
+      maxOutput: known?.maxOutput ?? null,
+    };
+  }
+
+  function supplementRemoteModels(name, remoteModels) {
+    if (name !== "zhipu") return remoteModels;
+    const seen = new Set();
+    const merged = [];
+    const append = (model) => {
+      const id = typeof model === "string" ? model : model?.id;
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      merged.push(typeof model === "string" ? knownCatalogModel(name, id) : model);
+    };
+
+    for (const model of remoteModels) append(model);
+    for (const id of engine.providerRegistry.getDefaultModels?.(name) || []) append(id);
+    for (const id of listKnownProviderModels(name)) append(id);
+    return merged;
+  }
+
   async function refreshProviderModels() {
     clearConfigCache();
     await engine.onProviderChanged();
@@ -323,6 +351,10 @@ export function createProvidersRoute(engine) {
     });
     const effectiveApi = explicitApi || saved.api || "";
 
+    if (effectiveApi === "openai-codex-responses") {
+      return c.json(registryOrDefaultsFallback(name));
+    }
+
     // ── 2. 远程 list models（baseUrl 为空时跳过）──
     if (effectiveBaseUrl) {
       try {
@@ -348,7 +380,7 @@ export function createProvidersRoute(engine) {
 
         if (res.ok) {
           const data = await res.json();
-          const remoteModels = normalizeRemoteModels(data, effectiveApi);
+          const remoteModels = supplementRemoteModels(name, normalizeRemoteModels(data, effectiveApi));
           const { models, ignoredModels } = filterDiscoveredProviderModels(name, remoteModels, {
             baseUrl: effectiveBaseUrl,
           });

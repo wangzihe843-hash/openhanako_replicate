@@ -1,4 +1,7 @@
 import { Hono } from "hono";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, expect, it } from "vitest";
 import { createHtmlPreviewRoute } from "../server/routes/html-preview.js";
 
@@ -35,13 +38,55 @@ describe("HTML preview route", () => {
     expect(rendered.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(rendered.headers.get("X-Content-Type-Options")).toBe("nosniff");
     const csp = rendered.headers.get("Content-Security-Policy") || "";
+    expect(csp).toContain("base-uri 'self'");
     expect(csp).toContain("script-src 'unsafe-inline' https:");
     expect(csp).toContain("style-src 'unsafe-inline' https:");
     expect(csp).toContain("font-src https: data:");
-    expect(csp).toContain("img-src https: data: blob:");
+    expect(csp).toContain("img-src 'self' https: data: blob:");
+    expect(csp).toContain("media-src 'self' https: data: blob:");
     expect(csp).toContain("connect-src 'none'");
     expect(csp).not.toContain("script-src 'self'");
     expect(await rendered.text()).toBe(html);
+  });
+
+  it("adds a token-scoped asset base for HTML files so relative attachment images load through the preview route", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hana-html-preview-"));
+    const sourceFilePath = path.join(tmp, "demo.html");
+    const assetDir = path.join(tmp, "assets");
+    fs.mkdirSync(assetDir, { recursive: true });
+    fs.writeFileSync(sourceFilePath, '<img src="./assets/pic.png">');
+    fs.writeFileSync(path.join(assetDir, "pic.png"), Buffer.from("PNG"));
+
+    const app = makeApp({
+      randomId: () => "pv_assets",
+      randomToken: () => "preview_secret",
+      now: () => 1000,
+    });
+
+    const register = await app.request("http://127.0.0.1:14500/api/preview/html", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "demo.html",
+        content: '<html><head><title>Demo</title></head><body><img src="./assets/pic.png"></body></html>',
+        sourceFilePath,
+      }),
+    });
+    const registered = await register.json();
+    const rendered = await app.request(registered.previewUrl);
+    const html = await rendered.text();
+
+    expect(html).toContain('<base href="http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/">');
+    expect(html.indexOf('<base href="http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/">'))
+      .toBeLessThan(html.indexOf('<title>Demo</title>'));
+
+    const asset = await app.request("http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/assets/pic.png");
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("Content-Type")).toContain("image/png");
+    expect(await asset.text()).toBe("PNG");
+
+    const traversal = await app.request("http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/../demo.html");
+    expect(traversal.status).toBe(404);
   });
 
   it("requires the per-preview token and expires entries from memory", async () => {

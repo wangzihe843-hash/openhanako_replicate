@@ -331,6 +331,44 @@ function decodeHttpConfigBody(body) {
   };
 }
 
+function validateImageGenDefaultImageModel(engine, values) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
+  if (!Object.prototype.hasOwnProperty.call(values, "defaultImageModel")) return null;
+  const value = values.defaultImageModel;
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "defaultImageModel must be an object with provider and id";
+  }
+  const providerId = typeof value.provider === "string" ? value.provider.trim() : "";
+  const modelId = typeof value.id === "string" ? value.id.trim() : "";
+  if (!providerId || !modelId) return "defaultImageModel requires provider and id";
+
+  const providerRegistry = engine?.providerRegistry;
+  if (typeof providerRegistry?.resolveMediaModel !== "function") return null;
+
+  let resolved;
+  try {
+    resolved = providerRegistry.resolveMediaModel({
+      providerId,
+      modelId,
+      capability: "image_generation",
+    });
+  } catch (err) {
+    return err?.message || String(err);
+  }
+
+  const protocolId = resolved?.model?.protocolId;
+  if (!protocolId) return `Media model "${providerId}/${modelId}" missing protocolId`;
+
+  const imageGenCtx = engine?.pluginManager?.getPlugin?.("image-gen")?.ctx;
+  const adapterRegistry = imageGenCtx?._mediaGen?.registry;
+  if (!adapterRegistry) return null;
+
+  const adapter = adapterRegistry.getProtocol?.(protocolId) || adapterRegistry.get?.(providerId);
+  if (!adapter) return `No image generation adapter registered for protocol "${protocolId}"`;
+  return null;
+}
+
 async function downloadMarketplaceRelease({ engine, plugin }) {
   const dist = plugin?.distribution;
   if (!dist || dist.kind !== "release") {
@@ -822,6 +860,10 @@ export function createPluginsRoute(engine) {
     const body = await c.req.json();
     try {
       const { values, scope, agentId, sessionPath } = decodeHttpConfigBody(body);
+      if (c.req.param("id") === "image-gen") {
+        const imageDefaultError = validateImageGenDefaultImageModel(engine, values);
+        if (imageDefaultError) return c.json({ error: imageDefaultError }, 400);
+      }
       const config = pm.setConfig(c.req.param("id"), values, {
         scope,
         agentId,

@@ -4,5 +4,7 @@ export { SelectWidget } from './SelectWidget';
 export type { SelectOption } from './SelectWidget';
 export { ContextMenu } from './ContextMenu';
 export type { ContextMenuItem, ContextMenuProps } from './ContextMenu';
+export { Tooltip } from './Tooltip';
+export type { TooltipAlign, TooltipPlacement, TooltipTriggerProps, TooltipVariant } from './Tooltip';
 export { useAnimatePresence } from '../hooks/use-animate-presence';
 export type { AnimateStage } from '../hooks/use-animate-presence';

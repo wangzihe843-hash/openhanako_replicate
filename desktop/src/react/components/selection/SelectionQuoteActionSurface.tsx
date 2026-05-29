@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../stores';
+import { Tooltip } from '../../ui';
 import { computeFloatingInputPosition } from '../floating-input/position';
 import styles from './SelectionQuoteActionSurface.module.css';
 
@@ -22,8 +23,6 @@ export function SelectionQuoteActionSurface() {
   const requestInputFocus = useStore(s => s.requestInputFocus);
   const [viewport, setViewport] = useState(() => getViewportSize());
   const [scrollTick, setScrollTick] = useState(0);
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  const tooltipTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleResize = () => setViewport(getViewportSize());
@@ -47,10 +46,6 @@ export function SelectionQuoteActionSurface() {
     };
   }, []);
 
-  useEffect(() => {
-    setTooltipVisible(false);
-  }, [quoteCandidate?.updatedAt]);
-
   const position = useMemo(() => {
     const liveAnchorRect = getLiveSelectionAnchorRect(quoteCandidate?.text, viewport);
     if (liveAnchorRect === null) return null;
@@ -66,25 +61,6 @@ export function SelectionQuoteActionSurface() {
       TOOLBAR_CROSS_AXIS_OFFSET,
     );
   }, [quoteCandidate?.anchorRect, quoteCandidate?.text, viewport, scrollTick]);
-
-  const showTooltipLater = useCallback(() => {
-    if (tooltipTimerRef.current !== null) window.clearTimeout(tooltipTimerRef.current);
-    tooltipTimerRef.current = window.setTimeout(() => {
-      setTooltipVisible(true);
-      tooltipTimerRef.current = null;
-    }, TOOLTIP_DELAY_MS);
-  }, []);
-  const hideTooltip = useCallback(() => {
-    if (tooltipTimerRef.current !== null) {
-      window.clearTimeout(tooltipTimerRef.current);
-      tooltipTimerRef.current = null;
-    }
-    setTooltipVisible(false);
-  }, []);
-
-  useEffect(() => () => {
-    if (tooltipTimerRef.current !== null) window.clearTimeout(tooltipTimerRef.current);
-  }, []);
 
   const handleAddQuote = useCallback(() => {
     if (!quoteCandidate) return;
@@ -111,27 +87,28 @@ export function SelectionQuoteActionSurface() {
       style={{ left: `${position.left}px`, top: `${position.top}px` }}
     >
       {actions.map(action => (
-        <button
+        <Tooltip
           key={action.id}
-          type="button"
-          className={styles.button}
-          aria-label={action.label}
-          aria-describedby={tooltipVisible ? tooltipId : undefined}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={action.onClick}
-          onMouseEnter={showTooltipLater}
-          onMouseLeave={hideTooltip}
-          onFocus={showTooltipLater}
-          onBlur={hideTooltip}
+          id={tooltipId}
+          content={action.label}
+          delayMs={TOOLTIP_DELAY_MS}
+          placement={position.origin === 'top-center' ? 'bottom' : 'top'}
         >
-          {action.icon}
-        </button>
+          {({ ref, ...tooltipProps }) => (
+            <button
+              ref={(node) => ref(node)}
+              type="button"
+              className={styles.button}
+              aria-label={action.label}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={action.onClick}
+              {...tooltipProps}
+            >
+              {action.icon}
+            </button>
+          )}
+        </Tooltip>
       ))}
-      {tooltipVisible && (
-        <div id={tooltipId} role="tooltip" className={styles.tooltip}>
-          引用到对话
-        </div>
-      )}
     </div>
   );
 }

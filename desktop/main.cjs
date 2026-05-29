@@ -75,6 +75,9 @@ const {
   buildWin32ServerEnv,
 } = require("./src/shared/server-process-env.cjs");
 const {
+  createDesktopLaunchDiagnostics,
+} = require("./src/shared/desktop-launch-diagnostics.cjs");
+const {
   sanitizeWindowState,
 } = require("./src/shared/window-state.cjs");
 const {
@@ -253,6 +256,28 @@ if (!gpuStartupPolicy.hardwareAccelerationEnabled) {
   console.warn(`[desktop] GPU safe mode enabled (${gpuStartupPolicy.reason}); hardware acceleration disabled for this launch`);
 }
 const desktopStartupId = `${Date.now()}-${process.pid}`;
+const desktopLaunchDiagnostics = createDesktopLaunchDiagnostics({
+  hanakoHome,
+  startupId: desktopStartupId,
+  appVersion: app?.getVersion?.() || "unknown",
+  platform: process.platform,
+  arch: process.arch,
+  redactText: redactMainLogText,
+});
+try {
+  desktopLaunchDiagnostics.reset({
+    pid: process.pid,
+    argv: process.argv.slice(0, 20),
+    packaged: !!app.isPackaged,
+  });
+} catch {
+  // Launch diagnostics are best-effort. Startup must not depend on the log path.
+}
+
+function writeDesktopLaunchDiagnostic(event, details = {}) {
+  desktopLaunchDiagnostics.append(event, details);
+}
+
 if (process.platform === "win32") {
   markGpuStartupPending({
     hanakoHome,
@@ -328,6 +353,53 @@ function loadWindowURL(win, pageName, opts) {
       win.loadFile(path.join(__dirname, "src", `${pageName}.html`), opts);
     }
   }
+}
+
+function attachRendererLaunchDiagnostics(win, label) {
+  if (!win?.webContents) return;
+  writeDesktopLaunchDiagnostic("window-created", { label, id: win.id });
+
+  const wc = win.webContents;
+  const windowDetails = () => ({
+    label,
+    id: win.id,
+    url: wc.getURL(),
+    visible: typeof win.isVisible === "function" ? win.isVisible() : undefined,
+  });
+
+  wc.on("dom-ready", () => {
+    writeDesktopLaunchDiagnostic("dom-ready", windowDetails());
+  });
+  wc.on("did-finish-load", () => {
+    writeDesktopLaunchDiagnostic("did-finish-load", windowDetails());
+  });
+  wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    writeDesktopLaunchDiagnostic("did-fail-load", {
+      ...windowDetails(),
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+  wc.on("render-process-gone", (_event, details) => {
+    writeDesktopLaunchDiagnostic("render-process-gone", {
+      ...windowDetails(),
+      details,
+    });
+  });
+  wc.on("console-message", (_event, level, message, line, sourceId) => {
+    writeDesktopLaunchDiagnostic("console-message", {
+      ...windowDetails(),
+      level,
+      message,
+      line,
+      sourceId,
+    });
+  });
+  win.on("closed", () => {
+    writeDesktopLaunchDiagnostic("window-closed", { label, id: win.id });
+  });
 }
 
 /** 校验浏览器 URL：仅允许 http/https */
@@ -1107,6 +1179,7 @@ function createSplashWindow() {
       nodeIntegration: false,
     },
   });
+  attachRendererLaunchDiagnostics(splashWindow, "splash");
 
   loadWindowURL(splashWindow, "splash");
 
@@ -1190,6 +1263,7 @@ function createMainWindow() {
   }
 
   mainWindow = new BrowserWindow(opts);
+  attachRendererLaunchDiagnostics(mainWindow, "main");
   applyWindowThemeColors(mainWindow, initialTheme);
 
   // auto-updater 是进程级服务：初始化只做一次，窗口重建时只更新目标 window 引用。
@@ -1213,6 +1287,12 @@ function createMainWindow() {
   const initTimeout = setTimeout(() => {
     if (_startHiddenAtLogin) return;
     console.warn("[desktop] ⚠ 主窗口初始化超时（30s），强制显示");
+    writeDesktopLaunchDiagnostic("app-ready-timeout", {
+      label: "main",
+      timeoutMs: 30000,
+      visible: mainWindow && !mainWindow.isDestroyed() ? mainWindow.isVisible() : false,
+      url: mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : "",
+    });
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show();
     }
@@ -1348,6 +1428,7 @@ function createSettingsWindow(tab, theme) {
       nodeIntegration: false,
     },
   });
+  attachRendererLaunchDiagnostics(settingsWindow, "settings");
   applyWindowThemeColors(settingsWindow, settingsTheme);
 
   settingsWindow.once("ready-to-show", () => {
@@ -1458,6 +1539,7 @@ function createBrowserViewerWindow(opts = {}) {
       nodeIntegration: false,
     },
   });
+  attachRendererLaunchDiagnostics(browserViewerWindow, "browser-viewer");
   applyWindowThemeColors(browserViewerWindow, _browserViewerTheme);
 
   loadWindowURL(browserViewerWindow, "browser-viewer");
@@ -1762,6 +1844,38 @@ function _bindBrowserViewLifecycle(view, sessionPath) {
   if (sessionPath && _isBrowserViewDestroyed(view)) forget("destroyed");
 }
 
+function _createBrowserWebContentsView(sessionPath) {
+  const ses = session.fromPartition("persist:hana-browser");
+  const view = new WebContentsView({
+    webPreferences: {
+      session: ses,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  view.webContents.setAudioMuted(true);
+  view.webContents.on("did-navigate", (_e, url) => {
+    if (view === _browserWebView) _notifyViewerUrl(url);
+  });
+  view.webContents.on("did-navigate-in-page", (_e, url) => {
+    if (view === _browserWebView) _notifyViewerUrl(url);
+  });
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedBrowserUrl(url)) {
+      view.webContents.loadURL(url);
+    }
+    return { action: "deny" };
+  });
+  view.webContents.on("page-title-updated", () => {
+    if (view === _browserWebView) _notifyViewerUrl(view.webContents.getURL());
+  });
+  view.setBorderRadius(10);
+  _bindBrowserViewLifecycle(view, sessionPath);
+  return view;
+}
+
 function _ensureLiveWebContents(view, sessionPath) {
   if (_isBrowserViewDestroyed(view)) {
     _forgetBrowserView(view, "destroyed");
@@ -1933,43 +2047,7 @@ async function handleBrowserCommand(cmd, params) {
       // 无 sessionPath 且已有活跃 view → 直接返回（兼容旧调用）
       if (!sp && _browserWebView && !_isBrowserViewDestroyed(_browserWebView)) return {};
 
-      const ses = session.fromPartition("persist:hana-browser");
-      const view = new WebContentsView({
-        webPreferences: {
-          session: ses,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      });
-
-      // 默认静音
-      view.webContents.setAudioMuted(true);
-
-      // 监听导航事件，实时更新 URL 栏（只在该 view 是活跃 view 时通知）
-      view.webContents.on("did-navigate", (_e, url) => {
-        if (view === _browserWebView) _notifyViewerUrl(url);
-      });
-      view.webContents.on("did-navigate-in-page", (_e, url) => {
-        if (view === _browserWebView) _notifyViewerUrl(url);
-      });
-
-      // 在新窗口中打开链接（target=_blank）时，在当前视图中打开
-      view.webContents.setWindowOpenHandler(({ url }) => {
-        if (isAllowedBrowserUrl(url)) {
-          view.webContents.loadURL(url);
-        }
-        return { action: "deny" };
-      });
-
-      // 页面标题变化时更新标题栏（只在该 view 是活跃 view 时通知）
-      view.webContents.on("page-title-updated", () => {
-        if (view === _browserWebView) _notifyViewerUrl(view.webContents.getURL());
-      });
-
-      // 卡片圆角
-      view.setBorderRadius(10);
-      _bindBrowserViewLifecycle(view, sp);
+      const view = _createBrowserWebContentsView(sp);
 
       // 存入 Map
       if (sp) _browserViews.set(sp, view);
@@ -2360,6 +2438,7 @@ function createOnboardingWindow(query = {}) {
       nodeIntegration: false,
     },
   });
+  attachRendererLaunchDiagnostics(onboardingWindow, "onboarding");
   applyWindowThemeColors(onboardingWindow, initialTheme);
 
   loadWindowURL(onboardingWindow, "onboarding", { query });
@@ -2739,9 +2818,32 @@ wrapIpcHandler("set-auto-launch-enabled", (_event, enabled) => setAutoLaunchEnab
 wrapIpcBestEffortHandler("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 
 // 浏览器查看器窗口
-wrapIpcBestEffortHandler("open-browser-viewer", (_event, theme) => {
+wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, url) => {
   if (theme) _browserViewerTheme = theme;
   createBrowserViewerWindow();
+  if (!url || !isAllowedBrowserUrl(url)) return;
+
+  if (_browserWebView && _currentBrowserSession) {
+    if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
+      try { browserViewerWindow.contentView.removeChildView(_browserWebView); } catch {}
+    }
+    _browserWebView = null;
+    _currentBrowserSession = null;
+  }
+
+  if (!_browserWebView) {
+    _browserWebView = _createBrowserWebContentsView(null);
+    if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
+      try { browserViewerWindow.contentView.removeChildView(_browserWebView); } catch {}
+      browserViewerWindow.contentView.addChildView(_browserWebView);
+      _updateBrowserViewBounds();
+    }
+  }
+
+  await _withLiveWebContents(null, async (wc) => {
+    await wc.loadURL(url);
+  });
+  _notifyViewerUrl(url);
 });
 wrapIpcBestEffortHandler("browser-go-back", () => { if (_browserWebView) _browserWebView.webContents.goBack(); });
 wrapIpcBestEffortHandler("browser-go-forward", () => { if (_browserWebView) _browserWebView.webContents.goForward(); });
@@ -3401,7 +3503,12 @@ wrapIpcHandler("window-is-maximized", (event) => {
 });
 
 // 前端初始化完成后调用，关闭 splash / onboarding，显示主窗口
-wrapIpcBestEffortHandler("app-ready", () => {
+wrapIpcBestEffortHandler("app-ready", (event) => {
+  writeDesktopLaunchDiagnostic("app-ready", {
+    label: "main",
+    senderUrl: event?.sender?.getURL?.() || "",
+    mainWindowVisible: mainWindow && !mainWindow.isDestroyed() ? mainWindow.isVisible() : false,
+  });
   if (process.platform === "win32") {
     markGpuStartupReady({
       hanakoHome,
@@ -3534,6 +3641,11 @@ app.whenReady().then(async () => {
     checkForUpdates().catch(() => {});
   } catch (err) {
     console.error("[desktop] 启动失败:", err.message);
+    writeDesktopLaunchDiagnostic("desktop-launch-failed", {
+      message: err?.message || String(err),
+      code: err?.code,
+      stack: err?.stack,
+    });
     if (process.platform === "win32") {
       markGpuStartupFailed({
         hanakoHome,

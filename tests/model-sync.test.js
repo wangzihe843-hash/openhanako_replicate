@@ -1115,6 +1115,28 @@ describe("syncModels", () => {
     expect(result.providers["my-gemini-proxy"].models[0].compat.supportsStore).toBe(false);
   });
 
+  it("projects Zhipu OpenAI-compatible configs with explicit unsupported OpenAI fields", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      zhipu: {
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["glm-4.7-flash"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.zhipu.models[0].compat).toMatchObject({
+      supportsDeveloperRole: false,
+      supportsStore: false,
+      supportsReasoningEffort: false,
+    });
+  });
+
   it("skips models with type: image from models.json output", async () => {
     const syncModels = await loadSync();
 

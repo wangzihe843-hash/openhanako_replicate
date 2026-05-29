@@ -8,6 +8,60 @@ import { KeyInput } from '../../widgets/KeyInput';
 import { getApiKeySavePlan } from './api-key-save-plan';
 import styles from '../../Settings.module.css';
 
+interface DiscoveredProviderModel {
+  id?: unknown;
+  name?: unknown;
+  context?: unknown;
+  maxOutput?: unknown;
+}
+
+function shouldDiscoverModelsBeforeSave(providerId: string, api: string, payload: Record<string, unknown>) {
+  return payload.seed_default_models === true
+    && (providerId === 'gemini' || api === 'google-generative-ai');
+}
+
+function compactDiscoveredModel(model: DiscoveredProviderModel): string | Record<string, unknown> | null {
+  if (typeof model.id !== 'string' || !model.id.trim()) return null;
+  const entry: Record<string, unknown> = { id: model.id };
+  if (typeof model.name === 'string' && model.name.trim()) entry.name = model.name;
+  if (typeof model.context === 'number' && Number.isFinite(model.context)) entry.context = model.context;
+  if (typeof model.maxOutput === 'number' && Number.isFinite(model.maxOutput)) entry.maxOutput = model.maxOutput;
+  return Object.keys(entry).length === 1 ? model.id : entry;
+}
+
+async function resolveModelsForInitialSave(
+  providerId: string,
+  plan: ReturnType<typeof getApiKeySavePlan>,
+): Promise<Record<string, unknown>> {
+  const payload = { ...plan.payload };
+  if (!shouldDiscoverModelsBeforeSave(providerId, plan.api, payload)) return payload;
+
+  try {
+    const res = await hanaFetch('/api/providers/fetch-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: providerId,
+        base_url: plan.effectiveUrl,
+        api: plan.api,
+        api_key: plan.key,
+      }),
+    });
+    const data = await res.json();
+    const models = Array.isArray(data.models)
+      ? data.models.map(compactDiscoveredModel).filter(Boolean)
+      : [];
+    if (!data.error && models.length > 0) {
+      payload.models = models;
+      delete payload.seed_default_models;
+    }
+  } catch {
+    // Keep seed_default_models as the explicit static fallback for initial setup.
+  }
+
+  return payload;
+}
+
 export function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup, presetInfo, onRefresh }: {
   providerId: string;
   summary: ProviderSummary;
@@ -63,10 +117,11 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig, isPrese
           return;
         }
       }
+      const payload = await resolveModelsForInitialSave(providerId, plan);
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: plan.payload } }),
+        body: JSON.stringify({ providers: { [providerId]: payload } }),
       });
       invalidateConfigCache();
       showToast(plan.shouldVerify ? t('settings.providers.verifySuccess') : t('settings.saved'), 'success');

@@ -216,4 +216,92 @@ describe("secret custody across HTTP routes", () => {
       }),
     );
   });
+
+  it("resolves masked bridge test credentials from the explicit agent only", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.js");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        json: async () => ({ access_token: "qq-token" }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ id: "bot-1", username: "Agent B Bot" }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const agentA = {
+      id: "agent-a",
+      config: {
+        bridge: {
+          qq: { appID: "app-a", appSecret: "secret-a" },
+        },
+      },
+    };
+    const agentB = {
+      id: "agent-b",
+      config: {
+        bridge: {
+          qq: { appID: "app-b", appSecret: "secret-b" },
+        },
+      },
+    };
+    const engine = {
+      currentAgentId: "agent-a",
+      getAgent: (id) => ({ "agent-a": agentA, "agent-b": agentB }[id] || null),
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test?agentId=agent-b", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "qq",
+        credentials: { appID: "app-b", appSecret: MASKED_SECRET },
+      }),
+    });
+    const body = await res.json();
+
+    expect(body).toEqual({ ok: true, info: { username: "Agent B Bot", name: "Agent B Bot" } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://bots.qq.com/app/getAppAccessToken",
+      expect.objectContaining({
+        body: JSON.stringify({ appId: "app-b", clientSecret: "secret-b" }),
+      }),
+    );
+  });
+
+  it("rejects masked bridge test credentials without an explicit agent id", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.js");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const agent = {
+      id: "agent-a",
+      config: {
+        bridge: {
+          qq: { appID: "app-a", appSecret: "secret-a" },
+        },
+      },
+    };
+    const engine = {
+      currentAgentId: "agent-a",
+      getAgent: (id) => id === "agent-a" ? agent : null,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "qq",
+        credentials: { appID: "app-a", appSecret: MASKED_SECRET },
+      }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain("agentId is required");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

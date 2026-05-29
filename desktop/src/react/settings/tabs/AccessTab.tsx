@@ -30,6 +30,9 @@ interface AccessSummary {
     localMobileUrl: string;
     candidateLanMobileUrl: string | null;
     lanMobileUrl: string | null;
+    localDesktopUrl: string;
+    candidateLanDesktopUrl: string | null;
+    lanDesktopUrl: string | null;
   };
   account: {
     userId: string;
@@ -107,7 +110,7 @@ export function AccessTab() {
   const desktopUrl = useMemo(() => {
     if (!summary) return '';
     if (mode !== 'lan') return '';
-    return summary.network.lanServerUrl || '';
+    return summary.network.lanDesktopUrl || '';
   }, [mode, summary]);
 
   const qrUrl = useMemo(() => {
@@ -123,7 +126,7 @@ export function AccessTab() {
   const canShowQr = mode === 'lan' && mobileUrl.length > 0 && !summary?.network.restartRequired;
   const runtimeEndpoint = summary ? `${summary.network.runtimeHost}:${summary.network.actualPort}` : '';
   const effectiveMobileUrl = summary?.network.lanMobileUrl || summary?.network.localMobileUrl || '';
-  const effectiveDesktopUrl = summary?.network.lanServerUrl || summary?.network.localServerUrl || '';
+  const effectiveDesktopUrl = summary?.network.lanDesktopUrl || summary?.network.localDesktopUrl || '';
   const lanAddressText = summary?.network.lanAddresses.length
     ? summary.network.lanAddresses.join(', ')
     : t('settings.access.noLanAddresses');

@@ -11,10 +11,12 @@ import {
   defineTool,
   failTask,
   HANA_BUS_SKIP,
+  listUsageEntries,
   registerTask,
   requestBus,
   scheduleTask,
   sessionFileToMediaItem,
+  subscribeUsageEvents,
   unscheduleTask,
   updateTask,
 } from '@hana/plugin-runtime';
@@ -215,6 +217,33 @@ describe('plugin runtime SDK', () => {
     expect(request).toHaveBeenCalledWith('task:cancel', { taskId: 't1', reason: 'user' }, undefined);
     expect(request).toHaveBeenCalledWith('task:schedule', { scheduleId: 'daily', type: 'digest', intervalMs: 60_000 }, undefined);
     expect(request).toHaveBeenCalledWith('task:unschedule', { scheduleId: 'daily' }, undefined);
+  });
+
+  it('wraps usage list and live usage subscriptions with typed helpers', async () => {
+    const request = vi.fn(async () => ({
+      entries: [{ requestId: 'req-1', schemaVersion: 1 }],
+      nextCursor: null,
+    }));
+    const subscribe = vi.fn((callback: (event: unknown, sessionPath?: string | null) => void, filter?: unknown) => {
+      callback({ type: 'llm_usage', entry: { requestId: 'req-2' } }, '/sessions/a.jsonl');
+      return () => {};
+    });
+    const ctx = { bus: { request, subscribe } };
+    const events: unknown[] = [];
+
+    await expect(listUsageEntries(ctx as any, { limit: 25 })).resolves.toEqual({
+      entries: [{ requestId: 'req-1', schemaVersion: 1 }],
+      nextCursor: null,
+    });
+    subscribeUsageEvents(ctx as any, (entry, meta) => {
+      events.push({ entry, meta });
+    });
+
+    expect(request).toHaveBeenCalledWith('usage:list', { limit: 25 }, undefined);
+    expect(subscribe).toHaveBeenCalledWith(expect.any(Function), { types: ['llm_usage'] });
+    expect(events).toEqual([
+      { entry: { requestId: 'req-2' }, meta: { sessionPath: '/sessions/a.jsonl' } },
+    ]);
   });
 
   it('converts SessionFile records into structured media items', () => {

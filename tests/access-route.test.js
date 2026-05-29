@@ -125,6 +125,9 @@ describe("access route", () => {
         localMobileUrl: "http://127.0.0.1:14500/mobile/",
         candidateLanMobileUrl: "http://192.168.31.75:14500/mobile/",
         lanMobileUrl: null,
+        localDesktopUrl: "http://127.0.0.1:14500/desktop/",
+        candidateLanDesktopUrl: "http://192.168.31.75:14500/desktop/",
+        lanDesktopUrl: null,
       },
       account: {
         userId: "user_owner",
@@ -161,8 +164,10 @@ describe("access route", () => {
         restartRequired: true,
         candidateLanServerUrl: "http://192.168.31.75:14500/",
         candidateLanMobileUrl: "http://192.168.31.75:14500/mobile/",
+        candidateLanDesktopUrl: "http://192.168.31.75:14500/desktop/",
         lanServerUrl: null,
         lanMobileUrl: null,
+        lanDesktopUrl: null,
       },
     });
     expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "server-network.json"), "utf-8")))
@@ -188,8 +193,10 @@ describe("access route", () => {
         actualPort: 14500,
         restartRequired: true,
         candidateLanServerUrl: "http://192.168.31.75:14550/",
+        candidateLanDesktopUrl: "http://192.168.31.75:14550/desktop/",
         lanServerUrl: null,
         lanMobileUrl: null,
+        lanDesktopUrl: null,
       },
     });
   });
@@ -237,7 +244,7 @@ describe("access route", () => {
     expect(JSON.stringify(data)).not.toContain("secretHash");
   });
 
-  it("issues a desktop access key for professional manual connection without using the mobile PWA URL", async () => {
+  it("issues a desktop access key for the browser PWA URL on another computer", async () => {
     tmpDir = makeTmpDir();
     writeIdentity(tmpDir);
     writeJson(path.join(tmpDir, "server-network.json"), {
@@ -264,7 +271,7 @@ describe("access route", () => {
     const data = await res.json();
     expect(data.secret).toMatch(/^hana_dev_/);
     expect(data).toMatchObject({
-      accessUrl: "http://192.168.31.75:14500/",
+      accessUrl: "http://192.168.31.75:14500/desktop/",
       device: {
         displayName: "Studio Laptop",
         deviceKind: "desktop",
@@ -276,6 +283,7 @@ describe("access route", () => {
       },
     });
     expect(data.accessUrl).not.toContain("/mobile/");
+    expect(data.accessUrl).toContain("/desktop/");
     const stored = fs.readFileSync(path.join(tmpDir, "device-credentials.json"), "utf-8");
     expect(stored).not.toContain(data.secret);
     expect(JSON.stringify(data)).not.toContain("secretHash");

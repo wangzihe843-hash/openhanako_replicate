@@ -143,7 +143,7 @@ function normalizeBaseUrl(value: string): string {
   parsed.hash = '';
   parsed.search = '';
   const pathname = parsed.pathname.replace(/\/+$/, '');
-  parsed.pathname = pathname === '/mobile' ? '/' : pathname || '/';
+  parsed.pathname = pathname === '/mobile' || pathname === '/desktop' ? '/' : pathname || '/';
   return trimTrailingSlash(parsed.toString());
 }
 

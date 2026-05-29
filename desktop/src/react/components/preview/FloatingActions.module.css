@@ -98,6 +98,11 @@
     opacity: 0.55;
 }
 
+.coverMenuTooltipAnchor {
+    display: block;
+    width: 100%;
+}
+
 .coverGalleryCard {
     position: absolute;
     top: calc(100% + 8px);

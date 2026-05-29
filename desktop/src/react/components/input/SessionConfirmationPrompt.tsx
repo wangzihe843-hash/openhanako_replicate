@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import type { SessionConfirmationBlock } from '../../stores/chat-types';
+import { Tooltip } from '../../ui';
 import styles from './InputArea.module.css';
 
 type ConfirmationAction = 'confirmed' | 'rejected';
@@ -95,13 +96,9 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
   const [submission, setSubmission] = useState<{ confirmId: string; action: ConfirmationAction } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({});
   const [switchingMode, setSwitchingMode] = useState(false);
   const menuAnchorRef = useRef<HTMLDivElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
-  const tooltipAnchorRef = useRef<HTMLDivElement>(null);
-  const tooltipPanelRef = useRef<HTMLDivElement>(null);
   const pending = block.status === 'pending' && !exiting;
   const submitting = submission?.confirmId === block.confirmId ? submission.action : null;
   const confirmLabel = block.actions?.confirmLabel || window.t?.('common.approve') || '同意';
@@ -143,43 +140,9 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
     });
   }, [menuOpen]);
 
-  const updateTooltipPosition = useCallback(() => {
-    const anchor = tooltipAnchorRef.current;
-    if (!tooltipOpen || !anchor) return;
-    const anchorRect = anchor.getBoundingClientRect();
-    const panelRect = tooltipPanelRef.current?.getBoundingClientRect();
-    const viewportPadding = 8;
-    const gap = 8;
-    const panelWidth = panelRect?.width || Math.min(520, window.innerWidth - viewportPadding * 2);
-    const panelHeight = panelRect?.height || 120;
-    const left = Math.max(
-      viewportPadding,
-      Math.min(anchorRect.left, window.innerWidth - panelWidth - viewportPadding),
-    );
-    const preferredTop = anchorRect.top - panelHeight - gap;
-    const fallbackTop = anchorRect.bottom + gap;
-    const top = Math.max(
-      viewportPadding,
-      preferredTop < viewportPadding
-        ? Math.min(fallbackTop, window.innerHeight - panelHeight - viewportPadding)
-        : preferredTop,
-    );
-
-    setTooltipStyle({
-      position: 'fixed',
-      top,
-      left,
-      zIndex: 10001,
-    });
-  }, [tooltipOpen]);
-
   useLayoutEffect(() => {
     updateMenuPosition();
   }, [updateMenuPosition]);
-
-  useLayoutEffect(() => {
-    updateTooltipPosition();
-  }, [updateTooltipPosition]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -190,16 +153,6 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
       window.removeEventListener('scroll', updateMenuPosition, true);
     };
   }, [menuOpen, updateMenuPosition]);
-
-  useEffect(() => {
-    if (!tooltipOpen) return;
-    window.addEventListener('resize', updateTooltipPosition);
-    window.addEventListener('scroll', updateTooltipPosition, true);
-    return () => {
-      window.removeEventListener('resize', updateTooltipPosition);
-      window.removeEventListener('scroll', updateTooltipPosition, true);
-    };
-  }, [tooltipOpen, updateTooltipPosition]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -215,7 +168,6 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
 
   useEffect(() => {
     setMenuOpen(false);
-    setTooltipOpen(false);
   }, [block.confirmId]);
 
   const submit = useCallback(async (action: ConfirmationAction) => {
@@ -288,21 +240,6 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
     )
     : null;
 
-  const tooltip = tooltipOpen && tooltipText && typeof document !== 'undefined'
-    ? createPortal(
-      <div
-        id={tooltipId}
-        className={styles['session-confirmation-tooltip']}
-        ref={tooltipPanelRef}
-        role="tooltip"
-        style={tooltipStyle}
-      >
-        {tooltipText}
-      </div>,
-      document.body,
-    )
-    : null;
-
   return (
     <div
       className={`${styles['session-confirmation-prompt']} ${exiting ? styles['session-confirmation-prompt-exiting'] : ''}`}
@@ -310,25 +247,32 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
       data-status={block.status}
       data-severity={block.severity || 'normal'}
     >
-      <div
-        className={styles['session-confirmation-body']}
-        ref={tooltipAnchorRef}
-        data-testid="session-confirmation-summary"
-        tabIndex={0}
-        aria-describedby={tooltipOpen && tooltipText ? tooltipId : undefined}
-        onMouseEnter={() => tooltipText && setTooltipOpen(true)}
-        onMouseLeave={() => setTooltipOpen(false)}
-        onFocus={() => tooltipText && setTooltipOpen(true)}
-        onBlur={() => setTooltipOpen(false)}
+      <Tooltip
+        id={tooltipId}
+        content={tooltipText}
+        disabled={!tooltipText}
+        placement="top"
+        align="start"
+        variant="panel"
       >
-        <div className={styles['session-confirmation-title']}>{title}</div>
-        {hasSubject && (
-          <div className={styles['session-confirmation-subject']}>
-            {subject.label && <span className={styles['session-confirmation-subject-label']}>{subject.label}</span>}
-            {subject.detail && <span className={styles['session-confirmation-subject-detail']}>{subject.detail}</span>}
+        {({ ref, ...tooltipProps }) => (
+          <div
+            className={styles['session-confirmation-body']}
+            ref={(node) => ref(node)}
+            data-testid="session-confirmation-summary"
+            tabIndex={0}
+            {...tooltipProps}
+          >
+            <div className={styles['session-confirmation-title']}>{title}</div>
+            {hasSubject && (
+              <div className={styles['session-confirmation-subject']}>
+                {subject.label && <span className={styles['session-confirmation-subject-label']}>{subject.label}</span>}
+                {subject.detail && <span className={styles['session-confirmation-subject-detail']}>{subject.detail}</span>}
+              </div>
+            )}
           </div>
         )}
-      </div>
+      </Tooltip>
       {pending ? (
         <div className={styles['session-confirmation-actions']}>
           <button
@@ -383,7 +327,6 @@ export function SessionConfirmationPrompt({ block, exiting = false }: SessionCon
             : (window.t?.('common.rejected') || '已拒绝')}
         </div>
       )}
-      {tooltip}
     </div>
   );
 }

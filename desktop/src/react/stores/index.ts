@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createConnectionSlice, type ConnectionSlice } from './connection-slice';
 import { createSessionSlice, type SessionSlice } from './session-slice';
+import { createSessionProjectSlice, type SessionProjectSlice } from './session-project-slice';
 import { createStreamingSlice, type StreamingSlice } from './streaming-slice';
 import { createUiSlice, type UiSlice } from './ui-slice';
 import { createAgentSlice, type AgentSlice } from './agent-slice';
@@ -24,6 +25,7 @@ import { createScreenshotSlice, type ScreenshotSlice } from './screenshot-slice'
 
 export type StoreState = ConnectionSlice &
   SessionSlice &
+  SessionProjectSlice &
   StreamingSlice &
   UiSlice &
   AgentSlice &
@@ -48,6 +50,7 @@ export type StoreState = ConnectionSlice &
 export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createConnectionSlice(set, _get),
   ...createSessionSlice(set),
+  ...createSessionProjectSlice(set),
   ...createStreamingSlice(set, _get),
   ...createUiSlice(set),
   ...createAgentSlice(set),
@@ -74,6 +77,7 @@ export const useStore = create<StoreState>()((set, _get, _api) => ({
 export type {
   ConnectionSlice,
   SessionSlice,
+  SessionProjectSlice,
   StreamingSlice,
   UiSlice,
   AgentSlice,

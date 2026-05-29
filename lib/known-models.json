@@ -3064,6 +3064,13 @@
       "image": true,
       "reasoning": true
     },
+    "glm-4.7-flash": {
+      "name": "GLM-4.7 Flash",
+      "context": 200000,
+      "maxOutput": 128000,
+      "image": false,
+      "reasoning": true
+    },
     "glm-4-plus": {
       "name": "GLM-4 Plus",
       "context": 131072,

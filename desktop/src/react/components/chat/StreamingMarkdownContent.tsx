@@ -2,6 +2,7 @@ import { memo, useLayoutEffect, useMemo, useRef } from 'react';
 import { useTypewriterText } from '../../hooks/use-typewriter-text';
 import { splitGraphemes } from '../../utils/grapheme';
 import { renderMarkdown } from '../../utils/markdown';
+import type { LinkOpenContext } from '../../utils/link-open';
 import { MarkdownContent } from './MarkdownContent';
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
   source?: string;
   active?: boolean;
   className?: string;
+  linkContext?: LinkOpenContext;
 }
 
 const COMPLEX_MARKDOWN_PATTERNS = [
@@ -41,6 +43,7 @@ export const StreamingMarkdownContent = memo(function StreamingMarkdownContent({
   source,
   active = false,
   className,
+  linkContext,
 }: Props) {
   const shouldType = !!source && active && isTypewriterEligibleMarkdownSource(source);
   const previousVisibleSourceRef = useRef<string | null>(null);
@@ -71,6 +74,7 @@ export const StreamingMarkdownContent = memo(function StreamingMarkdownContent({
       html={visibleHtml}
       className={className}
       tailFadeCount={tailFadeCount}
+      linkContext={linkContext}
     />
   );
 });

@@ -221,7 +221,7 @@ export const UserMessage = memo(function UserMessage({
             disabled={busy}
           />
         ) : (
-          message.textHtml && <MarkdownContent html={message.textHtml} />
+          message.textHtml && <MarkdownContent html={message.textHtml} linkContext={{ origin: 'session', sessionPath, messageId: message.id }} />
         )}
       </div>
       {canShowLatestActions && (

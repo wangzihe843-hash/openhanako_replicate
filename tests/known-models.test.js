@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { lookupKnown } from "../shared/known-models.js";
+import { listKnownProviderModels, lookupKnown } from "../shared/known-models.js";
 
 describe("known-models dictionary", () => {
   it("treats missing model ids as unknown instead of throwing", () => {
@@ -71,6 +71,12 @@ describe("known-models dictionary", () => {
       image: false,
       reasoning: true,
     });
+    expect(lookupKnown("zhipu", "glm-4.7-flash")).toMatchObject({
+      context: 200000,
+      maxOutput: 128000,
+      image: false,
+      reasoning: true,
+    });
     expect(lookupKnown("mistral", "mistral-small-2603")).toMatchObject({
       context: 256000,
       maxOutput: 256000,
@@ -82,6 +88,14 @@ describe("known-models dictionary", () => {
       image: true,
       reasoning: true,
     });
+  });
+
+  it("lists provider-specific known model ids without exposing the raw dictionary", () => {
+    expect(listKnownProviderModels("zhipu")).toEqual(expect.arrayContaining([
+      "glm-5.1",
+      "glm-4.7-flash",
+    ]));
+    expect(listKnownProviderModels("missing-provider")).toEqual([]);
   });
 
   it("uses generic model fallbacks when a provider has no provider-specific entry", () => {

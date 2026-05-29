@@ -66,6 +66,13 @@ function shouldReusePiBuiltinModel(provider, modelId, api) {
   return api === "anthropic-messages" && !!getPiBuiltinModel(provider, modelId);
 }
 
+function isZhipuOpenAICompat(provider, baseUrl, api) {
+  return api === "openai-completions" && (
+    provider === "zhipu"
+    || baseUrl.includes("open.bigmodel.cn")
+  );
+}
+
 function buildModelOverride(modelEntry) {
   if (typeof modelEntry !== "object" || modelEntry === null) return null;
 
@@ -142,6 +149,10 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
       || baseUrl.includes("generativelanguage.googleapis.com")
     )) {
       compat.supportsStore = false;
+    }
+    if (isZhipuOpenAICompat(provider, baseUrl, api)) {
+      compat.supportsStore = false;
+      compat.supportsReasoningEffort = false;
     }
     entry.compat = compat;
   }

@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { callText } from "../core/llm-client.js";
 
+function makeCodexJwt(accountId) {
+  const payload = Buffer.from(JSON.stringify({
+    "https://api.openai.com/auth": {
+      chatgpt_account_id: accountId,
+    },
+  })).toString("base64url");
+  return `header.${payload}.signature`;
+}
+
 describe("callText provider-compat routing", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -447,10 +456,80 @@ describe("callText provider-compat routing", () => {
     await expect(callText({
       api: "openai-codex-responses",
       baseUrl: "https://example.test/v1",
-      model: { id: "gpt-5.4-codex", provider: "openai-codex" },
+      model: { id: "gpt-5.4-codex", provider: "openai-codex", accountId: "acct_123" },
       messages: [{ role: "user", content: "Reply OK." }],
       timeoutMs: 5_000,
     })).resolves.toBe("OK from Responses");
+  });
+
+  it("sends Codex Responses utility requests to ChatGPT /codex/responses with account headers", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ output_text: "Codex OK" }),
+    });
+
+    await expect(callText({
+      api: "openai-codex-responses",
+      apiKey: "oauth-token",
+      baseUrl: "https://chatgpt.com/backend-api",
+      model: {
+        id: "gpt-5.4-codex",
+        provider: "openai-codex-oauth",
+        accountId: "acct_123",
+      },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).resolves.toBe("Codex OK");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(init.headers.Authorization).toBe("Bearer oauth-token");
+    expect(init.headers["chatgpt-account-id"]).toBe("acct_123");
+    expect(init.headers["OpenAI-Beta"]).toBe("responses=experimental");
+    expect(init.headers.originator).toBe("pi");
+  });
+
+  it("derives the Codex account id from the OAuth token when the model omits it", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ output_text: "Codex OK" }),
+    });
+
+    await callText({
+      api: "openai-codex-responses",
+      apiKey: makeCodexJwt("acct_from_token"),
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      model: { id: "gpt-5.4-codex", provider: "openai-codex-oauth" },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(init.headers["chatgpt-account-id"]).toBe("acct_from_token");
+  });
+
+  it("fails closed when Codex Responses credentials do not carry an account id", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ output_text: "should not be called" }),
+    });
+
+    await expect(callText({
+      api: "openai-codex-responses",
+      apiKey: "opaque-token",
+      baseUrl: "https://chatgpt.com/backend-api",
+      model: { id: "gpt-5.4-codex", provider: "openai-codex-oauth" },
+      messages: [{ role: "user", content: "Reply OK." }],
+      timeoutMs: 5_000,
+    })).rejects.toMatchObject({
+      code: "LLM_AUTH_FAILED",
+      message: expect.stringContaining("account id"),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("preserves Responses top-level output_text extraction", async () => {
@@ -506,7 +585,7 @@ describe("callText provider-compat routing", () => {
     await expect(callText({
       api: "openai-codex-responses",
       baseUrl: "https://example.test/v1",
-      model: { id: "gpt-5.4-codex", provider: "openai-codex", reasoning: true },
+      model: { id: "gpt-5.4-codex", provider: "openai-codex", reasoning: true, accountId: "acct_123" },
       messages: [{ role: "user", content: "Reply OK." }],
       timeoutMs: 5_000,
     })).rejects.toMatchObject({

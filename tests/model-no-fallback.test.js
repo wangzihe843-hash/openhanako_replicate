@@ -385,6 +385,35 @@ describe("模型选择无 fallback", () => {
       expect(result.api).toBe("openai-completions");
     });
 
+    it("utility 模型携带 OAuth accountId，供 Codex Responses utility 请求使用", () => {
+      const mm = new ModelManager({ hanakoHome: tempDir });
+      mm._availableModels = [
+        {
+          id: "gpt-5.4-codex",
+          provider: "openai-codex-oauth",
+          _cred: {
+            api: "openai-codex-responses",
+            apiKey: "oauth-token",
+            baseUrl: "https://chatgpt.com/backend-api",
+            accountId: "acct_123",
+          },
+        },
+      ];
+      setupRouter(mm);
+
+      const result = mm.resolveUtilityConfig(
+        {},
+        {
+          utility: { id: "gpt-5.4-codex", provider: "openai-codex-oauth" },
+          utility_large: { id: "gpt-5.4-codex", provider: "openai-codex-oauth" },
+        },
+        {},
+      );
+
+      expect(result.utility).toMatchObject({ accountId: "acct_123" });
+      expect(result.utility_large).toMatchObject({ accountId: "acct_123" });
+    });
+
     it("provider 声明无须 key 时，utility 远程 baseUrl 可不填 apiKey", () => {
       const mm = new ModelManager({ hanakoHome: tempDir });
       mm._availableModels = [

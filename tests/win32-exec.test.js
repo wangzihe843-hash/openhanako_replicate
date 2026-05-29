@@ -1161,6 +1161,119 @@ describe("createWin32Exec", () => {
     expect(spawnAndStream).toHaveBeenCalledTimes(1);
   });
 
+  it("emits STATUS_DLL_INIT_FAILED diagnostics for direct cmd without rerouting", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "cmd", reason: "cmd-builtin" });
+    spawnAndStream.mockImplementationOnce(async (_cmd, _args, opts) => {
+      opts.onData(Buffer.from("partial"));
+      return { exitCode: 3221225794 };
+    });
+    const chunks = [];
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    const result = await exec("echo test", "C:\\work", {
+      onData: (data) => chunks.push(String(data)),
+      signal: undefined,
+      timeout: 5,
+      env: {
+        PATH: "C:\\Windows\\System32;C:\\Hanako\\resources\\git\\bin",
+        COMSPEC: systemCmdExe,
+        SystemRoot: "C:\\Windows",
+        USERPROFILE: "C:\\Users\\Hana",
+      },
+    });
+
+    expect(result.exitCode).toBe(3221225794);
+    const diagnostic = chunks.join("");
+    expect(diagnostic).toContain("partial");
+    expect(diagnostic).toContain("[win32-exec] cmd runner failed before command output");
+    expect(diagnostic).toContain("Exit code: 3221225794 (0xC0000142)");
+    expect(diagnostic).toContain("Route: runner=cmd reason=cmd-builtin mode=direct-cmd sandbox=false");
+    expect(diagnostic).toContain("Executable: C:\\Windows\\System32\\cmd.exe");
+    expect(diagnostic).toContain("Output bytes before failure: 7");
+    expect(diagnostic).toContain("PATH System32 index: 0");
+    expect(diagnostic).toContain("PATH PortableGit index: 1");
+    expect(diagnostic).toContain("No fallback was attempted");
+    expect(diagnostic).not.toContain("C:\\Users\\Hana");
+    expect(spawnAndStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits STATUS_DLL_INIT_FAILED diagnostics for sandboxed cmd helper failures", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "cmd", reason: "cmd-builtin" });
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === helper);
+    spawnAndStream.mockResolvedValueOnce({ exitCode: 3221225794 });
+    const chunks = [];
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    const result = await exec("echo test", "C:\\work", {
+      onData: (data) => chunks.push(String(data)),
+      signal: undefined,
+      timeout: 5,
+      env: {
+        PATH: "C:\\Windows\\System32",
+        COMSPEC: systemCmdExe,
+        SystemRoot: "C:\\Windows",
+        HANA_HOME: "C:\\Users\\Hana\\.hanako",
+      },
+    });
+
+    expect(result.exitCode).toBe(3221225794);
+    const diagnostic = chunks.join("");
+    expect(diagnostic).toContain("Route: runner=cmd reason=cmd-builtin mode=sandbox-helper sandbox=true");
+    expect(diagnostic).toContain(`Helper: ${helper}`);
+    expect(diagnostic).toContain("HANA_HOME: <HANA_HOME>");
+    expect(diagnostic).not.toContain("C:\\Users\\Hana");
+    expect(spawnAndStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits STATUS_DLL_INIT_FAILED diagnostics for sandboxed PowerShell helper failures", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "powershell-command", reason: "default-powershell" });
+    const helper = "C:\\Hanako\\resources\\sandbox\\windows\\hana-win-sandbox.exe";
+    existsSync.mockImplementation((p) => p === helper);
+    spawnAndStream.mockResolvedValueOnce({ exitCode: 3221225794 });
+    const chunks = [];
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec({
+      sandbox: {
+        helperPath: helper,
+        hanakoHome: "C:\\Users\\Hana\\.hanako",
+        grants: {
+          readPaths: [],
+          writePaths: ["C:\\work"],
+        },
+      },
+    });
+
+    const result = await exec("Get-Location", "C:\\work", {
+      onData: (data) => chunks.push(String(data)),
+      signal: undefined,
+      timeout: 5,
+      env: {
+        PATH: "C:\\Windows\\System32",
+        SystemRoot: "C:\\Windows",
+      },
+    });
+
+    expect(result.exitCode).toBe(3221225794);
+    const diagnostic = chunks.join("");
+    expect(diagnostic).toContain("Route: runner=powershell-command reason=default-powershell mode=sandbox-helper sandbox=true");
+    expect(diagnostic).toContain("Executable: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    expect(diagnostic).toContain(`Helper: ${helper}`);
+    expect(diagnostic).toContain("No fallback was attempted");
+    expect(spawnAndStream).toHaveBeenCalledTimes(1);
+  });
+
   it("does not pass network capability flags for restricted-token sandboxed commands", async () => {
     classifyWin32Command.mockReturnValue({ runner: "bash", reason: "complex-shell" });
     const bundledShell = "C:\\Hanako\\resources\\git\\bin\\bash.exe";

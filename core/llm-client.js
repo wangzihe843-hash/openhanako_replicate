@@ -4,6 +4,8 @@ import { normalizeProviderPayload } from './provider-compat.js';
 import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.js';
 
 const EMPTY_AFTER_THINKING_MESSAGE = "模型未回复正文，请检查思考内容或稍后重试。";
+const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
+const CODEX_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth";
 
 /**
  * core/llm-client.js — 统一的非流式 LLM 调用入口
@@ -57,6 +59,34 @@ function stripTaggedThinking(text) {
 function positiveInteger(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function resolveCodexResponsesUrl(baseUrl) {
+  const raw = (baseUrl || DEFAULT_CODEX_BASE_URL).replace(/\/+$/, "");
+  if (raw.endsWith("/codex/responses")) return raw;
+  if (raw.endsWith("/codex")) return `${raw}/responses`;
+  return `${raw}/codex/responses`;
+}
+
+function extractAccountIdFromToken(token) {
+  if (typeof token !== "string") return "";
+  const [, payload] = token.split(".");
+  if (!payload) return "";
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+    const accountId = data?.[CODEX_ACCOUNT_CLAIM_PATH]?.chatgpt_account_id;
+    return typeof accountId === "string" ? accountId : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveCodexAccountId(modelObj, apiKey) {
+  const direct = modelObj?.accountId || modelObj?.account_id || modelObj?.accountID;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const header = modelObj?.headers?.["chatgpt-account-id"] || modelObj?.headers?.["ChatGPT-Account-ID"];
+  if (typeof header === "string" && header.trim()) return header.trim();
+  return extractAccountIdFromToken(apiKey);
 }
 
 function isThinkingBlock(block) {
@@ -258,7 +288,30 @@ export async function callText({
       ...(mergedSystem && { system: mergedSystem }),
       messages: anthropicMessages,
     };
-  } else if (api === "openai-responses" || api === "openai-codex-responses") {
+  } else if (api === "openai-codex-responses") {
+    const accountId = resolveCodexAccountId(modelObj, apiKey);
+    if (!accountId) {
+      throw new AppError("LLM_AUTH_FAILED", {
+        message: "Codex OAuth account id is required for openai-codex-responses.",
+        context: { model: modelId, provider },
+      });
+    }
+    endpoint = resolveCodexResponsesUrl(baseUrl);
+    headers = {
+      "Content-Type": "application/json",
+      "OpenAI-Beta": "responses=experimental",
+      "originator": "pi",
+      "chatgpt-account-id": accountId,
+    };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+    body = {
+      model: modelId,
+      ...(explicitMaxTokens !== null && { max_output_tokens: explicitMaxTokens }),
+      ...(temperature !== undefined && { temperature }),
+      ...(mergedSystem && { instructions: mergedSystem }),
+      input: normalizedMessages,
+    };
+  } else if (api === "openai-responses") {
     // OpenAI Responses API
     endpoint = `${base}/responses`;
     headers = { "Content-Type": "application/json" };

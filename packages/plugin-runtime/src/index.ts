@@ -287,13 +287,20 @@ export interface HanaPluginConfigScopeOptions {
 }
 
 export interface HanaEventBus {
+  emit(event: unknown, sessionPath?: string | null): unknown;
   emit(type: string, payload?: unknown): unknown;
+  subscribe(callback: (event: unknown, sessionPath?: string | null) => void, filter?: HanaBusSubscriptionFilter): () => void;
   subscribe(type: string, handler: (payload: unknown) => void): () => void;
   request<T = unknown>(type: string, payload?: unknown, options?: Record<string, unknown>): Promise<T>;
   hasHandler?(type: string): boolean;
   handle?(type: string, handler: (payload: unknown) => MaybePromise<unknown>): () => void;
   listCapabilities?(): HanaEventBusCapability[];
   getCapability?(type: string): HanaEventBusCapability | null;
+}
+
+export interface HanaBusSubscriptionFilter {
+  types?: string[] | Set<string>;
+  [key: string]: unknown;
 }
 
 export interface HanaEventBusCapability {
@@ -384,6 +391,29 @@ export interface HanaUsageLedgerEntry {
     name: string | null;
     message: string | null;
   } | null;
+}
+
+export interface HanaUsageListFilter {
+  since?: string;
+  until?: string;
+  attributionKind?: string;
+  sessionPath?: string;
+  agentId?: string;
+  subsystem?: string;
+  operation?: string;
+  modelId?: string;
+  provider?: string;
+  status?: 'ok' | 'error' | 'aborted' | 'usage_missing' | string;
+  limit?: number;
+}
+
+export interface HanaUsageListResult {
+  entries: HanaUsageLedgerEntry[];
+  nextCursor: string | null;
+}
+
+export interface HanaUsageEventMeta {
+  sessionPath?: string | null;
 }
 
 export interface HanaPluginLogger {
@@ -588,6 +618,29 @@ export function requestBus<Result = unknown, Payload = unknown>(
     throw new Error('plugin bus request unavailable');
   }
   return ctx.bus.request<Result>(type, payload, options);
+}
+
+export function listUsageEntries(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  filter: HanaUsageListFilter = {},
+  options?: Record<string, unknown>,
+): Promise<HanaUsageListResult> {
+  return requestBus<HanaUsageListResult, HanaUsageListFilter>(ctx, 'usage:list', filter, options);
+}
+
+export function subscribeUsageEvents(
+  ctx: { bus?: Pick<HanaEventBus, 'subscribe'> | null },
+  handler: (entry: HanaUsageLedgerEntry, meta: HanaUsageEventMeta) => void,
+): () => void {
+  if (!ctx.bus || typeof ctx.bus.subscribe !== 'function') {
+    throw new Error('plugin bus subscribe unavailable');
+  }
+  return ctx.bus.subscribe((event, sessionPath) => {
+    if (!event || typeof event !== 'object') return;
+    const typed = event as { type?: unknown; entry?: unknown };
+    if (typed.type !== 'llm_usage') return;
+    handler(typed.entry as HanaUsageLedgerEntry, { sessionPath });
+  }, { types: ['llm_usage'] });
 }
 
 export function registerTask(

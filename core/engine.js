@@ -366,6 +366,7 @@ export class HanaEngine {
     this._listeners = new Set();
     this._eventBus = null;
     this._usageLedger = createUsageLedger({
+      storagePath: path.join(this.hanakoHome, "usage-ledger.json"),
       eventBus: {
         emit: (event, sessionPath) => this._emitEvent(event, sessionPath),
       },

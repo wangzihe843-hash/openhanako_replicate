@@ -5,7 +5,7 @@
  * 每种 previewItem 类型对应一个 JSX 分支或子组件。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { renderMarkdownPreview } from '../../utils/markdown';
 import {
   parseMarkdownCover,
@@ -26,11 +26,13 @@ import {
 import { parseCSV, injectCopyButtons } from '../../utils/format';
 import { fileIconSvg } from '../../utils/icons';
 import { openFilePreview } from '../../utils/file-preview';
+import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../../utils/link-open';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { upsertPreviewItem } from '../../stores/preview-actions';
 import { subscribeFileChanges } from '../../services/file-change-events';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
+import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 import type { PreviewItem } from '../../types';
 
 // ── LegacyMediaFallback ──
@@ -97,6 +99,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
       body: JSON.stringify({
         title: previewItem.title,
         content: previewItem.content,
+        sourceFilePath: previewItem.filePath,
       }),
     })
       .then(async (res) => {
@@ -114,7 +117,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
     return () => {
       cancelled = true;
     };
-  }, [previewItem.content, previewItem.title]);
+  }, [previewItem.content, previewItem.filePath, previewItem.title]);
 
   if (error) {
     return <pre className="preview-code">{error}</pre>;
@@ -408,8 +411,51 @@ function MarkdownNoCoverDropHost({ filePath, children }: { filePath?: string; ch
 
 function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
   const divRef = useRef<HTMLDivElement>(null);
+  const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   const cover = useMemo(() => parseMarkdownCover(previewItem.content), [previewItem.content]);
   const body = useMemo(() => stripMarkdownFrontMatterForPreview(previewItem.content), [previewItem.content]);
+  const linkContext = useMemo<LinkOpenContext>(() => ({
+    origin: 'desk',
+    baseFilePath: previewItem.filePath,
+  }), [previewItem.filePath]);
+
+  const findAnchor = useCallback((event: MouseEvent): HTMLAnchorElement | null => {
+    const root = divRef.current;
+    const target = event.target;
+    if (!root || !(target instanceof Element)) return null;
+    const anchor = target.closest<HTMLAnchorElement>('a[href]');
+    if (!anchor || !root.contains(anchor)) return null;
+    return anchor;
+  }, []);
+
+  const handleLinkClick = useCallback((event: MouseEvent) => {
+    const anchor = findAnchor(event);
+    if (!anchor) return;
+    const href = anchor.getAttribute('href') || '';
+    const context = {
+      ...linkContext,
+      label: anchor.textContent?.trim() || undefined,
+    };
+    if (resolveLinkTarget(href, context).kind === 'anchor') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openInternalLink(href, context);
+  }, [findAnchor, linkContext]);
+
+  const handleLinkContextMenu = useCallback((event: MouseEvent) => {
+    const anchor = findAnchor(event);
+    if (!anchor) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setLinkMenu({
+      href: anchor.getAttribute('href') || '',
+      context: {
+        ...linkContext,
+        label: anchor.textContent?.trim() || undefined,
+      },
+      position: { x: event.clientX, y: event.clientY },
+    });
+  }, [findAnchor, linkContext]);
 
   useEffect(() => {
     if (divRef.current) {
@@ -450,6 +496,8 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
         <div
           ref={divRef}
           className="preview-markdown md-content"
+          onClick={handleLinkClick}
+          onContextMenu={handleLinkContextMenu}
           dangerouslySetInnerHTML={{
             __html: renderMarkdownPreview(body, {
               filePath: previewItem.filePath,
@@ -462,6 +510,8 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
           <div
             ref={divRef}
             className="preview-markdown md-content"
+            onClick={handleLinkClick}
+            onContextMenu={handleLinkContextMenu}
             dangerouslySetInnerHTML={{
               __html: renderMarkdownPreview(body, {
                 filePath: previewItem.filePath,
@@ -470,6 +520,12 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
             }}
           />
         </MarkdownNoCoverDropHost>
+      )}
+      {linkMenu && (
+        <LinkContextMenu
+          state={linkMenu}
+          onClose={() => setLinkMenu(null)}
+        />
       )}
     </>
   );

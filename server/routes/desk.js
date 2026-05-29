@@ -18,6 +18,7 @@ import { DEFAULT_DISABLED_TOOL_NAMES } from "../../shared/tool-categories.js";
 import { applyMarkdownCoverFromGeneratedFile } from "../../plugins/beautify/lib/markdown-cover-service.js";
 import { resolveCoverGalleryPresetImagePath } from "../../plugins/beautify/lib/cover-gallery-assets.js";
 import { buildCoverStyleGuideForAgent } from "../../plugins/beautify/lib/cover-style-guide.js";
+import { createSubmitContext, validateImageModelRef } from "../../plugins/image-gen/lib/image-task-runner.js";
 import { emitAppEvent } from "../app-events.js";
 import { t } from "../i18n.js";
 import { realPath, isSensitivePath } from "../utils/path-security.js";
@@ -282,13 +283,13 @@ export function createDeskRoute(engine, hub) {
     ].filter(Boolean).join("\n");
   }
 
-  function getBeautifyAgent(requestedAgentId) {
+  function getBeautifyExecutorAgent(requestedAgentId) {
     const agentId = typeof requestedAgentId === "string" && requestedAgentId.trim()
       ? requestedAgentId.trim()
-      : engine.currentAgentId;
-    const agent = engine.getAgent?.(agentId) || engine.agent;
+      : (engine.getPrimaryAgentId?.() || engine.currentAgentId || null);
+    const agent = agentId ? engine.getAgent?.(agentId) : null;
     return {
-      agent,
+      agent: agent || null,
       agentId: agent?.id || agentId || null,
     };
   }
@@ -303,6 +304,123 @@ export function createDeskRoute(engine, hub) {
       ? agent.config.tools.disabled
       : DEFAULT_DISABLED_TOOL_NAMES;
     return !disabled.includes(BEAUTIFY_OPTIONAL_TOOL_NAME);
+  }
+
+  function beautifyAgentName(agent, agentId) {
+    return agent?.agentName || agent?.name || agentId || null;
+  }
+
+  function getImageGenContext() {
+    return engine.pluginManager?.getPlugin?.("image-gen")?.ctx || null;
+  }
+
+  async function resolveDefaultImageModelStatus() {
+    const imageGenCtx = getImageGenContext();
+    if (!imageGenCtx) {
+      return {
+        ok: false,
+        status: 404,
+        reason: "image-gen-unavailable",
+        error: "image generation plugin is unavailable",
+        settingsTarget: "media",
+      };
+    }
+
+    const defaultModel = imageGenCtx.config?.get?.("defaultImageModel");
+    if (!defaultModel?.provider || !defaultModel?.id) {
+      return {
+        ok: false,
+        status: 409,
+        reason: "default-image-model-missing",
+        error: "default image model is not configured",
+        settingsTarget: "media",
+      };
+    }
+
+    const registry = imageGenCtx._mediaGen?.registry;
+    if (!registry) {
+      return {
+        ok: false,
+        status: 404,
+        reason: "image-gen-unavailable",
+        error: "image generation runtime is unavailable",
+        settingsTarget: "media",
+      };
+    }
+
+    try {
+      const resolved = await validateImageModelRef(
+        { providerId: defaultModel.provider, modelId: defaultModel.id },
+        registry,
+        createSubmitContext(imageGenCtx),
+      );
+      return { ok: true, resolved };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 409,
+        reason: "default-image-model-invalid",
+        error: err?.message || String(err),
+        settingsTarget: "media",
+      };
+    }
+  }
+
+  async function getBeautifyGenerationStatus(requestedAgentId) {
+    const { agent, agentId } = getBeautifyExecutorAgent(requestedAgentId);
+    const base = {
+      available: false,
+      enabled: false,
+      executorAgentId: agentId,
+      executorAgentName: beautifyAgentName(agent, agentId),
+      disabledReason: null,
+      message: null,
+      settingsTarget: null,
+    };
+
+    if (!agentId || !agent) {
+      return {
+        ...base,
+        disabledReason: "agent-unavailable",
+        message: "agent unavailable",
+      };
+    }
+
+    if (!isBeautifyPluginAvailable()) {
+      return {
+        ...base,
+        disabledReason: "beautify-plugin-unavailable",
+        message: "beautify tool is unavailable",
+        settingsTarget: "plugins",
+      };
+    }
+
+    if (!isBeautifyEnabled(agent)) {
+      return {
+        ...base,
+        available: true,
+        disabledReason: "beautify-disabled",
+        message: "beautify tool is disabled for this agent",
+        settingsTarget: "agent-tools",
+      };
+    }
+
+    const imageStatus = await resolveDefaultImageModelStatus();
+    if (!imageStatus.ok) {
+      return {
+        ...base,
+        available: true,
+        disabledReason: imageStatus.reason,
+        message: imageStatus.error,
+        settingsTarget: imageStatus.settingsTarget,
+      };
+    }
+
+    return {
+      ...base,
+      available: true,
+      enabled: true,
+    };
   }
 
   function validateBeautifyMarkdownFilePath(filePath) {
@@ -321,23 +439,44 @@ export function createDeskRoute(engine, hub) {
     return null;
   }
 
-  function validateBeautifyAccess(body) {
-    const { agent, agentId } = getBeautifyAgent(body?.agentId);
-    if (!agentId) return { error: "agent unavailable", status: 500 };
+  function validateMarkdownCoverSystemAccess() {
     if (!isBeautifyPluginAvailable()) {
       return { error: "beautify tool is unavailable", status: 404 };
     }
-    if (!isBeautifyEnabled(agent)) {
-      return { error: "beautify tool is disabled for this agent", status: 403 };
+    return {};
+  }
+
+  async function validateBeautifyGenerationAccess(body) {
+    const status = await getBeautifyGenerationStatus(body?.executorAgentId || body?.agentId);
+    if (!status.executorAgentId) return { error: "agent unavailable", status: 500, reason: "agent-unavailable" };
+    if (!status.enabled) {
+      const httpStatus = status.disabledReason === "beautify-disabled"
+        ? 403
+        : status.disabledReason === "beautify-plugin-unavailable" || status.disabledReason === "image-gen-unavailable"
+          ? 404
+          : 409;
+      return {
+        error: status.message || "beautify generation is unavailable",
+        status: httpStatus,
+        reason: status.disabledReason,
+        settingsTarget: status.settingsTarget,
+      };
     }
-    return { agent, agentId };
+    const agent = engine.getAgent?.(status.executorAgentId);
+    return { agent, agentId: status.executorAgentId };
   }
 
   route.get("/desk/beautify/status", async (c) => {
-    const { agent, agentId } = getBeautifyAgent(c.req.query("agentId"));
-    const available = isBeautifyPluginAvailable();
-    const enabled = Boolean(available && agentId && isBeautifyEnabled(agent));
-    return c.json({ available, enabled, agentId });
+    const systemCover = { available: isBeautifyPluginAvailable() };
+    const agentGenerate = await getBeautifyGenerationStatus(c.req.query("executorAgentId") || c.req.query("agentId"));
+    return c.json({
+      systemCover,
+      agentGenerate,
+      // Compatibility for older renderer code while the desktop bundle updates.
+      available: systemCover.available,
+      enabled: agentGenerate.enabled,
+      agentId: agentGenerate.executorAgentId,
+    });
   });
 
   route.post("/desk/beautify/cover/apply", async (c) => {
@@ -346,7 +485,7 @@ export function createDeskRoute(engine, hub) {
     const fileError = validateBeautifyMarkdownFilePath(filePath);
     if (fileError) return c.json({ error: fileError }, 400);
 
-    const access = validateBeautifyAccess(body);
+    const access = validateMarkdownCoverSystemAccess();
     if (access.error) return c.json({ error: access.error }, access.status);
 
     const imageFilePath = typeof body?.imageFilePath === "string"
@@ -374,7 +513,7 @@ export function createDeskRoute(engine, hub) {
     const fileError = validateBeautifyMarkdownFilePath(filePath);
     if (fileError) return c.json({ error: fileError }, 400);
 
-    const access = validateBeautifyAccess(body);
+    const access = validateMarkdownCoverSystemAccess();
     if (access.error) return c.json({ error: access.error }, access.status);
 
     const presetId = typeof body?.presetId === "string" ? body.presetId : "";
@@ -403,8 +542,14 @@ export function createDeskRoute(engine, hub) {
     const fileError = validateBeautifyMarkdownFilePath(filePath);
     if (fileError) return c.json({ error: fileError }, 400);
 
-    const access = validateBeautifyAccess(body);
-    if (access.error) return c.json({ error: access.error }, access.status);
+    const access = await validateBeautifyGenerationAccess(body);
+    if (access.error) {
+      return c.json({
+        error: access.error,
+        reason: access.reason,
+        settingsTarget: access.settingsTarget,
+      }, access.status);
+    }
     const { agent, agentId } = access;
 
     const activityId = `beautify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

@@ -264,13 +264,18 @@ export class ModelManager {
    * 根据 provider 名称查找凭证
    * 委托 ProviderRegistry，返回 snake_case 格式（兼容 callProviderText 消费方）
    * @param {string} provider
-   * @returns {{ api_key: string, base_url: string, api: string }}
+   * @returns {{ api_key: string, base_url: string, api: string, accountId?: string }}
    */
   resolveProviderCredentials(provider) {
     if (!provider) return { api_key: "", base_url: "", api: "" };
     const cred = this.providerRegistry.getCredentials(provider);
     if (cred) {
-      return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "" };
+      return {
+        api_key: cred.apiKey || "",
+        base_url: cred.baseUrl || "",
+        api: cred.api || "",
+        ...(cred.accountId ? { accountId: cred.accountId } : {}),
+      };
     }
     return { api_key: "", base_url: "", api: "" };
   }

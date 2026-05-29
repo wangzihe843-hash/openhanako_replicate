@@ -116,4 +116,72 @@ describe('ApiKeyCredentials', () => {
       api_key: 'saved-groq-key',
     });
   });
+
+  it('saves discovered Gemini models during preset setup instead of static defaults', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({
+        models: [
+          {
+            id: 'gemini-3-pro-preview',
+            name: 'Gemini 3 Pro Preview',
+            context: 1048576,
+            maxOutput: 65536,
+          },
+          { id: 'gemini-3-flash-preview' },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const { container } = render(
+      <ApiKeyCredentials
+        providerId="gemini"
+        summary={providerSummary({
+          display_name: 'Gemini',
+          base_url: '',
+          api: '',
+          models: [],
+        })}
+        isPresetSetup
+        presetInfo={{
+          label: 'Gemini',
+          value: 'gemini',
+          url: 'https://generativelanguage.googleapis.com/v1beta',
+          api: 'google-generative-ai',
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const input = container.querySelector('input[type="password"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'gemini-key' } });
+    const saveButton = container.querySelector('button[title="settings.providers.verifyConnection"]') as HTMLButtonElement;
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith(
+      '/api/config',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/providers/fetch-models', expect.objectContaining({
+      method: 'POST',
+    }));
+
+    const configCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/config');
+    const body = JSON.parse(String((configCall?.[1] as RequestInit).body));
+    expect(body.providers.gemini).toEqual({
+      base_url: 'https://generativelanguage.googleapis.com/v1beta',
+      api_key: 'gemini-key',
+      api: 'google-generative-ai',
+      models: [
+        {
+          id: 'gemini-3-pro-preview',
+          name: 'Gemini 3 Pro Preview',
+          context: 1048576,
+          maxOutput: 65536,
+        },
+        'gemini-3-flash-preview',
+      ],
+    });
+  });
 });

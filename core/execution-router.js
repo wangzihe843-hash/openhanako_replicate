@@ -25,6 +25,10 @@ const ROLE_TO_PREF_KEY = {
   utility_large: "utility_large_model",
 };
 
+function withCredentialAccountId(model, cred) {
+  return cred?.accountId ? { ...model, accountId: cred.accountId } : model;
+}
+
 export class ExecutionRouter {
   /**
    * @param {(ref: string) => object|null} resolveModel - 从 _availableModels 解析模型的函数
@@ -91,6 +95,7 @@ export class ExecutionRouter {
       api: cred.api,
       apiKey: cred.apiKey,
       baseUrl: cred.baseUrl,
+      ...(cred.accountId ? { accountId: cred.accountId } : {}),
     };
   }
 
@@ -134,15 +139,15 @@ export class ExecutionRouter {
     if (!largeModel) throw new Error(t("error.modelNotFound", { id: largeModelRef }));
 
     // utility 凭证
-    let apiKey, baseUrl, api;
+    let apiKey, baseUrl, api, utilCred;
     if (utilApiOverride?.provider || utilApiOverride?.api_key || utilApiOverride?.base_url) {
       // 校验 provider 一致性（与原 ModelManager.resolveUtilityConfig 行为一致）
       if (utilApiOverride.provider && utilApiOverride.provider !== utilModel.provider) {
         throw new Error(t("error.utilityApiProviderMismatch", { model: utilityModelRef }));
       }
       // utility API 覆盖（用户指定了独立的 utility api endpoint）
-      const provCred = this._providerRegistry.getCredentials(utilModel.provider);
-      api = provCred?.api || utilModel.api;
+      utilCred = this._providerRegistry.getCredentials(utilModel.provider);
+      api = utilCred?.api || utilModel.api;
       apiKey = utilApiOverride.api_key || "";
       baseUrl = utilApiOverride.base_url || "";
       if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
@@ -150,20 +155,20 @@ export class ExecutionRouter {
         throw new Error(t("error.utilityApiMissingCreds", { provider: utilModel.provider }));
       }
     } else {
-      const cred = this._providerRegistry.getCredentials(utilModel.provider);
-      if (!cred?.api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
-      if (!cred.baseUrl || (!cred.apiKey && !this._allowsMissingApiKey(utilModel.provider, cred.baseUrl))) {
+      utilCred = this._providerRegistry.getCredentials(utilModel.provider);
+      if (!utilCred?.api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
+      if (!utilCred.baseUrl || (!utilCred.apiKey && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: utilModel.provider }));
       }
-      apiKey = cred.apiKey;
-      baseUrl = cred.baseUrl;
-      api = cred.api;
+      apiKey = utilCred.apiKey;
+      baseUrl = utilCred.baseUrl;
+      api = utilCred.api;
     }
 
     // utility_large 凭证（provider 相同则复用）
-    let large_api_key = apiKey, large_base_url = baseUrl, large_api = api;
+    let large_api_key = apiKey, large_base_url = baseUrl, large_api = api, largeCred = utilCred;
     if (largeModel.provider !== utilModel.provider) {
-      const largeCred = this._providerRegistry.getCredentials(largeModel.provider);
+      largeCred = this._providerRegistry.getCredentials(largeModel.provider);
       if (!largeCred?.api) throw new Error(t("error.providerMissingApi", { provider: largeModel.provider }));
       if (!largeCred.baseUrl || (!largeCred.apiKey && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: largeModel.provider }));
@@ -174,8 +179,8 @@ export class ExecutionRouter {
     }
 
     return {
-      utility: utilModel,
-      utility_large: largeModel,
+      utility: withCredentialAccountId(utilModel, utilCred),
+      utility_large: withCredentialAccountId(largeModel, largeCred),
       api_key: apiKey,
       base_url: baseUrl,
       api,

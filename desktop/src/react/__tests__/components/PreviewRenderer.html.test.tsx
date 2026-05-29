@@ -73,6 +73,7 @@ describe('PreviewRenderer HTML isolation', () => {
       body: JSON.stringify({
         title: 'demo.html',
         content: htmlContent,
+        sourceFilePath: '/tmp/demo.html',
       }),
     });
 

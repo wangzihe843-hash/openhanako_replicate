@@ -1,26 +1,31 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { Hono } from "hono";
+import { guessMime } from "../http/file-content.js";
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_CONTENT_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_ASSET_BYTES = 50 * 1024 * 1024;
 
 export const HTML_PREVIEW_CSP = [
   "default-src 'none'",
-  "base-uri 'none'",
+  "base-uri 'self'",
   "form-action 'none'",
   "object-src 'none'",
   "connect-src 'none'",
   "script-src 'unsafe-inline' https:",
   "style-src 'unsafe-inline' https:",
   "font-src https: data:",
-  "img-src https: data: blob:",
-  "media-src https: data: blob:",
+  "img-src 'self' https: data: blob:",
+  "media-src 'self' https: data: blob:",
   "frame-ancestors 'self' file: http://127.0.0.1:* http://localhost:*",
 ].join("; ");
 
 export function createHtmlPreviewRoute({
   ttlMs = DEFAULT_TTL_MS,
   maxContentBytes = DEFAULT_MAX_CONTENT_BYTES,
+  maxAssetBytes = DEFAULT_MAX_ASSET_BYTES,
   now = () => Date.now(),
   randomId = () => `pv_${crypto.randomBytes(16).toString("hex")}`,
   randomToken = () => crypto.randomBytes(32).toString("base64url"),
@@ -46,15 +51,21 @@ export function createHtmlPreviewRoute({
 
     const id = randomId();
     const token = randomToken();
+    const sourceDir = resolvePreviewSourceDir(body?.sourceFilePath);
+    const requestUrl = new URL(c.req.url);
+    const assetBaseUrl = sourceDir
+      ? new URL(`/preview/html/${encodeURIComponent(id)}/assets/${encodeURIComponent(token)}/`, requestUrl.origin).toString()
+      : null;
+    const servedContent = assetBaseUrl ? injectAssetBase(content, assetBaseUrl) : content;
     const expiresAt = now() + ttlMs;
     previews.set(id, {
       token,
-      content,
+      content: servedContent,
       title: typeof body?.title === "string" ? body.title.slice(0, 240) : "",
+      sourceDir,
       expiresAt,
     });
 
-    const requestUrl = new URL(c.req.url);
     const previewUrl = new URL(`/preview/html/${encodeURIComponent(id)}`, requestUrl.origin);
     previewUrl.searchParams.set("previewToken", token);
 
@@ -67,6 +78,8 @@ export function createHtmlPreviewRoute({
 
   route.get("/preview/html/:id", (c) => servePreview(c, previews, now()));
   route.on("HEAD", "/preview/html/:id", (c) => servePreview(c, previews, now(), true));
+  route.get("/preview/html/:id/assets/:token/*", (c) => servePreviewAsset(c, previews, now(), maxAssetBytes));
+  route.on("HEAD", "/preview/html/:id/assets/:token/*", (c) => servePreviewAsset(c, previews, now(), maxAssetBytes, true));
 
   return route;
 }
@@ -91,8 +104,99 @@ function servePreview(c, previews, currentTime, headOnly = false) {
   return c.body(headOnly ? null : preview.content);
 }
 
+function servePreviewAsset(c, previews, currentTime, maxAssetBytes, headOnly = false) {
+  cleanupExpired(previews, currentTime);
+
+  const id = c.req.param("id");
+  const token = c.req.param("token") || "";
+  const preview = previews.get(id);
+  if (!preview || preview.token !== token || !preview.sourceDir) {
+    return c.body(null, 404);
+  }
+
+  const relativePath = extractAssetPath(c.req.path, id, token);
+  const assetPath = resolveAssetPath(preview.sourceDir, relativePath);
+  if (!assetPath) return c.body(null, 404);
+
+  const stat = fs.statSync(assetPath);
+  if (!stat.isFile() || stat.size > maxAssetBytes) return c.body(null, 404);
+
+  c.header("Content-Type", guessMime(assetPath));
+  c.header("Cache-Control", "no-store");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cross-Origin-Resource-Policy", "same-origin");
+  return c.body(headOnly ? null : fs.readFileSync(assetPath));
+}
+
 function cleanupExpired(previews, currentTime) {
   for (const [id, preview] of previews.entries()) {
     if (preview.expiresAt <= currentTime) previews.delete(id);
+  }
+}
+
+function resolvePreviewSourceDir(sourceFilePath) {
+  if (typeof sourceFilePath !== "string" || !path.isAbsolute(sourceFilePath)) return null;
+  try {
+    const stat = fs.statSync(sourceFilePath);
+    if (!stat.isFile()) return null;
+    return fs.realpathSync(path.dirname(sourceFilePath));
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtmlAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function injectAssetBase(content, assetBaseUrl) {
+  const baseTag = `<base href="${escapeHtmlAttr(assetBaseUrl)}">`;
+  if (/<head\b[^>]*>/i.test(content)) {
+    return content.replace(/<head\b[^>]*>/i, (match) => `${match}${baseTag}`);
+  }
+  return `${baseTag}${content}`;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractAssetPath(requestPath, id, token) {
+  const prefix = new RegExp(`^/preview/html/${escapeRegExp(id)}/assets/${escapeRegExp(token)}/?`);
+  const raw = String(requestPath || "").replace(prefix, "");
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return "";
+  }
+}
+
+function isInsideRoot(candidatePath, rootPath) {
+  const candidate = path.resolve(candidatePath);
+  const root = path.resolve(rootPath);
+  return candidate === root || candidate.startsWith(root + path.sep);
+}
+
+function resolveAssetPath(sourceDir, relativePath) {
+  if (!relativePath || relativePath.includes("\0") || relativePath.includes("\\")) return null;
+  if (path.isAbsolute(relativePath)) return null;
+  const parts = relativePath.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return null;
+
+  const candidate = path.resolve(sourceDir, relativePath);
+  if (!isInsideRoot(candidate, sourceDir)) return null;
+
+  try {
+    const stat = fs.lstatSync(candidate);
+    if (stat.isSymbolicLink()) return null;
+    const realPath = fs.realpathSync(candidate);
+    if (!isInsideRoot(realPath, sourceDir)) return null;
+    return realPath;
+  } catch {
+    return null;
   }
 }

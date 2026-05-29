@@ -19,14 +19,23 @@ import {
   autoProjectIdForCwd,
   buildSessionProjectView,
   buildSessionSections,
-  type SessionProjectCatalog,
-  type SessionProjectFolderGroup,
-  type SessionProjectGroup,
   type SessionViewMode,
 } from './session-sections';
+import type { SessionProjectFolderGroup, SessionProjectGroup } from '../types/session-projects';
+import {
+  createSessionProjectInCatalog,
+  deleteSessionProjectFolderFromCatalog,
+  deleteSessionProjectFromCatalog,
+  loadSessionProjectCatalog,
+  patchSessionProjectFolderInCatalog,
+  patchSessionProjectInCatalog,
+  reorderSessionProjectFoldersInCatalog,
+  reorderSessionProjectsInCatalog,
+  setSessionProjectAssignmentForSession,
+} from '../stores/session-project-actions';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
-import { cwdFromAutoProjectId, UNCATEGORIZED_PROJECT_ID } from '../../../../shared/session-projects.js';
+import { cwdFromAutoProjectId } from '../../../../shared/session-projects.js';
 import styles from './SessionList.module.css';
 
 const SESSION_VIEW_MODE_KEY = 'hana-session-sidebar-view-mode';
@@ -34,8 +43,6 @@ const SESSION_DRAG_MIME = 'application/x-hana-session-path';
 const PROJECT_DRAG_MIME = 'application/x-hana-project-id';
 const FOLDER_DRAG_MIME = 'application/x-hana-project-folder-id';
 const PROJECT_SESSION_PREVIEW_LIMIT = 5;
-
-const EMPTY_PROJECT_CATALOG: SessionProjectCatalog = { folders: [], projects: [] };
 
 type SidebarDragState =
   | { kind: 'session'; sessionPath: string }
@@ -140,19 +147,6 @@ function readInitialSessionViewMode(): SessionViewMode {
   }
 }
 
-function normalizeProjectCatalog(data: unknown): SessionProjectCatalog {
-  const raw = data && typeof data === 'object' && !Array.isArray(data)
-    ? (data as { catalog?: unknown }).catalog
-    : null;
-  const catalog = raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? raw as Partial<SessionProjectCatalog>
-    : EMPTY_PROJECT_CATALOG;
-  return {
-    folders: Array.isArray(catalog.folders) ? catalog.folders : [],
-    projects: Array.isArray(catalog.projects) ? catalog.projects : [],
-  };
-}
-
 function uniqueStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
@@ -230,10 +224,10 @@ function SessionListInner() {
   const agents = useStore(s => s.agents);
   const streamingSessions = useStore(s => s.streamingSessions);
   const browserBySession = useStore(s => s.browserBySession);
+  const projectCatalog = useStore(s => s.sessionProjectCatalog);
 
   const [browserSessions, setBrowserSessions] = useState<Record<string, BrowserSessionState>>({});
   const [viewMode, setViewModeState] = useState<SessionViewMode>(readInitialSessionViewMode);
-  const [projectCatalog, setProjectCatalog] = useState<SessionProjectCatalog>(EMPTY_PROJECT_CATALOG);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set());
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => new Set());
   const [showAllProjectIds, setShowAllProjectIds] = useState<Set<string>>(() => new Set());
@@ -355,16 +349,8 @@ function SessionListInner() {
 
   useEffect(() => {
     if (viewMode !== 'project') return;
-    let cancelled = false;
-    hanaFetch('/api/session-projects')
-      .then(res => res.json())
-      .then(data => {
-        if (!cancelled) setProjectCatalog(normalizeProjectCatalog(data));
-      })
+    loadSessionProjectCatalog()
       .catch(err => console.warn('[sessions] fetch project catalog failed:', err));
-    return () => {
-      cancelled = true;
-    };
   }, [viewMode]);
 
   useEffect(() => {
@@ -419,112 +405,33 @@ function SessionListInner() {
   }, []);
 
   const updateSessionProjectAssignment = useCallback(async (sessionPath: string, projectId: string | null) => {
-    await hanaFetch('/api/session-projects/session-assignment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionPath, projectId }),
-    });
-    useStore.setState(state => ({
-      sessions: state.sessions.map(session => session.path === sessionPath
-        ? { ...session, projectId }
-        : session),
-    }));
+    await setSessionProjectAssignmentForSession(sessionPath, projectId);
   }, []);
 
   const patchProject = useCallback(async (projectId: string, patch: { folderId?: string | null; name?: string }) => {
-    const res = await hanaFetch(`/api/session-projects/projects/${encodeURIComponent(projectId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    const data = await res.json().catch(() => ({}));
-    const project = data?.project;
-    if (!project || typeof project.id !== 'string') return null;
-    setProjectCatalog(catalog => ({
-      ...catalog,
-      projects: catalog.projects.some(item => item.id === project.id)
-        ? catalog.projects.map(item => item.id === project.id ? project : item)
-        : [...catalog.projects, project],
-    }));
-    return project;
+    return patchSessionProjectInCatalog(projectId, patch);
   }, []);
 
   const patchFolder = useCallback(async (folderId: string, patch: { name?: string }) => {
-    const res = await hanaFetch(`/api/session-projects/folders/${encodeURIComponent(folderId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    const data = await res.json().catch(() => ({}));
-    const folder = data?.folder;
-    if (!folder || typeof folder.id !== 'string') return null;
-    setProjectCatalog(catalog => ({
-      ...catalog,
-      folders: (catalog.folders || []).some(item => item.id === folder.id)
-        ? (catalog.folders || []).map(item => item.id === folder.id ? folder : item)
-        : [...(catalog.folders || []), folder],
-    }));
-    return folder;
+    return patchSessionProjectFolderInCatalog(folderId, patch);
   }, []);
 
   const reorderProjects = useCallback(async (folderId: string | null, projectIds: string[]) => {
-    const res = await hanaFetch('/api/session-projects/projects/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderId, projectIds }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.catalog) {
-      setProjectCatalog(normalizeProjectCatalog({ catalog: data.catalog }));
-    }
+    await reorderSessionProjectsInCatalog(folderId, projectIds);
   }, []);
 
   const reorderFolders = useCallback(async (folderIds: string[]) => {
-    const res = await hanaFetch('/api/session-projects/folders/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderIds }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.catalog) {
-      setProjectCatalog(normalizeProjectCatalog({ catalog: data.catalog }));
-    }
+    await reorderSessionProjectFoldersInCatalog(folderIds);
   }, []);
 
   const createProject = useCallback(async (name: string) => {
-    const res = await hanaFetch('/api/session-projects/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, folderId: null }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.project) {
-      setProjectCatalog(catalog => ({ ...catalog, projects: [...catalog.projects, data.project] }));
-    }
+    await createSessionProjectInCatalog({ name, folderId: null });
   }, []);
 
   const deleteProject = useCallback(async (project: SessionProjectGroup) => {
     const confirmed = window.confirm?.(t('sidebar.projects.deleteProjectConfirm', { name: project.name }));
     if (!confirmed) return;
-    const res = await hanaFetch(`/api/session-projects/projects/${encodeURIComponent(project.id)}`, {
-      method: 'DELETE',
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.catalog) {
-      setProjectCatalog(normalizeProjectCatalog({ catalog: data.catalog }));
-    }
-    const sessionPaths = Array.isArray(data?.assignment?.sessionPaths)
-      ? data.assignment.sessionPaths.filter((item: unknown): item is string => typeof item === 'string' && item.length > 0)
-      : project.items.map(item => item.path);
-    const nextProjectId = typeof data?.assignment?.projectId === 'string'
-      ? data.assignment.projectId
-      : UNCATEGORIZED_PROJECT_ID;
-    const pathSet = new Set(sessionPaths);
-    useStore.setState(state => ({
-      sessions: state.sessions.map(session => (
-        pathSet.has(session.path) ? { ...session, projectId: nextProjectId } : session
-      )),
-    }));
+    await deleteSessionProjectFromCatalog(project.id, project.items.map(item => item.path));
     setCollapsedProjectIds(prev => {
       const next = new Set(prev);
       next.delete(project.id);
@@ -540,13 +447,7 @@ function SessionListInner() {
   const deleteFolder = useCallback(async (folder: SessionProjectFolderGroup) => {
     const confirmed = window.confirm?.(t('sidebar.projects.deleteFolderConfirm', { name: folder.name }));
     if (!confirmed) return;
-    const res = await hanaFetch(`/api/session-projects/folders/${encodeURIComponent(folder.id)}`, {
-      method: 'DELETE',
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data?.catalog) {
-      setProjectCatalog(normalizeProjectCatalog({ catalog: data.catalog }));
-    }
+    await deleteSessionProjectFolderFromCatalog(folder.id);
     setCollapsedFolderIds(prev => {
       const next = new Set(prev);
       next.delete(folder.id);
@@ -555,8 +456,12 @@ function SessionListInner() {
   }, [t]);
 
   const handleCreateProjectSession = useCallback((project: SessionProjectGroup) => {
-    const cwd = project.source === 'cwd' ? cwdFromAutoProjectId(project.id) : null;
-    void createNewSession({ projectId: project.id, cwd });
+    if (project.source === 'cwd') {
+      const cwd = cwdFromAutoProjectId(project.id);
+      void createNewSession({ cwd });
+      return;
+    }
+    void createNewSession({ projectId: project.id, cwd: null });
   }, []);
 
   const handleProjectNameDialogSubmit = useCallback(async (event: React.FormEvent) => {

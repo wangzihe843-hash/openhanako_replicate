@@ -8,6 +8,12 @@ describe("image-gen provider discovery", () => {
     mediaRoute(app, {
       dataDir: "/tmp/hana-image-gen-test",
       config: { get: () => ({}) },
+      _mediaGen: {
+        registry: {
+          getProtocol: (protocolId) => protocolId === "plugin-images" ? { id: "plugin-adapter" } : null,
+          get: () => null,
+        },
+      },
       bus: {
         async request(type) {
           if (type === "provider:media-providers") {
@@ -18,7 +24,7 @@ describe("image-gen provider discovery", () => {
                   displayName: "Plugin Image",
                   hasCredentials: true,
                   runtime: { kind: "local-cli" },
-                  models: [{ id: "plugin-model", name: "Plugin Model" }],
+                  models: [{ id: "plugin-model", name: "Plugin Model", protocolId: "plugin-images" }],
                   availableModels: [],
                 },
               },
@@ -35,7 +41,49 @@ describe("image-gen provider discovery", () => {
     expect(Object.keys(body.providers)).toEqual(["plugin-image"]);
     expect(body.providers["plugin-image"]).toMatchObject({
       displayName: "Plugin Image",
-      models: [{ id: "plugin-model", name: "Plugin Model" }],
+      models: [{ id: "plugin-model", name: "Plugin Model", adapterAvailable: true }],
+    });
+  });
+
+  it("marks media models without a registered protocol adapter as unavailable", async () => {
+    const app = new Hono();
+    mediaRoute(app, {
+      dataDir: "/tmp/hana-image-gen-test",
+      config: { get: () => ({}) },
+      _mediaGen: {
+        registry: {
+          getProtocol: () => null,
+          get: () => null,
+        },
+      },
+      bus: {
+        async request(type) {
+          if (type === "provider:media-providers") {
+            return {
+              providers: {
+                axis: {
+                  providerId: "axis",
+                  displayName: "Axis",
+                  hasCredentials: true,
+                  models: [{ id: "gpt-image-2", name: "GPT Image 2", protocolId: "axis-images" }],
+                  availableModels: [],
+                },
+              },
+            };
+          }
+          throw new Error(`unexpected bus request: ${type}`);
+        },
+      },
+    });
+
+    const res = await app.request("/providers");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.providers.axis.models[0]).toMatchObject({
+      id: "gpt-image-2",
+      protocolId: "axis-images",
+      adapterAvailable: false,
     });
   });
 

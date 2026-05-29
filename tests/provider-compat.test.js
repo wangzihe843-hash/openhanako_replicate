@@ -628,6 +628,70 @@ describe("normalizeProviderPayload — 通用层", () => {
       video_url: { url: "data:video/webm;base64,AAAA" },
     });
   });
+
+  it("Zhipu payloads remove OpenAI-only fields and normalize reasoning/output controls", () => {
+    const payload = {
+      model: "glm-4.7-flash",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup",
+          strict: true,
+          parameters: {
+            type: "object",
+            properties: {},
+          },
+        },
+      }],
+      store: true,
+      stream_options: { include_usage: true },
+      reasoning_effort: "high",
+      max_completion_tokens: 32000,
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "glm-4.7-flash",
+      provider: "zhipu",
+      api: "openai-completions",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      reasoning: true,
+    }, { mode: "chat", reasoningLevel: "high", outputBudgetSource: "system" });
+
+    expect(result).not.toBe(payload);
+    expect(result).not.toHaveProperty("store");
+    expect(result).not.toHaveProperty("stream_options");
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(result.max_tokens).toBe(32000);
+    expect(result.thinking).toEqual({ type: "enabled" });
+    expect(result.tools[0].function).not.toHaveProperty("strict");
+    expect(payload.store).toBe(true);
+    expect(payload.tools[0].function.strict).toBe(true);
+  });
+
+  it("Zhipu utility payloads explicitly disable thinking instead of falling back to hidden provider defaults", () => {
+    const payload = {
+      model: "glm-4.7-flash",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "high",
+      max_completion_tokens: 100,
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "glm-4.7-flash",
+      provider: "custom",
+      api: "openai-completions",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      reasoning: true,
+    }, { mode: "utility" });
+
+    expect(result).toMatchObject({
+      max_tokens: 100,
+      thinking: { type: "disabled" },
+    });
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(result).not.toHaveProperty("max_completion_tokens");
+  });
 });
 
 describe("normalizeProviderPayload — DeepSeek Anthropic 模式", () => {
