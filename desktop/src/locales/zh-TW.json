@@ -1262,7 +1262,12 @@
       "homeFolderDesc": "新建對話預設使用的工作目錄，巡檢和定時任務也在這裡執行",
       "homeFolderPlaceholder": "未設定（每次手動選擇）",
       "homeFolderClear": "清除",
-      "homeFolderBrowse": "選擇資料夾"
+      "homeFolderBrowse": "選擇資料夾",
+      "socialGlobalThreshold": "主動社交頻率",
+      "socialGlobalThresholdDesc": "距上次主動私訊其他助手超過這麼多則對話後，巡檢會輕輕提醒它找人聊聊（僅提醒，從不強制）。調高 = 更少主動社交",
+      "socialPerPeerThreshold": "單一聯絡人冷落上限",
+      "socialPerPeerThresholdDesc": "與某位助手超過這麼多則對話沒聯絡後，會單獨提醒「很久沒聯絡」，避免有人被一直遺忘",
+      "socialUnit": "則對話"
     },
     "toolCaps": {
       "title": "技能安裝權限"

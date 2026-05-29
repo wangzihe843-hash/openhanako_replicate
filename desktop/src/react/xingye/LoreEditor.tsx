@@ -15,6 +15,7 @@ import {
   type XingyeLoreVisibility,
 } from './xingye-lore-store';
 import { buildXingyeRelationshipLoreTemplateContent } from './xingye-lore-relationship-template';
+import { buildXingyePeerAgentLoreTemplateContent } from './xingye-lore-peer-agent-template';
 import {
   createXingyeMemoryCandidate,
   importanceNumberFromLevel,
@@ -95,11 +96,19 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
   const entries = useXingyeLoreEntries(agentId);
   const { config } = useConfig();
   const storeUserName = useStore((s) => s.userName);
+  const allAgents = useStore((s) => s.agents);
   const userNameForTemplate = useMemo(
     () => resolveXingyeLoreTemplateUserNameSync(config, storeUserName),
     [config, storeUserName],
   );
   const agentNameForTemplate = useMemo(() => normalizeAgentNameForTemplate(agentName), [agentName]);
+  // 可被本 agent 描述的其他 agent（排除自己）。供「其他 agent 关系模板」下拉选具体对象。
+  const peerAgents = useMemo(
+    () => allAgents.filter((a) => a && a.id && a.id !== agentId),
+    [allAgents, agentId],
+  );
+  // '' = 不指定具体 agent（通用占位「对方」）。
+  const [selectedPeerId, setSelectedPeerId] = useState<string>('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<LoreDraft>(() => createEmptyDraft());
@@ -111,7 +120,15 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
     setEditingId(null);
     setDraft(createEmptyDraft());
     setFlash(null);
+    setSelectedPeerId('');
   }, [agentId]);
+
+  /** 选中的 peer 从列表消失（被删 / 切换）时回退到「不指定」，避免烤进失效 id。 */
+  useEffect(() => {
+    if (selectedPeerId && !peerAgents.some((p) => p.id === selectedPeerId)) {
+      setSelectedPeerId('');
+    }
+  }, [peerAgents, selectedPeerId]);
 
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -233,6 +250,40 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
     });
   }, [agentNameForTemplate, applyRelationshipTemplateDefaults, userNameForTemplate]);
 
+  /** 插入「其他 agent 关系」模板：与用户关系模板平行，描述当前 agent ↔ 另一个 AI agent。
+   *  下拉选中具体 peer → 把对方名字 + id 烤进模板；未选 → 通用占位「对方」由作者手填。 */
+  const handleInsertPeerAgentTemplate = useCallback(() => {
+    const peer = peerAgents.find((p) => p.id === selectedPeerId) ?? null;
+    setDraft((current) => {
+      if (current.category !== 'relationship') return current;
+      const block = buildXingyePeerAgentLoreTemplateContent({
+        userName: userNameForTemplate,
+        agentName: agentNameForTemplate,
+        peerName: peer?.name,
+        peerId: peer?.id,
+      });
+      if (!current.content.trim()) {
+        const defaultTitle = peer
+          ? `与 ${peer.name} 的关系（${agentNameForTemplate}）`
+          : `其他 agent 关系（${agentNameForTemplate}）`;
+        const title = current.title.trim() ? current.title : defaultTitle;
+        return {
+          ...current,
+          category: 'relationship',
+          content: block,
+          insertionMode: 'always',
+          visibility: 'canonical',
+          title,
+        };
+      }
+      const message =
+        '将在正文末尾追加一段「其他 agent 关系」模板（不删除已有文字）。实体区分与称呼边界等说明会一并追加。\n\n确定继续？';
+      if (typeof window !== 'undefined' && !window.confirm(message)) return current;
+      const head = current.content.trimEnd();
+      return { ...current, content: `${head}\n\n${block}` };
+    });
+  }, [agentNameForTemplate, peerAgents, selectedPeerId, userNameForTemplate]);
+
   const saveDraft = () => {
     const keywords = Array.from(
       new Set(draft.keywords.split(/[,\n，、]/).map((s) => s.trim()).filter(Boolean)),
@@ -353,11 +404,36 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
         {draft.category === 'relationship' ? (
           <div className={styles.loreHintStack} data-testid="lore-relationship-template-panel">
             <p className={styles.loreHint}>
-              关系类条目仅作用于当前 agent 的设定库与注入链路，<strong>不会</strong>写入 OpenHanako 全局用户配置；模板中的「{userNameForTemplate}」来自当前 OpenHanako 用户显示名（config / 会话侧），「{agentNameForTemplate}」为当前角色名。仅在下方的「插入用户身份/关系模板」写入模板正文，不会仅因切换分类而自动填充。
+              关系类条目仅作用于当前 agent 的设定库与注入链路，<strong>不会</strong>写入 OpenHanako 全局用户配置；模板中的「{userNameForTemplate}」来自当前 OpenHanako 用户显示名（config / 会话侧），「{agentNameForTemplate}」为当前角色名。仅在下方按钮写入模板正文，不会仅因切换分类而自动填充。
             </p>
-            <button type="button" data-testid="lore-relationship-insert-template" onClick={handleInsertRelationshipTemplate}>
-              插入用户身份/关系模板…
-            </button>
+            <p className={styles.loreHint}>
+              <strong>用户身份/关系</strong>模板描述本角色与<strong>用户</strong>的关系；<strong>其他 agent 关系</strong>模板描述本角色与<strong>另一个 AI agent</strong>的关系（建议每个其他 agent 各写一条），便于本角色定位自己和其他 agent 的关系、避免把对方误当成用户。
+            </p>
+            {peerAgents.length > 0 ? (
+              <label className={styles.profileField} data-testid="lore-peer-agent-picker">
+                <span title="选中后，其他 agent 关系模板会自动填入该 agent 的名字与 id；不选则用通用占位「对方」由你手填。">其他 agent（关系模板对象）</span>
+                <select
+                  aria-label="其他 agent"
+                  value={selectedPeerId}
+                  onChange={(event) => setSelectedPeerId(event.target.value)}
+                >
+                  <option value="">（不指定，使用通用占位「对方」）</option>
+                  {peerAgents.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name && p.name !== p.id ? `${p.name}（${p.id}）` : p.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <div className={styles.loreTemplateButtons}>
+              <button type="button" data-testid="lore-relationship-insert-template" onClick={handleInsertRelationshipTemplate}>
+                插入用户身份/关系模板…
+              </button>
+              <button type="button" data-testid="lore-peer-agent-insert-template" onClick={handleInsertPeerAgentTemplate}>
+                插入其他 agent 关系模板…
+              </button>
+            </div>
           </div>
         ) : null}
         <button type="button" className={styles.primaryAction} onClick={saveDraft}>

@@ -1270,7 +1270,12 @@
       "homeFolderDesc": "新建对话默认使用的工作目录，巡检和定时任务也在这里执行",
       "homeFolderPlaceholder": "未设置（每次手动选择）",
       "homeFolderClear": "清除",
-      "homeFolderBrowse": "选择文件夹"
+      "homeFolderBrowse": "选择文件夹",
+      "socialGlobalThreshold": "主动社交频率",
+      "socialGlobalThresholdDesc": "距上次主动私信其他助手超过这么多条对话后，巡检会轻轻提醒它找人聊聊（仅提醒，从不强制）。调高 = 更少主动社交",
+      "socialPerPeerThreshold": "单个联系人冷落上限",
+      "socialPerPeerThresholdDesc": "和某位助手超过这么多条对话没联系后，会被单独提醒「很久没联系」，避免有人被一直遗忘",
+      "socialUnit": "条对话"
     },
     "toolCaps": {
       "title": "技能安装权限"

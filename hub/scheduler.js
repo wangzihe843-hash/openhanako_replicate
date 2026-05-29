@@ -20,6 +20,7 @@ import {
 } from "../lib/desk/automation-executors.js";
 import { getLocale } from "../server/i18n.js";
 import { runXingyeHeartbeatConsumer } from "../lib/xingye/heartbeat-consumer.js";
+import { resolveSocialThresholds } from "../lib/desk/social-awareness.js";
 import { createFreshCompactDailyScheduler } from "../lib/fresh-compact/daily-scheduler.js";
 import { FreshCompactMaintainer } from "./fresh-compact-maintainer.js";
 import { createModuleLogger } from "../lib/debug-log.js";
@@ -443,7 +444,13 @@ export class Scheduler {
   async _runXingyeHeartbeatConsumer(agentId, agent) {
     try {
       const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
-      const result = await runXingyeHeartbeatConsumer({ agentId, agentDir });
+      // peers：当前可联系的其它 agent（已排除自己），供 social staleness 算 per-peer
+      // 候选。取不到（旧 agent / 无 channels）就给 []，consumer 内部 shouldSocialize 恒 false。
+      let peers = [];
+      try { peers = agent?.listPeerAgents?.() || []; } catch {}
+      // 社交阈值现读 agent config（每拍都读 → 用户在设置里改完，下一拍即生效，无需 reload）。
+      const socialThresholds = resolveSocialThresholds(agent?.config?.desk);
+      const result = await runXingyeHeartbeatConsumer({ agentId, agentDir, peers, socialThresholds });
       return result || null;
     } catch (err) {
       log.error(`[xingye] heartbeat consumer failed (${agentId}): ${err.message}`);

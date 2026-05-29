@@ -135,7 +135,7 @@ describe('LoreEditor — relationship template', () => {
     (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
     window.localStorage.clear();
     vi.mocked(hanaFetch).mockReset();
-    useStore.setState({ userName: 'User' });
+    useStore.setState({ userName: 'User', agents: [] });
   });
 
   afterEach(() => {
@@ -216,5 +216,53 @@ describe('LoreEditor — relationship template', () => {
     expect(confirmSpy).toHaveBeenCalled();
 
     confirmSpy.mockRestore();
+  });
+
+  it('inserts the peer-agent relationship template + defaults via its own button (no peer picked)', () => {
+    render(<LoreEditor agentId={agentId} agentName="星侧角色" />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: '分类' }), { target: { value: 'relationship' } });
+    expect(getDraftContentTextarea().value).toBe('');
+
+    // 没有其他 agent 时，下拉不出现
+    expect(screen.queryByTestId('lore-peer-agent-picker')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('lore-peer-agent-insert-template'));
+
+    const body = getDraftContentTextarea();
+    expect(body.value).toContain('星侧角色');
+    expect(body.value).toContain('OpenHanakoUser');
+    expect(body.value).toContain('【实体区分（重要）】');
+    expect(body.value).toContain('AI agent');
+
+    expect(screen.getByRole('combobox', { name: '插入模式' })).toHaveValue('always');
+    expect(screen.getByRole('combobox', { name: '可见性' })).toHaveValue('canonical');
+    expect(screen.getByRole('textbox', { name: '标题' })).toHaveValue('其他 agent 关系（星侧角色）');
+  });
+
+  it('bakes the selected peer name + id into the template and title', () => {
+    useStore.setState({
+      userName: 'User',
+      agents: [
+        { id: agentId, name: '星侧角色', yuan: 'hanako', isPrimary: true },
+        { id: 'ming', name: '明', yuan: 'ming', isPrimary: false },
+      ],
+    });
+
+    render(<LoreEditor agentId={agentId} agentName="星侧角色" />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: '分类' }), { target: { value: 'relationship' } });
+
+    // 下拉出现（排除了自己，只剩 ming），选中具体 peer
+    const picker = screen.getByRole('combobox', { name: '其他 agent' });
+    fireEvent.change(picker, { target: { value: 'ming' } });
+
+    fireEvent.click(screen.getByTestId('lore-peer-agent-insert-template'));
+
+    const body = getDraftContentTextarea().value;
+    expect(body).toContain('「明」');
+    expect(body).toContain('id：ming');
+    expect(body).toContain('对方 id：ming');
+    expect(screen.getByRole('textbox', { name: '标题' })).toHaveValue('与 明 的关系（星侧角色）');
   });
 });

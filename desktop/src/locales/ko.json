@@ -1270,7 +1270,12 @@
       "homeFolderDesc": "새 대화, 순찰, 예약 작업의 기본 작업 디렉토리",
       "homeFolderPlaceholder": "미설정 (매번 수동 선택)",
       "homeFolderClear": "지우기",
-      "homeFolderBrowse": "찾아보기"
+      "homeFolderBrowse": "찾아보기",
+      "socialGlobalThreshold": "자발적 소셜 빈도",
+      "socialGlobalThresholdDesc": "다른 어시스턴트에게 마지막으로 메시지를 보낸 뒤 이 대화 수를 넘으면 순찰이 가볍게 소셜을 권합니다(제안일 뿐 강제 아님). 클수록 덜 자주",
+      "socialPerPeerThreshold": "개별 연락 방치 상한",
+      "socialPerPeerThresholdDesc": "특정 어시스턴트와 이 대화 수만큼 연락이 없으면 '오래 연락 없음'으로 따로 알려 누구도 잊히지 않게 합니다",
+      "socialUnit": "대화"
     },
     "toolCaps": {
       "title": "스킬 설치 권한"

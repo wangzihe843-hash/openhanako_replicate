@@ -1190,6 +1190,13 @@
   margin-top: 0;
 }
 
+.loreTemplateButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .loreHint,
 .loreEmpty {
   margin: 6px 0 0;

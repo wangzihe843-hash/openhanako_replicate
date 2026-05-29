@@ -1270,7 +1270,12 @@
       "homeFolderDesc": "新しいチャット、巡回、cron タスクのデフォルト作業ディレクトリ",
       "homeFolderPlaceholder": "未設定（毎回手動で選択）",
       "homeFolderClear": "クリア",
-      "homeFolderBrowse": "参照"
+      "homeFolderBrowse": "参照",
+      "socialGlobalThreshold": "自発的な交流の頻度",
+      "socialGlobalThresholdDesc": "他のアシスタントに最後に連絡してからこの会話数を超えると、巡回がそっと交流を促します（提案のみ、強制しません）。大きいほど頻度は下がります",
+      "socialPerPeerThreshold": "個別連絡の放置上限",
+      "socialPerPeerThresholdDesc": "特定のアシスタントとこの会話数だけ連絡がないと「長く連絡なし」として単独で促し、誰も忘れられないようにします",
+      "socialUnit": "会話"
     },
     "toolCaps": {
       "title": "スキルインストール権限"

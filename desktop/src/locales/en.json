@@ -1270,7 +1270,12 @@
       "homeFolderDesc": "Default working directory for new chats, patrol and cron tasks",
       "homeFolderPlaceholder": "Not set (choose manually each time)",
       "homeFolderClear": "Clear",
-      "homeFolderBrowse": "Browse"
+      "homeFolderBrowse": "Browse",
+      "socialGlobalThreshold": "Proactive social frequency",
+      "socialGlobalThresholdDesc": "After this many chat turns since last messaging another assistant, patrol gently nudges it to socialize (a hint, never forced). Higher = less often",
+      "socialPerPeerThreshold": "Per-contact neglect limit",
+      "socialPerPeerThresholdDesc": "After this many chat turns without contacting a specific assistant, they're flagged as out of touch so nobody is forgotten",
+      "socialUnit": "turns"
     },
     "toolCaps": {
       "title": "Skill Installation Permissions"

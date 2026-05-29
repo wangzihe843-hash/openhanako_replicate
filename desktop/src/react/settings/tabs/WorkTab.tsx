@@ -9,12 +9,20 @@ import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { NumberInput } from '../components/NumberInput';
 import styles from '../Settings.module.css';
-import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from '../../../../../shared/default-workspace-constants.js';
+import {
+  DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
+  DEFAULT_SOCIAL_GLOBAL_THRESHOLD,
+  DEFAULT_SOCIAL_PER_PEER_THRESHOLD,
+  SOCIAL_THRESHOLD_MIN,
+  SOCIAL_THRESHOLD_MAX,
+} from '../../../../../shared/default-workspace-constants.js';
 
 type AgentDeskConfig = {
   home_folder: string;
   heartbeat_enabled: boolean;
   heartbeat_interval: number;
+  social_global_threshold: number;
+  social_per_peer_threshold: number;
 };
 
 export function WorkTab() {
@@ -41,11 +49,16 @@ export function WorkTab() {
   const [agentDesk, setAgentDesk] = useState<AgentDeskConfig | null>(null);
   // hbInterval 是 draft：用户编辑后点"保存"才落盘，必须独立于 agentDesk
   const [hbIntervalDraft, setHbIntervalDraft] = useState<number | null>(null);
+  // 社交阈值同样是 draft（编辑后点"保存"才落盘）
+  const [socialGlobalDraft, setSocialGlobalDraft] = useState<number | null>(null);
+  const [socialPerPeerDraft, setSocialPerPeerDraft] = useState<number | null>(null);
 
   useEffect(() => {
     if (!selectedAgentId) return;
     setAgentDesk(null);
     setHbIntervalDraft(null);
+    setSocialGlobalDraft(null);
+    setSocialPerPeerDraft(null);
     const ac = new AbortController();
     hanaFetch(`/api/agents/${selectedAgentId}/config`, { signal: ac.signal })
       .then(r => r.json())
@@ -55,9 +68,13 @@ export function WorkTab() {
           home_folder: data.desk?.home_folder || '',
           heartbeat_enabled: data.desk?.heartbeat_enabled !== false,
           heartbeat_interval: data.desk?.heartbeat_interval ?? DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
+          social_global_threshold: data.desk?.social_global_threshold ?? DEFAULT_SOCIAL_GLOBAL_THRESHOLD,
+          social_per_peer_threshold: data.desk?.social_per_peer_threshold ?? DEFAULT_SOCIAL_PER_PEER_THRESHOLD,
         };
         setAgentDesk(desk);
         setHbIntervalDraft(desk.heartbeat_interval);
+        setSocialGlobalDraft(desk.social_global_threshold);
+        setSocialPerPeerDraft(desk.social_per_peer_threshold);
       })
       .catch(err => {
         if (err?.name !== 'AbortError') console.warn('[work] fetch agent config failed:', err);
@@ -149,6 +166,27 @@ export function WorkTab() {
     }
   };
 
+  // 通用社交阈值保存：clamp 到 [MIN, MAX] → 乐观更新 → PUT；失败回滚 draft + 快照。
+  const saveSocialThreshold = async (
+    key: 'social_global_threshold' | 'social_per_peer_threshold',
+    draftValue: number | null,
+    setDraft: (n: number | null) => void,
+  ) => {
+    if (draftValue == null || !agentDesk) return;
+    const agentId = selectedAgentIdRef.current;
+    if (!agentId) return;
+    const previous = agentDesk;
+    const previousDraft = draftValue;
+    const v = Math.max(SOCIAL_THRESHOLD_MIN, Math.min(SOCIAL_THRESHOLD_MAX, draftValue));
+    setAgentDesk({ ...agentDesk, [key]: v });
+    setDraft(v);
+    const saved = await saveAgentConfig(agentId, { desk: { [key]: v } });
+    if (!saved && selectedAgentIdRef.current === agentId) {
+      setAgentDesk(previous);
+      setDraft(previousDraft);
+    }
+  };
+
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="work">
       {/* ── Global section（对所有 agent 生效的总开关） ── */}
@@ -223,6 +261,52 @@ export function WorkTab() {
                     disabled={!agentDesk.heartbeat_enabled}
                   />
                   <button className={styles['settings-save-btn-ghost']} onClick={saveInterval}>
+                    {t('settings.save')}
+                  </button>
+                </>
+              }
+            />
+            <SettingsRow
+              label={t('settings.work.socialGlobalThreshold')}
+              hint={t('settings.work.socialGlobalThresholdDesc')}
+              layout="stacked"
+              control={
+                <>
+                  <NumberInput
+                    value={socialGlobalDraft ?? agentDesk.social_global_threshold}
+                    onChange={setSocialGlobalDraft}
+                    unit={t('settings.work.socialUnit')}
+                    min={SOCIAL_THRESHOLD_MIN}
+                    max={SOCIAL_THRESHOLD_MAX}
+                    disabled={!agentDesk.heartbeat_enabled}
+                  />
+                  <button
+                    className={styles['settings-save-btn-ghost']}
+                    onClick={() => saveSocialThreshold('social_global_threshold', socialGlobalDraft, setSocialGlobalDraft)}
+                  >
+                    {t('settings.save')}
+                  </button>
+                </>
+              }
+            />
+            <SettingsRow
+              label={t('settings.work.socialPerPeerThreshold')}
+              hint={t('settings.work.socialPerPeerThresholdDesc')}
+              layout="stacked"
+              control={
+                <>
+                  <NumberInput
+                    value={socialPerPeerDraft ?? agentDesk.social_per_peer_threshold}
+                    onChange={setSocialPerPeerDraft}
+                    unit={t('settings.work.socialUnit')}
+                    min={SOCIAL_THRESHOLD_MIN}
+                    max={SOCIAL_THRESHOLD_MAX}
+                    disabled={!agentDesk.heartbeat_enabled}
+                  />
+                  <button
+                    className={styles['settings-save-btn-ghost']}
+                    onClick={() => saveSocialThreshold('social_per_peer_threshold', socialPerPeerDraft, setSocialPerPeerDraft)}
+                  >
                     {t('settings.save')}
                   </button>
                 </>

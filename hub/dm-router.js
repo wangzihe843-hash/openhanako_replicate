@@ -213,6 +213,7 @@ export class DmRouter {
           {
             text: isZh
               ? `你的手机收到了来自「${fromName}」的私信。\n\n`
+                + `（「${fromName}」是另一个 AI agent——你认识的人之一，见你系统提示里的「团队」名单，可以按 id 用 \`dm\` 回他；**不是用户本人**，别搞混。）\n\n`
                 + `以下是你们最近的聊天记录：\n\n${msgText}\n\n`
                 + `---\n\n`
                 + `${promptGuidance}\n\n`
@@ -220,6 +221,7 @@ export class DmRouter {
                 + `如果你觉得对话可以结束了，在末尾加 <done/>。\n`
                 + `如果你不想回复，输出 [NO_REPLY]。`
               : `You received a DM from "${fromName}".\n\n`
+                + `("${fromName}" is another AI agent — one of the people you know, see the "Team" roster in your system prompt; you can \`dm\` them back by id. **This is NOT the user**, don't confuse them.)\n\n`
                 + `Here is your recent chat history:\n\n${msgText}\n\n`
                 + `---\n\n`
                 + `${promptGuidance}\n\n`

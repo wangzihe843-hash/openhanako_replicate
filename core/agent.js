@@ -40,6 +40,7 @@ import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
 import { createTerminalTool } from "../lib/tools/terminal-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { getPlatformPromptNote } from "./platform-prompt.js";
+import { readCompactPeerPersona } from "../lib/desk/peer-persona.js";
 import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
 import { readXingyeAgentGenderPreambleSync } from "../shared/xingye-profile-file.js";
 import { readXingyeAgentRelationshipPreambleSync } from "../shared/xingye-relationship-preamble.js";
@@ -867,8 +868,30 @@ export class Agent {
     return fill(raw);
   }
 
+  /**
+   * 当前可联系的其他 agent（已排除自己）。供 heartbeat social staleness 用。
+   * 返回 [{ id, name, summary, model }]，无 channels/agentsDir 时返回 []。
+   */
+  listPeerAgents() {
+    if (!this._listAgents) return [];
+    try {
+      return this._listAgents().filter(a => a && a.id && a.id !== this.id);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * @param {boolean} isZh
+   * @param {object} [options]
+   * @param {boolean} [options.includeSelf=true]
+   * @param {boolean} [options.richPersona=false] - 为每个 peer 读取 public-ishiki（对外人设）
+   *   做描述，而不是只用 description.md 的一行岗位摘要。让 peer 之间「对得上人设」。
+   *   只在主 system prompt 的「团队」段开启；记忆反思等场景保持精简（默认 false）。
+   */
   _formatTeamRoster(isZh, options = {}) {
     const includeSelf = options.includeSelf !== false;
+    const richPersona = options.richPersona === true;
     if (!this._listAgents) return "";
     const allAgents = this._listAgents();
     const others = allAgents.filter(a => a.id !== this.id);
@@ -877,7 +900,13 @@ export class Agent {
     return rosterAgents.map(a => {
       const tag = a.id === this.id ? (isZh ? "（你）" : " (you)") : "";
       const model = a.model ? ` [${a.model}]` : "";
-      const desc = a.summary ? ` — ${a.summary}` : "";
+      // 自己那行不必读 public-ishiki（自己的人设已在 prompt 别处完整加载）；
+      // peer 优先用 public-ishiki，缺失再回退 description.md 摘要。
+      const persona = (richPersona && a.id !== this.id)
+        ? readCompactPeerPersona({ agentsDir: this.agentsDir, peerId: a.id, peerName: a.name, userName: this.userName })
+        : "";
+      const descText = persona || a.summary || "";
+      const desc = descText ? ` — ${descText}` : "";
       const nameLabel = a.name && a.name !== a.id ? `（${a.name}）` : "";
       return `- \`${a.id}\`${nameLabel}${tag}${model}${desc}`;
     }).join("\n");
@@ -1230,19 +1259,23 @@ export class Agent {
     // 团队协作（仅当存在其他 agent 时注入）
     // Subagent 场景下跳过：subagent 没有 subagent 工具，知道其他 agent 也使不上
     if (!forSubagent) {
-      const roster = this._formatTeamRoster(isZh);
+      const roster = this._formatTeamRoster(isZh, { richPersona: true });
       if (roster) {
         parts.push(isZh
           ? `\n## 团队\n\n` +
-            `你不是独自工作。当前环境中有多个 agent，各有不同的专长和模型：\n\n${roster}\n\n` +
+            `下面这些是和你一样的 **AI agent**，各有自己的身份、性格和模型。**他们都不是 ${this.userName}（用户）**——${this.userName} 是你正在服务的那个人，是同一个人；下面列出的每一个都是另一个独立的 AI，和用户是不同的存在。被问到"某个 agent 是谁"时，照这份名单回答，别把他们和用户搞混。\n\n${roster}\n\n` +
             `调用 subagent 或 dm 工具时，agent 参数必须传上面反引号里的 id 字段值，不是括号里的显示名。\n` +
             `遇到明显更适合其他 agent 专长的任务，或需要不同视角审核重要结论时，用 subagent 并指定 agent 参数请求协助。` +
-            `先判断这件事自己做合不合适，再决定是否交出去。不确定找谁时传 \`agent="?"\` 查看详情。`
+            `先判断这件事自己做合不合适，再决定是否交出去。不确定找谁时传 \`agent="?"\` 查看详情。\n\n` +
+            `而且他们不只是"干活的工具人"。每个 agent 都有自己的性格和正在过的生活（上面每行 — 后面就是他们的对外人设）。你可以纯粹**为了聊天**用 \`dm\` 主动私信任何一个人——分享点什么、问问近况、聊个你们都会感兴趣的话题，都行。` +
+            `要不要找人聊、什么时候、聊什么，完全是你自己的事，没人给你派这个活。和委派任务不同：\`dm\` 是像发微信一样的私人对话，对方会以自己的口吻回你。`
           : `\n## Team\n\n` +
-            `You are not working alone. Multiple agents are available, each with different strengths and models:\n\n${roster}\n\n` +
+            `These are other **AI agents** like you, each with their own identity, personality, and model. **None of them is ${this.userName} (the user)** — ${this.userName} is the single person you are serving; every entry below is a separate, independent AI, distinct from the user. When asked "who is some agent," answer from this roster and do not confuse them with the user.\n\n${roster}\n\n` +
             `When calling subagent or dm tools, the agent parameter must be the id field value shown in backticks above, not the display name in parentheses.\n` +
             `When a task clearly falls within another agent's expertise, or when an important conclusion would benefit from a different perspective, use subagent with the agent parameter to request help. ` +
-            `Judge whether you're the best fit for the job before deciding to delegate. Pass \`agent="?"\` if unsure who to ask.`
+            `Judge whether you're the best fit for the job before deciding to delegate. Pass \`agent="?"\` if unsure who to ask.\n\n` +
+            `And they're not just coworkers to delegate to. Each agent has their own personality and a life of their own (the text after the — on each line is their public persona). You can \`dm\` any of them purely **to chat** — share something, check in, bring up a topic you'd both find interesting. ` +
+            `Whether to reach out, when, and about what is entirely your own business; nobody assigned it. Unlike delegation, \`dm\` is a personal conversation (like texting) and they reply in their own voice.`
         );
       }
     }
