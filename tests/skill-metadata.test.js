@@ -159,6 +159,53 @@ describe("parseSkillMetadata", () => {
     const meta = parseSkillMetadata(content, "fallback");
     expect(meta.displayNames.zh.length).toBeLessThanOrEqual(60);
   });
+
+  it("invokes onError when YAML frontmatter fails to parse, and still returns fallback meta", () => {
+    /**
+     * Regression guard: 历史上 YAML 错误（典型：`description: "...内层"双引号穿透..."`）
+     * 被静默吞掉，整条 skill 直接消失在 UI、无日志可查。onError 让 caller 能把错误捞出来。
+     */
+    const content = [
+      "---",
+      "name: broken-skill",
+      'description: "outer "inner" outer"',
+      "---",
+      "",
+    ].join("\n");
+
+    const onError = vi.fn();
+    const meta = parseSkillMetadata(content, "fallback-skill", onError);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(meta.name).toBe("fallback-skill");
+    expect(meta.description).toBe("");
+  });
+
+  it("does not throw when onError itself throws (logger failure must not break parse)", () => {
+    const content = [
+      "---",
+      'description: "a "b" c"',
+      "---",
+    ].join("\n");
+
+    const onError = vi.fn(() => { throw new Error("logger boom"); });
+    expect(() => parseSkillMetadata(content, "fallback", onError)).not.toThrow();
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it("does not call onError when frontmatter parses cleanly", () => {
+    const content = [
+      "---",
+      "name: clean-skill",
+      "description: All good.",
+      "---",
+    ].join("\n");
+
+    const onError = vi.fn();
+    parseSkillMetadata(content, "fallback", onError);
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 describe("SkillManager metadata scanning", () => {

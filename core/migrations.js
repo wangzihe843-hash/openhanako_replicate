@@ -1362,7 +1362,9 @@ function migrateLearnedSkillsToGlobalSkillPool(ctx) {
       if (!fs.existsSync(skillFile)) continue;
 
       const sourceContent = skillFileContent(srcDir);
-      const meta = parseSkillMetadata(sourceContent, skillEntry.name);
+      const meta = parseSkillMetadata(sourceContent, skillEntry.name, (err) => {
+        moduleLog.warn(`learned-skill migration: SKILL.md frontmatter parse failed for "${skillEntry.name}" (agent ${agentId}) at ${skillFile}: ${err?.message || err}`);
+      });
       const baseName = sanitizeMigrationSkillName(meta.name || skillEntry.name, skillEntry.name);
       const target = uniqueMigratedSkillName(skillsDir, baseName, sourceContent, agentId);
       const dstDir = path.join(skillsDir, target.name);

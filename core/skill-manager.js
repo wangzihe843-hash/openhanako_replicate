@@ -56,7 +56,9 @@ function readSkillFileMetadata(skill) {
   if (!skill?.filePath) return null;
   try {
     const content = fs.readFileSync(skill.filePath, "utf-8");
-    return parseSkillMetadata(content, skill.name || "");
+    return parseSkillMetadata(content, skill.name || "", (err) => {
+      log.warn(`SKILL.md frontmatter parse failed for "${skill.name || skill.filePath}": ${err?.message || err}`);
+    });
   } catch {
     return null;
   }
@@ -292,7 +294,9 @@ export class SkillManager {
           if (!fs.existsSync(skillFile)) continue;
           try {
             const content = fs.readFileSync(skillFile, "utf-8");
-            const meta = parseSkillMetadata(content, entry.name);
+            const meta = parseSkillMetadata(content, entry.name, (err) => {
+              log.warn(`SKILL.md frontmatter parse failed for "${entry.name}" at ${skillFile}: ${err?.message || err}`);
+            });
             const owner = scope === "workspace"
               ? "workspace"
               : (label.startsWith("plugin:") ? "plugin" : "external");
