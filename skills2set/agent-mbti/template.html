@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>__TITLE__ · 角色卡</title>
+<style>
+  :root {
+    /* 主题色 —— agent 可按自身种族/气质改这一组 */
+    --bg: #f7f1e6;
+    --paper: #fffbf3;
+    --ink: #2b2418;
+    --ink-soft: #6b5b46;
+    --accent: #c97a3e;
+    --accent-soft: #f0c5a0;
+    --grid: #e6dac4;
+    --radar-fill: rgba(201, 122, 62, 0.22);
+    --radar-stroke: #c97a3e;
+    --bar-track: #ece2cf;
+    --shadow: 0 12px 40px rgba(80, 50, 20, 0.10), 0 2px 6px rgba(80, 50, 20, 0.06);
+    --grade-ss: #b03c3c;
+    --grade-s:  #c97a3e;
+    --grade-a:  #5d8a52;
+    --grade-b:  #6b8caa;
+    --grade-c:  #8a8576;
+    --grade-d:  #a89c87;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    font-feature-settings: "palt";
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 40px 16px; }
+  .card {
+    max-width: 720px;
+    margin: 0 auto;
+    background: var(--paper);
+    border-radius: 18px;
+    padding: 36px 40px 32px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+  }
+  .header { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 18px; }
+  .avatar {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--paper);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; flex-shrink: 0;
+    box-shadow: inset 0 -4px 8px rgba(0,0,0,0.06);
+  }
+  .header-text { flex: 1; min-width: 0; }
+  h1.title {
+    margin: 0 0 6px; font-size: 26px; font-weight: 700;
+    color: var(--ink); letter-spacing: 0.5px;
+  }
+  .meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .mbti-badge {
+    display: inline-block;
+    background: var(--ink); color: var(--paper);
+    padding: 3px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; letter-spacing: 2px;
+  }
+  .tag {
+    display: inline-block;
+    background: var(--accent-soft); color: var(--ink);
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px;
+  }
+  .oneliner {
+    margin: 0; color: var(--ink-soft); font-size: 14px;
+    font-style: italic;
+  }
+
+  section { margin-top: 28px; }
+  section h2 {
+    font-size: 14px; color: var(--ink-soft); margin: 0 0 14px;
+    text-transform: uppercase; letter-spacing: 3px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  section h2::after {
+    content: ""; flex: 1; height: 1px; background: var(--grid);
+  }
+
+  /* 雷达图 */
+  .radar-wrap {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: center;
+  }
+  @media (max-width: 560px) { .radar-wrap { grid-template-columns: 1fr; } }
+  .radar-svg { width: 100%; height: auto; max-width: 320px; margin: 0 auto; display: block; }
+  .radar-legend { list-style: none; padding: 0; margin: 0; }
+  .radar-legend li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border-bottom: 1px dashed var(--grid);
+    font-size: 14px;
+  }
+  .radar-legend li:last-child { border-bottom: none; }
+  .grade {
+    font-weight: 700; font-size: 13px;
+    padding: 1px 8px; border-radius: 4px;
+    color: var(--paper); min-width: 26px; text-align: center;
+  }
+  .grade.SS { background: var(--grade-ss); }
+  .grade.S  { background: var(--grade-s); }
+  .grade.A  { background: var(--grade-a); }
+  .grade.B  { background: var(--grade-b); }
+  .grade.C  { background: var(--grade-c); }
+  .grade.D  { background: var(--grade-d); }
+
+  /* 数值条 */
+  .stats { list-style: none; padding: 0; margin: 0; }
+  .stats li {
+    display: grid; grid-template-columns: 110px 1fr 36px;
+    align-items: center; gap: 12px;
+    padding: 6px 0;
+    font-size: 14px;
+  }
+  .bar-track {
+    background: var(--bar-track); border-radius: 999px; height: 8px; overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent-soft), var(--accent));
+    transition: width 0.8s ease;
+  }
+  .num { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; color: var(--ink); }
+
+  /* MBTI 拆解 */
+  .breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+  @media (max-width: 560px) { .breakdown { grid-template-columns: 1fr; } }
+  .breakdown li { list-style: none; font-size: 14px; color: var(--ink-soft); }
+  .breakdown strong {
+    display: inline-block; min-width: 38px;
+    color: var(--accent); font-weight: 700;
+    border-right: 1px solid var(--grid);
+    margin-right: 8px; padding-right: 8px;
+  }
+
+  .signature {
+    margin-top: 32px; padding-top: 16px;
+    border-top: 1px dashed var(--grid);
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .signature .quote {
+    font-style: italic; margin: 0 0 6px;
+  }
+  .signature .footer {
+    text-align: right; margin: 0;
+    font-size: 12px; opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="avatar">__EMOJI__</div>
+    <div class="header-text">
+      <h1 class="title">__TITLE__</h1>
+      <div class="meta">
+        <span class="mbti-badge">__MBTI__</span>
+        <!-- TAGS_HTML -->
+      </div>
+      <p class="oneliner">__ONELINER__</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>能力雷达</h2>
+    <div class="radar-wrap">
+      <svg class="radar-svg" viewBox="-130 -130 260 260" id="radar"></svg>
+      <ul class="radar-legend" id="radar-legend"></ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>__STATS_GROUP__</h2>
+    <ul class="stats" id="stats-list"></ul>
+  </section>
+
+  <section>
+    <h2>__MBTI__ 解码</h2>
+    <ul class="breakdown">
+      <li><strong>__AXIS1_LETTER__</strong>__AXIS1_REASON__</li>
+      <li><strong>__AXIS2_LETTER__</strong>__AXIS2_REASON__</li>
+      <li><strong>__AXIS3_LETTER__</strong>__AXIS3_REASON__</li>
+      <li><strong>__AXIS4_LETTER__</strong>__AXIS4_REASON__</li>
+    </ul>
+  </section>
+
+  <div class="signature">
+    <p class="quote">"__QUOTE__"</p>
+    <p class="footer">— __AGENT_NAME__ · __DATE__</p>
+  </div>
+</div>
+
+<script>
+  // ── 数据：agent 在生成时替换 ──
+  const data = {
+    radar: [
+      /* RADAR_DATA */
+      { name: "示例维度一", grade: "S" },
+      { name: "示例维度二", grade: "A" },
+      { name: "示例维度三", grade: "B" },
+      { name: "示例维度四", grade: "A" },
+      { name: "示例维度五", grade: "SS" },
+      { name: "示例维度六", grade: "C" }
+    ],
+    stats: [
+      /* STATS_DATA */
+      { name: "示例数值一", value: 82 },
+      { name: "示例数值二", value: 71 },
+      { name: "示例数值三", value: 88 },
+      { name: "示例数值四", value: 65 },
+      { name: "示例数值五", value: 76 },
+      { name: "示例数值六", value: 79 }
+    ]
+  };
+
+  // ── 雷达图渲染 ──
+  const GRADE_VALUE = { SS: 1.0, S: 0.85, A: 0.70, B: 0.55, C: 0.40, D: 0.25 };
+  const R = 100;
+  const svg = document.getElementById('radar');
+  const NS = 'http://www.w3.org/2000/svg';
+  const N = data.radar.length;
+
+  function point(idx, ratio) {
+    const angle = (Math.PI * 2 * idx / N) - Math.PI / 2;
+    return [Math.cos(angle) * R * ratio, Math.sin(angle) * R * ratio];
+  }
+
+  // 同心环
+  [0.25, 0.5, 0.75, 1].forEach(r => {
+    const poly = document.createElementNS(NS, 'polygon');
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const [x, y] = point(i, r);
+      pts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+    }
+    poly.setAttribute('points', pts.join(' '));
+    poly.setAttribute('fill', 'none');
+    poly.setAttribute('stroke', 'var(--grid)');
+    poly.setAttribute('stroke-width', '1');
+    svg.appendChild(poly);
+  });
+
+  // 轴线
+  for (let i = 0; i < N; i++) {
+    const [x, y] = point(i, 1);
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', 0); line.setAttribute('y1', 0);
+    line.setAttribute('x2', x.toFixed(2)); line.setAttribute('y2', y.toFixed(2));
+    line.setAttribute('stroke', 'var(--grid)');
+    line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+  }
+
+  // 数据多边形
+  const dataPts = data.radar.map((d, i) => {
+    const v = GRADE_VALUE[d.grade] ?? 0.5;
+    return point(i, v);
+  });
+  const dataPoly = document.createElementNS(NS, 'polygon');
+  dataPoly.setAttribute('points', dataPts.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
+  dataPoly.setAttribute('fill', 'var(--radar-fill)');
+  dataPoly.setAttribute('stroke', 'var(--radar-stroke)');
+  dataPoly.setAttribute('stroke-width', '2');
+  dataPoly.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(dataPoly);
+
+  // 数据点 + 名称
+  data.radar.forEach((d, i) => {
+    const [x, y] = point(i, GRADE_VALUE[d.grade] ?? 0.5);
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', x.toFixed(2)); dot.setAttribute('cy', y.toFixed(2));
+    dot.setAttribute('r', 3);
+    dot.setAttribute('fill', 'var(--radar-stroke)');
+    svg.appendChild(dot);
+
+    const [lx, ly] = point(i, 1.18);
+    const text = document.createElementNS(NS, 'text');
+    text.setAttribute('x', lx.toFixed(2));
+    text.setAttribute('y', ly.toFixed(2));
+    text.setAttribute('fill', 'var(--ink-soft)');
+    text.setAttribute('font-size', '11');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('dominant-baseline', 'middle');
+    text.textContent = d.name;
+    svg.appendChild(text);
+  });
+
+  // ── 图例 ──
+  const legend = document.getElementById('radar-legend');
+  data.radar.forEach(d => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${d.name}</span><span class="grade ${d.grade}">${d.grade}</span>`;
+    legend.appendChild(li);
+  });
+
+  // ── 数值条 ──
+  const list = document.getElementById('stats-list');
+  data.stats.forEach(s => {
+    const v = Math.max(0, Math.min(100, s.value));
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <span class="stat-name">${s.name}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${v}%"></span></span>
+      <span class="num">${s.value}</span>
+    `;
+    list.appendChild(li);
+  });
+</script>
+</body>
+</html>
