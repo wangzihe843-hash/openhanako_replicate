@@ -541,6 +541,42 @@ export async function deleteChannel(channelId: string): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════
+// 重命名频道（更新 name / description）
+// ══════════════════════════════════════════════════════
+
+export async function renameChannel(
+  channelId: string,
+  nextName: string,
+): Promise<void> {
+  const trimmed = (nextName || '').trim();
+  if (!trimmed) throw new Error('name must be a non-empty string');
+
+  const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: trimmed }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+
+  const finalName: string = data.name || trimmed;
+  const state = useStore.getState();
+  useStore.setState({
+    channels: state.channels.map((channel: Channel) =>
+      channel.id === channelId ? { ...channel, name: finalName } : channel,
+    ),
+    channelHeaderName: state.currentChannel === channelId
+      ? `# ${finalName}`
+      : state.channelHeaderName,
+    channelInfoName: state.currentChannel === channelId
+      ? finalName
+      : state.channelInfoName,
+  });
+}
+
+// ══════════════════════════════════════════════════════
 // 频道成员管理
 // ══════════════════════════════════════════════════════
 

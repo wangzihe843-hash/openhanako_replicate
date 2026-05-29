@@ -7445,21 +7445,23 @@
 
 .xyGroupChat {
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-  gap: var(--space-md);
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 0;
   margin-bottom: var(--space-md);
   border: 1px solid var(--overlay-light);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: var(--bg-card, var(--overlay-subtle));
-  min-height: 360px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 6px 16px rgba(15, 23, 42, 0.05);
+  overflow: hidden;
 }
 
 .xyGroupChatList {
   border-right: 1px solid var(--overlay-light);
-  padding: var(--space-md) var(--space-sm);
+  padding: 14px 12px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
 }
 
 .xyGroupChatListHeader {
@@ -7467,30 +7469,34 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: var(--space-sm);
+  margin-bottom: 10px;
+  padding: 0 4px;
 }
 
 .xyGroupChatListTitle {
   margin: 0;
-  font-size: 0.92rem;
-  font-weight: 650;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .xyGroupChatRefreshButton {
-  border: 1px solid var(--overlay-light);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 0.78rem;
-  padding: 4px 8px;
+  font-size: 0.76rem;
+  padding: 3px 8px;
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
 .xyGroupChatRefreshButton:hover:not(:disabled) {
   color: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-light);
 }
 
 .xyGroupChatRefreshButton:disabled {
@@ -7503,51 +7509,77 @@
   padding: 0;
   margin: 0;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   overflow-y: auto;
 }
 
 .xyGroupChatChannelButton {
+  position: relative;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  gap: 3px;
+  padding: 9px 12px 9px 14px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
   font: inherit;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.xyGroupChatChannelButton::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  transform: translateY(-50%);
+  transition: height var(--duration-fast) var(--ease-out);
 }
 
 .xyGroupChatChannelButton:hover {
-  background: var(--accent-light);
+  background: var(--overlay-light);
 }
 
 .xyGroupChatChannelButtonActive {
   background: var(--accent-light);
-  border-color: var(--accent);
   color: var(--accent);
+}
+
+.xyGroupChatChannelButtonActive::before {
+  height: 60%;
 }
 
 .xyGroupChatChannelName {
   font-size: 0.88rem;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .xyGroupChatChannelMeta {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--text-muted);
+  opacity: 0.9;
+}
+
+.xyGroupChatChannelButtonActive .xyGroupChatChannelMeta {
+  color: var(--accent);
+  opacity: 0.78;
 }
 
 .xyGroupChatDetail {
-  padding: var(--space-md);
+  padding: 16px 18px 18px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
   min-height: 0;
 }
 
@@ -7557,47 +7589,59 @@
   gap: var(--space-sm);
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: var(--space-sm);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--overlay-light);
 }
 
 .xyGroupChatDetailTitle {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
 .xyGroupChatDetailMeta {
-  margin: 4px 0 0;
+  margin: 5px 0 0;
   font-size: 0.78rem;
   color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .xyGroupChatDetailDesc {
   margin: 4px 0 0;
   font-size: 0.82rem;
   color: var(--text-muted);
+  line-height: 1.55;
 }
 
 .xyGroupChatDetailActions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .xyGroupChatTriggerButton {
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: var(--accent);
   color: var(--bg);
   font: inherit;
   font-size: 0.84rem;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 8px 16px;
   cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
   transition: all var(--duration-fast) var(--ease-out);
 }
 
 .xyGroupChatTriggerButton:hover:not(:disabled) {
   filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.12);
+}
+
+.xyGroupChatTriggerButton:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .xyGroupChatTriggerButton:disabled {
@@ -7606,16 +7650,17 @@
 }
 
 .xyGroupChatResult {
-  margin-bottom: var(--space-sm);
-  padding: 8px 10px;
+  padding: 9px 12px;
   border: 1px solid var(--overlay-light);
-  border-radius: var(--radius-sm);
+  border-left-width: 3px;
+  border-radius: 6px;
   font-size: 0.84rem;
   line-height: 1.55;
+  background: var(--overlay-subtle);
 }
 
 .xyGroupChatResultReplied {
-  border-color: var(--accent);
+  border-left-color: var(--accent);
   color: var(--accent);
 }
 
@@ -7624,27 +7669,112 @@
 }
 
 .xyGroupChatResultError {
-  border-color: var(--color-danger, #c0392b);
+  border-left-color: var(--color-danger, #c0392b);
   color: var(--color-danger, #c0392b);
+}
+
+/* === 聊天记录折叠头 ===================================================== */
+
+.xyGroupChatMessagesSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.xyGroupChatMessagesToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--overlay-light);
+  border-radius: 8px;
+  background: var(--overlay-subtle);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.xyGroupChatMessagesToggle:hover {
+  background: var(--overlay-light);
+  border-color: var(--accent);
+}
+
+.xyGroupChatMessagesToggleLabel {
+  font-size: 0.84rem;
+  font-weight: 600;
+  flex: 1 1 auto;
+}
+
+.xyGroupChatMessagesToggleCount {
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.xyGroupChatMessagesToggleHint {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.xyGroupChatMessagesToggleChevron {
+  color: var(--text-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.xyGroupChatMessagesToggleChevronOpen {
+  transform: rotate(180deg);
+}
+
+.xyGroupChatMessagesCollapsedHint {
+  margin: 0;
+  padding: 2px 12px 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
 }
 
 .xyGroupChatMessageList {
   list-style: none;
-  padding: 0;
+  padding: 4px 2px 2px;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
+  max-height: 480px;
 }
 
 .xyGroupChatMessage {
+  max-width: 82%;
   border: 1px solid var(--overlay-light);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  background: var(--bg-elevated, var(--overlay-subtle));
+  border-radius: 10px;
+  padding: 8px 11px;
+  background: var(--bg-elevated, #ffffff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.xyGroupChatMessageRowUser {
+  align-self: flex-end;
+  border-bottom-right-radius: 3px;
+}
+
+.xyGroupChatMessageRowOther {
+  align-self: flex-start;
+  border-bottom-left-radius: 3px;
+}
+
+.xyGroupChatMessageRowSystem {
+  align-self: center;
+  max-width: 90%;
+  text-align: center;
 }
 
 .xyGroupChatMessageUser {
@@ -7654,20 +7784,29 @@
 
 .xyGroupChatMessageSelfAgent {
   border-color: var(--accent);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 0 0 1px var(--accent-light);
 }
 
 .xyGroupChatMessageSystem {
   border-style: dashed;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-muted);
 }
 
 .xyGroupChatMessageHeader {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 0.74rem;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.72rem;
   color: var(--text-muted);
   margin-bottom: 4px;
+}
+
+.xyGroupChatMessageRowSystem .xyGroupChatMessageHeader {
+  justify-content: center;
+  gap: 6px;
 }
 
 .xyGroupChatMessageSender {
@@ -7676,6 +7815,7 @@
 
 .xyGroupChatMessageTimestamp {
   font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 .xyGroupChatMessageBody {
@@ -7690,6 +7830,7 @@
   font-size: 0.84rem;
   line-height: 1.6;
   margin: 0;
+  padding: 4px 2px;
 }
 
 .phoneReadingLayout,

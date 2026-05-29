@@ -113,6 +113,7 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [lastResult, setLastResult] = useState<LastTriggerResult | null>(null);
+  const [messagesExpanded, setMessagesExpanded] = useState(false);
 
   const refreshChannelList = useCallback(async () => {
     if (!selectedAgent) {
@@ -137,9 +138,10 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
     void refreshChannelList();
   }, [refreshChannelList]);
 
-  // Reset result when switching agent or channel
+  // Reset result + collapse messages when switching agent or channel
   useEffect(() => {
     setLastResult(null);
+    setMessagesExpanded(false);
   }, [selectedAgent?.id, selectedChannelId]);
 
   const refreshChannelDetail = useCallback(async () => {
@@ -234,7 +236,7 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
                     >
                       <span className={styles.xyGroupChatChannelName}># {ch.name}</span>
                       <span className={styles.xyGroupChatChannelMeta}>
-                        {ch.messageCount} 条 · {ch.members.length} 成员
+                        {ch.messageCount} 条 · {ch.members.length + 1} 成员
                       </span>
                     </button>
                   </li>
@@ -257,7 +259,7 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
                 <div>
                   <h3 className={styles.xyGroupChatDetailTitle}># {channelDetail.name}</h3>
                   <p className={styles.xyGroupChatDetailMeta}>
-                    成员：{channelDetail.members.join('、') || '（无）'}
+                    成员：{[userName, ...channelDetail.members.filter((m) => m !== userName)].join('、')}
                   </p>
                   {channelDetail.description ? (
                     <p className={styles.xyGroupChatDetailDesc}>{channelDetail.description}</p>
@@ -290,41 +292,96 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
                 </div>
               ) : null}
 
-              <ul className={styles.xyGroupChatMessageList} aria-label="群聊消息列表">
-                {channelDetail.messages.length === 0 ? (
-                  <li className={styles.xyGroupChatHint}>这个频道还没有任何消息。</li>
+              <div className={styles.xyGroupChatMessagesSection}>
+                <button
+                  type="button"
+                  className={styles.xyGroupChatMessagesToggle}
+                  onClick={() => setMessagesExpanded((v) => !v)}
+                  aria-expanded={messagesExpanded}
+                  aria-controls="xy-group-chat-messages"
+                >
+                  <span className={styles.xyGroupChatMessagesToggleLabel}>
+                    聊天记录
+                    <span className={styles.xyGroupChatMessagesToggleCount}>
+                      · {channelDetail.messages.length} 条
+                    </span>
+                  </span>
+                  <span className={styles.xyGroupChatMessagesToggleHint}>
+                    {messagesExpanded ? '收起' : '展开'}
+                  </span>
+                  <svg
+                    className={`${styles.xyGroupChatMessagesToggleChevron}${
+                      messagesExpanded ? ` ${styles.xyGroupChatMessagesToggleChevronOpen}` : ''
+                    }`}
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {messagesExpanded ? (
+                  <ul
+                    id="xy-group-chat-messages"
+                    className={styles.xyGroupChatMessageList}
+                    aria-label="群聊消息列表"
+                  >
+                    {channelDetail.messages.length === 0 ? (
+                      <li className={styles.xyGroupChatHint}>这个频道还没有任何消息。</li>
+                    ) : (
+                      channelDetail.messages.map((m) => {
+                        const isUser = m.sender === userName;
+                        const isSelfAgent = !!selectedAgent && m.sender === selectedAgent.id;
+                        const isSystem = m.sender === 'system';
+                        const rowAlign = isSystem
+                          ? styles.xyGroupChatMessageRowSystem
+                          : isUser
+                            ? styles.xyGroupChatMessageRowUser
+                            : styles.xyGroupChatMessageRowOther;
+                        const cls = [
+                          styles.xyGroupChatMessage,
+                          rowAlign,
+                          isUser ? styles.xyGroupChatMessageUser : '',
+                          isSelfAgent ? styles.xyGroupChatMessageSelfAgent : '',
+                          isSystem ? styles.xyGroupChatMessageSystem : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ');
+                        const tag = isUser
+                          ? `${m.sender} · user`
+                          : isSelfAgent
+                            ? `${m.sender} · 当前 agent`
+                            : isSystem
+                              ? `${m.sender} · 频道系统`
+                              : `${m.sender} · 其他成员`;
+                        return (
+                          <li key={`${m.sender}@${m.timestamp}`} className={cls}>
+                            <div className={styles.xyGroupChatMessageHeader}>
+                              <span className={styles.xyGroupChatMessageSender}>{tag}</span>
+                              <span className={styles.xyGroupChatMessageTimestamp}>
+                                {m.timestamp}
+                              </span>
+                            </div>
+                            <div className={styles.xyGroupChatMessageBody}>{m.body}</div>
+                          </li>
+                        );
+                      })
+                    )}
+                  </ul>
                 ) : (
-                  channelDetail.messages.map((m) => {
-                    const isUser = m.sender === userName;
-                    const isSelfAgent = !!selectedAgent && m.sender === selectedAgent.id;
-                    const isSystem = m.sender === 'system';
-                    const cls = [
-                      styles.xyGroupChatMessage,
-                      isUser ? styles.xyGroupChatMessageUser : '',
-                      isSelfAgent ? styles.xyGroupChatMessageSelfAgent : '',
-                      isSystem ? styles.xyGroupChatMessageSystem : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ');
-                    const tag = isUser
-                      ? `${m.sender} · user`
-                      : isSelfAgent
-                        ? `${m.sender} · 当前 agent`
-                        : isSystem
-                          ? `${m.sender} · 频道系统`
-                          : `${m.sender} · 其他成员`;
-                    return (
-                      <li key={`${m.sender}@${m.timestamp}`} className={cls}>
-                        <div className={styles.xyGroupChatMessageHeader}>
-                          <span className={styles.xyGroupChatMessageSender}>{tag}</span>
-                          <span className={styles.xyGroupChatMessageTimestamp}>{m.timestamp}</span>
-                        </div>
-                        <div className={styles.xyGroupChatMessageBody}>{m.body}</div>
-                      </li>
-                    );
-                  })
+                  <p className={styles.xyGroupChatMessagesCollapsedHint}>
+                    {channelDetail.messages.length === 0
+                      ? '这个频道还没有任何消息。'
+                      : '点开「频道」标签即可查看完整聊天记录。'}
+                  </p>
                 )}
-              </ul>
+              </div>
             </>
           ) : (
             <p className={styles.xyGroupChatHint}>读取群聊消息失败，点击刷新重试。</p>

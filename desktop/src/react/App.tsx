@@ -14,6 +14,7 @@ import { RegionalErrorBoundary } from './components/RegionalErrorBoundary';
 const SkillViewerOverlay = lazy(() => import('./components/SkillViewerOverlay').then(m => ({ default: m.SkillViewerOverlay })));
 import { ChannelsPanel } from './components/ChannelsPanel';
 import { ChannelCreateOverlay } from './components/channels/ChannelCreateOverlay';
+import { ChannelRenameOverlay } from './components/channels/ChannelRenameOverlay';
 import { SidebarLayout, toggleSidebar } from './components/SidebarLayout';
 import { FloatPreviewCard, useFloatCard } from './components/FloatPreviewCard';
 import { useSidebarResize } from './hooks/use-sidebar-resize';
@@ -123,6 +124,9 @@ function App() {
 
       {/* Channel create overlay */}
       <ChannelCreateOverlay />
+
+      {/* Channel rename overlay */}
+      <ChannelRenameOverlay />
 
       {/* Skill viewer overlay */}
       <Suspense fallback={null}><SkillViewerOverlay /></Suspense>

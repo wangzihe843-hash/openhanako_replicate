@@ -17,6 +17,10 @@ function confirmDeleteChannel(channelId: string) {
   deleteChannel(channelId);
 }
 
+function openRenameChannelOverlay(channelId: string) {
+  useStore.getState().setChannelRenameOverlayChannelId(channelId);
+}
+
 export function ChannelHeader() {
   const { t } = useI18n();
   const headerName = useStore(s => s.channelHeaderName);
@@ -31,6 +35,10 @@ export function ChannelHeader() {
     if (!currentChannel) return;
     const rect = e.currentTarget.getBoundingClientRect();
     setMenuItems([
+      {
+        label: t('channel.renameChannel'),
+        action: () => openRenameChannelOverlay(currentChannel),
+      },
       {
         label: t('channel.deleteChannel'),
         danger: true,

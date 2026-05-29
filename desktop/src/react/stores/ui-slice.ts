@@ -34,6 +34,8 @@ export interface UiSlice {
   skillCatalogVersion: number;
   /** 频道创建弹窗是否可见 */
   channelCreateOverlayVisible: boolean;
+  /** 频道重命名弹窗目标频道 ID（null 表示关闭） */
+  channelRenameOverlayChannelId: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarAutoCollapsed: (collapsed: boolean) => void;
   setJianOpen: (open: boolean) => void;
@@ -45,6 +47,7 @@ export interface UiSlice {
   setRightWorkspaceTab: (tab: RightWorkspaceTab) => void;
   setJianDrawerOpen: (open: boolean) => void;
   setChannelCreateOverlayVisible: (visible: boolean) => void;
+  setChannelRenameOverlayChannelId: (channelId: string | null) => void;
   setMediaViewer: (state: MediaViewerState | null) => void;
   setSettingsModal: (state: SettingsModalState) => void;
   setMediaViewerCurrent: (id: string) => void;
@@ -74,6 +77,7 @@ export const createUiSlice = (
   settingsModal: { open: false, activeTab: 'agent' },
   skillCatalogVersion: 0,
   channelCreateOverlayVisible: false,
+  channelRenameOverlayChannelId: null,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarAutoCollapsed: (collapsed) => set({ sidebarAutoCollapsed: collapsed }),
   setJianOpen: (open) => set({ jianOpen: open }),
@@ -85,6 +89,7 @@ export const createUiSlice = (
   setRightWorkspaceTab: (tab) => set({ rightWorkspaceTab: tab }),
   setJianDrawerOpen: (open) => set({ jianDrawerOpen: open }),
   setChannelCreateOverlayVisible: (visible) => set({ channelCreateOverlayVisible: visible }),
+  setChannelRenameOverlayChannelId: (channelId) => set({ channelRenameOverlayChannelId: channelId }),
   setMediaViewer: (state) => set({ mediaViewer: state }),
   setSettingsModal: (state) => set({ settingsModal: state }),
   setMediaViewerCurrent: (id) => set((s) => ({

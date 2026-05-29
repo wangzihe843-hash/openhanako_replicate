@@ -7,6 +7,7 @@
  * GET    /channels              — 列出所有频道 + 用户 bookmark + 未读数
  * POST   /channels              — 创建新频道
  * GET    /channels/:id          — 获取频道消息 + 成员列表
+ * PATCH  /channels/:id          — 更新频道元数据（name / description）
  * POST   /channels/:id/members  — 添加频道成员
  * DELETE /channels/:id/members/:agentId — 移除频道成员
  * POST   /channels/:id/messages — 用户发送群聊消息
@@ -627,6 +628,49 @@ export function createChannelsRoute(engine, hub) {
 
       await updateBookmark(userBookmarkPath(), name, timestamp);
       return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // ── 更新频道元数据（name / description）──
+  route.patch("/channels/:name", async (c) => {
+    try {
+      const disabled = requirePhoneEnabled(c);
+      if (disabled) return disabled;
+      const name = c.req.param("name");
+      const filePath = safeChannelPath(name);
+      if (!filePath) return c.json({ error: "Invalid channel id" }, 400);
+      if (!fs.existsSync(filePath)) return c.json({ error: "Channel not found" }, 404);
+
+      const body = await safeJson(c);
+      const patch = {};
+      if (body && Object.prototype.hasOwnProperty.call(body, "name")) {
+        if (typeof body.name !== "string" || !body.name.trim()) {
+          return c.json({ error: "name must be a non-empty string" }, 400);
+        }
+        patch.name = body.name.trim();
+      }
+      if (body && Object.prototype.hasOwnProperty.call(body, "description")) {
+        if (typeof body.description !== "string") {
+          return c.json({ error: "description must be a string" }, 400);
+        }
+        patch.description = body.description;
+      }
+      if (Object.keys(patch).length === 0) {
+        return c.json({ error: "no fields to update" }, 400);
+      }
+
+      await updateChannelMeta(filePath, patch);
+      const meta = getChannelMeta(filePath);
+
+      debugLog()?.log("api", `PATCH /channels/${name} fields=[${Object.keys(patch)}]`);
+      return c.json({
+        ok: true,
+        id: meta.id || name,
+        name: meta.name || name,
+        description: meta.description || "",
+      });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
