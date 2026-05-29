@@ -79,6 +79,39 @@ describe("heartbeat prompt: social staleness directive", () => {
     expect(prompt).toContain("明");
   });
 
+  it("injects a candidate's relationship lore into the opener when present", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      socialStaleness: {
+        shouldSocialize: true,
+        overduePeerCount: 0,
+        globalChatTurnsSinceLastDm: 85,
+        candidatePeers: [{
+          peerId: "ming",
+          name: "明",
+          summary: "钟与共鸣",
+          chatTurnsSinceLastDm: 85,
+          relationshipLore: "明是你关系冷淡的表兄，三年前因遗产闹翻，至今没和解。",
+        }],
+      },
+    });
+    expect(prompt).toContain("## 社交动态");
+    expect(prompt).toContain("关系冷淡的表兄");      // lore 正文注入
+    expect(prompt).toContain("不要无视也不要编造");   // 关系约束框架
+  });
+
+  it("does NOT render a lore block when candidates have no relationshipLore", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      socialStaleness: {
+        shouldSocialize: true,
+        overduePeerCount: 0,
+        globalChatTurnsSinceLastDm: 85,
+        candidatePeers: [{ peerId: "ming", name: "明", summary: "钟与共鸣", chatTurnsSinceLastDm: 85 }],
+      },
+    });
+    expect(prompt).toContain("## 社交动态");
+    expect(prompt).not.toContain("不要无视也不要编造");
+  });
+
   it("does NOT add social section when triggered but no candidates to name", async () => {
     const prompt = await runOnceAndCapturePrompt({
       socialStaleness: {

@@ -267,12 +267,19 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
           ? `与 ${peer.name} 的关系（${agentNameForTemplate}）`
           : `其他 agent 关系（${agentNameForTemplate}）`;
         const title = current.title.trim() ? current.title : defaultTitle;
+        // 默认 keyword：主聊天里用户提到该 peer 才注入（不污染无关对话）；
+        // 自主 DM / 心跳开场白由系统用"对话对象"定向命中同一关键词注入。
+        // 选中具体 peer 时自动把关键词填成 名字 + id，开箱即用。
+        const peerKeywords = peer
+          ? [peer.name, peer.id].filter((v, i, a) => !!v && a.indexOf(v) === i).join(', ')
+          : current.keywords;
         return {
           ...current,
           category: 'relationship',
           content: block,
-          insertionMode: 'always',
+          insertionMode: 'keyword',
           visibility: 'canonical',
+          keywords: peerKeywords,
           title,
         };
       }
@@ -408,6 +415,9 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
             </p>
             <p className={styles.loreHint}>
               <strong>用户身份/关系</strong>模板描述本角色与<strong>用户</strong>的关系；<strong>其他 agent 关系</strong>模板描述本角色与<strong>另一个 AI agent</strong>的关系（建议每个其他 agent 各写一条），便于本角色定位自己和其他 agent 的关系、避免把对方误当成用户。
+            </p>
+            <p className={styles.loreHint}>
+              其他 agent 关系模板默认用<strong>关键词</strong>注入（关键词自动填为对方名字 + id）：主聊天里只有用户<strong>提到该 agent</strong>时才注入，不污染无关对话；而当本角色<strong>和该 agent 私聊或在心跳里主动联系 TA</strong> 时，系统会用对方身份自动命中、定向注入这条关系，保证私聊贴合设定、不瞎编。
             </p>
             {peerAgents.length > 0 ? (
               <label className={styles.profileField} data-testid="lore-peer-agent-picker">

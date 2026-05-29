@@ -235,7 +235,7 @@ describe('LoreEditor — relationship template', () => {
     expect(body.value).toContain('【实体区分（重要）】');
     expect(body.value).toContain('AI agent');
 
-    expect(screen.getByRole('combobox', { name: '插入模式' })).toHaveValue('always');
+    expect(screen.getByRole('combobox', { name: '插入模式' })).toHaveValue('keyword');
     expect(screen.getByRole('combobox', { name: '可见性' })).toHaveValue('canonical');
     expect(screen.getByRole('textbox', { name: '标题' })).toHaveValue('其他 agent 关系（星侧角色）');
   });
@@ -264,5 +264,8 @@ describe('LoreEditor — relationship template', () => {
     expect(body).toContain('id：ming');
     expect(body).toContain('对方 id：ming');
     expect(screen.getByRole('textbox', { name: '标题' })).toHaveValue('与 明 的关系（星侧角色）');
+    // 默认 keyword 注入 + 关键词自动填为 名字 + id
+    expect(screen.getByRole('combobox', { name: '插入模式' })).toHaveValue('keyword');
+    expect(screen.getByRole('textbox', { name: '关键词' })).toHaveValue('明, ming');
   });
 });

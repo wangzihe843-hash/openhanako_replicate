@@ -20,6 +20,7 @@ import {
   formatMessagesForLLM,
 } from "../lib/channels/channel-store.js";
 import { runAgentPhoneSession } from "./agent-executor.js";
+import { buildXingyePeerRelationshipLore } from "../shared/xingye-peer-lore.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
 import {
@@ -179,7 +180,18 @@ export class DmRouter {
       const toName = toAgent?.agentName || toId;
       const phoneSettings = this._resolvePhoneSettings(toId, fromId);
 
-      debugLog()?.log("dm-router", `${toId} replying to ${fromId} (round ${round + 1}/${MAX_ROUNDS})`);
+      // 定向注入：取 toId（回复方）对 fromId（对话对象）的关系 lore（keyword 条目，
+      // 用 fromName+fromId 当 query 命中），作为 systemAppend 喂进回复 session——
+      // 让私聊贴合既定关系、不瞎编，且只带当前这一个对话对象的关系。故障返回 '' 不阻塞。
+      const peerLore = buildXingyePeerRelationshipLore({
+        agentId: toId,
+        agentDir: toAgent?.agentDir || path.join(agentsDir, toId),
+        hanakoHome: path.dirname(agentsDir),
+        peerName: fromName,
+        peerId: fromId,
+      });
+
+      debugLog()?.log("dm-router", `${toId} replying to ${fromId} (round ${round + 1}/${MAX_ROUNDS})${peerLore ? " [+lore]" : ""}`);
 
       // 用频道模式 prompt 让 toId 回复
       const isZh = getLocale().startsWith("zh");
@@ -237,6 +249,7 @@ export class DmRouter {
           conversationType: "dm",
           toolMode: phoneSettings.toolMode,
           emitEvents: true,
+          ...(peerLore ? { systemAppend: peerLore } : {}),
           onSessionReady: (sessionPath) => {
             activeSessionPath = sessionPath;
             return this._recordPhoneActivity(
