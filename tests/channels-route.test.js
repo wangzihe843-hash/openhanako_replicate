@@ -105,6 +105,33 @@ describe("channels route membership contract", () => {
     expect(fs.existsSync(path.join(engine.userDir, "channels.md"))).toBe(false);
   });
 
+  it("rejects multi-line name/description on PATCH (frontmatter injection guard)", async () => {
+    await createChannel(engine.channelsDir, { id: "ch_crew", name: "Crew", members: ["alice", "bob"] });
+    const metaPath = path.join(engine.channelsDir, "ch_crew.md");
+
+    // 注入尝试：换行想塞 members: 行 → 400，且元数据/成员不被篡改
+    const inject = await app.request("/api/channels/ch_crew", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Evil\nmembers: [carol]" }),
+    });
+    expect(inject.status).toBe(400);
+    let meta = getChannelMeta(metaPath);
+    expect(meta.members).toEqual(["alice", "bob"]);
+    expect(meta.name).toBe("Crew");
+
+    // 正常重命名 → 200 且生效，成员不变
+    const ok = await app.request("/api/channels/ch_crew", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "新船员" }),
+    });
+    expect(ok.status).toBe(200);
+    meta = getChannelMeta(metaPath);
+    expect(meta.name).toBe("新船员");
+    expect(meta.members).toEqual(["alice", "bob"]);
+  });
+
   it("freezes channel and phone settings routes when channels are disabled", async () => {
     const channelsDir = path.join(tmpDir, "channels");
     await createChannel(channelsDir, {

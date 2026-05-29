@@ -645,15 +645,27 @@ export function createChannelsRoute(engine, hub) {
 
       const body = await safeJson(c);
       const patch = {};
+      // frontmatter 是逐行 `key: value` 写的（serializeFrontmatter 不转义），所以
+      // name/description 必须是单行：含换行就能注入 `members:` 等键、或用 `---` 行截断
+      // frontmatter 篡改元数据。这里拒掉换行并限长。
       if (body && Object.prototype.hasOwnProperty.call(body, "name")) {
         if (typeof body.name !== "string" || !body.name.trim()) {
           return c.json({ error: "name must be a non-empty string" }, 400);
         }
-        patch.name = body.name.trim();
+        const nm = body.name.trim();
+        if (/[\r\n]/.test(nm)) return c.json({ error: "name must be single-line" }, 400);
+        if (nm.length > 200) return c.json({ error: "name too long (max 200)" }, 400);
+        patch.name = nm;
       }
       if (body && Object.prototype.hasOwnProperty.call(body, "description")) {
         if (typeof body.description !== "string") {
           return c.json({ error: "description must be a string" }, 400);
+        }
+        if (/[\r\n]/.test(body.description)) {
+          return c.json({ error: "description must be single-line" }, 400);
+        }
+        if (body.description.length > 500) {
+          return c.json({ error: "description too long (max 500)" }, 400);
         }
         patch.description = body.description;
       }

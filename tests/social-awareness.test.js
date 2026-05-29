@@ -243,4 +243,20 @@ describe("formatSocialCandidateLines", () => {
   it("handles non-array input", () => {
     expect(formatSocialCandidateLines(null, true)).toEqual([]);
   });
+
+  it("marks never-contacted candidates so the agent doesn't fake a reunion", () => {
+    const lines = formatSocialCandidateLines(
+      [{ peerId: "ming", name: "明", summary: "钟与共鸣", chatTurnsSinceLastDm: 250, neverContacted: true }],
+      true,
+    );
+    expect(lines[0]).toContain("还没联系过");
+  });
+
+  it("does not add the never-contacted marker when the peer has been contacted", () => {
+    const lines = formatSocialCandidateLines(
+      [{ peerId: "ming", name: "明", summary: "钟与共鸣", chatTurnsSinceLastDm: 90, neverContacted: false }],
+      true,
+    );
+    expect(lines[0]).not.toContain("还没联系过");
+  });
 });

@@ -57,6 +57,18 @@ describe("readCompactPeerPersona", () => {
     expect(out).not.toContain("{{");
   });
 
+  it("strips markdown list markers so they don't leave ' - ' fragments mid-sentence", () => {
+    writePublicIshiki("ming", [
+      "我是助手。",
+      "- 第一条边界",
+      "- 第二条边界",
+    ].join("\n"));
+    const out = readCompactPeerPersona({ agentsDir, peerId: "ming", peerName: "明" });
+    expect(out).toContain("第一条边界");
+    expect(out).not.toContain(" - ");
+    expect(out).not.toMatch(/(^|\s)-\s/);
+  });
+
   it("collapses whitespace into single line", () => {
     writePublicIshiki("ming", "第一行。\n\n\n第二行。\t第三段。");
     const out = readCompactPeerPersona({ agentsDir, peerId: "ming" });
