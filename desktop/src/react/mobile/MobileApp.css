@@ -17,6 +17,17 @@ body,
   height: 100%;
 }
 
+/* 桌面已把 titlebar 改为文档流布局行；移动端维持 fixed overlay——
+   移动端侧栏是 fixed 抽屉、preview 全屏、chat-area 等都依赖 --titlebar-h 避让，
+   移动端 titlebar 正规化留作后续。特异性 (0,2,0) 覆盖桌面的 .titlebar (0,1,0)。 */
+.mobile-desktop-root .titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+}
+
 .mobile-desktop-root .tb-toggle-left {
   margin-left: 4px;
 }

@@ -90,30 +90,34 @@ function App() {
       <SidebarLayout />
       <ChannelsPanel />
 
-      {/* ── Titlebar ── */}
-      <AppTitlebar
-        sidebarOpen={sidebarOpen}
-        jianOpen={jianOpen}
-        onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
-        onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
-        onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
-        onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
-        onToggleMouseLeave={scheduleFloatHide}
-      />
-
-      {/* ── App body ── */}
-      <div className="app">
-        <ChatSidebar
-          open={sidebarOpen && !isPluginTab}
-          onNewSession={createNewSession}
-          onCollapse={() => toggleSidebar()}
-          onOpenSettings={() => openSettingsModal()}
-          onTogglePanel={togglePanel}
+      {/* ── App shell: titlebar 作为独立布局行（flex column 第一行），
+           app body 占剩余高度。取代旧的 fixed overlay + 各内容区 padding-top 避让。 ── */}
+      <div className="app-shell">
+        {/* ── Titlebar ── */}
+        <AppTitlebar
+          sidebarOpen={sidebarOpen}
+          jianOpen={jianOpen}
+          onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
+          onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
+          onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
+          onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
+          onToggleMouseLeave={scheduleFloatHide}
         />
 
-        <RegionalErrorBoundary region="app-pages" resetKeys={[currentTab]}>
-          <AppPages />
-        </RegionalErrorBoundary>
+        {/* ── App body ── */}
+        <div className="app">
+          <ChatSidebar
+            open={sidebarOpen && !isPluginTab}
+            onNewSession={createNewSession}
+            onCollapse={() => toggleSidebar()}
+            onOpenSettings={() => openSettingsModal()}
+            onTogglePanel={togglePanel}
+          />
+
+          <RegionalErrorBoundary region="app-pages" resetKeys={[currentTab]}>
+            <AppPages />
+          </RegionalErrorBoundary>
+        </div>
       </div>
 
       {/* Connection status */}
