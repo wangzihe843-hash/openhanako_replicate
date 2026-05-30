@@ -24,7 +24,9 @@ import { resolveXingyeLoreTemplateUserNameSync } from './xingye-speaker-context'
 import { LoreEntryCard } from './LoreEntryCard';
 import styles from './XingyeShell.module.css';
 
-const LORE_CANDIDATE_REASON = '用户从设定库保存为候选重要记忆';
+// 会原样显示在「重要记忆候选」卡片的「理由：」处——用 TA 第一人称、带心意的口吻，
+// 而非「用户从设定库保存」这类系统说明（来源由「来源 · lore」标签单独标注，不靠这句溯源）。
+const LORE_CANDIDATE_REASON = '这是我心里早认定的事，想一直记着。';
 const LORE_CANDIDATE_FLASH_OK = '已加入候选重要记忆，请到记忆候选中确认写入';
 
 function buildLoreCandidateContent(entry: XingyeLoreEntry): string {

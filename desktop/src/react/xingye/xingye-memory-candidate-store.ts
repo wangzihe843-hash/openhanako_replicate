@@ -242,7 +242,12 @@ export const XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS: readonly {
   { level: 'high', label: '高' },
 ] as const;
 
-export const XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT = '用户从秘密空间手动保存为候选重要记忆';
+/**
+ * 「新建私藏回忆」模态里「理由」字段的默认文案。
+ * 这条会原样显示在私藏回忆卡片的「理由：」处，所以用 **TA 第一人称、带心意的口吻**，
+ * 而不是「用户手动保存为候选」这类系统/工程说明——保持与心跳产出的回忆 reason 同一种语气。
+ */
+export const XINGYE_SECRET_SPACE_MANUAL_CANDIDATE_REASON_DEFAULT = '想把这个，悄悄收进只有我自己翻得到的地方。';
 
 async function appendMemoryCandidateWrittenEvent(
   agentId: string,

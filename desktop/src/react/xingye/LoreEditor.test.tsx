@@ -83,7 +83,7 @@ describe('LoreEditor — save lore as memory candidate', () => {
     expect(candidate.target).toBe('pinned');
     expect(candidate.status).toBe('pending');
     expect(candidate.content).toBe(`【设定】${entry.title}\n${entry.content}`);
-    expect(candidate.reason).toBe('用户从设定库保存为候选重要记忆');
+    expect(candidate.reason).toBe('这是我心里早认定的事，想一直记着。');
     expect(candidate.importance).toBe(2);
 
     expect(hanaFetch).not.toHaveBeenCalled();

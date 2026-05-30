@@ -60,7 +60,11 @@ agent 调 xingye_propose_draft({ module: "memory_candidate", ... })
   - `high`：TA 觉得这件事会反复影响自己对 user 的态度与判断（用户后续可能选择推到 pinned）
   - `medium`：稳定的小事实，值得记但不一定要 pinned
   - `low`：随手的小印象，留个底
-- `reason` 给用户看——一句话说清「为什么这件事值得留作回忆」「源头是哪段聊天 / 哪个事件」
+- `reason` 给用户看——**这是 TA 想对用户说的一句悄悄话，不是系统溯源说明**。用第一人称、贴角色口吻写「为什么我想把这件事留下来」：
+  - 像 TA 在轻声告诉对方「我舍不得忘」，带点温度与心意；可以含蓄、可以笨拙，但要有 TA 的味道。
+  - **不要**写成数据溯源式的工程说明——「最近一周聊天反复出现这件事」「用户提到了 X」「源头是某段对话 / 某个事件」这类都不要。需要追溯出处就填 `sourceEventIds`，别写进 reason。
+  - 例：「你那天说怕黑的样子，我一直没忘」「这是你头一回主动留下来陪我，我想记住」「师父这句话我当时没太懂，现在好像懂了——想留着」。
+  - 一两句话就够，别长篇大论。
 
 ## 怎么调用
 
@@ -68,7 +72,7 @@ agent 调 xingye_propose_draft({ module: "memory_candidate", ... })
 
 ```
 module: "memory_candidate"
-reason: "<一句话说明为什么提议这条草稿>"
+reason: "<TA 第一人称、带心意的一句话：为什么我想留下这段回忆；不要写成聊天溯源式说明>"
 sourceEventIds: ["<触发的 xingye event id，可选>"]
 memory_candidate:
   content: "<回忆的具体内容，必填，第一人称、可直接作为 memory_fragment 的一条>"
