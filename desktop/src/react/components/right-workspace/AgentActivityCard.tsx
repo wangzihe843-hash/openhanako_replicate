@@ -1,20 +1,17 @@
 /**
- * AgentActivityCard — 右侧「后台动态」卡片（可收纳）
+ * AgentActivityCard — 右侧「子助手」卡（复刻群聊 Agent 动态：行 + 展开实时流）
  *
  * 消费统一 Agent Activity 真相源（agentActivitiesBySession），按当前对话 sessionPath
- * 展示 subagent / workflow / 巡检 的实时状态。无活动时返回 null（desk 撑满）。
+ * 筛 kind=subagent。每行复刻群聊：头像 + 名字 + 最新动态；点击展开子会话实时流
+ * （复用 chat/SubagentSessionPreview，传 childSessionPath）。无子助手时返回 null（desk 撑满）。
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { selectAgentActivities, type AgentActivityEntry } from '../../stores/agent-activity-slice';
+import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { SubagentSessionPreview } from '../chat/SubagentSessionPreview';
+import type { Agent } from '../../types';
 import styles from './AgentActivityCard.module.css';
-
-const KIND_LABEL: Record<AgentActivityEntry['kind'], string> = {
-  subagent: '子助手',
-  workflow: 'Workflow',
-  heartbeat: '巡检',
-  cron: '定时',
-};
 
 function rank(status: AgentActivityEntry['status']): number {
   return status === 'running' ? 0 : 1; // 运行中优先
@@ -28,13 +25,69 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+function SubagentActivityRow({ entry, agents, open, onToggle }: {
+  entry: AgentActivityEntry;
+  agents: Agent[];
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const info = resolveAgentDisplayInfo({
+    id: entry.agentId,
+    agents,
+    fallbackAgentName: entry.agentName || entry.agentId || 'Subagent',
+  });
+
+  // 展开且子会话已就绪时，把 preview entry 的 sessionPath 对齐到 childSessionPath。
+  // SubagentSessionPreview 内部用它做 race 校验；右侧卡自持此契约，不依赖群聊 SubagentCard 是否 mount。
+  useEffect(() => {
+    if (open && entry.childSessionPath) {
+      useStore.getState().setSubagentPreviewSessionPath(entry.id, entry.childSessionPath);
+    }
+  }, [open, entry.childSessionPath, entry.id]);
+
+  return (
+    <div className={styles.item}>
+      <button
+        type="button"
+        className={styles.activityRow}
+        data-status={entry.status}
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <span className={styles.avatar}>
+          <AgentAvatar info={info} className={styles.avatarImg} alt={info.displayName} />
+        </span>
+        <span className={styles.name} title={info.displayName}>{info.displayName}</span>
+        <span className={styles.summary} title={entry.summary || ''}>{entry.summary || ''}</span>
+      </button>
+      {open && (
+        <div className={styles.details}>
+          <div ref={scrollRef} className={styles.scroll}>
+            <SubagentSessionPreview
+              taskId={entry.id}
+              sessionPath={entry.childSessionPath}
+              agentId={entry.agentId}
+              streamStatus={entry.status}
+              summary={entry.summary}
+              scrollContainerRef={scrollRef}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AgentActivityCard() {
   const [collapsed, setCollapsed] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const sessionPath = useStore((s) => s.currentSessionPath);
   const all = useStore(selectAgentActivities(sessionPath));
+  const agents = useStore((s) => s.agents);
   const t = window.t ?? ((k: string) => k);
 
-  // 这张卡只管 subagent；workflow 已拆到 WorkflowCard，巡检不进当前对话。
+  // 这张卡只管 subagent；workflow 已拆到 WorkflowCard，巡检系统级不进当前对话。
   const activities = all.filter((a) => a.kind === 'subagent');
   if (!activities.length) return null;
 
@@ -54,14 +107,13 @@ export function AgentActivityCard() {
       {!collapsed && (
         <div className={styles.list}>
           {sorted.map((a) => (
-            <div key={a.id} className={styles.row} data-status={a.status}>
-              <span className={`${styles.dot} ${styles[`dot-${a.status}`] ?? ''}`} aria-hidden="true" />
-              <span className={styles.name} title={a.agentName || a.agentId || ''}>
-                {a.agentName || a.agentId || KIND_LABEL[a.kind] || a.kind}
-              </span>
-              <span className={styles.summary} title={a.summary || ''}>{a.summary || ''}</span>
-              <span className={styles.kind}>{KIND_LABEL[a.kind] || a.kind}</span>
-            </div>
+            <SubagentActivityRow
+              key={a.id}
+              entry={a}
+              agents={agents}
+              open={expanded[a.id] === true}
+              onToggle={() => setExpanded((prev) => ({ ...prev, [a.id]: !prev[a.id] }))}
+            />
           ))}
         </div>
       )}
