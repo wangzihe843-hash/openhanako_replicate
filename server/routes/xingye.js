@@ -39,6 +39,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "relationship_state",
   "secret_space",
   "journal_draft",
+  "trips_history",
   "mm_chat",
   "divination_reading",
   "moments",
