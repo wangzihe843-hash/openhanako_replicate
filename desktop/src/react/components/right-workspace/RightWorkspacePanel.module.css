@@ -19,8 +19,8 @@
     /* desk 卡限高（≈ jian 卡 2-3 倍）：不再 flex:1 顶满，让出空间给下方平级卡片。
        高度走 CSS 变量便于调；小屏用 max-height 兜底防顶满。 */
     flex: 0 0 auto;
-    height: var(--right-workspace-desk-height, 380px);
-    max-height: 55%;
+    height: var(--right-workspace-desk-height, 600px);
+    max-height: 65%;
     min-height: 0;
     display: flex;
     flex-direction: column;

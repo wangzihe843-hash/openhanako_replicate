@@ -31,9 +31,11 @@ function Chevron({ open }: { open: boolean }) {
 export function AgentActivityCard() {
   const [collapsed, setCollapsed] = useState(false);
   const sessionPath = useStore((s) => s.currentSessionPath);
-  const activities = useStore(selectAgentActivities(sessionPath));
+  const all = useStore(selectAgentActivities(sessionPath));
   const t = window.t ?? ((k: string) => k);
 
+  // 这张卡只管 subagent；workflow 已拆到 WorkflowCard，巡检不进当前对话。
+  const activities = all.filter((a) => a.kind === 'subagent');
   if (!activities.length) return null;
 
   const sorted = [...activities].sort((a, b) => {
@@ -43,9 +45,9 @@ export function AgentActivityCard() {
   });
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.activity.title')}>
+    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.subagent.title')}>
       <button className={styles.header} type="button" onClick={() => setCollapsed((c) => !c)} aria-expanded={!collapsed}>
-        <span className={styles.title}>{t('rightWorkspace.activity.title')}</span>
+        <span className={styles.title}>{t('rightWorkspace.subagent.title')}</span>
         <span className={styles.count}>{sorted.length}</span>
         <Chevron open={!collapsed} />
       </button>

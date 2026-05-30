@@ -1,0 +1,82 @@
+.card {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-sm) var(--space-md);
+    gap: 5px;
+    max-height: 30%;
+    overflow: hidden;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+}
+
+.title {
+    font-family: "Songti SC", "Noto Serif CJK SC", serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.count {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    padding: 3px 2px;
+    font-size: 0.78rem;
+}
+
+.statusIcon {
+    text-align: center;
+    color: var(--text-light);
+    font-size: 0.82rem;
+    line-height: 1;
+}
+
+.status-running {
+    color: var(--accent);
+    display: inline-block;
+    animation: workflowSpin 1.4s linear infinite;
+}
+
+.status-done {
+    color: #5aa07a;
+}
+
+.status-failed {
+    color: #c46a6a;
+}
+
+.status-aborted {
+    color: var(--text-light);
+}
+
+@keyframes workflowSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.name {
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

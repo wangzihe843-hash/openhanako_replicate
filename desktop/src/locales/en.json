@@ -1710,6 +1710,12 @@
     "activity": {
       "title": "Activity"
     },
+    "todo": {
+      "title": "To-dos"
+    },
+    "subagent": {
+      "title": "Sub-agents"
+    },
     "session": {
       "title": "This Conversation",
       "cwd": "Workspace",

@@ -1710,6 +1710,12 @@
     "activity": {
       "title": "백그라운드 활동"
     },
+    "todo": {
+      "title": "할 일"
+    },
+    "subagent": {
+      "title": "서브 에이전트"
+    },
     "session": {
       "title": "이 대화",
       "cwd": "작업 폴더",

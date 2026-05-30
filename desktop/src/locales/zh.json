@@ -1710,6 +1710,12 @@
     "activity": {
       "title": "后台动态"
     },
+    "todo": {
+      "title": "待办"
+    },
+    "subagent": {
+      "title": "子助手"
+    },
     "session": {
       "title": "本次对话",
       "cwd": "工作目录",

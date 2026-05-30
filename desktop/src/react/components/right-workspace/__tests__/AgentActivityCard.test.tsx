@@ -23,7 +23,7 @@ describe('AgentActivityCard', () => {
     mockState.agentActivitiesBySession = {
       '/s/a.jsonl': [
         { id: 'd2', kind: 'subagent', status: 'done', sessionPath: '/s/a.jsonl', agentId: null, agentName: '毛毛', summary: '调研完成', childSessionPath: null, startedAt: 1000, finishedAt: 2000 },
-        { id: 'd1', kind: 'workflow', status: 'running', sessionPath: '/s/a.jsonl', agentId: null, agentName: '小黎', summary: '点评咖啡', childSessionPath: null, startedAt: 3000, finishedAt: null },
+        { id: 'd1', kind: 'subagent', status: 'running', sessionPath: '/s/a.jsonl', agentId: null, agentName: '小黎', summary: '点评咖啡', childSessionPath: null, startedAt: 3000, finishedAt: null },
       ],
       '/s/b.jsonl': [
         { id: 'other', kind: 'subagent', status: 'running', sessionPath: '/s/b.jsonl', agentId: null, agentName: '别的', summary: '别的对话', childSessionPath: null, startedAt: 9000, finishedAt: null },

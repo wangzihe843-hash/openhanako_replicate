@@ -6,6 +6,8 @@ import { DeskCwdSkillsButton, DeskCwdSkillsPanel } from '../desk/DeskCwdSkills';
 import { JianEditor } from '../desk/DeskEditor';
 import { PluginWidgetView } from '../plugin/PluginWidgetView';
 import { SessionRegistryFilesPanel } from './SessionRegistryFilesPanel';
+import { SessionTodoCard } from './SessionTodoCard';
+import { WorkflowCard } from './WorkflowCard';
 import { AgentActivityCard } from './AgentActivityCard';
 import { SessionStatusCard } from './SessionStatusCard';
 import styles from './RightWorkspacePanel.module.css';
@@ -148,6 +150,8 @@ export function RightWorkspacePanel() {
         <JianDrawer />
         <JianFloatingToggle />
       </div>
+      <SessionTodoCard />
+      <WorkflowCard />
       <AgentActivityCard />
       <SessionStatusCard />
     </div>

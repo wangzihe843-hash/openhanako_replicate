@@ -1710,6 +1710,12 @@
     "activity": {
       "title": "バックグラウンド"
     },
+    "todo": {
+      "title": "ToDo"
+    },
+    "subagent": {
+      "title": "サブエージェント"
+    },
     "session": {
       "title": "この対話",
       "cwd": "作業フォルダ",

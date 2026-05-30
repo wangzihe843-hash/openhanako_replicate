@@ -1702,6 +1702,12 @@
     "activity": {
       "title": "背景動態"
     },
+    "todo": {
+      "title": "待辦"
+    },
+    "subagent": {
+      "title": "子助手"
+    },
     "session": {
       "title": "本次對話",
       "cwd": "工作目錄",
