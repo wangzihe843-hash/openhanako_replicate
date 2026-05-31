@@ -16,7 +16,7 @@ import {
   runCachePreservingCompactionForSession,
 } from "./session-compactor.js";
 import { teardownSessionResources } from "./session-teardown.js";
-import { evaluateSessionHealth } from "./session-health.js";
+import { evaluateSessionHealth, repairOrphanToolResultEntriesInFile } from "./session-health.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { t, getLocale } from "../server/i18n.js";
@@ -1020,6 +1020,8 @@ export class SessionCoordinator {
     // 说明用户已经撞到了"反复 empty_stream"循环，给前端发警告事件让 UI 提示用户
     // 新建会话或修复。restore 本身仍然继续，避免破坏用户预期。
     this._emitSessionHealthWarning(sessionPath);
+    // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
+    this._repairOrphanToolHistory(sessionPath);
 
     // 冷启动恢复：model 由 PI SDK 从 session JSONL 恢复（单一数据源），不从 session-meta.json 读
     const sessionMgr = SessionManager.open(sessionPath, this._d.getAgent().sessionDir);
@@ -1050,6 +1052,28 @@ export class SessionCoordinator {
     } catch (err) {
       // 健康度检查不能阻塞 restore，吃掉所有错误
       log.warn(`session health check failed for ${path.basename(sessionPath)}: ${err.message}`);
+    }
+  }
+
+  /**
+   * @private #1285 读时结构修复：在 SessionManager.open 之前清理已落盘坏会话里的孤儿
+   * toolResult entry（父 toolCall 属于会被 SDK 丢弃的 error/aborted assistant），避免
+   * 重放时序列化出无前驱 tool_calls 的 role:"tool" → OpenAI-compatible provider 400。
+   *
+   * 必须在 open 之前调用：修复发生在文件层，open 之后 SessionManager 从已清理文件加载。
+   * 容错不阻塞 restore（异常吃掉；运行时 provider-compat 兜底仍会防 400）。
+   */
+  _repairOrphanToolHistory(sessionPath) {
+    try {
+      const { repaired, removed } = repairOrphanToolResultEntriesInFile(sessionPath);
+      if (repaired) {
+        log.warn(
+          `session restore: ${path.basename(sessionPath)} 清理 ${removed} 条孤儿 toolResult `
+          + `(父 tool_calls 属于 error/aborted assistant，会被 SDK 丢弃) — see #1285.`
+        );
+      }
+    } catch (err) {
+      log.warn(`orphan tool history repair failed for ${path.basename(sessionPath)}: ${err.message}`);
     }
   }
 
@@ -1985,6 +2009,8 @@ export class SessionCoordinator {
     }
 
     this._emitSessionHealthWarning(sessionPath);
+    // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
+    this._repairOrphanToolHistory(sessionPath);
     const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
     const cwd = sessionMgr.getCwd?.() || undefined;
     const result = await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
@@ -2047,6 +2073,8 @@ export class SessionCoordinator {
     try {
       // #521: attach 路径同样要做健康度评估，否则 bridge / RC 自动恢复时也会反复失败
       this._emitSessionHealthWarning(sessionPath);
+      // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
+      this._repairOrphanToolHistory(sessionPath);
       const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
       const cwd = sessionMgr.getCwd?.() || undefined;
       await this.createSession(sessionMgr, cwd, memoryEnabled, null, {

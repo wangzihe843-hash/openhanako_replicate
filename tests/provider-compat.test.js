@@ -1068,3 +1068,94 @@ describe("normalizeProviderPayload — 边界条件", () => {
     expect(result).toBe(payload);
   });
 });
+
+describe("normalizeProviderPayload — 孤儿 toolResult 配对兜底（#1285，通用补丁）", () => {
+  it("DeepSeek payload 里父 tool_calls 已丢失的孤儿 role:tool 被删除", () => {
+    // 复现 #1285：error assistant 被 SDK transform-messages 丢弃后，序列化 payload
+    // 里残留孤儿 role:"tool"，DeepSeek 会返回 400。
+    const payload = {
+      model: "deepseek-chat",
+      messages: [
+        { role: "user", content: "调用工具" },
+        { role: "tool", tool_call_id: "call_orphan", content: "工具结果" },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "deepseek-chat",
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com/v1",
+      reasoning: false,
+    }, { mode: "chat" });
+
+    expect(result.messages.some((m) => m.role === "tool")).toBe(false);
+    expect(result.messages.map((m) => m.role)).toEqual(["user", "user"]);
+    // 不可变契约：返回新对象，不 mutate 输入
+    expect(payload.messages).toHaveLength(3);
+  });
+
+  it("普通 OpenAI-compatible provider 同样剥离孤儿（provider-agnostic）", () => {
+    const payload = {
+      model: "gpt-4o",
+      messages: [
+        { role: "user", content: "q" },
+        { role: "tool", tool_call_id: "ghost", content: "orphan" },
+        { role: "assistant", content: "answer" },
+      ],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "gpt-4o",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: false,
+    }, { mode: "chat" });
+    expect(result.messages.some((m) => m.role === "tool")).toBe(false);
+  });
+
+  it("正常成对 toolCall+toolResult 序列原样保留（关键回归保护）", () => {
+    const payload = {
+      model: "deepseek-chat",
+      messages: [
+        { role: "user", content: "今天几号" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "date", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "2026-05-29" },
+        { role: "assistant", content: "今天是 2026-05-29" },
+      ],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "deepseek-chat",
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com/v1",
+      reasoning: false,
+    }, { mode: "chat" });
+    // 成对序列：tool 消息全部保留
+    expect(result.messages.filter((m) => m.role === "tool")).toHaveLength(1);
+    expect(result.messages.find((m) => m.role === "tool").tool_call_id).toBe("call_1");
+  });
+
+  it("混合场景：删孤儿、留成对", () => {
+    const payload = {
+      model: "deepseek-chat",
+      messages: [
+        { role: "user", content: "q" },
+        { role: "assistant", content: null, tool_calls: [{ id: "good", type: "function", function: { name: "f", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "good", content: "ok" },
+        { role: "tool", tool_call_id: "orphan", content: "leftover" },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "deepseek-chat",
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com/v1",
+      reasoning: false,
+    }, { mode: "chat" });
+    const toolMsgs = result.messages.filter((m) => m.role === "tool");
+    expect(toolMsgs).toHaveLength(1);
+    expect(toolMsgs[0].tool_call_id).toBe("good");
+  });
+});

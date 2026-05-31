@@ -95,12 +95,38 @@ describe('parseMoodFromContent (format.ts)', () => {
 });
 
 describe('injectCopyButtons', () => {
-  it('adds an icon-only copy button and shows copied state after click', async () => {
+  beforeEach(() => {
     window.t = ((key: string) => {
       if (key === 'attach.copy') return '复制';
       if (key === 'attach.copied') return '已复制';
       return key;
     }) as typeof window.t;
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+  });
+
+  it('pre 被 .code-block-wrap 包裹，按钮是 wrapper 的直接子元素而非 pre 的子元素', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<pre><code>const x = 1;</code></pre>';
+
+    injectCopyButtons(container);
+
+    const wrapper = container.querySelector<HTMLDivElement>('.code-block-wrap');
+    expect(wrapper).toBeInstanceOf(HTMLDivElement);
+
+    const pre = wrapper?.querySelector('pre');
+    expect(pre).toBeInstanceOf(HTMLPreElement);
+
+    // 按钮是 wrapper 的直接子，不是 pre 的子
+    const btn = wrapper?.querySelector(':scope > .copy-btn');
+    expect(btn).toBeInstanceOf(HTMLButtonElement);
+    expect(pre?.querySelector('.copy-btn')).toBeNull();
+  });
+
+  it('adds an icon-only copy button and shows copied state after click', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -125,5 +151,53 @@ describe('injectCopyButtons', () => {
     expect(writeText).toHaveBeenCalledWith('const x = 1;');
     expect(button?.dataset.copied).toBe('true');
     expect(button?.getAttribute('aria-label')).toBe('已复制');
+  });
+
+  it('.mermaid-source 的 pre 不被包裹、不加按钮', () => {
+    const container = document.createElement('div');
+    container.innerHTML = `
+      <div class="mermaid-diagram">
+        <pre class="mermaid-source"><code>graph TD; A-->B</code></pre>
+        <div class="mermaid-rendered"></div>
+      </div>
+    `;
+
+    injectCopyButtons(container);
+
+    // mermaid pre 不应被 wrapper 包裹
+    const mermaidPre = container.querySelector('pre.mermaid-source');
+    expect(mermaidPre?.parentElement?.classList.contains('code-block-wrap')).toBe(false);
+    // mermaid pre 内不应有复制按钮
+    expect(mermaidPre?.querySelector('.copy-btn')).toBeNull();
+    // wrapper 也不应存在
+    expect(container.querySelector('.code-block-wrap')).toBeNull();
+  });
+
+  it('重复调用不重复套 wrapper、不重复加按钮', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<pre><code>hello</code></pre>';
+
+    injectCopyButtons(container);
+    injectCopyButtons(container);
+
+    expect(container.querySelectorAll('.code-block-wrap').length).toBe(1);
+    expect(container.querySelectorAll('.copy-btn').length).toBe(1);
+  });
+
+  it('混合场景：普通代码块被套 wrapper，mermaid 不动', () => {
+    const container = document.createElement('div');
+    container.innerHTML = `
+      <pre><code>normal code</code></pre>
+      <div class="mermaid-diagram">
+        <pre class="mermaid-source"><code>graph TD; A-->B</code></pre>
+        <div class="mermaid-rendered"></div>
+      </div>
+    `;
+
+    injectCopyButtons(container);
+
+    expect(container.querySelectorAll('.code-block-wrap').length).toBe(1);
+    expect(container.querySelectorAll('.copy-btn').length).toBe(1);
+    expect(container.querySelector('pre.mermaid-source')?.parentElement?.classList.contains('code-block-wrap')).toBe(false);
   });
 });

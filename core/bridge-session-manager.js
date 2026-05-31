@@ -9,6 +9,7 @@ import path from "path";
 import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.js";
 import { createDefaultSettings } from "./session-defaults.js";
 import { compactSessionWithCachePreservation } from "./session-compactor.js";
+import { repairOrphanToolResultEntriesInFile } from "./session-health.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
 import { atomicWriteSync, safeReadJSON } from "../shared/safe-fs.js";
@@ -660,6 +661,19 @@ export class BridgeSessionManager {
       let mgr;
       let reopenError = null;
       if (existingPath) {
+        // #1285 读时结构修复：在 open 之前清理已落盘 bridge session 里的孤儿 toolResult entry。
+        // 失败不阻塞 restore（运行时 provider-compat 兜底仍会防 400）。
+        try {
+          const { repaired, removed } = repairOrphanToolResultEntriesInFile(existingPath);
+          if (repaired) {
+            log.warn(
+              `bridge session restore: ${path.basename(existingPath)} 清理 ${removed} 条孤儿 toolResult `
+              + `(父 tool_calls 属于 error/aborted assistant，会被 SDK 丢弃) — see #1285.`
+            );
+          }
+        } catch (err) {
+          log.warn(`orphan tool history repair failed for bridge ${path.basename(existingPath)}: ${err.message}`);
+        }
         try {
           mgr = SessionManager.open(existingPath, sessionDir);
         } catch (err) {
@@ -1152,6 +1166,19 @@ export class BridgeSessionManager {
     const mm = this._deps.getModelManager();
     const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
     const sessionDir = path.dirname(sessionFilePath);
+    // #1285 读时结构修复：在 open 之前清理已落盘 bridge session 里的孤儿 toolResult entry。
+    // 失败不阻塞 compaction（运行时 provider-compat 兜底仍会防 400）。
+    try {
+      const { repaired, removed } = repairOrphanToolResultEntriesInFile(sessionFilePath);
+      if (repaired) {
+        log.warn(
+          `bridge compact reopen: ${path.basename(sessionFilePath)} 清理 ${removed} 条孤儿 toolResult `
+          + `(父 tool_calls 属于 error/aborted assistant，会被 SDK 丢弃) — see #1285.`
+        );
+      }
+    } catch (err) {
+      log.warn(`orphan tool history repair failed for bridge compact ${path.basename(sessionFilePath)}: ${err.message}`);
+    }
     const mgr = SessionManager.open(sessionFilePath, sessionDir);
     const bridgeContext = this.getBridgeContextForSessionPath(sessionFilePath, { agentId: agent.id })
       || this._buildBridgeContext(sessionKey, entry, { guest: false }, agent);

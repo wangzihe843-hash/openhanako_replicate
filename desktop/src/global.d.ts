@@ -37,7 +37,7 @@ declare global {
     loadSavedPaperTexture: () => void;
 
     // ── Notification bridge ──
-    showNotification?: (title: string, body: string) => void;
+    showNotification?: (title: string, body: string, agentId?: string | null) => void;
     updateBrowserViewer?: (data: { url: string; thumbnail?: string }) => void;
 
     // ── i18n loader ──

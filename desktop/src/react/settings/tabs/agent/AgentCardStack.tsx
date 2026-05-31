@@ -41,7 +41,6 @@ export function calculateAgentCardGeometry(totalCards: number): AgentCardGeometr
 export function AgentCardStack({
   agents,
   selectedId,
-  currentAgentId,
   onSelect,
   onAvatarClick,
   onSetPrimary,
@@ -215,9 +214,11 @@ export function AgentCardStack({
   }, []);
 
   const selectedAgent = selectedId ? agents.find(a => a.id === selectedId) : null;
-  const isSelectedCurrent = selectedAgent?.id === currentAgentId;
   const canSetPrimary = !!selectedAgent && !selectedAgent.isPrimary;
-  const canDeleteSelected = !!selectedAgent && agents.length >= 2 && !selectedAgent.isPrimary && !isSelectedCurrent;
+  // 删除门控只依据 agent 自身属性（非主助手）+ 数量下限，刻意不挂钩 currentAgentId：
+  // 新建 agent 会被自动切为当前 agent，门控若看 current 则新建后永远删不掉（#1301）。
+  // 删当前 agent 是安全的：AgentDeleteOverlay 会先切到其他 agent 再 DELETE，后端也拒删 active agent。
+  const canDeleteSelected = !!selectedAgent && agents.length >= 2 && !selectedAgent.isPrimary;
   const isExportingSelected = !!selectedAgent && exportingAgentId === selectedAgent.id;
 
   return (

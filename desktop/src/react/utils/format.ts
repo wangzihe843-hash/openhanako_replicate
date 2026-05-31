@@ -114,13 +114,28 @@ export function parseMoodFromContent(content: string): { mood: string | null; te
 }
 
 /**
- * 给 md-content 里的代码块注入复制按钮
+ * 给 md-content 里的代码块注入复制按钮。
+ *
+ * 为修复横向滚动时按钮跟随内容漂移的问题，将每个代码块 <pre> 包裹在
+ * <div class="code-block-wrap"> 中，按钮挂到 wrapper 而非 pre 内。
+ * wrapper 是非滚动定位祖先（position:relative），pre 继续作为滚动容器
+ * （overflow-x:auto），两者职责分离。
+ *
+ * 排除 .mermaid-source：该 pre 是 mermaid-diagram 结构的一部分，
+ * 套 wrapper 会破坏渲染，且无需复制按钮。
  */
 export function injectCopyButtons(container: HTMLElement): void {
   const t = window.t ?? ((p: string) => p);
   const pres = container.querySelectorAll('pre');
   for (const pre of pres) {
-    if (pre.querySelector('.copy-btn')) continue;
+    // 跳过 mermaid 图表源码 pre（不套 wrapper、不加按钮）
+    if (pre.classList.contains('mermaid-source')) continue;
+    // 判重：已在 wrapper 内则跳过
+    if (pre.parentElement?.classList.contains('code-block-wrap')) continue;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrap';
+
     const btn = document.createElement('button');
     btn.className = 'copy-btn';
     btn.type = 'button';
@@ -163,7 +178,10 @@ export function injectCopyButtons(container: HTMLElement): void {
         }, 1500);
       });
     });
-    pre.style.position = 'relative';
-    pre.appendChild(btn);
+
+    // 将 pre 替换为 wrapper，wrapper 内含 pre 和 btn
+    pre.parentNode?.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    wrapper.appendChild(btn);
   }
 }

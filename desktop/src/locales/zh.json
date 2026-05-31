@@ -55,6 +55,9 @@
     "toolPermission": "工具权限",
     "agentIdle": "空闲",
     "phoneReceivedNewMessages": "收到新的群聊消息",
+    "deliveryActive": "正在送达 {agent}（{done}/{total}）",
+    "deliveryQueued": "送达排队中",
+    "nextReminder": "下次主动发起：{time}",
     "replyRange": "回复字数",
     "replyMinPlaceholder": "最少",
     "replyMaxPlaceholder": "最多",
@@ -72,7 +75,8 @@
     "selectModel": "选择模型",
     "noModelsAvailable": "没有可用模型",
     "toolReadOnly": "只读",
-    "toolWrite": "写入"
+    "toolWrite": "写入",
+    "filesUnsupported": "频道暂只支持文本消息，文件不会加入普通聊天附件"
   },
   "sidebar": {
     "title": "对话",
@@ -118,6 +122,7 @@
       "save": "保存",
       "cancel": "取消",
       "showMore": "展开显示",
+      "loading": "正在载入项目…",
       "empty": "还没有项目"
     }
   },
@@ -1436,6 +1441,10 @@
       "headersHint": "每行一个 KEY=value。保存后会脱敏展示，请求远程 MCP 时会带上这些 headers。",
       "statusRunning": "运行中",
       "statusStopped": "已停止",
+      "statusConnecting": "连接中",
+      "statusReconnecting": "重连中",
+      "statusFailed": "重连失败",
+      "statusNeedsAuth": "需重新登录",
       "command": "命令",
       "args": "参数",
       "cwd": "工作目录",
@@ -1488,7 +1497,7 @@
       "feishu": "飞书",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
-      "feishuHint": "从飞书开放平台获取",
+      "feishuHint": "从飞书开放平台获取；使用长连接接收事件，不需要本地回调 URL",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",

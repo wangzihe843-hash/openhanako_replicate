@@ -36,6 +36,22 @@ class MockResizeObserver {
   disconnect() {}
 }
 
+// A ResizeObserver whose callback can be fired on demand, to exercise the post-activation
+// content-resize path (point #4: the first resize after a panel becomes active must snap, not animate).
+class TriggerableResizeObserver {
+  static instances: TriggerableResizeObserver[] = [];
+  private readonly callback: ResizeObserverCallback;
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    TriggerableResizeObserver.instances.push(this);
+  }
+  observe() {}
+  disconnect() {}
+  trigger() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
+}
+
 function setScrollMetrics(
   el: HTMLElement,
   metrics: { scrollHeight: number; clientHeight: number; scrollTop: number },
@@ -166,6 +182,54 @@ describe('ChatArea continuous bottom scroll', () => {
       sourceMessageId: 'a-quote',
       sourceSessionPath: '/chat/scroll.jsonl',
     });
+  });
+
+  it('snaps instantly on the first content resize after a panel becomes active (no animated follow)', async () => {
+    TriggerableResizeObserver.instances = [];
+    window.ResizeObserver = TriggerableResizeObserver as unknown as typeof ResizeObserver;
+    const rafCallbacks: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb);
+      return rafCallbacks.length;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((id: number) => { rafCallbacks[id - 1] = () => {}; }) as typeof window.cancelAnimationFrame;
+    window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+
+    useStore.setState({
+      currentSessionPath: '/chat/scroll.jsonl',
+      streamingSessions: [],
+      chatSessions: {
+        '/chat/scroll.jsonl': {
+          items: [message('u-1', 'user'), message('a-1', 'assistant')],
+          hasMore: false,
+          loadingMore: false,
+        },
+      },
+    } as never);
+
+    const { container } = render(<ChatArea />);
+    await waitFor(() => {
+      expect(container.querySelector('[class*="sessionPanel"]')).toBeTruthy();
+    });
+
+    const panel = container.querySelector('[class*="sessionPanel"]') as HTMLElement;
+    // Parked at the bottom after the first-content instant landing.
+    const metrics = { scrollHeight: 600, clientHeight: 300, scrollTop: 300 };
+    setScrollMetrics(panel, metrics);
+
+    // First post-activation content reflow (e.g. media finishes loading) grows content under the
+    // largeJump threshold. With the arm it must snap straight to the new bottom — no rAF animation.
+    act(() => {
+      metrics.scrollHeight = 950;
+      TriggerableResizeObserver.instances[0]?.trigger();
+    });
+    expect(metrics.scrollTop).toBe(650);
+
+    act(() => {
+      const pending = rafCallbacks.splice(0);
+      pending.forEach((cb) => cb(16));
+    });
+    expect(metrics.scrollTop).toBe(650);
   });
 });
 

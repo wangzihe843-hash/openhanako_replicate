@@ -54,6 +54,9 @@
     "toolPermission": "Tool permission",
     "agentIdle": "Idle",
     "phoneReceivedNewMessages": "Received new channel messages",
+    "deliveryActive": "Delivering to {agent} ({done}/{total})",
+    "deliveryQueued": "Delivery queued",
+    "nextReminder": "Next initiation: {time}",
     "replyRange": "Reply length",
     "replyMinPlaceholder": "Min",
     "replyMaxPlaceholder": "Max",
@@ -72,6 +75,7 @@
     "noModelsAvailable": "No models available",
     "toolReadOnly": "Read",
     "toolWrite": "Write",
+    "filesUnsupported": "Channels currently support text only; files will not be attached to chat",
     "createIntroOptional": "Description"
   },
   "sidebar": {
@@ -118,6 +122,7 @@
       "save": "Save",
       "cancel": "Cancel",
       "showMore": "Show more",
+      "loading": "Loading projects…",
       "empty": "No projects yet"
     }
   },
@@ -1436,6 +1441,10 @@
       "headersHint": "One KEY=value pair per line. Values are stored for connector requests and masked after saving.",
       "statusRunning": "Running",
       "statusStopped": "Stopped",
+      "statusConnecting": "Connecting",
+      "statusReconnecting": "Reconnecting",
+      "statusFailed": "Reconnect failed",
+      "statusNeedsAuth": "Needs sign-in",
       "command": "Command",
       "args": "Arguments",
       "cwd": "Working Directory",
@@ -1488,7 +1497,7 @@
       "feishu": "Feishu",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
-      "feishuHint": "Get from Feishu Open Platform",
+      "feishuHint": "Get from Feishu Open Platform; events use long connection, no local callback URL needed",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",

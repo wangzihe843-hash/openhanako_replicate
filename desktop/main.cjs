@@ -31,6 +31,7 @@ const {
   submitOnboardingCompleteIntent,
 } = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
+const { resolveAgentAvatarPath } = require("./src/shared/agent-avatar-path.cjs");
 const { redactLogText } = require("../shared/log-redactor.cjs");
 const {
   configureClientSingleInstance,
@@ -3441,14 +3442,25 @@ wrapIpcBestEffortHandler("reload-main-window", () => {
   }
 });
 
-// 系统通知（由 agent 的 notify 工具触发）
-wrapIpcBestEffortHandler("show-notification", (_event, title, body) => {
+// 系统通知（由 agent 的 notify 工具或定时任务触发）
+// agentId 标识触发的助手；据此读取该 agent 头像作为通知 icon，让多 agent 并发通知可分辨身份。
+// agentId 缺失或头像不存在时退回无 icon，禁止用当前焦点 agent 兜底（会张冠李戴）。
+// Windows 自定义 icon 依赖 AppUserModelID 已注册（见上方 app.setAppUserModelId），已满足；三平台同一套逻辑。
+wrapIpcBestEffortHandler("show-notification", (_event, title, body, agentId) => {
   if (!Notification.isSupported()) return;
-  const notif = new Notification({
+  /** @type {Electron.NotificationConstructorOptions} */
+  const options = {
     title: title || "Hana",
     body: body || "",
     silent: false,
-  });
+  };
+  const avatarPath = resolveAgentAvatarPath(hanakoHome, agentId);
+  if (avatarPath) {
+    const icon = nativeImage.createFromPath(avatarPath);
+    // createFromPath 对不支持的格式/损坏文件返回空图；空图会顶掉默认 icon，故只在有效时设置。
+    if (!icon.isEmpty()) options.icon = icon;
+  }
+  const notif = new Notification(options);
   notif.on("click", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();

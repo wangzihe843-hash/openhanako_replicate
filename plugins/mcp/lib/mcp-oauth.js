@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { MCP_PROTOCOL_VERSION } from "./mcp-stdio-client.js";
+import { McpHttpError } from "./mcp-http-client.js";
 import {
   MCP_PROTOCOL_VERSION_HEADER,
   resolveInitialMcpProtocolVersion,
@@ -56,9 +57,65 @@ export async function discoverMcpOAuth({
     authorizationServer: authServer,
     authorizationEndpoint,
     tokenEndpoint,
+    // RFC 7591: the AS advertises its dynamic client registration endpoint here.
+    // Empty when the server does not support DCR — callers must fall back to a
+    // manually configured client id and error out rather than guess.
+    registrationEndpoint: stringOrEmpty(authMetadata.registration_endpoint),
     scope: stringOrEmpty(challengeParams.scope) || scopeFromResource(resourceMetadata),
+    // Raw capability lists kept so the authorization flow can decide whether to
+    // request offline_access and persist what the server actually supports.
+    scopesSupported: stringArray(authMetadata.scopes_supported),
+    grantTypesSupported: stringArray(authMetadata.grant_types_supported),
     resourceMetadata,
     authorizationMetadata: authMetadata,
+  };
+}
+
+// RFC 7591 §2/§3.1: register a public (PKCE) OAuth client with the authorization
+// server. We always request both authorization_code and refresh_token grants so
+// the resulting client can mint refresh tokens; token_endpoint_auth_method "none"
+// matches a native app that authenticates the token endpoint via PKCE, not a
+// client secret. A returned client_secret (some servers issue one anyway) is
+// passed back for the caller to persist.
+export async function registerMcpOAuthClient({
+  registrationEndpoint,
+  redirectUri,
+  scope = "",
+  clientName = "Hana",
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (!registrationEndpoint) throw new Error("registrationEndpoint is required");
+  if (!redirectUri) throw new Error("redirectUri is required");
+
+  const metadata = {
+    client_name: clientName,
+    redirect_uris: [redirectUri],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  };
+  if (scope) metadata.scope = scope;
+
+  const response = await fetchImpl(registrationEndpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(metadata),
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(data?.error_description || data?.error || `OAuth dynamic client registration failed with status ${response.status}`);
+  }
+  const clientId = stringOrEmpty(data.client_id);
+  if (!clientId) throw new Error("OAuth dynamic client registration response did not include client_id");
+  return {
+    clientId,
+    clientSecret: stringOrEmpty(data.client_secret),
+    registrationAccessToken: stringOrEmpty(data.registration_access_token),
+    registrationClientUri: stringOrEmpty(data.registration_client_uri),
   };
 }
 
@@ -72,7 +129,6 @@ export async function createMcpOAuthAuthorization({
 } = {}) {
   if (!connector?.id) throw new Error("connector.id is required");
   if (!connector?.url) throw new Error("connector.url is required");
-  if (!connector?.oauthClientId) throw new Error("OAuth client ID is required");
   if (!redirectUri) throw new Error("redirectUri is required");
   const pkce = codeVerifier && codeChallenge ? { codeVerifier, codeChallenge } : createPkcePair();
   const discovery = await discoverMcpOAuth({
@@ -80,12 +136,45 @@ export async function createMcpOAuthAuthorization({
     headers: connector.headers,
     fetchImpl,
   });
+
+  // Request offline_access only when the AS advertises it, so the token endpoint
+  // will mint a refresh token (RFC 6749 §6 + OIDC offline_access). Deduplicated
+  // because the base scope may already include it from a different source.
+  const scope = withOfflineAccess(discovery.scope, discovery.scopesSupported);
+
+  // Client id resolution. Priority: a manually configured client id wins; only
+  // when none is set do we fall back to Dynamic Client Registration (RFC 7591).
+  // No client id and no registration endpoint is a hard error — we never invent
+  // or guess a client id and never silently continue.
+  const manualClientId = stringOrEmpty(connector.oauthClientId);
+  let clientId = manualClientId;
+  let clientSecret = stringOrEmpty(connector.oauthClientSecret);
+  let clientIdSource = manualClientId ? "manual" : "";
+  let registration = null;
+  if (!clientId) {
+    if (!discovery.registrationEndpoint) {
+      throw new Error(
+        "OAuth client ID is required: the authorization server does not support dynamic client registration. "
+        + "Set the connector's OAuth Client ID manually.",
+      );
+    }
+    registration = await registerMcpOAuthClient({
+      registrationEndpoint: discovery.registrationEndpoint,
+      redirectUri,
+      scope,
+      fetchImpl,
+    });
+    clientId = registration.clientId;
+    clientSecret = registration.clientSecret;
+    clientIdSource = "dcr";
+  }
+
   const url = new URL(discovery.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", connector.oauthClientId);
+  url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("resource", connector.url);
-  if (discovery.scope) url.searchParams.set("scope", discovery.scope);
+  if (scope) url.searchParams.set("scope", scope);
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", pkce.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
@@ -95,12 +184,16 @@ export async function createMcpOAuthAuthorization({
       state,
       connectorId: connector.id,
       connectorUrl: connector.url,
-      clientId: connector.oauthClientId,
-      clientSecret: stringOrEmpty(connector.oauthClientSecret),
+      clientId,
+      clientSecret,
+      clientIdSource,
+      // Carried so the runtime can persist DCR products (RFC 7592 reuse later).
+      registrationAccessToken: registration?.registrationAccessToken || "",
+      registrationClientUri: registration?.registrationClientUri || "",
       redirectUri,
       codeVerifier: pkce.codeVerifier,
       tokenEndpoint: discovery.tokenEndpoint,
-      scope: discovery.scope,
+      scope,
       resource: connector.url,
       createdAt: Date.now(),
     },
@@ -133,6 +226,42 @@ export async function exchangeMcpOAuthCode({
   if (clientSecret) body.set("client_secret", clientSecret);
   if (resource) body.set("resource", resource);
 
+  return postTokenRequest({ tokenEndpoint, body, fetchImpl, failurePrefix: "OAuth token exchange" });
+}
+
+// RFC 6749 §6: exchange a refresh token for a fresh access token. Returns the
+// same shape as exchangeMcpOAuthCode so callers persist tokens uniformly. The
+// authorization server MAY omit a new refresh_token (it is allowed not to
+// rotate); in that case we preserve the caller's existing refresh token rather
+// than blanking it, otherwise the next refresh would have nothing to present.
+export async function refreshMcpOAuthToken({
+  tokenEndpoint,
+  refreshToken,
+  clientId,
+  clientSecret = "",
+  scope = "",
+  resource,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (!tokenEndpoint) throw new Error("tokenEndpoint is required");
+  if (!refreshToken) throw new Error("refreshToken is required");
+  if (!clientId) throw new Error("clientId is required");
+
+  const body = new URLSearchParams();
+  body.set("grant_type", "refresh_token");
+  body.set("refresh_token", refreshToken);
+  body.set("client_id", clientId);
+  if (clientSecret) body.set("client_secret", clientSecret);
+  if (scope) body.set("scope", scope);
+  if (resource) body.set("resource", resource);
+
+  const token = await postTokenRequest({ tokenEndpoint, body, fetchImpl, failurePrefix: "OAuth token refresh" });
+  // Keep the old refresh token when the server did not issue a new one.
+  if (!token.refreshToken) token.refreshToken = stringOrEmpty(refreshToken);
+  return token;
+}
+
+async function postTokenRequest({ tokenEndpoint, body, fetchImpl, failurePrefix }) {
   const response = await fetchImpl(tokenEndpoint, {
     method: "POST",
     headers: {
@@ -142,12 +271,23 @@ export async function exchangeMcpOAuthCode({
     body,
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  // The token endpoint usually returns JSON, but a 5xx from a fronting proxy may
+  // return HTML/plain text. Parse defensively so a non-JSON error body surfaces
+  // the HTTP status (transient → backoff) instead of crashing with a SyntaxError.
+  const data = parseJsonOrEmpty(text);
   if (!response.ok) {
-    throw new Error(data?.error_description || data?.error || `OAuth token exchange failed with status ${response.status}`);
+    // Throw a structured error carrying the HTTP status AND the OAuth error code
+    // (RFC 6749 §5.2). Downstream classification (live-401 self-heal,
+    // reconnect-attempt, pre-refresh) routes invalid_grant / 401 / 403 to
+    // needs-auth and leaves transient 5xx/network failures on backoff reconnect.
+    const oauthError = stringOrEmpty(data?.error);
+    throw new McpHttpError(
+      data?.error_description || data?.error || `${failurePrefix} failed with status ${response.status}`,
+      { status: response.status, body: text, headers: response.headers, oauthError },
+    );
   }
   const accessToken = stringOrEmpty(data.access_token);
-  if (!accessToken) throw new Error("OAuth token response did not include access_token");
+  if (!accessToken) throw new Error(`${failurePrefix} response did not include access_token`);
   return {
     accessToken,
     refreshToken: stringOrEmpty(data.refresh_token),
@@ -238,12 +378,38 @@ function scopeFromResource(resourceMetadata) {
   return "";
 }
 
+function stringArray(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item) : [];
+}
+
+// Add offline_access to the requested scope iff the AS advertises support for it,
+// without duplicating it if the base scope already asked. A space-delimited scope
+// string is returned (RFC 6749 §3.3).
+function withOfflineAccess(scope, scopesSupported) {
+  if (!stringArray(scopesSupported).includes("offline_access")) return scope || "";
+  const scopes = stringOrEmpty(scope).split(/\s+/).filter(Boolean);
+  if (!scopes.includes("offline_access")) scopes.push("offline_access");
+  return scopes.join(" ");
+}
+
 function firstString(values) {
   return Array.isArray(values) ? values.find((value) => typeof value === "string" && value) : "";
 }
 
 function stringOrEmpty(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+// Parse a token-endpoint body, tolerating a non-JSON payload (e.g. an HTML 5xx
+// from a gateway). Returns {} on empty or unparseable text so the caller can
+// still surface the HTTP status rather than throwing a SyntaxError.
+function parseJsonOrEmpty(text) {
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
 }
 
 function base64url(buffer) {

@@ -66,3 +66,200 @@ export function evaluateSessionHealth(sessionPath, opts = {}) {
     exists: true,
   };
 }
+
+// ── #1285 读时结构修复：孤儿 toolResult entry 清理 ──
+//
+// 坏数据成因：agentic 工具循环里 assistant 回包 stopReason=error/aborted 时，Pi SDK
+// agent-loop 立即 return 不执行其 tool calls，但此前已完成轮次的 toolResult 已 push 进
+// context 并持久化（jsonl）。重放时 Pi SDK transform-messages 整条丢弃 error/aborted
+// assistant（连带 tool_calls），残留的 toolResult 变成孤儿；convertMessages 把它序列化成
+// role:"tool" 而前面缺 tool_calls → OpenAI-compatible provider 返回 400。
+//
+// 这里在 restore 读时检测并删除这些孤儿 toolResult entry，让坏会话不再每次重发都 400。
+// 与 core/provider-compat/tool-pairing.js 的运行时兜底是同一缺口的两端：运行时兜底防
+// 每次出站 payload，读时修复清理已落盘历史（CLAUDE.md「改持久化结构必须迁移老数据」）。
+//
+// 删除条件（build-to-delete）：上游 Pi SDK transform-messages 丢弃 error/aborted
+// assistant 的 tool_calls 时同步删除孤儿 toolResult，届时本修复器与运行时兜底可一并删除。
+
+const STOP_REASONS_DROPPED_BY_SDK = new Set(["error", "aborted"]);
+
+/**
+ * 收集某条 assistant message 在 SDK transform-messages 里「不会被丢弃」时声明的
+ * toolCall id。镜像 SDK 规则：stopReason 为 error/aborted 的 assistant 整条被丢弃
+ * （连带 tool_calls），其声明的 toolCall 不算「父存在」。
+ *
+ * @param {object} message - entry.message（assistant）
+ * @param {Set<string>} into
+ */
+function collectSurvivingToolCallIds(message, into) {
+  if (!message || message.role !== "assistant") return;
+  if (STOP_REASONS_DROPPED_BY_SDK.has(message.stopReason)) return;
+  const content = message.content;
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (block && typeof block === "object" && block.type === "toolCall"
+      && typeof block.id === "string" && block.id.length > 0) {
+      into.add(block.id);
+    }
+  }
+}
+
+function isToolResultEntry(entry) {
+  return Boolean(entry)
+    && entry.type === "message"
+    && entry.message
+    && entry.message.role === "toolResult";
+}
+
+function isAssistantEntry(entry) {
+  return Boolean(entry)
+    && entry.type === "message"
+    && entry.message
+    && entry.message.role === "assistant";
+}
+
+/**
+ * 检测并删除孤儿 toolResult entry（父 toolCall 属于会被 SDK 丢弃的 error/aborted
+ * assistant，或根本不存在）。删除时修复 parentId 链：被删 entry 的子节点重连到被删
+ * 节点的父节点，保证 buildSessionContext 的 parentId tree-walk 不被破坏。
+ *
+ * 在 entries 的数组（append/conversation）顺序上单遍判定——未分支会话的数组顺序即
+ * 对话顺序，与 SDK 重放路径一致。
+ *
+ * 不可变契约：无孤儿时返回原数组引用（removed=0）；有孤儿时返回新数组（被保留 entry
+ * 引用尽量复用，仅 parentId 需重连的 entry 浅拷贝）。
+ *
+ * @param {Array|any} entries - SessionManager.fileEntries 形态（含 type:"session" 头）
+ * @returns {{ entries: Array|any, removed: number }}
+ */
+export function repairOrphanToolResultEntries(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { entries, removed: 0 };
+  }
+
+  // 第一遍：找出要删除的孤儿 toolResult entry id 与它们的 parentId（用于子节点重连）。
+  const declaredToolCallIds = new Set();
+  const orphanParentById = new Map(); // orphanEntryId -> parentId
+  for (const entry of entries) {
+    if (isAssistantEntry(entry)) {
+      collectSurvivingToolCallIds(entry.message, declaredToolCallIds);
+      continue;
+    }
+    if (isToolResultEntry(entry)) {
+      const toolCallId = entry.message.toolCallId;
+      const paired = typeof toolCallId === "string" && declaredToolCallIds.has(toolCallId);
+      if (!paired) {
+        orphanParentById.set(entry.id, entry.parentId ?? null);
+      }
+    }
+  }
+
+  if (orphanParentById.size === 0) {
+    return { entries, removed: 0 };
+  }
+
+  // parentId 重连：被删节点可能彼此相连（连续孤儿），需顺着被删链一路上溯到第一个
+  // 未被删除的祖先。
+  const resolveSurvivingParent = (parentId) => {
+    let current = parentId ?? null;
+    const guard = new Set();
+    while (current !== null && orphanParentById.has(current) && !guard.has(current)) {
+      guard.add(current);
+      current = orphanParentById.get(current);
+    }
+    return current;
+  };
+
+  // 第二遍：构建新数组，丢弃孤儿、重连子节点 parentId。
+  const result = [];
+  for (const entry of entries) {
+    if (entry && orphanParentById.has(entry.id)) {
+      continue; // 丢弃孤儿
+    }
+    if (entry && typeof entry === "object" && entry.parentId != null
+      && orphanParentById.has(entry.parentId)) {
+      const newParent = resolveSurvivingParent(entry.parentId);
+      result.push({ ...entry, parentId: newParent });
+    } else {
+      result.push(entry);
+    }
+  }
+
+  return { entries: result, removed: orphanParentById.size };
+}
+
+/**
+ * 解析 jsonl 为 entry 数组。镜像 SDK loadEntriesFromFile 的容错：跳过空行 / 坏行，
+ * 校验首行是合法 session header，否则返回空（视为不可修复，交还上层不动）。
+ *
+ * @param {string} raw
+ * @returns {Array|null} entries（含 header）；不可解析时返回 null
+ */
+function parseSessionEntries(raw) {
+  const entries = [];
+  const lines = raw.split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line));
+    } catch {
+      // 坏行：跳过。注意——坏行存在意味着我们无法保证无损 round-trip 重写整个文件，
+      // 调用方据此放弃修复（见 repairOrphanToolResultEntriesInFile）。
+      return null;
+    }
+  }
+  if (entries.length === 0) return null;
+  const header = entries[0];
+  if (!header || header.type !== "session" || typeof header.id !== "string") {
+    return null;
+  }
+  return entries;
+}
+
+/**
+ * 序列化 entry 数组为 jsonl，字节格式与 SDK SessionManager._rewriteFile 一致
+ * （每行一个 JSON，尾随单个换行），保证 SessionManager.open 能原样读回。
+ *
+ * @param {Array} entries
+ * @returns {string}
+ */
+function serializeSessionEntries(entries) {
+  return `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
+}
+
+/**
+ * 读时结构修复（落盘）：在 SessionManager.open 之前直接修复 jsonl 文件，删除孤儿
+ * toolResult entry。修复发生在文件层而非 SDK 内部状态，open 之后 SessionManager 会
+ * 从已清理的文件自然加载，无需触碰 SDK 私有索引/leaf。
+ *
+ * 严守容错：任何异常或不可无损解析（坏行 / 非法 header / IO 失败）一律放弃修复并
+ * 返回 { repaired:false }，绝不阻塞 / 破坏 restore（与 evaluateSessionHealth 的
+ * 「识别失败一律视为 healthy」同一纪律）。
+ *
+ * @param {string} sessionPath - 绝对路径
+ * @returns {{ repaired: boolean, removed: number }}
+ */
+export function repairOrphanToolResultEntriesInFile(sessionPath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(sessionPath, "utf-8");
+  } catch {
+    return { repaired: false, removed: 0 };
+  }
+
+  const entries = parseSessionEntries(raw);
+  if (!entries) return { repaired: false, removed: 0 };
+
+  const { entries: repaired, removed } = repairOrphanToolResultEntries(entries);
+  if (removed === 0) return { repaired: false, removed: 0 };
+
+  try {
+    fs.writeFileSync(sessionPath, serializeSessionEntries(repaired));
+  } catch {
+    // 写失败：保持原文件不变，运行时兜底（provider-compat/tool-pairing）仍会防 400。
+    return { repaired: false, removed: 0 };
+  }
+
+  return { repaired: true, removed };
+}

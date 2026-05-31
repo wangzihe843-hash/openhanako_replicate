@@ -346,4 +346,42 @@ describe('handleAppEvent', () => {
 
     expect(mockRefreshPreviewItemsFromFile).toHaveBeenCalledWith('/notes/demo.md');
   });
+
+  it('agent-created reloads both agents and channels so the new DM appears immediately', async () => {
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('agent-created', { agentId: 'agent-new' });
+
+    expect(mockLoadAgents).toHaveBeenCalledTimes(1);
+    expect(mockLoadChannels).toHaveBeenCalledTimes(1);
+  });
+
+  it('agent-deleted reloads both agents and channels so the stale DM disappears immediately', async () => {
+    Object.assign(mockState, { currentChannel: 'other-channel' });
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('agent-deleted', { agentId: 'agent-gone' });
+
+    expect(mockLoadAgents).toHaveBeenCalledTimes(1);
+    expect(mockLoadChannels).toHaveBeenCalledTimes(1);
+  });
+
+  it('agent-deleted clears current session state when the open DM belongs to the deleted agent', async () => {
+    Object.assign(mockState, {
+      currentChannel: 'dm:agent-gone',
+      channelMessages: [{ sender: 'agent-gone', body: 'hi', timestamp: '2026-01-01' }],
+      channelHeaderName: 'agent-gone',
+      channelHeaderMembersText: '2 members',
+      channelIsDM: true,
+    });
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('agent-deleted', { agentId: 'agent-gone' });
+
+    expect(mockState.currentChannel).toBeNull();
+    expect(mockState.channelMessages).toEqual([]);
+    expect(mockState.channelHeaderName).toBe('');
+    expect(mockState.channelHeaderMembersText).toBe('');
+    expect(mockState.channelIsDM).toBe(false);
+  });
 });

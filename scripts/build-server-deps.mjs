@@ -1,6 +1,49 @@
 import fs from "fs";
 import path from "path";
 
+/**
+ * Read and JSON-parse a file, retrying on EMFILE/ENFILE (file handle exhaustion).
+ *
+ * Windows has no ulimit-equivalent, so nft trace can exhaust the OS handle quota.
+ * EMFILE means "temporarily can't open" — the file exists and is valid. Treating
+ * it the same as ENOENT is a contract bug: it maps an I/O resource error onto a
+ * product-integrity failure, which is exactly the misdiagnosis that kills Windows builds.
+ *
+ * @param {string} filePath - Absolute path to the JSON file.
+ * @param {{ maxRetries?: number, baseDelayMs?: number }} [opts]
+ * @returns {unknown} Parsed JSON value.
+ * @throws On ENOENT, JSON parse failure, or EMFILE after all retries.
+ */
+export function readPackageJsonWithRetry(filePath, { maxRetries = 5, baseDelayMs = 50 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    } catch (err) {
+      const code = err && err.code;
+      // EMFILE = too many open file descriptors (Windows/macOS kernel limit hit).
+      // ENFILE = system-wide file table full (rarer but same transient nature).
+      // Both are recoverable: wait and retry. Do NOT treat as "file missing".
+      if (code === "EMFILE" || code === "ENFILE") {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          // Synchronous exponential backoff — this is a build script, blocking is fine.
+          // Atomics.wait on a fresh SharedArrayBuffer gives a true sync sleep without
+          // spinning and without requiring a running event loop.
+          const delayMs = baseDelayMs * Math.pow(2, attempt);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+          continue;
+        }
+        // Exhausted retries: re-throw the original EMFILE so the caller knows why.
+        throw lastErr;
+      }
+      // ENOENT = file truly absent. JSON SyntaxError = corrupt file.
+      // All other errors: propagate as-is.
+      throw err;
+    }
+  }
+}
+
 function getLockedPackageVersion(rootLock, packageName) {
   const packagePath = `node_modules/${packageName}`;
   const lockedPackage = rootLock?.packages?.[packagePath];
@@ -128,33 +171,53 @@ function getRootExport(exportsField) {
   return isSubpathMap ? undefined : exportsField;
 }
 
-export function verifyExternalEntrypoints(outDir, packageNames) {
+export function verifyExternalEntrypoints(outDir, packageNames, { readRetries, readBaseDelayMs } = {}) {
   const failures = [];
+  const retryOpts = {};
+  if (readRetries !== undefined) retryOpts.maxRetries = readRetries;
+  if (readBaseDelayMs !== undefined) retryOpts.baseDelayMs = readBaseDelayMs;
 
   for (const packageName of packageNames) {
     const packageDir = path.join(outDir, "node_modules", packageName);
     const packageJsonPath = path.join(packageDir, "package.json");
 
+    let pkg;
     try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-      const rootExport = getRootExport(pkg.exports);
-      const targets = rootExport === undefined
-        ? [pkg.main, pkg.module].filter(Boolean)
-        : collectRuntimeExportTargets(rootExport);
-
-      for (const target of targets) {
-        if (typeof target !== "string" || !target.startsWith("./") || target.includes("*")) {
-          continue;
-        }
-
-        const targetPath = path.join(packageDir, target);
-        if (!fs.existsSync(targetPath)) {
-          failures.push(`${packageName}: ${target} resolves to missing file ${targetPath}`);
-        }
-      }
+      // readPackageJsonWithRetry retries on EMFILE/ENFILE (transient handle exhaustion).
+      // It only throws ENOENT or parse errors after retries — those are genuine failures.
+      pkg = readPackageJsonWithRetry(packageJsonPath, retryOpts);
     } catch (err) {
+      const code = err && err.code;
+      // EMFILE/ENFILE after all retries: the file exists but we couldn't open it.
+      // This is an I/O resource failure, NOT a missing package. Don't count it as
+      // a missing entrypoint — doing so is the contract bug that caused #1307.
+      // Re-throw so the caller (build-server.mjs) sees a hard I/O error and can
+      // decide to abort with an accurate message rather than a misleading "missing" report.
+      if (code === "EMFILE" || code === "ENFILE") {
+        throw err;
+      }
+      // ENOENT: package.json truly absent — the package was not installed.
+      // JSON SyntaxError: package.json is corrupt.
+      // Both are genuine product-integrity failures.
       const msg = err instanceof Error ? err.message : String(err);
       failures.push(`${packageName}: ${msg}`);
+      continue;
+    }
+
+    const rootExport = getRootExport(pkg.exports);
+    const targets = rootExport === undefined
+      ? [pkg.main, pkg.module].filter(Boolean)
+      : collectRuntimeExportTargets(rootExport);
+
+    for (const target of targets) {
+      if (typeof target !== "string" || !target.startsWith("./") || target.includes("*")) {
+        continue;
+      }
+
+      const targetPath = path.join(packageDir, target);
+      if (!fs.existsSync(targetPath)) {
+        failures.push(`${packageName}: ${target} resolves to missing file ${targetPath}`);
+      }
     }
   }
 

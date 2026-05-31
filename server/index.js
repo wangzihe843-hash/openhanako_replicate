@@ -245,6 +245,7 @@ dlog.log("server", "engine initialized");
 
 const outboundProxyRuntime = createOutboundProxyRuntime({
   log: (msg) => dlog.log("server", msg),
+  warn: (msg) => log.warn(msg),
 });
 engine.setOutboundProxyRuntime(outboundProxyRuntime);
 outboundProxyRuntime.apply(engine.getNetworkProxy());

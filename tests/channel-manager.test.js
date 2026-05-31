@@ -99,18 +99,7 @@ describe("ChannelManager", () => {
   });
 
   describe("setupChannelsForNewAgent", () => {
-    it("does not create ch_crew until at least two agents exist", async () => {
-      const agentDir = path.join(agentsDir, "new-agent");
-      fs.mkdirSync(agentDir, { recursive: true });
-      fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: New\n", "utf-8");
-
-      await manager.setupChannelsForNewAgent("new-agent");
-
-      expect(fs.existsSync(path.join(channelsDir, "ch_crew.md"))).toBe(false);
-      expect(readBookmarks(path.join(agentDir, "channels.md")).has("ch_crew")).toBe(false);
-    });
-
-    it("creates ch_crew channel with all existing agents once the second agent joins", async () => {
+    it("never auto-creates ch_crew, even when multiple agents already exist", async () => {
       const existingDir = path.join(agentsDir, "existing-agent");
       fs.mkdirSync(existingDir, { recursive: true });
       fs.writeFileSync(path.join(existingDir, "config.yaml"), "agent:\n  name: Existing\n", "utf-8");
@@ -121,15 +110,14 @@ describe("ChannelManager", () => {
 
       await manager.setupChannelsForNewAgent("new-agent");
 
-      expect(fs.existsSync(path.join(channelsDir, "ch_crew.md"))).toBe(true);
-      const members = readMembers(channelsDir, "ch_crew");
-      expect(members).toContain("existing-agent");
-      expect(members).toContain("new-agent");
-      expect(readBookmarks(path.join(existingDir, "channels.md")).get("ch_crew")).toBe("never");
-      expect(readBookmarks(path.join(agentDir, "channels.md")).get("ch_crew")).toBe("never");
+      // No all-hands channel is created and the new agent is not subscribed to one.
+      expect(fs.existsSync(path.join(channelsDir, "ch_crew.md"))).toBe(false);
+      expect(readBookmarks(path.join(agentDir, "channels.md")).has("ch_crew")).toBe(false);
+      expect(readBookmarks(path.join(existingDir, "channels.md")).has("ch_crew")).toBe(false);
     });
 
-    it("adds to existing ch_crew channel", async () => {
+    it("does NOT auto-join the new agent into an existing crew-style channel", async () => {
+      // A user-created channel that happens to exist; the new agent is NOT a member.
       writeChannelMd(channelsDir, "ch_crew", ["existing-agent"]);
 
       const agentDir = path.join(agentsDir, "new-agent");
@@ -138,9 +126,10 @@ describe("ChannelManager", () => {
 
       await manager.setupChannelsForNewAgent("new-agent");
 
+      // Membership of the existing channel is untouched: the new agent is not pulled in.
       const members = readMembers(channelsDir, "ch_crew");
-      expect(members).toContain("existing-agent");
-      expect(members).toContain("new-agent");
+      expect(members).toEqual(["existing-agent"]);
+      expect(readBookmarks(path.join(agentDir, "channels.md")).has("ch_crew")).toBe(false);
     });
 
     it("does NOT create DM channels (DM is separate system now)", async () => {
@@ -161,8 +150,12 @@ describe("ChannelManager", () => {
       expect(dmFiles).toHaveLength(0);
     });
 
-    it("writes channels.md for new agent with ch_crew when the crew channel exists", async () => {
-      writeChannelMd(channelsDir, "ch_crew", ["existing-agent"]);
+    it("projects a cursor for channels the new agent is already a member of", async () => {
+      // User manually placed the agent into a channel (e.g. via POST /channels).
+      // setupChannelsForNewAgent must still write the read-cursor projection so the
+      // agent receives messages from channels it already belongs to.
+      writeChannelMd(channelsDir, "ch_project", ["existing-agent", "new-agent"]);
+      writeChannelMd(channelsDir, "ch_other", ["existing-agent"]);
 
       const agentDir = path.join(agentsDir, "new-agent");
       fs.mkdirSync(agentDir, { recursive: true });
@@ -170,8 +163,11 @@ describe("ChannelManager", () => {
 
       await manager.setupChannelsForNewAgent("new-agent");
 
-      const channelsMd = fs.readFileSync(path.join(agentDir, "channels.md"), "utf-8");
-      expect(channelsMd).toContain("ch_crew");
+      const bookmarks = readBookmarks(path.join(agentDir, "channels.md"));
+      // Member channel is projected as an unread cursor.
+      expect(bookmarks.get("ch_project")).toBe("never");
+      // Non-member channel is not projected.
+      expect(bookmarks.has("ch_other")).toBe(false);
     });
   });
 

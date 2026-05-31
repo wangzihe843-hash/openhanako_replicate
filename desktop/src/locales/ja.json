@@ -54,6 +54,9 @@
     "toolPermission": "ツール権限",
     "agentIdle": "待機中",
     "phoneReceivedNewMessages": "新しいグループチャットメッセージを受信",
+    "deliveryActive": "{agent} へ配信中（{done}/{total}）",
+    "deliveryQueued": "配信待ちです",
+    "nextReminder": "次の主導: {time}",
     "replyRange": "返信文字数",
     "replyMinPlaceholder": "最小",
     "replyMaxPlaceholder": "最大",
@@ -72,6 +75,7 @@
     "noModelsAvailable": "利用可能なモデルがありません",
     "toolReadOnly": "読取",
     "toolWrite": "書込",
+    "filesUnsupported": "チャンネルは現在テキストのみ対応しています。ファイルはチャット添付に追加されません",
     "createIntroOptional": "説明"
   },
   "sidebar": {
@@ -118,6 +122,7 @@
       "save": "保存",
       "cancel": "キャンセル",
       "showMore": "さらに表示",
+      "loading": "プロジェクトを読み込み中…",
       "empty": "プロジェクトはまだありません"
     }
   },
@@ -1436,6 +1441,10 @@
       "headersHint": "One KEY=value pair per line. Values are stored for connector requests and masked after saving.",
       "statusRunning": "Running",
       "statusStopped": "Stopped",
+      "statusConnecting": "Connecting",
+      "statusReconnecting": "Reconnecting",
+      "statusFailed": "Reconnect failed",
+      "statusNeedsAuth": "Needs sign-in",
       "command": "Command",
       "args": "Arguments",
       "cwd": "Working Directory",
@@ -1488,7 +1497,7 @@
       "feishu": "Feishu",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
-      "feishuHint": "Feishu オープンプラットフォームから取得",
+      "feishuHint": "Feishu オープンプラットフォームから取得。イベントは長接続で受信するため、ローカル callback URL は不要です",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",

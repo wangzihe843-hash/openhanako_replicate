@@ -107,6 +107,51 @@ describe("Pi SDK stream guard", () => {
     ]);
   });
 
+  it("does NOT recover tool-protocol XML fragments as visible text (#1293)", async () => {
+    // 模型尝试发起工具调用、SDK 抽 name 失败 → partialArgs 是工具协议 XML，
+    // 不是 prose，不能回写成可见文本，否则 Bridge 会泄漏 <tool_calls>/<invoke>。
+    const invalidTool = {
+      type: "toolCall",
+      id: "call_toolxml",
+      name: "",
+      arguments: {},
+      partialArgs: '<tool_calls><invoke name="bash"><parameter name="command">ls -la</parameter></invoke></tool_calls>',
+    };
+    const finalMessage = assistantMessage([invalidTool]);
+    const inner = makeStream([
+      { type: "start", partial: assistantMessage([]) },
+      { type: "toolcall_start", contentIndex: 0, partial: assistantMessage([invalidTool]) },
+      { type: "toolcall_end", contentIndex: 0, toolCall: invalidTool, partial: assistantMessage([invalidTool]) },
+      { type: "done", reason: "stop", message: finalMessage },
+    ], finalMessage);
+
+    const { events, result } = await collect(guardAssistantMessageStream(inner));
+
+    // 不应产生任何 text_* 事件
+    expect(events.map((event) => event.type)).toEqual(["start", "done"]);
+    expect(result.content).toEqual([]);
+  });
+
+  it("does NOT recover bare <invoke / channel-marker fragments", async () => {
+    const invalidTool = {
+      type: "toolCall",
+      id: "call_invoke",
+      name: "",
+      arguments: {},
+      partialArgs: '<invoke name="read"><parameter name="path">a.txt',
+    };
+    const finalMessage = assistantMessage([invalidTool]);
+    const inner = makeStream([
+      { type: "start", partial: assistantMessage([]) },
+      { type: "toolcall_end", contentIndex: 0, toolCall: invalidTool, partial: assistantMessage([invalidTool]) },
+      { type: "done", reason: "stop", message: finalMessage },
+    ], finalMessage);
+
+    const { events, result } = await collect(guardAssistantMessageStream(inner));
+    expect(events.map((event) => event.type)).toEqual(["start", "done"]);
+    expect(result.content).toEqual([]);
+  });
+
   it("leaves valid tool calls untouched", async () => {
     const validTool = { type: "toolCall", id: "call_read", name: "read", arguments: { path: "a.txt" }, partialArgs: "{\"path\":\"a.txt\"}" };
     const finalMessage = assistantMessage([validTool]);

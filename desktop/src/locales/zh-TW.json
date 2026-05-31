@@ -54,6 +54,9 @@
     "toolPermission": "工具權限",
     "agentIdle": "空閒",
     "phoneReceivedNewMessages": "收到新的群聊訊息",
+    "deliveryActive": "正在送達 {agent}（{done}/{total}）",
+    "deliveryQueued": "送達排隊中",
+    "nextReminder": "下次主動發起：{time}",
     "replyRange": "回覆字數",
     "replyMinPlaceholder": "最少",
     "replyMaxPlaceholder": "最多",
@@ -72,6 +75,7 @@
     "noModelsAvailable": "沒有可用模型",
     "toolReadOnly": "只讀",
     "toolWrite": "寫入",
+    "filesUnsupported": "頻道暫時只支援文字訊息，檔案不會加入普通聊天附件",
     "createIntroOptional": "說明"
   },
   "sidebar": {
@@ -118,6 +122,7 @@
       "save": "儲存",
       "cancel": "取消",
       "showMore": "展開顯示",
+      "loading": "正在載入項目…",
       "empty": "還沒有項目"
     }
   },
@@ -1428,6 +1433,10 @@
       "headersHint": "每行一個 KEY=value。儲存後會脫敏顯示，請求遠端 MCP 時會帶上這些 headers。",
       "statusRunning": "執行中",
       "statusStopped": "已停止",
+      "statusConnecting": "連線中",
+      "statusReconnecting": "重新連線中",
+      "statusFailed": "重新連線失敗",
+      "statusNeedsAuth": "需重新登入",
       "command": "命令",
       "args": "參數",
       "cwd": "工作目錄",
@@ -1480,7 +1489,7 @@
       "feishu": "飛書",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
-      "feishuHint": "從飛書開放平台取得",
+      "feishuHint": "從飛書開放平台取得；使用長連線接收事件，不需要本機回呼 URL",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",

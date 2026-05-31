@@ -166,9 +166,25 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
       break;
     }
     case 'agent-created':
-    case 'agent-deleted':
       loadAgents();
+      loadChannels();
       break;
+    case 'agent-deleted': {
+      // If the currently open conversation is a DM with the deleted agent, clear it
+      const deletedDmId = data.agentId ? `dm:${data.agentId}` : null;
+      if (deletedDmId && useStore.getState().currentChannel === deletedDmId) {
+        useStore.setState({
+          currentChannel: null,
+          channelMessages: [],
+          channelHeaderName: '',
+          channelHeaderMembersText: '',
+          channelIsDM: false,
+        });
+      }
+      loadAgents();
+      loadChannels();
+      break;
+    }
     case 'agent-updated': {
       const currentAgentId = useStore.getState().currentAgentId;
       if (data.agentId && data.agentId !== currentAgentId) {

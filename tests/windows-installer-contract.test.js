@@ -91,6 +91,28 @@ describe("Windows NSIS installer contract", () => {
     expect(macro).not.toContain("un.atomicRMDir");
   });
 
+  it("removes legacy Hanako-branded install entries without blind global shortcut deletion", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const macro = extractMacro(source, "hanakoRemoveOwnedInstallTrees");
+    const overlay = extractMacro(source, "hanakoPrepareOwnedOverlay");
+    const shortcutCleaner = extractMacro(source, "hanakoWriteLegacyShortcutCleaner");
+
+    expect(macro).toContain('Delete "$INSTDIR\\Hanako.exe"');
+    expect(macro).toContain('Delete "$INSTDIR\\Uninstall Hanako.exe"');
+    expect(macro).toContain('Delete "$INSTDIR\\hanako-install-diagnostics.log"');
+    expect(macro).not.toContain('Delete "$DESKTOP\\Hanako.lnk"');
+    expect(macro).not.toContain('Delete "$SMPROGRAMS\\Hanako.lnk"');
+    expect(macro).not.toContain('RMDir /r "$SMPROGRAMS\\Hanako"');
+    expect(macro).toContain("hanakoRemoveLegacyGlobalShortcuts");
+    expect(shortcutCleaner).toContain("WScript.Shell");
+    expect(shortcutCleaner).toContain("CreateShortcut");
+    expect(shortcutCleaner).toContain("Test-HanaInstallPath $$shortcut.TargetPath");
+    expect(shortcutCleaner).toContain("Test-HanaInstallPath $$shortcut.WorkingDirectory");
+    expect(shortcutCleaner).not.toContain("Remove-Item -LiteralPath $$legacyDir -Recurse");
+    expect(macro).not.toContain('Delete "$INSTDIR\\*.exe"');
+    expect(overlay).toContain("hanakoRemoveOwnedInstallTrees");
+  });
+
   it("overrides app-running detection to close HanaAgent, legacy Hanako, and the bundled server explicitly", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const macro = extractMacro(source, "customCheckAppRunning");
@@ -116,6 +138,13 @@ describe("Windows NSIS installer contract", () => {
     expect(pkg.build.nsis.allowToChangeInstallationDirectory).toBe(false);
   });
 
+  it("pins the Windows executable name to the current product identity", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
+
+    expect(pkg.build.win.executableName).toBe("HanaAgent");
+    expect(pkg.build.nsis.shortcutName).toBe("HanaAgent");
+  });
+
   it("runs an install surface self-check and writes diagnostics before aborting", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const customInstall = extractMacro(source, "customInstall");
@@ -133,5 +162,34 @@ describe("Windows NSIS installer contract", () => {
     expect(verify).toContain('$INSTDIR\\resources\\git\\cmd\\git.exe');
     expect(verify).toContain('MessageBox MB_OK|MB_ICONSTOP');
     expect(verify).toContain('Quit');
+  });
+
+  it("records installer phase timing without changing install success conditions", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const timing = extractMacro(source, "hanakoInstallTimingMark");
+    const persist = extractMacro(source, "hanakoPersistInstallTiming");
+    const customInit = extractMacro(source, "customInit");
+    const customCheck = extractMacro(source, "customCheckAppRunning");
+    const customInstall = extractMacro(source, "customInstall");
+    const stopProcesses = extractMacro(source, "hanakoStopInstallDirProcesses");
+    const removeTrees = extractMacro(source, "hanakoRemoveOwnedInstallTrees");
+    const verify = extractMacro(source, "hanakoVerifyInstallSurface");
+
+    expect(timing).toContain("GetTickCount");
+    expect(timing).toContain("$PLUGINSDIR\\hanaagent-install-timing.log");
+    expect(timing).toContain("phase=${_PHASE}");
+    expect(timing).not.toContain("Quit");
+    expect(persist).toContain("$INSTDIR\\hanaagent-install-timing.log");
+    expect(customInit).toContain('hanakoInstallTimingMark "customInit" "start"');
+    expect(customInit).toContain('hanakoInstallTimingMark "customInit" "end"');
+    expect(customCheck).toContain('hanakoInstallTimingMark "customCheckAppRunning" "start"');
+    expect(customCheck).toContain('hanakoInstallTimingMark "customCheckAppRunning" "end"');
+    expect(customInstall).toContain('hanakoInstallTimingMark "customInstall" "start"');
+    expect(customInstall).toContain('hanakoInstallTimingMark "customInstall" "end"');
+    expect(stopProcesses).toContain('hanakoInstallTimingMark "stopInstallDirProcesses" "start"');
+    expect(stopProcesses).toContain('hanakoInstallTimingMark "stopInstallDirProcesses" "end"');
+    expect(removeTrees).toContain('hanakoInstallTimingMark "removeOwnedInstallTrees" "start"');
+    expect(removeTrees).toContain('hanakoInstallTimingMark "removeOwnedInstallTrees" "end"');
+    expect(verify).toContain("hanakoPersistInstallTiming");
   });
 });

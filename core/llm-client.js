@@ -156,6 +156,70 @@ function extractResponsesText(data) {
   };
 }
 
+async function readCodexResponsesStream(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const events = [];
+  const textDeltas = [];
+  let doneText = "";
+  let completedResponse = null;
+  let buffer = "";
+
+  const consumeBlock = (block) => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") return;
+
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      return;
+    }
+    events.push(event);
+
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      textDeltas.push(event.delta);
+    } else if (event.type === "response.output_text.done" && typeof event.text === "string") {
+      doneText = event.text;
+    } else if (event.type === "response.completed") {
+      completedResponse = event.response || event;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: !done });
+    let sep;
+    while ((sep = buffer.search(/\r?\n\r?\n/)) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(buffer[sep] === "\r" ? sep + 4 : sep + 2);
+      consumeBlock(block);
+    }
+    if (done) break;
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+
+  const outputText = textDeltas.join("").trim() || doneText.trim();
+  const usage = completedResponse?.usage || events.find((event) => event?.usage)?.usage || null;
+  if (outputText) {
+    return {
+      output_text: outputText,
+      ...(usage ? { usage } : {}),
+    };
+  }
+  if (completedResponse) return completedResponse;
+  return {
+    output: events,
+    ...(usage ? { usage } : {}),
+  };
+}
+
 function throwAbortOrTimeout(err, signal, modelId) {
   if (err.name === "AbortError" || err.name === "TimeoutError") {
     if (signal?.aborted) throw createUserAbortError();
@@ -306,6 +370,8 @@ export async function callText({
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     body = {
       model: modelId,
+      store: false,
+      stream: true,
       ...(explicitMaxTokens !== null && { max_output_tokens: explicitMaxTokens }),
       ...(temperature !== undefined && { temperature }),
       ...(mergedSystem && { instructions: mergedSystem }),
@@ -391,18 +457,25 @@ export async function callText({
 
   // ── 5. 解析响应 ──
   let rawText;
+  let data;
   try {
-    rawText = await res.text();
+    if (res.ok && api === "openai-codex-responses" && res.body && typeof res.body.getReader === "function") {
+      data = await readCodexResponsesStream(res.body);
+      rawText = JSON.stringify(data);
+    } else {
+      rawText = await res.text();
+    }
   } catch (err) {
     clearTimeout(slowTimer);
     throwAbortOrTimeout(err, signal, modelId);
   }
   clearTimeout(slowTimer);
-  let data;
-  try {
-    data = rawText ? JSON.parse(rawText) : null;
-  } catch {
-    throw new Error(`LLM returned invalid JSON (status=${res.status})`);
+  if (!data) {
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      throw new Error(`LLM returned invalid JSON (status=${res.status})`);
+    }
   }
   observedUsagePayload = data?.usage ?? null;
 

@@ -4,15 +4,28 @@ import path from "node:path";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 
+// stdio shutdown escalation windows: ask politely (stdin EOF), then SIGTERM,
+// then SIGKILL. Kept here so both stop() timers read one source of truth.
+const STDIO_GRACEFUL_MS = 2_000;
+const STDIO_FORCE_MS = 3_000;
+
 export class McpStdioClient {
-  constructor(server, { log = console } = {}) {
+  constructor(server, { log = console, onClose = null } = {}) {
     this.server = server;
     this.log = log;
+    // onClose({ reason, expected }) lets McpRuntime distinguish a deliberate
+    // stop() (expected) from an unexpected child death (expected=false) so it
+    // can decide whether to reconnect. Ownership of "intent" lives in the
+    // runtime; the client only reports what physically happened.
+    this.onClose = typeof onClose === "function" ? onClose : null;
     this.process = null;
     this._nextId = 1;
     this._pending = new Map();
     this._stdoutBuffer = "";
     this._closed = false;
+    // True only while a deliberate stop() is in flight. The exit/error
+    // handlers consult this to label the close as expected vs unexpected.
+    this._stopping = false;
   }
 
   get running() {
@@ -24,6 +37,7 @@ export class McpStdioClient {
     if (!this.server?.command) throw new Error("MCP server command is required");
 
     this._closed = false;
+    this._stopping = false;
     const spawnSpec = resolveMcpStdioSpawnSpec(this.server);
     this.process = spawn(spawnSpec.command, spawnSpec.args, {
       cwd: this.server.cwd || undefined,
@@ -46,11 +60,13 @@ export class McpStdioClient {
       const err = new Error(`MCP server exited (${reason})`);
       for (const pending of this._pending.values()) pending.reject(err);
       this._pending.clear();
+      this._reportClose(`exited (${reason})`);
     });
     this.process.on("error", (err) => {
       this._closed = true;
       for (const pending of this._pending.values()) pending.reject(err);
       this._pending.clear();
+      this._reportClose(err.message || "process error");
     });
 
     await this.initialize();
@@ -111,21 +127,42 @@ export class McpStdioClient {
   }
 
   async stop() {
-    if (!this.process) return;
+    // Mark intent first so the exit handler treats this as an expected close,
+    // never an unexpected disconnect that would trigger a reconnect.
+    this._stopping = true;
+    if (!this.process) {
+      this._closed = true;
+      return;
+    }
     const proc = this.process;
     this.process = null;
     this._closed = true;
     try { proc.stdin.end(); } catch {}
     await new Promise((resolve) => {
-      const timer = setTimeout(() => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(graceTimer);
+        clearTimeout(forceTimer);
+        resolve();
+      };
+      // Politely wait, then SIGTERM, then SIGKILL if it still refuses to die.
+      const graceTimer = setTimeout(() => {
         try { proc.kill("SIGTERM"); } catch {}
-        resolve();
-      }, 2_000);
-      proc.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
+      }, STDIO_GRACEFUL_MS);
+      const forceTimer = setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch {}
+        finish();
+      }, STDIO_GRACEFUL_MS + STDIO_FORCE_MS);
+      proc.once("exit", finish);
     });
+  }
+
+  _reportClose(reason) {
+    if (!this.onClose) return;
+    const expected = this._stopping === true;
+    this.onClose({ reason, expected });
   }
 
   _send(payload) {

@@ -61,6 +61,8 @@ describe('desk-actions workspace roots', () => {
       workspaceFolders: [],
       pendingNewSession: true,
       currentSessionPath: null,
+      currentAgentId: null,
+      selectedAgentId: null,
     } as never);
   });
 
@@ -75,6 +77,26 @@ describe('desk-actions workspace roots', () => {
     expect(mockHanaFetch).toHaveBeenNthCalledWith(
       1,
       '/api/desk/files?dir=%2Fhome-folder',
+    );
+  });
+
+  it('passes the selected agent id when loading the selected agent workbench', async () => {
+    useStore.setState({
+      currentAgentId: 'hana',
+      selectedAgentId: 'mio',
+      selectedFolder: '/workspace/Mio',
+      deskBasePath: '/workspace/Mio',
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({ files: [], basePath: '/workspace/Mio' }))
+      .mockResolvedValueOnce(jsonResponse({ content: null }));
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/desk/files?dir=%2Fworkspace%2FMio&agentId=mio',
     );
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { subscribeStreamKey } from '../../services/stream-key-dispatcher';
 import { renderMarkdown } from '../../utils/markdown';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../../stores/chat-types';
@@ -73,7 +73,13 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
     return activeStreamTurnRef.current;
   }, []);
 
-  useEffect(() => {
+  // Switch landing in the layout phase (pre-paint). Only arm an instant landing when the target
+  // session has no messages yet, so the first async hydrate (0 -> N) snaps without animating;
+  // an already-loaded session lands via the instant scroll and later growth = streaming (smooth follow).
+  useLayoutEffect(() => {
+    const alreadyHydrated = !!sessionPath
+      && (useStore.getState().chatSessions[sessionPath]?.items?.length ?? 0) > 0;
+    if (sessionPath && !alreadyHydrated) bottomScroll.armInstantLanding();
     bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
     activeStreamTurnRef.current = 0;
     pendingCleanupTurnRef.current = null;

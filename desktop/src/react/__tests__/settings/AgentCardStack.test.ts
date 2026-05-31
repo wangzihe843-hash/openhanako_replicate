@@ -134,4 +134,23 @@ describe('AgentCardStack actions', () => {
     expect(screen.queryByRole('button', { name: 'settings.agent.setPrimary' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'settings.agent.deleteBtn' })).not.toBeInTheDocument();
   });
+
+  it('keeps the delete action available for a selected non-primary agent that is also the current agent (#1301)', () => {
+    const onDelete = vi.fn();
+
+    render(React.createElement(AgentCardStack, {
+      agents,
+      selectedId: 'deepseek',
+      currentAgentId: 'deepseek', // 新建 agent 会被自动切为 current；删除不应因此被隐藏
+      onSelect: vi.fn(),
+      onAvatarClick: vi.fn(),
+      onSetPrimary: vi.fn(),
+      onDelete,
+      onExport: vi.fn(),
+      onAdd: vi.fn(),
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agent.deleteBtn' }));
+    expect(onDelete).toHaveBeenCalledWith('deepseek');
+  });
 });

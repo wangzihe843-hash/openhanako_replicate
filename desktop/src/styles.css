@@ -1030,8 +1030,19 @@ html[data-platform="linux"] .tb-toggle-right {
     line-height: 1.5;
 }
 
+/* 代码块 wrapper：非滚动定位祖先，让复制按钮锚在可视区右上角不随横滚漂移 */
+.md-content .code-block-wrap {
+    position: relative;
+    margin: var(--space-sm) 0;
+}
+
+/* wrapper 内的 pre 边距归零，由 wrapper 接管，避免视觉跳动 */
+.md-content .code-block-wrap > pre {
+    margin: 0;
+}
+
 /* 代码块复制按钮 */
-.md-content pre .copy-btn {
+.md-content .code-block-wrap .copy-btn {
     position: absolute;
     top: 0;
     right: 0;
@@ -1052,13 +1063,13 @@ html[data-platform="linux"] .tb-toggle-right {
     transition: opacity var(--duration-fast), color var(--duration-fast);
 }
 
-.md-content pre .copy-btn-icon {
+.md-content .code-block-wrap .copy-btn-icon {
     width: 0.9rem;
     height: 0.9rem;
     flex: 0 0 auto;
 }
 
-.md-content pre .copy-btn::after {
+.md-content .code-block-wrap .copy-btn::after {
     content: attr(data-copied-label);
     position: absolute;
     top: 50%;
@@ -1075,14 +1086,14 @@ html[data-platform="linux"] .tb-toggle-right {
     transition: opacity var(--duration-fast);
 }
 
-.md-content pre .copy-btn:hover,
-.md-content pre .copy-btn:focus-visible,
-.md-content pre .copy-btn[data-copied="true"] {
+.md-content .code-block-wrap .copy-btn:hover,
+.md-content .code-block-wrap .copy-btn:focus-visible,
+.md-content .code-block-wrap .copy-btn[data-copied="true"] {
     color: var(--accent);
     opacity: 1;
 }
 
-.md-content pre .copy-btn[data-copied="true"]::after {
+.md-content .code-block-wrap .copy-btn[data-copied="true"]::after {
     opacity: 1;
 }
 

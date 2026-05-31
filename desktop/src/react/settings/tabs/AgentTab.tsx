@@ -251,6 +251,14 @@ export function AgentTab() {
             value={agentName}
             placeholder={t('settings.agent.agentNameHint')}
             onChange={(e) => setAgentName(e.target.value)}
+            onKeyDown={(e) => {
+              // 回车保存名称（等同下方「保存」按钮）；排除中文输入法组合态，
+              // 否则用拼音输入时按回车确认候选词会误触发保存（#1306）。
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void saveAgent();
+              }
+            }}
           />
         </div>
         <div className={`${styles['settings-form-field']} ${styles['settings-form-field-center']}`}>

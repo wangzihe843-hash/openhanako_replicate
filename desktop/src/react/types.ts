@@ -108,6 +108,29 @@ export interface AgentPhoneActivity {
 }
 
 export type ChannelAgentActivities = Record<string, Record<string, AgentPhoneActivity[]>>;
+
+export interface ChannelTickerStatus {
+  active?: {
+    channelName?: string;
+    agentId?: string;
+    activeAgentId?: string;
+    delivered?: number;
+    agentCount?: number;
+    checks?: number;
+    maxChecks?: number;
+    mode?: string;
+  } | null;
+  nextReminder?: {
+    channelName?: string;
+    dueAt?: string;
+    dueAtMs?: number;
+    intervalMs?: number;
+  } | null;
+  running?: boolean;
+  queued?: boolean;
+}
+
+export type ChannelTickerStatusMap = Record<string, ChannelTickerStatus | null>;
 export type AgentPhoneToolMode = 'read_only' | 'write';
 
 export interface AgentPhoneSettings {
@@ -329,7 +352,7 @@ export interface PlatformApi {
   onboardingComplete?(): Promise<void>;
 
   // ── Notification ──
-  showNotification?(title: string, body: string): void;
+  showNotification?(title: string, body: string, agentId?: string | null): void;
 
   // ── App info ──
   getAppVersion?(): Promise<string>;

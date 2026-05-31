@@ -369,6 +369,11 @@ export class ChannelRouter {
     this._ticker?.refreshSchedule?.();
   }
 
+  tickerSnapshot(channelName) {
+    if (!this.ensureStarted()) return null;
+    return this._ticker?.snapshot?.(channelName) || null;
+  }
+
   _listMentionableAgents() {
     if (typeof this._engine.listAgents === "function") {
       return this._engine.listAgents();
@@ -653,71 +658,78 @@ export class ChannelRouter {
         + `These are the unprocessed new messages inside this delivery window, not the channel's full history. The source is the channel transcript Truth, not a direct user request:\n\n`;
     let activeSessionPath = null;
     let decision = null;
-    await runAgentPhoneSession(
-      agentId,
-      [
+    try {
+      await runAgentPhoneSession(
+        agentId,
+        [
+          {
+            text: isZh
+              ? zhIntro
+                + `${msgText || "（没有新消息）"}\n\n`
+                + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
+                + `请像群聊成员一样阅读并行动：\n`
+                + `${behaviorGuidance}\n`
+                + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
+                + `- 结合此前 Phone Session 内容理解这批消息；本次投递窗口不是频道全部历史\n`
+                + `${promptGuidance}\n`
+                + `- 本轮最后必须调用 channel_reply 或 channel_pass 之一完成动作\n`
+                + `- 不要把最终群聊回复写在普通文本里；只有 channel_reply.content 会进入群聊`
+              : enIntro
+                + `${msgText || "(No new messages)"}\n\n`
+                + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
+                + `Read and act like a group chat member:\n`
+                + `${behaviorGuidance}\n`
+                + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
+                + `- Interpret this batch together with the prior Phone Session content; this delivery window is not the channel's full history\n`
+                + `${promptGuidance}\n`
+                + `- End this turn by calling exactly one of channel_reply or channel_pass\n`
+                + `- Do not write the final channel reply as ordinary text; only channel_reply.content enters the channel`,
+            capture: true,
+          },
+        ],
         {
-          text: isZh
-            ? zhIntro
-              + `${msgText || "（没有新消息）"}\n\n`
-              + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
-              + `请像群聊成员一样阅读并行动：\n`
-              + `${behaviorGuidance}\n`
-              + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
-              + `- 结合此前 Phone Session 内容理解这批消息；本次投递窗口不是频道全部历史\n`
-              + `${promptGuidance}\n`
-              + `- 本轮最后必须调用 channel_reply 或 channel_pass 之一完成动作\n`
-              + `- 不要把最终群聊回复写在普通文本里；只有 channel_reply.content 会进入群聊`
-            : enIntro
-              + `${msgText || "(No new messages)"}\n\n`
-              + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
-              + `Read and act like a group chat member:\n`
-              + `${behaviorGuidance}\n`
-              + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
-              + `- Interpret this batch together with the prior Phone Session content; this delivery window is not the channel's full history\n`
-              + `${promptGuidance}\n`
-              + `- End this turn by calling exactly one of channel_reply or channel_pass\n`
-              + `- Do not write the final channel reply as ordinary text; only channel_reply.content enters the channel`,
-          capture: true,
+          engine: this._engine,
+          signal,
+          conversationId: channelName,
+          conversationType: "channel",
+          toolMode: phoneSettings.toolMode,
+          modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
+          emitEvents: true,
+          extraCustomTools: this._createChannelPhoneTools(agentId, channelName, {
+            setDecision: (next) => { if (!decision) decision = next; },
+          }),
+          onSessionReady: (sessionPath) => {
+            activeSessionPath = sessionPath;
+            return this._recordPhoneActivity(
+              agentId,
+              channelName,
+              "replying",
+              isZh ? "正在查看手机群聊" : "Reading phone channel messages",
+              {
+                ...(messageCount != null ? { messageCount } : {}),
+                sessionPath,
+              },
+            );
+          },
+          onActivity: (state, summary, details) =>
+            this._recordPhoneActivity(
+              agentId,
+              channelName,
+              state,
+              summary,
+              {
+                ...(details || {}),
+                ...(activeSessionPath ? { sessionPath: activeSessionPath } : {}),
+              },
+          ),
         },
-      ],
-      {
-        engine: this._engine,
-        signal,
-        conversationId: channelName,
-        conversationType: "channel",
-        toolMode: phoneSettings.toolMode,
-        modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
-        emitEvents: true,
-        extraCustomTools: this._createChannelPhoneTools(agentId, channelName, {
-          setDecision: (next) => { if (!decision) decision = next; },
-        }),
-        onSessionReady: (sessionPath) => {
-          activeSessionPath = sessionPath;
-          return this._recordPhoneActivity(
-            agentId,
-            channelName,
-            "replying",
-            isZh ? "正在查看手机群聊" : "Reading phone channel messages",
-            {
-              ...(messageCount != null ? { messageCount } : {}),
-              sessionPath,
-            },
-          );
-        },
-        onActivity: (state, summary, details) =>
-          this._recordPhoneActivity(
-            agentId,
-            channelName,
-            state,
-            summary,
-            {
-              ...(details || {}),
-              ...(activeSessionPath ? { sessionPath: activeSessionPath } : {}),
-            },
-        ),
-      },
-    );
+      );
+    } catch (err) {
+      if (decision) {
+        return { ...decision, abortedAfterDecision: true };
+      }
+      throw err;
+    }
 
     return decision || { replied: false, missingDecision: true };
   }

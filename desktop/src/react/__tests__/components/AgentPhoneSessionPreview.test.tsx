@@ -93,6 +93,54 @@ describe('AgentPhoneSessionPreview', () => {
     });
   });
 
+  it('lands instantly (no animated scroll) when a switched session hydrates its messages', () => {
+    // Capture rAF instead of auto-running so we can tell an instant snap from an animated follow.
+    const rafCallbacks: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb);
+      return rafCallbacks.length;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((id: number) => { rafCallbacks[id - 1] = () => {}; }) as typeof window.cancelAnimationFrame;
+
+    const { container } = render(
+      <AgentPhoneSessionPreview
+        sessionPath="/tmp/butter-phone.jsonl"
+        agentId="butter-agent"
+        agentYuan="butter"
+      />,
+    );
+    const scroller = container.querySelector('[class*="agentActivityTranscriptScroll"]') as HTMLElement;
+    // Empty session: no overflow, parked at bottom (sticky).
+    const metrics = { scrollHeight: 600, clientHeight: 300, scrollTop: 300 };
+    setScrollMetrics(scroller, metrics);
+
+    // Async loadMessages resolves -> items hydrate 0 -> N, growing content by 350px (under the
+    // largeJump snap threshold, so the old code would animate this first fill).
+    act(() => {
+      metrics.scrollHeight = 950;
+      useStore.setState((state) => ({
+        chatSessions: {
+          ...state.chatSessions,
+          '/tmp/butter-phone.jsonl': {
+            items: [
+              { type: 'message', data: { id: 'a-1', role: 'assistant', blocks: [{ type: 'text', html: '<p>hi</p>', source: 'hi' }] } },
+            ],
+            hasMore: false,
+            loadingMore: false,
+          },
+        },
+      } as never));
+    });
+
+    // First fill after switch must snap straight to the new bottom, with no pending animation frame.
+    expect(metrics.scrollTop).toBe(650);
+    act(() => {
+      const pending = rafCallbacks.splice(0);
+      pending.forEach((cb) => cb(16));
+    });
+    expect(metrics.scrollTop).toBe(650);
+  });
+
   it('does not force bottom after the user scrolls up during a phone stream', () => {
     const { container } = render(
       <AgentPhoneSessionPreview

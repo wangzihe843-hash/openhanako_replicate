@@ -10,6 +10,18 @@ function makeCodexJwt(accountId) {
   return `header.${payload}.signature`;
 }
 
+function makeSseBody(blocks) {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const block of blocks) {
+        controller.enqueue(encoder.encode(block));
+      }
+      controller.close();
+    },
+  });
+}
+
 describe("callText provider-compat routing", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -466,7 +478,11 @@ describe("callText provider-compat routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ output_text: "Codex OK" }),
+      body: makeSseBody([
+        `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "Codex " })}\n\n`,
+        `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "OK" })}\n\n`,
+        "data: [DONE]\n\n",
+      ]),
     });
 
     await expect(callText({
@@ -488,6 +504,10 @@ describe("callText provider-compat routing", () => {
     expect(init.headers["chatgpt-account-id"]).toBe("acct_123");
     expect(init.headers["OpenAI-Beta"]).toBe("responses=experimental");
     expect(init.headers.originator).toBe("pi");
+    expect(JSON.parse(init.body)).toMatchObject({
+      store: false,
+      stream: true,
+    });
   });
 
   it("derives the Codex account id from the OAuth token when the model omits it", async () => {

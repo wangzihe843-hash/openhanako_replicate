@@ -5,7 +5,7 @@
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
-import { memo, useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { memo, useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { loadMoreMessages } from '../../stores/session-actions';
@@ -180,9 +180,16 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     }
   }, [loadingMore]);
 
-  // 首次有内容 → 滚到底
+  // 切到本面板（active 翻转为 true）时武装一次性 instant 落位：ResizeObserver 因 active 重订阅而
+  // 触发的首次回调（以及切换后首屏媒体 reflow）会瞬时收口到底，而非带动画 follow，消除"先画错位一帧再补跳"。
+  // 后续流式增长仍走平滑 follow。
+  useLayoutEffect(() => {
+    if (active) bottomScroll.armInstantLanding();
+  }, [active, bottomScroll]);
+
+  // 首次有内容 → 滚到底（layout 阶段，先于 paint，避免首屏跳动）
   const scrolledOnce = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (scrolledOnce.current) return;
     if (items.length > 0) {
       bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });

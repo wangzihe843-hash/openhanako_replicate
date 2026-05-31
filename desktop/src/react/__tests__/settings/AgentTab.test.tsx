@@ -181,4 +181,48 @@ describe('AgentTab settings agent selection', () => {
     });
     expect(showInFinderMock).toHaveBeenCalledWith('/tmp/hana-charactercard.zip');
   });
+
+  it('saves the agent name when pressing Enter in the name field (#1306)', async () => {
+    const { AgentTab } = await import('../../settings/tabs/AgentTab');
+    render(<AgentTab />);
+
+    const nameInput = screen.getByPlaceholderText('settings.agent.agentNameHint');
+
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: 'NewName' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(nameInput, { key: 'Enter' });
+      await Promise.resolve();
+    });
+
+    const cfgCall = hanaFetchMock.mock.calls.find((call) => {
+      const [url, opts] = call as [string, RequestInit | undefined];
+      return url === '/api/agents/hana/config' && opts?.method === 'PUT';
+    }) as [string, RequestInit | undefined] | undefined;
+    expect(cfgCall).toBeTruthy();
+    expect(JSON.parse(String(cfgCall?.[1]?.body))).toEqual({ agent: { name: 'NewName' } });
+  });
+
+  it('does not save on Enter while composing with an IME (#1306)', async () => {
+    const { AgentTab } = await import('../../settings/tabs/AgentTab');
+    render(<AgentTab />);
+
+    const nameInput = screen.getByPlaceholderText('settings.agent.agentNameHint');
+
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: '小花' } });
+    });
+    await act(async () => {
+      // 中文输入法组合态按回车确认候选词，不应触发保存
+      fireEvent.keyDown(nameInput, { key: 'Enter', isComposing: true });
+      await Promise.resolve();
+    });
+
+    const cfgCall = hanaFetchMock.mock.calls.find((call) => {
+      const [url, opts] = call as [string, RequestInit | undefined];
+      return url === '/api/agents/hana/config' && opts?.method === 'PUT';
+    });
+    expect(cfgCall).toBeUndefined();
+  });
 });

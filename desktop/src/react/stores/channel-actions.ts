@@ -75,11 +75,16 @@ export async function loadConversationAgentActivities(conversationId: string): P
     if (!res.ok) return;
     const data = await res.json();
     const activities = keyActivities(data.activities || []);
-    const current = (useStore.getState().channelAgentActivities || {}) as ChannelAgentActivities;
+    const latestState = useStore.getState();
+    const current = (latestState.channelAgentActivities || {}) as ChannelAgentActivities;
     useStore.setState({
       channelAgentActivities: {
         ...current,
         [conversationId]: activities,
+      },
+      channelTickerStatus: {
+        ...(latestState.channelTickerStatus || {}),
+        [conversationId]: data.ticker || null,
       },
     });
   } catch (err) {

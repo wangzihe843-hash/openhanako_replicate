@@ -1,6 +1,6 @@
 /** ChannelsPanel — 频道系统入口 + 保留组件（子组件在 ./channels/） */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { fetchConfig } from '../hooks/use-config';
 import { hanaFetch } from '../hooks/use-hana-fetch';
@@ -22,7 +22,7 @@ import type { MemberInfo } from './channels/ChannelList';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ContextMenu, type ContextMenuItem } from '../ui';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../stores/chat-types';
-import type { AgentPhoneActivity, Channel, Model } from '../types';
+import type { AgentPhoneActivity, Channel, ChannelTickerStatus, Model } from '../types';
 import styles from './channels/Channels.module.css';
 import chatStyles from './chat/Chat.module.css';
 
@@ -342,6 +342,25 @@ function activitySessionPath(activity: AgentPhoneActivity | undefined): string |
   return typeof value === 'string' && value ? value : null;
 }
 
+function channelTickerText(status: ChannelTickerStatus | null | undefined, t: (key: string, vars?: Record<string, string | number>) => string): string | null {
+  if (!status) return null;
+  const active = status.active;
+  if (active) {
+    return t('channel.deliveryActive', {
+      agent: active.agentId || active.activeAgentId || '',
+      done: active.delivered ?? 0,
+      total: active.agentCount ?? 0,
+    });
+  }
+  const dueAt = status.nextReminder?.dueAtMs || (status.nextReminder?.dueAt ? Date.parse(status.nextReminder.dueAt) : 0);
+  if (dueAt && Number.isFinite(dueAt)) {
+    const time = new Date(dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return t('channel.nextReminder', { time });
+  }
+  if (status.queued) return t('channel.deliveryQueued');
+  return null;
+}
+
 function createPhoneStreamMessage(agentId: string, turnToken: number): ChatMessage {
   return {
     id: `${PHONE_STREAM_MESSAGE_PREFIX}-${agentId}-${turnToken}`,
@@ -387,7 +406,14 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
   });
   const moodYuan = agentYuan || 'hanako';
 
-  useEffect(() => {
+  // Switch landing runs in the layout phase (before paint) so the panel never shows a wrong
+  // scrollTop frame. Only arm an instant landing when the target session has no messages yet:
+  // the first async hydrate (0 -> N) then snaps without animating. If the session is already
+  // loaded, the instant scroll below lands it and later growth = streaming (keeps smooth follow).
+  useLayoutEffect(() => {
+    const alreadyHydrated = !!sessionPath
+      && (useStore.getState().chatSessions[sessionPath]?.items?.length ?? 0) > 0;
+    if (sessionPath && !alreadyHydrated) bottomScroll.armInstantLanding();
     bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
     streamTurnRef.current = 0;
     setStreamMessage(null);
@@ -616,6 +642,7 @@ export function ChannelAgentActivityPanel() {
   const userAvatarUrl = useStore(s => s.userAvatarUrl);
   const currentAgentId = useStore(s => s.currentAgentId);
   const allActivities = useStore(s => s.channelAgentActivities);
+  const tickerStatuses = useStore(s => s.channelTickerStatus);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const agentMap = useMemo(() => buildAgentMap(agents), [agents]);
@@ -631,6 +658,7 @@ export function ChannelAgentActivityPanel() {
   if (uniqueIds.length === 0) return null;
 
   const byAgent = allActivities?.[currentChannel] || {};
+  const tickerText = channelTickerText(tickerStatuses?.[currentChannel], t);
   const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, isDM ? dmOwnerId : currentAgentId, agentMap);
 
   return (
@@ -639,6 +667,7 @@ export function ChannelAgentActivityPanel() {
         <div className={styles.agentActivityHeader}>
           <div className="channel-info-label">{t('channel.agentActivity')}</div>
         </div>
+        {tickerText && <div className={styles.agentActivityScheduler}>{tickerText}</div>}
         <div className={styles.agentActivityList}>
           {uniqueIds.map((agentId) => {
             const info = resolve(agentId);

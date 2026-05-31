@@ -151,4 +151,44 @@ describe('ProviderModelList', () => {
     expect(id.nextElementSibling?.nextElementSibling).toHaveAttribute('title', 'settings.api.capability.video');
     expect(id.nextElementSibling?.nextElementSibling?.nextElementSibling).toHaveAttribute('title', 'settings.api.capability.reasoning');
   });
+
+  it('opens fetched models in the add-model dropdown so they can be enabled', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch
+      .mockResolvedValueOnce(jsonResponse({ models: [] }))
+      .mockResolvedValueOnce(jsonResponse({ models: [{ id: 'kimi-new-model' }] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    render(
+      <ProviderModelList
+        providerId="kimi-coding"
+        summary={{
+          type: 'api-key',
+          auth_type: 'api-key',
+          display_name: 'Kimi Coding Plan',
+          base_url: 'https://api.kimi.com/coding/',
+          api: 'anthropic-messages',
+          api_key: '',
+          models: [],
+          custom_models: [],
+          has_credentials: false,
+          supports_oauth: false,
+          is_coding_plan: true,
+          can_delete: false,
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.fetchModels' }));
+
+    const option = await screen.findByRole('button', { name: /kimi-new-model/ });
+    fireEvent.click(option);
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ providers: { 'kimi-coding': { models: ['kimi-new-model'] } } }),
+    })));
+    expect(onRefresh).toHaveBeenCalled();
+  });
 });

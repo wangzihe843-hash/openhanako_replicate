@@ -6,7 +6,7 @@
 ## 核心纪律
 
 1. **唯一对外入口**：所有出站 payload 兼容必须经过 [`core/provider-compat.js`](../provider-compat.js) 的 `normalizeProviderPayload(payload, model, options)`。chat 路径（`engine.js` 注册的 `before_provider_request` 钩子）和 utility 路径（`llm-client.js` 的 `callText`）共享这一个入口。需要在 provider serializer 之前处理的 replay/history 规则走同文件的 `normalizeProviderContextMessages(messages, model, options)`。
-2. **通用补丁留主入口**：与 provider 无关的处理（空 tools 数组剥离、按 `compat.thinkingFormat` 剥离不兼容的 `thinking` 字段、移除 SDK 注入的隐式 output cap）写在 `provider-compat.js` 主入口或同目录通用 helper。
+2. **通用补丁留主入口**：与 provider 无关的处理（空 tools 数组剥离、按 `compat.thinkingFormat` 剥离不兼容的 `thinking` 字段、移除 SDK 注入的隐式 output cap、孤儿 toolResult 配对兜底）写在 `provider-compat.js` 主入口或同目录通用 helper。孤儿 toolResult 兜底逻辑在 [`tool-pairing.js`](tool-pairing.js)（provider-agnostic helper，删除 OpenAI-compatible 序列化 payload 里父 `tool_calls` 已被 SDK 丢弃的 `role:"tool"`，issue #1285），由主入口 `stripOrphanToolMessages` 调用；它不是 provider 子模块（无 `matches`/`apply`），不进 first-match-wins 分发。
 3. **Provider-specific 补丁拆子文件**：每个 provider 一个 `core/provider-compat/<name>.js`，互不串扰。
 4. **接口契约**：每个子文件 export `matches(model) → boolean`（必须容忍 `model = null/undefined`，不抛错）和 `apply(payload, model, options) → payload`（不可 mutate 输入 payload）。如果该 provider 有 serializer 前的 replay/history 约束，可以额外 export `normalizeContextMessages(messages, model, options) → messages`。
 5. **dispatch 单调性**：dispatcher 按数组顺序遍历，第一个 `matches` 返回 true 的子模块负责处理（first-match-wins）。一个 model 只匹配一个子模块。新 provider 默认加在数组末尾；只有当模块的 `matches` 是另一模块的子集（更具体的规则）时才前置，避免被通用规则吞掉。

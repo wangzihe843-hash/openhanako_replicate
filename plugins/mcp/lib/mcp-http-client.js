@@ -10,13 +10,36 @@ const SSE_ACCEPT = "text/event-stream";
 const FALLBACK_STATUSES = new Set([400, 404, 405]);
 
 export class McpHttpError extends Error {
-  constructor(message, { status = null, body = "", headers = null } = {}) {
+  constructor(message, { status = null, body = "", headers = null, oauthError = "" } = {}) {
     super(message);
     this.name = "McpHttpError";
     this.status = status;
     this.body = body;
     this.headers = headers;
+    // OAuth 2.0 error code (RFC 6749 §5.2) when this failure came from a token
+    // endpoint, e.g. "invalid_grant" (the refresh token is dead). Empty for
+    // transport-level failures (a 5xx / 404 with no OAuth error body). Used by
+    // the auth-terminal classifier so a dead refresh token routes to needs-auth
+    // even though its HTTP status is 400, not 401/403.
+    this.oauthError = oauthError;
   }
+}
+
+// An auth-terminal failure means re-authorization is required and retrying with
+// the same credentials is futile (→ needs-auth, never backoff/loop). Two
+// independent signals qualify: an HTTP 401/403 on a resource request, or an
+// OAuth token-endpoint error that invalidates the grant/client. invalid_grant =
+// the refresh token expired/was revoked; invalid_client / unauthorized_client =
+// the registered client is no longer accepted. Transient failures (network drop,
+// 5xx, request-shape OAuth errors) are deliberately excluded so they keep
+// reconnecting. Single source of truth shared by the runtime and the client.
+const AUTH_TERMINAL_OAUTH_ERRORS = new Set(["invalid_grant", "invalid_client", "unauthorized_client"]);
+
+export function isAuthTerminalError(err) {
+  // McpHttpError carries status/oauthError directly; a non-McpHttpError transport
+  // error may still surface a status field — read both uniformly via optional chain.
+  if (err?.status === 401 || err?.status === 403) return true;
+  return typeof err?.oauthError === "string" && AUTH_TERMINAL_OAUTH_ERRORS.has(err.oauthError);
 }
 
 export function parseSseEvents(text) {
@@ -109,14 +132,27 @@ function requestTimeoutMs(server) {
 }
 
 export class McpStreamableHttpClient {
-  constructor(server, { fetchImpl = globalThis.fetch, log = console } = {}) {
+  constructor(server, { fetchImpl = globalThis.fetch, log = console, onClose = null, getAuthToken = null, refreshAuthToken = null } = {}) {
     this.server = server;
     this.fetchImpl = fetchImpl;
     this.log = log;
+    // onClose({ reason, expected, needsAuth }) reports an unexpected death of a
+    // previously-live session so McpRuntime can decide whether to reconnect.
+    // The inline 404 session refresh recovers in place and never reports here.
+    this.onClose = typeof onClose === "function" ? onClose : null;
+    // OAuth self-heal seams (#1286 ③a, 方案 A). The live client snapshots the
+    // connector, so config refreshes never reach this.server. getAuthToken()
+    // returns the freshest access token per request (runtime pre-refreshes near
+    // expiry + dedups); refreshAuthToken() force-refreshes on a 401. Both are
+    // optional: when absent, the client falls back to the snapshot token and a
+    // 401 is not retried (pure-client unit tests keep the old behavior).
+    this.getAuthToken = typeof getAuthToken === "function" ? getAuthToken : null;
+    this.refreshAuthToken = typeof refreshAuthToken === "function" ? refreshAuthToken : null;
     this.endpoint = server?.url || "";
     this._nextId = 1;
     this._closed = true;
     this._initialized = false;
+    this._stopping = false;
     this.sessionId = "";
     this.initialProtocolVersion = resolveInitialMcpProtocolVersion({ headers: connectorHeaders(server) });
     this.protocolVersion = this.initialProtocolVersion;
@@ -130,6 +166,7 @@ export class McpStreamableHttpClient {
     if (this.running) return;
     if (!this.endpoint) throw new Error("MCP connector URL is required");
     this._closed = false;
+    this._stopping = false;
     try {
       await this.initialize();
       this._initialized = true;
@@ -172,7 +209,77 @@ export class McpStreamableHttpClient {
 
   async request(method, params = {}, opts = {}) {
     if (!this.running) throw new Error("MCP connector is not running");
-    return this._request(method, params, opts);
+    try {
+      return await this._request(method, params, opts);
+    } catch (err) {
+      // 401 OAuth self-heal (方案 A, bounded to a single retry). A live request
+      // came back 401: ask the runtime to force a token refresh, and if it
+      // produced a new token, replay this one request with it. We retry AT MOST
+      // once — a second 401, or no refresh available, falls through to failing
+      // the session as needs-auth. No loop.
+      if (this._is401(err) && this.refreshAuthToken) {
+        const refreshed = await this._tryRefreshAndRetry(method, params, opts);
+        if (refreshed.recovered) return refreshed.result;
+        // Refresh produced a more specific failure (the refresh token itself is
+        // dead → invalid_grant, or the retry hit a fresh error). Adopt it as the
+        // failing context: a dead refresh token is auth-terminal, so _failLiveSession
+        // routes it to needs-auth instead of leaving a bare 401 to back off blindly.
+        if (refreshed.error) err = refreshed.error;
+      }
+      // A live request failed in a way the inline 404 self-heal could not recover
+      // (network drop, 5xx, unrecovered 401/403, or a dead refresh token's
+      // invalid_grant). Tear the session down and report it so the runtime can run
+      // backoff reconnect; auth-terminal failures additionally flag needsAuth for
+      // the OAuth self-heal / re-auth. This never silently swallows the error.
+      this._failLiveSession(err);
+      throw err;
+    }
+  }
+
+  _is401(err) {
+    return err instanceof McpHttpError && err.status === 401;
+  }
+
+  // Force a refresh, then replay the request exactly once. Returns whether the
+  // retry recovered (and its result) or carries the retry's error so the caller
+  // fails the session with the most relevant context. Never recurses.
+  async _tryRefreshAndRetry(method, params, opts) {
+    let newToken = "";
+    try {
+      newToken = stringOrEmpty(await this.refreshAuthToken());
+    } catch (refreshErr) {
+      // Refresh itself failed. Surface that error (an invalid_grant means the
+      // refresh token is dead → auth-terminal; a 5xx means transient) so the
+      // caller fails the session with the more specific, correctly-classified
+      // context rather than the original opaque 401.
+      return { recovered: false, error: refreshErr };
+    }
+    // No new token but no throw (e.g. no refresh token configured): keep the
+    // original 401 as the failing context — it is already auth-terminal.
+    if (!newToken) return { recovered: false };
+    try {
+      return { recovered: true, result: await this._request(method, params, opts) };
+    } catch (retryErr) {
+      return { recovered: false, error: retryErr };
+    }
+  }
+
+  _failLiveSession(err) {
+    if (this._stopping || this._closed) return;
+    // Auth-terminal (401/403, or a dead refresh token surfacing as an OAuth
+    // invalid_grant from the forced refresh) → needs-auth: re-auth, never loop.
+    // Everything else (network drop, 5xx, transient refresh failure) stays a
+    // generic close so the runtime keeps backoff reconnect. Never swallowed.
+    const needsAuth = isAuthTerminalError(err);
+    this._closed = true;
+    this._initialized = false;
+    if (this.onClose) {
+      this.onClose({
+        reason: err?.message || "connection lost",
+        expected: false,
+        needsAuth,
+      });
+    }
   }
 
   async _request(method, params = {}, { initializing = false, retryOnSessionExpired = true } = {}) {
@@ -202,6 +309,7 @@ export class McpStreamableHttpClient {
   }
 
   async stop() {
+    this._stopping = true;
     this._closed = true;
     this._initialized = false;
     if (this.sessionId) {
@@ -210,7 +318,7 @@ export class McpStreamableHttpClient {
       try {
         await this.fetchImpl(this.endpoint, {
           method: "DELETE",
-          headers: this._headers({ sessionId, includeJson: false }),
+          headers: await this._headers({ sessionId, includeJson: false }),
         });
       } catch (err) {
         this.log.debug?.(`[mcp:${this.server.id}] remote session delete failed: ${err.message}`);
@@ -218,7 +326,7 @@ export class McpStreamableHttpClient {
     }
   }
 
-  _headers({ sessionId = this.sessionId, includeJson = true, initializing = false } = {}) {
+  async _headers({ sessionId = this.sessionId, includeJson = true, initializing = false } = {}) {
     const headers = {
       ...headersWithoutMcpProtocolVersion(connectorHeaders(this.server)),
       Accept: STREAMABLE_ACCEPT,
@@ -226,7 +334,9 @@ export class McpStreamableHttpClient {
     };
     if (includeJson) headers["Content-Type"] = "application/json";
     if (sessionId && !initializing) headers["MCP-Session-Id"] = sessionId;
-    const token = authToken(this.server);
+    // Prefer the runtime's freshest token (handles near-expiry refresh out of
+    // band); fall back to the connector snapshot when no callback is injected.
+    const token = this.getAuthToken ? stringOrEmpty(await this.getAuthToken()) : authToken(this.server);
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
@@ -234,7 +344,7 @@ export class McpStreamableHttpClient {
   async _postJsonRpc(payload, { initializing = false } = {}) {
     const response = await fetchWithTimeout(this.fetchImpl, this.endpoint, {
       method: "POST",
-      headers: this._headers({ initializing }),
+      headers: await this._headers({ initializing }),
       body: JSON.stringify(payload),
     }, requestTimeoutMs(this.server));
     if (initializing) {
@@ -269,16 +379,24 @@ export class McpStreamableHttpClient {
 }
 
 export class McpLegacySseClient {
-  constructor(server, { fetchImpl = globalThis.fetch, log = console } = {}) {
+  constructor(server, { fetchImpl = globalThis.fetch, log = console, onClose = null, getAuthToken = null, refreshAuthToken = null } = {}) {
     this.server = server;
     this.fetchImpl = fetchImpl;
     this.log = log;
+    // onClose({ reason, expected }) reports an unexpected stream death so the
+    // runtime can run backoff reconnect; a deliberate stop() is expected.
+    this.onClose = typeof onClose === "function" ? onClose : null;
+    // OAuth self-heal seams (#1286 ③a); see McpStreamableHttpClient for the
+    // contract. Optional — absent callbacks preserve the snapshot-token behavior.
+    this.getAuthToken = typeof getAuthToken === "function" ? getAuthToken : null;
+    this.refreshAuthToken = typeof refreshAuthToken === "function" ? refreshAuthToken : null;
     this.sseUrl = server?.url || "";
     this.messageEndpoint = "";
     this._nextId = 1;
     this._pending = new Map();
     this._queued = new Map();
     this._closed = true;
+    this._stopping = false;
     this._buffer = "";
     this._abort = null;
     this._endpointResolve = null;
@@ -293,6 +411,7 @@ export class McpLegacySseClient {
     if (this.running) return;
     if (!this.sseUrl) throw new Error("MCP connector URL is required");
     this._closed = false;
+    this._stopping = false;
     try {
       await this._connectSse();
       await this.initialize();
@@ -330,12 +449,32 @@ export class McpLegacySseClient {
 
   async request(method, params = {}, { timeout = 30_000 } = {}) {
     if (!this.running) throw new Error("MCP connector is not running");
+    try {
+      return await this._sendRequest(method, params, timeout);
+    } catch (err) {
+      // 401 OAuth self-heal (方案 A, single retry). Force a token refresh and, if
+      // it yields a new token, replay the request once with a fresh id. A second
+      // 401 or no refresh rethrows. No loop.
+      if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
+        let newToken = "";
+        try {
+          newToken = stringOrEmpty(await this.refreshAuthToken());
+        } catch (refreshErr) {
+          throw refreshErr;
+        }
+        if (newToken) return this._sendRequest(method, params, timeout);
+      }
+      throw err;
+    }
+  }
+
+  _sendRequest(method, params, timeout) {
     const id = this._nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     const queued = this._queued.get(id);
     if (queued) {
       this._queued.delete(id);
-      return rpcResult(queued);
+      return Promise.resolve(rpcResult(queued));
     }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -366,6 +505,7 @@ export class McpLegacySseClient {
   }
 
   async stop() {
+    this._stopping = true;
     this._closed = true;
     this.messageEndpoint = "";
     try { this._abort?.abort(); } catch {}
@@ -384,7 +524,7 @@ export class McpLegacySseClient {
     });
     const response = await this.fetchImpl(this.sseUrl, {
       method: "GET",
-      headers: this._headers({ accept: SSE_ACCEPT, includeJson: false }),
+      headers: await this._headers({ accept: SSE_ACCEPT, includeJson: false }),
       signal: this._abort.signal,
     });
     if (!response.ok) {
@@ -409,6 +549,7 @@ export class McpLegacySseClient {
     if (!body?.getReader) {
       const text = await responseText({ text: async () => "" });
       this._consumeSse(text);
+      this._handleStreamClosed("SSE stream produced no readable body");
       return;
     }
     const decoder = new TextDecoder();
@@ -419,6 +560,24 @@ export class McpLegacySseClient {
       this._consumeSse(decoder.decode(value, { stream: true }));
     }
     this._consumeSse(decoder.decode());
+    // The stream ended. Whether the remote closed it or stop() aborted it, the
+    // live session is gone — clear messageEndpoint so running() stops lying
+    // (the :288 stale-positive), reject any in-flight requests, and report an
+    // unexpected close unless this was a deliberate stop().
+    this._handleStreamClosed("SSE stream closed by remote");
+  }
+
+  _handleStreamClosed(reason) {
+    const wasLive = !this._closed && !!this.messageEndpoint;
+    this.messageEndpoint = "";
+    if (this._stopping) return;
+    if (!wasLive) return;
+    this._closed = true;
+    for (const pending of this._pending.values()) {
+      pending.reject(new Error(reason));
+    }
+    this._pending.clear();
+    this.onClose?.({ reason, expected: false });
   }
 
   _consumeSse(chunk) {
@@ -463,7 +622,7 @@ export class McpLegacySseClient {
   async _postMessage(payload) {
     const response = await fetchWithTimeout(this.fetchImpl, this.messageEndpoint, {
       method: "POST",
-      headers: this._headers({ accept: "application/json", includeJson: true }),
+      headers: await this._headers({ accept: "application/json", includeJson: true }),
       body: JSON.stringify(payload),
     }, requestTimeoutMs(this.server));
     if (!response.ok) {
@@ -476,10 +635,10 @@ export class McpLegacySseClient {
     }
   }
 
-  _headers({ accept, includeJson }) {
+  async _headers({ accept, includeJson }) {
     const headers = { ...connectorHeaders(this.server), Accept: accept };
     if (includeJson) headers["Content-Type"] = "application/json";
-    const token = authToken(this.server);
+    const token = this.getAuthToken ? stringOrEmpty(await this.getAuthToken()) : authToken(this.server);
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }

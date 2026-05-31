@@ -64,6 +64,11 @@ describe("channels route membership contract", () => {
           ? [{ conversationId, agentId: "hana", state: "idle", summary: "已回复" }]
           : [],
       },
+      channelRouter: {
+        tickerSnapshot: (conversationId) => conversationId === "ch_crew"
+          ? { active: { channelName: conversationId, agentId: "hana", delivered: 1, agentCount: 2 } }
+          : null,
+      },
     }));
   });
 
@@ -221,6 +226,9 @@ describe("channels route membership contract", () => {
         state: "idle",
       }),
     ]);
+    expect(data.ticker).toEqual({
+      active: { channelName: "ch_crew", agentId: "hana", delivered: 1, agentCount: 2 },
+    });
   });
 
   it("persists channel agent phone tool mode in channel metadata", async () => {

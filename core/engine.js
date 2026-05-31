@@ -1198,13 +1198,10 @@ export class HanaEngine {
     await this._agentMgr.initAllAgents(log, this._agentMgr.activeAgentId);
     log(`[init] 2/5 ${this._agentMgr.agents.size} 个 agent 已就绪`);
 
-    // 2b. 确保所有 agent 都有 channels.md（老用户升级兼容）
-    for (const [id] of this._agentMgr.agents) {
-      const channelsMd = path.join(this.agentsDir, id, 'channels.md');
-      if (!fs.existsSync(channelsMd)) {
-        await this._channels.setupChannelsForNewAgent(id);
-      }
-    }
+    // 2b. 补齐频道游标投影（老用户升级兼容）。
+    // repairChannelCursorProjection 扫描所有频道，为每个"已是成员且有 config"
+    // 的 agent 把缺失的 last-read cursor 补进 channels.md，是按成员真相源
+    // 重建投影的单一入口，覆盖缺 channels.md 的老 agent。
     await this._channels.repairChannelCursorProjection();
 
     // 3. ResourceLoader + Skills

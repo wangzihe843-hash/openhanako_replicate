@@ -115,6 +115,53 @@ describe("channel-ticker membership source", () => {
     });
   });
 
+  it("exposes the active phone delivery snapshot for channel progress UI", async () => {
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    const agentDir = path.join(agentsDir, "hana");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n- ch_crew (last: never)\n", "utf-8");
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui"],
+    });
+    await appendMessage(path.join(channelsDir, `${channelId}.md`), "user", "ping");
+
+    const started = deferred();
+    const executeCheck = vi.fn(async (_agentId, _channelName, _messages, _updates, opts) => {
+      started.resolve();
+      await new Promise((resolve) => opts.signal.addEventListener("abort", resolve, { once: true }));
+      return { replied: false };
+    });
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana"],
+      executeCheck,
+      onMemorySummarize: vi.fn(),
+    });
+
+    ticker.start();
+    const delivery = ticker.triggerImmediate(channelId);
+    await started.promise;
+
+    expect(ticker.snapshot(channelId)).toMatchObject({
+      active: {
+        channelName: channelId,
+        agentId: "hana",
+        delivered: 1,
+        agentCount: 1,
+        checks: 1,
+      },
+    });
+
+    await ticker.stop();
+    await delivery;
+  });
+
   it("aborts the active immediate delivery synchronously when a newer channel message arrives", async () => {
     tmpDir = mktemp();
     const channelsDir = path.join(tmpDir, "channels");
@@ -355,6 +402,48 @@ describe("channel-ticker membership source", () => {
       /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
     );
     expect(onMemorySummarize).not.toHaveBeenCalled();
+  });
+
+  it("advances the bookmark only through the delivered unread window", async () => {
+    vi.useFakeTimers();
+    tmpDir = mktemp();
+    const channelsDir = path.join(tmpDir, "channels");
+    const agentsDir = path.join(tmpDir, "agents");
+    const agentDir = path.join(agentsDir, "hana");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "channels.md"), "# 频道\n\n- ch_crew (last: never)\n", "utf-8");
+
+    const { id: channelId } = await createChannel(channelsDir, {
+      id: "ch_crew",
+      name: "Crew",
+      members: ["hana", "yui"],
+    });
+    const channelFile = path.join(channelsDir, `${channelId}.md`);
+    vi.setSystemTime(new Date("2026-05-30T00:00:00Z"));
+    const first = await appendMessage(channelFile, "user", "投递窗口里的消息");
+
+    const executeCheck = vi.fn(async () => {
+      vi.setSystemTime(new Date("2026-05-30T00:00:05Z"));
+      await appendMessage(channelFile, "user", "检查期间新到的消息");
+      return { replied: false, passed: true };
+    });
+    const ticker = createChannelTicker({
+      channelsDir,
+      agentsDir,
+      getAgentOrder: () => ["hana"],
+      executeCheck,
+      onMemorySummarize: vi.fn(),
+    });
+
+    ticker.start();
+    try {
+      await ticker.triggerImmediate(channelId);
+    } finally {
+      await ticker.stop();
+      vi.useRealTimers();
+    }
+
+    expect(readBookmarks(path.join(agentDir, "channels.md")).get(channelId)).toBe(first.timestamp);
   });
 
   it("prioritizes mentioned agents while still delivering mention context to other members", async () => {

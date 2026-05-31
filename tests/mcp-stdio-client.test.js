@@ -20,7 +20,13 @@ class FakeProcess extends EventEmitter {
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
     this.stdin = {
-      end: vi.fn(),
+      // A well-behaved MCP server exits when its stdin reaches EOF.
+      end: vi.fn(() => {
+        if (this.exitCode == null) {
+          this.exitCode = 0;
+          queueMicrotask(() => this.emit("exit", 0, null));
+        }
+      }),
       write: vi.fn((line) => {
         const message = JSON.parse(String(line));
         if (message.id == null) return true;
@@ -78,6 +84,85 @@ describe("MCP stdio client", () => {
       await client.stop();
     },
   );
+
+  it("fires onClose with expected=false when the child exits unexpectedly", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+    const onClose = vi.fn();
+
+    const client = new McpStdioClient({
+      id: "local",
+      command: "npx",
+      args: ["-y", "mcp-server-example"],
+    }, { log: console, onClose });
+
+    await client.start();
+    expect(client.running).toBe(true);
+
+    // Child dies on its own (crash / killed by OS), not via stop().
+    proc.exitCode = 1;
+    proc.emit("exit", 1, null);
+
+    expect(client.running).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ expected: false }));
+  });
+
+  it("does not report an unexpected close when stop() terminates the child", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+    const onClose = vi.fn();
+
+    const client = new McpStdioClient({
+      id: "local",
+      command: "npx",
+      args: ["-y", "mcp-server-example"],
+    }, { log: console, onClose });
+
+    await client.start();
+    await client.stop();
+
+    // A deliberate stop must never be reported as an unexpected disconnect.
+    const unexpectedCalls = onClose.mock.calls.filter(([info]) => info && info.expected === false);
+    expect(unexpectedCalls).toHaveLength(0);
+  });
+
+  it("escalates SIGTERM to SIGKILL when a child ignores graceful shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = new FakeProcess();
+      // A stubborn child ignores stdin EOF, forcing the kill escalation path.
+      proc.stdin.end = vi.fn();
+      // Override kill so SIGTERM is ignored; only SIGKILL actually exits.
+      proc.kill = vi.fn((signal) => {
+        if (signal === "SIGKILL") {
+          proc.exitCode = 0;
+          proc.emit("exit", null, "SIGKILL");
+        }
+        return true;
+      });
+      spawnMock.mockReturnValueOnce(proc);
+
+      const client = new McpStdioClient({
+        id: "stubborn",
+        command: "npx",
+        args: [],
+      }, { log: console });
+
+      await client.start();
+      const stopPromise = client.stop();
+
+      // After the graceful window, SIGTERM is sent; child still alive.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+      // After the force window, SIGKILL is sent and the child finally exits.
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+      await stopPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("wraps Windows .cmd shims with cmd.exe while preserving registry env", () => {
     const spec = resolveMcpStdioSpawnSpec({

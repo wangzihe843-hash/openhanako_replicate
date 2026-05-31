@@ -2,12 +2,13 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildBetterSqliteRuntimeSmokeScript,
   buildExternalPackage,
   buildJiebaRuntimeSmokeScript,
   collectInstalledOptionalDependencyDirs,
+  readPackageJsonWithRetry,
   verifyExternalEntrypoints,
 } from "../scripts/build-server-deps.mjs";
 
@@ -202,5 +203,162 @@ describe("build-server external dependency packaging", () => {
     }));
 
     expect(() => verifyExternalEntrypoints(outDir, ["esm-only-package"])).not.toThrow();
+  });
+});
+
+// ── readPackageJsonWithRetry: errno distinction contract ──────────────────────
+// These tests verify the core contract that separates the #1307 root cause:
+//   - EMFILE/ENFILE (transient handle exhaustion) → retry, then re-throw as I/O error
+//   - ENOENT (file genuinely absent) → propagate immediately as product failure
+//   - JSON SyntaxError (corrupt file) → propagate immediately as product failure
+//
+// Because EMFILE is hard to produce deterministically without kernel cooperation,
+// we test by directly stubbing fs.readFileSync, which is the exact seam that
+// the Windows build fails at during nft trace's file handle exhaustion.
+describe("readPackageJsonWithRetry errno contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns parsed JSON on first successful read", () => {
+    const outDir = makeTempDir();
+    const filePath = path.join(outDir, "package.json");
+    fs.writeFileSync(filePath, JSON.stringify({ name: "ok-pkg", version: "1.0.0" }));
+
+    const result = readPackageJsonWithRetry(filePath);
+    expect(result).toEqual({ name: "ok-pkg", version: "1.0.0" });
+  });
+
+  it("retries on EMFILE and returns the value when a later attempt succeeds", () => {
+    const outDir = makeTempDir();
+    const filePath = path.join(outDir, "package.json");
+    const content = JSON.stringify({ name: "retry-pkg", version: "2.0.0" });
+    fs.writeFileSync(filePath, content);
+
+    const original = fs.readFileSync.bind(fs);
+    let callCount = 0;
+    vi.spyOn(fs, "readFileSync").mockImplementation((...args) => {
+      callCount++;
+      if (callCount <= 2) {
+        const err = Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+        throw err;
+      }
+      return original(...args);
+    });
+
+    // Should not throw — succeeds on 3rd attempt.
+    const result = readPackageJsonWithRetry(filePath, { maxRetries: 5, baseDelayMs: 1 });
+    expect(result).toEqual({ name: "retry-pkg", version: "2.0.0" });
+    expect(callCount).toBe(3);
+  });
+
+  it("re-throws EMFILE after exhausting all retries (does NOT silently swallow or misreport as missing)", () => {
+    const outDir = makeTempDir();
+    const filePath = path.join(outDir, "package.json");
+    fs.writeFileSync(filePath, JSON.stringify({ name: "pkg" }));
+
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      const err = Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+      throw err;
+    });
+
+    // Must re-throw with code EMFILE, not silently return undefined or fold into failures.
+    expect(() => readPackageJsonWithRetry(filePath, { maxRetries: 2, baseDelayMs: 1 }))
+      .toThrow(expect.objectContaining({ code: "EMFILE" }));
+  });
+
+  it("re-throws ENFILE after exhausting all retries", () => {
+    const outDir = makeTempDir();
+    const filePath = path.join(outDir, "package.json");
+    fs.writeFileSync(filePath, JSON.stringify({ name: "pkg" }));
+
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      const err = Object.assign(new Error("ENFILE: file table overflow"), { code: "ENFILE" });
+      throw err;
+    });
+
+    expect(() => readPackageJsonWithRetry(filePath, { maxRetries: 2, baseDelayMs: 1 }))
+      .toThrow(expect.objectContaining({ code: "ENFILE" }));
+  });
+
+  it("propagates ENOENT immediately without retry (file truly absent)", () => {
+    const outDir = makeTempDir();
+    const missingPath = path.join(outDir, "nonexistent.json");
+
+    let callCount = 0;
+    const spy = vi.spyOn(fs, "readFileSync");
+    spy.mockImplementation((...args) => {
+      callCount++;
+      // Let the real implementation run — it will throw ENOENT
+      return fs.readFileSync.wrappedImplementation?.(...args)
+        ?? (() => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); })();
+    });
+
+    // Use real fs (no mock) to get genuine ENOENT — spy just counts calls.
+    vi.restoreAllMocks();
+    let thrown;
+    try {
+      readPackageJsonWithRetry(missingPath, { maxRetries: 5, baseDelayMs: 1 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.code).toBe("ENOENT");
+  });
+
+  it("propagates JSON SyntaxError immediately (corrupt package.json)", () => {
+    const outDir = makeTempDir();
+    const filePath = path.join(outDir, "package.json");
+    fs.writeFileSync(filePath, "{ this is: not valid json !!!");
+
+    expect(() => readPackageJsonWithRetry(filePath, { maxRetries: 5, baseDelayMs: 1 }))
+      .toThrow(SyntaxError);
+  });
+});
+
+// ── verifyExternalEntrypoints EMFILE contract ─────────────────────────────────
+// Verifies that EMFILE from readPackageJsonWithRetry causes verifyExternalEntrypoints
+// to re-throw as an I/O error rather than adding to failures as "missing entrypoint".
+describe("verifyExternalEntrypoints EMFILE contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-throws EMFILE as I/O error, not as entrypoint verification failure", () => {
+    const outDir = makeTempDir();
+    const packageDir = path.join(outDir, "node_modules", "my-pkg");
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+      name: "my-pkg",
+      version: "1.0.0",
+      main: "./index.js",
+    }));
+    fs.writeFileSync(path.join(packageDir, "index.js"), "module.exports = {};\n");
+
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      const err = Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+      throw err;
+    });
+
+    // Must re-throw EMFILE rather than report "[build-server] external package entrypoint verification failed"
+    let thrown;
+    try {
+      verifyExternalEntrypoints(outDir, ["my-pkg"], { readRetries: 0, readBaseDelayMs: 1 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeDefined();
+    // The thrown error must be the EMFILE I/O error, not the product-integrity message.
+    // If this assertion fails, the errno-discrimination fix is broken.
+    expect(thrown.code).toBe("EMFILE");
+    expect(thrown.message).not.toMatch(/entrypoint verification failed/);
+  });
+
+  it("still reports ENOENT as a genuine entrypoint failure (package not installed)", () => {
+    const outDir = makeTempDir();
+    // Note: node_modules/missing-pkg directory does not exist at all.
+
+    expect(() => verifyExternalEntrypoints(outDir, ["missing-pkg"]))
+      .toThrow(/entrypoint verification failed/);
   });
 });

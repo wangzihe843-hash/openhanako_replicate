@@ -289,6 +289,52 @@ describe("createFeishuAdapter", () => {
     }));
   });
 
+  it("drops only self bot/app echoes while keeping other bot messages if Feishu delivers them", async () => {
+    const onMessage = vi.fn();
+
+    createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage,
+    });
+
+    await registeredHandlers["im.message.receive_v1"]({
+      message: {
+        message_id: "om_self_app",
+        message_type: "text",
+        content: JSON.stringify({ text: "self echo" }),
+        chat_id: "oc_group",
+        chat_type: "group",
+      },
+      sender: {
+        sender_type: "app",
+        sender_id: { app_id: "app-id", open_id: "ou_self" },
+      },
+    });
+
+    await registeredHandlers["im.message.receive_v1"]({
+      message: {
+        message_id: "om_other_bot",
+        message_type: "text",
+        content: JSON.stringify({ text: "other bot" }),
+        chat_id: "oc_group",
+        chat_type: "group",
+      },
+      sender: {
+        sender_type: "bot",
+        sender_id: { app_id: "other-app", open_id: "ou_other_bot" },
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "other bot",
+      userId: "ou_other_bot",
+      sessionKey: "fs_group_oc_group@hana",
+    }));
+  });
+
   it("falls back to the first available post locale and keeps media-only posts", async () => {
     const onMessage = vi.fn();
 
@@ -680,6 +726,24 @@ describe("createFeishuAdapter", () => {
         content: markdownPostContent("- item"),
       },
     });
+  });
+
+  it("renders explicit Feishu at tokens as post at elements", async () => {
+    const adapter = createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    await adapter.sendReply("oc_chat", "请 <at user_id=\"ou_agent\">Agent B</at> 看一下");
+
+    const content = JSON.parse(mockMessageCreate.mock.calls[0][0].data.content);
+    expect(content.zh_cn.content).toEqual([[
+      { tag: "md", text: "请 " },
+      { tag: "at", user_id: "ou_agent", user_name: "Agent B" },
+      { tag: "md", text: " 看一下" },
+    ]]);
   });
 
   it("declares Feishu edit-message streaming and updates the same post markdown message", async () => {

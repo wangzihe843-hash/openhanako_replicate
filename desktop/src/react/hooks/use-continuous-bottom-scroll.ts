@@ -30,6 +30,14 @@ export interface ContinuousBottomScrollController {
   cancelFollow: () => void;
   followBottom: () => void;
   scrollToBottom: (options?: ScrollToBottomOptions) => void;
+  /**
+   * Arm a one-shot "instant landing": the very next bottom-follow (whether driven by the
+   * ResizeObserver content callback or an explicit `followBottom()` call) snaps straight to the
+   * bottom instead of animating, then disarms. Use this when switching/hydrating a session so the
+   * first fill lands without a visible scroll animation, while subsequent streaming growth keeps
+   * the smooth follow. Honors sticky: if the user has scrolled up, nothing moves.
+   */
+  armInstantLanding: () => void;
 }
 
 const DEFAULT_STICKY_THRESHOLD = 48;
@@ -63,6 +71,7 @@ export function useContinuousBottomScroll({
   const rafRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number | null>(null);
   const followingRef = useRef(false);
+  const instantLandingArmedRef = useRef(false);
 
   activeRef.current = active;
   thresholdRef.current = stickyThreshold;
@@ -93,7 +102,12 @@ export function useContinuousBottomScroll({
   const cancelFollow = useCallback(() => {
     stopFollow();
     isStickyRef.current = false;
+    instantLandingArmedRef.current = false;
   }, [stopFollow]);
+
+  const armInstantLanding = useCallback(() => {
+    instantLandingArmedRef.current = true;
+  }, []);
 
   const runFrame = useCallback((time: number) => {
     const el = scrollRef.current;
@@ -134,7 +148,18 @@ export function useContinuousBottomScroll({
     const target = maxScrollTop(el);
     const delta = target - el.scrollTop;
     if (delta <= 0.5) {
+      // Already at bottom: a no-op follow must NOT consume an armed instant landing — the arm is
+      // reserved for the first *meaningful* growth (the async hydrate after a switch).
       el.scrollTop = target;
+      return;
+    }
+
+    // First fill after a session switch/hydrate: snap to bottom synchronously instead of
+    // animating from a mid position, then disarm so subsequent streaming growth animates normally.
+    if (instantLandingArmedRef.current) {
+      instantLandingArmedRef.current = false;
+      el.scrollTop = target;
+      stopFollow();
       return;
     }
 
@@ -221,5 +246,6 @@ export function useContinuousBottomScroll({
     cancelFollow,
     followBottom,
     scrollToBottom,
-  }), [cancelFollow, checkSticky, followBottom, markSticky, scrollToBottom]);
+    armInstantLanding,
+  }), [armInstantLanding, cancelFollow, checkSticky, followBottom, markSticky, scrollToBottom]);
 }

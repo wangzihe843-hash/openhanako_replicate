@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { usePanel } from '../hooks/use-panel';
 import { hanaFetch } from '../hooks/use-hana-fetch';
@@ -490,7 +490,12 @@ export function BridgeChatTranscript({
     stickyThreshold: BRIDGE_SCROLL_THRESHOLD,
   });
 
-  useEffect(() => {
+  // Switch landing in the layout phase (pre-paint). Only arm an instant landing when the target
+  // session has no messages yet, so the first async hydrate (0 -> N) snaps without animating;
+  // an already-loaded session lands via the instant scroll and later growth = streaming (smooth follow).
+  useLayoutEffect(() => {
+    const alreadyHydrated = (useStore.getState().chatSessions[sessionPath]?.items?.length ?? 0) > 0;
+    if (!alreadyHydrated) bottomScroll.armInstantLanding();
     bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
   }, [bottomScroll, sessionPath]);
 

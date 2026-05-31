@@ -121,4 +121,16 @@ describe('InputArea layout', () => {
     expect(shellBlock).toMatch(/bottom:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\)\)/);
     expect(footerBlock).toMatch(/height:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\) \+ 5rem\)/);
   });
+
+  it('floats the scroll-to-bottom FAB above the measured input card instead of a fixed offset (#1297)', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const fabBlock = cssBlock(css, String.raw`\.scrollToBottomFab`);
+
+    // FAB 必须跟随输入卡片实时高度（--input-card-h），不能写死固定 bottom，
+    // 否则多行输入时输入框升高会盖住 FAB（#1297）。
+    expect(fabBlock).toMatch(/bottom:\s*calc\(var\(--input-card-h[^)]*\)\s*\+\s*var\(--space-md\)\)/);
+  });
 });

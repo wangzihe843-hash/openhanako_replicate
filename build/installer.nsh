@@ -11,6 +11,26 @@ CRCCheck off
 
 !include LogicLib.nsh
 
+!macro hanakoInstallTimingMark _PHASE _EVENT
+  Push $0
+  Push $1
+  InitPluginsDir
+  System::Call 'kernel32::GetTickCount() i.r0'
+  FileOpen $1 "$PLUGINSDIR\hanaagent-install-timing.log" a
+  ${IfNot} ${Errors}
+    FileWrite $1 "tickMs=$0 phase=${_PHASE} event=${_EVENT}$\r$\n"
+    FileClose $1
+  ${EndIf}
+  ClearErrors
+  Pop $1
+  Pop $0
+!macroend
+
+!macro hanakoPersistInstallTiming
+  IfFileExists "$PLUGINSDIR\hanaagent-install-timing.log" 0 +2
+    CopyFiles /SILENT "$PLUGINSDIR\hanaagent-install-timing.log" "$INSTDIR\hanaagent-install-timing.log"
+!macroend
+
 !macro hanakoFindProcess _NAME _RETURN
   nsExec::ExecToLog `"$SYSDIR\cmd.exe" /D /C tasklist /FI "IMAGENAME eq ${_NAME}" /FO CSV | "$SYSDIR\find.exe" "${_NAME}"`
   Pop ${_RETURN}
@@ -52,6 +72,7 @@ CRCCheck off
 !macroend
 
 !macro hanakoVerifyInstallSurface
+  !insertmacro hanakoInstallTimingMark "installSurfaceSelfCheck" "start"
   Push $0
   Push $R2
   StrCpy $R2 ""
@@ -76,6 +97,8 @@ CRCCheck off
     FileClose $0
     MessageBox MB_OK|MB_ICONSTOP "HanaAgent installation is incomplete. Missing or unreadable files:$R2$\r$\n$\r$\nDiagnostic file:$\r$\n$INSTDIR\hanaagent-install-diagnostics.log"
     SetErrorLevel 1
+    !insertmacro hanakoInstallTimingMark "installSurfaceSelfCheck" "failed"
+    !insertmacro hanakoPersistInstallTiming
     Pop $R2
     Pop $0
     Quit
@@ -86,6 +109,7 @@ CRCCheck off
   ${EndIf}
   Pop $R2
   Pop $0
+  !insertmacro hanakoInstallTimingMark "installSurfaceSelfCheck" "end"
 !macroend
 
 !macro hanakoWriteInstallDirProcessCleaner _SCRIPT
@@ -157,6 +181,7 @@ CRCCheck off
 !macro hanakoStopInstallDirProcesses
   ; Stop every process launched from this install root. This catches renamed
   ; helper processes and stale child processes that do not use fixed image names.
+  !insertmacro hanakoInstallTimingMark "stopInstallDirProcesses" "start"
   Push $0
   Push $1
   InitPluginsDir
@@ -167,9 +192,11 @@ CRCCheck off
   Pop $0
   Pop $1
   Pop $0
+  !insertmacro hanakoInstallTimingMark "stopInstallDirProcesses" "end"
 !macroend
 
 !macro hanakoFindInstallDirProcesses _RETURN
+  !insertmacro hanakoInstallTimingMark "findInstallDirProcesses" "start"
   Push $0
   Push $1
   InitPluginsDir
@@ -180,6 +207,7 @@ CRCCheck off
   Pop ${_RETURN}
   Pop $1
   Pop $0
+  !insertmacro hanakoInstallTimingMark "findInstallDirProcesses" "end"
 !macroend
 
 !macro hanakoBypassOldUninstallerForUpdate
@@ -205,9 +233,14 @@ CRCCheck off
 !macroend
 
 !macro customInstall
+  !insertmacro hanakoInstallTimingMark "customInstall" "start"
   !insertmacro hanakoVerifyInstallSurface
+  !insertmacro hanakoInstallTimingMark "customInstall" "end"
+  !insertmacro hanakoPersistInstallTiming
   ${If} ${isUpdated}
   ${AndIf} ${isForceRun}
+    !insertmacro hanakoInstallTimingMark "relaunch" "start"
+    !insertmacro hanakoPersistInstallTiming
     HideWindow
     StrCpy $1 "--updated"
     ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
@@ -234,6 +267,7 @@ CRCCheck off
 !macroend
 
 !macro customCheckAppRunning
+  !insertmacro hanakoInstallTimingMark "customCheckAppRunning" "start"
   !insertmacro hanakoBypassOldUninstallerForUpdate
   !insertmacro hanakoStopInstallDirProcesses
   !insertmacro hanakoFindInstallDirProcesses $R0
@@ -293,6 +327,7 @@ CRCCheck off
       ${EndIf}
   ${EndIf}
   ${EndIf}
+  !insertmacro hanakoInstallTimingMark "customCheckAppRunning" "end"
 !macroend
 
 !macro hanakoCleanBundledServer
@@ -303,7 +338,64 @@ CRCCheck off
     RMDir /r "$INSTDIR\resources\server"
 !macroend
 
+!macro hanakoWriteLegacyShortcutCleaner _SCRIPT
+  Push $0
+  FileOpen $0 "${_SCRIPT}" w
+  FileWrite $0 `$$ErrorActionPreference = 'SilentlyContinue'$\r$\n`
+  FileWrite $0 `$$installDir = [Environment]::GetEnvironmentVariable('HANA_INSTALL_DIR')$\r$\n`
+  FileWrite $0 `if ([string]::IsNullOrWhiteSpace($$installDir)) { exit 0 }$\r$\n`
+  FileWrite $0 `$$installFull = [System.IO.Path]::GetFullPath($$installDir).TrimEnd('\')$\r$\n`
+  FileWrite $0 `$$installPrefix = $$installFull + '\'$\r$\n`
+  FileWrite $0 `$$shell = New-Object -ComObject WScript.Shell$\r$\n`
+  FileWrite $0 `function Test-HanaInstallPath([string]$$value) {$\r$\n`
+  FileWrite $0 `  if ([string]::IsNullOrWhiteSpace($$value)) { return $$false }$\r$\n`
+  FileWrite $0 `  try {$\r$\n`
+  FileWrite $0 `    $$expanded = [Environment]::ExpandEnvironmentVariables($$value)$\r$\n`
+  FileWrite $0 `    $$full = [System.IO.Path]::GetFullPath($$expanded)$\r$\n`
+  FileWrite $0 `    return $$full.Equals($$installFull, [StringComparison]::OrdinalIgnoreCase) -or $$full.StartsWith($$installPrefix, [StringComparison]::OrdinalIgnoreCase)$\r$\n`
+  FileWrite $0 `  } catch { return $$false }$\r$\n`
+  FileWrite $0 `}$\r$\n`
+  FileWrite $0 `function Remove-OwnedShortcut([string]$$path) {$\r$\n`
+  FileWrite $0 `  if ([string]::IsNullOrWhiteSpace($$path)) { return }$\r$\n`
+  FileWrite $0 `  if (-not (Test-Path -LiteralPath $$path -PathType Leaf)) { return }$\r$\n`
+  FileWrite $0 `  try {$\r$\n`
+  FileWrite $0 `    $$shortcut = $$shell.CreateShortcut($$path)$\r$\n`
+  FileWrite $0 `    if ((Test-HanaInstallPath $$shortcut.TargetPath) -or (Test-HanaInstallPath $$shortcut.WorkingDirectory)) {$\r$\n`
+  FileWrite $0 `      Remove-Item -LiteralPath $$path -Force$\r$\n`
+  FileWrite $0 `    }$\r$\n`
+  FileWrite $0 `  } catch {}$\r$\n`
+  FileWrite $0 `}$\r$\n`
+  FileWrite $0 `Remove-OwnedShortcut ([Environment]::GetEnvironmentVariable('HANA_DESKTOP_LEGACY_SHORTCUT'))$\r$\n`
+  FileWrite $0 `Remove-OwnedShortcut ([Environment]::GetEnvironmentVariable('HANA_STARTMENU_LEGACY_SHORTCUT'))$\r$\n`
+  FileWrite $0 `$$legacyDir = [Environment]::GetEnvironmentVariable('HANA_STARTMENU_LEGACY_DIR')$\r$\n`
+  FileWrite $0 `if (-not [string]::IsNullOrWhiteSpace($$legacyDir) -and (Test-Path -LiteralPath $$legacyDir -PathType Container)) {$\r$\n`
+  FileWrite $0 `  Get-ChildItem -LiteralPath $$legacyDir -Filter '*.lnk' | Where-Object { -not $$_.PSIsContainer } | ForEach-Object { Remove-OwnedShortcut $$_.FullName }$\r$\n`
+  FileWrite $0 `  try { Remove-Item -LiteralPath $$legacyDir -Force -ErrorAction Stop } catch {}$\r$\n`
+  FileWrite $0 `}$\r$\n`
+  FileClose $0
+  Pop $0
+!macroend
+
+!macro hanakoRemoveLegacyGlobalShortcuts
+  !insertmacro hanakoInstallTimingMark "legacyShortcutCleanup" "start"
+  Push $0
+  Push $1
+  InitPluginsDir
+  StrCpy $1 "$PLUGINSDIR\hanako-clean-legacy-shortcuts.ps1"
+  !insertmacro hanakoWriteLegacyShortcutCleaner "$1"
+  System::Call 'kernel32::SetEnvironmentVariable(t "HANA_INSTALL_DIR", t "$INSTDIR") i.r0'
+  System::Call 'kernel32::SetEnvironmentVariable(t "HANA_DESKTOP_LEGACY_SHORTCUT", t "$DESKTOP\Hanako.lnk") i.r0'
+  System::Call 'kernel32::SetEnvironmentVariable(t "HANA_STARTMENU_LEGACY_SHORTCUT", t "$SMPROGRAMS\Hanako.lnk") i.r0'
+  System::Call 'kernel32::SetEnvironmentVariable(t "HANA_STARTMENU_LEGACY_DIR", t "$SMPROGRAMS\Hanako") i.r0'
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$1"`
+  Pop $0
+  Pop $1
+  Pop $0
+  !insertmacro hanakoInstallTimingMark "legacyShortcutCleanup" "end"
+!macroend
+
 !macro hanakoRemoveOwnedInstallTrees
+  !insertmacro hanakoInstallTimingMark "removeOwnedInstallTrees" "start"
   DetailPrint "Removing HanaAgent-owned install files"
   SetOutPath "$TEMP"
   RMDir /r "$INSTDIR\resources\server"
@@ -319,6 +411,10 @@ CRCCheck off
   RMDir /r "$INSTDIR\swiftshader"
   Delete "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   Delete "$INSTDIR\${UNINSTALL_FILENAME}"
+  Delete "$INSTDIR\Hanako.exe"
+  Delete "$INSTDIR\Uninstall Hanako.exe"
+  Delete "$INSTDIR\hanako-install-diagnostics.log"
+  !insertmacro hanakoRemoveLegacyGlobalShortcuts
   Delete "$INSTDIR\uninstallerIcon.ico"
   Delete "$INSTDIR\*.pak"
   Delete "$INSTDIR\*.bin"
@@ -328,21 +424,27 @@ CRCCheck off
   Delete "$INSTDIR\*.html"
   Delete "$INSTDIR\LICENSE*"
   Delete "$INSTDIR\*.ico"
+  !insertmacro hanakoInstallTimingMark "removeOwnedInstallTrees" "end"
 !macroend
 
 !macro hanakoPrepareOwnedOverlay
+  !insertmacro hanakoInstallTimingMark "prepareOwnedOverlay" "start"
   !insertmacro hanakoStopInstallDirProcesses
   !insertmacro hanakoRemoveOwnedInstallTrees
   ClearErrors
+  !insertmacro hanakoInstallTimingMark "prepareOwnedOverlay" "end"
 !macroend
 
 !macro customInit
+  !insertmacro hanakoInstallTimingMark "customInit" "start"
   !insertmacro hanakoStopInstallDirProcesses
   ; Wait for file handles to release.
   Sleep 2000
+  !insertmacro hanakoInstallTimingMark "customInit" "end"
 !macroend
 
 !macro customUnInstallCheck
+  !insertmacro hanakoInstallTimingMark "customUnInstallCheck" "start"
   ${If} ${Errors}
     DetailPrint `Previous uninstaller could not be launched; preparing a HanaAgent-owned overlay.`
   ${ElseIf} $R0 != 0
@@ -350,9 +452,11 @@ CRCCheck off
   ${EndIf}
   !insertmacro hanakoPrepareOwnedOverlay
   ClearErrors
+  !insertmacro hanakoInstallTimingMark "customUnInstallCheck" "end"
 !macroend
 
 !macro customUnInstallCheckCurrentUser
+  !insertmacro hanakoInstallTimingMark "customUnInstallCheckCurrentUser" "start"
   ${If} ${Errors}
     DetailPrint `Previous current-user uninstaller could not be launched; continuing with HanaAgent-owned overlay.`
   ${ElseIf} $R0 != 0
@@ -360,16 +464,21 @@ CRCCheck off
   ${EndIf}
   !insertmacro hanakoPrepareOwnedOverlay
   ClearErrors
+  !insertmacro hanakoInstallTimingMark "customUnInstallCheckCurrentUser" "end"
 !macroend
 
 !macro customRemoveFiles
+  !insertmacro hanakoInstallTimingMark "customRemoveFiles" "start"
   !insertmacro hanakoStopInstallDirProcesses
   Delete "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   !insertmacro hanakoRemoveOwnedInstallTrees
   RMDir "$INSTDIR"
+  !insertmacro hanakoInstallTimingMark "customRemoveFiles" "end"
 !macroend
 
 !macro customUnInit
+  !insertmacro hanakoInstallTimingMark "customUnInit" "start"
   !insertmacro hanakoStopInstallDirProcesses
   Sleep 2000
+  !insertmacro hanakoInstallTimingMark "customUnInit" "end"
 !macroend

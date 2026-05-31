@@ -1,6 +1,12 @@
 export type McpTransport = 'stdio' | 'remote' | 'streamable-http' | 'sse';
 export type McpAuthType = 'none' | 'bearer' | 'oauth';
-export type McpConnectorStatus = 'running' | 'stopped';
+export type McpConnectorStatus =
+  | 'running'
+  | 'stopped'
+  | 'connecting'
+  | 'reconnecting'
+  | 'failed'
+  | 'needs-auth';
 
 export interface McpTool {
   name: string;

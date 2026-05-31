@@ -121,8 +121,8 @@ contextBridge.exposeInMainWorld("hana", {
   closeSkillViewer: () => ipcRenderer.invoke("close-skill-viewer"),
   // 原生拖拽（书桌文件拖到 Finder / 聊天区）
   startDrag: (filePaths) => ipcRenderer.send("start-drag", filePaths),
-  // 系统通知
-  showNotification: (title, body) => ipcRenderer.invoke("show-notification", title, body),
+  // 系统通知（agentId 标识触发的助手，主进程据此设头像 icon；缺失则无 icon）
+  showNotification: (title, body, agentId) => ipcRenderer.invoke("show-notification", title, body, agentId ?? null),
   // 窗口控制（Windows/Linux 自绘标题栏）
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),

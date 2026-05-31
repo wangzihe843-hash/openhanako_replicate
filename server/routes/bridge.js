@@ -25,6 +25,30 @@ import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capabi
 import { recordSecurityAuditEvent } from "../http/security-audit.js";
 
 const MAX_BRIDGE_MEDIA_SIZE = 50 * 1024 * 1024;
+const FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
+
+function feishuLongConnectionInfo() {
+  return {
+    eventDelivery: "long_connection",
+    callbackUrlRequired: false,
+    longConnection: {
+      status: "not_tested",
+      reason: "bridge/test validates credentials only; the runtime WSClient reports live long-connection status after the connector is enabled.",
+    },
+  };
+}
+
+function feishuTestInfo({ credentialOk, response, data } = {}) {
+  const logId = data?.error?.log_id || data?.log_id || null;
+  return {
+    credentialOk,
+    ...feishuLongConnectionInfo(),
+    ...(response ? { httpStatus: response.status } : {}),
+    ...(data?.code !== undefined ? { feishuCode: data.code } : {}),
+    ...(data?.msg ? { feishuMessage: data.msg } : {}),
+    ...(logId ? { logId } : {}),
+  };
+}
 
 function normalizeBridgeManagerRef(ref) {
   if (ref && typeof ref.get === "function") {
@@ -501,19 +525,30 @@ export function createBridgeRoute(engine, bridgeManagerRef) {
         const me = await bot.getMe();
         return c.json({ ok: true, info: { username: me.username, name: me.first_name } });
       } else if (platform === "feishu") {
-        const resp = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
+        const resp = await fetch(FEISHU_TENANT_TOKEN_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             app_id: effectiveCredentials.appId,
             app_secret: effectiveCredentials.appSecret,
           }),
+          signal: AbortSignal.timeout(10_000),
         });
         const data = await resp.json();
         if (data.code === 0) {
-          return c.json({ ok: true, info: { msg: t("error.tokenSuccess") } });
+          return c.json({
+            ok: true,
+            info: {
+              msg: t("error.tokenSuccess"),
+              ...feishuTestInfo({ credentialOk: true, response: resp, data }),
+            },
+          });
         }
-        return c.json({ ok: false, error: data.msg || t("error.verifyFailed") });
+        return c.json({
+          ok: false,
+          error: data.msg || t("error.verifyFailed"),
+          info: feishuTestInfo({ credentialOk: false, response: resp, data }),
+        });
       } else if (platform === "qq") {
         // v2 鉴权：appID + appSecret → access_token → /users/@me
         const tokenRes = await fetch("https://bots.qq.com/app/getAppAccessToken", {

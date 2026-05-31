@@ -13,9 +13,11 @@ import css from './Desk.module.css';
 async function loadCwdSkills() {
   const s = useStore.getState();
   if (!s.deskBasePath) return;
+  const params = new URLSearchParams({ dir: s.deskBasePath });
+  if (s.selectedAgentId) params.set('agentId', s.selectedAgentId);
   try {
     const res = await hanaFetch(
-      `/api/desk/skills?dir=${encodeURIComponent(s.deskBasePath)}`,
+      `/api/desk/skills?${params}`,
     );
     const data = await res.json();
     useStore.setState({ cwdSkills: data.skills || [] });
@@ -132,10 +134,11 @@ export function DeskCwdSkillsPanel() {
       console.log('[cwd-skills] filePath=', filePath, 'file.name=', file.name);
       if (!filePath) continue;
       try {
+        const s = useStore.getState();
         const res = await hanaFetch('/api/desk/install-skill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filePath, dir }),
+          body: JSON.stringify({ filePath, dir, ...(s.selectedAgentId ? { agentId: s.selectedAgentId } : {}) }),
         });
         const data = await res.json();
         if (data.error) {

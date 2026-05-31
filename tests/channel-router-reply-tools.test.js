@@ -321,6 +321,61 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("RAW MODEL TEXT SHOULD NOT BE POSTED");
   });
 
+  it("keeps a committed channel_reply decision when the phone session aborts after posting", async () => {
+    runAgentSessionMock.mockClear();
+    runAgentPhoneSessionMock.mockClear();
+    runAgentPhoneSessionMock.mockImplementationOnce(async (_agentId, _rounds, options) => {
+      const replyTool = options.extraCustomTools.find((tool) => tool.name === "channel_reply");
+      await replyTool.execute("tool-call-1", { content: "已经写入频道的回复" });
+      const err = new Error("delivery aborted after channel reply");
+      err.name = "AbortError";
+      throw err;
+    });
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-abort-after-reply-"));
+    const channelsDir = path.join(root, "channels");
+    const agentsDir = path.join(root, "agents");
+    const userDir = path.join(root, "user");
+    const productDir = path.join(root, "product");
+    fs.mkdirSync(path.join(agentsDir, "hanako"), { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(path.join(productDir, "yuan"), { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, "hanako", "config.yaml"), "agent:\n  name: Hanako\n", "utf-8");
+    fs.writeFileSync(path.join(channelsDir, "ch_crew.md"), "---\nid: ch_crew\nmembers: [hanako]\n---\n", "utf-8");
+
+    const activityRecord = vi.fn();
+    const router = new ChannelRouter({
+      hub: {
+        engine: {
+          channelsDir,
+          agentsDir,
+          userDir,
+          productDir,
+          isChannelsEnabled: () => true,
+        },
+        eventBus: { emit: vi.fn() },
+        agentPhoneActivities: { record: activityRecord },
+      },
+    });
+
+    const result = await router._executeCheck(
+      "hanako",
+      "ch_crew",
+      [{ sender: "user", timestamp: "2026-05-07 17:00:00", body: "@Hanako ping" }],
+      [],
+    );
+
+    expect(result).toMatchObject({
+      replied: true,
+      replyContent: "已经写入频道的回复",
+    });
+    expect(activityRecord.mock.calls.map((call) => call[0].state)).toContain("idle");
+    expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).toContain("已经写入频道的回复");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("refuses channel_reply when the running agent has been removed from the channel", async () => {
     runAgentSessionMock.mockClear();
     runAgentPhoneSessionMock.mockClear();

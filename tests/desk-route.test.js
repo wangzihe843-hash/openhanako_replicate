@@ -181,6 +181,39 @@ describe("desk route", () => {
     }
   });
 
+  it("allows a selected agent explicit home folder without switching the engine focus", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
+    try {
+      const currentHome = path.join(tempRoot, "hana");
+      const selectedHome = path.join(tempRoot, "mio");
+      fs.mkdirSync(currentHome, { recursive: true });
+      fs.mkdirSync(selectedHome, { recursive: true });
+      fs.writeFileSync(path.join(selectedHome, "mio.md"), "ok");
+
+      const engine = {
+        deskCwd: currentHome,
+        homeCwd: currentHome,
+        getExplicitHomeCwd: vi.fn((agentId) => (agentId === "mio" ? selectedHome : null)),
+        getHomeCwd: vi.fn((agentId) => (agentId === "mio" ? selectedHome : currentHome)),
+      };
+
+      const { createDeskRoute } = await import("../server/routes/desk.js");
+      const app = new Hono();
+      app.route("/api", createDeskRoute(engine, null));
+
+      const blocked = await app.request(`/api/desk/files?dir=${encodeURIComponent(selectedHome)}`);
+      expect(await blocked.json()).toHaveProperty("error");
+
+      const allowed = await app.request(`/api/desk/files?dir=${encodeURIComponent(selectedHome)}&agentId=mio`);
+      expect(allowed.status).toBe(200);
+      const data = await allowed.json();
+      expect(data.basePath).toBe(selectedHome);
+      expect(data.files.map(f => f.name)).toContain("mio.md");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("allows the app file browser to open persisted workspace history outside the agent sandbox", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
     try {

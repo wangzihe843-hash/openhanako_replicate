@@ -13,6 +13,20 @@ import { createModuleLogger } from "../lib/debug-log.js";
 
 const log = createModuleLogger("llm-utils");
 
+/**
+ * 格式化错误消息，透传 err.cause 的根因信息。
+ * 当 fetch 失败时（如代理 ECONNREFUSED），顶层 message 是 "fetch failed"，
+ * 真正的根因在 err.cause 里；不展开 cause 会让诊断日志没有任何价值。
+ */
+function formatError(err) {
+  const top = err?.message || String(err);
+  if (!err?.cause) return top;
+  const cause = err.cause;
+  const causeMsg = cause?.message || String(cause);
+  const causeCode = cause?.code ? ` [${cause.code}]` : "";
+  return `${top} — caused by: ${causeMsg}${causeCode}`;
+}
+
 /** Pi SDK content block 是否为工具调用（兼容 tool_use / toolCall 两种格式） */
 export const isToolCallBlock = (b) => (b.type === "tool_use" || b.type === "toolCall") && !!b.name;
 
@@ -175,7 +189,7 @@ Rules:
   } catch (err) {
     // AbortError（超时）不算失败，静默返回 null 让调用方走 fallback
     if (err.name === "AbortError" || err.name === "TimeoutError" || err.code === "LLM_TIMEOUT") return null;
-    log.error(`summarizeTitle failed: ${err.message}`);
+    log.error(`summarizeTitle failed: ${formatError(err)}`);
     return null;
   }
 }
@@ -211,7 +225,7 @@ export async function translateSkillNames(utilConfig, names, lang) {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     return jsonMatch ? JSON.parse(jsonMatch[0]) : {};
   } catch (err) {
-    log.error(`translateSkillNames 失败: ${err.message}`);
+    log.error(`translateSkillNames 失败: ${formatError(err)}`);
     return {};
   }
 }
@@ -290,8 +304,8 @@ Rules:
 
     return text;
   } catch (err) {
-    log(`[summarize] error: ${err.message}`);
-    log.error(`summarizeActivity failed: ${err.message}`);
+    log(`[summarize] error: ${formatError(err)}`);
+    log.error(`summarizeActivity failed: ${formatError(err)}`);
     return null;
   }
 }
@@ -337,7 +351,7 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
       usageContext: utilityUsageContext(utilConfig, "activity_summary_quick", "scheduled"),
     });
   } catch (err) {
-    log.error(`summarizeActivityQuick failed: ${err.message}`);
+    log.error(`summarizeActivityQuick failed: ${formatError(err)}`);
     return null;
   }
 }
@@ -432,7 +446,7 @@ Examples:
 
     base = sanitizeAgentId(text);
   } catch (err) {
-    log.error(`generateAgentId LLM failed: ${err.message}`);
+    log.error(`generateAgentId LLM failed: ${formatError(err)}`);
   }
 
   // LLM 失败或洗完太短 → 用 name 自己做 slug（比时间戳兜底更有语义）
@@ -486,7 +500,7 @@ export async function generateDescription(utilConfig, personality, locale) {
     const text = normalizePlainDescription(raw, 100);
     return text || null;
   } catch (err) {
-    log.error(`generateDescription failed: ${err.message}`);
+    log.error(`generateDescription failed: ${formatError(err)}`);
     return null;
   }
 }

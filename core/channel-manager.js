@@ -11,11 +11,8 @@ import path from "path";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { t } from "../server/i18n.js";
 import {
-  createChannel as createChannelFile,
   addBookmarkEntry,
-  addChannelMember,
   getChannelMembers,
-  MIN_CHANNEL_AGENT_MEMBERS,
   removeChannelMember,
   removeBookmarkEntry,
   deleteChannel,
@@ -127,40 +124,17 @@ export class ChannelManager {
   }
 
   /**
-   * 为新 agent 设置默认频道
-   * - 确保 ch_crew 频道存在并加入
-   * - 写 agent 的 channels.md
+   * 为新 agent 写入频道游标投影。
+   *
+   * 只做一件事：扫描所有频道，把"已把该 agent 列为成员的频道"写进它的
+   * channels.md（last-read cursor）。不自动建群、不自动拉人——建群由用户
+   * 通过 POST /channels 或 channel 工具显式发起。
    */
   async setupChannelsForNewAgent(agentId) {
     const channelsMdPath = path.join(this._agentsDir, agentId, "channels.md");
 
-    // 确保 ch_crew 频道存在
-    const crewFile = path.join(this._channelsDir, "ch_crew.md");
-    if (!fs.existsSync(crewFile)) {
-      const members = this._listConfiguredAgentIds();
-      if (!members.includes(agentId)) members.push(agentId);
-      if (members.length < MIN_CHANNEL_AGENT_MEMBERS) {
-        return;
-      }
-
-      const chName = t("error.defaultChannelName");
-      const chDesc = t("error.defaultChannelDesc");
-      await createChannelFile(this._channelsDir, {
-        id: "ch_crew",
-        name: chName,
-        description: chDesc,
-        members,
-        intro: chDesc,
-      });
-      for (const memberId of members) {
-        await addBookmarkEntry(path.join(this._agentsDir, memberId, "channels.md"), "ch_crew");
-      }
-    } else {
-      await addChannelMember(crewFile, agentId);
-    }
-
-    // 写 agent 的 channels.md（扫描所有频道，加入包含该 agent 的）
-    const allChannels = [];
+    // 扫描所有频道，加入包含该 agent 的（写 last-read cursor 投影）
+    const memberChannels = [];
     try {
       const files = fs.readdirSync(this._channelsDir);
       for (const f of files) {
@@ -168,26 +142,15 @@ export class ChannelManager {
         const channelId = f.replace(".md", "");
         const members = getChannelMembers(path.join(this._channelsDir, f));
         if (members.includes(agentId)) {
-          allChannels.push(channelId);
+          memberChannels.push(channelId);
         }
       }
     } catch {
       // Missing channels directory is fine during first-run initialization.
     }
 
-    for (const ch of allChannels) {
+    for (const ch of memberChannels) {
       await addBookmarkEntry(channelsMdPath, ch);
-    }
-  }
-
-  _listConfiguredAgentIds() {
-    try {
-      return fs.readdirSync(this._agentsDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .filter((id) => fs.existsSync(path.join(this._agentsDir, id, "config.yaml")));
-    } catch {
-      return [];
     }
   }
 

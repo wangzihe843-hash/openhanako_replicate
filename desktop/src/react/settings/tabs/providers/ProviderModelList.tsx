@@ -158,6 +158,8 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
       if (models.length === 0) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
       // Backend already cached the results; just refresh the dropdown
       setDiscoveredModels(models);
+      setSearch('');
+      setDropdownOpen(true);
       showFetchHint(t('settings.providers.fetchSuccess', { name: providerId, n: models.length }), true);
     } catch {
       showFetchHint(t('settings.providers.fetchFailed'), false);

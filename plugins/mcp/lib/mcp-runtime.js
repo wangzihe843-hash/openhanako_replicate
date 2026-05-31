@@ -3,12 +3,15 @@ import path from "node:path";
 import { McpStdioClient } from "./mcp-stdio-client.js";
 import {
   McpAutoHttpClient,
+  McpHttpError,
   McpLegacySseClient,
   McpStreamableHttpClient,
+  isAuthTerminalError,
 } from "./mcp-http-client.js";
 import {
   createMcpOAuthAuthorization,
   exchangeMcpOAuthCode,
+  refreshMcpOAuthToken,
 } from "./mcp-oauth.js";
 import { createSettingsUpdate } from "../../../lib/tools/settings-update-result.js";
 
@@ -21,6 +24,29 @@ const DEFAULT_CONFIG = {
 const TRANSPORTS = new Set(["stdio", "remote", "streamable-http", "sse"]);
 const AUTH_TYPES = new Set(["none", "bearer", "oauth"]);
 const MASKED_SECRET = "********";
+
+// Auto-reconnect backoff, modelled on the MCP SDK's reconnection options:
+// start at 1s, double each attempt, cap at ~30s, give up after a bounded number
+// of attempts and leave the connector "failed" for manual recovery. These are
+// runtime-only knobs (not persisted); per-connector opt-out is `autoReconnect`.
+const RECONNECT_INITIAL_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+const RECONNECT_GROW_FACTOR = 2;
+const RECONNECT_MAX_ATTEMPTS = 8;
+
+// Refresh an OAuth access token this long before its stated expiry, so a request
+// firing right at the boundary still goes out with a valid token (clock skew +
+// in-flight latency buffer). Matches the design's 60s pre-expiry window.
+const OAUTH_REFRESH_LEEWAY_MS = 60_000;
+
+// Runtime-only connector statuses layered on top of the persisted config.
+// "running"/"stopped" are derived from the live client; the rest are transient
+// in-memory states surfaced through getState() (and thus the stage-1 status
+// tool) without ever being written to disk.
+const STATUS_CONNECTING = "connecting";
+const STATUS_RECONNECTING = "reconnecting";
+const STATUS_FAILED = "failed";
+const STATUS_NEEDS_AUTH = "needs-auth";
 
 function normalizeTool(tool) {
   if (!tool || typeof tool.name !== "string" || !tool.name) return null;
@@ -65,8 +91,18 @@ function normalizeConnector(connector, fallbackId = "") {
     authorizationToken,
     oauthClientId: stringOrEmpty(connector.oauthClientId || connector.clientId),
     oauthClientSecret: stringOrEmpty(connector.oauthClientSecret || connector.clientSecret),
+    // Provenance of the OAuth client id (CLAUDE.md #6 read-time migration):
+    // "manual" = user-entered, "dcr" = obtained via RFC 7591 dynamic client
+    // registration. Old connectors predate this field — default to "manual"
+    // when a client id is already present, otherwise "" (unknown/unregistered).
+    clientIdSource: normalizeClientIdSource(connector),
     oauth,
     autoStart: connector.autoStart === true || connector.isActive === true,
+    // Read-time compat (CLAUDE.md #7): connectors saved before auto-reconnect
+    // existed have no `autoReconnect` field; default them to true so existing
+    // users get keepalive without a migration script. Only an explicit `false`
+    // opts out of automatic reconnection.
+    autoReconnect: connector.autoReconnect !== false,
     tools,
   };
 }
@@ -139,6 +175,62 @@ export function normalizeMcpToolResult(value) {
   };
 }
 
+// Unprefixed name; PluginManager.addTool prefixes the plugin id ("mcp"),
+// so the agent-facing tool resolves to "mcp_connectors_status".
+export const MCP_CONNECTORS_STATUS_TOOL_NAME = "connectors_status";
+
+const MCP_CONNECTORS_STATUS_DESCRIPTION =
+  "Report the live status of every configured MCP connector (running/stopped, last error, "
+  + "auth state, and cached tool count). Use this to self-diagnose whether an MCP tool failure "
+  + "is a connector problem (stopped/error/auth) versus an upstream API error. Read-only; takes no input.";
+
+// Project the redacted getState() view down to the fields an agent needs for
+// self-diagnosis. getState() is the single source of truth; this never reads
+// connector status from anywhere else and never re-derives secrets.
+function statusConnectorView(connector) {
+  return {
+    id: connector.id,
+    name: connector.name,
+    transport: connector.transport,
+    status: connector.status,
+    error: connector.error || "",
+    authType: connector.authType,
+    authStatus: connector.authStatus,
+    toolCount: Array.isArray(connector.tools) ? connector.tools.length : 0,
+  };
+}
+
+export function createMcpConnectorsStatusToolDefinition({ getState, getGlobalEnabled }) {
+  return {
+    name: MCP_CONNECTORS_STATUS_TOOL_NAME,
+    description: MCP_CONNECTORS_STATUS_DESCRIPTION,
+    parameters: { type: "object", properties: {} },
+    invocationStyle: "pi_tool",
+    metadata: { kind: "mcp", readOnly: true },
+    // Read-only diagnostics are available to any agent whenever Connectors are
+    // globally enabled; they are intentionally not gated per-connector, since
+    // the point is to inspect connectors the agent may not have enabled.
+    isEnabledForAgentConfig: () => getGlobalEnabled() === true,
+    execute: async () => {
+      if (getGlobalEnabled() !== true) {
+        return mcpToolError("MCP is disabled globally. Enable Connectors in Settings to inspect connector status.");
+      }
+      // getState() already runs every connector through publicConnector(),
+      // which masks env/headers and drops tokens/secrets.
+      const state = getState();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            enabled: state.enabled === true,
+            connectors: (state.connectors || []).map(statusConnectorView),
+          }, null, 2),
+        }],
+      };
+    },
+  };
+}
+
 export function createMcpToolDefinition({
   serverId,
   connectorId = serverId,
@@ -207,8 +299,25 @@ export class McpRuntime {
     ));
     this.clients = new Map();
     this.clientErrors = new Map();
+    // Explicit per-connector intent. The single source of truth for "does the
+    // user want this connector running?" — never inferred from clients.has(id).
+    // Only desiredStates.get(id) === "running" permits auto-reconnect.
+    this.desiredStates = new Map();
+    // Runtime-only transient status overrides (connecting/reconnecting/failed/
+    // needs-auth). Absent entry => derive running/stopped from the live client.
+    this.connectorStatus = new Map();
+    // In-flight backoff bookkeeping: { attempts, timer } keyed by connector id.
+    this.reconnectState = new Map();
+    // Connector ids whose client is currently in its start()/initialize phase.
+    // While establishing, the start() promise (and its catch) is the single
+    // authoritative writer; a transport's onClose firing during this window is
+    // ignored so a death never gets handled twice (rejected promise + close).
+    this.establishing = new Set();
     this.toolDisposers = [];
     this.oauthSessions = new Map();
+    // In-flight OAuth refresh promises keyed by connector id. Guarantees a single
+    // refresh per connector even under concurrent near-expiry / 401 callers.
+    this.refreshInFlight = new Map();
   }
 
   async load() {
@@ -228,12 +337,25 @@ export class McpRuntime {
     for (const dispose of this.toolDisposers.splice(0)) {
       try { dispose(); } catch {}
     }
+    // Stop trying to reconnect anything: a runtime teardown is a deliberate
+    // close, so flip every connector's intent to stopped first.
+    for (const id of this.reconnectState.keys()) {
+      const state = this.reconnectState.get(id);
+      if (state?.timer) clearTimeout(state.timer);
+    }
+    this.reconnectState.clear();
+    for (const id of this.clients.keys()) {
+      this.desiredStates.set(id, "stopped");
+    }
     for (const client of this.clients.values()) {
       await client.stop().catch(() => {});
     }
     this.clients.clear();
     this.clientErrors.clear();
+    this.connectorStatus.clear();
+    this.desiredStates.clear();
     this.oauthSessions.clear();
+    this.refreshInFlight.clear();
   }
 
   getConfig() {
@@ -253,7 +375,7 @@ export class McpRuntime {
     const config = this.getConfig();
     const connectors = config.connectors.map((connector) => publicConnector({
       connector,
-      status: this.clients.get(connector.id)?.running ? "running" : "stopped",
+      status: this.connectorStatusFor(connector.id),
       error: this.clientErrors.get(connector.id) || "",
     }));
     return {
@@ -262,6 +384,15 @@ export class McpRuntime {
       servers: connectors,
       agentConfig: normalizeAgentMcpConfig(agentConfig),
     };
+  }
+
+  // Single status derivation: a transient runtime override (connecting/
+  // reconnecting/failed/needs-auth) wins; otherwise read liveness off the
+  // owning client. Never sourced from anywhere else.
+  connectorStatusFor(id) {
+    const override = this.connectorStatus.get(id);
+    if (override) return override;
+    return this.clients.get(id)?.running ? "running" : "stopped";
   }
 
   async setEnabled(enabled) {
@@ -331,22 +462,65 @@ export class McpRuntime {
     if (!config.enabled) throw new Error("MCP connectors are disabled globally");
     const connector = config.connectors.find((s) => s.id === id);
     if (!connector) throw new Error(`MCP connector "${id}" not found`);
+    // Record intent up front: a manual/auto start means the user wants this
+    // connector running, which is what later authorizes auto-reconnect.
+    this.desiredStates.set(id, "running");
+    // A fresh start cancels any pending backoff from a prior death.
+    this._cancelReconnect(id);
     const existing = this.clients.get(id);
-    if (existing?.running) return connector;
+    if (existing?.running) {
+      this.connectorStatus.delete(id);
+      return connector;
+    }
 
-    const client = this.clientFactory(connector, { log: this.ctx.log, fetchImpl: this.fetchImpl });
+    const client = this._createClient(connector);
     this.clients.set(id, client);
     this.clientErrors.delete(id);
+    this.connectorStatus.set(id, STATUS_CONNECTING);
+    this.establishing.add(id);
     try {
       await client.start();
       await this.refreshTools(id);
+      this.connectorStatus.delete(id);
       return this.getConfig().connectors.find((s) => s.id === id);
     } catch (err) {
       this.clients.delete(id);
       this.clientErrors.set(id, err.message || "MCP connector failed to start");
+      this.connectorStatus.delete(id);
       await client.stop().catch(() => {});
       throw err;
+    } finally {
+      this.establishing.delete(id);
     }
+  }
+
+  // Build a client wired to report unexpected disconnects back to this runtime.
+  // The onClose handler closes over the connector id so the reconnect decision
+  // is always made against that connector's own desiredState (ownership unique).
+  // It also captures the client instance: only the connector's *current* client
+  // may drive a close, so a late event from an already-replaced client (e.g. a
+  // stdio exit racing a successful reconnect) is harmlessly ignored.
+  _createClient(connector) {
+    const id = connector.id;
+    const holder = {};
+    holder.client = this.clientFactory(connector, {
+      log: this.ctx.log,
+      fetchImpl: this.fetchImpl,
+      // OAuth self-heal seams (#1286 ③a, 方案 A). The client holds a connector
+      // snapshot, so a refresh written to config never reaches it; these
+      // callbacks let the client pull the freshest token per request and force a
+      // refresh on a 401, all keyed to this connector's id (ownership unique).
+      getAuthToken: () => this.getValidToken(id),
+      refreshAuthToken: () => this.refreshIfPossible(id),
+      onClose: (info) => {
+        // Stale client (already replaced) or a death during the start phase
+        // (owned by the start() promise) — ignore; otherwise handle the close.
+        if (this.clients.get(id) !== holder.client) return;
+        if (this.establishing.has(id)) return;
+        this._onClientClose(id, info || {});
+      },
+    });
+    return holder.client;
   }
 
   async startServer(id) {
@@ -354,6 +528,12 @@ export class McpRuntime {
   }
 
   async stopConnector(id) {
+    // Intent first: mark stopped and tear down any pending reconnect *before*
+    // touching the client, so a close event racing in during stop() can never
+    // resurrect a connector the user just asked to stop.
+    this.desiredStates.set(id, "stopped");
+    this._cancelReconnect(id);
+    this.connectorStatus.delete(id);
     const client = this.clients.get(id);
     if (!client) return;
     this.clients.delete(id);
@@ -363,6 +543,168 @@ export class McpRuntime {
 
   async stopServer(id) {
     return this.stopConnector(id);
+  }
+
+  // ── Auto-reconnect ────────────────────────────────────────────────────────
+  // A transport reported that a connection died. `expected` distinguishes a
+  // deliberate stop() (do nothing) from an unexpected disconnect (maybe
+  // reconnect). All reconnect decisions are gated on explicit intent, never on
+  // whether a client happens to be in the map.
+
+  _onClientClose(id, info) {
+    if (info.expected) return; // deliberate stop/teardown — honour the user.
+
+    // Auth-terminal close (401/403, or a dead refresh token's invalid_grant): the
+    // connection is dead and re-trying with the same invalid credentials would
+    // just fail again. Mark needs-auth and stop here; the OAuth self-heal / manual
+    // re-auth consumes this state. We do NOT silently swallow the failure — the
+    // error stays recorded and surfaced via getState.
+    if (info.needsAuth) {
+      // Auth loss is terminal for automatic recovery: retrying with the same
+      // invalid credentials just fails again. Cancel any in-flight backoff first
+      // so a previously-armed reconnect timer can't overwrite needs-auth, then
+      // mark the state for the OAuth self-heal / manual re-auth to consume.
+      this._cancelReconnect(id);
+      this._markDeadClient(id, info.reason || "authentication required");
+      // "Needs re-auth" is a credential fact, orthogonal to the keepalive
+      // (autoReconnect) preference: report it whenever the connector is still a
+      // going concern (desired-running, present, globally enabled), even when
+      // autoReconnect is off — otherwise that connector would silently fall to
+      // "stopped" and the user would never be told to re-authorize. This matches
+      // the reconnect-attempt path, which also marks needs-auth unconditionally.
+      if (this._isDesiredLiveConnector(id)) {
+        this.connectorStatus.set(id, STATUS_NEEDS_AUTH);
+      } else {
+        // The user already stopped / removed / globally-disabled this connector:
+        // there is nothing to re-auth into, so leave no stale transient override.
+        this.connectorStatus.delete(id);
+      }
+      return;
+    }
+
+    this._markDeadClient(id, info.reason || "connection lost");
+    if (!this._canAutoReconnect(id)) {
+      // Reconnect not permitted (manual stop, global disable, autoReconnect off,
+      // or connector removed). Leave it stopped — do not resurrect.
+      this.connectorStatus.delete(id);
+      return;
+    }
+    this._scheduleReconnect(id);
+  }
+
+  // Record the error and drop the dead client so callTool fails fast, but keep
+  // the transient status override (set by the caller) driving the public view.
+  _markDeadClient(id, reason) {
+    const dead = this.clients.get(id);
+    if (dead) {
+      this.clients.delete(id);
+      dead.stop?.().catch?.(() => {});
+    }
+    this.clientErrors.set(id, reason);
+  }
+
+  // Is this connector still one the user wants live, and that still exists and is
+  // globally enabled? These are the intent gates that say "this connector is a
+  // going concern" — independent of the keepalive (autoReconnect) preference.
+  // A needs-auth credential fact is reported whenever this holds, even when
+  // autoReconnect is off (re-auth is orthogonal to retry-on-drop).
+  _isDesiredLiveConnector(id) {
+    if (this.desiredStates.get(id) !== "running") return false;
+    const config = this.getConfig();
+    if (!config.enabled) return false;
+    return config.connectors.some((s) => s.id === id);
+  }
+
+  // Reconnect is permitted only when ALL intent gates agree. This is the red
+  // line: a single false here means the connector stays down. It layers the
+  // keepalive opt-out (autoReconnect) on top of the going-concern gates.
+  _canAutoReconnect(id) {
+    if (!this._isDesiredLiveConnector(id)) return false;
+    const connector = this.getConfig().connectors.find((s) => s.id === id);
+    return connector?.autoReconnect !== false;
+  }
+
+  _scheduleReconnect(id) {
+    const prior = this.reconnectState.get(id);
+    const attempts = prior?.attempts || 0;
+    if (prior?.timer) clearTimeout(prior.timer);
+    const delay = Math.min(
+      RECONNECT_INITIAL_DELAY_MS * RECONNECT_GROW_FACTOR ** attempts,
+      RECONNECT_MAX_DELAY_MS,
+    );
+    this.connectorStatus.set(id, STATUS_RECONNECTING);
+    const timer = setTimeout(() => {
+      this._attemptReconnect(id).catch((err) => {
+        this.ctx.log.warn?.(`mcp reconnect crashed for ${id}: ${err?.message || err}`);
+      });
+    }, delay);
+    // Don't let a pending reconnect keep the process alive.
+    timer.unref?.();
+    this.reconnectState.set(id, { attempts, timer });
+  }
+
+  async _attemptReconnect(id) {
+    // Re-check intent at fire time: the user may have stopped or disabled while
+    // the backoff timer was pending.
+    if (!this._canAutoReconnect(id)) {
+      this._cancelReconnect(id);
+      this.connectorStatus.delete(id);
+      return;
+    }
+    const connector = this.getConfig().connectors.find((s) => s.id === id);
+    const attempt = (this.reconnectState.get(id)?.attempts || 0) + 1;
+
+    const client = this._createClient(connector);
+    this.clients.set(id, client);
+    this.connectorStatus.set(id, STATUS_RECONNECTING);
+    // While establishing, this attempt's promise is the single authoritative
+    // writer; the client's onClose is suppressed so a death during start can't
+    // be handled twice (rejected promise + close event).
+    this.establishing.add(id);
+    try {
+      await client.start();
+      await this.refreshTools(id);
+      // Success: live again. Clear transient state and the error, reset backoff.
+      this.clientErrors.delete(id);
+      this.connectorStatus.delete(id);
+      this.reconnectState.delete(id);
+    } catch (err) {
+      this.clients.delete(id);
+      await client.stop().catch(() => {});
+      this.clientErrors.set(id, err?.message || "MCP reconnect failed");
+      // Auth error during reconnect (token expired while the connection was
+      // down): retrying with the same credentials is futile. Short-circuit to
+      // needs-auth — do NOT count it as a generic failure or keep backing off.
+      // The OAuth self-heal / manual re-auth consumes this; the error is kept.
+      if (isAuthError(err)) {
+        this._cancelReconnect(id);
+        this.connectorStatus.set(id, STATUS_NEEDS_AUTH);
+        return;
+      }
+      if (attempt >= RECONNECT_MAX_ATTEMPTS) {
+        // Exhausted the budget — give up and wait for a manual start.
+        this.reconnectState.delete(id);
+        this.connectorStatus.set(id, STATUS_FAILED);
+        this.ctx.log.warn?.(`mcp connector ${id} failed to reconnect after ${attempt} attempts`);
+        return;
+      }
+      // Still re-checking intent before scheduling the next attempt.
+      if (!this._canAutoReconnect(id)) {
+        this._cancelReconnect(id);
+        this.connectorStatus.delete(id);
+        return;
+      }
+      this.reconnectState.set(id, { attempts: attempt, timer: null });
+      this._scheduleReconnect(id);
+    } finally {
+      this.establishing.delete(id);
+    }
+  }
+
+  _cancelReconnect(id) {
+    const state = this.reconnectState.get(id);
+    if (state?.timer) clearTimeout(state.timer);
+    this.reconnectState.delete(id);
   }
 
   async refreshTools(id) {
@@ -390,6 +732,11 @@ export class McpRuntime {
     for (const dispose of this.toolDisposers.splice(0)) {
       try { dispose(); } catch {}
     }
+    const statusDefinition = createMcpConnectorsStatusToolDefinition({
+      getState: () => this.getState(),
+      getGlobalEnabled: () => this.getConfig().enabled,
+    });
+    this.toolDisposers.push(this.ctx.registerTool(statusDefinition));
     const config = this.getConfig();
     for (const connector of config.connectors) {
       for (const tool of connector.tools || []) {
@@ -609,7 +956,16 @@ export class McpRuntime {
         resource: session.resource,
         fetchImpl: this.fetchImpl,
       });
-      await this.saveConnectorOAuth(session.connectorId, token);
+      // Full authorization (user logged in): persist the token AND any client
+      // registration the session obtained via DCR, then stop so the next start
+      // rebuilds the live client against the new credentials.
+      await this.saveConnectorOAuth(session.connectorId, token, {
+        clientRegistration: {
+          clientId: stringOrEmpty(session.clientId),
+          clientSecret: stringOrEmpty(session.clientSecret),
+          clientIdSource: stringOrEmpty(session.clientIdSource),
+        },
+      });
       session.status = "done";
       session.result = { connectorId: session.connectorId };
       return session;
@@ -628,19 +984,97 @@ export class McpRuntime {
     return { status: "pending" };
   }
 
-  async saveConnectorOAuth(connectorId, token) {
+  // Full-authorization write-back (initial login / re-login). Persists the token
+  // and any DCR client registration, then STOPS the connector so the next start
+  // rebuilds the live client (which snapshots the connector) against the new
+  // credentials. This is the only OAuth write path that tears down the client.
+  async saveConnectorOAuth(connectorId, token, { clientRegistration = null } = {}) {
+    this._writeConnectorOAuth(connectorId, token, clientRegistration);
+    const saved = await this.stopConnector(connectorId).then(() => this.getConfig());
+    return saved.connectors.find((item) => item.id === connectorId);
+  }
+
+  // Pure persistence of OAuth credentials onto a connector. No client lifecycle
+  // side effects — callers decide whether to stop/restart. Centralizing the
+  // write keeps the oauth/expiresAt/DCR fields in exactly one place.
+  _writeConnectorOAuth(connectorId, token, clientRegistration = null) {
     const config = this.getConfig();
     const connector = config.connectors.find((item) => item.id === connectorId);
     if (!connector) throw new Error(`MCP connector "${connectorId}" not found`);
     connector.authType = "oauth";
     connector.authorizationToken = "";
+    if (clientRegistration?.clientId) {
+      connector.oauthClientId = clientRegistration.clientId;
+      connector.oauthClientSecret = clientRegistration.clientSecret || "";
+      connector.clientIdSource = clientRegistration.clientIdSource || "manual";
+    }
     connector.oauth = {
       ...token,
       expiresAt: token.expiresIn ? token.obtainedAt + token.expiresIn * 1000 : 0,
     };
-    const saved = this.saveConfig(config);
-    await this.stopConnector(connectorId);
-    return saved.connectors.find((item) => item.id === connectorId);
+    return this.saveConfig(config);
+  }
+
+  // Return a usable access token for a connector, refreshing it in place when it
+  // is within 60s of expiry (RFC 6749 §6). The refreshed token is written back
+  // WITHOUT stopping the connector — a live client picks it up via the injected
+  // getAuthToken callback, so an in-use session is never torn down by a refresh.
+  // Concurrent callers are deduplicated onto a single in-flight refresh promise.
+  async getValidToken(connectorId) {
+    const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+    const oauth = connector?.oauth || {};
+    const accessToken = stringOrEmpty(oauth.accessToken);
+    const refreshToken = stringOrEmpty(oauth.refreshToken);
+    const expiresAt = Number(oauth.expiresAt || 0) || 0;
+    const nearExpiry = expiresAt > 0 && Date.now() > expiresAt - OAUTH_REFRESH_LEEWAY_MS;
+    if (!nearExpiry || !refreshToken) return accessToken;
+    return this._refreshConnectorToken(connectorId);
+  }
+
+  // Force a refresh if the connector still has a refresh token, returning the new
+  // access token (or "" if refresh is impossible). Used by the 401 self-heal path.
+  async refreshIfPossible(connectorId) {
+    const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+    const refreshToken = stringOrEmpty(connector?.oauth?.refreshToken);
+    if (!refreshToken) return "";
+    return this._refreshConnectorToken(connectorId);
+  }
+
+  // Single in-flight refresh per connector: many requests hitting a near-expiry
+  // (or 401) at once must not fire N parallel refreshes that race each other's
+  // write-back. The first caller starts the refresh; the rest await the same
+  // promise. The map entry is cleared on settle so a later expiry refreshes anew.
+  _refreshConnectorToken(connectorId) {
+    const inFlight = this.refreshInFlight.get(connectorId);
+    if (inFlight) return inFlight;
+    const promise = this._doRefreshConnectorToken(connectorId)
+      .finally(() => {
+        if (this.refreshInFlight.get(connectorId) === promise) {
+          this.refreshInFlight.delete(connectorId);
+        }
+      });
+    this.refreshInFlight.set(connectorId, promise);
+    return promise;
+  }
+
+  async _doRefreshConnectorToken(connectorId) {
+    const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
+    if (!connector) throw new Error(`MCP connector "${connectorId}" not found`);
+    const oauth = connector.oauth || {};
+    const refreshToken = stringOrEmpty(oauth.refreshToken);
+    if (!refreshToken) throw new Error(`MCP connector "${connectorId}" has no refresh token`);
+    const token = await refreshMcpOAuthToken({
+      tokenEndpoint: stringOrEmpty(oauth.tokenEndpoint),
+      refreshToken,
+      clientId: stringOrEmpty(connector.oauthClientId),
+      clientSecret: stringOrEmpty(connector.oauthClientSecret),
+      scope: stringOrEmpty(oauth.scope),
+      resource: stringOrEmpty(connector.url),
+      fetchImpl: this.fetchImpl,
+    });
+    // Refresh write-back: persist WITHOUT stopping the connector.
+    this._writeConnectorOAuth(connectorId, token);
+    return stringOrEmpty(token.accessToken);
   }
 
   async logoutOAuth(connectorId) {
@@ -659,6 +1093,16 @@ function isPlainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
+}
+
+// Classify a reconnect/start error as auth-terminal (re-auth required, retrying
+// is futile). Delegates to the shared classifier so the rule is identical at the
+// live-request layer (_failLiveSession) and here: an HTTP 401/403, OR a dead
+// refresh token surfacing as an OAuth invalid_grant (HTTP 400) from the
+// pre-request refresh during start(). Used to short-circuit reconnect into
+// needs-auth instead of burning the whole backoff budget re-hammering the AS.
+function isAuthError(err) {
+  return isAuthTerminalError(err);
 }
 
 function normalizeBoolean(value, fieldName) {
@@ -712,6 +1156,12 @@ function normalizeAuthType(value, { authorizationToken, oauth, connector }) {
   if (authorizationToken) return "bearer";
   if (oauth.accessToken || connector.oauthClientId || connector.clientId) return "oauth";
   return "none";
+}
+
+function normalizeClientIdSource(connector) {
+  const raw = stringOrEmpty(connector.clientIdSource);
+  if (raw === "manual" || raw === "dcr") return raw;
+  return stringOrEmpty(connector.oauthClientId || connector.clientId) ? "manual" : "";
 }
 
 function normalizeOAuthState(value) {

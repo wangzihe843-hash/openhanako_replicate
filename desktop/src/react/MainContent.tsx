@@ -54,6 +54,12 @@ async function installSkillFile(filePath: string, sessionPath?: string | null): 
   }
 }
 
+function blockChatAttachmentDropOutsideChat(): boolean {
+  if (useStore.getState().currentTab !== 'channels') return false;
+  useStore.getState().addToast(t('channel.filesUnsupported'), 'error');
+  return true;
+}
+
 /**
  * attachFilesFromPaths — 将文件系统路径列表附加为聊天附件
  *
@@ -64,6 +70,7 @@ export async function attachFilesFromPaths(
   nameMap: Record<string, string> = {},
 ): Promise<void> {
   if (srcPaths.length === 0) return;
+  if (blockChatAttachmentDropOutsideChat()) return;
   if (useStore.getState().attachedFiles.length >= 9) return;
 
   // .skill 文件直接安装为用户技能，不当附件处理
@@ -136,6 +143,7 @@ export async function attachFilesFromPaths(
 
 export async function attachAppFileDragPayloadToInput(payload: AppFileDragPayload): Promise<void> {
   if (payload.files.length === 0) return;
+  if (blockChatAttachmentDropOutsideChat()) return;
   const state = useStore.getState();
   if (state.attachedFiles.length >= 9) return;
 

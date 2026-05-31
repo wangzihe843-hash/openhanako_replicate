@@ -208,13 +208,70 @@ describe("secret custody across HTTP routes", () => {
     });
     const body = await res.json();
 
-    expect(body).toEqual({ ok: true, info: { msg: expect.any(String) } });
+    expect(body).toMatchObject({
+      ok: true,
+      info: {
+        msg: expect.any(String),
+        credentialOk: true,
+        eventDelivery: "long_connection",
+        callbackUrlRequired: false,
+        longConnection: {
+          status: "not_tested",
+        },
+      },
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
       expect.objectContaining({
         body: JSON.stringify({ app_id: "cli-id", app_secret: "fs-plaintext" }),
+        signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("returns structured Feishu credential diagnostics without implying webhook setup", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.js");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        code: 99991663,
+        msg: "app not found",
+        error: { log_id: "202605300001" },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = {
+      currentAgentId: null,
+      getAgent: () => null,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "feishu",
+        credentials: { appId: "cli-id", appSecret: "bad-secret" },
+      }),
+    });
+    const body = await res.json();
+
+    expect(body).toMatchObject({
+      ok: false,
+      error: "app not found",
+      info: {
+        credentialOk: false,
+        eventDelivery: "long_connection",
+        callbackUrlRequired: false,
+        httpStatus: 400,
+        feishuCode: 99991663,
+        feishuMessage: "app not found",
+        logId: "202605300001",
+      },
+    });
   });
 
   it("resolves masked bridge test credentials from the explicit agent only", async () => {

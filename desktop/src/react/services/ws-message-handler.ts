@@ -451,7 +451,9 @@ export function handleServerMessage(msg: any): void {
 
     case 'notification':
       if (window.hana?.showNotification) {
-        window.hana.showNotification(msg.title, msg.body);
+        // agentId 标识触发通知的助手，主进程据此读取该 agent 头像作为通知 icon。
+        // 缺失时透传 null，主进程退回无 icon，禁止从当前焦点 agent 兜底。
+        window.hana.showNotification(msg.title, msg.body, msg.agentId ?? null);
       }
       break;
 
