@@ -89,6 +89,18 @@ describe("ReusableSubagentStore", () => {
     expect(store.removeByAgentId("nobody")).toBe(0); // 无匹配返回 0
   });
 
+  it("removeBySession：删某 parent session 的所有实例，别的 session 不受影响", () => {
+    const store = new ReusableSubagentStore(storePath);
+    store.beginRun("kA1", { childSessionPath: "/r/a1.jsonl", agentId: "毛毛", taskSuffix: "探索", parentSessionPath: "/s/a.jsonl" });
+    store.beginRun("kA2", { childSessionPath: "/r/a2.jsonl", agentId: "毛毛", taskSuffix: "下笔", parentSessionPath: "/s/a.jsonl" });
+    store.beginRun("kB1", { childSessionPath: "/r/b1.jsonl", agentId: "毛毛", taskSuffix: "探索", parentSessionPath: "/s/b.jsonl" });
+    expect(store.removeBySession("/s/a.jsonl")).toBe(2);
+    expect(store.get("kA1")).toBeNull();
+    expect(store.get("kA2")).toBeNull();
+    expect(store.get("kB1")).toBeTruthy(); // 别的 session 不动
+    expect(store.removeBySession("/s/none")).toBe(0);
+  });
+
   it("不同 key 互相隔离", () => {
     const store = new ReusableSubagentStore(storePath);
     store.beginRun("毛毛::探索", { childSessionPath: "/r/a.jsonl", agentId: "毛毛", taskSuffix: "探索" });
@@ -116,14 +128,15 @@ describe("ReusableSubagentStore", () => {
     expect(onDisk.instances.k.reuseKey).toBe("k");
   });
 
-  it("read-time 容错：裸 map / 缺字段不崩，归一化补默认", () => {
+  it("read-time：v1 全局条目 / 无版本裸 map 整体丢弃（破坏性 per-session 迁移），不崩且可续写", () => {
     fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    // 脏数据：没有 schemaVersion 包装的裸 map，记录缺 runCount 等字段
-    fs.writeFileSync(storePath, JSON.stringify({ "legacy::k": { childSessionPath: "/r/old.jsonl" } }));
+    // v1（全局 agentId::suffix 作用域）旧数据：key 无 session 维度，无法重映射到 per-session。
+    fs.writeFileSync(storePath, JSON.stringify({ schemaVersion: 1, instances: { "old::k": { childSessionPath: "/r/old.jsonl" } } }));
     const store = new ReusableSubagentStore(storePath);
-    const rec = store.get("legacy::k");
-    expect(rec).toMatchObject({ reuseKey: "legacy::k", childSessionPath: "/r/old.jsonl" });
-    expect(rec.runCount).toBe(0); // 缺 runCount 容错为 0
+    expect(store.size).toBe(0);              // v1 旧条目整体丢弃
+    expect(store.get("old::k")).toBeNull();
+    store.beginRun("k", { childSessionPath: "/r/a.jsonl", agentId: "a", taskSuffix: "s" });
+    expect(store.get("k").runCount).toBe(1); // 起空账本后正常写入 v2
   });
 
   it("损坏 JSON 文件不崩（按空账本起步）", () => {

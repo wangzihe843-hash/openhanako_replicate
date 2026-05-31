@@ -328,6 +328,12 @@ export function createSessionsRoute(engine, hub = null) {
         lifecycleLog.warn(`subagent run cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
+        // per-session 复用实例随其所属对话退场（reuseKey 含 sessionPath，归属唯一确定）。
+        engine.reusableSubagents?.removeBySession?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`reusable subagent cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
         engine.deferredResults?.suppressBySession?.(sessionPath, reason);
       } catch (err) {
         lifecycleLog.warn(`deferred cleanup failed for ${sessionPath}: ${err.message}`);

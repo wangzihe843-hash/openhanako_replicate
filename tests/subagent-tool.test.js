@@ -679,7 +679,7 @@ describe("subagent-tool 复用模式 (instance)", () => {
   });
   afterEach(() => { vi.useRealTimers(); });
 
-  const REUSE_KEY = composeReuseKey("other-agent", "探索");
+  const REUSE_KEY = composeReuseKey("/test/session.jsonl", "other-agent", "探索");
 
   it("首跑：persist 指向 reusable 目录、无 resumeSessionPath、subagentContext 仍剥离记忆、beginRun 落库", async () => {
     const reuseStore = new ReusableSubagentStore();
@@ -737,10 +737,34 @@ describe("subagent-tool 复用模式 (instance)", () => {
     await tool.execute("c2", { task: "下笔", agent: "other-agent", instance: "下笔" }, null, null, mockCtx());
 
     await vi.waitFor(() => {
-      expect(reuseStore.get(composeReuseKey("other-agent", "探索"))?.runCount).toBe(1);
-      expect(reuseStore.get(composeReuseKey("other-agent", "下笔"))?.runCount).toBe(1);
+      expect(reuseStore.get(composeReuseKey("/test/session.jsonl", "other-agent", "探索"))?.runCount).toBe(1);
+      expect(reuseStore.get(composeReuseKey("/test/session.jsonl", "other-agent", "下笔"))?.runCount).toBe(1);
     });
     expect(reuseStore.size).toBe(2);
+  });
+
+  it("per-session 隔离：同 agent+后缀，不同对话 = 不同实例（B 不续 A 的历史）", async () => {
+    const reuseStore = new ReusableSubagentStore();
+    const capture = makeExecuteIsolated({ replyText: "ok", error: null, sessionPath: "/test/child.jsonl" });
+    const tool = createSubagentTool(makeDeps({
+      executeIsolated: capture,
+      getDeferredStore: () => mockStore,
+      getReusableSubagentStore: () => reuseStore,
+    }));
+
+    // 对话 A 首跑「other-agent·探索」→ 落库到 A 的 reuseKey
+    await tool.execute("c1", { task: "t", agent: "other-agent", instance: "探索" }, null, null, mockCtx("/session/a.jsonl"));
+    await vi.waitFor(() =>
+      expect(reuseStore.get(composeReuseKey("/session/a.jsonl", "other-agent", "探索"))?.childSessionPath).toBe("/test/child.jsonl"));
+
+    // 对话 B 派同 agent+后缀 → 不同 reuseKey，首跑无 resume（绝不串 A 的历史）
+    await tool.execute("c2", { task: "t", agent: "other-agent", instance: "探索" }, null, null, mockCtx("/session/b.jsonl"));
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+    expect(capture.mock.calls[1][1].resumeSessionPath).toBeUndefined();
+
+    // 两个独立实例（A 与 B 各一）
+    expect(reuseStore.size).toBe(2);
+    expect(reuseStore.get(composeReuseKey("/session/b.jsonl", "other-agent", "探索"))).toBeTruthy();
   });
 
   it("不带 instance：维持一次性，persist 不进 reusable 子目录、不碰复用账本", async () => {
