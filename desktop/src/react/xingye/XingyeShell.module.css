@@ -1711,6 +1711,10 @@
   background: linear-gradient(135deg, #b5675b, #c98a7e);
 }
 
+.phoneAppGlyph_trips {
+  background: linear-gradient(135deg, #4f7d6e, #88b3a0);
+}
+
 .phoneAppLabel {
   max-width: 100%;
   min-width: 0;

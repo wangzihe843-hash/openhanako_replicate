@@ -29,12 +29,12 @@ const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 /**
  * 支持「初始化 / 批量 / 补齐」流程的 appId。
  *
- * journal 只用 initializedAt 字段做首次初始化 marker；planBulkRequest /
+ * journal / trips 只用 initializedAt 字段做首次初始化 marker；planBulkRequest /
  * planInitialBulkRequest（14 天窗口）专给 accounting/shopping/secondhand 用，
- * journal 自己有 buildJournalHistoryPrompt / generateJournalHistoryWithAI 走
- * 跨期分布的策略，不调用这俩 planner。
+ * journal 自己有 buildJournalHistoryPrompt / generateJournalHistoryWithAI、trips 有
+ * buildTripsHistoryPrompt / generateTripsHistoryWithAI 走各自的批量策略，不调用这俩 planner。
  */
-export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand', 'journal'] as const;
+export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand', 'journal', 'trips'] as const;
 export type HistoryAppId = (typeof HISTORY_APP_IDS)[number];
 
 export type XingyeAppHistoryState = {

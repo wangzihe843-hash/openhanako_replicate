@@ -1,0 +1,712 @@
+/* ============================================================
+   行程 / Trips — 旧车票（硬板票）列表 + 路线时间轴 + 亲笔批注
+   配色跟随主题 token（--accent / --text / --coral …），暖纸色为模块自带。
+   ============================================================ */
+
+.tripsRoot {
+  /* 暖纸（票根专用，固定的复古纸感，不随换肤） */
+  --trips-paper: #f3e7d6;
+  --trips-paper-2: #ecdcc4;
+  --trips-paper-ink: #4a4036;
+  --trips-paper-line: rgba(120, 96, 64, 0.3);
+  --trips-stamp: #b5524b;
+  --trips-accent: var(--accent, #7e99a8);
+  --trips-accent-rgb: var(--accent-rgb, 126, 153, 168);
+  --trips-coral: var(--coral, #c4827c);
+  --trips-coral-rgb: var(--coral-rgb, 196, 130, 124);
+
+  --trips-font-serif: var(--xingye-font-serif, var(--font-serif, 'Noto Serif SC', 'Songti SC', serif));
+  --trips-font-mono: var(--xingye-font-mono, var(--font-mono, 'JetBrains Mono', ui-monospace, Menlo, monospace));
+  /* 手写体：复用 shell 的「毛笔楷书」token（Ma Shan Zheng，清晰不潦草，由
+     xingye-shell-fonts.ts 通过 @fontsource 自托管加载）。 */
+  --trips-font-hand: var(--xingye-font-brush, 'Ma Shan Zheng', 'STKaiti', 'KaiTi', '楷体', var(--trips-font-serif));
+}
+
+/* ── 列表滚动区 ── */
+.listScroll {
+  padding: 14px 16px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.listIntro {
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--text-light, var(--text-muted));
+  padding: 2px 2px 4px;
+}
+
+.chapterLabel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 2px -4px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+.chapterLabel::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.emptyHint {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+  background: var(--overlay-subtle, rgba(0, 0, 0, 0.03));
+}
+
+.initBanner {
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: var(--text-light, var(--text-muted));
+  background: var(--accent-light, rgba(126, 153, 168, 0.1));
+}
+.initBanner.error {
+  color: var(--danger, #8b4040);
+  border-color: rgba(var(--trips-coral-rgb), 0.4);
+  background: rgba(var(--trips-coral-rgb), 0.08);
+}
+
+/* ============================================================
+   车票 · 硬板票
+   ============================================================ */
+.ticket {
+  position: relative;
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--trips-paper-ink);
+  background: var(--trips-paper);
+  box-shadow:
+    0 8px 20px -10px rgba(60, 48, 30, 0.4),
+    0 2px 4px rgba(60, 48, 30, 0.12);
+  transition:
+    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ticket:hover {
+  transform: translateY(-3px) rotate(-0.3deg);
+  box-shadow:
+    0 16px 30px -12px rgba(60, 48, 30, 0.45),
+    0 3px 6px rgba(60, 48, 30, 0.14);
+}
+.ticket:active {
+  transform: translateY(-1px) scale(0.995);
+}
+
+/* 票根左联 */
+.ticketStub {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px;
+  background: var(--trips-paper-2);
+}
+/* 硬板票特征：左缘一道红印齿边 */
+.ticketStub::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: repeating-linear-gradient(180deg, var(--trips-stamp) 0 7px, transparent 7px 14px);
+  opacity: 0.5;
+}
+.stubMode {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.4px solid var(--trips-paper-ink);
+  color: var(--trips-paper-ink);
+}
+.stubMode svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.stubSerial {
+  writing-mode: vertical-rl;
+  font-family: var(--trips-font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  color: rgba(74, 64, 54, 0.7);
+  max-height: 84px;
+  overflow: hidden;
+}
+.stubPunch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-card, #f8f9fb);
+  box-shadow: inset 0 0 0 1.4px rgba(120, 96, 64, 0.4);
+}
+
+/* 齿孔分隔线 */
+.ticketPerf {
+  position: absolute;
+  left: 74px;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1.6px dashed rgba(120, 96, 64, 0.4);
+  z-index: 2;
+}
+.ticketPerf::before,
+.ticketPerf::after {
+  content: '';
+  position: absolute;
+  left: -7px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bg-card, #f8f9fb);
+}
+.ticketPerf::before {
+  top: -7px;
+}
+.ticketPerf::after {
+  bottom: -7px;
+}
+
+/* 主联 */
+.ticketBody {
+  position: relative;
+  padding: 13px 15px 14px 18px;
+  background: var(--trips-paper);
+  background-image: repeating-linear-gradient(0deg, transparent 0 22px, rgba(120, 96, 64, 0.05) 22px 23px);
+}
+.ticketTopline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: rgba(74, 64, 54, 0.62);
+}
+.ticketRoute {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 7px;
+}
+.ticketPlace {
+  min-width: 0;
+}
+.ticketPlace .pName {
+  font-family: var(--trips-font-serif);
+  font-size: 0.98rem;
+  font-weight: 650;
+  line-height: 1.2;
+  color: var(--trips-paper-ink);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.ticketPlace.toEnd {
+  text-align: right;
+}
+.ticketPlace .pMeta {
+  margin-top: 2px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.6rem;
+  color: rgba(74, 64, 54, 0.6);
+}
+.ticketArrow {
+  color: rgba(74, 64, 54, 0.55);
+  display: grid;
+  place-items: center;
+}
+.ticketArrow svg {
+  width: 26px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+.ticketBottomline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.62rem;
+  color: rgba(74, 64, 54, 0.74);
+}
+.ticketBottomline .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+.ticketTag {
+  padding: 2px 7px;
+  border: 1px solid rgba(120, 96, 64, 0.34);
+  border-radius: 4px;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+}
+
+/* 检票印章 */
+.stamp {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-13deg);
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--trips-stamp);
+  border-radius: 50%;
+  color: var(--trips-stamp);
+  opacity: 0.78;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+.stamp::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid var(--trips-stamp);
+  border-radius: 50%;
+}
+.stampText {
+  font-family: var(--trips-font-serif);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  line-height: 1.05;
+  padding: 0 4px;
+}
+
+/* ============================================================
+   详情页
+   ============================================================ */
+.detailScroll {
+  padding: 0 0 36px;
+}
+
+/* 大票头 */
+.detailTicket {
+  position: relative;
+  margin: 14px 16px 0;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--trips-paper);
+  color: var(--trips-paper-ink);
+  box-shadow: 0 14px 30px -12px rgba(60, 48, 30, 0.42);
+  background-image: repeating-linear-gradient(0deg, transparent 0 26px, rgba(120, 96, 64, 0.045) 26px 27px);
+}
+.detailTicketTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1.6px dashed rgba(120, 96, 64, 0.4);
+  font-family: var(--trips-font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: rgba(74, 64, 54, 0.7);
+}
+.clsBadge {
+  padding: 3px 9px;
+  border: 1.4px solid var(--trips-stamp);
+  color: var(--trips-stamp);
+  border-radius: 4px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.detailTicketMain {
+  padding: 16px;
+}
+.detailRouteHead {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.detailRouteHead .pName {
+  font-family: var(--trips-font-serif);
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.22;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.detailRouteHead .pMeta {
+  margin-top: 4px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.64rem;
+  color: rgba(74, 64, 54, 0.62);
+}
+.detailRouteHead .toEnd {
+  text-align: right;
+}
+.midGlyph {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.4px solid rgba(120, 96, 64, 0.5);
+  color: rgba(74, 64, 54, 0.8);
+}
+.midGlyph svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.detailMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(120, 96, 64, 0.2);
+  font-family: var(--trips-font-mono);
+  font-size: 0.64rem;
+  color: rgba(74, 64, 54, 0.74);
+}
+.mItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mItem svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mItem b {
+  font-weight: 600;
+}
+.detailStamp {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  transform: rotate(-12deg);
+  width: 62px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--trips-stamp);
+  border-radius: 50%;
+  color: var(--trips-stamp);
+  opacity: 0.72;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.detailStamp::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid var(--trips-stamp);
+  border-radius: 50%;
+}
+
+/* ── 路线时间轴 ── */
+.routeCard {
+  margin: 18px 16px 0;
+  padding: 6px 4px;
+}
+.routeSectionLabel {
+  margin: 0 4px 8px;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.timeline {
+  position: relative;
+  padding: 2px 4px;
+}
+.tlNode {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px 22px 1fr;
+  gap: 10px;
+  min-height: 40px;
+}
+.tlTime {
+  font-family: var(--trips-font-mono);
+  font-size: 0.72rem;
+  color: var(--text-light, var(--text-muted));
+  padding-top: 1px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.tlRail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.tlLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--trips-accent);
+}
+.tlLine.walk {
+  background: none;
+  border-left: 3px dotted var(--text-muted);
+  width: 0;
+  left: calc(50% - 1.5px);
+}
+.tlDot {
+  position: relative;
+  z-index: 2;
+  margin-top: 4px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bg-card, #fff);
+  border: 3px solid var(--trips-accent);
+}
+.tlDot.major {
+  width: 16px;
+  height: 16px;
+  border-width: 4px;
+  box-shadow: 0 0 0 4px rgba(var(--trips-accent-rgb), 0.14);
+}
+.tlDot.via {
+  width: 9px;
+  height: 9px;
+  border-width: 2px;
+  border-color: var(--text-muted);
+  margin-top: 6px;
+}
+.tlBody {
+  padding-bottom: 16px;
+  min-width: 0;
+}
+.tlStation {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.tlStation.viaName {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-light, var(--text-muted));
+}
+.tlSub {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: var(--trips-font-mono);
+}
+.tlSegTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 500;
+  color: var(--trips-accent);
+  background: var(--accent-light, rgba(126, 153, 168, 0.1));
+  border: 1px solid rgba(var(--trips-accent-rgb), 0.2);
+}
+.tlSegTag svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tlSegTag.walk {
+  color: var(--text-muted);
+  background: var(--overlay-subtle, rgba(0, 0, 0, 0.03));
+  border-color: var(--overlay-light, rgba(0, 0, 0, 0.05));
+}
+
+/* ── 亲笔批注（手写体） ── */
+.handNote {
+  position: relative;
+  margin-top: 9px;
+  padding: 10px 13px 11px 15px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(var(--trips-coral-rgb), 0.07), rgba(var(--trips-coral-rgb), 0.03));
+  border: 1px solid rgba(var(--trips-coral-rgb), 0.22);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+  transform: rotate(-0.5deg);
+}
+.handNote::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(var(--trips-coral-rgb), 0.5);
+}
+.handNote.atEnd {
+  background: linear-gradient(180deg, rgba(var(--trips-accent-rgb), 0.09), rgba(var(--trips-accent-rgb), 0.04));
+  border-color: rgba(var(--trips-accent-rgb), 0.24);
+  transform: rotate(0.5deg);
+}
+.handNote.atEnd::before {
+  background: rgba(var(--trips-accent-rgb), 0.5);
+}
+.handNoteHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.handPen {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--trips-coral);
+  flex: 0 0 auto;
+}
+.handNote.atEnd .handPen {
+  color: var(--trips-accent);
+}
+.handPen svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.handWho {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--text-light, var(--text-muted));
+  letter-spacing: 0.02em;
+}
+.handTag {
+  margin-left: auto;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-family: var(--trips-font-mono);
+}
+.handNoteText {
+  font-family: var(--trips-font-hand);
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  padding-top: 1px;
+  overflow-wrap: anywhere;
+}
+
+/* ── 随笔块 ── */
+.moodCard {
+  margin: 18px 16px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, rgba(255, 255, 255, 0.7));
+}
+.moodLabel {
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+.moodCard p {
+  font-family: var(--trips-font-serif);
+  font-size: 0.92rem;
+  line-height: 1.78;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.moodMeta {
+  margin-top: 10px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.moodMeta span {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  background: var(--overlay-subtle, rgba(0, 0, 0, 0.03));
+}
+
+/* 详情顶部小标 */
+.detailEyebrow {
+  margin: 16px 16px 0;
+  font-family: var(--trips-font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.deleteRow {
+  margin: 22px 16px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.deleteButton {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  transition: all 0.15s ease;
+}
+.deleteButton:hover {
+  color: var(--danger, #8b4040);
+  border-color: rgba(var(--trips-coral-rgb), 0.45);
+  background: rgba(var(--trips-coral-rgb), 0.08);
+}

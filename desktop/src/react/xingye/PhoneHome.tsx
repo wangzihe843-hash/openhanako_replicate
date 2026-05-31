@@ -27,6 +27,7 @@ interface PhoneHomeProps {
   onOpenNews?: () => void;
   onOpenHealth?: () => void;
   onOpenAccounting?: () => void;
+  onOpenTrips?: () => void;
 }
 
 const phoneIcons = {
@@ -155,6 +156,14 @@ const phoneIcons = {
       <path d="M12 16h3" />
     </svg>
   ),
+  trips: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="6.5" cy="6.5" r="2" />
+      <path d="M6.5 8.6v2.9a3.5 3.5 0 0 0 3.5 3.5h2.6" />
+      <path d="M17 10.5c2.05 0 3.4 1.6 3.4 3.5 0 2.4-3.4 5.5-3.4 5.5s-3.4-3.1-3.4-5.5c0-1.9 1.35-3.5 3.4-3.5Z" />
+      <circle cx="17" cy="13.9" r="1.05" />
+    </svg>
+  ),
 };
 
 const appShortcuts = [
@@ -162,6 +171,7 @@ const appShortcuts = [
   { label: '短信', subtitle: '角色间短信模拟', tone: 'message', icon: phoneIcons.message, action: 'sms' },
   { label: 'MM Chat', subtitle: 'TA 咨询 AI 助手', tone: 'mmchat', icon: phoneIcons.sparkles, action: 'mm-chat' },
   { label: '日程', subtitle: '安排与约定记录', tone: 'schedule', icon: phoneIcons.calendar, action: 'schedule' },
+  { label: '行程', subtitle: 'TA 走过的路', tone: 'trips', icon: phoneIcons.trips, action: 'trips' },
   { label: '占卜', subtitle: '角色视角叙事占断', tone: 'divination', icon: phoneIcons.moon, action: 'divination' },
   { label: '文件', subtitle: '资料柜与发现记录', tone: 'files', icon: phoneIcons.folder, action: 'files' },
   { label: '购物', subtitle: 'TA 的购物记录', tone: 'shopping', icon: phoneIcons.bag, action: 'shopping' },
@@ -215,6 +225,7 @@ export function PhoneHome({
   onOpenNews,
   onOpenHealth,
   onOpenAccounting,
+  onOpenTrips,
 }: PhoneHomeProps) {
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
@@ -286,6 +297,10 @@ export function PhoneHome({
     }
     if (action === 'accounting') {
       onOpenAccounting?.();
+      return;
+    }
+    if (action === 'trips') {
+      onOpenTrips?.();
       return;
     }
   };
