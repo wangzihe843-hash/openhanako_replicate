@@ -192,16 +192,30 @@ function TripTicket({ trip, onClick }: { trip: XingyeTripEntry; onClick: () => v
   );
 }
 
-/* ── 角色亲笔批注（手写体） ── */
+/* ── 角色亲笔批注（手写体；默认「封缄」，点开有落笔书写的彩蛋） ── */
 function HandNote({ text, author, atEnd }: { text: string; author: string; atEnd?: boolean }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`${css.handNote}${atEnd ? ` ${css.atEnd}` : ''}`}>
-      <div className={css.handNoteHead}>
+    <div
+      className={`${css.handNote}${atEnd ? ` ${css.atEnd}` : ''}${open ? ` ${css.handNoteOpen}` : ''}`}
+    >
+      <button
+        type="button"
+        className={css.handNoteHead}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className={css.handPen}>{ICON_PEN}</span>
         <span className={css.handWho}>{author} · 亲笔</span>
         <span className={css.handTag}>{atEnd ? '终点' : '起点'}</span>
+        <span className={css.handSeal} aria-hidden="true">
+          <span className={css.handSealHint}>{open ? '收起' : '点开'}</span>
+          <span className={css.handSealGlyph}>{open ? '启' : '缄'}</span>
+        </span>
+      </button>
+      <div className={css.handNoteReveal}>
+        <p className={css.handNoteText}>{text}</p>
       </div>
-      <div className={css.handNoteText}>{text}</div>
     </div>
   );
 }
