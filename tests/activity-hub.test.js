@@ -145,19 +145,48 @@ function makeFakeStore(initial = []) {
 }
 
 describe("ActivityHub 持久化背书", () => {
-  it("workflow / workflow_agent 写穿 store；subagent / heartbeat 不写（各有自己的源）", () => {
+  it("workflow / workflow_agent / subagent 写穿 store；heartbeat / cron 不写（瞬时）", () => {
     const store = makeFakeStore();
     const hub = new ActivityHub(null, store);
     hub.upsert({ id: "wf-1", kind: "workflow", status: "running", sessionPath: "/s/a.jsonl" });
     hub.upsert({ id: "wf-1::n1", kind: "workflow_agent", status: "running", sessionPath: "/s/a.jsonl", parentTaskId: "wf-1" });
     hub.upsert({ id: "sub-1", kind: "subagent", status: "running", sessionPath: "/s/a.jsonl" });
     hub.upsert({ id: "hb-1", kind: "heartbeat", status: "running", sessionPath: "/s/a.jsonl" });
+    hub.upsert({ id: "cron-1", kind: "cron", status: "running", sessionPath: "/s/a.jsonl" });
 
     const persistedIds = store.upsert.mock.calls.map((c) => c[0].id);
     expect(persistedIds).toContain("wf-1");
     expect(persistedIds).toContain("wf-1::n1");
-    expect(persistedIds).not.toContain("sub-1");
+    expect(persistedIds).toContain("sub-1");        // subagent 现在也持久化（右侧子助手卡重启复原）
     expect(persistedIds).not.toContain("hb-1");
+    expect(persistedIds).not.toContain("cron-1");
+  });
+
+  it("subagent 写穿 + 回灌保留 reuseInstance / childSessionPath（重启右侧子助手卡完整复原）", () => {
+    const store = makeFakeStore();
+    const hub1 = new ActivityHub(null, store);
+    hub1.upsert({
+      id: "sub-1", kind: "subagent", status: "done", sessionPath: "/s/a.jsonl",
+      agentId: "butter", agentName: "Butter", reuseInstance: "探索",
+      childSessionPath: "/s/child.jsonl", summary: "调研完成", startedAt: 1, finishedAt: 2,
+    });
+    // 模拟重启：新 hub 从同一 store 回灌
+    const hub2 = new ActivityHub(null, store);
+    const e = hub2.get("sub-1");
+    expect(e.kind).toBe("subagent");
+    expect(e.status).toBe("done");               // 终态原样
+    expect(e.reuseInstance).toBe("探索");         // 复用后缀保留
+    expect(e.childSessionPath).toBe("/s/child.jsonl"); // 子会话预览链接保留
+    expect(e.agentId).toBe("butter");
+  });
+
+  it("subagent 遗留 running → 回灌判孤儿标 failed（不永久转圈）", () => {
+    const store = makeFakeStore([
+      { id: "sub-orphan", kind: "subagent", status: "running", sessionPath: "/s/a.jsonl", startedAt: 100 },
+    ]);
+    const hub = new ActivityHub(null, store);
+    expect(hub.get("sub-orphan").status).toBe("failed");
+    expect(hub.get("sub-orphan").finishedAt).toBe(100);
   });
 
   it("构造时从 store 回灌；上一进程遗留的 running 判为孤儿 → 标 failed（不再永久转圈）", () => {
