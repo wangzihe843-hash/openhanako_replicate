@@ -11,6 +11,14 @@ describe("workflow meta extraction", () => {
     expect(body).toMatch(/const meta =/);
   });
 
+  it("剥离 export default 转成入口调用，杂散 export 前缀剥成局部声明", () => {
+    const script = `export const meta = { name: 'x', description: 'd' }\nexport const helper = 1\nexport default async function(api){ return helper }`;
+    const { body } = extractMeta(script);
+    expect(body).not.toMatch(/export\s+default/);
+    expect(body).not.toMatch(/export\s+const\s+helper/);
+    expect(body).toMatch(/__wf_default/); // export default 被转成入口变量 + 调用
+  });
+
   it("meta 含 phases 数组也能解析", () => {
     const script = `export const meta = { name: 'a', description: 'b', phases: [{ title: 'X' }] }\nreturn []`;
     const { meta } = extractMeta(script);

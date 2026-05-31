@@ -10,6 +10,28 @@ describe("workflow sandbox", () => {
     expect(meta.name).toBe("t");
   });
 
+  it("支持 export default async function 形态：解构注入的 host API，函数返回值即结果", async () => {
+    const host = { greet: (n) => `hi ${n}` };
+    const script = META + `export default async function({ greet }) { return await greet('hana'); }`;
+    const { result } = await runWorkflowScript(script, host);
+    expect(result).toBe("hi hana");
+  });
+
+  it("支持 export default 箭头函数形态", async () => {
+    const host = { val: 7 };
+    const script = META + `export default async ({ val }) => val * 2`;
+    const { result } = await runWorkflowScript(script, host);
+    expect(result).toBe(14);
+  });
+
+  it("export default 函数与顶层全局 API 等价（两种写法都能跑）", async () => {
+    const host = { agent: async (p) => `[${p}]` };
+    const top = META + `return await agent('x')`;
+    const def = META + `export default async function({ agent }) { return await agent('x'); }`;
+    expect((await runWorkflowScript(top, host)).result).toBe("[x]");
+    expect((await runWorkflowScript(def, host)).result).toBe("[x]");
+  });
+
   it("脚本能 await 注入的 host 函数", async () => {
     const host = { greet: async (n) => `hi ${n}` };
     const { result } = await runWorkflowScript(META + `return await greet('hana')`, host);

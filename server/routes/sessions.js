@@ -712,6 +712,30 @@ export function createSessionsRoute(engine, hub = null) {
         }
       }
 
+      // workflow inline 概览块回填：block_update patch 是前端瞬时事件、未持久化进 toolResult details，
+      // 重启后块保留派单时的 streamStatus:"running" + startedAt，会显示离谱「已运行 Xm」时长。
+      // 从 durable runStore 读终态修正，并用 completedAt 补 finishedAt（inline 卡算总时长用）。
+      {
+        const wfRunStore = engine.subagentRuns;
+        const wfDeferredStore = engine.deferredResults;
+        for (const b of slicedBlocks) {
+          if (b.type !== "workflow" || !b.taskId) continue;
+          if (b.streamStatus !== "running") continue;
+          const run = wfRunStore?.query?.(b.taskId) || null;
+          const task = wfDeferredStore?.query?.(b.taskId) || null;
+          const status = run?.status || task?.status || null;
+          if (status === "resolved" || status === "done") b.streamStatus = "done";
+          else if (status === "failed") b.streamStatus = "failed";
+          else if (status === "aborted") b.streamStatus = "aborted";
+          else continue; // 仍 pending / 无记录：保持 running，不误判完成
+          if (!b.finishedAt && run?.completedAt) {
+            const ts = Date.parse(run.completedAt);
+            if (Number.isFinite(ts)) b.finishedAt = ts;
+          }
+          if (!b.summary && typeof run?.summary === "string") b.summary = run.summary;
+        }
+      }
+
       patchSessionFileLifecycleBlocks(slicedBlocks, engine, resolvedSessionPath);
       const sessionFiles = listSessionRegistryFiles(engine, resolvedSessionPath);
 

@@ -2,10 +2,11 @@
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
     padding: var(--space-sm) var(--space-md);
     gap: 6px;
-    max-height: 40%;
+    /* 解禁硬高度上限 + overflow:hidden：原本 40% 截断 + .list 不滚动，导致展开后
+       内容被裁、与下方卡重合。改为卡片随内容自然增高，整列滚动交给外层 panel
+       （RightWorkspacePanel .shell overflow-y:auto）。节点 preview 自带 3 行滚动（见 .scroll）。 */
 }
 
 .header {
@@ -202,7 +203,8 @@
 }
 
 .scroll {
-    max-height: 10rem;
+    /* 每个展开节点 preview 限 ~3 行后内部滚动，避免单节点把卡片撑高、彼此挤压。 */
+    max-height: 4.5rem;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 6px 7px 7px;

@@ -797,6 +797,71 @@ describe("sessions route", () => {
     });
   });
 
+  it("reload 时从 runStore 回填 workflow inline 块终态（running→done + 补 finishedAt）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+      {
+        role: "toolResult",
+        toolName: "workflow",
+        details: { taskId: "workflow-1", workflow: "three-theme-poem", streamStatus: "running", startedAt: 1000 },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: {
+        query: vi.fn((id) => id === "workflow-1"
+          ? { taskId: "workflow-1", status: "resolved", summary: "诗", completedAt: "2026-05-31T08:26:49.160Z" }
+          : null),
+      },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    const wf = data.blocks.find((b) => b.type === "workflow");
+    expect(wf).toMatchObject({ taskId: "workflow-1", streamStatus: "done", startedAt: 1000 });
+    expect(wf.finishedAt).toBe(Date.parse("2026-05-31T08:26:49.160Z"));
+  });
+
+  it("workflow inline 块仍 pending 时保持 running（不误判完成）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+      {
+        role: "toolResult",
+        toolName: "workflow",
+        details: { taskId: "workflow-2", workflow: "wf", streamStatus: "running", startedAt: 1000 },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: { query: vi.fn(() => ({ taskId: "workflow-2", status: "pending" })) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+    const wf = data.blocks.find((b) => b.type === "workflow");
+    expect(wf.streamStatus).toBe("running");
+  });
+
   it("includes session entry timestamps on displayable history messages", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const msgUtils = await import("../core/message-utils.js");
