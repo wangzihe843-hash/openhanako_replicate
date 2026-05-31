@@ -6,8 +6,9 @@ import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Agent } from '../types';
+import type { Activity, Agent } from '../types';
 import { PhoneHome } from './PhoneHome';
+import { useStore } from '../stores';
 
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -61,16 +62,37 @@ function renderPhoneHome() {
   );
 }
 
+/** 模拟一次 beat 完成：scheduler 经 activity_update 把带 summaryZh 的 heartbeat 活动推进 store。 */
+function pushHeartbeatActivity(overrides: Partial<Activity> = {}): void {
+  const activity: Activity = {
+    id: `hb_${Date.now()}`,
+    type: 'heartbeat',
+    title: '日常巡检',
+    timestamp: new Date().toISOString(),
+    agentId: 'agent-a',
+    agentName: 'Agent A',
+    startedAt: Date.now(),
+    finishedAt: Date.now() + 60_000, // 确保晚于触发水位线
+    summary: '日常巡检',
+    status: 'done',
+    error: null,
+    ...overrides,
+  };
+  useStore.setState((s) => ({ activities: [activity, ...(s.activities as Activity[])] }));
+}
+
 describe('PhoneHome heartbeat trigger', () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    useStore.setState({ activities: [] });
   });
 
   afterEach(() => {
     cleanup();
+    useStore.setState({ activities: [] });
   });
 
-  it('calls the existing desk heartbeat route and shows success, cooldown, and failure states', async () => {
+  it('fire-and-forget 触发后等 activity_update 经 store 回填 summaryZh，并处理 cooldown / 失败', async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -89,55 +111,74 @@ describe('PhoneHome heartbeat trigger', () => {
     renderPhoneHome();
     const button = screen.getByRole('button', { name: '立即巡检' });
 
+    // 1) 触发成功：先停在「触发中」，beat 完成（store 推活动）后回填 summaryZh
     fireEvent.click(button);
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent('巡检已触发');
+      expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
     });
     expect(fetchMock).toHaveBeenLastCalledWith('/api/desk/heartbeat?agentId=agent-a', { method: 'POST' });
 
-    fireEvent.click(button);
+    pushHeartbeatActivity({ summaryZh: '自上次巡检以来：短信×2（共 2 条）' });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('巡检完毕');
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：短信×2（共 2 条）');
+
+    // 2) 冷却中：路由回 cooldown，不依赖 activity_update
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('冷却中');
     });
 
-    fireEvent.click(button);
+    // 3) 路由本身报错：直接显示失败
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检失败：Heartbeat not initialized');
     });
   });
 
-  it('shows the summaryZh returned from /api/desk/heartbeat in the status line', async () => {
-    fetchMock.mockResolvedValueOnce({
+  it('只回填属于本 agent、且晚于触发水位线的 heartbeat 活动', async () => {
+    fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        ok: true,
-        triggered: true,
-        cooldown: false,
-        summaryZh: '自上次巡检以来：通讯录变更×1、短信×2（共 3 条）',
-        consumedCount: 3,
-      }),
+      json: async () => ({ ok: true, triggered: true, cooldown: false }),
     } as Response);
 
     renderPhoneHome();
     fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
-
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent('巡检已触发');
+      expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
     });
-    expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：通讯录变更×1、短信×2（共 3 条）');
+
+    // 别的 agent 的活动：忽略
+    pushHeartbeatActivity({ agentId: 'agent-b', summaryZh: '不该显示的别人' });
+    // 触发前就结束的旧活动（finishedAt 早于水位线）：忽略
+    pushHeartbeatActivity({ finishedAt: Date.now() - 60_000, summaryZh: '过期旧活动' });
+    expect(screen.getByRole('status')).not.toHaveTextContent('不该显示的别人');
+    expect(screen.getByRole('status')).not.toHaveTextContent('过期旧活动');
+    expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
+
+    // 本 agent、晚于水位线：回填
+    pushHeartbeatActivity({ summaryZh: '通讯录变更×1、短信×2（共 3 条）' });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('通讯录变更×1、短信×2（共 3 条）');
+    });
   });
 
-  it('shows just the cooldown line when the server returns no summaryZh', async () => {
-    fetchMock.mockResolvedValueOnce({
+  it('巡检完成但无 summaryZh 时只显示「巡检完毕」', async () => {
+    fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ ok: true, triggered: false, cooldown: true, summaryZh: '' }),
+      json: async () => ({ ok: true, triggered: true, cooldown: false }),
     } as Response);
 
     renderPhoneHome();
     fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
-
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent('冷却中');
+      expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
+    });
+
+    pushHeartbeatActivity({ summaryZh: '' });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('巡检完毕');
     });
     expect(screen.getByRole('status')).not.toHaveTextContent('自上次巡检以来');
   });

@@ -152,6 +152,10 @@ export interface Activity {
   agentId?: string;
   agentName?: string;
   summary?: string;
+  /** 星野手机事件聚合（确定性，「短信×2（共 2 条）」式），仅 heartbeat 主巡检带。 */
+  summaryZh?: string;
+  /** 本次巡检消费的小手机事件条数。 */
+  consumedCount?: number;
   [key: string]: unknown;
 }
 

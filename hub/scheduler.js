@@ -171,8 +171,12 @@ export class Scheduler {
       // 这样 agent 能基于事件主动判断是否要 notify。heartbeat.js 会把消费结果合并进 payload，
       // desk 路由还是能拿到 summaryZh。
       getEventSummary: () => this._runXingyeHeartbeatConsumer(agentId, agent),
-      onBeat: async (prompt) => {
-        await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {});
+      onBeat: async (prompt, extra = {}) => {
+        // extra.xingyeConsumed：consumer 结果（含 summaryZh / eventCount），挂到 activity_update 负载，
+        // 让前端 activities store 拿到本次巡检的小手机事件聚合（手动 + 自动统一走这条）。
+        await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {
+          xingyeConsumed: extra?.xingyeConsumed || null,
+        });
       },
       onJianBeat: (prompt, cwd, runTools = {}) => {
         const isZh = getLocale().startsWith("zh");
@@ -375,7 +379,8 @@ export class Scheduler {
     const id = `${type === "heartbeat" ? "hb" : "cron"}_${startedAt}`;
 
     // 所有 agent 统一走 executeIsolated（支持 agentId + signal 参数）
-    const { signal, ...restOpts } = opts;
+    // xingyeConsumed 只用于给 activity_update 负载挂 summaryZh，不能透传给 executeIsolated。
+    const { signal, xingyeConsumed, ...restOpts } = opts;
     const result = await engine.executeIsolated(prompt, {
       agentId,
       persist: activityDir,
@@ -420,6 +425,15 @@ export class Scheduler {
       status: failed ? "error" : "done",
       error: error || null,
     };
+
+    // 小手机事件聚合：把 consumer 的 summaryZh / eventCount 挂到 activity_update 负载，
+    // 让前端（PhoneHome）订阅 activities store 即可拿到本次巡检消费了哪些事件。
+    // 仅主巡检（onBeat 传了 xingyeConsumed）带；笺子巡检 / cron 不带。
+    if (xingyeConsumed?.result) {
+      const r = xingyeConsumed.result;
+      if (typeof r.summaryZh === "string" && r.summaryZh) entry.summaryZh = r.summaryZh;
+      if (typeof r.eventCount === "number") entry.consumedCount = r.eventCount;
+    }
 
     // 写入对应 agent 的 ActivityStore
     engine.getActivityStore(agentId).add(entry);

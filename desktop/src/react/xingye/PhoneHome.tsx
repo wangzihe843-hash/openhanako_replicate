@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import type { Agent } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import type { Activity, Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type { XingyeTabId } from './xingye-tabs';
+import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { tryRelockHiddenFolderAfterHeartbeat } from './xingye-files-secret-heartbeat';
@@ -230,6 +231,19 @@ export function PhoneHome({
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
   const [heartbeatBusy, setHeartbeatBusy] = useState(false);
+  // 触发水位线：只认 finishedAt 晚于此刻的心跳活动，避免把上一轮旧 activity 当本次结果。
+  const triggerWatermarkRef = useRef(0);
+  const clearBusyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 订阅 activities store 里本 agent 最新的一条 heartbeat 活动（beat 完成时 scheduler 经
+  // activity_update 推过来，手动 / 自动统一走这条）。返回的是 store 数组里的同一引用，稳定。
+  const latestHeartbeat = useStore((s) => {
+    if (!agent?.id) return null;
+    const list = s.activities as Activity[];
+    for (const a of list) {
+      if (a.type === 'heartbeat' && a.agentId === agent.id) return a;
+    }
+    return null;
+  });
   useEffect(() => {
     setStatusTime(formatPhoneStatusTime(new Date()));
     const id = window.setInterval(() => {
@@ -307,35 +321,74 @@ export function PhoneHome({
 
   const handleHeartbeatTrigger = async () => {
     if (!agent?.id || heartbeatBusy) return;
+    const agentId = agent.id;
     setHeartbeatBusy(true);
     setHeartbeatStatus('巡检触发中...');
+    // 触发即记水位线；真实巡检完成由下方 effect 经 activities store 收尾。
+    triggerWatermarkRef.current = Date.now();
     try {
-      const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agent.id)}`, {
+      // fire-and-forget：路由只回 triggered/cooldown，不阻塞等整轮 beat（否则会被 30s 超时误报失败）。
+      const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agentId)}`, {
         method: 'POST',
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) {
         throw new Error(typeof data?.error === 'string' ? data.error : res.statusText || 'heartbeat failed');
       }
-      const statusLine = data?.cooldown ? '冷却中，请稍后再试' : '巡检已触发';
-      const detail = typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : '';
-      const eventsSummary = typeof data?.summaryZh === 'string' ? data.summaryZh.trim() : '';
-      const composed = [statusLine, detail, eventsSummary].filter(Boolean).join(' · ');
-      setHeartbeatStatus(composed);
-      rememberDeskHeartbeatUiOutcome(agent.id, composed);
-      /**
-       * 心跳成功后让隐藏文件夹以极小概率自动重锁（搭车 agent 的"巡检"节奏）。
-       * best-effort：内部已 swallow 所有错误，不阻塞心跳 UI。
-       */
-      void tryRelockHiddenFolderAfterHeartbeat(agent);
+      if (data?.cooldown || !data?.triggered) {
+        // 冷却中：没有新 beat、不会有 activity_update，直接结束等待。
+        const line = '冷却中，请稍后再试';
+        setHeartbeatStatus(line);
+        rememberDeskHeartbeatUiOutcome(agentId, line);
+        triggerWatermarkRef.current = 0;
+        setHeartbeatBusy(false);
+        return;
+      }
+      // 已触发：保持 busy，等 beat 完成的 activity_update 经 store 推回（见下方 effect）。
+      // 安全兜底：beat 上限 5min，超 6min 仍无结果则解除 busy，避免按钮永久卡住。
+      if (clearBusyTimerRef.current) clearTimeout(clearBusyTimerRef.current);
+      clearBusyTimerRef.current = setTimeout(() => {
+        triggerWatermarkRef.current = 0;
+        clearBusyTimerRef.current = null;
+        setHeartbeatBusy(false);
+        setHeartbeatStatus((prev) => (prev === '巡检触发中...' ? '巡检仍在后台进行，稍后回来查看' : prev));
+      }, 6 * 60 * 1000);
     } catch (error) {
       const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
       setHeartbeatStatus(fail);
-      rememberDeskHeartbeatUiOutcome(agent.id, fail);
-    } finally {
+      rememberDeskHeartbeatUiOutcome(agentId, fail);
+      triggerWatermarkRef.current = 0;
       setHeartbeatBusy(false);
     }
   };
+
+  // 巡检完成：本 agent 出现 finishedAt 晚于触发水位线的 heartbeat 活动时，
+  // 用其 summaryZh 收尾状态行（活动负载由 scheduler 经 activity_update 推到 store）。
+  useEffect(() => {
+    if (!agent?.id) return;
+    const watermark = triggerWatermarkRef.current;
+    if (!watermark || !latestHeartbeat) return;
+    const finishedAt = typeof latestHeartbeat.finishedAt === 'number' ? latestHeartbeat.finishedAt : 0;
+    if (finishedAt < watermark) return; // 旧活动，忽略
+    const summaryZh = typeof latestHeartbeat.summaryZh === 'string' ? latestHeartbeat.summaryZh.trim() : '';
+    const failed = latestHeartbeat.status === 'error';
+    const composed = [failed ? '巡检失败' : '巡检完毕', summaryZh].filter(Boolean).join(' · ');
+    setHeartbeatStatus(composed);
+    rememberDeskHeartbeatUiOutcome(agent.id, composed);
+    triggerWatermarkRef.current = 0;
+    if (clearBusyTimerRef.current) { clearTimeout(clearBusyTimerRef.current); clearBusyTimerRef.current = null; }
+    setHeartbeatBusy(false);
+    /**
+     * 心跳成功后让隐藏文件夹以极小概率自动重锁（搭车 agent 的"巡检"节奏）。
+     * best-effort：内部已 swallow 所有错误，不阻塞心跳 UI。
+     */
+    if (!failed) void tryRelockHiddenFolderAfterHeartbeat(agent);
+  }, [latestHeartbeat, agent]);
+
+  // 卸载时清掉兜底定时器，避免泄漏 / unmount 后 setState。
+  useEffect(() => () => {
+    if (clearBusyTimerRef.current) clearTimeout(clearBusyTimerRef.current);
+  }, []);
 
   return (
     <div className={styles.phoneShell} aria-label="角色手机主页">

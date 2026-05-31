@@ -21,21 +21,15 @@ describe("desk route", () => {
     vi.clearAllMocks();
   });
 
-  it("desk/heartbeat triggers the existing scheduler heartbeat and reports cooldown", async () => {
-    const runHeartbeatOnce = vi.fn()
-      .mockResolvedValueOnce({
-        status: "ran",
-        payload: {
-          xingyeConsumed: {
-            consumed: 2,
-            result: { summaryZh: "自上次巡检以来：短信×2（共 2 条）", eventCount: 2 },
-          },
-        },
-      })
-      .mockResolvedValueOnce({ status: "skipped", reason: "cooldown" });
+  it("desk/heartbeat fire-and-forget 触发巡检并同步回报 triggered/cooldown（summary 走 activity_update，不在此处 await）", async () => {
+    // triggerNow() 同步返回：true=启动一轮 beat，false=冷却窗口内未触发。
+    // 路由不再 await 整轮 beat，故响应里不含 summaryZh —— 它由 beat 完成时的 activity_update 推到前端。
+    const triggerNow = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
     const hub = {
       scheduler: {
-        getHeartbeat: vi.fn(() => ({ runHeartbeatOnce })),
+        getHeartbeat: vi.fn(() => ({ triggerNow })),
       },
     };
 
@@ -49,9 +43,6 @@ describe("desk route", () => {
       ok: true,
       triggered: true,
       cooldown: false,
-      summaryZh: "自上次巡检以来：短信×2（共 2 条）",
-      consumedCount: 2,
-      status: "ran",
     });
 
     const second = await app.request("/api/desk/heartbeat?agentId=agent-a", { method: "POST" });
@@ -60,12 +51,10 @@ describe("desk route", () => {
       ok: true,
       triggered: false,
       cooldown: true,
-      status: "skipped",
-      reason: "cooldown",
     });
 
     expect(hub.scheduler.getHeartbeat).toHaveBeenCalledWith("agent-a");
-    expect(runHeartbeatOnce).toHaveBeenCalledTimes(2);
+    expect(triggerNow).toHaveBeenCalledTimes(2);
   });
 
   it("desk/install-skill 对 zip/.skill 走 extractZip 抽象，并把解压结果安装到工作区技能目录", async () => {

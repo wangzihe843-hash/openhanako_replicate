@@ -728,11 +728,14 @@ export function createDeskRoute(engine, hub) {
 
   /** 手动触发心跳巡检（调试用）。
    *
-   * 走 heartbeat.runHeartbeatOnce —— 一个 await 拿到 {status, payload}，payload 里直接带
-   * xingye consumer 结构化结果（summaryZh / eventCount）。不再 trigger + 轮询 + 读 result.json
-   * 三段式；旧实现那条路径会和 beat 内部 consumer 竞速、让 history.jsonl 出现重复行。
+   * Fire-and-forget：真实巡检含 agent LLM 轮、可能跑几分钟，若在此处同步 await 整个 beat，
+   * 前端 hanaFetch 的 30s 默认超时会先 abort、误报「巡检失败」，且永远拿不到 summary。
+   * 这里只触发并立即返回 triggered/cooldown；巡检结果（含 xingye summaryZh / consumedCount）
+   * 由 beat 完成时 scheduler 发出的 activity_update 事件经 ws 推到前端 activities store，
+   * 手动与自动巡检统一走这条事件路径。
    *
-   * 形状参考 openclaw 的 runHeartbeatOnce（src/infra/heartbeat-runner.ts）。
+   * 注意：不读 result.json（旧的 trigger+轮询+读文件三段式会和 beat 内部 consumer 竞速、
+   * 让 history.jsonl 出现重复行）；summary 直接来自 consumer 输出，不存在该竞速。
    */
   route.post("/desk/heartbeat", async (c) => {
     const agentId = c.req.query("agentId");
@@ -740,31 +743,13 @@ export function createDeskRoute(engine, hub) {
     const hb = hub?.scheduler?.getHeartbeat(agentId);
     if (!hb) return c.json({ error: "Heartbeat not initialized" });
 
-    const result = await hb.runHeartbeatOnce({ source: "manual", reason: "desk-route" });
-    const triggered = result.status === "ran";
-    const cooldown = result.status === "skipped" && result.reason === "cooldown";
-
-    // Consumer 跑成功后才落 payload —— ran / failed 两种情况都可能有 payload，
-    // 因为 activity 失败时已成功的 xingye consumer 结果会通过 payload 救出来。
-    let summaryZh = "";
-    let consumedCount = 0;
-    const xingye = result.payload?.xingyeConsumed;
-    if (xingye?.result) {
-      summaryZh = typeof xingye.result.summaryZh === "string" ? xingye.result.summaryZh : "";
-      consumedCount = typeof xingye.result.eventCount === "number" ? xingye.result.eventCount : 0;
-    }
-
+    // triggerNow() 同步返回：true=已启动一轮 beat，false=冷却窗口内未触发。
+    const triggered = hb.triggerNow();
     return c.json({
-      ok: result.status !== "failed",
+      ok: true,
       triggered,
-      cooldown,
-      summaryZh,
-      consumedCount,
-      status: result.status,
-      reason: result.reason,
-      message: triggered
-        ? t("error.heartbeatTriggered")
-        : (cooldown ? "Heartbeat trigger cooldown" : (result.reason || "")),
+      cooldown: !triggered,
+      message: triggered ? t("error.heartbeatTriggered") : "Heartbeat trigger cooldown",
     });
   });
 
