@@ -710,3 +710,184 @@
   border-color: rgba(var(--trips-coral-rgb), 0.45);
   background: rgba(var(--trips-coral-rgb), 0.08);
 }
+
+/* ── 手动 AI 更新（整理新行程） ── */
+.manualRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -4px 2px 0;
+}
+.manualButton {
+  flex: none;
+  padding: 7px 16px;
+  border: 1px solid rgba(var(--trips-accent-rgb), 0.5);
+  border-radius: 999px;
+  background: rgba(var(--trips-accent-rgb), 0.1);
+  color: var(--trips-accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.manualButton:hover:not(:disabled) {
+  background: rgba(var(--trips-accent-rgb), 0.18);
+}
+.manualButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.manualHint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   待确认行程草稿（心跳巡检 / 手动整理产出）
+   ============================================================ */
+.draftSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.draftSectionLabel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 2px;
+  font-family: var(--trips-font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--trips-accent);
+}
+.draftSectionLabel::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(var(--trips-accent-rgb), 0.35);
+}
+
+.draftCard {
+  border: 1px dashed rgba(var(--trips-accent-rgb), 0.55);
+  border-radius: 14px;
+  padding: 12px 13px;
+  background: rgba(var(--trips-accent-rgb), 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.draftHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.draftBadge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(var(--trips-accent-rgb), 0.18);
+  color: var(--trips-accent);
+  font-family: var(--trips-font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+}
+.draftEyebrow {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.draftRoute {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.draftMode {
+  flex: none;
+  display: inline-flex;
+  color: var(--trips-accent);
+}
+.draftMode svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.draftPlace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draftArrow {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+.draftArrow svg {
+  width: 22px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.draftModeLabel {
+  font-size: 0.74rem;
+  color: var(--text-light, var(--text-muted));
+}
+.draftReason {
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding: 6px 9px;
+  border-left: 2px solid rgba(var(--trips-accent-rgb), 0.4);
+  background: var(--overlay-subtle, rgba(0, 0, 0, 0.03));
+  border-radius: 0 8px 8px 0;
+}
+.draftActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+.draftConfirm {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--trips-accent);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 600;
+  transition: opacity 0.15s ease;
+}
+.draftConfirm:hover {
+  opacity: 0.88;
+}
+.draftConfirm:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.draftDiscard {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  transition: all 0.15s ease;
+}
+.draftDiscard:hover {
+  color: var(--danger, #8b4040);
+  border-color: rgba(var(--trips-coral-rgb), 0.45);
+  background: rgba(var(--trips-coral-rgb), 0.08);
+}
+.draftDiscard:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

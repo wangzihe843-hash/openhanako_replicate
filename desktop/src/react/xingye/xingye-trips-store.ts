@@ -1,5 +1,7 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
+import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
 /**
  * 「行程」模块的本地模拟存储。
@@ -15,8 +17,30 @@ import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 
+async function appendTripsEventBestEffort(
+  agentId: string,
+  input: Omit<XingyeEventInput, 'agentId'>,
+): Promise<void> {
+  try {
+    await appendXingyeEvent(agentId, input);
+  } catch (error) {
+    console.warn('[xingye-trips-store] event log append failed:', error);
+  }
+}
+
 /** 相对路径位于 HANA_HOME/agents/{agentId}/xingye/ 下 */
 export const XINGYE_TRIPS_ENTRIES_JSONL = 'apps/trips/entries.jsonl';
+
+/**
+ * 心跳巡检（或其他自动来源）产出的「待确认行程草稿」存放路径。
+ *
+ * 与 entries.jsonl 分文件，语义同 journal/drafts.jsonl：
+ *  - entries.jsonl 只放出现在「已走过的路」列表里的最终行程；
+ *  - drafts.jsonl 是自动来源（agent 心跳 `xingye_propose_draft`）刚提议、未经用户确认的
+ *    候选；始终先落盘再呈现，用户没立刻打开 app 也不会丢；
+ *  - 确认走 confirmTripDraft（先 append entries 再删 drafts），丢弃走 discardTripDraft。
+ */
+export const XINGYE_TRIPS_DRAFTS_JSONL = 'apps/trips/drafts.jsonl';
 
 /** 与 server/routes/xingye-storage.js SAFE_AGENT_ID_RE 一致 */
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
@@ -300,6 +324,19 @@ export async function appendTripEntry(
   const createdAt = Number.isFinite(overrideParsed) ? new Date(overrideParsed).toISOString() : new Date().toISOString();
   const row: XingyeTripEntry & { key: string } = { id, key: id, ...draft, createdAt };
   await backend.appendJsonl(aid, XINGYE_TRIPS_ENTRIES_JSONL, row);
+  await appendTripsEventBestEffort(aid, {
+    type: 'trips.entry_appended',
+    source: 'xingye-trips-store',
+    subjectId: id,
+    payload: {
+      entryId: id,
+      chapter: draft.chapter,
+      from: draft.from.name,
+      to: draft.to.name,
+      mode: draft.mode,
+      origin: originFromEntryId(id),
+    },
+  });
   return { id, ...draft, createdAt };
 }
 
@@ -315,5 +352,227 @@ export async function deleteTripEntry(agentId: string, entryId: string): Promise
   if (!eid) {
     throw new Error('删除失败：缺少行程 id。');
   }
-  return backend.deleteJsonlRecord(aid, XINGYE_TRIPS_ENTRIES_JSONL, eid);
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_TRIPS_ENTRIES_JSONL, eid);
+  if (deleted) {
+    await appendTripsEventBestEffort(aid, {
+      type: 'trips.entry_deleted',
+      source: 'xingye-trips-store',
+      subjectId: eid,
+      payload: { entryId: eid },
+    });
+  }
+  return deleted;
+}
+
+/* ============================================================
+   待确认行程草稿（心跳巡检 / xingye_propose_draft 产出）
+   ============================================================ */
+
+/** 一条「待确认行程草稿」：行程内容 + 来源 / 理由等元信息。 */
+export type XingyeTripPendingDraft = XingyeTripDraft & {
+  id: string;
+  /** Producer（如 'xingye-heartbeat-tool'）；用于 UI 区分来源。 */
+  source: string;
+  /** 为什么提议这条草稿——展示给用户帮助决定是否确认。 */
+  reason?: string;
+  /** 触发本草稿的 xingye event id 列表（可追溯）；可空。 */
+  sourceEventIds?: string[];
+  createdAt: string;
+};
+
+function normalizeTripDraftRow(value: unknown): XingyeTripPendingDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const r = value as Record<string, unknown>;
+  const id = clampStr(r.id, 120);
+  if (!id) return null;
+  const draft = normalizeTripDraft(value);
+  if (!draft) return null;
+  const source = clampStr(r.source, 80) || 'unknown';
+  const reason = clampStr(r.reason, 400);
+  const createdAt = typeof r.createdAt === 'string' && r.createdAt ? r.createdAt : new Date(0).toISOString();
+  const sourceEventIds = Array.isArray(r.sourceEventIds)
+    ? r.sourceEventIds.filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
+    : undefined;
+  return {
+    id,
+    ...draft,
+    source,
+    ...(reason ? { reason } : {}),
+    ...(sourceEventIds && sourceEventIds.length ? { sourceEventIds } : {}),
+    createdAt,
+  };
+}
+
+function sortTripDrafts(a: XingyeTripPendingDraft, b: XingyeTripPendingDraft): number {
+  const ta = Date.parse(a.createdAt);
+  const tb = Date.parse(b.createdAt);
+  if (ta !== tb && !Number.isNaN(ta) && !Number.isNaN(tb)) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+export async function listTripDrafts(agentId: string): Promise<XingyeTripPendingDraft[]> {
+  const aid = agentId.trim();
+  if (!aid) return [];
+  try {
+    const rows = await backend.listJsonl<unknown>(aid, XINGYE_TRIPS_DRAFTS_JSONL);
+    return rows
+      .map(normalizeTripDraftRow)
+      .filter((d): d is XingyeTripPendingDraft => Boolean(d))
+      .sort(sortTripDrafts);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 写入一条「待确认行程草稿」。
+ *
+ * 与 appendTripEntry 区别：只写 drafts.jsonl、不写 entries.jsonl、不发 trips.entry_appended，
+ * 因此不会出现在用户的「已走过的路」列表里；发 `trips.draft_proposed` 事件，便于心跳
+ * 消费者下一轮汇总「新增 N 条行程草稿待确认」。
+ */
+export async function appendTripDraft(
+  agentId: string,
+  input: XingyeTripDraft & { source: string; reason?: string; sourceEventIds?: string[] },
+): Promise<XingyeTripPendingDraft> {
+  const aid = agentId.trim();
+  if (!aid) {
+    throw new Error('保存草稿失败：缺少 agentId。');
+  }
+  if (!SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('保存草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  const draft = normalizeTripDraft(input);
+  if (!draft) {
+    throw new Error('保存草稿失败：行程缺少起点或终点。');
+  }
+  const source = input.source.trim();
+  if (!source) {
+    throw new Error('草稿来源 (source) 不能为空。');
+  }
+  const id = newTripId();
+  const createdAt = new Date().toISOString();
+  const reason = clampStr(input.reason, 400);
+  const sourceEventIds = Array.isArray(input.sourceEventIds)
+    ? input.sourceEventIds.filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
+    : undefined;
+  const row: XingyeTripPendingDraft & { key: string } = {
+    id,
+    key: id,
+    ...draft,
+    source,
+    ...(reason ? { reason } : {}),
+    ...(sourceEventIds && sourceEventIds.length ? { sourceEventIds } : {}),
+    createdAt,
+  };
+  await backend.appendJsonl(aid, XINGYE_TRIPS_DRAFTS_JSONL, row);
+  await appendTripsEventBestEffort(aid, {
+    type: 'trips.draft_proposed',
+    source,
+    subjectId: id,
+    payload: {
+      draftId: id,
+      chapter: draft.chapter,
+      from: draft.from.name,
+      to: draft.to.name,
+      mode: draft.mode,
+      reason: reason || null,
+      sourceEventIds: sourceEventIds ?? [],
+    },
+  });
+  const { key: _key, ...record } = row;
+  return record;
+}
+
+export async function discardTripDraft(agentId: string, draftId: string): Promise<boolean> {
+  const aid = agentId.trim();
+  const did = draftId.trim();
+  if (!aid) {
+    throw new Error('丢弃草稿失败：缺少 agentId。');
+  }
+  if (!SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('丢弃草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  if (!did) {
+    throw new Error('丢弃草稿失败：缺少草稿 id。');
+  }
+  const deleted = await backend.deleteJsonlRecord(aid, XINGYE_TRIPS_DRAFTS_JSONL, did);
+  if (deleted) {
+    await appendTripsEventBestEffort(aid, {
+      type: 'trips.draft_discarded',
+      source: 'xingye-trips-store',
+      subjectId: did,
+      payload: { draftId: did },
+    });
+  }
+  return deleted;
+}
+
+/** 心跳确认产出的 entry 用确定性 id，让 retry 走幂等查重（见 journal 同名注释）。 */
+function tripEntryIdFromDraftId(draftId: string): string {
+  return `from-draft-${draftId}`;
+}
+
+/**
+ * 用户在「待确认草稿」区点「确认收进行程」时调用：
+ *   1. 用 `edits`（可选）覆盖草稿字段；
+ *   2. 通过 appendTripEntry 写入 entries.jsonl（发 trips.entry_appended），entry id 用
+ *      `from-draft-${draftId}`；entries 里已存在该 id（上次 confirm 写完 entry 但删 draft
+ *      失败）则复用现有 entry，不再追加；
+ *   3. 从 drafts.jsonl 删掉这条（删除失败只 warn，不影响 entry 落盘）；
+ *   4. 发 trips.draft_confirmed 事件，把 draftId/entryId 配对记下。
+ *
+ * 进程内 per-draft 锁防止 UI 双击/多窗口并发 confirm；与「确定性 id + 先 list 查重」组合
+ * 后，即使锁被绕过最坏也只剩孤儿 draft，不会产出重复 entry。
+ */
+export async function confirmTripDraft(
+  agentId: string,
+  draftId: string,
+  edits?: Partial<XingyeTripDraft>,
+): Promise<XingyeTripEntry> {
+  const aid = agentId.trim();
+  const did = draftId.trim();
+  if (!aid) {
+    throw new Error('确认草稿失败：缺少 agentId。');
+  }
+  if (!SAFE_AGENT_ID_RE.test(aid)) {
+    throw new Error('确认草稿失败：agentId 格式无效（仅允许字母、数字、下划线与短横线，长度 1–120）。');
+  }
+  if (!did) {
+    throw new Error('确认草稿失败：缺少草稿 id。');
+  }
+  return withDraftConfirmLock(`trips::${aid}::${did}`, async () => {
+    const expectedEntryId = tripEntryIdFromDraftId(did);
+    const existingEntry = (await listTripEntries(aid)).find((e) => e.id === expectedEntryId);
+
+    const drafts = await listTripDrafts(aid);
+    const draft = drafts.find((d) => d.id === did);
+    if (!draft && !existingEntry) {
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    let entry: XingyeTripEntry;
+    if (existingEntry) {
+      entry = existingEntry;
+    } else if (draft) {
+      const { id: _id, source: _source, reason: _reason, sourceEventIds: _evt, createdAt: _createdAt, ...content } = draft;
+      entry = await appendTripEntry(aid, { id: expectedEntryId, ...content, ...(edits ?? {}) });
+    } else {
+      /** Unreachable thanks to the guard above; keeps TS happy. */
+      throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
+    }
+
+    try {
+      await backend.deleteJsonlRecord(aid, XINGYE_TRIPS_DRAFTS_JSONL, did);
+    } catch (error) {
+      console.warn('[xingye-trips-store] confirm draft: failed to delete draft after entry append:', error);
+    }
+    await appendTripsEventBestEffort(aid, {
+      type: 'trips.draft_confirmed',
+      source: 'xingye-trips-store',
+      subjectId: did,
+      payload: { draftId: did, entryId: entry.id },
+    });
+    return entry;
+  });
 }

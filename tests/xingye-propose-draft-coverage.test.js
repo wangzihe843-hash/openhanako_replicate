@@ -44,6 +44,7 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const MODULE_UI_FIXTURES = {
   journal:            { src: "desktop/src/react/xingye/PhoneJournalApp.tsx",        test: "desktop/src/react/xingye/PhoneJournalApp.test.tsx",       confirmVerb: "confirmJournalDraft",          discardVerb: "discardJournalDraft" },
   schedule:           { src: "desktop/src/react/xingye/PhoneScheduleApp.tsx",       test: "desktop/src/react/xingye/PhoneScheduleApp.test.tsx",      confirmVerb: "confirmScheduleDraft",         discardVerb: "discardScheduleDraft" },
+  trips:              { src: "desktop/src/react/xingye/PhoneTripsApp.tsx",          test: "desktop/src/react/xingye/PhoneTripsApp.test.tsx",         confirmVerb: "confirmTripDraft",             discardVerb: "discardTripDraft" },
   moments:            { src: "desktop/src/react/xingye/MomentsPanel.tsx",           test: "desktop/src/react/xingye/MomentsPanel.test.tsx",          confirmVerb: "confirmMomentDraft",           discardVerb: "discardMomentDraft" },
   mail:               { src: "desktop/src/react/xingye/PhoneMailApp.tsx",           test: "desktop/src/react/xingye/PhoneMailApp.test.tsx",          confirmVerb: "confirmMailDraft",             discardVerb: "discardMailDraft" },
   shopping:           { src: "desktop/src/react/xingye/PhoneShoppingApp.tsx",       test: "desktop/src/react/xingye/PhoneShoppingApp.test.tsx",      confirmVerb: "confirmShoppingDraft",         discardVerb: "discardShoppingDraft" },

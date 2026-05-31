@@ -3,14 +3,19 @@ import type { ReactNode } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { loadHistoryState, saveHistoryState } from './xingye-app-history-state';
-import { generateTripsHistoryWithAI } from './xingye-trips-ai';
+import { generateTripsHistoryWithAI, generateTripsUpdateWithAI } from './xingye-trips-ai';
 import {
+  appendTripDraft,
   appendTripEntry,
+  confirmTripDraft,
   deleteTripEntry,
+  discardTripDraft,
+  listTripDrafts,
   listTripEntries,
   normalizeTripModeKey,
   type TripModeKey,
   type XingyeTripEntry,
+  type XingyeTripPendingDraft,
 } from './xingye-trips-store';
 import shell from './XingyeShell.module.css';
 import css from './PhoneTripsApp.module.css';
@@ -349,14 +354,71 @@ function TripDetail({
   );
 }
 
+/* ── 待确认行程草稿卡（心跳巡检产出） ── */
+function TripDraftCard({
+  draft,
+  busy,
+  onConfirm,
+  onDiscard,
+}: {
+  draft: XingyeTripPendingDraft;
+  busy: boolean;
+  onConfirm: () => void;
+  onDiscard: () => void;
+}) {
+  const eyebrow = [draft.chapter, draft.when].filter(Boolean).join(' · ');
+  return (
+    <div className={css.draftCard} data-testid={`phone-trips-draft-${draft.id}`}>
+      <div className={css.draftHead}>
+        <span className={css.draftBadge}>待确认</span>
+        {eyebrow ? <span className={css.draftEyebrow}>{eyebrow}</span> : null}
+      </div>
+      <div className={css.draftRoute}>
+        <span className={css.draftMode}>{modeIcon(draft.mode)}</span>
+        <span className={css.draftPlace}>{draft.from.name}</span>
+        <span className={css.draftArrow}>{ICON_ARROW}</span>
+        <span className={css.draftPlace}>{draft.to.name}</span>
+      </div>
+      {draft.modeLabel ? <div className={css.draftModeLabel}>{draft.modeLabel}</div> : null}
+      {draft.reason ? <div className={css.draftReason}>{draft.reason}</div> : null}
+      <div className={css.draftActions}>
+        <button
+          type="button"
+          className={css.draftConfirm}
+          disabled={busy}
+          data-testid={`phone-trips-draft-confirm-${draft.id}`}
+          onClick={onConfirm}
+        >
+          {busy ? '处理中…' : '确认收进行程'}
+        </button>
+        <button
+          type="button"
+          className={css.draftDiscard}
+          disabled={busy}
+          data-testid={`phone-trips-draft-discard-${draft.id}`}
+          onClick={onDiscard}
+        >
+          丢弃
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneTripsAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const author = displayName?.trim() || ownerAgent?.name || 'TA';
 
   const [entries, setEntries] = useState<XingyeTripEntry[]>([]);
+  const [pendingDrafts, setPendingDrafts] = useState<XingyeTripPendingDraft[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualNotice, setManualNotice] = useState<string | null>(null);
 
   /**
    * 首次打开行程 app 的一次性初始化（按 lore 生成 3–5 段过去行程）。
@@ -371,13 +433,18 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const reloadEntries = useCallback(async () => {
     if (!ownerAgentId) {
       setEntries([]);
+      setPendingDrafts([]);
       return;
     }
     setListLoading(true);
     setListError(null);
     try {
-      const rows = await listTripEntries(ownerAgentId);
+      const [rows, drafts] = await Promise.all([
+        listTripEntries(ownerAgentId),
+        listTripDrafts(ownerAgentId),
+      ]);
       setEntries(rows);
+      setPendingDrafts(drafts);
     } catch (e) {
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -388,6 +455,10 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
   useEffect(() => {
     setSelectedId(null);
     setListError(null);
+    setPendingDrafts([]);
+    setDraftError(null);
+    setManualError(null);
+    setManualNotice(null);
     initialBootstrapTriedRef.current = null;
     setInitError(null);
     setInitNotice(null);
@@ -437,8 +508,8 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
     if (listLoading) return;
     if (initBusy) return;
     if (initialBootstrapTriedRef.current === ownerAgentId) return;
-    // 已经有行程 → 视为已初始化过，跳过。
-    if (entries.length > 0) {
+    // 已经有行程，或 agent 心跳已经垫了待确认草稿 → 视为已初始化过，跳过。
+    if (entries.length > 0 || pendingDrafts.length > 0) {
       initialBootstrapTriedRef.current = ownerAgentId;
       return;
     }
@@ -449,8 +520,11 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
         if (state.initializedAt) return;
         // 二次确认：mount 初次 entries.length=0 不能当真，直接落盘问一次；
         // 也覆盖老用户场景（加这个功能前已写过行程但没 marker）：有内容只补 marker。
-        const fresh = await listTripEntries(ownerAgentId);
-        if (fresh.length > 0) {
+        const [freshEntries, freshDrafts] = await Promise.all([
+          listTripEntries(ownerAgentId),
+          listTripDrafts(ownerAgentId),
+        ]);
+        if (freshEntries.length > 0 || freshDrafts.length > 0) {
           await saveHistoryState(ownerAgentId, 'trips', {
             initializedAt: new Date().toISOString(),
           });
@@ -461,7 +535,7 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
         console.warn('[PhoneTripsApp] init bootstrap failed:', err);
       }
     })();
-  }, [ownerAgent, ownerAgentId, listLoading, initBusy, entries.length, runInitialBootstrap]);
+  }, [ownerAgent, ownerAgentId, listLoading, initBusy, entries.length, pendingDrafts.length, runInitialBootstrap]);
 
   const handleDelete = useCallback(
     async (entryId: string) => {
@@ -476,6 +550,72 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
     },
     [ownerAgentId, reloadEntries],
   );
+
+  const handleConfirmDraft = useCallback(
+    async (draft: XingyeTripPendingDraft) => {
+      if (!ownerAgentId) return;
+      setDraftBusyId(draft.id);
+      setDraftError(null);
+      try {
+        await confirmTripDraft(ownerAgentId, draft.id);
+        setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+        await reloadEntries();
+      } catch (e) {
+        setDraftError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDraftBusyId(null);
+      }
+    },
+    [ownerAgentId, reloadEntries],
+  );
+
+  const handleDiscardDraft = useCallback(
+    async (draft: XingyeTripPendingDraft) => {
+      if (!ownerAgentId) return;
+      if (typeof window !== 'undefined' && !window.confirm('丢弃这条待确认行程草稿？')) return;
+      setDraftBusyId(draft.id);
+      setDraftError(null);
+      try {
+        const ok = await discardTripDraft(ownerAgentId, draft.id);
+        if (ok) {
+          setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+        }
+      } catch (e) {
+        setDraftError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDraftBusyId(null);
+      }
+    },
+    [ownerAgentId],
+  );
+
+  /**
+   * 「整理新行程」手动 AI 更新：从最近聊天 / 上次巡检 / 关系状态 / lore 里提取 TA
+   * 之前没记过的过去旅程，产出 1–3 条**待确认草稿**（落到下方草稿区，不直接进
+   * 「已走过的路」）。与购物 / 记账的手动批量更新同模式。
+   */
+  const handleManualUpdate = useCallback(async () => {
+    if (!ownerAgent || !ownerAgentId) return;
+    setManualBusy(true);
+    setManualError(null);
+    setManualNotice(null);
+    try {
+      const drafts = await generateTripsUpdateWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        existingTrips: entries,
+      });
+      for (const d of drafts) {
+        await appendTripDraft(ownerAgentId, { ...d, source: 'xingye-trips-manual' });
+      }
+      setManualNotice(`已整理 ${drafts.length} 段新行程草稿，在下方确认或丢弃`);
+      await reloadEntries();
+    } catch (e) {
+      setManualError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setManualBusy(false);
+    }
+  }, [ownerAgent, ownerAgentId, ownerProfile, entries, reloadEntries]);
 
   if (!ownerAgent || !ownerAgentId) {
     return (
@@ -527,6 +667,23 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
             {author} 走过的路——每一张旧票根，一段已经发生、不会重来的路。
           </div>
 
+          <div className={css.manualRow}>
+            <button
+              type="button"
+              className={css.manualButton}
+              disabled={manualBusy || initBusy}
+              data-testid="phone-trips-manual-update"
+              onClick={() => void handleManualUpdate()}
+            >
+              {manualBusy ? '正在翻找…' : '整理新行程'}
+            </button>
+            <span className={css.manualHint}>从最近聊天 / 设定里补一段没记过的路</span>
+          </div>
+          {manualNotice && !manualBusy ? <div className={css.initBanner}>{manualNotice}</div> : null}
+          {manualError && !manualBusy ? (
+            <div className={`${css.initBanner} ${css.error}`}>整理失败：{manualError}</div>
+          ) : null}
+
           {initBusy ? (
             <div className={css.initBanner}>正在从设定里翻找 {author} 走过的路……</div>
           ) : null}
@@ -540,8 +697,26 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
             <div className={`${css.initBanner} ${css.error}`}>读取失败：{listError}</div>
           ) : null}
 
-          {!initBusy && entries.length === 0 && !initError ? (
-            <div className={css.emptyHint}>
+          {pendingDrafts.length > 0 ? (
+            <section className={css.draftSection} data-testid="phone-trips-pending-drafts">
+              <div className={css.draftSectionLabel}>待确认草稿 · 心跳巡检 / 手动整理</div>
+              {draftError ? (
+                <div className={`${css.initBanner} ${css.error}`}>草稿操作失败：{draftError}</div>
+              ) : null}
+              {pendingDrafts.map((d) => (
+                <TripDraftCard
+                  key={d.id}
+                  draft={d}
+                  busy={draftBusyId === d.id}
+                  onConfirm={() => handleConfirmDraft(d)}
+                  onDiscard={() => handleDiscardDraft(d)}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {!initBusy && entries.length === 0 && pendingDrafts.length === 0 && !initError ? (
+            <div className={css.emptyHint} data-testid="phone-trips-empty">
               还没有行程。首次打开会按 {author} 的设定，自动整理几段 TA 过去走过的路。
             </div>
           ) : null}

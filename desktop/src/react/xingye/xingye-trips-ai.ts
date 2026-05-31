@@ -8,10 +8,18 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
+import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
+import { collectRecentContextForAgent, describeRecentContextForPrompt } from './xingye-recent-context';
+import { getRelationshipState } from './xingye-state-store';
 import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import { postXingyeStorage } from './xingye-storage-api';
 import { buildTripsHistoryPrompt } from './xingye-trips-prompts';
-import { normalizeTripDraft, type XingyeTripDraft } from './xingye-trips-store';
+import {
+  listTripEntries,
+  normalizeTripDraft,
+  type XingyeTripDraft,
+  type XingyeTripEntry,
+} from './xingye-trips-store';
 
 function truncateChars(text: string, max: number): string {
   const t = text.trim();
@@ -187,6 +195,139 @@ export async function generateTripsHistoryWithAI(params: {
   const drafts = normalizeTripsHistoryResults(data?.result);
   if (drafts.length === 0) {
     throw new Error('模型返回无效：未生成可用的行程');
+  }
+  return drafts;
+}
+
+function formatRelationshipBlock(agentId: string): string {
+  const storage = getXingyePersistenceStorage();
+  const state = getRelationshipState(agentId, storage);
+  if (!state) return '';
+  return JSON.stringify(
+    {
+      mood: state.mood,
+      relationshipLabel: state.relationshipLabel,
+      stateSummary: state.stateSummary,
+      lastReason: state.lastReason,
+      affection: state.affection,
+      trust: state.trust,
+    },
+    null,
+    2,
+  );
+}
+
+/** 已记录行程的去重锚点：`from → to · chapter` 列表（截断到 max 条）。 */
+function buildExistingTripsAnchor(trips: XingyeTripEntry[], max = 16): string {
+  if (!trips.length) return '';
+  return trips
+    .slice(0, max)
+    .map((t) => `- ${t.from.name} → ${t.to.name}${t.chapter ? ` · ${t.chapter}` : ''}`)
+    .join('\n');
+}
+
+/**
+ * 「手动 AI 更新行程」：用户在行程 app 点「整理新行程」时调用。
+ *
+ * 与 generateTripsHistoryWithAI（首次打开、纯 lore 批量）区别：
+ *  - 额外喂入 **最近 OpenHanako 聊天摘录 + 上次巡检结果 + 当前关系状态**，让模型从
+ *    「最近 TA 提到 / 浮现的过去旅程」取材（走 mode:'update' 的 prompt 分支）；
+ *  - 传入已记录行程做**去重锚点**，并对模型输出按 from→to|chapter 二次过滤，避免补出
+ *    和现有行程重复的路；
+ *  - 默认产出更少（1–3 条），是「增量补一段」而非「铺满一批」。
+ *
+ * 与购物 / 记账的「手动批量更新」一致：产出的是**待确认草稿**（由调用方写入
+ * drafts.jsonl，落到行程 app 的「待确认草稿」区），不直接进「已走过的路」列表。
+ */
+export async function generateTripsUpdateWithAI(params: {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  /** 已记录行程（去重 + 锚点）；不传则内部 listTripEntries 拉一次。 */
+  existingTrips?: XingyeTripEntry[];
+  /** 期望生成几条（1–3；越界会被夹紧）。 */
+  desiredCount?: number;
+  timeoutMs?: number;
+}): Promise<XingyeTripDraft[]> {
+  const { agent, ownerProfile } = params;
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const desiredCount = Math.max(1, Math.min(3, Math.floor(params.desiredCount ?? 2)));
+
+  const existingTrips = params.existingTrips ?? (await listTripEntries(agent.id));
+  const existingKeys = new Set(existingTrips.map((t) => `${t.from.name}→${t.to.name}|${t.chapter}`));
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const userName = await resolveXingyeSpeakerUserName();
+
+  const recentContext = collectRecentContextForAgent({ agentId: agent.id });
+  const recentSceneBlock = describeRecentContextForPrompt(recentContext);
+  const relationshipBlock = formatRelationshipBlock(agent.id);
+  const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
+  const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
+  const existingTripsAnchor = buildExistingTripsAnchor(existingTrips);
+
+  const queryText = buildXingyeLoreRuntimeQueryText([
+    ...profilePartsForQuery(ownerProfile ?? null),
+    recentContext.summaryText,
+    relationshipBlock,
+    stableLoreBlock.slice(0, 2000),
+    heartbeatLine ?? '',
+  ]);
+
+  const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+    purpose: 'journal_draft',
+    queryText,
+    maxChars: 2000,
+    includeAlways: false,
+    includeKeyword: true,
+  });
+  const keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+
+  const prompt = buildTripsHistoryPrompt({
+    agent,
+    userName,
+    profile: ownerProfile,
+    stableLoreBlock,
+    keywordLoreBlock,
+    desiredCount,
+    mode: 'update',
+    recentSceneBlock,
+    relationshipBlock,
+    heartbeatBlock,
+    existingTripsAnchor,
+  });
+
+  const response = await hanaFetch('/api/xingye/phone-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs,
+    body: JSON.stringify({
+      kind: 'trips_history',
+      ownerAgentId: agent.id,
+      agentId: agent.id,
+      prompt,
+      timeoutMs,
+    }),
+  });
+
+  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('解析服务器响应失败');
+  }
+
+  if (!response.ok || data?.ok === false || data?.error) {
+    const details = Array.isArray(data?.details)
+      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+      : '';
+    throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  const drafts = normalizeTripsHistoryResults(data?.result).filter(
+    (d) => !existingKeys.has(`${d.from.name}→${d.to.name}|${d.chapter}`),
+  );
+  if (drafts.length === 0) {
+    throw new Error('没有整理出新的行程（可能都和已记录的重复了，或最近聊天里没有可提取的旅程）');
   }
   return drafts;
 }

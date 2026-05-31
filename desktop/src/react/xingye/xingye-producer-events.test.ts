@@ -80,6 +80,14 @@ import {
   discardScheduleDraft,
 } from './xingye-schedule-store';
 import {
+  appendTripDraft,
+  appendTripEntry,
+  confirmTripDraft,
+  deleteTripEntry,
+  discardTripDraft,
+  type XingyeTripDraft,
+} from './xingye-trips-store';
+import {
   appendFileDraft,
   appendFileEntry,
   confirmFileDraft,
@@ -438,6 +446,115 @@ describe('producer contract: schedule-store drafts', () => {
       subjectId: draft.id,
       payload: { draftId: draft.id, entryId: entry.id },
     });
+  });
+});
+
+describe('producer contract: trips-store', () => {
+  const validTrip = { from: { name: 'A地' }, to: { name: 'B地' }, mode: 'boat', modeLabel: '摆渡' } as unknown as XingyeTripDraft;
+
+  it('emits trips.entry_appended and trips.entry_deleted', async () => {
+    const entry = await appendTripEntry('agent-a', validTrip as never);
+    expect(lastEvent().input).toMatchObject({
+      type: 'trips.entry_appended',
+      source: 'xingye-trips-store',
+      subjectId: entry.id,
+      payload: { entryId: entry.id, from: 'A地', to: 'B地', mode: 'boat' },
+    });
+
+    appendEventMock.mockClear();
+    const ok = await deleteTripEntry('agent-a', entry.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'trips.entry_deleted',
+      source: 'xingye-trips-store',
+      subjectId: entry.id,
+    });
+  });
+
+  it('does not emit a delete event when the entry was not found', async () => {
+    const ok = await deleteTripEntry('agent-a', 'does-not-exist');
+    expect(ok).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('producer contract: trips-store drafts', () => {
+  const validTrip = { from: { name: 'A地' }, to: { name: 'B地' }, mode: 'boat', modeLabel: '摆渡' } as unknown as XingyeTripDraft;
+
+  it('appendTripDraft emits trips.draft_proposed only (no entry_appended)', async () => {
+    const draft = await appendTripDraft('agent-a', {
+      ...validTrip,
+      source: 'xingye-heartbeat-tool',
+      reason: '聊到那次撤离',
+    });
+    expect(appendEventMock).toHaveBeenCalledTimes(1);
+    expect(lastEvent().input).toMatchObject({
+      type: 'trips.draft_proposed',
+      source: 'xingye-heartbeat-tool',
+      subjectId: draft.id,
+      payload: { draftId: draft.id, from: 'A地', to: 'B地' },
+    });
+  });
+
+  it('discardTripDraft emits draft_discarded only when something was deleted', async () => {
+    const draft = await appendTripDraft('agent-a', {
+      ...validTrip,
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const ok = await discardTripDraft('agent-a', draft.id);
+    expect(ok).toBe(true);
+    expect(lastEvent().input).toMatchObject({
+      type: 'trips.draft_discarded',
+      source: 'xingye-trips-store',
+      subjectId: draft.id,
+    });
+    appendEventMock.mockClear();
+    const okAgain = await discardTripDraft('agent-a', draft.id);
+    expect(okAgain).toBe(false);
+    expect(appendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmTripDraft fires entry_appended AND draft_confirmed (entry id derived from draft id)', async () => {
+    const draft = await appendTripDraft('agent-a', {
+      ...validTrip,
+      source: 'xingye-heartbeat-tool',
+    });
+    appendEventMock.mockClear();
+    const entry = await confirmTripDraft('agent-a', draft.id);
+    expect(entry.id).toBe(`from-draft-${draft.id}`);
+    expect(entry.id).not.toBe(draft.id);
+
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).toContain('trips.entry_appended');
+    expect(types).toContain('trips.draft_confirmed');
+    const confirmed = appendEventMock.mock.calls
+      .map((c) => c[1] as Record<string, unknown>)
+      .find((input) => input.type === 'trips.draft_confirmed');
+    expect(confirmed).toMatchObject({
+      subjectId: draft.id,
+      payload: { draftId: draft.id, entryId: entry.id },
+    });
+  });
+
+  it('confirmTripDraft is idempotent: second confirm reuses existing entry after orphan-draft scenario', async () => {
+    const draft = await appendTripDraft('agent-a', {
+      ...validTrip,
+      source: 'xingye-heartbeat-tool',
+    });
+    const first = await confirmTripDraft('agent-a', draft.id);
+    /** Simulate "delete failed last time" by re-injecting the draft row. */
+    const draftsKey = 'agent-a|apps/trips/drafts.jsonl';
+    jsonlStore.set(draftsKey, [
+      { id: draft.id, key: draft.id, from: { name: 'A地' }, to: { name: 'B地' }, mode: 'boat',
+        source: 'xingye-heartbeat-tool', createdAt: new Date().toISOString() },
+    ]);
+    appendEventMock.mockClear();
+    const second = await confirmTripDraft('agent-a', draft.id);
+    expect(second.id).toBe(first.id);
+    const types = appendEventMock.mock.calls.map((c) => (c[1] as Record<string, unknown>).type);
+    expect(types).not.toContain('trips.entry_appended');
+    expect(types).toContain('trips.draft_confirmed');
   });
 });
 
@@ -1230,6 +1347,18 @@ describe('producer contract: payload.origin tagging (auto vs user)', () => {
     });
     await confirmScheduleDraft('agent-a', draft.id);
     expect((findEventByType('schedule.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
+  });
+
+  it('trips.entry_appended: user for manual, auto for confirm', async () => {
+    await appendTripEntry('agent-a', { from: { name: 'A地' }, to: { name: 'B地' } } as never);
+    expect((findEventByType('trips.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('user');
+
+    appendEventMock.mockClear();
+    const draft = await appendTripDraft('agent-a', {
+      from: { name: 'A地' }, to: { name: 'B地' }, source: 'xingye-heartbeat-tool',
+    } as never);
+    await confirmTripDraft('agent-a', draft.id);
+    expect((findEventByType('trips.entry_appended')?.payload as Record<string, unknown>)?.origin).toBe('auto');
   });
 
   it('file.entry_appended: user for manual, auto for confirm', async () => {
