@@ -8475,6 +8475,86 @@
   text-transform: uppercase;
 }
 
+/* ── 评价区（购物 / 二手详情页内联，见 AppReviewSection.tsx）── */
+.xyReviewCard {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  background: var(--xy-paper-soft);
+  border: 1px solid var(--xy-slate-bg);
+  border-radius: 8px;
+}
+
+.xyReviewCard:last-child {
+  margin-bottom: 0;
+}
+
+.xyReviewCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.xyReviewSideLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--xy-ink-soft);
+}
+
+.xyReviewStars {
+  display: inline-block;
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: var(--xy-ochre);
+  line-height: 1.4;
+}
+
+.xyReviewStarsEmpty {
+  color: var(--xy-slate-bg);
+}
+
+.xyReviewText {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--xy-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.xyReviewDefault {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--xy-ink-mute);
+  font-style: italic;
+}
+
+.xyReviewSellerReply {
+  margin: 0 0 10px 14px;
+  padding: 10px 12px;
+  background: var(--xy-terracotta-bg);
+  border-left: 3px solid var(--xy-terracotta-soft);
+  border-radius: 4px 8px 8px 4px;
+}
+
+.xyReviewSellerReplyLabel {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--xy-terracotta);
+  margin-bottom: 4px;
+}
+
+.xyReviewSellerReplyText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--xy-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .xyDetailTimeline {
   list-style: none;
   margin: 0;

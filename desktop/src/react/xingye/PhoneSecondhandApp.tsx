@@ -34,6 +34,7 @@ import {
   type BulkPlan,
 } from './xingye-app-history-state';
 import { SecondhandBuyerChatPanel } from './SecondhandBuyerChatPanel';
+import { SecondhandReviewSection } from './AppReviewSection';
 
 export interface PhoneSecondhandAppProps {
   ownerAgent: Agent | null;
@@ -1240,6 +1241,8 @@ export function PhoneSecondhandApp({
           <SecondhandDetailView
             entry={selected}
             ta={ta}
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile}
             onEdit={openEdit}
             onDelete={handleDeleteSelected}
             deleteBusy={deleteBusy}
@@ -1596,6 +1599,8 @@ export function PhoneSecondhandApp({
 function SecondhandDetailView({
   entry,
   ta,
+  ownerAgent,
+  ownerProfile,
   onEdit,
   onDelete,
   deleteBusy,
@@ -1605,6 +1610,8 @@ function SecondhandDetailView({
 }: {
   entry: SecondhandEntry;
   ta: string;
+  ownerAgent: Agent | null;
+  ownerProfile?: XingyeRoleProfile | null;
   onEdit: () => void;
   onDelete: () => void;
   deleteBusy: boolean;
@@ -1763,6 +1770,15 @@ function SecondhandDetailView({
             </div>
           ) : null}
         </div>
+
+        {status === 'sold' && ownerAgent ? (
+          <SecondhandReviewSection
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile}
+            entry={entry}
+            taDisplayName={ta}
+          />
+        ) : null}
 
         {entry.metadata.tags && entry.metadata.tags.length > 0 ? (
           <div className={styles.xyDetailSection}>

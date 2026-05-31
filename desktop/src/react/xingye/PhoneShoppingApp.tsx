@@ -33,6 +33,7 @@ import {
   toYmd,
   type BulkPlan,
 } from './xingye-app-history-state';
+import { ShoppingReviewSection } from './AppReviewSection';
 
 export interface PhoneShoppingAppProps {
   ownerAgent: Agent | null;
@@ -1159,6 +1160,8 @@ export function PhoneShoppingApp({
           <ShoppingDetailView
             entry={selected}
             ta={ta}
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile}
             onEdit={openEdit}
             onDelete={handleDeleteSelected}
             deleteBusy={deleteBusy}
@@ -1450,6 +1453,8 @@ export function PhoneShoppingApp({
 function ShoppingDetailView({
   entry,
   ta,
+  ownerAgent,
+  ownerProfile,
   onEdit,
   onDelete,
   deleteBusy,
@@ -1458,6 +1463,8 @@ function ShoppingDetailView({
 }: {
   entry: ShoppingEntry;
   ta: string;
+  ownerAgent: Agent | null;
+  ownerProfile?: XingyeRoleProfile | null;
   onEdit: () => void;
   onDelete: () => void;
   deleteBusy: boolean;
@@ -1599,6 +1606,15 @@ function ShoppingDetailView({
             </div>
           ) : null}
         </div>
+
+        {(status === 'received' || status === 'returned') && ownerAgent ? (
+          <ShoppingReviewSection
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile}
+            entry={entry}
+            taDisplayName={ta}
+          />
+        ) : null}
 
         {entry.metadata.tags && entry.metadata.tags.length > 0 ? (
           <div className={styles.xyDetailSection}>

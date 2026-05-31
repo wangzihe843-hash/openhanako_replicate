@@ -11,7 +11,12 @@ import {
   SECONDHAND_AI_STATUSES,
 } from './xingye-secondhand-prompts';
 import { buildSecondhandBuyerChatPrompt } from './xingye-secondhand-buyer-chat-prompts';
+import {
+  readSecondhandBuyerChat,
+  saveSecondhandBuyerChat,
+} from './xingye-secondhand-buyer-chat-store';
 import type {
+  SecondhandBuyerChat,
   SecondhandBuyerChatMessage,
   SecondhandBuyerChatStatus,
 } from './xingye-secondhand-buyer-chat-store';
@@ -940,4 +945,119 @@ export async function generateSecondhandBuyerChatWithAI(params: {
     throw new Error('模型返回的聊天数据无效（messages 缺失或格式错误）');
   }
   return normalized;
+}
+
+/**
+ * 「在谈 → 已售」迁移时（同 entryId），成交收尾的处理：
+ *  - 50% 续写一小段成交收尾（1–3 条），衔接旧对话；
+ *  - 50% **沉默成交**——满意收货的真实买家往往不再发消息，旧「在谈」对话原样保留即可。
+ * 两种情况都把 itemStatus 标成 'sold'，避免下次打开重复触发 / 重复掷骰。
+ */
+export const SECONDHAND_SOLD_SILENT_PROBABILITY = 0.5;
+
+/**
+ * 拿到某条 sold/negotiating 挂牌「最终形态」的买家聊天，必要时生成 / 迁移并落盘。
+ *
+ * 抽出来让**买家聊天面板**和**二手互评补聊天**走同一条路径，避免两处各自迁移导致不一致
+ * （例如互评基于「在谈」段生成、聊天面板却又另外续写了成交收尾，二者对不上）。
+ *
+ * 三条分支（与原 SecondhandBuyerChatPanel.init 同源）：
+ *  - 无缓存 → 按 status 整段生成、落盘、返回（**生成失败抛出**，调用方决定报错或降级）。
+ *  - 有缓存且「在谈→已售」迁移（缓存 itemStatus='negotiating' 且当前 status='sold'）→
+ *    50% 沉默成交（仅升 itemStatus）、50% 续写 1–3 条成交收尾（续写失败按沉默处理，不抛）；落盘、返回。
+ *  - 其它（缓存状态与当前一致）→ 原样返回缓存。
+ */
+export async function ensureSecondhandBuyerChat(params: {
+  agent: Agent;
+  ownerProfile: XingyeRoleProfile | null | undefined;
+  agentId: string;
+  entry: {
+    id: string;
+    updatedAt: string;
+    content?: string;
+    metadata: {
+      itemName: string;
+      status: SecondhandBuyerChatStatus;
+      category?: string;
+      askingPrice?: string;
+      delta?: string;
+      buyer?: string;
+      reason?: string;
+      platformStyle?: string;
+      tags?: string[];
+    };
+  };
+  userName?: string;
+}): Promise<SecondhandBuyerChat> {
+  const { agent, ownerProfile, agentId, entry, userName } = params;
+  const status = entry.metadata.status;
+  const buyerName = entry.metadata.buyer?.trim() || '陌生人';
+
+  const chatEntry = {
+    id: entry.id,
+    updatedAt: entry.updatedAt,
+    content: entry.content,
+    metadata: {
+      itemName: entry.metadata.itemName,
+      status: 'sold' as SecondhandBuyerChatStatus,
+      category: entry.metadata.category,
+      askingPrice: entry.metadata.askingPrice,
+      delta: entry.metadata.delta,
+      buyer: entry.metadata.buyer,
+      reason: entry.metadata.reason,
+      platformStyle: entry.metadata.platformStyle,
+      tags: entry.metadata.tags,
+    },
+  };
+
+  const existing = await readSecondhandBuyerChat(agentId, entry.id);
+
+  // 在谈 → 已售出 迁移：保留旧对话，按概率续写成交收尾，并把 itemStatus 升到 'sold'。
+  if (existing && status === 'sold' && existing.itemStatus === 'negotiating') {
+    let closing: SecondhandBuyerChatMessage[] = [];
+    const silent = Math.random() < SECONDHAND_SOLD_SILENT_PROBABILITY;
+    if (!silent) {
+      try {
+        const appended = await generateSecondhandBuyerChatWithAI({
+          agent,
+          ownerProfile,
+          userName,
+          entry: chatEntry,
+          mode: 'append_closing',
+          priorMessages: existing.messages,
+        });
+        closing = appended.messages;
+      } catch {
+        // 续写失败不阻塞：当作沉默成交，仍把状态升到 sold。
+        closing = [];
+      }
+    }
+    const upgraded: SecondhandBuyerChat = {
+      ...existing,
+      itemStatus: 'sold',
+      messages: closing.length ? [...existing.messages, ...closing] : existing.messages,
+    };
+    await saveSecondhandBuyerChat(agentId, upgraded);
+    return upgraded;
+  }
+
+  if (existing) return existing;
+
+  // 无缓存 → 整段生成（按当前 status，可能是 negotiating 或 sold）。
+  const result = await generateSecondhandBuyerChatWithAI({
+    agent,
+    ownerProfile,
+    userName,
+    entry: { ...chatEntry, metadata: { ...chatEntry.metadata, status } },
+  });
+  const record: SecondhandBuyerChat = {
+    entryId: entry.id,
+    buyerName,
+    itemName: entry.metadata.itemName,
+    itemStatus: status,
+    messages: result.messages,
+    generatedAt: new Date().toISOString(),
+  };
+  await saveSecondhandBuyerChat(agentId, record);
+  return record;
 }
