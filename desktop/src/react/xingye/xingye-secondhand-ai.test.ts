@@ -15,6 +15,7 @@ vi.mock('./xingye-storage-api', () => ({
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
+  generateSecondhandBuyerChatWithAI,
   generateSecondhandDraftWithAI,
   generateSecondhandHistoryWithAI,
   normalizeSecondhandDraftResult,
@@ -24,6 +25,8 @@ import {
   buildSecondhandDraftPrompt,
   SECONDHAND_AI_STATUSES,
 } from './xingye-secondhand-prompts';
+import { buildSecondhandBuyerChatPrompt } from './xingye-secondhand-buyer-chat-prompts';
+import type { SecondhandBuyerChatMessage } from './xingye-secondhand-buyer-chat-store';
 
 describe('normalizeSecondhandDraftResult', () => {
   it('requires itemName and clamps fields, defaulting status/platform', () => {
@@ -293,5 +296,139 @@ describe('buildSecondhandDraftPrompt', () => {
     expect(prompt).toContain('occurredAtHint');
     expect(prompt).toContain('过去 14 天');
     expect(prompt).toContain('drafts 长度 = 5');
+  });
+});
+
+describe('buildSecondhandBuyerChatPrompt · mode=append_closing', () => {
+  const prior: Array<{ role: 'buyer' | 'seller'; text: string }> = [
+    { role: 'buyer', text: '这件还在吗' },
+    { role: 'seller', text: '在的，120 出' },
+    { role: 'buyer', text: '能不能再松点' },
+  ];
+
+  it('builds a closing-only continuation prompt (1-3 msgs), not a full transcript', () => {
+    const prompt = buildSecondhandBuyerChatPrompt({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' as never },
+      profile: null,
+      entry: { itemName: '灰色长款风衣', status: 'sold', askingPrice: '¥120', buyer: '巷口收旧衣的' },
+      desiredMessageCount: 10,
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      mode: 'append_closing',
+      priorMessages: prior,
+    });
+    // 续写指令，而不是「整段 / 第一条必须 buyer / 固定 N 条」那套
+    expect(prompt).toContain('已经成交了');
+    expect(prompt).toContain('只续写收尾');
+    expect(prompt).toContain('1–3 条');
+    expect(prompt).not.toContain('第一条 role 必须是 "buyer"');
+    // 两种收尾基调都给到：简短成交收尾 + 收到货后不满意
+    expect(prompt).toContain('收到货后觉得有点不满意');
+    expect(prompt).toContain('成交收尾');
+    // 售后不满也不能演变成整单退货（与「已售出」矛盾）
+    expect(prompt).toContain('不要**写成整单退货');
+    // 收到货后的反馈用 afterDelivery 标记，让本地补一个隔天间隔
+    expect(prompt).toContain('afterDelivery');
+    // 既有对话作为上下文带入
+    expect(prompt).toContain('能不能再松点');
+    // 上一条是 buyer → 提示续写第一条应为「卖家」
+    expect(prompt).toContain('卖家');
+  });
+});
+
+describe('generateSecondhandBuyerChatWithAI · mode=append_closing', () => {
+  const prior: SecondhandBuyerChatMessage[] = [
+    { id: 'm1', role: 'buyer', text: '还在吗', at: '2026-05-20T10:00:00.000Z' },
+    { id: 'm2', role: 'seller', text: '在，120', at: '2026-05-20T10:02:00.000Z' },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(postXingyeStorage).mockReset();
+    vi.mocked(hanaFetch).mockReset();
+    vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
+  });
+
+  it('returns only the 1-3 closing messages, timestamped after the last prior message', async () => {
+    vi.mocked(hanaFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: { messages: [{ role: 'buyer', text: '那我要了' }, { role: 'seller', text: '好，明天来拿' }] },
+      }),
+    } as Response);
+
+    const res = await generateSecondhandBuyerChatWithAI({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' } as never,
+      ownerProfile: null,
+      entry: {
+        id: 'e1',
+        updatedAt: '2026-05-21T09:00:00.000Z',
+        metadata: { itemName: '灰色长款风衣', status: 'sold', askingPrice: '¥120' },
+      },
+      mode: 'append_closing',
+      priorMessages: prior,
+    });
+
+    expect(res.messages).toHaveLength(2);
+    expect(res.messages[0].text).toBe('那我要了');
+    // 时间戳排在既有最后一条（10:02）之后
+    expect(Date.parse(res.messages[0].at)).toBeGreaterThan(Date.parse('2026-05-20T10:02:00.000Z'));
+    // 走的是 buyer_chat kind
+    const call = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/phone-generate');
+    const body = JSON.parse(String(call?.[1]?.body ?? '')) as { kind?: string };
+    expect(body.kind).toBe('secondhand_buyer_chat');
+  });
+
+  it('inserts a multi-day gap before an afterDelivery (post-receipt) message', async () => {
+    vi.mocked(hanaFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          messages: [
+            { role: 'buyer', text: '行那我要了' },
+            { role: 'buyer', text: '收到了，成色比想的旧', afterDelivery: true },
+          ],
+        },
+      }),
+    } as Response);
+
+    const res = await generateSecondhandBuyerChatWithAI({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' } as never,
+      ownerProfile: null,
+      entry: { id: 'e1', updatedAt: '2026-05-21T09:00:00.000Z', metadata: { itemName: 'X', status: 'sold' } },
+      mode: 'append_closing',
+      priorMessages: prior,
+    });
+
+    expect(res.messages).toHaveLength(2);
+    const gapMs = Date.parse(res.messages[1].at) - Date.parse(res.messages[0].at);
+    // afterDelivery 那条至少隔了 1 天
+    expect(gapMs).toBeGreaterThan(86_400_000);
+  });
+
+  it('caps the closing at 3 messages even if the model returns more', async () => {
+    vi.mocked(hanaFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: {
+          messages: [
+            { role: 'buyer', text: '要了' }, { role: 'seller', text: '好' },
+            { role: 'buyer', text: '几点' }, { role: 'seller', text: '下午' }, { role: 'buyer', text: '行' },
+          ],
+        },
+      }),
+    } as Response);
+
+    const res = await generateSecondhandBuyerChatWithAI({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' } as never,
+      ownerProfile: null,
+      entry: { id: 'e1', updatedAt: '2026-05-21T09:00:00.000Z', metadata: { itemName: 'X', status: 'sold' } },
+      mode: 'append_closing',
+      priorMessages: prior,
+    });
+    expect(res.messages.length).toBeLessThanOrEqual(3);
   });
 });

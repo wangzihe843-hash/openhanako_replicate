@@ -125,6 +125,73 @@ describe("appendSecondhandDraftServer", () => {
       input: { itemName: "X", source: "s" },
     })).toBeNull();
   });
+
+  it("action defaults to 'add' when omitted", async () => {
+    const draft = await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { itemName: "旧相机", source: "s" },
+    });
+    expect(draft.action).toBe("add");
+    expect(draft.patch).toBeUndefined();
+    expect(draft.targetEntryId).toBeUndefined();
+  });
+
+  it("action='update' stores patch + matchName (falls back to itemName)", async () => {
+    const draft = await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: {
+        action: "update",
+        itemName: "灰色长款风衣",
+        patch: {
+          status: "sold",
+          buyer: "巷口收旧衣的",
+          tags: [" 已出 ", ""],
+          contentAppend: "  出掉了，对方挺满意。  ",
+        },
+        source: "xingye-heartbeat-tool",
+      },
+    });
+    expect(draft.action).toBe("update");
+    expect(draft.matchName).toBe("灰色长款风衣"); // 缺省回退到 itemName
+    expect(draft.patch).toMatchObject({
+      status: "sold",
+      buyer: "巷口收旧衣的",
+      tags: ["已出"],
+      contentAppend: "出掉了，对方挺满意。",
+    });
+    const proposed = readJson(path.join(agentDir, "xingye", "events", "log.json"))
+      .events.find((e) => e.type === "secondhand.draft_proposed");
+    expect(proposed.payload.action).toBe("update");
+    expect(proposed.payload.status).toBe("sold"); // update 的语义状态取自 patch.status
+    expect(proposed.payload.patchFields).toContain("status");
+  });
+
+  it("action='update' prefers explicit matchName over itemName", async () => {
+    const draft = await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: {
+        action: "update", itemName: "风衣", matchName: "灰色长款风衣",
+        patch: { status: "sold" }, source: "s",
+      },
+    });
+    expect(draft.matchName).toBe("灰色长款风衣");
+  });
+
+  it("action='update' with empty/invalid patch returns null", async () => {
+    expect(await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", itemName: "X", patch: {}, source: "s" },
+    })).toBeNull();
+    // 非法 status 被丢弃后 patch 变空 → null
+    expect(await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", itemName: "X", patch: { status: "bogus" }, source: "s" },
+    })).toBeNull();
+    expect(await appendSecondhandDraftServer({
+      agentDir, agentId: "agent-a",
+      input: { action: "update", itemName: "X", source: "s" },
+    })).toBeNull();
+  });
 });
 
 describe("createProposeDraftTool · module=secondhand", () => {
@@ -157,6 +224,38 @@ describe("createProposeDraftTool · module=secondhand", () => {
     expect(res.details.ok).toBe(false);
     expect(res.details.module).toBe("secondhand");
     expect(res.details.reason).toBe("empty_item_name");
+    expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("dispatches an action='update' status-migration draft", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      reason: "那件风衣昨天卖掉了",
+      secondhand: {
+        action: "update",
+        itemName: "灰色长款风衣",
+        patch: { status: "sold", buyer: "巷口收旧衣的" },
+      },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.action).toBe("update");
+    expect(res.details.status).toBe("sold");
+    expect(res.details.matchName).toBe("灰色长款风衣");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe("update");
+    expect(rows[0].patch).toMatchObject({ status: "sold", buyer: "巷口收旧衣的" });
+  });
+
+  it("rejects action='update' with empty patch", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { action: "update", itemName: "风衣" },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.reason).toBe("empty_patch");
     expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"))).toBe(false);
   });
 });

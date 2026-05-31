@@ -37,6 +37,14 @@ function isChatEligibleStatus(value: string): value is SecondhandBuyerChatStatus
   return value === 'sold' || value === 'negotiating';
 }
 
+/**
+ * 「在谈 → 已售」迁移时（同 entryId，例如 AI update 草稿 / 用户手动改状态），成交收尾的处理：
+ *  - 50% 续写一小段成交收尾（1–3 条），衔接旧对话；
+ *  - 50% **沉默成交**——满意收货的真实买家往往不再发消息，旧「在谈」对话原样保留即可。
+ * 两种情况都把 itemStatus 标成 'sold'，避免下次打开重复触发 / 重复掷骰。
+ */
+const SECONDHAND_SOLD_SILENT_PROBABILITY = 0.5;
+
 function formatClockTime(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
@@ -106,6 +114,55 @@ export function SecondhandBuyerChatPanel(props: SecondhandBuyerChatPanelProps) {
         const existing = await readSecondhandBuyerChat(entry.agentId, entry.id);
         if (cancelled) return;
         if (existing) {
+          /**
+           * 挂牌已从「在谈」迁移到「已售」（同 entryId）：保留旧对话，按 50% 概率续写成交
+           * 收尾，另 50% 沉默成交。不论是否续写都把 itemStatus 升到 'sold'，下次打开直接命中缓存。
+           */
+          if (status === 'sold' && existing.itemStatus === 'negotiating') {
+            let closing: SecondhandBuyerChatMessage[] = [];
+            const silent = Math.random() < SECONDHAND_SOLD_SILENT_PROBABILITY;
+            if (!silent) {
+              try {
+                const appended = await generateSecondhandBuyerChatWithAI({
+                  agent: ownerAgent,
+                  ownerProfile,
+                  entry: {
+                    id: entry.id,
+                    updatedAt: entry.updatedAt,
+                    content: entry.content,
+                    metadata: {
+                      itemName: entry.metadata.itemName,
+                      status: 'sold',
+                      category: entry.metadata.category,
+                      askingPrice: entry.metadata.askingPrice,
+                      delta: entry.metadata.delta,
+                      buyer: entry.metadata.buyer,
+                      reason: entry.metadata.reason,
+                      platformStyle: entry.metadata.platformStyle,
+                      tags: entry.metadata.tags,
+                    },
+                  },
+                  mode: 'append_closing',
+                  priorMessages: existing.messages,
+                });
+                closing = appended.messages;
+              } catch {
+                // 续写失败不阻塞：当作沉默成交，仍把状态升到 sold。
+                closing = [];
+              }
+            }
+            if (cancelled) return;
+            const upgraded: SecondhandBuyerChat = {
+              ...existing,
+              itemStatus: 'sold',
+              messages: closing.length ? [...existing.messages, ...closing] : existing.messages,
+            };
+            await saveSecondhandBuyerChat(entry.agentId, upgraded);
+            if (cancelled) return;
+            setChat(upgraded);
+            setBusy(false);
+            return;
+          }
           setChat(existing);
           setBusy(false);
           return;

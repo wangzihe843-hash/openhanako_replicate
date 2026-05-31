@@ -747,6 +747,52 @@ export function pickRandomSecondhandBuyerChatCount(): number {
 }
 
 /**
+ * append_closing 模式的归一：解析续写的 1–maxCount 条成交收尾消息。
+ * 与 full 模式不同：
+ *  - **不要求**第一条是 buyer（续写衔接，发话人由上下文决定）；
+ *  - 时间戳从 startIso（一般 = 既有最后一条的 at）**向后**推，每条 +30–180s，
+ *    让成交段排在「在谈」段之后；
+ *  - 某条带 `afterDelivery: true`（模型标在「买家收到货之后」那条上）时，在它之前
+ *    额外插入 **1–4 天** 的间隔——让售后反馈像隔了几天到货才发的，面板也会因此渲染
+ *    出日期分隔线。隔几天由本地随机（遵循「LLM 只回定性、数值本地生成」）；
+ *  - 允许返回空数组（模型没给有效消息 → 当作「沉默成交」，由调用方决定如何处理）。
+ * raw 完全不是对象 / messages 不是数组 → null（硬失败，调用方据此降级为沉默）。
+ */
+function normalizeSecondhandBuyerChatClosing(
+  raw: unknown,
+  opts: { startIso: string; maxCount: number },
+): SecondhandBuyerChatAiResult | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const rawMessages = rec.messages;
+  if (!Array.isArray(rawMessages)) return null;
+  const startMs = (() => {
+    const t = Date.parse(opts.startIso);
+    return Number.isFinite(t) ? t : Date.now();
+  })();
+  let cursorMs = startMs;
+  const out: SecondhandBuyerChatMessage[] = [];
+  for (let i = 0; i < rawMessages.length && out.length < opts.maxCount; i += 1) {
+    const item = rawMessages[i];
+    if (!item || typeof item !== 'object') continue;
+    const m = item as Record<string, unknown>;
+    const role = m.role === 'seller' ? 'seller' : m.role === 'buyer' ? 'buyer' : null;
+    const text = typeof m.text === 'string' ? m.text.trim() : '';
+    if (!role || !text) continue;
+    const jitterSec = 30 + Math.floor(Math.random() * 150);
+    const deliveryGapSec = m.afterDelivery === true ? (1 + Math.floor(Math.random() * 4)) * 86_400 : 0;
+    cursorMs += (deliveryGapSec + jitterSec) * 1000;
+    out.push({
+      id: newBuyerChatMessageId(),
+      role,
+      text: truncateChars(text, 200),
+      at: new Date(cursorMs).toISOString(),
+    });
+  }
+  return { messages: out };
+}
+
+/**
  * 二手 buyer chat 生成入口。
  *
  * - 仅 status === 'sold' / 'negotiating' 才有意义；调用方负责守门。
@@ -774,12 +820,21 @@ export async function generateSecondhandBuyerChatWithAI(params: {
   };
   userName?: string;
   desiredMessageCount?: number;
+  /**
+   * 'full'（默认）= 从零生成整段；'append_closing' = 保留 priorMessages 只续写成交收尾 1–3 条。
+   * append_closing 用于挂牌从「在谈」迁移到「已售」时延续旧聊天（见 SecondhandBuyerChatPanel）。
+   */
+  mode?: 'full' | 'append_closing';
+  /** append_closing 模式下的既有对话（之前「在谈」段）。 */
+  priorMessages?: SecondhandBuyerChatMessage[];
   timeoutMs?: number;
 }): Promise<SecondhandBuyerChatAiResult> {
   const { agent, ownerProfile, entry } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
   const userName = await resolveXingyeSpeakerUserName(params.userName);
   const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
+  const mode = params.mode ?? 'full';
+  const priorMessages = params.priorMessages ?? [];
   const desiredMessageCount = params.desiredMessageCount ?? pickRandomSecondhandBuyerChatCount();
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
@@ -832,6 +887,8 @@ export async function generateSecondhandBuyerChatWithAI(params: {
     stableLoreBlock,
     keywordLoreBlock,
     relationshipBlock,
+    mode,
+    priorMessages: priorMessages.map((m) => ({ role: m.role, text: m.text })),
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -859,6 +916,20 @@ export async function generateSecondhandBuyerChatWithAI(params: {
       ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
       : '';
     throw new Error(`${data?.error || '模型调用失败'}${details}`);
+  }
+
+  if (mode === 'append_closing') {
+    // 时间戳从既有最后一条之后续推；既有为空时退回 entry.updatedAt。
+    const lastPrior = priorMessages.length ? priorMessages[priorMessages.length - 1] : null;
+    const startIso = lastPrior?.at || entry.updatedAt;
+    const normalizedClosing = normalizeSecondhandBuyerChatClosing(data?.result, {
+      startIso,
+      maxCount: 3,
+    });
+    if (!normalizedClosing) {
+      throw new Error('模型返回的成交收尾数据无效（messages 缺失或格式错误）');
+    }
+    return normalizedClosing;
   }
 
   const normalized = normalizeSecondhandBuyerChatResult(data?.result, {

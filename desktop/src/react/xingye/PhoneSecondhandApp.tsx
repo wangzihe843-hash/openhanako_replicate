@@ -483,6 +483,29 @@ export function PhoneSecondhandApp({
     [draftEdits],
   );
 
+  /**
+   * update 草稿：在已加载的 entries 里定位目标挂牌（targetEntryId 优先、matchName/itemName 兜底）。
+   * 与 server/confirm 端 resolveSecondhandTargetEntry 同逻辑，这里仅供 UI 展示「旧 → 新」diff
+   * 和「目标未找到」告警；真正的落地解析仍在 confirmSecondhandDraft 内做。
+   */
+  const resolveUpdateTarget = useCallback(
+    (d: XingyePendingSecondhandDraft): SecondhandEntry | null => {
+      const tid = d.targetEntryId?.trim();
+      if (tid) {
+        const byId = entries.find((e) => e.id === tid);
+        if (byId) return byId;
+      }
+      const name = (d.matchName ?? d.itemName ?? '').trim().toLowerCase();
+      if (!name) return null;
+      const matches = entries.filter(
+        (e) => (e.metadata.itemName || e.title || '').trim().toLowerCase() === name,
+      );
+      if (matches.length === 0) return null;
+      return matches.slice().sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+    },
+    [entries],
+  );
+
   const handleDraftFieldChange = (
     draftId: string,
     patch: Partial<{
@@ -603,6 +626,38 @@ export function PhoneSecondhandApp({
           ? working.currency
           : (fallbackCurrency ?? null),
       });
+      const normalized = normalizeSecondhandEntry(entry);
+      setEntries((prev) =>
+        [normalized, ...prev.filter((p) => p.id !== normalized.id)].sort(
+          (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+        ),
+      );
+      setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
+      setDraftEdits((prev) => {
+        if (!(d.id in prev)) return prev;
+        const { [d.id]: _omitted, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDraftBusyId(null);
+      setDraftBusyKind(null);
+    }
+  };
+
+  /**
+   * update 草稿确认：把 patch merge 到目标挂牌（保持 entryId 不变，买家聊天延续）。
+   * 不走 polish/edits 两段式——更新候选就是「给用户一个 diff 让其确认」，确认即应用、不再编辑。
+   * confirmSecondhandDraft 内部按 draft.action 分发到 applySecondhandUpdateDraft。
+   */
+  const handleConfirmUpdateDraft = async (d: XingyePendingSecondhandDraft) => {
+    if (!ownerAgentId) return;
+    setDraftBusyId(d.id);
+    setDraftBusyKind('plain');
+    setDraftError(null);
+    try {
+      const entry = await confirmSecondhandDraft(ownerAgentId, d.id);
       const normalized = normalizeSecondhandEntry(entry);
       setEntries((prev) =>
         [normalized, ...prev.filter((p) => p.id !== normalized.id)].sort(
@@ -1252,8 +1307,68 @@ export function PhoneSecondhandApp({
                   <p className={styles.xyDraftError} role="alert">{draftError}</p>
                 ) : null}
                 {pendingDrafts.map((d) => {
-                  const working = draftWorkingValue(d);
                   const busy = draftBusyId === d.id;
+                  if (d.action === 'update') {
+                    const target = resolveUpdateTarget(d);
+                    const p = d.patch ?? {};
+                    const toStatus = p.status ? STATUS_LABELS[p.status] : null;
+                    const fromStatus = target ? STATUS_LABELS[target.metadata.status] : null;
+                    return (
+                      <div
+                        key={d.id}
+                        className={styles.xyDraftCard}
+                        data-testid={`phone-secondhand-draft-${d.id}`}
+                        data-draft-action="update"
+                      >
+                        <p className={styles.xyDraftHeader} style={{ margin: 0 }}>
+                          更新现有挂牌 · {target ? target.metadata.itemName || target.title : d.itemName}
+                        </p>
+                        {!target ? (
+                          <p className={styles.xyDraftError} role="alert">
+                            没在清单里找到「{d.matchName || d.itemName}」这条挂牌（可能已删除或改名）。确认会失败，建议丢弃后让角色重新提议。
+                          </p>
+                        ) : null}
+                        <div
+                          style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, lineHeight: 1.5 }}
+                          data-testid={`phone-secondhand-draft-diff-${d.id}`}
+                        >
+                          {toStatus ? (
+                            <span>
+                              状态：{fromStatus ?? '—'} → <b>{toStatus}</b>
+                            </span>
+                          ) : null}
+                          {p.askingPrice !== undefined ? <span>卖价 → {p.askingPrice}</span> : null}
+                          {p.delta !== undefined ? <span>落差 → {p.delta}</span> : null}
+                          {p.buyer !== undefined ? <span>买家 → {p.buyer}</span> : null}
+                          {p.category !== undefined ? <span>类别 → {p.category}</span> : null}
+                          {p.tags !== undefined ? <span>标签 → {p.tags.join(' / ')}</span> : null}
+                          {p.contentAppend ? <span>备注追加：{p.contentAppend}</span> : null}
+                        </div>
+                        {d.reason ? <p className={styles.xyDraftReason}>理由：{d.reason}</p> : null}
+                        <div className={styles.xyDraftActions}>
+                          <button
+                            type="button"
+                            className={styles.xyDraftConfirm}
+                            onClick={() => void handleConfirmUpdateDraft(d)}
+                            disabled={busy}
+                            data-testid={`phone-secondhand-draft-confirm-${d.id}`}
+                          >
+                            {busy && draftBusyKind === 'plain' ? '处理中…' : '确认更新'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.xyDraftDiscard}
+                            onClick={() => void handleDiscardDraft(d)}
+                            disabled={busy}
+                            data-testid={`phone-secondhand-draft-discard-${d.id}`}
+                          >
+                            丢弃
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  const working = draftWorkingValue(d);
                   return (
                     <div
                       key={d.id}

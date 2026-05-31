@@ -34,7 +34,11 @@ export type SecondhandBuyerChat = {
   buyerName: string;
   /** 生成时的商品名快照（用于聊天页顶部 banner，避免详情数据漂移） */
   itemName: string;
-  /** 生成时的商品状态快照。状态变化时不会自动重生成——由用户手动触发。 */
+  /**
+   * 本条聊天对应的状态快照。多数状态变化不会自动重生成（由用户手动「换一段」）；
+   * 唯一例外是 negotiating → sold：打开聊天时会保留旧对话、按概率续写成交收尾
+   * 并把本字段升到 'sold'（见 SecondhandBuyerChatPanel），避免重复触发。
+   */
   itemStatus: SecondhandBuyerChatStatus;
   /** 完整对话序列；约定 buyer 先开口。 */
   messages: SecondhandBuyerChatMessage[];

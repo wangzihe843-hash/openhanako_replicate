@@ -20,6 +20,7 @@ import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import {
   appendAppEntry,
   listAppEntries,
+  updateAppEntry,
   type AppEntry,
 } from './xingye-app-entry-store';
 import { withDraftConfirmLock } from './xingye-draft-confirm-lock';
@@ -52,6 +53,24 @@ export type SecondhandDraftStatus =
 
 export type SecondhandDraftPlatformStyle = 'amazon' | 'taobao' | 'xianyu' | 'generic';
 
+export type SecondhandDraftAction = 'add' | 'update';
+
+/**
+ * update 草稿对一条「已有挂牌」的状态迁移补丁。
+ * 与 server 端 normalizeSecondhandDraftPatch 的字段一一对应。
+ * confirm 阶段把这些字段 merge 到目标 entry 的 metadata 上（保持 entryId 不变）。
+ */
+export type SecondhandDraftPatch = {
+  status?: SecondhandDraftStatus;
+  askingPrice?: string;
+  delta?: string;
+  buyer?: string;
+  category?: string;
+  tags?: string[];
+  /** 追加到目标 entry 正文末尾的一句话（不整体覆盖）。 */
+  contentAppend?: string;
+};
+
 const SECONDHAND_DRAFT_STATUSES = new Set<SecondhandDraftStatus>([
   'to_sell',
   'listed',
@@ -70,6 +89,17 @@ const SECONDHAND_DRAFT_PLATFORM_STYLES = new Set<SecondhandDraftPlatformStyle>([
 
 export type XingyePendingSecondhandDraft = {
   id: string;
+  /**
+   * 草稿动作；缺省 'add'（向后兼容旧草稿行）。
+   * 'update' 草稿对一条已有挂牌做状态迁移补丁，靠 targetEntryId / matchName 定位目标。
+   */
+  action: SecondhandDraftAction;
+  /** action='update' 时的目标挂牌 entry id（优先）。 */
+  targetEntryId?: string;
+  /** action='update' 时按物品名匹配目标的兜底名（server 端缺省回退到 itemName）。 */
+  matchName?: string;
+  /** action='update' 时的状态迁移补丁。 */
+  patch?: SecondhandDraftPatch;
   itemName: string;
   status: SecondhandDraftStatus;
   platformStyle: SecondhandDraftPlatformStyle;
@@ -127,6 +157,38 @@ function normalizeStatus(value: unknown): SecondhandDraftStatus {
     : 'to_sell';
 }
 
+function normalizeAction(value: unknown): SecondhandDraftAction {
+  return value === 'update' ? 'update' : 'add';
+}
+
+/**
+ * 归一 update 补丁。镜像 server 端 normalizeSecondhandDraftPatch：
+ *  - status 必须合法枚举值，否则丢弃该字段（不回退——update 不该悄悄改错状态）
+ *  - tags 空数组丢弃
+ *  - 全部字段都缺 → undefined（调用方据此判定为「无可应用补丁」）
+ */
+function normalizeDraftPatch(value: unknown): SecondhandDraftPatch | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const patch: SecondhandDraftPatch = {};
+  if (typeof raw.status === 'string' && SECONDHAND_DRAFT_STATUSES.has(raw.status as SecondhandDraftStatus)) {
+    patch.status = raw.status as SecondhandDraftStatus;
+  }
+  const askingPrice = normalizeOptionalText(raw.askingPrice, 40);
+  if (askingPrice !== undefined) patch.askingPrice = askingPrice;
+  const delta = normalizeOptionalText(raw.delta, 32);
+  if (delta !== undefined) patch.delta = delta;
+  const buyer = normalizeOptionalText(raw.buyer, 24);
+  if (buyer !== undefined) patch.buyer = buyer;
+  const category = normalizeOptionalText(raw.category, 24);
+  if (category !== undefined) patch.category = category;
+  const tags = normalizeTags(raw.tags);
+  if (tags && tags.length > 0) patch.tags = tags;
+  const contentAppend = normalizeOptionalText(raw.contentAppend, 2000);
+  if (contentAppend !== undefined) patch.contentAppend = contentAppend;
+  return Object.keys(patch).length > 0 ? patch : undefined;
+}
+
 function normalizePlatformStyle(value: unknown): SecondhandDraftPlatformStyle {
   return typeof value === 'string' && SECONDHAND_DRAFT_PLATFORM_STYLES.has(value as SecondhandDraftPlatformStyle)
     ? (value as SecondhandDraftPlatformStyle)
@@ -168,8 +230,14 @@ function normalizeDraftRow(value: unknown): XingyePendingSecondhandDraft | null 
   const occurredAt = Number.isFinite(occurredAtParsed)
     ? new Date(occurredAtParsed).toISOString()
     : undefined;
+  const action = normalizeAction(raw.action);
+  const patch = action === 'update' ? normalizeDraftPatch(raw.patch) : undefined;
   return {
     id,
+    action,
+    targetEntryId: action === 'update' ? normalizeOptionalText(raw.targetEntryId, 120) : undefined,
+    matchName: action === 'update' ? normalizeOptionalText(raw.matchName, 80) : undefined,
+    patch,
     itemName,
     status: normalizeStatus(raw.status),
     platformStyle: normalizePlatformStyle(raw.platformStyle),
@@ -274,6 +342,7 @@ export async function appendSecondhandDraft(
   const row: XingyePendingSecondhandDraft & { key: string } = {
     id,
     key: id,
+    action: 'add',
     itemName,
     status,
     platformStyle,
@@ -298,6 +367,7 @@ export async function appendSecondhandDraft(
     subjectId: id,
     payload: {
       draftId: id,
+      action: 'add',
       itemName,
       status,
       reason: reason ?? null,
@@ -306,6 +376,7 @@ export async function appendSecondhandDraft(
   });
   return {
     id,
+    action: 'add',
     itemName,
     status,
     platformStyle,
@@ -347,6 +418,76 @@ function secondhandEntryIdFromDraftId(draftId: string): string {
 }
 
 /**
+ * update 草稿：在已有挂牌里定位目标。targetEntryId 优先，matchName / itemName 按名兜底。
+ * 多条同名时取最近更新的一条（最可能是 TA 正谈着的那条）。
+ */
+function resolveSecondhandTargetEntry(
+  entries: AppEntry[],
+  draft: XingyePendingSecondhandDraft,
+): AppEntry | null {
+  const tid = draft.targetEntryId?.trim();
+  if (tid) {
+    const byId = entries.find((e) => e.id === tid);
+    if (byId) return byId;
+  }
+  const name = (draft.matchName ?? draft.itemName ?? '').trim().toLowerCase();
+  if (!name) return null;
+  const matches = entries.filter((e) => {
+    const metaName =
+      typeof (e.metadata as Record<string, unknown>)?.itemName === 'string'
+        ? ((e.metadata as Record<string, unknown>).itemName as string)
+        : '';
+    const candidate = (metaName || e.title || '').trim().toLowerCase();
+    return candidate === name;
+  });
+  if (matches.length === 0) return null;
+  return matches.slice().sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+}
+
+/**
+ * 把 update 草稿的 patch merge 到目标挂牌上：
+ *  - 读目标 entry 的 metadata，按 patch 覆盖 status / askingPrice / delta / buyer / category / tags；
+ *  - contentAppend 追加到正文末尾（≤2000 截断），不整体覆盖；
+ *  - 调 updateAppEntry 写回，**保持 entryId 不变**——买家聊天按 entryId 存，因此得以延续；
+ *  - amount / currency 不在 patch 范围，保留目标原值（要改金额由用户手动编辑）。
+ *
+ * 注意：updateAppEntry / store.updateEntry 对 metadata 是**整体替换**而非 merge，
+ * 所以这里必须把 merge 后的**完整** metadata 传回去。
+ */
+async function applySecondhandUpdateDraft(
+  agentId: string,
+  draft: XingyePendingSecondhandDraft,
+  entries: AppEntry[],
+): Promise<AppEntry> {
+  const target = resolveSecondhandTargetEntry(entries, draft);
+  if (!target) {
+    throw new Error('确认更新草稿失败：目标挂牌已不存在（可能已被删除或改名）；请丢弃此草稿后让角色重新提议。');
+  }
+  const patch = draft.patch ?? {};
+  const meta: Record<string, unknown> = { ...(target.metadata ?? {}) };
+  if (patch.status) meta.status = patch.status;
+  if (patch.askingPrice !== undefined) meta.askingPrice = patch.askingPrice;
+  if (patch.delta !== undefined) meta.delta = patch.delta;
+  if (patch.buyer !== undefined) meta.buyer = patch.buyer;
+  if (patch.category !== undefined) meta.category = patch.category;
+  if (patch.tags !== undefined) meta.tags = patch.tags;
+
+  const nextContent = patch.contentAppend
+    ? `${target.content ? `${target.content}\n\n` : ''}${patch.contentAppend}`.slice(0, 2000)
+    : target.content;
+
+  const updated = await updateAppEntry(agentId, 'secondhand', target.id, {
+    title: target.title,
+    content: nextContent,
+    metadata: meta,
+  });
+  if (!updated) {
+    throw new Error('确认更新草稿失败：updateAppEntry 未找到目标条目（可能并发删除）。');
+  }
+  return updated;
+}
+
+/**
  * 用户在「待确认草稿」区点「确认生成」时调用：
  *   1. entry id 用 `from-draft-${draftId}`；先 listAppEntries('secondhand') 查重，
  *      发现已有同 id 的 entry（说明上一次 confirm 写完 entry 但 delete draft 失败）
@@ -380,8 +521,9 @@ export async function confirmSecondhandDraft(
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
   return withDraftConfirmLock(`secondhand::${aid}::${did}`, async () => {
+    const entries = await listAppEntries(aid, 'secondhand');
     const expectedEntryId = secondhandEntryIdFromDraftId(did);
-    const existingEntry = (await listAppEntries(aid, 'secondhand')).find((e) => e.id === expectedEntryId);
+    const existingEntry = entries.find((e) => e.id === expectedEntryId);
 
     const draft = (await listSecondhandDrafts(aid)).find((d) => d.id === did);
     if (!draft && !existingEntry) {
@@ -390,7 +532,10 @@ export async function confirmSecondhandDraft(
 
     let entry: AppEntry;
     if (existingEntry) {
+      // 幂等重试：上次 confirm 写完 add entry 但 delete draft 失败（update 不走 from-draft id）。
       entry = existingEntry;
+    } else if (draft && draft.action === 'update') {
+      entry = await applySecondhandUpdateDraft(aid, draft, entries);
     } else if (draft) {
       const resolveOptional = (
         key: 'category' | 'askingPrice' | 'delta' | 'buyer' | 'content' | 'reason',
@@ -477,7 +622,12 @@ export async function confirmSecondhandDraft(
       type: 'secondhand.draft_confirmed',
       source: 'xingye-secondhand-drafts',
       subjectId: did,
-      payload: { draftId: did, entryId: entry.id, itemName: entry.title },
+      payload: {
+        draftId: did,
+        action: draft?.action ?? 'add',
+        entryId: entry.id,
+        itemName: entry.title,
+      },
     });
     return entry;
   });

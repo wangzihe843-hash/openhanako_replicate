@@ -37,7 +37,8 @@ display-name-ko: 호시노 중고 초안
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `itemName` | ✅ | 物品名，必填，trim 后不能为空。简洁、具体。例：「灰色长款风衣」「《长安的荔枝》」「米色 18cm 小锅」。≤80 字符。 |
+| `action` | 可选 | 草稿动作，默认 `add`。`add` = 新挂出一件清单里**还没有**的东西；`update` = 给一件**已有挂牌**打状态迁移补丁（见下方专门一节）。**物件状态变了（在谈→已售 等）请用 `update`，不要 `add` 重复条目。** |
+| `itemName` | ✅ | 物品名，必填，trim 后不能为空。简洁、具体。例：「灰色长款风衣」「《长安的荔枝》」「米色 18cm 小锅」。≤80 字符。**`action='update'` 时**：写成与目标旧挂牌**一致**的名字（同时兼作 `matchName` 兜底）。 |
 | `status` | 强烈建议主动判断 | 状态。**必须根据最近聊天 / 事件流的语义信号主动判断**——不要无脑默认 `to_sell`，否则「她刚把相机出手了」也被错记成「想卖」。具体规则见下方专门一节。允许：`to_sell` / `listed` / `negotiating` / `sold` / `kept` / `delisted`。判不出 / 上下文完全模糊时才回退 `to_sell`（也是 enum 校验的兜底）。 |
 | `platformStyle` | 可选 | 平台风格（影响卡片配色），默认 `generic`。允许：`amazon`/`taobao`/`xianyu`/`generic`。 |
 | `category` | 可选 | 类别，例：「衣物」「书」「旧物」「家居」。≤24 字符。 |
@@ -69,7 +70,46 @@ display-name-ko: 호시노 중고 초안
 > 反例：「她说那只旧相机昨天被楼下收旧货的收走了」——这是 `sold`，不是 `to_sell`。
 > 写错 status 会让用户在 PhoneSecondhandApp 的状态筛选里找不到这条。
 
-## 调用样例
+## 改已有挂牌的状态（`action='update'`，**重要**）
+
+当最近聊天 / 事件流说的是**一件清单里已经有的旧物状态变了**——典型是「在谈 → 已售」，也包括「想卖 → 挂出」「挂出 → 撤下」「在谈 → 留下」等——请用 `action='update'` 给那条**已有挂牌**打补丁，而**不是** `add` 一条几乎同名的新挂牌。
+
+**为什么必须用 update**：
+
+- `add` 会产生两条几乎同名的重复记录，用户在清单里看到一件东西出现两次。
+- 旧挂牌在「在谈」阶段可能已经积累了**与买家的聊天记录**（按挂牌 entryId 存）。`add` 出来的是新 entryId，旧聊天对不上、成了孤儿；`update` 保持 entryId 不变，**聊天得以延续到成交**。
+
+**怎么写 update**：
+
+| 字段 | 说明 |
+| --- | --- |
+| `action` | 填 `'update'`。 |
+| `targetEntryId` | 若你从「小手机事件」摘要里知道目标挂牌的 entry id，优先填它。≤120 字符。 |
+| `matchName` | 不知道 id 时按**物品名**匹配；缺省会回退用 `itemName`。所以最简单的做法：把 `itemName` 写成与原挂牌一致的名字即可。≤80 字符。 |
+| `patch` | 状态迁移补丁，**至少含一个非空字段**。常用 `patch.status`（迁移到的新状态），可带 `patch.askingPrice`（最终成交价）、`patch.delta`、`patch.buyer`（成交后才知道是谁接手的）、`patch.contentAppend`（追加一句备注，不覆盖原文）。 |
+
+`patch.status` 的取值与上面 status 表一致（`to_sell`/`listed`/`negotiating`/`sold`/`kept`/`delisted`）。
+
+> 反例（**别这么做**）：上周提议过「灰色长款风衣 · 在谈」，这周聊天说「那件风衣卖掉了」——**不要**再 `add` 一条「灰色长款风衣 · 已售」，而要 `action='update'`, `itemName: '灰色长款风衣'`, `patch: { status: 'sold', buyer: '巷口收旧衣的' }`。
+
+### update 调用样例
+
+```
+module: "secondhand"
+reason: "她说上周挂的那件风衣昨天被人收走了，成交了"
+sourceEventIds: ["<event-id>"]
+secondhand:
+  action: "update"
+  itemName: "灰色长款风衣"          # 与原挂牌同名，兼作 matchName 兜底
+  patch:
+    status: "sold"
+    buyer: "巷口收旧衣的"
+    contentAppend: "最后 100 出的，对方挺爽快，没怎么压价。"
+```
+
+用户在二手清单「待确认草稿」区会看到一张「更新现有挂牌 · 灰色长款风衣 / 状态：在谈 → 已售出」的卡片，点「确认更新」即把补丁应用到原挂牌（entryId 不变）。
+
+## 调用样例（新增挂牌 `action='add'`）
 
 读完本 skill，调用 `xingye_propose_draft` 工具：
 
