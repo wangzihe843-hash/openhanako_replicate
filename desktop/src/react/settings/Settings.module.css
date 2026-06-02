@@ -4623,6 +4623,10 @@ a.about-link:hover {
     min-height: 28px;
 }
 
+.pv-cred-row-top {
+    align-items: flex-start;
+}
+
 .pv-cred-label {
     font-size: 0.72rem;
     color: var(--text-muted);
@@ -4649,6 +4653,12 @@ a.about-link:hover {
 .pv-cred-url-row .settings-input {
     width: 100%;
     font-size: 0.75rem;
+}
+
+.pv-headers-textarea {
+    min-height: 66px;
+    font-size: 0.75rem;
+    resize: vertical;
 }
 
 .pv-cred-badge {

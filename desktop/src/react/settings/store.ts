@@ -34,6 +34,7 @@ export interface ProviderSummary {
   base_url: string;
   api: string;
   api_key: string;
+  headers?: Record<string, string>;
   models: (string | { id: string; [key: string]: any })[];
   custom_models: string[];
   has_credentials: boolean;

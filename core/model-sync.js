@@ -10,7 +10,7 @@ import { getPiModel } from "../lib/pi-sdk/index.js";
 import { lookupKnown } from "../shared/known-models.js";
 import { atomicWriteSync } from "../shared/safe-fs.js";
 import { normalizeVisionCapabilities, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.js";
-import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
+import { normalizeProviderHeaders, providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
 import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.js";
 
@@ -219,13 +219,16 @@ export function syncModels(providers, opts = {}) {
       apiKey = extractApiKey(getAuthJson()[authKey]);
     }
 
-    // 无凭证时只允许 provider 契约声明无需 key，或旧本地 loopback 配置。
-    if (!apiKey && !providerCredentialAllowsMissingApiKey({
+    const headers = normalizeProviderHeaders(p.headers);
+    const hasHeaders = Object.keys(headers).length > 0;
+
+    // 无凭证时只允许 provider 契约声明无需 key、旧本地 loopback 配置，或显式 provider headers。
+    if (!apiKey && !hasHeaders && !providerCredentialAllowsMissingApiKey({
       authType: p.auth_type,
       baseUrl: p.base_url,
     })) continue;
 
-    const effectiveApiKey = apiKey || "local";
+    const effectiveApiKey = apiKey || (hasHeaders ? "headers" : "local");
     const effectiveApi = p.api || "openai-completions";
     const chatModels = filterChatModelEntries(name, p.models);
     const customModels = [];
@@ -246,6 +249,7 @@ export function syncModels(providers, opts = {}) {
       api: effectiveApi,
       apiKey: hasLiteralApiKey ? buildRuntimeApiKeyRef(name) : effectiveApiKey,
     };
+    if (Object.keys(headers).length > 0) providerConfig.headers = headers;
     if (customModels.length > 0) providerConfig.models = customModels;
     if (Object.keys(modelOverrides).length > 0) providerConfig.modelOverrides = modelOverrides;
 

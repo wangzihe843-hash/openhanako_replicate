@@ -331,6 +331,32 @@ describe("callText provider-compat routing", () => {
     expect(fetchMock.mock.calls[1][1].headers["User-Agent"]).toBe("ExistingClient/2.0");
   });
 
+  it("lets provider request headers override protocol auth headers on utility requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      apiKey: "sk-default",
+      baseUrl: "https://gateway.example/v1",
+      model: {
+        id: "gateway-model",
+        provider: "gateway-provider",
+        headers: { Authorization: "Gateway gateway-token" },
+      },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.Authorization).toBe("Gateway gateway-token");
+  });
+
   it("does not append a duplicate v1 segment for Anthropic-compatible base URLs", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

@@ -7,7 +7,12 @@ import os from "os";
 import { Hono } from "hono";
 import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
-import { appendProviderApiPath, buildProviderAuthHeaders, normalizeProviderBaseUrlForApi, probeProvider, withDefaultProviderHeaders } from "../../lib/llm/provider-client.js";
+import { appendProviderApiPath, buildProviderRequestHeaders, normalizeProviderBaseUrlForApi, probeProvider } from "../../lib/llm/provider-client.js";
+import {
+  collectProviderHeaderSecretPatchPaths,
+  maskProviderHeaders,
+  resolveProviderHeadersPatch,
+} from "../../shared/provider-auth.js";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.js";
 import { listKnownProviderModels, lookupKnown } from "../../shared/known-models.js";
 import { clearConfigCache } from "../../lib/memory/config-loader.js";
@@ -65,6 +70,7 @@ export function createProvidersRoute(engine) {
         base_url: p.base_url || entry?.baseUrl || "",
         api_key: p.api_key || "",
         api: p.api || entry?.api || "",
+        headers: p.headers || entry?.headers || {},
         models: p.models || [],
         config_error: p._config_error || null,
       };
@@ -105,7 +111,8 @@ export function createProvidersRoute(engine) {
       const rawModels = p.models || [];
       const customModels = oauthCustom[name] || [];
       const allowsMissingApiKey = !!p.base_url && provRegistry.allowsMissingApiKey?.(name, p.base_url);
-      const hasCredentials = !!(p.api_key || (isOAuth && oauthInfo?.loggedIn) || (!isOAuth && allowsMissingApiKey));
+      const hasHeaders = Object.keys(p.headers || {}).length > 0;
+      const hasCredentials = !!(p.api_key || hasHeaders || (isOAuth && oauthInfo?.loggedIn) || (!isOAuth && allowsMissingApiKey));
       const missingFields = [];
       if (!isOAuth) {
         if (!p.base_url) missingFields.push("base_url");
@@ -120,6 +127,7 @@ export function createProvidersRoute(engine) {
         base_url: p.base_url || "",
         api: p.api || "",
         api_key: maskSecretValue(p.api_key || ""),
+        headers: maskProviderHeaders(p.headers || {}),
         models: rawModels,
         custom_models: customModels,
         has_credentials: hasCredentials,
@@ -330,7 +338,10 @@ export function createProvidersRoute(engine) {
     const body = await safeJson(c);
     const scopeDenied = denyWithoutScope(c, "providers.manage");
     if (scopeDenied) return scopeDenied;
-    const secretDenied = denySecretMutationWithoutScope(c, collectSecretPatchPaths(body, ["api_key"]));
+    const secretDenied = denySecretMutationWithoutScope(c, [
+      ...collectSecretPatchPaths(body, ["api_key"]),
+      ...collectProviderHeaderSecretPatchPaths(body.headers, "headers"),
+    ]);
     if (secretDenied) return secretDenied;
     const { name, base_url, api: explicitApi, api_key } = body;
     if (!name && !base_url) {
@@ -350,6 +361,9 @@ export function createProvidersRoute(engine) {
       api: explicitApi || saved.api || "",
     });
     const effectiveApi = explicitApi || saved.api || "";
+    const effectiveHeaders = Object.prototype.hasOwnProperty.call(body, "headers")
+      ? resolveProviderHeadersPatch({ patch: body.headers, existing: saved.headers || {} })
+      : saved.headers || {};
 
     if (effectiveApi === "openai-codex-responses") {
       return c.json(registryOrDefaultsFallback(name));
@@ -363,13 +377,15 @@ export function createProvidersRoute(engine) {
           ? appendProviderApiPath(base, "/v1/models?limit=1000")
           : `${base}/models`;
 
-        let headers = withDefaultProviderHeaders({ "Content-Type": "application/json" });
-        if (effectiveKey) {
-          if (!effectiveApi) {
-            return c.json({ error: "api is required when api_key is present", models: [] });
-          }
-          headers = buildProviderAuthHeaders(effectiveApi, effectiveKey);
+        if (effectiveKey && !effectiveApi) {
+          return c.json({ error: "api is required when api_key is present", models: [] });
         }
+        const headers = buildProviderRequestHeaders({
+          api: effectiveApi,
+          apiKey: effectiveKey,
+          headers: effectiveHeaders,
+          allowMissingApiKey: true,
+        });
         const res = await fetch(url, {
           headers,
           signal: AbortSignal.timeout(15000),
@@ -432,7 +448,10 @@ export function createProvidersRoute(engine) {
     const body = await safeJson(c);
     const scopeDenied = denyWithoutScope(c, "providers.manage");
     if (scopeDenied) return scopeDenied;
-    const secretDenied = denySecretMutationWithoutScope(c, collectSecretPatchPaths(body, ["api_key"]));
+    const secretDenied = denySecretMutationWithoutScope(c, [
+      ...collectSecretPatchPaths(body, ["api_key"]),
+      ...collectProviderHeaderSecretPatchPaths(body.headers, "headers"),
+    ]);
     if (secretDenied) return secretDenied;
     const { name } = body;
     // 清洗 API key：去除非 ASCII 字符（防止粘贴时输入法带入中文）
@@ -450,6 +469,9 @@ export function createProvidersRoute(engine) {
       baseUrl: body.base_url || saved.base_url || "",
       api,
     });
+    const headers = Object.prototype.hasOwnProperty.call(body, "headers")
+      ? resolveProviderHeadersPatch({ patch: body.headers, existing: saved.headers || {} })
+      : saved.headers || {};
 
     if (!base_url) {
       return c.json({ error: "base_url is required" }, 400);
@@ -459,7 +481,7 @@ export function createProvidersRoute(engine) {
     }
 
     try {
-      const result = await probeProvider({ baseUrl: base_url, api, apiKey: api_key });
+      const result = await probeProvider({ baseUrl: base_url, api, apiKey: api_key, headers });
       return c.json(result);
     } catch (err) {
       return c.json({ ok: false, error: err.message });

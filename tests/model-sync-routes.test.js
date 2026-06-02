@@ -32,7 +32,7 @@ function withResolveCreds(engine) {
   engine.resolveProviderCredentials = (provider) => {
     if (!provider) return { api_key: "", base_url: "", api: "" };
     const cred = engine.providerRegistry?.getCredentials?.(provider);
-    if (cred) return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "" };
+    if (cred) return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "", headers: cred.headers || {} };
     return { api_key: "", base_url: "", api: "" };
   };
   return engine;
@@ -988,6 +988,52 @@ describe("model sync related routes", () => {
     const data = await res.json();
     expect(data.models).toHaveLength(2);
     expect(data.models[0].id).toBe("MiniMax-M2.5");
+  });
+
+  it("provider fetch-models uses saved request headers as credentials", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{ id: "gateway-model", context_length: 128000 }],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({
+          apiKey: "",
+          baseUrl: "https://gateway.example/v1",
+          api: "openai-completions",
+          headers: { Authorization: "Bearer gateway-token", "X-Corp-Auth": "corp-token" },
+        }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "gateway-provider" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer gateway-token",
+      "X-Corp-Auth": "corp-token",
+    });
+    const data = await res.json();
+    expect(data.models[0].id).toBe("gateway-model");
   });
 
   it("fetch-models does not expose the official DeepSeek provider id as a model", async () => {

@@ -25,8 +25,16 @@ const ROLE_TO_PREF_KEY = {
   utility_large: "utility_large_model",
 };
 
-function withCredentialAccountId(model, cred) {
-  return cred?.accountId ? { ...model, accountId: cred.accountId } : model;
+function withCredentialMetadata(model, cred) {
+  const headers = cred?.headers && typeof cred.headers === "object" ? cred.headers : {};
+  const next = Object.keys(headers).length > 0
+    ? { ...model, headers: { ...(model.headers || {}), ...headers } }
+    : model;
+  return cred?.accountId ? { ...next, accountId: cred.accountId } : next;
+}
+
+function hasCredentialHeaders(cred) {
+  return !!cred?.headers && typeof cred.headers === "object" && Object.keys(cred.headers).length > 0;
 }
 
 export class ExecutionRouter {
@@ -69,12 +77,14 @@ export class ExecutionRouter {
       if (utilApiOverride.provider && utilApiOverride.provider !== model.provider) {
         throw new Error(t("error.utilityApiProviderMismatch", { model: modelRef }));
       }
+      const overrideCred = this._providerRegistry.getCredentials(model.provider);
       return {
         modelId: model.id,
         providerId: model.provider,
         api: model.api,
         apiKey: utilApiOverride.api_key,
         baseUrl: utilApiOverride.base_url || model.baseUrl,
+        headers: overrideCred?.headers || {},
       };
     }
 
@@ -85,7 +95,7 @@ export class ExecutionRouter {
     if (!cred.api) {
       throw new Error(t("error.providerMissingApi", { provider: model.provider }));
     }
-    if (!cred.baseUrl || (!cred.apiKey && !this._allowsMissingApiKey(model.provider, cred.baseUrl))) {
+    if (!cred.baseUrl || (!cred.apiKey && !hasCredentialHeaders(cred) && !this._allowsMissingApiKey(model.provider, cred.baseUrl))) {
       throw new Error(t("error.providerMissingCreds", { provider: model.provider }));
     }
 
@@ -95,6 +105,7 @@ export class ExecutionRouter {
       api: cred.api,
       apiKey: cred.apiKey,
       baseUrl: cred.baseUrl,
+      headers: cred.headers || {},
       ...(cred.accountId ? { accountId: cred.accountId } : {}),
     };
   }
@@ -151,13 +162,13 @@ export class ExecutionRouter {
       apiKey = utilApiOverride.api_key || "";
       baseUrl = utilApiOverride.base_url || "";
       if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
-      if (!baseUrl || (!apiKey && !this._allowsMissingApiKey(utilModel.provider, baseUrl))) {
+      if (!baseUrl || (!apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, baseUrl))) {
         throw new Error(t("error.utilityApiMissingCreds", { provider: utilModel.provider }));
       }
     } else {
       utilCred = this._providerRegistry.getCredentials(utilModel.provider);
       if (!utilCred?.api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
-      if (!utilCred.baseUrl || (!utilCred.apiKey && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
+      if (!utilCred.baseUrl || (!utilCred.apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: utilModel.provider }));
       }
       apiKey = utilCred.apiKey;
@@ -170,7 +181,7 @@ export class ExecutionRouter {
     if (largeModel.provider !== utilModel.provider) {
       largeCred = this._providerRegistry.getCredentials(largeModel.provider);
       if (!largeCred?.api) throw new Error(t("error.providerMissingApi", { provider: largeModel.provider }));
-      if (!largeCred.baseUrl || (!largeCred.apiKey && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
+      if (!largeCred.baseUrl || (!largeCred.apiKey && !hasCredentialHeaders(largeCred) && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: largeModel.provider }));
       }
       large_api_key = largeCred.apiKey;
@@ -179,8 +190,8 @@ export class ExecutionRouter {
     }
 
     return {
-      utility: withCredentialAccountId(utilModel, utilCred),
-      utility_large: withCredentialAccountId(largeModel, largeCred),
+      utility: withCredentialMetadata(utilModel, utilCred),
+      utility_large: withCredentialMetadata(largeModel, largeCred),
       api_key: apiKey,
       base_url: baseUrl,
       api,

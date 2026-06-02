@@ -1255,4 +1255,34 @@ describe("syncModels", () => {
       thinkingFormat: "deepseek",
     });
   });
+
+  it("projects provider request headers into models.json even without an api key", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "gateway-provider": {
+        base_url: "https://gateway.example/v1",
+        api: "openai-completions",
+        headers: {
+          Authorization: "Bearer gateway-token",
+          "X-Corp-Auth": "corp-token",
+        },
+        models: ["gateway-chat"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["gateway-provider"]).toMatchObject({
+      baseUrl: "https://gateway.example/v1",
+      api: "openai-completions",
+      apiKey: "headers",
+      headers: {
+        Authorization: "Bearer gateway-token",
+        "X-Corp-Auth": "corp-token",
+      },
+    });
+    expect(result.providers["gateway-provider"].models[0].id).toBe("gateway-chat");
+  });
 });

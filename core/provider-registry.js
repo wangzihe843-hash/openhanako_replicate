@@ -17,6 +17,7 @@ import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.js";
 import { fromRoot } from "../shared/hana-root.js";
 import { lookupKnown } from "../shared/known-models.js";
 import {
+  normalizeProviderHeaders,
   normalizeProviderAuthType,
   providerCredentialAllowsMissingApiKey,
 } from "../shared/provider-auth.js";
@@ -582,6 +583,7 @@ export class ProviderRegistry {
       authType: normalizeProviderAuthType(userConfig.auth_type || plugin.authType),
       baseUrl: userConfig.base_url || plugin.defaultBaseUrl,
       api: userConfig.api || plugin.defaultApi,
+      headers: normalizeProviderHeaders(userConfig.headers || plugin.headers),
       authJsonKey: plugin.authJsonKey || plugin.id,
       isBuiltin,
       source: normalizeProviderSource(plugin, isBuiltin),
@@ -706,7 +708,8 @@ export class ProviderRegistry {
         };
       }
       const creds = this.getCredentials(laneProviderId);
-      if (creds?.apiKey) {
+      const hasHeaders = !!creds?.headers && Object.keys(creds.headers).length > 0;
+      if (creds?.apiKey || hasHeaders) {
         return {
           hasCredentials: true,
           unavailableReason: null,
@@ -895,7 +898,7 @@ export class ProviderRegistry {
    * OAuth provider 若 YAML 无 api_key，自动从 auth.json 补全 access token；
    * 若 auth.json 含 resourceUrl 且 YAML 未配 base_url，用 resourceUrl 作为 baseUrl。
    * @param {string} providerId
-   * @returns {{ apiKey: string, baseUrl: string, api: string, accountId?: string } | null}
+   * @returns {{ apiKey: string, baseUrl: string, api: string, headers?: Record<string, string>, accountId?: string } | null}
    */
   getCredentials(providerId) {
     const userConfig = this._loadAddedModels();
@@ -929,10 +932,12 @@ export class ProviderRegistry {
       }
     }
 
+    const headers = normalizeProviderHeaders(uc?.headers || entry?.headers || plugin?.headers);
     return {
       apiKey,
       baseUrl: uc?.base_url || oauthBaseUrl || entry?.baseUrl || plugin?.defaultBaseUrl || "",
       api: uc?.api || entry?.api || plugin?.defaultApi || "",
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
       ...(oauthAccountId ? { accountId: oauthAccountId } : {}),
     };
   }
@@ -1177,6 +1182,9 @@ export class ProviderRegistry {
   saveProvider(providerId, data) {
     const userConfig = this._loadAddedModels();
     const { seed_default_models: seedDefaultModels, ...providerData } = data || {};
+    if (Object.prototype.hasOwnProperty.call(providerData, "headers")) {
+      providerData.headers = normalizeProviderHeaders(providerData.headers);
+    }
     const nextProvider = { ...(userConfig[providerId] || {}), ...providerData };
 
     if (seedDefaultModels && (!Array.isArray(nextProvider.models) || nextProvider.models.length === 0)) {

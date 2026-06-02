@@ -27,6 +27,11 @@ import {
   normalizeWorkspacePath,
   removeWorkspaceHistoryEntries,
 } from "../../shared/workspace-history.js";
+import {
+  collectProviderHeaderSecretPatchPathsFromConfig,
+  maskProviderHeaders,
+  resolveProviderHeadersPatch,
+} from "../../shared/provider-auth.js";
 import { isSearchApiProvider, normalizeSearchApiKeys } from "../../shared/search-providers.js";
 import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.js";
 import { formatSkillsForPrompt } from "../../lib/pi-sdk/index.js";
@@ -193,6 +198,7 @@ export function createConfigRoute(engine) {
           base_url: p.base_url || entry?.baseUrl || "",
           api: p.api || entry?.api || "",
           api_key: maskSecretValue(p.api_key || ""),
+          headers: maskProviderHeaders(p.headers || {}),
           models: p.models || [],
           model_count: (p.models || []).length,
         };
@@ -278,7 +284,10 @@ export function createConfigRoute(engine) {
         const providerDenied = denyWithoutScope(c, "providers.manage");
         if (providerDenied) return providerDenied;
       }
-      const secretFields = collectSecretPatchPaths(partial, ["api_key"]);
+      const secretFields = [
+        ...collectSecretPatchPaths(partial, ["api_key"]),
+        ...collectProviderHeaderSecretPatchPathsFromConfig(partial),
+      ];
       const secretDenied = denySecretMutationWithoutScope(c, secretFields);
       if (secretDenied) return secretDenied;
       // ── schema-driven 全局字段分流 ──
@@ -295,11 +304,18 @@ export function createConfigRoute(engine) {
           if (data === null) {
             engine.providerRegistry.removeProvider(name);
           } else {
-            engine.providerRegistry.saveProvider(name, resolveSecretPatch({
+            const resolvedPatch = resolveSecretPatch({
               patch: data,
               existing: rawProviders[name] || {},
               secretKeys: ["api_key"],
-            }));
+            });
+            if (hasOwn(data, "headers")) {
+              resolvedPatch.headers = resolveProviderHeadersPatch({
+                patch: data.headers,
+                existing: rawProviders[name]?.headers || {},
+              });
+            }
+            engine.providerRegistry.saveProvider(name, resolvedPatch);
           }
         }
         delete agentPartial.providers;

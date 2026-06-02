@@ -135,6 +135,7 @@ export class ModelManager {
         ...raw,
         base_url: raw.base_url || entry?.baseUrl || "",
         api: raw.api || entry?.api || "openai-completions",
+        headers: raw.headers || entry?.headers || {},
         auth_type: raw.auth_type || entry?.authType || "api-key",
       };
     }
@@ -264,7 +265,7 @@ export class ModelManager {
    * 根据 provider 名称查找凭证
    * 委托 ProviderRegistry，返回 snake_case 格式（兼容 callProviderText 消费方）
    * @param {string} provider
-   * @returns {{ api_key: string, base_url: string, api: string, accountId?: string }}
+   * @returns {{ api_key: string, base_url: string, api: string, headers?: Record<string, string>, accountId?: string }}
    */
   resolveProviderCredentials(provider) {
     if (!provider) return { api_key: "", base_url: "", api: "" };
@@ -274,6 +275,7 @@ export class ModelManager {
         api_key: cred.apiKey || "",
         base_url: cred.baseUrl || "",
         api: cred.api || "",
+        headers: cred.headers || {},
         ...(cred.accountId ? { accountId: cred.accountId } : {}),
       };
     }
@@ -309,6 +311,7 @@ export class ModelManager {
         api_key: "",
         base_url: cred?.baseUrl || entry.baseUrl || "",
         api: cred?.api || entry.api || "",
+        headers: cred?.headers || entry.headers || {},
         ...(cred?.accountId ? { accountId: cred.accountId } : {}),
       };
     }
@@ -317,6 +320,7 @@ export class ModelManager {
         api_key: refreshedOAuthKey || cred.apiKey || "",
         base_url: cred.baseUrl || "",
         api: cred.api || "",
+        headers: cred.headers || {},
         ...(cred.accountId ? { accountId: cred.accountId } : {}),
       };
     }
@@ -353,15 +357,21 @@ export class ModelManager {
     }
     const allowsMissingApiKey = this.providerRegistry?.allowsMissingApiKey?.(provider, creds.base_url)
       ?? isLocalBaseUrl(creds.base_url);
-    if (!creds.base_url || (!creds.api_key && !allowsMissingApiKey)) {
+    const headers = creds.headers || {};
+    const hasHeaders = Object.keys(headers).length > 0;
+    if (!creds.base_url || (!creds.api_key && !hasHeaders && !allowsMissingApiKey)) {
       throw new Error(t("error.providerMissingCreds", { provider }));
     }
+    const modelWithHeaders = Object.keys(headers).length > 0
+      ? { ...entry, headers: { ...(entry.headers || {}), ...headers } }
+      : entry;
     return {
-      model: entry,
+      model: modelWithHeaders,
       provider,
       api: creds.api,
       api_key: creds.api_key,
       base_url: creds.base_url,
+      headers,
     };
   }
 
