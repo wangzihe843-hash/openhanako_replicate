@@ -24,6 +24,7 @@ import {
 } from './xingye-recent-context';
 import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
 import {
+  buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
 } from './xingye-lore-runtime-context';
@@ -98,6 +99,22 @@ export function normalizeSecretSpaceAiResult(
   };
 }
 
+/** owner 角色资料里适合做 lore keyword 命中底座的字段（与小手机 / 各 app 链路一致）。 */
+function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
+  if (!profile) return [];
+  return [
+    profile.displayName,
+    profile.shortBio,
+    profile.identitySummary,
+    profile.backgroundSummary,
+    profile.personalitySummary,
+    profile.relationshipLabel,
+    profile.values,
+    profile.taboos,
+    profile.relationshipMode,
+  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+}
+
 /**
  * 调用服务端模型（与通讯录 / 短信 / TA 状态一致：`POST /api/xingye/phone-generate`，`kind: secret_space`）。
  * 不写入存储；由调用方 appendSecretSpaceRecord。
@@ -125,7 +142,16 @@ export async function generateSecretSpaceRecordWithAI(params: {
 
   const loreSeed = category === 'saved_item' ? (params.seedText ?? '') : '';
   const loreOpts = buildSecretSpaceLoreRuntimeOptions(category, loreSeed || undefined);
-  const loreCtx = collectXingyeLoreRuntimeContext(agent.id, loreOpts);
+  // 冷启动（无种子、无聊天）时 buildSecretSpaceLoreRuntimeOptions 给出的 queryText 仅含 seedText，
+  // keyword 型 lore 几乎不可能命中。与小手机 / 占卜等链路对齐：把 owner profile 关键字段 +
+  // 最近聊天摘要也并入 queryText，让世界观 keyword 至少能经角色资料 / 近况被命中。
+  // always lore 仍照常注入（loreOpts.includeAlways 保持 true，不受影响）。
+  const loreQueryText = buildXingyeLoreRuntimeQueryText([
+    loreOpts.queryText,
+    ...profilePartsForQuery(ownerProfile),
+    typeof recentContext.summaryText === 'string' ? recentContext.summaryText : '',
+  ]);
+  const loreCtx = collectXingyeLoreRuntimeContext(agent.id, { ...loreOpts, queryText: loreQueryText });
   const loreBlock = formatXingyeLoreRuntimeContextBlock(loreCtx);
 
   // 反重复：拉同子类型最近记录 → 构建 anchor block 喂给模型。

@@ -189,7 +189,6 @@ export async function buildDivinationResolverContext(
     profile?.behaviorLogic,
   ]);
   const divQ = typeof options?.divinationQuestion === 'string' ? options.divinationQuestion.trim() : '';
-  const keywordQueryText = buildXingyeLoreRuntimeQueryText([profileQueryText, divQ]);
 
   let loreSkippedDisabledCount = 0;
   const enabledLoreTitlesInCorpus: string[] = [];
@@ -215,6 +214,14 @@ export async function buildDivinationResolverContext(
   }
 
   const enabledSorted = sortEnabledLoreForDivination(allParsed.filter((e) => e.enabled));
+
+  // keyword 型 lore 的命中文本：profile 摘要 + 当前问卜问题，外加本角色 enabled 的 always 模式 lore 正文
+  // —— 与小手机 / 秘密空间链路一致。这样冷启动（问卜问题为空、且关键词没写进 profile）时，
+  // 「角色根本设定所牵连的世界观 keyword」仍能经 always 正文被命中，而不是只能靠用户在主题框手输。
+  const alwaysLoreText = enabledSorted
+    .filter((e) => e.insertionMode === 'always')
+    .map((e) => `${e.title} ${e.content}`);
+  const keywordQueryText = buildXingyeLoreRuntimeQueryText([profileQueryText, divQ, ...alwaysLoreText]);
 
   let loreTotal = 0;
   for (const entry of enabledSorted) {

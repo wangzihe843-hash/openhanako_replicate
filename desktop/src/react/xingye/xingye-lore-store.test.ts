@@ -72,6 +72,29 @@ describe('xingye-lore-store', () => {
     expect(storage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY)).toContain('失落王国');
   });
 
+  it('defaults insertionMode by category when not explicitly provided', () => {
+    const bg = createLoreEntry('agent-1', { title: '背景', content: '角色背景。', category: 'background' }, storage);
+    const rel = createLoreEntry('agent-1', { title: '关系', content: '用户身份与关系。', category: 'relationship' }, storage);
+    const world = createLoreEntry('agent-1', { title: '世界观', content: '世界观设定。', category: 'worldview' }, storage);
+    const evt = createLoreEntry('agent-1', { title: '事件', content: '某事件。', category: 'event' }, storage);
+    // 不传 category → 默认 background → always
+    const fallback = createLoreEntry('agent-1', { title: '无分类', content: '默认走背景分类。' }, storage);
+
+    expect(bg.insertionMode).toBe('always');
+    expect(rel.insertionMode).toBe('always');
+    expect(world.insertionMode).toBe('keyword');
+    expect(evt.insertionMode).toBe('manual');
+    expect(fallback.insertionMode).toBe('always');
+
+    // 显式传入的 insertionMode 仍优先于分类默认。
+    const explicit = createLoreEntry(
+      'agent-1',
+      { title: '强制手动', content: '虽是背景但作者选手动。', category: 'background', insertionMode: 'manual' },
+      storage,
+    );
+    expect(explicit.insertionMode).toBe('manual');
+  });
+
   it('updates, toggles, and deletes lore entries without touching other agents', () => {
     const first = createLoreEntry('agent-1', {
       title: '初遇',

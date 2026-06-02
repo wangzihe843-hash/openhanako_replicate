@@ -160,6 +160,35 @@ describe('buildDivinationResolverContext', () => {
     expect(hit?.agentLike.extraCorpus).toContain('FULL_KEYWORD_ONLY_WHEN_HIT');
   });
 
+  it('cold start: keyword lore hits when its keyword appears in an always entry content (no question, not in profile)', async () => {
+    readMock.mockResolvedValue({
+      agentId: 'agent-lin',
+      displayName: '林',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    mockReadJsonLore({
+      world: baseEntry('world', {
+        title: '世界根基',
+        content: '这片大陆由教廷统辖，魔晶是流通的硬通货。',
+        enabled: true,
+        insertionMode: 'always',
+        category: 'worldview',
+      }),
+      kw: baseEntry('kw', {
+        title: '魔晶矿脉秘闻',
+        content: 'FULL_KEYWORD_BODY_VIA_ALWAYS',
+        enabled: true,
+        insertionMode: 'keyword',
+        keywords: ['魔晶'],
+        category: 'worldview',
+      }),
+    });
+    // 问卜问题为空（冷启动），关键词「魔晶」也没写进 profile；但它出现在 always 条目正文里，
+    // 经 always 正文回灌进 keywordQueryText → keyword 条目仍应被命中并纳入全文。
+    const built = await buildDivinationResolverContext('agent-lin', agent, null, { divinationQuestion: '' });
+    expect(built?.agentLike.extraCorpus).toContain('FULL_KEYWORD_BODY_VIA_ALWAYS');
+  });
+
   it('profile-only 林雾式摘要：matchedSignals 非空、field_oracle 非零、理由提示仅 profile', async () => {
     readMock.mockResolvedValue({
       agentId: 'agent-lin',

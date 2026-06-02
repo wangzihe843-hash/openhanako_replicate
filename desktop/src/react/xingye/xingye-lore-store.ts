@@ -110,6 +110,25 @@ function normalizeInsertionMode(value: unknown): XingyeLoreInsertionMode {
     : 'manual';
 }
 
+/**
+ * 新建设定条目时，按分类给出的默认插入模式（仅作用于「创建」，不改既有条目、不改 normalize 回退）：
+ * - `background`（角色背景）/ `relationship`（用户身份与关系）→ `always`：长期稳定、应常驻。
+ * - `worldview`（世界观）→ `keyword`：宜按需命中，避免把长文世界观「圣经」常驻塞进 prompt。
+ * - 其余分类 → `manual`：默认不自动注入，由作者按需开启。
+ * 注意：这是「创建默认值」，用户/模板仍可在表单里覆盖（如 peer-agent 关系模板会显式改成 keyword）。
+ */
+export function defaultInsertionModeForCategory(category: XingyeLoreCategory): XingyeLoreInsertionMode {
+  switch (category) {
+    case 'background':
+    case 'relationship':
+      return 'always';
+    case 'worldview':
+      return 'keyword';
+    default:
+      return 'manual';
+  }
+}
+
 function normalizeVisibility(value: unknown): XingyeLoreVisibility {
   return typeof value === 'string' && VISIBILITIES.includes(value as XingyeLoreVisibility)
     ? value as XingyeLoreVisibility
@@ -220,16 +239,17 @@ export function createLoreEntry(
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeLoreEntry {
   const now = new Date().toISOString();
+  const category = input.category ?? 'background';
   const entry = normalizeLoreEntry({
     id: createId(),
     agentId,
     title: input.title ?? '未命名设定',
     content: input.content ?? '待补充设定内容。',
-    category: input.category ?? 'background',
+    category,
     keywords: input.keywords ?? [],
     enabled: input.enabled ?? true,
     priority: input.priority ?? 50,
-    insertionMode: input.insertionMode ?? 'manual',
+    insertionMode: input.insertionMode ?? defaultInsertionModeForCategory(category),
     visibility: input.visibility ?? 'canonical',
     createdAt: now,
     updatedAt: now,

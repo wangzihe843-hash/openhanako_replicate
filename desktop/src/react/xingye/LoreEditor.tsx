@@ -3,6 +3,7 @@ import { useConfig } from '../hooks/use-config';
 import { useStore } from '../stores';
 import {
   createLoreEntry,
+  defaultInsertionModeForCategory,
   deleteLoreEntry,
   toggleLoreEntry,
   updateLoreEntry,
@@ -66,13 +67,14 @@ type LoreDraft = {
 };
 
 function createEmptyDraft(): LoreDraft {
+  const category: XingyeLoreCategory = 'background';
   return {
     title: '',
     content: '',
-    category: 'background',
+    category,
     keywords: '',
     priority: 50,
-    insertionMode: 'manual',
+    insertionMode: defaultInsertionModeForCategory(category),
     visibility: 'canonical',
   };
 }
@@ -330,6 +332,9 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
               <strong>始终</strong>模式：在「小手机」「秘密空间」等生成任务中，会<strong>默认引用</strong>已启用且设为「始终」的条目。请勿把过长的全文世界观「圣经」塞进「始终」；长文请拆成多条或改用关键词按需注入。
             </p>
             <p className={styles.loreHint}>
+              新建条目时，<strong>插入模式</strong>会按<strong>分类</strong>给出默认：<strong>背景</strong>与<strong>关系（用户身份）</strong>默认「始终」、<strong>世界观</strong>默认「关键词」、其余默认「手动」。可随时手动调整。
+            </p>
+            <p className={styles.loreHint}>
               建议按主题拆条，例如：<strong>身份核心</strong>、<strong>关系核心</strong>、<strong>地点</strong>、<strong>组织</strong>、<strong>事件</strong>、<strong>规则</strong>，各写成一条或一组短条目，便于按需命中与阅读。
             </p>
           </div>
@@ -362,10 +367,19 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
             <span>分类</span>
             <select
               value={draft.category}
-              onChange={(event) => setDraft((current) => ({
-                ...current,
-                category: event.target.value as XingyeLoreCategory,
-              }))}
+              onChange={(event) => {
+                const nextCategory = event.target.value as XingyeLoreCategory;
+                setDraft((current) => ({
+                  ...current,
+                  category: nextCategory,
+                  // 新建条目时，插入模式跟随分类默认（背景/关系→始终、世界观→关键词、其余→手动）；
+                  // 编辑既有条目时保留其已保存的模式，不擅自改动。
+                  insertionMode:
+                    editingId == null
+                      ? defaultInsertionModeForCategory(nextCategory)
+                      : current.insertionMode,
+                }));
+              }}
             >
               {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
