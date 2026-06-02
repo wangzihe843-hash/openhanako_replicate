@@ -92,6 +92,39 @@ describe('xingye-persistence agent scoped storage', () => {
     expect(reloaded['agent-a::agent::peer'].remark).toBe('agent a note');
   });
 
+  it('flushes a pending edit to the current agent before switching, with no wipe/cross-pollution (fast edit-then-switch race)', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    // Edit agent-a's contacts but do NOT flush — this leaves a debounced flush
+    // pending (the 450ms timer). Switching agents before it fires is the race.
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({
+        'agent-a::agent::peer': {
+          ownerAgentId: 'agent-a',
+          targetType: 'agent',
+          targetId: 'peer',
+          remark: 'pending edit',
+          updatedAt: '2026-06-02T00:00:00.000Z',
+        },
+      }),
+    );
+
+    // Switch to agent-b BEFORE the debounce fires. The pending edit must be
+    // flushed to agent-a (not lost, not written into agent-b's file).
+    await refreshXingyeAgentPersistence('agent-b');
+
+    // agent-a's pending edit was persisted to agent-a's own file.
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    const reloadedA = JSON.parse(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts') ?? '{}');
+    expect(reloadedA['agent-a::agent::peer']?.remark).toBe('pending edit');
+
+    // agent-b's file was never touched by agent-a's edit (no cross-pollution / no {} wipe).
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-b');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+  });
+
   it('does not expose formal business storage without an explicit agent id', async () => {
     await refreshXingyeAgentPersistence('');
     expect(getXingyePersistenceStorage()).toBeNull();

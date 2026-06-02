@@ -172,15 +172,22 @@ async function tryMigrateFromLocalStorageOnce(agentId: string, key: string): Pro
   }
 }
 
-async function loadAgentIntoMemory(agentId: string): Promise<void> {
-  memory.clear();
+/**
+ * Read an agent's scoped files into a FRESH local Map (does not touch the
+ * module-global `memory`). The caller commits it atomically only after a
+ * version check, so concurrent refreshes can't interleave their partial reads
+ * into the shared map and the UI never sees a mixed-agent transient state.
+ */
+async function loadAgentScopedMemory(agentId: string): Promise<Map<string, string>> {
+  const next = new Map<string, string>();
   for (const key of XINGYE_KNOWN_STORAGE_KEYS) {
     let raw = await readAgentFile(agentId, key);
     if (raw == null) {
       raw = await tryMigrateFromLocalStorageOnce(agentId, key);
     }
-    if (raw != null) memory.set(key, raw);
+    if (raw != null) next.set(key, raw);
   }
+  return next;
 }
 
 function scheduleFlush(): void {
@@ -289,9 +296,26 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     return;
   }
 
-  try {
-    await loadAgentIntoMemory(id);
+  // Persist any debounced pending edit to the CURRENT agent BEFORE switching,
+  // while activeAgentId/memory still point at it, and cancel the timer so it
+  // cannot fire mid-load. Otherwise a flush during loadAgentScopedMemory would
+  // serialize the NEW agent's rows but scope them to the OLD activeAgentId:
+  // pickAgentScopedData filters owner-tagged rows to empty and overwrites the
+  // OLD agent's file with {} (silent per-character data wipe), while owner-less
+  // rows leak into the wrong agent's file.
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+    await flushNow();
     if (myVersion !== refreshVersion) return;
+  }
+
+  try {
+    const loaded = await loadAgentScopedMemory(id);
+    // A newer refresh superseded us during the load — don't clobber its memory.
+    if (myVersion !== refreshVersion) return;
+    memory.clear();
+    for (const [key, raw] of loaded) memory.set(key, raw);
     activeAgentId = id;
     mode = 'agent';
     lastRefreshError = null;
