@@ -145,4 +145,63 @@ describe('PreviewPanel markdown editor status', () => {
       expect(inactive?.fileVersion).toEqual({ mtimeMs: 20, size: 23, sha256: 'fresh' });
     });
   });
+
+  it('keeps retained file watches alive when the open tab set changes', async () => {
+    useStore.setState({
+      previewOpen: true,
+      previewItems: [
+        {
+          id: 'note',
+          type: 'markdown',
+          title: 'note.md',
+          content: '你好ab',
+          filePath: '/tmp/hana-note.md',
+        },
+        {
+          id: 'inactive',
+          type: 'code',
+          title: 'inactive.ts',
+          content: 'export const value = 1;\n',
+          filePath: '/tmp/inactive.ts',
+          ext: 'ts',
+          language: 'ts',
+        },
+        {
+          id: 'extra',
+          type: 'markdown',
+          title: 'extra.md',
+          content: 'extra',
+          filePath: '/tmp/extra.md',
+        },
+      ],
+      openTabs: ['note', 'inactive'],
+      activeTabId: 'note',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
+    render(<PreviewPanel />);
+
+    await waitFor(() => {
+      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/hana-note.md');
+      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+    });
+
+    vi.mocked(window.platform!.unwatchFile!).mockClear();
+
+    useStore.setState({ openTabs: ['note', 'inactive', 'extra'] } as Partial<StoreState>);
+
+    await waitFor(() => {
+      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/extra.md');
+    });
+    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
+    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/inactive.ts');
+
+    useStore.setState({ openTabs: ['note', 'extra'] } as Partial<StoreState>);
+
+    await waitFor(() => {
+      expect(window.platform?.unwatchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+    });
+    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
+    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/extra.md');
+  });
 });

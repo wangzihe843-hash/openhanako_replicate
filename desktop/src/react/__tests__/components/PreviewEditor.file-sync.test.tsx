@@ -416,6 +416,80 @@ describe('PreviewEditor file sync', () => {
     expect(onContentChange).toHaveBeenLastCalledWith('second edit', secondVersion);
   });
 
+  it('does not report a self-write refresh as an external conflict while newer edits are pending', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 1, size: 8, sha256: 'loaded' };
+    const firstVersion = { mtimeMs: 2, size: 10, sha256: 'first' };
+    const notices: Array<{ text?: string; type?: string }> = [];
+    const onNotice = vi.fn((event: Event) => {
+      notices.push((event as CustomEvent).detail ?? {});
+    });
+
+    let resolveFirst!: (value: VersionedWriteResult) => void;
+    const firstWrite = new Promise<VersionedWriteResult>((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    vi.mocked(platform.writeFileIfUnchanged!).mockReturnValueOnce(firstWrite);
+    window.addEventListener('hana-inline-notice', onNotice);
+
+    const { rerender } = render(
+      <PreviewEditor
+        ref={ref}
+        content="original"
+        filePath="/tmp/hana-note.md"
+        fileVersion={loadedVersion}
+        mode="markdown"
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'original'.length, insert: 'first edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      vi.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'first edit'.length, insert: 'second edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      vi.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveFirst({
+        ok: true,
+        conflict: false,
+        version: firstVersion,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="first edit"
+          filePath="/tmp/hana-note.md"
+          fileVersion={firstVersion}
+          mode="markdown"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    window.removeEventListener('hana-inline-notice', onNotice);
+
+    expect(ref.current?.getView()?.state.doc.toString()).toBe('second edit');
+    expect(notices.some(notice => String(notice.text ?? '').includes('settings.fileChangedOnDisk'))).toBe(false);
+  });
+
   it('pastes clipboard images into the markdown attachment folder at the cursor', async () => {
     const ref = createRef<PreviewEditorHandle>();
 

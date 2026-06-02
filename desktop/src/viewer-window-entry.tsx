@@ -46,6 +46,10 @@ function getPlatform(): ViewerPlatform | null {
   return (window as any).platform ?? null;
 }
 
+function fileUnavailableError(payload: ViewerLoadPayload): Error {
+  return new Error(`File is no longer available: ${payload.title || payload.filePath}`);
+}
+
 function ViewerApp() {
   const [payload, setPayload] = useState<ViewerLoadPayload | null>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -81,8 +85,12 @@ function ViewerApp() {
     platform.readFile(payload.filePath)
       .then((c) => {
         if (cancelled) return;
+        if (c == null) {
+          fail(fileUnavailableError(payload));
+          return;
+        }
         setLoadError(null);
-        setContent(c ?? '');
+        setContent(c);
       })
       .catch(fail);
 
@@ -91,7 +99,10 @@ function ViewerApp() {
       platform.readFile(payload.filePath)
         .then((c) => {
           if (cancelled) return;
-          if (c == null) return;
+          if (c == null) {
+            fail(fileUnavailableError(payload));
+            return;
+          }
           setLoadError(null);
           setContent(c);
         })

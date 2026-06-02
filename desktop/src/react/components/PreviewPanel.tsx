@@ -10,7 +10,7 @@
  * - 独立窗口由下阶段的 viewer spawn 机制负责（单向只读副本），本面板不做 detach/dock
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { selectPreviewItems, selectActiveTabId, selectMarkdownPreviewIds } from '../stores/preview-slice';
 import { setMarkdownPreviewActive, upsertPreviewItem } from '../stores/preview-actions';
@@ -69,21 +69,33 @@ function watchedPreviewFilePaths(previewItems: PreviewItem[], openTabs: string[]
 }
 
 function PreviewFileWatchBridge({ previewItems, openTabs }: { previewItems: PreviewItem[]; openTabs: string[] }) {
-  const watchKey = useMemo(
-    () => watchedPreviewFilePaths(previewItems, openTabs).join('\0'),
+  const paths = useMemo(
+    () => watchedPreviewFilePaths(previewItems, openTabs),
     [previewItems, openTabs],
   );
+  const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
 
   useEffect(() => {
-    if (!watchKey) return undefined;
-    const paths = watchKey.split('\0').filter(Boolean);
-    const unsubscribers = paths.map(filePath => watchFileChanges(filePath, (changedPath) => {
-      void refreshPreviewItemsFromFile(changedPath);
-    }));
-    return () => {
-      for (const unsubscribe of unsubscribers) unsubscribe();
-    };
-  }, [watchKey]);
+    const nextPaths = new Set(paths);
+    for (const [filePath, unsubscribe] of subscriptionsRef.current) {
+      if (nextPaths.has(filePath)) continue;
+      unsubscribe();
+      subscriptionsRef.current.delete(filePath);
+    }
+
+    for (const filePath of paths) {
+      if (subscriptionsRef.current.has(filePath)) continue;
+      const unsubscribe = watchFileChanges(filePath, (changedPath) => {
+        void refreshPreviewItemsFromFile(changedPath);
+      });
+      subscriptionsRef.current.set(filePath, unsubscribe);
+    }
+  }, [paths]);
+
+  useEffect(() => () => {
+    for (const unsubscribe of subscriptionsRef.current.values()) unsubscribe();
+    subscriptionsRef.current.clear();
+  }, []);
 
   return null;
 }

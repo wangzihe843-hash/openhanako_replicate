@@ -1,10 +1,6 @@
 const path = require("path");
 const chokidar = require("chokidar");
-
-function normalizeFileWatchPath(filePath) {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
+const { normalizeFileWatchPath } = require("./file-watch-path.cjs");
 
 function createStableFileWatcher(filePath, options = {}, onChange) {
   if (typeof onChange !== "function") {

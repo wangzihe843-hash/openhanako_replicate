@@ -1,4 +1,5 @@
 const path = require("path");
+const { normalizeFileWatchPath } = require("./file-watch-path.cjs");
 
 /**
  * file-watch-registry.cjs
@@ -8,11 +9,6 @@ const path = require("path");
  * - 多个 renderer / window 可以按 subscriberId 共享订阅同一文件
  * - 任意一侧 unwatch / renderer destroyed 只移除自己的订阅，不影响其他订阅者
  */
-
-function normalizeWatchPath(filePath) {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
 
 function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = {}) {
   if (typeof watch !== "function") {
@@ -49,7 +45,7 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
 
   function ensureEntry(filePath) {
     const resolvedPath = path.resolve(filePath);
-    const fileKey = normalizeWatchPath(resolvedPath);
+    const fileKey = normalizeFileWatchPath(resolvedPath);
     let entry = entries.get(fileKey);
     if (entry) return entry;
 
@@ -65,7 +61,7 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
       const current = entries.get(fileKey);
       if (!current) return;
       const changed = changedPath ? path.resolve(changedPath) : current.filePath;
-      if (normalizeWatchPath(changed) !== current.fileKey) return;
+      if (normalizeFileWatchPath(changed) !== current.fileKey) return;
       if (current.debounceTimer) clearTimeout(current.debounceTimer);
       current.debounceTimer = setTimeout(() => {
         current.debounceTimer = null;
@@ -94,7 +90,7 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
   }
 
   function unwatchFile(filePath, subscriberId) {
-    const fileKey = normalizeWatchPath(filePath);
+    const fileKey = normalizeFileWatchPath(filePath);
     const entry = entries.get(fileKey);
     if (!entry) {
       unbindSubscriber(fileKey, subscriberId);

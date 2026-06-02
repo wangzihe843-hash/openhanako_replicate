@@ -270,6 +270,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     const saveInFlightRef = useRef(false);
     const pendingSaveRef = useRef<SaveJob | null>(null);
     const lastSavedContentRef = useRef<string>(content);
+    const selfWriteContentsRef = useRef<Set<string>>(new Set());
     const diskVersionRef = useRef<FileVersion | null>(fileVersion ?? null);
     const docRevisionRef = useRef(0);
     const lastCheckpointAtRef = useRef<number>(0);
@@ -360,6 +361,13 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       statsCbRef.current?.(next);
     }, []);
 
+    const rememberSelfWrite = useCallback((text: string) => {
+      selfWriteContentsRef.current.add(text);
+      window.setTimeout(() => {
+        selfWriteContentsRef.current.delete(text);
+      }, 5000);
+    }, []);
+
     const performSave = useCallback(async ({ text, revision }: SaveJob) => {
       const fp = filePathRef.current;
       const saveRemoteDocument = saveDocumentRef.current;
@@ -402,6 +410,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           }
         }
         lastSavedContentRef.current = text;
+        rememberSelfWrite(text);
 
         if (revision === docRevisionRef.current && fp === filePathRef.current && nextVersion !== undefined) {
           contentCbRef.current?.(text, nextVersion);
@@ -410,7 +419,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         console.warn('[PreviewEditor] write failed:', err);
         showSaveError('settings.saveFailed', err);
       }
-    }, [createCheckpointIfDue]);
+    }, [createCheckpointIfDue, rememberSelfWrite]);
 
     const drainSaveQueue = useCallback(function drain() {
       if (saveInFlightRef.current) return;
@@ -435,6 +444,10 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const current = view.state.doc.toString();
       if (current === nextContent) {
         if (options.publish) lastSavedContentRef.current = nextContent;
+        return;
+      }
+
+      if (selfWriteContentsRef.current.has(nextContent)) {
         return;
       }
 
