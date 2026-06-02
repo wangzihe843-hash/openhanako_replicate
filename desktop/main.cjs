@@ -21,6 +21,7 @@ const {
   setAutoLaunchEnabled,
 } = require("./login-item-settings.cjs");
 const { createFileWatchRegistry } = require("./file-watch-registry.cjs");
+const { createStableFileWatcher } = require("./file-watch-adapter.cjs");
 const { createWorkspaceWatchRegistry } = require("./workspace-watch-registry.cjs");
 const { readTextFileSnapshot, writeTextFileIfUnchanged } = require("./file-text-io.cjs");
 const chokidar = require("chokidar");
@@ -3371,7 +3372,7 @@ wrapIpcHandler("screenshot-render", (_event, payload) => {
 // 文件监听（artifact 编辑 — 外部变更刷新用）
 const _watchedRendererIds = new Set();
 const _fileWatchRegistry = createFileWatchRegistry({
-  watch: (filePath, options, onChange) => fs.watch(filePath, options, onChange),
+  watch: createStableFileWatcher,
   notifySubscriber: (subscriberId, filePath) => {
     const wc = webContents.fromId(subscriberId);
     if (!wc || wc.isDestroyed()) {

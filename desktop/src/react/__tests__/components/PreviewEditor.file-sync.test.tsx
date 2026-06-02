@@ -13,7 +13,6 @@ vi.mock('../../utils/checkpoints', () => ({
 }));
 
 describe('PreviewEditor file sync', () => {
-  let fileChangedHandler: ((filePath: string) => void) | null;
   let platform: Pick<
     PlatformApi,
     'readFile' | 'writeFile' | 'writeFileIfUnchanged' | 'writeFileBinary' | 'copyFile' | 'watchFile' | 'unwatchFile' | 'onFileChanged' | 'getFilePath'
@@ -22,7 +21,6 @@ describe('PreviewEditor file sync', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-22T01:02:03Z'));
-    fileChangedHandler = null;
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -49,9 +47,7 @@ describe('PreviewEditor file sync', () => {
       getFilePath: vi.fn(() => null),
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
-      onFileChanged: vi.fn((handler: (filePath: string) => void) => {
-        fileChangedHandler = handler;
-      }),
+      onFileChanged: vi.fn(),
     };
     window.platform = platform as PlatformApi;
   });
@@ -61,10 +57,10 @@ describe('PreviewEditor file sync', () => {
     vi.useRealTimers();
   });
 
-  it('does not autosave content that arrived from a file watcher reload', async () => {
+  it('does not autosave content that arrived from a parent file refresh', async () => {
     const ref = createRef<PreviewEditorHandle>();
 
-    render(
+    const { rerender } = render(
       <PreviewEditor
         ref={ref}
         content="original"
@@ -74,7 +70,15 @@ describe('PreviewEditor file sync', () => {
     );
 
     await act(async () => {
-      fileChangedHandler?.('/tmp/hana-note.md');
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="external update"
+          filePath="/tmp/hana-note.md"
+          fileVersion={{ mtimeMs: 2, size: 15, sha256: 'external' }}
+          mode="markdown"
+        />,
+      );
       await Promise.resolve();
     });
 
@@ -85,6 +89,7 @@ describe('PreviewEditor file sync', () => {
       await Promise.resolve();
     });
 
+    expect(platform.writeFileIfUnchanged).not.toHaveBeenCalled();
     expect(platform.writeFile).not.toHaveBeenCalled();
   });
 

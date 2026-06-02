@@ -1,5 +1,9 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createFileWatchRegistry } from "../desktop/file-watch-registry.cjs";
+import { createStableFileWatcher } from "../desktop/file-watch-adapter.cjs";
 
 describe("file-watch-registry", () => {
   let watchMock;
@@ -86,5 +90,51 @@ describe("file-watch-registry", () => {
 
     expect(registry.watchFile("/tmp/a.txt", 1)).toBe(false);
     expect(registry.unwatchFile("/tmp/a.txt", 1)).toBe(true);
+  });
+
+  it("用稳定文件 watcher 监听时，atomic replace 后仍继续通知同一路径的后续改动", async () => {
+    vi.useRealTimers();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-file-watch-"));
+    const filePath = path.join(dir, "note.md");
+    fs.writeFileSync(filePath, "one\n", "utf-8");
+    let readyResolve;
+    let readyReject;
+    const ready = new Promise((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const notified = [];
+    const registry = createFileWatchRegistry({
+      debounceMs: 5,
+      watch: (targetPath, options, onChange) => {
+        const watcher = createStableFileWatcher(targetPath, options, onChange);
+        watcher.on("ready", readyResolve);
+        watcher.on("error", readyReject);
+        return watcher;
+      },
+      notifySubscriber: (_subscriberId, changedPath) => {
+        notified.push(fs.readFileSync(changedPath, "utf-8"));
+      },
+    });
+
+    try {
+      expect(registry.watchFile(filePath, 1)).toBe(true);
+      await ready;
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      fs.writeFileSync(filePath, "two\n", "utf-8");
+      await vi.waitFor(() => expect(notified).toContain("two\n"));
+
+      const tmpPath = `${filePath}.tmp`;
+      fs.writeFileSync(tmpPath, "three\n", "utf-8");
+      fs.renameSync(tmpPath, filePath);
+      await vi.waitFor(() => expect(notified).toContain("three\n"));
+
+      fs.writeFileSync(filePath, "four\n", "utf-8");
+      await vi.waitFor(() => expect(notified).toContain("four\n"));
+    } finally {
+      registry.unwatchFile(filePath, 1);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

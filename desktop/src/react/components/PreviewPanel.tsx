@@ -21,6 +21,8 @@ import { FloatingActions } from './preview/FloatingActions';
 import { captureSelection, clearSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
 import { saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
+import { watchFileChanges } from '../services/file-change-events';
+import { refreshPreviewItemsFromFile } from '../utils/preview-file-refresh';
 import previewStyles from './Preview.module.css';
 
 const EDITABLE_TYPES = new Set(['markdown', 'code', 'csv']);
@@ -54,10 +56,43 @@ function formatMarkdownEditorStatus(stats: PreviewEditorStats): string {
   return translated && translated !== 'preview.markdownEditorStatus' ? translated : fallback;
 }
 
+function watchedPreviewFilePaths(previewItems: PreviewItem[], openTabs: string[]): string[] {
+  const itemsById = new Map(previewItems.map(item => [item.id, item]));
+  const paths = new Set<string>();
+  for (const id of openTabs) {
+    const item = itemsById.get(id);
+    if (!item?.filePath) continue;
+    if (item.storageKind === 'remote-content' || item.remoteContentRef) continue;
+    paths.add(item.filePath);
+  }
+  return [...paths].sort();
+}
+
+function PreviewFileWatchBridge({ previewItems, openTabs }: { previewItems: PreviewItem[]; openTabs: string[] }) {
+  const watchKey = useMemo(
+    () => watchedPreviewFilePaths(previewItems, openTabs).join('\0'),
+    [previewItems, openTabs],
+  );
+
+  useEffect(() => {
+    if (!watchKey) return undefined;
+    const paths = watchKey.split('\0').filter(Boolean);
+    const unsubscribers = paths.map(filePath => watchFileChanges(filePath, (changedPath) => {
+      void refreshPreviewItemsFromFile(changedPath);
+    }));
+    return () => {
+      for (const unsubscribe of unsubscribers) unsubscribe();
+    };
+  }, [watchKey]);
+
+  return null;
+}
+
 export function PreviewPanel() {
   const previewOpen = useStore(s => s.previewOpen);
   const activeTabId = useStore(selectActiveTabId);
   const previewItems = useStore(selectPreviewItems);
+  const openTabs = useStore(s => s.openTabs);
   const markdownPreviewIds = useStore(selectMarkdownPreviewIds);
   const [editorStats, setEditorStats] = useState<PreviewEditorStats>({ selectedChars: 0, totalChars: 0 });
 
@@ -111,6 +146,7 @@ export function PreviewPanel() {
       id="previewPanel"
       data-preview-open={previewOpen ? 'true' : 'false'}
     >
+      <PreviewFileWatchBridge previewItems={previewItems} openTabs={openTabs} />
       <div className="resize-handle resize-handle-left" id="previewResizeHandle"></div>
       <div className={previewStyles.previewPanelInner} data-preview-panel-inner="">
         <TabBar />

@@ -2,14 +2,17 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewPanel } from '../../components/PreviewPanel';
 import { useStore, type StoreState } from '../../stores';
 import type { PlatformApi } from '../../types';
 
 describe('PreviewPanel markdown editor status', () => {
+  let fileChangedHandler: ((filePath: string) => void) | null;
+
   beforeEach(() => {
+    fileChangedHandler = null;
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -26,7 +29,13 @@ describe('PreviewPanel markdown editor status', () => {
     window.platform = {
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
-      onFileChanged: vi.fn(),
+      onFileChanged: vi.fn((handler: (filePath: string) => void) => {
+        fileChangedHandler = handler;
+      }),
+      readFileSnapshot: vi.fn(async (filePath: string) => ({
+        content: filePath.endsWith('inactive.ts') ? 'export const value = 2;\n' : '外部更新',
+        version: { mtimeMs: 20, size: 23, sha256: 'fresh' },
+      })),
       writeFile: vi.fn(async () => true),
       writeFileIfUnchanged: vi.fn(async () => ({
         ok: true,
@@ -98,5 +107,42 @@ describe('PreviewPanel markdown editor status', () => {
     render(<PreviewPanel />);
 
     expect(screen.getByTestId('markdown-editor-status')).toHaveTextContent('选中 0 字 · 共 4 字');
+  });
+
+  it('refreshes an inactive open preview tab when its backing file changes', async () => {
+    useStore.setState({
+      previewOpen: true,
+      previewItems: [
+        {
+          id: 'note',
+          type: 'markdown',
+          title: 'note.md',
+          content: '你好ab',
+          filePath: '/tmp/hana-note.md',
+        },
+        {
+          id: 'inactive',
+          type: 'code',
+          title: 'inactive.ts',
+          content: 'export const value = 1;\n',
+          filePath: '/tmp/inactive.ts',
+          ext: 'ts',
+          language: 'ts',
+        },
+      ],
+      openTabs: ['note', 'inactive'],
+      activeTabId: 'note',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
+    render(<PreviewPanel />);
+
+    fileChangedHandler?.('/tmp/inactive.ts');
+
+    await waitFor(() => {
+      const inactive = useStore.getState().previewItems.find(item => item.id === 'inactive');
+      expect(inactive?.content).toBe('export const value = 2;\n');
+      expect(inactive?.fileVersion).toEqual({ mtimeMs: 20, size: 23, sha256: 'fresh' });
+    });
   });
 });
