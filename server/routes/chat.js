@@ -699,6 +699,12 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         sender: event.sender,
         message: event.message || null,
       });
+    } else if (event.type === "channel_created") {
+      broadcast({
+        type: "channel_created",
+        channelName: event.channelName,
+        channel: event.channel || null,
+      });
     } else if (event.type === "dm_new_message") {
       broadcast({ type: "dm_new_message", from: event.from, to: event.to });
     } else if (event.type === "conversation_agent_activity") {

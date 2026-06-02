@@ -233,6 +233,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
   onSessionReady,
   emitEvents = false,
   extraCustomTools = [],
+  returnDiagnostics = false,
   now = new Date(),
 } = {}) {
   if (!conversationId) throw new Error("conversationId is required for agent phone session");
@@ -355,6 +356,9 @@ export async function runAgentPhoneSession(agentId, rounds, {
   let capturedText = "";
   let isCapturing = false;
   let lastLiveActivity = null;
+  let toolCallCount = 0;
+  const toolCallNames = [];
+  let lastPromptResult = null;
   const recordLiveActivity = (key, state, summary, details = {}) => {
     if (!isCapturing || lastLiveActivity === key) return;
     lastLiveActivity = key;
@@ -375,6 +379,8 @@ export async function runAgentPhoneSession(agentId, rounds, {
       }
       if (sub?.type === "text_delta") capturedText += sub.delta || "";
     } else if (event.type === "tool_execution_start") {
+      toolCallCount++;
+      if (event.toolName) toolCallNames.push(event.toolName);
       if (event.toolName === "channel_reply") {
         recordLiveActivity("channel_reply", "replying", "正在发送频道消息");
       } else if (event.toolName === "channel_pass") {
@@ -393,7 +399,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
         capturedText = "";
         lastLiveActivity = null;
       }
-      await session.prompt(round.text);
+      lastPromptResult = await session.prompt(round.text);
     }
   } finally {
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
@@ -411,5 +417,18 @@ export async function runAgentPhoneSession(agentId, rounds, {
     .trim();
 
   debugLog()?.log("agent-executor", `${agentId} phone done, ${text.length} chars captured`);
+  if (returnDiagnostics) {
+    return {
+      text,
+      diagnostics: {
+        activeToolNames,
+        toolCallCount,
+        toolCallNames,
+        ordinaryTextLength: text.length,
+        rawTextLength: capturedText.length,
+        stopReason: lastPromptResult?.stopReason || lastPromptResult?.finishReason || null,
+      },
+    };
+  }
   return text;
 }

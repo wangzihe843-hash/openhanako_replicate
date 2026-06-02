@@ -857,6 +857,7 @@ export class AgentManager {
       getSkillsDir:         () => getEngine()?.skillsDir ?? null,
       getLearnSkills:       () => getEngine()?.getLearnSkills?.() ?? {},
       isChannelsEnabled:    () => getEngine()?.isChannelsEnabled?.() ?? false,
+      createChannelEntry:    (input) => getEngine()?.createChannelEntry?.(input),
       resolveUtilityConfig: () => getEngine()?.resolveUtilityConfig?.({ agentId: ag.id }),
       getCwd:               () => getEngine()?.cwd ?? "",
       getTimezone:          () => getEngine()?.getTimezone?.() ?? "",

@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createChannelsRoute } from "../server/routes/channels.js";
+import { ChannelManager } from "../core/channel-manager.js";
 import { createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.js";
 import { updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
 
@@ -50,6 +51,13 @@ describe("channels route membership contract", () => {
     for (const id of ["alice", "bob", "carol"]) {
       fs.mkdirSync(path.join(engine.agentsDir, id), { recursive: true });
     }
+    const channelManager = new ChannelManager({
+      channelsDir: engine.channelsDir,
+      agentsDir: engine.agentsDir,
+      userDir: engine.userDir,
+      getHub: () => ({ eventBus: { emit: vi.fn() } }),
+    });
+    engine.createChannelEntry = (input) => channelManager.createChannelEntry(input);
 
     refreshChannelProactiveSchedule = vi.fn();
     triggerChannelDelivery = vi.fn(() => Promise.resolve());

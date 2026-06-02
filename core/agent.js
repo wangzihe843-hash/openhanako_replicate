@@ -439,6 +439,7 @@ export class Agent {
         agentId,
         listAgents,
         isEnabled: () => this._cb?.isChannelsEnabled?.() ?? false,
+        createChannelEntry: (input) => this._cb?.createChannelEntry?.(input),
         onPost: (channelName, senderId, message) => {
           this._channelPostHandler?.(channelName, senderId, message);
         },

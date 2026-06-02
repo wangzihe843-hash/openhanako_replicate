@@ -985,6 +985,7 @@ export class HanaEngine {
   //  Channel 代理（→ ChannelManager）
   // ════════════════════════════
 
+  async createChannelEntry(input) { return this._channels.createChannelEntry(input); }
   async deleteChannelByName(n) { return this._channels.deleteChannelByName(n); }
   async triggerChannelDelivery(n, o) { return this._channels.triggerChannelDelivery(n, o); }
   async triggerChannelTriage(n, o) { return this.triggerChannelDelivery(n, o); }

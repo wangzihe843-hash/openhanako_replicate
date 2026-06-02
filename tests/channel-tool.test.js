@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -71,6 +72,40 @@ describe("channel tool membership contract", () => {
       error: "Agent not found: ghost",
     });
     expect(fs.readdirSync(channelsDir)).toEqual([]);
+  });
+
+  it("delegates create to the host channel lifecycle when available", async () => {
+    const createChannelEntry = vi.fn(async ({ members }) => ({
+      id: "ch_delegated",
+      members,
+    }));
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+      createChannelEntry,
+    });
+
+    const result = await tool.execute("call-delegated-create", {
+      action: "create",
+      name: "delegated",
+      members: ["bob"],
+      intro: "hello",
+    });
+
+    expect(createChannelEntry).toHaveBeenCalledWith({
+      name: "delegated",
+      members: ["alice", "bob"],
+      intro: "hello",
+      addUserBookmark: true,
+    });
+    expect(result.details).toMatchObject({
+      action: "create",
+      channel: "ch_delegated",
+      members: ["alice", "bob"],
+    });
   });
 
   it("rejects read when the agent is not a channel member", async () => {

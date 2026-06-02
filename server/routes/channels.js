@@ -21,7 +21,6 @@ import { safeJson } from "../hono-helpers.js";
 import { debugLog } from "../../lib/debug-log.js";
 import {
   parseChannel,
-  createChannel,
   appendMessage,
   readBookmarks,
   updateBookmark,
@@ -430,34 +429,18 @@ export function createChannelsRoute(engine, hub) {
         return c.json({ error: err.message }, 400);
       }
 
-      const channelsDir = engine.channelsDir;
-      fs.mkdirSync(channelsDir, { recursive: true });
-
       for (const memberId of normalizedMembers) {
         if (!safeAgentDir(memberId)) {
           return c.json({ error: `Agent not found: ${memberId}`, code: "CHANNEL_AGENT_NOT_FOUND" }, 404);
         }
       }
 
-      const { id: channelId } = await createChannel(channelsDir, {
+      const { id: channelId } = await engine.createChannelEntry({
         name,
         description: description || undefined,
         members: normalizedMembers,
         intro: intro || undefined,
       });
-
-      // 给每个 agent 成员的 channels.md 添加 bookmark
-      const agentsDir = engine.agentsDir;
-      for (const memberId of normalizedMembers) {
-        const memberDir = path.join(agentsDir, memberId);
-        if (fs.existsSync(memberDir)) {
-          const memberChannelsMd = path.join(memberDir, "channels.md");
-          await addBookmarkEntry(memberChannelsMd, channelId);
-        }
-      }
-
-      // 也给用户添加 bookmark
-      await addBookmarkEntry(userBookmarkPath(), channelId);
 
       debugLog()?.log("api", `POST /channels — created "${channelId}" (${name}) members=[${normalizedMembers}]`);
       return c.json({ ok: true, id: channelId, name, members: normalizedMembers });

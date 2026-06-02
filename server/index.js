@@ -69,6 +69,7 @@ import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
 import { createHtmlPreviewRoute } from "./routes/html-preview.js";
 import { createAccessRoute } from "./routes/access.js";
+import { registerTaskRegistryBusHandlers } from "./task-bus-handlers.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
 // upgrade handler below (WsTransport needs raw ws .on()/.off() methods)
@@ -468,52 +469,7 @@ hub.eventBus.handle("deferred:abort", ({ taskId, reason }) => {
 });
 
 // Task registry bus handlers (plugin access)
-hub.eventBus.handle("task:register-handler", ({ type, abort }) => {
-  engine.taskRegistry.registerHandler(type, { abort });
-  return { ok: true };
-});
-hub.eventBus.handle("task:unregister-handler", ({ type }) => {
-  engine.taskRegistry.unregisterHandler(type);
-  return { ok: true };
-});
-hub.eventBus.handle("task:register", ({ taskId, type, parentSessionPath, meta, pluginId, agentId, persist }) => {
-  engine.taskRegistry.register(taskId, { type, parentSessionPath, meta, pluginId, agentId, persist });
-  return { ok: true };
-});
-hub.eventBus.handle("task:update", ({ taskId, ...patch }) => {
-  return { ok: true, task: engine.taskRegistry.update(taskId, patch) };
-});
-hub.eventBus.handle("task:complete", ({ taskId, result }) => {
-  return { ok: true, task: engine.taskRegistry.complete(taskId, result) };
-});
-hub.eventBus.handle("task:fail", ({ taskId, reason, error }) => {
-  return { ok: true, task: engine.taskRegistry.fail(taskId, reason ?? error) };
-});
-hub.eventBus.handle("task:remove", ({ taskId }) => {
-  engine.taskRegistry.remove(taskId);
-  return { ok: true };
-});
-hub.eventBus.handle("task:query", ({ taskId }) => {
-  return engine.taskRegistry.query(taskId);
-});
-hub.eventBus.handle("task:list", (filter = {}) => {
-  return engine.taskRegistry.listAll(filter);
-});
-hub.eventBus.handle("task:abort", ({ taskId }) => {
-  return { result: engine.taskRegistry.abort(taskId) };
-});
-hub.eventBus.handle("task:cancel", ({ taskId, reason }) => {
-  return engine.taskRegistry.cancel(taskId, reason);
-});
-hub.eventBus.handle("task:schedule", ({ scheduleId, ...input }) => {
-  return { ok: true, schedule: engine.taskRegistry.schedule(scheduleId, input) };
-});
-hub.eventBus.handle("task:unschedule", ({ scheduleId }) => {
-  return { ok: true, removed: engine.taskRegistry.unschedule(scheduleId) };
-});
-hub.eventBus.handle("task:list-schedules", (filter = {}) => {
-  return engine.taskRegistry.listSchedules(filter);
-});
+registerTaskRegistryBusHandlers(hub.eventBus, engine.taskRegistry);
 hub.eventBus.handle("session:get-titles", async ({ paths }) => {
   if (!Array.isArray(paths) || !paths.length) return { titles: {} };
   const coord = engine._sessionCoord;

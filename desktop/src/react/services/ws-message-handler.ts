@@ -596,11 +596,13 @@ export function handleServerMessage(msg: any): void {
 
     case 'channel_new_message': {
       const store = useStore.getState();
+      const knownChannel = store.channels.some((channel) => channel.id === msg.channelName);
       const isVisibleCurrentChannel =
         store.currentTab === 'channels'
         && store.currentChannel === msg.channelName
         && document.visibilityState === 'visible';
       if (msg.channelName && msg.message) {
+        if (!knownChannel) loadChannelsAction();
         appendChannelMessageAction(msg.channelName, msg.message, { markRead: isVisibleCurrentChannel });
       } else if (msg.channelName && isVisibleCurrentChannel) {
         markChannelMessagesDirtyAction(msg.channelName);
@@ -609,6 +611,11 @@ export function handleServerMessage(msg: any): void {
         markChannelMessagesDirtyAction(msg.channelName);
         loadChannelsAction();
       }
+      break;
+    }
+
+    case 'channel_created': {
+      loadChannelsAction();
       break;
     }
 
