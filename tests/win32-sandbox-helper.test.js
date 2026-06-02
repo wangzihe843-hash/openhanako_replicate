@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWin32SandboxTokenDiagnosticArgs,
-  buildWin32HanaWriteAclCleanupArgs,
-  buildWin32LegacyAclDiagnosticArgs,
-  buildWin32LegacyProfileCleanupArgs,
   buildWin32SandboxHelperArgs,
 } from "../lib/sandbox/win32-sandbox-helper.js";
 
 describe("buildWin32SandboxHelperArgs", () => {
   it("projects the helper contract as write roots instead of read ACL grants", () => {
-    expect(buildWin32SandboxHelperArgs({
+    const args = buildWin32SandboxHelperArgs({
       cwd: "C:\\work",
       executable: "C:\\Hanako\\resources\\git\\bin\\bash.exe",
       args: ["-lc", "curl https://example.com"],
@@ -21,7 +18,9 @@ describe("buildWin32SandboxHelperArgs", () => {
         denyReadPaths: ["C:\\Users\\Hana\\.hanako\\auth.json"],
         denyWritePaths: ["C:\\work\\.git"],
       },
-    })).toEqual([
+    });
+
+    expect(args).toEqual([
       "--cwd",
       "C:\\work",
       "--writable-root",
@@ -35,17 +34,18 @@ describe("buildWin32SandboxHelperArgs", () => {
       "-lc",
       "curl https://example.com",
     ]);
-  });
-
-  it("builds a legacy AppContainer ACL diagnostic command without executable passthrough", () => {
-    expect(buildWin32LegacyAclDiagnosticArgs({
-      paths: ["C:\\work", "C:\\Users\\Hana\\.hanako\\.ephemeral"],
-    })).toEqual([
+    expect(args).not.toEqual(expect.arrayContaining([
+      "--grant-read",
+      "--grant-read-optional",
+      "--grant-write",
+      "--grant-write-optional",
+      "--deny-read",
       "--diagnose-legacy-acl",
-      "C:\\work",
-      "--diagnose-legacy-acl",
-      "C:\\Users\\Hana\\.hanako\\.ephemeral",
-    ]);
+      "--cleanup-legacy-acl",
+      "--cleanup-hana-write-acl",
+      "--cleanup-legacy-profile",
+      "--legacy-appcontainer-profile",
+    ]));
   });
 
   it("builds token diagnostic args without changing the executable contract", () => {
@@ -73,42 +73,6 @@ describe("buildWin32SandboxHelperArgs", () => {
       "-NoLogo",
       "-Command",
       "Write-Output ok",
-    ]);
-  });
-
-  it("can request explicit legacy AppContainer ACL cleanup", () => {
-    expect(buildWin32LegacyAclDiagnosticArgs({
-      cleanup: true,
-      paths: ["C:\\work"],
-    })).toEqual([
-      "--cleanup-legacy-acl",
-      "--diagnose-legacy-acl",
-      "C:\\work",
-    ]);
-  });
-
-  it("builds stale Hana write ACL cleanup commands without executable passthrough", () => {
-    expect(buildWin32HanaWriteAclCleanupArgs({
-      paths: ["C:\\work", "C:\\Users\\Hana\\.hanako\\.ephemeral"],
-    })).toEqual([
-      "--cleanup-hana-write-acl",
-      "C:\\work",
-      "--cleanup-hana-write-acl",
-      "C:\\Users\\Hana\\.hanako\\.ephemeral",
-    ]);
-  });
-
-  it("builds explicit legacy AppContainer profile cleanup commands", () => {
-    expect(buildWin32LegacyProfileCleanupArgs({
-      profileNames: [
-        "com.hanako.sandbox.1288.475900",
-        "com.hanako.sandbox.5104.475988",
-      ],
-    })).toEqual([
-      "--cleanup-legacy-profile",
-      "com.hanako.sandbox.1288.475900",
-      "--cleanup-legacy-profile",
-      "com.hanako.sandbox.5104.475988",
     ]);
   });
 });

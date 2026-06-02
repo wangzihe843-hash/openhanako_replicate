@@ -30,6 +30,7 @@ import {
   hasServerConnection,
   mergeServerIdentity,
   readPersistedServerConnectionState,
+  refreshLocalServerConnectionState,
   upsertServerConnection,
   type ServerConnection,
 } from './services/server-connection';
@@ -90,6 +91,28 @@ export async function initApp(): Promise<void> {
   };
   configureAppEventActions({ requestContextUsage });
   configureWsMessageHandler({ requestContextUsage });
+
+  platform.onServerRestarted?.((data: { port: number; token?: string | null }) => {
+    const storeState = useStore.getState();
+    const serverPort = String(data.port);
+    const serverToken = data.token ?? storeState.serverToken ?? null;
+    const activeBeforeRestart = storeState.activeServerConnection;
+    const nextConnectionState = refreshLocalServerConnectionState({
+      serverConnections: storeState.serverConnections,
+      activeServerConnectionId: storeState.activeServerConnectionId,
+      activeServerConnection: storeState.activeServerConnection,
+      serverPort,
+      serverToken,
+    });
+    useStore.setState({
+      serverPort,
+      serverToken,
+      ...nextConnectionState,
+    });
+    if (!activeBeforeRestart || activeBeforeRestart.connectionId === LOCAL_CONNECTION_ID) {
+      connectWebSocket();
+    }
+  });
 
   // 1. 获取 server 连接信息并存入 Zustand
   const serverPort = await platform.getServerPort();

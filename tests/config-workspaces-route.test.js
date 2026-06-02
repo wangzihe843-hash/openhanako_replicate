@@ -48,6 +48,55 @@ describe("config workspace routes", () => {
     });
   });
 
+  it("removes a recent workspace entry without deleting the directory", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.js");
+    const oldWorkspace = path.join(tmpDir, "old");
+    const keepWorkspace = path.join(tmpDir, "keep");
+    fs.mkdirSync(oldWorkspace);
+    fs.mkdirSync(keepWorkspace);
+    const engine = {
+      config: { cwd_history: [oldWorkspace, keepWorkspace] },
+      updateConfig: vi.fn(async (patch) => {
+        engine.config = { ...engine.config, ...patch };
+      }),
+    };
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: oldWorkspace }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cwd_history).toEqual([keepWorkspace]);
+    expect(fs.existsSync(oldWorkspace)).toBe(true);
+    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [keepWorkspace] });
+  });
+
+  it("clears recent workspace history without deleting directories", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.js");
+    const oldWorkspace = path.join(tmpDir, "old");
+    fs.mkdirSync(oldWorkspace);
+    const engine = {
+      config: { cwd_history: [oldWorkspace] },
+      updateConfig: vi.fn(async (patch) => {
+        engine.config = { ...engine.config, ...patch };
+      }),
+    };
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent/all", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, cwd_history: [] });
+    expect(fs.existsSync(oldWorkspace)).toBe(true);
+    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [] });
+  });
+
   it("exposes and creates the default onboarding workspace", async () => {
     const homeDir = path.join(tmpDir, "home");
     fs.mkdirSync(homeDir, { recursive: true });

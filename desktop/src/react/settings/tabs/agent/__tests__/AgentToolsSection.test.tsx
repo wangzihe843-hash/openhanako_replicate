@@ -54,13 +54,14 @@ describe("AgentToolsSection", () => {
           "dm",
           "install_skill",
           "update_settings",
+          "workflow",
           "xingye_propose_draft",
           "read",
         ]}
         disabled={[]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(8);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(9);
     expect(getRow(container, "automation")).toBeTruthy();
     expect(getRow(container, "beautify")).toBeTruthy();
     expect(getRow(container, "browser")).toBeTruthy();
@@ -69,6 +70,7 @@ describe("AgentToolsSection", () => {
     expect(getRow(container, "dm")).toBeTruthy();
     expect(getRow(container, "install_skill")).toBeTruthy();
     expect(getRow(container, "update_settings")).toBeTruthy();
+    expect(getRow(container, "workflow")).toBeTruthy();
     expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });
 
@@ -79,11 +81,12 @@ describe("AgentToolsSection", () => {
         disabled={["update_settings", "dm"]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(8);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(9);
     expect(getRow(container, "automation")).toBeTruthy();
     expect(getRow(container, "beautify")).toBeTruthy();
     expect(getRow(container, "browser")).toBeTruthy();
     expect(getRow(container, "computer")).toBeNull();
+    expect(getRow(container, "workflow")).toBeTruthy();
     expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });
 

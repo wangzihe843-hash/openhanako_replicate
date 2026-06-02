@@ -21,7 +21,17 @@ import {
   resolveDefaultWorkspacePath,
 } from "../../shared/default-workspace.js";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.js';
-import { mergeWorkspaceHistory, normalizeWorkspacePath } from "../../shared/workspace-history.js";
+import {
+  clearWorkspaceHistory,
+  mergeWorkspaceHistory,
+  normalizeWorkspacePath,
+  removeWorkspaceHistoryEntries,
+} from "../../shared/workspace-history.js";
+import {
+  collectProviderHeaderSecretPatchPathsFromConfig,
+  maskProviderHeaders,
+  resolveProviderHeadersPatch,
+} from "../../shared/provider-auth.js";
 import { isSearchApiProvider, normalizeSearchApiKeys } from "../../shared/search-providers.js";
 import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.js";
 import { appendXingyeEvent } from "../../lib/xingye/events.js";
@@ -87,6 +97,83 @@ function emitConfigAppEvents(engine, { globalFields, agentPartial, providersChan
   }
 }
 
+function latestIso(values) {
+  let latest = null;
+  let latestTime = -Infinity;
+  for (const value of values) {
+    if (typeof value !== "string" || !value) continue;
+    const time = Date.parse(value);
+    if (Number.isNaN(time)) continue;
+    if (time > latestTime) {
+      latest = value;
+      latestTime = time;
+    }
+  }
+  return latest;
+}
+
+function normalizeMemoryStepHealth(step) {
+  const failCount = Number(step?.failCount);
+  return {
+    lastSuccessAt: typeof step?.lastSuccessAt === "string" ? step.lastSuccessAt : null,
+    lastErrorAt: typeof step?.lastErrorAt === "string" ? step.lastErrorAt : null,
+    lastErrorMsg: step?.lastErrorMsg ? String(step.lastErrorMsg) : null,
+    failCount: Number.isFinite(failCount) && failCount > 0 ? failCount : 0,
+  };
+}
+
+function buildMemoryHealth(agent) {
+  const base = {
+    enabled: agent.memoryMasterEnabled !== false,
+    reason: null,
+    steps: {},
+    failedSteps: [],
+    maxFailCount: 0,
+    lastSuccessAt: null,
+    lastErrorAt: null,
+  };
+
+  if (agent.memoryMasterEnabled === false) {
+    return {
+      ...base,
+      status: "disabled",
+      reason: "memory_disabled",
+      enabled: false,
+    };
+  }
+
+  if (!agent.memoryTicker || typeof agent.memoryTicker.getHealthStatus !== "function") {
+    return {
+      ...base,
+      status: "unavailable",
+      reason: "memory_ticker_unavailable",
+    };
+  }
+
+  const rawSteps = agent.memoryTicker.getHealthStatus();
+  const steps = {};
+  for (const [key, value] of Object.entries(rawSteps || {})) {
+    steps[key] = normalizeMemoryStepHealth(value);
+  }
+
+  const stepEntries = Object.entries(steps);
+  const failedSteps = stepEntries
+    .filter(([, step]) => step.failCount > 0 || !!step.lastErrorMsg || !!step.lastErrorAt)
+    .map(([key]) => key);
+  const maxFailCount = stepEntries.reduce((max, [, step]) => Math.max(max, step.failCount), 0);
+  const status = failedSteps.length === 0 ? "healthy" : (maxFailCount >= 3 ? "unhealthy" : "degraded");
+
+  return {
+    ...base,
+    status,
+    steps,
+    failedSteps,
+    maxFailCount,
+    lastSuccessAt: latestIso(stepEntries.map(([, step]) => step.lastSuccessAt)),
+    lastErrorAt: latestIso(stepEntries.map(([, step]) => step.lastErrorAt)),
+  };
+}
+
 export function createConfigRoute(engine) {
   const route = new Hono();
 
@@ -112,6 +199,7 @@ export function createConfigRoute(engine) {
           base_url: p.base_url || entry?.baseUrl || "",
           api: p.api || entry?.api || "",
           api_key: maskSecretValue(p.api_key || ""),
+          headers: maskProviderHeaders(p.headers || {}),
           models: p.models || [],
           model_count: (p.models || []).length,
         };
@@ -149,6 +237,29 @@ export function createConfigRoute(engine) {
     }
   });
 
+  route.delete("/config/workspaces/recent", async (c) => {
+    try {
+      const body = await safeJson(c).catch(() => ({}));
+      const folder = normalizeWorkspacePath(body?.path);
+      if (!folder) return c.json({ error: "path must be a non-empty string" }, 400);
+      const cwdHistory = removeWorkspaceHistoryEntries(engine.config.cwd_history, [folder]);
+      await engine.updateConfig({ cwd_history: cwdHistory });
+      return c.json({ ok: true, cwd_history: cwdHistory });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.delete("/config/workspaces/recent/all", async (c) => {
+    try {
+      const cwdHistory = clearWorkspaceHistory();
+      await engine.updateConfig({ cwd_history: cwdHistory });
+      return c.json({ ok: true, cwd_history: cwdHistory });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
   route.get("/config/default-workspace", async (c) => {
     return c.json({ path: resolveDefaultWorkspacePath() });
   });
@@ -174,7 +285,10 @@ export function createConfigRoute(engine) {
         const providerDenied = denyWithoutScope(c, "providers.manage");
         if (providerDenied) return providerDenied;
       }
-      const secretFields = collectSecretPatchPaths(partial, ["api_key"]);
+      const secretFields = [
+        ...collectSecretPatchPaths(partial, ["api_key"]),
+        ...collectProviderHeaderSecretPatchPathsFromConfig(partial),
+      ];
       const secretDenied = denySecretMutationWithoutScope(c, secretFields);
       if (secretDenied) return secretDenied;
       // ── schema-driven 全局字段分流 ──
@@ -191,11 +305,18 @@ export function createConfigRoute(engine) {
           if (data === null) {
             engine.providerRegistry.removeProvider(name);
           } else {
-            engine.providerRegistry.saveProvider(name, resolveSecretPatch({
+            const resolvedPatch = resolveSecretPatch({
               patch: data,
               existing: rawProviders[name] || {},
               secretKeys: ["api_key"],
-            }));
+            });
+            if (hasOwn(data, "headers")) {
+              resolvedPatch.headers = resolveProviderHeadersPatch({
+                patch: data.headers,
+                existing: rawProviders[name]?.headers || {},
+              });
+            }
+            engine.providerRegistry.saveProvider(name, resolvedPatch);
           }
         }
         delete agentPartial.providers;
@@ -475,6 +596,20 @@ export function createConfigRoute(engine) {
       throw new Error(`Cannot open fact DB for agent "${resolvedId}": ${err.message}`);
     }
   }
+
+  // 获取记忆后台整理健康状态。显式 agentId 是状态归属边界。
+  route.get("/memories/health", async (c) => {
+    try {
+      const agent = resolveAgentStrict(engine, c);
+      return c.json({
+        agentId: agent.id,
+        ...buildMemoryHealth(agent),
+      });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+      return c.json({ error: err.message }, 500);
+    }
+  });
 
   // 获取所有元事实
   route.get("/memories", async (c) => {

@@ -23,7 +23,7 @@ export interface HistoryApiResponse {
     role: string;
     content: string;
     thinking?: string;
-    toolCalls?: Array<{ name: string; args?: Record<string, unknown> }>;
+    toolCalls?: Array<{ id?: string; toolCallId?: string; name: string; args?: Record<string, unknown> }>;
     images?: Array<{ data: string; mimeType: string }>;
     timestamp?: number | string | null;
   }>;
@@ -286,6 +286,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         blocks.push({
           type: 'tool_group',
           tools: m.toolCalls.map(tc => ({
+            id: tc.id || tc.toolCallId || undefined,
             name: tc.name,
             args: tc.args,
             done: true,

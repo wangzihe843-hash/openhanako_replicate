@@ -9,6 +9,7 @@ import {
   buildConnectionUrl,
   createLocalServerConnection,
 } from '../services/server-connection';
+import { userFallbackAvatar, yuanFallbackAvatar } from './agent-helpers';
 
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -91,7 +92,19 @@ async function resolveAvatarCache(state: StoreSnapshot): Promise<AvatarCache> {
       : Promise.resolve(null),
     fetchAvatarAsDataUrl('user', null).catch(() => null),
   ]);
-  return { assistant, user };
+  const [assistantFallback, userFallback] = await Promise.all([
+    assistant
+      ? Promise.resolve(assistant)
+      : resolveAssistantFallbackAvatar(state).catch(() => null),
+    user
+      ? Promise.resolve(user)
+      : Promise.resolve(userFallbackAvatar(state.userName || '我')),
+  ]);
+
+  return {
+    assistant: assistantFallback,
+    user: userFallback,
+  };
 }
 
 async function buildScreenshotPayloadForMessages(
@@ -261,14 +274,42 @@ export async function takeArticleScreenshot(markdown: string, options: ArticleSc
 
 async function fetchImageAsDataUrl(filePath: string): Promise<string> {
   const url = window.platform?.getFileUrl?.(filePath) ?? '';
+  return fetchUrlAsDataUrl(url);
+}
+
+async function fetchUrlAsDataUrl(url: string): Promise<string> {
   const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`failed to fetch image: ${resp.status}`);
   const blob = await resp.blob();
+  return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+function resolveAssetUrl(src: string): string {
+  try {
+    return new URL(src, window.location.href).toString();
+  } catch {
+    return src;
+  }
+}
+
+async function resolveAssistantFallbackAvatar(state: StoreSnapshot): Promise<string | null> {
+  const fallbackSrc = yuanFallbackAvatar(state.agentYuan || undefined);
+  if (!fallbackSrc) return null;
+  if (fallbackSrc.startsWith('data:')) return fallbackSrc;
+  try {
+    return await fetchUrlAsDataUrl(resolveAssetUrl(fallbackSrc));
+  } catch {
+    return userFallbackAvatar(state.agentName || 'Hana');
+  }
 }
 
 async function fetchAvatarAsDataUrl(role: string, agentId: string | null): Promise<string | null> {
@@ -286,10 +327,5 @@ async function fetchAvatarAsDataUrl(role: string, agentId: string | null): Promi
   });
   if (!resp.ok) return null;
   const blob = await resp.blob();
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(blob);
-  });
+  return blobToDataUrl(blob).catch(() => null);
 }

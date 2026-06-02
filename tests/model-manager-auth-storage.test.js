@@ -160,6 +160,39 @@ describe("ModelManager AuthStorage ownership", () => {
     expect(manager.availableModels.filter((m) => m.provider === "deepseek")).toHaveLength(0);
   });
 
+  it("does not resurrect a deleted custom provider from legacy auth or models projection", async () => {
+    writeAuth({
+      "my-provider": { type: "api_key", key: "sk-legacy-custom" },
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, "added-models.yaml"),
+      YAML.dump({
+        _deleted_providers: ["my-provider"],
+        providers: {},
+      }),
+      "utf-8",
+    );
+    writeModelsJson({
+      providers: {
+        "my-provider": {
+          baseUrl: "https://api.example.com/v1",
+          api: "openai-completions",
+          apiKey: "sk-projected-custom",
+          models: [{ id: "custom-model" }],
+        },
+      },
+    });
+
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.init();
+    await manager.syncAndRefresh();
+
+    const persistedProviders = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8")).providers;
+    const projected = JSON.parse(fs.readFileSync(path.join(tmpDir, "models.json"), "utf-8"));
+    expect(persistedProviders["my-provider"]).toBeUndefined();
+    expect(projected.providers["my-provider"]).toBeUndefined();
+  });
+
   it("reloadAndSync clears stale in-memory API-key auth before refreshing models", async () => {
     writeAuth({
       deepseek: { type: "api_key", key: "sk-old-3ffa" },
@@ -220,6 +253,7 @@ describe("ModelManager AuthStorage ownership", () => {
       api_key: "fresh-token",
       base_url: "https://chatgpt.com/backend-api",
       api: "openai-codex-responses",
+      headers: {},
       accountId: "acct_123",
     });
   });

@@ -1692,6 +1692,14 @@
     color: var(--text-muted);
 }
 
+/* 复用实例后缀（如 毛毛·探索）：紧贴名字、低对比度，作身份标注而非状态 */
+.subagentInstance {
+    font-weight: normal;
+    font-size: 0.78rem;
+    margin-left: 5px;
+    color: var(--text-muted);
+}
+
 .subagent-done .subagentStatus {
     color: #7a9e7a;
 }
@@ -1833,4 +1841,22 @@
 
 .subagentIcon {
     margin-right: 4px;
+}
+
+/* ── 框选 / 选择模式（桌面端） ── */
+/* selectionBox 用 fixed + viewport 坐标渲染（与 getBoundingClientRect/clientX 同坐标系）。
+   依赖：无带 transform/filter/will-change 的祖先，否则 fixed 会相对该祖先定位而错位。 */
+.selectionBox {
+    position: fixed;
+    z-index: 60;
+    border: 1px solid var(--accent);
+    background: var(--accent-light);
+    opacity: 0.5;
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.selectionModeActive .messageGroup {
+    user-select: none;
+    cursor: pointer;
 }

@@ -93,6 +93,23 @@ describe("HTTP route security policy", () => {
       .toMatchObject({ allowed: false, error: "insufficient_scope" });
   });
 
+  it("includes required scope diagnostics when a scoped route denies access", async () => {
+    const { authorizeHttpRoute } = await import("../server/http/route-security.js");
+    const principal = devicePrincipal(["chat"]);
+
+    expect(authorizeHttpRoute({
+      method: "GET",
+      path: "/api/preferences/models",
+      principal,
+    })).toMatchObject({
+      allowed: false,
+      error: "insufficient_scope",
+      reason: "missing_required_scope",
+      requiredScope: "settings.read",
+      policy: { kind: "scope", scope: "settings.read" },
+    });
+  });
+
   it("allows scoped device access to chat identity and resources without opening admin APIs", async () => {
     const { authorizeHttpRoute } = await import("../server/http/route-security.js");
     const principal = devicePrincipal(["chat", "resources.read"]);

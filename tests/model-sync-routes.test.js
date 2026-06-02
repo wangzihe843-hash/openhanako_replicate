@@ -32,7 +32,7 @@ function withResolveCreds(engine) {
   engine.resolveProviderCredentials = (provider) => {
     if (!provider) return { api_key: "", base_url: "", api: "" };
     const cred = engine.providerRegistry?.getCredentials?.(provider);
-    if (cred) return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "" };
+    if (cred) return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "", headers: cred.headers || {} };
     return { api_key: "", base_url: "", api: "" };
   };
   return engine;
@@ -632,9 +632,9 @@ describe("model sync related routes", () => {
         reasoning: true,
       },
       provider: "minimax",
-      api: "openai-completions",
+      api: "anthropic-messages",
       api_key: "sk-test",
-      base_url: "https://api.minimax.io/v1",
+      base_url: "https://api.minimaxi.com/anthropic",
     };
     const engine = {
       availableModels: [],
@@ -990,6 +990,52 @@ describe("model sync related routes", () => {
     expect(data.models[0].id).toBe("MiniMax-M2.5");
   });
 
+  it("provider fetch-models uses saved request headers as credentials", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{ id: "gateway-model", context_length: 128000 }],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({
+          apiKey: "",
+          baseUrl: "https://gateway.example/v1",
+          api: "openai-completions",
+          headers: { Authorization: "Bearer gateway-token", "X-Corp-Auth": "corp-token" },
+        }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "gateway-provider" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer gateway-token",
+      "X-Corp-Auth": "corp-token",
+    });
+    const data = await res.json();
+    expect(data.models[0].id).toBe("gateway-model");
+  });
+
   it("fetch-models does not expose the official DeepSeek provider id as a model", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.js");
     const app = new Hono();
@@ -1315,12 +1361,51 @@ describe("model sync related routes", () => {
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["x-api-key"]).toBe("sk-test");
     expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers["User-Agent"]).toBe("HanaAgent/1.0");
 
     const data = await res.json();
     expect(data.models).toEqual([
       { id: "claude-opus-4-7", name: "Claude Opus 4.7", context: 200000, maxOutput: 64000 },
       { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", context: 200000, maxOutput: 64000 },
     ]);
+  });
+
+  it("anthropic-messages model discovery does not duplicate /v1 in base URLs", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "claude-compatible", display_name: "Claude Compatible" }],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({ apiKey: "", baseUrl: "", api: "" }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "custom-anthropic",
+        base_url: "https://anthropic-compatible.example/v1",
+        api: "anthropic-messages",
+        api_key: "sk-test",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://anthropic-compatible.example/v1/models?limit=1000");
   });
 
   it("google-generative-ai hits native Gemini /models with x-goog-api-key and normalizes fields", async () => {
@@ -1484,6 +1569,41 @@ describe("model sync related routes", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.minimaxi.com/anthropic/v1/models?limit=1000");
     const data = await res.json();
     expect(data.models.map(m => m.id)).toEqual(["MiniMax-M2.7"]);
+  });
+
+  it("normalizes MiniMax Token Plan v1 base URLs to the shared Anthropic endpoint", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.js");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "MiniMax-M3", display_name: "MiniMax M3" }],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => ({ apiKey: "sk-test", baseUrl: "https://api.minimaxi.com/v1", api: "anthropic-messages" }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    });
+
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "minimax-token-plan" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.minimaxi.com/anthropic/v1/models?limit=1000");
+    const data = await res.json();
+    expect(data.models.map(m => m.id)).toEqual(["MiniMax-M3"]);
   });
 
   it("request body api_key overrides saved credentials", async () => {

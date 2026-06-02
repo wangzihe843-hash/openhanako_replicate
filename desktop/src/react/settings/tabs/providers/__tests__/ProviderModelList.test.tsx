@@ -24,6 +24,8 @@ vi.mock('../../../helpers', () => ({
   t: (key: string) => key,
   formatContext: (n: number) => `${n}`,
   lookupModelMeta: (id: unknown, provider?: unknown) => mocks.lookupModelMeta(id, provider),
+  CONTEXT_PRESETS: [],
+  OUTPUT_PRESETS: [],
 }));
 
 import { ProviderModelList } from '../ProviderModelList';
@@ -190,5 +192,57 @@ describe('ProviderModelList', () => {
       body: JSON.stringify({ providers: { 'kimi-coding': { models: ['kimi-new-model'] } } }),
     })));
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('does not serialize untouched capability defaults as explicit false overrides', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch.mockResolvedValue(jsonResponse({ models: [] }));
+    mocks.lookupModelMeta.mockImplementation((id: unknown, provider: unknown) => {
+      expect(provider).toBe('mimo');
+      if (id === 'mimo-v2.5-pro') {
+        return {
+          name: 'MiMo V2.5 Pro',
+          reasoning: true,
+          image: false,
+          video: false,
+        };
+      }
+      return null;
+    });
+
+    render(
+      <ProviderModelList
+        providerId="mimo"
+        summary={{
+          type: 'api-key',
+          auth_type: 'api-key',
+          display_name: 'Xiaomi (MiMo)',
+          base_url: 'https://api.xiaomimimo.com/v1',
+          api: 'openai-completions',
+          api_key: 'sk-test',
+          models: ['mimo-v2.5-pro'],
+          custom_models: [],
+          has_credentials: true,
+          supports_oauth: false,
+          is_coding_plan: false,
+          can_delete: true,
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.editModel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.save' }));
+
+    await waitFor(() => {
+      const updateCall = mocks.hanaFetch.mock.calls.find(([url, options]) => (
+        String(url).includes('/api/providers/mimo/models/mimo-v2.5-pro')
+        && options?.method === 'PUT'
+      ));
+      expect(updateCall).toBeTruthy();
+      expect(JSON.parse(String(updateCall?.[1]?.body))).toEqual({
+        name: 'MiMo V2.5 Pro',
+      });
+    });
   });
 });

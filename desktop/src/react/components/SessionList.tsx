@@ -36,6 +36,7 @@ import {
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
 import { cwdFromAutoProjectId } from '../../../../shared/session-projects.js';
+import { FolderIcon } from './shared/FolderIcon';
 import styles from './SessionList.module.css';
 
 const SESSION_VIEW_MODE_KEY = 'hana-session-sidebar-view-mode';
@@ -1108,7 +1109,7 @@ function ProjectBlock({
         onDragLeave={() => setDropTargetId(null)}
         onDrop={(event) => onDropProject(event, project)}
       >
-        <FolderIcon />
+        <FolderIcon className={styles.projectIcon} size={16} open={!collapsed} />
         <span className={styles.projectName}>{project.name}</span>
         <button
           type="button"
@@ -1223,7 +1224,7 @@ function FolderBlock({
         onDragLeave={() => setDropTargetId(null)}
         onDrop={(event) => onDropFolder(event, folder)}
       >
-        <FolderIcon />
+        <FolderIcon className={styles.projectIcon} size={16} open={!collapsed} />
         <span className={styles.projectName}>{folder.name}</span>
       </div>
       {!collapsed && (
@@ -1249,14 +1250,6 @@ function FolderBlock({
         </div>
       )}
     </div>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg className={styles.projectIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 7.5a2 2 0 0 1 2-2h4.2l2 2H19a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    </svg>
   );
 }
 

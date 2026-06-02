@@ -152,6 +152,41 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().workspaceFolders).toEqual(['/reference']);
   });
 
+  it('removes recent workspaces locally and persists the history deletion', async () => {
+    useStore.setState({
+      cwdHistory: ['/workspace/Desktop', '/workspace/Novel'],
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({ cwd_history: ['/workspace/Novel'] }));
+
+    const { removeRecentWorkspace } = await import('../../stores/desk-actions');
+    await removeRecentWorkspace('/workspace/Desktop/');
+
+    expect(useStore.getState().cwdHistory).toEqual(['/workspace/Novel']);
+    expect(mockHanaFetch).toHaveBeenCalledWith(
+      '/api/config/workspaces/recent',
+      expect.objectContaining({
+        method: 'DELETE',
+        body: JSON.stringify({ path: '/workspace/Desktop' }),
+      }),
+    );
+  });
+
+  it('clears recent workspace history through the server API', async () => {
+    useStore.setState({
+      cwdHistory: ['/workspace/Desktop', '/workspace/Novel'],
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({ cwd_history: [] }));
+
+    const { clearRecentWorkspaces } = await import('../../stores/desk-actions');
+    await clearRecentWorkspaces();
+
+    expect(useStore.getState().cwdHistory).toEqual([]);
+    expect(mockHanaFetch).toHaveBeenCalledWith(
+      '/api/config/workspaces/recent/all',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
   it('persists the selected workspace before refreshing the visible desk root', async () => {
     const persist = deferred<Response>();
     mockHanaFetch

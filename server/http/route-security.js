@@ -11,20 +11,29 @@ export function authorizeHttpRoute({ method, path, principal }) {
     return allowed(policy);
   }
   if (policy.kind === "local_only") {
-    return denied("local_only_route", 403, policy);
+    return denied("local_only_route", 403, policy, {
+      reason: "local_owner_required",
+    });
   }
   if (policy.kind === "authenticated") {
-    return principal ? allowed(policy) : denied("forbidden", 403, policy);
+    return principal ? allowed(policy) : denied("forbidden", 403, policy, {
+      reason: "missing_principal",
+    });
   }
   if (!principal) {
-    return denied("forbidden", 403, policy);
+    return denied("forbidden", 403, policy, {
+      reason: "missing_principal",
+    });
   }
   const scopes = Array.isArray(principal.scopes) ? principal.scopes : [];
   const required = policy.scope;
   if (scopeAllows(scopes, required)) {
     return allowed(policy);
   }
-  return denied("insufficient_scope", 403, policy);
+  return denied("insufficient_scope", 403, policy, {
+    reason: "missing_required_scope",
+    requiredScope: required,
+  });
 }
 
 export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
@@ -151,8 +160,8 @@ function allowed(policy) {
   return { allowed: true, policy };
 }
 
-function denied(error, status, policy) {
-  return { allowed: false, error, status, policy };
+function denied(error, status, policy, details = {}) {
+  return { allowed: false, error, status, policy, ...details };
 }
 
 function normalizePath(path) {

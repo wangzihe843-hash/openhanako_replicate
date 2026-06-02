@@ -12,6 +12,7 @@ import type { ChatMessage, ContentBlock } from '../stores/chat-types';
 import { useStore } from '../stores';
 import { renderMarkdown } from '../utils/markdown';
 import { cleanMoodText } from '../utils/message-parser';
+import { findOpenToolIndex, toolCallFromStartEvent, toolCallIdFromEvent } from '../utils/tool-call-identity';
 import {
   registerStreamBufferInvalidator,
   registerStreamBufferSnapshot,
@@ -320,7 +321,7 @@ class StreamBufferManager {
             if (tg.tools.some(t => !t.done)) {
               blocks[lastTg] = {
                 ...tg,
-                tools: [...tg.tools, { name: msg.name, args: msg.args, done: false, success: false }],
+                tools: [...tg.tools, toolCallFromStartEvent(msg)],
               };
               return { ...m, blocks };
             }
@@ -328,7 +329,7 @@ class StreamBufferManager {
           // 新建 tool_group
           blocks.push({
             type: 'tool_group',
-            tools: [{ name: msg.name, args: msg.args, done: false, success: false }],
+            tools: [toolCallFromStartEvent(msg)],
             collapsed: false,
           });
           return { ...m, blocks };
@@ -342,10 +343,17 @@ class StreamBufferManager {
           for (let i = blocks.length - 1; i >= 0; i--) {
             if (blocks[i].type !== 'tool_group') continue;
             const tg = blocks[i] as Extract<ContentBlock, { type: 'tool_group' }>;
-            const toolIdx = tg.tools.findIndex(t => t.name === msg.name && !t.done);
+            const toolIdx = findOpenToolIndex(tg.tools, msg);
             if (toolIdx >= 0) {
               const tools = [...tg.tools];
-              tools[toolIdx] = { ...tools[toolIdx], done: true, success: !!msg.success, details: msg.details };
+              const id = toolCallIdFromEvent(msg);
+              tools[toolIdx] = {
+                ...tools[toolIdx],
+                ...(id ? { id } : {}),
+                done: true,
+                success: !!msg.success,
+                details: msg.details,
+              };
               const allDone = tools.every(t => t.done);
               blocks[i] = { ...tg, tools, collapsed: allDone && tools.length > 1 };
               return { ...m, blocks };

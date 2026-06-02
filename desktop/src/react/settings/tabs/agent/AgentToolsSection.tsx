@@ -17,6 +17,7 @@ const OPTIONAL_TOOL_NAMES = [
   "dm",
   "install_skill",
   "update_settings",
+  "workflow",
   "xingye_propose_draft",
 ] as const;
 

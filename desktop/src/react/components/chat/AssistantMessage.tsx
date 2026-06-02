@@ -9,6 +9,7 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { ToolGroupBlock } from './ToolGroupBlock';
 import { PluginCardBlock } from './PluginCardBlock';
 import { SubagentCard } from './SubagentCard';
+import { WorkflowInlineCard } from './WorkflowInlineCard';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { SettingsUpdateCard } from './SettingsUpdateCard';
 import { MessageActions } from './MessageActions';
@@ -765,6 +766,7 @@ const SettingsUpdateBlock = memo(function SettingsUpdateBlock({ block }: { block
 // 注：`file` 与 `screenshot` 需 session 上下文（sessionPath/messageId/blockIdx），
 // 统一走 ContentBlockView 的 switch 内联分发，不注册到全局表中。
 BLOCK_RENDERERS['subagent'] = SubagentCard;
+BLOCK_RENDERERS['workflow'] = WorkflowInlineCard;
 BLOCK_RENDERERS['artifact'] = LegacyArtifactBlock;
 BLOCK_RENDERERS['plugin_card'] = PluginCardWrapper;
 BLOCK_RENDERERS['skill'] = SkillBlock;

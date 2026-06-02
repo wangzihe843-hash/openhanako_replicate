@@ -1,4 +1,10 @@
 import { MCP_PROTOCOL_VERSION } from "./mcp-stdio-client.js";
+import { getOutboundProxyConfig } from "../../../lib/net/outbound-proxy.js";
+import {
+  normalizeNetworkProxyConfig,
+  proxyConfigFromEnvironment,
+  resolveProxyForUrl,
+} from "../../../shared/network-proxy.js";
 import {
   MCP_PROTOCOL_VERSION_HEADER,
   headersWithoutMcpProtocolVersion,
@@ -65,8 +71,17 @@ export function parseSseEvents(text) {
   return events;
 }
 
-function authToken(server) {
-  return stringOrEmpty(server?.authorizationToken) || stringOrEmpty(server?.oauth?.accessToken);
+function configuredAuthToken(server) {
+  const authType = stringOrEmpty(server?.authType);
+  if (authType === "oauth") return stringOrEmpty(server?.oauth?.accessToken);
+  if (authType === "bearer") return stringOrEmpty(server?.authorizationToken);
+  if (authType === "none") return "";
+  return stringOrEmpty(server?.oauth?.accessToken) || stringOrEmpty(server?.authorizationToken);
+}
+
+async function requestAuthToken(server, getAuthToken) {
+  const dynamicToken = getAuthToken ? stringOrEmpty(await getAuthToken()) : "";
+  return dynamicToken || configuredAuthToken(server);
 }
 
 function stringOrEmpty(value) {
@@ -129,6 +144,53 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
 function requestTimeoutMs(server) {
   const timeout = Number(server?.timeout || 0);
   return Number.isFinite(timeout) && timeout > 0 ? timeout * 1000 : 30_000;
+}
+
+export function resolveMcpHttpProxyDiagnostics(server, { proxyConfig = getOutboundProxyConfig(), env = process.env } = {}) {
+  const transport = stringOrEmpty(server?.transport);
+  const url = stringOrEmpty(server?.url);
+  const applicable = !!url && transport !== "stdio";
+  if (!applicable) {
+    return {
+      applicable: false,
+      proxyUrl: "",
+      source: "not-applicable",
+      connectorEnvProxyIgnored: hasConnectorProxyEnv(server),
+    };
+  }
+
+  const normalized = normalizeNetworkProxyConfig(proxyConfig);
+  const effective = normalized.mode === "system" ? proxyConfigFromEnvironment(env) : normalized;
+  const proxyUrl = resolveProxyForUrl(url, normalized, env);
+  let source = normalized.mode;
+  if (normalized.mode === "manual") source = proxyUrl ? "app" : "bypass";
+  if (normalized.mode === "system") source = effective.mode === "direct" ? "system" : "system-env";
+  if (normalized.mode === "direct") source = "direct";
+
+  return {
+    applicable: true,
+    proxyUrl: redactProxyUrl(proxyUrl),
+    source,
+    connectorEnvProxyIgnored: hasConnectorProxyEnv(server),
+  };
+}
+
+function hasConnectorProxyEnv(server) {
+  const env = server?.env && typeof server.env === "object" && !Array.isArray(server.env) ? server.env : {};
+  return ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"]
+    .some((key) => typeof env[key] === "string" && env[key].trim());
+}
+
+function redactProxyUrl(proxyUrl) {
+  if (!proxyUrl) return "";
+  try {
+    const url = new URL(proxyUrl);
+    if (url.username) url.username = "********";
+    if (url.password) url.password = "********";
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 export class McpStreamableHttpClient {
@@ -212,6 +274,10 @@ export class McpStreamableHttpClient {
     try {
       return await this._request(method, params, opts);
     } catch (err) {
+      // The error we ultimately surface. A 401 refresh may replace it with a more
+      // specific cause; we track that on a local instead of reassigning the catch
+      // binding `err` (no-ex-assign).
+      let failure = err;
       // 401 OAuth self-heal (方案 A, bounded to a single retry). A live request
       // came back 401: ask the runtime to force a token refresh, and if it
       // produced a new token, replay this one request with it. We retry AT MOST
@@ -224,15 +290,15 @@ export class McpStreamableHttpClient {
         // dead → invalid_grant, or the retry hit a fresh error). Adopt it as the
         // failing context: a dead refresh token is auth-terminal, so _failLiveSession
         // routes it to needs-auth instead of leaving a bare 401 to back off blindly.
-        if (refreshed.error) err = refreshed.error;
+        if (refreshed.error) failure = refreshed.error;
       }
       // A live request failed in a way the inline 404 self-heal could not recover
       // (network drop, 5xx, unrecovered 401/403, or a dead refresh token's
       // invalid_grant). Tear the session down and report it so the runtime can run
       // backoff reconnect; auth-terminal failures additionally flag needsAuth for
       // the OAuth self-heal / re-auth. This never silently swallows the error.
-      this._failLiveSession(err);
-      throw err;
+      this._failLiveSession(failure);
+      throw failure;
     }
   }
 
@@ -336,12 +402,13 @@ export class McpStreamableHttpClient {
     if (sessionId && !initializing) headers["MCP-Session-Id"] = sessionId;
     // Prefer the runtime's freshest token (handles near-expiry refresh out of
     // band); fall back to the connector snapshot when no callback is injected.
-    const token = this.getAuthToken ? stringOrEmpty(await this.getAuthToken()) : authToken(this.server);
+    const token = await requestAuthToken(this.server, this.getAuthToken);
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
 
   async _postJsonRpc(payload, { initializing = false } = {}) {
+    assertValidUnicodeBoundary(payload);
     const response = await fetchWithTimeout(this.fetchImpl, this.endpoint, {
       method: "POST",
       headers: await this._headers({ initializing }),
@@ -456,12 +523,7 @@ export class McpLegacySseClient {
       // it yields a new token, replay the request once with a fresh id. A second
       // 401 or no refresh rethrows. No loop.
       if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
-        let newToken = "";
-        try {
-          newToken = stringOrEmpty(await this.refreshAuthToken());
-        } catch (refreshErr) {
-          throw refreshErr;
-        }
+        const newToken = stringOrEmpty(await this.refreshAuthToken());
         if (newToken) return this._sendRequest(method, params, timeout);
       }
       throw err;
@@ -620,6 +682,7 @@ export class McpLegacySseClient {
   }
 
   async _postMessage(payload) {
+    assertValidUnicodeBoundary(payload);
     const response = await fetchWithTimeout(this.fetchImpl, this.messageEndpoint, {
       method: "POST",
       headers: await this._headers({ accept: "application/json", includeJson: true }),
@@ -638,7 +701,7 @@ export class McpLegacySseClient {
   async _headers({ accept, includeJson }) {
     const headers = { ...connectorHeaders(this.server), Accept: accept };
     if (includeJson) headers["Content-Type"] = "application/json";
-    const token = this.getAuthToken ? stringOrEmpty(await this.getAuthToken()) : authToken(this.server);
+    const token = await requestAuthToken(this.server, this.getAuthToken);
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
@@ -705,4 +768,59 @@ function withTimeout(promise, timeout, message) {
       },
     );
   });
+}
+
+function assertValidUnicodeBoundary(payload) {
+  const invalid = findInvalidUnicode(payload);
+  if (!invalid) return;
+  throw new Error(
+    `MCP connector payload contains invalid Unicode at ${invalid.path}: lone UTF-16 surrogate at index ${invalid.index}. `
+    + "The original input was not modified; remove or replace the invalid character before retrying.",
+  );
+}
+
+function findInvalidUnicode(value, path = "", seen = new Set()) {
+  if (typeof value === "string") {
+    const index = loneSurrogateIndex(value);
+    return index === -1 ? null : { path: path || "value", index };
+  }
+  if (!value || typeof value !== "object") return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const invalid = findInvalidUnicode(value[i], `${path}[${i}]`, seen);
+      if (invalid) return invalid;
+    }
+    return null;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    const keyIndex = loneSurrogateIndex(key);
+    const childPath = appendPath(path, key);
+    if (keyIndex !== -1) return { path: childPath, index: keyIndex };
+    const invalid = findInvalidUnicode(child, childPath, seen);
+    if (invalid) return invalid;
+  }
+  return null;
+}
+
+function appendPath(base, key) {
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) return base ? `${base}.${key}` : key;
+  return `${base || "value"}[${JSON.stringify(key)}]`;
+}
+
+function loneSurrogateIndex(value) {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        i += 1;
+        continue;
+      }
+      return i;
+    }
+    if (code >= 0xDC00 && code <= 0xDFFF) return i;
+  }
+  return -1;
 }

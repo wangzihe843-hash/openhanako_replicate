@@ -2,6 +2,8 @@ import { AppError } from '../shared/errors.js';
 import { errorBus } from '../shared/error-bus.js';
 import { normalizeProviderPayload } from './provider-compat.js';
 import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.js';
+import { appendProviderApiPath, withDefaultProviderHeaders } from '../lib/llm/provider-client.js';
+import { normalizeProviderHeaders } from '../shared/provider-auth.js';
 
 const EMPTY_AFTER_THINKING_MESSAGE = "模型未回复正文，请检查思考内容或稍后重试。";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -273,6 +275,7 @@ function convertContentForApi(content, api) {
  * @param {string} opts.baseUrl        Provider base URL
  * @param {string|object} opts.model   模型：完整对象 {id, provider, reasoning, maxTokens, ...}
  *                                     或裸 id 字符串（旧调用方过渡期，会丢失 normalize 决策信息）
+ * @param {Record<string, string>} [opts.headers] Provider request headers
  * @param {string[]} [opts.quirks]     Provider quirk flags (e.g. ["enable_thinking"]).
  *                                     **已废弃**：仅在 modelObj.quirks 字段缺失时作 fallback。
  *                                     新代码请通过 model.quirks 传递（model-sync.js 自动从
@@ -294,6 +297,7 @@ export async function callText({
   apiKey,
   baseUrl,
   model,
+  headers: requestHeaders,
   quirks = [],
   systemPrompt = "",
   messages = [],
@@ -338,7 +342,7 @@ export async function callText({
 
   if (api === "anthropic-messages") {
     // Anthropic Messages API：baseUrl + /v1/messages（和 Pi SDK Anthropic provider 一致）
-    endpoint = `${base}/v1/messages`;
+    endpoint = appendProviderApiPath(base, "/v1/messages");
     headers = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
     if (apiKey) headers["x-api-key"] = apiKey;
 
@@ -406,9 +410,12 @@ export async function callText({
     };
   }
 
-  if (modelObj?.headers && typeof modelObj.headers === "object") {
-    headers = { ...modelObj.headers, ...headers };
+  const modelHeaders = normalizeProviderHeaders(modelObj?.headers);
+  const optionHeaders = normalizeProviderHeaders(requestHeaders);
+  if (Object.keys(modelHeaders).length > 0 || Object.keys(optionHeaders).length > 0) {
+    headers = { ...headers, ...modelHeaders, ...optionHeaders };
   }
+  headers = withDefaultProviderHeaders(headers);
 
   // Provider 兼容化（与 chat 路径共享 provider-compat）。
   // 把 callText opts 传入的 quirks 合入 model 对象，让 qwen.js 等子模块的

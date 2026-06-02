@@ -11,7 +11,7 @@ import { getAgentPhoneProjectionPath, safeConversationStem } from "../lib/conver
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 33;
+const LATEST_DATA_VERSION = 35;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -3116,9 +3116,14 @@ describe("migration #33 — beautify default is explicit opt-in", () => {
 
     const prefs = runFrom32();
 
-    expect(readAgentConfig(agentsDir, "empty-disabled").tools.disabled).toEqual(["beautify"]);
-    expect(readAgentConfig(agentsDir, "dm-disabled").tools.disabled).toEqual(["dm", "beautify"]);
-    expect(readAgentConfig(agentsDir, "already").tools.disabled).toEqual(["dm", "beautify"]);
+    // 从 v32 升级会连跑 #33(beautify)+ #34(workflow)，两者都默认关。
+    // tools.disabled 是无序去重集合，用 Set 比较。
+    expect(new Set(readAgentConfig(agentsDir, "empty-disabled").tools.disabled))
+      .toEqual(new Set(["beautify", "workflow"]));
+    expect(new Set(readAgentConfig(agentsDir, "dm-disabled").tools.disabled))
+      .toEqual(new Set(["dm", "beautify", "workflow"]));
+    expect(new Set(readAgentConfig(agentsDir, "already").tools.disabled))
+      .toEqual(new Set(["dm", "beautify", "workflow"]));
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 
@@ -3129,6 +3134,166 @@ describe("migration #33 — beautify default is explicit opt-in", () => {
 
     runFrom32();
 
-    expect(readAgentConfig(agentsDir, "missing").tools.disabled).toEqual(["dm", "beautify"]);
+    // 升级到最新版后物化为完整默认禁用集合（dm + beautify + workflow）
+    expect(new Set(readAgentConfig(agentsDir, "missing").tools.disabled))
+      .toEqual(new Set(["dm", "beautify", "workflow"]));
+  });
+});
+
+describe("migration #34 — workflow default is explicit opt-in", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runFrom33() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 33 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("adds workflow to existing disabled lists without changing explicit choices", () => {
+    writeAgentConfig(agentsDir, "beautify-off", {
+      agent: { name: "B" },
+      tools: { disabled: ["dm", "beautify"] },
+    });
+    // 用户手动开了 beautify（把它移出 disabled）：#34 不应破坏这个显式选择
+    writeAgentConfig(agentsDir, "beautify-on", {
+      agent: { name: "On" },
+      tools: { disabled: ["dm"] },
+    });
+
+    const prefs = runFrom33();
+
+    expect(readAgentConfig(agentsDir, "beautify-off").tools.disabled).toEqual(["dm", "beautify", "workflow"]);
+    expect(readAgentConfig(agentsDir, "beautify-on").tools.disabled).toEqual(["dm", "workflow"]);
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("is idempotent — already-disabled workflow is not duplicated", () => {
+    writeAgentConfig(agentsDir, "already", {
+      agent: { name: "Already" },
+      tools: { disabled: ["workflow"] },
+    });
+
+    runFrom33();
+
+    expect(readAgentConfig(agentsDir, "already").tools.disabled).toEqual(["workflow"]);
+  });
+
+  it("materializes the default when tools.disabled is missing", () => {
+    writeAgentConfig(agentsDir, "missing", {
+      agent: { name: "Missing" },
+    });
+
+    runFrom33();
+
+    expect(readAgentConfig(agentsDir, "missing").tools.disabled).toContain("workflow");
+  });
+});
+
+describe("migration #35 — MiniMax Token Plan endpoint follows current official Anthropic API", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = tmpDir;
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function writeAddedModelsYaml(providers) {
+    fs.writeFileSync(
+      path.join(tmpDir, "added-models.yaml"),
+      YAML.dump({ providers }, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: "\"" }),
+      "utf-8",
+    );
+  }
+
+  function readAddedModelsYaml() {
+    return YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
+  }
+
+  function runFrom34() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 34 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("rewrites only the legacy MiniMax Token Plan default endpoint and keeps credentials/models scoped to the provider id", () => {
+    writeAddedModelsYaml({
+      minimax: {
+        base_url: "https://api.minimaxi.com/anthropic",
+        api: "anthropic-messages",
+        api_key: "sk-pay-as-you-go",
+        models: ["MiniMax-M3"],
+      },
+      "minimax-token-plan": {
+        base_url: "https://api.minimax.io/v1",
+        api: "openai-completions",
+        api_key: "sk-token-plan",
+        models: ["MiniMax-M2.7"],
+      },
+    });
+
+    const prefs = runFrom34();
+
+    const raw = readAddedModelsYaml();
+    expect(raw.providers.minimax).toMatchObject({
+      base_url: "https://api.minimaxi.com/anthropic",
+      api: "anthropic-messages",
+      api_key: "sk-pay-as-you-go",
+      models: ["MiniMax-M3"],
+    });
+    expect(raw.providers["minimax-token-plan"]).toMatchObject({
+      base_url: "https://api.minimaxi.com/anthropic",
+      api: "anthropic-messages",
+      api_key: "sk-token-plan",
+      models: ["MiniMax-M2.7"],
+    });
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("does not rewrite custom MiniMax Token Plan proxies", () => {
+    writeAddedModelsYaml({
+      "minimax-token-plan": {
+        base_url: "https://proxy.example.com/minimax/v1",
+        api: "openai-completions",
+        api_key: "sk-token-plan",
+        models: ["MiniMax-M2.7"],
+      },
+    });
+
+    runFrom34();
+
+    const raw = readAddedModelsYaml();
+    expect(raw.providers["minimax-token-plan"]).toMatchObject({
+      base_url: "https://proxy.example.com/minimax/v1",
+      api: "openai-completions",
+      api_key: "sk-token-plan",
+      models: ["MiniMax-M2.7"],
+    });
   });
 });

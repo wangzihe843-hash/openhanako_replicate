@@ -20,6 +20,35 @@ function helperScriptHash(script) {
   return crypto.createHash("sha256").update(script, "utf8").digest("hex");
 }
 
+function helperRunPaths(helperDir) {
+  const id = `${process.pid}-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+  return {
+    requestPath: path.join(helperDir, `windows-uia-request-${id}.json`),
+    resultPath: path.join(helperDir, `windows-uia-result-${id}.json`),
+  };
+}
+
+function removeIfPresent(filePath) {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {}
+}
+
+function textPreview(value, limit = 4000) {
+  const text = String(value || "");
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}...[truncated ${text.length - limit} chars]`;
+}
+
+function helperDiagnostics(providerId, result, resultText = "") {
+  return {
+    providerId,
+    stdoutPreview: textPreview(result?.stdout),
+    stderrPreview: textPreview(result?.stderr),
+    resultPreview: textPreview(resultText),
+  };
+}
+
 function ensureHelperFile(helperDir, helperScript) {
   const hash = helperScriptHash(helperScript);
   const helperPath = path.join(helperDir, `windows-uia-helper-${hash.slice(0, 16)}.ps1`);
@@ -224,49 +253,79 @@ export function createWindowsUiaProvider({
 
   async function runHelper(payload) {
     helperPath ||= ensureHelperFile(helperDir, helperScript);
+    const { requestPath, resultPath } = helperRunPaths(helperDir);
     let result;
     try {
-      result = await runner.run(command, [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        helperPath,
-      ], {
-        stdin: JSON.stringify(payload),
-        timeoutMs,
-      });
-    } catch (err) {
-      mapHelperLaunchError(err, providerId);
-    }
+      try {
+        fs.writeFileSync(requestPath, JSON.stringify(payload), "utf8");
+      } catch (err) {
+        throw computerUseError(
+          COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+          `Windows UIA helper request file could not be prepared: ${err?.message || String(err)}`,
+          { providerId, writeCode: err?.code || null },
+        );
+      }
 
-    if (result.exitCode !== 0) {
-      throw computerUseError(
-        COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
-        result.stderr?.trim() || `Windows UIA helper exited with code ${result.exitCode}`,
-        { providerId, exitCode: result.exitCode },
-      );
-    }
+      try {
+        result = await runner.run(command, [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          helperPath,
+          "-RequestPath",
+          requestPath,
+          "-ResultPath",
+          resultPath,
+        ], {
+          timeoutMs,
+        });
+      } catch (err) {
+        mapHelperLaunchError(err, providerId);
+      }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(String(result.stdout || "").trim());
-    } catch {
-      throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper returned invalid JSON.", {
-        providerId,
-        stdout: result.stdout,
-      });
-    }
+      if (result.exitCode !== 0) {
+        throw computerUseError(
+          COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+          result.stderr?.trim() || `Windows UIA helper exited with code ${result.exitCode}`,
+          {
+            ...helperDiagnostics(providerId, result),
+            exitCode: result.exitCode,
+          },
+        );
+      }
 
-    if (!parsed?.ok) {
-      throw computerUseError(
-        parsed?.errorCode || COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
-        parsed?.message || "Windows UIA helper failed.",
-        parsed?.details || {},
-      );
+      let resultText = "";
+      try {
+        resultText = fs.readFileSync(resultPath, "utf8");
+      } catch (err) {
+        throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper did not write result JSON.", {
+          ...helperDiagnostics(providerId, result),
+          readCode: err?.code || null,
+        });
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(String(resultText || "").trim());
+      } catch {
+        throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper returned invalid JSON.", helperDiagnostics(providerId, result, resultText));
+      }
+
+      if (!parsed?.ok) {
+        throw computerUseError(
+          parsed?.errorCode || COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+          parsed?.message || "Windows UIA helper failed.",
+          parsed?.details || {},
+        );
+      }
+      return parsed.data || {};
+    } finally {
+      removeIfPresent(requestPath);
+      removeIfPresent(resultPath);
     }
-    return parsed.data || {};
   }
 
   function ensureWin32() {

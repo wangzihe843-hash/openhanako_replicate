@@ -1,4 +1,18 @@
 {
+  "cover": {
+    "make": "cover を作成",
+    "agentGenerate": {
+      "beautifyDisabled": "先にメインエージェントのツール設定で「小花美术」を有効にしてください。",
+      "defaultModelMissing": "先に設定でデフォルト画像モデルを設定してください。",
+      "defaultModelInvalid": "デフォルト画像モデルが利用できません。設定で再設定してください。",
+      "imageGenUnavailable": "画像生成ツールが無効です。先に設定で有効にしてください。",
+      "agentUnavailable": "メインエージェントが一時的に利用できないため、Agent 生成を開始できません。",
+      "disabled": "現在 Agent 生成は利用できません。"
+    }
+  },
+  "selection": {
+    "quoteToChat": "会話に引用"
+  },
   "channel": {
     "tab": "チャンネル",
     "chatTab": "チャット",
@@ -822,6 +836,7 @@
           "dm": { "label": "ダイレクトメッセージ", "summary": "別のエージェントに 1 対 1 のメッセージを送信" },
           "install_skill": { "label": "スキルをインストール", "summary": "GitHub またはスキルライブラリから新しいスキルをインストール" },
           "update_settings": { "label": "設定を変更", "summary": "Agent にアプリ設定の変更を許可" },
+          "workflow": { "label": "Workflow", "summary": "Agent に複数 Agent のワークフロースクリプトをバックグラウンドタスクとして実行させる" },
           "xingye_propose_draft": { "label": "Xingye 下書き提案", "summary": "ハートビート巡回中にキャラクター内蔵フォン／秘密空間へ確認待ち下書きを生成（現在対応：日記；他のモジュールは順次追加）。オフにすると新規下書きのみ停止、既存下書きは影響なし。" }
         }
       },
@@ -1200,6 +1215,25 @@
       "compiledEmpty": "コンパイル済みの記憶はまだありません",
       "compiledClear": "クリア",
       "compiledCleared": "コンパイル済みの記憶をクリアしました",
+      "health": {
+        "healthy": "記憶の整理は正常です",
+        "degraded": "記憶の整理に遅れがあります",
+        "unhealthy": "記憶の整理に対応が必要です",
+        "disabled": "記憶はオフです",
+        "unavailable": "記憶の状態を取得できません",
+        "stepSeparator": "、",
+        "failedSteps": "異常のあるステップ：{steps}",
+        "lastError": "直近のエラー：{time}",
+        "errorMessage": "エラー：{message}",
+        "steps": {
+          "rollingSummary": "ローリング要約",
+          "compileToday": "今日の記憶",
+          "compileWeek": "今週の記憶",
+          "compileLongterm": "長期記憶",
+          "compileFacts": "事実記憶",
+          "deepMemory": "深層記憶"
+        }
+      },
       "allMemories": "すべての記憶",
       "tokenBudget": "記憶容量",
       "tokenBudgetHint": "memory.md の目標 token 予算",
@@ -1716,6 +1750,26 @@
     "selectAll": "すべて選択"
   },
   "rightWorkspace": {
+    "activity": {
+      "title": "バックグラウンド"
+    },
+    "todo": {
+      "title": "ToDo"
+    },
+    "subagent": {
+      "title": "サブエージェント"
+    },
+    "workflow": {
+      "title": "Workflow",
+      "running": "実行中 {text}",
+      "agents": "{n} エージェント"
+    },
+    "session": {
+      "title": "この対話",
+      "cwd": "作業フォルダ",
+      "model": "モデル",
+      "files": "ファイル"
+    },
     "tabs": {
       "label": "右側ワークスペース",
       "sessionFiles": "会話ファイル",
@@ -2007,6 +2061,7 @@
     "subagentStopReason": "サブエージェントは正常に完了しませんでした（stopReason: {reason}）。",
     "subagentToolFailed": "サブエージェントのツール実行に失敗しました: {msg}",
     "subagentDispatched": "サブタスクを送信しました (task-id: {taskId})。完了後、結果は自動的に届きます。",
+    "subagentReuseQueued": "サブタスクを送信しました (task-id: {taskId})。インスタンス「{instance}」は処理中のため、キューに入れました。現在のタスク完了後に実行されます。",
     "installSkillDisabled": "スキルのインストール機能が有効になっていません。設定で「Agent のスキル作成/インストールを許可」を有効にしてください。",
     "installSkillGithubDisabled": "GitHub スキル取得が有効になっていません。設定で「GitHub からのスキル取得を許可」を有効にしてください。",
     "installSkillInvalidGithubUrl": "無効な GitHub URL：{url}",
@@ -2285,6 +2340,8 @@
       "description": "タスクをサブエージェントに委任します。別の agent を指定するか（agent パラメータ）、省略すると自分が分身として実行します。agent=\"?\" で利用可能な agent 一覧を確認できます。\n\nあなたの判断：\n- 並行して進められる作業があれば、続けてください\n- 結果がないと次に進めない場合は、ユーザーにタスクを送信済みで返信待ちであることを伝え、そのまま待ってください\n\n適している場面：\n- 大量の検索・読解の後に簡潔な結論にまとめる調査タスク\n- 現在の作業と並行できる独立したサブ問題\n- 複数の方向を同時に探索する必要があるタスク（複数の subagent を同時に呼び出せます）\n- 別の agent が専門的な視点でタスクを処理するケース\n適さない場面：ファイル変更やコマンド実行など副作用のある操作\n\n重要：task パラメータには完全な指示と必要な背景情報を含めてください。サブエージェントは現在の会話履歴を参照できません。",
       "taskDesc": "サブエージェントへの完全な指示。形式：1 行目に「タスク：xxx」とタスクタイトルを書き、空行を挟んで詳細な要件と必要な背景情報を書きます。サブエージェントは現在の会話履歴を参照できないため、必要なコンテキストはすべてここに記述してください。",
       "agentDesc": "対象 agent の id フィールド値（チームリストの括弧内、太字の表示名ではない）。省略すると自分が実行、\"?\" で利用可能な agent を一覧表示。",
+      "instanceDesc": "オプション。再利用インスタンスのサフィックス（例:「探索」「執筆」）。指定すると履歴を覚えている常駐サブヘルパーに送ります：同じ agent + 同じサフィックスで同じ会話を継続し、前回の文脈を参照します。省略すると記憶のない使い捨てサブタスク。注意：同一インスタンスは同時に 1 タスクのみ、並行送信は自動的にキューに入ります。",
+      "accessDesc": "オプション。権限レベル：探索/調査/レビュー系のタスクは \"read\"（読み取り専用、ファイル変更やコマンド実行は不可）；実行/変更系は \"write\"（操作可能）。省略すると現在の会話の権限レベルを継承：通常会話→操作可能、読み取り専用/plan モード→読み取り専用。",
       "modelDesc": "モデルを provider/id 形式で指定（オプション、デフォルトは utility モデル）"
     },
     "installSkill": {

@@ -272,4 +272,54 @@ describe("memory ticker respects session-level memory toggle", () => {
 
     expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
   });
+
+  it("stop waits for active background session work before resolving", async () => {
+    let resolveSummary;
+    const summaryManager = {
+      rollingSummary: vi.fn(() => new Promise((resolve) => { resolveSummary = resolve; })),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryDir = path.join(tmpDir, "memory");
+    const ticker = createMemoryTicker({
+      summaryManager,
+      configPath: path.join(tmpDir, "config.yaml"),
+      factStore: {},
+      getResolvedMemoryModel: () => ({ model: "m", provider: "p", api: "openai-completions", api_key: "k", base_url: "http://x" }),
+      getMemoryMasterEnabled: () => true,
+      isSessionMemoryEnabled: () => true,
+      onCompiled: vi.fn(),
+      sessionDir: path.join(tmpDir, "sessions"),
+      memoryDir,
+      memoryMdPath: path.join(memoryDir, "memory.md"),
+      todayMdPath: path.join(memoryDir, "today.md"),
+      weekMdPath: path.join(memoryDir, "week.md"),
+      longtermMdPath: path.join(memoryDir, "longterm.md"),
+      factsMdPath: path.join(memoryDir, "facts.md"),
+    });
+
+    ticker.notifyTurn(sessionPath);
+    void ticker.notifySessionEnd(sessionPath);
+    const stopPromise = ticker.stop();
+    let stopped = false;
+    stopPromise.then(() => { stopped = true; });
+    await Promise.resolve();
+
+    expect(stopped).toBe(false);
+
+    resolveSummary("summary");
+    await stopPromise;
+
+    expect(stopped).toBe(true);
+  });
+
+  it("stop prevents later turn notifications from starting new memory work", async () => {
+    const { ticker, summaryManager } = makeTicker(tmpDir, () => true);
+
+    await ticker.stop();
+    for (let i = 0; i < 10; i++) ticker.notifyTurn(sessionPath);
+    await Promise.resolve();
+
+    expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
+    expect(compileToday).not.toHaveBeenCalled();
+  });
 });

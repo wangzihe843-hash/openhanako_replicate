@@ -41,19 +41,20 @@ type CoverStatus = {
 
 function getAgentGenerateDisabledText(status: CoverGenerationStatus): string {
   if (status.message) return status.message;
+  const t = window.t ?? ((key: string) => key);
   switch (status.disabledReason) {
     case 'beautify-disabled':
-      return '需要先在主 Agent 的工具设置里开启小花美术。';
+      return t('cover.agentGenerate.beautifyDisabled');
     case 'default-image-model-missing':
-      return '需要先在设置里配置默认生图模型。';
+      return t('cover.agentGenerate.defaultModelMissing');
     case 'default-image-model-invalid':
-      return '默认生图模型不可用，需要在设置里重新配置。';
+      return t('cover.agentGenerate.defaultModelInvalid');
     case 'image-gen-unavailable':
-      return '生图工具未启用，需要先在设置里开启。';
+      return t('cover.agentGenerate.imageGenUnavailable');
     case 'agent-unavailable':
-      return '主 Agent 暂不可用，无法发起 Agent 生成。';
+      return t('cover.agentGenerate.agentUnavailable');
     default:
-      return '当前不能使用 Agent 生成。';
+      return t('cover.agentGenerate.disabled');
   }
 }
 
@@ -272,13 +273,13 @@ export function FloatingActions({
       </button>
       {contentType === 'markdown' && filePath && systemCoverAvailable && (
         <div className={styles.coverActionWrap} ref={coverMenuRef}>
-          <Tooltip content="制作 cover" placement="bottom" align="end">
+          <Tooltip content={t('cover.make')} placement="bottom" align="end">
             {({ ref, ...tooltipProps }) => (
               <button
                 ref={(node) => ref(node)}
                 className={`${styles.actionBtn}${coverBusy ? ` ${styles.actionBtnBusy}` : ''}${coverMenuOpen ? ` ${styles.actionBtnActive}` : ''}`}
                 onClick={() => setCoverMenuOpen(open => !open)}
-                aria-label="制作 cover"
+                aria-label={t('cover.make')}
                 disabled={coverBusy}
                 {...tooltipProps}
               >

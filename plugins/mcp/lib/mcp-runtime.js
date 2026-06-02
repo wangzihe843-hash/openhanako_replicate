@@ -7,6 +7,7 @@ import {
   McpLegacySseClient,
   McpStreamableHttpClient,
   isAuthTerminalError,
+  resolveMcpHttpProxyDiagnostics,
 } from "./mcp-http-client.js";
 import {
   createMcpOAuthAuthorization,
@@ -1231,6 +1232,7 @@ function publicConnector({ connector, status, error = "" }) {
       scope: connector.oauth?.scope || "",
       expiresAt: connector.oauth?.expiresAt || 0,
     },
+    proxy: resolveMcpHttpProxyDiagnostics(connector),
     authStatus: connectorAuthStatus(connector),
   };
 }

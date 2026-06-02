@@ -173,6 +173,20 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     expect(last.data.blocks?.some((block: { type: string }) => block.type === 'tool_group')).toBe(true);
   });
 
+  it('tool_end 有调用 ID 时只闭合对应的同名工具', () => {
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_a', name: 'echo', args: { value: 'first' } });
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_b', name: 'echo', args: { value: 'second' } });
+    streamBufferManager.handle({ type: 'tool_end', sessionPath: PATH, id: 'call_b', name: 'echo', success: true });
+
+    const group = getAssistantMessage()?.blocks?.find((block) => block.type === 'tool_group');
+    expect(group).toBeTruthy();
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools).toEqual([
+      expect.objectContaining({ id: 'call_a', name: 'echo', done: false }),
+      expect.objectContaining({ id: 'call_b', name: 'echo', done: true, success: true }),
+    ]);
+  });
+
   it('deferred 文件结果按 taskId 原地替换 media_generation 占位块', () => {
     streamBufferManager.handle({
       type: 'content_block',

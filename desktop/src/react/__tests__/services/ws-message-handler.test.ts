@@ -52,6 +52,7 @@ import { loadSessions } from '../../stores/session-actions';
 afterEach(() => {
   resetSessionRefreshSchedulerForTest();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('ws-message-handler applyStreamingStatus', () => {
@@ -676,6 +677,38 @@ describe('ws-message-handler turn_end side effects', () => {
     });
 
     expect(requestContextUsage).toHaveBeenCalledWith('/session/a.jsonl');
+  });
+
+  it('does not mark an old browser thumbnail as fresh when a running update omits thumbnail data', () => {
+    vi.stubGlobal('window', { platform: {} });
+    useStore.setState({
+      browserBySession: {
+        '/session/a.jsonl': {
+          running: true,
+          url: 'https://old.example',
+          thumbnail: 'OLD_THUMB',
+          thumbnailCapturedAt: 111,
+          thumbnailUrl: 'https://old.example',
+          thumbnailFresh: true,
+        },
+      },
+    } as never);
+
+    handleServerMessage({
+      type: 'browser_status',
+      sessionPath: '/session/a.jsonl',
+      running: true,
+      url: 'https://new.example',
+    });
+
+    expect(useStore.getState().browserBySession['/session/a.jsonl']).toMatchObject({
+      running: true,
+      url: 'https://new.example',
+      thumbnail: 'OLD_THUMB',
+      thumbnailCapturedAt: 111,
+      thumbnailUrl: 'https://old.example',
+      thumbnailFresh: false,
+    });
   });
 
   it('coalesces rapid turn_end session refreshes into one list request', async () => {

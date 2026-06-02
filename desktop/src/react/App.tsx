@@ -93,37 +93,40 @@ function App() {
       <SidebarLayout />
       <ChannelsPanel />
 
-      {/* ── Titlebar ── */}
-      <AppTitlebar
-        sidebarOpen={sidebarOpen}
-        jianOpen={jianOpen}
-        onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
-        onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
-        onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
-        onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
-        onToggleMouseLeave={scheduleFloatHide}
-      />
-
-      {/* ── App body ── */}
-      <div className="app">
-        <ChatSidebar
-          open={sidebarOpen && !isPluginTab}
-          onNewSession={createNewSession}
-          onCollapse={() => toggleSidebar()}
-          onOpenSettings={() => openSettingsModal()}
-          onTogglePanel={togglePanel}
-          xingyeOpen={xingyeOpen}
-          onOpenXingye={() => setXingyeOpen(true)}
+      {/* ── App shell: titlebar 作为独立布局行（flex column 第一行），
+           app body 占剩余高度。取代旧的 fixed overlay + 各内容区 padding-top 避让。 ── */}
+      <div className="app-shell">
+        {/* ── Titlebar ── */}
+        <AppTitlebar
+          sidebarOpen={sidebarOpen}
+          jianOpen={jianOpen}
+          onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
+          onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
+          onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
+          onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
+          onToggleMouseLeave={scheduleFloatHide}
         />
 
+        {/* ── App body ── */}
+        <div className="app">
+          <ChatSidebar
+            open={sidebarOpen && !isPluginTab}
+            onNewSession={createNewSession}
+            onCollapse={() => toggleSidebar()}
+            onOpenSettings={() => openSettingsModal()}
+            onTogglePanel={togglePanel}
+            xingyeOpen={xingyeOpen}
+            onOpenXingye={() => setXingyeOpen(true)}
+          />
 
-        <RegionalErrorBoundary region="app-pages" resetKeys={[currentTab]}>
-          {xingyeOpen ? (
-            <XingyeShell onExit={() => setXingyeOpen(false)} />
-          ) : (
-            <AppPages />
-          )}
-        </RegionalErrorBoundary>
+          <RegionalErrorBoundary region="app-pages" resetKeys={[currentTab]}>
+            {xingyeOpen ? (
+              <XingyeShell onExit={() => setXingyeOpen(false)} />
+            ) : (
+              <AppPages />
+            )}
+          </RegionalErrorBoundary>
+        </div>
       </div>
 
       {/* Connection status */}

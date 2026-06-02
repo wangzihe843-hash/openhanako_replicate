@@ -20,6 +20,40 @@ describe("NotificationService", () => {
     });
   });
 
+  it("skips repeated notifications with the same explicit idempotency key", async () => {
+    const emitDesktop = vi.fn();
+    const service = new NotificationService({
+      emitDesktop,
+      getBridgeManager: () => null,
+    });
+
+    const first = await service.notify(
+      { title: "提醒", body: "喝水", idempotencyKey: "job:drink:2026-06-01T10:00" },
+      { agentId: "hana" },
+    );
+    const second = await service.notify(
+      { title: "提醒", body: "喝水", idempotencyKey: "job:drink:2026-06-01T10:00" },
+      { agentId: "hana" },
+    );
+
+    expect(emitDesktop).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({
+      ok: true,
+      idempotencyKey: "job:drink:2026-06-01T10:00",
+      deliveries: [{ channel: "desktop", status: "sent" }],
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      idempotencyKey: "job:drink:2026-06-01T10:00",
+      skipped: true,
+      deliveries: [{
+        channel: "notification",
+        status: "skipped",
+        reason: "duplicate notification",
+      }],
+    });
+  });
+
   it("delivers explicit bridge owner notifications through BridgeManager", async () => {
     const bridgeManager = {
       sendProactive: vi.fn().mockResolvedValue({

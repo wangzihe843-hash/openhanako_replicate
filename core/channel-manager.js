@@ -12,6 +12,7 @@ import { createModuleLogger } from "../lib/debug-log.js";
 import { t } from "../server/i18n.js";
 import {
   addBookmarkEntry,
+  createChannel,
   getChannelMembers,
   removeChannelMember,
   removeBookmarkEntry,
@@ -33,6 +34,41 @@ export class ChannelManager {
     this._agentsDir = deps.agentsDir;
     this._userDir = deps.userDir;
     this._getHub = deps.getHub;
+  }
+
+  async createChannelEntry({ name, description, members, intro, addUserBookmark = true } = {}) {
+    const normalizedMembers = Array.isArray(members) ? members : [];
+    fs.mkdirSync(this._channelsDir, { recursive: true });
+    for (const memberId of normalizedMembers) {
+      if (!this._safeAgentDir(memberId)) {
+        throw new Error(`Agent not found: ${memberId}`);
+      }
+    }
+
+    const created = await createChannel(this._channelsDir, {
+      name,
+      description,
+      members: normalizedMembers,
+      intro,
+    });
+
+    for (const memberId of normalizedMembers) {
+      const memberDir = this._safeAgentDir(memberId);
+      if (!memberDir) continue;
+      await addBookmarkEntry(path.join(memberDir, "channels.md"), created.id);
+    }
+
+    if (addUserBookmark) {
+      await addBookmarkEntry(path.join(this._userDir, "channel-bookmarks.md"), created.id);
+    }
+
+    this._emitChannelCreated({
+      id: created.id,
+      name,
+      description,
+      members: normalizedMembers,
+    });
+    return created;
   }
 
   /**
@@ -111,6 +147,24 @@ export class ChannelManager {
 
   async triggerChannelTriage(channelName, opts) {
     return this.triggerChannelDelivery(channelName, opts);
+  }
+
+  _safeAgentDir(agentId) {
+    if (!agentId || /[/\\]|\.\./.test(agentId)) return null;
+    const dirPath = path.resolve(this._agentsDir, agentId);
+    const base = path.resolve(this._agentsDir);
+    if (!dirPath.startsWith(base + path.sep) && dirPath !== base) return null;
+    return fs.existsSync(dirPath) ? dirPath : null;
+  }
+
+  _emitChannelCreated(channel) {
+    const eventBus = this._getHub?.()?.eventBus;
+    if (typeof eventBus?.emit !== "function") return;
+    eventBus.emit({
+      type: "channel_created",
+      channelName: channel.id,
+      channel,
+    }, null);
   }
 
   _abortChannelPhoneSessions(channelId, agentId, reason) {

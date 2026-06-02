@@ -5,6 +5,7 @@ import {
   McpHttpError,
   McpLegacySseClient,
   McpStreamableHttpClient,
+  resolveMcpHttpProxyDiagnostics,
 } from "../plugins/mcp/lib/mcp-http-client.js";
 
 function jsonResponse(body, { status = 200, headers = {} } = {}) {
@@ -127,6 +128,110 @@ describe("MCP HTTP clients", () => {
     expect(headerValue(requests[0].init.headers, "Authorization")).toBe("Bearer header-token");
   });
 
+  it("falls back to the configured bearer token when the injected OAuth token lookup is empty", async () => {
+    const requests = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = requestBody(init);
+      requests.push({ url: String(url), init, body });
+      if (body?.method === "initialize") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+        });
+      }
+      if (body?.method === "notifications/initialized") return emptyResponse();
+      if (body?.method === "tools/list") {
+        return jsonResponse({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      }
+      throw new Error(`unexpected method ${body?.method}`);
+    });
+
+    const client = new McpStreamableHttpClient({
+      id: "bearer",
+      url: "https://mcp.example.com/mcp",
+      authType: "bearer",
+      authorizationToken: "static-token",
+    }, {
+      fetchImpl,
+      getAuthToken: vi.fn(async () => ""),
+    });
+
+    await client.start();
+    await client.listTools();
+
+    expect(headerValue(requests[0].init.headers, "Authorization")).toBe("Bearer static-token");
+    expect(headerValue(requests.at(-1).init.headers, "Authorization")).toBe("Bearer static-token");
+  });
+
+  it("uses explicit auth precedence: OAuth token, then static bearer token, then custom Authorization header", async () => {
+    const oauthClient = new McpStreamableHttpClient({
+      id: "oauth",
+      url: "https://mcp.example.com/mcp",
+      authType: "oauth",
+      authorizationToken: "static-token",
+      oauth: { accessToken: "oauth-token" },
+      headers: { Authorization: "Bearer header-token" },
+    }, { fetchImpl: vi.fn() });
+    await expect(oauthClient._headers()).resolves.toMatchObject({
+      Authorization: "Bearer oauth-token",
+    });
+
+    const bearerClient = new McpStreamableHttpClient({
+      id: "bearer",
+      url: "https://mcp.example.com/mcp",
+      authType: "bearer",
+      authorizationToken: "static-token",
+      oauth: { accessToken: "oauth-token" },
+      headers: { Authorization: "Bearer header-token" },
+    }, { fetchImpl: vi.fn() });
+    await expect(bearerClient._headers()).resolves.toMatchObject({
+      Authorization: "Bearer static-token",
+    });
+
+    const headerClient = new McpStreamableHttpClient({
+      id: "headers",
+      url: "https://mcp.example.com/mcp",
+      authType: "none",
+      headers: { Authorization: "Bearer header-token" },
+    }, { fetchImpl: vi.fn() });
+    await expect(headerClient._headers()).resolves.toMatchObject({
+      Authorization: "Bearer header-token",
+    });
+  });
+
+  it("reports the effective HTTP proxy from the app proxy config and ignores connector env proxy hints", () => {
+    expect(resolveMcpHttpProxyDiagnostics({
+      id: "remote",
+      transport: "remote",
+      url: "https://mcp.example.com/mcp",
+      env: { HTTPS_PROXY: "http://connector-env-proxy.example:8080" },
+    }, {
+      proxyConfig: { mode: "direct" },
+      env: { HTTPS_PROXY: "http://system-proxy.example:8080" },
+    })).toMatchObject({
+      applicable: true,
+      proxyUrl: "",
+      source: "direct",
+      connectorEnvProxyIgnored: true,
+    });
+
+    expect(resolveMcpHttpProxyDiagnostics({
+      id: "remote",
+      transport: "remote",
+      url: "https://mcp.example.com/mcp",
+      env: { HTTPS_PROXY: "http://connector-env-proxy.example:8080" },
+    }, {
+      proxyConfig: { mode: "manual", httpsProxy: "http://app-proxy.example:8080", noProxy: "" },
+      env: {},
+    })).toMatchObject({
+      applicable: true,
+      proxyUrl: "http://app-proxy.example:8080",
+      source: "app",
+      connectorEnvProxyIgnored: true,
+    });
+  });
+
   it("reinitializes once when a Streamable HTTP session expires", async () => {
     const requests = [];
     let initializeCount = 0;
@@ -208,6 +313,37 @@ describe("MCP HTTP clients", () => {
     expect(requests[0].body.params.protocolVersion).toBe("2024-11-05");
     expect(headerValue(requests[0].init.headers, "MCP-Protocol-Version")).toBe("2024-11-05");
     expect(headerValue(requests[2].init.headers, "MCP-Protocol-Version")).toBe("2026-01-01");
+  });
+
+  it("rejects invalid Unicode in outgoing JSON-RPC payloads with a boundary diagnostic", async () => {
+    const requests = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = requestBody(init);
+      requests.push({ url: String(url), init, body });
+      if (body?.method === "initialize") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+        });
+      }
+      if (body?.method === "notifications/initialized") return emptyResponse();
+      throw new Error(`unexpected method ${body?.method}`);
+    });
+
+    const client = new McpStreamableHttpClient({
+      id: "metaso",
+      url: "https://mcp.example.com/mcp",
+    }, { fetchImpl });
+
+    await client.start();
+    await expect(client.callTool("search", { q: "\uD800" }))
+      .rejects.toThrow(/invalid Unicode.*params\.arguments\.q/i);
+
+    expect(requests.map((request) => request.body?.method)).toEqual([
+      "initialize",
+      "notifications/initialized",
+    ]);
   });
 
   it("does not let a legacy SSE server ping with the same id satisfy a tool response", async () => {

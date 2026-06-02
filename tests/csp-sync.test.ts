@@ -49,10 +49,32 @@ describe('CSP sync', () => {
 
   for (const [filename, profileCsp] of Object.entries(profiles)) {
     it(`${filename}: HTML source matches CSP_PROFILES`, () => {
+      if (filename === 'index.html') {
+        const html = fs.readFileSync(path.join(htmlDir, filename), 'utf-8');
+        expect(html).toContain('modules/connection-csp.js');
+        expect(extractHtmlCsp(path.join(htmlDir, filename))).toBeNull();
+        return;
+      }
       const htmlPath = path.join(htmlDir, filename);
       const htmlCsp = extractHtmlCsp(htmlPath);
       expect(htmlCsp).not.toBeNull();
       expect(normalizeCsp(htmlCsp!)).toBe(normalizeCsp(profileCsp));
     });
   }
+
+  it('desktop index CSP is not widened to all remote origins', () => {
+    const indexCsp = profiles['index.html'];
+    const runtimeCsp = fs.readFileSync(path.join(htmlDir, 'modules', 'connection-csp.js'), 'utf-8');
+
+    expect(indexCsp).toBeTruthy();
+    expect(indexCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
+    expect(indexCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
+    expect(indexCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
+    expect(indexCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
+    expect(runtimeCsp).toContain('activeServerConnectionId');
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
+  });
 });

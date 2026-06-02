@@ -268,6 +268,58 @@ describe("runAgentSession teardown", () => {
     expect(fs.existsSync(sessionFile)).toBe(true);
   });
 
+  it("phone session can return diagnostics without changing the default text contract", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-diagnostics.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    let subscriber = null;
+    const session = {
+      prompt: vi.fn(async () => {
+        subscriber?.({ type: "tool_execution_start", toolName: "channel_reply" });
+        subscriber?.({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "raw text" },
+        });
+        return { stopReason: "end_turn" };
+      }),
+      subscribe: vi.fn((cb) => {
+        subscriber = cb;
+        return () => {};
+      }),
+      dispose: vi.fn(),
+      setActiveToolsByName: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    const result = await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine: makeEngine(agent, cwd),
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      extraCustomTools: [{ name: "channel_reply", execute: vi.fn() }],
+      returnDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      text: "raw text",
+      diagnostics: {
+        activeToolNames: ["channel_reply"],
+        toolCallCount: 1,
+        toolCallNames: ["channel_reply"],
+        ordinaryTextLength: 8,
+        rawTextLength: 8,
+        stopReason: "end_turn",
+      },
+    });
+  });
+
   it("phone session appends channel-scoped custom tools after applying phone tool policy", async () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });

@@ -11,6 +11,9 @@ import {
 import { createPortal } from 'react-dom';
 import styles from './Tooltip.module.css';
 
+/** 统一的 tooltip 出现延迟(ms)。所有 <Tooltip> 默认走这个值,避免各处出现时间不一致。 */
+const DEFAULT_DELAY_MS = 500;
+
 export type TooltipPlacement = 'top' | 'bottom' | 'left' | 'right';
 export type TooltipAlign = 'start' | 'center' | 'end';
 export type TooltipVariant = 'compact' | 'panel';
@@ -96,7 +99,7 @@ export function Tooltip({
   children,
   id,
   disabled = false,
-  delayMs = 0,
+  delayMs = DEFAULT_DELAY_MS,
   placement = 'top',
   align = 'center',
   variant = 'compact',

@@ -364,6 +364,48 @@ export function refreshLocalServerConnection({
   };
 }
 
+export function refreshLocalServerConnectionState({
+  serverConnections,
+  activeServerConnectionId,
+  activeServerConnection,
+  serverPort,
+  serverToken,
+}: ServerConnectionSource): {
+  serverConnections: ServerConnectionRegistry;
+  activeServerConnectionId: string | null;
+  activeServerConnection: ServerConnection | null;
+} {
+  const existingRegistry = { ...(serverConnections ?? {}) };
+  if (activeServerConnection?.connectionId && !existingRegistry[activeServerConnection.connectionId]) {
+    existingRegistry[activeServerConnection.connectionId] = activeServerConnection;
+  }
+  const existingLocal = existingRegistry[LOCAL_CONNECTION_ID]
+    ?? (activeServerConnection?.connectionId === LOCAL_CONNECTION_ID ? activeServerConnection : null);
+  const localConnection = refreshLocalServerConnection({
+    existingConnection: existingLocal,
+    serverPort,
+    serverToken,
+  });
+  let nextRegistry = existingRegistry;
+  if (localConnection) {
+    nextRegistry = upsertServerConnection(nextRegistry, localConnection);
+  } else if (nextRegistry[LOCAL_CONNECTION_ID]) {
+    nextRegistry = { ...nextRegistry };
+    delete nextRegistry[LOCAL_CONNECTION_ID];
+  }
+
+  const preferredActive = activeServerConnectionId ? nextRegistry[activeServerConnectionId] : null;
+  const fallbackActive = activeServerConnection?.connectionId
+    ? nextRegistry[activeServerConnection.connectionId]
+    : null;
+  const nextActive = preferredActive || fallbackActive || localConnection || null;
+  return {
+    serverConnections: nextRegistry,
+    activeServerConnectionId: nextActive?.connectionId ?? null,
+    activeServerConnection: nextActive,
+  };
+}
+
 function normalizeBrowserConnectionKind(
   value: StudioConnectionKind | string | null | undefined,
   hostname: string,
@@ -597,6 +639,33 @@ export function buildConnectionWsUrl(
   const url = `${trimTrailingSlash(connection.wsUrl)}${path}`;
   if (!connection.token || !canUseQueryToken(connection)) return url;
   return appendQueryParam(url, 'token', connection.token);
+}
+
+function originOf(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+      return null;
+    }
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return null;
+  }
+}
+
+export function buildScopedConnectSources(connection: ServerConnection | null | undefined): string[] {
+  if (!connection || connection.kind === 'local') return [];
+  const out = new Set<string>();
+  const baseOrigin = originOf(connection.baseUrl);
+  const wsOrigin = originOf(connection.wsUrl);
+  if (baseOrigin) out.add(baseOrigin);
+  if (wsOrigin) out.add(wsOrigin);
+  if (baseOrigin && !wsOrigin) {
+    const base = new URL(baseOrigin);
+    out.add(`${base.protocol === 'https:' ? 'wss:' : 'ws:'}//${base.host}`);
+  }
+  return [...out];
 }
 
 export function appendConnectionAuth(

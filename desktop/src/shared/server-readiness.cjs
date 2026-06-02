@@ -131,7 +131,7 @@ function parsePortInUseStartupError(stderrLogs) {
     suggestions: [],
   });
 
-  const eaccesMatch = joined.match(/EACCES[^,\n]*?(?:permission denied\s*)?([^\s:]+):(\d+)/i);
+  const eaccesMatch = joined.match(/(?:EACCES|EPERM)[^,\n]*?(?:(?:permission denied|operation not permitted)\s*)?([^\s:]+):(\d+)/i);
   if (!eaccesMatch) return null;
   return normalizeListenStartupPayload({
     code: "LISTEN_PERMISSION_DENIED",

@@ -7,6 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- t() 返回值 + opts/patch 为动态 Record */
 
 import { useStore } from '../stores';
+import { displayInitial } from './grapheme';
 
 function tr(key: string, vars?: Record<string, string>): any {
   const fn = (globalThis as any).t || (globalThis as any).window?.t;
@@ -17,6 +18,19 @@ export function yuanFallbackAvatar(yuan?: string): string {
   const types = tr('yuan.types') || {};
   const entry = types[yuan || 'hanako'];
   return `assets/${entry?.avatar || 'Hanako.png'}`;
+}
+
+export function userFallbackAvatar(displayName: string): string {
+  const initial = displayInitial(displayName || 'User', 'U');
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+    '<rect width="40" height="40" rx="20" fill="#f0eee9"/>',
+    '<text x="20" y="24" text-anchor="middle" font-family="Georgia, serif" font-size="15" font-weight="600" fill="#2f6f8f">',
+    initial,
+    '</text>',
+    '</svg>',
+  ].join('');
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 export function randomWelcome(agentName?: string, yuan?: string): string {

@@ -3,10 +3,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
 import {
-  LOCAL_CONNECTION_ID,
   createLocalServerConnection,
   readPersistedServerConnectionState,
-  refreshLocalServerConnection,
+  refreshLocalServerConnectionState,
   upsertServerConnection,
   type ServerConnection,
 } from '../services/server-connection';
@@ -88,6 +87,7 @@ const TAB_TITLES: Record<string, string> = {
   interface: '界面',
   work: '工作台',
   computer: '使用电脑',
+  workflow: 'Workflow',
   skills: '技能',
   bridge: '社交平台',
   providers: '供应商',
@@ -168,26 +168,21 @@ export function SettingsContent({
   useEffect(() => {
     const platform = window.platform;
     if (!platform?.onServerRestarted) return;
-    const unsubscribe = platform.onServerRestarted((data: { port: number }) => {
+    const unsubscribe = platform.onServerRestarted((data: { port: number; token?: string | null }) => {
       const store = useSettingsStore.getState();
       console.log('[settings] server restarted, new port:', data.port);
-      const activeServerConnection = refreshLocalServerConnection({
-        existingConnection: store.serverConnections?.[LOCAL_CONNECTION_ID] ?? store.activeServerConnection,
+      const serverToken = data.token ?? store.serverToken;
+      const nextConnectionState = refreshLocalServerConnectionState({
+        serverConnections: store.serverConnections,
+        activeServerConnectionId: store.activeServerConnectionId,
+        activeServerConnection: store.activeServerConnection,
         serverPort: data.port,
-        serverToken: store.serverToken,
+        serverToken,
       });
       store.set({
         serverPort: data.port,
-        ...(activeServerConnection
-          ? {
-              serverConnections: upsertServerConnection(store.serverConnections, activeServerConnection),
-              activeServerConnectionId: activeServerConnection.connectionId,
-              activeServerConnection,
-            }
-          : {
-              activeServerConnectionId: null,
-              activeServerConnection: null,
-            }),
+        serverToken,
+        ...nextConnectionState,
       });
       loadAgents().catch(() => {});
       loadSettingsConfig().catch(() => {});

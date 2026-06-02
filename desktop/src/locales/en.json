@@ -1,4 +1,18 @@
 {
+  "cover": {
+    "make": "Make cover",
+    "agentGenerate": {
+      "beautifyDisabled": "Enable 小花美术 in the main agent's tool settings first.",
+      "defaultModelMissing": "Configure a default image model in settings first.",
+      "defaultModelInvalid": "The default image model is unavailable. Reconfigure it in settings.",
+      "imageGenUnavailable": "The image generation tool is disabled. Enable it in settings first.",
+      "agentUnavailable": "The main agent is temporarily unavailable, so Agent generation can't start.",
+      "disabled": "Agent generation is currently unavailable."
+    }
+  },
+  "selection": {
+    "quoteToChat": "Quote to chat"
+  },
   "channel": {
     "tab": "Channels",
     "chatTab": "Chat",
@@ -822,6 +836,7 @@
           "dm": { "label": "Direct Message", "summary": "Send a one-on-one message to another agent" },
           "install_skill": { "label": "Install Skill", "summary": "Install new skills from GitHub or the skill library" },
           "update_settings": { "label": "Update Settings", "summary": "Allow the agent to modify application configuration" },
+          "workflow": { "label": "Workflow", "summary": "Let the agent orchestrate multi-agent workflow scripts as background tasks" },
           "xingye_propose_draft": { "label": "Xingye Draft Proposer", "summary": "Heartbeat patrol drafts pending entries for the in-character phone / secret space (currently supports: journal; more modules to follow). Turning this off only stops new drafts; existing pending drafts are unaffected." }
         }
       },
@@ -1200,6 +1215,25 @@
       "compiledEmpty": "No compiled memories yet",
       "compiledClear": "Clear",
       "compiledCleared": "Compiled memory cleared",
+      "health": {
+        "healthy": "Memory maintenance is healthy",
+        "degraded": "Memory maintenance is delayed",
+        "unhealthy": "Memory maintenance needs attention",
+        "disabled": "Memory is turned off",
+        "unavailable": "Memory status is unavailable",
+        "stepSeparator": ", ",
+        "failedSteps": "Affected steps: {steps}",
+        "lastError": "Last error: {time}",
+        "errorMessage": "Error: {message}",
+        "steps": {
+          "rollingSummary": "Rolling summary",
+          "compileToday": "Today memory",
+          "compileWeek": "Week memory",
+          "compileLongterm": "Long-term memory",
+          "compileFacts": "Fact memory",
+          "deepMemory": "Deep memory"
+        }
+      },
       "allMemories": "All Memories",
       "tokenBudget": "Memory capacity",
       "tokenBudgetHint": "Target token budget for memory.md",
@@ -1716,6 +1750,26 @@
     "selectAll": "Select All"
   },
   "rightWorkspace": {
+    "activity": {
+      "title": "Activity"
+    },
+    "todo": {
+      "title": "To-dos"
+    },
+    "subagent": {
+      "title": "Sub-agents"
+    },
+    "workflow": {
+      "title": "Workflow",
+      "running": "Running {text}",
+      "agents": "{n} agents"
+    },
+    "session": {
+      "title": "This Conversation",
+      "cwd": "Workspace",
+      "model": "Model",
+      "files": "Files"
+    },
     "tabs": {
       "label": "Right workspace",
       "sessionFiles": "Conversation Files",
@@ -2007,6 +2061,7 @@
     "subagentStopReason": "Sub-agent did not finish cleanly (stopReason: {reason}).",
     "subagentToolFailed": "Sub-agent tool failed: {msg}",
     "subagentDispatched": "Sub-task dispatched (task-id: {taskId}). Results will be delivered when ready.",
+    "subagentReuseQueued": "Sub-task dispatched (task-id: {taskId}). Instance \"{instance}\" is busy; queued to run after the current task finishes.",
     "installSkillDisabled": "Skill installation is not enabled. Please enable \"Allow Agent to create/install skills\" in settings.",
     "installSkillGithubDisabled": "GitHub skill fetching not enabled. Please enable \"Allow fetching skills from GitHub\" in settings.",
     "installSkillInvalidGithubUrl": "Invalid GitHub URL: {url}",
@@ -2282,9 +2337,11 @@
     },
     "subagent": {
       "label": "Launch Sub-agent",
-      "description": "Delegate a task to a sub-agent. Optionally specify another agent (pass agent param), or omit to self-clone. Pass agent=\"?\" to list available agents.\n\nBehavior after dispatch:\n1. The sub-agent starts executing in the background immediately\n2. Continue with your current work — do not stop to wait\n3. Once your other work is done, use check_pending_tasks to check status\n4. If not yet complete, estimate a reasonable wait time based on task complexity, use wait then check again. Check at most 2 times, then stop polling\n5. The system will automatically notify you when tasks complete (<hana-background-result> messages) — process results at that point\n\nGood for:\n- Research tasks that require extensive searching and reading, summarized into a brief conclusion\n- Independent sub-problems that can run in parallel with your current work\n- Tasks that need simultaneous exploration in multiple directions (you can fire multiple subagent calls at once)\n- Having another agent handle a task from their specialized perspective\n\nImportant:\n- The task parameter must contain complete instructions and necessary background, as the sub-agent cannot see the current conversation history\n- Clearly state whether the sub-agent should only research (read-only) or is allowed to modify files. When not specified, the sub-agent defaults to research only — no file modifications",
+      "description": "Delegate a task to a sub-agent. Optionally specify another agent (pass agent param), or omit to self-clone. Pass agent=\"?\" to list available agents.\n\nBehavior after dispatch:\n1. The sub-agent starts executing in the background immediately\n2. Continue with your current work — do not stop to wait\n3. Once your other work is done, use check_pending_tasks to check status\n4. If not yet complete, estimate a reasonable wait time based on task complexity, use wait then check again. Check at most 2 times, then stop polling\n5. The system will automatically notify you when tasks complete (<hana-background-result> messages) — process results at that point\n\nGood for:\n- Research tasks that require extensive searching and reading, summarized into a brief conclusion\n- Independent sub-problems that can run in parallel with your current work\n- Tasks that need simultaneous exploration in multiple directions (you can fire multiple subagent calls at once)\n- Having another agent handle a task from their specialized perspective\n\nImportant:\n- The task parameter must contain complete instructions and necessary background, as the sub-agent cannot see the current conversation history\n- Use the access parameter to declare permissions: pass \"read\" for research/exploration/review (read-only), \"write\" for execution/modification (can operate); omit to inherit your current session's permission tier",
       "taskDesc": "Full instructions for the sub-agent. Format: first line writes \"Task: xxx\" as the task title, then a blank line, then detailed requirements and necessary background. The sub-agent cannot see the current conversation history, so all needed context must be written here.",
       "agentDesc": "Target agent's id field value (the one in parentheses in the team roster, not the bold display name). Omit to self-execute, pass \"?\" to list available agents.",
+      "instanceDesc": "Optional. Reusable instance suffix (e.g. \"research\", \"draft\"). Provide it to dispatch to a persistent sub-helper that remembers history: same agent + same suffix resumes the same conversation and sees prior context. Omit for a one-shot sub-task with no memory. Note: one instance runs one task at a time; concurrent dispatches queue automatically.",
+      "accessDesc": "Optional. Permission tier: pass \"read\" for exploration/research/review tasks (read-only, cannot modify files or run commands); pass \"write\" for execution/modification tasks (can operate). Omit to inherit your current session's permission tier: normal session → can operate, read-only/plan mode → read-only.",
       "modelDesc": "Specify model as provider/id (optional, defaults to utility model)"
     },
     "installSkill": {

@@ -190,6 +190,29 @@ describe("known-models dictionary", () => {
     });
   });
 
+  it("declares current MiniMax M-series text and image metadata across billing providers", () => {
+    const m3 = {
+      name: "MiniMax M3",
+      context: 1000000,
+      maxOutput: 524288,
+      image: true,
+      reasoning: true,
+    };
+    expect(lookupKnown("minimax", "MiniMax-M3")).toEqual(m3);
+    expect(lookupKnown("minimax-token-plan", "MiniMax-M3")).toEqual(m3);
+    expect(lookupKnown("minimax", "MiniMax-M2.1-highspeed")).toEqual({
+      name: "MiniMax M2.1 Highspeed",
+      context: 204800,
+      maxOutput: 204800,
+      image: false,
+      reasoning: true,
+    });
+    expect(listKnownProviderModels("minimax")).toEqual(expect.arrayContaining([
+      "MiniMax-M3",
+      "MiniMax-M2.1-highspeed",
+    ]));
+  });
+
   it("keeps provider-specific metadata ahead of generic fallbacks", () => {
     expect(lookupKnown("openai-codex-oauth", "gpt-5.5")).toMatchObject({
       context: 400000,

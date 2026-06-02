@@ -298,6 +298,86 @@ describe("callText provider-compat routing", () => {
     });
   });
 
+  it("uses a stable default User-Agent without overriding model headers", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: { id: "custom-model", provider: "custom" },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    });
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      model: {
+        id: "custom-model",
+        provider: "custom",
+        headers: { "User-Agent": "ExistingClient/2.0" },
+      },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    });
+
+    expect(fetchMock.mock.calls[0][1].headers["User-Agent"]).toBe("HanaAgent/1.0");
+    expect(fetchMock.mock.calls[1][1].headers["User-Agent"]).toBe("ExistingClient/2.0");
+  });
+
+  it("lets provider request headers override protocol auth headers on utility requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      apiKey: "sk-default",
+      baseUrl: "https://gateway.example/v1",
+      model: {
+        id: "gateway-model",
+        provider: "gateway-provider",
+        headers: { Authorization: "Gateway gateway-token" },
+      },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.Authorization).toBe("Gateway gateway-token");
+  });
+
+  it("does not append a duplicate v1 segment for Anthropic-compatible base URLs", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        content: [{ type: "text", text: "ok" }],
+      }),
+    });
+
+    await callText({
+      api: "anthropic-messages",
+      apiKey: "sk-test",
+      baseUrl: "https://anthropic-compatible.example/v1",
+      model: { id: "claude-compatible", provider: "custom" },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://anthropic-compatible.example/v1/messages");
+  });
+
   it("keeps callText string-compatible by default and returns usage only when requested", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce({

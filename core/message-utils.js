@@ -69,7 +69,11 @@ export function extractTextContent(content, { stripThink = false } = {}) {
           if (params[k] !== undefined) args[k] = params[k];
         }
       }
-      return { name: block.name, args: Object.keys(args).length ? args : undefined };
+      return {
+        id: typeof block.id === "string" && block.id ? block.id : undefined,
+        name: block.name,
+        args: Object.keys(args).length ? args : undefined,
+      };
     });
   return { text, thinking, toolUses, images };
 }

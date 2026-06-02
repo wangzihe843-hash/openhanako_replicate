@@ -71,6 +71,41 @@ describe("ChannelManager", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe("createChannelEntry", () => {
+    it("creates member and user bookmarks, then emits a channel_created event", async () => {
+      for (const agentId of ["alice", "bob"]) {
+        fs.mkdirSync(path.join(agentsDir, agentId), { recursive: true });
+      }
+      const emit = vi.fn();
+      const eventingManager = new ChannelManager({
+        channelsDir,
+        agentsDir,
+        userDir,
+        getHub: () => ({ eventBus: { emit } }),
+      });
+
+      const result = await eventingManager.createChannelEntry({
+        name: "Project",
+        members: ["alice", "bob"],
+        intro: "hello",
+      });
+
+      expect(result.id).toMatch(/^ch_/);
+      expect(readBookmarks(path.join(agentsDir, "alice", "channels.md")).get(result.id)).toBe("never");
+      expect(readBookmarks(path.join(agentsDir, "bob", "channels.md")).get(result.id)).toBe("never");
+      expect(readBookmarks(path.join(userDir, "channel-bookmarks.md")).get(result.id)).toBe("never");
+      expect(emit).toHaveBeenCalledWith({
+        type: "channel_created",
+        channelName: result.id,
+        channel: expect.objectContaining({
+          id: result.id,
+          name: "Project",
+          members: ["alice", "bob"],
+        }),
+      }, null);
+    });
+  });
+
   describe("deleteChannelByName", () => {
     it("deletes channel file", async () => {
       writeChannelMd(channelsDir, "test-ch", ["a", "b"]);

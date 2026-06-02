@@ -200,6 +200,71 @@ describe("chat route model switch guard", () => {
     handlers.onClose({}, ws);
   });
 
+  it("emits plugin_card blocks from extension custom messages", () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+    };
+    const engine = {
+      agentName: "Hana",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    subscriber?.({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "finance-market",
+        content: "",
+        display: true,
+        details: {
+          card: {
+            pluginId: "finance-market",
+            route: "/card?id=quote",
+            title: "Quote",
+          },
+        },
+      },
+    }, "/tmp/plugin-card-session.jsonl");
+
+    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    expect(payloads).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "content_block",
+        sessionPath: "/tmp/plugin-card-session.jsonl",
+        block: {
+          type: "plugin_card",
+          card: {
+            pluginId: "finance-market",
+            route: "/card?id=quote",
+            title: "Quote",
+            type: "iframe",
+          },
+        },
+      }),
+    ]));
+
+    handlers.onClose({}, ws);
+  });
+
   it("broadcasts browser_status events emitted outside tool execution", () => {
     let createHandlers;
     let subscriber;

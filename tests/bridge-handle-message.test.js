@@ -639,6 +639,54 @@ describe("BridgeManager._handleMessage", () => {
       });
     });
 
+    it("deduplicates proactive sends with the same explicit idempotency key", async () => {
+      const { bm, engine } = createMocks();
+      const feishuAdapter = {
+        sendReply: vi.fn().mockResolvedValue(),
+      };
+      bm._platforms.clear();
+      bm._platforms.set("feishu:hana", {
+        adapter: feishuAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "feishu",
+      });
+      engine.getAgent.mockImplementation((id) => {
+        if (id === "hana") return { agentName: "TestAgent", config: { bridge: { feishu: { owner: "owner-user-id" } } }, sessionDir: os.tmpdir() };
+        return null;
+      });
+      engine.getBridgeIndex = vi.fn().mockReturnValue({
+        "fs_dm_owner-open-id@hana": {
+          file: "owner/fs.jsonl",
+          userId: "owner-user-id",
+          chatId: "oc_owner_chat",
+          name: "Owner",
+        },
+      });
+
+      const first = await bm.sendProactive("hello", "hana", {
+        bridgePlatforms: ["feishu"],
+        idempotencyKey: "notify:job:once",
+      });
+      const second = await bm.sendProactive("hello", "hana", {
+        bridgePlatforms: ["feishu"],
+        idempotencyKey: "notify:job:once",
+      });
+
+      expect(feishuAdapter.sendReply).toHaveBeenCalledTimes(1);
+      expect(first).toMatchObject({
+        platform: "feishu",
+        chatId: "oc_owner_chat",
+        sessionKey: "fs_dm_owner-open-id@hana",
+      });
+      expect(second).toMatchObject({
+        platform: "feishu",
+        chatId: "oc_owner_chat",
+        sessionKey: "fs_dm_owner-open-id@hana",
+        skipped: true,
+      });
+    });
+
     it("passes message_id when downloading feishu image attachments", async () => {
       const { bm, hub } = createMocks();
       const feishuAdapter = {

@@ -323,7 +323,7 @@ export interface PlatformApi {
   onSettingsChanged(callback: (event: string, payload: unknown) => void): void | (() => void);
   onOpenSettingsModal?(callback: (tab?: string) => void): void | (() => void);
   onSwitchTab?(callback: (tab: string) => void): void | (() => void);
-  onServerRestarted?(callback: (data: { port: number }) => void): void | (() => void);
+  onServerRestarted?(callback: (data: { port: number; token?: string | null }) => void): void | (() => void);
   getFilePath?(file: File): string | null;
   startDrag?(filePaths: string | string[]): void;
   appReady(): void;
@@ -337,7 +337,14 @@ export interface PlatformApi {
   onMaximizeChange?(callback: (maximized: boolean) => void): void;
 
   // ── Browser viewer ──
-  updateBrowserViewer?(data: { running?: boolean; url?: string | null; thumbnail?: string | null }): void;
+  updateBrowserViewer?(data: {
+    running?: boolean;
+    url?: string | null;
+    thumbnail?: string | null;
+    thumbnailCapturedAt?: number | null;
+    thumbnailUrl?: string | null;
+    thumbnailFresh?: boolean;
+  }): void;
   onBrowserUpdate?(callback: (data: { title?: string; canGoBack?: boolean; canGoForward?: boolean; running?: boolean }) => void): void;
   closeBrowserViewer?(): void;
   closeBrowser?(): void;

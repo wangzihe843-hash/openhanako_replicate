@@ -1,4 +1,18 @@
 {
+  "cover": {
+    "make": "制作 cover",
+    "agentGenerate": {
+      "beautifyDisabled": "需要先在主 Agent 的工具设置里开启小花美术。",
+      "defaultModelMissing": "需要先在设置里配置默认生图模型。",
+      "defaultModelInvalid": "默认生图模型不可用，需要在设置里重新配置。",
+      "imageGenUnavailable": "生图工具未启用，需要先在设置里开启。",
+      "agentUnavailable": "主 Agent 暂不可用，无法发起 Agent 生成。",
+      "disabled": "当前不能使用 Agent 生成。"
+    }
+  },
+  "selection": {
+    "quoteToChat": "引用到对话"
+  },
   "channel": {
     "tab": "频道",
     "chatTab": "聊天",
@@ -822,6 +836,7 @@
           "dm": { "label": "私信", "summary": "向其他 Agent 发送一对一消息" },
           "install_skill": { "label": "安装技能", "summary": "从 GitHub 或技能库安装新技能" },
           "update_settings": { "label": "修改设置", "summary": "让 Agent 修改应用配置项" },
+          "workflow": { "label": "Workflow", "summary": "让 Agent 把多 Agent 编排脚本作为后台任务运行" },
           "xingye_propose_draft": { "label": "星野草稿提议", "summary": "心跳巡检里给角色小手机/秘密空间生成待确认草稿（目前覆盖：日记本；其它模块陆续接入）。关掉只阻止新草稿，已有的不受影响。" }
         }
       },
@@ -1200,6 +1215,25 @@
       "compiledEmpty": "还没有编译过记忆",
       "compiledClear": "清空",
       "compiledCleared": "编译记忆已清空",
+      "health": {
+        "healthy": "记忆整理正常",
+        "degraded": "记忆整理有延迟",
+        "unhealthy": "记忆整理需要处理",
+        "disabled": "记忆已关闭",
+        "unavailable": "记忆状态暂不可用",
+        "stepSeparator": "、",
+        "failedSteps": "异常步骤：{steps}",
+        "lastError": "最近错误：{time}",
+        "errorMessage": "错误：{message}",
+        "steps": {
+          "rollingSummary": "滚动摘要",
+          "compileToday": "今日记忆",
+          "compileWeek": "本周记忆",
+          "compileLongterm": "长期记忆",
+          "compileFacts": "事实记忆",
+          "deepMemory": "深层记忆"
+        }
+      },
       "allMemories": "所有记忆",
       "tokenBudget": "记忆容量",
       "tokenBudgetHint": "memory.md 的目标 token 预算",
@@ -1716,6 +1750,26 @@
     "selectAll": "全选"
   },
   "rightWorkspace": {
+    "activity": {
+      "title": "后台动态"
+    },
+    "todo": {
+      "title": "待办"
+    },
+    "subagent": {
+      "title": "子助手"
+    },
+    "workflow": {
+      "title": "Workflow",
+      "running": "已运行 {text}",
+      "agents": "{n} 个 agent"
+    },
+    "session": {
+      "title": "本次对话",
+      "cwd": "工作目录",
+      "model": "模型",
+      "files": "文件"
+    },
     "tabs": {
       "label": "右侧工作台",
       "sessionFiles": "对话文件",
@@ -2007,6 +2061,7 @@
     "subagentStopReason": "子 agent 未完整完成（stopReason: {reason}）。",
     "subagentToolFailed": "子 agent 工具执行失败: {msg}",
     "subagentDispatched": "子代理已出发 (task-id: {taskId})。完成后结果会自动送达。",
+    "subagentReuseQueued": "子代理已出发 (task-id: {taskId})。实例「{instance}」正忙，已排队，前一个任务完成后接着跑。",
     "installSkillDisabled": "技能安装能力未启用。请在设置中开启「允许 Agent 自行创建/安装技能」。",
     "installSkillGithubDisabled": "GitHub 技能获取未启用。请在设置中开启「允许从 GitHub 获取技能」。",
     "installSkillInvalidGithubUrl": "无效的 GitHub URL：{url}",
@@ -2282,9 +2337,11 @@
     },
     "subagent": {
       "label": "启动子 Agent",
-      "description": "将任务派给子 agent 执行。可指定其他 agent（传 agent 参数），不指定则自己分身执行。传 agent=\"?\" 查看可用 agent 列表。\n\n派出后的行为：\n1. 子代理立即在后台开始执行\n2. 继续做手头的工作，不要停下来等\n3. 手头工作做完后，用 check_pending_tasks 检查状态\n4. 如果还没完成，根据任务复杂度估算等待时间，用 wait 等待后再查。最多查 2 次，之后不再轮询\n5. 任务完成后系统会自动通知（<hana-background-result> 消息），届时处理结果\n\n适用场景：\n- 需要大量搜索、阅读后总结为简短结论的调研任务\n- 可以和当前思路并行的独立子问题\n- 需要在多个方向同时探索的任务（可同时发起多个 subagent 调用）\n- 让另一个 agent 从其专业视角处理任务\n\n重要：\n- task 参数要写清楚完整的指令和必要背景，子 agent 看不到当前对话历史\n- 明确告知子 agent 是只做调研（只读），还是可以修改文件。不声明时子 agent 默认只做调研、不修改任何文件",
+      "description": "将任务派给子 agent 执行。可指定其他 agent（传 agent 参数），不指定则自己分身执行。传 agent=\"?\" 查看可用 agent 列表。\n\n派出后的行为：\n1. 子代理立即在后台开始执行\n2. 继续做手头的工作，不要停下来等\n3. 手头工作做完后，用 check_pending_tasks 检查状态\n4. 如果还没完成，根据任务复杂度估算等待时间，用 wait 等待后再查。最多查 2 次，之后不再轮询\n5. 任务完成后系统会自动通知（<hana-background-result> 消息），届时处理结果\n\n适用场景：\n- 需要大量搜索、阅读后总结为简短结论的调研任务\n- 可以和当前思路并行的独立子问题\n- 需要在多个方向同时探索的任务（可同时发起多个 subagent 调用）\n- 让另一个 agent 从其专业视角处理任务\n\n重要：\n- task 参数要写清楚完整的指令和必要背景，子 agent 看不到当前对话历史\n- 用 access 参数声明权限：调研/探索/审查类传 \"read\"（只读），执行/修改类传 \"write\"（可操作）；省略则继承你当前会话的权限档",
       "taskDesc": "子 agent 的完整指令。格式：第一行写「任务：xxx」作为任务标题，空一行后写详细要求和必要背景。子 agent 看不到当前对话历史，必要上下文都要写在这里。",
       "agentDesc": "目标 agent 的 id 字段值（团队列表中括号里那个，不是加粗的显示名）。不填则当前 agent 自己执行，传 \"?\" 列出可用 agent。",
+      "instanceDesc": "可选。复用实例后缀（如「探索」「下笔」）。带上它表示派给一个会记住历史的常驻子助手实例：同一 agent + 同一后缀续接同一段对话，能看到上次的上下文。省略则是一次性子任务，不留记忆。注意：同一实例同一时刻只跑一个任务，并发会自动排队。",
+      "accessDesc": "可选。权限档：探索/调研/审查类任务传 \"read\"（只读，禁止改文件、跑命令）；执行/修改类传 \"write\"（可操作）。省略则继承你当前会话的权限档：普通会话→可操作，只读/plan 模式→只读。",
       "modelDesc": "指定模型，必须使用 provider/id（可选，默认使用 utility 模型）"
     },
     "installSkill": {

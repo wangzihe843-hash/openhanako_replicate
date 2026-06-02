@@ -417,6 +417,30 @@ export class SessionCoordinator {
     return this._session?.sessionManager?.getSessionFile?.() ?? this._currentSessionPath ?? null;
   }
 
+  async reloadExtensionRunners(reason = "extension_factories_changed") {
+    const summary = { reloaded: 0, skipped: 0, failed: 0 };
+    for (const [sessionPath, entry] of this._sessions) {
+      const session = entry?.session;
+      if (!session || typeof session.reload !== "function") {
+        summary.skipped += 1;
+        continue;
+      }
+      if (session.isStreaming || session.isCompacting || entry._switching) {
+        summary.skipped += 1;
+        continue;
+      }
+      try {
+        await session.reload();
+        entry.lastTouchedAt = Date.now();
+        summary.reloaded += 1;
+      } catch (err) {
+        summary.failed += 1;
+        log.warn(`reload extensions failed for ${path.basename(sessionPath)} (${reason}): ${err?.message || err}`);
+      }
+    }
+    return summary;
+  }
+
   // ── Session 创建 / 切换 ──
 
   async _shouldIncludeLegacyArtifactToolForRestore(agent, sessionPath) {
@@ -2651,7 +2675,11 @@ export class SessionCoordinator {
     if (this._headlessOps.size === 1) bm.setHeadless(true);
     let tempSessionMgr;
     let childSessionPath = null;
+    // resume 复用的持久实例 session：cleanup 各路径（含 early_abort 的无条件 cleanupTempSession）
+    // 一律不动，否则被 abort 一次实例文件就蒸发（撞底线#3）。
+    let isResumedSession = false;
     const cleanupTempSession = () => {
+      if (isResumedSession) return;
       const sp = tempSessionMgr?.getSessionFile?.();
       if (sp) {
         // 临时 session 文件清理 best-effort：删不掉（如已被删/权限）不应让 isolated 执行失败。
@@ -2699,7 +2727,19 @@ export class SessionCoordinator {
         }
       }
       const execModel = models.resolveExecutionModel(resolvedModel);
-      tempSessionMgr = SessionManager.create(execCwd, sessionDir);
+      // resume 分支：opts.resumeSessionPath 指向已有持久实例 session（subagent 复用续接）。
+      // 照前台 restore / bridge owner 范式：先修 #1285 孤儿 toolResult（必须早于 open），再 open；
+      // 文件不存在则退回新建（禁止静默：调用方传了 resumeSessionPath 但文件没了，按新建处理并由上层感知）。
+      const resumeExisting = typeof opts.resumeSessionPath === "string"
+        && opts.resumeSessionPath.trim()
+        && fs.existsSync(opts.resumeSessionPath);
+      if (resumeExisting) {
+        this._repairOrphanToolHistory(opts.resumeSessionPath);
+        tempSessionMgr = SessionManager.open(opts.resumeSessionPath, sessionDir);
+        isResumedSession = true;
+      } else {
+        tempSessionMgr = SessionManager.create(execCwd, sessionDir);
+      }
       const targetAgentToolsSnapshot = typeof targetAgent.getToolsSnapshot === "function"
         ? targetAgent.getToolsSnapshot({
           forceMemoryEnabled: targetAgent.memoryMasterEnabled !== false,
@@ -2718,7 +2758,8 @@ export class SessionCoordinator {
           workspaceFolders: execWorkspaceScope.workspaceFolders,
           getSessionPath: () => tempSessionMgr?.getSessionFile?.() || null,
           fileReadSessionPaths,
-          getPermissionMode: () => SESSION_PERMISSION_MODES.OPERATE,
+          getPermissionMode: () => opts.permissionMode || SESSION_PERMISSION_MODES.OPERATE,
+          permissionContext: { isSubagent: !!opts.subagentContext },
         },
       );
 
@@ -2900,8 +2941,9 @@ export class SessionCoordinator {
       const finalReplyText = replyText || finalAssistantText;
       const completionError = isolatedCompletionError(finalStopReason, finalErrorMessage);
 
-      if (!opts.persist && sessionPath) {
+      if (!opts.persist && !isResumedSession && sessionPath) {
         // 非 persist 的临时 session 文件清理 best-effort：删不掉不影响返回结果。
+        // isResumedSession 双保险：resume 复用文件即使调用方漏设 persist 也绝不删。
         try { fs.unlinkSync(sessionPath); } catch {}
         return {
           sessionPath: null,

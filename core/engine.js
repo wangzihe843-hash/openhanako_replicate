@@ -458,6 +458,22 @@ export class HanaEngine {
     return this._subagentRunStore || null;
   }
 
+  setReusableSubagentStore(store) {
+    this._reusableSubagentStore = store || null;
+  }
+
+  get reusableSubagents() {
+    return this._reusableSubagentStore || null;
+  }
+
+  setActivityHub(hub) {
+    this._activityHub = hub || null;
+  }
+
+  get activityHub() {
+    return this._activityHub || null;
+  }
+
   get taskRegistry() {
     return this._taskRegistry;
   }
@@ -482,6 +498,34 @@ export class HanaEngine {
   }
 
   registerSessionFile(entry) { return this._sessionFiles.registerFile(entry); }
+  recordSessionFileOperation(entry) {
+    const file = this.registerSessionFile(entry);
+    this._emitSessionFileUpdatedEvent(file, entry);
+    return file;
+  }
+  _emitSessionFileUpdatedEvent(file, entry = {}) {
+    const origin = typeof file?.origin === "string" ? file.origin : entry?.origin;
+    if (origin !== "agent_write" && origin !== "agent_edit") return;
+
+    const sessionPath = file?.sessionPath || entry?.sessionPath;
+    const filePath = file?.filePath || entry?.filePath;
+    if (!sessionPath || !filePath) return;
+
+    const fileId = file?.id || file?.fileId || null;
+    const operation = entry?.operation || file?.operation || (
+      Array.isArray(file?.operations) ? file.operations[file.operations.length - 1] : null
+    );
+    this._emitAppEvent("session-file-updated", {
+      sessionPath,
+      filePath,
+      ...(fileId ? { fileId } : {}),
+      origin,
+      ...(operation ? { operation } : {}),
+      ...(file?.mtimeMs !== undefined ? { mtimeMs: file.mtimeMs } : {}),
+      ...(file?.size !== undefined ? { size: file.size } : {}),
+      ...(file?.version ? { version: file.version } : {}),
+    });
+  }
   getSessionFile(fileId, options) { return this._sessionFiles.get(fileId, options); }
   getSessionFileByPath(filePath, options) { return this._sessionFiles.getByFilePath(filePath, options); }
   listSessionFiles(sessionPath) { return this._sessionFiles.list(sessionPath); }
@@ -599,9 +643,9 @@ export class HanaEngine {
   }
 
   async abortAllStreaming() { return this._sessionCoord.abortAllStreaming(); }
-  isBridgeSessionStreaming(key) { return this._bridge?.isSessionStreaming(key) ?? false; }
+  isBridgeSessionStreaming(key, opts) { return this._bridge?.isSessionStreaming(key, opts) ?? false; }
   async abortBridgeSession(key) { return this._bridge?.abortSession(key) ?? false; }
-  steerBridgeSession(key, text) { return this._bridge?.steerSession(key, text) ?? false; }
+  steerBridgeSession(key, text, opts) { return this._bridge?.steerSession(key, text, opts) ?? false; }
   get bridgeSessionManager() { return this._bridge; }
   recordSessionCustomEntry(sessionPath, customType, data) {
     const bridgeResult = this._bridge?.recordCustomEntryForSessionPath?.(sessionPath, customType, data);
@@ -941,6 +985,7 @@ export class HanaEngine {
   //  Channel 代理（→ ChannelManager）
   // ════════════════════════════
 
+  async createChannelEntry(input) { return this._channels.createChannelEntry(input); }
   async deleteChannelByName(n) { return this._channels.deleteChannelByName(n); }
   async triggerChannelDelivery(n, o) { return this._channels.triggerChannelDelivery(n, o); }
   async triggerChannelTriage(n, o) { return this.triggerChannelDelivery(n, o); }
@@ -1522,6 +1567,7 @@ export class HanaEngine {
   async syncPluginExtensions() {
     this._syncExtensionFactories();
     await this._reloadResourceLoaderForExtensionFactories();
+    await this._sessionCoord?.reloadExtensionRunners?.("plugin_extension_sync");
   }
 
   // ════════════════════════════
@@ -1634,7 +1680,7 @@ export class HanaEngine {
         : this._readPreferences().sandbox_network !== false,
       getExternalReadPaths,
       getSessionPath,
-      recordFileOperation: (entry) => this.registerSessionFile(entry),
+      recordFileOperation: (entry) => this.recordSessionFileOperation(entry),
       getVisionBridge: () => this.getVisionBridge(),
       isVisionAuxiliaryEnabled: () => this.isVisionAuxiliaryEnabled(),
       legacyCleanupQueue: this._win32LegacySandboxCleanupQueue,
@@ -1657,17 +1703,21 @@ export class HanaEngine {
     const getPermissionMode = typeof opts.getPermissionMode === "function"
       ? opts.getPermissionMode
       : (sessionPath) => this.getSessionPermissionMode(sessionPath);
+    // 拦截上下文（如 { isSubagent }）：classify 据此做与 mode 无关的固定边界（防自递归等）。
+    const permissionContext = opts.permissionContext || null;
     result = {
       ...result,
       tools: wrapWithSessionPermission(result.tools, {
         getSessionPath,
         getPermissionMode,
+        permissionContext,
         getConfirmStore: () => this._confirmStore,
         emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
       }),
       customTools: wrapWithSessionPermission(result.customTools, {
         getSessionPath,
         getPermissionMode,
+        permissionContext,
         getConfirmStore: () => this._confirmStore,
         emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
       }),

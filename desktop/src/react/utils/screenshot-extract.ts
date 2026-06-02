@@ -15,6 +15,7 @@ export interface ScreenshotMessage {
   role: 'user' | 'assistant';
   name: string;
   avatarDataUrl: string | null;
+  showHeader: boolean;
   blocks: ScreenshotBlock[];
 }
 
@@ -79,10 +80,11 @@ export function extractScreenshotPayload(
   const roles = new Set(messages.map(m => m.role));
   const isMixed = roles.size > 1;
 
-  const buildMsg = (m: ChatMessage) => ({
+  const buildMsg = (m: ChatMessage, index: number): ScreenshotMessage => ({
     role: m.role,
     name: '',
     avatarDataUrl: null as string | null,
+    showHeader: index === 0 || messages[index - 1].role !== m.role,
     blocks: m.role === 'user'
       ? extractUserBlocks(m)
       : extractBlocks(m.blocks || []),

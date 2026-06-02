@@ -32,7 +32,7 @@ vi.mock('../../services/websocket', () => ({
 }));
 
 import { useStore } from '../../stores';
-import { injectHandlers, replayStreamResume } from '../../services/stream-resume';
+import { injectHandlers, replayStreamResume, updateSessionStreamMeta } from '../../services/stream-resume';
 
 describe('stream-resume', () => {
   beforeEach(() => {
@@ -116,5 +116,48 @@ describe('stream-resume', () => {
       }),
     ]);
     expect(statuses).toEqual([{ isStreaming: true, sessionPath: '/background.jsonl' }]);
+  });
+
+  it('does not replay the same stream sequence twice when a resume response is repeated', () => {
+    const handled: unknown[] = [];
+    injectHandlers((msg) => handled.push(msg), vi.fn());
+
+    const resume = {
+      type: 'stream_resume',
+      sessionPath: '/background.jsonl',
+      streamId: 'stream_dedupe',
+      sinceSeq: 0,
+      nextSeq: 3,
+      isStreaming: true,
+      reset: false,
+      truncated: false,
+      events: [
+        { seq: 1, event: { type: 'tool_start', name: 'echo', args: { value: 'one' } } },
+        { seq: 2, event: { type: 'tool_end', name: 'echo', success: true } },
+      ],
+    };
+
+    replayStreamResume(resume);
+    replayStreamResume(resume);
+
+    expect(handled).toHaveLength(2);
+    expect(handled).toEqual([
+      expect.objectContaining({ type: 'tool_start', seq: 1 }),
+      expect.objectContaining({ type: 'tool_end', seq: 2 }),
+    ]);
+  });
+
+  it('reports duplicate live stream sequences as already consumed', () => {
+    expect(updateSessionStreamMeta({
+      sessionPath: '/background.jsonl',
+      streamId: 'stream_live_dedupe',
+      seq: 1,
+    })).toBe(true);
+
+    expect(updateSessionStreamMeta({
+      sessionPath: '/background.jsonl',
+      streamId: 'stream_live_dedupe',
+      seq: 1,
+    })).toBe(false);
   });
 });

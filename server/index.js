@@ -71,12 +71,16 @@ import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
 import { createHtmlPreviewRoute } from "./routes/html-preview.js";
 import { createAccessRoute } from "./routes/access.js";
+import { registerTaskRegistryBusHandlers } from "./task-bus-handlers.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
 // upgrade handler below (WsTransport needs raw ws .on()/.off() methods)
 import { ConfirmStore } from "../lib/confirm-store.js";
 import { DeferredResultStore } from "../lib/deferred-result-store.js";
 import { SubagentRunStore } from "../lib/subagent-run-store.js";
+import { ReusableSubagentStore } from "../lib/reusable-subagent-store.js";
+import { ActivityHub } from "../lib/activity-hub.js";
+import { WorkflowActivityStore } from "../lib/workflow-activity-store.js";
 import { normalizeDeferredResolveResult } from "../lib/deferred-result-payload.js";
 import { createDeferredResultExtension } from "../lib/extensions/deferred-result-ext.js";
 import { createCompactionGuardExtension } from "../lib/extensions/compaction-guard-ext.js";
@@ -125,7 +129,7 @@ function isAddressInUseError(err) {
 }
 
 function isListenPermissionError(err) {
-  return err?.code === "EACCES";
+  return err?.code === "EACCES" || err?.code === "EPERM";
 }
 
 function createPortInUseStartupError(cause, { host, port, listenHost, networkMode }) {
@@ -257,7 +261,8 @@ BrowserManager.setHanakoHome(engine.hanakoHome);
 // 注：createSession 必须在所有 Pi SDK extension factory 都注册完之后
 // (framework extension via registerExtensionFactory + plugin extension via
 //  initPlugins)。否则 ExtensionRunner 在 session 构造时只绑定当时已有的
-// factories，后注册的 extension 不会追溯挂到这个 session 上。
+// factories。运行期插件热操作后，engine.syncPluginExtensions() 会 reload
+// 已加载且空闲的 session，让 ExtensionRunner 重新绑定最新 factories。
 // 实际 createSession 调用下移到 initPlugins + registerExtensionFactory 之后。
 
 // 写日志头部
@@ -344,21 +349,34 @@ app.use("*", async (c, next) => {
     return;
   }
 
-  const authPrincipal = serverAuthService.authenticateRequest({
+  const authResult = serverAuthService.authenticateRequestDetailed({
     authorization: c.req.header("authorization"),
     queryToken: c.req.query("token"),
     cookieHeader: c.req.header("cookie"),
     allowQueryToken: true,
     connectionKind: transport.connectionKind,
   });
-  if (!authPrincipal) return c.json({ error: "forbidden" }, 403);
+  const authPrincipal = authResult.principal;
+  if (!authPrincipal) {
+    const denied = authResult.denied || {};
+    return c.json({
+      error: denied.error || "forbidden",
+      reason: denied.reason || "auth_failed",
+      ...(denied.credentialSource ? { credentialSource: denied.credentialSource } : {}),
+      connectionKind: denied.connectionKind || transport.connectionKind,
+    }, 403);
+  }
   const authz = authorizeHttpRoute({
     method: c.req.method,
     path: routePath,
     principal: authPrincipal,
   });
   if (!authz.allowed) {
-    return c.json({ error: authz.error }, authz.status);
+    return c.json({
+      error: authz.error,
+      ...(authz.reason ? { reason: authz.reason } : {}),
+      ...(authz.requiredScope ? { requiredScope: authz.requiredScope } : {}),
+    }, authz.status);
   }
   c.set("authPrincipal", authPrincipal);
 
@@ -400,6 +418,28 @@ const subagentRunStore = new SubagentRunStore(
 );
 engine.setSubagentRunStore(subagentRunStore);
 
+// 复用 subagent 实例账本（按 reuseKey 记稳定 childSessionPath + 串行锁）：
+// 单例，跨所有 per-agent subagent 工具闭包共享，保证复用实例全局串行。
+const reusableSubagentStore = new ReusableSubagentStore(
+  path.join(hanakoHome, "reusable-subagents.json"),
+);
+engine.setReusableSubagentStore(reusableSubagentStore);
+
+// 统一 Agent Activity 实时真相源（内存广播层）：subagent / workflow / 巡检 都往这推，
+// 前端按当前对话 sessionPath 订阅。广播走 engine.emitEvent → WS（与 block_update 同一路）。
+// workflow / workflow_agent 另有持久化背书（重启不丢右侧卡）：启动先按 72h 修剪冷活动，
+// 再交给 ActivityHub 回灌（构造时把遗留 running 判孤儿、标 failed）。
+const WORKFLOW_ACTIVITY_TTL_MS = 72 * 60 * 60 * 1000;
+const workflowActivityStore = new WorkflowActivityStore(
+  path.join(hanakoHome, "workflow-activity.json"),
+);
+workflowActivityStore.prune(WORKFLOW_ACTIVITY_TTL_MS, Date.now());
+const activityHub = new ActivityHub(
+  { emit: (event, sp) => engine.emitEvent(event, sp) },
+  workflowActivityStore,
+);
+engine.setActivityHub(activityHub);
+
 // Bus handlers for plugin access
 hub.eventBus.handle("deferred:register", ({ taskId, sessionPath, meta }) => {
   if (!sessionPath) return { ok: false, error: "sessionPath is required" };
@@ -431,52 +471,7 @@ hub.eventBus.handle("deferred:abort", ({ taskId, reason }) => {
 });
 
 // Task registry bus handlers (plugin access)
-hub.eventBus.handle("task:register-handler", ({ type, abort }) => {
-  engine.taskRegistry.registerHandler(type, { abort });
-  return { ok: true };
-});
-hub.eventBus.handle("task:unregister-handler", ({ type }) => {
-  engine.taskRegistry.unregisterHandler(type);
-  return { ok: true };
-});
-hub.eventBus.handle("task:register", ({ taskId, type, parentSessionPath, meta, pluginId, agentId, persist }) => {
-  engine.taskRegistry.register(taskId, { type, parentSessionPath, meta, pluginId, agentId, persist });
-  return { ok: true };
-});
-hub.eventBus.handle("task:update", ({ taskId, ...patch }) => {
-  return { ok: true, task: engine.taskRegistry.update(taskId, patch) };
-});
-hub.eventBus.handle("task:complete", ({ taskId, result }) => {
-  return { ok: true, task: engine.taskRegistry.complete(taskId, result) };
-});
-hub.eventBus.handle("task:fail", ({ taskId, reason, error }) => {
-  return { ok: true, task: engine.taskRegistry.fail(taskId, reason ?? error) };
-});
-hub.eventBus.handle("task:remove", ({ taskId }) => {
-  engine.taskRegistry.remove(taskId);
-  return { ok: true };
-});
-hub.eventBus.handle("task:query", ({ taskId }) => {
-  return engine.taskRegistry.query(taskId);
-});
-hub.eventBus.handle("task:list", (filter = {}) => {
-  return engine.taskRegistry.listAll(filter);
-});
-hub.eventBus.handle("task:abort", ({ taskId }) => {
-  return { result: engine.taskRegistry.abort(taskId) };
-});
-hub.eventBus.handle("task:cancel", ({ taskId, reason }) => {
-  return engine.taskRegistry.cancel(taskId, reason);
-});
-hub.eventBus.handle("task:schedule", ({ scheduleId, ...input }) => {
-  return { ok: true, schedule: engine.taskRegistry.schedule(scheduleId, input) };
-});
-hub.eventBus.handle("task:unschedule", ({ scheduleId }) => {
-  return { ok: true, removed: engine.taskRegistry.unschedule(scheduleId) };
-});
-hub.eventBus.handle("task:list-schedules", (filter = {}) => {
-  return engine.taskRegistry.listSchedules(filter);
-});
+registerTaskRegistryBusHandlers(hub.eventBus, engine.taskRegistry);
 hub.eventBus.handle("session:get-titles", async ({ paths }) => {
   if (!Array.isArray(paths) || !paths.length) return { titles: {} };
   const coord = engine._sessionCoord;

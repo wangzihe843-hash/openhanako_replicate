@@ -9,7 +9,7 @@ import fs from "fs";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.js";
 import { t } from "../server/i18n.js";
-import { ensureDefaultWorkspace } from "../shared/default-workspace.js";
+import { resolveDefaultWorkspacePath } from "../shared/default-workspace.js";
 import {
   AUTO_SEARCH_PROVIDER,
   isSearchApiProvider,
@@ -23,34 +23,13 @@ const log = createModuleLogger("config");
 export const ACCESS_MODE_OPERATE = "operate";
 export const ACCESS_MODE_READ_ONLY = "read_only";
 
-/** Plan Mode / Bridge 只读 SDK 工具名白名单 */
-export const READ_ONLY_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
-
-/** Session 只读模式下仍允许的信息获取工具。顺序由实际工具注册顺序决定。 */
-export const READ_ONLY_TOOL_NAMES = [
-  ...READ_ONLY_BUILTIN_TOOLS,
-  "search_memory",
-  "web_search",
-  "web_fetch",
-  "current_status",
-  "recall_experience",
-  "browser",
-];
-
-const READ_ONLY_TOOL_NAME_SET = new Set(READ_ONLY_TOOL_NAMES);
-
+// COMPAT: 旧 access-mode 枚举，仅 computer-host 仍用（待迁到 canonical session-permission-mode 后删）。
+// 只读工具白名单（READ_ONLY_TOOL_NAMES / filterReadOnlyToolNames 等）已删——零调用方的死代码，
+// 真正的只读判定收口在 core/session-permission-mode.js 的 classifySessionPermission。
 export function normalizeAccessMode(mode, { legacyPlanMode = false } = {}) {
   if (mode === ACCESS_MODE_READ_ONLY) return ACCESS_MODE_READ_ONLY;
   if (mode === ACCESS_MODE_OPERATE) return ACCESS_MODE_OPERATE;
   return legacyPlanMode ? ACCESS_MODE_READ_ONLY : ACCESS_MODE_OPERATE;
-}
-
-export function isReadOnlyAccessMode(mode) {
-  return normalizeAccessMode(mode) === ACCESS_MODE_READ_ONLY;
-}
-
-export function filterReadOnlyToolNames(toolNames) {
-  return (toolNames || []).filter((name) => READ_ONLY_TOOL_NAME_SET.has(name));
 }
 
 /** 全局共享模型字段 → preferences key 映射 */
@@ -143,7 +122,7 @@ export class ConfigCoordinator {
 
   /**
    * @param {string} [agentId] - 指定 agent；省略时查主 agent
-   * @returns {string} 工作目录（保证返回有效路径）
+   * @returns {string} 工作目录路径（纯解析，不创建目录）
    */
   getHomeFolder(agentId) {
     const explicit = this.getExplicitHomeFolder(agentId);
@@ -151,7 +130,7 @@ export class ConfigCoordinator {
 
     // 显式默认工作区，避免把整个桌面暴露成工作目录。
     // 不从别的 agent 继承 home_folder；跨 agent fallback 会让状态归属变成隐式焦点推导。
-    return ensureDefaultWorkspace();
+    return resolveDefaultWorkspacePath();
   }
 
   /**

@@ -22,31 +22,71 @@ export function createServerAuthService({
     connectionKind = "local",
     now,
   } = {}) {
+    return authenticateRequestDetailed({
+      authorization,
+      queryToken,
+      cookieHeader,
+      allowQueryToken,
+      connectionKind,
+      now,
+    }).principal;
+  }
+
+  function authenticateRequestDetailed({
+    authorization = null,
+    queryToken = null,
+    cookieHeader = null,
+    allowQueryToken = false,
+    connectionKind = "local",
+    now,
+  } = {}) {
     const parsed = parseCredential({ authorization, queryToken, allowQueryToken, connectionKind });
     if (!parsed) {
       const webPrincipal = authenticateWebSession(hanakoHome, cookieHeader, { now });
-      if (!webPrincipal) return null;
-      if (!principalAllowsConnection(webPrincipal, connectionKind)) return null;
-      return normalizePrincipal({
+      if (!webPrincipal) {
+        return denyAuth("missing_credential", { connectionKind });
+      }
+      if (!principalAllowsConnection(webPrincipal, connectionKind)) {
+        return denyAuth("connection_not_allowed", {
+          credentialSource: "cookie",
+          connectionKind,
+        });
+      }
+      return allowAuth(normalizePrincipal({
         ...webPrincipal,
         connectionKind: connectionKind === "local"
           ? (webPrincipal.connectionKind || connectionKind)
           : connectionKind,
-      });
+      }));
     }
 
     if (parsed.token === loopbackToken) {
-      if (connectionKind !== "local") return null;
-      return createLocalPrincipal(resolveRuntimeContext());
+      if (connectionKind !== "local") {
+        return denyAuth("loopback_token_requires_local_transport", {
+          credentialSource: parsed.source,
+          connectionKind,
+        });
+      }
+      return allowAuth(createLocalPrincipal(resolveRuntimeContext()));
     }
 
     const devicePrincipal = authenticateDeviceCredential(hanakoHome, parsed.token, { now });
-    if (!devicePrincipal) return null;
-    if (!principalAllowsConnection(devicePrincipal, connectionKind)) return null;
-    return normalizePrincipal({
+    if (!devicePrincipal) {
+      return denyAuth("invalid_credential", {
+        credentialSource: parsed.source,
+        connectionKind,
+      });
+    }
+    if (!principalAllowsConnection(devicePrincipal, connectionKind)) {
+      return denyAuth("connection_not_allowed", {
+        credentialSource: parsed.source,
+        connectionKind,
+      });
+    }
+    return allowAuth(normalizePrincipal({
       ...devicePrincipal,
       connectionKind: connectionKind === "local" ? devicePrincipal.connectionKind : connectionKind,
-    });
+    }));
   }
 
   function authenticateToken(token, options = {}) {
@@ -58,6 +98,7 @@ export function createServerAuthService({
 
   return Object.freeze({
     authenticateRequest,
+    authenticateRequestDetailed,
     authenticateToken,
   });
 }
@@ -103,4 +144,19 @@ function principalAllowsConnection(principal, connectionKind) {
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function allowAuth(principal) {
+  return Object.freeze({ principal, denied: null });
+}
+
+function denyAuth(reason, details = {}) {
+  return Object.freeze({
+    principal: null,
+    denied: Object.freeze({
+      error: "forbidden",
+      reason,
+      ...details,
+    }),
+  });
 }

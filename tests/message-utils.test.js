@@ -111,10 +111,11 @@ describe("extractTextContent", () => {
 
   it("content block 数组提取 tool_use block", () => {
     const content = [
-      { type: "tool_use", name: "read_file", input: { file_path: "/tmp/test.txt", extra: "ignored" } },
+      { type: "tool_use", id: "call_read_1", name: "read_file", input: { file_path: "/tmp/test.txt", extra: "ignored" } },
     ];
     const result = extractTextContent(content);
     expect(result.toolUses).toHaveLength(1);
+    expect(result.toolUses[0].id).toBe("call_read_1");
     expect(result.toolUses[0].name).toBe("read_file");
     expect(result.toolUses[0].args).toEqual({ file_path: "/tmp/test.txt" });
   });

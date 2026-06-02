@@ -219,6 +219,7 @@ export class BridgeSessionManager {
   constructor(deps) {
     this._deps = deps;
     this._activeSessions = new Map();
+    this._activeSessionRoles = new Map();
     this._prePromptAbortControllers = new Map();
     this._sessionPathBridgeContexts = new Map();
   }
@@ -236,7 +237,8 @@ export class BridgeSessionManager {
   }
 
   /** 指定 bridge session 是否正在 streaming */
-  isSessionStreaming(sessionKey) {
+  isSessionStreaming(sessionKey, opts = {}) {
+    if (!this._activeSessionRoleMatches(sessionKey, opts.role)) return false;
     return this._prePromptAbortControllers.has(sessionKey)
       || (this._activeSessions.get(sessionKey)?.isStreaming ?? false);
   }
@@ -252,6 +254,7 @@ export class BridgeSessionManager {
     const session = this._activeSessions.get(sessionKey);
     if (!session?.isStreaming) return false;
     this._activeSessions.delete(sessionKey);
+    this._activeSessionRoles.delete(sessionKey);
     try {
       const abortPromise = session.abort?.();
       Promise.resolve(abortPromise).catch((err) =>
@@ -300,6 +303,12 @@ export class BridgeSessionManager {
     if (Array.isArray(all)) return all.filter(Boolean);
     const focus = this._deps.getAgent?.();
     return focus ? [focus] : [];
+  }
+
+  _activeSessionRoleMatches(sessionKey, role) {
+    if (!role) return true;
+    const activeRole = this._activeSessionRoles.get(sessionKey);
+    return !activeRole || activeRole === role;
   }
 
   /**
@@ -362,6 +371,14 @@ export class BridgeSessionManager {
     return entry;
   }
 
+  _inferIndexEntryRole(entry, file) {
+    if (entry.role === "owner" || entry.role === "guest") return entry.role;
+    const root = typeof file === "string" ? file.split(/[\\/]/)[0] : "";
+    if (root === "owner") return "owner";
+    if (root === "guests") return "guest";
+    return null;
+  }
+
   _relativeBridgeFile(bridgeDir, sessionPath) {
     const relative = path.relative(bridgeDir, sessionPath);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -370,8 +387,13 @@ export class BridgeSessionManager {
     return relative.split(path.sep).join("/");
   }
 
-  _syncIndexEntry(index, sessionKey, previousRaw, { bridgeDir, sessionPath, meta }) {
+  _syncIndexEntry(index, sessionKey, previousRaw, { bridgeDir, sessionPath, meta, resetRoleBoundState = false }) {
     const entry = this._normalizeIndexEntry(previousRaw);
+    if (resetRoleBoundState) {
+      delete entry.promptSnapshot;
+      delete entry.toolNames;
+      delete entry.freshCompact;
+    }
     entry.file = this._relativeBridgeFile(bridgeDir, sessionPath);
     if (meta) Object.assign(entry, meta);
     const nextValue = this._serializeIndexEntry(previousRaw, entry);
@@ -654,13 +676,16 @@ export class BridgeSessionManager {
       const index = this.readIndex(agent);
       const raw = index[sessionKey];
       const entry = this._normalizeIndexEntry(raw);
-      let promptSnapshot = normalizeSessionPromptSnapshot(entry.promptSnapshot);
       const existingFile = typeof raw === "string" ? raw : raw?.file || null;
+      const previousRole = this._inferIndexEntryRole(entry, existingFile);
+      const currentRole = bridgeContext.role || (isGuest ? "guest" : "owner");
+      const roleChanged = !!previousRole && previousRole !== currentRole;
+      let promptSnapshot = roleChanged ? null : normalizeSessionPromptSnapshot(entry.promptSnapshot);
       const existingPath = existingFile ? path.join(bridgeDir, existingFile) : null;
 
       let mgr;
       let reopenError = null;
-      if (existingPath) {
+      if (existingPath && !roleChanged) {
         // #1285 读时结构修复：在 open 之前清理已落盘 bridge session 里的孤儿 toolResult entry。
         // 失败不阻塞 restore（运行时 provider-compat 兜底仍会防 400）。
         try {
@@ -765,6 +790,7 @@ export class BridgeSessionManager {
       }
       this._rememberBridgeContext(activeSessionPath, bridgeContext);
       this._activeSessions.set(sessionKey, session);
+      this._activeSessionRoles.set(sessionKey, currentRole);
 
       let displayAttachments = [];
       if (opts.inboundFiles?.length && !activeSessionPath) {
@@ -876,6 +902,7 @@ export class BridgeSessionManager {
           warn: (msg) => log.warn(msg),
         });
         this._activeSessions.delete(sessionKey);
+        this._activeSessionRoles.delete(sessionKey);
         this._emitSessionEvent({ type: "session_status", isStreaming: false }, activeSessionPath);
       }
 
@@ -885,6 +912,7 @@ export class BridgeSessionManager {
         const { changed, file } = this._syncIndexEntry(index, sessionKey, raw, {
           bridgeDir,
           sessionPath,
+          resetRoleBoundState: roleChanged,
           meta: {
             ...this._bridgeContextMeta(bridgeContext, meta),
             promptSnapshot,
@@ -931,7 +959,8 @@ export class BridgeSessionManager {
    * @param {string} text
    * @returns {boolean} 是否成功注入
    */
-  steerSession(sessionKey, text) {
+  steerSession(sessionKey, text, opts = {}) {
+    if (!this._activeSessionRoleMatches(sessionKey, opts.role)) return false;
     const session = this._activeSessions.get(sessionKey);
     if (!session?.isStreaming) return false;
     session.steer(text);

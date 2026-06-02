@@ -13,6 +13,11 @@ function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function deletedProviderSet(raw) {
+  const ids = Array.isArray(raw?._deleted_providers) ? raw._deleted_providers : [];
+  return new Set(ids.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()));
+}
+
 function readJson(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8")) || {};
@@ -146,6 +151,7 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
 
   providerRegistry?.reload?.();
   const raw = safeReadYAMLSync(providersPath, {}, YAML) || {};
+  const deletedProviders = deletedProviderSet(raw);
   const providers = isPlainObject(raw.providers) ? { ...raw.providers } : {};
   const modelsJsonProvidersRaw = readJson(path.join(hanakoHome, "models.json")).providers || {};
   const modelsJsonProviders = isPlainObject(modelsJsonProvidersRaw) ? modelsJsonProvidersRaw : {};
@@ -164,6 +170,13 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
     if (entry?.authType === "oauth") continue;
 
     const providerId = entry?.id || providerKey;
+    if (
+      deletedProviders.has(providerKey)
+      || deletedProviders.has(providerId)
+      || (entry?.authJsonKey && deletedProviders.has(entry.authJsonKey))
+    ) {
+      continue;
+    }
     const current = isPlainObject(providers[providerId]) ? providers[providerId] : {};
     if (hasOwn(current, "api_key")) continue;
 

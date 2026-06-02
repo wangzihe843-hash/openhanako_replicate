@@ -127,6 +127,20 @@ describe("auto-updater", () => {
     expect(mod.getState().status).toBe("latest");
   });
 
+  it("treats missing latest metadata as no update available instead of an update error", () => {
+    initWithMockWindow();
+    if (handlers["checking-for-update"]) handlers["checking-for-update"]();
+
+    if (handlers.error) {
+      handlers.error(new Error("Cannot find latest.yml in the latest release artifacts"));
+    }
+
+    expect(mod.getState()).toEqual(expect.objectContaining({
+      status: "latest",
+      error: null,
+    }));
+  });
+
   it("should set allowPrerelease on channel change", () => {
     initWithMockWindow();
     mod.setUpdateChannel("beta");

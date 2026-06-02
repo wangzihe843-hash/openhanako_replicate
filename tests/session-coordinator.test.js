@@ -62,6 +62,28 @@ describe("SessionCoordinator", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it("reloads extension runners for idle live sessions and skips active streams", async () => {
+    const idleReload = vi.fn(async () => {});
+    const streamingReload = vi.fn(async () => {});
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    coordinator._sessions = new Map([
+      [path.join(tempDir, "idle.jsonl"), {
+        session: { reload: idleReload, isStreaming: false, isCompacting: false },
+        lastTouchedAt: 1,
+      }],
+      [path.join(tempDir, "streaming.jsonl"), {
+        session: { reload: streamingReload, isStreaming: true, isCompacting: false },
+      }],
+    ]);
+
+    const summary = await coordinator.reloadExtensionRunners("test");
+
+    expect(idleReload).toHaveBeenCalledTimes(1);
+    expect(streamingReload).not.toHaveBeenCalled();
+    expect(summary).toEqual({ reloaded: 1, skipped: 1, failed: 0 });
+    expect(coordinator._sessions.get(path.join(tempDir, "idle.jsonl")).lastTouchedAt).toBeGreaterThan(1);
+  });
+
   it("applies session memory before creating the agent session", async () => {
     let sessionMemoryEnabled = true;
     const agent = {
@@ -2329,6 +2351,58 @@ describe("SessionCoordinator", () => {
       error: "aborted",
     });
     expect(fs.existsSync(sessionFile)).toBe(false);
+  });
+
+  const isoDeps = () => ({
+    agentsDir: "/tmp/agents",
+    getAgent: () => ({ agentDir: tempDir, sessionDir: tempDir, agentName: "test-agent", config: { models: { chat: { id: "default-model", provider: "test" } } }, tools: [] }),
+    getActiveAgentId: () => "hana",
+    getModels: () => ({ authStorage: {}, modelRegistry: {}, defaultModel: { id: "default-model", provider: "test" }, availableModels: [{ id: "default-model", provider: "test" }], resolveExecutionModel: (m) => m, resolveThinkingLevel: () => "medium" }),
+    getResourceLoader: () => ({ getSystemPrompt: () => "prompt" }),
+    getSkills: () => ({ getSkillsForAgent: () => [] }),
+    buildTools: () => ({ tools: [], customTools: [] }),
+    emitEvent: () => {},
+    getHomeCwd: () => tempDir,
+    agentIdFromSessionPath: () => null,
+    switchAgentOnly: async () => {},
+    getConfig: () => ({}),
+    getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+    getAgents: () => new Map(),
+    getActivityStore: () => null,
+    getAgentById: () => null,
+    listAgents: () => [],
+  });
+
+  it("executeIsolated: resumeSessionPath 存在时 open 续接而非 create，并先修孤儿 toolResult", async () => {
+    const resumeFile = path.join(tempDir, "reuse-instance.jsonl");
+    fs.writeFileSync(resumeFile, '{"type":"user","content":"hi"}\n');
+    const piSdk = await import("../lib/pi-sdk/index.js");
+    piSdk.SessionManager.open.mockReturnValue({ getCwd: () => tempDir, getSessionFile: () => resumeFile });
+    createAgentSessionMock.mockResolvedValue({
+      session: { sessionManager: { getSessionFile: () => resumeFile }, subscribe: vi.fn(() => vi.fn()), abort: vi.fn() },
+    });
+    const coordinator = new SessionCoordinator(isoDeps());
+    const repairSpy = vi.spyOn(coordinator, "_repairOrphanToolHistory").mockImplementation(() => {});
+    await coordinator.executeIsolated("continue task", { resumeSessionPath: resumeFile, persist: tempDir });
+    expect(piSdk.SessionManager.open).toHaveBeenCalledWith(resumeFile, tempDir);
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(repairSpy).toHaveBeenCalledWith(resumeFile);
+  });
+
+  it("executeIsolated: resume 实例被 abort 不删持久文件（cleanup 保护，对照临时 session 会删）", async () => {
+    const resumeFile = path.join(tempDir, "reuse-keep.jsonl");
+    fs.writeFileSync(resumeFile, '{"type":"user","content":"hi"}\n');
+    const piSdk = await import("../lib/pi-sdk/index.js");
+    piSdk.SessionManager.open.mockReturnValue({ getCwd: () => tempDir, getSessionFile: () => resumeFile });
+    const controller = new AbortController();
+    createAgentSessionMock.mockImplementation(async () => {
+      controller.abort();
+      return { session: { sessionManager: { getSessionFile: () => resumeFile }, subscribe: vi.fn(() => vi.fn()), abort: vi.fn() } };
+    });
+    const coordinator = new SessionCoordinator(isoDeps());
+    vi.spyOn(coordinator, "_repairOrphanToolHistory").mockImplementation(() => {});
+    await coordinator.executeIsolated("continue task", { resumeSessionPath: resumeFile, persist: tempDir, signal: controller.signal });
+    expect(fs.existsSync(resumeFile)).toBe(true); // 持久实例文件保留（cleanup 保护生效）
   });
 
   it("releases a streaming session immediately when the provider abort never settles", async () => {

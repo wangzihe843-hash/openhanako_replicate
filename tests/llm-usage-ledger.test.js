@@ -59,6 +59,20 @@ describe("Usage ledger", () => {
     ]);
   });
 
+  it("list 支持 childSessionPath 过滤（workflow 节点级 token 查询）", () => {
+    const ledger = createUsageLedger({ now: () => 1000, requestIdFactory: () => "req-cs" });
+    const req = ledger.start({
+      model: { provider: "openai", modelId: "gpt-5", api: "openai-completions" },
+      usageContext: {
+        source: { subsystem: "subagent", operation: "run", surface: "desktop", trigger: "tool" },
+        attribution: { kind: "session", sessionPath: "/parent.jsonl", childSessionPath: "/child-1.jsonl" },
+      },
+    });
+    ledger.finish(req.requestId, { usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } });
+    expect(ledger.list({ childSessionPath: "/child-1.jsonl" }).entries).toHaveLength(1);
+    expect(ledger.list({ childSessionPath: "/other.jsonl" }).entries).toHaveLength(0);
+  });
+
   it("records usage_missing for completed requests without provider usage", () => {
     const ledger = createUsageLedger({ now: () => 1_000, requestIdFactory: () => "req-missing" });
 

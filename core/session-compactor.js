@@ -9,42 +9,94 @@ import { computeHardTruncation } from "./compaction-utils.js";
 const DEFAULT_HARD_TRUNCATE_THRESHOLD = 0.85;
 const COMPACTION_REQUEST_BUFFER_TOKENS = 1024;
 
-const COMPACTION_REQUEST_PREFIX = `[Hana cache-preserving compaction]
+// Keep these prompt strings aligned with Pi SDK's compaction prompts. Hana's
+// cache-preserving variant only moves the prompt after the cached message prefix.
+const PI_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
-You are performing an internal context compaction for this same assistant session.
-The full conversation prefix above is the source of truth. Do not answer the user
-or continue the task. Produce only a structured checkpoint summary that a future
-turn can use after older history is replaced by this summary.
-
-Use this exact format:
+Use this EXACT format:
 
 ## Goal
-[What the user is trying to accomplish.]
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
 
 ## Constraints & Preferences
-- [Important user constraints, project rules, tone preferences, or "(none)".]
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
 
 ## Progress
 ### Done
-- [x] [Completed work]
+- [x] [Completed tasks/changes]
 
 ### In Progress
-- [ ] [Current unfinished work]
+- [ ] [Current work]
 
 ### Blocked
-- [Blockers, if any]
+- [Issues preventing progress, if any]
 
 ## Key Decisions
 - **[Decision]**: [Brief rationale]
 
 ## Next Steps
-1. [Concrete next step]
+1. [Ordered list of what should happen next]
 
 ## Critical Context
-- [Exact file paths, commands, errors, identifiers, dates, issue links, or facts needed to continue.]
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
 
-Keep it concise, but preserve technical facts exactly. If recent messages will be
-kept by the compactor, summarize them only when they clarify the older context.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const PI_UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new progress, decisions, and context from the new messages
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE exact file paths, function names, and error messages
+- If something is no longer relevant, you may remove it
+
+Use this EXACT format:
+
+## Goal
+[Preserve existing goals, add new ones if the task expanded]
+
+## Constraints & Preferences
+- [Preserve existing, add new ones discovered]
+
+## Progress
+### Done
+- [x] [Include previously done items AND newly completed items]
+
+### In Progress
+- [ ] [Current work - update based on progress]
+
+### Blocked
+- [Current blockers - remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve all previous, add new)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+const PI_TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+
+Summarize the prefix to provide context for the retained suffix:
+
+## Original Request
+[What did the user ask for in this turn?]
+
+## Early Progress
+- [Key decisions and work done in the prefix]
+
+## Context for Suffix
+- [Information needed to understand the kept suffix]
+
+Be concise. Focus on what's needed to understand the kept suffix.`;
 
 function textBlock(text) {
   return { type: "text", text };
@@ -59,22 +111,76 @@ export function getCachePreservingCompactionMaxTokens(preparation) {
   return Math.max(512, Math.floor((preparation?.settings?.reserveTokens ?? 4096) * 0.8));
 }
 
-export function buildCachePreservingCompactionInstruction({ preparation, customInstructions } = {}) {
-  const retainedNote = preparation?.firstKeptEntryId
-    ? `\n\nThe compactor will keep the recent tail starting at session entry id ${preparation.firstKeptEntryId}. Focus the summary on context that may be removed, while preserving current intent and decisions.`
-    : "";
-  const splitTurnNote = preparation?.isSplitTurn
-    ? "\n\nThe cut point is inside a turn. Include enough turn-prefix context for the retained suffix to make sense."
-    : "";
-  const customNote = customInstructions
-    ? `\n\nAdditional focus from the caller: ${customInstructions}`
-    : "";
+function getCachePreservingTurnPrefixMaxTokens(preparation) {
+  return Math.max(256, Math.floor((preparation?.settings?.reserveTokens ?? 4096) * 0.5));
+}
 
+function buildPiSummaryPrompt({ preparation, customInstructions } = {}) {
+  let basePrompt = preparation?.previousSummary
+    ? PI_UPDATE_SUMMARIZATION_PROMPT
+    : PI_SUMMARIZATION_PROMPT;
+  if (customInstructions) {
+    basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
+  }
+  if (!preparation?.previousSummary) return basePrompt;
+  return `<previous-summary>\n${preparation.previousSummary}\n</previous-summary>\n\n${basePrompt}`;
+}
+
+export function buildCachePreservingCompactionInstruction({ preparation, customInstructions } = {}) {
   return {
     role: "user",
-    content: [textBlock(`${COMPACTION_REQUEST_PREFIX}${retainedNote}${splitTurnNote}${customNote}`)],
+    content: [textBlock(buildPiSummaryPrompt({ preparation, customInstructions }))],
     timestamp: Date.now(),
   };
+}
+
+function buildCachePreservingTurnPrefixInstruction() {
+  return {
+    role: "user",
+    content: [textBlock(PI_TURN_PREFIX_SUMMARIZATION_PROMPT)],
+    timestamp: Date.now(),
+  };
+}
+
+function buildCachePreservingCompactionRequests({ preparation, customInstructions } = {}) {
+  const messagesToSummarize = Array.isArray(preparation?.messagesToSummarize)
+    ? preparation.messagesToSummarize
+    : [];
+  const turnPrefixMessages = Array.isArray(preparation?.turnPrefixMessages)
+    ? preparation.turnPrefixMessages
+    : [];
+
+  if (preparation?.isSplitTurn && turnPrefixMessages.length > 0) {
+    const requests = [];
+    if (messagesToSummarize.length > 0) {
+      requests.push({
+        kind: "history",
+        messages: [
+          ...messagesToSummarize,
+          buildCachePreservingCompactionInstruction({ preparation, customInstructions }),
+        ],
+        maxTokens: getCachePreservingCompactionMaxTokens(preparation),
+      });
+    }
+    requests.push({
+      kind: "turn-prefix",
+      messages: [
+        ...turnPrefixMessages,
+        buildCachePreservingTurnPrefixInstruction(),
+      ],
+      maxTokens: getCachePreservingTurnPrefixMaxTokens(preparation),
+    });
+    return requests;
+  }
+
+  return [{
+    kind: "history",
+    messages: [
+      ...messagesToSummarize,
+      buildCachePreservingCompactionInstruction({ preparation, customInstructions }),
+    ],
+    maxTokens: getCachePreservingCompactionMaxTokens(preparation),
+  }];
 }
 
 function computeFileDetails(fileOps) {
@@ -120,33 +226,45 @@ export function isStaleExtensionContextError(error) {
 export function estimateCachePreservingCompactionRequest({
   preparation,
   systemPrompt = "",
-  messages = [],
   customInstructions,
 } = {}) {
-  const instruction = buildCachePreservingCompactionInstruction({ preparation, customInstructions });
-  const messageTokens = Array.isArray(messages)
-    ? messages.reduce((sum, message) => sum + estimateTokens(message), 0)
-    : 0;
-  const instructionTokens = estimateTokens(instruction);
   const systemPromptTokens = estimateTextTokens(systemPrompt);
-  const maxTokens = getCachePreservingCompactionMaxTokens(preparation);
-  const promptTokens = messageTokens + instructionTokens + systemPromptTokens + COMPACTION_REQUEST_BUFFER_TOKENS;
-  return {
-    promptTokens,
-    maxTokens,
-    totalTokens: promptTokens + maxTokens,
-    messageTokens,
-    instructionTokens,
+  const requests = buildCachePreservingCompactionRequests({ preparation, customInstructions })
+    .map((request) => {
+      const messageTokens = request.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+      const promptTokens = messageTokens + systemPromptTokens + COMPACTION_REQUEST_BUFFER_TOKENS;
+      return {
+        kind: request.kind,
+        promptTokens,
+        maxTokens: request.maxTokens,
+        totalTokens: promptTokens + request.maxTokens,
+        messageTokens,
+        instructionTokens: 0,
+        systemPromptTokens,
+        bufferTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
+      };
+    });
+  const fallbackMaxTokens = getCachePreservingCompactionMaxTokens(preparation);
+  const fallbackBudget = {
+    kind: "history",
+    promptTokens: systemPromptTokens + COMPACTION_REQUEST_BUFFER_TOKENS,
+    maxTokens: fallbackMaxTokens,
+    totalTokens: systemPromptTokens + COMPACTION_REQUEST_BUFFER_TOKENS + fallbackMaxTokens,
+    messageTokens: 0,
+    instructionTokens: 0,
     systemPromptTokens,
     bufferTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
   };
+  const budget = requests.reduce((max, current) => (
+    current.totalTokens > max.totalTokens ? current : max
+  ), fallbackBudget);
+  return { ...budget, requests };
 }
 
 export function shouldHardTruncateCachePreservingCompaction({
   preparation,
   model,
   systemPrompt,
-  messages,
   customInstructions,
   hardTruncateThreshold = DEFAULT_HARD_TRUNCATE_THRESHOLD,
 } = {}) {
@@ -154,7 +272,6 @@ export function shouldHardTruncateCachePreservingCompaction({
   const budget = estimateCachePreservingCompactionRequest({
     preparation,
     systemPrompt,
-    messages,
     customInstructions,
   });
   if (contextWindow <= 0) {
@@ -214,7 +331,6 @@ export async function createCachePreservingCompactionResult({
   preparation,
   model,
   systemPrompt,
-  messages,
   customInstructions,
   signal,
   thinkingLevel,
@@ -226,59 +342,70 @@ export async function createCachePreservingCompactionResult({
 }) {
   if (!preparation) throw new Error("Cache-preserving compaction requires preparation");
   if (!model) throw new Error("Cache-preserving compaction requires a model");
-  if (!Array.isArray(messages) || messages.length === 0) {
-    throw new Error("Cache-preserving compaction requires conversation messages");
-  }
+  const requests = buildCachePreservingCompactionRequests({ preparation, customInstructions });
 
-  const instruction = buildCachePreservingCompactionInstruction({ preparation, customInstructions });
-  const agentMessages = [...messages, instruction];
-  const llmMessages = await convertToLlm(agentMessages);
-  const maxTokens = getCachePreservingCompactionMaxTokens(preparation);
-  const options = {
-    ...streamOptions,
-    maxTokens,
-    signal,
-    toolChoice: "none",
-    ...(model.reasoning && thinkingLevel && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
-  };
+  async function runRequest(request) {
+    const llmMessages = await convertToLlm(request.messages);
+    const options = {
+      ...streamOptions,
+      maxTokens: request.maxTokens,
+      signal,
+      toolChoice: "none",
+      ...(model.reasoning && thinkingLevel && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
+    };
 
-  const context = {
-    systemPrompt,
-    messages: llmMessages,
-  };
-  const usageRequest = usageLedger?.start?.({
-    model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
-    usageContext,
-    costRates: model?.cost,
-  }) || null;
-  let response;
-  try {
-    response = streamFn
-      ? await (await streamFn(model, context, options)).result()
-      : await completeSimple(model, context, options);
-  } catch (error) {
-    if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error);
-    throw error;
-  }
-
-  if (isErrorResponse(response)) {
-    if (usageRequest?.requestId) {
-      usageLedger?.recordError?.(
-        usageRequest.requestId,
-        new Error(response.errorMessage || response.stopReason || "compaction failed"),
-      );
+    const context = {
+      systemPrompt,
+      messages: llmMessages,
+    };
+    const usageRequest = usageLedger?.start?.({
+      model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+      usageContext,
+      costRates: model?.cost,
+    }) || null;
+    let response;
+    try {
+      response = streamFn
+        ? await (await streamFn(model, context, options)).result()
+        : await completeSimple(model, context, options);
+    } catch (error) {
+      if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error);
+      throw error;
     }
-    throw new Error(`Cache-preserving compaction failed: ${response.errorMessage || response.stopReason || "unknown error"}`);
-  }
-  usageLedger?.finish?.(usageRequest?.requestId, {
-    usage: response?.usage,
-    model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
-    costRates: model?.cost,
-  });
 
-  const text = extractSummaryText(response);
-  if (!text) {
-    throw new Error("Cache-preserving compaction failed: empty summary");
+    if (isErrorResponse(response)) {
+      if (usageRequest?.requestId) {
+        usageLedger?.recordError?.(
+          usageRequest.requestId,
+          new Error(response.errorMessage || response.stopReason || "compaction failed"),
+        );
+      }
+      throw new Error(`Cache-preserving compaction failed: ${response.errorMessage || response.stopReason || "unknown error"}`);
+    }
+    usageLedger?.finish?.(usageRequest?.requestId, {
+      usage: response?.usage,
+      model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+      costRates: model?.cost,
+    });
+
+    const text = extractSummaryText(response);
+    if (!text) {
+      throw new Error("Cache-preserving compaction failed: empty summary");
+    }
+    return text;
+  }
+
+  let text;
+  if (preparation.isSplitTurn && Array.isArray(preparation.turnPrefixMessages) && preparation.turnPrefixMessages.length > 0) {
+    const historyRequest = requests.find((request) => request.kind === "history");
+    const turnPrefixRequest = requests.find((request) => request.kind === "turn-prefix");
+    const [historyText, turnPrefixText] = await Promise.all([
+      historyRequest ? runRequest(historyRequest) : Promise.resolve("No prior history."),
+      turnPrefixRequest ? runRequest(turnPrefixRequest) : Promise.resolve(""),
+    ]);
+    text = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixText}`;
+  } else {
+    text = await runRequest(requests[0]);
   }
 
   const details = computeFileDetails(preparation.fileOps);
@@ -330,19 +457,11 @@ export async function runCachePreservingCompactionForSession(session, {
       throw new Error("Nothing to compact (session too small)");
     }
 
-    let messages = session.agent.state?.messages?.length
-      ? session.agent.state.messages
-      : session.sessionManager.buildSessionContext().messages;
-    if (session.agent.transformContext) {
-      messages = await session.agent.transformContext(messages, signal);
-    }
-
     const systemPrompt = session.agent.state?.systemPrompt ?? session.systemPrompt;
     const fit = shouldHardTruncateCachePreservingCompaction({
       preparation,
       model,
       systemPrompt,
-      messages,
       customInstructions,
       hardTruncateThreshold,
     });
@@ -371,7 +490,6 @@ export async function runCachePreservingCompactionForSession(session, {
       preparation,
       model,
       systemPrompt,
-      messages,
       customInstructions,
       signal,
       thinkingLevel: session.thinkingLevel ?? session.agent.state?.thinkingLevel,

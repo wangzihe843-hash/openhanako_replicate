@@ -11,6 +11,7 @@ import type { FileVersion } from '../types';
 // ── 工具调用 ──
 
 export interface ToolCall {
+  id?: string;
   name: string;
   args?: Record<string, unknown>;
   done: boolean;
@@ -174,6 +175,17 @@ export type RichBlock =
     streamKey: string;
     streamStatus: 'running' | 'done' | 'failed' | 'aborted';
     summary?: string;
+    reuseInstance?: string | null;
+  }
+  | {
+    // workflow inline 概览块（聊天流工具卡）：只携带「名 + 状态 + 时长」，不展开实时流。
+    type: 'workflow';
+    taskId: string;
+    taskTitle: string;
+    streamStatus: 'running' | 'done' | 'failed' | 'aborted';
+    summary?: string;
+    startedAt?: number | null;
+    finishedAt?: number | null;
   }
   | { type: 'plugin_card'; card: import('../types').PluginCardDetails };
 

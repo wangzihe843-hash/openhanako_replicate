@@ -52,11 +52,11 @@ describe("CompactionGuardExtension", () => {
     createCompactionGuardExtension({ cacheCompactor })(pi);
   });
 
-  it("registers context, message_end, tool_result and session_before_compact handlers", () => {
-    expect(pi.on).toHaveBeenCalledWith("context", expect.any(Function));
-    expect(pi.on).toHaveBeenCalledWith("message_end", expect.any(Function));
+  it("registers only tool_result and session_before_compact handlers", () => {
     expect(pi.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
     expect(pi.on).toHaveBeenCalledWith("session_before_compact", expect.any(Function));
+    expect(pi.on).not.toHaveBeenCalledWith("context", expect.any(Function));
+    expect(pi.on).not.toHaveBeenCalledWith("message_end", expect.any(Function));
   });
 
   describe("L1: tool_result truncation", () => {
@@ -194,10 +194,10 @@ describe("CompactionGuardExtension", () => {
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
-    it("uses the latest transformed context plus final assistant message", async () => {
+    it("does not let the latest transformed context expand the Pi compaction boundary", async () => {
       estimatePreparationTokens.mockReturnValue(50_000);
       await pi.trigger("context", {
-        messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+        messages: [{ role: "user", content: [{ type: "text", text: "live context" }], timestamp: 1 }],
       });
       await pi.trigger("message_end", {
         message: { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 2 },
@@ -209,8 +209,36 @@ describe("CompactionGuardExtension", () => {
         ctx,
       );
 
-      expect(cacheCompactor.mock.calls[0][0].messages).toHaveLength(2);
-      expect(cacheCompactor.mock.calls[0][0].messages[1]).toMatchObject({ role: "assistant" });
+      expect(cacheCompactor.mock.calls[0][0].messages).toEqual(preparation.messagesToSummarize);
+    });
+
+    it("passes only Pi preparation messages to the cache compactor, not the kept tail from live context", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      await pi.trigger("context", {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "old history to summarize" }], timestamp: 1 },
+          { role: "assistant", content: [{ type: "text", text: "KEPT_TAIL_SHOULD_NOT_ENTER_SUMMARY" }], timestamp: 2 },
+        ],
+      });
+
+      await pi.trigger(
+        "session_before_compact",
+        {
+          preparation: {
+            ...preparation,
+            messagesToSummarize: [
+              { role: "user", content: [{ type: "text", text: "old history to summarize" }], timestamp: 1 },
+            ],
+          },
+          signal: { aborted: false },
+        },
+        ctx,
+      );
+
+      const passedMessages = cacheCompactor.mock.calls[0][0].messages;
+      expect(passedMessages).toHaveLength(1);
+      expect(JSON.stringify(passedMessages)).toContain("old history to summarize");
+      expect(JSON.stringify(passedMessages)).not.toContain("KEPT_TAIL_SHOULD_NOT_ENTER_SUMMARY");
     });
 
     it("does not read stale session-bound pi helpers during compaction", async () => {

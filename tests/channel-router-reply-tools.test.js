@@ -380,12 +380,21 @@ describe("ChannelRouter reply tool boundary", () => {
     runAgentSessionMock.mockClear();
     runAgentPhoneSessionMock.mockClear();
     runAgentPhoneSessionMock.mockImplementationOnce(async (_agentId, _rounds, options) => {
+      expect(options.returnDiagnostics).toBe(true);
       const replyTool = options.extraCustomTools.find((tool) => tool.name === "channel_reply");
       const result = await replyTool.execute("tool-call-1", {
         content: "这条幽灵消息不应该写入频道",
       });
       expect(result.details).toMatchObject({ action: "reply", error: "not a channel member" });
-      return "";
+      return {
+        text: "普通文本不应进入频道",
+        diagnostics: {
+          activeToolNames: ["channel_reply", "channel_pass"],
+          toolCallCount: 1,
+          toolCallNames: ["channel_reply"],
+          ordinaryTextLength: 10,
+        },
+      };
     });
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-removed-reply-"));
@@ -400,6 +409,7 @@ describe("ChannelRouter reply tool boundary", () => {
     fs.writeFileSync(path.join(agentsDir, "hanako", "config.yaml"), "agent:\n  name: Hanako\n", "utf-8");
     fs.writeFileSync(path.join(channelsDir, "ch_crew.md"), "---\nid: ch_crew\nmembers: [yui]\n---\n", "utf-8");
 
+    const activityRecord = vi.fn();
     const router = new ChannelRouter({
       hub: {
         engine: {
@@ -410,7 +420,7 @@ describe("ChannelRouter reply tool boundary", () => {
           isChannelsEnabled: () => true,
         },
         eventBus: { emit: vi.fn() },
-        agentPhoneActivities: { record: vi.fn() },
+        agentPhoneActivities: { record: activityRecord },
       },
     });
 
@@ -422,6 +432,16 @@ describe("ChannelRouter reply tool boundary", () => {
     );
 
     expect(result).toMatchObject({ replied: false, missingDecision: true });
+    const errorActivity = activityRecord.mock.calls.find((call) => call[0]?.state === "error")?.[0];
+    expect(errorActivity).toMatchObject({
+      details: {
+        diagnostics: {
+          toolCallCount: 1,
+          toolCallNames: ["channel_reply"],
+          ordinaryTextLength: 10,
+        },
+      },
+    });
     expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("这条幽灵消息不应该写入频道");
 
     fs.rmSync(root, { recursive: true, force: true });

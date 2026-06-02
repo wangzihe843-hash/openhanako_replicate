@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { subscribeStreamKey } from '../../services/stream-key-dispatcher';
 import { renderMarkdown } from '../../utils/markdown';
+import { findOpenToolIndex, toolCallFromStartEvent, toolCallIdFromEvent } from '../../utils/tool-call-identity';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { loadMessages } from '../../stores/session-actions';
@@ -243,12 +244,12 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
               const group = blocks[actualIndex] as Extract<ContentBlock, { type: 'tool_group' }>;
               blocks[actualIndex] = {
                 ...group,
-                tools: [...group.tools, { name: event.name, args: event.args, done: false, success: false }],
+                tools: [...group.tools, toolCallFromStartEvent(event)],
               };
             } else {
               blocks.push({
                 type: 'tool_group',
-                tools: [{ name: event.name, args: event.args, done: false, success: false }],
+                tools: [toolCallFromStartEvent(event)],
                 collapsed: false,
               });
             }
@@ -262,11 +263,13 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
             for (let i = blocks.length - 1; i >= 0; i -= 1) {
               const block = blocks[i];
               if (block.type !== 'tool_group') continue;
-              const toolIndex = block.tools.findIndex((tool) => tool.name === event.name && !tool.done);
+              const toolIndex = findOpenToolIndex(block.tools, event);
               if (toolIndex < 0) continue;
               const tools = [...block.tools];
+              const id = toolCallIdFromEvent(event);
               tools[toolIndex] = {
                 ...tools[toolIndex],
+                ...(id ? { id } : {}),
                 done: true,
                 success: !!event.success,
                 details: event.details,

@@ -287,7 +287,7 @@ export function handleServerMessage(msg: any): void {
   }
 
   if (msg.type !== 'stream_resume' && isStreamScopedMessage(msg)) {
-    updateSessionStreamMeta(msg);
+    if (!updateSessionStreamMeta(msg)) return;
   }
 
   if (msg.type === 'compaction_start' || msg.type === 'compaction_end') {
@@ -377,17 +377,32 @@ export function handleServerMessage(msg: any): void {
       if (!bsp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
       const bRunning = !!msg.running;
       const bUrl = msg.url || null;
-      const prevThumbnail = state.browserBySession[bsp]?.thumbnail ?? null;
-      const bThumbnail = bRunning ? (msg.thumbnail || prevThumbnail) : null;
+      const prev = state.browserBySession[bsp] ?? null;
+      const hasFreshThumbnail = bRunning && typeof msg.thumbnail === 'string' && msg.thumbnail.length > 0;
+      const bThumbnail = bRunning ? (hasFreshThumbnail ? msg.thumbnail : prev?.thumbnail ?? null) : null;
+      const thumbnailCapturedAt = bRunning
+        ? hasFreshThumbnail
+          ? (typeof msg.thumbnailCapturedAt === 'number' ? msg.thumbnailCapturedAt : Date.now())
+          : prev?.thumbnailCapturedAt ?? null
+        : null;
+      const thumbnailUrl = bRunning
+        ? hasFreshThumbnail
+          ? (typeof msg.thumbnailUrl === 'string' ? msg.thumbnailUrl : bUrl)
+          : prev?.thumbnailUrl ?? null
+        : null;
+      const thumbnailFresh = bRunning && hasFreshThumbnail;
       updateKeyed('browserBySession', bsp,
-        { running: bRunning, url: bUrl, thumbnail: bThumbnail },
+        { running: bRunning, url: bUrl, thumbnail: bThumbnail, thumbnailCapturedAt, thumbnailUrl, thumbnailFresh },
       );
       // renderBrowserCard — no-op (browser card rendering handled by React)
-      if (window.platform?.updateBrowserViewer) {
+      if (typeof window !== 'undefined' && window.platform?.updateBrowserViewer) {
         window.platform.updateBrowserViewer({
           running: bRunning,
           url: bUrl,
           thumbnail: bThumbnail,
+          thumbnailCapturedAt,
+          thumbnailUrl,
+          thumbnailFresh,
         });
       }
       break;
@@ -446,6 +461,13 @@ export function handleServerMessage(msg: any): void {
     case 'activity_update':
       if (msg.activity) {
         useStore.setState({ activities: [msg.activity, ...state.activities.slice(0, 499)] });
+      }
+      break;
+
+    case 'agent_activity':
+      // 统一 Agent Activity 真相源（ActivityHub 广播）：subagent / workflow / 巡检
+      if (msg.entry?.id) {
+        useStore.getState().upsertAgentActivity(msg.entry);
       }
       break;
 
@@ -574,11 +596,13 @@ export function handleServerMessage(msg: any): void {
 
     case 'channel_new_message': {
       const store = useStore.getState();
+      const knownChannel = store.channels.some((channel) => channel.id === msg.channelName);
       const isVisibleCurrentChannel =
         store.currentTab === 'channels'
         && store.currentChannel === msg.channelName
         && document.visibilityState === 'visible';
       if (msg.channelName && msg.message) {
+        if (!knownChannel) loadChannelsAction();
         appendChannelMessageAction(msg.channelName, msg.message, { markRead: isVisibleCurrentChannel });
       } else if (msg.channelName && isVisibleCurrentChannel) {
         markChannelMessagesDirtyAction(msg.channelName);
@@ -587,6 +611,11 @@ export function handleServerMessage(msg: any): void {
         markChannelMessagesDirtyAction(msg.channelName);
         loadChannelsAction();
       }
+      break;
+    }
+
+    case 'channel_created': {
+      loadChannelsAction();
       break;
     }
 

@@ -1,8 +1,30 @@
 export const WINDOWS_UIA_HELPER_SCRIPT = String.raw`
+param(
+  [string]$RequestPath = "",
+  [string]$ResultPath = ""
+)
+
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+$VerbosePreference = "SilentlyContinue"
+$DebugPreference = "SilentlyContinue"
+$InformationPreference = "SilentlyContinue"
+$WarningPreference = "SilentlyContinue"
+
+$script:WindowsUiaResultPath = $ResultPath
+$script:WindowsUiaUtf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+try {
+  [Console]::OutputEncoding = $script:WindowsUiaUtf8NoBom
+  [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
 
 function Write-Result($obj) {
-  $obj | ConvertTo-Json -Depth 40 -Compress
+  $json = $obj | ConvertTo-Json -Depth 40 -Compress
+  if (-not [string]::IsNullOrWhiteSpace($script:WindowsUiaResultPath)) {
+    [System.IO.File]::WriteAllText($script:WindowsUiaResultPath, $json, $script:WindowsUiaUtf8NoBom)
+    return
+  }
+  [Console]::Out.Write($json)
 }
 
 function Bounds-Of($el) {
@@ -308,7 +330,11 @@ function Stale-Snapshot-Result($action, $match) {
 try {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
-  $inputJson = [Console]::In.ReadToEnd()
+  if (-not [string]::IsNullOrWhiteSpace($RequestPath)) {
+    $inputJson = [System.IO.File]::ReadAllText($RequestPath, [System.Text.Encoding]::UTF8)
+  } else {
+    $inputJson = [Console]::In.ReadToEnd()
+  }
   if ([string]::IsNullOrWhiteSpace($inputJson)) { throw "Missing helper request JSON." }
   $req = $inputJson | ConvertFrom-Json
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   appendConnectionAuth,
+  buildScopedConnectSources,
   buildConnectionUrl,
   buildConnectionWsUrl,
   connectDeviceServerConnection,
@@ -12,6 +13,7 @@ import {
   persistServerConnectionSelection,
   readPersistedServerConnectionState,
   refreshLocalServerConnection,
+  refreshLocalServerConnectionState,
   resolveServerConnection,
   upsertServerConnection,
   writePersistedServerConnectionState,
@@ -173,6 +175,65 @@ describe('server connection helpers', () => {
     expect(buildConnectionUrl(remote, '/api/resources/res_1/content', { includeTokenQuery: true }))
       .toBe('https://hana.example/api/resources/res_1/content');
     expect(buildConnectionWsUrl(remote, '/ws')).toBe('wss://hana.example/ws');
+  });
+
+  it('builds scoped CSP connect sources for only the active configured remote origin', () => {
+    const local = createLocalServerConnection({
+      serverPort: '3210',
+      serverToken: 'local-token',
+    })!;
+    const remote = {
+      ...local,
+      connectionId: 'lan:node_lan:studio_lan',
+      kind: 'lan' as const,
+      label: 'LAN Studio',
+      baseUrl: 'http://192.168.31.75:14500',
+      wsUrl: 'ws://192.168.31.75:14500',
+      token: 'remote-token',
+      trustState: 'lan' as const,
+      credentialKind: 'device_credential' as const,
+    };
+
+    expect(buildScopedConnectSources(remote)).toEqual([
+      'http://192.168.31.75:14500',
+      'ws://192.168.31.75:14500',
+    ]);
+    expect(buildScopedConnectSources(remote)).not.toContain('http:');
+    expect(buildScopedConnectSources(remote)).not.toContain('ws:');
+  });
+
+  it('updates the local restart token without stealing an active remote connection', () => {
+    const local = createLocalServerConnection({
+      serverPort: '3210',
+      serverToken: 'old-local-token',
+    })!;
+    const remote = {
+      ...local,
+      connectionId: 'lan:node_lan:studio_lan',
+      kind: 'lan' as const,
+      label: 'LAN Studio',
+      baseUrl: 'http://192.168.31.75:14500',
+      wsUrl: 'ws://192.168.31.75:14500',
+      token: 'remote-token',
+      trustState: 'lan' as const,
+      credentialKind: 'device_credential' as const,
+    };
+
+    const next = refreshLocalServerConnectionState({
+      serverConnections: { local, [remote.connectionId]: remote },
+      activeServerConnectionId: remote.connectionId,
+      activeServerConnection: remote,
+      serverPort: '63001',
+      serverToken: 'new-local-token',
+    });
+
+    expect(next.serverConnections.local).toEqual(expect.objectContaining({
+      baseUrl: 'http://127.0.0.1:63001',
+      wsUrl: 'ws://127.0.0.1:63001',
+      token: 'new-local-token',
+    }));
+    expect(next.activeServerConnectionId).toBe(remote.connectionId);
+    expect(next.activeServerConnection).toBe(next.serverConnections[remote.connectionId]);
   });
 
   it('creates a LAN device ServerConnection from manual URL, credential, and server identity', () => {

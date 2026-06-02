@@ -6,7 +6,6 @@ import styles from './SelectionQuoteActionSurface.module.css';
 
 const TOOLBAR_SIZE = 26;
 const TOOLBAR_CROSS_AXIS_OFFSET = 20;
-const TOOLTIP_DELAY_MS = 500;
 
 function getViewportSize() {
   if (typeof window === 'undefined') return { width: 0, height: 0 };
@@ -71,10 +70,11 @@ export function SelectionQuoteActionSurface() {
 
   if (!quoteCandidate || !position) return null;
 
+  const t = window.t ?? ((key: string) => key);
   const tooltipId = 'selection-quote-action-tooltip';
   const actions = [{
     id: 'quote',
-    label: '引用到对话',
+    label: t('selection.quoteToChat'),
     onClick: handleAddQuote,
     icon: <QuoteIcon />,
   }];
@@ -91,7 +91,6 @@ export function SelectionQuoteActionSurface() {
           key={action.id}
           id={tooltipId}
           content={action.label}
-          delayMs={TOOLTIP_DELAY_MS}
           placement={position.origin === 'top-center' ? 'bottom' : 'top'}
         >
           {({ ref, ...tooltipProps }) => (

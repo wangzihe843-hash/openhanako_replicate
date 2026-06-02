@@ -141,6 +141,7 @@ export function ProvidersTab() {
                 base_url: preset?.url || '',
                 api: preset?.api || '',
                 api_key: '',
+                headers: {},
                 models: [],
                 custom_models: [],
                 has_credentials: false,

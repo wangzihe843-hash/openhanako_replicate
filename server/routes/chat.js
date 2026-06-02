@@ -151,6 +151,19 @@ export function toNotificationWsMessage(event) {
   };
 }
 
+// ActivityHub（统一 Agent Activity 真相源）广播：subagent / workflow / 巡检 / cron。
+// 必须带顶层 sessionPath —— wsClientCanReceiveEvent 靠它给非本地（PWA/远程）client 做
+// session 订阅校验，缺失会 fail-closed。优先用 listener 第二参数（emit 时的权威 sessionPath），
+// entry.sessionPath 兜底。
+export function toAgentActivityWsMessage(event, sessionPath) {
+  if (!event || event.type !== "agent_activity") return null;
+  return {
+    type: "agent_activity",
+    entry: event.entry,
+    sessionPath: sessionPath ?? event.entry?.sessionPath ?? null,
+  };
+}
+
 export const DEFAULT_DISCONNECT_ABORT_GRACE_MS = 5 * 60_000;
 
 export function resolveDisconnectAbortGraceMs(value = process.env.HANA_WS_DISCONNECT_ABORT_GRACE_MS) {
@@ -306,7 +319,16 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         const wasRunning = browser.isRunning(sp);
         const thumbnail = await browser.thumbnail(sp);
         if (thumbnail) {
-          broadcast({ type: "browser_status", running: true, url: browser.currentUrl(sp), thumbnail, sessionPath: sp });
+          const url = browser.currentUrl(sp);
+          broadcast({
+            type: "browser_status",
+            running: true,
+            url,
+            thumbnail,
+            thumbnailCapturedAt: Date.now(),
+            thumbnailUrl: url,
+            sessionPath: sp,
+          });
         } else if (wasRunning && !browser.isRunning(sp)) {
           broadcast({
             type: "browser_status",
@@ -487,11 +509,17 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       }
       // 只保留前端 extractToolDetail 需要的字段，避免广播完整文件内容
       const args = summarizeToolStartArgs(event.toolName || "", event.args);
-      emitStreamEvent(sessionPath, ss, { type: "tool_start", name: event.toolName || "", args });
+      emitStreamEvent(sessionPath, ss, {
+        type: "tool_start",
+        id: event.toolCallId || undefined,
+        name: event.toolName || "",
+        args,
+      });
     } else if (event.type === "tool_execution_end") {
       if (!ss) return;
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
+        id: event.toolCallId || undefined,
         name: event.toolName || "",
         success: !event.isError,
         details: event.result?.details,
@@ -514,7 +542,11 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
           running: d.running ?? false,
           url: d.url || null,
         };
-        if (d.thumbnail) statusMsg.thumbnail = d.thumbnail;
+        if (d.thumbnail) {
+          statusMsg.thumbnail = d.thumbnail;
+          statusMsg.thumbnailCapturedAt = d.thumbnailCapturedAt || Date.now();
+          statusMsg.thumbnailUrl = d.thumbnailUrl || statusMsg.url;
+        }
         emitStreamEvent(sessionPath, ss, statusMsg);
         if (statusMsg.running) startBrowserThumbPoll();
         else if (!BrowserManager.instance().hasAnyRunning) stopBrowserThumbPoll();
@@ -534,7 +566,11 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         url: event.url || null,
         sessionPath,
       };
-      if (event.thumbnail) statusMsg.thumbnail = event.thumbnail;
+      if (event.thumbnail) {
+        statusMsg.thumbnail = event.thumbnail;
+        statusMsg.thumbnailCapturedAt = event.thumbnailCapturedAt || Date.now();
+        statusMsg.thumbnailUrl = event.thumbnailUrl || statusMsg.url;
+      }
       if (event.error) statusMsg.error = event.error;
       broadcast(statusMsg);
       if (statusMsg.running) startBrowserThumbPoll();
@@ -598,6 +634,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       });
     } else if (event.type === "activity_update") {
       broadcast({ type: "activity_update", activity: event.activity });
+    } else if (event.type === "agent_activity") {
+      // ActivityHub 统一活动真相源 → WS（右侧「子助手 / workflow」卡数据源）。
+      const agentActivityMsg = toAgentActivityWsMessage(event, sessionPath);
+      if (agentActivityMsg) broadcast(agentActivityMsg);
     } else if (event.type === "bridge_message") {
       broadcast({ type: "bridge_message", message: event.message });
     } else if (event.type === "bridge_status") {
@@ -665,6 +705,12 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         sender: event.sender,
         message: event.message || null,
       });
+    } else if (event.type === "channel_created") {
+      broadcast({
+        type: "channel_created",
+        channelName: event.channelName,
+        channel: event.channel || null,
+      });
     } else if (event.type === "dm_new_message") {
       broadcast({ type: "dm_new_message", from: event.from, to: event.to });
     } else if (event.type === "conversation_agent_activity") {
@@ -672,6 +718,16 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     } else if (event.type === "message_end") {
       // Provider 级别错误（超时、连接断开等）通过 message_end 传递，不经过 message_update
       if (!ss) return;
+      if (event.message?.role === "custom" && event.message.display !== false) {
+        const blocks = enrichSessionFileBlocks(
+          extractBlocks(event.message.customType, event.message.details, event.message),
+          engine,
+          sessionPath,
+        );
+        for (const block of blocks) {
+          emitStreamEvent(sessionPath, ss, { type: "content_block", block });
+        }
+      }
       if (event.message?.stopReason === "error") {
         ss.hasError = true;
         broadcast({ type: "error", message: event.message.errorMessage || "Unknown error", sessionPath });

@@ -47,7 +47,7 @@ describe("session-compactor", () => {
     findCutPointMock.mockReturnValue({ firstKeptEntryIndex: 1, turnStartIndex: -1, isSplitTurn: false });
   });
 
-  it("appends an internal compaction instruction and strips tools from the summary call", async () => {
+  it("uses Pi compaction boundaries and prompt text while moving the prompt after the cached prefix", async () => {
     const signal = new AbortController().signal;
     const resultStream = {
       result: vi.fn(async () => ({
@@ -62,6 +62,10 @@ describe("session-compactor", () => {
       preparation: {
         firstKeptEntryId: "entry-keep",
         tokensBefore: 1234,
+        previousSummary: "previous checkpoint",
+        messagesToSummarize: [
+          { role: "user", content: [{ type: "text", text: "old history to summarize" }], timestamp: 1 },
+        ],
         settings: { reserveTokens: 1000 },
         fileOps: {
           read: new Set(["/tmp/read.md", "/tmp/edited.md"]),
@@ -70,8 +74,11 @@ describe("session-compactor", () => {
         },
       },
       model: { id: "model", reasoning: true },
-      systemPrompt: "system prompt",
-      messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+      systemPrompt: "agent system prompt",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "old history to summarize" }], timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "KEPT_TAIL_SHOULD_NOT_ENTER_SUMMARY" }], timestamp: 2 },
+      ],
       tools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
       customInstructions: "focus on decisions",
       signal,
@@ -84,12 +91,16 @@ describe("session-compactor", () => {
     expect(streamFn).toHaveBeenCalledOnce();
     const [model, context, options] = streamFn.mock.calls[0];
     expect(model).toEqual({ id: "model", reasoning: true });
-    expect(context.systemPrompt).toBe("system prompt");
+    expect(context.systemPrompt).toBe("agent system prompt");
     expect(context.tools).toBeUndefined();
     expect(context.messages).toHaveLength(2);
+    expect(context.messages[0].content[0].text).toBe("old history to summarize");
+    expect(JSON.stringify(context.messages)).not.toContain("KEPT_TAIL_SHOULD_NOT_ENTER_SUMMARY");
     expect(context.messages[1].role).toBe("user");
-    expect(context.messages[1].content[0].text).toContain("Hana cache-preserving compaction");
-    expect(context.messages[1].content[0].text).toContain("focus on decisions");
+    expect(context.messages[1].content[0].text).toContain("<previous-summary>\nprevious checkpoint\n</previous-summary>");
+    expect(context.messages[1].content[0].text).toContain("The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.");
+    expect(context.messages[1].content[0].text).toContain("Additional focus: focus on decisions");
+    expect(context.messages[1].content[0].text).not.toContain("Hana cache-preserving compaction");
     expect(options).toEqual(expect.objectContaining({
       maxTokens: 800,
       reasoning: "high",
@@ -184,6 +195,7 @@ describe("session-compactor", () => {
     const preparation = {
       firstKeptEntryId: "entry-keep",
       tokensBefore: 4321,
+      messagesToSummarize: [{ role: "user", content: "before compaction" }],
       settings: { reserveTokens: 2000 },
     };
     const branch = [{ type: "message", id: "entry-old" }, { type: "message", id: "entry-keep" }];
@@ -227,10 +239,7 @@ describe("session-compactor", () => {
     const result = await runCachePreservingCompactionForSession(session);
 
     expect(prepareCompactionMock).toHaveBeenCalledWith(branch, { enabled: true, reserveTokens: 2000 });
-    expect(session.agent.transformContext).toHaveBeenCalledWith(
-      [{ role: "user", content: "before compaction" }],
-      undefined,
-    );
+    expect(session.agent.transformContext).not.toHaveBeenCalled();
     expect(appendCompaction).toHaveBeenCalledWith(
       "cache summary",
       "entry-keep",

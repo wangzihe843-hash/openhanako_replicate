@@ -6,6 +6,7 @@ import { fetchConfig } from '../hooks/use-config';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { renderMarkdown } from '../utils/markdown';
+import { findOpenToolIndex, toolCallFromStartEvent, toolCallIdFromEvent } from '../utils/tool-call-identity';
 import { MarkdownContent } from './chat/MarkdownContent';
 import {
   addChannelMember,
@@ -539,7 +540,7 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
               ...(message.blocks || []),
               {
                 type: 'tool_group',
-                tools: [{ name: event.name, args: event.args, done: false, success: false }],
+                tools: [toolCallFromStartEvent(event)],
                 collapsed: false,
               },
             ],
@@ -551,11 +552,13 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
             for (let i = blocks.length - 1; i >= 0; i -= 1) {
               const block = blocks[i];
               if (block.type !== 'tool_group') continue;
-              const toolIndex = block.tools.findIndex((tool) => tool.name === event.name && !tool.done);
+              const toolIndex = findOpenToolIndex(block.tools, event);
               if (toolIndex < 0) continue;
               const tools = [...block.tools];
+              const id = toolCallIdFromEvent(event);
               tools[toolIndex] = {
                 ...tools[toolIndex],
+                ...(id ? { id } : {}),
                 done: true,
                 success: !!event.success,
                 details: event.details,

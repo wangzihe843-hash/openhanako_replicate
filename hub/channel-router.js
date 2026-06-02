@@ -548,6 +548,7 @@ export class ChannelRouter {
         isZh ? "没有调用频道回复工具" : "Did not call a channel decision tool",
         {
           messageCount: newMessages.length,
+          ...(decision?.diagnostics ? { diagnostics: decision.diagnostics } : {}),
           ...(this._resolvePhoneSessionPath(agentId, channelName)
             ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
             : {}),
@@ -658,8 +659,9 @@ export class ChannelRouter {
         + `These are the unprocessed new messages inside this delivery window, not the channel's full history. The source is the channel transcript Truth, not a direct user request:\n\n`;
     let activeSessionPath = null;
     let decision = null;
+    let phoneDiagnostics = null;
     try {
-      await runAgentPhoneSession(
+      const phoneResult = await runAgentPhoneSession(
         agentId,
         [
           {
@@ -695,6 +697,7 @@ export class ChannelRouter {
           toolMode: phoneSettings.toolMode,
           modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
           emitEvents: true,
+          returnDiagnostics: true,
           extraCustomTools: this._createChannelPhoneTools(agentId, channelName, {
             setDecision: (next) => { if (!decision) decision = next; },
           }),
@@ -724,6 +727,9 @@ export class ChannelRouter {
           ),
         },
       );
+      if (phoneResult && typeof phoneResult === "object") {
+        phoneDiagnostics = phoneResult.diagnostics || null;
+      }
     } catch (err) {
       if (decision) {
         return { ...decision, abortedAfterDecision: true };
@@ -731,7 +737,7 @@ export class ChannelRouter {
       throw err;
     }
 
-    return decision || { replied: false, missingDecision: true };
+    return decision || { replied: false, missingDecision: true, diagnostics: phoneDiagnostics };
   }
 
   _resolveChannelMemorySenderName(sender, isZh) {

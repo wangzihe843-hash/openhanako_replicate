@@ -10,7 +10,6 @@
     flex-direction: column;
     background: var(--bg);
     border-left: 1px solid var(--overlay-light);
-    padding-top: 48px;
     overflow: hidden;
     transition: width var(--duration-slow) var(--ease-out),
                 border-color var(--duration-slow) var(--ease-out);

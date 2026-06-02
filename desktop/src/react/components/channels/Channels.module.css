@@ -291,7 +291,6 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px var(--space-lg);
-    padding-top: 60px;
     border-bottom: 1px solid var(--overlay-light);
     flex-shrink: 0;
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
+import { createCronScheduler, DEFAULT_CRON_EXECUTION_TIMEOUT_MS } from "../lib/desk/cron-scheduler.js";
 
 function createStore(job) {
   const calls = {
@@ -24,10 +24,15 @@ function createStore(job) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("cron-scheduler", () => {
+  it("默认把 cron 执行超时上限设为 20 分钟", () => {
+    expect(DEFAULT_CRON_EXECUTION_TIMEOUT_MS).toBe(20 * 60 * 1000);
+  });
+
   it("执行成功时记录 success", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -152,5 +157,41 @@ describe("cron-scheduler", () => {
     expect(calls.marks).toEqual([]);
 
     expect(done).toEqual([{ id: "job_3", result: { status: "skipped" } }]);
+  });
+
+  it("执行超过上限时 abort job 并记录 timeout 错误", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const job = {
+      id: "job_timeout",
+      label: "超时任务",
+      enabled: true,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    const { store, calls } = createStore(job);
+    const abortJob = vi.fn();
+    const done = [];
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob: () => new Promise(() => {}),
+      abortJob,
+      onJobDone: (j, result) => done.push({ id: j.id, result }),
+      executionTimeoutMs: 100,
+    });
+
+    const check = scheduler.checkJobs();
+    await vi.advanceTimersByTimeAsync(100);
+    await check;
+
+    expect(abortJob).toHaveBeenCalledWith("job_timeout");
+    expect(calls.runs).toHaveLength(1);
+    expect(calls.runs[0].run.status).toBe("error");
+    expect(calls.runs[0].run.error).toBe("execution timeout (100ms)");
+    expect(calls.marks).toEqual(["job_timeout"]);
+    expect(done).toEqual([
+      { id: "job_timeout", result: { status: "error", error: "execution timeout (100ms)" } },
+    ]);
   });
 });

@@ -1,4 +1,18 @@
 {
+  "cover": {
+    "make": "製作 cover",
+    "agentGenerate": {
+      "beautifyDisabled": "需要先在主 Agent 的工具設定裡開啟小花美术。",
+      "defaultModelMissing": "需要先在設定裡設定預設圖片模型。",
+      "defaultModelInvalid": "預設圖片模型不可用，需要在設定裡重新設定。",
+      "imageGenUnavailable": "圖片生成工具未啟用，需要先在設定裡開啟。",
+      "agentUnavailable": "主 Agent 暫不可用，無法發起 Agent 生成。",
+      "disabled": "目前無法使用 Agent 生成。"
+    }
+  },
+  "selection": {
+    "quoteToChat": "引用到對話"
+  },
   "channel": {
     "tab": "頻道",
     "chatTab": "聊天",
@@ -822,6 +836,7 @@
           "dm": { "label": "私訊", "summary": "向其他 Agent 傳送一對一訊息" },
           "install_skill": { "label": "安裝技能", "summary": "從 GitHub 或技能庫安裝新技能" },
           "update_settings": { "label": "修改設定", "summary": "讓 Agent 修改應用設定項" },
+          "workflow": { "label": "Workflow", "summary": "讓 Agent 把多 Agent 編排腳本作為背景任務執行" },
           "xingye_propose_draft": { "label": "星野草稿提議", "summary": "心跳巡檢裡給角色小手機/秘密空間生成待確認草稿（目前覆蓋：日記本；其它模組陸續接入）。關掉只阻止新草稿，已有的不受影響。" }
         }
       },
@@ -1192,6 +1207,25 @@
       "compiledEmpty": "還沒有編譯過記憶",
       "compiledClear": "清空",
       "compiledCleared": "編譯記憶已清空",
+      "health": {
+        "healthy": "記憶整理正常",
+        "degraded": "記憶整理有延遲",
+        "unhealthy": "記憶整理需要處理",
+        "disabled": "記憶已關閉",
+        "unavailable": "記憶狀態暫不可用",
+        "stepSeparator": "、",
+        "failedSteps": "異常步驟：{steps}",
+        "lastError": "最近錯誤：{time}",
+        "errorMessage": "錯誤：{message}",
+        "steps": {
+          "rollingSummary": "滾動摘要",
+          "compileToday": "今日記憶",
+          "compileWeek": "本週記憶",
+          "compileLongterm": "長期記憶",
+          "compileFacts": "事實記憶",
+          "deepMemory": "深層記憶"
+        }
+      },
       "allMemories": "所有記憶",
       "tokenBudget": "記憶容量",
       "tokenBudgetHint": "memory.md 的目標 token 預算",
@@ -1708,6 +1742,26 @@
     "selectAll": "全選"
   },
   "rightWorkspace": {
+    "activity": {
+      "title": "背景動態"
+    },
+    "todo": {
+      "title": "待辦"
+    },
+    "subagent": {
+      "title": "子助手"
+    },
+    "workflow": {
+      "title": "Workflow",
+      "running": "已運行 {text}",
+      "agents": "{n} 個 agent"
+    },
+    "session": {
+      "title": "本次對話",
+      "cwd": "工作目錄",
+      "model": "模型",
+      "files": "檔案"
+    },
     "tabs": {
       "label": "右側工作台",
       "sessionFiles": "對話檔案",
@@ -1999,6 +2053,7 @@
     "subagentStopReason": "子 agent 未完整完成（stopReason: {reason}）。",
     "subagentToolFailed": "子 agent 工具執行失敗: {msg}",
     "subagentDispatched": "子任務已派出 (task-id: {taskId})。完成後結果會自動送達。",
+    "subagentReuseQueued": "子任務已派出 (task-id: {taskId})。實例「{instance}」正忙，已排隊，前一個任務完成後接著跑。",
     "installSkillDisabled": "技能安裝能力未啟用。請在設定中開啟「允許 Agent 自行建立/安裝技能」。",
     "installSkillGithubDisabled": "GitHub 技能獲取未啟用。請在設定中開啟「允許從 GitHub 獲取技能」。",
     "installSkillInvalidGithubUrl": "無效的 GitHub URL：{url}",
@@ -2277,6 +2332,8 @@
       "description": "將任務派給子 agent 執行。可指定其他 agent（傳 agent 參數），不指定則自己分身執行。傳 agent=\"?\" 查看可用 agent 列表。\n\n你的判斷：\n- 如果目前還有可以並行推進的工作，繼續做\n- 如果必須拿到結果才能進行下一步，告訴使用者你已經派出去了、在等回覆，然後正常等待即可\n\n適用場景：\n- 需要大量搜尋、閱讀後總結為簡短結論的調研任務\n- 可以和目前思路並行的獨立子問題\n- 需要在多個方向同時探索的任務（可同時發起多個 subagent 呼叫）\n- 讓另一個 agent 從其專業視角處理任務\n不適用：需要修改檔案、執行命令等有副作用的操作\n\n重要：task 參數要寫清楚完整的指令和必要背景，子 agent 看不到目前的對話歷史。",
       "taskDesc": "子 agent 的完整指令。格式：第一行寫「任務：xxx」作為任務標題，空一行後寫詳細要求和必要背景。子 agent 看不到當前對話歷史，必要上下文都要寫在這裡。",
       "agentDesc": "目標 agent 的 id 欄位值（團隊列表中括號內，不是粗體的顯示名稱）。不填則當前 agent 自己執行，傳 \"?\" 列出可用 agent。",
+      "instanceDesc": "可選。複用實例後綴（如「探索」「下筆」）。帶上它表示派給一個會記住歷史的常駐子助手實例：同一 agent + 同一後綴續接同一段對話，能看到上次的上下文。省略則是一次性子任務，不留記憶。注意：同一實例同一時刻只跑一個任務，並發會自動排隊。",
+      "accessDesc": "可選。權限檔：探索/調研/審查類任務傳 \"read\"（唯讀，禁止改檔案、跑指令）；執行/修改類傳 \"write\"（可操作）。省略則繼承你目前對話的權限檔：一般對話→可操作，唯讀/plan 模式→唯讀。",
       "modelDesc": "指定模型，必須使用 provider/id（可選，預設使用 utility 模型）"
     },
     "installSkill": {

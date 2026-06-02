@@ -110,6 +110,10 @@ const migrations = {
   32: migrateAgentPhoneRuntimeOutOfProjection,
   // 小花美术默认显式关闭；旧 Agent 配置只有用户手动开启后才可用
   33: migrateBeautifyDefaultExplicitOff,
+  // workflow 默认显式关闭：从全局设置页开关迁移为 per-agent 工具开关后，老 agent 补 disabled
+  34: migrateWorkflowDefaultExplicitOff,
+  // MiniMax Token Plan 官方入口迁到 Anthropic-compatible endpoint，但保留独立 provider 边界
+  35: migrateMiniMaxTokenPlanAnthropicEndpoint,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -940,6 +944,106 @@ function migrateBeautifyDefaultExplicitOff(ctx) {
     saveConfig(cfgPath, { tools: { disabled: [...existing, "beautify"] } });
     log(`[migrations] #33: beautify defaulted to disabled for "${dir.name}"`);
   }
+}
+
+/**
+ * #34 — workflow 工具默认显式关闭
+ *
+ * workflow 从全局高权限设置页开关迁移为 per-agent 工具开关，默认 opt-in 关闭。
+ * 老配置的 tools.disabled 里不会有 workflow（旧机制下它不是 per-agent 工具），
+ * 迁移显式把 workflow 补进 disabled，让升级用户默认关，需在助手页手动开启。
+ * 已含则跳过（幂等），用户后续手动开关会正常覆盖。
+ */
+function migrateWorkflowDefaultExplicitOff(ctx) {
+  const { agentsDir, log } = ctx;
+  let dirs;
+  try {
+    dirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return;
+  }
+
+  for (const dir of dirs) {
+    const cfgPath = path.join(agentsDir, dir.name, "config.yaml");
+    if (!fs.existsSync(cfgPath)) continue;
+    const config = safeReadYAMLSync(cfgPath, null, YAML);
+    if (!config) continue;
+    const existing = Array.isArray(config.tools?.disabled)
+      ? config.tools.disabled
+      : DEFAULT_DISABLED_TOOL_NAMES.filter((name) => name !== "workflow");
+    if (existing.includes("workflow")) continue;
+    saveConfig(cfgPath, { tools: { disabled: [...existing, "workflow"] } });
+    log(`[migrations] #34: workflow defaulted to disabled for "${dir.name}"`);
+  }
+}
+
+const MINIMAX_TOKEN_PLAN_PROVIDER_ID = "minimax-token-plan";
+const MINIMAX_TOKEN_PLAN_LEGACY_BASE_URLS = new Set([
+  "https://api.minimax.io/v1",
+  "https://api.minimaxi.com/v1",
+]);
+const MINIMAX_TOKEN_PLAN_LEGACY_API = "openai-completions";
+const MINIMAX_CURRENT_ANTHROPIC_BASE_URL = "https://api.minimaxi.com/anthropic";
+const MINIMAX_CURRENT_ANTHROPIC_API = "anthropic-messages";
+
+function normalizeProviderUrlForMigration(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\/+$/, "");
+}
+
+/**
+ * #35 — MiniMax Token Plan 接入点迁到当前官方 Anthropic-compatible API
+ *
+ * Token Plan 和普通 MiniMax 现在都走 api.minimaxi.com/anthropic，但密钥、
+ * 套餐和 Provider ID 仍然是两套边界。本迁移只修旧官方默认值，遇到自定义
+ * 代理或非官方 URL 时不猜测。
+ */
+function migrateMiniMaxTokenPlanAnthropicEndpoint(ctx) {
+  const { hanakoHome, log } = ctx;
+  const ymlPath = path.join(hanakoHome, "added-models.yaml");
+  const raw = safeReadYAMLSync(ymlPath, null, YAML);
+  if (!raw?.providers || typeof raw.providers !== "object") {
+    log?.("[migrations] #35: MiniMax Token Plan endpoint migration skipped (no providers)");
+    return;
+  }
+
+  const provider = raw.providers[MINIMAX_TOKEN_PLAN_PROVIDER_ID];
+  if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+    log?.("[migrations] #35: MiniMax Token Plan endpoint migrated (patched=0)");
+    return;
+  }
+
+  const baseUrl = normalizeProviderUrlForMigration(provider.base_url);
+  const api = typeof provider.api === "string" ? provider.api.trim() : "";
+  const isLegacyOfficialDefault = MINIMAX_TOKEN_PLAN_LEGACY_BASE_URLS.has(baseUrl)
+    && (!api || api === MINIMAX_TOKEN_PLAN_LEGACY_API);
+
+  if (!isLegacyOfficialDefault) {
+    log?.("[migrations] #35: MiniMax Token Plan endpoint migrated (patched=0)");
+    return;
+  }
+
+  provider.base_url = MINIMAX_CURRENT_ANTHROPIC_BASE_URL;
+  provider.api = MINIMAX_CURRENT_ANTHROPIC_API;
+
+  const header =
+    "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
+    "# 由设置页面管理\n\n";
+  const yamlStr = header + YAML.dump(raw, {
+    indent: 2,
+    lineWidth: -1,
+    sortKeys: false,
+    quotingType: "\"",
+    forceQuotes: false,
+  });
+  atomicWriteSync(ymlPath, yamlStr);
+
+  if (ctx.providerRegistry) {
+    ctx.providerRegistry._addedModelsCache = null;
+    ctx.providerRegistry._addedModelsMtime = 0;
+  }
+
+  log?.("[migrations] #35: MiniMax Token Plan endpoint migrated (patched=1)");
 }
 
 /**

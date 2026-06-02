@@ -23,6 +23,7 @@ function makeEngine({ pluginFactories = [] } = {}) {
   engine._resourceLoader = {
     reload: vi.fn().mockResolvedValue(undefined),
   };
+  engine._sessionCoord = null;
   return engine;
 }
 
@@ -57,5 +58,18 @@ describe("HanaEngine extension factories", () => {
       "plugin-a",
     ]);
     expect(engine._resourceLoader.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads idle live sessions after plugin extension factories change", async () => {
+    const engine = makeEngine({
+      pluginFactories: [makeFactory("plugin-a")],
+    });
+    engine._sessionCoord = {
+      reloadExtensionRunners: vi.fn().mockResolvedValue({ reloaded: 1, skipped: 0, failed: 0 }),
+    };
+
+    await engine.syncPluginExtensions();
+
+    expect(engine._sessionCoord.reloadExtensionRunners).toHaveBeenCalledWith("plugin_extension_sync");
   });
 });

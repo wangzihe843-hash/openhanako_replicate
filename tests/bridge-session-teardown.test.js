@@ -131,6 +131,24 @@ describe("BridgeSessionManager teardown", () => {
     expect(session.steer).toHaveBeenCalledWith("先停一下，直接回答这个");
   });
 
+  it("does not steer an active bridge session across role boundaries", () => {
+    const agent = makeAgent(rootDir);
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    const sessionKey = "qq_dm_same-person@agent-a";
+    const session = {
+      isStreaming: true,
+      steer: vi.fn(),
+    };
+    manager.activeSessions.set(sessionKey, session);
+    manager._activeSessionRoles.set(sessionKey, "guest");
+
+    expect(manager.isSessionStreaming(sessionKey, { role: "owner" })).toBe(false);
+    expect(manager.steerSession(sessionKey, "owner message", { role: "owner" })).toBe(false);
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(manager.steerSession(sessionKey, "guest message", { role: "guest" })).toBe(true);
+    expect(session.steer).toHaveBeenCalledWith("guest message");
+  });
+
   it("executeExternalMessage 结束后走 emit -> unsub -> dispose", async () => {
     const agent = makeAgent(rootDir);
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s1.jsonl");
@@ -802,6 +820,64 @@ describe("BridgeSessionManager teardown", () => {
     const secondCreateArgs = createAgentSessionMock.mock.calls.at(-1)[0];
     expect(secondCreateArgs.resourceLoader.getSystemPrompt()).toBe(snapshot.systemPrompt);
     expect(secondCreateArgs.resourceLoader.getSystemPrompt()).not.toContain("group v2");
+  });
+
+  it("creates a new owner bridge session when an existing guest session becomes owner", async () => {
+    const agent = makeAgent(rootDir);
+    agent.buildSystemPrompt = vi.fn(() => "owner prompt");
+    const sessionKey = "qq_dm_c2c-openid@agent-a";
+    const guestPath = path.join(agent.sessionDir, "bridge", "guests", "guest-first.jsonl");
+    const ownerPath = path.join(agent.sessionDir, "bridge", "owner", "owner-after.jsonl");
+    fs.mkdirSync(path.dirname(guestPath), { recursive: true });
+    fs.mkdirSync(path.dirname(ownerPath), { recursive: true });
+    fs.writeFileSync(guestPath, "", "utf-8");
+    fs.writeFileSync(ownerPath, "", "utf-8");
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    sessionManagerCreateMock
+      .mockReturnValueOnce({ getSessionFile: () => guestPath })
+      .mockReturnValueOnce({ getSessionFile: () => ownerPath });
+    sessionManagerOpenMock.mockReturnValue({ getSessionFile: () => guestPath });
+    createAgentSessionMock.mockImplementation(async ({ sessionManager }) => ({
+      session: {
+        model: { input: ["text"] },
+        prompt: vi.fn(async () => {}),
+        subscribe: vi.fn(() => () => {}),
+        dispose: vi.fn(),
+        sessionManager,
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    }));
+
+    await manager.executeExternalMessage("guest hello", sessionKey, {
+      userId: "qq-user",
+      chatId: "c2c-openid",
+    }, { agentId: "agent-a", guest: true, contextTag: "guest context" });
+    expect(manager.readIndex(agent)[sessionKey]).toMatchObject({
+      file: "guests/guest-first.jsonl",
+      role: "guest",
+    });
+
+    sessionManagerCreateMock.mockClear();
+    sessionManagerOpenMock.mockClear();
+    createAgentSessionMock.mockClear();
+
+    await manager.executeExternalMessage("owner hello", sessionKey, {
+      userId: "qq-user",
+      chatId: "c2c-openid",
+    }, { agentId: "agent-a" });
+
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(sessionManagerCreateMock).toHaveBeenCalledOnce();
+    const ownerCreateArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(ownerCreateArgs.resourceLoader.getSystemPrompt()).toContain("owner prompt");
+    expect(ownerCreateArgs.resourceLoader.getSystemPrompt()).not.toContain("public-ishiki");
+    const entry = manager.readIndex(agent)[sessionKey];
+    expect(entry).toMatchObject({
+      file: "owner/owner-after.jsonl",
+      role: "owner",
+    });
+    expect(entry.promptSnapshot.systemPrompt).toContain("owner prompt");
+    expect(entry.promptSnapshot.systemPrompt).not.toContain("public-ishiki");
   });
 
   it("adds a low-salience platform line and records bridge context metadata for owner sessions", async () => {

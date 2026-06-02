@@ -84,4 +84,42 @@ describe("session permission wrapper", () => {
     expect(tool.execute).not.toHaveBeenCalled();
     expect(result.details.confirmed).toBe(false);
   });
+
+  // ---- 甲（Codex 式）端到端：permissionContext 透传到 classify ----
+
+  it("subagent 上下文拦 subagent 工具（防自递归），即便 operate 全放行也拦，真实工具不执行", async () => {
+    const tool = makeTool("subagent");
+    const [wrapped] = wrapWithSessionPermission([tool], {
+      getPermissionMode: () => "operate", // 即便最宽松的 operate
+      permissionContext: { isSubagent: true },
+    });
+    const result = await wrapped.execute("call-1", { task: "递归" }, null, null, ctx);
+    expect(tool.execute).not.toHaveBeenCalled();
+    expect(result.details.errorCode).toBe("ACTION_BLOCKED_IN_SUBAGENT");
+  });
+
+  it("subagent 上下文 + read-only：write 被拦、read 放行（探索者只读档的执行层证明）", async () => {
+    const write = makeTool("write");
+    const read = makeTool("read");
+    const [wWrite, wRead] = wrapWithSessionPermission([write, read], {
+      getPermissionMode: () => "read_only",
+      permissionContext: { isSubagent: true },
+    });
+    const wr = await wWrite.execute("c1", { path: "x" }, null, null, ctx);
+    const rd = await wRead.execute("c2", { path: "x" }, null, null, ctx);
+    expect(write.execute).not.toHaveBeenCalled();
+    expect(wr.details.errorCode).toBe("ACTION_BLOCKED_BY_READ_ONLY");
+    expect(read.execute).toHaveBeenCalledOnce();
+    expect(rd.details.executed).toBe(true);
+  });
+
+  it("对照：无 permissionContext 时 subagent 工具在 operate 下正常执行", async () => {
+    const tool = makeTool("subagent");
+    const [wrapped] = wrapWithSessionPermission([tool], {
+      getPermissionMode: () => "operate",
+    });
+    const result = await wrapped.execute("call-1", { task: "x" }, null, null, ctx);
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.details.executed).toBe(true);
+  });
 });

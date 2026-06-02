@@ -280,7 +280,7 @@ export const createChatSlice = (
       if (item.type !== 'message' || item.data.role !== 'assistant') continue;
       const blocks = item.data.blocks;
       if (!blocks) continue;
-      const blockIdx = blocks.findIndex((b: any) => b.type === 'subagent' && b.taskId === taskId);
+      const blockIdx = blocks.findIndex((b: any) => (b.type === 'subagent' || b.type === 'workflow') && b.taskId === taskId);
       if (blockIdx === -1) continue;
       const newBlocks = [...blocks];
       newBlocks[blockIdx] = { ...newBlocks[blockIdx], ...patch };

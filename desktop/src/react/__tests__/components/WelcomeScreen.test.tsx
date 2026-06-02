@@ -30,6 +30,7 @@ const translations: Record<string, string | string[] | Record<string, { avatar: 
   'input.selectProject': '选择项目',
   'input.noCustomProjects': '暂无自定义项目',
   'input.selectOtherFolder': '选择其他文件夹',
+  'input.removeRecentWorkspace': '从列表移除',
   'input.extraFolders': '额外文件夹',
   'input.addExternalFolder': '添加工作台以外的文件夹',
   'welcome.messages': ['想到什么就说什么吧~'],
@@ -65,6 +66,8 @@ describe('WelcomeScreen workspace picker', () => {
       homeFolder: '/workspace/Desktop/project-hana',
       cwdHistory: ['/workspace/Desktop/project-hana'],
       workspaceFolders: ['/workspace/Reference'],
+      serverPort: 62950,
+      serverToken: 'test-token',
       pendingProjectId: null,
       sessionProjectCatalog: {
         folders: [],
@@ -96,6 +99,25 @@ describe('WelcomeScreen workspace picker', () => {
     expect(currentLabel.compareDocumentPosition(selectOther) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectOther.compareDocumentPosition(extraLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(extraLabel.compareDocumentPosition(addExternal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('removes a recent workspace from the picker without switching workspace', async () => {
+    mocks.hanaFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      ok: true,
+      cwd_history: [],
+    }), { status: 200 }));
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /工作台：Desktop/ }));
+    fireEvent.click(screen.getByRole('button', { name: '从列表移除' }));
+
+    expect(useStore.getState().selectedFolder).toBe('/workspace/Desktop');
+    expect(useStore.getState().cwdHistory).toEqual([]);
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config/workspaces/recent', expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ path: '/workspace/Desktop/project-hana' }),
+    }));
   });
 
   it('shows the cwd project as the default new-session project', async () => {

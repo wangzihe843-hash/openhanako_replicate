@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConfigRoute } from "../server/routes/config.js";
 
-function makeAgent(tmpDir) {
+function makeAgent(tmpDir, overrides = {}) {
   const agentDir = path.join(tmpDir, "agents", "hana");
   const memoryDir = path.join(agentDir, "memory");
   const summariesDir = path.join(memoryDir, "summaries");
@@ -28,6 +28,7 @@ function makeAgent(tmpDir) {
       exportAll: vi.fn(() => []),
       clearAll: vi.fn(),
     },
+    ...overrides,
   };
 }
 
@@ -112,5 +113,53 @@ describe("memory routes", () => {
     expect(agent.summaryManager.clearCache).not.toHaveBeenCalled();
     expect(agent.factStore.clearAll).not.toHaveBeenCalled();
     expect(engine.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it("reports memory health for an explicit agent", async () => {
+    const health = {
+      rollingSummary: { lastSuccessAt: "2026-06-01T10:00:00.000Z", lastErrorAt: null, lastErrorMsg: null, failCount: 0 },
+      compileToday: { lastSuccessAt: "2026-06-01T10:05:00.000Z", lastErrorAt: null, lastErrorMsg: null, failCount: 0 },
+      compileWeek: { lastSuccessAt: null, lastErrorAt: null, lastErrorMsg: null, failCount: 0 },
+      compileLongterm: { lastSuccessAt: null, lastErrorAt: null, lastErrorMsg: null, failCount: 0 },
+      compileFacts: { lastSuccessAt: null, lastErrorAt: null, lastErrorMsg: null, failCount: 0 },
+      deepMemory: { lastSuccessAt: null, lastErrorAt: "2026-06-01T10:10:00.000Z", lastErrorMsg: "LLM timeout", failCount: 2 },
+    };
+    const memoryTicker = { getHealthStatus: vi.fn(() => health) };
+    const agent = makeAgent(tmpDir, { memoryTicker });
+    const engine = makeEngine(agent, tmpDir);
+    const app = mountConfigRoute(engine);
+
+    const res = await app.request("/api/memories/health?agentId=hana");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(memoryTicker.getHealthStatus).toHaveBeenCalledOnce();
+    expect(data).toMatchObject({
+      agentId: "hana",
+      status: "degraded",
+      reason: null,
+      failedSteps: ["deepMemory"],
+      maxFailCount: 2,
+      lastSuccessAt: "2026-06-01T10:05:00.000Z",
+      lastErrorAt: "2026-06-01T10:10:00.000Z",
+      steps: {
+        deepMemory: health.deepMemory,
+      },
+    });
+  });
+
+  it("requires an explicit agentId for memory health", async () => {
+    const agent = makeAgent(tmpDir, {
+      memoryTicker: { getHealthStatus: vi.fn(() => ({})) },
+    });
+    const engine = makeEngine(agent, tmpDir);
+    const app = mountConfigRoute(engine);
+
+    const res = await app.request("/api/memories/health");
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+    expect(agent.memoryTicker.getHealthStatus).not.toHaveBeenCalled();
   });
 });

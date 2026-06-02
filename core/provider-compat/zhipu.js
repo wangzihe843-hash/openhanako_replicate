@@ -4,7 +4,26 @@
  * Zhipu uses the OpenAI chat-completions shape but rejects several OpenAI-only
  * request fields. Keep the provider contract explicit instead of relying on
  * server-side defaults or silent provider fallback.
+ *
+ * Protocol notes:
+ *   1. GLM 4.7/5/5.1 thinking is controlled with thinking.type.
+ *   2. Tool-call turns in thinking mode must replay real reasoning_content.
+ *   3. Preserved thinking uses thinking.clear_thinking=false.
+ *
+ * Official docs:
+ *   - https://docs.bigmodel.cn/cn/guide/capabilities/thinking-mode
+ *   - https://docs.z.ai/api-reference/llm/chat-completion
+ *
+ * Deletion condition:
+ *   - pi-ai natively handles Zhipu thinking controls, reasoning_content replay,
+ *     and unsupported OpenAI-only request fields for GLM OpenAI-compatible APIs.
  */
+
+import {
+  ensureAssistantContentForToolCalls,
+  ensureReasoningContentForToolCalls,
+  stripReasoningContent,
+} from "./reasoning-content-replay.js";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -59,6 +78,17 @@ function normalizeTools(tools) {
   return { value, changed };
 }
 
+function hasAssistantToolCallHistory(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((message) => {
+    return message
+      && typeof message === "object"
+      && message.role === "assistant"
+      && Array.isArray(message.tool_calls)
+      && message.tool_calls.length > 0;
+  });
+}
+
 function normalizeThinking(payload, model, options) {
   const off = options?.mode === "utility"
     || isThinkingOff(options?.reasoningLevel)
@@ -72,7 +102,32 @@ function normalizeThinking(payload, model, options) {
 
   const next = { ...payload };
   delete next.reasoning_effort;
-  next.thinking = { type: off ? "disabled" : "enabled" };
+
+  if (off) {
+    next.thinking = { type: "disabled" };
+    if (Array.isArray(next.messages)) {
+      const stripped = stripReasoningContent(next.messages);
+      if (stripped !== next.messages) next.messages = stripped;
+    }
+    return next;
+  }
+
+  next.thinking = { type: "enabled" };
+
+  if (hasAssistantToolCallHistory(next.messages)) {
+    next.thinking.clear_thinking = false;
+
+    const ensured = ensureReasoningContentForToolCalls(next.messages, { providerLabel: "Zhipu" });
+    if (ensured !== next.messages) {
+      next.messages = ensured;
+    }
+
+    const contentEnsured = ensureAssistantContentForToolCalls(next.messages);
+    if (contentEnsured !== next.messages) {
+      next.messages = contentEnsured;
+    }
+  }
+
   return next;
 }
 

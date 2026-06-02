@@ -381,7 +381,8 @@
     transition: width var(--duration-slow) var(--ease-out) 0.8s;
 }
 
-.agent-cards:hover {
+.agent-cards:hover,
+.agent-cards-expanded {
     width: max(240px, calc(var(--cards-spread-width, 240) * 1px));
     transition-delay: 0s;
     /* overflow scroll for 9+ cards */
@@ -391,7 +392,8 @@
     -ms-overflow-style: none;
 }
 
-.agent-cards:hover::-webkit-scrollbar {
+.agent-cards:hover::-webkit-scrollbar,
+.agent-cards-expanded::-webkit-scrollbar {
     display: none;
 }
 
@@ -517,13 +519,15 @@
 }
 
 /* Hover 展开：直线排列（rotate 归零 + translateX 展开） */
-.agent-cards:hover .agent-card {
+.agent-cards:hover .agent-card,
+.agent-cards-expanded .agent-card {
     transform-origin: center center;
     transform: translateX(var(--tx-spread, 0px)) rotate(0deg) translateY(var(--lift, 0px));
     transition-delay: 0s;
 }
 
-.agent-cards:hover .agent-card-name {
+.agent-cards:hover .agent-card-name,
+.agent-cards-expanded .agent-card-name {
     opacity: 1;
 }
 
@@ -4619,6 +4623,10 @@ a.about-link:hover {
     min-height: 28px;
 }
 
+.pv-cred-row-top {
+    align-items: flex-start;
+}
+
 .pv-cred-label {
     font-size: 0.72rem;
     color: var(--text-muted);
@@ -4645,6 +4653,12 @@ a.about-link:hover {
 .pv-cred-url-row .settings-input {
     width: 100%;
     font-size: 0.75rem;
+}
+
+.pv-headers-textarea {
+    min-height: 66px;
+    font-size: 0.75rem;
+    resize: vertical;
 }
 
 .pv-cred-badge {
@@ -5587,6 +5601,75 @@ a.about-link:hover {
 
 .memory-action-btn.danger:hover {
     background: rgba(var(--coral-rgb), 0.08);
+}
+
+.memory-health-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.58rem 0.68rem;
+    margin-bottom: var(--space-lg);
+    border: 1px solid var(--overlay-light);
+    border-radius: 6px;
+    background: var(--overlay-subtle);
+    color: var(--text-light);
+}
+
+.memory-health-main {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.memory-health-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: var(--text-muted);
+}
+
+.memory-health-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.memory-health-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.8rem;
+    padding-left: 0.87rem;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    line-height: 1.5;
+}
+
+.memory-health-ok .memory-health-dot {
+    background: var(--sage, #8aa083);
+}
+
+.memory-health-attention {
+    border-color: rgba(var(--gold-rgb, 180, 138, 68), 0.35);
+    background: rgba(var(--gold-rgb, 180, 138, 68), 0.08);
+}
+
+.memory-health-attention .memory-health-dot {
+    background: var(--gold, #b48a44);
+}
+
+.memory-health-error {
+    border-color: rgba(var(--coral-rgb), 0.35);
+    background: rgba(var(--coral-rgb), 0.08);
+}
+
+.memory-health-error .memory-health-dot {
+    background: var(--coral);
+}
+
+.memory-health-muted .memory-health-dot {
+    background: var(--text-muted);
 }
 
 /* 清除确认浮层 */

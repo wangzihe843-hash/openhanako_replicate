@@ -23,6 +23,18 @@ export function mergeWorkspaceHistory(existing = [], additions = [], options = {
   return next.slice(0, Math.max(0, limit));
 }
 
+export function removeWorkspaceHistoryEntries(existing = [], removals = []) {
+  const removeSet = new Set((Array.isArray(removals) ? removals : [removals])
+    .map(normalizeWorkspacePath)
+    .filter(Boolean));
+  if (removeSet.size === 0) return mergeWorkspaceHistory(existing, []);
+  return mergeWorkspaceHistory(existing, []).filter((item) => !removeSet.has(item));
+}
+
+export function clearWorkspaceHistory() {
+  return [];
+}
+
 export function buildWorkspacePickerItems({ selectedFolder, homeFolder, cwdHistory } = {}) {
   const items = [];
   const push = (value) => {

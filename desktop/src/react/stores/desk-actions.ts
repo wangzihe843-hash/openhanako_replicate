@@ -16,7 +16,8 @@ import {
 } from './workspace-ui-state-actions';
 import { hasServerConnection } from '../services/server-connection';
 // @ts-expect-error — shared JS module
-import { mergeWorkspaceHistory, normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
+import { mergeWorkspaceHistory, normalizeWorkspacePath, removeWorkspaceHistoryEntries } from '../../../../shared/workspace-history.js';
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调及 IPC callback data */
 
 const t = (key: string, vars?: Record<string, string | number>) => window.t?.(key, vars) ?? key;
@@ -845,6 +846,48 @@ async function persistWorkspaceHistory(folder: string): Promise<void> {
     }
   } catch (err) {
     console.error('[workspace] persist history failed:', err);
+  }
+}
+
+export async function removeRecentWorkspace(folder: string): Promise<void> {
+  const normalized = normalizeFolder(folder);
+  if (!normalized) return;
+  useStore.setState((s: any) => ({
+    cwdHistory: removeWorkspaceHistoryEntries(s.cwdHistory, [normalized]),
+  }));
+  const s = useStore.getState();
+  if (!hasServerConnection(s)) return;
+  try {
+    const res = await hanaFetch('/api/config/workspaces/recent', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: normalized }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(String(data.error));
+    if (Array.isArray(data.cwd_history)) {
+      useStore.setState({ cwdHistory: mergeWorkspaceHistory(data.cwd_history, []) });
+    }
+  } catch (err) {
+    console.error('[workspace] remove recent history failed:', err);
+  }
+}
+
+export async function clearRecentWorkspaces(): Promise<void> {
+  useStore.setState({ cwdHistory: [] });
+  const s = useStore.getState();
+  if (!hasServerConnection(s)) return;
+  try {
+    const res = await hanaFetch('/api/config/workspaces/recent/all', {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(String(data.error));
+    if (Array.isArray(data.cwd_history)) {
+      useStore.setState({ cwdHistory: mergeWorkspaceHistory(data.cwd_history, []) });
+    }
+  } catch (err) {
+    console.error('[workspace] clear recent history failed:', err);
   }
 }
 

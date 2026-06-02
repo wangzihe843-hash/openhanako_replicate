@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWorkspacePickerItems,
+  clearWorkspaceHistory,
   mergeWorkspaceHistory,
+  removeWorkspaceHistoryEntries,
   workspaceDisplayName,
 } from "../shared/workspace-history.js";
 
@@ -26,5 +28,20 @@ describe("workspace history", () => {
   it("derives a stable folder display name from the workspace root", () => {
     expect(workspaceDisplayName("/workspace/Desktop/")).toBe("Desktop");
     expect(workspaceDisplayName("/")).toBe("/");
+  });
+
+  it("removes normalized workspace history entries without touching other roots", () => {
+    expect(removeWorkspaceHistoryEntries([
+      "/workspace/Desktop",
+      "/workspace/Novel",
+      "C:/Users/Hana/Project",
+    ], [
+      "/workspace/Desktop/",
+      "C:\\Users\\Hana\\Project",
+    ])).toEqual(["/workspace/Novel"]);
+  });
+
+  it("clears workspace history explicitly", () => {
+    expect(clearWorkspaceHistory()).toEqual([]);
   });
 });

@@ -517,7 +517,11 @@ function TreeNode({
         </span>
         <span
           className={s.itemIcon}
-          dangerouslySetInnerHTML={{ __html: file.isDir ? ICONS.folder : getFileIcon(file.name) }}
+          dangerouslySetInnerHTML={{
+            __html: file.isDir
+              ? (expanded ? ICONS.folderOpen : ICONS.folder)
+              : getFileIcon(file.name),
+          }}
         />
         {isRenaming ? (
           <RenameInput

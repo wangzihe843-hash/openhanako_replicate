@@ -1,23 +1,10 @@
 import { useEffect, useState } from 'react';
 import { hanaUrl } from '../hooks/use-hana-fetch';
 import type { Agent } from '../types';
-import { yuanFallbackAvatar } from './agent-helpers';
+import { userFallbackAvatar, yuanFallbackAvatar } from './agent-helpers';
 import { displayInitial } from './grapheme';
 
 let agentAvatarVersion = Date.now();
-
-function userFallbackAvatar(displayName: string): string {
-  const initial = displayInitial(displayName || 'User', 'U');
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
-    '<rect width="40" height="40" rx="20" fill="#f0eee9"/>',
-    '<text x="20" y="24" text-anchor="middle" font-family="Georgia, serif" font-size="15" font-weight="600" fill="#2f6f8f">',
-    initial,
-    '</text>',
-    '</svg>',
-  ].join('');
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
 
 export function refreshAgentAvatarVersion() {
   agentAvatarVersion = Date.now();

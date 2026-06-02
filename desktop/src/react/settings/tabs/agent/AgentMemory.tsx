@@ -1,16 +1,149 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { t, autoSaveConfig, savePins } from '../../helpers';
+import { hanaFetch } from '../../api';
 import { PinItem } from './AgentPins';
 import { SettingsSection } from '../../components/SettingsSection';
 import styles from '../../Settings.module.css';
 
-export function MemorySection({ hasUtilityModel, memoryEnabled, currentPins }: {
+type MemoryHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'disabled' | 'unavailable';
+
+type MemoryStepHealth = {
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorMsg: string | null;
+  failCount: number;
+};
+
+type MemoryHealthPayload = {
+  agentId: string;
+  status: MemoryHealthStatus;
+  reason: string | null;
+  enabled: boolean;
+  steps: Record<string, MemoryStepHealth>;
+  failedSteps: string[];
+  maxFailCount: number;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+};
+
+const healthToneByStatus: Record<MemoryHealthStatus, string> = {
+  healthy: 'ok',
+  degraded: 'attention',
+  unhealthy: 'error',
+  disabled: 'muted',
+  unavailable: 'muted',
+};
+
+function formatHealthTime(value: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function memoryStepLabel(step: string): string {
+  const key = `settings.memory.health.steps.${step}`;
+  const label = t(key);
+  return label === key ? step : label;
+}
+
+function formatFailedStepLabels(steps: string[]): string {
+  const labels = steps.map(memoryStepLabel);
+  if (labels.length <= 1) return labels[0] || '';
+  const sepKey = 'settings.memory.health.stepSeparator';
+  const separator = t(sepKey);
+  return labels.join(separator === sepKey ? ', ' : separator);
+}
+
+function pickLastErrorMessage(health: MemoryHealthPayload): string | null {
+  for (const step of health.failedSteps) {
+    const message = health.steps[step]?.lastErrorMsg;
+    if (message) return message;
+  }
+  return null;
+}
+
+function MemoryHealthNotice({ health, error }: {
+  health: MemoryHealthPayload | null;
+  error: string | null;
+}) {
+  if (!error && (!health || health.status === 'healthy')) return null;
+
+  const status: MemoryHealthStatus = error ? 'unavailable' : (health?.status || 'unavailable');
+  const tone = healthToneByStatus[status];
+  const failedStepLabels = health ? formatFailedStepLabels(health.failedSteps) : '';
+  const lastErrorAt = formatHealthTime(health?.lastErrorAt || null);
+  const lastErrorMessage = health ? pickLastErrorMessage(health) : null;
+
+  return (
+    <div className={`${styles['memory-health-strip']} ${styles[`memory-health-${tone}`]}`} role="status">
+      <div className={styles['memory-health-main']}>
+        <span className={styles['memory-health-dot']} />
+        <span className={styles['memory-health-title']}>{t(`settings.memory.health.${status}`)}</span>
+      </div>
+      <div className={styles['memory-health-detail']}>
+        {failedStepLabels && (
+          <span>{t('settings.memory.health.failedSteps', { steps: failedStepLabels })}</span>
+        )}
+        {lastErrorAt && (
+          <span>{t('settings.memory.health.lastError', { time: lastErrorAt })}</span>
+        )}
+        {lastErrorMessage && (
+          <span>{t('settings.memory.health.errorMessage', { message: lastErrorMessage })}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, currentPins }: {
+  agentId: string | null;
   hasUtilityModel: boolean;
   memoryEnabled: boolean;
   currentPins: string[];
 }) {
   const [pinInput, setPinInput] = useState('');
+  const [health, setHealth] = useState<MemoryHealthPayload | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!agentId || !hasUtilityModel || !memoryEnabled) {
+      setHealth(null);
+      setHealthError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setHealthError(null);
+
+    hanaFetch(`/api/memories/health?agentId=${encodeURIComponent(agentId)}`, {
+      signal: controller.signal,
+      timeout: 10_000,
+    })
+      .then((res) => res.json())
+      .then((data: MemoryHealthPayload) => {
+        if (!active) return;
+        setHealth(data);
+      })
+      .catch((err) => {
+        if (!active || controller.signal.aborted) return;
+        setHealth(null);
+        setHealthError(err?.message || String(err));
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [agentId, hasUtilityModel, memoryEnabled]);
 
   const addPin = () => {
     const val = pinInput.trim();
@@ -47,6 +180,8 @@ export function MemorySection({ hasUtilityModel, memoryEnabled, currentPins }: {
         )}
 
         <div className={!hasUtilityModel || !memoryEnabled ? 'settings-disabled' : ''}>
+          <MemoryHealthNotice health={health} error={healthError} />
+
           <div className={styles['settings-subsection']}>
             <div className={styles['settings-subsection-header']}>
               <h3 className={styles['settings-subsection-title']}>{t('settings.pins.title')}</h3>

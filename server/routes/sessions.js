@@ -328,6 +328,18 @@ export function createSessionsRoute(engine, hub = null) {
         lifecycleLog.warn(`subagent run cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
+        // per-session 复用实例随其所属对话退场（reuseKey 含 sessionPath，归属唯一确定）。
+        engine.reusableSubagents?.removeBySession?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`reusable subagent cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
+        // 右侧 workflow 卡活动随对话退场（内存 + 持久化背书一并清，按 sessionPath 归属）。
+        engine.activityHub?.clearBySession?.(sessionPath);
+      } catch (err) {
+        lifecycleLog.warn(`activity hub cleanup failed for ${sessionPath}: ${err.message}`);
+      }
+      try {
         engine.deferredResults?.suppressBySession?.(sessionPath, reason);
       } catch (err) {
         lifecycleLog.warn(`deferred cleanup failed for ${sessionPath}: ${err.message}`);
@@ -616,6 +628,13 @@ export function createSessionsRoute(engine, hub = null) {
             }
           }
         } else if (m.role === "custom") {
+          const afterIndex = displayIdx - 1;
+          if (m.display !== false && afterIndex >= pageBounds.startIdx && afterIndex < pageBounds.endIdx) {
+            const extracted = extractBlocks(m.customType, m.details, m);
+            for (const b of extracted) {
+              blocks.push({ ...b, afterIndex });
+            }
+          }
           recordMediaGenerationResult(parseHistoryDeferredResult(m), displayIdx - 1);
         }
       }
@@ -712,12 +731,43 @@ export function createSessionsRoute(engine, hub = null) {
         }
       }
 
+      // workflow inline 概览块回填：block_update patch 是前端瞬时事件、未持久化进 toolResult details，
+      // 重启后块保留派单时的 streamStatus:"running" + startedAt，会显示离谱「已运行 Xm」时长。
+      // 从 durable runStore 读终态修正，并用 completedAt 补 finishedAt（inline 卡算总时长用）。
+      {
+        const wfRunStore = engine.subagentRuns;
+        const wfDeferredStore = engine.deferredResults;
+        for (const b of slicedBlocks) {
+          if (b.type !== "workflow" || !b.taskId) continue;
+          if (b.streamStatus !== "running") continue;
+          const run = wfRunStore?.query?.(b.taskId) || null;
+          const task = wfDeferredStore?.query?.(b.taskId) || null;
+          const status = run?.status || task?.status || null;
+          if (status === "resolved" || status === "done") b.streamStatus = "done";
+          else if (status === "failed") b.streamStatus = "failed";
+          else if (status === "aborted") b.streamStatus = "aborted";
+          else continue; // 仍 pending / 无记录：保持 running，不误判完成
+          if (!b.finishedAt && run?.completedAt) {
+            const ts = Date.parse(run.completedAt);
+            if (Number.isFinite(ts)) b.finishedAt = ts;
+          }
+          if (!b.summary && typeof run?.summary === "string") b.summary = run.summary;
+        }
+      }
+
       patchSessionFileLifecycleBlocks(slicedBlocks, engine, resolvedSessionPath);
       const sessionFiles = listSessionRegistryFiles(engine, resolvedSessionPath);
 
       // 从历史中提取最新 todo 状态：branch-aware，沿当前 leaf 回溯到 root，
       // 只在当前分支路径上找最新合法快照。避免从抛弃的分支取到错误状态。
       const todos = extractLatestTodos(sourceMessages);
+
+      // 重启后右侧 workflow 卡复原：ActivityHub 已从持久化背书回灌该会话的 workflow 活动，
+      // 这里在「首屏载入」（非翻页）时重发一遍，让前端 agent-activity slice 重新填充。
+      // 翻页（beforeId != null）不重发，避免重复广播。WS 是全局广播、前端按 sessionPath 入库。
+      if (beforeId == null && resolvedSessionPath) {
+        engine.activityHub?.rebroadcastSession?.(resolvedSessionPath);
+      }
 
       return c.json({ messages, blocks: slicedBlocks, todos, hasMore, sessionFiles });
     } catch (err) {

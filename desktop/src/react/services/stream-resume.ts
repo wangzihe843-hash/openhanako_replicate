@@ -30,13 +30,21 @@ const _streamResumeRebuildVersions: Record<string, number> = {};
 let _streamResumeRebuildingFor: string | null = null;
 
 // ── Session 流元数据（module-level，不走 Zustand） ──
-const _sessionStreams: Record<string, { streamId: string | null; lastSeq: number }> = {};
+const MAX_CONSUMED_SEQS = 10_000;
 
-export function getSessionStreamMeta(sessionPath?: string): { streamId: string | null; lastSeq: number } | null {
+type SessionStreamMeta = {
+  streamId: string | null;
+  lastSeq: number;
+  consumedSeqs: Set<number>;
+};
+
+const _sessionStreams: Record<string, SessionStreamMeta> = {};
+
+export function getSessionStreamMeta(sessionPath?: string): SessionStreamMeta | null {
   const path = sessionPath || useStore.getState().currentSessionPath;
   if (!path) return null;
   if (!_sessionStreams[path]) {
-    _sessionStreams[path] = { streamId: null, lastSeq: 0 };
+    _sessionStreams[path] = { streamId: null, lastSeq: 0, consumedSeqs: new Set() };
   }
   return _sessionStreams[path];
 }
@@ -45,23 +53,28 @@ export function isStreamScopedMessage(msg: any): boolean {
   return !!(msg && msg.sessionPath && (msg.streamId || Number.isFinite(msg.seq)));
 }
 
-export function updateSessionStreamMeta(meta: any = {}): void {
+export function updateSessionStreamMeta(meta: any = {}): boolean {
   const sessionPath = meta.sessionPath || useStore.getState().currentSessionPath;
-  if (!sessionPath) return;
+  if (!sessionPath) return true;
 
   const entry = getSessionStreamMeta(sessionPath);
-  if (!entry) return;
+  if (!entry) return true;
 
   if (meta.streamId) {
     if (entry.streamId && entry.streamId !== meta.streamId) {
       entry.lastSeq = 0;
+      entry.consumedSeqs.clear();
     }
     entry.streamId = meta.streamId;
   }
 
   if (Number.isFinite(meta.seq)) {
-    entry.lastSeq = Math.max(entry.lastSeq || 0, meta.seq);
+    const seq = Math.max(0, Math.floor(meta.seq));
+    if (entry.consumedSeqs.has(seq)) return false;
+    markConsumedSeq(entry, seq);
   }
+
+  return true;
 }
 
 export function isStreamResumeRebuilding(): string | null {
@@ -105,6 +118,58 @@ function shouldHydrateCompletedEmptyResume(msg: any): boolean {
   return Number.isFinite(msg.nextSeq) && msg.nextSeq > 1;
 }
 
+function prepareStreamMeta(sessionPath: string, streamId: string | null, opts: { resetConsumed?: boolean } = {}): SessionStreamMeta | null {
+  const meta = getSessionStreamMeta(sessionPath);
+  if (!meta) return null;
+  if (streamId) {
+    if (meta.streamId && meta.streamId !== streamId) {
+      meta.lastSeq = 0;
+      meta.consumedSeqs.clear();
+    }
+    meta.streamId = streamId;
+  }
+  if (opts.resetConsumed) {
+    meta.lastSeq = 0;
+    meta.consumedSeqs.clear();
+  }
+  return meta;
+}
+
+function markConsumedSeq(meta: SessionStreamMeta, seq: unknown): void {
+  const value = Number(seq);
+  if (!Number.isFinite(value)) return;
+  const normalized = Math.max(0, Math.floor(value));
+  meta.lastSeq = Math.max(meta.lastSeq || 0, normalized);
+  meta.consumedSeqs.add(normalized);
+  pruneConsumedSeqs(meta);
+}
+
+function pruneConsumedSeqs(meta: SessionStreamMeta): void {
+  if (meta.consumedSeqs.size <= MAX_CONSUMED_SEQS) return;
+  const sorted = [...meta.consumedSeqs].sort((a, b) => a - b);
+  const removeCount = meta.consumedSeqs.size - MAX_CONSUMED_SEQS;
+  for (let i = 0; i < removeCount; i += 1) {
+    meta.consumedSeqs.delete(sorted[i]);
+  }
+}
+
+function dispatchReplayEvent(sessionPath: string, streamId: string | null, entry: any, meta: SessionStreamMeta | null): void {
+  const seq = Number.isFinite(entry?.seq) ? Math.max(0, Math.floor(Number(entry.seq))) : null;
+  if (seq !== null && meta?.consumedSeqs.has(seq)) return;
+
+  _handleServerMessage?.({
+    ...entry.event,
+    sessionPath,
+    streamId,
+    seq: entry.seq,
+    __fromReplay: true,
+  });
+
+  if (seq !== null && meta) {
+    markConsumedSeq(meta, seq);
+  }
+}
+
 async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrate?: boolean } = {}): Promise<void> {
   const currentSessionPath = useStore.getState().currentSessionPath;
   const sessionPath = msg.sessionPath || currentSessionPath;
@@ -131,20 +196,15 @@ async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrat
     if (!isLatestResumeRebuild(sessionPath, myVersion)) return;
     if (isCurrentSession && useStore.getState().currentSessionPath !== sessionPath) return;
 
-    const meta = getSessionStreamMeta(sessionPath);
-    if (meta) {
-      meta.streamId = msg.streamId || null;
-      meta.lastSeq = Number.isFinite(msg.nextSeq) ? Math.max(0, msg.nextSeq - 1) : 0;
-    }
+    const streamId = msg.streamId || null;
+    const meta = prepareStreamMeta(sessionPath, streamId, { resetConsumed: true });
 
     for (const entry of msg.events || []) {
-      _handleServerMessage?.({
-        ...entry.event,
-        sessionPath,
-        streamId: msg.streamId || null,
-        seq: entry.seq,
-        __fromReplay: true,
-      });
+      dispatchReplayEvent(sessionPath, streamId, entry, meta);
+    }
+
+    if (meta && Number.isFinite(msg.nextSeq)) {
+      meta.lastSeq = Math.max(meta.lastSeq || 0, Math.max(0, msg.nextSeq - 1));
     }
 
     _applyStreamingStatus?.(msg.isStreaming, sessionPath);
@@ -174,26 +234,15 @@ export function replayStreamResume(msg: any): void {
     return;
   }
 
-  const meta = getSessionStreamMeta(sessionPath);
-  if (meta && msg.streamId) {
-    if (msg.reset) meta.lastSeq = 0;
-    if (meta.streamId && meta.streamId !== msg.streamId) {
-      meta.lastSeq = 0;
-    }
-    meta.streamId = msg.streamId;
-    if (Number.isFinite(msg.nextSeq)) {
-      meta.lastSeq = Math.max(meta.lastSeq || 0, msg.nextSeq - 1);
-    }
-  }
+  const streamId = msg.streamId || null;
+  const meta = prepareStreamMeta(sessionPath, streamId);
 
   for (const entry of msg.events || []) {
-    _handleServerMessage?.({
-      ...entry.event,
-      sessionPath,
-      streamId: msg.streamId || null,
-      seq: entry.seq,
-      __fromReplay: true,
-    });
+    dispatchReplayEvent(sessionPath, streamId, entry, meta);
+  }
+
+  if (meta && Number.isFinite(msg.nextSeq)) {
+    meta.lastSeq = Math.max(meta.lastSeq || 0, Math.max(0, msg.nextSeq - 1));
   }
 
   _applyStreamingStatus?.(msg.isStreaming, sessionPath);

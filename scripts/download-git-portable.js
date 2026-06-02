@@ -11,6 +11,7 @@ import path from "path";
 import crypto from "crypto";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
+import { prunePortableGitRuntime } from "./prune-git-portable.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -77,6 +78,11 @@ async function main() {
 
   // 清理 archive
   fs.unlinkSync(ARCHIVE_PATH);
+
+  // 裁剪：砍掉 agent 用不到的 doc/gui/perl/tcl/svn/locale/编辑器，保留 bash+coreutils+git。
+  // 见 .docs/plans/2026-05-31-prune-portablegit-runtime.md
+  console.log("[download-git-portable] Pruning runtime...");
+  prunePortableGitRuntime(VENDOR_DIR);
 
   console.log(`[download-git-portable] PortableGit ${PORTABLE_GIT_VERSION} ready at ${VENDOR_DIR}`);
 }

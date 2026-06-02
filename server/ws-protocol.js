@@ -17,8 +17,8 @@
  *   { type: "thinking_start" }
  *   { type: "thinking_delta", delta: "..." }
  *   { type: "thinking_end" }
- *   { type: "tool_start", name: "..." }
- *   { type: "tool_end", name: "...", success: bool, details?: object }
+ *   { type: "tool_start", id?: "tool_call_id", name: "..." }
+ *   { type: "tool_end", id?: "tool_call_id", name: "...", success: bool, details?: object }
  *   { type: "turn_end" }
  *   { type: "error", message: "..." }
  *   { type: "status", isStreaming: bool }

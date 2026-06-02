@@ -348,6 +348,7 @@ export function AgentTab() {
       {/* 以下是本 phase 需要改造的部分：Memory / Experience / Tools */}
 
       <MemorySection
+        agentId={selectedSettingsAgentId}
         hasUtilityModel={hasUtilityModel}
         memoryEnabled={memoryEnabled}
         currentPins={currentPins}
@@ -394,10 +395,10 @@ export function AgentTab() {
         </div>
       </SettingsSection>
 
-      {/* 默认关闭 dm / beautify，与后端 DEFAULT_DISABLED_TOOL_NAMES 保持同步 */}
+      {/* 默认关闭 dm / beautify / workflow，与后端 DEFAULT_DISABLED_TOOL_NAMES 保持同步 */}
       <AgentToolsSection
         availableTools={availableTools}
-        disabled={settingsConfig?.tools?.disabled ?? ["dm", "beautify"]}
+        disabled={settingsConfig?.tools?.disabled ?? ["dm", "beautify", "workflow"]}
       />
 
       {exportPlanningAgentId && createPortal((

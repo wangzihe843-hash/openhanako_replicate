@@ -160,4 +160,25 @@ describe('extractScreenshotPayload', () => {
     const result = extractScreenshotPayload(messages as any, 'solarized-light');
     expect(result.messages![0].blocks).toHaveLength(0);
   });
+
+  it('conversation: consecutive same-role messages mark showHeader only on the first', () => {
+    const messages = [
+      { id: '1', role: 'user' as const, text: 'hi' },
+      { id: '2', role: 'assistant' as const, blocks: [{ type: 'text' as const, html: '<p>a</p>' }] },
+      { id: '3', role: 'assistant' as const, blocks: [{ type: 'text' as const, html: '<p>b</p>' }] },
+      { id: '4', role: 'assistant' as const, blocks: [{ type: 'text' as const, html: '<p>c</p>' }] },
+      { id: '5', role: 'user' as const, text: 'bye' },
+    ];
+    const result = extractScreenshotPayload(messages, 'solarized-dark');
+    expect(result.messages!.map(m => m.showHeader)).toEqual([true, true, false, false, true]);
+  });
+
+  it('first message always shows header even when same role follows', () => {
+    const messages = [
+      { id: '1', role: 'assistant' as const, blocks: [{ type: 'text' as const, html: '<p>a</p>' }] },
+      { id: '2', role: 'assistant' as const, blocks: [{ type: 'text' as const, html: '<p>b</p>' }] },
+    ];
+    const result = extractScreenshotPayload(messages, 'solarized-light');
+    expect(result.messages!.map(m => m.showHeader)).toEqual([true, false]);
+  });
 });

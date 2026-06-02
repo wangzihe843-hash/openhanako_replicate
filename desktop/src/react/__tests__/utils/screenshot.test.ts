@@ -161,4 +161,51 @@ describe('screenshot utils', () => {
       segmentTotal: 2,
     }));
   });
+
+  it('自定义头像缺失时，截图 payload 仍烧录普通聊天 UI 的默认头像', async () => {
+    const sessionPath = '/session/default-avatars.jsonl';
+    storeMock.state = {
+      ...storeMock.state,
+      currentAgentId: 'hana',
+      agentName: 'Hana',
+      agentYuan: 'hanako',
+      userName: '唐',
+      selectedIdsBySession: {
+        [sessionPath]: ['u1', 'a1'],
+      },
+      chatSessions: {
+        [sessionPath]: {
+          hasMore: false,
+          loadingMore: false,
+          items: [
+            { type: 'message', data: { id: 'u1', role: 'user', text: '你好' } },
+            { type: 'message', data: { id: 'a1', role: 'assistant', blocks: [{ type: 'text', html: '<p>你好</p>' }] } },
+          ],
+        },
+      },
+    };
+
+    const pngBlob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('assets/Hanako.png')) {
+        return new Response(pngBlob, { status: 200, headers: { 'Content-Type': 'image/png' } });
+      }
+      return new Response('', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+      getServerPort: vi.fn().mockResolvedValue(null),
+      getServerToken: vi.fn().mockResolvedValue(null),
+    };
+
+    await expect(takeScreenshot('u1', sessionPath)).resolves.toBeUndefined();
+
+    const payload = (window as any).hana.screenshotRender.mock.calls[0][0];
+    expect(payload.messages[0].avatarDataUrl).toMatch(/^data:image\/svg\+xml/);
+    expect(decodeURIComponent(payload.messages[0].avatarDataUrl)).toContain('唐');
+    expect(payload.messages[1].avatarDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('assets/Hanako.png'));
+  });
 });

@@ -5,6 +5,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { fetchConfig, invalidateConfigCache } from '../hooks/use-config';
 import { loadSessions, switchSession } from '../stores/session-actions';
 import { formatSessionDate, injectCopyButtons, parseMoodFromContent } from '../utils/format';
+import { formatElapsed } from '../utils/format-duration';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { getMd } from '../utils/markdown';
 import { useMermaidDiagrams } from '../hooks/use-mermaid-diagrams';
@@ -224,11 +225,7 @@ function ActivityCard({
 
   let durationText = '';
   if (a.finishedAt && a.startedAt) {
-    const seconds = Math.round((a.finishedAt - a.startedAt) / 1000);
-    const text = seconds >= 60
-      ? `${Math.floor(seconds / 60)}m${seconds % 60}s`
-      : `${seconds}s`;
-    durationText = t('activity.duration', { text });
+    durationText = t('activity.duration', { text: formatElapsed(a.finishedAt - a.startedAt) });
   }
 
   return (

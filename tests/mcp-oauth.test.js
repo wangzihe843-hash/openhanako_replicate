@@ -281,6 +281,25 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
     })).rejects.toThrow(/redirect not allowed/);
   });
 
+  it("throws a structured error when DCR rejects with a non-JSON body", async () => {
+    const fetchImpl = vi.fn(async () => new Response("<html>bad gateway</html>", {
+      status: 502,
+      headers: { "Content-Type": "text/html" },
+    }));
+
+    const err = await registerMcpOAuthClient({
+      registrationEndpoint: "https://auth.example.com/register",
+      redirectUri: "http://127.0.0.1:3210/api/plugins/mcp/oauth/callback",
+      fetchImpl,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(McpHttpError);
+    expect(err.status).toBe(502);
+    expect(err.body).toContain("bad gateway");
+    expect(err.message).toMatch(/dynamic client registration failed with status 502/i);
+    expect(err.message).not.toMatch(/SyntaxError/i);
+  });
+
   it("runs DCR when the connector has no client id and discovery offers a registration endpoint", async () => {
     const fetchImpl = vi.fn(async (url, init) => {
       if (String(url) === "https://mcp.example.com/mcp") {

@@ -48,4 +48,62 @@ describe("session permission modes", () => {
     });
     expect(classifySessionPermission({ mode: "operate", toolName: "terminal", params: { action: "close" } })).toEqual({ action: "allow" });
   });
+
+  it("blocks subagent tool inside a subagent (anti-recursion), independent of mode", () => {
+    // subagent 上下文：subagent 工具被拦，无论什么 mode（防自递归，拦截层而非剥离）
+    expect(classifySessionPermission({ mode: "operate", toolName: "subagent", context: { isSubagent: true } }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
+    expect(classifySessionPermission({ mode: "read_only", toolName: "subagent", context: { isSubagent: true } }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
+    // 非 subagent 上下文：subagent 工具按常规（operate 放行）
+    expect(classifySessionPermission({ mode: "operate", toolName: "subagent" })).toEqual({ action: "allow" });
+    // subagent 上下文里其它工具不受这条影响：read 放行、write 仍按 mode
+    expect(classifySessionPermission({ mode: "operate", toolName: "read", context: { isSubagent: true } })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "operate", toolName: "write", context: { isSubagent: true } })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "read_only", toolName: "write", context: { isSubagent: true } }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+  });
+
+  it("blocks the full subagent越权 tool set inside a subagent (memory/lifecycle/fan-out), independent of mode", () => {
+    // subagent 不该碰：污染长期记忆 / 管 agent 一生 / 再扇出。即便最宽松的 operate 也拦。
+    const BLOCKED = [
+      "subagent",         // 防自递归
+      "pin_memory", "unpin_memory", "record_experience", // 长期记忆（subagent 不碰）
+      "cron", "channel", "dm", "notify", "install_skill", "update_settings", // agent 生命周期/对外
+      "workflow",         // 间接扇出
+    ];
+    for (const name of BLOCKED) {
+      expect(
+        classifySessionPermission({ mode: "operate", toolName: name, context: { isSubagent: true } }),
+        `${name} 应在 subagent 上下文被拦`,
+      ).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
+      // 非 subagent 上下文：operate 正常放行（限制仅在 subagent 上下文）
+      expect(
+        classifySessionPermission({ mode: "operate", toolName: name }),
+        `${name} 在普通上下文 operate 应放行`,
+      ).toEqual({ action: "allow" });
+    }
+    // computer 不在禁用集（有全局开关兜底）：subagent 上下文 operate 仍放行
+    expect(classifySessionPermission({ mode: "operate", toolName: "computer", context: { isSubagent: true } }))
+      .toEqual({ action: "allow" });
+  });
+
+  it("subagent 没有 ask 模式：ask 在 subagent 上下文坍缩为 operate（永不挂在确认上）", () => {
+    // subagent 上下文 + ask：write 不 prompt，直接放行（坍缩 operate）
+    expect(classifySessionPermission({ mode: "ask", toolName: "write", context: { isSubagent: true } }))
+      .toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "ask", toolName: "bash", context: { isSubagent: true } }))
+      .toEqual({ action: "allow" });
+    // browser/terminal 的写动作同理（ask 坍缩 operate → 放行，不 prompt）
+    expect(classifySessionPermission({ mode: "ask", toolName: "browser", params: { action: "click" }, context: { isSubagent: true } }))
+      .toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "ask", toolName: "terminal", params: { action: "start" }, context: { isSubagent: true } }))
+      .toEqual({ action: "allow" });
+    // 非 subagent 上下文：ask 照常 prompt（不受影响）
+    expect(classifySessionPermission({ mode: "ask", toolName: "write" }))
+      .toMatchObject({ action: "prompt" });
+    // subagent + ask 仍挡越权工具（坍缩只影响 ask→operate，不放开禁用集）
+    expect(classifySessionPermission({ mode: "ask", toolName: "pin_memory", context: { isSubagent: true } }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
+  });
 });

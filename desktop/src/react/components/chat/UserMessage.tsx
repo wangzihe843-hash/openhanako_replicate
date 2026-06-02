@@ -6,6 +6,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { AttachmentChip } from '../shared/AttachmentChip';
+import { FolderIcon } from '../shared/FolderIcon';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
@@ -312,14 +313,6 @@ function GridIcon() {
       <line x1="18" y1="4" x2="18" y2="20" />
       <line x1="6" y1="8" x2="18" y2="8" />
       <line x1="6" y1="16" x2="18" y2="16" />
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
 }

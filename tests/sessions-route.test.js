@@ -797,6 +797,121 @@ describe("sessions route", () => {
     });
   });
 
+  it("reload 时从 runStore 回填 workflow inline 块终态（running→done + 补 finishedAt）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+      {
+        role: "toolResult",
+        toolName: "workflow",
+        details: { taskId: "workflow-1", workflow: "three-theme-poem", streamStatus: "running", startedAt: 1000 },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: {
+        query: vi.fn((id) => id === "workflow-1"
+          ? { taskId: "workflow-1", status: "resolved", summary: "诗", completedAt: "2026-05-31T08:26:49.160Z" }
+          : null),
+      },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    const wf = data.blocks.find((b) => b.type === "workflow");
+    expect(wf).toMatchObject({ taskId: "workflow-1", streamStatus: "done", startedAt: 1000 });
+    expect(wf.finishedAt).toBe(Date.parse("2026-05-31T08:26:49.160Z"));
+  });
+
+  it("workflow inline 块仍 pending 时保持 running（不误判完成）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+      {
+        role: "toolResult",
+        toolName: "workflow",
+        details: { taskId: "workflow-2", workflow: "wf", streamStatus: "running", startedAt: 1000 },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: { query: vi.fn(() => ({ taskId: "workflow-2", status: "pending" })) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+    const wf = data.blocks.find((b) => b.type === "workflow");
+    expect(wf.streamStatus).toBe("running");
+  });
+
+  it("首屏载入重发该会话的 workflow 活动（重启后右侧卡复原）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+    ]);
+
+    const rebroadcastSession = vi.fn();
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: null,
+      activityHub: { rebroadcastSession },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent("/s/a.jsonl")}`);
+    expect(res.status).toBe(200);
+    expect(rebroadcastSession).toHaveBeenCalledWith("/s/a.jsonl");
+  });
+
+  it("翻页（before）不重发 workflow 活动（避免重复广播）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+    ]);
+
+    const rebroadcastSession = vi.fn();
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      subagentRuns: null,
+      activityHub: { rebroadcastSession },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent("/s/a.jsonl")}&before=5`);
+    expect(res.status).toBe(200);
+    expect(rebroadcastSession).not.toHaveBeenCalled();
+  });
+
   it("includes session entry timestamps on displayable history messages", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.js");
     const msgUtils = await import("../core/message-utils.js");
@@ -1194,6 +1309,55 @@ describe("sessions route", () => {
       kind: "image",
       storageKind: "plugin_data",
       status: "available",
+    }]);
+  });
+
+  it("restores plugin_card blocks from extension custom messages", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/plugin-card.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "card produced", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "card produced" },
+      {
+        role: "custom",
+        customType: "finance-market",
+        content: "",
+        display: true,
+        details: {
+          card: {
+            pluginId: "finance-market",
+            route: "/card?id=quote",
+            title: "Quote",
+          },
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks).toEqual([{
+      type: "plugin_card",
+      afterIndex: 0,
+      card: {
+        pluginId: "finance-market",
+        route: "/card?id=quote",
+        title: "Quote",
+        type: "iframe",
+      },
     }]);
   });
 

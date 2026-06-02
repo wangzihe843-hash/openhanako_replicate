@@ -38,6 +38,7 @@ import { createWaitTool } from "../lib/tools/wait-tool.js";
 import { createStopTaskTool } from "../lib/tools/stop-task-tool.js";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
 import { createTerminalTool } from "../lib/tools/terminal-tool.js";
+import { createWorkflowTool } from "../lib/tools/workflow-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { getPlatformPromptNote } from "./platform-prompt.js";
 import { readCompactPeerPersona } from "../lib/desk/peer-persona.js";
@@ -450,6 +451,7 @@ export class Agent {
         agentId,
         listAgents,
         isEnabled: () => this._cb?.isChannelsEnabled?.() ?? false,
+        createChannelEntry: (input) => this._cb?.createChannelEntry?.(input),
         onPost: (channelName, senderId, message) => {
           this._channelPostHandler?.(channelName, senderId, message);
         },
@@ -492,10 +494,15 @@ export class Agent {
       resolveUtilityModel: () => this._cb?.getCurrentModelId?.() || null,
       getDeferredStore: () => this._cb?.getDeferredResults?.(),
       getSubagentRunStore: () => this._cb?.getSubagentRunStore?.(),
+      getReusableSubagentStore: () => this._cb?.getReusableSubagentStore?.(),
+      getActivityHub: () => this._cb?.getActivityHub?.(),
       getTaskRegistry: () => this._cb?.getTaskRegistry?.(),
       setSubagentController: (id, ctrl) => this._cb?.setSubagentController?.(id, ctrl),
       removeSubagentController: (id) => this._cb?.removeSubagentController?.(id),
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      // 父会话当前权限档：subagent 省略 access 参数时据此继承（Codex 式）。
+      // 按显式 sessionPath 反查，不从焦点指针推导（状态归属唯一确定）。
+      getSessionPermissionMode: (sp) => this._cb?.getSessionPermissionMode?.(sp) ?? null,
       // Subagent 继承 parent session 的 cwd（不是 agent 的 home_folder）：
       // 用户在主 session 里可能把 cwd 切到某个子项目，派出 subagent 时应当在同一处干活。
       getParentCwd: () => this._cb?.getCwd?.() || null,
@@ -504,6 +511,30 @@ export class Agent {
       agentDir: this.agentDir,
       emitEvent: (event, sp) => this._cb?.emitEvent?.(event, sp),
       persistSubagentSessionMeta: (sessionPath, meta) => writeSubagentSessionMeta(sessionPath, meta),
+    });
+
+    // 13. workflow 工具（per-agent 工具开关，默认关；纳入与否由 tools.disabled 决定）
+    this._workflowTool = createWorkflowTool({
+      executeIsolated: (prompt, opts) => {
+        if (!this._cb?.executeIsolated) throw new Error("workflow 调用失败：engine 未初始化");
+        return this._cb.executeIsolated(prompt, opts);
+      },
+      getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      getParentCwd: () => this._cb?.getCwd?.() || null,
+      getAgentId: () => this.id,
+      emitEvent: (event, sp) => this._cb?.emitEvent?.(event, sp),
+      resolveAgentId: (agentType) => {
+        const all = this._listAgents ? this._listAgents() : [];
+        const hit = all.find((a) => a.id === agentType || a.name === agentType);
+        return hit?.id;
+      },
+      // workflow 后台任务化：复用 subagent 的 deferred 基础设施，
+      // 完成后由 DeferredResultCoordinator 回灌主对话。
+      getDeferredStore: () => this._cb?.getDeferredResults?.(),
+      getSubagentRunStore: () => this._cb?.getSubagentRunStore?.(),
+      getActivityHub: () => this._cb?.getActivityHub?.(),
+      // 节点 token：从 UsageLedger 按子节点 session 汇总（usage 已在 executeIsolated 采集）。
+      getUsageLedger: () => this._cb?.getEngine?.()?.usageLedger,
     });
 
     // 12. 组装 system prompt（按 master 构建，与 per-session 开关解耦）
@@ -662,6 +693,7 @@ export class Agent {
       this._xingyeProposeDraftTool,
       this._updateSettingsTool,
       this._subagentTool,
+      this._workflowTool,
       this._checkDeferredTool,
       this._currentStatusTool,
       this._terminalTool,

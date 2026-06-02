@@ -201,6 +201,29 @@ describe("server auth service", () => {
     })).toBeNull();
   });
 
+  it("returns structured deny diagnostics for stale local tokens", async () => {
+    tmpDir = makeTmpDir();
+    const { createServerAuthService } = await import("../core/server-auth.js");
+    const auth = createServerAuthService({
+      hanakoHome: tmpDir,
+      loopbackToken: "new-local-secret",
+      runtimeContext: runtimeContext(),
+    });
+
+    expect(auth.authenticateRequestDetailed({
+      authorization: "Bearer old-local-secret",
+      connectionKind: "local",
+    })).toMatchObject({
+      principal: null,
+      denied: {
+        error: "forbidden",
+        reason: "invalid_credential",
+        credentialSource: "authorization",
+        connectionKind: "local",
+      },
+    });
+  });
+
   it("authenticates web sessions from HttpOnly cookie material without accepting them as URL tokens", async () => {
     tmpDir = makeTmpDir();
     const { createDeviceCredential } = await import("../core/device-registry.js");

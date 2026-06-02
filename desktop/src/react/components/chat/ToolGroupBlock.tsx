@@ -70,7 +70,7 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools: rawTools, co
       )}
       <div className={`${styles.toolGroupContent}${collapsed && !isSingle ? ` ${styles.toolGroupContentCollapsed}` : ''}`}>
         {tools.map((tool, i) => (
-          <ToolIndicator key={`${tool.name}-${i}`} tool={tool} agentName={agentName} />
+          <ToolIndicator key={tool.id || `${tool.name}-${i}`} tool={tool} agentName={agentName} />
         ))}
       </div>
     </div>

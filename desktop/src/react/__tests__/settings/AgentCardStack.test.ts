@@ -70,6 +70,37 @@ describe('AgentCardStack geometry', () => {
 });
 
 describe('AgentCardStack actions', () => {
+  it('lets the page own wheel scrolling while the stack is collapsed and captures horizontal stack scrolling only after expansion', () => {
+    render(React.createElement(AgentCardStack, {
+      agents,
+      selectedId: 'hana',
+      currentAgentId: 'hana',
+      onSelect: vi.fn(),
+      onAvatarClick: vi.fn(),
+      onSetPrimary: vi.fn(),
+      onDelete: vi.fn(),
+      onExport: vi.fn(),
+      onAdd: vi.fn(),
+    }));
+
+    const stack = screen.getByText('DeepSeek').closest('[class*="agent-cards"]') as HTMLElement;
+    expect(stack).not.toBeNull();
+    Object.defineProperty(stack, 'scrollWidth', { configurable: true, value: 900 });
+    Object.defineProperty(stack, 'clientWidth', { configurable: true, value: 260 });
+
+    const collapsedWheel = new WheelEvent('wheel', { deltaY: 48, cancelable: true });
+    stack.dispatchEvent(collapsedWheel);
+    expect(collapsedWheel.defaultPrevented).toBe(false);
+    expect(stack.scrollLeft).toBe(0);
+
+    fireEvent.pointerEnter(stack);
+
+    const expandedWheel = new WheelEvent('wheel', { deltaY: 48, cancelable: true });
+    stack.dispatchEvent(expandedWheel);
+    expect(expandedWheel.defaultPrevented).toBe(true);
+    expect(stack.scrollLeft).toBe(48);
+  });
+
   it('shows quiet actions below the selected non-primary agent and calls explicit targets', () => {
     const onSetPrimary = vi.fn();
     const onDelete = vi.fn();

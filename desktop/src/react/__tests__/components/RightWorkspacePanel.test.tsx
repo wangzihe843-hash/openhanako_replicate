@@ -23,6 +23,15 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
   hanaFetch: vi.fn(),
 }));
 
+// 整列卡片栈的兄弟卡（Activity / Session 状态）各有独立测试；这里聚焦 desk 卡 tab
+// 逻辑，stub 掉它们避免「工作目录」等文案在多张卡里重复导致 getByText 命中多个。
+vi.mock('../../components/right-workspace/AgentActivityCard', () => ({
+  AgentActivityCard: () => null,
+}));
+vi.mock('../../components/right-workspace/SessionStatusCard', () => ({
+  SessionStatusCard: () => null,
+}));
+
 const tMap: Record<string, string> = {
   'rightWorkspace.tabs.sessionFiles': '对话文件',
   'rightWorkspace.tabs.workspace': '工作台',

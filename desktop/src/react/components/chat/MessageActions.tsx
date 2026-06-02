@@ -43,6 +43,7 @@ export const MessageActions = memo(function MessageActions({
 
   return (
     <div
+      data-message-actions=""
       className={`${styles.msgActions}${align === 'left' ? ` ${styles.msgActionsLeft}` : ''}${isSelected ? ` ${styles.msgActionsVisible}` : ''}`}
     >
       <div className={styles.msgActionsPopover}>

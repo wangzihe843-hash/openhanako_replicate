@@ -1,0 +1,58 @@
+.card {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    margin: 4px 0;
+    padding: 5px 10px;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+    background: var(--surface, transparent);
+    font-size: 0.8rem;
+}
+
+.icon {
+    flex: 0 0 auto;
+    color: var(--text-light);
+    font-size: 0.82rem;
+    line-height: 1;
+}
+
+.running {
+    display: inline-block;
+    color: var(--accent);
+    animation: workflowInlineSpin 1.4s linear infinite;
+}
+
+.done {
+    color: #5aa07a;
+}
+
+.failed {
+    color: #c46a6a;
+}
+
+.aborted {
+    color: var(--text-light);
+}
+
+@keyframes workflowInlineSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.title {
+    min-width: 0;
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.duration {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}

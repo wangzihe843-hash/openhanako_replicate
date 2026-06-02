@@ -41,6 +41,27 @@ const SIDE_EFFECT_TOOLS = new Set([
   "unpin_memory",
 ]);
 
+// subagent 上下文固定边界（与 permission mode 无关）：哪怕 operate 也拦。收口在拦截层而非剥离——
+// subagent 工具对模型仍可见，调用时被拦（Codex 式甲），保证缓存前缀统一。未来加禁用工具加到这里。
+// 范畴：① 防自递归与间接扇出；② 长期记忆（subagent 不碰）；③ agent 一生/对外副作用。
+// 不含 computer（有独立全局开关兜底）、search_memory/recall_experience（只读记忆，允许查）。
+const SUBAGENT_BLOCKED_TOOLS = new Set([
+  // ① 扇出
+  "subagent",          // 防自递归
+  "workflow",          // 间接扇出
+  // ② 长期记忆（与「subagent 不带长期记忆」原则一致：可读不可写）
+  "pin_memory",
+  "unpin_memory",
+  "record_experience",
+  // ③ agent 生命周期 / 对外副作用
+  "cron",
+  "channel",
+  "dm",
+  "notify",
+  "install_skill",
+  "update_settings",
+]);
+
 const BROWSER_READ_ACTIONS = new Set([
   "start",
   "navigate",
@@ -76,11 +97,11 @@ export function isReadOnlyPermissionMode(mode) {
   return normalizeSessionPermissionMode(mode) === SESSION_PERMISSION_MODES.READ_ONLY;
 }
 
-function blocked(toolName) {
+function blocked(toolName, { code = "ACTION_BLOCKED_BY_READ_ONLY", message } = {}) {
   return {
     action: "deny",
-    code: "ACTION_BLOCKED_BY_READ_ONLY",
-    message: `${toolName} is blocked in read-only mode.`,
+    code,
+    message: message || `${toolName} is blocked in read-only mode.`,
     details: { toolName },
   };
 }
@@ -107,10 +128,21 @@ function classifyTerminalAction(mode, action) {
   return { action: "allow" };
 }
 
-export function classifySessionPermission({ mode, toolName, params } = {}) {
-  const normalized = normalizeSessionPermissionMode(mode);
+export function classifySessionPermission({ mode, toolName, params, context } = {}) {
+  let normalized = normalizeSessionPermissionMode(mode);
   const name = typeof toolName === "string" ? toolName : "";
   if (!name) return { action: "allow" };
+  // subagent 上下文固定边界（与 mode 无关，优先于其它判定）：防自递归 + 禁越权工具。
+  if (context?.isSubagent && SUBAGENT_BLOCKED_TOOLS.has(name)) {
+    return blocked(name, { code: "ACTION_BLOCKED_IN_SUBAGENT", message: `${name} is not available inside a subagent.` });
+  }
+  // 硬不变量：subagent 没有「先问(ask)」模式。后台任务无人交互确认，若走 prompt 会挂在
+  // 永不到来的确认上（直到超时）。ASK 在 subagent 上下文一律坍缩为 operate，与
+  // subagent-tool-policy 的继承映射一致。收口已保证 subagent 不会拿到 ask，这里是兜底硬约束：
+  // 即便上游绕过收口直接给了 ask，也绝不让 subagent 挂在确认上。
+  if (context?.isSubagent && normalized === SESSION_PERMISSION_MODES.ASK) {
+    normalized = SESSION_PERMISSION_MODES.OPERATE;
+  }
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action);
   if (name === "terminal") return classifyTerminalAction(normalized, params?.action);

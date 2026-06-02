@@ -105,9 +105,13 @@ export async function registerMcpOAuthClient({
     body: JSON.stringify(metadata),
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  const data = parseJsonOrEmpty(text);
   if (!response.ok) {
-    throw new Error(data?.error_description || data?.error || `OAuth dynamic client registration failed with status ${response.status}`);
+    const oauthError = stringOrEmpty(data?.error);
+    throw new McpHttpError(
+      registrationFailureMessage(response.status, text, data),
+      { status: response.status, body: text, headers: response.headers, oauthError },
+    );
   }
   const clientId = stringOrEmpty(data.client_id);
   if (!clientId) throw new Error("OAuth dynamic client registration response did not include client_id");
@@ -398,6 +402,13 @@ function firstString(values) {
 
 function stringOrEmpty(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function registrationFailureMessage(status, text, data) {
+  const structured = stringOrEmpty(data?.error_description) || stringOrEmpty(data?.error);
+  if (structured) return structured;
+  const body = stringOrEmpty(text).replace(/\s+/g, " ").slice(0, 240);
+  return `OAuth dynamic client registration failed with status ${status}${body ? `: ${body}` : ""}`;
 }
 
 // Parse a token-endpoint body, tolerating a non-JSON payload (e.g. an HTML 5xx

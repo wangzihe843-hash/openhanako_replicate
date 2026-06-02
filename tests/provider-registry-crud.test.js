@@ -55,22 +55,29 @@ afterEach(() => {
 // ── getCredentials ───────────────────────────────────────────────────────────
 
 describe("getCredentials", () => {
-  it("registers MiniMax Token Plan as an OpenAI-compatible provider boundary", () => {
+  it("keeps MiniMax Token Plan as a distinct Anthropic-compatible provider boundary", () => {
     writeAddedModels({});
     const reg = new ProviderRegistry(tmpDir);
 
+    const minimax = reg.get("minimax");
     const entry = reg.get("minimax-token-plan");
 
+    expect(minimax).toMatchObject({
+      id: "minimax",
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      api: "anthropic-messages",
+    });
     expect(entry).toMatchObject({
       id: "minimax-token-plan",
       displayName: "MiniMax Token Plan",
       authType: "api-key",
-      baseUrl: "https://api.minimax.io/v1",
-      api: "openai-completions",
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      api: "anthropic-messages",
       isBuiltin: true,
     });
+    expect(entry.id).not.toBe(minimax.id);
     expect(reg.getDefaultModels("minimax-token-plan")).toEqual(
-      expect.arrayContaining(["MiniMax-M2.7"])
+      expect.arrayContaining(["MiniMax-M3", "MiniMax-M2.1-highspeed"])
     );
   });
 
@@ -453,6 +460,27 @@ describe("getAllProvidersRaw", () => {
     const reg = makeRegistry();
     const raw = reg.getAllProvidersRaw();
     expect(raw).toEqual({});
+  });
+
+  it("returns snapshots so callers cannot mutate the registry cache", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "sk-x",
+        models: ["model-a"],
+      },
+    });
+    const reg = makeRegistry();
+
+    const raw = reg.getAllProvidersRaw();
+    raw["test-provider"].models.push("polluted-model");
+    raw["new-provider"] = { api_key: "sk-polluted" };
+
+    expect(reg.getAllProvidersRaw()).toEqual({
+      "test-provider": {
+        api_key: "sk-x",
+        models: ["model-a"],
+      },
+    });
   });
 
   it("normalizes malformed provider records to empty configs at the registry boundary", () => {
@@ -911,6 +939,22 @@ describe("removeProvider", () => {
     const persisted = readAddedModels();
     expect(persisted["test-provider"]).toBeUndefined();
     expect(persisted["keep-me"]).toBeDefined();
+  });
+
+  it("records an explicit deletion tombstone and clears it when provider is saved again", () => {
+    writeAddedModels({
+      "test-provider": { api_key: "sk-x" },
+    });
+    const reg = makeRegistry();
+
+    reg.removeProvider("test-provider");
+    let raw = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
+    expect(raw._deleted_providers).toContain("test-provider");
+
+    reg.saveProvider("test-provider", { api_key: "sk-new" });
+    raw = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
+    expect(raw._deleted_providers || []).not.toContain("test-provider");
+    expect(raw.providers["test-provider"].api_key).toBe("sk-new");
   });
 
   it("删除不存在的 provider 不报错", () => {

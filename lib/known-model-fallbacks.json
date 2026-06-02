@@ -205,14 +205,14 @@
     "name": "MiniMax M2.7",
     "context": 204800,
     "maxOutput": 204800,
-    "image": true,
+    "image": false,
     "reasoning": true
   },
   "minimax-m2.7-highspeed": {
     "name": "MiniMax M2.7 High Speed",
     "context": 204800,
     "maxOutput": 204800,
-    "image": true,
+    "image": false,
     "reasoning": true
   },
   "mistral-small-2603": {
@@ -677,17 +677,31 @@
     "context": 32768,
     "maxOutput": 4096
   },
+  "MiniMax-M3": {
+    "name": "MiniMax M3",
+    "context": 1000000,
+    "maxOutput": 524288,
+    "image": true,
+    "reasoning": true
+  },
   "MiniMax-M2": {
     "name": "MiniMax M2",
-    "context": 196608,
-    "maxOutput": 128000,
+    "context": 204800,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },
   "MiniMax-M2.1": {
     "name": "MiniMax M2.1",
     "context": 204800,
-    "maxOutput": 131072,
+    "maxOutput": 204800,
+    "image": false,
+    "reasoning": true
+  },
+  "MiniMax-M2.1-highspeed": {
+    "name": "MiniMax M2.1 Highspeed",
+    "context": 204800,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },
@@ -701,14 +715,14 @@
   "MiniMax-M2.5": {
     "name": "MiniMax M2.5",
     "context": 204800,
-    "maxOutput": 131072,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },
   "MiniMax-M2.5-highspeed": {
     "name": "MiniMax M2.5 Highspeed",
     "context": 204800,
-    "maxOutput": 131072,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },
@@ -722,14 +736,14 @@
   "MiniMax-M2.7": {
     "name": "MiniMax M2.7",
     "context": 204800,
-    "maxOutput": 131072,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },
   "MiniMax-M2.7-highspeed": {
     "name": "MiniMax M2.7 Highspeed",
     "context": 204800,
-    "maxOutput": 131072,
+    "maxOutput": 204800,
     "image": false,
     "reasoning": true
   },

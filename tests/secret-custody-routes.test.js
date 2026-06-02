@@ -18,6 +18,7 @@ describe("secret custody across HTTP routes", () => {
             base_url: "https://api.deepseek.com",
             api: "openai-completions",
             api_key: "sk-provider-secret",
+            headers: { Authorization: "Bearer gateway-secret" },
             models: ["deepseek-chat"],
           },
         }),
@@ -40,7 +41,9 @@ describe("secret custody across HTTP routes", () => {
 
     expect(res.status).toBe(200);
     expect(body.providers.deepseek.api_key).toBe(MASKED_SECRET);
+    expect(body.providers.deepseek.headers.Authorization).toBe(MASKED_SECRET);
     expect(JSON.stringify(body)).not.toContain("sk-provider-secret");
+    expect(JSON.stringify(body)).not.toContain("gateway-secret");
   });
 
   it("preserves saved provider secrets when a masked config patch is submitted", async () => {
@@ -57,6 +60,7 @@ describe("secret custody across HTTP routes", () => {
           deepseek: {
             base_url: "https://old.example/v1",
             api_key: "sk-saved-provider",
+            headers: { Authorization: "Bearer saved-gateway" },
           },
         }),
         saveProvider,
@@ -73,6 +77,7 @@ describe("secret custody across HTTP routes", () => {
           deepseek: {
             base_url: "https://new.example/v1",
             api_key: MASKED_SECRET,
+            headers: { Authorization: MASKED_SECRET, "X-Corp-Auth": "new-token" },
           },
         },
       }),
@@ -82,6 +87,10 @@ describe("secret custody across HTTP routes", () => {
     expect(saveProvider).toHaveBeenCalledWith("deepseek", {
       base_url: "https://new.example/v1",
       api_key: "sk-saved-provider",
+      headers: {
+        Authorization: "Bearer saved-gateway",
+        "X-Corp-Auth": "new-token",
+      },
     });
   });
 

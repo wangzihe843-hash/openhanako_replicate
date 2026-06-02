@@ -69,8 +69,8 @@ describe('FloatingActions cover gallery', () => {
   it('removes a gallery preset when its thumbnail fails to load', async () => {
     render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
 
-    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText('制作 cover'));
+    await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('cover.make'));
     fireEvent.click(screen.getByText('小花美术馆'));
 
     const firstItem = COVER_GALLERY_ITEMS[0];
@@ -86,8 +86,8 @@ describe('FloatingActions cover gallery', () => {
   it('opens the built-in gallery card and applies the selected preset', async () => {
     render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
 
-    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText('制作 cover'));
+    await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('cover.make'));
     fireEvent.click(screen.getByText('小花美术馆'));
 
     expect(screen.getByRole('dialog', { name: '小花美术馆' })).toBeInTheDocument();
@@ -137,8 +137,8 @@ describe('FloatingActions cover gallery', () => {
 
     render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
 
-    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText('制作 cover'));
+    await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('cover.make'));
 
     expect(screen.getByRole('button', { name: 'Agent 生成' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '小花美术馆' })).toBeEnabled();
@@ -167,11 +167,11 @@ describe('FloatingActions cover gallery', () => {
 
     render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
 
-    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText('制作 cover'));
+    await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('cover.make'));
     const generateButton = screen.getByRole('button', { name: 'Agent 生成' });
     fireEvent.mouseEnter(generateButton.parentElement as HTMLElement);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('需要先在设置里配置默认生图模型。');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('cover.agentGenerate.defaultModelMissing');
     fireEvent.click(generateButton);
 
     expect(mocks.hanaFetch).not.toHaveBeenCalledWith(
@@ -183,8 +183,8 @@ describe('FloatingActions cover gallery', () => {
   it('applies an uploaded cover without sending agent scope', async () => {
     render(<FloatingActions content="# Demo\n" filePath="/tmp/note.md" contentType="markdown" />);
 
-    await waitFor(() => expect(screen.getByLabelText('制作 cover')).toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText('制作 cover'));
+    await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('cover.make'));
     fireEvent.click(screen.getByText('自己上传'));
 
     await waitFor(() => {

@@ -199,6 +199,73 @@ describe("BridgeManager session_file media delivery", () => {
     expect(adapter.sendMedia).not.toHaveBeenCalled();
   });
 
+  it("deduplicates repeated deferred_result media events by task id", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-"));
+    const sessionPath = path.join(tmpDir, "bridge-session.jsonl");
+    const filePath = path.join(tmpDir, "generated.png");
+    fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]));
+    const sessionFile = {
+      id: "sf_generated",
+      sessionPath,
+      filePath,
+      realPath: filePath,
+      filename: "generated.png",
+      mime: "image/png",
+      kind: "image",
+    };
+    let subscribed = null;
+    const engine = {
+      hanakoHome: tmpDir,
+      agent: null,
+      agentName: "Hana",
+      deferredResults: {
+        markDelivered: vi.fn(),
+      },
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getSessionFile: vi.fn((id) => id === "sf_generated" ? sessionFile : null),
+      getBridgeContextForSessionPath: vi.fn((sp) => sp === sessionPath ? {
+        isBridgeSession: true,
+        platform: "telegram",
+        chatType: "dm",
+        chatId: "chat-1",
+        sessionKey: "tg_dm_chat-1@agent-a",
+        agentId: "agent-a",
+      } : null),
+    };
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscribed = fn;
+        return vi.fn();
+      }),
+      eventBus: { emit: vi.fn() },
+    };
+    const bm = new BridgeManager({ engine, hub });
+    const adapter = {
+      mediaCapabilities: TELEGRAM_CAPS,
+      sendMediaBuffer: vi.fn().mockResolvedValue(),
+      sendMedia: vi.fn().mockResolvedValue(),
+    };
+    bm._platforms.set("telegram:agent-a", {
+      platform: "telegram",
+      agentId: "agent-a",
+      status: "connected",
+      adapter,
+    });
+    const event = {
+      type: "deferred_result",
+      taskId: "task_1",
+      status: "success",
+      result: { sessionFiles: [sessionFile] },
+    };
+
+    subscribed(event, sessionPath);
+    subscribed(event, sessionPath);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.sendMediaBuffer).toHaveBeenCalledTimes(1);
+    expect(engine.deferredResults.markDelivered).toHaveBeenCalledTimes(1);
+  });
+
   it("sends deferred_result sessionFiles to an attached RC bridge target", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-"));
     const sessionPath = path.join(tmpDir, "desktop-session.jsonl");

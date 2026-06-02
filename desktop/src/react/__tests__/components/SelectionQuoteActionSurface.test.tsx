@@ -7,6 +7,7 @@ import { useStore } from '../../stores';
 
 describe('SelectionQuoteActionSurface', () => {
   beforeEach(() => {
+    window.t = ((key: string) => key) as typeof window.t;
     vi.useFakeTimers();
     useStore.getState().clearQuoteCandidate();
     useStore.getState().clearQuotedSelections();
@@ -30,7 +31,7 @@ describe('SelectionQuoteActionSurface', () => {
     });
     render(<SelectionQuoteActionSurface />);
 
-    fireEvent.click(screen.getByRole('button', { name: '引用到对话' }));
+    fireEvent.click(screen.getByRole('button', { name: 'selection.quoteToChat' }));
 
     expect(useStore.getState().quotedSelections).toHaveLength(1);
     expect(useStore.getState().quotedSelections[0]).toMatchObject({ text: '第一段引用' });
@@ -47,13 +48,13 @@ describe('SelectionQuoteActionSurface', () => {
     });
     render(<SelectionQuoteActionSurface />);
 
-    const button = screen.getByRole('button', { name: '引用到对话' });
+    const button = screen.getByRole('button', { name: 'selection.quoteToChat' });
     fireEvent.mouseEnter(button);
     act(() => { vi.advanceTimersByTime(499); });
     expect(screen.queryByRole('tooltip')).toBeNull();
 
     act(() => { vi.advanceTimersByTime(1); });
-    expect(screen.getByRole('tooltip').textContent).toBe('引用到对话');
+    expect(screen.getByRole('tooltip').textContent).toBe('selection.quoteToChat');
   });
 
   it('renders a compact SVG quote action shifted slightly to the right of the selection center', () => {
@@ -66,7 +67,7 @@ describe('SelectionQuoteActionSurface', () => {
     });
     render(<SelectionQuoteActionSurface />);
 
-    const button = screen.getByRole('button', { name: '引用到对话' });
+    const button = screen.getByRole('button', { name: 'selection.quoteToChat' });
     const surface = button.closest('[data-selection-ignore="true"]') as HTMLElement;
     const icon = button.querySelector('svg');
 
@@ -104,7 +105,7 @@ describe('SelectionQuoteActionSurface', () => {
     });
     render(<SelectionQuoteActionSurface />);
 
-    const surface = screen.getByRole('button', { name: '引用到对话' }).closest('[data-selection-ignore="true"]') as HTMLElement;
+    const surface = screen.getByRole('button', { name: 'selection.quoteToChat' }).closest('[data-selection-ignore="true"]') as HTMLElement;
     expect(surface.style.top).toBe('86px');
 
     liveRect = { left: 100, right: 180, top: 70, bottom: 90, width: 80, height: 20 };

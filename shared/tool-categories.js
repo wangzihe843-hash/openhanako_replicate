@@ -54,6 +54,7 @@ export const OPTIONAL_TOOL_NAMES = [
   "dm",
   "install_skill",
   "update_settings",
+  "workflow",
   /**
    * Xingye 心跳巡检主动向小手机/秘密空间各模块提议「待确认草稿」用的 dispatch tool。
    * OPTIONAL：默认开（不在 DEFAULT_DISABLED_TOOL_NAMES 里），但用户可以从「设置 → 助手 → 工具」
@@ -84,8 +85,10 @@ const OPTIONAL_TOOL_NAMES_SET = new Set(OPTIONAL_TOOL_NAMES);
  *                     off by default until the feature has baked for a few versions.
  *   dm              — direct-messages between agents; off by default because
  *                     single-agent setups have no peers and it adds context.
+ *   workflow        — deterministic multi-agent orchestration; a heavy fan-out
+ *                     capability, opt-in per agent until it has baked.
  */
-export const DEFAULT_DISABLED_TOOL_NAMES = ["dm", "beautify"];
+export const DEFAULT_DISABLED_TOOL_NAMES = ["dm", "beautify", "workflow"];
 
 export function uniqueToolNames(names) {
   const seen = new Set();

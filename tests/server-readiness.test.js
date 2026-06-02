@@ -224,6 +224,15 @@ describe("startup root error extraction", () => {
     expect(root).not.toContain("GPU startup marker");
   });
 
+  it("extracts EPERM listen permission failures as the same typed startup diagnostic", () => {
+    const root = extractRootServerStartupError([
+      "[stderr] Error: listen EPERM: operation not permitted 0.0.0.0:14500\n",
+    ]);
+
+    expect(root).toContain("LISTEN_PERMISSION_DENIED");
+    expect(root).toContain("0.0.0.0:14500");
+  });
+
   it("does not let GPU diagnostics override a structured server port conflict", () => {
     const root = extractRootServerStartupError([
       '[stderr] [server] startup-error {"code":"PORT_IN_USE","host":"0.0.0.0","port":14500,"networkMode":"loopback","suggestions":["Use Access & Devices to change the port."]}\n',

@@ -11,7 +11,7 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
-import { activateWorkspaceDesk, addWorkspaceFolder, applyFolder, removeWorkspaceFolder } from '../stores/desk-actions';
+import { activateWorkspaceDesk, addWorkspaceFolder, applyFolder, removeRecentWorkspace, removeWorkspaceFolder } from '../stores/desk-actions';
 import { loadSessionProjectCatalog } from '../stores/session-project-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent } from '../types';
@@ -335,6 +335,7 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
           onSelect={handleSelectHistory}
           onBrowse={handleBrowse}
           onAddWorkspaceFolder={handleAddWorkspaceFolder}
+          onRemoveRecentWorkspace={removeRecentWorkspace}
           onRemoveWorkspaceFolder={removeWorkspaceFolder}
         />
       )}
@@ -342,7 +343,7 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
   );
 }
 
-function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolder, workspaceFolders, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveWorkspaceFolder }: {
+function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolder, workspaceFolders, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveRecentWorkspace, onRemoveWorkspaceFolder }: {
   cwdHistory: string[];
   agentHomeFolders: string[];
   selectedFolder: string | null;
@@ -351,6 +352,7 @@ function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolde
   onSelect: (folder: string) => void;
   onBrowse: () => void;
   onAddWorkspaceFolder: () => void;
+  onRemoveRecentWorkspace: (folder: string) => void;
   onRemoveWorkspaceFolder: (folder: string) => void;
 }) {
   const primaryItems: string[] = buildWorkspacePickerItems({
@@ -358,6 +360,7 @@ function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolde
     homeFolder,
     cwdHistory: [...agentHomeFolders, ...cwdHistory],
   });
+  const removableHistory = new Set(cwdHistory.map(normalizeWorkspacePath).filter(Boolean));
   const t = window.t ?? ((p: string) => p);
   return (
     <div className={styles.folderHistory}>
@@ -380,6 +383,20 @@ function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolde
               </svg>
             </span>
             <span className={styles.folderHistoryItemName}>{name}</span>
+            {removableHistory.has(normalizeWorkspacePath(p)) && (
+              <button
+                type="button"
+                className={styles.folderHistoryRemove}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveRecentWorkspace(p);
+                }}
+                title={t('input.removeRecentWorkspace')}
+                aria-label={t('input.removeRecentWorkspace')}
+              >
+                x
+              </button>
+            )}
           </div>
         );
       })}
