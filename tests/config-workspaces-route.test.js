@@ -71,9 +71,12 @@ describe("config workspace routes", () => {
 
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.cwd_history).toEqual([keepWorkspace]);
+    // cwd_history is stored after normalizeWorkspacePath (backslashes folded to
+    // forward slashes), so compare against the normalized path for Windows portability.
+    const expectedKeep = normalizeWorkspacePath(keepWorkspace);
+    expect(data.cwd_history).toEqual([expectedKeep]);
     expect(fs.existsSync(oldWorkspace)).toBe(true);
-    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [keepWorkspace] });
+    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [expectedKeep] });
   });
 
   it("clears recent workspace history without deleting directories", async () => {
