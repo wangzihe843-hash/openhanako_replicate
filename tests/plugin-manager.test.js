@@ -773,6 +773,8 @@ describe("configuration", () => {
     const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() });
     pm.scan();
     await pm.loadAll();
+    const [plugin] = pm.listPlugins();
+    expect(plugin.contributions).toContain("configuration");
     const schema = pm.getConfigSchema("config-plug");
     expect(schema.properties.interval.type).toBe("number");
     expect(schema.properties.enabled.default).toBe(true);

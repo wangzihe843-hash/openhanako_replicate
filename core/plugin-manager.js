@@ -43,6 +43,14 @@ function pluginDataDirForEntry(rootDir, entry) {
   return path.join(rootDir, entry.id);
 }
 
+function addContribution(contributions, name) {
+  if (!contributions.includes(name)) contributions.push(name);
+}
+
+function hasConfigProperties(schema) {
+  return Object.keys(schema?.properties || {}).length > 0;
+}
+
 class PluginLoadTimeoutError extends Error {
   constructor(pluginId, stage, ms) {
     super(`Plugin "${pluginId}" ${stage} timed out after ${ms}ms`);
@@ -307,11 +315,14 @@ export class PluginManager {
       : normalizePluginConfigSchema(id, {});
     const contributions = [];
     for (const dir of KNOWN_CONTRIBUTION_DIRS) {
-      if (fs.existsSync(path.join(pluginDir, dir))) contributions.push(dir);
+      if (fs.existsSync(path.join(pluginDir, dir))) addContribution(contributions, dir);
     }
-    if (fs.existsSync(path.join(pluginDir, "extensions"))) contributions.push("extensions");
+    if (fs.existsSync(path.join(pluginDir, "extensions"))) addContribution(contributions, "extensions");
     const hasLifecycle = fs.existsSync(path.join(pluginDir, "index.js"));
-    if (hasLifecycle) contributions.push("lifecycle");
+    if (hasLifecycle) addContribution(contributions, "lifecycle");
+    if (manifest?.contributes?.configuration && hasConfigProperties(configSchema)) {
+      addContribution(contributions, "configuration");
+    }
     const trust = manifest?.trust === "full-access" ? "full-access" : "restricted";
     const hidden = !!manifest?.hidden;
     const activationEvents = normalizeActivationEvents(manifest?.activationEvents, hasLifecycle);

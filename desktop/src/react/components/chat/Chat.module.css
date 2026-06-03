@@ -795,6 +795,97 @@
     padding: 0;
 }
 
+/* ── 连续过程大折叠 ── */
+
+.processFoldMessage {
+    width: 100%;
+}
+
+.processFoldSummary {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: var(--space-xs) 0;
+    padding: 0.4rem 0.75rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--overlay-subtle);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.processFoldSummary:hover {
+    background: var(--tool-bg);
+    color: var(--tool-text);
+}
+
+.processFoldSummaryOpen {
+    margin-bottom: 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.processFoldTitle {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.42rem;
+}
+
+.processFoldTitleText {
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.processFoldArrow {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.processFoldSummaryOpen .processFoldArrow {
+    transform: rotate(90deg);
+}
+
+.processFoldPanel {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 var(--space-xs);
+    padding: 0.4rem 0.75rem;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    background: var(--overlay-subtle);
+    background: color-mix(in srgb, var(--overlay-subtle) 62%, transparent);
+}
+
+.processFoldMessage + .processFoldPanel {
+    margin-top: 0;
+}
+
+.processFoldPanel .messageGroupAssistant {
+    margin-left: 0;
+    padding-left: 0;
+    animation: none;
+}
+
+.processFoldPanel .messageGroupAssistant + .messageGroupAssistant {
+    margin-top: var(--space-sm);
+}
+
+.processFoldPanel .message {
+    max-width: 100%;
+}
+
 /* ── 工具调用指示器 ── */
 
 .toolIndicator {

@@ -266,6 +266,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             sessionPath={path}
             agentId={sessionAgentId}
             registerMessageElement={registerMessageElement}
+            enableProcessFold
           />
           {isSessionStreaming && (
             <div className={styles.typingIndicator} />

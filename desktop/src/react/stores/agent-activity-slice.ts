@@ -14,15 +14,16 @@ export interface AgentActivityEntry {
   agentName: string | null;
   summary: string | null;
   childSessionPath: string | null;
+  threadId?: string | null;
+  threadKind?: string | null;
+  access?: string | null;
   startedAt: number | null;
   finishedAt: number | null;
-  // workflow_agent 子节点专属（其它 kind 缺省）：归属父 wf + 节点标签 + phase 弱分组 + token 消耗
+  // workflow_agent 子节点和 subagent 都会用 label：节点名或子 Agent 展示标签。
   parentTaskId?: string | null;
   label?: string | null;
   phaseLabel?: string | null;
   tokens?: number | null;
-  // subagent 复用实例后缀（区分同名实例，如 毛毛·探索）；非复用为 null。
-  reuseInstance?: string | null;
 }
 
 export interface AgentActivitySlice {

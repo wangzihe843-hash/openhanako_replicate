@@ -78,7 +78,7 @@ import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from
 import { ConfirmStore } from "../lib/confirm-store.js";
 import { DeferredResultStore } from "../lib/deferred-result-store.js";
 import { SubagentRunStore } from "../lib/subagent-run-store.js";
-import { ReusableSubagentStore } from "../lib/reusable-subagent-store.js";
+import { SubagentThreadStore } from "../lib/subagent-thread-store.js";
 import { ActivityHub } from "../lib/activity-hub.js";
 import { WorkflowActivityStore } from "../lib/workflow-activity-store.js";
 import { normalizeDeferredResolveResult } from "../lib/deferred-result-payload.js";
@@ -418,12 +418,10 @@ const subagentRunStore = new SubagentRunStore(
 );
 engine.setSubagentRunStore(subagentRunStore);
 
-// 复用 subagent 实例账本（按 reuseKey 记稳定 childSessionPath + 串行锁）：
-// 单例，跨所有 per-agent subagent 工具闭包共享，保证复用实例全局串行。
-const reusableSubagentStore = new ReusableSubagentStore(
-  path.join(hanakoHome, "reusable-subagents.json"),
+const subagentThreadStore = new SubagentThreadStore(
+  path.join(hanakoHome, "subagent-threads.json"),
 );
-engine.setReusableSubagentStore(reusableSubagentStore);
+engine.setSubagentThreadStore(subagentThreadStore);
 
 // 统一 Agent Activity 实时真相源（内存广播层）：subagent / workflow / 巡检 都往这推，
 // 前端按当前对话 sessionPath 订阅。广播走 engine.emitEvent → WS（与 block_update 同一路）。

@@ -243,6 +243,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const fileMentionSearchSeqRef = useRef(0);
   const inputSurfaceRef = useRef<HTMLDivElement>(null);
   const inputCardRef = useRef<HTMLDivElement>(null);
+  const focusFrameRef = useRef<number | null>(null);
   const [inputText, setInputText] = useState('');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [fileSelected, setFileSelected] = useState(0);
@@ -367,6 +368,37 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     },
   });
 
+  const restoreEditorFocus = useCallback(() => {
+    if (!editor || editor.isDestroyed) return;
+    if (!shouldAllowInputFocus({ inputRoot: inputSurfaceRef.current })) return;
+
+    const run = () => {
+      focusFrameRef.current = null;
+      if (!editor || editor.isDestroyed) return;
+      if (!shouldAllowInputFocus({ inputRoot: inputSurfaceRef.current })) return;
+      editor.commands.focus();
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      if (focusFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(focusFrameRef.current);
+      }
+      focusFrameRef.current = window.requestAnimationFrame(run);
+      return;
+    }
+
+    window.setTimeout(run, 0);
+  }, [editor]);
+
+  useEffect(() => {
+    return () => {
+      if (focusFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(focusFrameRef.current);
+      }
+      focusFrameRef.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     const surface = inputSurfaceRef.current;
     const card = inputCardRef.current;
@@ -423,10 +455,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
   useEffect(() => {
-    if (inputFocusTrigger > 0 && shouldAllowInputFocus({ inputRoot: inputSurfaceRef.current })) {
-      editor?.commands.focus();
-    }
-  }, [inputFocusTrigger, editor]);
+    if (inputFocusTrigger > 0) restoreEditorFocus();
+  }, [inputFocusTrigger, restoreEditorFocus]);
+
+  useEffect(() => {
+    if (surface !== 'desktop') return;
+    const handleWindowFocus = () => restoreEditorFocus();
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
+  }, [restoreEditorFocus, surface]);
 
   // Doc context
   const currentDoc = useMemo(() => {
@@ -574,45 +611,49 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const handleBrowserFileInputChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files || []);
     event.currentTarget.value = '';
-    if (files.length === 0) return;
-    if (useStore.getState().attachedFiles.length >= 9) return;
+    try {
+      if (files.length === 0) return;
+      if (useStore.getState().attachedFiles.length >= 9) return;
 
-    for (const file of files) {
-      if (useStore.getState().attachedFiles.length >= 9) break;
-      const mimeType = file.type || chatImageMimeTypeForName(file.name);
-      try {
-        const base64Data = await readFileAsBase64(file);
-        const res = await hanaFetch('/api/upload-blob', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: file.name,
-            base64Data,
-            mimeType,
-            ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
-          }),
-        });
-        const data = await res.json();
-        const upload = data?.uploads?.[0];
-        if (upload?.dest) {
-          addAttachedFile({
-            fileId: upload.fileId,
-            path: upload.dest,
-            name: upload.name || file.name,
-            isDirectory: false,
-            base64Data,
-            mimeType,
+      for (const file of files) {
+        if (useStore.getState().attachedFiles.length >= 9) break;
+        const mimeType = file.type || chatImageMimeTypeForName(file.name);
+        try {
+          const base64Data = await readFileAsBase64(file);
+          const res = await hanaFetch('/api/upload-blob', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: file.name,
+              base64Data,
+              mimeType,
+              ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
+            }),
           });
-        } else {
+          const data = await res.json();
+          const upload = data?.uploads?.[0];
+          if (upload?.dest) {
+            addAttachedFile({
+              fileId: upload.fileId,
+              path: upload.dest,
+              name: upload.name || file.name,
+              isDirectory: false,
+              base64Data,
+              mimeType,
+            });
+          } else {
+            useStore.getState().addToast(t('error.uploadFailed'), 'error');
+            console.warn('[upload] browser file upload failed', upload?.error || data);
+          }
+        } catch (err) {
+          console.warn('[upload] browser file upload error', err);
           useStore.getState().addToast(t('error.uploadFailed'), 'error');
-          console.warn('[upload] browser file upload failed', upload?.error || data);
         }
-      } catch (err) {
-        console.warn('[upload] browser file upload error', err);
-        useStore.getState().addToast(t('error.uploadFailed'), 'error');
       }
+    } finally {
+      restoreEditorFocus();
     }
-  }, [addAttachedFile, t]);
+  }, [addAttachedFile, restoreEditorFocus, t]);
 
   const handleAttach = useCallback(async () => {
     if (surface === 'mobile') {
@@ -620,12 +661,17 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       return;
     }
     if (typeof window.platform?.selectFiles === 'function') {
-      const paths = await window.platform.selectFiles();
-      if (paths && paths.length > 0) await attachFilesFromPaths(paths);
+      try {
+        const paths = await window.platform.selectFiles();
+        if (paths && paths.length > 0) await attachFilesFromPaths(paths);
+      } finally {
+        restoreEditorFocus();
+      }
       return;
     }
     browserFileInputRef.current?.click();
-  }, [surface]);
+    window.setTimeout(restoreEditorFocus, 0);
+  }, [restoreEditorFocus, surface]);
 
   // Sync editor text to React state (drives hasInput / canSend) + slash menu detection + draft save
   useEffect(() => {

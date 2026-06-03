@@ -46,17 +46,13 @@ describe("sandbox workspace roots", () => {
     expect(guard.check(path.join(sibling, "secret.md"), "delete").allowed).toBe(false);
   });
 
-  it("lets agents read skill snapshots and session files but blocks writing runtime copies", () => {
+  it("lets agents read session files but blocks writing runtime copies", () => {
     const agentDir = path.join(tempRoot, "agents", "hana");
     const hanakoHome = path.join(tempRoot, "home");
     const workspace = path.join(tempRoot, "project");
-    const snapshotRoot = path.join(agentDir, "sessions", ".skill-snapshots");
-    const snapshotSkill = path.join(snapshotRoot, "main", "001-demo", "SKILL.md");
     const sessionFile = path.join(hanakoHome, "session-files", "abc123", "SKILL.md");
-    for (const filePath of [snapshotSkill, sessionFile]) {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, "---\nname: demo\n---\n", "utf-8");
-    }
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "---\nname: demo\n---\n", "utf-8");
     fs.mkdirSync(workspace, { recursive: true });
 
     const policy = deriveSandboxPolicy({
@@ -69,12 +65,8 @@ describe("sandbox workspace roots", () => {
     const guard = new PathGuard(policy);
 
     expect(policy.writablePaths).not.toContain(path.join(hanakoHome, "session-files"));
-    expect(policy.protectedPaths).toContain(snapshotRoot);
-    expect(guard.getAccessLevel(snapshotSkill)).toBe(AccessLevel.READ_ONLY);
     expect(guard.getAccessLevel(sessionFile)).toBe(AccessLevel.READ_ONLY);
-    expect(guard.check(snapshotSkill, "read").allowed).toBe(true);
     expect(guard.check(sessionFile, "read").allowed).toBe(true);
-    expect(guard.check(snapshotSkill, "write").allowed).toBe(false);
     expect(guard.check(sessionFile, "write").allowed).toBe(false);
   });
 

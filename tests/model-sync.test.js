@@ -953,6 +953,42 @@ describe("syncModels", () => {
     expect(result.providers.ollama.models[0].id).toBe("llama3");
   });
 
+  it("projects bare Ollama OpenAI-compatible base URLs to the /v1 runtime API root", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      ollama: {
+        base_url: "http://localhost:51434",
+        api: "openai-completions",
+        models: ["llama3"],
+      },
+    };
+
+    const changed = syncModels(providers, { modelsJsonPath });
+
+    expect(changed).toBe(true);
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.ollama.baseUrl).toBe("http://localhost:51434/v1");
+  });
+
+  it("does not duplicate /v1 for Ollama OpenAI-compatible base URLs", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      ollama: {
+        base_url: "http://localhost:51434/v1/",
+        api: "openai-completions",
+        models: ["llama3"],
+      },
+    };
+
+    const changed = syncModels(providers, { modelsJsonPath });
+
+    expect(changed).toBe(true);
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.ollama.baseUrl).toBe("http://localhost:51434/v1");
+  });
+
   it("allows IPv6 loopback providers without api_key", async () => {
     const syncModels = await loadSync();
 

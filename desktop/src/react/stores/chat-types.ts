@@ -175,6 +175,7 @@ export type RichBlock =
     streamKey: string;
     streamStatus: 'running' | 'done' | 'failed' | 'aborted';
     summary?: string;
+    label?: string | null;
     reuseInstance?: string | null;
   }
   | {

@@ -11,7 +11,7 @@ import { getAgentPhoneProjectionPath, safeConversationStem } from "../lib/conver
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 35;
+const LATEST_DATA_VERSION = 37;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -3295,5 +3295,172 @@ describe("migration #35 — MiniMax Token Plan endpoint follows current official
       api_key: "sk-token-plan",
       models: ["MiniMax-M2.7"],
     });
+  });
+});
+
+describe("migration #36 — subagent thread registry backfills old run and reusable records", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = tmpDir;
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function runFrom35() {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 35 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+    return prefs;
+  }
+
+  it("creates closed direct threads from historical subagent runs with child sessions", () => {
+    writeJson(path.join(tmpDir, "subagent-runs.json"), {
+      schemaVersion: 1,
+      runs: {
+        "subagent-old": {
+          taskId: "subagent-old",
+          status: "resolved",
+          parentSessionPath: "/parent.jsonl",
+          childSessionPath: "/child.jsonl",
+          summary: "旧摘要",
+          executorAgentId: "butter",
+          executorAgentNameSnapshot: "Butter",
+          completedAt: "2026-06-01T00:02:00.000Z",
+        },
+        "workflow-old": {
+          taskId: "workflow-old",
+          status: "resolved",
+          parentSessionPath: "/parent.jsonl",
+          summary: "旧 workflow",
+        },
+      },
+    });
+
+    const prefs = runFrom35();
+
+    const threads = readJson(path.join(tmpDir, "subagent-threads.json"));
+    expect(threads.threads["subagent-old"]).toMatchObject({
+      threadId: "subagent-old",
+      kind: "direct",
+      status: "closed",
+      lastRunStatus: "resolved",
+      parentSessionPath: "/parent.jsonl",
+      childSessionPath: "/child.jsonl",
+      agentId: "butter",
+      agentName: "Butter",
+      summary: "旧摘要",
+      runCount: 1,
+    });
+    const runs = readJson(path.join(tmpDir, "subagent-runs.json"));
+    expect(runs.runs["subagent-old"].threadKind).toBe("direct");
+    expect(threads.threads["workflow-old"]).toBeUndefined();
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+
+  it("creates open direct threads from historical reusable instance records", () => {
+    writeJson(path.join(tmpDir, "reusable-subagents.json"), {
+      schemaVersion: 2,
+      instances: {
+        "/parent.jsonl::butter::探索": {
+          reuseKey: "/parent.jsonl::butter::探索",
+          childSessionPath: "/child.jsonl",
+          parentSessionPath: "/parent.jsonl",
+          agentId: "butter",
+          taskSuffix: "探索",
+          summary: "最近一次",
+          lastStatus: "resolved",
+          runCount: 3,
+        },
+      },
+    });
+
+    runFrom35();
+
+    const threads = readJson(path.join(tmpDir, "subagent-threads.json"));
+    expect(threads.threads["reusable::/parent.jsonl::butter::探索"]).toMatchObject({
+      kind: "direct",
+      status: "open",
+      lastRunStatus: "resolved",
+      parentSessionPath: "/parent.jsonl",
+      childSessionPath: "/child.jsonl",
+      agentId: "butter",
+      label: "探索",
+      summary: "最近一次",
+      runCount: 3,
+    });
+  });
+
+  it("normalizes already-migrated v36 thread files to direct semantics", () => {
+    writeJson(path.join(tmpDir, "subagent-threads.json"), {
+      schemaVersion: 1,
+      threads: {
+        "subagent-old": {
+          threadId: "subagent-old",
+          kind: "ephemeral",
+          status: "closed",
+          parentSessionPath: "/parent.jsonl",
+          childSessionPath: "/child.jsonl",
+        },
+        "reusable::/parent.jsonl::butter::探索": {
+          threadId: "reusable::/parent.jsonl::butter::探索",
+          kind: "reusable",
+          status: "open",
+          parentSessionPath: "/parent.jsonl",
+          childSessionPath: "/child.jsonl",
+          agentId: "butter",
+          instance: "探索",
+          reuseKey: "/parent.jsonl::butter::探索",
+        },
+        "workflow-1::node-1": {
+          threadId: "workflow-1::node-1",
+          kind: "workflow_node",
+          status: "closed",
+        },
+      },
+    });
+    writeJson(path.join(tmpDir, "subagent-runs.json"), {
+      schemaVersion: 1,
+      runs: {
+        "subagent-old": {
+          taskId: "subagent-old",
+          threadId: "subagent-old",
+          threadKind: "ephemeral",
+        },
+      },
+    });
+
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 36 });
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistry([]),
+      log: () => {},
+    });
+
+    const threads = readJson(path.join(tmpDir, "subagent-threads.json")).threads;
+    expect(threads["subagent-old"]).toMatchObject({ kind: "direct", status: "closed" });
+    expect(threads["reusable::/parent.jsonl::butter::探索"]).toMatchObject({
+      kind: "direct",
+      status: "open",
+      label: "探索",
+    });
+    expect(threads["reusable::/parent.jsonl::butter::探索"].instance).toBeUndefined();
+    expect(threads["reusable::/parent.jsonl::butter::探索"].reuseKey).toBeUndefined();
+    expect(threads["workflow-1::node-1"].kind).toBe("workflow_node");
+    const runs = readJson(path.join(tmpDir, "subagent-runs.json")).runs;
+    expect(runs["subagent-old"].threadKind).toBe("direct");
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
   });
 });

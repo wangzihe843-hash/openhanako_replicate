@@ -13,6 +13,7 @@ import { normalizeVisionCapabilities, withHanaVideoInputCompat, withThinkingForm
 import { normalizeProviderHeaders, providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
 import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.js";
+import { normalizeProviderBaseUrlForApi } from "../lib/llm/provider-client.js";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const PI_BUILTIN_PROVIDER_REUSE = new Set(["kimi-coding"]);
@@ -230,6 +231,11 @@ export function syncModels(providers, opts = {}) {
 
     const effectiveApiKey = apiKey || (hasHeaders ? "headers" : "local");
     const effectiveApi = p.api || "openai-completions";
+    const effectiveBaseUrl = normalizeProviderBaseUrlForApi({
+      provider: name,
+      baseUrl: p.base_url,
+      api: effectiveApi,
+    });
     const chatModels = filterChatModelEntries(name, p.models);
     const customModels = [];
     const modelOverrides = {};
@@ -241,11 +247,11 @@ export function syncModels(providers, opts = {}) {
         if (override) modelOverrides[id] = override;
         continue;
       }
-      customModels.push(buildModelEntry(modelEntry, name, p.base_url, effectiveApi));
+      customModels.push(buildModelEntry(modelEntry, name, effectiveBaseUrl, effectiveApi));
     }
 
     const providerConfig = {
-      baseUrl: p.base_url,
+      baseUrl: effectiveBaseUrl,
       api: effectiveApi,
       apiKey: hasLiteralApiKey ? buildRuntimeApiKeyRef(name) : effectiveApiKey,
     };

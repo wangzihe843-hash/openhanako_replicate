@@ -58,12 +58,48 @@ export interface UsageLedgerEntry {
   } | null;
 }
 
-export async function loadLlmUsageEntries(limit = 500): Promise<UsageLedgerEntry[]> {
-  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 2000) : 500;
-  const res = await hanaFetch(`/api/usage/llm?limit=${safeLimit}`);
+export interface LoadLlmUsageEntriesOptions {
+  limit?: number | null;
+  since?: string | null;
+  until?: string | null;
+}
+
+export async function loadLlmUsageEntries(options: number | LoadLlmUsageEntriesOptions = 500): Promise<UsageLedgerEntry[]> {
+  const params = usageQueryParams(options);
+  const query = params.toString();
+  const res = await hanaFetch(`/api/usage/llm${query ? `?${query}` : ''}`);
   const data: unknown = await res.json();
   if (!isUsageResponse(data)) return [];
   return data.entries;
+}
+
+function usageQueryParams(options: number | LoadLlmUsageEntriesOptions) {
+  const params = new URLSearchParams();
+  if (typeof options === 'number') {
+    params.set('limit', String(normalizeLimit(options)));
+    return params;
+  }
+
+  const since = cleanDateParam(options?.since);
+  const until = cleanDateParam(options?.until);
+  if (since) params.set('since', since);
+  if (until) params.set('until', until);
+
+  if (options?.limit !== undefined && options.limit !== null) {
+    params.set('limit', String(normalizeLimit(options.limit)));
+  } else if (!since && !until) {
+    params.set('limit', '500');
+  }
+
+  return params;
+}
+
+function normalizeLimit(limit: number) {
+  return Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 2000) : 500;
+}
+
+function cleanDateParam(value: string | null | undefined) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function isUsageResponse(value: unknown): value is { entries: UsageLedgerEntry[] } {

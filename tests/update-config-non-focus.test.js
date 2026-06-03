@@ -73,6 +73,34 @@ describe("updateConfig with agentId", () => {
     expect(coord.getHomeFolder("target")).not.toBe(focusHome);
   });
 
+  it("clears a requested agent explicit home folder only when the path is missing", () => {
+    const missingHome = path.join(os.tmpdir(), `hana-missing-home-${Date.now()}`);
+    const { targetAgent, deps } = makeDeps();
+    targetAgent.config.desk = { home_folder: missingHome };
+    const coord = new ConfigCoordinator(deps);
+
+    expect(coord.getExplicitHomeFolder("target")).toBeNull();
+    expect(targetAgent.updateConfig).toHaveBeenCalledWith({ desk: { home_folder: null } });
+  });
+
+  it("keeps a requested agent explicit home folder when stat reports temporary access failure", () => {
+    const blockedHome = path.join(os.tmpdir(), `hana-blocked-home-${Date.now()}`);
+    const originalStatSync = fs.statSync;
+    const statSpy = vi.spyOn(fs, "statSync").mockImplementation((target, ...args) => {
+      if (target === blockedHome) {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return originalStatSync.call(fs, target, ...args);
+    });
+    const { targetAgent, deps } = makeDeps();
+    targetAgent.config.desk = { home_folder: blockedHome };
+    const coord = new ConfigCoordinator(deps);
+
+    expect(coord.getExplicitHomeFolder("target")).toBe(blockedHome);
+    expect(statSpy).toHaveBeenCalledWith(blockedHome);
+    expect(targetAgent.updateConfig).not.toHaveBeenCalled();
+  });
+
   it("传入 agentId 时刷新目标 agent 而非焦点 agent", async () => {
     const { focusAgent, targetAgent, deps } = makeDeps();
     const coord = new ConfigCoordinator(deps);

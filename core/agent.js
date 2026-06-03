@@ -31,7 +31,11 @@ import { createExperienceTools } from "../lib/tools/experience.js";
 import { createInstallSkillTool } from "../lib/tools/install-skill.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
-import { createSubagentTool } from "../lib/tools/subagent-tool.js";
+import {
+  createSubagentCloseTool,
+  createSubagentReplyTool,
+  createSubagentTool,
+} from "../lib/tools/subagent-tool.js";
 import { writeSubagentSessionMeta } from "../lib/subagent-executor-metadata.js";
 import { createCheckDeferredTool } from "../lib/tools/check-deferred-tool.js";
 import { createWaitTool } from "../lib/tools/wait-tool.js";
@@ -126,6 +130,10 @@ export class Agent {
     this._computerUseTool = null;
     this._notifyTool = null;
     this._stopTaskTool = null;
+    this._subagentTool = null;
+    this._subagentReplyTool = null;
+    this._subagentCloseTool = null;
+    this._workflowTool = null;
     this._currentStatusTool = null;
     this._terminalTool = null;
 
@@ -385,6 +393,7 @@ export class Agent {
       getUiContext: (sessionPath) => this._cb?.getEngine?.()?.getUiContext?.(sessionPath) || null,
       listSessionFiles: (sessionPath) => this._cb?.getEngine?.()?.listSessionFiles?.(sessionPath) || [],
       getBridgeContext: (sessionPath) => this._cb?.getEngine?.()?.getBridgeContextForSessionPath?.(sessionPath, { agentId: this.id }) || null,
+      listOpenSubagentThreads: (sessionPath) => this._cb?.getSubagentThreadStore?.()?.listOpenDirectBySession?.(sessionPath) || [],
     });
     this._terminalTool = createTerminalTool({
       getTerminalSessionManager: () => this._cb?.getTerminalSessionManager?.(),
@@ -486,7 +495,7 @@ export class Agent {
     });
 
     // 11. subagent 工具
-    this._subagentTool = createSubagentTool({
+    const subagentToolDeps = {
       executeIsolated: (prompt, opts) => {
         if (!this._cb?.executeIsolated) throw new Error("subagent 调用失败：engine 未初始化");
         return this._cb.executeIsolated(prompt, opts);
@@ -494,7 +503,7 @@ export class Agent {
       resolveUtilityModel: () => this._cb?.getCurrentModelId?.() || null,
       getDeferredStore: () => this._cb?.getDeferredResults?.(),
       getSubagentRunStore: () => this._cb?.getSubagentRunStore?.(),
-      getReusableSubagentStore: () => this._cb?.getReusableSubagentStore?.(),
+      getSubagentThreadStore: () => this._cb?.getSubagentThreadStore?.(),
       getActivityHub: () => this._cb?.getActivityHub?.(),
       getTaskRegistry: () => this._cb?.getTaskRegistry?.(),
       setSubagentController: (id, ctrl) => this._cb?.setSubagentController?.(id, ctrl),
@@ -511,7 +520,10 @@ export class Agent {
       agentDir: this.agentDir,
       emitEvent: (event, sp) => this._cb?.emitEvent?.(event, sp),
       persistSubagentSessionMeta: (sessionPath, meta) => writeSubagentSessionMeta(sessionPath, meta),
-    });
+    };
+    this._subagentTool = createSubagentTool(subagentToolDeps);
+    this._subagentReplyTool = createSubagentReplyTool(subagentToolDeps);
+    this._subagentCloseTool = createSubagentCloseTool(subagentToolDeps);
 
     // 13. workflow 工具（per-agent 工具开关，默认关；纳入与否由 tools.disabled 决定）
     this._workflowTool = createWorkflowTool({
@@ -532,6 +544,7 @@ export class Agent {
       // 完成后由 DeferredResultCoordinator 回灌主对话。
       getDeferredStore: () => this._cb?.getDeferredResults?.(),
       getSubagentRunStore: () => this._cb?.getSubagentRunStore?.(),
+      getSubagentThreadStore: () => this._cb?.getSubagentThreadStore?.(),
       getActivityHub: () => this._cb?.getActivityHub?.(),
       // 节点 token：从 UsageLedger 按子节点 session 汇总（usage 已在 executeIsolated 采集）。
       getUsageLedger: () => this._cb?.getEngine?.()?.usageLedger,
@@ -693,6 +706,8 @@ export class Agent {
       this._xingyeProposeDraftTool,
       this._updateSettingsTool,
       this._subagentTool,
+      this._subagentReplyTool,
+      this._subagentCloseTool,
       this._workflowTool,
       this._checkDeferredTool,
       this._currentStatusTool,
@@ -986,7 +1001,7 @@ export class Agent {
    * @param {object} [options]
    * @param {boolean} [options.forSubagent] - 为 subagent 构造的轻量 prompt：
    *   跳过记忆三段（规则 + pinned.md + memory.md）和团队 agent 名单。
-   *   Subagent 是一次性隔离任务，不需要长期记忆和多 agent 协作上下文。
+   *   Subagent 是隔离子会话，不注入长期记忆和多 agent 协作上下文。
    * @param {string} [options.cwdOverride] - 覆盖 prompt 中“工作台”章节展示的 cwd。
    *   用于新建隔离 session 时，让 prompt 快照和实际执行目录保持一致。
    */
@@ -994,9 +1009,6 @@ export class Agent {
     const forSubagent = !!options.forSubagent;
     const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
       ? options.forceMemoryEnabled
-      : null;
-    const forceExperienceEnabled = Object.prototype.hasOwnProperty.call(options, "forceExperienceEnabled")
-      ? options.forceExperienceEnabled
       : null;
     const cwdOverride = Object.prototype.hasOwnProperty.call(options, "cwdOverride")
       ? (typeof options.cwdOverride === "string" ? options.cwdOverride : "")
@@ -1009,9 +1021,6 @@ export class Agent {
     const memoryEnabled = typeof forceMemoryEnabled === "boolean"
       ? forceMemoryEnabled
       : this.memoryEnabled;
-    const experienceEnabled = typeof forceExperienceEnabled === "boolean"
-      ? forceExperienceEnabled
-      : this.experienceEnabled;
     const isZh = String(this._config.locale || "").startsWith("zh");
 
     const readFile = (filePath) => safeReadFile(filePath, "");
@@ -1105,87 +1114,49 @@ export class Agent {
     // 分支末尾追加一份 formatSkillsForPrompt(skills)。这里再追加一次会重复（#399）。
     // 显示路径（GET /system-prompt）会自行拼接 skills 以保持开发者视图一致。
 
-    // 任务管理引导（todo_write 工具主动使用）
-    parts.push(isZh
-      ? "\n## 任务管理\n\n" +
-        "用 todo_write 工具拆分和追踪你的工作。收到复杂或多步骤的任务时，先拆分为子任务再逐步执行。\n\n" +
-        "**每次调用都传入完整的 todos 列表**（替换式），每条 todo 必须包含：\n" +
-        "- content：静态描述，如『读取 spec』\n" +
-        "- activeForm：执行中态描述，如『正在读取 spec』\n" +
-        "- status：pending | in_progress | completed\n\n" +
-        "**约定同时最多一条 in_progress**。开始一条时标 in_progress，完成后立即改 completed 并把下一条改 in_progress，不要攒着批量标记。\n" +
-        "这能帮助用户了解你的进度。简单的单步任务（回答问题、单次查询、简单修改）不需要 todo_write。"
-      : "\n## Task Management\n\n" +
-        "Use the todo_write tool to break down and track your work. When you receive complex or multi-step tasks, decompose them into sub-tasks before executing step by step.\n\n" +
-        "**Each call replaces the entire todos list** (replacement-style). Each todo must include:\n" +
-        "- content: static description, e.g. 'Read spec'\n" +
-        "- activeForm: in-progress description, e.g. 'Reading spec'\n" +
-        "- status: pending | in_progress | completed\n\n" +
-        "**Convention: at most one in_progress at a time**. Mark a todo in_progress when starting it, immediately change it to completed when done and set the next one to in_progress — do not batch up completions.\n" +
-        "This helps the user track your progress. Simple single-step tasks (answering questions, single lookups, simple edits) do not need todo_write."
-    );
-
-    // 经验库引导。经验是独立能力：缺省关闭，开启后才把规则写入新 session 的 prompt。
-    if (experienceEnabled) {
-      parts.push(isZh
-        ? "\n## 经验库\n\n" +
-          "你有一个经验库，记录着过往工作中踩过的坑和学到的教训。\n\n" +
-          "**查**：接到工作任务时，先调用 recall_experience 扫一眼索引，看有没有相关经验。\n\n" +
-          "**记**：工作中遇到以下情况时，用 record_experience 记录一条简洁的教训：\n" +
-          "- 用户纠正了你的错误\n" +
-          "- 用户表现出不满或反复强调某件事\n" +
-          "- 你自己试错后找到了正确做法\n" +
-          "- 巡检或自主工作时踩了坑"
-        : "\n## Experience Library\n\n" +
-          "You have an experience library that stores lessons from past work — mistakes, corrections, and discoveries.\n\n" +
-          "**Recall**: When you receive a work task, call recall_experience to scan the index for relevant experience first.\n\n" +
-          "**Record**: During work, use record_experience to log a concise lesson when:\n" +
-          "- The user corrects a mistake you made\n" +
-          "- The user shows frustration or repeatedly emphasizes something\n" +
-          "- You discover the right approach after trial and error\n" +
-          "- You hit a pitfall during patrol or autonomous work"
-      );
-    }
-
     // 工具使用纪律（轻量优先）
     parts.push(isZh
       ? "\n## 工具使用纪律\n\n" +
-        "当多个工具能完成同一件事时，优先使用成本最低、干扰最小的那个。" +
-        "不要在简单工具能解决问题的场景下启动重型工具。"
+        "当多个工具能完成同一件事时，优先用成本最低、干扰最小的那个，不要在简单工具够用时启动重型工具。"
       : "\n## Tool Usage Discipline\n\n" +
-        "When multiple tools can accomplish the same task, prefer the one with the lowest cost and least disruption. " +
-        "Do not reach for heavy tools when simpler ones can do the job."
-    );
-
-    parts.push(isZh
-      ? "\n## 当前视野\n\n" +
-        "用户界面有一份可查询的当前视野，包括当前浏览目录、主面板打开内容和钉住窗口。" +
-        "用户用“这个、这里、当前、打开的、选中的、钉住的、当前文件、当前文件夹”等说法指向界面时，先调用 current_status 获取 ui_context，再继续处理任务。"
-      : "\n## Current View\n\n" +
-        "The user interface has queryable current-view state, including the current viewed folder, main-panel content, and pinned viewer windows. " +
-        "When the user says things like this, here, current, open, selected, pinned, current file, or current folder to refer to the UI, call current_status for ui_context first, then continue the task."
+        "When multiple tools can accomplish the same task, prefer the lowest-cost, least-disruptive one; do not reach for heavy tools when simpler ones suffice."
     );
 
     parts.push(isZh
       ? "\n## Session 文件与交付\n\n" +
-        "SessionFile 表示和当前 session 相关的本地文件：用户上传/附加的文件、你通过 write 创建的文件、你通过 edit 修改的文件、插件产物、浏览器截图、安装产物都会进入同一套 session 文件记录。\n\n" +
+        "SessionFile 表示和当前 session 相关的本地文件：用户上传、你用 write/edit 产生的、插件产物、浏览器截图、安装产物，都会进入同一套 session 文件记录。\n\n" +
         "当你需要使用本轮会话已经产生或登记过的文件时，先调用 current_status 获取 session_files。它会返回当前 session 的文件清单、fileId、来源、状态和本机路径。不要猜测 session-files 缓存路径。\n\n" +
         "write/edit 成功后会由工具层自动记录为 session 相关文件；这只表示文件和本次会话有关，不等于已经交付给用户。\n\n" +
-        "当用户要求你把文件发给他、呈现给他、交付给他，或者你创建/修改了一个明确需要用户查看或拿走的文件时，使用 stage_files 标记为已交付。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件；桌面端可以显示卡片，Bridge 可以按平台能力发送，未来移动端也消费同一份 SessionFile。\n\n" +
+        "当用户要求你把文件发给他、呈现给他、交付给他，或者你创建/修改了一个明确需要用户查看或拿走的文件时，使用 stage_files 标记为已交付。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件。\n\n" +
         "- 只传真实存在的本机绝对路径\n" +
         "- 已经 stage 过的同一个文件不需要反复 stage；如文件内容后来又被修改，并且用户需要查看最新版本，再 stage 一次\n" +
         "- 不要只在文本里写文件路径\n" +
         "- 不要在 Agent 层判断具体平台怎么展示或发送，消费端会处理"
       : "\n## Session Files and Delivery\n\n" +
-        "SessionFile means a local file related to the current session: files uploaded or attached by the user, files you create with write, files you modify with edit, plugin outputs, browser screenshots, and install outputs all enter the same session file record.\n\n" +
+        "SessionFile means a local file related to the current session: files uploaded by the user, files you produce with write/edit, plugin outputs, browser screenshots, and install outputs all enter the same session file record.\n\n" +
         "When you need to use a file that has already been produced or registered in this conversation, call current_status with the session_files key first. It returns the current session file list, fileId, origin, status, and local path. Do not guess session-files cache paths.\n\n" +
         "After write/edit succeeds, the tool layer records the file as session-related automatically; this only means the file belongs to this session, not that it has been delivered to the user.\n\n" +
-        "When the user asks you to send, present, or hand over a file, or when you create/modify a file the user clearly needs to see or take away, use stage_files to mark it as delivered. Staging promotes this session-related file to something consumers can display/send; desktop can render a card, Bridge can send according to platform capabilities, and future mobile clients can consume the same SessionFile.\n\n" +
+        "When the user asks you to send, present, or hand over a file, or when you create/modify a file the user clearly needs to see or take away, use stage_files to mark it as delivered. Staging promotes this session-related file to something consumers can display/send.\n\n" +
         "- Pass only real local absolute paths\n" +
         "- Do not repeatedly stage the same file once it has already been staged; if the file is modified later and the user needs the latest version, stage it again\n" +
         "- Do not merely write file paths in text\n" +
         "- Do not decide platform-specific display or sending behavior in the Agent layer; consumers handle it"
     );
+
+    if (!forSubagent) {
+      parts.push(isZh
+        ? "\n## 子 Agent 协作\n\n" +
+          "subagent 会创建一个可继续的子 Agent 实例，并返回 threadId。label 只用于展示，access 只决定只读或可操作权限；二者都不作为续接身份。\n\n" +
+          "当任务可能已经有合适的子 Agent 实例时，先调用 current_status 获取 subagents，查看当前会话打开的 threadId、agent、label、权限和最近状态。\n\n" +
+          "继续同一个实例用 subagent_reply(threadId, task)。新方向或缺少合适实例时才用 subagent 创建新的实例。一个实例忙时会排队执行，不要用 label 猜测身份。\n\n" +
+          "如果实例不再有用，或需要腾出位置，调用 subagent_close(threadId) 关闭。没有可用位置时，由你根据任务相关性和最近状态决定关闭哪个实例。workflow 里的 agent() 是一次性节点，不参与这里的可继续实例池。"
+        : "\n## Subagent Collaboration\n\n" +
+          "subagent creates a continuable sub-agent instance and returns a threadId. label is display-only, and access only chooses read-only or writable permissions; neither is the resume identity.\n\n" +
+          "When the task may already have a suitable sub-agent instance, call current_status with the subagents key first. It shows the open threadId, agent, label, access, and recent status for this session.\n\n" +
+          "Continue the same instance with subagent_reply(threadId, task). Create a new instance with subagent only for a new direction or when no suitable instance exists. If an instance is busy, replies queue; do not infer identity from label.\n\n" +
+          "When an instance is no longer useful, or you need room, close it with subagent_close(threadId). If there is no available slot, decide which instance to close from task relevance and recent status. workflow agent() nodes are one-shot and do not join this continuable instance pool."
+      );
+    }
 
     if (this._isComputerUseAvailableForThisAgent()) {
       parts.push(isZh
@@ -1226,31 +1197,17 @@ export class Agent {
     parts.push(isZh
       ? "\n## 网页工具优先级\n\n" +
         "获取网页信息时，按以下顺序选择工具：\n" +
-        "1. **web_search** — 查找信息、获取 URL。大多数「帮我查一下 XX」的请求用这个就够了\n" +
-        "2. **web_fetch** — 已知 URL，需要提取页面文字内容。简单抓取必须用这个\n" +
+        "1. **web_search** — 查找信息、获取 URL\n" +
+        "2. **web_fetch** — 已知 URL，需要提取页面文字内容\n" +
         "3. **browser** — 只在以下情况使用：页面需要登录/身份验证、需要填表或点击交互、web_fetch 返回的内容为空或不完整（JS 动态渲染页面）、需要查看页面视觉布局\n\n" +
         "**禁止**在 web_search 或 web_fetch 能完成的场景下启动浏览器。浏览器启动成本高、会打开窗口干扰用户。"
       : "\n## Web Tool Priority\n\n" +
         "When fetching web information, choose tools in this order:\n" +
-        "1. **web_search** — Find information, get URLs. Most \"look up XX\" requests are handled by this alone\n" +
-        "2. **web_fetch** — Known URL, need to extract page text. Simple scraping must use this\n" +
+        "1. **web_search** — Find information, get URLs\n" +
+        "2. **web_fetch** — Known URL, need to extract page text\n" +
         "3. **browser** — Only use when: the page requires login/authentication, form filling or click interaction is needed, web_fetch returns empty or incomplete content (JS-rendered pages), or you need to see visual layout\n\n" +
         "**Do not** launch the browser when web_search or web_fetch can do the job. Browser startup is expensive and opens a window that interrupts the user."
     );
-
-    // 设置工具路由只在工具可用时注入，用户关闭后 prompt 层也消失。
-    const disabledTools = Array.isArray(this._config?.tools?.disabled) ? this._config.tools.disabled : [];
-    const updateSettingsEnabled = !disabledTools.includes("update_settings");
-    if (updateSettingsEnabled) {
-      parts.push(isZh
-        ? "\n## 设置修改\n\n" +
-          "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
-          "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录、MCP 连接器）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，执行后用一句话报告修改结果；不确定时先 search。"
-        : "\n## Settings Changes\n\n" +
-          "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
-          "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory, MCP connectors), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly and report the result in one sentence; when unsure, search first."
-      );
-    }
 
     // 主动技能获取引导（仅在 allow_github_fetch 开启时注入）
     // learn_skills 从全局 preferences 读取
@@ -1258,33 +1215,15 @@ export class Agent {
     if (learnCfg.enabled && learnCfg.allow_github_fetch) {
       parts.push(isZh
         ? "\n## 主动技能获取\n\n" +
-          "遇到专业领域任务且你没有对应技能时，主动搜索并安装。\n\n" +
-          "### 搜索\n\n" +
-          "1. `site:clawhub.ai {关键词}` 或 `site:github.com/openclaw/skills {关键词}`\n" +
-          "2. GitHub 上其他含 SKILL.md 的仓库\n" +
-          "3. install_skill 安装：用 github_url 参数\n\n" +
-          "### 判断\n\n" +
-          "- 已有相关技能则直接使用，不重复搜索\n" +
-          "- 仅专业领域任务搜索，日常对话不搜\n" +
-          "- 安装应能显著提升输出质量\n\n" +
-          "### 行为\n\n" +
-          "- 找到后简要告知用户，直接安装并立即应用\n" +
-          "- 安装失败则尝试自己完成\n" +
-          "- 搜索无果正常完成，不反复尝试"
+          "遇到专业领域任务且你没有对应技能时，主动搜索并安装：\n" +
+          "- 搜索：`site:clawhub.ai {关键词}` 或 `site:github.com/openclaw/skills {关键词}`，或其他含 SKILL.md 的 GitHub 仓库；用 install_skill 的 github_url 参数安装\n" +
+          "- 判断：仅专业任务搜（日常对话不搜），安装应能显著提升输出质量；已有相关技能则直接用，不重复搜\n" +
+          "- 行为：找到后简要告知用户，直接安装并应用；安装失败则自己完成；搜索无果正常完成，不反复尝试"
         : "\n## Proactive Skill Acquisition\n\n" +
-          "When you encounter specialized tasks and lack a matching skill, proactively search and install one.\n\n" +
-          "### Search\n\n" +
-          "1. `site:clawhub.ai {keywords}` or `site:github.com/openclaw/skills {keywords}`\n" +
-          "2. Other GitHub repos containing SKILL.md\n" +
-          "3. install_skill: use github_url parameter\n\n" +
-          "### When\n\n" +
-          "- If you already have a relevant skill, use it directly — don't search again\n" +
-          "- Only search for specialized domain tasks, not daily conversations\n" +
-          "- Install should significantly improve output quality\n\n" +
-          "### Behavior\n\n" +
-          "- Briefly inform the user, install, and apply immediately\n" +
-          "- If installation fails, attempt the task yourself\n" +
-          "- If nothing found, complete normally — don't retry"
+          "When you encounter specialized tasks and lack a matching skill, proactively search and install one:\n" +
+          "- Search: `site:clawhub.ai {keywords}` or `site:github.com/openclaw/skills {keywords}`, or other GitHub repos containing SKILL.md; install via install_skill's github_url parameter\n" +
+          "- When: only for specialized domain tasks (not daily conversations), and only if it significantly improves output quality; if you already have a relevant skill, use it directly without searching again\n" +
+          "- Behavior: briefly inform the user, install, and apply immediately; if installation fails, do the task yourself; if nothing is found, complete normally without retrying"
       );
     }
 
@@ -1344,21 +1283,12 @@ export class Agent {
     parts.push(isZh
       ? "\n## 文件与命令工具使用\n\n" +
         "查看文件和目录时优先用 read/grep/find/ls。\n" +
-        "修改已有源码文件时优先用 edit，新建完整文件或全量替换时用 write。\n" +
-        "运行测试、构建、包脚本、生成器和命令行工具时用 shell。\n" +
-        "结构化文件工具可用时，避免用 shell 重定向修改源码文件。"
+        "改已有源码用 edit、新建或全量替换用 write，不要用 shell 重定向改源码。\n" +
+        "运行测试、构建、包脚本、生成器和命令行工具时用 shell。"
       : "\n## Tool Use For Files And Commands\n\n" +
         "Use read/grep/find/ls to inspect files.\n" +
-        "Use edit for source-code changes to existing files and write for new complete files.\n" +
-        "Use shell for builds, tests, package scripts, generators, and command-line tools.\n" +
-        "Avoid shell redirection to modify source files when structured file tools are available."
-    );
-
-    parts.push(isZh
-      ? "\n## 技能文件身份\n\n" +
-        "技能的运行时位置可能是会话冻结的源文件指针，也可能是旧会话遗留的快照副本。指针只冻结本次会话可见的技能身份；如果源文件已不存在，该技能视为不可用。`sessions/.skill-snapshots` 与 `session-files` 下的技能副本不是源文件，不能编辑。用户要求修改技能时，先定位真实源文件：工作台技能通常在当前工作目录的 `.agents/skills/<name>/SKILL.md`；安装后的用户技能以安装工具返回的 `skill_source` 为准。找不到源文件时显式说明。"
-      : "\n## Skill File Identity\n\n" +
-        "A skill's runtime location may be a per-session source pointer, or a legacy snapshot copy from older sessions. A pointer freezes only the skill identity visible to this session; if the source file no longer exists, that skill is unavailable. Skill copies under `sessions/.skill-snapshots` and `session-files` are not source files and must not be edited. When the user asks to modify a skill, locate the real source file first: workspace skills usually live at `.agents/skills/<name>/SKILL.md` under the current working directory; installed user skills should use the `skill_source` returned by install tools. If the source cannot be resolved, say so explicitly."
+        "Use edit for source-code changes and write for new complete files; do not use shell redirection to modify source files.\n" +
+        "Use shell for builds, tests, package scripts, generators, and command-line tools."
     );
 
     // 记忆规则 + 置顶记忆 + 记忆（动态，后台 compile 会更新；按 session 快照）

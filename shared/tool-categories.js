@@ -32,6 +32,8 @@ export const STANDARD_TOOL_NAMES = [
   "notify",
   "stage_files",
   "subagent",
+  "subagent_reply",
+  "subagent_close",
   "channel",
   "record_experience",
   "recall_experience",

@@ -13,7 +13,6 @@ vi.mock('../../utils/checkpoints', () => ({
 }));
 
 describe('PreviewEditor file sync', () => {
-  let fileChangedHandler: ((filePath: string) => void) | null;
   let platform: Pick<
     PlatformApi,
     'readFile' | 'writeFile' | 'writeFileIfUnchanged' | 'writeFileBinary' | 'copyFile' | 'watchFile' | 'unwatchFile' | 'onFileChanged' | 'getFilePath'
@@ -22,7 +21,6 @@ describe('PreviewEditor file sync', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-22T01:02:03Z'));
-    fileChangedHandler = null;
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -49,9 +47,7 @@ describe('PreviewEditor file sync', () => {
       getFilePath: vi.fn(() => null),
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
-      onFileChanged: vi.fn((handler: (filePath: string) => void) => {
-        fileChangedHandler = handler;
-      }),
+      onFileChanged: vi.fn(),
     };
     window.platform = platform as PlatformApi;
   });
@@ -61,10 +57,10 @@ describe('PreviewEditor file sync', () => {
     vi.useRealTimers();
   });
 
-  it('does not autosave content that arrived from a file watcher reload', async () => {
+  it('does not autosave content that arrived from a parent file refresh', async () => {
     const ref = createRef<PreviewEditorHandle>();
 
-    render(
+    const { rerender } = render(
       <PreviewEditor
         ref={ref}
         content="original"
@@ -74,7 +70,15 @@ describe('PreviewEditor file sync', () => {
     );
 
     await act(async () => {
-      fileChangedHandler?.('/tmp/hana-note.md');
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="external update"
+          filePath="/tmp/hana-note.md"
+          fileVersion={{ mtimeMs: 2, size: 15, sha256: 'external' }}
+          mode="markdown"
+        />,
+      );
       await Promise.resolve();
     });
 
@@ -85,6 +89,7 @@ describe('PreviewEditor file sync', () => {
       await Promise.resolve();
     });
 
+    expect(platform.writeFileIfUnchanged).not.toHaveBeenCalled();
     expect(platform.writeFile).not.toHaveBeenCalled();
   });
 
@@ -409,6 +414,80 @@ describe('PreviewEditor file sync', () => {
 
     expect(onContentChange).not.toHaveBeenCalledWith('first edit', firstVersion);
     expect(onContentChange).toHaveBeenLastCalledWith('second edit', secondVersion);
+  });
+
+  it('does not report a self-write refresh as an external conflict while newer edits are pending', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 1, size: 8, sha256: 'loaded' };
+    const firstVersion = { mtimeMs: 2, size: 10, sha256: 'first' };
+    const notices: Array<{ text?: string; type?: string }> = [];
+    const onNotice = vi.fn((event: Event) => {
+      notices.push((event as CustomEvent).detail ?? {});
+    });
+
+    let resolveFirst!: (value: VersionedWriteResult) => void;
+    const firstWrite = new Promise<VersionedWriteResult>((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    vi.mocked(platform.writeFileIfUnchanged!).mockReturnValueOnce(firstWrite);
+    window.addEventListener('hana-inline-notice', onNotice);
+
+    const { rerender } = render(
+      <PreviewEditor
+        ref={ref}
+        content="original"
+        filePath="/tmp/hana-note.md"
+        fileVersion={loadedVersion}
+        mode="markdown"
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'original'.length, insert: 'first edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      vi.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'first edit'.length, insert: 'second edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      vi.advanceTimersByTime(700);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveFirst({
+        ok: true,
+        conflict: false,
+        version: firstVersion,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="first edit"
+          filePath="/tmp/hana-note.md"
+          fileVersion={firstVersion}
+          mode="markdown"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    window.removeEventListener('hana-inline-notice', onNotice);
+
+    expect(ref.current?.getView()?.state.doc.toString()).toBe('second edit');
+    expect(notices.some(notice => String(notice.text ?? '').includes('settings.fileChangedOnDisk'))).toBe(false);
   });
 
   it('pastes clipboard images into the markdown attachment folder at the cursor', async () => {

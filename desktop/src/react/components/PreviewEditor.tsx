@@ -81,8 +81,8 @@ export interface PreviewEditorProps {
   onStatsChange?: (stats: PreviewEditorStats) => void;
   onContentChange?: (content: string, fileVersion?: FileVersion | null) => void;
   /**
-   * 只读模式：禁用编辑、不挂 autosave listener、不挂 file watch。
-   * 调用方（如派生 viewer 窗口）自己管 watchFile → setContent 即可。
+   * 只读模式：禁用编辑、不挂 autosave listener。
+   * 调用方（如派生 viewer 窗口）自己把新 content 作为 prop 传入即可。
    */
   readOnly?: boolean;
 }
@@ -260,19 +260,6 @@ function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
   return y >= rect.top && y <= rect.top + 40;
 }
 
-/* ── File change emitter (global singleton) ── */
-
-const _fileChangeEmitter = new EventTarget();
-let _fileChangeListenerSetup = false;
-
-function setupFileChangeListener() {
-  if (_fileChangeListenerSetup) return;
-  _fileChangeListenerSetup = true;
-  window.platform?.onFileChanged((filePath: string) => {
-    _fileChangeEmitter.dispatchEvent(new CustomEvent('change', { detail: filePath }));
-  });
-}
-
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
@@ -403,7 +390,6 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           }
           nextVersion = result.version ?? null;
           if (result.version) diskVersionRef.current = result.version;
-          rememberSelfWrite(text);
         } else {
           if (!fp) return;
           if (window.platform?.writeFileIfUnchanged) {
@@ -417,15 +403,14 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
             }
             nextVersion = result.version ?? null;
             if (result.version) diskVersionRef.current = result.version;
-            rememberSelfWrite(text);
           } else {
-            rememberSelfWrite(text);
             const ok = await window.platform?.writeFile(fp, text);
             if (ok === false) throw new Error('write-file returned false');
             nextVersion = undefined;
           }
         }
         lastSavedContentRef.current = text;
+        rememberSelfWrite(text);
 
         if (revision === docRevisionRef.current && fp === filePathRef.current && nextVersion !== undefined) {
           contentCbRef.current?.(text, nextVersion);
@@ -459,6 +444,10 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const current = view.state.doc.toString();
       if (current === nextContent) {
         if (options.publish) lastSavedContentRef.current = nextContent;
+        return;
+      }
+
+      if (selfWriteContentsRef.current.has(nextContent)) {
         return;
       }
 
@@ -669,42 +658,6 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     useEffect(() => {
       applyIncomingContent(content);
     }, [content, applyIncomingContent]);
-
-    // File watching（只读模式下由调用方自理，这里跳过避免重复监听）
-    useEffect(() => {
-      if (!filePath || readOnly) return;
-      setupFileChangeListener();
-      window.platform?.watchFile(filePath);
-
-      const handler = (e: Event) => {
-        const changedPath = (e as CustomEvent).detail;
-        if (changedPath !== filePath) return;
-        void (async () => {
-          const snapshot = await window.platform?.readFileSnapshot?.(filePath);
-          const newContent = snapshot?.content ?? await window.platform?.readFile(filePath);
-          if (snapshot?.version) diskVersionRef.current = snapshot.version;
-          return newContent;
-        })()
-          .then((newContent) => {
-            if (newContent == null) return;
-            // Content comparison: same as last write → self-write, ignore
-            if (newContent === lastSavedContentRef.current || selfWriteContentsRef.current.has(newContent)) {
-              lastSavedContentRef.current = newContent;
-              return;
-            }
-            applyIncomingContent(newContent, { publish: true });
-          })
-          .catch((err) => {
-            console.warn('[PreviewEditor] reload watched file failed:', err);
-          });
-      };
-
-      _fileChangeEmitter.addEventListener('change', handler);
-      return () => {
-        _fileChangeEmitter.removeEventListener('change', handler);
-        window.platform?.unwatchFile(filePath);
-      };
-    }, [filePath, readOnly, applyIncomingContent]);
 
     return <div className={`preview-editor mode-${mode}`} ref={containerRef} />;
   },

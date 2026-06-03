@@ -187,4 +187,32 @@ describe("Usage ledger", () => {
       entries: [{ requestId: "req-persisted" }],
     });
   });
+
+  it("returns every entry in an explicit date window before applying any default list cap", () => {
+    let clock = Date.parse("2026-05-20T00:00:00.000Z");
+    let id = 0;
+    const ledger = createUsageLedger({
+      maxEntries: 1_000,
+      now: () => clock,
+      requestIdFactory: () => `req-${++id}`,
+    });
+
+    for (let index = 0; index < 600; index += 1) {
+      ledger.record({
+        model: { provider: "openai", modelId: "gpt-5", api: "openai-responses" },
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usageContext: sessionContext(`/sessions/day-${index}.jsonl`),
+      });
+      clock += 1_000;
+    }
+
+    const result = ledger.list({
+      since: "2026-05-20T00:00:00.000Z",
+      until: "2026-05-21T00:00:00.000Z",
+    });
+
+    expect(result.entries).toHaveLength(600);
+    expect(result.entries[0].requestId).toBe("req-1");
+    expect(result.entries.at(-1)?.requestId).toBe("req-600");
+  });
 });

@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.268.19",
+  "version": "0.271.11",
   "type": "module",
   "description": "HanaAgent - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -23,7 +23,7 @@
     "hana": "cli/entry.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "npm run build:preload && npm run build:renderer && npm run build:theme && node scripts/launch.js electron",
@@ -116,7 +116,7 @@
     "@types/react-dom": "^19.2.3",
     "@vercel/nft": "^1.5.0",
     "@vitejs/plugin-react": "^5.1.4",
-    "electron": "^38.8.4",
+    "electron": "42.3.0",
     "electron-builder": "^26.8.1",
     "esbuild": "^0.27.4",
     "eslint": "^9.39.4",
@@ -131,6 +131,7 @@
     "appId": "com.hanako.app",
     "productName": "HanaAgent",
     "asar": true,
+    "npmRebuild": false,
     "afterPack": "./scripts/fix-modules.cjs",
     "extraMetadata": {
       "main": "desktop/bootstrap.cjs"

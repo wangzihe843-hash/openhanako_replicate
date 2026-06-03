@@ -503,6 +503,12 @@
     "count": "{n} 個工具",
     "running": "{n} 個工具運行中"
   },
+  "processFold": {
+    "summary": "✨ {name}忙活了一陣子",
+    "tools": "{n} 個工具",
+    "thinking": "{n} 次思考",
+    "unsuccessful": "{n} 次嘗試未成功"
+  },
   "tool": {
     "web_search": {
       "running": "🌐 {name} 正在網路上衝浪",
@@ -2043,6 +2049,7 @@
     "settingsCancelled": "使用者取消了「{label}」的修改",
     "settingsTimeout": "「{label}」修改確認逾時，設定未變更",
     "subagentMaxConcurrent": "目前已有 {max} 個子 agent 在執行，請等待完成後再發起。",
+    "subagentParentSessionRequired": "subagent 需要活躍父會話和背景任務儲存，無法在目前上下文建立可繼續實例。",
     "subagentFailed": "子 agent 執行失敗: {msg}",
     "subagentTimeout": "子 agent 執行逾時（{minutes} 分鐘）",
     "subagentAborted": "子 agent 已被終止",
@@ -2053,7 +2060,8 @@
     "subagentStopReason": "子 agent 未完整完成（stopReason: {reason}）。",
     "subagentToolFailed": "子 agent 工具執行失敗: {msg}",
     "subagentDispatched": "子任務已派出 (task-id: {taskId})。完成後結果會自動送達。",
-    "subagentReuseQueued": "子任務已派出 (task-id: {taskId})。實例「{instance}」正忙，已排隊，前一個任務完成後接著跑。",
+    "subagentThreadQueued": "子任務已派出 (task-id: {taskId})。實例 {threadId} 正忙，已排隊，前一個任務完成後接著跑。",
+    "subagentThreadClosed": "子 Agent 實例已關閉：{threadId}",
     "installSkillDisabled": "技能安裝能力未啟用。請在設定中開啟「允許 Agent 自行建立/安裝技能」。",
     "installSkillGithubDisabled": "GitHub 技能獲取未啟用。請在設定中開啟「允許從 GitHub 獲取技能」。",
     "installSkillInvalidGithubUrl": "無效的 GitHub URL：{url}",
@@ -2290,13 +2298,19 @@
     },
     "todoWrite": {
       "label": "待辦",
-      "description": "管理當前 session 內的待辦清單。每次呼叫傳入完整的 todos 陣列覆蓋當前狀態（替換式）。\n每條 todo 需要：\n- content：靜態描述（如『讀取 spec』）\n- activeForm：執行中態描述（如『正在讀取 spec』）\n- status：pending | in_progress | completed\n約定同時最多一條 in_progress。",
+      "description": "管理當前 session 內的待辦清單，用於拆分和追蹤多步驟工作。收到複雜或多步驟任務時，先拆成子任務再逐步執行；簡單的單步任務（回答問題、單次查詢、簡單修改）不需要用。每次呼叫傳入完整的 todos 陣列覆蓋當前狀態（替換式）。\n每條 todo 需要：\n- content：靜態描述（如『讀取 spec』）\n- activeForm：執行中態描述（如『正在讀取 spec』）\n- status：pending | in_progress | completed\n約定同時最多一條 in_progress：開始一條時標 in_progress，完成後立即改 completed 並把下一條轉 in_progress，不要攢著批量標記。",
       "contentDesc": "todo 的靜態描述文字",
       "activeFormDesc": "執行中態的描述文字（用於 UI 展示 in_progress 時）",
       "statusDesc": "三態：pending / in_progress / completed",
       "todosDesc": "完整的 todo 清單，每次呼叫都會覆蓋舊清單",
       "summaryEmpty": "已清空待辦",
       "summaryStats": "共 {total} 條待辦：{completed} 完成，{in_progress} 進行中，{pending} 待處理"
+    },
+    "currentStatus": {
+      "label": "當前狀態",
+      "description": "查詢當前環境的輕量狀態。可查：時間、邏輯日期、agent 身份、使用者/agent 頭像外觀、模型身份、Bridge 平台上下文、開放子 Agent 實例，以及使用者當前可見的介面視野。重要：系統提示裡的日期時間是 session 建立時的快照，可能已過時；需要精確當前時間、排程、提醒、按鐘點算日期、問候等任何在意時分的場景，用 action=get、key=time。key=logical_date 僅用於判斷 4:00 邊界下 Hana 該把哪一天當今天，不返回時分秒。key=appearance 用於使用者問「我/當前 agent 長什麼樣」。當使用者用「這個檔案、這裡、當前/開啟的/可見的/選中的項、釘住的視窗、當前 Bridge 會話/平台、當前資料夾」指代介面時，先用 action=get、key=ui_context 取當前視野再繼續。",
+      "actionDesc": "list 返回所有可查詢的狀態鍵；get 取某個狀態鍵的值。",
+      "keyDesc": "action=get 時要取的狀態鍵。常用鍵：time、logical_date、agent、appearance、model、ui_context、session_files、bridge_context、subagents。引用當前 Bridge 平台/會話用 bridge_context；續接或關閉子 Agent 前用 subagents。"
     },
     "pinnedMemory": {
       "pinLabel": "釘選記憶",
@@ -2311,7 +2325,7 @@
       "recallDescription": "查看經驗庫。不傳參數回傳所有分類概覽，傳分類名回傳該分類的具體經驗。當使用者要求你完成一項具體工作（寫程式碼、搜尋資料、建立文件、分析問題等）時，開始前應先呼叫此工具檢查是否有相關經驗可參考。普通閒聊、問答、日常對話不需要呼叫。",
       "recallCategoryDesc": "分類名。不傳則回傳所有分類概覽",
       "recordLabel": "記錄經驗",
-      "recordDescription": "將一條經驗教訓記錄到經驗庫。在以下情況使用：使用者指出你犯了錯誤並說明正確做法、你嘗試多種方法後發現了有效做法、使用者明確說「以後要/不要這樣做」。每條經驗應簡潔直接，一句話概括。",
+      "recordDescription": "將一條經驗教訓記錄到經驗庫。在以下情況使用：使用者指出你犯了錯誤並說明正確做法、使用者表現出不滿或反覆強調某件事、你嘗試多種方法後發現了有效做法、使用者明確說「以後要/不要這樣做」、巡檢或自主工作時踩了坑。每條經驗應簡潔直接，一句話概括。",
       "recordCategoryDesc": "經驗所屬分類，2-4 字短語，如「工具使用」「搜尋技巧」「回答風格」",
       "recordContentDesc": "具體的經驗內容，簡潔直接，一句話"
     },
@@ -2329,12 +2343,26 @@
     },
     "subagent": {
       "label": "啟動子 Agent",
-      "description": "將任務派給子 agent 執行。可指定其他 agent（傳 agent 參數），不指定則自己分身執行。傳 agent=\"?\" 查看可用 agent 列表。\n\n你的判斷：\n- 如果目前還有可以並行推進的工作，繼續做\n- 如果必須拿到結果才能進行下一步，告訴使用者你已經派出去了、在等回覆，然後正常等待即可\n\n適用場景：\n- 需要大量搜尋、閱讀後總結為簡短結論的調研任務\n- 可以和目前思路並行的獨立子問題\n- 需要在多個方向同時探索的任務（可同時發起多個 subagent 呼叫）\n- 讓另一個 agent 從其專業視角處理任務\n不適用：需要修改檔案、執行命令等有副作用的操作\n\n重要：task 參數要寫清楚完整的指令和必要背景，子 agent 看不到目前的對話歷史。",
-      "taskDesc": "子 agent 的完整指令。格式：第一行寫「任務：xxx」作為任務標題，空一行後寫詳細要求和必要背景。子 agent 看不到當前對話歷史，必要上下文都要寫在這裡。",
-      "agentDesc": "目標 agent 的 id 欄位值（團隊列表中括號內，不是粗體的顯示名稱）。不填則當前 agent 自己執行，傳 \"?\" 列出可用 agent。",
-      "instanceDesc": "可選。複用實例後綴（如「探索」「下筆」）。帶上它表示派給一個會記住歷史的常駐子助手實例：同一 agent + 同一後綴續接同一段對話，能看到上次的上下文。省略則是一次性子任務，不留記憶。注意：同一實例同一時刻只跑一個任務，並發會自動排隊。",
-      "accessDesc": "可選。權限檔：探索/調研/審查類任務傳 \"read\"（唯讀，禁止改檔案、跑指令）；執行/修改類傳 \"write\"（可操作）。省略則繼承你目前對話的權限檔：一般對話→可操作，唯讀/plan 模式→唯讀。",
-      "modelDesc": "指定模型，必須使用 provider/id（可選，預設使用 utility 模型）"
+      "description": "建立可繼續的子 Agent 實例執行委派任務，立即返回 taskId 和 threadId；結果會在背景送回目前對話。用 agent 指定目標，agent=\"?\" 查看可用 Agent。",
+      "taskDesc": "給子 agent 的完整指令與必要上下文。子 agent 看不到目前對話歷史；需要它知道的內容都寫在這裡。",
+      "agentDesc": "目標 agent 的 id，使用團隊列表裡反引號中的值。根據任務選擇人格、專長與模型最合適的 agent；團隊列表會展示模型與簡介。省略則目前 agent 自己執行；傳 \"?\" 列出可用 agent。",
+      "labelDesc": "可選顯示標籤，如「探索一」「下筆二」。只影響使用者看到的名字；續接實例請使用返回的 threadId 呼叫 subagent_reply。",
+      "instanceDesc": "舊欄位，僅作為 label 相容；新呼叫請使用 label，續接請使用 threadId。",
+      "accessDesc": "可選權限檔：\"read\" 用於唯讀調研、探索、審查；\"write\" 用於執行、修改、跑指令。省略則繼承目前會話權限。",
+      "modelDesc": "可選模型覆蓋，必須使用 provider/id。省略則使用目標 agent 的聊天模型設定。"
+    },
+    "subagentReply": {
+      "label": "繼續子 Agent",
+      "description": "向目前會話中已開啟的子 Agent 實例追加任務。先用 current_status 的 subagents 查看可用 threadId。",
+      "threadIdDesc": "要繼續的子 Agent 實例 threadId。必須來自目前會話的開放 subagent 實例。",
+      "taskDesc": "追加給該子 Agent 的完整指令與必要上下文。",
+      "accessDesc": "可選權限檔：\"read\" 或 \"write\"。省略則沿用該實例權限，仍會受目前會話權限限制。"
+    },
+    "subagentClose": {
+      "label": "關閉子 Agent",
+      "description": "關閉目前會話中不再需要的子 Agent 實例，釋放可繼續實例槽位。",
+      "threadIdDesc": "要關閉的開放子 Agent 實例 threadId。",
+      "reasonDesc": "可選關閉原因，會寫入該實例的最後摘要。"
     },
     "installSkill": {
       "label": "安裝技能",
@@ -2346,7 +2374,7 @@
     },
     "updateSettings": {
       "label": "設定",
-      "description": "修改 HanaAgent 的設定。支援兩種操作：\n- search + query：用關鍵字搜尋設定項，查看當前值和可選項\n- apply + key + value：修改指定設定項，需使用者確認\n\n如果已知確切 key，可以直接 apply 跳過搜尋。",
+      "description": "修改 HanaAgent 的設定。使用者提到改設定但沒指明具體軟體時，預設就是本應用的設定；涉及外觀主題、語言地區、模型選擇、安全權限、記憶功能、個人資訊、工作目錄、MCP 連接器等偏好時，用本工具，不要去搜網頁、也不要直接編輯設定檔。支援兩種操作：\n- search + query：用關鍵字搜尋設定項，查看當前值和可選項\n- apply + key + value：修改指定設定項，需使用者確認\n\n已知確切 key 時可直接 apply 跳過搜尋。意圖明確就直接 apply，執行後用一句話報告結果；不確定先 search。",
       "actionDesc": "操作類型：search 搜尋設定項 / apply 修改設定",
       "queryDesc": "搜尋關鍵字（search 時必填）",
       "keyDesc": "設定項 key（透過 search 取得）",

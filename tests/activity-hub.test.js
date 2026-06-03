@@ -22,12 +22,16 @@ describe("ActivityHub", () => {
     expect(hub.list()).toHaveLength(1);
   });
 
-  it("upsert 透传 reuseInstance（subagent 复用实例后缀），缺省为 null", () => {
+  it("upsert 透传 label/access，并把旧 reuseInstance 映射为兼容展示标签", () => {
     const hub = new ActivityHub();
-    hub.upsert({ ...baseEntry, reuseInstance: "探索" });
-    expect(hub.get("subagent-1").reuseInstance).toBe("探索");
+    hub.upsert({ ...baseEntry, label: "探索一", access: "read" });
+    expect(hub.get("subagent-1").label).toBe("探索一");
+    expect(hub.get("subagent-1").access).toBe("read");
+    hub.upsert({ ...baseEntry, id: "legacy", reuseInstance: "探索" });
+    expect(hub.get("legacy").label).toBe("探索");
+    expect(hub.get("legacy").reuseInstance).toBeUndefined();
     hub.upsert({ id: "s2", kind: "subagent", status: "running", sessionPath: "/s/a.jsonl" });
-    expect(hub.get("s2").reuseInstance).toBeNull();
+    expect(hub.get("s2").label).toBeNull();
   });
 
   it("upsert 同 id 合并：running→done 保留 startedAt/sessionPath/summary，补 finishedAt", () => {
@@ -162,12 +166,12 @@ describe("ActivityHub 持久化背书", () => {
     expect(persistedIds).not.toContain("cron-1");
   });
 
-  it("subagent 写穿 + 回灌保留 reuseInstance / childSessionPath（重启右侧子助手卡完整复原）", () => {
+  it("subagent 写穿 + 回灌保留 label / access / childSessionPath（重启右侧子助手卡完整复原）", () => {
     const store = makeFakeStore();
     const hub1 = new ActivityHub(null, store);
     hub1.upsert({
       id: "sub-1", kind: "subagent", status: "done", sessionPath: "/s/a.jsonl",
-      agentId: "butter", agentName: "Butter", reuseInstance: "探索",
+      agentId: "butter", agentName: "Butter", label: "探索一", access: "read",
       childSessionPath: "/s/child.jsonl", summary: "调研完成", startedAt: 1, finishedAt: 2,
     });
     // 模拟重启：新 hub 从同一 store 回灌
@@ -175,7 +179,8 @@ describe("ActivityHub 持久化背书", () => {
     const e = hub2.get("sub-1");
     expect(e.kind).toBe("subagent");
     expect(e.status).toBe("done");               // 终态原样
-    expect(e.reuseInstance).toBe("探索");         // 复用后缀保留
+    expect(e.label).toBe("探索一");               // 展示标签保留
+    expect(e.access).toBe("read");                // 权限档保留
     expect(e.childSessionPath).toBe("/s/child.jsonl"); // 子会话预览链接保留
     expect(e.agentId).toBe("butter");
   });

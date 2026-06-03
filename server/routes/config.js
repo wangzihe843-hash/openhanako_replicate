@@ -2,7 +2,6 @@
  * 配置管理 REST 路由
  */
 import fs from "fs/promises";
-import { existsSync } from "fs";
 import path from "path";
 import { Hono } from "hono";
 import { emitAppEvent } from "../app-events.js";
@@ -27,6 +26,7 @@ import {
   normalizeWorkspacePath,
   removeWorkspaceHistoryEntries,
 } from "../../shared/workspace-history.js";
+import { pruneMissingWorkspaceConfig } from "../../shared/workspace-persistence-gc.js";
 import {
   collectProviderHeaderSecretPatchPathsFromConfig,
   maskProviderHeaders,
@@ -180,6 +180,7 @@ export function createConfigRoute(engine) {
   // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
   route.get("/config", async (c) => {
     try {
+      await gcConfigWorkspacePersistence(engine);
       const config = { ...engine.config };
       const raw = getRawConfig(engine.configPath) || {};
 
@@ -208,14 +209,6 @@ export function createConfigRoute(engine) {
 
       // 自动注入全局字段（schema-driven）
       injectGlobalFields(config, engine);
-      // cwd_history 过滤（agent-scope，但需要 existsSync 验证）
-      if (Array.isArray(config.cwd_history)) {
-        config.cwd_history = mergeWorkspaceHistory(
-          config.cwd_history.filter(p => typeof p === "string" && existsSync(p)),
-          [],
-        );
-      }
-
       return c.json(maskObjectSecrets(config));
     } catch (err) {
       return c.json({ error: err.message }, 500);
@@ -760,4 +753,15 @@ export function createConfigRoute(engine) {
   });
 
   return route;
+}
+
+async function gcConfigWorkspacePersistence(engine) {
+  if (typeof engine.gcWorkspacePersistence === "function") {
+    await engine.gcWorkspacePersistence({ agentId: engine.currentAgentId || undefined });
+    return;
+  }
+  const result = pruneMissingWorkspaceConfig(engine.config || {});
+  if (result.changed && typeof engine.updateConfig === "function") {
+    await engine.updateConfig(result.patch);
+  }
 }

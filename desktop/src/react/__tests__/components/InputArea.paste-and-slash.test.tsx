@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   loadSessions: vi.fn(),
   hanaFetch: vi.fn(),
   wsSend: vi.fn(),
+  editorFocus: vi.fn(),
 }));
 
 function editorJsonForText(text: string) {
@@ -42,7 +43,7 @@ vi.mock('@tiptap/react', () => ({
     };
     return {
       commands: {
-        focus: vi.fn(),
+        focus: mocks.editorFocus,
         clearContent: vi.fn(),
         scrollIntoView: vi.fn(),
         setContent: mocks.setContent,
@@ -247,6 +248,7 @@ describe('InputArea paste and slash menu behavior', () => {
     mocks.editorText = '';
     mocks.updateHandler = undefined;
     mocks.chainInserted = [];
+    mocks.editorFocus.mockClear();
     seedInputState();
     mocks.hanaFetch.mockResolvedValue(new Response('{}', { status: 200 }));
     window.platform = {} as typeof window.platform;
@@ -377,6 +379,23 @@ describe('InputArea paste and slash menu behavior', () => {
       expect(mocks.ensureSession).toHaveBeenCalledTimes(1);
       expect(mocks.loadSessions).toHaveBeenCalledTimes(1);
       expect(mocks.wsSend).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('returns focus to the editor after the desktop file picker resolves', async () => {
+    const selectFiles = vi.fn(async () => ['/tmp/report.pdf']);
+    window.platform = { selectFiles } as unknown as typeof window.platform;
+    render(React.createElement(InputArea));
+
+    const attach = screen.getByRole('button', { name: 'attach' });
+    attach.focus();
+    expect(document.activeElement).toBe(attach);
+
+    fireEvent.click(attach);
+
+    await waitFor(() => {
+      expect(selectFiles).toHaveBeenCalledTimes(1);
+      expect(mocks.editorFocus).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -317,14 +317,16 @@ describe('SessionList context menu', () => {
     expect(css).not.toMatch(/sessionItemSummaryEmpty/);
   });
 
-  it('keeps row hover-only controls behind fine pointer media queries so mobile taps switch immediately', () => {
+  it('uses one fine-hover policy for row and heading hover controls', () => {
     const css = fs.readFileSync(
       path.join(__dirname, '../../components/SessionList.module.css'),
       'utf-8',
     );
 
-    expect(css).toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover\s*\{/);
-    expect(css).toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
+    expect(css).not.toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover\s*\{/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionListScroller:hover \.sectionTitleActions/);
   });
 
   it('keeps the mobile session search input at 16px to avoid browser auto zoom', () => {
@@ -345,6 +347,15 @@ describe('SessionList context menu', () => {
     expect(css).toMatch(/\.sessionItemActive \.sessionPinBtn,\s*\.sessionItemActive \.sessionRenameBtn,\s*\.sessionItemActive \.sessionArchiveBtn/);
     expect(css).toMatch(/\.sessionItem:focus-visible \.sessionPinBtn,\s*\.sessionItem:focus-visible \.sessionRenameBtn,\s*\.sessionItem:focus-visible \.sessionArchiveBtn/);
     expect(css).toMatch(/\.sessionItemActive \.sessionItemMeta,\s*\.sessionItem:focus-visible \.sessionItemMeta/);
+  });
+
+  it('reveals section heading actions on focus without depending on hover media queries', () => {
+    const css = fs.readFileSync(
+      path.join(__dirname, '../../components/SessionList.module.css'),
+      'utf-8',
+    );
+
+    expect(css).toMatch(/\.sessionSectionTitle:focus-within \.sectionTitleActions\s*\{[\s\S]*opacity:\s*1/);
   });
 
   it('switches views through one Codex-like sort menu on the section heading', async () => {

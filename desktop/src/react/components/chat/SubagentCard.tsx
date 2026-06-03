@@ -30,6 +30,7 @@ interface SubagentCardProps {
     streamKey: string;
     streamStatus: 'running' | 'done' | 'failed' | 'aborted';
     summary?: string;
+    label?: string | null;
     reuseInstance?: string | null;
   };
 }
@@ -145,6 +146,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   }, [block.taskId, block.streamKey, isOpen]);
 
   const headerDisplay = block.taskTitle;
+  const displayLabel = block.label || block.reuseInstance || null;
 
   return (
     <div className={`${styles.subagentCard} ${styles[`subagent-${status}`]}`}>
@@ -163,7 +165,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
           <div className={styles.subagentBody}>
             <div className={styles.subagentName}>
               {agentName}
-              {block.reuseInstance ? <span className={styles.subagentInstance}>· {block.reuseInstance}</span> : null}
+              {displayLabel ? <span className={styles.subagentInstance}>· {displayLabel}</span> : null}
               <span className={styles.subagentStatus}>
                 {isInterrupted ? '已中断' : status === 'aborted' ? '已终止' : status === 'done' ? '已完成' : status === 'failed' ? '失败' : '已派出'}
               </span>

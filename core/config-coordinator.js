@@ -5,7 +5,6 @@
  * session meta 持久化、updateConfig 联动。
  * 不持有 engine 引用，通过构造器注入依赖。
  */
-import fs from "fs";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.js";
 import { t } from "../server/i18n.js";
@@ -17,6 +16,10 @@ import {
   normalizeSearchApiKeys,
   normalizeSearchProvider,
 } from "../shared/search-providers.js";
+import {
+  classifyWorkspacePathForGc,
+  pruneMissingWorkspaceConfig,
+} from "../shared/workspace-persistence-gc.js";
 
 const log = createModuleLogger("config");
 
@@ -116,7 +119,11 @@ export class ConfigCoordinator {
     if (!targetId) return null;
     const agent = this._d.getAgentById(targetId);
     const folder = agent?.config?.desk?.home_folder;
-    if (folder && fs.existsSync(folder)) return folder;
+    const status = classifyWorkspacePathForGc(folder);
+    if (status.status === "present" || status.status === "unknown") return status.path;
+    if (status.status === "missing") {
+      agent?.updateConfig?.({ desk: { home_folder: null } });
+    }
     return null;
   }
 
@@ -150,6 +157,27 @@ export class ConfigCoordinator {
       agent.updateConfig({ desk: { home_folder: null } });
     }
     log.log(`setHomeFolder(${agentId}): ${folder || "(cleared)"}`);
+  }
+
+  gcWorkspaceConfig(agentId, options = {}) {
+    const targetId = agentId || this._getPrimaryAgentId();
+    if (!targetId) return { changed: false, patch: {} };
+    const agent = this._d.getAgentById(targetId);
+    if (!agent) return { changed: false, patch: {} };
+    const result = pruneMissingWorkspaceConfig(agent.config || {}, options);
+    if (result.changed) {
+      agent.updateConfig(result.patch);
+    }
+    return result;
+  }
+
+  gcAllWorkspaceConfigs(options = {}) {
+    const agents = this._d.getAgents?.();
+    const ids = agents instanceof Map ? [...agents.keys()] : [];
+    if (ids.length === 0) {
+      return [this.gcWorkspaceConfig(undefined, options)];
+    }
+    return ids.map((id) => this.gcWorkspaceConfig(id, options));
   }
 
   // ── Shared Models ──

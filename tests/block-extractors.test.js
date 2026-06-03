@@ -584,15 +584,22 @@ describe('subagent', () => {
       streamKey: "/s/t.jsonl",
       streamStatus: "running",
     });
-    expect(blocks[0].reuseInstance).toBeNull(); // 非复用 subagent
+    expect(blocks[0].label).toBeNull();
   });
 
-  it("subagent: 复用实例后缀 reuseInstance 透传到块", () => {
+  it("subagent: 展示 label 透传到块，旧 reuseInstance 可兼容映射", () => {
     const blocks = extractBlocks("subagent", {
       taskId: "t1", taskTitle: "x", sessionPath: "/s/t.jsonl",
+      streamStatus: "running", label: "探索一",
+    });
+    expect(blocks[0]).toMatchObject({ type: "subagent", label: "探索一" });
+
+    const legacy = extractBlocks("subagent", {
+      taskId: "t2", taskTitle: "x", sessionPath: "/s/t.jsonl",
       streamStatus: "running", reuseInstance: "探索",
     });
-    expect(blocks[0]).toMatchObject({ type: "subagent", reuseInstance: "探索" });
+    expect(legacy[0]).toMatchObject({ type: "subagent", label: "探索" });
+    expect(legacy[0].reuseInstance).toBeUndefined();
   });
 
   it("subagent: 优先读取显式 executor metadata", () => {

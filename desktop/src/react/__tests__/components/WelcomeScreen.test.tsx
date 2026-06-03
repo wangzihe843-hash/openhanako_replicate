@@ -120,25 +120,14 @@ describe('WelcomeScreen workspace picker', () => {
     }));
   });
 
-  it('shows the cwd project as the default new-session project', async () => {
+  it('does not show a project picker while creating a new session', async () => {
     const { WelcomeScreen } = await import('../../components/WelcomeScreen');
 
     render(<WelcomeScreen />);
 
-    expect(screen.getByRole('button', { name: /项目：Desktop/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /项目：/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('自定义项目')).not.toBeInTheDocument();
     expect(useStore.getState().pendingProjectId).toBeNull();
-  });
-
-  it('lets the pending new-session draft choose a custom project without changing the workspace', async () => {
-    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
-
-    render(<WelcomeScreen />);
-    fireEvent.click(screen.getByRole('button', { name: /项目：Desktop/ }));
-    fireEvent.click(screen.getByText('写作项目'));
-
-    expect(useStore.getState().pendingProjectId).toBe('project-writing');
-    expect(useStore.getState().selectedFolder).toBe('/workspace/Desktop');
-    expect(screen.getByRole('button', { name: /项目：写作项目/ })).toBeInTheDocument();
   });
 
   it('disables the memory toggle when the selected agent has memory disabled in settings', async () => {

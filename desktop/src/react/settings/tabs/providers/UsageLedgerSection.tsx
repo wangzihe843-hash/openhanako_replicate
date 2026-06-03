@@ -16,6 +16,7 @@ import {
   groupEntries,
   modelKey,
   modelLabel,
+  usagePeriodDateRange,
   type UsagePeriod,
   type UsageAggregate,
   type UsageView,
@@ -25,6 +26,7 @@ type CssVars = CSSProperties & Record<string, string | number>;
 
 export function UsageLedgerSection() {
   const [entries, setEntries] = useState<UsageLedgerEntry[]>([]);
+  const [dateWindowEntries, setDateWindowEntries] = useState<UsageLedgerEntry[]>([]);
   const [view, setView] = useState<UsageView>('overall');
   const [period, setPeriod] = useState<UsagePeriod>('week');
   const [loading, setLoading] = useState(false);
@@ -34,20 +36,25 @@ export function UsageLedgerSection() {
     setLoading(true);
     setError(null);
     try {
-      setEntries(await loadLlmUsageEntries(500));
+      const [recent, dateWindow] = await Promise.all([
+        loadLlmUsageEntries(500),
+        loadLlmUsageEntries(usagePeriodDateRange(period)),
+      ]);
+      setEntries(recent);
+      setDateWindowEntries(dateWindow);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const totals = useMemo(() => aggregateEntries('total', t('settings.usage.total'), entries), [entries]);
   const modelGroups = useMemo(() => groupEntries(entries, modelKey, modelLabel), [entries]);
   const categoryGroups = useMemo(() => groupEntries(entries, categoryKey, entry => categoryLabel(entry, t)), [entries]);
-  const dateWindowGroups = useMemo(() => groupDateWindowEntries(entries, period), [entries, period]);
+  const dateWindowGroups = useMemo(() => groupDateWindowEntries(dateWindowEntries, period), [dateWindowEntries, period]);
   const latestEntries = useMemo(() => [...entries].reverse(), [entries]);
 
   return (

@@ -30,7 +30,6 @@ import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../..
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { upsertPreviewItem } from '../../stores/preview-actions';
-import { subscribeFileChanges } from '../../services/file-change-events';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 import type { PreviewItem } from '../../types';
@@ -463,31 +462,6 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
     }
   }, [body]);
   useMermaidDiagrams(divRef, [body]);
-
-  useEffect(() => {
-    const filePath = previewItem.filePath;
-    if (!filePath) return;
-    window.platform?.watchFile?.(filePath);
-    const unsubscribe = subscribeFileChanges((changedPath) => {
-      if (changedPath !== filePath) return;
-      void (async () => {
-        const snapshot = await window.platform?.readFileSnapshot?.(filePath);
-        const nextContent = snapshot?.content ?? await window.platform?.readFile?.(filePath);
-        if (nextContent == null || nextContent === previewItem.content) return;
-        upsertPreviewItem({
-          ...previewItem,
-          content: nextContent,
-          fileVersion: snapshot?.version ?? previewItem.fileVersion,
-        });
-      })().catch((err) => {
-        console.warn('[PreviewRenderer] markdown reload failed:', err);
-      });
-    });
-    return () => {
-      unsubscribe();
-      window.platform?.unwatchFile?.(filePath);
-    };
-  }, [previewItem]);
 
   return (
     <>

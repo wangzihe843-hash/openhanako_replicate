@@ -716,12 +716,10 @@ export class AgentManager {
 
     await fsp.rm(agentDir, { recursive: true, force: true });
 
-    // 复用 subagent 实例账本：agent 删除后其 reusable session 文件已随 agentDir 消失，
-    // 同步清理账本条目（build-to-delete：避免悬挂指向已删文件的记录）。
     try {
-      this._d.getEngine?.()?.reusableSubagents?.removeByAgentId?.(agentId);
+      this._d.getEngine?.()?.subagentThreads?.removeByAgentId?.(agentId);
     } catch (err) {
-      log.warn(`复用实例账本清理失败 (${agentId}): ${err.message}`);
+      log.warn(`subagent 线程账本清理失败 (${agentId}): ${err.message}`);
     }
 
     if (this._d.hanakoHome) {
@@ -845,7 +843,7 @@ export class AgentManager {
       emitSessionEvent:     (event) => getEngine()?.emitSessionEvent?.(event),
       getDeferredResults:   () => getEngine()?.deferredResults ?? null,
       getSubagentRunStore:  () => getEngine()?.subagentRuns ?? null,
-      getReusableSubagentStore: () => getEngine()?.reusableSubagents ?? null,
+      getSubagentThreadStore: () => getEngine()?.subagentThreads ?? null,
       getActivityHub:       () => getEngine()?.activityHub ?? null,
       getTaskRegistry:      () => getEngine()?.taskRegistry ?? null,
       getTerminalSessionManager: () => getEngine()?.terminalSessions ?? null,

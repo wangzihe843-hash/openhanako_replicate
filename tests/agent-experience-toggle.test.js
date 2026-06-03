@@ -69,24 +69,24 @@ describe("agent experience toggle", () => {
     expect(agent.getToolsSnapshot().map((tool) => tool.name)).not.toContain("recall_experience");
   });
 
-  it("excludes experience tools and prompt guidance while disabled", () => {
+  it("excludes experience tools while disabled", () => {
     const { agent, root } = makeAgent({ experienceEnabled: false });
     roots.push(root);
 
+    // 经验引导已收口进 recall/record 工具的 description，随工具进出。
+    // 工具关闭即不进工具集（description 也随之消失），不再单独在 system prompt 注入。
     const toolNames = agent.getToolsSnapshot().map((tool) => tool.name);
     expect(toolNames).not.toContain("record_experience");
     expect(toolNames).not.toContain("recall_experience");
-    expect(agent.buildSystemPrompt()).not.toContain("Experience Library");
   });
 
-  it("includes experience tools and prompt guidance while enabled", () => {
+  it("includes experience tools while enabled", () => {
     const { agent, root } = makeAgent({ experienceEnabled: true });
     roots.push(root);
 
     const toolNames = agent.getToolsSnapshot().map((tool) => tool.name);
     expect(toolNames).toContain("record_experience");
     expect(toolNames).toContain("recall_experience");
-    expect(agent.buildSystemPrompt()).toContain("Experience Library");
   });
 
   it("keeps create_artifact as an explicit legacy compatibility tool only", () => {
@@ -106,9 +106,7 @@ describe("agent experience toggle", () => {
     expect(prompt).toContain("SessionFile means a local file related to the current session");
     expect(prompt).toContain("After write/edit succeeds, the tool layer records the file as session-related automatically");
     expect(prompt).toContain("use stage_files to mark it as delivered");
-    expect(prompt).toContain("Bridge can send according to platform capabilities");
     expect(prompt).toContain("Do not repeatedly stage the same file once it has already been staged");
-    expect(prompt).toContain("same SessionFile");
     expect(prompt).not.toContain("create_artifact");
   });
 

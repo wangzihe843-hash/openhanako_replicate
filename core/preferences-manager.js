@@ -21,6 +21,7 @@ import {
   getWorkspaceUiStateEntry,
   upsertWorkspaceUiState,
 } from "../shared/workspace-ui-state.js";
+import { pruneMissingWorkspaceUiState } from "../shared/workspace-persistence-gc.js";
 import {
   mergeSidebarUiPrefs,
   normalizeSidebarUiPrefs,
@@ -43,6 +44,7 @@ export class PreferencesManager {
     this._path = path.join(userDir, "preferences.json");
     this._cache = this._readFromDisk();
     this._migrateLegacyDefaults();
+    this.gcWorkspaceUiState();
   }
 
   /**
@@ -375,6 +377,7 @@ export class PreferencesManager {
   getWorkspaceUiState(workspaceRoot, surface) {
     const workspace = normalizeWorkspacePath(workspaceRoot);
     if (!workspace) return null;
+    this.gcWorkspaceUiState();
     return getWorkspaceUiStateEntry(this._cache.workspace_ui_state || {}, workspace, { surface });
   }
 
@@ -391,6 +394,17 @@ export class PreferencesManager {
     );
     this.savePreferences(prefs);
     return getWorkspaceUiStateEntry(prefs.workspace_ui_state, workspace, { surface });
+  }
+
+  /** 清理已确定不存在的 workspace UI state 根目录；权限错误等未知状态会保留。 */
+  gcWorkspaceUiState(options = {}) {
+    const prefs = this._mutableCopy();
+    const { state, changed } = pruneMissingWorkspaceUiState(prefs.workspace_ui_state || {}, options);
+    if (changed || prefs.workspace_ui_state) {
+      prefs.workspace_ui_state = state;
+    }
+    if (changed) this.savePreferences(prefs);
+    return state;
   }
 
   /** 读取侧边栏 UI 偏好（项目视图展开、展开全部等）。 */

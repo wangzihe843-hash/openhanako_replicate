@@ -81,6 +81,41 @@ describe("host api - agent()", () => {
     expect(evts.find((e) => e.phase === "done")).toMatchObject({ nodeId: "node-1" });
   });
 
+  it("agent() 为 workflow 节点生成稳定 threadId 并透传给 executeIsolated", async () => {
+    const calls = [];
+    const evts = [];
+    const api = createHostApi(makeDeps({
+      baseIsoOpts: {
+        agentId: "a1",
+        parentSessionPath: "/s.jsonl",
+        cwd: "/w",
+        subagentTaskId: "workflow-1",
+      },
+      onAgentEvent: (e) => evts.push(e),
+      executeIsolated: async (p, o) => {
+        calls.push(o);
+        o.onSessionReady?.("/child.jsonl");
+        return { replyText: "ok", error: null };
+      },
+    }));
+
+    await api.agent("p", { label: "探索" });
+
+    expect(calls[0]).toMatchObject({
+      subagentThreadId: "workflow-1::node-1",
+      subagentThreadKind: "workflow_node",
+    });
+    expect(evts.find((e) => e.phase === "start")).toMatchObject({
+      nodeId: "node-1",
+      threadId: "workflow-1::node-1",
+      threadKind: "workflow_node",
+    });
+    expect(evts.find((e) => e.phase === "session")).toMatchObject({
+      threadId: "workflow-1::node-1",
+      childSessionPath: "/child.jsonl",
+    });
+  });
+
   it("节点级上报：agent() 失败发 fail（不重复）", async () => {
     const evts = [];
     const api = createHostApi(makeDeps({

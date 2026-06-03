@@ -100,6 +100,39 @@ describe("config workspace routes", () => {
     expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [] });
   });
 
+  it("persists GC for missing cwd_history and last_cwd entries when reading config", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.js");
+    const keepWorkspace = path.join(tmpDir, "keep");
+    const missingWorkspace = path.join(tmpDir, "missing");
+    fs.mkdirSync(keepWorkspace);
+    const engine = {
+      config: {
+        last_cwd: missingWorkspace,
+        cwd_history: [missingWorkspace, keepWorkspace],
+      },
+      providerRegistry: {
+        getAllProvidersRaw: () => ({}),
+        get: () => null,
+      },
+      updateConfig: vi.fn(async (patch) => {
+        engine.config = { ...engine.config, ...patch };
+      }),
+    };
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.cwd_history).toEqual([keepWorkspace]);
+    expect(data.last_cwd).toBeNull();
+    expect(engine.updateConfig).toHaveBeenCalledWith({
+      cwd_history: [keepWorkspace],
+      last_cwd: null,
+    });
+  });
+
   it("exposes and creates the default onboarding workspace", async () => {
     const homeDir = path.join(tmpDir, "home");
     fs.mkdirSync(homeDir, { recursive: true });

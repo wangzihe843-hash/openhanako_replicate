@@ -12,15 +12,12 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
 import { activateWorkspaceDesk, addWorkspaceFolder, applyFolder, removeRecentWorkspace, removeWorkspaceFolder } from '../stores/desk-actions';
-import { loadSessionProjectCatalog } from '../stores/session-project-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent } from '../types';
-import type { SessionProjectCatalog } from '../types/session-projects';
 import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../utils/agent-display';
 import styles from './Welcome.module.css';
 // @ts-expect-error — shared JS module
 import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
-import { autoProjectNameForCwd, cwdFromAutoProjectId, isAutoProjectId } from '../../../../shared/session-projects.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调 (s: any) */
 
@@ -60,9 +57,6 @@ function WelcomeInner() {
   const homeFolder = useStore(s => s.homeFolder);
   const workspaceFolders = useStore(s => s.workspaceFolders);
   const cwdHistory = useStore(s => s.cwdHistory);
-  const pendingProjectId = useStore(s => s.pendingProjectId);
-  const projectCatalog = useStore(s => s.sessionProjectCatalog);
-  const projectCatalogLoaded = useStore(s => s.sessionProjectCatalogLoaded);
 
   // Determine the displayed agent
   const displayAgent = useMemo(() => {
@@ -101,11 +95,6 @@ function WelcomeInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 welcomeVisible 切换时重新随机，不跟踪 displayName/displayYuan 变化
   }, [welcomeVisible]);
 
-  useEffect(() => {
-    if (!welcomeVisible || projectCatalogLoaded) return;
-    loadSessionProjectCatalog().catch(err => console.warn('[welcome] fetch project catalog failed:', err));
-  }, [projectCatalogLoaded, welcomeVisible]);
-
   if (!welcomeVisible) return null;
 
   return (
@@ -125,12 +114,6 @@ function WelcomeInner() {
         homeFolder={homeFolder}
         workspaceFolders={workspaceFolders}
         cwdHistory={cwdHistory}
-      />
-      <ProjectPicker
-        selectedFolder={selectedFolder}
-        pendingProjectId={pendingProjectId}
-        catalog={projectCatalog}
-        catalogLoaded={projectCatalogLoaded}
       />
       <MemoryToggle enabled={memoryEnabled} masterEnabled={memoryMasterEnabled} t={t} />
     </div>
@@ -455,141 +438,6 @@ function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolde
       </div>
     </div>
   );
-}
-
-function ProjectPicker({ selectedFolder, pendingProjectId, catalog, catalogLoaded }: {
-  selectedFolder: string | null;
-  pendingProjectId: string | null;
-  catalog: SessionProjectCatalog;
-  catalogLoaded: boolean;
-}) {
-  const { t } = useI18n();
-  const [showProjects, setShowProjects] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const projects = useMemo(() => (
-    [...(catalog.projects || [])].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
-  ), [catalog.projects]);
-  const selectedProject = pendingProjectId && !isAutoProjectId(pendingProjectId)
-    ? projects.find(project => project.id === pendingProjectId) || null
-    : null;
-  const cwdProjectName = projectNameForCwdProject(pendingProjectId, selectedFolder, t('input.selectProject'));
-  const label = selectedProject
-    ? `${t('input.project')}${selectedProject.name}`
-    : `${t('input.project')}${cwdProjectName}`;
-
-  useEffect(() => {
-    if (!showProjects) return;
-    const close = (event: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
-        setShowProjects(false);
-      }
-    };
-    const timer = setTimeout(() => document.addEventListener('click', close, true), 0);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('click', close, true);
-    };
-  }, [showProjects]);
-
-  useEffect(() => {
-    if (!catalogLoaded || !pendingProjectId || isAutoProjectId(pendingProjectId)) return;
-    if (projects.some(project => project.id === pendingProjectId)) return;
-    useStore.getState().setPendingProjectId(null);
-  }, [catalogLoaded, pendingProjectId, projects]);
-
-  const handleSelectCwdProject = useCallback(() => {
-    setShowProjects(false);
-    useStore.getState().setPendingProjectId(null);
-  }, []);
-
-  const handleSelectProject = useCallback((projectId: string) => {
-    setShowProjects(false);
-    useStore.getState().setPendingProjectId(projectId);
-  }, []);
-
-  return (
-    <div
-      className={`${styles.folderSelectWrap}${showProjects ? ` ${styles.folderSelectWrapShowHistory}` : ''}`}
-      ref={wrapRef}
-    >
-      <button
-        className={`${styles.folderSelectBtn} ${styles.folderSelectBtnHasFolder}`}
-        onClick={() => setShowProjects(prev => !prev)}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4.5 5.5h15v13h-15z" />
-          <path d="M8 9h8" />
-          <path d="M8 12h6" />
-          <path d="M8 15h7" />
-        </svg>
-        <span>{label}</span>
-        <svg className={styles.folderSwapIcon} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="17 1 21 5 17 9"></polyline>
-          <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-          <polyline points="7 23 3 19 7 15"></polyline>
-          <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
-        </svg>
-      </button>
-      {showProjects && (
-        <div className={styles.folderHistory}>
-          <div className={styles.folderHistorySectionLabel}>
-            {t('input.currentWorkspace')}
-          </div>
-          <div
-            className={`${styles.folderHistoryItem}${!pendingProjectId || isAutoProjectId(pendingProjectId) ? ` ${styles.folderHistoryItemActive}` : ''}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              handleSelectCwdProject();
-            }}
-          >
-            <span className={styles.folderHistoryItemIcon}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-              </svg>
-            </span>
-            <span className={styles.folderHistoryItemName}>
-              {t('input.cwdProject', { name: cwdProjectName })}
-            </span>
-          </div>
-          <div className={styles.folderHistoryDivider} />
-          <div className={styles.folderHistorySectionLabel}>
-            {t('input.customProjects')}
-          </div>
-          {projects.length > 0 ? projects.map(project => (
-            <div
-              key={project.id}
-              className={`${styles.folderHistoryItem}${project.id === pendingProjectId ? ` ${styles.folderHistoryItemActive}` : ''}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                handleSelectProject(project.id);
-              }}
-            >
-              <span className={styles.folderHistoryItemIcon}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4.5 5.5h15v13h-15z" />
-                  <path d="M8 9h8" />
-                  <path d="M8 12h6" />
-                  <path d="M8 15h7" />
-                </svg>
-              </span>
-              <span className={styles.folderHistoryItemName}>{project.name}</span>
-            </div>
-          )) : (
-            <div className={styles.folderHistoryItem}>
-              <span className={styles.folderHistoryItemName}>{t('input.noCustomProjects')}</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function projectNameForCwdProject(projectId: string | null, selectedFolder: string | null, fallback: string): string {
-  const cwd = projectId && isAutoProjectId(projectId)
-    ? cwdFromAutoProjectId(projectId)
-    : selectedFolder;
-  return autoProjectNameForCwd(cwd, fallback);
 }
 
 function collectAgentHomeFolders(agents: Agent[]): string[] {

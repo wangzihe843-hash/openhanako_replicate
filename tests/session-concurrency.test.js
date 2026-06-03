@@ -151,6 +151,13 @@ const mockCtx = (sp = "/test/session.jsonl") => ({
 });
 
 function makeSubagentDeps(overrides = {}) {
+  const threadStore = {
+    beginRun: vi.fn(),
+    attachSession: vi.fn(),
+    finishRun: vi.fn(),
+    runSerialized: vi.fn((_threadId, taskFn) => taskFn()),
+    isBusy: vi.fn(() => false),
+  };
   return {
     executeIsolated: vi.fn().mockResolvedValue({
       replyText: "done",
@@ -172,6 +179,7 @@ function makeSubagentDeps(overrides = {}) {
     currentAgentId: "hana",
     agentDir: "/test/agents/hana",
     emitEvent: vi.fn(),
+    getSubagentThreadStore: () => threadStore,
     ...overrides,
   };
 }

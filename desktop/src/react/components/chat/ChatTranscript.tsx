@@ -2,6 +2,10 @@ import { memo, useCallback, useMemo } from 'react';
 import type { ChatListItem, ChatMessage } from '../../stores/chat-types';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
+import { ProcessFoldBlock } from './ProcessFoldBlock';
+import { buildTranscriptRenderItems, type TranscriptRenderItem } from './process-fold';
+import { useStore } from '../../stores';
+import { selectIsStreamingSession } from '../../stores/session-selectors';
 
 interface Props {
   items: ChatListItem[];
@@ -11,6 +15,7 @@ interface Props {
   hideUserIdentity?: boolean;
   userIdentity?: { name?: string | null; avatarUrl?: string | null };
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
+  enableProcessFold?: boolean;
 }
 
 export const ChatTranscript = memo(function ChatTranscript({
@@ -21,7 +26,15 @@ export const ChatTranscript = memo(function ChatTranscript({
   hideUserIdentity = false,
   userIdentity,
   registerMessageElement,
+  enableProcessFold = false,
 }: Props) {
+  const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
+  const renderItems = useMemo(
+    () => enableProcessFold
+      ? buildTranscriptRenderItems(items, { isStreaming })
+      : items.map((item, originalIndex) => ({ type: 'source' as const, item, originalIndex })),
+    [enableProcessFold, isStreaming, items],
+  );
   const latestTurn = useMemo(() => {
     let latestUserIndex = -1;
     let latestAssistantIndex = -1;
@@ -44,26 +57,91 @@ export const ChatTranscript = memo(function ChatTranscript({
 
   return (
     <>
-      {items.map((item, index) => (
-        <TranscriptItemView
-          key={item.type === 'message' ? item.data.id : `c-${index}`}
-          item={item}
-          prevItem={index > 0 ? items[index - 1] : undefined}
+      {renderItems.map((renderItem) => (
+        <TranscriptRenderItemView
+          key={renderItemKey(renderItem)}
+          renderItem={renderItem}
+          sourceItems={items}
           sessionPath={sessionPath}
           agentId={agentId}
           readOnly={readOnly}
           hideUserIdentity={hideUserIdentity}
           userIdentity={userIdentity}
           latestUserMessage={latestTurn.latestUserMessage}
-          isLatestUserMessage={index === latestTurn.latestUserIndex}
-          isLatestAssistantMessage={
-            index === latestTurn.latestAssistantIndex
-            && latestTurn.latestAssistantIndex > latestTurn.latestUserIndex
-          }
+          latestUserIndex={latestTurn.latestUserIndex}
+          latestAssistantIndex={latestTurn.latestAssistantIndex}
           registerMessageElement={registerMessageElement}
         />
       ))}
     </>
+  );
+});
+
+function renderItemKey(renderItem: TranscriptRenderItem): string {
+  if (renderItem.type === 'process_fold') return renderItem.id;
+  const item = renderItem.item;
+  return item.type === 'message' ? item.data.id : `c-${renderItem.originalIndex}`;
+}
+
+const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
+  renderItem,
+  sourceItems,
+  sessionPath,
+  agentId,
+  readOnly,
+  hideUserIdentity,
+  userIdentity,
+  latestUserMessage,
+  latestUserIndex,
+  latestAssistantIndex,
+  registerMessageElement,
+}: {
+  renderItem: TranscriptRenderItem;
+  sourceItems: ChatListItem[];
+  sessionPath: string;
+  agentId?: string | null;
+  readOnly: boolean;
+  hideUserIdentity: boolean;
+  userIdentity?: { name?: string | null; avatarUrl?: string | null };
+  latestUserMessage?: ChatMessage | null;
+  latestUserIndex: number;
+  latestAssistantIndex: number;
+  registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
+}) {
+  const originalIndex = renderItem.originalIndex;
+  const prevItem = originalIndex > 0 ? sourceItems[originalIndex - 1] : undefined;
+
+  if (renderItem.type === 'process_fold') {
+    const prevRole = prevItem?.type === 'message' ? prevItem.data.role : null;
+    return (
+      <ProcessFoldBlock
+        group={renderItem}
+        showAvatar={prevRole !== 'assistant'}
+        sessionPath={sessionPath}
+        agentId={agentId}
+        readOnly={readOnly}
+        registerMessageElement={registerMessageElement}
+      />
+    );
+  }
+
+  return (
+    <TranscriptItemView
+      item={renderItem.item}
+      prevItem={prevItem}
+      sessionPath={sessionPath}
+      agentId={agentId}
+      readOnly={readOnly}
+      hideUserIdentity={hideUserIdentity}
+      userIdentity={userIdentity}
+      latestUserMessage={latestUserMessage}
+      isLatestUserMessage={originalIndex === latestUserIndex}
+      isLatestAssistantMessage={
+        originalIndex === latestAssistantIndex
+        && latestAssistantIndex > latestUserIndex
+      }
+      registerMessageElement={registerMessageElement}
+    />
   );
 });
 

@@ -503,6 +503,12 @@
     "count": "{n}개 도구",
     "running": "{n}개 도구 실행 중"
   },
+  "processFold": {
+    "summary": "✨ {name}이(가) 한동안 바쁘게 움직였어요",
+    "tools": "{n}개 도구",
+    "thinking": "{n}번 생각",
+    "unsuccessful": "{n}번 시도 미성공"
+  },
   "tool": {
     "web_search": {
       "running": "🌐 {name}이(가) 인터넷 서핑 중이에요",
@@ -2051,6 +2057,7 @@
     "settingsCancelled": "사용자가 \"{label}\" 변경을 취소했어요",
     "settingsTimeout": "\"{label}\" 변경 확인 시간이 초과되었어요. 설정이 변경되지 않았어요",
     "subagentMaxConcurrent": "현재 {max}개의 서브 에이전트가 실행 중이에요. 완료될 때까지 기다려 주세요.",
+    "subagentParentSessionRequired": "subagent에는 활성 부모 대화와 백그라운드 작업 저장소가 필요해요. 현재 컨텍스트에서는 계속 가능한 인스턴스를 만들 수 없어요.",
     "subagentFailed": "서브 에이전트 실행 실패: {msg}",
     "subagentTimeout": "서브 에이전트 실행 시간 초과 ({minutes}분)",
     "subagentAborted": "서브 에이전트가 중단되었어요",
@@ -2061,7 +2068,8 @@
     "subagentStopReason": "서브 에이전트가 정상적으로 완료되지 않았어요 (stopReason: {reason}).",
     "subagentToolFailed": "서브 에이전트 도구 실행 실패: {msg}",
     "subagentDispatched": "서브 작업을 보냈어요 (task-id: {taskId}). 완료되면 결과가 자동으로 전달돼요.",
-    "subagentReuseQueued": "서브 작업을 보냈어요 (task-id: {taskId}). 인스턴스 \"{instance}\"가 사용 중이라 대기열에 넣었어요. 현재 작업이 끝나면 실행돼요.",
+    "subagentThreadQueued": "서브 작업을 보냈어요 (task-id: {taskId}). 인스턴스 {threadId}가 사용 중이라 대기열에 넣었어요. 현재 작업이 끝나면 실행돼요.",
+    "subagentThreadClosed": "서브 에이전트 인스턴스를 닫았어요: {threadId}",
     "installSkillDisabled": "스킬 설치 기능이 활성화되지 않았어요. 설정에서 「Agent의 스킬 생성/설치 허용」을 켜주세요.",
     "installSkillGithubDisabled": "GitHub 스킬 가져오기가 활성화되지 않았어요. 설정에서 「GitHub에서 스킬 가져오기 허용」을 켜주세요.",
     "installSkillInvalidGithubUrl": "잘못된 GitHub URL: {url}",
@@ -2298,7 +2306,6 @@
     },
     "todoWrite": {
       "label": "할 일",
-      "description": "현재 세션의 할 일 목록을 관리합니다. 호출할 때마다 완전한 todos 배열을 전달하여 현재 상태를 대체합니다(교체 방식).\n각 할 일에 필요한 항목:\n- content: 정적 설명(예: '스펙 읽기')\n- activeForm: 진행 중 설명(예: '스펙 읽는 중')\n- status: pending | in_progress | completed\n규약: 동시에 최대 하나의 in_progress.",
       "contentDesc": "할 일의 정적 설명",
       "activeFormDesc": "진행 중 형식 설명(UI에서 in_progress 표시 시 사용)",
       "statusDesc": "pending / in_progress / completed 중 하나",
@@ -2319,7 +2326,6 @@
       "recallDescription": "경험 라이브러리를 탐색해요. 파라미터 없이 호출하면 전체 카테고리 개요를 반환하고, 카테고리 이름을 지정하면 해당 카테고리의 구체적인 경험을 반환해요. 사용자가 구체적인 작업 (코드 작성, 조사, 문서 작성, 문제 분석 등)을 요청했을 때, 시작 전에 이 도구로 참고할 경험이 있는지 확인해요. 일상 대화, Q&A, 가벼운 채팅에서는 호출할 필요 없어요.",
       "recallCategoryDesc": "카테고리 이름. 생략하면 전체 카테고리 개요를 반환해요",
       "recordLabel": "경험 기록",
-      "recordDescription": "경험 라이브러리에 교훈을 기록해요. 다음 경우에 사용해요: 사용자가 실수를 지적하고 올바른 방법을 설명했을 때, 여러 방법을 시도한 후 효과적인 방법을 발견했을 때, 사용자가 '앞으로는 이렇게 해/하지 마'라고 명확히 말했을 때. 각 항목은 간결하고 직접적으로, 한 문장으로 작성해요.",
       "recordCategoryDesc": "경험의 카테고리, 2~4단어 짧은 문구, 예: '도구 사용', '검색 팁', '답변 스타일'",
       "recordContentDesc": "구체적인 경험 내용, 간결하고 직접적으로, 한 문장"
     },
@@ -2337,12 +2343,26 @@
     },
     "subagent": {
       "label": "서브 에이전트 시작",
-      "description": "서브 에이전트에게 작업을 위임해요. 다른 agent를 지정하거나(agent 파라미터), 생략하면 자기 자신이 분신으로 실행해요. agent=\"?\"로 사용 가능한 agent 목록을 확인할 수 있어요.\n\n판단 기준:\n- 병렬로 진행할 수 있는 작업이 있으면 계속 진행하세요\n- 결과가 있어야 다음 단계로 넘어갈 수 있다면, 사용자에게 작업을 보냈고 답변을 기다리고 있다고 알려주세요\n\n적합한 경우:\n- 대량의 검색, 읽기 후 간결한 결론으로 요약하는 조사 작업\n- 현재 작업과 병렬로 진행할 수 있는 독립적인 하위 문제\n- 여러 방향을 동시에 탐색해야 하는 작업 (여러 subagent를 동시에 호출 가능)\n- 다른 agent가 전문적 관점에서 작업을 처리하도록\n적합하지 않은 경우: 파일 수정, 명령 실행 등 부작용이 있는 작업\n\n중요: task 파라미터에 완전한 지시와 필요한 배경 정보를 포함하세요. 서브 에이전트는 현재 대화 기록을 볼 수 없어요.",
-      "taskDesc": "서브 에이전트에 대한 완전한 지시. 형식: 첫 번째 줄에 「작업: xxx」을 작업 제목으로 쓰고, 빈 줄 다음에 상세한 요구사항과 필요한 배경 정보를 작성하세요. 서브 에이전트는 현재 대화 기록을 볼 수 없으므로 필요한 모든 맥락을 여기에 작성해야 해요.",
-      "agentDesc": "대상 agent의 id 필드 값(팀 목록의 괄호 안, 굵은 표시 이름이 아님). 생략하면 자신이 실행, \"?\"로 사용 가능한 agent 목록 보기.",
-      "instanceDesc": "선택. 재사용 인스턴스 접미사(예: \"탐색\", \"집필\"). 지정하면 이력을 기억하는 상주 서브 헬퍼로 보내요: 같은 agent + 같은 접미사로 같은 대화를 이어가며 이전 맥락을 봐요. 생략하면 기억 없는 일회성 서브 작업이에요. 참고: 한 인스턴스는 한 번에 한 작업만 실행하고, 동시 전송은 자동으로 대기열에 들어가요.",
+      "description": "위임 작업을 위한 계속 가능한 서브 에이전트 인스턴스를 만들고 taskId와 threadId를 바로 반환해요. 결과는 백그라운드에서 현재 대화로 전달돼요. agent=\"?\"로 목록을 볼 수 있어요.",
+      "taskDesc": "서브 에이전트에 대한 완전한 지시와 필요한 맥락. 현재 대화 기록은 볼 수 없으므로 필요한 정보는 여기에 포함하세요.",
+      "agentDesc": "팀 목록의 백틱 안에 표시된 대상 agent id. 성격, 전문성, model이 작업에 맞는 agent를 선택하세요. 생략하면 현재 agent, \"?\"로 목록 보기.",
+      "labelDesc": "선택 표시 라벨(예: \"탐색 1\", \"집필 2\"). 표시 전용이에요. 이어가려면 반환된 threadId를 subagent_reply에 전달하세요.",
+      "instanceDesc": "레거시 필드이며 label 호환으로만 받습니다. 새 호출은 label을 사용하고, 이어가기는 threadId를 사용하세요.",
       "accessDesc": "선택. 권한 등급: 탐색/조사/검토 작업은 \"read\"(읽기 전용, 파일 수정·명령 실행 금지); 실행/수정 작업은 \"write\"(작업 가능). 생략하면 현재 대화의 권한 등급을 상속해요: 일반 대화→작업 가능, 읽기 전용/plan 모드→읽기 전용.",
-      "modelDesc": "모델을 provider/id 형식으로 지정 (선택, 기본값은 utility 모델)"
+      "modelDesc": "모델을 provider/id 형식으로 지정(선택). 생략하면 대상 agent의 채팅 모델 설정을 사용해요."
+    },
+    "subagentReply": {
+      "label": "서브 에이전트 이어가기",
+      "description": "현재 대화에서 열린 서브 에이전트 인스턴스에 작업을 추가해요. 먼저 current_status의 subagents로 threadId를 확인하세요.",
+      "threadIdDesc": "이어갈 서브 에이전트 인스턴스의 threadId. 현재 대화에서 열린 인스턴스여야 해요.",
+      "taskDesc": "그 서브 에이전트에 추가할 완전한 지시와 필요한 맥락.",
+      "accessDesc": "선택 권한 등급: \"read\" 또는 \"write\". 생략하면 인스턴스 권한을 사용하고 현재 대화 권한의 제한도 받아요."
+    },
+    "subagentClose": {
+      "label": "서브 에이전트 닫기",
+      "description": "현재 대화에서 더 필요 없는 서브 에이전트 인스턴스를 닫고 계속 가능한 인스턴스 슬롯을 비워요.",
+      "threadIdDesc": "닫을 열린 서브 에이전트 인스턴스의 threadId.",
+      "reasonDesc": "선택 닫기 이유. 인스턴스의 마지막 요약으로 저장돼요."
     },
     "installSkill": {
       "label": "스킬 설치",
@@ -2354,7 +2374,6 @@
     },
     "updateSettings": {
       "label": "설정",
-      "description": "HanaAgent의 설정을 변경해요. 두 가지 작업을 지원해요:\n- search + query: 키워드로 설정 항목을 검색하고, 현재 값과 옵션을 확인\n- apply + key + value: 지정한 설정을 변경 (사용자 확인 필요)\n\n정확한 키를 알고 있다면 바로 apply할 수 있어요.",
       "actionDesc": "작업 유형: search로 설정 검색 / apply로 설정 변경",
       "queryDesc": "검색 키워드 (search 시 필수)",
       "keyDesc": "설정 키 (search로 확인)",

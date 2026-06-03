@@ -4,6 +4,7 @@ import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifySessionPermission } from "../core/session-permission-mode.js";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
+import { loadLocale } from "../server/i18n.js";
 
 function textPayload(result) {
   return JSON.parse(result.content[0].text);
@@ -41,12 +42,25 @@ describe("current_status tool", () => {
   });
 
   it("describes time and logical_date as distinct lookup contracts", () => {
+    loadLocale("en");
     const tool = createCurrentStatusTool();
 
     expect(tool.description).toContain('key="time"');
     expect(tool.description).toContain("hour/minute");
     expect(tool.description).toContain('key="logical_date"');
     expect(tool.description).toContain("does not return hour/minute/second");
+  });
+
+  it("localizes the description and current-view guidance via i18n", () => {
+    loadLocale("zh");
+    const zhTool = createCurrentStatusTool();
+    expect(zhTool.description).toContain("当前视野");
+    expect(zhTool.description).toContain("ui_context");
+
+    loadLocale("en");
+    const enTool = createCurrentStatusTool();
+    expect(enTool.description).toContain("UI context");
+    expect(enTool.description).toContain("ui_context");
   });
 
   it("lists available status keys without returning live status values", async () => {
@@ -68,6 +82,7 @@ describe("current_status tool", () => {
       "ui_context",
       "session_files",
       "bridge_context",
+      "subagents",
     ]);
     expect(payload.usage).toContain("list");
     expect(payload.usage).toContain("get");
@@ -478,6 +493,55 @@ describe("current_status tool", () => {
     expect(payload).toEqual({
       bridge_context: {
         isBridgeSession: false,
+      },
+    });
+  });
+
+  it("returns open direct subagent instances for the current session", async () => {
+    const tool = createCurrentStatusTool({
+      listOpenSubagentThreads: (sessionPath) => sessionPath === "/session/s1.jsonl"
+        ? [{
+            threadId: "thread-a",
+            agentId: "other-agent",
+            agentName: "毛毛",
+            label: "探索一",
+            access: "read",
+            status: "open",
+            lastRunStatus: "resolved",
+            childSessionPath: "/child/a.jsonl",
+            summary: "读完生命周期代码",
+            runCount: 2,
+            lastRunAt: "2026-06-02T10:00:00.000Z",
+            updatedAt: "2026-06-02T10:01:00.000Z",
+          }]
+        : [],
+    });
+
+    const payload = textPayload(await tool.execute(
+      "call_1",
+      { action: "get", key: "subagents" },
+      null,
+      null,
+      makeCtx("/session/s1.jsonl"),
+    ));
+
+    expect(payload).toEqual({
+      subagents: {
+        sessionPath: "/session/s1.jsonl",
+        open: [{
+          threadId: "thread-a",
+          agentId: "other-agent",
+          agentName: "毛毛",
+          label: "探索一",
+          access: "read",
+          status: "open",
+          lastRunStatus: "resolved",
+          childSessionPath: "/child/a.jsonl",
+          summary: "读完生命周期代码",
+          runCount: 2,
+          lastRunAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:01:00.000Z",
+        }],
       },
     });
   });

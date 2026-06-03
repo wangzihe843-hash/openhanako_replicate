@@ -503,6 +503,12 @@
     "count": "{n} tools",
     "running": "{n} tools running"
   },
+  "processFold": {
+    "summary": "✨ {name} worked for a while",
+    "tools": "{n} tools",
+    "thinking": "{n} thoughts",
+    "unsuccessful": "{n} attempts not successful"
+  },
   "tool": {
     "web_search": {
       "running": "🌐 {name} is surfing the web",
@@ -2051,6 +2057,7 @@
     "settingsCancelled": "User cancelled change of \"{label}\"",
     "settingsTimeout": "\"{label}\" change confirmation timed out, no changes made",
     "subagentMaxConcurrent": "{max} sub-agents are already running, please wait before starting new ones.",
+    "subagentParentSessionRequired": "subagent requires an active parent session and deferred task store; cannot create a continuable instance in this context.",
     "subagentFailed": "Sub-agent execution failed: {msg}",
     "subagentTimeout": "Sub-agent timed out after {minutes} minutes",
     "subagentAborted": "Sub-agent was aborted",
@@ -2061,7 +2068,8 @@
     "subagentStopReason": "Sub-agent did not finish cleanly (stopReason: {reason}).",
     "subagentToolFailed": "Sub-agent tool failed: {msg}",
     "subagentDispatched": "Sub-task dispatched (task-id: {taskId}). Results will be delivered when ready.",
-    "subagentReuseQueued": "Sub-task dispatched (task-id: {taskId}). Instance \"{instance}\" is busy; queued to run after the current task finishes.",
+    "subagentThreadQueued": "Sub-task dispatched (task-id: {taskId}). Instance {threadId} is busy; queued to run after the current task finishes.",
+    "subagentThreadClosed": "Sub-agent instance closed: {threadId}",
     "installSkillDisabled": "Skill installation is not enabled. Please enable \"Allow Agent to create/install skills\" in settings.",
     "installSkillGithubDisabled": "GitHub skill fetching not enabled. Please enable \"Allow fetching skills from GitHub\" in settings.",
     "installSkillInvalidGithubUrl": "Invalid GitHub URL: {url}",
@@ -2298,13 +2306,19 @@
     },
     "todoWrite": {
       "label": "Todo",
-      "description": "Manage the todo list for the current session. Pass the complete todos array each call to replace the current state (replacement style).\nEach todo needs:\n- content: static description (e.g. 'Read spec')\n- activeForm: in-progress description (e.g. 'Reading spec')\n- status: pending | in_progress | completed\nConvention: at most one in_progress at a time.",
+      "description": "Manage the todo list for the current session. Use it to break down and track multi-step work: when you receive a complex or multi-step task, decompose it into sub-tasks before executing step by step. Simple single-step tasks (answering questions, single lookups, simple edits) do not need it. Pass the complete todos array each call to replace the current state (replacement style).\nEach todo needs:\n- content: static description (e.g. 'Read spec')\n- activeForm: in-progress description (e.g. 'Reading spec')\n- status: pending | in_progress | completed\nConvention: at most one in_progress at a time. Mark a todo in_progress when starting it, immediately change it to completed when done and set the next one to in_progress; do not batch up completions.",
       "contentDesc": "Static description of the todo",
       "activeFormDesc": "In-progress form description (shown in UI while in_progress)",
       "statusDesc": "One of: pending / in_progress / completed",
       "todosDesc": "Complete todo list; each call replaces the previous list",
       "summaryEmpty": "Cleared todos",
       "summaryStats": "{total} todos: {completed} completed, {in_progress} in progress, {pending} pending"
+    },
+    "currentStatus": {
+      "label": "Current Status",
+      "description": "Lightweight current-environment status. Use it to check fresh state such as time, logical date, agent identity, user/agent avatar appearance, model identity, Bridge platform context, open sub-agent instances, and the user's visible UI context. IMPORTANT: The date/time shown in the system prompt is a snapshot from when the session was created and may be outdated. For precise current time, scheduling, reminders, date calculations that need clock time, greetings, or any case where hour/minute matters, call this tool with action=\"get\", key=\"time\". Use key=\"logical_date\" only when you need to know which calendar day Hana should treat as today under the 4:00 boundary; it does not return hour/minute/second. Use key=\"appearance\" when the user asks what the user or current agent looks like. When the user refers to this file, here, the current/open/visible/selected item, the pinned window, current Bridge chat/platform, or the current folder, call this tool with action=\"get\", key=\"ui_context\" first to resolve the reference.",
+      "actionDesc": "list returns available status keys; get returns one status key value.",
+      "keyDesc": "Status key to fetch when action=get. Common keys: time, logical_date, agent, appearance, model, ui_context, session_files, bridge_context, subagents. Use bridge_context for references to the current Bridge platform/chat; use subagents before continuing or closing a sub-agent."
     },
     "pinnedMemory": {
       "pinLabel": "Pin Memory",
@@ -2319,7 +2333,7 @@
       "recallDescription": "Browse the experience library. Without parameters, returns an overview of all categories. With a category name, returns specific experiences in that category. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
       "recallCategoryDesc": "Category name. Omit to get an overview of all categories",
       "recordLabel": "Record Experience",
-      "recordDescription": "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, you discover an effective method after trying multiple approaches, or the user explicitly says 'from now on do/don't do this'. Each entry should be concise and direct, one sentence.",
+      "recordDescription": "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, the user shows frustration or repeatedly emphasizes something, you discover an effective method after trying multiple approaches, the user explicitly says 'from now on do/don't do this', or you hit a pitfall during patrol or autonomous work. Each entry should be concise and direct, one sentence.",
       "recordCategoryDesc": "Category for the experience, a 2-4 word phrase, e.g. 'tool usage', 'search tips', 'response style'",
       "recordContentDesc": "The specific experience content, concise and direct, one sentence"
     },
@@ -2337,12 +2351,26 @@
     },
     "subagent": {
       "label": "Launch Sub-agent",
-      "description": "Delegate a task to a sub-agent. Optionally specify another agent (pass agent param), or omit to self-clone. Pass agent=\"?\" to list available agents.\n\nBehavior after dispatch:\n1. The sub-agent starts executing in the background immediately\n2. Continue with your current work — do not stop to wait\n3. Once your other work is done, use check_pending_tasks to check status\n4. If not yet complete, estimate a reasonable wait time based on task complexity, use wait then check again. Check at most 2 times, then stop polling\n5. The system will automatically notify you when tasks complete (<hana-background-result> messages) — process results at that point\n\nGood for:\n- Research tasks that require extensive searching and reading, summarized into a brief conclusion\n- Independent sub-problems that can run in parallel with your current work\n- Tasks that need simultaneous exploration in multiple directions (you can fire multiple subagent calls at once)\n- Having another agent handle a task from their specialized perspective\n\nImportant:\n- The task parameter must contain complete instructions and necessary background, as the sub-agent cannot see the current conversation history\n- Use the access parameter to declare permissions: pass \"read\" for research/exploration/review (read-only), \"write\" for execution/modification (can operate); omit to inherit your current session's permission tier",
-      "taskDesc": "Full instructions for the sub-agent. Format: first line writes \"Task: xxx\" as the task title, then a blank line, then detailed requirements and necessary background. The sub-agent cannot see the current conversation history, so all needed context must be written here.",
-      "agentDesc": "Target agent's id field value (the one in parentheses in the team roster, not the bold display name). Omit to self-execute, pass \"?\" to list available agents.",
-      "instanceDesc": "Optional. Reusable instance suffix (e.g. \"research\", \"draft\"). Provide it to dispatch to a persistent sub-helper that remembers history: same agent + same suffix resumes the same conversation and sees prior context. Omit for a one-shot sub-task with no memory. Note: one instance runs one task at a time; concurrent dispatches queue automatically.",
-      "accessDesc": "Optional. Permission tier: pass \"read\" for exploration/research/review tasks (read-only, cannot modify files or run commands); pass \"write\" for execution/modification tasks (can operate). Omit to inherit your current session's permission tier: normal session → can operate, read-only/plan mode → read-only.",
-      "modelDesc": "Specify model as provider/id (optional, defaults to utility model)"
+      "description": "Create a continuable sub-agent instance for a delegated task. Returns immediately with taskId and threadId; results are delivered back in the background. Use agent to target an agent, or agent=\"?\" to list agents.",
+      "taskDesc": "Complete instructions and required context for the subagent. The subagent cannot see the current conversation history unless you include it here.",
+      "agentDesc": "Target agent id from the team roster, using the value shown in backticks. Choose the agent whose persona, strengths, and model best fit the task; the roster shows each model and summary. Omit for the current agent; pass \"?\" to list agents.",
+      "labelDesc": "Optional display label, such as \"research 1\" or \"draft 2\". Display-only; resume by passing the returned threadId to subagent_reply.",
+      "instanceDesc": "Legacy field, accepted only as label compatibility. New calls should use label; resume with threadId.",
+      "accessDesc": "Optional permission tier: \"read\" for read-only research, exploration, or review; \"write\" for execution, edits, or commands. Omit to inherit the current session permission.",
+      "modelDesc": "Optional model override as provider/id. Omit to use the target agent's configured chat model."
+    },
+    "subagentReply": {
+      "label": "Continue Sub-agent",
+      "description": "Append a task to an open sub-agent instance in the current session. Use current_status with subagents first to see available threadIds.",
+      "threadIdDesc": "The threadId of the sub-agent instance to continue. It must be an open subagent instance in the current session.",
+      "taskDesc": "Complete instructions and required context to append to that sub-agent.",
+      "accessDesc": "Optional permission tier: \"read\" or \"write\". Omit to reuse the instance access, still bounded by the current session permission."
+    },
+    "subagentClose": {
+      "label": "Close Sub-agent",
+      "description": "Close a no-longer-needed sub-agent instance in the current session and free a continuable instance slot.",
+      "threadIdDesc": "The threadId of the open sub-agent instance to close.",
+      "reasonDesc": "Optional closing reason, saved as the instance's final summary."
     },
     "installSkill": {
       "label": "Install Skill",
@@ -2354,7 +2382,7 @@
     },
     "updateSettings": {
       "label": "Settings",
-      "description": "Modify HanaAgent's settings. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly.",
+      "description": "Modify HanaAgent's settings. When the user mentions changing settings without naming a specific app, assume this application. For preferences like appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory, or MCP connectors, use this tool, and do not search the web or edit config files directly. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly. When intent is clear, apply directly and report the result in one sentence; when unsure, search first.",
       "actionDesc": "Action: search to find settings / apply to change a setting",
       "queryDesc": "Search keyword (required for search)",
       "keyDesc": "Setting key (found via search)",

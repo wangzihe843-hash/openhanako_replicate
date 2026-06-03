@@ -95,6 +95,17 @@ export function groupDateWindowEntries(entries: UsageLedgerEntry[], period: Usag
   return groups;
 }
 
+export function usagePeriodDateRange(period: UsagePeriod, now = new Date()) {
+  const dayCount = USAGE_PERIOD_DAYS[period];
+  const end = startOfLocalDay(now);
+  const start = addLocalDays(end, 1 - dayCount);
+  const until = addLocalDays(end, 1);
+  return {
+    since: start.toISOString(),
+    until: until.toISOString(),
+  };
+}
+
 export function categoryKey(entry: UsageLedgerEntry) {
   return entry.source?.subsystem || 'unknown';
 }

@@ -18,6 +18,7 @@ export function createMobileWorkbenchRoute(engine) {
   const route = new Hono();
 
   route.get("/mobile/bootstrap", (c) => {
+    engine.gcWorkspacePersistence?.();
     return c.json({
       locale: engine.getLocale?.() || engine.config?.locale || "zh-CN",
       agentName: engine.agentName || "Hanako",
