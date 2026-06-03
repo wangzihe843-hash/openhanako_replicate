@@ -89,6 +89,35 @@ describe("Usage ledger", () => {
     });
   });
 
+  it("preserves cache strategy metadata on entries", () => {
+    const ledger = createUsageLedger({ now: () => 1_000, requestIdFactory: () => "req-cache-meta" });
+    const req = ledger.start({
+      model: { provider: "openai", modelId: "gpt-5.1", api: "openai-responses" },
+      usageContext: sessionContext("/sessions/cache.jsonl"),
+      metadata: {
+        cacheStrategy: "session_snapshot",
+        cacheGroup: "memory.reflection",
+        strict: true,
+        cachePrefixHash: "b".repeat(64),
+        parentCachePrefixHash: "a".repeat(64),
+      },
+    });
+
+    const entry = ledger.finish(req.requestId, {
+      usage: { input_tokens: 100, cache_read_input_tokens: 90, output_tokens: 10 },
+    });
+
+    expect(entry.metadata).toMatchObject({
+      cacheStrategy: "session_snapshot",
+      cacheGroup: "memory.reflection",
+      strict: true,
+      parentCachePrefixHash: "a".repeat(64),
+    });
+    expect(ledger.list({ sessionPath: "/sessions/cache.jsonl" }).entries[0].metadata).toMatchObject({
+      cacheStrategy: "session_snapshot",
+    });
+  });
+
   it("records errors without prompt content", () => {
     const ledger = createUsageLedger({ now: () => 1_000, requestIdFactory: () => "req-error" });
     const req = ledger.start({

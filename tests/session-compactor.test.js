@@ -92,7 +92,9 @@ describe("session-compactor", () => {
     const [model, context, options] = streamFn.mock.calls[0];
     expect(model).toEqual({ id: "model", reasoning: true });
     expect(context.systemPrompt).toBe("agent system prompt");
-    expect(context.tools).toBeUndefined();
+    expect(context.tools).toEqual([
+      { name: "read", description: "Read files", parameters: { type: "object" } },
+    ]);
     expect(context.messages).toHaveLength(2);
     expect(context.messages[0].content[0].text).toBe("old history to summarize");
     expect(JSON.stringify(context.messages)).not.toContain("KEPT_TAIL_SHOULD_NOT_ENTER_SUMMARY");
@@ -188,6 +190,11 @@ describe("session-compactor", () => {
         output: { totalTokens: 25 },
         cache: { readTokens: 80, hit: true },
       },
+    });
+    expect(entry.metadata).toMatchObject({
+      cacheStrategy: "session_snapshot",
+      cacheGroup: "compaction.history",
+      strict: true,
     });
   });
 

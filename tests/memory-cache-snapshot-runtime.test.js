@@ -43,7 +43,7 @@ function writeSession(sessionPath) {
   fs.writeFileSync(sessionPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n", "utf-8");
 }
 
-function makeTicker(tmpDir, mode, summaryManager) {
+function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner) {
   const agentDir = path.join(tmpDir, "agents", "hana");
   const sessionDir = path.join(agentDir, "sessions");
   const memoryDir = path.join(agentDir, "memory");
@@ -67,6 +67,20 @@ function makeTicker(tmpDir, mode, summaryManager) {
     getMemoryMasterEnabled: () => true,
     isSessionMemoryEnabled: () => true,
     getCacheSnapshotReflectionMode: () => mode,
+    memoryReflectionRunner,
+    buildSessionCacheSnapshot: vi.fn((sessionPath, { reason, messages }) => ({
+      strategy: "session_snapshot",
+      strict: true,
+      sessionPath,
+      reason,
+      cachePrefixHash: "a".repeat(64),
+      parentCachePrefixHash: "",
+      cacheKeyParams: { thinkingLevel: "medium" },
+      tools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
+      messages,
+      messageCount: messages.length,
+    })),
+    getSessionStreamFn: vi.fn(() => vi.fn()),
     sessionDir,
     memoryDir,
     memoryMdPath: path.join(memoryDir, "memory.md"),
@@ -94,7 +108,12 @@ describe("cache snapshot reflection runtime", () => {
   it("shadow mode keeps the official rolling summary path and writes only an observation artifact", async () => {
     const summaryManager = {
       rollingSummary: vi.fn().mockResolvedValue("official summary"),
-      createRollingSummaryDraft: vi.fn().mockResolvedValue({
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
         summary: "shadow summary",
         changed: true,
         data: { summary: "shadow summary" },
@@ -102,17 +121,22 @@ describe("cache snapshot reflection runtime", () => {
           input: { uncachedTokens: 3 },
           cache: { readTokens: 997, missTokens: 3 },
         },
+        metadata: {
+          cacheStrategy: "session_snapshot",
+          strict: true,
+          cachePrefixHash: "b".repeat(64),
+          parentCachePrefixHash: "a".repeat(64),
+        },
       }),
-      saveSummary: vi.fn(),
-      getSummary: vi.fn().mockReturnValue(null),
     };
-    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "shadow", summaryManager);
+    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "shadow", summaryManager, memoryReflectionRunner);
     writeSession(sessionPath);
 
     await ticker.flushSession(sessionPath);
 
     expect(summaryManager.rollingSummary).toHaveBeenCalledOnce();
-    expect(summaryManager.createRollingSummaryDraft).toHaveBeenCalledOnce();
+    expect(summaryManager.createRollingSummaryDraft).not.toHaveBeenCalled();
+    expect(memoryReflectionRunner.runMemoryReflection).toHaveBeenCalledOnce();
     expect(summaryManager.saveSummary).not.toHaveBeenCalled();
 
     const observation = readCacheSnapshotObservation(agentDir);
@@ -121,6 +145,8 @@ describe("cache snapshot reflection runtime", () => {
       sessionPath,
       mode: "shadow",
       status: "success",
+      cacheStrategy: "session_snapshot",
+      strict: true,
       summaryPreview: "shadow summary",
     });
     expect(observation.usage.cachedTokens).toBe(997);
@@ -138,29 +164,76 @@ describe("cache snapshot reflection runtime", () => {
     };
     const summaryManager = {
       rollingSummary: vi.fn().mockResolvedValue("legacy summary"),
-      createRollingSummaryDraft: vi.fn().mockResolvedValue({
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
         summary: "write summary",
         changed: true,
         data: summaryData,
         usage: { cache: { readTokens: 1200, missTokens: 4 } },
+        metadata: {
+          cacheStrategy: "session_snapshot",
+          strict: true,
+          cachePrefixHash: "b".repeat(64),
+          parentCachePrefixHash: "a".repeat(64),
+        },
       }),
-      saveSummary: vi.fn(),
-      getSummary: vi.fn().mockReturnValue(null),
     };
-    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "write", summaryManager);
+    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner);
     writeSession(sessionPath);
 
     await ticker.flushSession(sessionPath);
 
     expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
-    expect(summaryManager.createRollingSummaryDraft).toHaveBeenCalledOnce();
+    expect(summaryManager.createRollingSummaryDraft).not.toHaveBeenCalled();
+    expect(memoryReflectionRunner.runMemoryReflection).toHaveBeenCalledOnce();
     expect(summaryManager.saveSummary).toHaveBeenCalledWith(sessionId, summaryData);
 
     const observation = readCacheSnapshotObservation(agentDir);
     expect(observation).toMatchObject({
       mode: "write",
       status: "success",
+      cacheStrategy: "session_snapshot",
+      strict: true,
       summaryPreview: "write summary",
+    });
+  });
+
+  it("write mode refuses non-strict reflection results", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
+        summary: "recovery summary",
+        changed: true,
+        data: { summary: "recovery summary" },
+        usage: { cache: { readTokens: 0, missTokens: 100 } },
+        metadata: {
+          cacheStrategy: "cache_recovery",
+          strict: false,
+          degradeReason: "session_snapshot_contract_mismatch",
+        },
+      }),
+    };
+    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner);
+    writeSession(sessionPath);
+
+    await expect(ticker.flushSession(sessionPath)).rejects.toThrow("requires a strict session_snapshot");
+    expect(summaryManager.saveSummary).not.toHaveBeenCalled();
+    const observation = readCacheSnapshotObservation(agentDir);
+    expect(observation).toMatchObject({
+      mode: "write",
+      status: "failed",
+      cacheStrategy: "cache_recovery",
+      strict: false,
+      degradeReason: "session_snapshot_contract_mismatch",
     });
   });
 });

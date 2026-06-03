@@ -2314,6 +2314,44 @@ describe("SessionCoordinator", () => {
     }, {})).resolves.toBe("ok");
   });
 
+  it("builds a keyed session cache snapshot from session-owned active tool definitions", () => {
+    const sessionPath = path.join(tempDir, "hana", "sessions", "snapshot.jsonl");
+    const readTool = { name: "read", description: "Read files", parameters: { type: "object" } };
+    const bashTool = { name: "bash", description: "Run shell", parameters: { type: "object" } };
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    coordinator._sessions = new Map([
+      [sessionPath, {
+        session: {
+          model: { id: "gpt-5.1", provider: "openai", api: "openai-responses" },
+          agent: {
+            state: {
+              systemPrompt: "stable system",
+              messages: [
+                { role: "user", content: [{ type: "text", text: "hello" }, { type: "input_audio", audio_url: "file://voice.wav" }] },
+              ],
+            },
+          },
+        },
+        thinkingLevel: "medium",
+        activeToolDefinitions: [readTool, bashTool],
+      }],
+    ]);
+
+    const snapshot = coordinator.buildSessionCacheSnapshot(sessionPath, { reason: "compaction.history" });
+
+    expect(snapshot).toMatchObject({
+      strategy: "session_snapshot",
+      sessionPath,
+      toolNames: ["read", "bash"],
+      cacheKeyParams: { thinkingLevel: "medium" },
+    });
+    expect(snapshot.tools).toEqual([
+      { name: "read", description: "Read files", parameters: { type: "object" } },
+      { name: "bash", description: "Run shell", parameters: { type: "object" } },
+    ]);
+    expect(snapshot.messages[0].content[1]).toEqual({ type: "input_audio", audio_url: "file://voice.wav" });
+  });
+
   it("cleans up the temporary session file when aborted after session creation", async () => {
     const sessionFile = path.join(tempDir, "isolated.jsonl");
     fs.writeFileSync(sessionFile, "temp");

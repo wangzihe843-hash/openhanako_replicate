@@ -5,6 +5,9 @@ import {
   prepareCompaction,
 } from "../lib/pi-sdk/index.js";
 import { computeHardTruncation } from "./compaction-utils.js";
+import { buildSessionCacheSnapshot } from "./session-cache-snapshot.js";
+import { runSessionSnapshotSideTask } from "../lib/llm/session-snapshot-side-task-runner.js";
+import { buildCacheStrategyMetadata } from "../lib/llm/cache-strategy-contract.js";
 
 const DEFAULT_HARD_TRUNCATE_THRESHOLD = 0.85;
 const COMPACTION_REQUEST_BUFFER_TOKENS = 1024;
@@ -331,6 +334,11 @@ export async function createCachePreservingCompactionResult({
   preparation,
   model,
   systemPrompt,
+  messages,
+  tools = [],
+  sessionSnapshot = null,
+  cacheKeyParams = {},
+  cacheMetadataOverride = null,
   customInstructions,
   signal,
   thinkingLevel,
@@ -342,10 +350,22 @@ export async function createCachePreservingCompactionResult({
 }) {
   if (!preparation) throw new Error("Cache-preserving compaction requires preparation");
   if (!model) throw new Error("Cache-preserving compaction requires a model");
-  const requests = buildCachePreservingCompactionRequests({ preparation, customInstructions });
+  const rawMessagesToSummarize = Array.isArray(preparation.messagesToSummarize)
+    ? preparation.messagesToSummarize
+    : [];
+  const effectivePreparation = Array.isArray(messages) && messages.length === rawMessagesToSummarize.length
+    ? { ...preparation, messagesToSummarize: messages }
+    : preparation;
+  const effectiveCacheKeyParams = {
+    ...cacheKeyParams,
+    thinkingLevel: cacheKeyParams.thinkingLevel ?? thinkingLevel ?? "off",
+  };
+  const requests = buildCachePreservingCompactionRequests({ preparation: effectivePreparation, customInstructions });
 
   async function runRequest(request) {
     const llmMessages = await convertToLlm(request.messages);
+    const suffixMessage = llmMessages[llmMessages.length - 1];
+    const prefixMessages = llmMessages.slice(0, -1);
     const options = {
       ...streamOptions,
       maxTokens: request.maxTokens,
@@ -353,42 +373,70 @@ export async function createCachePreservingCompactionResult({
       toolChoice: "none",
       ...(model.reasoning && thinkingLevel && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
     };
-
-    const context = {
-      systemPrompt,
-      messages: llmMessages,
-    };
-    const usageRequest = usageLedger?.start?.({
-      model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
-      usageContext,
-      costRates: model?.cost,
-    }) || null;
-    let response;
+    if (cacheMetadataOverride) {
+      const context = {
+        systemPrompt,
+        tools,
+        messages: llmMessages,
+      };
+      const metadata = buildCacheStrategyMetadata(cacheMetadataOverride);
+      const usageRequest = usageLedger?.start?.({
+        model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+        usageContext,
+        metadata,
+        costRates: model?.cost,
+      }) || null;
+      let response;
+      try {
+        response = streamFn
+          ? await (await streamFn(model, context, options)).result()
+          : await completeSimple(model, context, options);
+      } catch (error) {
+        if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error);
+        throw error;
+      }
+      if (isErrorResponse(response)) {
+        const error = new Error(`Cache-preserving compaction failed: ${response.errorMessage || response.stopReason || "unknown error"}`);
+        if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error, "error", { usage: response?.usage });
+        throw error;
+      }
+      usageLedger?.finish?.(usageRequest?.requestId, {
+        usage: response?.usage,
+        model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
+        costRates: model?.cost,
+      });
+      return extractSummaryText(response);
+    }
+    const snapshotForRequest = sessionSnapshot?.messageCount === prefixMessages.length
+      ? sessionSnapshot
+      : buildSessionCacheSnapshot({
+        sessionPath: sessionSnapshot?.sessionPath || "",
+        reason: request.kind === "turn-prefix" ? "compaction.turn_prefix" : "compaction.history",
+        model,
+        cacheKeyParams: effectiveCacheKeyParams,
+        systemPrompt,
+        tools,
+        messages: prefixMessages,
+      });
+    let sideTask;
     try {
-      response = streamFn
-        ? await (await streamFn(model, context, options)).result()
-        : await completeSimple(model, context, options);
+      sideTask = await runSessionSnapshotSideTask({
+        snapshot: snapshotForRequest,
+        model,
+        cacheKeyParams: effectiveCacheKeyParams,
+        suffixMessage,
+        streamFn,
+        options,
+        cacheGroup: request.kind === "turn-prefix" ? "compaction.turn_prefix" : "compaction.history",
+        templateVersion: "v1",
+        usageLedger,
+        usageContext,
+      });
     } catch (error) {
-      if (usageRequest?.requestId) usageLedger?.recordError?.(usageRequest.requestId, error);
       throw error;
     }
 
-    if (isErrorResponse(response)) {
-      if (usageRequest?.requestId) {
-        usageLedger?.recordError?.(
-          usageRequest.requestId,
-          new Error(response.errorMessage || response.stopReason || "compaction failed"),
-        );
-      }
-      throw new Error(`Cache-preserving compaction failed: ${response.errorMessage || response.stopReason || "unknown error"}`);
-    }
-    usageLedger?.finish?.(usageRequest?.requestId, {
-      usage: response?.usage,
-      model: { provider: model?.provider ?? null, modelId: model?.id ?? null, api: model?.api ?? null },
-      costRates: model?.cost,
-    });
-
-    const text = extractSummaryText(response);
+    const text = sideTask.text;
     if (!text) {
       throw new Error("Cache-preserving compaction failed: empty summary");
     }
@@ -493,6 +541,10 @@ export async function runCachePreservingCompactionForSession(session, {
       customInstructions,
       signal,
       thinkingLevel: session.thinkingLevel ?? session.agent.state?.thinkingLevel,
+      tools: session.agent.state?.tools || [],
+      cacheKeyParams: {
+        thinkingLevel: session.thinkingLevel ?? session.agent.state?.thinkingLevel ?? "off",
+      },
       streamFn: session.agent.streamFn,
       streamOptions: {
         sessionId: session.agent.sessionId,

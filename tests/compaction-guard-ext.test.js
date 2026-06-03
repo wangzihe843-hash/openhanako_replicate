@@ -39,6 +39,7 @@ function createMockPi() {
 describe("CompactionGuardExtension", () => {
   let pi;
   let cacheCompactor;
+  let buildSessionCacheSnapshot;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -49,7 +50,21 @@ describe("CompactionGuardExtension", () => {
       tokensBefore: preparation.tokensBefore ?? 90_000,
       details: { readFiles: [], modifiedFiles: [] },
     }));
-    createCompactionGuardExtension({ cacheCompactor })(pi);
+    buildSessionCacheSnapshot = vi.fn((sessionPath, { reason, messages } = {}) => ({
+      strategy: "session_snapshot",
+      strict: true,
+      sessionPath,
+      reason,
+      cachePrefixHash: "a".repeat(64),
+      tools: [{
+        name: "read",
+        description: "Read files",
+        parameters: { type: "object" },
+      }],
+      messages,
+      messageCount: Array.isArray(messages) ? messages.length : 0,
+    }));
+    createCompactionGuardExtension({ cacheCompactor, buildSessionCacheSnapshot })(pi);
   });
 
   it("registers only tool_result and session_before_compact handlers", () => {
@@ -160,6 +175,7 @@ describe("CompactionGuardExtension", () => {
       },
       getSystemPrompt: vi.fn(() => "system prompt"),
       sessionManager: {
+        getSessionFile: () => "/sessions/current.jsonl",
         getBranch: () => [],
         buildSessionContext: () => ({
           thinkingLevel: "off",
@@ -189,8 +205,24 @@ describe("CompactionGuardExtension", () => {
         systemPrompt: "system prompt",
         customInstructions: undefined,
         thinkingLevel: "off",
+        sessionSnapshot: expect.objectContaining({
+          sessionPath: "/sessions/current.jsonl",
+          tools: [{
+            name: "read",
+            description: "Read files",
+            parameters: { type: "object" },
+          }],
+        }),
+        tools: [{
+          name: "read",
+          description: "Read files",
+          parameters: { type: "object" },
+        }],
       }));
-      expect(cacheCompactor.mock.calls[0][0].tools).toBeUndefined();
+      expect(buildSessionCacheSnapshot).toHaveBeenCalledWith("/sessions/current.jsonl", expect.objectContaining({
+        reason: "compaction.history",
+        messages: preparation.messagesToSummarize,
+      }));
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
@@ -257,6 +289,53 @@ describe("CompactionGuardExtension", () => {
       expect(pi.getThinkingLevel).not.toHaveBeenCalled();
       expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
         thinkingLevel: "off",
+      }));
+    });
+
+    it("uses explicit cache recovery when GLM thinking tool-call history cannot replay reasoning_content", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      const glmModel = {
+        id: "glm-4.5",
+        provider: "zhipu",
+        api: "openai-completions",
+        reasoning: true,
+        contextWindow: 128_000,
+      };
+      const res = await pi.trigger(
+        "session_before_compact",
+        {
+          preparation: {
+            ...preparation,
+            messagesToSummarize: [
+              {
+                role: "assistant",
+                content: "",
+                tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }],
+              },
+            ],
+          },
+          signal: { aborted: false },
+        },
+        {
+          ...ctx,
+          model: glmModel,
+          sessionManager: {
+            ...ctx.sessionManager,
+            buildSessionContext: () => ({ thinkingLevel: "high" }),
+          },
+        },
+      );
+
+      expect(res).toMatchObject({ compaction: expect.any(Object) });
+      expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
+        model: glmModel,
+        thinkingLevel: "off",
+        cacheKeyParams: { thinkingLevel: "off" },
+        cacheMetadataOverride: expect.objectContaining({
+          cacheStrategy: "cache_recovery",
+          strict: false,
+          degradeReason: "reasoning_replay_unavailable",
+        }),
       }));
     });
 

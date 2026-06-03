@@ -286,6 +286,12 @@ export class Agent {
           this._cb?.getPreferences?.(),
           CACHE_SNAPSHOT_EXPERIMENT_ID,
         ),
+        buildSessionCacheSnapshot: (sessionPath, options) => (
+          this._cb?.getEngine?.()?.buildSessionCacheSnapshot?.(sessionPath, options)
+        ),
+        getSessionStreamFn: (sessionPath) => (
+          this._cb?.getEngine?.()?.getSessionStreamFn?.(sessionPath)
+        ),
         onCompiled: () => {
           // _systemPrompt 是非 session 路径（巡检/cron/频道/DM/bridge owner 新建）
           // 共享的 cache，必须按 master 构建，不被 per-session 开关污染。

@@ -517,6 +517,7 @@ await engine.registerExtensionFactory(createDeferredResultExtension(deferredResu
 // Cache-preserving compaction — 接管 Pi auto/manual compact，避免原生 summarizer 冷读上下文
 await engine.registerExtensionFactory(createCompactionGuardExtension({
   usageLedger: engine.usageLedger,
+  buildSessionCacheSnapshot: (sessionPath, options) => engine.buildSessionCacheSnapshot(sessionPath, options),
   buildUsageContext: ({ ctx }) => {
     const sessionPath = ctx?.sessionManager?.getSessionFile?.() || null;
     const bridgeContext = sessionPath ? engine.getBridgeContextForSessionPath(sessionPath) : null;

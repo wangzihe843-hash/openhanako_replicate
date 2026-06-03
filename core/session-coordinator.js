@@ -63,6 +63,7 @@ import {
   diffCachePrefixContracts,
   summarizeCachePrefixContract,
 } from "../lib/llm/cache-prefix-contract.js";
+import { buildSessionCacheSnapshot as buildSessionCacheSnapshotValue } from "./session-cache-snapshot.js";
 import {
   SESSION_PROMPT_SNAPSHOT_VERSION,
   freezeAgentsFilesResult,
@@ -142,6 +143,17 @@ function timestampFromHistoryMessage(message, fallback = Date.now()) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames) {
+  const allowed = snapshotToolNames === null ? null : new Set(snapshotToolNames || []);
+  return (allToolObjects || [])
+    .filter((tool) => tool?.name && (allowed === null || allowed.has(tool.name)))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description ?? "",
+      parameters: tool.parameters ?? tool.input_schema ?? tool.schema ?? null,
+    }));
 }
 
 function normalizeDeletedAgentTranscriptMessage(message) {
@@ -467,6 +479,31 @@ export class SessionCoordinator {
 
   get currentSessionPath() {
     return this._session?.sessionManager?.getSessionFile?.() ?? this._currentSessionPath ?? null;
+  }
+
+  buildSessionCacheSnapshot(sessionPath, { reason = "unknown", messages = null } = {}) {
+    const entry = this._sessions.get(sessionPath);
+    if (!entry?.session) {
+      throw new Error(`Session cache snapshot unavailable: unknown session ${sessionPath || "(empty)"}`);
+    }
+    const session = entry.session;
+    const state = session.agent?.state || {};
+    return buildSessionCacheSnapshotValue({
+      sessionPath,
+      reason,
+      model: session.model || state.model || null,
+      cacheKeyParams: {
+        thinkingLevel: entry.thinkingLevel || state.thinkingLevel || session.thinkingLevel || "off",
+      },
+      systemPrompt: this._getFinalSystemPrompt(session) ?? state.systemPrompt ?? "",
+      tools: entry.activeToolDefinitions || [],
+      messages: Array.isArray(messages) ? messages : (Array.isArray(state.messages) ? state.messages : []),
+    });
+  }
+
+  getSessionStreamFn(sessionPath) {
+    const entry = this._sessions.get(sessionPath);
+    return entry?.session?.agent?.streamFn || null;
   }
 
   async reloadExtensionRunners(reason = "extension_factories_changed") {
@@ -965,6 +1002,7 @@ export class SessionCoordinator {
       planMode: initialPlanMode,
       thinkingLevel: initialThinkingLevel,
       toolNames: snapshotToolNames,  // null for legacy sessions (Case B), array otherwise
+      activeToolDefinitions: activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames),
       memoryReflectionSnapshot,
       lastTouchedAt: Date.now(),
       unsub,

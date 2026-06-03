@@ -626,6 +626,12 @@ export class HanaEngine {
   async createSession(mgr, cwd, mem, model, opts = {}) {
     return this._sessionCoord.createSession(mgr, cwd, mem, model, opts);
   }
+  buildSessionCacheSnapshot(p, opts) {
+    return this._sessionCoord.buildSessionCacheSnapshot(p, opts);
+  }
+  getSessionStreamFn(p) {
+    return this._sessionCoord.getSessionStreamFn(p);
+  }
   async switchSession(p) {
     const result = await this._sessionCoord.switchSession(p);
     await this.syncWorkspaceSkillPaths(this.cwd, { reload: true, emitEvent: false });
