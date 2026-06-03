@@ -252,41 +252,54 @@ export function createXingyeStorageRoute(engine) {
           if (!Object.prototype.hasOwnProperty.call(body || {}, "data")) {
             return c.json({ error: "data required" }, 400);
           }
-          await atomicWrite(target, Buffer.from(JSON.stringify(body.data, null, 2), "utf-8"));
-          if (
-            isAgentLoreEntriesJsonPath(relativePath)
-            && body.data != null
-            && typeof body.data === "object"
-            && !Array.isArray(body.data)
-          ) {
-            const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
-            if (!hanakoHome) {
-              console.warn(
-                `[xingye-storage] skip stable lore-memory sync (${agentId}): engine.agentsDir missing or invalid`,
-              );
-            } else {
-              try {
-                await syncXingyeStableLoreMemoryFile({
-                  hanakoHome,
-                  agentId,
-                  entries: body.data,
-                });
-              } catch (err) {
+          // entries.json 落盘 + 派生 lore-memory.md 同步必须作为一个 per-agent 原子段：lore/entries.json
+          // 的 syncXingyeStableLoreMemoryFile 本身是对 lore-memory.md 的无锁 RMW，两个并发 writeJson 交错会
+          // 让 lore-memory.md（core/agent.js 注入的 '# 星野核心设定' prompt 来源）与 entries.json 失配。
+          // 与 writeJsonl/deleteJsonlRecord 同锁串行化；锁段不嵌套取锁（sync 内部不再取同锁），无死锁。
+          await withXingyeAgentEventLock(agentId, async () => {
+            await atomicWrite(target, Buffer.from(JSON.stringify(body.data, null, 2), "utf-8"));
+            if (
+              isAgentLoreEntriesJsonPath(relativePath)
+              && body.data != null
+              && typeof body.data === "object"
+              && !Array.isArray(body.data)
+            ) {
+              const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
+              if (!hanakoHome) {
                 console.warn(
-                  `[xingye-storage] sync stable lore-memory failed (${agentId}):`,
-                  err?.message || err,
+                  `[xingye-storage] skip stable lore-memory sync (${agentId}): engine.agentsDir missing or invalid`,
                 );
+              } else {
+                try {
+                  await syncXingyeStableLoreMemoryFile({
+                    hanakoHome,
+                    agentId,
+                    entries: body.data,
+                  });
+                } catch (err) {
+                  console.warn(
+                    `[xingye-storage] sync stable lore-memory failed (${agentId}):`,
+                    err?.message || err,
+                  );
+                }
               }
             }
-          }
+          });
           return c.json({ ok: true });
         }
         case "appendJsonl": {
           if (!Object.prototype.hasOwnProperty.call(body || {}, "data")) {
             return c.json({ error: "data required" }, 400);
           }
-          await fs.promises.mkdir(path.dirname(target), { recursive: true });
-          await fs.promises.appendFile(target, `${JSON.stringify(body.data)}\n`, "utf-8");
+          // 追加也要进 per-agent 锁：与持锁的 writeJsonl/deleteJsonlRecord（read→filter→atomicWrite
+          // RMW）串行化。否则 RMW 读完快照、rename 之前，这里 appendFile 插进去的新行会被基于旧快照的
+          // rename 静默覆盖丢失（commit 57292f8a 修过对称方向，独漏这条 append→RMW 方向）。O_APPEND
+          // 对并发 append 本就原子、服务端 *-drafts.js append 也已持同锁，问题只在「无锁 append vs 持锁整表
+          // RMW」。锁段不嵌套取锁，无死锁。
+          await withXingyeAgentEventLock(agentId, async () => {
+            await fs.promises.mkdir(path.dirname(target), { recursive: true });
+            await fs.promises.appendFile(target, `${JSON.stringify(body.data)}\n`, "utf-8");
+          });
           return c.json({ ok: true });
         }
         case "listJsonl": {

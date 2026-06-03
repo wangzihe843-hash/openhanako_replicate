@@ -657,7 +657,14 @@ export function PhoneShoppingApp({
     }
   };
 
+  const ownerResetMountedRef = useRef(false);
   useEffect(() => {
+    // 首挂载跳过重置：dep-array effect 在首次 commit 后也会跑一次，若此时 setSelectedId(null) 会把
+    // 账本深链传入的 initialSelectedId（selectedId 初值）清掉，详情页永远打不开。仅在真正切 ownerAgentId 时重置。
+    if (!ownerResetMountedRef.current) {
+      ownerResetMountedRef.current = true;
+      return;
+    }
     setSelectedId(null);
     setComposeOpen(false);
     setEditing(false);

@@ -277,6 +277,14 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   lastRefreshError = null;
 
   if (!id) {
+    // 进入 disabled 前先落盘上一个 agent 的 debounced 待写（此刻 mode 仍 'agent'、activeAgentId 仍指向它）。
+    // 否则 memory.clear() 后定时器再 fire 时 flushNow 因 mode!=='agent' 早退，上一个 agent 的待写被静默丢弃。
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+      await flushNow();
+      if (myVersion !== refreshVersion) return;
+    }
     mode = 'disabled';
     memory.clear();
     activeAgentId = null;
@@ -285,6 +293,13 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   }
 
   if (!hasServerConnection(useStore.getState())) {
+    // 同上：断连进入 disabled 前，先把上一个 agent 的待写落盘，避免丢失。
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+      await flushNow();
+      if (myVersion !== refreshVersion) return;
+    }
     mode = 'disabled';
     memory.clear();
     activeAgentId = null;

@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
+import { withXingyeAgentEventLock } from "../lib/xingye/events.js";
 
 describe("xingye storage route", () => {
   it("read write list stays under agent xingye root", async () => {
@@ -63,6 +64,61 @@ describe("xingye storage route", () => {
       expect(list.status).toBe(200);
       const listJson = await list.json();
       expect(listJson.entries.some((e) => e.name === "hello.txt")).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("appendJsonl 进 per-agent 锁：被同 agent 持锁阻塞，不与持锁 RMW 交错（防 append 行被覆盖丢失）", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const agent = { id: "agent-a", name: "A" };
+      const engine = {
+        agentsDir,
+        currentAgentId: "agent-a",
+        getAgent: (id) => (id === "agent-a" ? agent : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const relativePath = "apps/sms/drafts.jsonl";
+      // 外部持有 agent-a 的 per-agent 锁，模拟一段持锁 RMW（writeJsonl/deleteJsonlRecord）正在进行。
+      let release;
+      const held = new Promise((r) => { release = r; });
+      const lockHeld = withXingyeAgentEventLock("agent-a", async () => { await held; });
+
+      // 锁被占用期间发起 appendJsonl：修复后它必须排队等锁，不能立刻完成（修复前无锁会立即完成）。
+      let appendDone = false;
+      const appendReq = app
+        .request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "appendJsonl", agentId: "agent-a", relativePath, data: { id: "d1", text: "draft" } }),
+        })
+        .then((r) => {
+          appendDone = true;
+          return r;
+        });
+
+      // 给事件循环若干 tick 让 handler 跑到取锁处；锁被外部占用，append 不应完成。
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(appendDone).toBe(false);
+
+      // 释放锁后 append 才得以完成。
+      release();
+      await lockHeld;
+      const res = await appendReq;
+      expect(res.status).toBe(200);
+      expect(appendDone).toBe(true);
+
+      // 追加的行确实落盘。
+      const abs = path.join(agentsDir, "agent-a", "xingye", relativePath);
+      const lines = fs.readFileSync(abs, "utf-8").trim().split(/\r?\n/);
+      expect(lines.map((l) => JSON.parse(l).id)).toContain("d1");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

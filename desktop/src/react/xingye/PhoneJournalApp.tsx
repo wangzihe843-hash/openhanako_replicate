@@ -143,7 +143,11 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [initError, setInitError] = useState<string | null>(null);
   const [initNotice, setInitNotice] = useState<string | null>(null);
 
+  // 跨角色 stale-write 守卫：与 PhoneMailApp 等同款（AgentPhonePanel 原地换角色，无 key）。
+  const reloadSeqRef = useRef(0);
+
   const reloadEntries = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
@@ -157,12 +161,14 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         listJournalEntries(ownerAgentId),
         listJournalDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setEntries(rows);
       setPendingDrafts(drafts);
     } catch (e) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
-      setListLoading(false);
+      if (seq === reloadSeqRef.current) setListLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -180,6 +186,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
 
   useEffect(() => {
     void reloadEntries();
+    return () => {
+      reloadSeqRef.current += 1; // 卸载/换 agent 时作废在途结果
+    };
   }, [reloadEntries]);
 
   /**

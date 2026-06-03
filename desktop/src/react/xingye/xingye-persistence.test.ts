@@ -125,6 +125,33 @@ describe('xingye-persistence agent scoped storage', () => {
     expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
   });
 
+  it('flushes a pending edit before entering disabled state (agentId -> null), so the edit is not lost', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    // Arm a debounced pending edit for agent-a; do NOT flush (450ms timer still pending).
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({
+        'agent-a::agent::peer': {
+          ownerAgentId: 'agent-a',
+          targetType: 'agent',
+          targetId: 'peer',
+          remark: 'pending before disable',
+          updatedAt: '2026-06-03T00:00:00.000Z',
+        },
+      }),
+    );
+
+    // Enter disabled state (e.g. selected agent deleted / agents list momentarily empty).
+    // The pending edit must be flushed to agent-a BEFORE memory is cleared, not silently dropped.
+    await refreshXingyeAgentPersistence('');
+
+    // agent-a's pending edit survived the transition to disabled.
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    const reloadedA = JSON.parse(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts') ?? '{}');
+    expect(reloadedA['agent-a::agent::peer']?.remark).toBe('pending before disable');
+  });
+
   it('does not expose formal business storage without an explicit agent id', async () => {
     await refreshXingyeAgentPersistence('');
     expect(getXingyePersistenceStorage()).toBeNull();

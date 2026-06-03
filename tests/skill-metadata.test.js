@@ -46,6 +46,27 @@ describe("parseSkillMetadata", () => {
     });
   });
 
+  it("空的 metadata: 块（js-yaml 解析成 null）不致命：保留 name/description，且不误报解析失败", () => {
+    // 回归：typeof null === "object" 让旧 guard 漏掉 null，frontmatterMetadata 返回 null，
+    // 下游 normalizeDefaultEnabled 解引用即抛 TypeError，被 catch 后整条 skill 静默降级成
+    // fallback 名 + 空描述，且触发误导性的 onError「frontmatter parse failed」。
+    const content = [
+      "---",
+      "name: empty-meta-skill",
+      "description: a real description",
+      "metadata:",
+      "---",
+      "",
+    ].join("\n");
+    const onError = vi.fn();
+    const meta = parseSkillMetadata(content, "fallback-skill", onError);
+    expect(meta.name).toBe("empty-meta-skill");
+    expect(meta.description).toBe("a real description");
+    expect(meta.displayNames).toEqual({});
+    expect(meta.defaultEnabled).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("会限制 prompt-facing description 的长度", () => {
     const longDesc = "x".repeat(1300);
     const content = [

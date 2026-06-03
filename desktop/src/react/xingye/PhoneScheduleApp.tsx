@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import { generateScheduleDraftWithAI } from './xingye-schedule-ai';
@@ -172,7 +172,11 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  // 跨角色 stale-write 守卫：与 PhoneMailApp 等同款（AgentPhonePanel 原地换角色，无 key）。
+  const reloadSeqRef = useRef(0);
+
   const reloadEntries = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
@@ -186,12 +190,14 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
         listScheduleEntries(ownerAgentId),
         listScheduleDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setEntries(rows);
       setPendingDrafts(drafts);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -293,6 +299,9 @@ export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack
 
   useEffect(() => {
     void reloadEntries();
+    return () => {
+      reloadSeqRef.current += 1; // 卸载/换 agent 时作废在途结果
+    };
   }, [reloadEntries]);
 
   const selected = useMemo(

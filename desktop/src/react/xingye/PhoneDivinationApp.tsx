@@ -219,7 +219,12 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
     setMethodId(resolveRecommendedDivinationMethod(ctxAgentLike, ctxHint).method);
   }, [ownerAgentId, ctxBusy, ctxAgentLike, ctxHint]);
 
+  // 跨角色 stale-write 守卫：与 PhoneMailApp 等同款。AgentPhonePanel 不给 key={agentId}，
+  // 换角色是原地重渲染；旧 agent 的在途 reload 若晚于新 agent 返回，会用旧数据覆盖列表。
+  const reloadSeqRef = useRef(0);
+
   const reloadEntries = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
@@ -233,13 +238,15 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
         loadDivinationEntries(ownerAgentId),
         listDivinationDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       const sorted = [...rows].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       setEntries(sorted);
       setPendingDrafts(drafts);
     } catch (e) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
-      setListLoading(false);
+      if (seq === reloadSeqRef.current) setListLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -405,6 +412,9 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
 
   useEffect(() => {
     void reloadEntries();
+    return () => {
+      reloadSeqRef.current += 1; // 卸载/换 agent 时作废在途结果
+    };
   }, [reloadEntries]);
 
   const selected = useMemo(

@@ -717,7 +717,14 @@ export function PhoneSecondhandApp({
     }
   };
 
+  const ownerResetMountedRef = useRef(false);
   useEffect(() => {
+    // 首挂载跳过重置：否则会把账本深链传入的 initialSelectedId（selectedId 初值）清掉，详情页打不开。
+    // 仅在真正切 ownerAgentId 时重置。
+    if (!ownerResetMountedRef.current) {
+      ownerResetMountedRef.current = true;
+      return;
+    }
     setSelectedId(null);
     setComposeOpen(false);
     setEditing(false);

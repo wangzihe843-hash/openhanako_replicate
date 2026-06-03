@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { mergeWorkspaceHistory, normalizeWorkspacePath } from "./workspace-history.js";
 import { normalizeWorkspaceUiState } from "./workspace-ui-state.js";
 
@@ -12,11 +13,24 @@ export function classifyWorkspacePathForGc(value, { statSync = fs.statSync } = {
     return { path: workspace, status: "present", errorCode: null };
   } catch (err) {
     const errorCode = typeof err?.code === "string" ? err.code : null;
-    return {
-      path: workspace,
-      status: MISSING_PATH_CODES.has(errorCode) ? "missing" : "unknown",
-      errorCode,
-    };
+    if (!MISSING_PATH_CODES.has(errorCode)) {
+      // EACCES/EBUSY/EPERM 等：无法判定是否真被删，保守保留（不剪）。
+      return { path: workspace, status: "unknown", errorCode };
+    }
+    // ENOENT/ENOTDIR：只有当父目录仍存在时才算「确实被删」。若父目录也取不到——典型是
+    // Windows 断开的网络盘/可移动盘整盘 ENOENT——多半是临时卸载而非删除，判为 unknown 予以保留；
+    // 否则仅一次读取（getWorkspaceUiState 每次读都跑 GC）就会把该工作区保存的 UI 状态永久抹掉，
+    // 重新挂盘也回不来。
+    const parent = path.dirname(workspace);
+    if (!parent || parent === workspace) {
+      return { path: workspace, status: "unknown", errorCode };
+    }
+    try {
+      statSync(parent);
+      return { path: workspace, status: "missing", errorCode };
+    } catch {
+      return { path: workspace, status: "unknown", errorCode };
+    }
   }
 }
 

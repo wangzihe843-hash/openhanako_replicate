@@ -74,7 +74,7 @@ export function PhoneContactDetail({
 
       {contact.targetType === 'virtual_contact' ? (
         <div className={styles.phoneActionRow}>
-          <select className={styles.phoneInlineSelect} defaultValue={contact.linkedAgentId ?? ''} onChange={event => onLinkAgent(event.target.value)}>
+          <select className={styles.phoneInlineSelect} value={contact.linkedAgentId ?? ''} onChange={event => onLinkAgent(event.target.value)}>
             <option value="">关联现有角色（占位）</option>
             {linkOptions.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
