@@ -231,8 +231,19 @@ export function PhoneHome({
   const [statusTime, setStatusTime] = useState(() => formatPhoneStatusTime(new Date()));
   const [heartbeatStatus, setHeartbeatStatus] = useState('等待手动巡检');
   const [heartbeatBusy, setHeartbeatBusy] = useState(false);
-  // 触发水位线：只认 finishedAt 晚于此刻的心跳活动，避免把上一轮旧 activity 当本次结果。
-  const triggerWatermarkRef = useRef(0);
+  /**
+   * 触发完成检测改用「服务端有序身份」而非客户端时钟比较：
+   * - awaitingResultRef：本次触发后是否仍在等结果（false 时完成 effect 不收尾）。
+   * - baselineHeartbeatIdRef：触发瞬间已存在的最新 heartbeat 活动 id（没有则 null）。
+   *   完成判定 = 出现一条 id 与 baseline 不同的 heartbeat 活动（即 scheduler 经 activity_update
+   *   推回的新一轮 beat）。activities 数组按服务端顺序新→旧，latestHeartbeat 取第一条即最新。
+   *
+   * 为什么不再比 finishedAt >= 客户端 Date.now()：远程 / 配对连接下服务端时钟可能比客户端慢
+   * 一整个 beat，合法完成会被误判成旧活动丢弃，状态行卡在「巡检触发中...」直到 6min 兜底。
+   * id 比较只依赖服务端自身有序性，与两端时钟差无关；loopback 默认场景行为不变。
+   */
+  const awaitingResultRef = useRef(false);
+  const baselineHeartbeatIdRef = useRef<string | null>(null);
   const clearBusyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 订阅 activities store 里本 agent 最新的一条 heartbeat 活动（beat 完成时 scheduler 经
   // activity_update 推过来，手动 / 自动统一走这条）。返回的是 store 数组里的同一引用，稳定。
@@ -324,8 +335,10 @@ export function PhoneHome({
     const agentId = agent.id;
     setHeartbeatBusy(true);
     setHeartbeatStatus('巡检触发中...');
-    // 触发即记水位线；真实巡检完成由下方 effect 经 activities store 收尾。
-    triggerWatermarkRef.current = Date.now();
+    // 触发即快照当前最新 heartbeat 活动 id 作为基线；真实巡检完成由下方 effect 在出现
+    // 「id 不同于基线」的新活动时收尾（服务端有序，与两端时钟差无关）。
+    baselineHeartbeatIdRef.current = latestHeartbeat?.id ?? null;
+    awaitingResultRef.current = true;
     try {
       // fire-and-forget：路由只回 triggered/cooldown，不阻塞等整轮 beat（否则会被 30s 超时误报失败）。
       const res = await hanaFetch(`/api/desk/heartbeat?agentId=${encodeURIComponent(agentId)}`, {
@@ -340,7 +353,7 @@ export function PhoneHome({
         const line = '冷却中，请稍后再试';
         setHeartbeatStatus(line);
         rememberDeskHeartbeatUiOutcome(agentId, line);
-        triggerWatermarkRef.current = 0;
+        awaitingResultRef.current = false;
         setHeartbeatBusy(false);
         return;
       }
@@ -348,7 +361,7 @@ export function PhoneHome({
       // 安全兜底：beat 上限 5min，超 6min 仍无结果则解除 busy，避免按钮永久卡住。
       if (clearBusyTimerRef.current) clearTimeout(clearBusyTimerRef.current);
       clearBusyTimerRef.current = setTimeout(() => {
-        triggerWatermarkRef.current = 0;
+        awaitingResultRef.current = false;
         clearBusyTimerRef.current = null;
         setHeartbeatBusy(false);
         setHeartbeatStatus((prev) => (prev === '巡检触发中...' ? '巡检仍在后台进行，稍后回来查看' : prev));
@@ -357,25 +370,26 @@ export function PhoneHome({
       const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
       setHeartbeatStatus(fail);
       rememberDeskHeartbeatUiOutcome(agentId, fail);
-      triggerWatermarkRef.current = 0;
+      awaitingResultRef.current = false;
       setHeartbeatBusy(false);
     }
   };
 
-  // 巡检完成：本 agent 出现 finishedAt 晚于触发水位线的 heartbeat 活动时，
+  // 巡检完成：本次触发后出现一条 id 不同于触发基线的本 agent heartbeat 活动时收尾，
   // 用其 summaryZh 收尾状态行（活动负载由 scheduler 经 activity_update 推到 store）。
+  // 不再比 finishedAt vs 客户端时钟——远程连接两端时钟差会误丢合法完成。
   useEffect(() => {
     if (!agent?.id) return;
-    const watermark = triggerWatermarkRef.current;
-    if (!watermark || !latestHeartbeat) return;
-    const finishedAt = typeof latestHeartbeat.finishedAt === 'number' ? latestHeartbeat.finishedAt : 0;
-    if (finishedAt < watermark) return; // 旧活动，忽略
+    if (!awaitingResultRef.current || !latestHeartbeat) return;
+    // 还是触发瞬间那条（或基线本身）——尚无新一轮 beat，继续等。
+    if (latestHeartbeat.id === baselineHeartbeatIdRef.current) return;
     const summaryZh = typeof latestHeartbeat.summaryZh === 'string' ? latestHeartbeat.summaryZh.trim() : '';
     const failed = latestHeartbeat.status === 'error';
     const composed = [failed ? '巡检失败' : '巡检完毕', summaryZh].filter(Boolean).join(' · ');
     setHeartbeatStatus(composed);
     rememberDeskHeartbeatUiOutcome(agent.id, composed);
-    triggerWatermarkRef.current = 0;
+    awaitingResultRef.current = false;
+    baselineHeartbeatIdRef.current = latestHeartbeat.id;
     if (clearBusyTimerRef.current) { clearTimeout(clearBusyTimerRef.current); clearBusyTimerRef.current = null; }
     setHeartbeatBusy(false);
     /**

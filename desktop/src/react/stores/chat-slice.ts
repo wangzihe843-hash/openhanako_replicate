@@ -4,7 +4,7 @@
 
 import type { ChatListItem, ChatMessage, ContentBlock, SessionMessages, SessionModel, SessionRegistryFile } from './chat-types';
 import { invalidateSessionCache } from './selectors/file-refs';
-import { invalidateStreamBuffer } from './stream-invalidator';
+import { invalidateStreamBuffer, clearSessionStreamMeta } from './stream-invalidator';
 import { clearMessageLiveVersion } from './message-live-version';
 
 export interface ChatSlice {
@@ -75,6 +75,7 @@ export const createChatSlice = (
         delete scrollPositions[oldest];
         invalidateSessionCache(oldest);
         invalidateStreamBuffer(oldest);
+        clearSessionStreamMeta(oldest);
       }
     }
     return { chatSessions: sessions, sessionRegistryFilesByPath: registryFiles, scrollPositions };
@@ -347,9 +348,22 @@ export const createChatSlice = (
     delete versions[path];
     const scrollPositions = { ...s.scrollPositions };
     delete scrollPositions[path];
+    // agentActivitiesBySession 是 AgentActivitySlice 的 per-session map，与上面几张
+    // 同生命周期；clearSession 是 clearChat / clearSessionRuntimeCaches 的汇聚点，
+    // 不在这里清就只剩无生产调用方的 clearAgentActivities 兜底，迟到的 agent_activity
+    // 事件会复活 key 且永不淘汰（adversarial review #FIX1）。
+    const activities = { ...(s as unknown as { agentActivitiesBySession?: Record<string, unknown> }).agentActivitiesBySession };
+    delete activities[path];
     // FileRef 缓存和 streamBuffer 都绑定 session 生命周期，归属方主动清
     invalidateSessionCache(path);
     invalidateStreamBuffer(path);
+    // 注意：这里【不】清 stream-resume 流元数据。clearSession 不是真正的退场——
+    // rebuildSessionFromResume 会在重建中途调 clearSession(path) 重置消息缓存，此刻
+    // 若连带删掉 _streamResumeRebuildVersions[path]，重建的 isLatestResumeRebuild 版本守卫
+    // 会失配、提前 return，跳过 _applyStreamingStatus，会话卡在「streaming」态
+    // （stream-resume 的 "hydrates a completed empty resume" 回归）。流元数据的无界增长
+    // 由 LRU 淘汰分支（见上方 initSession 里的 clearSessionStreamMeta(oldest)）兜底回收，
+    // 那才是真正的 session 退场点。
     clearMessageLiveVersion(path);
     return {
       chatSessions: sessions,
@@ -357,7 +371,8 @@ export const createChatSlice = (
       sessionModelsByPath: models,
       _loadMessagesVersion: versions,
       scrollPositions,
-    };
+      agentActivitiesBySession: activities,
+    } as Partial<ChatSlice>;
   }),
 
   saveScrollPosition: (path, scrollTop) => set((s) => ({

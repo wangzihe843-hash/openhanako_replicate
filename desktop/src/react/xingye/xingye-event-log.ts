@@ -236,12 +236,41 @@ async function readLog(agentId: string): Promise<XingyeEventLogFile> {
   return { version: 1, events, dedupeKeys };
 }
 
-async function writeLog(agentId: string, log: XingyeEventLogFile): Promise<void> {
-  await backend.writeJson(agentId, XINGYE_EVENT_LOG_RELATIVE_PATH, {
-    version: 1,
-    events: log.events.sort(compareEventsByCreatedAt),
-    dedupeKeys: log.dedupeKeys,
+/**
+ * 渲染端不再裸 readJson+writeJson 改 events/log.json —— 那是一次没有跨进程互斥的
+ * read-modify-write，会和服务端在 withXingyeAgentEventLock 内的 read→rename 交错，把
+ * draft_proposed 之类事件静默吃掉。改走服务端 appendEventLog/markEventConsumed action，
+ * 这两个 action 在 lib/xingye/events.js 的 per-agent 锁内做 RMW，与服务端来源的写入串行化。
+ */
+async function postEventLogAppend(
+  agentId: string,
+  event: XingyeEvent,
+  dedupeKey?: string,
+): Promise<XingyeEvent> {
+  const data = await postXingyeStorage({
+    action: 'appendEventLog',
+    agentId,
+    relativePath: XINGYE_EVENT_LOG_RELATIVE_PATH,
+    event,
+    ...(dedupeKey ? { dedupeKey } : {}),
   });
+  // 服务端归一化后回写 event（dedupe 命中时回的是已有事件）；解析失败则退回本地构造的 event。
+  return normalizeXingyeEvent(data?.event) ?? event;
+}
+
+async function postEventLogMarkConsumed(
+  agentId: string,
+  eventId: string,
+  consumer: string,
+): Promise<XingyeEvent | null> {
+  const data = await postXingyeStorage({
+    action: 'markEventConsumed',
+    agentId,
+    relativePath: XINGYE_EVENT_LOG_RELATIVE_PATH,
+    eventId,
+    consumer,
+  });
+  return normalizeXingyeEvent(data?.event);
 }
 
 function compareEventsByCreatedAt(a: XingyeEvent, b: XingyeEvent): number {
@@ -284,11 +313,9 @@ export async function appendXingyeEvent(
 ): Promise<XingyeEvent> {
   const aid = agentId.trim();
   if (!aid) throw new Error('agentId is required');
+  // 本地构造（生成 id/createdAt、做一遍校验），实际落盘走服务端锁内 append。
   const event = createXingyeEvent({ ...input, agentId: aid });
-  const log = await readLog(aid);
-  log.events.push(event);
-  await writeLog(aid, log);
-  return event;
+  return postEventLogAppend(aid, event);
 }
 
 export async function markXingyeEventConsumed(
@@ -300,19 +327,7 @@ export async function markXingyeEventConsumed(
   const id = eventId.trim();
   const consumer = consumerName.trim();
   if (!aid || !id || !consumer) return null;
-  const log = await readLog(aid);
-  const index = log.events.findIndex((event) => event.id === id);
-  if (index < 0) return null;
-  const next: XingyeEvent = {
-    ...log.events[index],
-    consumedBy: {
-      ...(log.events[index].consumedBy ?? {}),
-      [consumer]: new Date().toISOString(),
-    },
-  };
-  log.events[index] = next;
-  await writeLog(aid, log);
-  return next;
+  return postEventLogMarkConsumed(aid, id, consumer);
 }
 
 export async function listUnconsumedXingyeEvents(
@@ -356,14 +371,7 @@ export async function appendXingyeEventOnce(
   if (!aid) throw new Error('agentId is required');
   if (!key) return appendXingyeEvent(aid, input);
 
-  const log = await readLog(aid);
-  const existingEventId = log.dedupeKeys[key];
-  const existingEvent = existingEventId ? log.events.find((event) => event.id === existingEventId) : null;
-  if (existingEvent) return existingEvent;
-
+  // 本地构造候选事件；dedupe 判定与落盘都在服务端锁内做（命中已有 key 时回旧事件，不追加）。
   const event = createXingyeEvent({ ...input, agentId: aid });
-  log.events.push(event);
-  log.dedupeKeys[key] = event.id;
-  await writeLog(aid, log);
-  return event;
+  return postEventLogAppend(aid, event, key);
 }

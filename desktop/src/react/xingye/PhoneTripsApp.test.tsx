@@ -60,6 +60,31 @@ function renderTripsApp() {
   );
 }
 
+function makeEntry(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'e-1',
+    serial: 'S-001',
+    when: '某日',
+    chapter: '某章',
+    mode: 'walk',
+    modeLabel: '徒步',
+    cls: '徒步',
+    from: { name: '起点甲' },
+    to: { name: '终点甲' },
+    duration: '',
+    distance: '',
+    pass: '—',
+    stampText: '',
+    noteFrom: '',
+    noteTo: '',
+    mood: '',
+    moodTags: [],
+    route: [],
+    createdAt: '2026-05-17T12:00:00.000Z',
+    ...over,
+  };
+}
+
 function makeDraft(over: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'd-1',
@@ -253,5 +278,48 @@ describe('PhoneTripsApp · 手动 AI 更新（整理新行程）', () => {
 
     expect(await screen.findByText(/整理失败：模型调用失败/)).toBeInTheDocument();
     expect(tripsStoreMock.appendTripDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe('PhoneTripsApp · 跨角色 reload 竞态', () => {
+  const agentB: Agent = { ...agent, id: 'agentB', name: 'B' };
+
+  it('切换角色后，旧角色后落地的 reload 不覆盖新角色数据', async () => {
+    // 受控 deferred：让 A 的 listTripEntries 一直挂着，切到 B 后再 resolve A，
+    // 模拟「旧角色的在飞读取最后才落地」。
+    let resolveA: (rows: unknown[]) => void = () => {};
+    const aEntriesPromise = new Promise<unknown[]>((resolve) => {
+      resolveA = resolve;
+    });
+
+    tripsStoreMock.listTripEntries.mockImplementation((aid: string) => {
+      if (aid === 'linwu') return aEntriesPromise;
+      if (aid === 'agentB') return Promise.resolve([makeEntry({ id: 'b-1', from: { name: '起点乙' }, to: { name: '终点乙' } })]);
+      return Promise.resolve([]);
+    });
+    tripsStoreMock.listTripDrafts.mockResolvedValue([]);
+
+    const { rerender } = render(
+      <PhoneTripsApp ownerAgent={agent} ownerProfile={null} displayName="林雾" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(tripsStoreMock.listTripEntries).toHaveBeenCalledWith('linwu');
+    });
+
+    // 切到 B：触发新一轮 reload（cleanup 让上一轮失效）。
+    rerender(
+      <PhoneTripsApp ownerAgent={agentB} ownerProfile={null} displayName="B" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('起点乙')).toBeInTheDocument();
+    });
+
+    // 现在 A 的旧读取才落地——必须被请求号守卫丢弃，不能覆盖 B。
+    resolveA([makeEntry({ id: 'a-1', from: { name: '起点甲' }, to: { name: '终点甲' } })]);
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByText('起点乙')).toBeInTheDocument();
+    expect(screen.queryByText('起点甲')).not.toBeInTheDocument();
   });
 });

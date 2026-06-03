@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// chat-slice 经 stream-invalidator 桥接触达 stream-resume 的清理器（避免反向 import
+// services/stream-resume 形成循环依赖）。这里注册一个 spy 清理器，验证 chat-slice 在
+// teardown 路径上确实经桥接调用了 clearSessionStreamMeta（FIX2 wiring）。
+const mockClearSessionStreamMeta = vi.fn();
+
 import { createChatSlice, type ChatSlice } from '../../stores/chat-slice';
 import type { SessionModel } from '../../stores/chat-types';
-import { registerStreamBufferInvalidator } from '../../stores/stream-invalidator';
+import { registerStreamBufferInvalidator, registerSessionStreamMetaCleaner } from '../../stores/stream-invalidator';
 
 function makeSlice(): ChatSlice {
   let state: ChatSlice;
@@ -14,6 +20,24 @@ function makeSlice(): ChatSlice {
   return new Proxy({} as ChatSlice, {
     get: (_, key: string) => (state as unknown as Record<string, unknown>)[key],
   });
+}
+
+/**
+ * 与 makeSlice 同构，但额外暴露 set，用于把 agentActivitiesBySession 这类
+ * 跨 slice 字段预置进 state（真实 store 里它由 AgentActivitySlice 提供）。
+ */
+function makeSliceWithSet(): { slice: ChatSlice; set: (patch: Record<string, unknown>) => void } {
+  let state: ChatSlice;
+  const set = (partial: Partial<ChatSlice> | ((s: ChatSlice) => Partial<ChatSlice>)) => {
+    const patch = typeof partial === 'function' ? partial(state) : partial;
+    state = { ...state, ...patch };
+  };
+  const get = () => state;
+  state = createChatSlice(set as never, get);
+  const slice = new Proxy({} as ChatSlice, {
+    get: (_, key: string) => (state as unknown as Record<string, unknown>)[key],
+  });
+  return { slice, set: set as (patch: Record<string, unknown>) => void };
 }
 
 const MODEL: SessionModel = {
@@ -29,6 +53,8 @@ describe('chat-slice', () => {
   let slice: ChatSlice;
 
   beforeEach(() => {
+    mockClearSessionStreamMeta.mockClear();
+    registerSessionStreamMetaCleaner(mockClearSessionStreamMeta);
     slice = makeSlice();
   });
 
@@ -151,6 +177,40 @@ describe('chat-slice', () => {
       // 第 9 次 initSession 会淘汰最老的 /s0（keys.find(k => k !== path)）
       expect(invalidator).toHaveBeenCalledWith('/s0');
       expect(slice.scrollPositions['/s0']).toBeUndefined();
+    });
+
+    it('evicts the per-session agentActivitiesBySession entry (FIX1)', () => {
+      const { slice: seeded, set } = makeSliceWithSet();
+      // 真实 store 里 agentActivitiesBySession 由 AgentActivitySlice 提供；这里手动预置。
+      set({ agentActivitiesBySession: { '/a': [{ id: 'x' }], '/b': [{ id: 'y' }] } });
+      seeded.initSession('/a', [], false);
+      seeded.clearSession('/a');
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities['/a']).toBeUndefined();
+      expect(activities['/b']).toBeDefined(); // 只清目标 path
+    });
+
+    it('clearSession 在 agentActivitiesBySession 缺失时不抛（孤立 slice 兜底）', () => {
+      slice.initSession('/a', [], false);
+      expect(() => slice.clearSession('/a')).not.toThrow();
+      expect((slice as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession).toEqual({});
+    });
+
+    it('clearSession 不清 stream-resume 流元数据（rebuild 中途会调 clearSession，清了会破坏版本守卫）', () => {
+      // clearSession 不是真正的 session 退场：rebuildSessionFromResume 会在重建中途
+      // 调 clearSession(path) 重置消息缓存。若此刻连带清掉 _streamResumeRebuildVersions，
+      // 重建的版本守卫会失配、提前 return，会话卡在 streaming 态。故流元数据只在 LRU
+      // 淘汰（真正退场）时清。
+      slice.initSession('/a', [], false);
+      slice.clearSession('/a');
+      expect(mockClearSessionStreamMeta).not.toHaveBeenCalledWith('/a');
+    });
+
+    it('LRU eviction 调用 clearSessionStreamMeta 清被淘汰 session 的流元数据 (FIX2 wiring)', () => {
+      for (let i = 0; i < 9; i++) {
+        slice.initSession(`/s${i}`, [], false);
+      }
+      expect(mockClearSessionStreamMeta).toHaveBeenCalledWith('/s0');
     });
   });
 

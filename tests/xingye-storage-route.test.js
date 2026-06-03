@@ -899,4 +899,268 @@ describe("xingye storage route", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("appendEventLog persists events through the lock-wrapped append helper", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const append = async (payload) =>
+        app.request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "appendEventLog",
+            agentId: "agent-a",
+            relativePath: "events/log.json",
+            ...payload,
+          }),
+        });
+
+      const first = await append({
+        event: {
+          type: "moment.created",
+          source: "renderer",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          payload: { id: "older" },
+        },
+      });
+      expect(first.status).toBe(200);
+      const firstJson = await first.json();
+      expect(firstJson.ok).toBe(true);
+      expect(firstJson.event).toMatchObject({
+        agentId: "agent-a",
+        type: "moment.created",
+        payload: { id: "older" },
+      });
+      expect(typeof firstJson.event.id).toBe("string");
+
+      const second = await append({
+        event: {
+          type: "moment.draft_proposed",
+          source: "renderer",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          payload: { id: "newer" },
+        },
+      });
+      expect(second.status).toBe(200);
+
+      // 两条都在；落盘文件是 events.js 的 {version, events, dedupeKeys} schema 且按 createdAt 升序。
+      const abs = path.join(agentsDir, "agent-a", "xingye", "events", "log.json");
+      const onDisk = JSON.parse(fs.readFileSync(abs, "utf8"));
+      expect(onDisk.version).toBe(1);
+      expect(onDisk.events.map((e) => e.payload.id)).toEqual(["older", "newer"]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("appendEventLog serializes with server-originated appends so no event is dropped", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      const targetAgentDir = path.join(agentsDir, "agent-a");
+      fs.mkdirSync(targetAgentDir, { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      // 服务端进程内 append（pinned 工具 / heartbeat consumer 用的那条路径）。
+      const { appendXingyeEvent } = await import("../lib/xingye/events.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const routeAppend = (payload) =>
+        app.request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "appendEventLog",
+            agentId: "agent-a",
+            relativePath: "events/log.json",
+            event: payload,
+          }),
+        });
+
+      // 渲染端 append 与服务端 append 同时打出去；两者共用 lib/xingye/events.js 的 per-agent 锁，
+      // 串行化后两条都应保留——这正是裸 readJson+writeJson 会丢事件的场景。
+      await Promise.all([
+        routeAppend({
+          type: "moment.draft_proposed",
+          source: "renderer",
+          createdAt: "2026-01-01T00:00:01.000Z",
+          payload: { id: "renderer-evt" },
+        }),
+        appendXingyeEvent({
+          agentDir: targetAgentDir,
+          agentId: "agent-a",
+          input: {
+            type: "pinned_memory.changed",
+            source: "server",
+            createdAt: "2026-01-01T00:00:02.000Z",
+            payload: { id: "server-evt" },
+          },
+        }),
+      ]);
+
+      const abs = path.join(targetAgentDir, "xingye", "events", "log.json");
+      const onDisk = JSON.parse(fs.readFileSync(abs, "utf8"));
+      const ids = onDisk.events.map((e) => e.payload.id).sort();
+      expect(ids).toEqual(["renderer-evt", "server-evt"]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("appendEventLog dedupeKey returns the existing event instead of appending twice", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const append = () =>
+        app.request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "appendEventLog",
+            agentId: "agent-a",
+            relativePath: "events/log.json",
+            dedupeKey: "dk-1",
+            event: {
+              type: "secret_space.record_appended",
+              source: "renderer",
+              subjectId: "dream-1",
+              payload: { recordId: "dream-1" },
+            },
+          }),
+        });
+
+      const firstJson = await (await append()).json();
+      const secondJson = await (await append()).json();
+      expect(secondJson.event.id).toBe(firstJson.event.id);
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "events", "log.json");
+      const onDisk = JSON.parse(fs.readFileSync(abs, "utf8"));
+      expect(onDisk.events).toHaveLength(1);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("markEventConsumed stamps only the named consumer under the lock", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const appended = await (await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendEventLog",
+          agentId: "agent-a",
+          relativePath: "events/log.json",
+          event: { type: "moment.created", source: "renderer", payload: { id: "m1" } },
+        }),
+      })).json();
+
+      const mark = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "markEventConsumed",
+          agentId: "agent-a",
+          relativePath: "events/log.json",
+          eventId: appended.event.id,
+          consumer: "heartbeat",
+        }),
+      });
+      expect(mark.status).toBe(200);
+      const markJson = await mark.json();
+      expect(Object.keys(markJson.event.consumedBy)).toEqual(["heartbeat"]);
+
+      const abs = path.join(agentsDir, "agent-a", "xingye", "events", "log.json");
+      const onDisk = JSON.parse(fs.readFileSync(abs, "utf8"));
+      expect(onDisk.events[0].consumedBy.heartbeat).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(onDisk.events[0].consumedBy.moments).toBeUndefined();
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("appendEventLog and markEventConsumed reject non event-log paths and bad input", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      fs.mkdirSync(path.join(agentsDir, "agent-a"), { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const wrongPath = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendEventLog",
+          agentId: "agent-a",
+          relativePath: "moments/posts.json",
+          event: { type: "moment.created", source: "renderer", payload: {} },
+        }),
+      });
+      expect(wrongPath.status).toBe(400);
+
+      const noEvent = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "appendEventLog",
+          agentId: "agent-a",
+          relativePath: "events/log.json",
+        }),
+      });
+      expect(noEvent.status).toBe(400);
+
+      const badConsumer = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "markEventConsumed",
+          agentId: "agent-a",
+          relativePath: "events/log.json",
+          eventId: "x",
+        }),
+      });
+      expect(badConsumer.status).toBe(400);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

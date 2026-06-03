@@ -44,6 +44,34 @@ function resetHanaFetchMock(): void {
         eventJsonStore.set(key, body.data);
         return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
+      // 渲染端事件落盘改走服务端锁内 append/markConsumed action（见 xingye-event-log.ts）；
+      // 本地 mock 镜像服务端语义，对 events/log.json 做 append + dedupe。
+      if (body.action === 'appendEventLog') {
+        const log = (eventJsonStore.get(key) as { version: number; events: unknown[]; dedupeKeys: Record<string, string> } | undefined)
+          ?? { version: 1, events: [], dedupeKeys: {} };
+        const events = Array.isArray(log.events) ? log.events : [];
+        const dedupeKeys = log.dedupeKeys ?? {};
+        const dedupeKey = typeof body.dedupeKey === 'string' ? body.dedupeKey : null;
+        if (dedupeKey && dedupeKeys[dedupeKey]) {
+          const existing = events.find((e) => (e as { id?: string }).id === dedupeKeys[dedupeKey]) ?? null;
+          return { ok: true, json: async () => ({ ok: true, event: existing }) } as Response;
+        }
+        events.push(body.event);
+        if (dedupeKey) dedupeKeys[dedupeKey] = (body.event as { id?: string })?.id ?? '';
+        eventJsonStore.set(key, { version: 1, events, dedupeKeys });
+        return { ok: true, json: async () => ({ ok: true, event: body.event }) } as Response;
+      }
+      if (body.action === 'markEventConsumed') {
+        const log = (eventJsonStore.get(key) as { version: number; events: Array<Record<string, unknown>>; dedupeKeys: Record<string, string> } | undefined)
+          ?? { version: 1, events: [], dedupeKeys: {} };
+        const events = Array.isArray(log.events) ? log.events : [];
+        const idx = events.findIndex((e) => (e as { id?: string }).id === body.eventId);
+        if (idx < 0) return { ok: true, json: async () => ({ ok: true, event: null }) } as Response;
+        const next = { ...events[idx], consumedBy: { ...((events[idx].consumedBy as Record<string, string>) ?? {}), [String(body.consumer)]: '2026-06-03T00:00:00.000Z' } };
+        events[idx] = next;
+        eventJsonStore.set(key, { version: 1, events, dedupeKeys: log.dedupeKeys ?? {} });
+        return { ok: true, json: async () => ({ ok: true, event: next }) } as Response;
+      }
     }
     return undefined as unknown as Response;
   });
@@ -222,6 +250,32 @@ describe('xingye-memory-candidate-store pinned confirm', () => {
         if (body.action === 'writeJson') {
           eventJsonStore.set(key, body.data);
           return { ok: true, json: async () => ({ ok: true }) } as Response;
+        }
+        if (body.action === 'appendEventLog') {
+          const log = (eventJsonStore.get(key) as { version: number; events: unknown[]; dedupeKeys: Record<string, string> } | undefined)
+            ?? { version: 1, events: [], dedupeKeys: {} };
+          const events = Array.isArray(log.events) ? log.events : [];
+          const dedupeKeys = log.dedupeKeys ?? {};
+          const dedupeKey = typeof body.dedupeKey === 'string' ? body.dedupeKey : null;
+          if (dedupeKey && dedupeKeys[dedupeKey]) {
+            const existing = events.find((e) => (e as { id?: string }).id === dedupeKeys[dedupeKey]) ?? null;
+            return { ok: true, json: async () => ({ ok: true, event: existing }) } as Response;
+          }
+          events.push(body.event);
+          if (dedupeKey) dedupeKeys[dedupeKey] = (body.event as { id?: string })?.id ?? '';
+          eventJsonStore.set(key, { version: 1, events, dedupeKeys });
+          return { ok: true, json: async () => ({ ok: true, event: body.event }) } as Response;
+        }
+        if (body.action === 'markEventConsumed') {
+          const log = (eventJsonStore.get(key) as { version: number; events: Array<Record<string, unknown>>; dedupeKeys: Record<string, string> } | undefined)
+            ?? { version: 1, events: [], dedupeKeys: {} };
+          const events = Array.isArray(log.events) ? log.events : [];
+          const idx = events.findIndex((e) => (e as { id?: string }).id === body.eventId);
+          if (idx < 0) return { ok: true, json: async () => ({ ok: true, event: null }) } as Response;
+          const next = { ...events[idx], consumedBy: { ...((events[idx].consumedBy as Record<string, string>) ?? {}), [String(body.consumer)]: '2026-06-03T00:00:00.000Z' } };
+          events[idx] = next;
+          eventJsonStore.set(key, { version: 1, events, dedupeKeys: log.dedupeKeys ?? {} });
+          return { ok: true, json: async () => ({ ok: true, event: next }) } as Response;
         }
       }
       return { ok: false, status: 404, json: async () => ({ error: 'unexpected path' }) } as Response;

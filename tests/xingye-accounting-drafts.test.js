@@ -225,4 +225,45 @@ describe("createProposeDraftTool · module=accounting", () => {
     expect(r2.details.ok).toBe(false);
     expect(r2.details.reason).toBe("invalid_amount");
   });
+
+  it("rejects invalid / omitted direction at dispatch (no silent coercion to expense)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    /** 缺省 direction：必须被拒，而不是悄悄落成 'expense'。 */
+    const omitted = await tool.execute("call-omit", {
+      module: "accounting",
+      accounting: { title: "X", amount: 100 },
+    });
+    expect(omitted.details.ok).toBe(false);
+    expect(omitted.details.module).toBe("accounting");
+    expect(omitted.details.reason).toBe("invalid_direction");
+    /** 不认识的值同样被拒。 */
+    const bogus = await tool.execute("call-bogus", {
+      module: "accounting",
+      accounting: { title: "X", direction: "nonsense", amount: 100 },
+    });
+    expect(bogus.details.ok).toBe(false);
+    expect(bogus.details.reason).toBe("invalid_direction");
+    /** "in" 不是合法 direction（曾经会被静默兜成 expense 翻转收入符号）。 */
+    const abbrev = await tool.execute("call-in", {
+      module: "accounting",
+      accounting: { title: "工资", direction: "in", amount: 5000 },
+    });
+    expect(abbrev.details.ok).toBe(false);
+    expect(abbrev.details.reason).toBe("invalid_direction");
+    /** 三次都没写盘。 */
+    expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "accounting", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("accepts direction with surrounding whitespace / casing (normalized at dispatch)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "accounting",
+      accounting: { title: "五月薪俸", direction: "  Income  ", amount: 5000 },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.direction).toBe("income");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "accounting", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].direction).toBe("income");
+  });
 });

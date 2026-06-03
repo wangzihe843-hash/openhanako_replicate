@@ -60,6 +60,19 @@ const SUBAGENT_BLOCKED_TOOLS = new Set([
   "notify",
   "install_skill",
   "update_settings",
+  // ④ 角色私有状态：subagent 不得替角色落草稿。否则一个后台任务能静默改写角色 draft 状态。
+  //    与 strategy 无关地拦死：甲（intercept）这里硬拦；乙（strip）的白名单本就不含它。
+  //    注意优先级——本拦截集先于下面 SILENT_DRAFT_TOOLS 的放行判定（见 classifySessionPermission），
+  //    哪怕 subagent 的 ask 已坍缩成 operate、SILENT_DRAFT 本会放行，subagent 仍被这条拦死。
+  "xingye_propose_draft",
+]);
+
+// 「静默草稿」工具：写的是非约束性草稿（落库后仍需用户在面板里「确认生成」才真正生效），
+// 故没必要在 ASK 模式再弹一次工具确认——否则就是「批工具」+「面板确认」的冗余双重确认。
+// 仅对【非 subagent】主 agent 生效：OPERATE/ASK 直接放行（不 prompt），READ_ONLY 仍按只读拦死。
+// subagent 走不到这里——上面的 SUBAGENT_BLOCKED_TOOLS 已先把它拦死（优先级保证见 classify）。
+const SILENT_DRAFT_TOOLS = new Set([
+  "xingye_propose_draft",
 ]);
 
 const BROWSER_READ_ACTIONS = new Set([
@@ -146,6 +159,12 @@ export function classifySessionPermission({ mode, toolName, params, context } = 
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action);
   if (name === "terminal") return classifyTerminalAction(normalized, params?.action);
+  // 静默草稿工具：在 ASK 提示兜底之前判定。OPERATE/ASK 一律放行（草稿非约束、面板还有「确认生成」，
+  // 不该重复弹工具确认）；READ_ONLY 仍走下面的只读拦截。subagent 已在函数开头被 SUBAGENT_BLOCKED 拦死，
+  // 走不到这里——故这里的放行只对主 agent 生效，二者组合时拦截优先。
+  if (SILENT_DRAFT_TOOLS.has(name) && normalized !== SESSION_PERMISSION_MODES.READ_ONLY) {
+    return { action: "allow" };
+  }
   if (normalized === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
   if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blocked(name);
   if (SIDE_EFFECT_TOOLS.has(name)) return prompt(name);

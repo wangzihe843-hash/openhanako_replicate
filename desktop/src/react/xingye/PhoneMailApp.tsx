@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import {
@@ -136,7 +136,16 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
   const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
 
+  /**
+   * 防跨角色脏写：切角色时 ownerAgentId 变化会触发新一轮 reload，但上一个角色还在飞的
+   * 读取可能后落地、用旧数据覆盖新角色。每次 reload 自增请求序号，落 setState 前校验仍是
+   * 最新一轮（与 PhoneMmChatApp / PhoneDivinationApp 的 cancelled 守卫同语义，这里用单调
+   * 请求号覆盖所有调用点——星标 / 删除 / 草稿确认失败兜底也复用 reload）。
+   */
+  const reloadSeqRef = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setProfile(null);
       setMessages([]);
@@ -152,13 +161,15 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
         listMailMessages(ownerAgentId),
         listMailDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setProfile(p);
       setMessages(m);
       setPendingDrafts(drafts);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -254,6 +265,10 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
 
   useEffect(() => {
     void reload();
+    // cleanup：作废本轮 reload，让切角色后旧角色的在飞读取无法再 setState（与上面的请求号双保险）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reload]);
 
   const ta = displayName || ownerAgent?.name || 'TA';

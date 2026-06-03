@@ -82,11 +82,24 @@ export function useBoxSelection({ messageElementsRef, orderedIds, sessionPath, a
         justDraggedRef.current = true;
       }
     };
+    // pointercancel（指针在窗外释放 / OS 手势接管 / 触控被系统抢走）与窗口 blur 时
+    // 不会再来 pointerup，只做 onUp 的 teardown（清拖拽态、撤选框、解 user-select/cursor 锁），
+    // 但不提交选择——半截拖拽不该落成选中（与 cover-field.ts / PreviewRenderer.tsx 的
+    // pointercancel→finishDrag 同思路）。
+    const onCancel = () => {
+      dragRef.current = null;
+      if (rafRef.current != null) { window.cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      setBox(null);
+    };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('blur', onCancel);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('blur', onCancel);
       if (rafRef.current != null) { window.cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
   }, [enabled, computeHit, setMessageSelection, sessionPath]);

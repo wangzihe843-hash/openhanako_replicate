@@ -444,7 +444,16 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [initError, setInitError] = useState<string | null>(null);
   const [initNotice, setInitNotice] = useState<string | null>(null);
 
+  /**
+   * 防跨角色脏写：切角色时 ownerAgentId 变化会触发新一轮 reload，但上一个角色还在飞的
+   * 读取可能后落地、用旧数据覆盖新角色。每次 reload 自增请求序号，落 setState 前校验仍是
+   * 最新一轮（与 PhoneMmChatApp / PhoneDivinationApp 的 cancelled 守卫同语义，这里用单调
+   * 请求号覆盖所有调用点——delete / confirm / 手动整理后也复用 reloadEntries）。
+   */
+  const reloadSeqRef = useRef(0);
+
   const reloadEntries = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
@@ -457,12 +466,14 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
         listTripEntries(ownerAgentId),
         listTripDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setEntries(rows);
       setPendingDrafts(drafts);
     } catch (e) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
-      setListLoading(false);
+      if (seq === reloadSeqRef.current) setListLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -480,6 +491,10 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
 
   useEffect(() => {
     void reloadEntries();
+    // cleanup：作废本轮 reload，让切角色后旧角色的在飞读取无法再 setState（与上面的请求号双保险）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reloadEntries]);
 
   /**

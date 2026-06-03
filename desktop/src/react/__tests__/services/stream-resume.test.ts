@@ -32,7 +32,7 @@ vi.mock('../../services/websocket', () => ({
 }));
 
 import { useStore } from '../../stores';
-import { injectHandlers, replayStreamResume, updateSessionStreamMeta } from '../../services/stream-resume';
+import { clearSessionStreamMeta, getSessionStreamMeta, injectHandlers, replayStreamResume, updateSessionStreamMeta } from '../../services/stream-resume';
 
 describe('stream-resume', () => {
   beforeEach(() => {
@@ -159,5 +159,36 @@ describe('stream-resume', () => {
       streamId: 'stream_live_dedupe',
       seq: 1,
     })).toBe(false);
+  });
+
+  describe('clearSessionStreamMeta', () => {
+    it('drops the per-session meta so a previously consumed seq is accepted again (no unbounded retention)', () => {
+      const path = '/evict.jsonl';
+      // 第一次 seq 入账，再次重复被判已消费
+      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(true);
+      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(false);
+
+      clearSessionStreamMeta(path);
+
+      // 清后该 path 的 consumedSeqs 重置：同一 seq 被当成全新事件再次入账
+      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(true);
+    });
+
+    it('resets the lazily-recreated meta to a fresh empty entry', () => {
+      const path = '/evict-2.jsonl';
+      const before = getSessionStreamMeta(path);
+      before!.streamId = 'old';
+      before!.lastSeq = 42;
+
+      clearSessionStreamMeta(path);
+
+      const after = getSessionStreamMeta(path);
+      expect(after).not.toBe(before);
+      expect(after).toEqual({ streamId: null, lastSeq: 0, consumedSeqs: new Set() });
+    });
+
+    it('is a no-op for an empty path', () => {
+      expect(() => clearSessionStreamMeta('')).not.toThrow();
+    });
   });
 });

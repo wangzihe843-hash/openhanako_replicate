@@ -248,6 +248,36 @@ describe("appendSmsDraftServer", () => {
       const rows = readJsonl(path.join(agentDir, "xingye", "apps", "sms", "drafts.jsonl"));
       expect(rows).toHaveLength(2);
     });
+
+    it("check-and-append 在锁内原子完成：两次并发同句 propose 只落一行（TOCTOU）", async () => {
+      /**
+       * 心跳驱动 vs 对话驱动可能近乎同时 propose 同一句。修复前 readRecentDrafts +
+       * detectSmsDraftDuplicate 在锁外做，两者都读到「还没这一行」→ 都判 unique →
+       * 都追加，硬去重失效。修复后读+判重+追加都在 withXingyeAgentEventLock 内，
+       * 后到的那次会读到前次已写的行从而命中 exact_dup。
+       *
+       * 这里**不 await 第一次再发第二次**，而是同一 tick 并发触发两次，正是
+       * 修复前会双写的竞态时序。断言：恰好一次拿到 duplicateOf、文件只有一行。
+       */
+      const input = {
+        targetType: "virtual_contact",
+        targetId: "vc-linwu",
+        content: "今晚的事我想了想，还是当面说吧。",
+        source: "s",
+      };
+      const [a, b] = await Promise.all([
+        appendSmsDraftServer({ agentDir, agentId: "agent-a", input }),
+        appendSmsDraftServer({ agentDir, agentId: "agent-a", input }),
+      ]);
+
+      const flaggedDup = [a, b].filter((r) => r && r.duplicateOf);
+      expect(flaggedDup).toHaveLength(1);
+
+      const rows = readJsonl(path.join(agentDir, "xingye", "apps", "sms", "drafts.jsonl"));
+      expect(rows).toHaveLength(1);
+      /** 被标 duplicateOf 的那次指向实际落盘的那一行。 */
+      expect(flaggedDup[0].duplicateOf).toBe(rows[0].id);
+    });
   });
 });
 

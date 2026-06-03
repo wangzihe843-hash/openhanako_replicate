@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +28,8 @@ describe("WorkflowActivityStore", () => {
     expect(store.size).toBe(2);
     expect(store.get("workflow-1").summary).toBe("demo");
 
+    // upsert 防抖落盘——重载前显式 flush 才能保证已落盘
+    store.flush();
     // 模拟重启：新实例从同一文件重载
     const reloaded = new WorkflowActivityStore(file);
     expect(reloaded.size).toBe(2);
@@ -38,6 +40,7 @@ describe("WorkflowActivityStore", () => {
   it("落盘格式带 schemaVersion + entries", () => {
     const store = new WorkflowActivityStore(file);
     store.upsert(wfEntry());
+    store.flush();
     const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
     expect(raw.schemaVersion).toBe(WORKFLOW_ACTIVITY_STORE_VERSION);
     expect(raw.entries["workflow-1"]).toBeTruthy();
@@ -93,6 +96,58 @@ describe("WorkflowActivityStore", () => {
     expect(store.size).toBe(0);
   });
 
+  it("状态转移同步写穿，同 status 进度更新防抖合并为单次写盘", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new WorkflowActivityStore(file);
+      // 新建（none→running 状态转移）：同步写穿，落盘可见
+      store.upsert(wfEntry({ id: "w", status: "running", tokens: 0 }));
+      expect(fs.existsSync(file)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["w"].status).toBe("running");
+      // 同 id 同 status 的进度 churn（token 累计）：防抖，不立刻写盘（文件仍是旧值）
+      for (let i = 1; i <= 20; i++) store.upsert(wfEntry({ id: "w", status: "running", tokens: i }));
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["w"].tokens).toBe(0);
+      // 推过 1s 防抖窗：合并为单次落盘，落最新进度
+      vi.advanceTimersByTime(1000);
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["w"].tokens).toBe(20);
+      // running→done 状态转移（终态）：同步写穿，不靠防抖窗口
+      store.upsert(wfEntry({ id: "w", status: "done", tokens: 20, finishedAt: 2000 }));
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["w"].status).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flush() 同步落盘待写的防抖进度（耐久关键路径不靠防抖窗口）", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new WorkflowActivityStore(file);
+      store.upsert(wfEntry({ id: "x", status: "running", tokens: 0 })); // 新建→同步写穿
+      store.upsert(wfEntry({ id: "x", status: "running", tokens: 5 })); // 同 status 进度→防抖挂起
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["x"].tokens).toBe(0); // 防抖窗口内未落最新
+      store.flush();                                                    // 同步写穿挂起的进度
+      expect(JSON.parse(fs.readFileSync(file, "utf-8")).entries["x"].tokens).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removeBySession 同步落盘（不留给防抖窗口）", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new WorkflowActivityStore(file);
+      store.upsert(wfEntry({ id: "a1", sessionPath: "/s/a.jsonl" }));
+      store.upsert(wfEntry({ id: "b1", sessionPath: "/s/b.jsonl" }));
+      expect(store.removeBySession("/s/a.jsonl")).toBe(1);
+      // 不推进定时器：removeBySession 已同步写穿
+      const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+      expect(raw.entries.a1).toBeUndefined();
+      expect(raw.entries.b1).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("无持久化路径时纯内存（仍可 upsert/list）", () => {
     const store = new WorkflowActivityStore(null);
     store.upsert(wfEntry());
@@ -107,6 +162,7 @@ describe("WorkflowActivityStore", () => {
     // 起空账本后仍可正常写入并重载
     store.upsert(wfEntry());
     expect(store.size).toBe(1);
+    store.flush();
     const reloaded = new WorkflowActivityStore(file);
     expect(reloaded.get("workflow-1").summary).toBe("demo");
   });

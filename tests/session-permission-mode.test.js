@@ -106,4 +106,27 @@ describe("session permission modes", () => {
     expect(classifySessionPermission({ mode: "ask", toolName: "pin_memory", context: { isSubagent: true } }))
       .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
   });
+
+  it("静默草稿 xingye_propose_draft：主 agent 在 ASK 不再二次弹确认（草稿非约束 + 面板已有确认）", () => {
+    // (b) 主 agent ASK：直接放行，不 prompt（避免「批工具」+「面板确认」冗余双重确认）
+    expect(classifySessionPermission({ mode: "ask", toolName: "xingye_propose_draft" }))
+      .toEqual({ action: "allow" });
+    // (d) heartbeat 强制 OPERATE：照常放行（与改动前一致，不受影响）
+    expect(classifySessionPermission({ mode: "operate", toolName: "xingye_propose_draft" }))
+      .toEqual({ action: "allow" });
+    // (c) READ_ONLY：仍按只读拦死（静默放行只覆盖 OPERATE/ASK）
+    expect(classifySessionPermission({ mode: "read_only", toolName: "xingye_propose_draft" }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+  });
+
+  it("组合：xingye_propose_draft 在 subagent 上下文一律被拦死（拦截优先于静默放行）", () => {
+    // (a) subagent 永远拿不到草稿工具：哪怕 ask 已坍缩成 operate、SILENT_DRAFT 本会放行，
+    // SUBAGENT_BLOCKED_TOOLS 仍先把它拦死（函数开头判定，优先级最高）。
+    for (const mode of ["operate", "ask", "read_only"]) {
+      expect(
+        classifySessionPermission({ mode, toolName: "xingye_propose_draft", context: { isSubagent: true } }),
+        `subagent 上下文 ${mode} 应拦死 xingye_propose_draft`,
+      ).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
+    }
+  });
 });

@@ -1,16 +1,61 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+type LogFile = {
+  version: 1;
+  events: Array<Record<string, unknown>>;
+  dedupeKeys: Record<string, string>;
+};
+
 const jsonStore = vi.hoisted(() => new Map<string, unknown>());
+// 模拟服务端 lib/xingye/events.js + xingye-storage.js 的锁内 append/markConsumed 语义：
+// 每次都基于当前持久化状态做 read-modify-write，新增事件不会覆盖已有事件。
 const postMock = vi.hoisted(() => vi.fn(async (body: Record<string, unknown>) => {
   const agentId = typeof body.agentId === 'string' ? body.agentId : '';
   const relativePath = typeof body.relativePath === 'string' ? body.relativePath : '';
   const key = `${agentId}|${relativePath}`;
+  const readFile = (): LogFile => {
+    const raw = jsonStore.get(key) as LogFile | undefined;
+    return raw && Array.isArray(raw.events)
+      ? { version: 1, events: [...raw.events], dedupeKeys: { ...(raw.dedupeKeys ?? {}) } }
+      : { version: 1, events: [], dedupeKeys: {} };
+  };
   if (body.action === 'readJson') {
     return { ok: true, data: jsonStore.get(key) ?? null };
   }
   if (body.action === 'writeJson') {
     jsonStore.set(key, body.data);
     return { ok: true };
+  }
+  if (body.action === 'appendEventLog') {
+    const event = body.event as Record<string, unknown>;
+    const dedupeKey = typeof body.dedupeKey === 'string' ? body.dedupeKey : '';
+    const file = readFile();
+    if (dedupeKey) {
+      const existingId = file.dedupeKeys[dedupeKey];
+      const existing = existingId ? file.events.find((e) => e.id === existingId) : null;
+      if (existing) return { ok: true, event: existing };
+      file.dedupeKeys[dedupeKey] = String(event.id);
+    }
+    file.events.push(event);
+    jsonStore.set(key, file);
+    return { ok: true, event };
+  }
+  if (body.action === 'markEventConsumed') {
+    const eventId = String(body.eventId ?? '');
+    const consumer = String(body.consumer ?? '');
+    const file = readFile();
+    const index = file.events.findIndex((e) => e.id === eventId);
+    if (index < 0) return { ok: true, event: null };
+    const next = {
+      ...file.events[index],
+      consumedBy: {
+        ...((file.events[index].consumedBy as Record<string, string>) ?? {}),
+        [consumer]: new Date().toISOString(),
+      },
+    };
+    file.events[index] = next;
+    jsonStore.set(key, file);
+    return { ok: true, event: next };
   }
   throw new Error(`unexpected action: ${String(body.action)}`);
 }));

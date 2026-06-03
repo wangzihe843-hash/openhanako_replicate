@@ -9,7 +9,7 @@ import { createHeartbeat } from "../lib/desk/heartbeat.js";
  * 不直接调 buildHeartbeatContext（它是模块内部函数），避免暴露内部 API。
  */
 describe("heartbeat prompt: auto-draft staleness directive", () => {
-  async function runOnceAndCapturePrompt({ autoDraftStaleness, summaryZh = null, eventCount = 0 } = {}) {
+  async function runOnceAndCapturePrompt({ autoDraftStaleness, summaryZh = null, eventCount = 0, getProposeDraftAvailable } = {}) {
     let capturedPrompt = null;
     const hb = createHeartbeat({
       onBeat: async (prompt) => {
@@ -21,6 +21,7 @@ describe("heartbeat prompt: auto-draft staleness directive", () => {
         consumed: eventCount,
         result: { summaryZh, eventCount, autoDraftStaleness },
       }),
+      ...(getProposeDraftAvailable ? { getProposeDraftAvailable } : {}),
       intervalMinutes: 31,
       locale: "zh-CN",
     });
@@ -114,5 +115,102 @@ describe("heartbeat prompt: auto-draft staleness directive", () => {
     expect(capturedPrompt).toContain("60 user chat turns");
     expect(capturedPrompt).toContain("MUST");
     expect(capturedPrompt).toContain("xingye_propose_draft");
+  });
+});
+
+/**
+ * 当用户从「设置 → 助手 → 工具」关掉 OPTIONAL 的 `xingye_propose_draft`，或用
+ * `desk.patrol_tools` 设了一个不含它的限定白名单时，巡检 session 里根本没有这个 tool。
+ * scheduler 把这个判定算成布尔，通过 getProposeDraftAvailable() 喂给心跳；此时：
+ *  - 不能再发「必须主动产出」hard directive（永远无法满足、staleness 永不清零、每拍重发 = 烧钱）
+ *  - 也不出软的草稿引导（tool 都没有，引导去 call 只污染 prompt）
+ * 默认 agent（没传该回调 / 返回非 false）行为完全不变。
+ */
+describe("heartbeat prompt: gate on proposeDraftAvailable", () => {
+  async function runOnceAndCapturePrompt({ autoDraftStaleness, summaryZh = null, eventCount = 0, getProposeDraftAvailable } = {}) {
+    let capturedPrompt = null;
+    const hb = createHeartbeat({
+      onBeat: async (prompt) => { capturedPrompt = prompt; return { ok: true }; },
+      getEventSummary: async () => ({
+        consumed: eventCount,
+        result: { summaryZh, eventCount, autoDraftStaleness },
+      }),
+      ...(getProposeDraftAvailable ? { getProposeDraftAvailable } : {}),
+      intervalMinutes: 31,
+      locale: "zh-CN",
+    });
+    const res = await hb.runHeartbeatOnce({ reason: "test-gate" });
+    expect(res.status).toBe("ran");
+    return capturedPrompt;
+  }
+
+  it("OMITS the mustPropose hard directive when proposeDraftAvailable=false", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 73, mustPropose: true },
+      summaryZh: "自上次巡检以来：最近对话×3（共 3 条）",
+      eventCount: 3,
+      getProposeDraftAvailable: () => false,
+    });
+    expect(prompt).not.toContain("## 必须主动产出");
+    expect(prompt).not.toContain("73 条用户对话");
+  });
+
+  it("OMITS the soft draft guidance when proposeDraftAvailable=false (even with events but no mustPropose)", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 5, mustPropose: false },
+      summaryZh: "自上次巡检以来：日记新增（手动）×1（共 1 条）",
+      eventCount: 1,
+      getProposeDraftAvailable: () => false,
+    });
+    // 软引导整段都引用 xingye_propose_draft；tool 不可用时整段不应出现
+    expect(prompt).not.toContain("xingye_propose_draft");
+    // 但「## 小手机事件」标题本身仍在（有 summaryZh），只是没有了草稿引导那几句
+    expect(prompt).toContain("## 小手机事件");
+  });
+
+  it("supports async availability resolution", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 80, mustPropose: true },
+      summaryZh: "自上次巡检以来：最近对话×2（共 2 条）",
+      eventCount: 2,
+      getProposeDraftAvailable: async () => false,
+    });
+    expect(prompt).not.toContain("## 必须主动产出");
+    expect(prompt).not.toContain("xingye_propose_draft");
+  });
+
+  it("default (no getProposeDraftAvailable) keeps the hard directive — behavior unchanged", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 73, mustPropose: true },
+      summaryZh: "自上次巡检以来：最近对话×3（共 3 条）",
+      eventCount: 3,
+      // 不传 getProposeDraftAvailable → 默认 true
+    });
+    expect(prompt).toContain("## 必须主动产出");
+    expect(prompt).toContain("73 条用户对话");
+    expect(prompt).toContain("xingye_propose_draft");
+  });
+
+  it("explicit getProposeDraftAvailable=()=>true keeps both directive and soft guidance", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 73, mustPropose: true },
+      summaryZh: "自上次巡检以来：最近对话×3（共 3 条）",
+      eventCount: 3,
+      getProposeDraftAvailable: () => true,
+    });
+    expect(prompt).toContain("## 必须主动产出");
+    expect(prompt).toContain("## 小手机事件");
+    expect(prompt).toContain("xingye_propose_draft");
+  });
+
+  it("availability resolver throwing falls back to available=true (does not silently drop the directive)", async () => {
+    const prompt = await runOnceAndCapturePrompt({
+      autoDraftStaleness: { lastAutoDraftAt: null, chatTurnsSinceLastDraft: 73, mustPropose: true },
+      summaryZh: "自上次巡检以来：最近对话×3（共 3 条）",
+      eventCount: 3,
+      getProposeDraftAvailable: () => { throw new Error("boom"); },
+    });
+    expect(prompt).toContain("## 必须主动产出");
+    expect(prompt).toContain("xingye_propose_draft");
   });
 });

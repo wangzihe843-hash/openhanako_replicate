@@ -62,28 +62,34 @@ function renderPhoneHome() {
   );
 }
 
+let hbSeq = 0;
+
 /** 模拟一次 beat 完成：scheduler 经 activity_update 把带 summaryZh 的 heartbeat 活动推进 store。 */
 function pushHeartbeatActivity(overrides: Partial<Activity> = {}): void {
+  // id 必须每条唯一且单调（服务端有序）——完成检测靠「id 不同于触发基线」而非时钟比较。
+  hbSeq += 1;
   const activity: Activity = {
-    id: `hb_${Date.now()}`,
+    id: `hb_${hbSeq}`,
     type: 'heartbeat',
     title: '日常巡检',
     timestamp: new Date().toISOString(),
     agentId: 'agent-a',
     agentName: 'Agent A',
     startedAt: Date.now(),
-    finishedAt: Date.now() + 60_000, // 确保晚于触发水位线
+    finishedAt: Date.now() + 60_000,
     summary: '日常巡检',
     status: 'done',
     error: null,
     ...overrides,
   };
+  // 新→旧排序（与 store 真实顺序一致）：最新 beat 排在数组最前。
   useStore.setState((s) => ({ activities: [activity, ...(s.activities as Activity[])] }));
 }
 
 describe('PhoneHome heartbeat trigger', () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    hbSeq = 0;
     useStore.setState({ activities: [] });
   });
 
@@ -137,28 +143,35 @@ describe('PhoneHome heartbeat trigger', () => {
     });
   });
 
-  it('只回填属于本 agent、且晚于触发水位线的 heartbeat 活动', async () => {
+  it('只回填属于本 agent、且 id 不同于触发基线的新 heartbeat 活动', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ ok: true, triggered: true, cooldown: false }),
     } as Response);
+
+    // 触发前就已存在的上一轮 beat —— 触发时会被快照为基线，绝不能被当成本次结果。
+    pushHeartbeatActivity({ summaryZh: '上一轮旧结果' });
 
     renderPhoneHome();
     fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
     });
+    // 基线那条不会被回填（id 与基线相同）。
+    expect(screen.getByRole('status')).not.toHaveTextContent('上一轮旧结果');
 
-    // 别的 agent 的活动：忽略
+    // 别的 agent 的新活动：selector 直接过滤掉，忽略。
     pushHeartbeatActivity({ agentId: 'agent-b', summaryZh: '不该显示的别人' });
-    // 触发前就结束的旧活动（finishedAt 早于水位线）：忽略
-    pushHeartbeatActivity({ finishedAt: Date.now() - 60_000, summaryZh: '过期旧活动' });
     expect(screen.getByRole('status')).not.toHaveTextContent('不该显示的别人');
-    expect(screen.getByRole('status')).not.toHaveTextContent('过期旧活动');
     expect(screen.getByRole('status')).toHaveTextContent('巡检触发中');
 
-    // 本 agent、晚于水位线：回填
-    pushHeartbeatActivity({ summaryZh: '通讯录变更×1、短信×2（共 3 条）' });
+    // 本 agent、id 不同于基线的新一轮 beat：回填。
+    // 关键：finishedAt 故意早于客户端 now（模拟服务端时钟落后整整一个 beat），
+    // 旧的时钟比较会误丢这条；id 比较不受时钟差影响，仍能正确收尾。
+    pushHeartbeatActivity({
+      finishedAt: Date.now() - 10 * 60_000,
+      summaryZh: '通讯录变更×1、短信×2（共 3 条）',
+    });
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent('通讯录变更×1、短信×2（共 3 条）');
     });

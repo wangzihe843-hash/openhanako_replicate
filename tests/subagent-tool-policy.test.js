@@ -80,4 +80,22 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
   it("默认策略 intercept", () => {
     expect(resolveSubagentToolStrategy()).toBe("intercept");
   });
+
+  // ── 角色私有草稿：subagent 无论甲乙策略都拿不到 xingye_propose_draft ──
+  // 甲（intercept）给全集但靠拦截层（SUBAGENT_BLOCKED_TOOLS）拦死；乙（strip）的白名单本就不含它。
+  // 这里只断言「策略侧不会把它派给 subagent」：strip 的 customToolFilter 不含；intercept 不剥离（filter=null）。
+  // 运行时拦截见 session-permission-mode.test.js。
+  it("strip（乙）：白名单不含 xingye_propose_draft（subagent 拿不到草稿工具）", () => {
+    const w = resolveSubagentToolAccess({ access: "write", strategy: "strip" });
+    expect(w.customToolFilter).not.toContain("xingye_propose_draft");
+    const r = resolveSubagentToolAccess({ access: "read", strategy: "strip" });
+    expect(r.customToolFilter).not.toContain("xingye_propose_draft");
+  });
+
+  it("intercept（甲）：不剥离工具（草稿工具靠拦截层拦，不靠剥离）", () => {
+    // intercept 给全集（filter=null），xingye_propose_draft 在拦截层被 SUBAGENT_BLOCKED_TOOLS 拦死。
+    const a = resolveSubagentToolAccess({ access: "write", strategy: "intercept" });
+    expect(a.customToolFilter).toBeNull();
+    expect(a.subagentContext).toBe(true);
+  });
 });

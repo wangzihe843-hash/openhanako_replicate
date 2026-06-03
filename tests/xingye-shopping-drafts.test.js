@@ -154,4 +154,36 @@ describe("createProposeDraftTool · module=shopping", () => {
     expect(res.details.reason).toBe("empty_item_name");
     expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "shopping", "drafts.jsonl"))).toBe(false);
   });
+
+  it("rejects invalid status at dispatch (no silent coercion to wanted)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "shopping",
+      shopping: { itemName: "灰色风衣", status: "nonsense" },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.module).toBe("shopping");
+    expect(res.details.reason).toBe("invalid_status");
+    expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "shopping", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("allows omitted status (legitimately falls back to wanted) but normalizes provided casing", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    /** 缺省 status 是合法的，回退 'wanted'。 */
+    const omitted = await tool.execute("call-omit", {
+      module: "shopping",
+      shopping: { itemName: "《长安的荔枝》" },
+    });
+    expect(omitted.details.ok).toBe(true);
+    expect(omitted.details.status).toBe("wanted");
+    /** 大小写 / 空白归一后命中的合法值放行。 */
+    const cased = await tool.execute("call-cased", {
+      module: "shopping",
+      shopping: { itemName: "灰色风衣", status: "  Ordered  " },
+    });
+    expect(cased.details.ok).toBe(true);
+    expect(cased.details.status).toBe("ordered");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "shopping", "drafts.jsonl"));
+    expect(rows).toHaveLength(2);
+  });
 });

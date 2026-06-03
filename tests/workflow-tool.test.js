@@ -189,6 +189,35 @@ describe("workflow tool", () => {
     expect(upserts.find((e) => e.id === childId && e.status === "done")).toBeTruthy();
   });
 
+  it("同步兜底路径建 AbortController：signal 传给 host API 与 runWorkflowScript（截止/兜底时不漏 abort 子 agent）", async () => {
+    vi.resetModules();
+    const seen = { hostSignal: undefined, runSignal: undefined };
+    vi.doMock("../lib/workflow/host-api.js", () => ({
+      createHostApi: (opts) => { seen.hostSignal = opts.signal; return {}; },
+    }));
+    vi.doMock("../lib/workflow/sandbox.js", () => ({
+      runWorkflowScript: async (_script, _api, opts) => { seen.runSignal = opts?.signal; return { result: "ok" }; },
+    }));
+    try {
+      const { createWorkflowTool: makeTool } = await import("../lib/tools/workflow-tool.js");
+      const tool = makeTool({
+        executeIsolated: async () => ({ replyText: "x", error: null }),
+        getAgentId: () => "a1", emitEvent: () => {},
+        // 不提供 getDeferredStore → 走 _syncRun 同步兜底
+      });
+      const res = await tool.execute("c1", { script: META + `return 1` }, undefined, undefined, makeCtx());
+      expect(res.details.result).toBe("ok");
+      // 同步路径不再 signal: undefined，而是真实 AbortSignal，且同一个传给 run
+      expect(seen.hostSignal).toBeInstanceOf(AbortSignal);
+      expect(seen.runSignal).toBeInstanceOf(AbortSignal);
+      expect(seen.runSignal).toBe(seen.hostSignal);
+    } finally {
+      vi.doUnmock("../lib/workflow/host-api.js");
+      vi.doUnmock("../lib/workflow/sandbox.js");
+      vi.resetModules();
+    }
+  });
+
   it("节点 done 从 UsageLedger 按 childSessionPath 汇总 token 写入子 entry", async () => {
     const store = makeStore();
     const upserts = [];

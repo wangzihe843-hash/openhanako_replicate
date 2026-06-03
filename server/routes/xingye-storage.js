@@ -12,10 +12,25 @@ import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
 import { syncXingyeStableLoreMemoryFile } from "../../shared/xingye-lore-memory-file.js";
+import {
+  appendXingyeEvent,
+  appendXingyeEventOnce,
+  withXingyeAgentEventLock,
+} from "../../lib/xingye/events.js";
 import { safeJson } from "../hono-helpers.js";
 import { realPath } from "../utils/path-security.js";
 
 const XINGYE_ROOT_DIR = "xingye";
+/**
+ * 渲染端 event log（events/log.json）的相对路径。
+ *
+ * 渲染端追加/标记消费走 appendEventLog / markEventConsumed 两个 action，二者都在
+ * lib/xingye/events.js 的 per-agent 锁内做 read-modify-write，与服务端进程内的
+ * appendXingyeEvent / heartbeat consumer 串行化——避免渲染端裸 readJson+writeJson
+ * 与服务端 read→rename 交错，把 draft_proposed 之类事件静默吃掉（跨进程竞态）。
+ * 字面量与 desktop 端 XINGYE_EVENT_LOG_RELATIVE_PATH 保持一致。
+ */
+const XINGYE_EVENT_LOG_RELATIVE_PATH = "events/log.json";
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 /**
  * 「用户本人」的保留存储作用域。
@@ -40,10 +55,17 @@ const ACTIONS = new Set([
   "append",
   "list",
   "delete",
+  "appendEventLog",
+  "markEventConsumed",
 ]);
 
 function isSafeAgentId(agentId) {
   return typeof agentId === "string" && SAFE_AGENT_ID_RE.test(agentId);
+}
+
+/** appendEventLog 的 event 入参：必须是普通对象（具体字段交给 events.js 归一化/校验）。 */
+function isInput(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function xingyeBaseDir(engine, agentId) {
@@ -152,6 +174,11 @@ function secretSpaceCategoryFromJsonlRelativePath(relativePath) {
 
 function isAgentLoreEntriesJsonPath(relativePath) {
   return String(relativePath ?? "").replace(/\\/g, "/") === "lore/entries.json";
+}
+
+/** events/log.json（接受反斜杠写法）—— 只有这个文件能走 appendEventLog/markEventConsumed。 */
+function isXingyeEventLogPath(relativePath) {
+  return String(relativePath ?? "").replace(/\\/g, "/") === XINGYE_EVENT_LOG_RELATIVE_PATH;
 }
 
 /**
@@ -410,6 +437,66 @@ export function createXingyeStorageRoute(engine) {
             if (error?.code !== "ENOENT") throw error;
           }
           return c.json({ ok: true });
+        }
+        case "appendEventLog": {
+          // 渲染端追加事件：复用 lib/xingye/events.js 里带 per-agent 锁的 append helper，
+          // 让渲染端来源的写入与服务端来源（pinned 工具、heartbeat consumer 等）串行化。
+          if (!isXingyeEventLogPath(relativePath)) {
+            return c.json({ error: "appendEventLog only supports events/log.json" }, 400);
+          }
+          const input = body?.event;
+          if (!isInput(input)) {
+            return c.json({ error: "event required" }, 400);
+          }
+          // events.js 自己从 agentDir 推 events/log.json，不用 target。
+          const targetAgentDir = path.join(engine.agentsDir, agentId);
+          const dedupeKey = typeof body?.dedupeKey === "string" ? body.dedupeKey.trim() : "";
+          const event = dedupeKey
+            ? await appendXingyeEventOnce({ agentDir: targetAgentDir, agentId, input, dedupeKey })
+            : await appendXingyeEvent({ agentDir: targetAgentDir, agentId, input });
+          if (!event) {
+            return c.json({ error: "invalid event" }, 400);
+          }
+          return c.json({ ok: true, event });
+        }
+        case "markEventConsumed": {
+          // 渲染端把某事件标记为已被某 consumer 消费：read-modify-write 同样要进 per-agent 锁，
+          // 否则会和并发 append 交错把对方写入吃掉（与 heartbeat consumer 用同一把锁）。
+          if (!isXingyeEventLogPath(relativePath)) {
+            return c.json({ error: "markEventConsumed only supports events/log.json" }, 400);
+          }
+          const eventId = typeof body?.eventId === "string" ? body.eventId.trim() : "";
+          const consumer = typeof body?.consumer === "string" ? body.consumer.trim() : "";
+          if (!eventId || !consumer) {
+            return c.json({ error: "eventId and consumer are required" }, 400);
+          }
+          const updated = await withXingyeAgentEventLock(agentId, async () => {
+            const { missing, content } = await readUtf8OrMissing(target);
+            if (missing) return null;
+            let raw;
+            try {
+              raw = JSON.parse(content);
+            } catch {
+              return null;
+            }
+            const events = raw && Array.isArray(raw.events) ? raw.events : [];
+            const index = events.findIndex((e) => e && e.id === eventId);
+            if (index < 0) return null;
+            const next = {
+              ...events[index],
+              consumedBy: {
+                ...(events[index]?.consumedBy ?? {}),
+                [consumer]: new Date().toISOString(),
+              },
+            };
+            events[index] = next;
+            await atomicWrite(
+              target,
+              Buffer.from(`${JSON.stringify({ ...raw, version: 1, events }, null, 2)}\n`, "utf-8"),
+            );
+            return next;
+          });
+          return c.json({ ok: true, event: updated });
         }
         default:
           return c.json({ error: "unsupported" }, 400);

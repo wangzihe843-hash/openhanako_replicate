@@ -12,6 +12,7 @@ import { useStore } from '../stores';
 import { getWebSocket } from './websocket';
 import { clearChat } from '../stores/agent-actions';
 import { loadMessages } from '../stores/session-actions';
+import { registerSessionStreamMetaCleaner } from '../stores/stream-invalidator';
 
 // 延迟导入，打破循环依赖
 let _handleServerMessage: ((msg: any) => void) | null = null;
@@ -48,6 +49,25 @@ export function getSessionStreamMeta(sessionPath?: string): SessionStreamMeta | 
   }
   return _sessionStreams[path];
 }
+
+/**
+ * 由 session 数据归属方调用（clearSession / LRU eviction）：清除指定 session 的
+ * module-level 流元数据 + 重建版本号，否则这两张 Record 按 sessionPath 只增不减。
+ * 若被清的 session 正在重建，连带复位 _streamResumeRebuildingFor，避免悬挂状态。
+ */
+export function clearSessionStreamMeta(path: string): void {
+  if (!path) return;
+  delete _sessionStreams[path];
+  delete _streamResumeRebuildVersions[path];
+  if (_streamResumeRebuildingFor === path) {
+    _streamResumeRebuildingFor = null;
+  }
+}
+
+// 经 stream-invalidator 桥接对外暴露，避免 chat-slice 反向 import 本模块（本模块拉入
+// websocket/use-stream-buffer/stores，直接 import 会形成模块求值期循环依赖 TDZ）。
+// websocket.ts 在应用初始化时静态 import 本模块，注册随之生效。
+registerSessionStreamMetaCleaner(clearSessionStreamMeta);
 
 export function isStreamScopedMessage(msg: any): boolean {
   return !!(msg && msg.sessionPath && (msg.streamId || Number.isFinite(msg.seq)));
