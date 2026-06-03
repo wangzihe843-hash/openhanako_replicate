@@ -8,7 +8,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../stores';
 import { resolvePluginTitle, resolvePluginIcon } from '../../utils/resolve-plugin-title';
-import { openWidget, openDesk, hideWidget, showWidget } from '../../stores/plugin-ui-actions';
+import { openWidget, openDesk, hideWidget, showWidget, showAndOpenWidget } from '../../stores/plugin-ui-actions';
 import { ContextMenu, type ContextMenuItem } from '../../ui';
 import s from './WidgetButtons.module.css';
 
@@ -83,7 +83,7 @@ export function WidgetButtons() {
                 return (
                   <div key={w.pluginId} className={s.dropdownRow}>
                     <button className={s.dropdownItem}
-                      onClick={() => { showWidget(w.pluginId); setDropdownOpen(false); }}>
+                      onClick={() => { showAndOpenWidget(w.pluginId); setDropdownOpen(false); }}>
                       {title}
                     </button>
                     <button

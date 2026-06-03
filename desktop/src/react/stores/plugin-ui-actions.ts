@@ -101,6 +101,12 @@ export function showWidget(pluginId: string): void {
   persistField({ hiddenWidgets: next });
 }
 
+/** Show a hidden widget entry and open its right workspace panel. */
+export function showAndOpenWidget(pluginId: string): void {
+  showWidget(pluginId);
+  openWidget(pluginId);
+}
+
 /** Switch jian sidebar to a widget view. */
 export function openWidget(pluginId: string): void {
   const s = useStore.getState();
