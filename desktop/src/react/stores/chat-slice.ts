@@ -67,6 +67,7 @@ export const createChatSlice = (
     // 被淘汰的 session 的 FileRef 缓存（含 inlineData base64）必须同步清，
     // 否则模块顶层的 cachedSession 会让载荷在 renderer 里滞留。
     const keys = Object.keys(sessions);
+    const out = { chatSessions: sessions, sessionRegistryFilesByPath: registryFiles, scrollPositions } as Partial<ChatSlice>;
     if (keys.length > MAX_CACHED_SESSIONS) {
       const oldest = keys.find(k => k !== path);
       if (oldest) {
@@ -76,9 +77,16 @@ export const createChatSlice = (
         invalidateSessionCache(oldest);
         invalidateStreamBuffer(oldest);
         clearSessionStreamMeta(oldest);
+        // agentActivitiesBySession 与上面几张 per-session map 同生命周期。LRU 淘汰才是真正的
+        // session 退场点（见 clearSession 末尾注释：clearSession 会被重建中途调用、不算退场），
+        // clearSession 的 #FIX1 只清了它那条汇聚点，漏了这条淘汰路径——upsertAgentActivity 不校验
+        // chatSessions 成员，淘汰后迟到的 agent_activity 事件会复活被淘汰 key 且永不回收。这里补清。
+        const activities = { ...(s as unknown as { agentActivitiesBySession?: Record<string, unknown> }).agentActivitiesBySession };
+        delete activities[oldest];
+        (out as unknown as { agentActivitiesBySession?: Record<string, unknown> }).agentActivitiesBySession = activities;
       }
     }
-    return { chatSessions: sessions, sessionRegistryFilesByPath: registryFiles, scrollPositions };
+    return out;
   }),
 
   prependItems: (path, items, hasMore) => set((s) => {

@@ -1016,8 +1016,11 @@ async function gracefulShutdown() {
     bridgeManager?.stopAll();
     dlog.log("server", "bridge stopped");
 
-    // 4. flush deferred result store（debounce 可能有未写盘的脏数据）
+    // 4. flush 防抖落盘的 store（debounce 可能有未写盘的脏数据）
     engine.deferredResults?.dispose?.();
+    // workflowActivityStore 同样有 ~1s unref 防抖窗口（同 id 同 status 的进度更新），
+    // 定时器 unref 不挡退出，process.exit 会丢掉窗口内最新进度——与 deferred store 对齐主动 flush。
+    try { workflowActivityStore.flush(); } catch (e) { log.error(`activity store flush 失败: ${e.message}`); }
 
     // 5. 清理 Hub + 引擎（停 ticker → 等 tick 完成 → 关 DB → 清理 session）
     await hub.dispose();

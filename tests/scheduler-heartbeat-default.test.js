@@ -174,6 +174,24 @@ describe("Scheduler heartbeat defaults", () => {
     expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(false);
   });
 
+  it("getProposeDraftAvailable returns true for falsy-but-defined patrol_tools ('' / null), mirroring the `||` fallthrough to '*'", () => {
+    // session-coordinator: `opts.toolFilter || patrol_tools || PATROL_TOOLS_DEFAULT('*')` —
+    // '' 和 null 都是 falsy，短路落到 '*' → 放行全部 → 工具实际可用。回调若仅排除 undefined，
+    // 会把 '' / null 喂给 new Set('')（空集）误判成"不可用"，与真实会话分叉。守卫用真值判断后对齐。
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true, patrol_tools: "" } });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(true);
+
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true, patrol_tools: null } });
+    expect(heartbeatOptions[1].getProposeDraftAvailable()).toBe(true);
+  });
+
+  it("getProposeDraftAvailable returns false for empty-array patrol_tools (truthy 有限白名单 → 不含该工具)", () => {
+    // [] 是 truthy，session 端 `[] || '*'` → [] → new Set([]).has(name) = false → 工具被丢；
+    // 回调同样按 new Set([]) 判定 → false，与会话过滤一致（区别于 falsy 的 '' / null）。
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true, patrol_tools: [] } });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(false);
+  });
+
   it("getProposeDraftAvailable returns true for default/undefined/'*' patrol_tools when tool enabled", () => {
     // undefined patrol_tools + no tools.disabled → available
     const { scheduler: s1 } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });

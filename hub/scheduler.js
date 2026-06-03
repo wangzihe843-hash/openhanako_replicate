@@ -190,17 +190,20 @@ export class Scheduler {
       locale: agent.config?.locale,
       // 是否在巡检里硬指挥 xingye_propose_draft：必须镜像 executeIsolated 真正的两道过滤——
       // (a) tools.disabled 含该工具 → filterToolObjectsByAvailability 已把它从 customTools 删掉；
-      // (b) desk.patrol_tools 是有限白名单（非 '*'/默认/undefined）且不含该工具 → patrol 过滤删掉。
+      // (b) desk.patrol_tools 是有限白名单（truthy 且非 '*'）且不含该工具 → patrol 过滤删掉。
       // 二者皆不命中才算可用。每个 beat 现读 agent.config（配置可能在两次 beat 之间变化），不要快照。
       getProposeDraftAvailable: () => {
         const cfg = agent.config || {};
         if (Array.isArray(cfg.tools?.disabled) && cfg.tools.disabled.includes("xingye_propose_draft")) return false;
-        // 镜像 executeIsolated 的 `new Set(patrolAllowed).has(name)`（session-coordinator）：
-        // '*'/undefined → 放行全部；其余（数组 or 异常的纯字符串）都按 new Set(...) 判定——
-        // 数组得到名字集合；纯字符串（如误配 'notify'）被 new Set 拆成字符集合（与 session 端
-        // 同样的拆字行为），均能正确判出该工具不在白名单里，避免回调与真实会话过滤分叉。
+        // 镜像 executeIsolated 的 `opts.toolFilter || patrol_tools || PATROL_TOOLS_DEFAULT('*')`
+        // 这条 `||` 链（session-coordinator）：任何 falsy 值（undefined / '' / null）都短路落到
+        // '*' → 放行全部，故守卫必须用真值判断 `patrol`（而非仅排除 undefined），否则 '' / null
+        // 会被错喂给 new Set('')（空集）判成"不可用"，与真实会话分叉、静默吞掉巡检硬指令。
+        // truthy 的值（数组 / 异常纯字符串如误配 'notify' / 空数组 []）才按 new Set(...) 判定——
+        // 数组得名字集合、纯字符串被拆成字符集合，均能正确判出工具不在白名单；这也顺带避免
+        // new Set(0)/new Set(false) 抛错（falsy 已先短路）。
         const patrol = cfg.desk?.patrol_tools;
-        if (patrol !== undefined && patrol !== "*" && !new Set(patrol).has("xingye_propose_draft")) return false;
+        if (patrol && patrol !== "*" && !new Set(patrol).has("xingye_propose_draft")) return false;
         return true;
       },
     });

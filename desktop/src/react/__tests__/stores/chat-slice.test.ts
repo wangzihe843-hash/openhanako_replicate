@@ -212,6 +212,28 @@ describe('chat-slice', () => {
       }
       expect(mockClearSessionStreamMeta).toHaveBeenCalledWith('/s0');
     });
+
+    it('LRU eviction 也清被淘汰 session 的 agentActivitiesBySession（FIX1 漏掉的退场路径）', () => {
+      // clearSession 的 FIX1 只清了它那条汇聚点；LRU 淘汰才是真正的 session 退场，
+      // 之前漏清，迟到的 agent_activity 事件会复活被淘汰 key 且永不回收。补清后此路径也应回收。
+      const { slice: seeded, set } = makeSliceWithSet();
+      set({ agentActivitiesBySession: { '/s0': [{ id: 'x' }], '/s1': [{ id: 'y' }] } });
+      for (let i = 0; i < 9; i++) {
+        seeded.initSession(`/s${i}`, [], false);
+      }
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities['/s0']).toBeUndefined(); // /s0 被淘汰 → 活动同步回收
+      expect(activities['/s1']).toBeDefined();   // 仍在缓存内 → 保留
+    });
+
+    it('initSession 无淘汰时不改写 agentActivitiesBySession（避免无谓 re-render）', () => {
+      const { slice: seeded, set } = makeSliceWithSet();
+      const seededMap = { '/a': [{ id: 'x' }] };
+      set({ agentActivitiesBySession: seededMap });
+      seeded.initSession('/a', [], false); // 未超过 LRU 上限，无淘汰
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities).toBe(seededMap); // 引用未变 → set 未触碰该 map
+    });
   });
 
   describe('truncateSessionFromMessage', () => {
