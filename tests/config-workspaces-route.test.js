@@ -124,11 +124,13 @@ describe("config workspace routes", () => {
     const res = await app.request("/api/config");
     const data = await res.json();
 
+    // cwd_history is stored after normalizeWorkspacePath (backslashes folded to forward slashes)
+    const expectedKeep = normalizeWorkspacePath(keepWorkspace);
     expect(res.status).toBe(200);
-    expect(data.cwd_history).toEqual([keepWorkspace]);
+    expect(data.cwd_history).toEqual([expectedKeep]);
     expect(data.last_cwd).toBeNull();
     expect(engine.updateConfig).toHaveBeenCalledWith({
-      cwd_history: [keepWorkspace],
+      cwd_history: [expectedKeep],
       last_cwd: null,
     });
   });

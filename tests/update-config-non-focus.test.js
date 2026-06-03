@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { ConfigCoordinator } from "../core/config-coordinator.js";
+import { normalizeWorkspacePath } from "../shared/workspace-history.js";
 
 describe("updateConfig with agentId", () => {
   const tempRoots = [];
@@ -86,8 +87,10 @@ describe("updateConfig with agentId", () => {
   it("keeps a requested agent explicit home folder when stat reports temporary access failure", () => {
     const blockedHome = path.join(os.tmpdir(), `hana-blocked-home-${Date.now()}`);
     const originalStatSync = fs.statSync;
+    // 产线 classifyWorkspacePathForGc 在 statSync 前先 normalizeWorkspacePath（Windows 把 \ 折成 /），
+    // 因此 spy 与断言都按归一化路径比，才能跨平台命中（POSIX 上归一化为恒等，无副作用）。
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((target, ...args) => {
-      if (target === blockedHome) {
+      if (normalizeWorkspacePath(target) === normalizeWorkspacePath(blockedHome)) {
         throw Object.assign(new Error("permission denied"), { code: "EACCES" });
       }
       return originalStatSync.call(fs, target, ...args);
@@ -96,8 +99,8 @@ describe("updateConfig with agentId", () => {
     targetAgent.config.desk = { home_folder: blockedHome };
     const coord = new ConfigCoordinator(deps);
 
-    expect(coord.getExplicitHomeFolder("target")).toBe(blockedHome);
-    expect(statSpy).toHaveBeenCalledWith(blockedHome);
+    expect(coord.getExplicitHomeFolder("target")).toBe(normalizeWorkspacePath(blockedHome));
+    expect(statSpy).toHaveBeenCalledWith(normalizeWorkspacePath(blockedHome));
     expect(targetAgent.updateConfig).not.toHaveBeenCalled();
   });
 

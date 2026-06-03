@@ -151,9 +151,12 @@ describe("workflow tool", () => {
       getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
     });
     const res = await tool.execute("c1", { script: META + `return await agent('x')` }, undefined, undefined, makeCtx());
-    await flush();
-    const bu = evts.find((x) => x.e.type === "block_update" && x.e.taskId === res.details.taskId);
-    expect(bu).toBeTruthy();
+    // 后台 deferred 任务异步 emit；并行高负载下 2-tick flush 可能赶不上，用 waitFor 轮询直到 block_update 到达。
+    const bu = await vi.waitFor(() => {
+      const found = evts.find((x) => x.e.type === "block_update" && x.e.taskId === res.details.taskId);
+      expect(found).toBeTruthy();
+      return found;
+    });
     expect(bu.e.patch.streamStatus).toBe("done");
     expect(typeof bu.e.patch.finishedAt).toBe("number");
     expect(bu.sp).toBe("/s.jsonl");
@@ -168,9 +171,12 @@ describe("workflow tool", () => {
       getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
     });
     const res = await tool.execute("c1", { script: META + `return await agent('x')` }, undefined, undefined, makeCtx());
-    await flush();
-    const bu = evts.find((e) => e.type === "block_update" && e.patch?.streamStatus === "failed");
-    expect(bu).toBeTruthy();
+    // 后台 deferred 任务异步 emit；并行高负载下 2-tick flush 可能赶不上，用 waitFor 轮询直到 block_update 到达。
+    const bu = await vi.waitFor(() => {
+      const found = evts.find((e) => e.type === "block_update" && e.patch?.streamStatus === "failed");
+      expect(found).toBeTruthy();
+      return found;
+    });
     expect(bu.taskId).toBe(res.details.taskId);
   });
 

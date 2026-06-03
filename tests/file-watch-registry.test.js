@@ -11,6 +11,11 @@ describe("file-watch-registry", () => {
   let closeFns;
   let notified;
 
+  // 产线 file-watch-registry 用 path.resolve(filePath) 作 watch key（Windows 下 /tmp/a.txt → D:\tmp\a.txt），
+  // 测试统一用解析后的绝对路径，才能跨平台命中 mock 的 callbacks/closeFns（POSIX 上 path.resolve 为恒等，无副作用）。
+  const A = path.resolve("/tmp/a.txt");
+  const B = path.resolve("/tmp/b.txt");
+
   beforeEach(() => {
     callbacks = new Map();
     closeFns = new Map();
@@ -34,16 +39,16 @@ describe("file-watch-registry", () => {
       notifySubscriber: (subscriberId, filePath) => notified.push({ subscriberId, filePath }),
     });
 
-    expect(registry.watchFile("/tmp/a.txt", 1)).toBe(true);
-    expect(registry.watchFile("/tmp/a.txt", 2)).toBe(true);
+    expect(registry.watchFile(A, 1)).toBe(true);
+    expect(registry.watchFile(A, 2)).toBe(true);
     expect(watchMock).toHaveBeenCalledTimes(1);
 
-    callbacks.get("/tmp/a.txt")("change");
+    callbacks.get(A)("change");
     vi.advanceTimersByTime(60);
 
     expect(notified).toEqual([
-      { subscriberId: 1, filePath: "/tmp/a.txt" },
-      { subscriberId: 2, filePath: "/tmp/a.txt" },
+      { subscriberId: 1, filePath: A },
+      { subscriberId: 2, filePath: A },
     ]);
   });
 
@@ -53,14 +58,14 @@ describe("file-watch-registry", () => {
       notifySubscriber: () => {},
     });
 
-    registry.watchFile("/tmp/a.txt", 1);
-    registry.watchFile("/tmp/a.txt", 2);
+    registry.watchFile(A, 1);
+    registry.watchFile(A, 2);
 
-    expect(registry.unwatchFile("/tmp/a.txt", 1)).toBe(true);
-    expect(closeFns.get("/tmp/a.txt")).not.toHaveBeenCalled();
+    expect(registry.unwatchFile(A, 1)).toBe(true);
+    expect(closeFns.get(A)).not.toHaveBeenCalled();
 
-    expect(registry.unwatchFile("/tmp/a.txt", 2)).toBe(true);
-    expect(closeFns.get("/tmp/a.txt")).toHaveBeenCalledOnce();
+    expect(registry.unwatchFile(A, 2)).toBe(true);
+    expect(closeFns.get(A)).toHaveBeenCalledOnce();
   });
 
   it("unwatchAllForSubscriber 只移除该 subscriber，不影响其他文件/订阅者", () => {
@@ -69,16 +74,16 @@ describe("file-watch-registry", () => {
       notifySubscriber: () => {},
     });
 
-    registry.watchFile("/tmp/a.txt", 1);
-    registry.watchFile("/tmp/b.txt", 1);
-    registry.watchFile("/tmp/b.txt", 2);
+    registry.watchFile(A, 1);
+    registry.watchFile(B, 1);
+    registry.watchFile(B, 2);
 
     registry.unwatchAllForSubscriber(1);
 
-    expect(closeFns.get("/tmp/a.txt")).toHaveBeenCalledOnce();
-    expect(closeFns.get("/tmp/b.txt")).not.toHaveBeenCalled();
+    expect(closeFns.get(A)).toHaveBeenCalledOnce();
+    expect(closeFns.get(B)).not.toHaveBeenCalled();
 
-    callbacks.get("/tmp/b.txt")("rename");
+    callbacks.get(B)("rename");
     vi.advanceTimersByTime(60);
   });
 
@@ -88,8 +93,8 @@ describe("file-watch-registry", () => {
       notifySubscriber: () => {},
     });
 
-    expect(registry.watchFile("/tmp/a.txt", 1)).toBe(false);
-    expect(registry.unwatchFile("/tmp/a.txt", 1)).toBe(true);
+    expect(registry.watchFile(A, 1)).toBe(false);
+    expect(registry.unwatchFile(A, 1)).toBe(true);
   });
 
   it("用稳定文件 watcher 监听时，atomic replace 后仍继续通知同一路径的后续改动", async () => {
