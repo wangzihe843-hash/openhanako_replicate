@@ -258,4 +258,81 @@ describe("createProposeDraftTool · module=secondhand", () => {
     expect(res.details.reason).toBe("empty_patch");
     expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"))).toBe(false);
   });
+
+  it("rejects an invalid add-path status at the dispatch boundary (writes nothing)", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { itemName: "灰色长款风衣", status: "for_sale" },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.module).toBe("secondhand");
+    expect(res.details.reason).toBe("invalid_status");
+    // 不被 normalizeStatus 静默兜成 'to_sell'，且什么都没写
+    expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("rejects a near-miss add-path status ('Sold') instead of silently coercing to 'to_sell'", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { itemName: "旧相机", status: "Sold" }, // 'sold' 大写后能命中——见下一例；带空格的 ' for_sale ' 不行
+    });
+    // 'Sold' 经 trim+toLowerCase → 'sold' 是合法的，故应放行而非拒绝
+    expect(res.details.ok).toBe(true);
+    expect(res.details.status).toBe("sold");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("sold");
+  });
+
+  it("normalizes a valid add-path status with mixed case/whitespace ('  Negotiating  ')", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { itemName: "二手吉他", status: "  Negotiating  " },
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.status).toBe("negotiating");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("negotiating");
+  });
+
+  it("rejects a near-miss status with whitespace ('for_sale ') that does not match after normalization", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { itemName: "旧书", status: "for_sale " },
+    });
+    expect(res.details.ok).toBe(false);
+    expect(res.details.reason).toBe("invalid_status");
+    expect(fs.existsSync(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"))).toBe(false);
+  });
+
+  it("omitted add-path status still falls back to the default 'to_sell' and writes", async () => {
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { itemName: "灰色长款风衣" }, // status 缺省
+    });
+    expect(res.details.ok).toBe(true);
+    expect(res.details.status).toBe("to_sell");
+    const rows = readJsonl(path.join(agentDir, "xingye", "apps", "secondhand", "drafts.jsonl"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("to_sell");
+  });
+
+  it("an invalid add-path status is rejected before reaching an action='update' (update carries status via patch)", async () => {
+    // update 路径不读顶层 status，故顶层非法 status 不应影响 update；
+    // 这里确认 add 边界校验只在 add 路径触发（update 的 status 走 patch，由 normalizeSecondhandDraftPatch 处理）。
+    const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
+    const res = await tool.execute("call-1", {
+      module: "secondhand",
+      secondhand: { action: "update", itemName: "灰色长款风衣", status: "for_sale", patch: { status: "sold" } },
+    });
+    expect(res.details.ok).toBe(true); // 顶层 status 在 update 路径被忽略，不触发 add 校验
+    expect(res.details.action).toBe("update");
+    expect(res.details.status).toBe("sold");
+  });
 });

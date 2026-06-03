@@ -375,6 +375,20 @@ export function PhoneHome({
     }
   };
 
+  // 角色在原地切换时（PhoneHome 无 key、就地重渲染——如 XingyeShell 在当前 agent 从
+  // 列表掉出时 fallback 改选别的角色）复位本次触发追踪与 busy/状态。否则上一个角色在途的
+  // 触发会把下一个角色「已存在」的那条 heartbeat（id 必然 ≠ 基线）误判为本次完成，错误收尾、
+  // 把别人的 summary 写进当前角色的状态、甚至 rememberDeskHeartbeatUiOutcome 写到错的 agent。
+  // 旧的客户端时钟水位线方案天然免疫这点（已存在 beat 的 finishedAt < 触发水位），id 比对
+  // 方案需在角色切换时显式复位。
+  useEffect(() => {
+    awaitingResultRef.current = false;
+    baselineHeartbeatIdRef.current = null;
+    if (clearBusyTimerRef.current) { clearTimeout(clearBusyTimerRef.current); clearBusyTimerRef.current = null; }
+    setHeartbeatBusy(false);
+    setHeartbeatStatus('等待手动巡检');
+  }, [agent?.id]);
+
   // 巡检完成：本次触发后出现一条 id 不同于触发基线的本 agent heartbeat 活动时收尾，
   // 用其 summaryZh 收尾状态行（活动负载由 scheduler 经 activity_update 推到 store）。
   // 不再比 finishedAt vs 客户端时钟——远程连接两端时钟差会误丢合法完成。

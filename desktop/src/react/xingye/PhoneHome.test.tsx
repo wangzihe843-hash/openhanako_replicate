@@ -196,6 +196,37 @@ describe('PhoneHome heartbeat trigger', () => {
     expect(screen.getByRole('status')).not.toHaveTextContent('自上次巡检以来');
   });
 
+  it('原地切换角色时复位在途触发，不把新角色已存在的 heartbeat 误判为完成（regression）', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, triggered: true, cooldown: false }),
+    } as Response);
+
+    const agentB: Agent = { id: 'agent-b', name: 'Agent B', yuan: 'hanako', isPrimary: false, hasAvatar: false };
+    const common = {
+      display,
+      onNavigate: vi.fn(), onOpenSms: vi.fn(), onOpenContacts: vi.fn(), onOpenMmChat: vi.fn(),
+      onOpenJournal: vi.fn(), onOpenSchedule: vi.fn(), onOpenDivination: vi.fn(),
+      onOpenFiles: vi.fn(), onOpenShopping: vi.fn(), onOpenMail: vi.fn(),
+    };
+
+    // agent-b 早就存在一条旧 beat —— 它的 id 必然 ≠ agent-a 触发时的基线，绝不能被
+    // agent-a 的在途触发误判为「本次完成」。
+    pushHeartbeatActivity({ agentId: 'agent-b', agentName: 'Agent B', summaryZh: 'B 的旧巡检结果' });
+
+    const { rerender } = render(<PhoneHome agent={agent} {...common} />);
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('巡检触发中'));
+
+    // 无 key、就地把 agent prop 换成 agent-b（XingyeShell 在当前角色掉出列表时的 fallback 路径）。
+    rerender(<PhoneHome agent={agentB} {...common} />);
+
+    // 复位生效：状态回到 idle，不把 agent-b 的旧 beat 误收尾为「巡检完毕」。
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('等待手动巡检'));
+    expect(screen.getByRole('status')).not.toHaveTextContent('巡检完毕');
+    expect(screen.getByRole('status')).not.toHaveTextContent('B 的旧巡检结果');
+  });
+
   it('opens the schedule app from the phone home grid', () => {
     const onOpenSchedule = vi.fn();
     render(

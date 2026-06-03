@@ -188,6 +188,17 @@ export class Scheduler {
       intervalMinutes: hbInterval,
       emitDevLog: (text, level) => engine.emitDevLog(text, level),
       locale: agent.config?.locale,
+      // 是否在巡检里硬指挥 xingye_propose_draft：必须镜像 executeIsolated 真正的两道过滤——
+      // (a) tools.disabled 含该工具 → filterToolObjectsByAvailability 已把它从 customTools 删掉；
+      // (b) desk.patrol_tools 是有限白名单（非 '*'/默认/undefined）且不含该工具 → patrol 过滤删掉。
+      // 二者皆不命中才算可用。每个 beat 现读 agent.config（配置可能在两次 beat 之间变化），不要快照。
+      getProposeDraftAvailable: () => {
+        const cfg = agent.config || {};
+        if (Array.isArray(cfg.tools?.disabled) && cfg.tools.disabled.includes("xingye_propose_draft")) return false;
+        const patrol = cfg.desk?.patrol_tools;
+        if (Array.isArray(patrol) && !patrol.includes("xingye_propose_draft")) return false;
+        return true;
+      },
     });
     this._heartbeats.set(agentId, hb);
     if (hbEnabled) hb.start();

@@ -56,6 +56,34 @@ describe("workflow meta extraction", () => {
     expect(body).toMatch(/\/\* export const bar \*\//);
   });
 
+  it("嵌套模板插值（内含奇数引号）后的真实 export default 仍被剥离（不再失步崩溃）", () => {
+    // 内层模板里的 it's 是模板文本里的撇号，旧单标志扫描器会误当字符串开头而失步，
+    // 把后面的 export default 漏剥，vm 执行报 Unexpected token 'export'。
+    const script = "export const meta = { name: 'x', description: 'd' }\nconst t = `${`it's ${1}`}`\nexport default async function(api){ return t }";
+    const { body } = extractMeta(script);
+    expect(body).toMatch(/const __wf_default = async function/);
+    expect(body).toMatch(/return await \(typeof __wf_default/);
+    // 内层模板文本原样保留
+    expect(body).toMatch(/`\$\{`it's \$\{1\}`\}`/);
+    // 剥离后 body 不应再含顶层语句位置的 export 关键字
+    expect(body).not.toMatch(/(^|\n)\s*export\s+default/);
+  });
+
+  it("嵌套模板插值后的真实 export const 仍被剥离前缀", () => {
+    const script = "export const meta = { name: 'x', description: 'd' }\nconst t = `${`a'b`}`\nexport const helper = 2\nreturn helper";
+    const { body } = extractMeta(script);
+    expect(body).toMatch(/`\$\{`a'b`\}`/);
+    expect(body).toMatch(/(^|\n)\s*const helper = 2/);
+    expect(body).not.toMatch(/(^|\n)\s*export\s+const helper/);
+  });
+
+  it("插值里嵌套模板中的 export 字面文本不被改写", () => {
+    const script = "export const meta = { name: 'x', description: 'd' }\nconst t = `${`export default nope`}`\nreturn t";
+    const { body } = extractMeta(script);
+    expect(body).toMatch(/`\$\{`export default nope`\}`/);
+    expect(body).not.toMatch(/__wf_default/);
+  });
+
   it("meta 含 phases 数组也能解析", () => {
     const script = `export const meta = { name: 'a', description: 'b', phases: [{ title: 'X' }] }\nreturn []`;
     const { meta } = extractMeta(script);

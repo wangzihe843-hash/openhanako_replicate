@@ -115,4 +115,77 @@ describe("Scheduler heartbeat defaults", () => {
       },
     );
   });
+
+  // 镜像 executeIsolated 的两道过滤（core/session-coordinator.js executeIsolated +
+  // core/tool-availability.js）：getProposeDraftAvailable 决定巡检里能否硬指挥 xingye_propose_draft。
+  function startSingleAgentHeartbeat(config) {
+    const root = "/tmp/hana-heartbeat-propose-draft";
+    const agent = {
+      id: "agent-pd",
+      agentName: "Agent PD",
+      deskDir: path.join(root, "agents", "agent-pd", "desk"),
+      config,
+    };
+    const engine = {
+      agents: new Map([[agent.id, agent]]),
+      getHeartbeatMaster: () => true,
+      getHomeCwd: () => path.join(root, "home", agent.id),
+      emitDevLog: vi.fn(),
+    };
+    const scheduler = new Scheduler({ hub: { engine } });
+    scheduler._executeActivityForAgent = vi.fn();
+    scheduler.startHeartbeat();
+    return { agent, scheduler };
+  }
+
+  it("wires getProposeDraftAvailable into the createHeartbeat call", () => {
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
+    expect(typeof heartbeatOptions[0].getProposeDraftAvailable).toBe("function");
+  });
+
+  it("getProposeDraftAvailable returns false when tools.disabled includes xingye_propose_draft", () => {
+    startSingleAgentHeartbeat({
+      desk: { heartbeat_enabled: true },
+      tools: { disabled: ["xingye_propose_draft"] },
+    });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(false);
+  });
+
+  it("getProposeDraftAvailable returns false when desk.patrol_tools is a finite list excluding it", () => {
+    startSingleAgentHeartbeat({
+      desk: { heartbeat_enabled: true, patrol_tools: ["notify", "current_status"] },
+    });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(false);
+  });
+
+  it("getProposeDraftAvailable returns true when patrol_tools is a finite list including it", () => {
+    startSingleAgentHeartbeat({
+      desk: { heartbeat_enabled: true, patrol_tools: ["notify", "xingye_propose_draft"] },
+    });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(true);
+  });
+
+  it("getProposeDraftAvailable returns true for default/undefined/'*' patrol_tools when tool enabled", () => {
+    // undefined patrol_tools + no tools.disabled → available
+    const { scheduler: s1 } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(true);
+    void s1;
+
+    // '*' patrol_tools (= 与 chat 一致，全部放行) → available
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true, patrol_tools: "*" } });
+    expect(heartbeatOptions[1].getProposeDraftAvailable()).toBe(true);
+
+    // 显式 tools.disabled: [] (全开) → available
+    startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true }, tools: { disabled: [] } });
+    expect(heartbeatOptions[2].getProposeDraftAvailable()).toBe(true);
+  });
+
+  it("getProposeDraftAvailable reads agent.config fresh per beat (no snapshot)", () => {
+    const { agent } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
+    const cb = heartbeatOptions[0].getProposeDraftAvailable;
+    expect(cb()).toBe(true);
+    // 配置在两次 beat 之间变化：回调必须现读，不能用初始化时的快照
+    agent.config = { desk: { heartbeat_enabled: true }, tools: { disabled: ["xingye_propose_draft"] } };
+    expect(cb()).toBe(false);
+  });
 });

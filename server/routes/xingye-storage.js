@@ -311,7 +311,12 @@ export function createXingyeStorageRoute(engine) {
           const content = body.records.length
             ? `${body.records.map((record) => JSON.stringify(record)).join("\n")}\n`
             : "";
-          await atomicWrite(target, Buffer.from(content, "utf-8"));
+          // 渲染端整表覆写（确认/丢弃草稿等）也要进 per-agent 锁：否则会和服务端持锁的
+          // *-drafts.js append（如 heartbeat 追加 drafts.jsonl）交错，把刚追加的草稿行
+          // 静默覆盖掉。串行化的只是这一次 atomicWrite，不跨无关 await。
+          await withXingyeAgentEventLock(agentId, async () => {
+            await atomicWrite(target, Buffer.from(content, "utf-8"));
+          });
           return c.json({ ok: true });
         }
         case "deleteJsonlRecord": {
@@ -319,47 +324,53 @@ export function createXingyeStorageRoute(engine) {
           if (!recordId) {
             return c.json({ error: "recordId is required" }, 400);
           }
-          const { missing, content } = await readUtf8OrMissing(target);
-          if (missing) return c.json({ ok: true, deleted: false });
-          const lines = content.split(/\r?\n/);
-          const kept = [];
-          let deleted = false;
-          const catFromPath = secretSpaceCategoryFromJsonlRelativePath(relativePath);
-          /** Same ordering as listJsonl: only successfully parsed JSON lines get indices (0, 1, …). */
-          let parsedSuccessIndex = 0;
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) {
-              kept.push(line);
-              continue;
+          // 渲染端删除单行（确认后清掉草稿等）是 read→filter→atomicWrite 的 RMW：必须进
+          // per-agent 锁，与服务端持锁的 *-drafts.js append 串行化，否则两者交错会把刚 append
+          // 的草稿行连带覆盖丢失。锁只罩这一段 RMW，纯查询/过滤的本地 helper 不会再取锁。
+          const deleted = await withXingyeAgentEventLock(agentId, async () => {
+            const { missing, content } = await readUtf8OrMissing(target);
+            if (missing) return false;
+            const lines = content.split(/\r?\n/);
+            const kept = [];
+            let removed = false;
+            const catFromPath = secretSpaceCategoryFromJsonlRelativePath(relativePath);
+            /** Same ordering as listJsonl: only successfully parsed JSON lines get indices (0, 1, …). */
+            let parsedSuccessIndex = 0;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) {
+                kept.push(line);
+                continue;
+              }
+              let obj;
+              try {
+                obj = JSON.parse(trimmed);
+              } catch {
+                kept.push(line);
+                continue;
+              }
+              const rowKey = jsonlRecordFieldAsString(obj?.key);
+              const rowId = jsonlRecordFieldAsString(obj?.id);
+              const idMatch = rowKey === recordId || rowId === recordId;
+              const syntheticEligible = !rowKey && !rowId;
+              const syntheticId = catFromPath ? `${catFromPath}-${parsedSuccessIndex}` : null;
+              const syntheticMatch = Boolean(
+                syntheticEligible && syntheticId != null && recordId === syntheticId,
+              );
+              const isMatch = !removed && (idMatch || syntheticMatch);
+              if (isMatch) {
+                removed = true;
+              } else {
+                kept.push(line);
+              }
+              parsedSuccessIndex += 1;
             }
-            let obj;
-            try {
-              obj = JSON.parse(trimmed);
-            } catch {
-              kept.push(line);
-              continue;
-            }
-            const rowKey = jsonlRecordFieldAsString(obj?.key);
-            const rowId = jsonlRecordFieldAsString(obj?.id);
-            const idMatch = rowKey === recordId || rowId === recordId;
-            const syntheticEligible = !rowKey && !rowId;
-            const syntheticId = catFromPath ? `${catFromPath}-${parsedSuccessIndex}` : null;
-            const syntheticMatch = Boolean(
-              syntheticEligible && syntheticId != null && recordId === syntheticId,
-            );
-            const isMatch = !deleted && (idMatch || syntheticMatch);
-            if (isMatch) {
-              deleted = true;
-            } else {
-              kept.push(line);
-            }
-            parsedSuccessIndex += 1;
-          }
-          if (!deleted) return c.json({ ok: true, deleted: false });
-          const out = kept.join("\n");
-          await atomicWrite(target, Buffer.from(out === "" ? "" : `${out}\n`, "utf-8"));
-          return c.json({ ok: true, deleted: true });
+            if (!removed) return false;
+            const out = kept.join("\n");
+            await atomicWrite(target, Buffer.from(out === "" ? "" : `${out}\n`, "utf-8"));
+            return true;
+          });
+          return c.json({ ok: true, deleted });
         }
         case "list": {
           let stat;

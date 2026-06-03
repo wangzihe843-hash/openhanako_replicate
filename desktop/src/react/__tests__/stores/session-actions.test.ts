@@ -119,8 +119,10 @@ vi.mock('../../stores/create-keyed-slice', () => ({
 vi.mock('../../stores/stream-invalidator', () => ({
   snapshotStreamBuffer: vi.fn(),
   invalidateStreamBuffer: vi.fn(),
+  clearSessionStreamMeta: vi.fn(),
   registerStreamBufferInvalidator: vi.fn(),
   registerStreamBufferSnapshot: vi.fn(),
+  registerSessionStreamMetaCleaner: vi.fn(),
 }));
 
 vi.mock('../../utils/markdown', () => ({
@@ -214,12 +216,13 @@ import { clearChat } from '../../stores/agent-actions';
 import { loadDeskFiles } from '../../stores/desk-actions';
 import { bumpMessageLiveVersion, clearMessageLiveVersion } from '../../stores/message-live-version';
 import { archiveSession, createNewSession, ensureSession, loadMessages, loadSessions, pinSession, switchSession } from '../../stores/session-actions';
-import { snapshotStreamBuffer } from '../../stores/stream-invalidator';
+import { snapshotStreamBuffer, clearSessionStreamMeta } from '../../stores/stream-invalidator';
 
 const mockFetch = vi.mocked(hanaFetch);
 const mockClearChat = vi.mocked(clearChat);
 const mockLoadDeskFiles = vi.mocked(loadDeskFiles);
 const mockSnapshot = vi.mocked(snapshotStreamBuffer);
+const mockClearSessionStreamMeta = vi.mocked(clearSessionStreamMeta);
 
 function jsonResponse(body: unknown, ok = true): Response {
   return { ok, json: async () => body } as unknown as Response;
@@ -271,6 +274,7 @@ describe('session-actions', () => {
     });
     mockSnapshot.mockReset();
     mockSnapshot.mockReturnValue(null);
+    mockClearSessionStreamMeta.mockReset();
     clearMessageLiveVersion();
     dispatchedEvents.length = 0;
   });
@@ -979,6 +983,8 @@ describe('session-actions', () => {
         clearSession: ReturnType<typeof vi.fn>;
       }).clearSession;
       expect(clearSessionMock).toHaveBeenCalledWith('/archived');
+      // 退役 funnel 必须经 stream-invalidator 桥接清掉该 path 的 stream-resume 元数据
+      expect(mockClearSessionStreamMeta).toHaveBeenCalledWith('/archived');
       expect(mockState.currentSessionPath).toBe('/current');
       expect((mockState.chatSessions as Record<string, unknown>)['/archived']).toBeUndefined();
       expect((mockState.sessionStreams as Record<string, unknown>)['/archived']).toBeUndefined();
@@ -1023,6 +1029,8 @@ describe('session-actions', () => {
         clearSession: ReturnType<typeof vi.fn>;
       }).clearSession;
       expect(clearSessionMock).toHaveBeenCalledWith('/current');
+      // 归档当前 session 同样经退役 funnel 清掉 stream-resume 元数据
+      expect(mockClearSessionStreamMeta).toHaveBeenCalledWith('/current');
       expect(mockClearChat).toHaveBeenCalledTimes(1);
       expect((mockState.chatSessions as Record<string, unknown>)['/current']).toBeUndefined();
       expect((mockState.sessionStreams as Record<string, unknown>)['/current']).toBeUndefined();

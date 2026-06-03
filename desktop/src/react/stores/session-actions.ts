@@ -15,7 +15,7 @@ import { loadAvatars as loadAvatarsAction, clearChat as clearChatAction } from '
 import { activateWorkspaceDesk } from './desk-actions';
 import { loadModels } from '../utils/ui-helpers';
 import { updateKeyed } from './create-keyed-slice';
-import { snapshotStreamBuffer, type StreamBufferSnapshot } from './stream-invalidator';
+import { snapshotStreamBuffer, clearSessionStreamMeta, type StreamBufferSnapshot } from './stream-invalidator';
 import { renderMarkdown } from '../utils/markdown';
 import type { ChatMessage, ContentBlock } from './chat-types';
 import { readMessageLiveVersion } from './message-live-version';
@@ -74,6 +74,10 @@ async function resetDeskForSessionCwd(cwd?: string | null): Promise<void> {
 
 function clearSessionRuntimeCaches(path: string): void {
   useStore.getState().clearSession?.(path);
+  // 归档/桥接重置是「永久退役」终点：clearSession 故意不碰 stream-resume 元数据
+  // （rebuild 复用 clearSession，清版本号会破坏版本护栏），所以在这个不参与 rebuild
+  // 的退役 funnel 里显式清掉，避免该 path 的 stream-resume 元数据泄漏。
+  clearSessionStreamMeta(path);
   useStore.setState((s: Record<string, any>) => {
     const { [path]: _attached, ...attachedFilesBySession } = s.attachedFilesBySession || {};
     const { [path]: _registryFiles, ...sessionRegistryFilesByPath } = s.sessionRegistryFilesByPath || {};

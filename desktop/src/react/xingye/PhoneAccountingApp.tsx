@@ -482,8 +482,15 @@ export function PhoneAccountingApp({
   });
   const [fxEditorOpen, setFxEditorOpen] = useState(false);
   const [fxSaving, setFxSaving] = useState(false);
+  /**
+   * 防跨角色脏写：切角色时 ownerAgentId 变化会触发新一轮 reload，但上一个角色还在飞的
+   * 读取可能后落地、用旧数据覆盖新角色。每次 reload 自增请求序号，落 setState 前校验仍是
+   * 最新一轮（与 PhoneSecondhandApp / PhoneMailApp 同语义）。
+   */
+  const reloadSeqRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setLedger({ entries: [], summary: { byCurrency: [], missingAmountCount: 0 } });
       setPendingDrafts([]);
@@ -499,13 +506,15 @@ export function PhoneAccountingApp({
         listAccountingDrafts(ownerAgentId),
         loadFxConfig(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setLedger(lg);
       setPendingDrafts(drafts);
       setFxConfig(fx);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -521,6 +530,10 @@ export function PhoneAccountingApp({
 
   useEffect(() => {
     void reload();
+    // cleanup：作废本轮 reload，让切角色后旧角色的在飞读取无法再 setState（与上面的请求号双保险）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reload]);
 
   /**

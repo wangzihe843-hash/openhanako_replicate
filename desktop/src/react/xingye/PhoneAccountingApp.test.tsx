@@ -195,3 +195,83 @@ describe('PhoneAccountingApp · 待确认草稿', () => {
     expect(accountingDraftsMock.discardAccountingDraft).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 跨角色 reload 竞态：见 PhoneSecondhandApp/PhoneTripsApp 的同款守卫。
+ * reloadSeqRef 单调请求号 + effect cleanup 让上一个角色还在飞的 loadLedger
+ * 最后才落地时无法 setState 覆盖新角色账本。
+ */
+describe('PhoneAccountingApp · 跨角色 reload 竞态', () => {
+  const agentB: Agent = { ...linwu, id: 'agentB', name: 'B' };
+
+  beforeEach(() => {
+    accountingDraftsMock.listAccountingDrafts.mockClear();
+    accountingDraftsMock.listAccountingDrafts.mockResolvedValue([]);
+    ledgerMock.loadLedger.mockReset();
+    fxRatesMock.loadFxConfig.mockResolvedValue({ version: 1, displayCurrency: '', rates: {} });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function makeLedgerEntry(id: string, title: string) {
+    return {
+      id,
+      source: 'accounting' as const,
+      origin: 'native' as const,
+      direction: 'expense' as const,
+      title,
+      amount: 30,
+      currency: '¥',
+      realized: true,
+      occurredAt: '2026-05-26T08:00:00.000Z',
+    };
+  }
+
+  function makeLedger(id: string, title: string) {
+    return {
+      entries: [makeLedgerEntry(id, title)],
+      summary: { byCurrency: [], missingAmountCount: 0 },
+    };
+  }
+
+  it('切换角色后，旧角色后落地的 reload 不覆盖新角色账本', async () => {
+    // 受控 deferred：让 A 的 loadLedger 一直挂着，切到 B 后再 resolve A，
+    // 模拟「旧角色的在飞读取最后才落地」。
+    let resolveA: (lg: unknown) => void = () => {};
+    const aLedgerPromise = new Promise<unknown>((resolve) => {
+      resolveA = resolve;
+    });
+
+    ledgerMock.loadLedger.mockImplementation((aid: string) => {
+      if (aid === 'linwu') return aLedgerPromise;
+      if (aid === 'agentB') return Promise.resolve(makeLedger('b-1', '乙账目样本'));
+      return Promise.resolve({ entries: [], summary: { byCurrency: [], missingAmountCount: 0 } });
+    });
+
+    const { rerender } = render(
+      <PhoneAccountingApp ownerAgent={linwu} ownerProfile={null} displayName="林雾" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(ledgerMock.loadLedger).toHaveBeenCalledWith('linwu');
+    });
+
+    // 切到 B：触发新一轮 reload（cleanup 让上一轮失效）。
+    rerender(
+      <PhoneAccountingApp ownerAgent={agentB} ownerProfile={null} displayName="B" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('乙账目样本')).toBeInTheDocument();
+    });
+
+    // 现在 A 的旧读取才落地——必须被请求号守卫丢弃，不能覆盖 B。
+    resolveA(makeLedger('a-1', '甲账目样本'));
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByText('乙账目样本')).toBeInTheDocument();
+    expect(screen.queryByText('甲账目样本')).not.toBeInTheDocument();
+  });
+});

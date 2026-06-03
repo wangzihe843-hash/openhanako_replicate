@@ -453,3 +453,83 @@ describe('PhoneShoppingApp · pending draft section', () => {
     expect(screen.getByTestId('phone-shopping-draft-d-3')).toBeInTheDocument();
   });
 });
+
+/**
+ * 跨角色 reload 竞态：见 PhoneSecondhandApp/PhoneTripsApp 的同款守卫。
+ * reloadSeqRef 单调请求号 + effect cleanup 让上一个角色还在飞的 listAppEntries
+ * 最后才落地时无法 setState 覆盖新角色数据。
+ */
+describe('PhoneShoppingApp · 跨角色 reload 竞态', () => {
+  const agentB: Agent = { ...linwu, id: 'agentB', name: 'B' };
+
+  beforeEach(() => {
+    appEntryStoreMock.appendAppEntry.mockReset();
+    appEntryStoreMock.deleteAppEntry.mockReset();
+    appEntryStoreMock.listAppEntries.mockReset();
+    appEntryStoreMock.updateAppEntry.mockReset();
+    appEntryStoreMock.listAppEntries.mockResolvedValue([]);
+    shoppingDraftsMock.listShoppingDrafts.mockReset();
+    shoppingDraftsMock.listShoppingDrafts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function makeShoppingEntry(id: string, itemName: string) {
+    return {
+      id,
+      agentId: id,
+      appId: 'shopping',
+      title: itemName,
+      content: '',
+      metadata: {
+        status: 'wanted',
+        platformStyle: 'generic',
+        itemName,
+      },
+      source: 'manual',
+      createdAt: '2026-05-15T10:00:00.000Z',
+      updatedAt: '2026-05-15T10:00:00.000Z',
+    };
+  }
+
+  it('切换角色后，旧角色后落地的 reload 不覆盖新角色数据', async () => {
+    // 受控 deferred：让 A 的 listAppEntries 一直挂着，切到 B 后再 resolve A，
+    // 模拟「旧角色的在飞读取最后才落地」。
+    let resolveA: (rows: unknown[]) => void = () => {};
+    const aEntriesPromise = new Promise<unknown[]>((resolve) => {
+      resolveA = resolve;
+    });
+
+    appEntryStoreMock.listAppEntries.mockImplementation((aid: string) => {
+      if (aid === 'linwu') return aEntriesPromise;
+      if (aid === 'agentB') return Promise.resolve([makeShoppingEntry('b-1', '乙物品')]);
+      return Promise.resolve([]);
+    });
+
+    const { rerender } = render(
+      <PhoneShoppingApp ownerAgent={linwu} displayName="林雾" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(appEntryStoreMock.listAppEntries).toHaveBeenCalledWith('linwu', 'shopping');
+    });
+
+    // 切到 B：触发新一轮 reload（cleanup 让上一轮失效）。
+    rerender(
+      <PhoneShoppingApp ownerAgent={agentB} displayName="B" onBack={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('乙物品')).toBeInTheDocument();
+    });
+
+    // 现在 A 的旧读取才落地——必须被请求号守卫丢弃，不能覆盖 B。
+    resolveA([makeShoppingEntry('a-1', '甲物品')]);
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByText('乙物品')).toBeInTheDocument();
+    expect(screen.queryByText('甲物品')).not.toBeInTheDocument();
+  });
+});

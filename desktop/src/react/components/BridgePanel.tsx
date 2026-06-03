@@ -7,6 +7,7 @@ import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { displayInitial } from '../utils/grapheme';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import { loadMessages } from '../stores/session-actions';
+import { clearSessionStreamMeta } from '../stores/stream-invalidator';
 import { useContinuousBottomScroll } from '../hooks/use-continuous-bottom-scroll';
 import type { ChatListItem } from '../stores/chat-types';
 import { ChatTranscript } from './chat/ChatTranscript';
@@ -219,7 +220,11 @@ export function BridgePanel() {
       const agentQuery = snapshotId ? `?agentId=${encodeURIComponent(snapshotId)}` : '';
       await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(currentKey)}/reset${agentQuery}`, { method: 'POST' });
       if (bridgeAgentIdRef.current !== snapshotId) return; // stale
-      if (currentSessionPath) useStore.getState().clearSession(currentSessionPath);
+      if (currentSessionPath) {
+        useStore.getState().clearSession(currentSessionPath);
+        // 桥接重置永久退役该 session：clearSession 不碰 stream-resume 元数据，显式清掉避免泄漏。
+        clearSessionStreamMeta(currentSessionPath);
+      }
       setChatOpen(false);
       setCurrentKey(null);
       setCurrentName('');

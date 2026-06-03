@@ -438,8 +438,15 @@ export function PhoneShoppingApp({
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const initialBootstrapTriedRef = useRef<string | null>(null);
+  /**
+   * 防跨角色脏写：切角色时 ownerAgentId 变化会触发新一轮 reload，但上一个角色还在飞的
+   * 读取可能后落地、用旧数据覆盖新角色。每次 reload 自增请求序号，落 setState 前校验仍是
+   * 最新一轮（与 PhoneSecondhandApp / PhoneMailApp 同语义）。
+   */
+  const reloadSeqRef = useRef(0);
 
   const reloadEntries = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
@@ -453,12 +460,14 @@ export function PhoneShoppingApp({
         listAppEntries(ownerAgentId, SHOPPING_APP_ID),
         listShoppingDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setEntries(rows.map(normalizeShoppingEntry).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)));
       setPendingDrafts(drafts);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -661,6 +670,10 @@ export function PhoneShoppingApp({
 
   useEffect(() => {
     void reloadEntries();
+    // cleanup：作废本轮 reload，让切角色后旧角色的在飞读取无法再 setState（与上面的请求号双保险）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reloadEntries]);
 
   /**

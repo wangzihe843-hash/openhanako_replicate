@@ -1021,6 +1021,117 @@ describe("xingye storage route", () => {
     }
   });
 
+  it("deleteJsonlRecord serializes with a lock-held drafts.jsonl append so the fresh draft survives", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      const targetAgentDir = path.join(agentsDir, "agent-a");
+      fs.mkdirSync(targetAgentDir, { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      // 服务端 *-drafts.js 持 per-agent 锁往 drafts.jsonl 追加（heartbeat 用的那条路径）。
+      const { appendJournalDraftServer } = await import("../lib/xingye/journal-drafts.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const relativePath = "journal/drafts.jsonl";
+
+      const send = (payload) =>
+        app.request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: "agent-a", relativePath, ...payload }),
+        });
+
+      // 先放两行种子草稿，确认/丢弃路径要删掉其中一行。
+      await send({ action: "appendJsonl", data: { id: "seed-1", key: "seed-1", body: "s1" } });
+      await send({ action: "appendJsonl", data: { id: "seed-2", key: "seed-2", body: "s2" } });
+
+      // 渲染端确认/丢弃（deleteJsonlRecord 的 read→filter→atomicWrite）与服务端持锁的
+      // drafts.jsonl append 同时打出去；两者共用 events.js 的 per-agent 锁，串行化后
+      // 删除只吃掉 seed-1，刚 append 的草稿行一定还在——这正是裸 RMW 会静默覆盖的场景。
+      await Promise.all([
+        send({ action: "deleteJsonlRecord", recordId: "seed-1" }),
+        appendJournalDraftServer({
+          agentDir: targetAgentDir,
+          agentId: "agent-a",
+          input: { title: "心跳草稿", body: "fresh draft body", source: "heartbeat" },
+        }),
+      ]);
+
+      const list = await send({ action: "listJsonl" });
+      const { records } = await list.json();
+      const ids = records.map((r) => r.id);
+      // seed-1 被删；seed-2 与心跳刚 append 的草稿都必须幸存（无静默覆盖）。
+      expect(ids).toContain("seed-2");
+      expect(ids).not.toContain("seed-1");
+      const freshDraft = records.find((r) => r.body === "fresh draft body");
+      expect(freshDraft).toBeTruthy();
+      expect(freshDraft.source).toBe("heartbeat");
+      expect(records).toHaveLength(2);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writeJsonl runs under the per-agent lock so a concurrent append never leaves a torn file", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
+    try {
+      const agentsDir = path.join(tempRoot, "agents");
+      const targetAgentDir = path.join(agentsDir, "agent-a");
+      fs.mkdirSync(targetAgentDir, { recursive: true });
+      const engine = {
+        agentsDir,
+        getAgent: (id) => (id === "agent-a" ? { id, name: "A" } : null),
+      };
+      const { createXingyeStorageRoute } = await import("../server/routes/xingye-storage.js");
+      const { appendJournalDraftServer } = await import("../lib/xingye/journal-drafts.js");
+      const app = new Hono();
+      app.route("/api", createXingyeStorageRoute(engine));
+
+      const relativePath = "journal/drafts.jsonl";
+      const send = (payload) =>
+        app.request("/api/xingye/storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: "agent-a", relativePath, ...payload }),
+        });
+
+      // 渲染端整表覆写（writeJsonl）与服务端持锁的 append 并发。writeJsonl 是「全表替换」，
+      // 落地顺序谁先谁后都合法，但因为两者共用同一把 per-agent 锁，两次写绝不会交错出
+      // 半行/坏行。这里断言：最终文件是两个合法终态之一，且每行都是合法 JSON（无撕裂）。
+      await Promise.all([
+        send({ action: "writeJsonl", records: [{ id: "kept-1", key: "kept-1", body: "kept" }] }),
+        appendJournalDraftServer({
+          agentDir: targetAgentDir,
+          agentId: "agent-a",
+          input: { title: "心跳草稿", body: "concurrent draft body", source: "heartbeat" },
+        }),
+      ]);
+
+      const abs = path.join(targetAgentDir, "xingye", "journal", "drafts.jsonl");
+      const raw = fs.readFileSync(abs, "utf8");
+      const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+      // 每行都能 JSON.parse —— 没有被另一次写切片成坏行。
+      const parsed = lines.map((l) => JSON.parse(l));
+      const bodies = parsed.map((r) => r.body).sort();
+      // 串行化后只能落在两个合法终态之一：
+      //   append 先 → writeJsonl 全表替换为 [kept]            → bodies = ["kept"]
+      //   writeJsonl 先 → append 追加 draft 到 [kept] 之后    → bodies = ["concurrent draft body", "kept"]
+      const valid =
+        (bodies.length === 1 && bodies[0] === "kept")
+        || (bodies.length === 2
+          && bodies[0] === "concurrent draft body"
+          && bodies[1] === "kept");
+      expect(valid).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("appendEventLog dedupeKey returns the existing event instead of appending twice", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-xingye-stor-"));
     try {
