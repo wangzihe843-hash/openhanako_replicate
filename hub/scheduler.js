@@ -195,8 +195,12 @@ export class Scheduler {
       getProposeDraftAvailable: () => {
         const cfg = agent.config || {};
         if (Array.isArray(cfg.tools?.disabled) && cfg.tools.disabled.includes("xingye_propose_draft")) return false;
+        // 镜像 executeIsolated 的 `new Set(patrolAllowed).has(name)`（session-coordinator）：
+        // '*'/undefined → 放行全部；其余（数组 or 异常的纯字符串）都按 new Set(...) 判定——
+        // 数组得到名字集合；纯字符串（如误配 'notify'）被 new Set 拆成字符集合（与 session 端
+        // 同样的拆字行为），均能正确判出该工具不在白名单里，避免回调与真实会话过滤分叉。
         const patrol = cfg.desk?.patrol_tools;
-        if (Array.isArray(patrol) && !patrol.includes("xingye_propose_draft")) return false;
+        if (patrol !== undefined && patrol !== "*" && !new Set(patrol).has("xingye_propose_draft")) return false;
         return true;
       },
     });

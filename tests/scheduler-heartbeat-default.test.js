@@ -165,6 +165,15 @@ describe("Scheduler heartbeat defaults", () => {
     expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(true);
   });
 
+  it("getProposeDraftAvailable returns false for a malformed non-'*' string patrol_tools (镜像 session 端 new Set(string) 拆字)", () => {
+    // 误配成纯字符串 'notify'：session 端 new Set('notify') 拆成 {n,o,t,i,f,y}，工具被丢；
+    // 回调用 new Set(patrol) 同样判出不含 xingye_propose_draft → false，与会话过滤一致。
+    startSingleAgentHeartbeat({
+      desk: { heartbeat_enabled: true, patrol_tools: "notify" },
+    });
+    expect(heartbeatOptions[0].getProposeDraftAvailable()).toBe(false);
+  });
+
   it("getProposeDraftAvailable returns true for default/undefined/'*' patrol_tools when tool enabled", () => {
     // undefined patrol_tools + no tools.disabled → available
     const { scheduler: s1 } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });

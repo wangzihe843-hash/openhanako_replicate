@@ -1,5 +1,11 @@
+import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { extractMeta } from "../lib/workflow/meta.js";
+
+/** body 能在 vm 非模块上下文里编译（顶层 export 都被剥掉了才行）。只 parse 不执行。 */
+function bodyCompiles(body) {
+  return () => new vm.Script("(async function(__wf_api){" + body + "\n})");
+}
 
 describe("workflow meta extraction", () => {
   it("提取合法 meta 并剥离 export", () => {
@@ -82,6 +88,31 @@ describe("workflow meta extraction", () => {
     const { body } = extractMeta(script);
     expect(body).toMatch(/`\$\{`export default nope`\}`/);
     expect(body).not.toMatch(/__wf_default/);
+  });
+
+  it("顶层正则后接除号不吞掉后面的真实 export（vm 可编译）", () => {
+    const script = "export const meta = { name: 'x', description: 'd' }\nconst n = /a/ / 1\nexport const y = 1\nreturn y + n";
+    const { body } = extractMeta(script);
+    expect(body).toMatch(/(^|\n)\s*const y = 1/);
+    expect(body).not.toMatch(/(^|\n)\s*export\s/);
+    expect(bodyCompiles(body)).not.toThrow();
+  });
+
+  it("模板插值开头的正则后接除号不吞掉真实 export（regression：本轮栈式改写曾把它误判为除号）", () => {
+    const script = "export const meta = { name: 'x', description: 'd' }\nconst t = `${ /a/ / 1 }`\nexport const y = 1\nreturn y";
+    const { body } = extractMeta(script);
+    expect(body).toMatch(/(^|\n)\s*const y = 1/);
+    expect(body).not.toMatch(/(^|\n)\s*export\s/);
+    expect(bodyCompiles(body)).not.toThrow();
+  });
+
+  it("正则/除号控制组：带 flag 正则、纯除法、正则方法调用后的 export 仍被剥离且可编译", () => {
+    for (const expr of ["/a/g / 1", "6 / 2 / 1", "/a/.test(x)", "'ab'.replace(/a/, 'x')"]) {
+      const script = `export const meta = { name: 'x', description: 'd' }\nconst v = ${expr}\nexport const y = 1\nreturn 0`;
+      const { body } = extractMeta(script);
+      expect(body, expr).not.toMatch(/(^|\n)\s*export\s/);
+      expect(bodyCompiles(body), expr).not.toThrow();
+    }
   });
 
   it("meta 含 phases 数组也能解析", () => {
