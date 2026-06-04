@@ -65,7 +65,6 @@ vi.mock('../../settings/tabs/AgentTab', () => ({ AgentTab: () => <div data-testi
 vi.mock('../../settings/tabs/MeTab', () => ({ MeTab: () => <div data-testid="active-tab">me tab</div> }));
 vi.mock('../../settings/tabs/InterfaceTab', () => ({ InterfaceTab: () => <div data-testid="active-tab">interface tab</div> }));
 vi.mock('../../settings/tabs/WorkTab', () => ({ WorkTab: () => <div data-testid="active-tab">work tab</div> }));
-vi.mock('../../settings/tabs/ComputerUseTab', () => ({ ComputerUseTab: () => <div data-testid="active-tab">computer tab</div> }));
 vi.mock('../../settings/tabs/SkillsTab', () => ({ SkillsTab: () => <div data-testid="active-tab">skills tab</div> }));
 vi.mock('../../settings/tabs/BridgeTab', () => ({ BridgeTab: () => <div data-testid="active-tab">bridge tab</div> }));
 vi.mock('../../settings/tabs/ProvidersTab', () => ({ ProvidersTab: () => <div data-testid="active-tab">providers tab</div> }));
@@ -75,6 +74,7 @@ vi.mock('../../settings/tabs/PluginsTab', () => ({ PluginsTab: () => <div data-t
 vi.mock('../../settings/tabs/SecurityTab', () => ({ SecurityTab: () => <div data-testid="active-tab">security tab</div> }));
 vi.mock('../../settings/tabs/SharingTab', () => ({ SharingTab: () => <div data-testid="active-tab">sharing tab</div> }));
 vi.mock('../../settings/tabs/AccessTab', () => ({ AccessTab: () => <div data-testid="active-tab">access tab</div> }));
+vi.mock('../../settings/tabs/ExperimentsTab', () => ({ ExperimentsTab: () => <div data-testid="active-tab">experiments tab</div> }));
 
 function resetState() {
   Object.keys(mockState).forEach(key => delete mockState[key]);
@@ -135,10 +135,10 @@ describe('SettingsContent title placement', () => {
     const { SettingsContent } = await import('../../settings/SettingsContent');
     render(<SettingsContent variant="modal" onClose={() => {}} onActiveTabChange={onActiveTabChange} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'settings.tabs.computer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.tabs.experiments' }));
 
     expect(onActiveTabChange).toHaveBeenCalledTimes(1);
-    expect(onActiveTabChange).toHaveBeenCalledWith('computer');
+    expect(onActiveTabChange).toHaveBeenCalledWith('experiments');
   });
 
   it('does not echo the initially rendered tab back to the modal shell', async () => {
@@ -175,14 +175,13 @@ describe('SettingsContent title placement', () => {
     });
   });
 
-  it('hides the Computer Use tab on Linux and redirects stale computer tabs', async () => {
+  it('does not render a Computer Use tab and redirects stale computer tabs to experiments', async () => {
     mockState.activeTab = 'computer';
-    mockState.platformName = 'linux';
     const { SettingsContent } = await import('../../settings/SettingsContent');
     render(<SettingsContent variant="modal" onClose={() => {}} />);
 
     expect(screen.queryByRole('button', { name: 'settings.tabs.computer' })).not.toBeInTheDocument();
-    expect(mockState.set).toHaveBeenCalledWith({ activeTab: 'agent' });
+    expect(mockState.set).toHaveBeenCalledWith({ activeTab: 'experiments' });
   });
 
   it('keeps activeServerConnection in sync when the settings window hears server restart', async () => {

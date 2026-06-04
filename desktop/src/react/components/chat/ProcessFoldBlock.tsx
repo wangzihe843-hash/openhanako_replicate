@@ -2,6 +2,7 @@ import { memo, useCallback, useId, useMemo, useState } from 'react';
 import { useStore } from '../../stores';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { AssistantMessage } from './AssistantMessage';
+import { MessageFooterActions, formatMessageTime } from './MessageFooterActions';
 import { buildProcessFoldSummary, type ProcessFoldRenderItem } from './process-fold';
 import styles from './Chat.module.css';
 
@@ -11,6 +12,8 @@ interface Props {
   sessionPath: string;
   agentId?: string | null;
   readOnly: boolean;
+  turnCompletionAssistantIndexes?: ReadonlySet<number>;
+  completionTimePersistent?: boolean;
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }
 
@@ -20,6 +23,8 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
   sessionPath,
   agentId,
   readOnly,
+  turnCompletionAssistantIndexes,
+  completionTimePersistent = false,
   registerMessageElement,
 }: Props) {
   const agents = useStore(s => s.agents);
@@ -49,6 +54,10 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
   const messageRef = useCallback((messageId: string) => (
     (element: HTMLDivElement | null) => registerMessageElement?.(messageId, element)
   ), [registerMessageElement]);
+  const turnCompletionEntry = turnCompletionAssistantIndexes
+    ? group.items.find((entry) => turnCompletionAssistantIndexes.has(entry.originalIndex))
+    : null;
+  const completionTimeText = formatMessageTime(turnCompletionEntry?.item.data.timestamp);
 
   return (
     <>
@@ -87,10 +96,19 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
                 sessionPath={sessionPath}
                 agentId={agentId}
                 readOnly={readOnly}
+                showTurnCompletionTime={turnCompletionAssistantIndexes?.has(entry.originalIndex) ?? false}
                 messageRef={messageRef(entry.item.data.id)}
               />
             ))}
           </div>
+        )}
+        {!open && completionTimeText && (
+          <MessageFooterActions
+            align="left"
+            timeText={completionTimeText}
+            timePersistent={completionTimePersistent}
+            actions={[]}
+          />
         )}
       </div>
     </>

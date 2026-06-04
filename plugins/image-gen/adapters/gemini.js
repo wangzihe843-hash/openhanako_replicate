@@ -6,6 +6,8 @@ import {
 } from "./common.js";
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_SUPPORTED_RATIOS = new Set(["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]);
+const GEMINI_SUPPORTED_IMAGE_SIZES = new Set(["1K", "2K", "4K"]);
 
 async function getCredentials(ctx, params = {}) {
   const providerId = params.credentialProviderId || params.providerId || "gemini";
@@ -31,6 +33,37 @@ function collectInlineImages(data) {
     }
   }
   return images;
+}
+
+function normalizeGeminiAspectRatio(value) {
+  if (!value) return null;
+  const ratio = String(value).trim();
+  if (GEMINI_SUPPORTED_RATIOS.has(ratio)) return ratio;
+  throw new Error(`Gemini image ratio "${ratio}" is unsupported`);
+}
+
+function normalizeGeminiImageSize(value, fieldName) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const normalized = raw.toUpperCase();
+  if (GEMINI_SUPPORTED_IMAGE_SIZES.has(normalized)) return normalized;
+  throw new Error(`Gemini image ${fieldName} "${raw}" is unsupported`);
+}
+
+function normalizeGeminiImageConfig(params) {
+  const imageConfig = {};
+  const aspectRatio = normalizeGeminiAspectRatio(params.aspect_ratio || params.aspectRatio || params.ratio);
+  if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
+
+  const size = normalizeGeminiImageSize(params.size, "size");
+  const resolution = normalizeGeminiImageSize(params.resolution, "resolution");
+  if (size && resolution && size !== resolution) {
+    throw new Error(`Gemini image size "${params.size}" conflicts with resolution "${params.resolution}"`);
+  }
+  const imageSize = size || resolution;
+  if (imageSize) imageConfig.imageSize = imageSize;
+
+  return imageConfig;
 }
 
 async function remoteImageToInlinePart(url) {
@@ -82,10 +115,7 @@ export const geminiImageAdapter = {
       if (part) parts.push(part);
     }
 
-    const imageConfig = {};
-    const aspectRatio = params.aspect_ratio || params.aspectRatio || params.ratio;
-    if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
-    if (params.size || params.resolution) imageConfig.imageSize = params.size || params.resolution;
+    const imageConfig = normalizeGeminiImageConfig(params);
 
     const body = {
       contents: [{ parts }],

@@ -736,6 +736,27 @@ describe("saveProvider", () => {
     expect(persisted.mimo.seed_default_models).toBeUndefined();
   });
 
+  it("MiMo Token Plan 首次保存空 models 时填充独立默认模型列表", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    reg.saveProvider("mimo-token-plan", {
+      api_key: "tp-mimo",
+      base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+      api: "openai-completions",
+      seed_default_models: true,
+    });
+
+    const persisted = readAddedModels();
+    expect(persisted["mimo-token-plan"].models).toEqual(reg.getDefaultModels("mimo-token-plan"));
+    expect(persisted["mimo-token-plan"].models).toEqual(expect.arrayContaining([
+      "mimo-v2.5-pro",
+      "mimo-v2.5",
+      "mimo-v2.5-tts",
+    ]));
+    expect(persisted["mimo-token-plan"].seed_default_models).toBeUndefined();
+  });
+
   it("已有 provider 显式保存空 models 时保留用户选择", () => {
     writeAddedModels({
       mimo: {

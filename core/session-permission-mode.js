@@ -1,4 +1,5 @@
 export const SESSION_PERMISSION_MODES = Object.freeze({
+  AUTO: "auto",
   OPERATE: "operate",
   ASK: "ask",
   READ_ONLY: "read_only",
@@ -60,6 +61,7 @@ const SUBAGENT_BLOCKED_TOOLS = new Set([
   "notify",
   "install_skill",
   "update_settings",
+  "session_folders",
   // ④ 角色私有状态：subagent 不得替角色落草稿。否则一个后台任务能静默改写角色 draft 状态。
   //    与 strategy 无关地拦死：甲（intercept）这里硬拦；乙（strip）的白名单本就不含它。
   //    注意优先级——本拦截集先于下面 SILENT_DRAFT_TOOLS 的放行判定（见 classifySessionPermission），
@@ -93,6 +95,7 @@ const TERMINAL_READ_ACTIONS = new Set([
 
 export function normalizeSessionPermissionMode(raw) {
   if (typeof raw === "string") return normalizeSessionPermissionMode({ permissionMode: raw });
+  if (raw?.permissionMode === SESSION_PERMISSION_MODES.AUTO) return SESSION_PERMISSION_MODES.AUTO;
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.OPERATE) return SESSION_PERMISSION_MODES.OPERATE;
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.ASK) return SESSION_PERMISSION_MODES.ASK;
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.READ_ONLY) return SESSION_PERMISSION_MODES.READ_ONLY;
@@ -127,9 +130,18 @@ function prompt(toolName) {
   };
 }
 
+function review(toolName) {
+  return {
+    action: "review",
+    kind: "tool_action_approval",
+    details: { toolName },
+  };
+}
+
 function classifyBrowserAction(mode, action) {
   if (BROWSER_READ_ACTIONS.has(action)) return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("browser");
+  if (mode === SESSION_PERMISSION_MODES.AUTO) return review("browser");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("browser");
   return { action: "allow" };
 }
@@ -137,7 +149,14 @@ function classifyBrowserAction(mode, action) {
 function classifyTerminalAction(mode, action) {
   if (TERMINAL_READ_ACTIONS.has(action)) return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("terminal");
+  if (mode === SESSION_PERMISSION_MODES.AUTO) return review("terminal");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("terminal");
+  return { action: "allow" };
+}
+
+function classifySessionFoldersAction(mode, action) {
+  if (action === "list") return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("session_folders");
   return { action: "allow" };
 }
 
@@ -149,11 +168,13 @@ export function classifySessionPermission({ mode, toolName, params, context } = 
   if (context?.isSubagent && SUBAGENT_BLOCKED_TOOLS.has(name)) {
     return blocked(name, { code: "ACTION_BLOCKED_IN_SUBAGENT", message: `${name} is not available inside a subagent.` });
   }
-  // 硬不变量：subagent 没有「先问(ask)」模式。后台任务无人交互确认，若走 prompt 会挂在
-  // 永不到来的确认上（直到超时）。ASK 在 subagent 上下文一律坍缩为 operate，与
-  // subagent-tool-policy 的继承映射一致。收口已保证 subagent 不会拿到 ask，这里是兜底硬约束：
-  // 即便上游绕过收口直接给了 ask，也绝不让 subagent 挂在确认上。
-  if (context?.isSubagent && normalized === SESSION_PERMISSION_MODES.ASK) {
+  // 硬不变量：subagent 没有需要人类确认的模式。后台任务无人交互确认，若走 prompt/review
+  // 会挂在永不到来的确认上（直到超时）。ASK/AUTO 在 subagent 上下文一律坍缩为 operate，
+  // 与 subagent-tool-policy 的继承映射一致。即便上游绕过收口直接给了 ask/auto，也绝不挂起。
+  if (context?.isSubagent && (
+    normalized === SESSION_PERMISSION_MODES.ASK
+    || normalized === SESSION_PERMISSION_MODES.AUTO
+  )) {
     normalized = SESSION_PERMISSION_MODES.OPERATE;
   }
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
@@ -162,11 +183,14 @@ export function classifySessionPermission({ mode, toolName, params, context } = 
   // 静默草稿工具：在 ASK 提示兜底之前判定。OPERATE/ASK 一律放行（草稿非约束、面板还有「确认生成」，
   // 不该重复弹工具确认）；READ_ONLY 仍走下面的只读拦截。subagent 已在函数开头被 SUBAGENT_BLOCKED 拦死，
   // 走不到这里——故这里的放行只对主 agent 生效，二者组合时拦截优先。
+  // 必须先于下面的 AUTO→review 兜底，否则 AUTO 模式会把草稿工具误送给异步审阅而非直接放行。
   if (SILENT_DRAFT_TOOLS.has(name) && normalized !== SESSION_PERMISSION_MODES.READ_ONLY) {
     return { action: "allow" };
   }
+  if (name === "session_folders") return classifySessionFoldersAction(normalized, params?.action);
   if (normalized === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
   if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blocked(name);
+  if (normalized === SESSION_PERMISSION_MODES.AUTO) return review(name);
   if (SIDE_EFFECT_TOOLS.has(name)) return prompt(name);
   return prompt(name);
 }

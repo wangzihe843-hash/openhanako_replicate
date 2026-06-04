@@ -1,14 +1,33 @@
 .floatingActions {
     position: absolute;
-    top: 6px;
-    right: 6px;
+    top: -20px;
+    right: -20px;
+    z-index: 5;
+    padding: 28px;
+}
+
+.floatingActionsSurface {
+    position: relative;
     display: flex;
     gap: 3px;
-    z-index: 5;
     background: var(--bg-card, var(--bg));
     border-radius: var(--radius-sm);
     padding: 2px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-2px);
+    transition:
+        opacity var(--duration-fast) var(--ease-out),
+        transform var(--duration-fast) var(--ease-out);
+}
+
+.floatingActions:hover .floatingActionsSurface,
+.floatingActions:focus-within .floatingActionsSurface,
+.floatingActionsPinned .floatingActionsSurface {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
 }
 
 .actionBtn {

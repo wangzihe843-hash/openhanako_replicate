@@ -25,6 +25,7 @@ interface BuildFileMentionItemsParams {
   deskCurrentPath: string;
   searchResults: readonly DeskSearchResult[];
   limit?: number;
+  includeWorkspace?: boolean;
 }
 
 function joinWorkspacePath(base: string, subdir: string, name: string): string {
@@ -58,7 +59,8 @@ export function buildFileMentionItems({
   deskFiles,
   deskBasePath,
   searchResults,
-  limit = 20,
+  limit = 5,
+  includeWorkspace = false,
 }: BuildFileMentionItemsParams): FileMentionItem[] {
   const items: FileMentionItem[] = [];
   const seen = new Set<string>();
@@ -92,30 +94,32 @@ export function buildFileMentionItems({
     });
   }
 
-  const workspaceItems = query.trim()
-    ? searchResults.map((file) => ({
-      name: file.name,
-      path: joinWorkspacePath(deskBasePath, '', file.relativePath),
-      isDirectory: file.isDir,
-      detail: file.parentSubdir || '/',
-    }))
-    : deskFiles.map((file) => ({
-      name: file.name,
-      path: joinWorkspacePath(deskBasePath, '', file.name),
-      isDirectory: file.isDir,
-      detail: '/',
-    }));
+  if (includeWorkspace) {
+    const workspaceItems = query.trim()
+      ? searchResults.map((file) => ({
+        name: file.name,
+        path: joinWorkspacePath(deskBasePath, '', file.relativePath),
+        isDirectory: file.isDir,
+        detail: file.parentSubdir || '/',
+      }))
+      : deskFiles.map((file) => ({
+        name: file.name,
+        path: joinWorkspacePath(deskBasePath, '', file.name),
+        isDirectory: file.isDir,
+        detail: '/',
+      }));
 
-  for (const file of workspaceItems) {
-    if (!file.path || !matchesQuery(query, file.name, file.path)) continue;
-    pushUnique(items, seen, {
-      id: `workspace:${file.path}`,
-      source: 'workspace',
-      path: file.path,
-      name: file.name,
-      isDirectory: file.isDirectory,
-      detail: file.detail,
-    });
+    for (const file of workspaceItems) {
+      if (!file.path || !matchesQuery(query, file.name, file.path)) continue;
+      pushUnique(items, seen, {
+        id: `workspace:${file.path}`,
+        source: 'workspace',
+        path: file.path,
+        name: file.name,
+        isDirectory: file.isDirectory,
+        detail: file.detail,
+      });
+    }
   }
 
   return items.slice(0, limit);

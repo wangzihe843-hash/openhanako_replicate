@@ -23,6 +23,7 @@ describe('screenshot utils', () => {
 
   beforeEach(() => {
     notices.length = 0;
+    const storage = new Map<string, string>();
     storeMock.state = {
       homeFolder: '/tmp/hana-home',
       chatSessions: {},
@@ -35,10 +36,10 @@ describe('screenshot utils', () => {
       endScreenshotTask: vi.fn(),
     };
     vi.stubGlobal('localStorage', {
-      getItem: vi.fn(() => null),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn(),
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+      clear: vi.fn(() => storage.clear()),
     });
     window.i18n = { locale: 'zh' } as typeof window.i18n;
     window.addEventListener('hana-inline-notice', noticeHandler);
@@ -108,6 +109,33 @@ describe('screenshot utils', () => {
       filePath: '/vault/app.ts',
       articleType: 'code',
       language: 'ts',
+    }));
+  });
+
+  it('screenshot font follows the reading font when no screenshot override is selected', async () => {
+    localStorage.setItem('hana-font-serif', '0');
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+    };
+
+    await expect(takeArticleScreenshot('# hello')).resolves.toBeUndefined();
+
+    expect((window as any).hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      fontFamily: expect.stringContaining('Inter'),
+    }));
+  });
+
+  it('screenshot font can override the reading font explicitly', async () => {
+    localStorage.setItem('hana-font-serif', '0');
+    localStorage.setItem('hana-screenshot-font', 'serif');
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+    };
+
+    await expect(takeArticleScreenshot('# hello')).resolves.toBeUndefined();
+
+    expect((window as any).hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      fontFamily: expect.stringContaining('Noto Serif SC'),
     }));
   });
 
@@ -207,5 +235,81 @@ describe('screenshot utils', () => {
     expect(decodeURIComponent(payload.messages[0].avatarDataUrl)).toContain('唐');
     expect(payload.messages[1].avatarDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('assets/Hanako.png'));
+  });
+
+  it('用户消息截图 payload 保留非图片附件的语义块', async () => {
+    const sessionPath = '/session/attachments.jsonl';
+    storeMock.state = {
+      ...storeMock.state,
+      selectedIdsBySession: {
+        [sessionPath]: ['u1'],
+      },
+      chatSessions: {
+        [sessionPath]: {
+          hasMore: false,
+          loadingMore: false,
+          items: [
+            {
+              type: 'message',
+              data: {
+                id: 'u1',
+                role: 'user',
+                text: '附件在这里',
+                attachments: [
+                  {
+                    path: '/tmp/voice.wav',
+                    name: 'voice.wav',
+                    isDir: false,
+                    mimeType: 'audio/wav',
+                    presentation: 'voice-input',
+                    listed: false,
+                    waveform: {
+                      version: 1,
+                      peaks: [0.2, 0.7, 0.4],
+                      durationMs: 1200,
+                      source: 'computed',
+                    },
+                    transcription: {
+                      status: 'ready',
+                      text: '今晚我们先把语音输入跑通。',
+                    },
+                  },
+                  { path: '/tmp/readme.md', name: 'readme.md', isDir: false, mimeType: 'text/markdown' },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+    (window as any).hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+      getServerPort: vi.fn().mockResolvedValue(null),
+      getServerToken: vi.fn().mockResolvedValue(null),
+    };
+
+    await expect(takeScreenshot('u1', sessionPath)).resolves.toBeUndefined();
+
+    const payload = (window as any).hana.screenshotRender.mock.calls[0][0];
+    expect(payload.messages[0].blocks).toEqual([
+      { type: 'markdown', content: '附件在这里' },
+      {
+        type: 'attachment',
+        kind: 'audio',
+        name: 'voice.wav',
+        presentation: 'voice-input',
+        waveform: {
+          version: 1,
+          peaks: [0.2, 0.7, 0.4],
+          durationMs: 1200,
+          source: 'computed',
+        },
+        transcription: {
+          status: 'ready',
+          text: '今晚我们先把语音输入跑通。',
+        },
+      },
+      { type: 'attachment', kind: 'markdown', name: 'readme.md' },
+    ]);
   });
 });

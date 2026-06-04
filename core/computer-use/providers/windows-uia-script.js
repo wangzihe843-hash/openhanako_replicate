@@ -21,7 +21,26 @@ try {
 function Write-Result($obj) {
   $json = $obj | ConvertTo-Json -Depth 40 -Compress
   if (-not [string]::IsNullOrWhiteSpace($script:WindowsUiaResultPath)) {
-    [System.IO.File]::WriteAllText($script:WindowsUiaResultPath, $json, $script:WindowsUiaUtf8NoBom)
+    $resultDirectory = [System.IO.Path]::GetDirectoryName($script:WindowsUiaResultPath)
+    if ([string]::IsNullOrWhiteSpace($resultDirectory)) {
+      $resultDirectory = [System.IO.Directory]::GetCurrentDirectory()
+    }
+    $resultFileName = [System.IO.Path]::GetFileName($script:WindowsUiaResultPath)
+    $tempResultPath = [System.IO.Path]::Combine(
+      $resultDirectory,
+      "$resultFileName.tmp.$PID.$([System.Guid]::NewGuid().ToString('N'))"
+    )
+    try {
+      [System.IO.File]::WriteAllText($tempResultPath, $json, $script:WindowsUiaUtf8NoBom)
+      [System.IO.File]::Move($tempResultPath, $script:WindowsUiaResultPath)
+    } catch {
+      try {
+        if (-not [string]::IsNullOrWhiteSpace($tempResultPath) -and [System.IO.File]::Exists($tempResultPath)) {
+          [System.IO.File]::Delete($tempResultPath)
+        }
+      } catch {}
+      throw
+    }
     return
   }
   [Console]::Out.Write($json)

@@ -1,4 +1,5 @@
 const DEFAULT_MARKDOWN_TYPOGRAPHY = Object.freeze({
+  fontPreset: "follow",
   bodyFontSize: 15,
   heading1FontSize: 24,
   heading2FontSize: 20,
@@ -26,6 +27,8 @@ const LIMITS = Object.freeze({
   contentPadding: [0, 64],
 });
 
+const FONT_PRESETS = new Set(["follow", "serif", "sans"]);
+
 function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -44,6 +47,10 @@ function clampNumber(value, fallback, [min, max], decimals = 0) {
   return Math.round(clamped);
 }
 
+function normalizeFontPreset(value, fallback) {
+  return typeof value === "string" && FONT_PRESETS.has(value) ? value : fallback;
+}
+
 export function normalizeEditorTypography(value) {
   const source = isRecord(value) ? value : {};
   const markdown = isRecord(source.markdown) ? source.markdown : {};
@@ -51,6 +58,7 @@ export function normalizeEditorTypography(value) {
 
   return {
     markdown: {
+      fontPreset: normalizeFontPreset(markdown.fontPreset, defaults.fontPreset),
       bodyFontSize: clampNumber(markdown.bodyFontSize, defaults.bodyFontSize, LIMITS.bodyFontSize),
       heading1FontSize: clampNumber(markdown.heading1FontSize, defaults.heading1FontSize, LIMITS.heading1FontSize),
       heading2FontSize: clampNumber(markdown.heading2FontSize, defaults.heading2FontSize, LIMITS.heading2FontSize),

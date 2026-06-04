@@ -34,7 +34,7 @@ html {
 }
 
 body {
-  font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", "Lora", "Georgia", serif;
+  font-family: var(--screenshot-font-family, "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", "Lora", "Georgia", serif);
   font-size: 1rem;
   line-height: 1.75;
   color: #a8b5b7;

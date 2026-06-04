@@ -9,7 +9,7 @@ export const EXT_TO_KIND: Record<string, FileKind> = {
   // video
   mp4: 'video', webm: 'video', mov: 'video', m4v: 'video', mkv: 'video',
   // audio
-  mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio',
+  mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio', weba: 'audio',
   // docs
   pdf: 'pdf',
   docx: 'doc', xlsx: 'doc', xls: 'doc',
@@ -28,6 +28,14 @@ export function inferKindByExt(ext: string | undefined): FileKind {
   return EXT_TO_KIND[ext.toLowerCase()] ?? 'other';
 }
 
+export function kindOfFileName(name: string, mimeType?: string): FileKind {
+  const lowerMime = String(mimeType || '').toLowerCase();
+  if (lowerMime.startsWith('image/')) return lowerMime === 'image/svg+xml' ? 'svg' : 'image';
+  if (lowerMime.startsWith('video/')) return 'video';
+  if (lowerMime.startsWith('audio/')) return 'audio';
+  return inferKindByExt(extOfName(name));
+}
+
 const MEDIA_KINDS: ReadonlySet<FileKind> = new Set(['image', 'svg', 'video']);
 
 export function isMediaKind(kind: FileKind): boolean {
@@ -42,6 +50,10 @@ export function isImageOrSvgExt(ext: string | undefined): boolean {
   if (!ext) return false;
   const kind = inferKindByExt(ext);
   return kind === 'image' || kind === 'svg';
+}
+
+export function isAudioFileName(name: string, mimeType?: string): boolean {
+  return kindOfFileName(name, mimeType) === 'audio';
 }
 
 /**

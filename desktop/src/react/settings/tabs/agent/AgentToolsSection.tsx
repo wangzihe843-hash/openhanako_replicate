@@ -72,10 +72,10 @@ export function AgentToolsSection({ availableTools, disabled }: Props) {
   }
 
   return (
-    <SettingsSection title={t("settings.agent.tools.title")}>
-      <SettingsSection.Note>
-        {t("settings.agent.tools.description")}
-      </SettingsSection.Note>
+    <SettingsSection
+      title={t("settings.agent.tools.title")}
+      description={t("settings.agent.tools.description")}
+    >
       {renderable.map((name) => {
         const isOn = !normalizedDisabled.includes(name);
         return (

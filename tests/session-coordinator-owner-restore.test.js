@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   createAgentSessionMock,
+  repairInlineMediaMock,
   sessionManagerOpenMock,
 } = vi.hoisted(() => ({
   createAgentSessionMock: vi.fn(),
+  repairInlineMediaMock: vi.fn(),
   sessionManagerOpenMock: vi.fn(),
 }));
 
@@ -32,6 +34,14 @@ vi.mock("../lib/debug-log.js", () => ({
     error: vi.fn(),
   }),
 }));
+
+vi.mock("../core/session-inline-media-prune.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    repairSessionInlineMediaEntriesInFile: (...args) => repairInlineMediaMock(...args),
+  };
+});
 
 import { SessionCoordinator } from "../core/session-coordinator.js";
 
@@ -72,6 +82,13 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    repairInlineMediaMock.mockReturnValue({
+      repaired: false,
+      stripped: 0,
+      strippedImages: 0,
+      strippedVideos: 0,
+      strippedAudios: 0,
+    });
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-owner-restore-"));
   });
 
@@ -111,8 +128,15 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
       model: { id: "restored-model", provider: "test" },
     };
 
-    sessionManagerOpenMock.mockReturnValue({
-      getCwd: () => tempDir,
+    const callOrder = [];
+    repairInlineMediaMock.mockImplementation((p) => {
+      callOrder.push("inline-media-repair");
+      expect(p).toBe(sessionPath);
+      return { repaired: false, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
+    });
+    sessionManagerOpenMock.mockImplementation(() => {
+      callOrder.push("open");
+      return { getCwd: () => tempDir };
     });
     createAgentSessionMock.mockImplementation(async (opts) => {
       capturedCreateOpts = opts;
@@ -177,6 +201,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
     expect(coordinator.session).toBe(focusSession);
     expect(coordinator.sessionStarted).toBe(true);
     expect(coordinator._sessions.get(sessionPath)?.agentId).toBe("owner");
+    expect(callOrder).toEqual(["inline-media-repair", "open"]);
 
     subscribers[0]({
       type: "message_update",

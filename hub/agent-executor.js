@@ -48,6 +48,77 @@ function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
   return found;
 }
 
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function modelIdFromModel(model) {
+  return textOrNull(model?.id ?? model?.modelId);
+}
+
+function agentPhoneModelMeta(model) {
+  return {
+    provider: textOrNull(model?.provider),
+    id: modelIdFromModel(model),
+    name: textOrNull(model?.name),
+    api: textOrNull(model?.api),
+  };
+}
+
+function agentPhoneModelMetaForUsage(message, model) {
+  return {
+    provider: textOrNull(message?.provider) ?? textOrNull(model?.provider),
+    modelId: textOrNull(message?.model) ?? modelIdFromModel(model),
+    api: textOrNull(message?.api) ?? textOrNull(model?.api),
+  };
+}
+
+function recordAgentPhoneAssistantUsage({
+  ledger,
+  event,
+  sessionPath,
+  agentId,
+  conversationId,
+  conversationType,
+  model,
+}) {
+  if (!ledger || event?.type !== "message_end" || event.message?.role !== "assistant") return null;
+  const usageContext = {
+    source: {
+      subsystem: "session",
+      operation: "phone_reply",
+      surface: conversationType === "channel" ? "channel" : "dm",
+      trigger: "delivery",
+    },
+    attribution: {
+      kind: "phone",
+      agentId: agentId || null,
+      conversationId,
+      conversationType,
+      sessionPath,
+    },
+  };
+  const modelMeta = agentPhoneModelMetaForUsage(event.message, model);
+  if (event.message?.usage) {
+    return ledger.record?.({
+      model: modelMeta,
+      usage: event.message.usage,
+      usageContext,
+      costRates: model?.cost,
+    });
+  }
+  const errorMessage = event.message?.errorMessage || event.message?.error?.message || null;
+  if (event.message?.stopReason === "error" || errorMessage) {
+    const request = ledger.start?.({
+      model: modelMeta,
+      usageContext,
+      costRates: model?.cost,
+    });
+    return ledger.recordError?.(request?.requestId, new Error(errorMessage || "provider request failed"));
+  }
+  return null;
+}
+
 function buildAgentPhonePromptSnapshot(agent, ctx, systemPrompt) {
   return buildSessionPromptSnapshot({
     systemPrompt,
@@ -299,6 +370,13 @@ export async function runAgentPhoneSession(agentId, rounds, {
     customTools: sessionCustomTools,
   });
   const model = resolveAgentPhoneModel(engine, ctx, agent.config, modelOverride);
+  const effectiveModel = agentPhoneModelMeta(model);
+  const requestedModelOverride = modelOverride
+    ? agentPhoneModelMeta(requireModelRef(modelOverride))
+    : null;
+  const modelOverrideApplied = !!(modelOverride
+    && effectiveModel.provider === requestedModelOverride?.provider
+    && effectiveModel.id === requestedModelOverride?.id);
   const { session } = await createAgentSession({
     cwd,
     sessionManager,
@@ -314,6 +392,7 @@ export async function runAgentPhoneSession(agentId, rounds, {
   session.setActiveToolsByName?.(activeToolNames);
 
   const sessionPath = session.sessionManager?.getSessionFile?.();
+  const usageLedger = engine.usageLedger || engine.getUsageLedger?.() || null;
   const unregisterPhoneAbort = engine.registerAgentPhoneAbortHandler?.(
     () => {
       try { session.abort?.(); } catch {}
@@ -333,6 +412,9 @@ export async function runAgentPhoneSession(agentId, rounds, {
           ? (runtime.phoneSessionStartedAt || refreshNow.toISOString())
           : refreshNow.toISOString(),
         promptSnapshot,
+        effectiveModel,
+        modelOverrideApplied,
+        ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
       },
       timestamp: refreshNow.toISOString(),
     });
@@ -341,7 +423,12 @@ export async function runAgentPhoneSession(agentId, rounds, {
       agentId,
       conversationId,
       conversationType,
-      patch: { toolMode },
+      patch: {
+        toolMode,
+        effectiveModel,
+        modelOverrideApplied,
+        ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
+      },
       timestamp: refreshNow.toISOString(),
     });
     try { await onSessionReady?.(sessionPath); } catch {}
@@ -365,6 +452,15 @@ export async function runAgentPhoneSession(agentId, rounds, {
     Promise.resolve(onActivity?.(state, summary, details)).catch(() => {});
   };
   const unsub = session.subscribe((event) => {
+    recordAgentPhoneAssistantUsage({
+      ledger: usageLedger,
+      event,
+      sessionPath,
+      agentId,
+      conversationId,
+      conversationType,
+      model,
+    });
     if (emitEvents && sessionPath && isCapturing) {
       engine.emitEvent?.({ ...event, isolated: true }, sessionPath);
     }

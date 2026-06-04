@@ -25,12 +25,35 @@ export function normalizeWorkspaceScope({ primaryCwd, workspaceFolders } = {}) {
   };
 }
 
-export function workspaceRootsForSandbox(primaryCwd, workspaceFolders) {
-  const scope = normalizeWorkspaceScope({ primaryCwd, workspaceFolders });
-  return [
-    scope.primaryCwd,
-    ...scope.workspaceFolders,
-  ].filter(Boolean);
+export function workspaceRootsForSandbox(primaryCwd, workspaceFolders, authorizedFolders = []) {
+  const scope = normalizeSessionFolderScope({ primaryCwd, workspaceFolders, authorizedFolders });
+  return scope.sandboxFolders;
+}
+
+export function normalizeSessionFolderScope({ primaryCwd, workspaceFolders, authorizedFolders } = {}) {
+  const workspaceScope = normalizeWorkspaceScope({ primaryCwd, workspaceFolders });
+  const seen = new Set([
+    workspaceScope.primaryCwd,
+    ...workspaceScope.workspaceFolders,
+  ].filter(Boolean));
+  const authorized = [];
+
+  for (const raw of Array.isArray(authorizedFolders) ? authorizedFolders : []) {
+    const folder = cleanPath(raw);
+    if (!folder || seen.has(folder)) continue;
+    seen.add(folder);
+    authorized.push(folder);
+  }
+
+  return {
+    ...workspaceScope,
+    authorizedFolders: authorized,
+    sandboxFolders: [
+      workspaceScope.primaryCwd,
+      ...workspaceScope.workspaceFolders,
+      ...authorized,
+    ].filter(Boolean),
+  };
 }
 
 export function formatWorkspaceScopePrompt({ primaryCwd, workspaceFolders, locale } = {}) {

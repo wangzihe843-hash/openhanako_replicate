@@ -4,11 +4,17 @@ import { EditorState, RangeSetBuilder, StateField, Transaction } from '@codemirr
 import {
   findMarkdownCoverRenderRange,
   parseMarkdownCover,
+  removeMarkdownCover,
   resolveMarkdownCoverImagePath,
   updateMarkdownCoverLayout,
   type MarkdownCover,
   type MarkdownCoverLayoutPatch,
 } from '../utils/markdown-cover';
+import {
+  isExternalCoverImagePath,
+  regenerateMarkdownCoverWithPrompt,
+  saveMarkdownCoverImage,
+} from '../utils/markdown-cover-actions';
 import { markdownImageContextFacet } from './md-decorations';
 
 function clamp(value: number | undefined, min: number, max: number, fallback: number): number {
@@ -16,10 +22,13 @@ function clamp(value: number | undefined, min: number, max: number, fallback: nu
   return Math.min(max, Math.max(min, Number(value)));
 }
 
-function resolveCoverImageUrl(cover: MarkdownCover, markdownFilePath?: string, getFileUrl?: (path: string) => string | undefined): string | null {
-  const imagePath = resolveMarkdownCoverImagePath(markdownFilePath, cover.image);
+interface MarkdownCoverElement extends HTMLElement {
+  __hanaMarkdownCoverCleanup?: () => void;
+}
+
+function resolveCoverImageUrl(imagePath: string | null, getFileUrl?: (path: string) => string | undefined): string | null {
   if (!imagePath) return null;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(imagePath)) return imagePath;
+  if (isExternalCoverImagePath(imagePath)) return imagePath;
   return getFileUrl?.(imagePath) || imagePath;
 }
 
@@ -30,6 +39,16 @@ function updateCoverLayout(view: EditorView, patch: MarkdownCoverLayoutPatch): v
   view.dispatch({
     changes: { from: 0, to: source.length, insert: nextSource },
     annotations: Transaction.userEvent.of('input'),
+  });
+}
+
+function deleteCover(view: EditorView): void {
+  const source = view.state.doc.toString();
+  const nextSource = removeMarkdownCover(source);
+  if (nextSource === source) return;
+  view.dispatch({
+    changes: { from: 0, to: source.length, insert: nextSource },
+    annotations: Transaction.userEvent.of('delete'),
   });
 }
 
@@ -64,7 +83,7 @@ class MarkdownCoverWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const wrapper = document.createElement('div');
+    const wrapper = document.createElement('div') as MarkdownCoverElement;
     wrapper.className = 'cm-markdown-cover';
     if (this.isTopCover) wrapper.classList.add('cm-markdown-cover-top');
     wrapper.contentEditable = 'false';
@@ -81,7 +100,8 @@ class MarkdownCoverWidget extends WidgetType {
     }
     wrapper.style.height = `${displayHeight}px`;
 
-    const src = resolveCoverImageUrl(this.cover, this.markdownFilePath, this.getFileUrl);
+    const imagePath = resolveMarkdownCoverImagePath(this.markdownFilePath, this.cover.image);
+    const src = resolveCoverImageUrl(imagePath, this.getFileUrl);
     if (!src) {
       wrapper.classList.add('cm-markdown-cover-missing');
       wrapper.textContent = 'Cover 图片不可用';
@@ -99,12 +119,52 @@ class MarkdownCoverWidget extends WidgetType {
     resize.className = 'cm-markdown-cover-resize';
     wrapper.appendChild(resize);
 
+    let menu: HTMLElement | null = null;
     let drag: null | {
       kind: 'position' | 'height';
       startY: number;
       startHeight: number;
       startPositionY: number;
     } = null;
+
+    const closeMenu = () => {
+      menu?.remove();
+      menu = null;
+      window.removeEventListener('pointerdown', closeMenu);
+    };
+
+    const makeMenuButton = (label: string, action: () => void) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        closeMenu();
+        action();
+      });
+      return button;
+    };
+
+    const openMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu();
+      menu = document.createElement('div');
+      menu.className = 'markdown-cover-menu';
+      menu.style.left = `${event.clientX}px`;
+      menu.style.top = `${event.clientY}px`;
+      menu.addEventListener('pointerdown', (pointerEvent) => pointerEvent.stopPropagation());
+      menu.appendChild(makeMenuButton('保存图片', () => {
+        void saveMarkdownCoverImage(imagePath);
+      }));
+      menu.appendChild(makeMenuButton('自定义提示词生成图片', () => {
+        void regenerateMarkdownCoverWithPrompt(this.markdownFilePath);
+      }));
+      const deleteButton = makeMenuButton('删除封面', () => deleteCover(view));
+      deleteButton.className = 'markdown-cover-menu-danger';
+      menu.appendChild(deleteButton);
+      wrapper.appendChild(menu);
+      window.addEventListener('pointerdown', closeMenu);
+    };
 
     const finishDrag = () => {
       if (!drag) return;
@@ -153,8 +213,19 @@ class MarkdownCoverWidget extends WidgetType {
 
     img.addEventListener('pointerdown', (event) => beginDrag('position', event));
     resize.addEventListener('pointerdown', (event) => beginDrag('height', event));
+    wrapper.addEventListener('contextmenu', openMenu);
+    wrapper.__hanaMarkdownCoverCleanup = () => {
+      closeMenu();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', finishDrag);
+    };
 
     return wrapper;
+  }
+
+  destroy(dom: HTMLElement): void {
+    (dom as MarkdownCoverElement).__hanaMarkdownCoverCleanup?.();
   }
 }
 

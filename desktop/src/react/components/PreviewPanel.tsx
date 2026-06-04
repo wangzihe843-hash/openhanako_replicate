@@ -18,7 +18,7 @@ import { PreviewEditor, type PreviewEditorStats } from './PreviewEditor';
 import { PreviewRenderer } from './preview/PreviewRenderer';
 import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
-import { captureSelection, clearSelection } from '../stores/selection-actions';
+import { clearSelection, scheduleCaptureSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
 import { saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
 import { watchFileChanges } from '../services/file-change-events';
@@ -140,7 +140,7 @@ export function PreviewPanel() {
   // DOM 模式选区捕获（非编辑模式下 mouseup 时检测选中文本）
   const handleMouseUp = useCallback(() => {
     if (!previewItem || editable) return;
-    captureSelection(previewItem);
+    scheduleCaptureSelection(previewItem);
   }, [previewItem, editable]);
 
   // 切换 tab 时清除选区
@@ -186,8 +186,8 @@ export function PreviewPanel() {
                 saveDocument={saveDocument}
                 mode={getEditorMode(previewItem)}
                 language={previewItem.language}
-                onSelectionChange={(view) => {
-                  if (previewItem) captureSelection(previewItem, view);
+                onSelectionCommit={(view) => {
+                  if (previewItem) scheduleCaptureSelection(previewItem, view);
                 }}
                 onStatsChange={handleEditorStatsChange}
                 onContentChange={handleEditorContentChange}

@@ -215,6 +215,21 @@ export function updateMarkdownCoverLayout(markdown: string, patch: MarkdownCover
   return `---${parts.newline}${nextLines.join(parts.newline)}${parts.newline}---${parts.newline}${parts.body}`;
 }
 
+export function removeMarkdownCover(markdown: string): string {
+  const parts = splitFrontMatter(markdown);
+  if (!parts.hasFrontMatter) return markdown;
+
+  const lines = frontMatterLines(parts.frontMatter);
+  const range = coverBlockRange(lines);
+  if (!range) return markdown;
+
+  const nextLines = [...lines];
+  nextLines.splice(range.start, range.end - range.start);
+  if (!nextLines.some(line => line.trim())) return parts.body;
+
+  return `---${parts.newline}${nextLines.join(parts.newline)}${parts.newline}---${parts.newline}${parts.body}`;
+}
+
 export function isMarkdownCoverOnlyUpdate(previousMarkdown: string, nextMarkdown: string): boolean {
   const nextCover = parseMarkdownCover(nextMarkdown);
   if (!nextCover) return false;

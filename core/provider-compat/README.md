@@ -6,7 +6,7 @@
 ## 核心纪律
 
 1. **唯一对外入口**：所有出站 payload 兼容必须经过 [`core/provider-compat.js`](../provider-compat.js) 的 `normalizeProviderPayload(payload, model, options)`。chat 路径（`engine.js` 注册的 `before_provider_request` 钩子）和 utility 路径（`llm-client.js` 的 `callText`）共享这一个入口。需要在 provider serializer 之前处理的 replay/history 规则走同文件的 `normalizeProviderContextMessages(messages, model, options)`。
-2. **通用补丁留主入口**：与 provider 无关的处理（空 tools 数组剥离、按 `compat.thinkingFormat` 剥离不兼容的 `thinking` 字段、移除 SDK 注入的隐式 output cap、孤儿 toolResult 配对兜底）写在 `provider-compat.js` 主入口或同目录通用 helper。孤儿 toolResult 兜底逻辑在 [`tool-pairing.js`](tool-pairing.js)（provider-agnostic helper，删除 OpenAI-compatible 序列化 payload 里父 `tool_calls` 已被 SDK 丢弃的 `role:"tool"`，issue #1285），由主入口 `stripOrphanToolMessages` 调用；它不是 provider 子模块（无 `matches`/`apply`），不进 first-match-wins 分发。
+2. **通用补丁留主入口**：与 provider 无关的处理（空 tools 数组剥离、按 `compat.thinkingFormat` 剥离不兼容的 `thinking` 字段、移除 SDK 注入的隐式 output cap、孤儿 toolResult 配对兜底、按 `compat.audioTransport` 执行音频 transport pre-pass）写在 `provider-compat.js` 主入口或同目录通用 helper。孤儿 toolResult 兜底逻辑在 [`tool-pairing.js`](tool-pairing.js)（provider-agnostic helper，删除 OpenAI-compatible 序列化 payload 里父 `tool_calls` 已被 SDK 丢弃的 `role:"tool"`，issue #1285），由主入口 `stripOrphanToolMessages` 调用；它不是 provider 子模块（无 `matches`/`apply`），不进 first-match-wins 分发。
 3. **Provider-specific 补丁拆子文件**：每个 provider 一个 `core/provider-compat/<name>.js`，互不串扰。
 4. **接口契约**：每个子文件 export `matches(model) → boolean`（必须容忍 `model = null/undefined`，不抛错）和 `apply(payload, model, options) → payload`（不可 mutate 输入 payload）。如果该 provider 有 serializer 前的 replay/history 约束，可以额外 export `normalizeContextMessages(messages, model, options) → messages`。
 5. **dispatch 单调性**：dispatcher 按数组顺序遍历，第一个 `matches` 返回 true 的子模块负责处理（first-match-wins）。一个 model 只匹配一个子模块。新 provider 默认加在数组末尾；只有当模块的 `matches` 是另一模块的子集（更具体的规则）时才前置，避免被通用规则吞掉。
@@ -122,6 +122,28 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 5. 真正的用户级或系统级单次输出上限，调用方必须通过 `options.outputBudgetSource = "user" | "system"` 或等价显式 source 传入，通用层不得静默移除显式意图。
 6. chat hook 拿不到 Pi SDK `maxTokens` 的来源，保持 source 为 `unspecified`；兼容层只在字段值等于 Pi SDK 隐式默认时移除，避免误删未来真实的非默认上限。
 
+## 音频输入 transport
+
+Hana 内部用 `{ type: "audio", data, mimeType }` 表示当前轮音频。UI、SessionFile、历史恢复、`@附件`、压缩与缓存逻辑只处理这个内部语义，不按 provider 写分支。
+
+出站请求分两步：
+
+1. `core/provider-media-serializer.js` 在 utility 路径把当前轮 audio block 直接序列化成 Chat Completions 官方 `{ type: "input_audio", input_audio: { data, format } }`，其中 `format` 只允许 `wav` / `mp3`。
+2. chat 路径仍经过 Pi SDK，它会把非 text block 统一输出成 `image_url` data URL。`normalizeProviderPayload()` 在 first-match-wins provider 子模块之前，根据 `shared/model-capabilities.js` 的 `resolveModelAudioInputTransport(model)` 执行 audio transport pre-pass。当前 `mimo-input-audio` 与 `openai-input-audio` 都复用 [`input-audio.js`](input-audio.js)，把 Pi SDK 产出的 `data:audio/...` 或旧 canonical audio block 转成同一个 `input_audio` 结构；不支持的音频格式必须显式报错，不允许继续伪装成 `image_url`。
+
+接入未来 DeepSeek 音频时，优先在 known model / provider sync 投影里声明：
+
+```json
+{
+  "compat": {
+    "hanaAudioInput": true,
+    "audioTransport": "openai-input-audio"
+  }
+}
+```
+
+如果 DeepSeek 使用不同 wire format，再新增独立 transport 常量和 provider-agnostic helper；不要在 UI、SessionFile、`desktop-session-submit` 或 `session-coordinator` 里写 DeepSeek 分支。
+
 ## 已知子模块
 
 | 文件 | 处理 provider | 删除条件 |
@@ -130,6 +152,7 @@ Pi SDK 的 `streamSimple` 会在调用方未传 `maxTokens` 时，把 `min(model
 | [`mimo.js`](mimo.js) | MiMo OpenAI-compatible 思考模式协议（chat_template_kwargs + reasoning_content 回放），覆盖官网与 Xiaomi Token Plan `/v1` endpoint | MiMo 不再通过 chat_template_kwargs 控制 thinking；或 pi-ai 原生处理 MiMo replay |
 | [`qwen.js`](qwen.js) | Qwen-style 思考模型 `enable_thinking` quirk；DashScope 视频输入复用 `openai-video-url` 转换 | quirks 系统重构 / Qwen-style 协议改成 reasoning_effort；DashScope 和 Pi SDK 原生支持 video_url |
 | [`zhipu.js`](zhipu.js) | Zhipu / GLM OpenAI-compatible 思考模式协议（thinking.type、preserved thinking、reasoning_content 回放）与 OpenAI-only 字段清理 | pi-ai 原生处理 GLM thinking 控制、reasoning_content 回放和 Zhipu 不支持的 OpenAI-only 字段 |
+| [`input-audio.js`](input-audio.js) | 通用 OpenAI-compatible 音频 transport helper，由主入口按 `audioTransport` 调用，不参与 first-match-wins | Pi SDK / provider serializer 原生按模型 transport 输出正确音频块 |
 | [`openai-video-url.js`](openai-video-url.js) | OpenAI-compatible 视频输入 `image_url data:video` → `video_url`，当前用于 Moonshot Kimi 与 DashScope Qwen | Pi SDK 原生按 video MIME 输出 `video_url`；或相关 provider 接受 `image_url data:video` |
 
 子模块的对外 API 仅有 `matches` 和 `apply` 两个 export。其它 export（如 replay helper 的 `extractReasoningFromContent`、`ensureReasoningContentForToolCalls`）属于实现细节、仅供同文件和单元测试访问，**不构成对外契约**。升级 SDK 想删 helper 时不需顾虑外部依赖。

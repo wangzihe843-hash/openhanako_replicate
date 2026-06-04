@@ -199,6 +199,121 @@ describe("SessionFileRegistry", () => {
     expect(registry.list(sessionPath)).toEqual([first]);
   });
 
+  it("persists voice-input presentation and listing policy in the session sidecar", () => {
+    const filePath = makeTempFile("voice.wav", "RIFF");
+    const sessionPath = makeSessionPath("voice.jsonl");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+
+    const file = registry.registerFile({
+      sessionPath,
+      filePath,
+      label: "录音 1.wav",
+      origin: "voice_input",
+      storageKind: "managed_cache",
+      presentation: "voice-input",
+      listed: false,
+    });
+
+    expect(file).toMatchObject({
+      presentation: "voice-input",
+      listed: false,
+      origin: "voice_input",
+    });
+    expect(readSidecar(sessionPath).files[file.id]).toMatchObject({
+      presentation: "voice-input",
+      listed: false,
+    });
+
+    const reloaded = new SessionFileRegistry({ now: () => 9999 });
+    expect(reloaded.get(file.id, { sessionPath })).toMatchObject({
+      presentation: "voice-input",
+      listed: false,
+    });
+  });
+
+  it("persists voice-input transcription metadata by file id", () => {
+    const filePath = makeTempFile("voice.wav", "RIFF");
+    const sessionPath = makeSessionPath("voice-transcription.jsonl");
+    let now = 1000;
+    const registry = new SessionFileRegistry({ now: () => now });
+
+    const file = registry.registerFile({
+      sessionPath,
+      filePath,
+      label: "录音 1.wav",
+      origin: "voice_input",
+      storageKind: "managed_cache",
+      presentation: "voice-input",
+      listed: false,
+    });
+
+    now = 2000;
+    const updated = registry.updateTranscription(file.id, {
+      status: "ready",
+      text: "今晚我们先把语音输入跑通。",
+      providerId: "mimo",
+      modelId: "mimo-v2.5-asr",
+      protocolId: "mimo-chat-completions-asr",
+      language: "zh",
+    }, { sessionPath });
+
+    expect(updated).toMatchObject({
+      id: file.id,
+      transcription: {
+        status: "ready",
+        text: "今晚我们先把语音输入跑通。",
+        providerId: "mimo",
+        modelId: "mimo-v2.5-asr",
+        protocolId: "mimo-chat-completions-asr",
+        language: "zh",
+        createdAt: 2000,
+        updatedAt: 2000,
+      },
+    });
+    expect(readSidecar(sessionPath).files[file.id].transcription).toMatchObject({
+      status: "ready",
+      text: "今晚我们先把语音输入跑通。",
+      updatedAt: 2000,
+    });
+
+    const reloaded = new SessionFileRegistry({ now: () => 3000 });
+    expect(reloaded.get(file.id, { sessionPath })?.transcription).toMatchObject({
+      status: "ready",
+      text: "今晚我们先把语音输入跑通。",
+    });
+  });
+
+  it("persists audio waveform metadata in the session sidecar", () => {
+    const filePath = makeTempFile("voice.wav", "RIFF");
+    const sessionPath = makeSessionPath("voice-waveform.jsonl");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+
+    const file = registry.registerFile({
+      sessionPath,
+      filePath,
+      label: "voice.wav",
+      origin: "user_upload",
+      storageKind: "managed_cache",
+      waveform: {
+        version: 1,
+        peaks: [0, 0.25, 0.9, 1.4, -0.2],
+        durationMs: 3210,
+        source: "computed",
+      },
+    });
+
+    expect(file.waveform).toEqual({
+      version: 1,
+      peaks: [0, 0.25, 0.9, 1, 0],
+      durationMs: 3210,
+      source: "computed",
+    });
+    expect(readSidecar(sessionPath).files[file.id].waveform).toEqual(file.waveform);
+
+    const reloaded = new SessionFileRegistry({ now: () => 9999 });
+    expect(reloaded.get(file.id, { sessionPath })?.waveform).toEqual(file.waveform);
+  });
+
   it("keeps one session file per path and records file relationship operations", () => {
     const filePath = makeTempFile("draft.md", "first\n");
     const sessionPath = makeSessionPath("relationships.jsonl");

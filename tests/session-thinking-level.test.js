@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeRequestThinkingLevel,
+  normalizeSessionThinkingLevel,
   modelSupportsAnthropicMaxEffort,
   modelSupportsXhigh,
   normalizeThinkingLevelForModel,
 } from "../core/session-thinking-level.js";
 
 describe("session thinking level capabilities", () => {
+  it("maps legacy auto to medium at runtime boundaries", () => {
+    expect(normalizeSessionThinkingLevel("auto")).toBe("medium");
+    expect(normalizeRequestThinkingLevel("auto")).toBe("medium");
+    expect(normalizeSessionThinkingLevel(undefined)).toBe("medium");
+  });
+
   it("shows the unified Max level for GPT-5.5", () => {
     const model = { id: "gpt-5.5", provider: "openai", reasoning: true };
 

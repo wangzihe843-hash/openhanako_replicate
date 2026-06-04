@@ -9,7 +9,7 @@ import { memo, useRef, useEffect, useLayoutEffect, useState, useCallback, useMem
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { loadMoreMessages } from '../../stores/session-actions';
-import { captureChatSelection } from '../../stores/selection-actions';
+import { scheduleCaptureChatSelection } from '../../stores/selection-actions';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 
@@ -86,6 +86,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const sessionAgentId = useStore(s => s.sessions.find(se => se.path === path)?.agentId ?? null);
   const xingyeProfile = useXingyeRoleProfile(sessionAgentId);
   const chatBackgroundDataUrl = xingyeProfile?.chatBackgroundDataUrl;
+  const sessionReadOnly = useStore(s => s.sessions.find(se => se.path === path)?.agentDeleted === true);
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -114,7 +115,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const boxSelection = useBoxSelection({ messageElementsRef, orderedIds, sessionPath: path, active });
   const handleCaptureSelection = useCallback(() => {
     if (!active) return;
-    captureChatSelection(path);
+    scheduleCaptureChatSelection(path);
   }, [active, path]);
   const handleShellPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -265,6 +266,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             items={items}
             sessionPath={path}
             agentId={sessionAgentId}
+            readOnly={sessionReadOnly}
             registerMessageElement={registerMessageElement}
             enableProcessFold
           />

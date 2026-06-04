@@ -107,6 +107,48 @@ export const COVER_GALLERY_PRESETS = Object.freeze([
     fileName: "felt-blue-storybook.jpg",
     category: "default",
   },
+  {
+    id: "rainy-street-cafe",
+    title: "雨街咖啡",
+    fileName: "rainy-street-cafe.jpg",
+    category: "default",
+  },
+  {
+    id: "dragon-pillar-palace",
+    title: "龙柱古殿",
+    fileName: "dragon-pillar-palace.jpg",
+    category: "default",
+  },
+  {
+    id: "wasteland-rider",
+    title: "废土骑士",
+    fileName: "wasteland-rider.jpg",
+    category: "default",
+  },
+  {
+    id: "white-cat-blossom",
+    title: "花间白猫",
+    fileName: "white-cat-blossom.jpg",
+    category: "default",
+  },
+  {
+    id: "tree-lined-path",
+    title: "林荫步道",
+    fileName: "tree-lined-path.jpg",
+    category: "default",
+  },
+  {
+    id: "ochre-silhouette",
+    title: "赭墨剪影",
+    fileName: "ochre-silhouette.jpg",
+    category: "default",
+  },
+  {
+    id: "misty-blossoms",
+    title: "薄雾繁花",
+    fileName: "misty-blossoms.jpg",
+    category: "default",
+  },
 ].map(Object.freeze));
 
 const COVER_GALLERY_PRESET_BY_ID = new Map(COVER_GALLERY_PRESETS.map((preset) => [preset.id, preset]));

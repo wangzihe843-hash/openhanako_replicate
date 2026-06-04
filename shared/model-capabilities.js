@@ -67,6 +67,7 @@ function isOpenRouterEndpoint(model, context = {}) {
 
 const OFFICIAL_MIMO_PROVIDERS = new Set([
   "mimo",
+  "mimo-token-plan",
   "xiaomi",
   "xiaomi-token",
   "xiaomi-token-plan-cn",
@@ -280,6 +281,57 @@ export function modelSupportsVideoInput(model) {
   return Array.isArray(model.input) && model.input.includes("video");
 }
 
+export function modelSupportsAudioInput(model) {
+  if (!isPlainObject(model)) return false;
+  if (model.audio === true) return true;
+  if (model.compat?.hanaAudioInput === true) return true;
+  if (isOfficialMimoAudioInputModel(model)) return true;
+
+  // Legacy/runtime objects may carry audio in input once upstream SDKs allow it.
+  return Array.isArray(model.input) && model.input.includes("audio");
+}
+
+export const MODEL_AUDIO_TRANSPORTS = Object.freeze({
+  NONE: "none",
+  MIMO_INPUT_AUDIO: "mimo-input-audio",
+  OPENAI_INPUT_AUDIO: "openai-input-audio",
+  UNSUPPORTED: "unsupported",
+});
+
+export function resolveModelAudioInputTransport(model, context = {}) {
+  if (!modelSupportsAudioInput(model)) return MODEL_AUDIO_TRANSPORTS.NONE;
+
+  const explicit = lower(model?.compat?.audioTransport || model?.compat?.hanaAudioTransport);
+  if (explicit) {
+    if (Object.values(MODEL_AUDIO_TRANSPORTS).includes(explicit)) return explicit;
+    return MODEL_AUDIO_TRANSPORTS.UNSUPPORTED;
+  }
+
+  if (isOfficialMimoAudioInputModel(model, context)) {
+    return MODEL_AUDIO_TRANSPORTS.MIMO_INPUT_AUDIO;
+  }
+
+  const api = getApi(model, context);
+  const provider = getProvider(model, context);
+  if (api === "openai-completions" && provider === "openai") {
+    return MODEL_AUDIO_TRANSPORTS.OPENAI_INPUT_AUDIO;
+  }
+
+  return MODEL_AUDIO_TRANSPORTS.UNSUPPORTED;
+}
+
+export function modelSupportsDirectAudioInput(model, context = {}) {
+  const transport = resolveModelAudioInputTransport(model, context);
+  return transport === MODEL_AUDIO_TRANSPORTS.MIMO_INPUT_AUDIO
+    || transport === MODEL_AUDIO_TRANSPORTS.OPENAI_INPUT_AUDIO;
+}
+
+function isOfficialMimoAudioInputModel(model, context = {}) {
+  if (!isOfficialMimoEndpoint(model, context)) return false;
+  const id = getModelId(model, context);
+  return id === "mimo-v2.5" || id === "mimo-v2-omni";
+}
+
 export const MODEL_VIDEO_TRANSPORTS = Object.freeze({
   NONE: "none",
   GEMINI_INLINE_DATA: "gemini-inline-data",
@@ -340,6 +392,21 @@ export function withHanaVideoInputCompat(model, enabled) {
     compat: {
       ...compat,
       hanaVideoInput: true,
+    },
+  };
+}
+
+export function withHanaAudioInputCompat(model, enabled) {
+  if (!isPlainObject(model) || enabled !== true) return model;
+
+  const compat = isPlainObject(model.compat) ? model.compat : {};
+  if (compat.hanaAudioInput === true) return model;
+
+  return {
+    ...model,
+    compat: {
+      ...compat,
+      hanaAudioInput: true,
     },
   };
 }

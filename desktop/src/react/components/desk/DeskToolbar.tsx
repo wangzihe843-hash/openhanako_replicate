@@ -179,7 +179,7 @@ export function DeskFilterButton({ filters, onFiltersChange, onShowMenu }: {
   );
 }
 
-// ── 工作区搜索 ──
+// ── 工作台搜索 ──
 
 export function DeskSearchBox() {
   const hasDesk = useStore(s => !!s.deskBasePath);

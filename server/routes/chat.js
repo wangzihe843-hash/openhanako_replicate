@@ -25,9 +25,10 @@ import {
 import { AppError } from "../../shared/errors.js";
 import { errorBus } from "../../shared/error-bus.js";
 import { createRequestContext } from "../http/boundary.js";
-import { waitTimingDetails } from "../../lib/tools/wait-contract.js";
-import { MAX_CHAT_IMAGE_BASE64_CHARS, isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.js";
+import { buildDeferredResultInterludeBlock, resolveDeferredReceiverName } from "../deferred-result-interlude.js";
+import { isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.js";
 import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shared/video-mime.js";
+import { isAllowedChatAudioMime, isChatAudioBase64WithinLimit } from "../../shared/audio-mime.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -49,9 +50,6 @@ export function summarizeToolStartArgs(toolName, rawArgs, startedAt = Date.now()
   const args = {};
   for (const k of TOOL_ARG_SUMMARY_KEYS) {
     if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
-  }
-  if (toolName === "wait" && rawArgs.seconds !== undefined) {
-    Object.assign(args, waitTimingDetails(rawArgs.seconds, startedAt));
   }
   return Object.keys(args).length ? args : undefined;
 }
@@ -93,11 +91,14 @@ function sessionFileToContentBlock(file, extra = undefined) {
     ...(file.mime ? { mime: file.mime } : {}),
     ...(file.kind ? { kind: file.kind } : {}),
     ...(file.storageKind ? { storageKind: file.storageKind } : {}),
+    ...(file.presentation ? { presentation: file.presentation } : {}),
+    ...(file.listed !== undefined ? { listed: file.listed !== false } : {}),
     ...(file.status ? { status: file.status } : {}),
     ...(file.missingAt !== undefined ? { missingAt: file.missingAt } : {}),
     ...(file.mtimeMs !== undefined ? { mtimeMs: file.mtimeMs } : {}),
     ...(file.size !== undefined ? { size: file.size } : {}),
     ...(file.version ? { version: file.version } : {}),
+    ...(file.waveform ? { waveform: file.waveform } : {}),
     ...(file.resource ? { resource: file.resource } : {}),
   };
 }
@@ -212,6 +213,16 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     return null;
   }
 
+  function isDeletedAgentSessionPath(sessionPath) {
+    if (!sessionPath) return false;
+    const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
+    return !!agentId && engine.isAgentDeleted?.(agentId) === true;
+  }
+
+  function rejectDeletedAgentSession(ws, sessionPath) {
+    wsSend(ws, { type: "error", message: "agent_deleted", sessionPath });
+  }
+
   function getState(sessionPath) {
     if (!sessionPath) return null;
     if (!sessionState.has(sessionPath)) {
@@ -240,8 +251,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         hasThinking: false,
         hasError: false,
         isAborted: false,
+        turnActive: false,
         titleRequested: false,
         titlePreview: "",
+        pendingDeferredContentEvents: [],
         lastAccessed: Date.now(),
         ...createSessionStreamState(),
       });
@@ -358,8 +371,50 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     return entry;
   }
 
+  function buildDeferredResultContentEvents(sessionPath, event) {
+    const events = [];
+    const interlude = buildDeferredResultInterludeBlock(event, {
+      receiverName: resolveDeferredReceiverName(engine, sessionPath),
+    });
+    if (interlude) events.push({ type: "content_block", block: interlude });
+
+    if (event.status === "success") {
+      for (const block of enrichSessionFileBlocks(deferredResultFileBlocks(event.result, event.taskId), engine, sessionPath)) {
+        events.push({ type: "content_block", block });
+      }
+    } else {
+      const block = deferredResultFailureBlock(event);
+      if (block) events.push({ type: "content_block", block });
+    }
+
+    return events;
+  }
+
+  function emitDeferredContentEvents(sessionPath, ss, events) {
+    for (const deferredEvent of events) {
+      emitStreamEvent(sessionPath, ss, deferredEvent);
+    }
+  }
+
+  function queueOrEmitDeferredContentEvents(sessionPath, ss, events, { delayUntilTurnEnd = ss.isStreaming } = {}) {
+    if (!events.length) return;
+    if (delayUntilTurnEnd) {
+      ss.pendingDeferredContentEvents.push(...events);
+      return;
+    }
+    emitDeferredContentEvents(sessionPath, ss, events);
+  }
+
+  function flushPendingDeferredContentEvents(sessionPath, ss) {
+    const pending = ss.pendingDeferredContentEvents || [];
+    if (!pending.length) return;
+    ss.pendingDeferredContentEvents = [];
+    emitDeferredContentEvents(sessionPath, ss, pending);
+  }
+
   function finishStreamingState(ss) {
     if (!ss) return;
+    ss.turnActive = false;
     if (ss.isStreaming) finishSessionStream(ss);
     ss.thinkTagParser.reset();
     ss.moodParser.reset();
@@ -652,6 +707,13 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     } else if (event.type === "session_user_message") {
       if (!ss) return;
       emitStreamEvent(sessionPath, ss, { type: "session_user_message", message: event.message });
+    } else if (event.type === "voice_transcription_update") {
+      broadcast({
+        type: "voice_transcription_update",
+        sessionPath: event.sessionPath || sessionPath,
+        fileId: event.fileId || null,
+        transcription: event.transcription || null,
+      });
     } else if (event.type === "session_created") {
       broadcast({
         type: "session_created",
@@ -661,6 +723,8 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     } else if (event.type === "session_status") {
       if (ss) {
         if (event.isStreaming) {
+          flushPendingDeferredContentEvents(sessionPath, ss);
+          ss.turnActive = true;
           ss.thinkTagParser.reset();
           ss.moodParser.reset();
           ss.cardParser.reset();
@@ -677,9 +741,14 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
           beginSessionStream(ss);
         } else if (ss.isStreaming) {
           finishStreamingState(ss);
+        } else {
+          ss.turnActive = false;
         }
       }
       broadcast({ type: "status", isStreaming: !!event.isStreaming, sessionPath });
+      if (ss && !event.isStreaming) {
+        flushPendingDeferredContentEvents(sessionPath, ss);
+      }
     } else if (event.type === "bridge_rc_attached") {
       broadcast({
         type: "bridge_rc_attached",
@@ -694,8 +763,18 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         sessionKey: event.sessionKey,
         sessionPath,
       });
+    } else if (event.type === "permission_mode") {
+      broadcast({ type: "permission_mode", mode: event.mode, readOnly: event.readOnly === true, sessionPath });
+    } else if (event.type === "access_mode") {
+      broadcast({
+        type: "access_mode",
+        mode: event.mode,
+        permissionMode: event.permissionMode,
+        readOnly: event.readOnly === true,
+        sessionPath,
+      });
     } else if (event.type === "plan_mode") {
-      broadcast({ type: "plan_mode", enabled: event.enabled, sessionPath });
+      broadcast({ type: "plan_mode", enabled: event.enabled, mode: event.mode, sessionPath });
     } else if (event.type === "notification") {
       broadcast(toNotificationWsMessage(event));
     } else if (event.type === "channel_new_message") {
@@ -817,6 +896,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
       emitStreamEvent(sessionPath, ss, { type: "turn_end" });
       finishSessionStream(ss);
+      ss.turnActive = false;
       ss.hasOutput = false;
       ss.hasToolCall = false;
       ss.hasThinking = false;
@@ -827,11 +907,13 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
       ss.cardParser.reset();
       ss._cardHints = [];
       ss._cardEmitted = false;
+      flushPendingDeferredContentEvents(sessionPath, ss);
 
       debugLog()?.log("ws", `turn done (${sessionPath?.split("/").pop()})`);
       maybeGenerateFirstTurnTitle(sessionPath, ss);
     } else if (event.type === "deferred_result") {
       if (!ss) return;
+      const delayVisibleBlocks = ss.turnActive === true;
       emitStreamEvent(sessionPath, ss, {
         type: "deferred_result",
         taskId: event.taskId,
@@ -840,14 +922,12 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
         reason: event.reason,
         meta: event.meta,
       });
-      if (event.status === "success") {
-        for (const block of enrichSessionFileBlocks(deferredResultFileBlocks(event.result, event.taskId), engine, sessionPath)) {
-          emitStreamEvent(sessionPath, ss, { type: "content_block", block });
-        }
-      } else {
-        const block = deferredResultFailureBlock(event);
-        if (block) emitStreamEvent(sessionPath, ss, { type: "content_block", block });
-      }
+      queueOrEmitDeferredContentEvents(
+        sessionPath,
+        ss,
+        buildDeferredResultContentEvents(sessionPath, event),
+        { delayUntilTurnEnd: delayVisibleBlocks },
+      );
     }
   });
 
@@ -918,6 +998,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
             if (msg.type === "steer" && msg.text) {
               debugLog()?.log("ws", `steer (${msg.text.length} chars)`);
               const steerPath = requireSessionPath(msg, ws); if (!steerPath) return;
+              if (isDeletedAgentSessionPath(steerPath)) {
+                rejectDeletedAgentSession(ws, steerPath);
+                return;
+              }
               if (engine.steerSession(steerPath, msg.text)) {
                 wsSend(ws, { type: "steered" });
                 return;
@@ -979,6 +1063,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
             if (msg.type === "slash" && typeof msg.text === "string") {
               const sp = requireSessionPath(msg, ws); if (!sp) return;
+              if (isDeletedAgentSessionPath(sp)) {
+                rejectDeletedAgentSession(ws, sp);
+                return;
+              }
               const dispatcher = engine.slashDispatcher;
               if (!dispatcher) {
                 wsSend(ws, { type: "error", message: "slash system not ready", sessionPath: sp });
@@ -1008,6 +1096,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
 
             if (msg.type === "compact") {
               const compactPath = requireSessionPath(msg, ws); if (!compactPath) return;
+              if (isDeletedAgentSessionPath(compactPath)) {
+                rejectDeletedAgentSession(ws, compactPath);
+                return;
+              }
               let session = engine.getSessionByPath(compactPath)
                 || await engine.ensureSessionLoaded?.(compactPath);
               if (!session) {
@@ -1040,7 +1132,7 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
               return;
             }
 
-            if (msg.type === "prompt" && (msg.text || msg.images?.length || msg.videos?.length)) {
+            if (msg.type === "prompt" && (msg.text || msg.images?.length || msg.videos?.length || msg.audios?.length)) {
               // 图片校验：最多 10 张，单张 ≤ 20MB，仅允许常见图片 MIME
               if (msg.images?.length) {
                 const MAX_IMAGES = 10;
@@ -1076,20 +1168,37 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
                   }
                 }
               }
-              // 图片持久化 + [attached_image] 标记 + image 模态 check 统一在 hub.send() 和下游 handler 处理
+              if (msg.audios?.length) {
+                const MAX_AUDIOS = 3;
+                if (msg.audios.length > MAX_AUDIOS) {
+                  wsSend(ws, { type: "error", message: t("error.maxAudios", { max: MAX_AUDIOS }), sessionPath: msg.sessionPath });
+                  return;
+                }
+                for (const audio of msg.audios) {
+                  if (!audio?.mimeType || !isAllowedChatAudioMime(audio.mimeType)) {
+                    wsSend(ws, { type: "error", message: t("error.unsupportedAudioFormat", { mime: audio?.mimeType || "unknown" }), sessionPath: msg.sessionPath });
+                    return;
+                  }
+                  if (audio.data && !isChatAudioBase64WithinLimit(audio.data)) {
+                    wsSend(ws, { type: "error", message: t("error.audioTooLarge"), sessionPath: msg.sessionPath });
+                    return;
+                  }
+                }
+              }
+              // 媒体持久化 + attached_* 标记 + 模态 check 统一在 hub.send() 和下游 handler 处理
               let promptText = msg.text || "";
               // Skill invocation tags
               if (msg.skills?.length) {
                 const skillNote = msg.skills.map(s => `[Use skill: ${s}]`).join('\n');
                 promptText = `${skillNote}\n${promptText}`;
               }
-              if (!promptText.trim()) {
-                if (msg.images?.length) promptText = t("error.viewImage");
-                else if (msg.videos?.length) promptText = t("error.viewVideo");
-              }
-              debugLog()?.log("ws", `user message (${promptText.length} chars, ${msg.images?.length || 0} images, ${msg.videos?.length || 0} videos)`);
+              debugLog()?.log("ws", `user message (${promptText.length} chars, ${msg.images?.length || 0} images, ${msg.videos?.length || 0} videos, ${msg.audios?.length || 0} audios)`);
               // Phase 2: 客户端可指定 sessionPath，否则用焦点 session
               const promptSessionPath = requireSessionPath(msg, ws); if (!promptSessionPath) return;
+              if (isDeletedAgentSessionPath(promptSessionPath)) {
+                rejectDeletedAgentSession(ws, promptSessionPath);
+                return;
+              }
               if (engine.isSessionStreaming(promptSessionPath)) {
                 wsSend(ws, { type: "error", message: t("error.stillStreaming", { name: engine.agentName }), sessionPath: promptSessionPath });
                 return;
@@ -1104,8 +1213,10 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
                   sessionPath: promptSessionPath,
                   images: msg.images,
                   videos: msg.videos,
+                  audios: msg.audios,
                   uiContext: msg.uiContext ?? null,
                   displayMessage: msg.displayMessage,
+                  sessionFileRefs: msg.sessionFileRefs,
                 });
               } catch (err) {
                 const isUserAbort = err.name === 'AbortError'

@@ -266,6 +266,72 @@ describe("BridgeManager session_file media delivery", () => {
     expect(engine.deferredResults.markDelivered).toHaveBeenCalledTimes(1);
   });
 
+  it("sends bridge deferred failure events back as text and marks them delivered", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-failure-"));
+    const sessionPath = path.join(tmpDir, "bridge-session.jsonl");
+    let subscribed = null;
+    const engine = {
+      hanakoHome: tmpDir,
+      agent: null,
+      agentName: "Hana",
+      deferredResults: {
+        markDelivered: vi.fn(),
+      },
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getBridgeContextForSessionPath: vi.fn((sp) => sp === sessionPath ? {
+        isBridgeSession: true,
+        platform: "qq",
+        chatType: "group",
+        chatId: "group-1",
+        sessionKey: "qq_group_group-1@agent-a",
+        agentId: "agent-a",
+      } : null),
+    };
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscribed = fn;
+        return vi.fn();
+      }),
+      eventBus: { emit: vi.fn() },
+    };
+    const bm = new BridgeManager({ engine, hub });
+    const adapter = {
+      sendReply: vi.fn().mockResolvedValue(),
+    };
+    bm._platforms.set("qq:agent-a", {
+      platform: "qq",
+      agentId: "agent-a",
+      status: "connected",
+      adapter,
+    });
+
+    subscribed({
+      type: "deferred_result",
+      taskId: "task_fail_1",
+      status: "failed",
+      reason: "provider quota exceeded",
+      meta: {
+        type: "image-generation",
+        deliveryTarget: {
+          kind: "bridge",
+          platform: "qq",
+          chatId: "group-1",
+          sessionKey: "qq_group_group-1@agent-a",
+          agentId: "agent-a",
+          chatType: "group",
+        },
+      },
+    }, sessionPath);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(adapter.sendReply).toHaveBeenCalledWith(
+      "group-1",
+      expect.stringContaining("provider quota exceeded"),
+      expect.objectContaining({ isGroup: true, targetScope: "group" }),
+    );
+    expect(engine.deferredResults.markDelivered).toHaveBeenCalledWith("task_fail_1");
+  });
+
   it("sends deferred_result sessionFiles to an attached RC bridge target", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bridge-media-"));
     const sessionPath = path.join(tmpDir, "desktop-session.jsonl");

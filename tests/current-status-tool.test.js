@@ -81,6 +81,7 @@ describe("current_status tool", () => {
       "model",
       "ui_context",
       "session_files",
+      "session_folders",
       "bridge_context",
       "subagents",
     ]);
@@ -89,6 +90,37 @@ describe("current_status tool", () => {
     expect(JSON.stringify(payload)).not.toContain("Hana");
     expect(JSON.stringify(payload)).not.toContain("claude-sonnet-4-5");
     expect(JSON.stringify(payload)).not.toContain("2026-05-03T19:30:00.000Z");
+  });
+
+  it("returns the current session folder scope without relying on prompt injection", async () => {
+    const sessionPath = "/tmp/agents/hana/sessions/s1.jsonl";
+    const tool = createCurrentStatusTool({
+      getSessionFolderScope: vi.fn(() => ({
+        sessionPath,
+        cwd: "/workspace/project",
+        workspaceFolders: ["/workspace/reference"],
+        authorizedFolders: ["/external/assets"],
+        sandboxFolders: ["/workspace/project", "/workspace/reference", "/external/assets"],
+      })),
+    });
+
+    const payload = textPayload(await tool.execute(
+      "call_1",
+      { action: "get", key: "session_folders" },
+      null,
+      null,
+      makeCtx(sessionPath),
+    ));
+
+    expect(payload).toEqual({
+      session_folders: {
+        sessionPath,
+        cwd: "/workspace/project",
+        workspaceFolders: ["/workspace/reference"],
+        authorizedFolders: ["/external/assets"],
+        sandboxFolders: ["/workspace/project", "/workspace/reference", "/external/assets"],
+      },
+    });
   });
 
   it("returns only time fields for get time", async () => {

@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
 import { t } from "../i18n.js";
 import { extractBlocks, resolveMediaGenerationBlocks } from "../block-extractors.js";
+import { buildDeferredResultInterludeBlock, resolveDeferredReceiverName } from "../deferred-result-interlude.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
 import { sessionIdFromFilename } from "../../lib/session-jsonl.js";
 import {
@@ -44,10 +45,13 @@ import {
 } from "../../lib/session-files/session-file-registry.js";
 import { serializeSessionFile } from "../../lib/session-files/session-file-response.js";
 import { browserScreenshotPath } from "../../lib/session-files/browser-screenshot-file.js";
-import { modelSupportsXhigh } from "../../core/session-thinking-level.js";
+import { normalizeSessionThinkingLevel, modelSupportsXhigh } from "../../core/session-thinking-level.js";
 import {
+  modelSupportsDirectAudioInput,
   modelSupportsDirectVideoInput,
+  modelSupportsAudioInput,
   modelSupportsVideoInput,
+  resolveModelAudioInputTransport,
   resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.js";
 import { replayLatestUserTurn } from "../../core/session-turn-actions.js";
@@ -370,6 +374,51 @@ export function createSessionsRoute(engine, hub = null) {
     }
   }
 
+  function isDeletedAgentSessionPath(sessionPath) {
+    if (!sessionPath) return false;
+    const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
+    return !!agentId && engine.isAgentDeleted?.(agentId) === true;
+  }
+
+  function rejectDeletedAgentSession(c) {
+    return c.json({ error: "agent_deleted", reason: "agent_deleted" }, 409);
+  }
+
+  function sessionFolderScopeResponse(scope) {
+    return {
+      ok: true,
+      sessionPath: scope?.sessionPath || null,
+      cwd: scope?.cwd || null,
+      workspaceFolders: Array.isArray(scope?.workspaceFolders) ? scope.workspaceFolders : [],
+      authorizedFolders: Array.isArray(scope?.authorizedFolders) ? scope.authorizedFolders : [],
+      sandboxFolders: Array.isArray(scope?.sandboxFolders) ? scope.sandboxFolders : [],
+    };
+  }
+
+  async function validateAuthorizedFolder(rawFolder) {
+    if (typeof rawFolder !== "string" || !rawFolder.trim()) {
+      throw new Error("folder is required");
+    }
+    const folder = path.resolve(rawFolder.trim());
+    let stat;
+    try {
+      stat = await fs.stat(folder);
+    } catch {
+      throw new Error("folder does not exist");
+    }
+    if (!stat.isDirectory()) {
+      throw new Error("folder must be a directory");
+    }
+    return folder;
+  }
+
+  function normalizeAuthorizedFolderPath(rawFolder) {
+    if (typeof rawFolder !== "string" || !rawFolder.trim()) {
+      throw new Error("folder is required");
+    }
+    return path.resolve(rawFolder.trim());
+  }
+
   // 列出所有 agent 的历史 session
   route.get("/sessions", async (c) => {
     try {
@@ -416,6 +465,10 @@ export function createSessionsRoute(engine, hub = null) {
             ? engine.getSessionPermissionMode(s.path)
             : engine.permissionMode || null,
           pinnedAt: s.pinnedAt || null,
+          agentDeleted: s.agentDeleted === true,
+          readOnlyReason: s.readOnlyReason || (s.agentDeleted === true ? "agent_deleted" : null),
+          continuationAvailable: s.continuationAvailable === true,
+          deletedAt: s.deletedAt || null,
           hasSummary: !!summaryRecord,
           rcAttachment: rcAttachmentByPath.get(s.path)
             ? {
@@ -473,6 +526,10 @@ export function createSessionsRoute(engine, hub = null) {
         modelId: s.modelId || null,
         modelProvider: s.modelProvider || null,
         pinnedAt: s.pinnedAt || null,
+        agentDeleted: s.agentDeleted === true,
+        readOnlyReason: s.readOnlyReason || (s.agentDeleted === true ? "agent_deleted" : null),
+        continuationAvailable: s.continuationAvailable === true,
+        deletedAt: s.deletedAt || null,
         matchKind: s.matchKind,
         snippet: s.snippet || "",
         score: s.score,
@@ -527,6 +584,9 @@ export function createSessionsRoute(engine, hub = null) {
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
+      }
       const auth = authorizeSessionRoute(requestContext, "sessions.write", {
         kind: "session",
         studioId: requestContext.studioId,
@@ -537,6 +597,86 @@ export function createSessionsRoute(engine, hub = null) {
       return c.json({ ok: true, pinnedAt });
     } catch (err) {
       return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.get("/sessions/authorized-folders", async (c) => {
+    try {
+      const requestContext = createRequestContext(c, engine);
+      const sessionPath = c.req.query("path") || engine.currentSessionPath || null;
+      if (!sessionPath) {
+        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+      }
+      const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
+        return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
+      }
+      if (!(await pathExists(sessionPath))) {
+        return c.json({ error: "session not found" }, 404);
+      }
+      return c.json(sessionFolderScopeResponse(engine.getSessionFolderScope?.(sessionPath)));
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.patch("/sessions/authorized-folders", async (c) => {
+    try {
+      const requestContext = createRequestContext(c, engine);
+      const body = await safeJson(c);
+      const sessionPath = body?.path || body?.sessionPath || null;
+      if (!sessionPath) {
+        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+      }
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
+        return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
+      }
+      if (!(await pathExists(sessionPath))) {
+        return c.json({ error: "session not found" }, 404);
+      }
+
+      const action = typeof body?.action === "string" ? body.action.trim() : "set";
+      let scope;
+      if (action === "add") {
+        const folder = await validateAuthorizedFolder(body?.folder);
+        scope = await engine.addSessionAuthorizedFolder?.(sessionPath, folder);
+      } else if (action === "remove") {
+        const folder = normalizeAuthorizedFolderPath(body?.folder);
+        scope = await engine.removeSessionAuthorizedFolder?.(sessionPath, folder);
+      } else if (action === "set") {
+        const folders = Array.isArray(body?.folders) ? body.folders : [];
+        const normalizedFolders = [];
+        for (const folder of folders) {
+          normalizedFolders.push(await validateAuthorizedFolder(folder));
+        }
+        scope = await engine.setSessionAuthorizedFolders?.(sessionPath, normalizedFolders);
+      } else {
+        return c.json({ error: "Invalid action" }, 400);
+      }
+      return c.json(sessionFolderScopeResponse(scope || engine.getSessionFolderScope?.(sessionPath)));
+    } catch (err) {
+      const message = err.message || String(err);
+      if (/folder (is required|does not exist|must be a directory)/.test(message)) {
+        return c.json({ error: message }, 400);
+      }
+      return c.json({ error: message }, 500);
     }
   });
 
@@ -572,6 +712,9 @@ export function createSessionsRoute(engine, hub = null) {
       const blocks = [];
       const mediaGenerationResults = new Map();
       const standaloneMediaGenerationResults = [];
+      const deferredInterludeTaskIds = new Set();
+      const deferredStore = engine.deferredResults;
+      const receiverName = resolveDeferredReceiverName(engine, resolvedSessionPath);
       const recordMediaGenerationResult = (parsed, afterIndex) => {
         if (!parsed?.taskId || !isMediaGenerationDeferredResult(parsed)) return;
         mediaGenerationResults.set(parsed.taskId, parsed);
@@ -581,6 +724,29 @@ export function createSessionsRoute(engine, hub = null) {
             afterIndex,
           });
         }
+      };
+      const recordDeferredInterlude = (parsed, afterIndex) => {
+        if (!parsed?.taskId || afterIndex < 0 || deferredInterludeTaskIds.has(parsed.taskId)) return;
+        const task = deferredStore?.query?.(parsed.taskId) || null;
+        const run = engine.subagentRuns?.query?.(parsed.taskId) || null;
+        const runTask = taskFromSubagentRun(run);
+        const metadataTask = mergeSubagentTaskMetadata(runTask, task);
+        const metadataMeta = metadataTask?.meta || {};
+        const meta = {
+          ...metadataMeta,
+          type: parsed.type || metadataMeta.type || task?.meta?.type || "background-task",
+        };
+        const event = {
+          taskId: parsed.taskId,
+          status: parsed.status === "failed" || parsed.status === "aborted" ? parsed.status : "success",
+          result: Object.prototype.hasOwnProperty.call(parsed, "result") ? parsed.result : metadataTask?.result,
+          reason: parsed.reason || metadataTask?.reason || null,
+          meta,
+        };
+        const block = buildDeferredResultInterludeBlock(event, { receiverName });
+        if (!block) return;
+        blocks.push({ ...block, afterIndex });
+        deferredInterludeTaskIds.add(parsed.taskId);
       };
       let displayIdx = 0;
 
@@ -633,15 +799,18 @@ export function createSessionsRoute(engine, hub = null) {
               blocks.push({ ...b, afterIndex });
             }
           }
-          recordMediaGenerationResult(parseHistoryDeferredResult(m), displayIdx - 1);
+          const parsed = parseHistoryDeferredResult(m);
+          recordMediaGenerationResult(parsed, afterIndex);
+          recordDeferredInterlude(parsed, afterIndex);
         }
       }
 
-      const deferredStore = engine.deferredResults;
       if (resolvedSessionPath && typeof deferredStore?.listBySession === "function") {
         for (const task of deferredStore.listBySession(resolvedSessionPath)) {
           if (!isTerminalDeferredTask(task)) continue;
-          recordMediaGenerationResult(buildDeferredResultRecord(task.taskId, task), pageBounds.total - 1);
+          const parsed = buildDeferredResultRecord(task.taskId, task);
+          recordMediaGenerationResult(parsed, pageBounds.total - 1);
+          recordDeferredInterlude(parsed, pageBounds.total - 1);
         }
       }
       const resolvedBlocks = resolveMediaGenerationBlocks(
@@ -790,6 +959,9 @@ export function createSessionsRoute(engine, hub = null) {
       if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
+      }
       if (!(await pathExists(sessionPath))) {
         return c.json({ error: "session not found" }, 404);
       }
@@ -828,6 +1000,9 @@ export function createSessionsRoute(engine, hub = null) {
       if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
       if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
       }
       try {
         await fs.access(sessionPath);
@@ -931,14 +1106,68 @@ export function createSessionsRoute(engine, hub = null) {
         path: newSessionPath,
         cwd: engine.cwd,
         workspaceFolders: engine.getSessionWorkspaceFolders?.(newSessionPath) || [],
+        authorizedFolders: engine.getSessionAuthorizedFolders?.(newSessionPath) || [],
         agentId: newAgentId,
         agentName: engine.getAgent(newAgentId)?.agentName || engine.agentName,
         projectId,
         planMode: engine.planMode,
         permissionMode: engine.permissionMode,
         accessMode: engine.accessMode,
-        thinkingLevel: engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.() || "auto",
+        thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.()),
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
+      };
+      hub?.eventBus?.emit?.({
+        type: "session_created",
+        session: response,
+      }, newSessionPath);
+      return c.json(response);
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.post("/sessions/continue-deleted-agent", async (c) => {
+    try {
+      const requestContext = createRequestContext(c, engine);
+      const body = await safeJson(c);
+      const sessionPath = body?.path || body?.sessionPath || null;
+      if (!sessionPath) {
+        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+      }
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "session",
+        studioId: requestContext.studioId,
+        sessionPath,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
+        return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (!isDeletedAgentSessionPath(sessionPath)) {
+        return c.json({ error: "agent_not_deleted" }, 400);
+      }
+      if (!(await pathExists(sessionPath))) {
+        return c.json({ error: t("error.sessionNotFound") }, 404);
+      }
+
+      const result = await engine.continueDeletedAgentSession(sessionPath);
+      const newSessionPath = result.sessionPath;
+      const newAgentId = result.agentId;
+      const response = {
+        ok: true,
+        path: newSessionPath,
+        cwd: result.cwd || engine.cwd || null,
+        workspaceFolders: result.workspaceFolders || engine.getSessionWorkspaceFolders?.(newSessionPath) || [],
+        authorizedFolders: result.authorizedFolders || engine.getSessionAuthorizedFolders?.(newSessionPath) || [],
+        agentId: newAgentId,
+        agentName: result.agentName || engine.getAgent?.(newAgentId)?.agentName || newAgentId,
+        projectId: null,
+        planMode: engine.planMode,
+        permissionMode: engine.permissionMode,
+        accessMode: engine.accessMode,
+        thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.()),
+        memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
+        compacted: result.compacted === true,
       };
       hub?.eventBus?.emit?.({
         type: "session_created",
@@ -961,6 +1190,9 @@ export function createSessionsRoute(engine, hub = null) {
       // 运行路径只允许 active desktop session。归档会话必须先 restore。
       if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
       }
       // 切换前挂起浏览器（保存当前 session 的浏览器状态）
       const bm = BrowserManager.instance();
@@ -996,10 +1228,11 @@ export function createSessionsRoute(engine, hub = null) {
         planMode: engine.planMode,
         permissionMode: engine.permissionMode,
         accessMode: engine.accessMode,
-        thinkingLevel: engine.getSessionThinkingLevel?.(sessionPath) || engine.getThinkingLevel?.() || "auto",
+        thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(sessionPath) || engine.getThinkingLevel?.()),
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
         cwd: engine.cwd,
         workspaceFolders: engine.getSessionWorkspaceFolders?.(sessionPath) || [],
+        authorizedFolders: engine.getSessionAuthorizedFolders?.(sessionPath) || [],
         agentId: switchedAgentId,
         agentName: switchedAgent?.agentName || switchedAgentId,
         browserRunning: bm.isRunning(sessionPath),
@@ -1012,6 +1245,9 @@ export function createSessionsRoute(engine, hub = null) {
         currentModelVideo: modelSupportsVideoInput(activeModel),
         currentModelVideoTransport: resolveModelVideoInputTransport(activeModel),
         currentModelVideoTransportSupported: modelSupportsDirectVideoInput(activeModel),
+        currentModelAudio: modelSupportsAudioInput(activeModel),
+        currentModelAudioTransport: resolveModelAudioInputTransport(activeModel),
+        currentModelAudioTransportSupported: modelSupportsDirectAudioInput(activeModel),
         currentModelReasoning: activeModel?.reasoning ?? null,
         currentModelXhigh: modelSupportsXhigh(activeModel),
         currentModelContextWindow: activeModel?.contextWindow ?? null,
@@ -1060,6 +1296,9 @@ export function createSessionsRoute(engine, hub = null) {
       }
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
       }
       await engine.saveSessionTitle(sessionPath, title.trim());
       return c.json({ ok: true });
@@ -1128,6 +1367,9 @@ export function createSessionsRoute(engine, hub = null) {
       // archive 是 lifecycle transition，只允许 active desktop session。
       if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
+      }
+      if (isDeletedAgentSessionPath(sessionPath)) {
+        return rejectDeletedAgentSession(c);
       }
 
       // 确认文件存在
@@ -1318,6 +1560,8 @@ function sessionFileLifecycleFields(file, engine) {
     ...(source.mime ? { mime: source.mime } : {}),
     ...(source.kind ? { kind: source.kind } : {}),
     ...(source.storageKind ? { storageKind: source.storageKind } : {}),
+    ...(source.presentation ? { presentation: source.presentation } : {}),
+    ...(source.listed !== undefined ? { listed: source.listed !== false } : {}),
     ...(source.status ? { status: source.status } : {}),
     ...(source.missingAt !== undefined ? { missingAt: source.missingAt } : {}),
     ...(source.mtimeMs !== undefined ? { mtimeMs: source.mtimeMs } : {}),

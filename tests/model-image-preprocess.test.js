@@ -48,7 +48,7 @@ describe("prepareModelImageInputsForPrompt", () => {
     expect(result.opts.imageAttachmentPaths).toEqual(["/tmp/design.png"]);
     expect(result.opts.modelImageInputsPrepared).toBe(true);
     expect(result.text).toContain("[attached_image: /tmp/design.png]\n");
-    expect(result.text).toContain('<file name="/tmp/design.png">[Image: original 4000x3000, displayed at 2000x1500.');
+    expect(result.text).toContain('<file name="image-1">[Image: original 4000x3000, displayed at 2000x1500.');
     expect(result.text).toContain("你挑刺把，这个设计");
   });
 

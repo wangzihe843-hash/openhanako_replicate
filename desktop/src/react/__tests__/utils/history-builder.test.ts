@@ -75,7 +75,7 @@ describe('buildItemsFromHistory user image restoration', () => {
     expect(second.data.text).toBe('just answer directly');
   });
 
-  it('把 attached_image 标记恢复成图片附件，并从正文隐藏', () => {
+  it('把 media-only attached_image 占位恢复成裸图片附件', () => {
     const items = buildItemsFromHistory({
       messages: [{
         id: 'u1',
@@ -88,8 +88,8 @@ describe('buildItemsFromHistory user image restoration', () => {
     const first = items[0];
     expect(first.type).toBe('message');
     if (first.type !== 'message') throw new Error('expected message');
-    expect(first.data.text).toBe('(看图)');
-    expect(first.data.textHtml).not.toContain('attached_image');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
     expect(first.data.attachments).toEqual([{
       path: '/Users/test/.hanako/attachments/upload-abc.png',
       name: 'upload-abc.png',
@@ -119,6 +119,215 @@ describe('buildItemsFromHistory user image restoration', () => {
     }]);
   });
 
+  it('把 attached_audio 标记恢复成音频附件，并从正文隐藏', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: '[attached_audio: /Users/test/.hanako/session-files/voice.wav]\n听一下',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('听一下');
+    expect(first.data.textHtml).not.toContain('attached_audio');
+    expect(first.data.attachments).toEqual([{
+      path: '/Users/test/.hanako/session-files/voice.wav',
+      name: 'voice.wav',
+      isDir: false,
+    }]);
+  });
+
+  it('把 media-only attached_audio 占位恢复成裸音频附件', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: '[attached_audio: /Users/test/.hanako/session-files/voice.wav]\n（听音频）',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
+    expect(first.data.attachments).toEqual([{
+      path: '/Users/test/.hanako/session-files/voice.wav',
+      name: 'voice.wav',
+      isDir: false,
+    }]);
+  });
+
+  it('从 SessionFile 账本恢复历史音频附件的展示名和元信息', () => {
+    const filePath = '/Users/test/.hanako/session-files/hash/录音 1_mpykkdz7_35680467.wav';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: `[attached_audio: ${filePath}]`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_voice_1',
+        filePath,
+        realPath: filePath,
+        displayName: '录音 1.wav',
+        label: '录音 1.wav',
+        filename: '录音 1_mpykkdz7_35680467.wav',
+        mime: 'audio/wav',
+        kind: 'audio',
+        status: 'available',
+        missingAt: null,
+      }],
+    } as any);
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
+    expect(first.data.attachments).toEqual([{
+      fileId: 'sf_voice_1',
+      path: filePath,
+      name: '录音 1.wav',
+      isDir: false,
+      mimeType: 'audio/wav',
+      status: 'available',
+      missingAt: null,
+    }]);
+  });
+
+  it('从 SessionFile 账本恢复 voice-input 音频附件的展示语义', () => {
+    const filePath = '/Users/test/.hanako/session-files/hash/录音 1_mpykkdz7_35680467.wav';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-voice-input',
+        role: 'user',
+        content: `[attached_audio: ${filePath}]\n（听音频）`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_voice_1',
+        filePath,
+        displayName: '录音 1.wav',
+        mime: 'audio/wav',
+        kind: 'audio',
+        presentation: 'voice-input',
+        listed: false,
+        status: 'available',
+        missingAt: null,
+      }],
+    });
+
+    const first = items[0];
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.attachments).toEqual([{
+      fileId: 'sf_voice_1',
+      path: filePath,
+      name: '录音 1.wav',
+      isDir: false,
+      mimeType: 'audio/wav',
+      presentation: 'voice-input',
+      listed: false,
+      status: 'available',
+      missingAt: null,
+    }]);
+  });
+
+  it('从 SessionFile 账本恢复 voice-input 转录展示元数据，但不把它写进消息正文', () => {
+    const filePath = '/Users/test/.hanako/session-files/hash/录音 1_mpykkdz7_35680467.wav';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-voice-transcript',
+        role: 'user',
+        content: `[attached_audio: ${filePath}]\n（听音频）`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_voice_1',
+        filePath,
+        displayName: '录音 1.wav',
+        mime: 'audio/wav',
+        kind: 'audio',
+        presentation: 'voice-input',
+        listed: false,
+        waveform: {
+          version: 1,
+          peaks: [0.1, 0.4, 0.8],
+          durationMs: 1800,
+          source: 'computed',
+        },
+        transcription: {
+          status: 'ready',
+          text: '今晚我们先把语音输入跑通。',
+          providerId: 'mimo',
+          modelId: 'mimo-v2.5-asr',
+          protocolId: 'mimo-chat-completions-asr',
+        },
+      }],
+    } as any);
+
+    const first = items[0];
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
+    expect(first.data.attachments?.[0]).toMatchObject({
+      fileId: 'sf_voice_1',
+      presentation: 'voice-input',
+      waveform: {
+        version: 1,
+        peaks: [0.1, 0.4, 0.8],
+        durationMs: 1800,
+        source: 'computed',
+      },
+      transcription: {
+        status: 'ready',
+        text: '今晚我们先把语音输入跑通。',
+        providerId: 'mimo',
+        modelId: 'mimo-v2.5-asr',
+      },
+    });
+  });
+
+  it('从 SessionFile 账本恢复旧版图片附件，并把模型传输说明排除出可见正文', () => {
+    const filePath = '/Users/test/.hanako/uploads/粘贴图片_mpyjx6zr_fc3d70a9.png';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: `[attached_image: ${filePath}]\n<file name="image-1">[Image: original 2236x1854, displayed at 2000x1658. Multiply coordinates by 1.12 to map to original image.]</file>\n（看图）`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_image_1',
+        filePath,
+        realPath: filePath,
+        displayName: '粘贴图片.png',
+        label: '粘贴图片.png',
+        filename: '粘贴图片_mpyjx6zr_fc3d70a9.png',
+        mime: 'image/png',
+        kind: 'image',
+        status: 'available',
+        missingAt: null,
+      }],
+    } as any);
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
+    expect(first.data.attachments).toEqual([{
+      fileId: 'sf_image_1',
+      path: filePath,
+      name: '粘贴图片.png',
+      isDir: false,
+      mimeType: 'image/png',
+      status: 'available',
+      missingAt: null,
+    }]);
+  });
+
   it('丢弃字段残缺的历史 sideband block，保留同消息的可渲染内容', () => {
     const items = buildItemsFromHistory({
       messages: [{
@@ -143,6 +352,38 @@ describe('buildItemsFromHistory user image restoration', () => {
       filePath: '/tmp/report.pdf',
       label: 'report.pdf',
       ext: 'pdf',
+    });
+  });
+
+  it('恢复 deferred 幕间消息 block', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a1',
+        role: 'assistant',
+        content: '可见正文',
+      }],
+      blocks: [{
+        type: 'interlude',
+        afterIndex: 0,
+        id: 'deferred:subagent-1:success',
+        variant: 'deferred_result',
+        taskId: 'subagent-1',
+        status: 'success',
+        sourceKind: 'subagent',
+        sourceLabel: '明 · 大纲评估',
+        text: '小花收到了来自 明 · 大纲评估 的回复',
+        detailMarkdown: '完成了',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.blocks?.map(block => block.type)).toEqual(['text', 'interlude']);
+    expect(first.data.blocks?.[1]).toMatchObject({
+      type: 'interlude',
+      taskId: 'subagent-1',
+      text: '小花收到了来自 明 · 大纲评估 的回复',
     });
   });
 });

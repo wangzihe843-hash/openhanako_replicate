@@ -28,4 +28,17 @@ describe('input context chip layout', () => {
 
     expect(chip).toMatch(/max-width:\s*140px/);
   });
+
+  it('keeps inline file badges compact with ellipsis instead of wrapping long names', () => {
+    const css = readCss('desktop/src/react/components/input/FileBadgeView.module.css');
+    const badge = cssRule(css, '.badge');
+    const name = cssRule(css, '.name');
+
+    expect(badge).toMatch(/max-width:\s*min\(8rem,\s*100%\)/);
+    expect(badge).toMatch(/overflow:\s*hidden/);
+    expect(name).toMatch(/min-width:\s*0/);
+    expect(name).toMatch(/overflow:\s*hidden/);
+    expect(name).toMatch(/text-overflow:\s*ellipsis/);
+    expect(name).toMatch(/white-space:\s*nowrap/);
+  });
 });

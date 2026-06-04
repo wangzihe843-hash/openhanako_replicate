@@ -39,6 +39,7 @@ function createMockPi() {
 describe("CompactionGuardExtension", () => {
   let pi;
   let cacheCompactor;
+  let buildSessionCacheSnapshot;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -49,7 +50,21 @@ describe("CompactionGuardExtension", () => {
       tokensBefore: preparation.tokensBefore ?? 90_000,
       details: { readFiles: [], modifiedFiles: [] },
     }));
-    createCompactionGuardExtension({ cacheCompactor })(pi);
+    buildSessionCacheSnapshot = vi.fn((sessionPath, { reason, messages } = {}) => ({
+      strategy: "session_snapshot",
+      strict: true,
+      sessionPath,
+      reason,
+      cachePrefixHash: "a".repeat(64),
+      tools: [{
+        name: "read",
+        description: "Read files",
+        parameters: { type: "object" },
+      }],
+      messages,
+      messageCount: Array.isArray(messages) ? messages.length : 0,
+    }));
+    createCompactionGuardExtension({ cacheCompactor, buildSessionCacheSnapshot })(pi);
   });
 
   it("registers only tool_result and session_before_compact handlers", () => {
@@ -160,6 +175,7 @@ describe("CompactionGuardExtension", () => {
       },
       getSystemPrompt: vi.fn(() => "system prompt"),
       sessionManager: {
+        getSessionFile: () => "/sessions/current.jsonl",
         getBranch: () => [],
         buildSessionContext: () => ({
           thinkingLevel: "off",
@@ -189,9 +205,76 @@ describe("CompactionGuardExtension", () => {
         systemPrompt: "system prompt",
         customInstructions: undefined,
         thinkingLevel: "off",
+        sessionSnapshot: expect.objectContaining({
+          sessionPath: "/sessions/current.jsonl",
+          tools: [{
+            name: "read",
+            description: "Read files",
+            parameters: { type: "object" },
+          }],
+        }),
+        tools: [{
+          name: "read",
+          description: "Read files",
+          parameters: { type: "object" },
+        }],
       }));
-      expect(cacheCompactor.mock.calls[0][0].tools).toBeUndefined();
+      expect(buildSessionCacheSnapshot).toHaveBeenCalledWith("/sessions/current.jsonl", expect.objectContaining({
+        reason: "compaction.history",
+        messages: preparation.messagesToSummarize,
+      }));
       expect(computeHardTruncation).not.toHaveBeenCalled();
+    });
+
+    it("strips inline media from compaction preparation before estimating or snapshotting history", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      const mediaPreparation = {
+        ...preparation,
+        messagesToSummarize: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "[attached_audio: /tmp/recording.wav]\n听一下" },
+              { type: "audio", data: "BASE64_AUDIO", mimeType: "audio/wav" },
+            ],
+            timestamp: 1,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_screenshot",
+            toolName: "browser_screenshot",
+            content: [
+              { type: "text", text: "Screenshot captured" },
+              { type: "image", data: "BASE64_IMAGE", mimeType: "image/png" },
+            ],
+            timestamp: 2,
+          },
+        ],
+      };
+
+      await pi.trigger(
+        "session_before_compact",
+        { preparation: mediaPreparation, signal: { aborted: false } },
+        ctx,
+      );
+
+      const estimatedPreparation = estimatePreparationTokens.mock.calls[0][0];
+      expect(JSON.stringify(estimatedPreparation)).not.toContain("BASE64_AUDIO");
+      expect(JSON.stringify(estimatedPreparation)).not.toContain("BASE64_IMAGE");
+      expect(estimatedPreparation.messagesToSummarize[0].content).toEqual([
+        { type: "text", text: "[attached_audio: /tmp/recording.wav]\n听一下" },
+      ]);
+      expect(estimatedPreparation.messagesToSummarize[1].content).toEqual([
+        { type: "text", text: "Screenshot captured" },
+        { type: "text", text: "[图片已省略：历史图片保留为文件引用，避免重复发送原始 base64]" },
+      ]);
+
+      const passedMessages = cacheCompactor.mock.calls[0][0].messages;
+      expect(passedMessages).toEqual(estimatedPreparation.messagesToSummarize);
+      expect(buildSessionCacheSnapshot).toHaveBeenCalledWith("/sessions/current.jsonl", expect.objectContaining({
+        reason: "compaction.history",
+        messages: estimatedPreparation.messagesToSummarize,
+      }));
     });
 
     it("does not let the latest transformed context expand the Pi compaction boundary", async () => {
@@ -257,6 +340,126 @@ describe("CompactionGuardExtension", () => {
       expect(pi.getThinkingLevel).not.toHaveBeenCalled();
       expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
         thinkingLevel: "off",
+      }));
+    });
+
+    it("uses the session snapshot cache params for the side-task request contract", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      buildSessionCacheSnapshot.mockImplementationOnce((sessionPath, { reason, messages } = {}) => ({
+        strategy: "session_snapshot",
+        strict: true,
+        sessionPath,
+        reason,
+        cachePrefixHash: "b".repeat(64),
+        cacheKeyParams: { thinkingLevel: "medium" },
+        tools: [],
+        messages,
+        messageCount: Array.isArray(messages) ? messages.length : 0,
+      }));
+
+      await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        ctx,
+      );
+
+      expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
+        sessionSnapshot: expect.objectContaining({
+          cacheKeyParams: { thinkingLevel: "medium" },
+        }),
+        cacheKeyParams: { thinkingLevel: "medium" },
+      }));
+    });
+
+    it("canonicalizes legacy auto thinking before compaction side-task requests", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      buildSessionCacheSnapshot.mockImplementationOnce((sessionPath, { reason, messages } = {}) => ({
+        strategy: "session_snapshot",
+        strict: true,
+        sessionPath,
+        reason,
+        cachePrefixHash: "b".repeat(64),
+        cacheKeyParams: { thinkingLevel: "auto" },
+        tools: [],
+        messages,
+        messageCount: Array.isArray(messages) ? messages.length : 0,
+      }));
+
+      await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        {
+          ...ctx,
+          sessionManager: {
+            ...ctx.sessionManager,
+            buildSessionContext: () => ({ thinkingLevel: "auto" }),
+          },
+        },
+      );
+
+      const call = cacheCompactor.mock.calls[0][0];
+      expect(call.cacheKeyParams).toEqual({ thinkingLevel: "medium" });
+      expect(call.thinkingLevel).toBe("medium");
+      expect(call.streamOptions.onPayload({
+        model: "deepseek-v4-pro",
+        messages: [{ role: "user", content: "hello" }],
+        reasoning_effort: "auto",
+        max_tokens: 32000,
+      }, {
+        id: "deepseek-v4-pro",
+        provider: "deepseek",
+        api: "openai-completions",
+        reasoning: true,
+        contextWindow: 128_000,
+      })).toMatchObject({
+        reasoning_effort: "high",
+      });
+    });
+
+    it("uses explicit cache recovery when GLM thinking tool-call history cannot replay reasoning_content", async () => {
+      estimatePreparationTokens.mockReturnValue(50_000);
+      const glmModel = {
+        id: "glm-4.5",
+        provider: "zhipu",
+        api: "openai-completions",
+        reasoning: true,
+        contextWindow: 128_000,
+      };
+      const res = await pi.trigger(
+        "session_before_compact",
+        {
+          preparation: {
+            ...preparation,
+            messagesToSummarize: [
+              {
+                role: "assistant",
+                content: "",
+                tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }],
+              },
+            ],
+          },
+          signal: { aborted: false },
+        },
+        {
+          ...ctx,
+          model: glmModel,
+          sessionManager: {
+            ...ctx.sessionManager,
+            buildSessionContext: () => ({ thinkingLevel: "high" }),
+          },
+        },
+      );
+
+      expect(res).toMatchObject({ compaction: expect.any(Object) });
+      expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
+        model: glmModel,
+        thinkingLevel: "off",
+        cacheKeyParams: { thinkingLevel: "off" },
+        cacheMetadataOverride: expect.objectContaining({
+          cacheStrategy: "cache_recovery",
+          strict: false,
+          degradeReason: "reasoning_replay_unavailable",
+        }),
       }));
     });
 

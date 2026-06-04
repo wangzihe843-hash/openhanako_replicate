@@ -78,6 +78,7 @@ export interface PreviewEditorProps {
   mode: 'markdown' | 'code' | 'csv' | 'text';
   language?: string | null;
   onSelectionChange?: (view: EditorView) => void;
+  onSelectionCommit?: (view: EditorView) => void;
   onStatsChange?: (stats: PreviewEditorStats) => void;
   onContentChange?: (content: string, fileVersion?: FileVersion | null) => void;
   /**
@@ -263,7 +264,7 @@ function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, fileVersion, saveDocument, mode, language, onSelectionChange, onStatsChange, onContentChange, readOnly = false }, ref) {
+  function PreviewEditor({ content, filePath, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, readOnly = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -280,6 +281,8 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     saveDocumentRef.current = saveDocument;
     const selectionCbRef = useRef(onSelectionChange);
     selectionCbRef.current = onSelectionChange;
+    const selectionCommitCbRef = useRef(onSelectionCommit);
+    selectionCommitCbRef.current = onSelectionCommit;
     const statsCbRef = useRef(onStatsChange);
     statsCbRef.current = onStatsChange;
     const lastStatsRef = useRef<PreviewEditorStats | null>(null);
@@ -494,7 +497,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const isCsv = mode === 'csv';
 
       const extensions = [
-        drawSelection(),
+        ...(isMd ? [] : [drawSelection()]),
         history(),
         bracketMatching(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -589,6 +592,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
 
       const state = EditorState.create({ doc: content, extensions });
       const view = new EditorView({ state, parent: containerRef.current });
+      const onSelectionCommitEvent = () => {
+        selectionCommitCbRef.current?.(view);
+      };
       const onCoverDragOver = (event: DragEvent) => {
         const coverElement = editorCoverElementFromEvent(event);
         if (coverElement && filePathRef.current && hasMarkdownCoverDropImage(event.dataTransfer)) {
@@ -633,6 +639,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           dataTransfer: event.dataTransfer,
         });
       };
+      view.dom.addEventListener('mouseup', onSelectionCommitEvent);
+      view.dom.addEventListener('touchend', onSelectionCommitEvent);
+      view.dom.addEventListener('keyup', onSelectionCommitEvent);
       view.dom.addEventListener('dragover', onCoverDragOver, true);
       view.dom.addEventListener('dragleave', onCoverDragLeave, true);
       view.dom.addEventListener('drop', onCoverDrop, true);
@@ -646,6 +655,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           saveTimerRef.current = null;
           saveToFile(view.state.doc.toString(), docRevisionRef.current);
         }
+        view.dom.removeEventListener('mouseup', onSelectionCommitEvent);
+        view.dom.removeEventListener('touchend', onSelectionCommitEvent);
+        view.dom.removeEventListener('keyup', onSelectionCommitEvent);
         view.dom.removeEventListener('dragover', onCoverDragOver, true);
         view.dom.removeEventListener('dragleave', onCoverDragLeave, true);
         view.dom.removeEventListener('drop', onCoverDrop, true);

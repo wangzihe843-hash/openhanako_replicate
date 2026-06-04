@@ -8,6 +8,7 @@ import path from "path";
 import { isToolCallBlock, getToolArgs } from "./llm-utils.js";
 import { SessionManager } from "../lib/pi-sdk/index.js";
 import { DEFERRED_RESULT_RECORD_TYPE } from "../lib/deferred-result-notification.js";
+import { repairOversizedSessionEntriesInFile } from "./session-jsonl-file.js";
 
 /**
  * 工具调用参数摘要键列表
@@ -97,6 +98,7 @@ export async function loadSessionHistoryMessages(engine, explicitPath) {
 
   try {
     if (await looksLikePiSessionFile(sessionPath)) {
+      repairOversizedSessionEntriesInFile(sessionPath);
       const manager = SessionManager.open(sessionPath, path.dirname(sessionPath));
       const branch = manager.getBranch();
       const messages = [];

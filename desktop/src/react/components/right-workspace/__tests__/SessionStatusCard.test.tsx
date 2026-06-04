@@ -2,9 +2,10 @@
  * @vitest-environment jsdom
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SessionStatusCard } from '../SessionStatusCard';
+import { hanaFetch } from '../../../hooks/use-hana-fetch';
 
 const mockState: any = {
   currentSessionPath: null,
@@ -12,12 +13,42 @@ const mockState: any = {
   currentModel: { id: 'gpt-x', provider: 'openai' },
   sessionModelsByPath: {},
   sessionRegistryFilesByPath: {},
+  sessionAuthorizedFoldersByPath: {},
+  setSessionAuthorizedFolders: vi.fn((sessionPath: string, folders: string[]) => {
+    mockState.sessionAuthorizedFoldersByPath = {
+      ...mockState.sessionAuthorizedFoldersByPath,
+      [sessionPath]: folders,
+    };
+  }),
+  addToast: vi.fn(),
 };
 vi.mock('../../../stores', () => ({
   useStore: (selector: (s: any) => any) => selector(mockState),
 }));
+vi.mock('../../../hooks/use-hana-fetch', () => ({
+  hanaFetch: vi.fn(),
+}));
 
 describe('SessionStatusCard', () => {
+  beforeEach(() => {
+    mockState.currentSessionPath = null;
+    mockState.deskBasePath = '/Users/x/OH-WorkSpace';
+    mockState.currentModel = { id: 'gpt-x', provider: 'openai' };
+    mockState.sessionModelsByPath = {};
+    mockState.sessionRegistryFilesByPath = {};
+    mockState.sessionAuthorizedFoldersByPath = {};
+    mockState.setSessionAuthorizedFolders.mockClear();
+    mockState.addToast.mockClear();
+    vi.mocked(hanaFetch).mockReset();
+    (window as any).platform = {
+      selectFolder: vi.fn(async () => '/Users/x/Assets'),
+    };
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
   it('无当前对话返回 null（welcome 态不显示）', () => {
     mockState.currentSessionPath = null;
     const { container } = render(<SessionStatusCard />);
@@ -39,5 +70,28 @@ describe('SessionStatusCard', () => {
     const { container } = render(<SessionStatusCard />);
     expect(container.textContent).toContain('claude-x');
     mockState.sessionModelsByPath = {}; // 复位
+  });
+
+  it('点击文件夹加号后把授权目录写回当前 session', async () => {
+    mockState.currentSessionPath = '/s/a.jsonl';
+    vi.mocked(hanaFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      ok: true,
+      authorizedFolders: ['/Users/x/Assets'],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    render(<SessionStatusCard />);
+    fireEvent.click(screen.getByRole('button', { name: 'rightWorkspace.session.addAuthorizedFolder' }));
+
+    await waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/sessions/authorized-folders', expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          path: '/s/a.jsonl',
+          action: 'add',
+          folder: '/Users/x/Assets',
+        }),
+      }));
+    });
+    expect(mockState.setSessionAuthorizedFolders).toHaveBeenCalledWith('/s/a.jsonl', ['/Users/x/Assets']);
   });
 });

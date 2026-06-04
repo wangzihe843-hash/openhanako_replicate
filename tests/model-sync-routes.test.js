@@ -479,6 +479,14 @@ describe("model sync related routes", () => {
           provider: "deepseek",
           reasoning: true,
         },
+        {
+          id: "gpt-audio-mini",
+          name: "GPT Audio Mini",
+          provider: "openai",
+          api: "openai-completions",
+          input: ["text"],
+          audio: true,
+        },
       ],
       currentModel: { id: "gpt-5.4", name: "Gpt 5.4" },
       config: {},
@@ -493,6 +501,12 @@ describe("model sync related routes", () => {
     expect(allData.models[0].id).toBe("gpt-5.4");
     expect(allData.models[0].name).toBe("Gpt 5.4");
     expect(allData.models[1].xhigh).toBe(true);
+    expect(allData.models[2]).toMatchObject({
+      id: "gpt-audio-mini",
+      audio: true,
+      audioTransport: "openai-input-audio",
+      audioTransportSupported: true,
+    });
   });
 
   it("auxiliary vision route exposes availability without settings secrets", async () => {

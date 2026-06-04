@@ -192,7 +192,10 @@ function makeCleanElementOnlyTool() {
   return { tool, ctx, emitted };
 }
 
-function makeApprovalTool(confirmAction = "confirmed") {
+function makeApprovalTool(confirmAction = "confirmed", {
+  permissionMode = "ask",
+  approvalGateway = null,
+} = {}) {
   const provider = createMockComputerProvider({ providerId: "mock" });
   provider.capabilities.isolated = false;
   const providers = new ComputerProviderRegistry();
@@ -222,6 +225,8 @@ function makeApprovalTool(confirmAction = "confirmed") {
     getSessionModel: () => model,
     getAgentId: () => "hana",
     getConfirmStore: () => confirmStore,
+    getPermissionMode: () => permissionMode,
+    getApprovalGateway: () => approvalGateway,
     approveComputerUseApp: approve,
     isAgentToolEnabled: () => true,
     emitEvent: (event, sessionPath) => emitted.push({ event, sessionPath }),
@@ -231,7 +236,7 @@ function makeApprovalTool(confirmAction = "confirmed") {
     agentId: "hana",
     model,
   };
-  return { tool, ctx, emitted, confirmStore, approve };
+  return { tool, ctx, emitted, confirmStore, approve, approvalGateway };
 }
 
 describe("computer tool", () => {
@@ -245,6 +250,18 @@ describe("computer tool", () => {
     expect(actions).not.toContain("double_click");
     expect(actions).not.toContain("drag");
     expect(JSON.stringify(tool.parameters)).not.toMatch(/click_point|double_click|drag|fromX|from_x|toX|to_x/);
+  });
+
+  it("returns disabled when a frozen session calls the tool after the global gate is closed", async () => {
+    const { tool, ctx } = makeTool(
+      { id: "gpt-5.5", provider: "openai", input: ["text", "image"] },
+      { enabled: false },
+    );
+
+    const result = await tool.execute("call-disabled", { action: "status" }, null, null, ctx);
+
+    expect(result.content[0].text).toContain("Computer Use is disabled for this agent");
+    expect(result.details.errorCode).toBe(COMPUTER_USE_ERRORS.DISABLED);
   });
 
   it("creates a lease and reads app state", async () => {
@@ -613,6 +630,89 @@ describe("computer tool", () => {
       providerId: "mock",
       appId: "app.notes",
       appName: "Mock Notes",
+    }));
+  });
+
+  it("auto mode approves app access through the approval gateway without human confirmation", async () => {
+    const approvalGateway = {
+      review: vi.fn(async () => ({
+        action: "allow",
+        reviewer: "large_tool_model",
+        reason: "app control matches the current user task",
+        risk: "high",
+      })),
+    };
+    const { tool, ctx, confirmStore, approve } = makeApprovalTool("confirmed", {
+      permissionMode: "auto",
+      approvalGateway,
+    });
+
+    const result = await tool.execute("call-approval", {
+      action: "start",
+      appId: "app.notes",
+      appName: "Mock Notes",
+      windowId: "win-1",
+    }, null, null, ctx);
+
+    expect(approvalGateway.review).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "computer_app_approval",
+        sessionPath: "/tmp/session.jsonl",
+        toolName: "computer",
+        target: expect.objectContaining({ type: "app", appId: "app.notes" }),
+      }),
+      expect.any(Object),
+    );
+    expect(confirmStore.create).not.toHaveBeenCalled();
+    expect(result.details.leaseId).toBeTruthy();
+    expect(result.details.confirmation).toMatchObject({
+      kind: "computer_app_approval",
+      status: "approved",
+      reviewer: "large_tool_model",
+    });
+    expect(approve).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "mock",
+      appId: "app.notes",
+    }));
+  });
+
+  it("auto mode falls back to app approval confirmation when the gateway asks the user", async () => {
+    const approvalGateway = {
+      review: vi.fn(async () => ({
+        action: "ask_user",
+        reviewer: "large_tool_model",
+        reason: "new app target needs user confirmation",
+        risk: "high",
+      })),
+    };
+    const { tool, ctx, emitted, confirmStore, approve } = makeApprovalTool("confirmed", {
+      permissionMode: "auto",
+      approvalGateway,
+    });
+
+    const result = await tool.execute("call-approval", {
+      action: "start",
+      appId: "app.notes",
+      appName: "Mock Notes",
+      windowId: "win-1",
+    }, null, null, ctx);
+
+    expect(approvalGateway.review).toHaveBeenCalledOnce();
+    expect(confirmStore.create).toHaveBeenCalledWith(
+      "computer_app_approval",
+      expect.objectContaining({
+        approval: expect.objectContaining({ providerId: "mock", appId: "app.notes" }),
+      }),
+      "/tmp/session.jsonl",
+    );
+    expect(emitted[0].event).toMatchObject({
+      type: "session_confirmation",
+      request: { kind: "computer_app_approval" },
+    });
+    expect(result.details.confirmation.status).toBe("confirmed");
+    expect(approve).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "mock",
+      appId: "app.notes",
     }));
   });
 

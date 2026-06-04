@@ -54,6 +54,7 @@ import { createChannelsRoute } from "./routes/channels.js";
 import { createDmRoute } from "./routes/dm.js";
 import { createFsRoute } from "./routes/fs.js";
 import { createPreferencesRoute } from "./routes/preferences.js";
+import { createExperimentsRoute } from "./routes/experiments.js";
 import { createBridgeRoute } from "./routes/bridge.js";
 import { createAuthRoute } from "./routes/auth.js";
 import { createDiaryRoute } from "./routes/diary.js";
@@ -71,6 +72,7 @@ import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
 import { createHtmlPreviewRoute } from "./routes/html-preview.js";
 import { createAccessRoute } from "./routes/access.js";
+import { createSpeechRecognitionRoute } from "./routes/speech-recognition.js";
 import { registerTaskRegistryBusHandlers } from "./task-bus-handlers.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
@@ -518,6 +520,7 @@ await engine.registerExtensionFactory(createDeferredResultExtension(deferredResu
 // Cache-preserving compaction — 接管 Pi auto/manual compact，避免原生 summarizer 冷读上下文
 await engine.registerExtensionFactory(createCompactionGuardExtension({
   usageLedger: engine.usageLedger,
+  buildSessionCacheSnapshot: (sessionPath, options) => engine.buildSessionCacheSnapshot(sessionPath, options),
   buildUsageContext: ({ ctx }) => {
     const sessionPath = ctx?.sessionManager?.getSessionFile?.() || null;
     const bridgeContext = sessionPath ? engine.getBridgeContextForSessionPath(sessionPath) : null;
@@ -674,6 +677,7 @@ app.route("/api", createChannelsRoute(engine, hub));
 app.route("/api", createDmRoute(engine, hub));
 app.route("/api", createFsRoute(engine));
 app.route("/api", createPreferencesRoute(engine));
+app.route("/api", createExperimentsRoute(engine));
 app.route("/api", createBridgeRoute(engine, bridgeManagerRef));
 app.route("/api", createAuthRoute(engine));
 app.route("/api", createDiaryRoute(engine));
@@ -683,6 +687,7 @@ app.route("/api", createCheckpointsRoute(engine));
 app.route("/api", createCommandsRoute(engine));
 app.route("/api", createResourcesRoute(engine));
 app.route("/api", createUsageRoute(engine));
+app.route("/api", createSpeechRecognitionRoute(engine));
 app.route("/api", createServerIdentityRoute({
   hanakoHome: engine.hanakoHome,
   appVersion,

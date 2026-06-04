@@ -32,6 +32,10 @@
     --link: var(--accent, #537D96);
     --link-hover: var(--accent-hover, var(--link));
     --link-rgb: var(--accent-rgb, 83, 125, 150);
+    --permission-auto: #5f93aa;
+    --permission-auto-rgb: 95, 147, 170;
+    --permission-auto-border: rgba(var(--permission-auto-rgb), 0.32);
+    --permission-auto-bg: rgba(var(--permission-auto-rgb), 0.08);
     --tooltip-bg: var(--text);
     --tooltip-text: var(--bg);
     --tooltip-border: transparent;
@@ -53,6 +57,7 @@
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
     /* 编辑器默认排版：用户设置写入同名变量，主题仍可覆盖初始值 */
+    --editor-markdown-font-family: var(--font-serif);
     --editor-markdown-font-size: 16px;
     --editor-markdown-h1-font-size: 24px;
     --editor-markdown-h2-font-size: 20px;

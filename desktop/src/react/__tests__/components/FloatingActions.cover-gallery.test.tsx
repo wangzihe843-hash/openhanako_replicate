@@ -53,6 +53,7 @@ describe('FloatingActions cover gallery', () => {
     useStore.setState({
       currentAgentId: null,
       previewItems: [],
+      locale: '',
     } as Partial<StoreState>);
   });
 
@@ -143,6 +144,30 @@ describe('FloatingActions cover gallery', () => {
     expect(screen.getByRole('button', { name: 'Agent 生成' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '小花美术馆' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '自己上传' })).toBeEnabled();
+  });
+
+  it('refreshes markdown preview toggle i18n after locale sync', async () => {
+    window.t = ((key: string) => key) as typeof window.t;
+
+    render(
+      <FloatingActions
+        content="# Demo\n"
+        contentType="text"
+        showMarkdownPreviewToggle
+        onToggleMarkdownPreview={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'preview.markdownPreview' })).toBeInTheDocument();
+
+    window.t = ((key: string) => (
+      key === 'preview.markdownPreview' ? '预览' : key
+    )) as typeof window.t;
+    useStore.setState({ locale: 'zh' } as Partial<StoreState>);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '预览' })).toBeInTheDocument();
+    });
   });
 
   it('does not start Agent generation when the generation menu item is disabled', async () => {

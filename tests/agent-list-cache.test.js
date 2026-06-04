@@ -118,4 +118,25 @@ describe("AgentManager.listAgents 缓存", () => {
     const fresh = mgr.listAgents();
     expect(fresh[0].identity).toBe("全新的身份描述");
   });
+
+  it("excludes tombstoned agents from the active list and exposes deleted metadata", () => {
+    createTestAgent("alive", "Alive");
+    createTestAgent("deleted", "Deleted");
+    fs.writeFileSync(
+      path.join(agentsDir, "deleted", ".deleted-agent.json"),
+      JSON.stringify({ deletedAt: "2026-06-03T01:00:00.000Z", agentName: "Deleted" }),
+      "utf-8",
+    );
+    const mgr = makeMgr();
+
+    expect(mgr.listAgents().map(a => a.id)).toEqual(["alive"]);
+    expect(mgr.isAgentDeleted("deleted")).toBe(true);
+    expect(mgr.listDeletedAgents()).toEqual([
+      expect.objectContaining({
+        id: "deleted",
+        name: "Deleted",
+        deletedAt: "2026-06-03T01:00:00.000Z",
+      }),
+    ]);
+  });
 });

@@ -4,6 +4,7 @@ import {
   isMarkdownCoverOnlyUpdate,
   mergeMarkdownCoverIntoDocument,
   parseMarkdownCover,
+  removeMarkdownCover,
   resolveMarkdownCoverImagePath,
   stripMarkdownFrontMatterForPreview,
   updateMarkdownCoverLayout,
@@ -122,6 +123,41 @@ describe('markdown cover utilities', () => {
       '',
       'Body with local draft',
     ].join('\n'));
+  });
+
+  it('removes only the cover block while preserving other frontmatter fields', () => {
+    const markdown = [
+      '---',
+      'title: Demo',
+      'cover:',
+      '  image: 文本附件/cover.png',
+      '  displayHeight: 320',
+      'tags:',
+      '  - writing',
+      '---',
+      '# Demo',
+    ].join('\n');
+
+    expect(removeMarkdownCover(markdown)).toBe([
+      '---',
+      'title: Demo',
+      'tags:',
+      '  - writing',
+      '---',
+      '# Demo',
+    ].join('\n'));
+  });
+
+  it('removes cover-only frontmatter together with the delimiters', () => {
+    const markdown = [
+      '---',
+      'cover:',
+      '  image: 文本附件/cover.png',
+      '---',
+      '# Demo',
+    ].join('\n');
+
+    expect(removeMarkdownCover(markdown)).toBe('# Demo');
   });
 
   it('renders only the cover block when other frontmatter fields exist', () => {

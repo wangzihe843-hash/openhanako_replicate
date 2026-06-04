@@ -18,6 +18,7 @@ describe('PreferencesManager editor typography preferences', () => {
 
     expect(prefs.getEditor()).toEqual({
       markdown: {
+        fontPreset: 'follow',
         bodyFontSize: 15,
         heading1FontSize: 24,
         heading2FontSize: 20,
@@ -37,12 +38,14 @@ describe('PreferencesManager editor typography preferences', () => {
     prefs.setEditor({
       markdown: {
         bodyFontSize: 18,
+        fontPreset: 'sans',
         lineHeight: 1.9,
       },
     });
 
     expect(prefs.getEditor()).toEqual({
       markdown: {
+        fontPreset: 'sans',
         bodyFontSize: 18,
         heading1FontSize: 24,
         heading2FontSize: 20,

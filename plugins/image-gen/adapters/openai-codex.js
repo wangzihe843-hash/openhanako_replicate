@@ -23,6 +23,7 @@ const RATIO_TO_SIZE = {
   "3:2": "1536x1024",
   "2:3": "1024x1536",
 };
+const SUPPORTED_CODEX_SIZES = new Set(Object.values(RATIO_TO_SIZE));
 
 function resolveCodexResponsesUrl(baseUrl) {
   const raw = (baseUrl || DEFAULT_CODEX_BASE_URL).replace(/\/+$/, "");
@@ -153,6 +154,34 @@ function resolveResponsesModel(params, providerDefaults) {
   return DEFAULT_RESPONSES_MODEL;
 }
 
+function normalizeCodexRatio(value) {
+  if (!value) return null;
+  const ratio = String(value).trim();
+  const size = RATIO_TO_SIZE[ratio];
+  if (size) return { ratio, size };
+  throw new Error(`Codex image ratio "${ratio}" is unsupported`);
+}
+
+function normalizeCodexSize(value, source = "size") {
+  if (!value) return null;
+  const size = String(value).trim();
+  if (SUPPORTED_CODEX_SIZES.has(size)) return size;
+  throw new Error(`Codex image ${source} "${size}" is unsupported`);
+}
+
+function resolveCodexToolSize(params, providerDefaults) {
+  if (params.resolution) {
+    throw new Error(`Codex image resolution "${params.resolution}" is unsupported`);
+  }
+  if (params.size) return normalizeCodexSize(params.size, "size");
+
+  const effectiveRatio = params.aspect_ratio || params.aspectRatio || params.ratio || providerDefaults?.aspect_ratio;
+  const ratio = normalizeCodexRatio(effectiveRatio);
+  if (ratio) return ratio.size;
+
+  return normalizeCodexSize(providerDefaults?.size, "default size");
+}
+
 async function getCredentials(ctx) {
   const creds = await ctx.bus.request("provider:credentials", { providerId: PROVIDER_ID });
   if (creds.error || !creds.apiKey) {
@@ -189,19 +218,13 @@ export const openaiCodexImageAdapter = {
     const allDefaults = ctx.config?.get?.("providerDefaults") || {};
     const providerDefaults = allDefaults[PROVIDER_ID] || {};
     const outputFormat = params.format || providerDefaults?.format || "png";
-    const effectiveRatio = params.aspect_ratio || params.aspectRatio || params.ratio || providerDefaults?.aspect_ratio;
 
     const tool = {
       type: "image_generation",
       output_format: outputFormat,
     };
-    if (params.size) {
-      tool.size = params.size;
-    } else if (effectiveRatio && RATIO_TO_SIZE[effectiveRatio]) {
-      tool.size = RATIO_TO_SIZE[effectiveRatio];
-    } else if (providerDefaults?.size) {
-      tool.size = providerDefaults.size;
-    }
+    const toolSize = resolveCodexToolSize(params, providerDefaults);
+    if (toolSize) tool.size = toolSize;
 
     const quality = params.quality || providerDefaults?.quality;
     if (quality) tool.quality = quality;

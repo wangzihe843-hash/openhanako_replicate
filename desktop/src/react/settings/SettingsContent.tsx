@@ -18,7 +18,6 @@ import { AgentTab } from './tabs/AgentTab';
 import { MeTab } from './tabs/MeTab';
 import { InterfaceTab } from './tabs/InterfaceTab';
 import { WorkTab } from './tabs/WorkTab';
-import { ComputerUseTab } from './tabs/ComputerUseTab';
 import { SkillsTab } from './tabs/SkillsTab';
 import { BridgeTab } from './tabs/BridgeTab';
 import { ProvidersTab } from './tabs/ProvidersTab';
@@ -26,6 +25,7 @@ import { MediaTab } from './tabs/MediaTab';
 import { AboutTab } from './tabs/AboutTab';
 import { PluginsTab } from './tabs/PluginsTab';
 import { PluginMarketplaceTab } from './tabs/PluginMarketplaceTab';
+import { ExperimentsTab } from './tabs/ExperimentsTab';
 import { SecurityTab } from './tabs/SecurityTab';
 import { SharingTab } from './tabs/SharingTab';
 import { AccessTab } from './tabs/AccessTab';
@@ -50,7 +50,6 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   me: MeTab,
   interface: InterfaceTab,
   work: WorkTab,
-  computer: ComputerUseTab,
   skills: SkillsTab,
   bridge: BridgeTab,
   providers: ProvidersTab,
@@ -58,6 +57,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   sharing: SharingTab,
   access: AccessTab,
   plugins: PluginsTab,
+  experiments: ExperimentsTab,
   'plugin-marketplace': PluginMarketplaceTab,
   security: SecurityTab,
   about: AboutTab,
@@ -86,7 +86,6 @@ const TAB_TITLES: Record<string, string> = {
   me: '我',
   interface: '界面',
   work: '工作台',
-  computer: '使用电脑',
   workflow: 'Workflow',
   skills: '技能',
   bridge: '社交平台',
@@ -95,13 +94,18 @@ const TAB_TITLES: Record<string, string> = {
   sharing: '分享',
   access: '访问与设备',
   plugins: '插件',
+  experiments: '实验',
   'plugin-marketplace': '插件市场',
   security: '安全',
   about: '关于',
 };
 
-function normalizeNativeTabForPlatform(tab: string, platformName: string | null | undefined): string {
-  return platformName === 'linux' && tab === 'computer' ? 'agent' : tab;
+const TAB_DESCRIPTION_KEYS: Record<string, string> = {
+  experiments: 'settings.experiments.description',
+};
+
+function normalizeSettingsTab(tab: string): string {
+  return tab === 'computer' ? 'experiments' : tab;
 }
 
 function titleToLabel(title: string | Record<string, string> | undefined): string {
@@ -124,8 +128,8 @@ export function SettingsContent({
   onActiveTabChange,
   listenToWindowTabSwitch = false,
 }: SettingsContentProps) {
-  const { activeTab, platformName, pluginSettingsTabs, ready } = useSettingsStore(
-    useShallow(s => ({ activeTab: s.activeTab, platformName: s.platformName, pluginSettingsTabs: s.pluginSettingsTabs, ready: s.ready }))
+  const { activeTab, pluginSettingsTabs, ready } = useSettingsStore(
+    useShallow(s => ({ activeTab: s.activeTab, pluginSettingsTabs: s.pluginSettingsTabs, ready: s.ready }))
   );
   const set = useSettingsStore(s => s.set);
   const lastReportedActiveTabRef = useRef<string | null>(null);
@@ -139,7 +143,7 @@ export function SettingsContent({
     const platform = window.platform;
     if (!platform?.onSwitchTab) return;
     const unsubscribe = platform.onSwitchTab((tab: string) => {
-      const nextTab = normalizeNativeTabForPlatform(tab, useSettingsStore.getState().platformName);
+      const nextTab = normalizeSettingsTab(tab);
       set({ activeTab: nextTab });
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
@@ -156,13 +160,13 @@ export function SettingsContent({
   }, []);
 
   useEffect(() => {
-    const nextTab = normalizeNativeTabForPlatform(activeTab, platformName);
+    const nextTab = normalizeSettingsTab(activeTab);
     if (nextTab !== activeTab) {
       set({ activeTab: nextTab });
       lastReportedActiveTabRef.current = nextTab;
       onActiveTabChange?.(nextTab);
     }
-  }, [activeTab, platformName, set, onActiveTabChange]);
+  }, [activeTab, set, onActiveTabChange]);
 
   // Server 重启后用新端口重新加载数据
   useEffect(() => {
@@ -220,20 +224,22 @@ export function SettingsContent({
   }, [variant]);
 
   const availablePluginSettingsTabs = pluginSettingsTabs || [];
-  const effectiveActiveTab = normalizeNativeTabForPlatform(activeTab, platformName);
+  const effectiveActiveTab = normalizeSettingsTab(activeTab);
   const dynamicTab = availablePluginSettingsTabs.find(tab => tab.id === effectiveActiveTab);
   const ActiveTab = TAB_COMPONENTS[effectiveActiveTab]
     || (dynamicTab ? getNativeSettingsTabComponent(dynamicTab.nativeComponent) : null)
     || AgentTab;
   const isModal = variant === 'modal';
   const activeTabTitle = TAB_TITLES[effectiveActiveTab] || titleToLabel(dynamicTab?.title);
+  const activeTabDescriptionKey = TAB_DESCRIPTION_KEYS[effectiveActiveTab];
+  const activeTabDescription = activeTabDescriptionKey ? t(activeTabDescriptionKey) : '';
   const isWideTab = effectiveActiveTab === 'plugin-marketplace' || effectiveActiveTab === 'providers';
 
   const reportActiveTabChange = useCallback((tab: string) => {
-    const nextTab = normalizeNativeTabForPlatform(tab, platformName);
+    const nextTab = normalizeSettingsTab(tab);
     lastReportedActiveTabRef.current = nextTab;
     onActiveTabChange?.(nextTab);
-  }, [onActiveTabChange, platformName]);
+  }, [onActiveTabChange]);
 
   useEffect(() => {
     if (lastReportedActiveTabRef.current === null) {
@@ -278,7 +284,12 @@ export function SettingsContent({
           <SettingsNav onTabChange={reportActiveTabChange} />
           <div className={`${styles['settings-main']}${isWideTab ? ' ' + styles['settings-main-wide'] : ''}`}>
             {!isModal && (
-              <h1 className={styles['settings-tab-title']}>{activeTabTitle}</h1>
+              <div className={styles['settings-tab-heading']}>
+                <h1 className={styles['settings-tab-title']}>{activeTabTitle}</h1>
+                {activeTabDescription && (
+                  <p className={styles['settings-tab-description']}>{activeTabDescription}</p>
+                )}
+              </div>
             )}
             <ErrorBoundary region={effectiveActiveTab} resetKeys={[effectiveActiveTab]}>
               <ActiveTab />

@@ -70,6 +70,38 @@ describe("sandbox workspace roots", () => {
     expect(guard.check(sessionFile, "write").allowed).toBe(false);
   });
 
+  it("honors read-all semantics for non-secret HANA_HOME paths while keeping writes scoped", () => {
+    const agentDir = path.join(tempRoot, "home", "agents", "hana");
+    const hanakoHome = path.join(tempRoot, "home");
+    const workspace = path.join(tempRoot, "project");
+    const pluginSkill = path.join(hanakoHome, "plugins", "demo", "skills", "reader", "SKILL.md");
+    const pluginSource = path.join(hanakoHome, "plugins", "demo", "index.js");
+    const blockedAuth = path.join(hanakoHome, "auth.json");
+    fs.mkdirSync(path.dirname(pluginSkill), { recursive: true });
+    fs.writeFileSync(pluginSkill, "---\nname: reader\n---\n", "utf-8");
+    fs.writeFileSync(pluginSource, "export default {};\n", "utf-8");
+    fs.writeFileSync(blockedAuth, "{}\n", "utf-8");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      hanakoHome,
+      workspace,
+      workspaceFolders: [],
+      mode: "standard",
+    });
+    const guard = new PathGuard(policy);
+
+    expect(policy.access.read).toBe("all");
+    expect(guard.getAccessLevel(pluginSkill)).toBe(AccessLevel.READ_ONLY);
+    expect(guard.check(pluginSkill, "read").allowed).toBe(true);
+    expect(guard.check(pluginSkill, "write").allowed).toBe(false);
+    expect(guard.getAccessLevel(pluginSource)).toBe(AccessLevel.READ_ONLY);
+    expect(guard.check(pluginSource, "read").allowed).toBe(true);
+    expect(guard.check(blockedAuth, "read").allowed).toBe(false);
+  });
+
   it("treats cwd and explicit runtime roots as scoped write roots", () => {
     const agentDir = path.join(tempRoot, "agents", "hana");
     const hanakoHome = path.join(tempRoot, "home");

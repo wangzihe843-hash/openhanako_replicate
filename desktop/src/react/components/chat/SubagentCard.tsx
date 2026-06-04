@@ -1,5 +1,5 @@
 /**
- * SubagentCard — 子 Agent 实时执行状态卡片
+ * SubagentCard — 子 Agent 静态预览状态卡片
  *
  * 订阅 streamKey 上的实时事件，互斥显示当前状态：
  * 思考 / 文字输出 / 工具调用 / 已完成 / 失败 / 已中断
@@ -10,11 +10,11 @@ import { subscribeStreamKey } from '../../services/stream-key-dispatcher';
 import { hanaUrl } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
-import { SubagentSessionPreview } from './SubagentSessionPreview';
+import { ChatResourceCard } from './ChatResourceCard';
+import type { ChatResourceCardStatusTone } from './ChatResourceCard';
 import styles from './Chat.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const SUBAGENT_PREVIEW_CLOSE_MS = 200;
 
 interface SubagentCardProps {
   block: {
@@ -48,20 +48,13 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   // 头像：优先用 agent 头像 API，fallback 到 yuan 剪影头像
   const currentAgentId = useStore(s => s.currentAgentId);
   const agents = useStore(s => s.agents);
-  const previewEntry = useStore(s => s.subagentPreviewByTaskId[block.taskId]);
   const agentId = block.agentId || block.executorAgentId || currentAgentId || '';
-  const previewAgentId = block.agentId || block.executorAgentId || currentAgentId || null;
   const displayInfo = resolveAgentDisplayInfo({
     id: agentId || null,
     agents,
     fallbackAgentName: block.agentName || block.executorAgentNameSnapshot || block.agentId || 'Subagent',
   });
   const agentName = displayInfo.displayName;
-  const isOpen = previewEntry?.open ?? false;
-  const previewSessionPath = previewEntry?.sessionPath ?? (block.streamKey || null);
-  const [shouldRenderPreview, setShouldRenderPreview] = useState(isOpen);
-  const [isClosingPreview, setIsClosingPreview] = useState(false);
-  const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Sync block prop changes (from block_update patch)
   useEffect(() => {
@@ -70,27 +63,6 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
     if (block.streamStatus === 'failed') setDisplay(block.summary || '失败');
     if (block.streamStatus === 'aborted') setDisplay(block.summary || '已终止');
   }, [block.streamStatus, block.summary]);
-
-  useEffect(() => {
-    useStore.getState().setSubagentPreviewSessionPath(block.taskId, block.streamKey || null);
-  }, [block.taskId, block.streamKey]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRenderPreview(true);
-      setIsClosingPreview(false);
-      return;
-    }
-    if (!shouldRenderPreview) return;
-
-    setIsClosingPreview(true);
-    const timer = window.setTimeout(() => {
-      setShouldRenderPreview(false);
-      setIsClosingPreview(false);
-    }, SUBAGENT_PREVIEW_CLOSE_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [isOpen, shouldRenderPreview]);
 
   // Subscribe to live events
   useEffect(() => {
@@ -137,67 +109,53 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
     } catch { /* user-initiated abort; silent on network failure */ }
   }, [block.taskId]);
 
-  const handleToggle = useCallback(() => {
-    if (isOpen) {
-      useStore.getState().closeSubagentPreview(block.taskId);
-      return;
-    }
-    useStore.getState().openSubagentPreview(block.taskId, block.streamKey || null);
-  }, [block.taskId, block.streamKey, isOpen]);
-
-  const headerDisplay = block.taskTitle;
+  const headerDisplay = status === 'running' && display ? display : block.taskTitle;
   const displayLabel = block.label || block.reuseInstance || null;
+  const statusLabel = isInterrupted
+    ? '已中断'
+    : status === 'aborted'
+      ? '已终止'
+      : status === 'done'
+        ? '已完成'
+        : status === 'failed'
+          ? '失败'
+          : '已派出';
+  const statusTone: ChatResourceCardStatusTone = status === 'done'
+    ? 'success'
+    : status === 'failed'
+      ? 'danger'
+      : status === 'running' && !isInterrupted
+        ? 'accent'
+        : 'muted';
 
   return (
-    <div className={`${styles.subagentCard} ${styles[`subagent-${status}`]}`}>
-      <div className={styles.subagentCardHeader}>
+    <ChatResourceCard
+      className={`${styles.subagentResourceCard} ${styles[`subagent-${status}`]}`}
+      icon={(
+        <AgentAvatar
+          info={displayInfo}
+          className={styles.subagentAvatar}
+          alt={agentName}
+        />
+      )}
+      title={agentName}
+      titleMeta={displayLabel ? `· ${displayLabel}` : undefined}
+      subtitle={headerDisplay}
+      statusLabel={statusLabel}
+      statusTone={statusTone}
+      actionSlot={status === 'running' && !isInterrupted && (
         <button
           type="button"
-          className={styles.subagentCardButton}
-          aria-expanded={isOpen}
-          onClick={handleToggle}
+          className={styles.subagentAbortBtn}
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleAbort();
+          }}
+          title={window.t?.('subagentAbort') || '终止'}
         >
-          <AgentAvatar
-            info={displayInfo}
-            className={styles.subagentAvatar}
-            alt={agentName}
-          />
-          <div className={styles.subagentBody}>
-            <div className={styles.subagentName}>
-              {agentName}
-              {displayLabel ? <span className={styles.subagentInstance}>· {displayLabel}</span> : null}
-              <span className={styles.subagentStatus}>
-                {isInterrupted ? '已中断' : status === 'aborted' ? '已终止' : status === 'done' ? '已完成' : status === 'failed' ? '失败' : '已派出'}
-              </span>
-            </div>
-            <div className={styles.subagentDisplay}>
-              {headerDisplay}
-            </div>
-          </div>
+          ✕
         </button>
-        {status === 'running' && !isInterrupted && (
-          <button className={styles.subagentAbortBtn} onClick={handleAbort} title={window.t?.('subagentAbort') || '终止'}>
-            ✕
-          </button>
-        )}
-      </div>
-      <div
-        className={`${styles.subagentPreviewWrap}${isOpen ? ` ${styles.subagentPreviewWrapOpen}` : ''}${isClosingPreview ? ` ${styles.subagentPreviewWrapClosing}` : ''}`}
-        aria-hidden={!isOpen}
-      >
-        <div ref={previewScrollRef} className={styles.subagentPreviewScroll}>
-          {shouldRenderPreview ? (
-            <SubagentSessionPreview
-              taskId={block.taskId}
-              sessionPath={previewSessionPath}
-              agentId={previewAgentId}
-              streamStatus={status}
-              summary={block.summary}
-              scrollContainerRef={previewScrollRef}
-            />
-          ) : null}
-        </div>
-      </div>
-    </div>
+      )}
+    />
   );
 });

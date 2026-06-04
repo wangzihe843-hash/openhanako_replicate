@@ -46,6 +46,7 @@ describe('expired session file presentation', () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -109,6 +110,267 @@ describe('expired session file presentation', () => {
     expect(screen.queryByRole('img', { name: 'old.png' })).not.toBeInTheDocument();
     expect(screen.getByText('old.png · 文件已过期')).toBeInTheDocument();
     expect(window.platform?.getFileUrl).not.toHaveBeenCalled();
+  });
+
+  it('renders attachment-only user messages without an empty text bubble', () => {
+    const { container } = render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-attachment-only',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_img',
+              path: '/cache/photo.png',
+              name: 'photo.png',
+              isDir: false,
+              mimeType: 'image/png',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: 'photo.png' })).toBeInTheDocument();
+    const userTextBubble = Array.from(container.querySelectorAll('div')).find((node) => {
+      const className = String(node.getAttribute('class') || '');
+      return className.includes('messageUser') && !className.includes('messageGroupUser');
+    });
+    expect(userTextBubble).toBeUndefined();
+  });
+
+  it('renders playable audio user attachments with a waveform chip', () => {
+    const audioInstances: Array<{ play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn> }> = [];
+    const AudioMock = vi.fn().mockImplementation(function MockAudio(this: {
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      onended: (() => void) | null;
+      onerror: (() => void) | null;
+    }) {
+      this.play = vi.fn(() => Promise.resolve());
+      this.pause = vi.fn();
+      this.onended = null;
+      this.onerror = null;
+      audioInstances.push(this);
+    });
+    vi.stubGlobal('Audio', AudioMock);
+
+    render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-audio',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/voice.wav',
+              name: 'voice.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('voice.wav')).toBeInTheDocument();
+    expect(screen.getByTestId('audio-attachment-wave')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Play voice.wav'));
+    expect(AudioMock).toHaveBeenCalledWith('file:///cache/voice.wav');
+    expect(audioInstances[0].play).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders generic audio attachments with persisted waveform peaks and supports seeking on the wave', () => {
+    const audioInstances: Array<{
+      currentTime: number;
+      duration: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      removeEventListener: ReturnType<typeof vi.fn>;
+    }> = [];
+    const AudioMock = vi.fn().mockImplementation(function MockAudio(this: {
+      currentTime: number;
+      duration: number;
+      play: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      removeEventListener: ReturnType<typeof vi.fn>;
+    }) {
+      this.currentTime = 0;
+      this.duration = 4;
+      this.play = vi.fn(() => Promise.resolve());
+      this.pause = vi.fn();
+      this.addEventListener = vi.fn();
+      this.removeEventListener = vi.fn();
+      audioInstances.push(this);
+    });
+    vi.stubGlobal('Audio', AudioMock);
+
+    render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-audio-waveform',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/song.wav',
+              name: 'song.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+              waveform: {
+                version: 1,
+                peaks: [0.1, 0.5, 0.9],
+                durationMs: 4000,
+                source: 'computed',
+              },
+            } as any,
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText('Play song.wav'));
+    const wave = screen.getByTestId('audio-attachment-wave');
+    expect(wave.querySelectorAll('[data-audio-wave-bar]')).toHaveLength(24);
+
+    wave.getBoundingClientRect = vi.fn(() => ({
+      x: 10,
+      y: 0,
+      left: 10,
+      top: 0,
+      right: 110,
+      bottom: 20,
+      width: 100,
+      height: 20,
+      toJSON: () => ({}),
+    }));
+    fireEvent.click(wave, { clientX: 60 });
+
+    expect(audioInstances[0].currentTime).toBeCloseTo(2);
+  });
+
+  it('renders voice-input audio messages inside the voice card even before transcription is ready', () => {
+    const { container } = render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-voice-input-pending',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/voice.wav',
+              name: '录音 1.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+              presentation: 'voice-input',
+              listed: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText('录音 1.wav')).not.toBeInTheDocument();
+    const wave = screen.getByTestId('audio-attachment-wave');
+    const voiceCard = wave.closest('[class*="voiceInputCard"]');
+    expect(voiceCard).toBeTruthy();
+    expect(voiceCard).toContainElement(wave);
+    const userTextBubble = Array.from(container.querySelectorAll('div')).find((node) => {
+      const className = String(node.getAttribute('class') || '');
+      return className.includes('messageUser') && !className.includes('messageGroupUser');
+    });
+    expect(userTextBubble).toBeUndefined();
+  });
+
+  it('renders voice-input audio messages as waveform-only chips without visible filenames', () => {
+    render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-voice-input',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/voice.wav',
+              name: '录音 1.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+              presentation: 'voice-input',
+              listed: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText('录音 1.wav')).not.toBeInTheDocument();
+    expect(screen.getByTestId('audio-attachment-wave')).toBeInTheDocument();
+    expect(screen.getByLabelText('Play 录音 1.wav')).toBeInTheDocument();
+  });
+
+  it('renders voice-input transcript above the playable audio strip without an empty text bubble', () => {
+    const { container } = render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-voice-transcript',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/voice.wav',
+              name: '录音 1.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+              presentation: 'voice-input',
+              listed: false,
+              transcription: {
+                status: 'ready',
+                text: '今晚我们先把语音输入跑通。',
+              },
+            } as any,
+          ],
+        }}
+      />,
+    );
+
+    const transcript = screen.getByText('今晚我们先把语音输入跑通。');
+    const wave = screen.getByTestId('audio-attachment-wave');
+    const voiceCard = transcript.closest('[class*="voiceInputCard"]');
+    expect(transcript).toBeInTheDocument();
+    expect(wave).toBeInTheDocument();
+    expect(voiceCard).toBeTruthy();
+    expect(voiceCard).toContainElement(wave);
+    const userTextBubble = Array.from(container.querySelectorAll('div')).find((node) => {
+      const className = String(node.getAttribute('class') || '');
+      return className.includes('messageUser') && !className.includes('messageGroupUser');
+    });
+    expect(userTextBubble).toBeUndefined();
   });
 
   it('renders assistant file actions as a split button with reveal and copy menu actions', async () => {

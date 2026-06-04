@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewRenderer } from '../../components/preview/PreviewRenderer';
 import { clearAppFileDragPayload, writeAppFileDragPayload } from '../../utils/app-file-drag';
@@ -182,6 +182,80 @@ describe('PreviewRenderer HTML isolation', () => {
           agentId: undefined,
         }),
       }));
+    });
+  });
+
+  it('marks markdown body rendered after a cover for cover-aware title layout', () => {
+    window.platform = {
+      getFileUrl: vi.fn((path: string) => `file://${path}`),
+    } as unknown as typeof window.platform;
+
+    const markdownItem: PreviewItem = {
+      id: 'markdown-demo',
+      type: 'markdown',
+      title: 'demo.md',
+      content: [
+        '---',
+        'cover:',
+        '  image: cover.png',
+        '---',
+        '# Demo',
+      ].join('\n'),
+      filePath: '/tmp/workspace/demo.md',
+      ext: 'md',
+    };
+
+    const { container } = render(<PreviewRenderer previewItem={markdownItem} />);
+    const body = container.querySelector('.preview-markdown');
+
+    expect(body).toHaveClass('markdown-has-cover');
+    expect(body?.querySelector('h1')?.textContent).toBe('Demo');
+  });
+
+  it('removes the preview cover from the markdown file context menu', async () => {
+    window.platform = {
+      getFileUrl: vi.fn((path: string) => `file://${path}`),
+      writeFileIfUnchanged: vi.fn(async (_filePath: string, _content: string, _version: unknown) => ({
+        ok: true,
+        version: { mtimeMs: 2, size: 32, sha256: 'v2' },
+      })),
+    } as unknown as typeof window.platform;
+
+    const markdownItem: PreviewItem = {
+      id: 'markdown-demo',
+      type: 'markdown',
+      title: 'demo.md',
+      content: [
+        '---',
+        'title: Demo',
+        'cover:',
+        '  image: cover.png',
+        '---',
+        '# Demo',
+      ].join('\n'),
+      filePath: '/tmp/workspace/demo.md',
+      fileVersion: { mtimeMs: 1, size: 48, sha256: 'v1' },
+      ext: 'md',
+    };
+
+    const { container } = render(<PreviewRenderer previewItem={markdownItem} />);
+    const cover = container.querySelector('.markdown-cover') as HTMLElement | null;
+    expect(cover).toBeTruthy();
+
+    fireEvent.contextMenu(cover!, { clientX: 44, clientY: 72 });
+    fireEvent.click(screen.getByRole('button', { name: '删除封面' }));
+
+    await waitFor(() => {
+      expect(window.platform?.writeFileIfUnchanged).toHaveBeenCalledWith(
+        '/tmp/workspace/demo.md',
+        [
+          '---',
+          'title: Demo',
+          '---',
+          '# Demo',
+        ].join('\n'),
+        { mtimeMs: 1, size: 48, sha256: 'v1' },
+      );
     });
   });
 });

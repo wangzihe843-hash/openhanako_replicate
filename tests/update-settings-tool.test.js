@@ -24,7 +24,7 @@ function makeMockPrefs(initial = {}) {
     setBridgeMediaPublicBaseUrl(v) {
       store.bridge = { ...(store.bridge || {}), mediaPublicBaseUrl: v };
     },
-    getThinkingLevel: () => store.thinking_level || "auto",
+    getThinkingLevel: () => store.thinking_level || "medium",
     setThinkingLevel(v) { store.thinking_level = v; },
     getFileBackup: () => store.file_backup || { enabled: false, retention_days: 1, max_file_size_kb: 1024 },
     setFileBackup(v) { store.file_backup = { ...(store.file_backup || {}), ...v }; },
@@ -63,6 +63,11 @@ function makeMockEngine(overrides = {}) {
     setTimezone: vi.fn(function (v) { prefs.setTimezone(v); }),
     getBridgeMediaPublicBaseUrl: vi.fn(() => prefs.getBridgeMediaPublicBaseUrl()),
     setBridgeMediaPublicBaseUrl: vi.fn(function (v) { prefs.setBridgeMediaPublicBaseUrl(v); }),
+    getComputerUseSettings: vi.fn(() => prefs._store.computer_use || { enabled: false }),
+    updateComputerUseSettings: vi.fn(async function (partial) {
+      prefs._store.computer_use = { ...(prefs._store.computer_use || {}), ...(partial || {}) };
+      return prefs._store.computer_use;
+    }),
     setThinkingLevel: vi.fn(function (v) { prefs.setThinkingLevel(v); }),
     setDefaultModel: vi.fn(),
     getEventBus: vi.fn(() => eventBus),
@@ -216,6 +221,32 @@ describe("update-settings-tool", () => {
 
       expect(engine.setBridgeMediaPublicBaseUrl).toHaveBeenCalledWith("");
       expect(engine._prefs._store.bridge.mediaPublicBaseUrl).toBe("");
+    });
+  });
+
+  describe("computer use global gate", () => {
+    it("searches the Computer Use global switch", async () => {
+      const { tool } = buildTool();
+      const result = await tool.execute("c-computer-search", { action: "search", query: "computer use" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("computer_use.enabled");
+      expect(text).toContain("Computer Use");
+    });
+
+    it("applies the Computer Use global switch", async () => {
+      const { tool, engine } = buildTool({
+        prefsData: { computer_use: { enabled: false } },
+      });
+
+      await tool.execute("c-computer-apply", {
+        action: "apply",
+        key: "computer_use.enabled",
+        value: "true",
+      });
+
+      expect(engine.updateComputerUseSettings).toHaveBeenCalledWith({ enabled: true });
+      expect(engine._prefs._store.computer_use.enabled).toBe(true);
     });
   });
 

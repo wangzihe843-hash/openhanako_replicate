@@ -2,7 +2,7 @@
  * WebSocket 消息协议定义
  *
  * Client → Server:
- *   { type: "prompt", text: "...", sessionPath?: "...", images?: [...], videos?: [...], skills?: [...],
+ *   { type: "prompt", text: "...", sessionPath?: "...", images?: [...], videos?: [...], audios?: [...], skills?: [...],
  *     uiContext?: { currentViewed?: string|null, activeFile?: string|null, activePreview?: string|null, pinnedFiles?: string[] } | null }
  *     （uiContext：用户视野元信息，供 current_status(ui_context) 按需读取；
  *      null/undefined 表示清空旧值；不进 session.entries。）

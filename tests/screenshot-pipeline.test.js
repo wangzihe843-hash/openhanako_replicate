@@ -93,4 +93,13 @@ describe("screenshot pipeline", () => {
     expect(mainSource).toContain('.chat-image { width: ${themeName.endsWith("-desktop") ? "66.666%" : "100%"};');
     expect(mainSource).toContain("height: auto; border-radius: 6px;");
   });
+
+  it("renders semantic user attachments in screenshot HTML", () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+
+    expect(mainSource).toContain("function renderScreenshotAttachment");
+    expect(mainSource).toContain('if (b.type === "attachment") return renderScreenshotAttachment(b);');
+    expect(mainSource).toContain("chat-attachment");
+    expect(mainSource).toContain("chat-audio-wave");
+  });
 });

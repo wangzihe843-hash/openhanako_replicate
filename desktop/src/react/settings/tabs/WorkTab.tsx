@@ -23,6 +23,10 @@ type AgentDeskConfig = {
   heartbeat_interval: number;
   social_global_threshold: number;
   social_per_peer_threshold: number;
+  workspace_context: {
+    inject_agents_md: boolean;
+    inject_claude_md: boolean;
+  };
 };
 
 export function WorkTab() {
@@ -70,6 +74,10 @@ export function WorkTab() {
           heartbeat_interval: data.desk?.heartbeat_interval ?? DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
           social_global_threshold: data.desk?.social_global_threshold ?? DEFAULT_SOCIAL_GLOBAL_THRESHOLD,
           social_per_peer_threshold: data.desk?.social_per_peer_threshold ?? DEFAULT_SOCIAL_PER_PEER_THRESHOLD,
+          workspace_context: {
+            inject_agents_md: data.workspace_context?.inject_agents_md === true,
+            inject_claude_md: data.workspace_context?.inject_claude_md === true,
+          },
         };
         setAgentDesk(desk);
         setHbIntervalDraft(desk.heartbeat_interval);
@@ -117,6 +125,27 @@ export function WorkTab() {
     const previous = agentDesk;
     setAgentDesk({ ...agentDesk, heartbeat_enabled: on });
     const saved = await saveAgentConfig(agentId, { desk: { heartbeat_enabled: on } });
+    if (!saved && selectedAgentIdRef.current === agentId) {
+      setAgentDesk(previous);
+    }
+  };
+
+  const toggleWorkspaceContext = async (
+    key: keyof AgentDeskConfig['workspace_context'],
+    on: boolean,
+  ) => {
+    if (!agentDesk) return;
+    const agentId = selectedAgentIdRef.current;
+    if (!agentId) return;
+    const previous = agentDesk;
+    setAgentDesk({
+      ...agentDesk,
+      workspace_context: {
+        ...agentDesk.workspace_context,
+        [key]: on,
+      },
+    });
+    const saved = await saveAgentConfig(agentId, { workspace_context: { [key]: on } });
     if (!saved && selectedAgentIdRef.current === agentId) {
       setAgentDesk(previous);
     }
@@ -205,7 +234,7 @@ export function WorkTab() {
 
       {/* ── Per-agent section（AgentSelect 作为 context，section 内所有配置针对该 agent） ── */}
       <SettingsSection
-        title="Agent 工作书桌设置"
+        title="Agent 工作台设置"
         context={<AgentSelect value={selectedAgentId} onChange={setSelectedAgentId} />}
       >
         {agentDesk && (
@@ -310,6 +339,39 @@ export function WorkTab() {
                     {t('settings.save')}
                   </button>
                 </>
+              }
+            />
+          </>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('settings.work.contextFilesTitle')}
+        description={t('settings.work.contextFilesDesc')}
+        context={<AgentSelect value={selectedAgentId} onChange={setSelectedAgentId} />}
+      >
+        {agentDesk && (
+          <>
+            <SettingsRow
+              label={t('settings.work.injectAgentsMd')}
+              hint={t('settings.work.injectAgentsMdDesc')}
+              control={
+                <Toggle
+                  on={agentDesk.workspace_context.inject_agents_md}
+                  onChange={(on) => toggleWorkspaceContext('inject_agents_md', on)}
+                  ariaLabel={t('settings.work.injectAgentsMd')}
+                />
+              }
+            />
+            <SettingsRow
+              label={t('settings.work.injectClaudeMd')}
+              hint={t('settings.work.injectClaudeMdDesc')}
+              control={
+                <Toggle
+                  on={agentDesk.workspace_context.inject_claude_md}
+                  onChange={(on) => toggleWorkspaceContext('inject_claude_md', on)}
+                  ariaLabel={t('settings.work.injectClaudeMd')}
+                />
               }
             />
           </>

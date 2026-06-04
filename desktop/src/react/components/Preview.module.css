@@ -64,11 +64,15 @@
 
 /* Markdown 预览 */
 .previewPanelBody :global(.preview-markdown) {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-lg) var(--space-lg) var(--space-md);
     font-size: var(--editor-markdown-font-size);
     font-weight: 400;
     line-height: var(--editor-markdown-line-height);
-    font-family: var(--font-serif);
+    font-family: var(--editor-markdown-font-family, var(--font-serif));
+}
+
+.previewPanelBody :global(.markdown-cover-drop-host .preview-markdown) {
+    padding-top: calc(var(--space-xl) + var(--space-lg));
 }
 
 .previewPanelBody :global(.markdown-cover) {
@@ -203,10 +207,21 @@
     background: var(--overlay-light);
 }
 
+.previewPanelBody :global(.markdown-cover-menu button.markdown-cover-menu-danger) {
+    margin-top: 4px;
+    border-top: 1px solid var(--overlay-light);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    color: var(--danger, #b45a5a);
+}
+
 .previewPanelBody :global(.preview-markdown) h1 {
     text-align: center;
     font-size: var(--editor-markdown-h1-font-size);
     font-weight: 700;
+}
+
+.previewPanelBody :global(.preview-markdown.markdown-has-cover) h1 {
+    text-align: left;
 }
 
 .previewPanelBody :global(.preview-markdown) h2 {
@@ -610,7 +625,7 @@
     width: 100%;
     border-collapse: collapse;
     font-size: 0.9em;
-    font-family: var(--font-serif);
+    font-family: var(--editor-markdown-font-family, var(--font-serif));
 }
 
 :global(.cm-table-widget th),
@@ -683,7 +698,7 @@
     width: 100%;
     border-collapse: collapse;
     font-size: 0.85em;
-    font-family: var(--font-serif);
+    font-family: var(--editor-markdown-font-family, var(--font-serif));
 }
 
 :global(.cm-csv-table-widget th),

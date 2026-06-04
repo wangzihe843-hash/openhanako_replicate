@@ -5,6 +5,7 @@ import type { FloatingAnchorRect, QuotedSelection } from './input-slice';
 import type { ChatMessage } from './chat-types';
 
 const MAX_QUOTED_SELECTION_CHARS = 2000;
+const SELECTION_QUOTE_ACTION_SELECTOR = '[data-selection-quote-action="true"]';
 type QuoteClearScope = {
   sourceKind?: QuotedSelection['sourceKind'];
   sourceFilePath?: string | null;
@@ -25,13 +26,31 @@ export function initQuotedSelectionLifecycle(target: Document = document): () =>
   const handleSelectionChange = () => {
     clearSelectionIfNativeSelectionIsEmpty(target);
   };
+  let suppressNextSelectionCommit = false;
+  const handleSelectionBoundaryInteraction = (event: Event) => {
+    const targetElement = eventTargetElement(event.target);
+    if (!clearSelectionIfInteractionLeavesQuoteAction(targetElement)) return;
+    if (!targetElement || !closestChatSelectionRoot(targetElement)) {
+      suppressNextSelectionCommit = true;
+    }
+  };
+  const handleWindowBlur = () => {
+    suppressNextSelectionCommit = true;
+    clearSelection();
+  };
   const handledSelectionCommitEvents = new WeakSet<Event>();
   const handleSelectionCommit = (event: Event) => {
     if (handledSelectionCommitEvents.has(event)) return;
     handledSelectionCommitEvents.add(event);
-    captureDocumentChatSelection(target, eventAnchorRect(event));
+    if (suppressNextSelectionCommit) {
+      suppressNextSelectionCommit = false;
+      return;
+    }
+    scheduleDocumentChatSelectionCapture(target, eventAnchorRect(event));
   };
   target.addEventListener('selectionchange', handleSelectionChange);
+  target.addEventListener('pointerdown', handleSelectionBoundaryInteraction, true);
+  target.addEventListener('focusin', handleSelectionBoundaryInteraction, true);
   target.addEventListener('mouseup', handleSelectionCommit);
   target.addEventListener('touchend', handleSelectionCommit);
   target.addEventListener('keyup', handleSelectionCommit);
@@ -40,15 +59,19 @@ export function initQuotedSelectionLifecycle(target: Document = document): () =>
   targetWindow?.addEventListener('mouseup', handleSelectionCommit);
   targetWindow?.addEventListener('touchend', handleSelectionCommit);
   targetWindow?.addEventListener('keyup', handleSelectionCommit);
+  targetWindow?.addEventListener('blur', handleWindowBlur);
 
   const cleanup = () => {
     target.removeEventListener('selectionchange', handleSelectionChange);
+    target.removeEventListener('pointerdown', handleSelectionBoundaryInteraction, true);
+    target.removeEventListener('focusin', handleSelectionBoundaryInteraction, true);
     target.removeEventListener('mouseup', handleSelectionCommit);
     target.removeEventListener('touchend', handleSelectionCommit);
     target.removeEventListener('keyup', handleSelectionCommit);
     targetWindow?.removeEventListener('mouseup', handleSelectionCommit);
     targetWindow?.removeEventListener('touchend', handleSelectionCommit);
     targetWindow?.removeEventListener('keyup', handleSelectionCommit);
+    targetWindow?.removeEventListener('blur', handleWindowBlur);
     if (quotedSelectionLifecycle?.target === target) {
       quotedSelectionLifecycle = null;
     }
@@ -67,6 +90,10 @@ export function captureSelection(previewItem: PreviewItem, cmView?: EditorView):
   } else {
     captureDOMSelection(previewItem);
   }
+}
+
+export function scheduleCaptureSelection(previewItem: PreviewItem, cmView?: EditorView): void {
+  captureSelection(previewItem, cmView);
 }
 
 function captureCMSelection(previewItem: PreviewItem, view: EditorView): void {
@@ -95,6 +122,7 @@ function captureCMSelection(previewItem: PreviewItem, view: EditorView): void {
     sourceFilePath: previewItem.filePath,
     lineStart,
     lineEnd,
+    selectionAnchorKind: 'codemirror',
     charCount: text.length,
     anchorRect: getCMSelectionAnchorRect(view, textStart, textEnd) ?? getElementAnchorRect((view as EditorView & { dom?: Element }).dom ?? null),
     updatedAt: Date.now(),
@@ -115,6 +143,7 @@ function captureDOMSelection(previewItem: PreviewItem): void {
     sourceTitle: previewItem.title,
     sourceKind: 'preview',
     sourceFilePath: previewItem.filePath,
+    selectionAnchorKind: 'native',
     charCount: text.length,
     anchorRect: sel && sel.rangeCount > 0
       ? getRangeAnchorRect(sel.getRangeAt(0)) ?? getElementAnchorRect(nodeElement(sel.anchorNode))
@@ -153,11 +182,16 @@ export function captureChatSelection(sessionPath: string, fallbackAnchorRect?: F
     sourceSessionPath: sessionPath,
     sourceMessageId: message.id,
     sourceRole: message.role,
+    selectionAnchorKind: 'native',
     charCount: text.length,
     anchorRect: getRangeAnchorRect(sel.getRangeAt(0)) ?? getElementAnchorRect(anchorMessage) ?? fallbackAnchorRect,
     updatedAt: Date.now(),
   };
   useStore.getState().setQuoteCandidate(quotedSelection);
+}
+
+export function scheduleCaptureChatSelection(sessionPath: string, fallbackAnchorRect?: FloatingAnchorRect): void {
+  captureChatSelection(sessionPath, fallbackAnchorRect);
 }
 
 function captureDocumentChatSelection(target: Document, fallbackAnchorRect?: FloatingAnchorRect): void {
@@ -179,6 +213,10 @@ function captureDocumentChatSelection(target: Document, fallbackAnchorRect?: Flo
   captureChatSelection(sessionPath, fallbackAnchorRect);
 }
 
+function scheduleDocumentChatSelectionCapture(target: Document, fallbackAnchorRect?: FloatingAnchorRect): void {
+  captureDocumentChatSelection(target, fallbackAnchorRect);
+}
+
 function clipQuotedText(text: string): string {
   return text.length > MAX_QUOTED_SELECTION_CHARS ? text.slice(0, MAX_QUOTED_SELECTION_CHARS) : text;
 }
@@ -187,6 +225,10 @@ function nodeElement(node: Node | null): Element | null {
   if (!node) return null;
   if (node.nodeType === Node.ELEMENT_NODE) return node as Element;
   return node.parentElement;
+}
+
+function eventTargetElement(target: EventTarget | null): Element | null {
+  return target instanceof Node ? nodeElement(target) : null;
 }
 
 function closestChatSelectionRoot(element: Element): HTMLElement | null {
@@ -199,6 +241,14 @@ function closestMessageElement(element: Element): HTMLElement | null {
 
 function isInteractiveSelectionElement(element: Element): boolean {
   return !!element.closest('input, textarea, select, button, [contenteditable="true"], [data-selection-ignore="true"], [data-mobile-gesture-ignore="true"]');
+}
+
+function clearSelectionIfInteractionLeavesQuoteAction(targetElement: Element | null): boolean {
+  const current = useStore.getState().quoteCandidate;
+  if (!current) return false;
+  if (targetElement?.closest(SELECTION_QUOTE_ACTION_SELECTOR)) return false;
+  clearSelection();
+  return true;
 }
 
 function findMessage(sessionPath: string, messageId: string): ChatMessage | null {
@@ -294,12 +344,13 @@ export function clearSelection(scope?: QuoteClearScope): void {
 }
 
 function clearSelectionIfNativeSelectionIsEmpty(target: Document): void {
-  const current = useStore.getState().quoteCandidate;
-  if (!current) return;
   const sel = getNativeSelection(target);
   const text = sel?.toString().trim();
   if (sel && text && sel.rangeCount > 0) return;
-  clearSelection();
+  const current = useStore.getState().quoteCandidate;
+  if (!current) return;
+  if (current.selectionAnchorKind === 'codemirror') return;
+  useStore.getState().clearQuoteCandidate();
 }
 
 function getNativeSelection(target: Document): Selection | null {

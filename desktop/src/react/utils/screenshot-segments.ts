@@ -31,6 +31,12 @@ function isImageAttachment(attachment: UserAttachment): boolean {
   return Boolean(ext && isImageOrSvgExt(ext));
 }
 
+function voiceTranscriptionVisibleLength(attachment: UserAttachment): number {
+  if (attachment.presentation !== 'voice-input') return 0;
+  if (attachment.transcription?.status !== 'ready') return 0;
+  return attachment.transcription.text?.trim().length || 0;
+}
+
 function blockVisibleWeight(block: ContentBlock): number {
   if (block.type === 'text') return stripHtml(block.html).length;
   if (block.type === 'file' && isImageOrSvgExt(block.ext)) return IMAGE_BLOCK_VISIBLE_CHAR_WEIGHT;
@@ -40,10 +46,15 @@ function blockVisibleWeight(block: ContentBlock): number {
 
 export function estimateScreenshotVisibleChars(message: ChatMessage): number {
   if (message.role === 'user') {
-    const imageWeight = (message.attachments || [])
+    const attachments = message.attachments || [];
+    const imageWeight = attachments
       .filter(isImageAttachment)
       .length * IMAGE_BLOCK_VISIBLE_CHAR_WEIGHT;
-    return (message.text || '').length + imageWeight;
+    const voiceTextWeight = attachments.reduce(
+      (sum, attachment) => sum + voiceTranscriptionVisibleLength(attachment),
+      0,
+    );
+    return (message.text || '').length + voiceTextWeight + imageWeight;
   }
 
   return (message.blocks || []).reduce((sum, block) => sum + blockVisibleWeight(block), 0);

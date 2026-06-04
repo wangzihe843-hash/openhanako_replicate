@@ -123,4 +123,98 @@ describe('markdown cover editor field', () => {
 
     view.destroy();
   });
+
+  it('opens the same cover context menu in editor mode', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: [
+          '---',
+          'cover:',
+          '  image: 文本附件/cover.png',
+          '---',
+          '# Demo',
+        ].join('\n'),
+        extensions: [
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/day.md',
+            getFileUrl: (filePath) => `file://${filePath}`,
+          }),
+          markdownCoverField,
+        ],
+      }),
+    });
+
+    const cover = parent.querySelector('.cm-markdown-cover') as HTMLElement | null;
+    expect(cover).toBeInstanceOf(HTMLElement);
+
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 18,
+      clientY: 24,
+    });
+    const notPrevented = cover!.dispatchEvent(event);
+
+    expect(notPrevented).toBe(false);
+    const menu = parent.querySelector('.markdown-cover-menu') as HTMLElement | null;
+    expect(menu).toBeInstanceOf(HTMLElement);
+    expect(menu?.style.left).toBe('18px');
+    expect(menu?.style.top).toBe('24px');
+    expect([...menu!.querySelectorAll('button')].map(button => button.textContent)).toEqual([
+      '保存图片',
+      '自定义提示词生成图片',
+      '删除封面',
+    ]);
+
+    view.destroy();
+  });
+
+  it('removes the cover block from editor mode through the context menu', () => {
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: [
+          '---',
+          'title: Demo',
+          'cover:',
+          '  image: 文本附件/cover.png',
+          '---',
+          '# Demo',
+        ].join('\n'),
+        extensions: [
+          markdownImageContextFacet.of({
+            filePath: '/vault/notes/day.md',
+            getFileUrl: (filePath) => `file://${filePath}`,
+          }),
+          markdownCoverField,
+        ],
+      }),
+    });
+
+    const cover = parent.querySelector('.cm-markdown-cover') as HTMLElement | null;
+    cover!.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 18,
+      clientY: 24,
+    }));
+    const deleteButton = [...parent.querySelectorAll('.markdown-cover-menu button')]
+      .find(button => button.textContent === '删除封面') as HTMLButtonElement | undefined;
+
+    deleteButton?.click();
+
+    expect(view.state.doc.toString()).toBe([
+      '---',
+      'title: Demo',
+      '---',
+      '# Demo',
+    ].join('\n'));
+
+    view.destroy();
+  });
 });

@@ -31,6 +31,7 @@ import { createExperienceTools } from "../lib/tools/experience.js";
 import { createInstallSkillTool } from "../lib/tools/install-skill.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
+import { createSessionFoldersTool } from "../lib/tools/session-folders-tool.js";
 import {
   createSubagentCloseTool,
   createSubagentReplyTool,
@@ -38,7 +39,6 @@ import {
 } from "../lib/tools/subagent-tool.js";
 import { writeSubagentSessionMeta } from "../lib/subagent-executor-metadata.js";
 import { createCheckDeferredTool } from "../lib/tools/check-deferred-tool.js";
-import { createWaitTool } from "../lib/tools/wait-tool.js";
 import { createStopTaskTool } from "../lib/tools/stop-task-tool.js";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.js";
 import { createTerminalTool } from "../lib/tools/terminal-tool.js";
@@ -52,7 +52,15 @@ import { readXingyeAgentRelationshipPreambleSync } from "../shared/xingye-relati
 import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
 import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
 import { assertAgentConfigPatchYuan, getAgentConfigRepairState } from "./yuan-registry.js";
+import {
+  collectWorkspaceInstructionFiles,
+  formatWorkspaceInstructionFiles,
+} from "./workspace-instruction-files.js";
 import { createModuleLogger } from "../lib/debug-log.js";
+import {
+  CACHE_SNAPSHOT_EXPERIMENT_ID,
+  getResolvedExperimentValue,
+} from "../lib/experiments/registry.js";
 
 const moduleLog = createModuleLogger("agent");
 
@@ -285,12 +293,24 @@ export class Agent {
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
         getTimezone: () => this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        getCacheSnapshotReflectionMode: () => getResolvedExperimentValue(
+          this._cb?.getPreferences?.(),
+          CACHE_SNAPSHOT_EXPERIMENT_ID,
+        ),
+        buildSessionCacheSnapshot: (sessionPath, options) => (
+          this._cb?.getEngine?.()?.buildSessionCacheSnapshot?.(sessionPath, options)
+        ),
+        getSessionStreamFn: (sessionPath) => (
+          this._cb?.getEngine?.()?.getSessionStreamFn?.(sessionPath)
+        ),
         onCompiled: () => {
           // _systemPrompt 是非 session 路径（巡检/cron/频道/DM/bridge owner 新建）
           // 共享的 cache，必须按 master 构建，不被 per-session 开关污染。
           this._systemPrompt = this.buildSystemPrompt({ forceMemoryEnabled: this._memoryMasterEnabled });
           moduleLog.log(`${this.agentName} 记忆编译完成，system prompt 已刷新`);
         },
+        agentId: this.id,
+        agentDir: this.agentDir,
         sessionDir: this.sessionDir,
         memoryDir: path.dirname(this.memoryMdPath),
         memoryMdPath: this.memoryMdPath,
@@ -392,6 +412,7 @@ export class Agent {
       getCurrentModel: () => this._cb?.getEngine?.()?.currentModel || null,
       getUiContext: (sessionPath) => this._cb?.getEngine?.()?.getUiContext?.(sessionPath) || null,
       listSessionFiles: (sessionPath) => this._cb?.getEngine?.()?.listSessionFiles?.(sessionPath) || [],
+      getSessionFolderScope: (sessionPath) => this._cb?.getEngine?.()?.getSessionFolderScope?.(sessionPath) || null,
       getBridgeContext: (sessionPath) => this._cb?.getEngine?.()?.getBridgeContextForSessionPath?.(sessionPath, { agentId: this.id }) || null,
       listOpenSubagentThreads: (sessionPath) => this._cb?.getSubagentThreadStore?.()?.listOpenDirectBySession?.(sessionPath) || [],
     });
@@ -406,6 +427,13 @@ export class Agent {
       getEngine: () => this._cb?.getEngine?.(),
       getAgent: () => this,
       getConfirmStore: () => this._cb?.getConfirmStore?.(),
+      getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      emitEvent: (event, sp) => { if (sp) this._cb?.emitEvent?.(event, sp); },
+    });
+    this._sessionFoldersTool = createSessionFoldersTool({
+      getEngine: () => this._cb?.getEngine?.(),
+      getConfirmStore: () => this._cb?.getConfirmStore?.(),
+      getApprovalGateway: () => this._cb?.getApprovalGateway?.(),
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
       emitEvent: (event, sp) => { if (sp) this._cb?.emitEvent?.(event, sp); },
     });
@@ -680,7 +708,7 @@ export class Agent {
       ...this._pinnedMemoryTools,
     ] : [];
     const experienceTools = experienceEnabled ? this._experienceTools : [];
-    const computerUseTools = this._isComputerUseAvailableForThisAgent()
+    const computerUseTools = this._isComputerUseCandidateForThisAgent()
       ? [this._getComputerUseTool()]
       : [];
     const legacyArtifactTools = options.includeLegacyArtifactTool === true
@@ -705,6 +733,7 @@ export class Agent {
       this._stopTaskTool,
       this._xingyeProposeDraftTool,
       this._updateSettingsTool,
+      this._sessionFoldersTool,
       this._subagentTool,
       this._subagentReplyTool,
       this._subagentCloseTool,
@@ -712,7 +741,6 @@ export class Agent {
       this._checkDeferredTool,
       this._currentStatusTool,
       this._terminalTool,
-      createWaitTool(),
     ].filter(Boolean);
   }
   get tools() {
@@ -729,20 +757,29 @@ export class Agent {
         },
         getAgentId: () => this.id,
         getConfirmStore: () => this._cb?.getConfirmStore?.(),
+        getApprovalGateway: () => this._cb?.getApprovalGateway?.(),
+        getPermissionMode: (sessionPath) => this._cb?.getSessionPermissionMode?.(sessionPath),
         approveComputerUseApp: (approval) => this._cb?.getEngine?.()?.approveComputerUseApp?.(approval),
         emitEvent: (event, sp) => { if (sp) this._cb?.emitEvent?.(event, sp); },
+        isAgentToolEnabled: () => this._isComputerUseAvailableForThisAgent(),
+        isEnabledForAgentConfig: () => this._isComputerUseAvailableForThisAgent(),
       });
     }
     return this._computerUseTool;
   }
 
-  _isComputerUseAvailableForThisAgent() {
+  _isComputerUseCandidateForThisAgent() {
     const engine = this._cb?.getEngine?.();
     if (engine?.isComputerUseSupported?.() === false) return false;
-    const settings = engine?.getComputerUseSettings?.();
-    if (settings?.enabled !== true) return false;
     const primaryAgentId = engine?.getPrimaryAgentId?.() || null;
     return !primaryAgentId || primaryAgentId === this.id;
+  }
+
+  _isComputerUseAvailableForThisAgent() {
+    if (!this._isComputerUseCandidateForThisAgent()) return false;
+    const engine = this._cb?.getEngine?.();
+    const settings = engine?.getComputerUseSettings?.();
+    return settings?.enabled === true;
   }
 
   // Desk 系统访问
@@ -1042,7 +1079,7 @@ export class Agent {
     // cache 命中率（KV cache / Anthropic prompt cache 都按严格前缀匹配）。
     // 顺序：平台 → 环境 → 行为指南（任务/经验/工具/安全/网页/设置/技能/团队）
     //      ── cache 分界线 ──
-    //      用户档案 → ishiki（依赖 userName）→ 工作台 → 记忆规则/置顶/记忆 → 当前时间
+    //      用户档案 → ishiki（依赖 userName）→ 工作台 → 工作区说明文件 → 记忆规则/置顶/记忆 → 当前时间
     //
     // ishiki 放在用户档案之后：模板里有「你和{userName}是认识很久的人」这类引用，
     // 叙事顺序上先告诉模型"用户是谁"，再告诉它"你是谁、你和用户什么关系"。
@@ -1125,6 +1162,7 @@ export class Agent {
     parts.push(isZh
       ? "\n## Session 文件与交付\n\n" +
         "SessionFile 表示和当前 session 相关的本地文件：用户上传、你用 write/edit 产生的、插件产物、浏览器截图、安装产物，都会进入同一套 session 文件记录。\n\n" +
+        "当用户本轮附加文件时，消息里可能出现 [SessionFile] JSON 上下文。这里的 fileId 是机器契约，label 只是展示名；读取时优先用 read 的 fileId 参数，不要从 label 或可见文本重建真实路径。\n\n" +
         "当你需要使用本轮会话已经产生或登记过的文件时，先调用 current_status 获取 session_files。它会返回当前 session 的文件清单、fileId、来源、状态和本机路径。不要猜测 session-files 缓存路径。\n\n" +
         "write/edit 成功后会由工具层自动记录为 session 相关文件；这只表示文件和本次会话有关，不等于已经交付给用户。\n\n" +
         "当用户要求你把文件发给他、呈现给他、交付给他，或者你创建/修改了一个明确需要用户查看或拿走的文件时，使用 stage_files 标记为已交付。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件。\n\n" +
@@ -1134,6 +1172,7 @@ export class Agent {
         "- 不要在 Agent 层判断具体平台怎么展示或发送，消费端会处理"
       : "\n## Session Files and Delivery\n\n" +
         "SessionFile means a local file related to the current session: files uploaded by the user, files you produce with write/edit, plugin outputs, browser screenshots, and install outputs all enter the same session file record.\n\n" +
+        "When the user attaches files in the current turn, the message may include [SessionFile] JSON context. fileId is the machine contract and label is display-only; prefer the read tool's fileId argument instead of reconstructing a real path from label or visible text.\n\n" +
         "When you need to use a file that has already been produced or registered in this conversation, call current_status with the session_files key first. It returns the current session file list, fileId, origin, status, and local path. Do not guess session-files cache paths.\n\n" +
         "After write/edit succeeds, the tool layer records the file as session-related automatically; this only means the file belongs to this session, not that it has been delivered to the user.\n\n" +
         "When the user asks you to send, present, or hand over a file, or when you create/modify a file the user clearly needs to see or take away, use stage_files to mark it as delivered. Staging promotes this session-related file to something consumers can display/send.\n\n" +
@@ -1280,6 +1319,17 @@ export class Agent {
         `\nFiles and directories mentioned by the user should be searched in the current working directory first.`
     );
 
+    const workspaceInstructionBlock = formatWorkspaceInstructionFiles(
+      collectWorkspaceInstructionFiles({
+        cwd: cwdPath,
+        workspaceContext: this._config?.workspace_context,
+      }),
+      { locale: this._config.locale || "" },
+    );
+    if (workspaceInstructionBlock) {
+      parts.push(workspaceInstructionBlock);
+    }
+
     parts.push(isZh
       ? "\n## 文件与命令工具使用\n\n" +
         "查看文件和目录时优先用 read/grep/find/ls。\n" +
@@ -1394,13 +1444,14 @@ export class Agent {
     const fmtOpts = {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+      hourCycle: "h23",
       ...(tz ? { timeZone: tz } : {}),
     };
-    const dateTime = now.toLocaleString("en-US", fmtOpts);
+    const dateTime = new Intl.DateTimeFormat("en-US", fmtOpts).format(now);
     parts.push(`\nCurrent date and time: ${dateTime}`);
     parts.push(isZh
-      ? "你的一天从凌晨 4:00 开始。4:00 之前的对话属于前一天。"
-      : "Your day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.");
+      ? "你的一天从 04:00 开始。04:00 之前的对话属于前一天。"
+      : "Your day starts at 04:00. Conversations before 04:00 belong to the previous day.");
 
     return parts.join("\n");
   }

@@ -1143,47 +1143,56 @@
     "gpt-4o-audio-preview": {
       "name": "Gpt 4o Audio Preview",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-4o-audio-preview-2024-12-17": {
       "name": "Gpt 4o Audio Preview 2024.12.17",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-4o-audio-preview-2025-06-03": {
       "name": "Gpt 4o Audio Preview 2025.06.03",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio": {
       "name": "Gpt Audio",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio-1.5": {
       "name": "Gpt Audio 1.5",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio-2025-08-28": {
       "name": "Gpt Audio 2025.08.28",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio-mini": {
       "name": "Gpt Audio Mini",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio-mini-2025-10-06": {
       "name": "Gpt Audio Mini 2025.10.06",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-audio-mini-2025-12-15": {
       "name": "Gpt Audio Mini 2025.12.15",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-4o-mini-2024-07-18": {
       "name": "Gpt 4o Mini 2024.07.18",
@@ -1203,12 +1212,14 @@
     "gpt-4o-mini-audio-preview": {
       "name": "Gpt 4o Mini Audio Preview",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-4o-mini-audio-preview-2024-12-17": {
       "name": "Gpt 4o Mini Audio Preview 2024.12.17",
       "context": 128000,
-      "maxOutput": 16384
+      "maxOutput": 16384,
+      "audio": true
     },
     "gpt-4o-mini-realtime-preview": {
       "name": "Gpt 4o Mini Realtime Preview",
@@ -2996,8 +3007,6 @@
       "name": "MiMo V2.5 Pro",
       "context": 1048576,
       "maxOutput": 131072,
-      "image": true,
-      "video": true,
       "reasoning": true
     },
     "mimo-v2.5": {
@@ -3006,7 +3015,8 @@
       "maxOutput": 131072,
       "image": true,
       "video": true,
-      "reasoning": true
+      "reasoning": true,
+      "audio": true
     },
     "mimo-v2.5-tts": {
       "name": "MiMo V2.5 TTS",
@@ -3035,7 +3045,8 @@
       "maxOutput": 131072,
       "image": true,
       "video": true,
-      "reasoning": true
+      "reasoning": true,
+      "audio": true
     },
     "mimo-v2-flash": {
       "name": "MiMo V2 Flash (309B MoE)",

@@ -34,6 +34,10 @@ import {
   syncExperienceCategories,
 } from "../../lib/tools/experience.js";
 import { appendXingyeEvent } from "../../lib/xingye/events.js";
+import {
+  readPinnedMemoryItems,
+  replacePinnedMemoryItems,
+} from "../../lib/memory/pinned-memory-store.js";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.js';
 import { validateId, agentExists } from "../utils/validation.js";
 import {
@@ -54,6 +58,12 @@ import {
 } from "../../shared/secret-custody.js";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.js";
 import { recordSecurityAuditEvent } from "../http/security-audit.js";
+
+function hideDisabledGlobalToolsForSettings(toolNames, engine) {
+  const computerUseEnabled = engine?.getComputerUseSettings?.()?.enabled === true;
+  if (computerUseEnabled) return toolNames;
+  return (toolNames || []).filter((name) => name !== "computer");
+}
 import { assertAgentConfigPatchYuan } from "../../core/yuan-registry.js";
 import { createModuleLogger } from "../../lib/debug-log.js";
 
@@ -215,6 +225,9 @@ export function createAgentsRoute(engine) {
       const workspaceFolders = sessionPath
         ? (engine.getSessionWorkspaceFolders?.(sessionPath) || [])
         : [];
+      const authorizedFolders = sessionPath
+        ? (engine.getSessionAuthorizedFolders?.(sessionPath) || [])
+        : [];
       const cwdHistory = cwd
         ? mergeWorkspaceHistory(engine.config?.cwd_history, [cwd])
         : mergeWorkspaceHistory(engine.config?.cwd_history, []);
@@ -232,6 +245,7 @@ export function createAgentsRoute(engine) {
         cwd,
         homeFolder,
         workspaceFolders,
+        authorizedFolders,
         cwdHistory,
         memoryMasterEnabled,
       };
@@ -246,6 +260,7 @@ export function createAgentsRoute(engine) {
         cwd,
         homeFolder,
         workspaceFolders,
+        authorizedFolders,
         cwdHistory,
         memoryMasterEnabled,
       });
@@ -425,12 +440,18 @@ export function createAgentsRoute(engine) {
         log.warn(
           `GET /agents/${id}/config: agent not found by keyed lookup despite passing agentExists check`
         );
-        config.availableTools = computeSettingsAvailableToolNames([], { pluginTools });
+        config.availableTools = hideDisabledGlobalToolsForSettings(
+          computeSettingsAvailableToolNames([], { pluginTools }),
+          engine,
+        );
       } else {
         const runtimeToolNames = (agent.tools || [])
           .map((t) => t.name)
           .filter(Boolean);
-        config.availableTools = computeSettingsAvailableToolNames(runtimeToolNames, { pluginTools });
+        config.availableTools = hideDisabledGlobalToolsForSettings(
+          computeSettingsAvailableToolNames(runtimeToolNames, { pluginTools }),
+          engine,
+        );
       }
 
       return c.json(maskObjectSecrets(config));
@@ -707,17 +728,9 @@ export function createAgentsRoute(engine) {
       return c.json({ error: "agent not found" }, 404);
     }
     try {
-      const content = await fs.readFile(path.join(agentDir(engine, id), "pinned.md"), "utf-8");
-      const pins = content
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .map(line => line.replace(/^-\s*/, ""));
+      const pins = readPinnedMemoryItems(agentDir(engine, id)).map(item => item.content);
       return c.json({ pins });
     } catch (err) {
-      if (err.code === "ENOENT") {
-        return c.json({ pins: [] });
-      }
       return c.json({ error: err.message }, 500);
     }
   });
@@ -733,15 +746,9 @@ export function createAgentsRoute(engine) {
       if (!Array.isArray(pins)) {
         return c.json({ error: "pins must be an array" }, 400);
       }
-      const trimmedPins = pins
-        .map(p => (typeof p === "string" ? p.trim() : ""))
-        .filter(p => p.length > 0);
-      const content = trimmedPins
-        .map(p => `- ${p}`)
-        .join("\n")
-        + "\n";
       const targetAgentDir = agentDir(engine, id);
-      await fs.writeFile(path.join(targetAgentDir, "pinned.md"), content, "utf-8");
+      replacePinnedMemoryItems(targetAgentDir, pins.filter(p => typeof p === "string"));
+      const pinsCount = pins.filter(p => typeof p === "string" && p.trim().length > 0).length;
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
@@ -752,7 +759,7 @@ export function createAgentsRoute(engine) {
           input: {
             type: "pinned_memory.changed",
             source: "agents-pinned-route",
-            payload: { pinsCount: trimmedPins.length },
+            payload: { pinsCount },
           },
         });
       } catch (err) {

@@ -11,6 +11,7 @@ export interface SessionSlice {
   /** @deprecated 兼容层 — 读取当前 session 的 todos，新代码用 todosBySession */
   sessionTodos: TodoItem[];
   todosBySession: Record<string, TodoItem[]>;
+  sessionAuthorizedFoldersByPath: Record<string, string[]>;
   /**
    * 每个 session 的 live todos 版本号。live WS 写入（tool_end）+1，
    * loadMessages hydrate 捕获版本前后对比：若 mid-flight 被 live 更新，
@@ -27,6 +28,7 @@ export interface SessionSlice {
   setMemoryEnabled: (enabled: boolean) => void;
   setSessionTodos: (todos: TodoItem[]) => void;
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
+  setSessionAuthorizedFolders: (sessionPath: string, folders: string[]) => void;
   bumpTodosLiveVersion: (sessionPath: string) => void;
 }
 
@@ -42,6 +44,7 @@ export const createSessionSlice = (
   memoryEnabled: true,
   sessionTodos: [],
   todosBySession: {},
+  sessionAuthorizedFoldersByPath: {},
   todosLiveVersionBySession: {},
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionPath: (path) => set({ currentSessionPath: path }),
@@ -74,6 +77,13 @@ export const createSessionSlice = (
       todosBySession: { ...s.todosBySession, [sessionPath]: todos },
       // 如果写入的是当前 session，同步更新兼容字段
       sessionTodos: s.currentSessionPath === sessionPath ? todos : s.sessionTodos,
+    })),
+  setSessionAuthorizedFolders: (sessionPath, folders) =>
+    set((s) => ({
+      sessionAuthorizedFoldersByPath: {
+        ...s.sessionAuthorizedFoldersByPath,
+        [sessionPath]: Array.isArray(folders) ? folders : [],
+      },
     })),
   bumpTodosLiveVersion: (sessionPath) =>
     set((s) => ({

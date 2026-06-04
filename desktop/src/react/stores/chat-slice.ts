@@ -28,6 +28,7 @@ export interface ChatSlice {
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (path: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => boolean;
   truncateSessionFromMessage: (path: string, messageId: string) => boolean;
+  insertInterludeNearTaskResult: (sessionPath: string, taskId: string, block: Extract<ContentBlock, { type: 'interlude' }>) => boolean;
   resolveBlockByTaskId: (sessionPath: string, taskId: string, resolution: ContentBlock) => boolean;
   patchBlockByTaskId: (sessionPath: string, taskId: string, patch: Record<string, any>) => void;
   _pendingBlockPatches: Record<string, Record<string, any>>;
@@ -204,6 +205,47 @@ export const createChatSlice = (
 
   // 缓存：block_update 到达时 block 可能还没添加到 store（时序竞争）
   _pendingBlockPatches: {} as Record<string, Record<string, any>>,
+
+  insertInterludeNearTaskResult: (sessionPath, taskId, block) => {
+    if (!get().chatSessions[sessionPath]) return false;
+
+    let consumed = false;
+    set((s) => {
+      const session = s.chatSessions[sessionPath];
+      if (!session) return {};
+      const items = [...session.items];
+
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.type !== 'message' || item.data.role !== 'assistant') continue;
+        const blocks = item.data.blocks;
+        if (!blocks) continue;
+        if (hasEquivalentInterludeBlock(blocks, block)) {
+          consumed = true;
+          return {};
+        }
+
+        const blockIdx = blocks.findIndex((existing) => isInterludeResultAnchorBlock(existing, taskId));
+        if (blockIdx < 0) continue;
+
+        const nextBlocks = [...blocks];
+        nextBlocks.splice(blockIdx, 0, block);
+        items[i] = { ...item, data: { ...item.data, blocks: nextBlocks } };
+        consumed = true;
+        invalidateSessionCache(sessionPath);
+        return {
+          chatSessions: {
+            ...s.chatSessions,
+            [sessionPath]: { ...session, items },
+          },
+        };
+      }
+
+      return {};
+    });
+
+    return consumed;
+  },
 
   resolveBlockByTaskId: (sessionPath, taskId, resolution) => {
     if (!get().chatSessions[sessionPath]) return false;
@@ -410,4 +452,30 @@ function isResolvedTaskBlock(block: ContentBlock, taskId: string): boolean {
 
 function isResolvedFileTaskBlock(block: ContentBlock, taskId: string): boolean {
   return block.type === 'file' && block.replacesTaskId === taskId;
+}
+
+function isInterludeBlock(block: ContentBlock): block is Extract<ContentBlock, { type: 'interlude' }> {
+  return block.type === 'interlude';
+}
+
+function hasEquivalentInterludeBlock(blocks: ContentBlock[], block: ContentBlock): boolean {
+  if (!isInterludeBlock(block)) return false;
+  return blocks.some((existing) => (
+    isInterludeBlock(existing) &&
+    (
+      (block.id && existing.id === block.id) ||
+      (!!block.taskId && existing.taskId === block.taskId && existing.status === block.status)
+    )
+  ));
+}
+
+function isMediaTaskAnchorBlock(block: ContentBlock, taskId: string): boolean {
+  return (
+    (block.type === 'media_generation' && block.taskId === taskId) ||
+    (block.type === 'file' && block.replacesTaskId === taskId)
+  );
+}
+
+function isInterludeResultAnchorBlock(block: ContentBlock, taskId: string): boolean {
+  return isMediaTaskAnchorBlock(block, taskId);
 }

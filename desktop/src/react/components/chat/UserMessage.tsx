@@ -6,13 +6,15 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { AttachmentChip } from '../shared/AttachmentChip';
+import { AudioAttachmentChip } from '../shared/AudioAttachmentChip';
+import { FileKindIcon } from '../shared/FileKindIcon';
 import { FolderIcon } from '../shared/FolderIcon';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts } from '../../utils/message-text';
 import { openFilePreview } from '../../utils/file-preview';
-import { isImageOrSvgExt, extOfName } from '../../utils/file-kind';
+import { isImageOrSvgExt, extOfName, kindOfFileName } from '../../utils/file-kind';
 import { getUserAttachmentImageSrc } from '../../utils/user-attachment-media';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { replayLatestUserMessage } from '../../stores/message-turn-actions';
@@ -138,7 +140,7 @@ export const UserMessage = memo(function UserMessage({
       disabled: busy || !editValue.trim(),
     },
   ], [busy, editValue, handleCancelEdit, handleConfirmEdit, t]);
-  const defaultActions: MessageFooterAction[] = useMemo(() => [
+  const latestActions: MessageFooterAction[] = useMemo(() => canShowLatestActions ? [
     {
       id: 'copy',
       title: t('common.copyText'),
@@ -161,7 +163,10 @@ export const UserMessage = memo(function UserMessage({
       onClick: () => handleEdit(),
       disabled: isStreaming || busy,
     },
-  ], [busy, copied, handleCopy, handleEdit, handleRegenerate, isStreaming, t]);
+  ] : [], [busy, canShowLatestActions, copied, handleCopy, handleEdit, handleRegenerate, isStreaming, t]);
+  const footerActions = editing ? editingActions : latestActions;
+  const hasSkillBadges = !!message.skills?.length;
+  const hasTextBubble = editing || !!message.textHtml || hasSkillBadges;
 
   return (
     <div className={`${styles.messageGroup} ${styles.messageGroupUser}${isSelected ? ` ${styles.messageGroupSelected}` : ''}`}
@@ -193,44 +198,46 @@ export const UserMessage = memo(function UserMessage({
           messageId={message.id}
         />
       )}
-      <div className={`${styles.message} ${styles.messageUser}${editing ? ` ${styles.messageUserEditing}` : ''}`}>
-        {message.skills && message.skills.length > 0 && message.skills.map(skillName => (
-          <span key={skillName} className={badgeStyles.badge} style={{ cursor: 'default' }}>
-            <svg className={badgeStyles.icon} width="13" height="13" viewBox="0 0 16 16" fill="none"
-              stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
-              <path d="M8 1 L9.5 6 L15 8 L9.5 10 L8 15 L6.5 10 L1 8 L6.5 6 Z" />
-            </svg>
-            <span className={badgeStyles.name}>{skillName}</span>
-          </span>
-        ))}
-        {editing ? (
-          <textarea
-            ref={textareaRef}
-            className={styles.userEditTextarea}
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                e.preventDefault();
-                void handleConfirmEdit();
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                handleCancelEdit();
-              }
-            }}
-            disabled={busy}
-          />
-        ) : (
-          message.textHtml && <MarkdownContent html={message.textHtml} linkContext={{ origin: 'session', sessionPath, messageId: message.id }} />
-        )}
-      </div>
-      {canShowLatestActions && (
+      {hasTextBubble && (
+        <div className={`${styles.message} ${styles.messageUser}${editing ? ` ${styles.messageUserEditing}` : ''}`}>
+          {message.skills && message.skills.length > 0 && message.skills.map(skillName => (
+            <span key={skillName} className={badgeStyles.badge} style={{ cursor: 'default' }}>
+              <svg className={badgeStyles.icon} width="13" height="13" viewBox="0 0 16 16" fill="none"
+                stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
+                <path d="M8 1 L9.5 6 L15 8 L9.5 10 L8 15 L6.5 10 L1 8 L6.5 6 Z" />
+              </svg>
+              <span className={badgeStyles.name}>{skillName}</span>
+            </span>
+          ))}
+          {editing ? (
+            <textarea
+              ref={textareaRef}
+              className={styles.userEditTextarea}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleConfirmEdit();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  handleCancelEdit();
+                }
+              }}
+              disabled={busy}
+            />
+          ) : (
+            message.textHtml && <MarkdownContent html={message.textHtml} linkContext={{ origin: 'session', sessionPath, messageId: message.id }} />
+          )}
+        </div>
+      )}
+      {(timeText || footerActions.length > 0) && (
         <MessageFooterActions
           align="right"
           timeText={timeText}
           visible={editing}
-          actions={editing ? editingActions : defaultActions}
+          actions={footerActions}
         />
       )}
     </div>
@@ -258,6 +265,46 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
         const expired = att.status === 'expired';
         const expiredLabel = t('chat.fileExpired');
         const imageSrc = !expired && isImage(att) ? getUserAttachmentImageSrc(att) : null;
+        const kind = att.isDir ? 'directory' : kindOfFileName(att.name || att.path, att.mimeType);
+        if (!expired && kind === 'audio') {
+          const isVoiceInput = att.presentation === 'voice-input';
+          const transcriptText = isVoiceInput && att.transcription?.status === 'ready'
+            ? att.transcription.text?.trim()
+            : '';
+          if (isVoiceInput) {
+            return (
+              <div key={att.fileId || att.path || att.name || `att-${i}`} className={styles.voiceInputCard}>
+                {transcriptText && <div className={styles.voiceInputTranscript}>{transcriptText}</div>}
+                <AudioAttachmentChip
+                  file={{
+                    path: att.path,
+                    name: att.name,
+                    base64Data: att.base64Data,
+                    mimeType: att.mimeType,
+                    waveform: att.waveform,
+                  }}
+                  showName={false}
+                  className={styles.voiceInputAudioStrip}
+                  waveform={att.waveform}
+                />
+              </div>
+            );
+          }
+          return (
+            <AudioAttachmentChip
+              key={att.fileId || att.path || att.name || `att-${i}`}
+              file={{
+                path: att.path,
+                name: att.name,
+                base64Data: att.base64Data,
+                mimeType: att.mimeType,
+                waveform: att.waveform,
+              }}
+              showName={att.presentation !== 'voice-input'}
+              waveform={att.waveform}
+            />
+          );
+        }
         if (imageSrc) {
           return (
             <div key={att.name || `att-${i}`} className={styles.attachImageWrap}>
@@ -287,8 +334,8 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
         }
         return (
           <AttachmentChip
-            key={att.name || `att-${i}`}
-            icon={att.isDir ? <FolderIcon /> : <FileIcon />}
+            key={att.fileId || att.path || att.name || `att-${i}`}
+            icon={att.isDir ? <FolderIcon /> : <FileKindIcon kind={kindOfFileName(att.name || att.path, att.mimeType)} size={14} />}
             name={expired ? `${att.name} · ${expiredLabel}` : att.name}
             variant={expired ? 'expired' : 'normal'}
           />
@@ -317,15 +364,6 @@ function GridIcon() {
   );
 }
 
-function FileIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}
-
 function CopyIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -338,8 +376,7 @@ function CopyIcon() {
 function RegenerateIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
+      <path d="M21 3v5m0 0h-5m5 0-3-2.708A9 9 0 1 0 20.777 14" />
     </svg>
   );
 }

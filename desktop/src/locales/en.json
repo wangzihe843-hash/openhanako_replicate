@@ -1,6 +1,6 @@
 {
   "cover": {
-    "make": "Make cover",
+    "make": "Add cover",
     "agentGenerate": {
       "beautifyDisabled": "Enable 小花美术 in the main agent's tool settings first.",
       "defaultModelMissing": "Configure a default image model in settings first.",
@@ -155,6 +155,14 @@
     "pinFailed": "Failed to pin session",
     "unpinFailed": "Failed to unpin session",
     "archive": "Archive",
+    "deletedAgent": {
+      "title": "Agent deleted",
+      "description": "This chat is kept as read-only history. Continuing will create a new session on your primary Agent after compacting the old context.",
+      "continueButton": "Migrate to primary Agent",
+      "continuing": "Compacting and creating session",
+      "continueFailed": "Migration failed",
+      "meta": "Read-only"
+    },
     "summary": {
       "title": "Session Summary",
       "open": "Session Summary",
@@ -270,7 +278,8 @@
     "addExternalFolder": "Add folder outside workspace",
     "planMode": "Access mode",
     "accessMode": "Session access mode",
-    "operateMode": "Auto operation",
+    "autoMode": "Auto approval",
+    "operateMode": "Full access",
     "askMode": "Ask before acting",
     "readOnlyMode": "Read-only mode",
     "accessModeLocked": "Access mode cannot be changed right now",
@@ -278,8 +287,18 @@
     "pastedImage": "Pasted image",
     "textModelImageBlocked": "The current model is text-only and cannot send images directly. Adjust the model capability in settings, or configure and enable auxiliary vision.",
     "textModelVideoBlocked": "The current model does not support video input. Enable video capability in settings, or switch to a video-capable model.",
+    "textModelAudioBlocked": "The current model does not support audio input. Switch to an audio-capable model.",
     "imageReadFailed": "Could not read the image, so the message was not sent. Paste or attach it again.",
     "videoReadFailed": "Could not read the video, so the message was not sent. Attach it again.",
+    "audioReadFailed": "Could not read the audio, so the message was not sent. Attach it again.",
+    "recordAudio": "Record audio",
+    "stopRecording": "Stop recording",
+    "audioRecording": "Recording",
+    "audioRecordingStarting": "Starting",
+    "audioRecordingSaving": "Saving",
+    "audioRecordingUnavailable": "Microphone recording is unavailable in this environment.",
+    "audioRecordingFailed": "Recording failed. Check microphone permission and try again.",
+    "recordedAudioName": "Recording {index}.wav",
     "openModelSettings": "Open model settings",
     "attachFiles": "Add files",
     "commandMenu": "Command menu",
@@ -287,12 +306,14 @@
     "thinkingLevel": {
       "off": "off",
       "auto": "auto",
+      "medium": "medium",
       "high": "high",
       "xhigh": "max"
     },
     "thinkingDesc": {
       "off": "no reasoning",
       "auto": "model decides depth",
+      "medium": "balanced reasoning",
       "high": "deep reasoning",
       "xhigh": "full reasoning"
     },
@@ -590,11 +611,6 @@
       "done": "🧭 Clone dispatched",
       "failed": "🧭 Clone ran into trouble"
     },
-    "wait": {
-      "running": "⏳ {name} is waiting for results",
-      "done": "⏳ Wait finished",
-      "failed": "⏳ Wait interrupted"
-    },
     "check_pending_tasks": {
       "running": "📋 {name} is checking unfinished business",
       "done": "📋 {name} all caught up",
@@ -687,15 +703,55 @@
       "models": "Models",
       "memory": "Memory",
       "work": "Workspace",
-      "computer": "Use Computer",
       "skills": "Skills",
       "mcp": "Connectors",
       "bridge": "Social",
       "sharing": "Sharing",
       "access": "Access & Devices",
       "plugins": "Plugins",
+      "experiments": "Experiments",
       "about": "About",
       "security": "Security"
+    },
+    "experiments": {
+      "title": "Experiments",
+      "memoryTitle": "Cache Memory",
+      "description": "Forward-looking features land here first. Once stable, they move to the settings page where they belong.",
+      "empty": "No visible experiments",
+      "owner": {
+        "memory": "Memory"
+      },
+      "status": {
+        "alpha": "Alpha",
+        "beta": "Beta",
+        "deprecated": "Deprecated",
+        "retired": "Retired"
+      },
+      "risk": {
+        "low": "Low risk",
+        "medium": "Medium risk",
+        "high": "High risk"
+      },
+      "restart": {
+        "immediate": "Applies immediately",
+        "new_session": "New sessions only",
+        "restart_server": "Restart server",
+        "restart_app": "Restart app"
+      },
+      "cacheSnapshot": {
+        "title": "Cache Memory System",
+        "description": "Build memory with cached context to improve cache hit rate and reduce spend.",
+        "off": "Off",
+        "shadow": "Observe",
+        "write": "Write",
+        "observeOnly": "Observe only, do not write memory",
+        "observationNote": "Observation mode has no effect on formal memory. It only shows whether the new memory system behaves as expected.",
+        "writeWarning": "This mode writes to formal memory.",
+        "previewTitle": "Memory MD Preview",
+        "summaryTitle": "Rolling Summary Preview",
+        "emptyPreview": "No observation yet",
+        "clearObservation": "Clear observation"
+      }
     },
     "appearance": {
       "title": "Appearance",
@@ -722,6 +778,8 @@
       "midnightContrastMode": "Clear",
       "auto": "Auto",
       "autoMode": "System",
+      "font": "Font",
+      "fontHint": "Choose the font used for body reading.",
       "serifFont": "Serif Font",
       "serifFontHint": "Use serif font for body text",
       "paperTexture": "Paper Texture",
@@ -730,13 +788,25 @@
       "leavesOverlay": "Sunny Mode",
       "leavesOverlayHint": "Go touch some grass (and sunlight)"
     },
+    "fonts": {
+      "followReading": "Follow Reading Font",
+      "serifName": "Serif",
+      "serifDesc": "For body reading",
+      "sansName": "Sans",
+      "sansDesc": "Closer to system UI"
+    },
     "interface": {
       "system": "System",
       "hardwareAcceleration": "Hardware Acceleration",
-      "hardwareAccelerationHint": "Use the GPU to render app windows. Turning this off takes effect on next launch and uses software rendering for Windows GPU-driver startup recovery."
+      "hardwareAccelerationHint": "Use the GPU to render app windows. Turning this off takes effect on next launch and uses software rendering for Windows GPU-driver startup recovery.",
+      "shortcuts": "Shortcuts",
+      "voiceRecordingShortcut": "Voice recording/send",
+      "voiceRecordingShortcutHint": "When the main chat page is focused, press once to start recording, then press again to finish and send."
     },
     "editor": {
       "title": "Editor",
+      "markdownFont": "Font",
+      "markdownFontHint": "Follow the appearance reading font by default, or choose one just for the editor.",
       "markdownBodyFontSize": "Body Size",
       "markdownBodyFontSizeHint": "Markdown body text defaults to 15px.",
       "markdownHeading1FontSize": "Heading 1 Size",
@@ -837,7 +907,6 @@
           "automation": { "label": "Automation", "summary": "Let the agent create scheduled notifications and plugin actions" },
           "beautify": { "label": "小花美术", "summary": "Let the agent generate document covers and aesthetic enhancements" },
           "browser": { "label": "Browser", "summary": "Control a headless browser to navigate web pages" },
-          "computer": { "label": "Computer Use", "summary": "Control approved desktop apps with a visible action overlay" },
           "cron": { "label": "Scheduled Tasks", "summary": "Run tasks automatically at specified times" },
           "dm": { "label": "Direct Message", "summary": "Send a one-on-one message to another agent" },
           "install_skill": { "label": "Install Skill", "summary": "Install new skills from GitHub or the skill library" },
@@ -845,19 +914,6 @@
           "workflow": { "label": "Workflow", "summary": "Let the agent orchestrate multi-agent workflow scripts as background tasks" },
           "xingye_propose_draft": { "label": "Xingye Draft Proposer", "summary": "Heartbeat patrol drafts pending entries for the in-character phone / secret space (currently supports: journal; more modules to follow). Turning this off only stops new drafts; existing pending drafts are unaffected." }
         }
-      },
-      "computerUse": {
-        "title": "Computer Use Status",
-        "description": "Shows the provider, OS permissions, and approved apps. The enable switch stays in Tools above.",
-        "provider": "Provider",
-        "availability": "Availability",
-        "available": "Available",
-        "unavailable": "Unavailable",
-        "permissions": "OS Permissions",
-        "permissionsEmpty": "No extra permissions or no status yet",
-        "approvals": "Approved Apps",
-        "approvalsEmpty": "None",
-        "refresh": "Refresh"
       }
     },
     "about": {
@@ -1116,6 +1172,9 @@
       "watermark": "Watermark",
       "aspectRatio": "Aspect Ratio",
       "speechRecognition": "Speech Recognition",
+      "speechRecognitionEnabled": "Transcribe voice strips on send",
+      "defaultSpeechModel": "Voice strip transcription model",
+      "speechModels": "Transcription Models",
       "speechSynthesis": "Speech Synthesis",
       "comingSoon": "Coming Soon",
       "noProvider": "Select a provider to view details",
@@ -1204,10 +1263,12 @@
       "displayName": "Display name",
       "vision": "Vision",
       "video": "Video",
+      "audio": "Audio",
       "reasoning": "Reasoning",
       "capability": {
         "image": "Supports image input",
         "video": "Supports video input",
+        "audio": "Supports audio input",
         "reasoning": "Supports reasoning"
       }
     },
@@ -1330,7 +1391,13 @@
       "socialGlobalThresholdDesc": "After this many chat turns since last messaging another assistant, patrol gently nudges it to socialize (a hint, never forced). Higher = less often",
       "socialPerPeerThreshold": "Per-contact neglect limit",
       "socialPerPeerThresholdDesc": "After this many chat turns without contacting a specific assistant, they're flagged as out of touch so nobody is forgotten",
-      "socialUnit": "turns"
+      "socialUnit": "turns",
+      "contextFilesTitle": "Workspace instruction injection",
+      "contextFilesDesc": "Inject AGENTS.md / CLAUDE.md from the current workspace project into new session system prompts before memory.",
+      "injectAgentsMd": "Inject AGENTS.md",
+      "injectAgentsMdDesc": "When enabled, new sessions read AGENTS.md from the current working directory up to the Git root.",
+      "injectClaudeMd": "Inject CLAUDE.md",
+      "injectClaudeMdDesc": "When enabled, new sessions read CLAUDE.md from the current working directory up to the Git root."
     },
     "toolCaps": {
       "title": "Skill Installation Permissions"
@@ -1515,6 +1582,9 @@
       "desc": "Choose the style and layout for sharing conversation screenshots",
       "color": "Color",
       "width": "Width",
+      "font": "Font",
+      "fontLabel": "Screenshot Font",
+      "fontHint": "When no screenshot font is selected, screenshots follow the appearance reading font.",
       "light": "Light",
       "dark": "Dark",
       "sakura": "Sakura",
@@ -1668,6 +1738,7 @@
       "contextLength": "Context length",
       "maxOutput": "Max output",
       "imageInput": "Image input",
+      "audioInput": "Audio input",
       "reasoning": "Reasoning",
       "cancelEdit": "Cancel",
       "saveEdit": "Save",
@@ -1774,7 +1845,9 @@
       "title": "This Conversation",
       "cwd": "Workspace",
       "model": "Model",
-      "files": "Files"
+      "files": "Files",
+      "authorizedFolders": "Authorized folders",
+      "addAuthorizedFolder": "Add authorized folder"
     },
     "tabs": {
       "label": "Right workspace",
@@ -1935,12 +2008,16 @@
     "compactFailed": "Compaction failed: {msg}",
     "maxImages": "Maximum {max} images allowed",
     "maxVideos": "Maximum {max} videos allowed",
+    "maxAudios": "Maximum {max} audio files allowed",
     "unsupportedImageFormat": "Unsupported image format: {mime}",
     "unsupportedVideoFormat": "Unsupported video format: {mime}",
+    "unsupportedAudioFormat": "Unsupported audio format: {mime}",
     "imageTooLarge": "Single image must not exceed 20MB",
     "videoTooLarge": "Single video must not exceed 20MB",
+    "audioTooLarge": "Single audio file must not exceed 50MB",
     "viewImage": "(view image)",
     "viewVideo": "(view video)",
+    "listenAudio": "(listen to audio)",
     "modelNoVision": "Current model does not support images. Please switch to a vision-capable model",
     "searchProviderNotConfigured": "Search provider not configured",
     "searchProviderMissingKey": "Search provider \"{provider}\" is missing API Key",
@@ -2316,9 +2393,9 @@
     },
     "currentStatus": {
       "label": "Current Status",
-      "description": "Lightweight current-environment status. Use it to check fresh state such as time, logical date, agent identity, user/agent avatar appearance, model identity, Bridge platform context, open sub-agent instances, and the user's visible UI context. IMPORTANT: The date/time shown in the system prompt is a snapshot from when the session was created and may be outdated. For precise current time, scheduling, reminders, date calculations that need clock time, greetings, or any case where hour/minute matters, call this tool with action=\"get\", key=\"time\". Use key=\"logical_date\" only when you need to know which calendar day Hana should treat as today under the 4:00 boundary; it does not return hour/minute/second. Use key=\"appearance\" when the user asks what the user or current agent looks like. When the user refers to this file, here, the current/open/visible/selected item, the pinned window, current Bridge chat/platform, or the current folder, call this tool with action=\"get\", key=\"ui_context\" first to resolve the reference.",
+      "description": "Lightweight current-environment status. Use it to check fresh state such as time, logical date, agent identity, user/agent avatar appearance, model identity, current session folder scope, Bridge platform context, open sub-agent instances, and the user's visible UI context. IMPORTANT: The date/time shown in the system prompt is a snapshot from when the session was created and may be outdated. For precise current time, scheduling, reminders, date calculations that need clock time, greetings, or any case where hour/minute matters, call this tool with action=\"get\", key=\"time\". Use key=\"logical_date\" only when you need to know which calendar day Hana should treat as today under the 4:00 boundary; it does not return hour/minute/second. Use key=\"appearance\" when the user asks what the user or current agent looks like. Use key=\"session_folders\" to inspect which folders the current session can access. When the user refers to this file, here, the current/open/visible/selected item, the pinned window, current Bridge chat/platform, or the current folder, call this tool with action=\"get\", key=\"ui_context\" first to resolve the reference.",
       "actionDesc": "list returns available status keys; get returns one status key value.",
-      "keyDesc": "Status key to fetch when action=get. Common keys: time, logical_date, agent, appearance, model, ui_context, session_files, bridge_context, subagents. Use bridge_context for references to the current Bridge platform/chat; use subagents before continuing or closing a sub-agent."
+      "keyDesc": "Status key to fetch when action=get. Common keys: time, logical_date, agent, appearance, model, ui_context, session_files, session_folders, bridge_context, subagents. Use bridge_context for references to the current Bridge platform/chat; use subagents before continuing or closing a sub-agent."
     },
     "pinnedMemory": {
       "pinLabel": "Pin Memory",
@@ -2343,11 +2420,6 @@
       "filepathsDesc": "Local absolute file paths to deliver. After locating files, pass them here so StageFile can register them for desktop, Bridge, or future mobile consumers.",
       "filePathDesc": "(Compat) Single local absolute file path. Prefer filepaths for new calls.",
       "labelDesc": "(Compat) File name shown to the user. Usually omit this; the filename is used by default."
-    },
-    "wait": {
-      "label": "Wait",
-      "description": "Wait for a specified number of seconds. Used to keep the turn active while waiting for background tasks to complete.",
-      "secondsDesc": "Seconds to wait (1-300)"
     },
     "subagent": {
       "label": "Launch Sub-agent",
@@ -2401,6 +2473,8 @@
       "timezoneDesc": "IANA timezone (e.g. Asia/Shanghai)",
       "bridgeMediaPublicBaseUrl": "Bridge File Public URL",
       "bridgeMediaPublicBaseUrlDesc": "Public HTTP/HTTPS base URL used by external platforms to fetch local staged files. Usually provided by a reverse proxy or tunnel. Leave empty to fall back to HANA_BRIDGE_PUBLIC_BASE_URL.",
+      "computerUse": "Computer Use",
+      "computerUseDesc": "When enabled, new conversations expose the computer tool to the primary Agent. When disabled, new conversations cannot see it, and frozen old conversations are rejected if they call it.",
       "thinkingBudget": "Thinking Depth",
       "memory": "Memory System",
       "memoryDesc": "Enable/disable memory for current Agent",

@@ -27,6 +27,7 @@ import { detachAgentFromBundles } from "../lib/skill-bundles/store.js";
 import { assertKnownYuan, getAgentConfigRepairState } from "./yuan-registry.js";
 
 const log = createModuleLogger("agent-mgr");
+const DELETED_AGENT_TOMBSTONE = ".deleted-agent.json";
 
 function writeStartupLog(startupLog, message) {
   if (typeof startupLog === "function") {
@@ -93,6 +94,42 @@ export class AgentManager {
   /** 按 ID 获取 agent */
   getAgent(agentId) { return this._agents.get(agentId) || null; }
 
+  _deletedAgentTombstonePath(agentId) {
+    return path.join(this._d.agentsDir, agentId, DELETED_AGENT_TOMBSTONE);
+  }
+
+  _readDeletedAgentInfo(agentId) {
+    const agentDir = path.join(this._d.agentsDir, agentId);
+    const tombstonePath = this._deletedAgentTombstonePath(agentId);
+    if (!fs.existsSync(tombstonePath)) return null;
+    let tombstone = {};
+    try {
+      tombstone = JSON.parse(fs.readFileSync(tombstonePath, "utf-8"));
+    } catch {}
+    let cfg = {};
+    try {
+      cfg = safeReadYAMLSync(path.join(agentDir, "config.yaml"), {}, YAML);
+    } catch {}
+    const name = tombstone.agentName || cfg.agent?.name || agentId;
+    return {
+      id: agentId,
+      name,
+      agentName: name,
+      yuan: tombstone.yuan || cfg.agent?.yuan || "hanako",
+      deletedAt: tombstone.deletedAt || null,
+    };
+  }
+
+  isAgentDeleted(agentId) {
+    if (!agentId) return false;
+    return !!this._readDeletedAgentInfo(agentId);
+  }
+
+  getDeletedAgentInfo(agentId) {
+    if (!agentId) return null;
+    return this._readDeletedAgentInfo(agentId);
+  }
+
   // ── Activity Store（per-agent 懒缓存） ──
 
   get activityStores() { return this._activityStores; }
@@ -146,6 +183,10 @@ export class AgentManager {
 
   async _loadAgentConfigOnly(agentId, { required = false } = {}) {
     if (this._agents.has(agentId)) return this._agents.get(agentId);
+    if (this.isAgentDeleted(agentId)) {
+      if (required) throw new Error(`agent "${agentId}" has been deleted`);
+      return null;
+    }
 
     const ag = this._createAgentInstance(agentId, () => ({}));
     ag.setGetOwnerIds(this._makeOwnerIdsFn(ag));
@@ -286,12 +327,20 @@ export class AgentManager {
     return agents;
   }
 
+  listDeletedAgents() {
+    const entries = this._scanDeletedAgentDirs();
+    return entries
+      .map((entry) => this._readDeletedAgentInfo(entry.name))
+      .filter(Boolean);
+  }
+
   /** 扫盘读取所有 agent 元数据（I/O 密集，由缓存保护） */
   _scanAgentList() {
     const entries = fs.readdirSync(this._d.agentsDir, { withFileTypes: true });
     const agents = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (this.isAgentDeleted(entry.name)) continue;
       const configPath = path.join(this._d.agentsDir, entry.name, "config.yaml");
       if (!fs.existsSync(configPath)) continue;
       try {
@@ -696,9 +745,17 @@ export class AgentManager {
     if (!fs.existsSync(agentDir)) {
       throw new Error(t("error.agentNotExists", { id: agentId }));
     }
+    if (this.isAgentDeleted(agentId)) {
+      throw new Error(t("error.agentNotExists", { id: agentId }));
+    }
 
     const ag = this._agents.get(agentId);
     this._d.getHub()?.abortAgentPhoneSessions?.("agent-deleted", { agentId });
+    try {
+      await this._d.getSessionCoordinator()?.discardSessionsForAgent?.(agentId, "agent deleted");
+    } catch (err) {
+      log.warn(`session runtime cleanup failed before deleting agent (${agentId}): ${err.message}`);
+    }
     if (ag) {
       this._agents.delete(agentId);
       this._activityStores.delete(agentId);
@@ -714,7 +771,18 @@ export class AgentManager {
       log.error(`频道清理失败 (${agentId}): ${err.message}`);
     }
 
-    await fsp.rm(agentDir, { recursive: true, force: true });
+    const tombstone = {
+      version: 1,
+      agentId,
+      agentName: ag?.agentName || ag?.name || this._readAgentNameFromConfig(agentDir) || agentId,
+      yuan: ag?.config?.agent?.yuan || this._readAgentYuanFromConfig(agentDir) || "hanako",
+      deletedAt: new Date().toISOString(),
+    };
+    await fsp.writeFile(
+      this._deletedAgentTombstonePath(agentId),
+      JSON.stringify(tombstone, null, 2),
+      "utf-8",
+    );
 
     try {
       this._d.getEngine?.()?.subagentThreads?.removeByAgentId?.(agentId);
@@ -752,7 +820,7 @@ export class AgentManager {
 
   setPrimaryAgent(agentId) {
     const agentDir = path.join(this._d.agentsDir, agentId);
-    if (!fs.existsSync(path.join(agentDir, "config.yaml"))) {
+    if (this.isAgentDeleted(agentId) || !fs.existsSync(path.join(agentDir, "config.yaml"))) {
       throw new Error(t("error.agentNotExists", { id: agentId }));
     }
     this._d.getPrefs().savePrimaryAgent(agentId);
@@ -790,8 +858,37 @@ export class AgentManager {
   _scanAgentDirs() {
     try {
       return fs.readdirSync(this._d.agentsDir, { withFileTypes: true })
-        .filter(e => e.isDirectory() && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml")));
+        .filter(e => e.isDirectory()
+          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+          && !this.isAgentDeleted(e.name));
     } catch { return []; }
+  }
+
+  _scanDeletedAgentDirs() {
+    try {
+      return fs.readdirSync(this._d.agentsDir, { withFileTypes: true })
+        .filter(e => e.isDirectory()
+          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+          && fs.existsSync(this._deletedAgentTombstonePath(e.name)));
+    } catch { return []; }
+  }
+
+  _readAgentNameFromConfig(agentDir) {
+    try {
+      const cfg = safeReadYAMLSync(path.join(agentDir, "config.yaml"), {}, YAML);
+      return cfg.agent?.name || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _readAgentYuanFromConfig(agentDir) {
+    try {
+      const cfg = safeReadYAMLSync(path.join(agentDir, "config.yaml"), {}, YAML);
+      return cfg.agent?.yuan || null;
+    } catch {
+      return null;
+    }
   }
 
   /** 构造 per-agent getOwnerIds 闭包：从 agent 自身的 config.bridge 读取 */
@@ -833,6 +930,7 @@ export class AgentManager {
     ag.setCallbacks({
       emitDevLog:           (text, level) => getEngine()?.emitDevLog?.(text, level),
       getConfirmStore:      () => getEngine()?.confirmStore ?? null,
+      getApprovalGateway:   () => getEngine()?.approvalGateway ?? null,
       getCurrentSessionPath:() => getEngine()?.currentSessionPath ?? null,
       getSessionPermissionMode: (sp) => getEngine()?.getSessionPermissionMode?.(sp) ?? null,
       getSessionCwd:        (sp) => getEngine()?.getSessionByPath?.(sp)?.sessionManager?.getCwd?.() ?? null,
@@ -854,6 +952,7 @@ export class AgentManager {
       getCurrentModelId:    () => getEngine()?.currentModel?.id ?? null,
       getSkillsDir:         () => getEngine()?.skillsDir ?? null,
       getLearnSkills:       () => getEngine()?.getLearnSkills?.() ?? {},
+      getPreferences:       () => getEngine()?.preferences ?? null,
       isChannelsEnabled:    () => getEngine()?.isChannelsEnabled?.() ?? false,
       createChannelEntry:    (input) => getEngine()?.createChannelEntry?.(input),
       resolveUtilityConfig: () => getEngine()?.resolveUtilityConfig?.({ agentId: ag.id }),

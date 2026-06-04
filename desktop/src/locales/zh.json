@@ -1,6 +1,6 @@
 {
   "cover": {
-    "make": "制作 cover",
+    "make": "添加封面",
     "agentGenerate": {
       "beautifyDisabled": "需要先在主 Agent 的工具设置里开启小花美术。",
       "defaultModelMissing": "需要先在设置里配置默认生图模型。",
@@ -155,6 +155,14 @@
     "pinFailed": "置顶 session 失败",
     "unpinFailed": "取消置顶失败",
     "archive": "归档",
+    "deletedAgent": {
+      "title": "Agent 已删除",
+      "description": "这段对话会保留为只读历史。继续聊天会用主 Agent 新建一个 session，并先压缩旧上下文。",
+      "continueButton": "迁移到现有主 Agent",
+      "continuing": "正在压缩并新建 session",
+      "continueFailed": "迁移失败",
+      "meta": "只读"
+    },
     "summary": {
       "title": "Session 摘要",
       "open": "摘要",
@@ -270,7 +278,8 @@
     "addExternalFolder": "添加工作台以外的文件夹",
     "planMode": "权限模式",
     "accessMode": "会话权限模式",
-    "operateMode": "自动操作",
+    "autoMode": "自动审核",
+    "operateMode": "完整权限",
     "askMode": "操作前询问",
     "readOnlyMode": "只读模式",
     "accessModeLocked": "当前无法更改权限模式",
@@ -278,8 +287,18 @@
     "pastedImage": "粘贴图片",
     "textModelImageBlocked": "当前模型为文本模型，不能直接发送图片。请在设置里调整模型能力，或配置并启用辅助视觉。",
     "textModelVideoBlocked": "当前模型不支持视频输入。请在设置里开启视频能力，或切换到支持视频的模型。",
+    "textModelAudioBlocked": "当前模型不支持音频输入。请切换到支持音频的模型。",
     "imageReadFailed": "图片读取失败，消息没有发送。请重新粘贴或重新添加图片。",
     "videoReadFailed": "视频读取失败，消息没有发送。请重新添加视频。",
+    "audioReadFailed": "音频读取失败，消息没有发送。请重新添加音频。",
+    "recordAudio": "录音",
+    "stopRecording": "结束录音",
+    "audioRecording": "正在录音",
+    "audioRecordingStarting": "准备录音",
+    "audioRecordingSaving": "保存录音",
+    "audioRecordingUnavailable": "当前环境无法使用麦克风录音。",
+    "audioRecordingFailed": "录音失败，请检查麦克风权限后重试。",
+    "recordedAudioName": "录音 {index}.wav",
     "openModelSettings": "打开模型设置",
     "attachFiles": "添加文件",
     "commandMenu": "命令菜单",
@@ -287,12 +306,14 @@
     "thinkingLevel": {
       "off": "关闭",
       "auto": "自动",
+      "medium": "中等",
       "high": "深度",
       "xhigh": "极限"
     },
     "thinkingDesc": {
       "off": "不推理",
       "auto": "模型决定深度",
+      "medium": "平衡推理",
       "high": "深度推理",
       "xhigh": "最强推理"
     },
@@ -590,11 +611,6 @@
       "done": "🧭 子代理已完成",
       "failed": "🧭 子代理执行失败"
     },
-    "wait": {
-      "running": "⏳ {name} 正在等待结果",
-      "done": "⏳ 等待结束",
-      "failed": "⏳ 等待被中断"
-    },
     "check_pending_tasks": {
       "running": "📋 {name} 正在找找没做完的事儿",
       "done": "📋 {name} 找完了",
@@ -687,15 +703,55 @@
       "models": "模型",
       "memory": "记忆",
       "work": "工作台",
-      "computer": "使用电脑",
       "skills": "技能",
       "mcp": "连接器",
       "bridge": "社交平台",
       "sharing": "分享",
       "access": "访问与设备",
       "plugins": "插件",
+      "experiments": "实验",
       "about": "关于",
       "security": "安全"
+    },
+    "experiments": {
+      "title": "实验",
+      "memoryTitle": "缓存记忆",
+      "description": "前沿能力会先放在这里观察。稳定后会迁移到它真正归属的设置页。",
+      "empty": "暂无可见实验功能",
+      "owner": {
+        "memory": "记忆"
+      },
+      "status": {
+        "alpha": "Alpha",
+        "beta": "Beta",
+        "deprecated": "即将移除",
+        "retired": "已退休"
+      },
+      "risk": {
+        "low": "低风险",
+        "medium": "中风险",
+        "high": "高风险"
+      },
+      "restart": {
+        "immediate": "立即生效",
+        "new_session": "新会话生效",
+        "restart_server": "重启服务生效",
+        "restart_app": "重启应用生效"
+      },
+      "cacheSnapshot": {
+        "title": "缓存记忆系统",
+        "description": "利用缓存搭建记忆，可以增加缓存命中率，减少消费。",
+        "off": "关闭",
+        "shadow": "观察",
+        "write": "写入",
+        "observeOnly": "只观察，不写入记忆",
+        "observationNote": "观察模式不会对正式记忆产生任何影响。它只用于观察新的记忆系统是否达到预期效果。",
+        "writeWarning": "当前会写入正式记忆。",
+        "previewTitle": "Memory MD Preview",
+        "summaryTitle": "Rolling Summary Preview",
+        "emptyPreview": "暂无观察结果",
+        "clearObservation": "清除观察结果"
+      }
     },
     "appearance": {
       "title": "外观",
@@ -722,6 +778,8 @@
       "midnightContrastMode": "清晰",
       "auto": "自动",
       "autoMode": "跟随系统",
+      "font": "字体",
+      "fontHint": "选择正文阅读使用的字体",
       "serifFont": "衬线字体",
       "serifFontHint": "使用衬线体显示正文内容",
       "paperTexture": "纸质纹理",
@@ -730,13 +788,25 @@
       "leavesOverlay": "晴天模式",
       "leavesOverlayHint": "没事儿晒晒太阳"
     },
+    "fonts": {
+      "followReading": "跟随阅读字体",
+      "serifName": "衬线",
+      "serifDesc": "适合正文阅读",
+      "sansName": "非衬线",
+      "sansDesc": "更接近系统界面"
+    },
     "interface": {
       "system": "系统",
       "hardwareAcceleration": "硬件加速",
-      "hardwareAccelerationHint": "使用显卡渲染窗口内容。关闭后会在下次启动使用软件渲染，可用于恢复 Windows 显卡驱动导致的启动闪退。"
+      "hardwareAccelerationHint": "使用显卡渲染窗口内容。关闭后会在下次启动使用软件渲染，可用于恢复 Windows 显卡驱动导致的启动闪退。",
+      "shortcuts": "快捷键",
+      "voiceRecordingShortcut": "语音录制/发送",
+      "voiceRecordingShortcutHint": "主聊天页面聚焦时，按一次开始录音，再按一次结束并发送。"
     },
     "editor": {
       "title": "编辑器",
+      "markdownFont": "字体",
+      "markdownFontHint": "默认跟随外观里的阅读字体，也可以单独指定。",
       "markdownBodyFontSize": "正文字号",
       "markdownBodyFontSizeHint": "Markdown 编辑器正文默认使用 15px。",
       "markdownHeading1FontSize": "一级标题字号",
@@ -837,7 +907,6 @@
           "automation": { "label": "自动化", "summary": "让 Agent 创建通知和插件定时动作" },
           "beautify": { "label": "小花美术", "summary": "让 Agent 为文档生成封面和审美增强内容" },
           "browser": { "label": "浏览器", "summary": "控制无头浏览器浏览网页" },
-          "computer": { "label": "电脑控制", "summary": "控制已批准的桌面应用，并显示实时动作光标" },
           "cron": { "label": "定时任务", "summary": "在指定时间自动执行任务" },
           "dm": { "label": "私信", "summary": "向其他 Agent 发送一对一消息" },
           "install_skill": { "label": "安装技能", "summary": "从 GitHub 或技能库安装新技能" },
@@ -845,19 +914,6 @@
           "workflow": { "label": "Workflow", "summary": "让 Agent 把多 Agent 编排脚本作为后台任务运行" },
           "xingye_propose_draft": { "label": "星野草稿提议", "summary": "心跳巡检里给角色小手机/秘密空间生成待确认草稿（目前覆盖：日记本；其它模块陆续接入）。关掉只阻止新草稿，已有的不受影响。" }
         }
-      },
-      "computerUse": {
-        "title": "电脑控制状态",
-        "description": "这里展示底层 provider、系统权限和已批准应用。启停仍在上面的工具开关里完成。",
-        "provider": "Provider",
-        "availability": "可用性",
-        "available": "可用",
-        "unavailable": "不可用",
-        "permissions": "系统权限",
-        "permissionsEmpty": "无需额外权限或尚未返回",
-        "approvals": "已批准应用",
-        "approvalsEmpty": "暂无",
-        "refresh": "刷新"
       }
     },
     "about": {
@@ -1116,6 +1172,9 @@
       "watermark": "水印",
       "aspectRatio": "长宽比",
       "speechRecognition": "语音识别",
+      "speechRecognitionEnabled": "发送语音条时转录",
+      "defaultSpeechModel": "语音条转录模型",
+      "speechModels": "转录模型",
       "speechSynthesis": "语音合成",
       "comingSoon": "即将推出",
       "noProvider": "请选择一个供应商查看详情",
@@ -1204,10 +1263,12 @@
       "displayName": "显示名称",
       "vision": "视觉",
       "video": "视频",
+      "audio": "音频",
       "reasoning": "推理",
       "capability": {
         "image": "支持图像输入",
         "video": "支持视频输入",
+        "audio": "支持音频输入",
         "reasoning": "支持推理"
       }
     },
@@ -1330,7 +1391,13 @@
       "socialGlobalThresholdDesc": "距上次主动私信其他助手超过这么多条对话后，巡检会轻轻提醒它找人聊聊（仅提醒，从不强制）。调高 = 更少主动社交",
       "socialPerPeerThreshold": "单个联系人冷落上限",
       "socialPerPeerThresholdDesc": "和某位助手超过这么多条对话没联系后，会被单独提醒「很久没联系」，避免有人被一直遗忘",
-      "socialUnit": "条对话"
+      "socialUnit": "条对话",
+      "contextFilesTitle": "工作台说明注入",
+      "contextFilesDesc": "把当前工作台项目里的 AGENTS.md / CLAUDE.md 注入到新建会话的系统提示词中，位置在记忆之前。",
+      "injectAgentsMd": "注入 AGENTS.md",
+      "injectAgentsMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 AGENTS.md。",
+      "injectClaudeMd": "注入 CLAUDE.md",
+      "injectClaudeMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 CLAUDE.md。"
     },
     "toolCaps": {
       "title": "技能安装权限"
@@ -1515,6 +1582,9 @@
       "desc": "选择你分享对话的截图样式与排版",
       "color": "配色",
       "width": "宽度",
+      "font": "字体",
+      "fontLabel": "截图字体",
+      "fontHint": "不选单独字体时，截图会跟随外观里的阅读字体。",
       "light": "浅色",
       "dark": "深色",
       "sakura": "青空与樱",
@@ -1668,6 +1738,7 @@
       "contextLength": "上下文长度",
       "maxOutput": "最大输出",
       "imageInput": "支持图片",
+      "audioInput": "支持音频",
       "reasoning": "推理模型",
       "cancelEdit": "取消",
       "saveEdit": "保存",
@@ -1774,7 +1845,9 @@
       "title": "本次对话",
       "cwd": "工作目录",
       "model": "模型",
-      "files": "文件"
+      "files": "文件",
+      "authorizedFolders": "授权目录",
+      "addAuthorizedFolder": "添加授权目录"
     },
     "tabs": {
       "label": "右侧工作台",
@@ -1935,12 +2008,16 @@
     "compactFailed": "压缩失败: {msg}",
     "maxImages": "最多支持 {max} 张图片",
     "maxVideos": "最多支持 {max} 个视频",
+    "maxAudios": "最多支持 {max} 个音频",
     "unsupportedImageFormat": "不支持的图片格式: {mime}",
     "unsupportedVideoFormat": "不支持的视频格式: {mime}",
+    "unsupportedAudioFormat": "不支持的音频格式: {mime}",
     "imageTooLarge": "单张图片不得超过 20MB",
     "videoTooLarge": "单个视频不得超过 20MB",
+    "audioTooLarge": "单个音频不得超过 50MB",
     "viewImage": "（看图）",
     "viewVideo": "（看视频）",
+    "listenAudio": "（听音频）",
     "modelNoVision": "当前模型不支持图片，请切换到支持图片的模型后再试",
     "searchProviderNotConfigured": "未配置搜索 provider",
     "searchProviderMissingKey": "搜索 provider \"{provider}\" 缺少 API Key",
@@ -2316,9 +2393,9 @@
     },
     "currentStatus": {
       "label": "当前状态",
-      "description": "查询当前环境的轻量状态。可查：时间、逻辑日期、agent 身份、用户/agent 头像外观、模型身份、Bridge 平台上下文、开放子 Agent 实例，以及用户当前可见的界面视野。重要：系统提示里的日期时间是 session 创建时的快照，可能已过时；需要精确当前时间、排程、提醒、按钟点算日期、问候等任何在意时分的场景，用 action=get、key=time。key=logical_date 仅用于判断 4:00 边界下 Hana 该把哪一天当今天，不返回时分秒。key=appearance 用于用户问「我/当前 agent 长什么样」。当用户用「这个文件、这里、当前/打开的/可见的/选中的项、钉住的窗口、当前 Bridge 会话/平台、当前文件夹」指代界面时，先用 action=get、key=ui_context 取当前视野再继续。",
+      "description": "查询当前环境的轻量状态。可查：时间、逻辑日期、agent 身份、用户/agent 头像外观、模型身份、本对话文件夹范围、Bridge 平台上下文、开放子 Agent 实例，以及用户当前可见的界面视野。重要：系统提示里的日期时间是 session 创建时的快照，可能已过时；需要精确当前时间、排程、提醒、按钟点算日期、问候等任何在意时分的场景，用 action=get、key=time。key=logical_date 仅用于判断 4:00 边界下 Hana 该把哪一天当今天，不返回时分秒。key=appearance 用于用户问「我/当前 agent 长什么样」。需要确认当前对话能访问哪些文件夹时，用 key=session_folders。当用户用「这个文件、这里、当前/打开的/可见的/选中的项、钉住的窗口、当前 Bridge 会话/平台、当前文件夹」指代界面时，先用 action=get、key=ui_context 取当前视野再继续。",
       "actionDesc": "list 返回所有可查询的状态键；get 取某个状态键的值。",
-      "keyDesc": "action=get 时要取的状态键。常用键：time、logical_date、agent、appearance、model、ui_context、session_files、bridge_context、subagents。引用当前 Bridge 平台/会话用 bridge_context；续接或关闭子 Agent 前用 subagents。"
+      "keyDesc": "action=get 时要取的状态键。常用键：time、logical_date、agent、appearance、model、ui_context、session_files、session_folders、bridge_context、subagents。引用当前 Bridge 平台/会话用 bridge_context；续接或关闭子 Agent 前用 subagents。"
     },
     "pinnedMemory": {
       "pinLabel": "置顶记忆",
@@ -2343,11 +2420,6 @@
       "filepathsDesc": "要交付的本机文件绝对路径数组。找到文件后把路径传给这里，由 StageFile 统一登记并交给桌面、Bridge 或未来移动端消费。",
       "filePathDesc": "(兼容) 单个本机文件的绝对路径；新调用优先使用 filepaths。",
       "labelDesc": "(兼容) 显示给用户的文件名，通常可以省略，默认使用文件名。"
-    },
-    "wait": {
-      "label": "等待",
-      "description": "等待指定秒数。用于等待后台任务完成时保持 turn 活跃。",
-      "secondsDesc": "等待秒数（1-300）"
     },
     "subagent": {
       "label": "启动子 Agent",
@@ -2401,6 +2473,8 @@
       "timezoneDesc": "IANA 时区（如 Asia/Shanghai）",
       "bridgeMediaPublicBaseUrl": "Bridge 文件公网 URL",
       "bridgeMediaPublicBaseUrlDesc": "外部平台拉取本地 staged 文件时使用的公网 HTTP/HTTPS base URL，通常来自反向代理或 tunnel；留空则回退到 HANA_BRIDGE_PUBLIC_BASE_URL。",
+      "computerUse": "电脑控制",
+      "computerUseDesc": "开启后，新会话会向主助手暴露电脑控制工具；关闭后，新会话看不到该工具，已冻结的旧会话调用时会被拒绝。",
       "thinkingBudget": "思考深度",
       "memory": "记忆系统",
       "memoryDesc": "开启/关闭当前 Agent 的记忆功能",

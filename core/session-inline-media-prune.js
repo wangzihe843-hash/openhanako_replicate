@@ -8,15 +8,20 @@
  */
 
 import { stripAllInlineMediaForHistory } from "./message-sanitizer.js";
+import {
+  readSessionEntriesFile,
+  writeSessionEntriesFile,
+} from "./session-jsonl-file.js";
 
 function emptyResult() {
-  return { stripped: 0, strippedImages: 0, strippedVideos: 0 };
+  return { stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
 }
 
 function addCounts(target, source) {
   target.stripped += source.stripped || 0;
   target.strippedImages += source.strippedImages || 0;
   target.strippedVideos += source.strippedVideos || 0;
+  target.strippedAudios += source.strippedAudios || 0;
 }
 
 function pruneSessionManagerEntries(sessionManager) {
@@ -38,6 +43,70 @@ function pruneSessionManagerEntries(sessionManager) {
   }
 
   return result;
+}
+
+function stripMessageEntryInlineMedia(entry) {
+  const result = emptyResult();
+  if (entry?.type !== "message" || !entry.message) {
+    return { entry, result, changed: false };
+  }
+
+  const stripped = stripAllInlineMediaForHistory([entry.message]);
+  if (stripped.stripped === 0) {
+    return { entry, result, changed: false };
+  }
+
+  addCounts(result, stripped);
+  return {
+    entry: { ...entry, message: stripped.messages[0] },
+    result,
+    changed: true,
+  };
+}
+
+export function repairSessionInlineMediaEntries(entries) {
+  const result = emptyResult();
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { entries, ...result };
+  }
+
+  let changed = false;
+  const repaired = entries.map((entry) => {
+    const stripped = stripMessageEntryInlineMedia(entry);
+    if (!stripped.changed) return entry;
+    changed = true;
+    addCounts(result, stripped.result);
+    return stripped.entry;
+  });
+
+  return {
+    entries: changed ? repaired : entries,
+    ...result,
+  };
+}
+
+export function repairSessionInlineMediaEntriesInFile(sessionPath) {
+  const empty = () => ({ repaired: false, ...emptyResult() });
+  const loaded = readSessionEntriesFile(sessionPath);
+  if (!loaded) return empty();
+
+  const { entries, stripped, strippedImages, strippedVideos, strippedAudios } =
+    repairSessionInlineMediaEntries(loaded.entries);
+  if (stripped === 0) return empty();
+
+  try {
+    writeSessionEntriesFile(sessionPath, entries);
+  } catch {
+    return empty();
+  }
+
+  return {
+    repaired: true,
+    stripped,
+    strippedImages,
+    strippedVideos,
+    strippedAudios,
+  };
 }
 
 function pruneAgentStateMessages(agent) {

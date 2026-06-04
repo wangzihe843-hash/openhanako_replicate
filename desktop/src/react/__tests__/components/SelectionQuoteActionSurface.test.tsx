@@ -38,7 +38,7 @@ describe('SelectionQuoteActionSurface', () => {
     expect(useStore.getState().quoteCandidate).toBeNull();
   });
 
-  it('delays the tooltip for 500ms', () => {
+  it('keeps the readable action label visible without rendering a duplicate tooltip', () => {
     useStore.getState().setQuoteCandidate({
       text: '第一段引用',
       sourceTitle: 'Assistant message',
@@ -49,15 +49,15 @@ describe('SelectionQuoteActionSurface', () => {
     render(<SelectionQuoteActionSurface />);
 
     const button = screen.getByRole('button', { name: 'selection.quoteToChat' });
+    expect(button.textContent).toContain('selection.quoteToChat');
     fireEvent.mouseEnter(button);
-    act(() => { vi.advanceTimersByTime(499); });
     expect(screen.queryByRole('tooltip')).toBeNull();
 
-    act(() => { vi.advanceTimersByTime(1); });
-    expect(screen.getByRole('tooltip').textContent).toBe('selection.quoteToChat');
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
-  it('renders a compact SVG quote action shifted slightly to the right of the selection center', () => {
+  it('renders a labeled SVG quote action shifted slightly to the right of the selection center', () => {
     useStore.getState().setQuoteCandidate({
       text: '第一段引用',
       sourceTitle: 'Assistant message',
@@ -71,12 +71,13 @@ describe('SelectionQuoteActionSurface', () => {
     const surface = button.closest('[data-selection-ignore="true"]') as HTMLElement;
     const icon = button.querySelector('svg');
 
+    expect(surface.getAttribute('data-selection-quote-action')).toBe('true');
     expect(icon).not.toBeNull();
     expect(icon?.getAttribute('fill')).toBe('currentColor');
     expect(icon?.hasAttribute('stroke')).toBe(false);
-    expect(button.textContent).not.toContain('"');
-    expect(surface.style.left).toBe('147px');
-    expect(surface.style.top).toBe('86px');
+    expect(button.textContent).toContain('selection.quoteToChat');
+    expect(surface.style.left).toBe('114px');
+    expect(surface.style.top).toBe('80px');
   });
 
   it('follows the live native selection rect when the transcript scrolls', () => {
@@ -106,14 +107,14 @@ describe('SelectionQuoteActionSurface', () => {
     render(<SelectionQuoteActionSurface />);
 
     const surface = screen.getByRole('button', { name: 'selection.quoteToChat' }).closest('[data-selection-ignore="true"]') as HTMLElement;
-    expect(surface.style.top).toBe('86px');
+    expect(surface.style.top).toBe('80px');
 
     liveRect = { left: 100, right: 180, top: 70, bottom: 90, width: 80, height: 20 };
     act(() => {
       document.dispatchEvent(new Event('scroll'));
     });
 
-    expect(surface.style.top).toBe('36px');
+    expect(surface.style.top).toBe('30px');
 
     getSelection.mockRestore();
     requestAnimationFrame.mockRestore();

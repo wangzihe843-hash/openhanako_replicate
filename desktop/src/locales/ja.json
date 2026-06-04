@@ -1,6 +1,6 @@
 {
   "cover": {
-    "make": "cover を作成",
+    "make": "カバーを追加",
     "agentGenerate": {
       "beautifyDisabled": "先にメインエージェントのツール設定で「小花美术」を有効にしてください。",
       "defaultModelMissing": "先に設定でデフォルト画像モデルを設定してください。",
@@ -155,6 +155,14 @@
     "pinFailed": "セッションのピン留めに失敗しました",
     "unpinFailed": "ピン留め解除に失敗しました",
     "archive": "アーカイブ",
+    "deletedAgent": {
+      "title": "Agent は削除済みです",
+      "description": "このチャットは読み取り専用の履歴として保持されます。続行すると、古いコンテキストを圧縮してから主 Agent で新しいセッションを作成します。",
+      "continueButton": "主 Agent に移行",
+      "continuing": "圧縮してセッションを作成中",
+      "continueFailed": "移行に失敗しました",
+      "meta": "読み取り専用"
+    },
     "summary": {
       "title": "セッション要約",
       "open": "セッション要約",
@@ -270,7 +278,8 @@
     "addExternalFolder": "ワークスペース外のフォルダを追加",
     "planMode": "アクセスモード",
     "accessMode": "セッションのアクセスモード",
-    "operateMode": "自動操作",
+    "autoMode": "自動承認",
+    "operateMode": "フルアクセス",
     "askMode": "操作前に確認",
     "readOnlyMode": "読み取り専用モード",
     "accessModeLocked": "現在アクセスモードを変更できません",
@@ -278,8 +287,18 @@
     "pastedImage": "貼り付け画像",
     "textModelImageBlocked": "現在のモデルはテキスト専用のため、画像を直接送信できません。設定でモデル能力を調整するか、補助ビジョンを設定して有効にしてください。",
     "textModelVideoBlocked": "現在のモデルは動画入力に対応していません。設定で動画能力を有効にするか、動画対応モデルに切り替えてください。",
+    "textModelAudioBlocked": "現在のモデルは音声入力に対応していません。音声対応モデルに切り替えてください。",
     "imageReadFailed": "画像を読み取れなかったため、メッセージは送信されませんでした。もう一度貼り付けるか添付してください。",
     "videoReadFailed": "動画を読み取れなかったため、メッセージは送信されませんでした。もう一度添付してください。",
+    "audioReadFailed": "音声を読み取れなかったため、メッセージは送信されませんでした。もう一度添付してください。",
+    "recordAudio": "録音",
+    "stopRecording": "録音を終了",
+    "audioRecording": "録音中",
+    "audioRecordingStarting": "録音を準備中",
+    "audioRecordingSaving": "録音を保存中",
+    "audioRecordingUnavailable": "現在の環境ではマイク録音を利用できません。",
+    "audioRecordingFailed": "録音に失敗しました。マイク権限を確認してもう一度お試しください。",
+    "recordedAudioName": "録音 {index}.wav",
     "openModelSettings": "モデル設定を開く",
     "attachFiles": "ファイルを追加",
     "commandMenu": "コマンドメニュー",
@@ -287,12 +306,14 @@
     "thinkingLevel": {
       "off": "オフ",
       "auto": "自動",
+      "medium": "中",
       "high": "深い",
       "xhigh": "最大"
     },
     "thinkingDesc": {
       "off": "推論なし",
       "auto": "モデルが深さを判断",
+      "medium": "バランス推論",
       "high": "深い推論",
       "xhigh": "フル推論"
     },
@@ -590,11 +611,6 @@
       "done": "🧭 分身を送り出した",
       "failed": "🧭 分身がトラブった"
     },
-    "wait": {
-      "running": "⏳ {name} は結果を待っています",
-      "done": "⏳ 待機が終わりました",
-      "failed": "⏳ 待機が中断されました"
-    },
     "check_pending_tasks": {
       "running": "📋 {name} はやり残しを探している",
       "done": "📋 {name} 確認おわり",
@@ -687,7 +703,6 @@
       "models": "モデル",
       "memory": "記憶",
       "work": "ワークスペース",
-      "computer": "コンピューターを使う",
       "skills": "スキル",
       "mcp": "Connectors",
       "bridge": "ソーシャル",
@@ -745,6 +760,8 @@
       "midnightContrastMode": "くっきり",
       "auto": "自動",
       "autoMode": "システム",
+      "font": "フォント",
+      "fontHint": "本文の閲覧に使うフォントを選択します",
       "serifFont": "明朝体",
       "serifFontHint": "本文に明朝体を使用する",
       "paperTexture": "和紙の質感",
@@ -753,13 +770,25 @@
       "leavesOverlay": "晴れモード",
       "leavesOverlayHint": "たまには日向ぼっこしよう"
     },
+    "fonts": {
+      "followReading": "閲覧フォントに従う",
+      "serifName": "明朝",
+      "serifDesc": "本文の閲覧向け",
+      "sansName": "ゴシック",
+      "sansDesc": "システム UI に近い"
+    },
     "interface": {
       "system": "システム",
       "hardwareAcceleration": "ハードウェアアクセラレーション",
-      "hardwareAccelerationHint": "GPU でウィンドウを描画します。オフにすると次回起動からソフトウェア描画を使い、Windows の GPU ドライバー起因の起動クラッシュ復旧に役立ちます。"
+      "hardwareAccelerationHint": "GPU でウィンドウを描画します。オフにすると次回起動からソフトウェア描画を使い、Windows の GPU ドライバー起因の起動クラッシュ復旧に役立ちます。",
+      "shortcuts": "ショートカット",
+      "voiceRecordingShortcut": "音声録音/送信",
+      "voiceRecordingShortcutHint": "メインチャット画面にフォーカスがあるとき、1 回押すと録音開始、もう 1 回押すと終了して送信します。"
     },
     "editor": {
       "title": "エディター",
+      "markdownFont": "フォント",
+      "markdownFontHint": "既定では外観の閲覧フォントに従います。エディターだけ別に指定することもできます。",
       "markdownBodyFontSize": "本文サイズ",
       "markdownBodyFontSizeHint": "Markdown エディターの本文は、15px を既定にします。",
       "markdownHeading1FontSize": "見出し 1 サイズ",
@@ -837,7 +866,6 @@
           "automation": { "label": "自動化", "summary": "通知とプラグインのスケジュール動作を Agent が作成できるようにします" },
           "beautify": { "label": "小花美术", "summary": "Agent にドキュメントカバーと美的な強化を生成させます" },
           "browser": { "label": "ブラウザ", "summary": "ヘッドレスブラウザを操作してウェブを閲覧" },
-          "computer": { "label": "Computer Use", "summary": "承認済みのデスクトップアプリを操作し、動作カーソルを表示します" },
           "cron": { "label": "定期実行", "summary": "指定した時刻にタスクを自動実行" },
           "dm": { "label": "ダイレクトメッセージ", "summary": "別のエージェントに 1 対 1 のメッセージを送信" },
           "install_skill": { "label": "スキルをインストール", "summary": "GitHub またはスキルライブラリから新しいスキルをインストール" },
@@ -845,19 +873,6 @@
           "workflow": { "label": "Workflow", "summary": "Agent に複数 Agent のワークフロースクリプトをバックグラウンドタスクとして実行させる" },
           "xingye_propose_draft": { "label": "Xingye 下書き提案", "summary": "ハートビート巡回中にキャラクター内蔵フォン／秘密空間へ確認待ち下書きを生成（現在対応：日記；他のモジュールは順次追加）。オフにすると新規下書きのみ停止、既存下書きは影響なし。" }
         }
-      },
-      "computerUse": {
-        "title": "Computer Use 状態",
-        "description": "基盤 provider、OS 権限、承認済みアプリを表示します。有効化は上のツールスイッチで行います。",
-        "provider": "Provider",
-        "availability": "利用状況",
-        "available": "利用可能",
-        "unavailable": "利用不可",
-        "permissions": "OS 権限",
-        "permissionsEmpty": "追加権限なし、または未取得",
-        "approvals": "承認済みアプリ",
-        "approvalsEmpty": "なし",
-        "refresh": "更新"
       }
     },
     "about": {
@@ -1116,6 +1131,9 @@
       "watermark": "ウォーターマーク",
       "aspectRatio": "アスペクト比",
       "speechRecognition": "音声認識",
+      "speechRecognitionEnabled": "音声メッセージ送信時に文字起こし",
+      "defaultSpeechModel": "音声メッセージ文字起こしモデル",
+      "speechModels": "文字起こしモデル",
       "speechSynthesis": "音声合成",
       "comingSoon": "近日公開",
       "noProvider": "プロバイダーを選択して詳細を表示",
@@ -1204,10 +1222,12 @@
       "displayName": "表示名",
       "vision": "ビジョン",
       "video": "動画",
+      "audio": "音声",
       "reasoning": "推論",
       "capability": {
         "image": "画像入力に対応",
         "video": "動画入力に対応",
+        "audio": "音声入力に対応",
         "reasoning": "推論に対応"
       }
     },
@@ -1330,7 +1350,13 @@
       "socialGlobalThresholdDesc": "他のアシスタントに最後に連絡してからこの会話数を超えると、巡回がそっと交流を促します（提案のみ、強制しません）。大きいほど頻度は下がります",
       "socialPerPeerThreshold": "個別連絡の放置上限",
       "socialPerPeerThresholdDesc": "特定のアシスタントとこの会話数だけ連絡がないと「長く連絡なし」として単独で促し、誰も忘れられないようにします",
-      "socialUnit": "会話"
+      "socialUnit": "会話",
+      "contextFilesTitle": "ワークスペース指示の注入",
+      "contextFilesDesc": "現在のワークスペースプロジェクトの AGENTS.md / CLAUDE.md を、新規セッションのシステムプロンプトへ記憶より前に注入します。",
+      "injectAgentsMd": "AGENTS.md を注入",
+      "injectAgentsMdDesc": "オンにすると、新規セッションは現在の作業ディレクトリから Git ルートまでの AGENTS.md を読み込みます。",
+      "injectClaudeMd": "CLAUDE.md を注入",
+      "injectClaudeMdDesc": "オンにすると、新規セッションは現在の作業ディレクトリから Git ルートまでの CLAUDE.md を読み込みます。"
     },
     "toolCaps": {
       "title": "スキルインストール権限"
@@ -1515,6 +1541,9 @@
       "desc": "会話スクリーンショットのスタイルとレイアウトを選択します",
       "color": "カラー",
       "width": "幅",
+      "font": "フォント",
+      "fontLabel": "スクリーンショットのフォント",
+      "fontHint": "個別フォントを選ばない場合、外観の閲覧フォントに従います。",
       "light": "ライト",
       "dark": "ダーク",
       "sakura": "青空と桜",
@@ -1668,6 +1697,7 @@
       "contextLength": "コンテキスト長",
       "maxOutput": "最大出力",
       "imageInput": "画像入力",
+      "audioInput": "音声入力",
       "reasoning": "推論モデル",
       "cancelEdit": "キャンセル",
       "saveEdit": "保存",
@@ -1774,7 +1804,9 @@
       "title": "この対話",
       "cwd": "作業フォルダ",
       "model": "モデル",
-      "files": "ファイル"
+      "files": "ファイル",
+      "authorizedFolders": "許可フォルダ",
+      "addAuthorizedFolder": "許可フォルダを追加"
     },
     "tabs": {
       "label": "右側ワークスペース",
@@ -1935,12 +1967,16 @@
     "compactFailed": "圧縮に失敗しました: {msg}",
     "maxImages": "画像は最大 {max} 枚までです",
     "maxVideos": "動画は最大 {max} 個までです",
+    "maxAudios": "音声は最大 {max} 個までです",
     "unsupportedImageFormat": "サポートされていない画像形式: {mime}",
     "unsupportedVideoFormat": "サポートされていない動画形式: {mime}",
+    "unsupportedAudioFormat": "サポートされていない音声形式: {mime}",
     "imageTooLarge": "1枚の画像は20MBを超えてはいけません",
     "videoTooLarge": "1つの動画は20MBを超えてはいけません",
+    "audioTooLarge": "1つの音声は50MBを超えてはいけません",
     "viewImage": "（画像を見る）",
     "viewVideo": "（動画を見る）",
+    "listenAudio": "（音声を聞く）",
     "modelNoVision": "現在のモデルは画像に対応していません。画像対応モデルに切り替えてください",
     "searchProviderNotConfigured": "検索プロバイダーが設定されていません",
     "searchProviderMissingKey": "検索プロバイダー \"{provider}\" の API Key がありません",
@@ -2336,11 +2372,6 @@
       "filePathDesc": "（互換）単一ローカルファイルの絶対パス。新しい呼び出しでは filepaths を優先してください。",
       "labelDesc": "（互換）ユーザーに表示するファイル名。通常は省略でき、既定でファイル名が使われます。"
     },
-    "wait": {
-      "label": "待機",
-      "description": "指定した秒数だけ待機します。バックグラウンドタスクの完了を待つ間、ターンをアクティブに保つために使います。",
-      "secondsDesc": "待機する秒数（1〜300）"
-    },
     "subagent": {
       "label": "サブエージェントを起動",
       "description": "委任タスク用の継続可能なサブエージェントインスタンスを作成し、taskId と threadId をすぐ返します。結果はバックグラウンドで現在の会話へ届きます。agent=\"?\" で一覧を確認できます。",
@@ -2392,6 +2423,8 @@
       "timezoneDesc": "IANA タイムゾーン（例: Asia/Shanghai）",
       "bridgeMediaPublicBaseUrl": "Bridge ファイル公開 URL",
       "bridgeMediaPublicBaseUrlDesc": "外部プラットフォームがローカル staged ファイルを取得するための公開 HTTP/HTTPS base URL。通常はリバースプロキシまたは tunnel で提供します。空にすると HANA_BRIDGE_PUBLIC_BASE_URL にフォールバックします。",
+      "computerUse": "Computer Use",
+      "computerUseDesc": "有効にすると、新しい会話で主 Agent に computer ツールを公開します。無効にすると新しい会話には表示されず、凍結済みの古い会話が呼び出した場合は拒否されます。",
       "thinkingBudget": "思考の深さ",
       "memory": "メモリシステム",
       "memoryDesc": "現在の Agent のメモリ機能を有効/無効にする",

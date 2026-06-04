@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.271.11",
+  "version": "0.282.4",
   "type": "module",
   "description": "HanaAgent - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -57,6 +57,7 @@
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language-data": "^6.5.2",
+    "@codemirror/view": "6.43.0",
     "@floating-ui/dom": "^1.7.6",
     "@fontsource/cormorant-garamond": "5.2.11",
     "@fontsource/fraunces": "5.2.9",

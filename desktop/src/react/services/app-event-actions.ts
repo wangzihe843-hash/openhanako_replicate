@@ -230,6 +230,16 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
         void refreshPreviewItemsFromFile(data.filePath);
       }
       break;
+    case 'session-authorized-folders-updated':
+      if (typeof data.sessionPath === 'string' && data.sessionPath) {
+        useStore.getState().setSessionAuthorizedFolders(
+          data.sessionPath,
+          Array.isArray(data.authorizedFolders)
+            ? data.authorizedFolders.filter((p: unknown): p is string => typeof p === 'string' && !!p.trim())
+            : [],
+        );
+      }
+      break;
     case 'theme-changed':
       window.setTheme(data.theme);
       break;

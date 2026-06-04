@@ -30,7 +30,7 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
 });
 
 import { runAgentSession, runAgentPhoneSession } from "../hub/agent-executor.js";
-import { updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
+import { getAgentPhoneProjectionPath, readAgentPhoneProjection, updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.js";
 import { readAgentPhoneRuntime, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.js";
 import { getAgentPhoneSessionDir } from "../lib/conversations/agent-phone-session.js";
 
@@ -573,8 +573,111 @@ describe("runAgentSession teardown", () => {
     });
 
     expect(createAgentSessionMock.mock.calls[0][0].model).toBe(channelModel);
+    const runtime = readAgentPhoneRuntime(agent.agentDir, "ch_crew");
+    expect(runtime).toMatchObject({
+      effectiveModel: {
+        id: "deepseek-v4-flash",
+        provider: "deepseek",
+        name: "DeepSeek V4 Flash",
+      },
+      modelOverrideApplied: true,
+      modelOverrideRequested: { id: "deepseek-v4-flash", provider: "deepseek" },
+    });
+    const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agent.agentDir, "ch_crew"));
+    expect(projection.meta.effectiveModel).toMatchObject({
+      id: "deepseek-v4-flash",
+      provider: "deepseek",
+    });
     expect(agent.config.models.chat).toEqual({ id: "gpt-4o", provider: "openai" });
     expect(resolveModel).not.toHaveBeenCalled();
+  });
+
+  it("records phone assistant usage with the actual override model attribution", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const agentDefaultModel = { id: "gpt-4o", provider: "openai", name: "GPT-4o" };
+    const channelModel = {
+      id: "deepseek-v4-flash",
+      provider: "deepseek",
+      name: "DeepSeek V4 Flash",
+      api: "openai-completions",
+      cost: { input: 1, output: 2 },
+    };
+    const usageLedger = { record: vi.fn() };
+    const engine = {
+      ...makeEngine(agent, cwd),
+      usageLedger,
+      availableModels: [agentDefaultModel, channelModel],
+      createSessionContext: () => ({
+        resourceLoader: {},
+        getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
+        buildTools: () => ({ tools: [], customTools: [] }),
+        resolveModel: () => agentDefaultModel,
+        authStorage: {},
+        modelRegistry: {},
+      }),
+    };
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-usage.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    let subscriber = null;
+    createAgentSessionMock.mockResolvedValue({
+      session: {
+        prompt: vi.fn(async () => {
+          subscriber?.({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              provider: "deepseek",
+              model: "deepseek-v4-flash",
+              usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+            },
+          });
+        }),
+        subscribe: vi.fn((fn) => {
+          subscriber = fn;
+          return vi.fn();
+        }),
+        dispose: vi.fn(),
+        sessionManager: { getSessionFile: () => sessionFile },
+        getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+        extensionRunner: { hasHandlers: vi.fn(() => false) },
+      },
+    });
+
+    await runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+      modelOverride: { id: "deepseek-v4-flash", provider: "deepseek" },
+    });
+
+    expect(usageLedger.record).toHaveBeenCalledWith(expect.objectContaining({
+      model: {
+        provider: "deepseek",
+        modelId: "deepseek-v4-flash",
+        api: "openai-completions",
+      },
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      costRates: channelModel.cost,
+      usageContext: {
+        source: {
+          subsystem: "session",
+          operation: "phone_reply",
+          surface: "channel",
+          trigger: "delivery",
+        },
+        attribution: {
+          kind: "phone",
+          agentId: "agent-a",
+          conversationId: "ch_crew",
+          conversationType: "channel",
+          sessionPath: sessionFile,
+        },
+      },
+    }));
   });
 
   it("phone sessions persist and reuse their prompt snapshot", async () => {

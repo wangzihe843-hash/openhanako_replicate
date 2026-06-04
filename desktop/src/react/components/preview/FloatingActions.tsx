@@ -8,6 +8,7 @@ import {
   requestMarkdownCoverGeneration,
 } from '../../utils/markdown-cover-generation';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
+import { useI18n } from '../../hooks/use-i18n';
 import { Tooltip } from '../../ui';
 import { extOfName, inferKindByExt } from '../../utils/file-kind';
 
@@ -123,6 +124,7 @@ export function FloatingActions({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverMenuRef = useRef<HTMLDivElement | null>(null);
   const floatingActionsRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useI18n();
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
@@ -260,152 +262,157 @@ export function FloatingActions({
     });
   }, []);
 
-  const t = window.t ?? ((p: string) => p);
+  const floatingActionsClassName = [
+    styles.floatingActions,
+    (coverMenuOpen || coverGalleryOpen || coverBusy || copyLabel) ? styles.floatingActionsPinned : '',
+  ].filter(Boolean).join(' ');
 
   return (
-    <div className={styles.floatingActions} data-react-managed ref={floatingActionsRef}>
-      <button className={styles.actionBtn} onClick={handleCopy}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-        <span>{copyLabel ?? t('attach.copy')}</span>
-      </button>
-      {contentType === 'markdown' && filePath && systemCoverAvailable && (
-        <div className={styles.coverActionWrap} ref={coverMenuRef}>
-          <Tooltip content={t('cover.make')} placement="bottom" align="end">
+    <div className={floatingActionsClassName} data-react-managed ref={floatingActionsRef}>
+      <div className={styles.floatingActionsSurface}>
+        <button className={styles.actionBtn} onClick={handleCopy}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          <span>{copyLabel ?? t('attach.copy')}</span>
+        </button>
+        {contentType === 'markdown' && filePath && systemCoverAvailable && (
+          <div className={styles.coverActionWrap} ref={coverMenuRef}>
+            <Tooltip content={t('cover.make')} placement="top" align="end">
+              {({ ref, ...tooltipProps }) => (
+                <button
+                  ref={(node) => ref(node)}
+                  className={`${styles.actionBtn}${coverBusy ? ` ${styles.actionBtnBusy}` : ''}${coverMenuOpen ? ` ${styles.actionBtnActive}` : ''}`}
+                  onClick={() => setCoverMenuOpen(open => !open)}
+                  aria-label={t('cover.make')}
+                  disabled={coverBusy}
+                  {...tooltipProps}
+                >
+                  <CoverPaletteIcon />
+                </button>
+              )}
+            </Tooltip>
+            {coverMenuOpen && (
+              <div className={styles.coverMenu}>
+                <Tooltip
+                  content={agentGenerateDisabledText}
+                  disabled={agentGenerateEnabled}
+                  placement="left"
+                  align="center"
+                >
+                  {({ ref, ...tooltipProps }) => (
+                    <span
+                      className={styles.coverMenuTooltipAnchor}
+                      ref={(node) => ref(node)}
+                      {...tooltipProps}
+                    >
+                      <button
+                        type="button"
+                        onClick={handleGenerateCover}
+                        disabled={coverBusy || !agentGenerateEnabled}
+                      >
+                        <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
+                        <span>Agent 生成</span>
+                      </button>
+                    </span>
+                  )}
+                </Tooltip>
+                <button type="button" onClick={handlePresetCover}>
+                  <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
+                  <span>小花美术馆</span>
+                </button>
+                <button type="button" onClick={handleUploadCover}>
+                  <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
+                  <span>自己上传</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {coverGalleryOpen && (
+          <div className={styles.coverGalleryCard} role="dialog" aria-label="小花美术馆">
+            <div className={styles.coverGalleryHeader}>
+              <div>
+                <div className={styles.coverGalleryTitle}>小花美术馆</div>
+              </div>
+              <button
+                type="button"
+                className={styles.coverGalleryClose}
+                onClick={() => setCoverGalleryOpen(false)}
+                aria-label="关闭小花美术馆"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className={styles.coverGalleryGrid}>
+              {visibleCoverGalleryItems.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={styles.coverGalleryItem}
+                  onClick={() => handleApplyPresetCover(item)}
+                  disabled={coverBusy}
+                  aria-label={item.title}
+                  title={item.title}
+                >
+                  <span className={styles.coverGalleryThumb}>
+                    <img
+                      src={item.src}
+                      alt=""
+                      draggable={false}
+                      loading="lazy"
+                      decoding="async"
+                      onError={() => handleCoverGalleryImageError(item.id)}
+                    />
+                  </span>
+                  <span className={styles.coverGalleryName}>{item.title}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {showMarkdownPreviewToggle && (
+          <Tooltip content={t(markdownPreviewActive ? 'preview.exitMarkdownPreview' : 'preview.markdownPreview')} placement="top" align="end">
             {({ ref, ...tooltipProps }) => (
               <button
                 ref={(node) => ref(node)}
-                className={`${styles.actionBtn}${coverBusy ? ` ${styles.actionBtnBusy}` : ''}${coverMenuOpen ? ` ${styles.actionBtnActive}` : ''}`}
-                onClick={() => setCoverMenuOpen(open => !open)}
-                aria-label={t('cover.make')}
-                disabled={coverBusy}
+                className={`${styles.actionBtn}${markdownPreviewActive ? ` ${styles.actionBtnActive}` : ''}`}
+                onClick={onToggleMarkdownPreview}
+                aria-label={t('preview.markdownPreview')}
                 {...tooltipProps}
               >
-                <CoverPaletteIcon />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
               </button>
             )}
           </Tooltip>
-          {coverMenuOpen && (
-            <div className={styles.coverMenu}>
-              <Tooltip
-                content={agentGenerateDisabledText}
-                disabled={agentGenerateEnabled}
-                placement="left"
-                align="center"
-              >
-                {({ ref, ...tooltipProps }) => (
-                  <span
-                    className={styles.coverMenuTooltipAnchor}
-                    ref={(node) => ref(node)}
-                    {...tooltipProps}
-                  >
-                    <button
-                      type="button"
-                      onClick={handleGenerateCover}
-                      disabled={coverBusy || !agentGenerateEnabled}
-                    >
-                      <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
-                      <span>Agent 生成</span>
-                    </button>
-                  </span>
-                )}
-              </Tooltip>
-              <button type="button" onClick={handlePresetCover}>
-                <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
-                <span>小花美术馆</span>
-              </button>
-              <button type="button" onClick={handleUploadCover}>
-                <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
-                <span>自己上传</span>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {coverGalleryOpen && (
-        <div className={styles.coverGalleryCard} role="dialog" aria-label="小花美术馆">
-          <div className={styles.coverGalleryHeader}>
-            <div>
-              <div className={styles.coverGalleryTitle}>小花美术馆</div>
-            </div>
-            <button
-              type="button"
-              className={styles.coverGalleryClose}
-              onClick={() => setCoverGalleryOpen(false)}
-              aria-label="关闭小花美术馆"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M18 6L6 18" />
-                <path d="M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div className={styles.coverGalleryGrid}>
-            {visibleCoverGalleryItems.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className={styles.coverGalleryItem}
-                onClick={() => handleApplyPresetCover(item)}
-                disabled={coverBusy}
-                aria-label={item.title}
-                title={item.title}
-              >
-                <span className={styles.coverGalleryThumb}>
-                  <img
-                    src={item.src}
-                    alt=""
-                    draggable={false}
-                    loading="lazy"
-                    decoding="async"
-                    onError={() => handleCoverGalleryImageError(item.id)}
-                  />
-                </span>
-                <span className={styles.coverGalleryName}>{item.title}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      {showMarkdownPreviewToggle && (
-        <Tooltip content={t(markdownPreviewActive ? 'preview.exitMarkdownPreview' : 'preview.markdownPreview')} placement="bottom" align="end">
+        )}
+        <Tooltip content={t('common.screenshot')} placement="top" align="end">
           {({ ref, ...tooltipProps }) => (
             <button
               ref={(node) => ref(node)}
-              className={`${styles.actionBtn}${markdownPreviewActive ? ` ${styles.actionBtnActive}` : ''}`}
-              onClick={onToggleMarkdownPreview}
-              aria-label={t('preview.markdownPreview')}
+              className={styles.actionBtn}
+              onClick={handleScreenshot}
+              aria-label={t('common.screenshot')}
               {...tooltipProps}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-                <circle cx="12" cy="12" r="3" />
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
               </svg>
             </button>
           )}
         </Tooltip>
-      )}
-      <Tooltip content={t('common.screenshot')} placement="bottom" align="end">
-        {({ ref, ...tooltipProps }) => (
-          <button
-            ref={(node) => ref(node)}
-            className={styles.actionBtn}
-            onClick={handleScreenshot}
-            aria-label={t('common.screenshot')}
-            {...tooltipProps}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-              <circle cx="12" cy="13" r="4" />
-            </svg>
-          </button>
-        )}
-      </Tooltip>
+      </div>
     </div>
   );
 }

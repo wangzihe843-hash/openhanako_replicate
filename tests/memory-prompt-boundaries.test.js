@@ -65,6 +65,20 @@ describe("memory prompt boundaries", () => {
     expect(prompt).toContain("如果这条信息回答的是“用户最近在关注哪个领域/项目/主题”");
   });
 
+  it("adds a reasoning buffer to rolling summary maxTokens without changing visible budget text", async () => {
+    const manager = new SessionSummaryManager(path.join(tmpDir, "summaries"));
+    const reasoningModel = {
+      ...RESOLVED_MODEL,
+      model: { id: "reasoning-model", provider: "deepseek", reasoning: true, maxTokens: 8192 },
+    };
+
+    await manager._callRollingLLM("【用户】我最近在关注记忆系统。", "", reasoningModel, 2);
+
+    const request = callText.mock.calls[0][0];
+    expect(request.messages[0].content).toContain("重要事实最多24字。事情经过最多56字。");
+    expect(request.maxTokens).toBeGreaterThan(150);
+  });
+
   it("today and week prompts keep broad work themes but reject work details", async () => {
     const summaries = [
       {
@@ -86,6 +100,27 @@ describe("memory prompt boundaries", () => {
       expect(prompt).toContain("不要记录执行步骤、文件名、工具、命令、检查顺序、协作偏好、工作细节");
       expect(prompt).toContain("不要输出 Markdown 标题");
     }
+  });
+
+  it("adds a reasoning buffer to compile maxTokens while keeping compile prompt body budget", async () => {
+    const summaries = [
+      {
+        session_id: "s1",
+        updated_at: new Date().toISOString(),
+        summary: "## 重要事实\n无\n\n## 事情经过\n用户在讨论记忆系统。",
+      },
+    ];
+    const manager = makeFakeSummaryManager(summaries);
+    const reasoningModel = {
+      ...RESOLVED_MODEL,
+      model: { id: "reasoning-model", provider: "deepseek", reasoning: true, maxTokens: 8192 },
+    };
+
+    await compileToday(manager, path.join(tmpDir, "today.md"), reasoningModel);
+
+    const request = callText.mock.calls[0][0];
+    expect(request.systemPrompt).toContain("最多 300 字");
+    expect(request.maxTokens).toBeGreaterThan(450);
   });
 
   it("longterm prompt keeps durable user profile instead of work patterns", async () => {

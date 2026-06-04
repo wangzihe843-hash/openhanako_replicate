@@ -25,7 +25,7 @@ export interface AutoLaunchStatus {
 
 // ── 核心数据结构 ──
 
-export type SessionPermissionMode = 'operate' | 'ask' | 'read_only';
+export type SessionPermissionMode = 'auto' | 'operate' | 'ask' | 'read_only';
 
 export interface Session {
   path: string;
@@ -40,6 +40,10 @@ export interface Session {
   permissionMode?: SessionPermissionMode | null;
   pinnedAt?: string | null;
   hasSummary?: boolean;
+  agentDeleted?: boolean;
+  readOnlyReason?: 'agent_deleted' | string | null;
+  continuationAvailable?: boolean;
+  deletedAt?: string | null;
   rcAttachment?: {
     sessionKey: string;
     platform: string;
@@ -71,7 +75,10 @@ export interface Model {
   isCurrent?: boolean;
   reasoning?: boolean;
   xhigh?: boolean;
-  /** 输入模态数组（Pi SDK 标准字段）。包含 "image" / "video" 表示模型支持对应媒体输入。 */
+  audio?: boolean;
+  audioTransport?: string | null;
+  audioTransportSupported?: boolean;
+  /** 输入模态数组（Pi SDK 标准字段）。包含 "image" / "video" 表示模型支持对应媒体输入；音频走 Hana 兼容能力字段。 */
   input?: ("text" | "image" | "video")[];
 }
 

@@ -63,6 +63,8 @@ export function loadLocale(locale) {
  * 按 dot path 取值。当前 locale 缺失时回退英文兜底包。
  */
 function getFrom(source, p) {
+  const exact = source?.[p];
+  if (exact !== undefined && exact !== null) return exact;
   return p.split(".").reduce((obj, k) => obj?.[k], source);
 }
 

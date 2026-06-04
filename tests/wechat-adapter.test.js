@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/debug-log.js", () => ({
@@ -147,5 +150,110 @@ describe("createWechatAdapter", () => {
 
     const legacyRawWireKey = Buffer.from(aesKeyHex, "hex").toString("base64");
     expect(decodeIlinkMediaAesKey(legacyRawWireKey).toString("hex")).toBe(aesKeyHex);
+  });
+
+  it("persists context tokens so scheduled WeChat replies survive adapter restart", async () => {
+    const hanaHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wechat-context-"));
+    vi.setSystemTime(new Date("2026-06-04T08:00:00.000Z"));
+    let getUpdatesCount = 0;
+    const fetchMock = vi.fn(async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("ilink/bot/getupdates")) {
+        getUpdatesCount += 1;
+        if (getUpdatesCount === 1) {
+          return jsonResponse({
+            ret: 0,
+            get_updates_buf: "buf-1",
+            msgs: [{
+              from_user_id: "user-1",
+              context_token: "ctx-persisted",
+              item_list: [{ type: 1, text_item: { text: "hi" } }],
+            }],
+          });
+        }
+        return new Promise(() => {});
+      }
+      if (requestUrl.includes("ilink/bot/sendmessage")) return jsonResponse({ ret: 0 });
+      throw new Error(`unexpected fetch: ${requestUrl}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createWechatAdapter({
+      botToken: "wx-token",
+      hanaHome,
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus: vi.fn(),
+    });
+    await vi.waitFor(() => expect(adapter.canReply("user-1")).toBe(true));
+    adapter.stop();
+
+    const restarted = createWechatAdapter({
+      botToken: "wx-token",
+      hanaHome,
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus: vi.fn(),
+    });
+
+    expect(restarted.canReply("user-1")).toBe(true);
+    await restarted.sendReply("user-1", "scheduled ping");
+    const sendMessageCall = fetchMock.mock.calls.find(([url]) => String(url).includes("ilink/bot/sendmessage"));
+    expect(sendMessageCall).toBeTruthy();
+    expect(JSON.parse(sendMessageCall[1].body).msg.context_token).toBe("ctx-persisted");
+
+    restarted.stop();
+    fs.rmSync(hanaHome, { recursive: true, force: true });
+  });
+
+  it("prunes expired persisted WeChat context tokens on restart", async () => {
+    const hanaHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wechat-context-expired-"));
+    vi.setSystemTime(new Date("2026-06-04T08:00:00.000Z"));
+    let getUpdatesCount = 0;
+    const fetchMock = vi.fn(async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("ilink/bot/getupdates")) {
+        getUpdatesCount += 1;
+        if (getUpdatesCount === 1) {
+          return jsonResponse({
+            ret: 0,
+            get_updates_buf: "buf-1",
+            msgs: [{
+              from_user_id: "user-1",
+              context_token: "ctx-expiring",
+              item_list: [{ type: 1, text_item: { text: "hi" } }],
+            }],
+          });
+        }
+        return new Promise(() => {});
+      }
+      throw new Error(`unexpected fetch: ${requestUrl}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createWechatAdapter({
+      botToken: "wx-token",
+      hanaHome,
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus: vi.fn(),
+    });
+    await vi.waitFor(() => expect(adapter.canReply("user-1")).toBe(true));
+    adapter.stop();
+
+    vi.setSystemTime(new Date("2026-06-05T08:00:01.000Z"));
+    const restarted = createWechatAdapter({
+      botToken: "wx-token",
+      hanaHome,
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus: vi.fn(),
+    });
+
+    expect(restarted.canReply("user-1")).toBe(false);
+    await expect(restarted.sendReply("user-1", "too late")).rejects.toThrow("需要对方最近发过消息");
+
+    restarted.stop();
+    fs.rmSync(hanaHome, { recursive: true, force: true });
   });
 });

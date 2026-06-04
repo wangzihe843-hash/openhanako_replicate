@@ -9,6 +9,7 @@ import {
   StreamingMarkdownContent,
   isTypewriterEligibleMarkdownSource,
 } from '../../components/chat/StreamingMarkdownContent';
+import { splitGraphemes } from '../../utils/grapheme';
 
 let rafCallbacks: FrameRequestCallback[] = [];
 
@@ -40,7 +41,7 @@ describe('StreamingMarkdownContent', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders streaming prose progressively and marks only the visible tail for fade', () => {
+  it('renders streaming prose progressively and marks the newly visible tail for fade', () => {
     const { container, rerender } = render(
       <StreamingMarkdownContent source="旧正文" html="<p>旧正文</p>" active />,
     );
@@ -54,9 +55,12 @@ describe('StreamingMarkdownContent', () => {
     });
 
     const text = container.textContent || '';
+    const newlyVisible = text.slice('旧正文'.length);
     expect(text.length).toBeGreaterThan('旧正文'.length);
     expect(text.length).toBeLessThan('旧正文新正文继续出现'.length);
-    expect(container.querySelectorAll('[data-stream-tail-char="true"]').length).toBe(1);
+    const tailCount = container.querySelectorAll('[data-stream-tail-char="true"]').length;
+    expect(tailCount).toBeGreaterThan(0);
+    expect(tailCount).toBeLessThanOrEqual(Math.min(6, splitGraphemes(newlyVisible).length));
   });
 
   it('does not replay the tail fade when the stream target advances before visible text does', () => {

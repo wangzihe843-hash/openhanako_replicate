@@ -3,7 +3,11 @@
 import React from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useTypewriterText } from '../../hooks/use-typewriter-text';
+import {
+  planTypewriterAdvance,
+  splitTypewriterChunks,
+  useTypewriterText,
+} from '../../hooks/use-typewriter-text';
 
 let rafCallbacks: FrameRequestCallback[] = [];
 
@@ -80,6 +84,30 @@ describe('useTypewriterText', () => {
 
     const advanced = (getByTestId('visible').textContent || '').length - '开头'.length;
     expect(advanced).toBeGreaterThan(1);
+  });
+
+  it('plans desktop streaming advances by word-like chunks instead of individual letters', () => {
+    const chunks = splitTypewriterChunks('hello brave new world', { useIntlSegmenter: false });
+
+    expect(chunks).toEqual(['hello', ' brave', ' new', ' world']);
+    expect(planTypewriterAdvance('hello brave new world', {
+      minBatch: 1,
+      maxBatch: 24,
+      catchUpThreshold: 24,
+      useIntlSegmenter: false,
+    })).toBe('hello');
+  });
+
+  it('keeps Chinese streaming chunks compact and attaches punctuation to the preceding chunk', () => {
+    const chunks = splitTypewriterChunks('测试一下，看看效果。', { useIntlSegmenter: false });
+
+    expect(chunks).toEqual(['测试', '一下，', '看看', '效果。']);
+    expect(planTypewriterAdvance('测试一下，看看效果。', {
+      minBatch: 1,
+      maxBatch: 24,
+      catchUpThreshold: 24,
+      useIntlSegmenter: false,
+    })).toBe('测试');
   });
 
   it('advances by grapheme clusters and does not split emoji sequences', () => {

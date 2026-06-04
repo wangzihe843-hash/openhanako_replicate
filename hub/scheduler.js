@@ -174,8 +174,10 @@ export class Scheduler {
       onBeat: async (prompt, extra = {}) => {
         // extra.xingyeConsumed：consumer 结果（含 summaryZh / eventCount），挂到 activity_update 负载，
         // 让前端 activities store 拿到本次巡检的小手机事件聚合（手动 + 自动统一走这条）。
+        // extra.customTools：upstream 的 patrol_update_log 工具，透传给 executeIsolated（与 onJianBeat 一致）。
         await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {
           xingyeConsumed: extra?.xingyeConsumed || null,
+          extraCustomTools: Array.isArray(extra?.customTools) ? extra.customTools : [],
         });
       },
       onJianBeat: (prompt, cwd, runTools = {}) => {

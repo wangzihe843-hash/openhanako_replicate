@@ -258,7 +258,7 @@ function syncMobilePermissionMode(session: Pick<Session, 'permissionMode'> | nul
 }
 
 function isSessionPermissionMode(value: unknown): value is SessionPermissionMode {
-  return value === 'operate' || value === 'ask' || value === 'read_only';
+  return value === 'auto' || value === 'operate' || value === 'ask' || value === 'read_only';
 }
 
 function configureMobileMessageHandlers(): void {

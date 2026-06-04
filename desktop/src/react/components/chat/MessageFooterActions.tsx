@@ -16,6 +16,7 @@ interface Props {
   actions: MessageFooterAction[];
   align?: 'left' | 'right';
   visible?: boolean;
+  timePersistent?: boolean;
   testId?: string;
 }
 
@@ -24,6 +25,7 @@ export const MessageFooterActions = memo(function MessageFooterActions({
   actions,
   align = 'right',
   visible = false,
+  timePersistent = false,
   testId,
 }: Props) {
   if (!timeText && actions.length === 0) return null;
@@ -34,6 +36,7 @@ export const MessageFooterActions = memo(function MessageFooterActions({
         styles.messageFooterActions,
         align === 'left' ? styles.messageFooterActionsLeft : styles.messageFooterActionsRight,
         visible ? styles.messageFooterActionsVisible : '',
+        timePersistent && timeText ? styles.messageFooterActionsTimePersistent : '',
       ].filter(Boolean).join(' ')}
       data-testid={testId}
     >

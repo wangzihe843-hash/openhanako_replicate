@@ -208,6 +208,7 @@
 }
 
 .fileRow {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -255,6 +256,7 @@
 .fileMain {
     flex: 1;
     min-width: 0;
+    transition: padding-right var(--duration-fast) var(--ease-out);
 }
 
 .fileName {
@@ -282,17 +284,44 @@
 }
 
 .fileActions {
-    flex: 0 0 auto;
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
     display: inline-flex;
     align-items: center;
     gap: 2px;
     opacity: 0;
+    padding-left: var(--space-sm);
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--overlay-subtle) 10px,
+        var(--overlay-subtle)
+    );
+    pointer-events: none;
     transition: opacity var(--duration-instant) var(--ease-out);
 }
 
+.fileRow:hover .fileMain,
+.fileRow:focus-within .fileMain {
+    padding-right: 122px;
+}
+
 .fileRow:hover .fileActions,
-.fileRowSelected .fileActions {
+.fileRow:focus-within .fileActions {
     opacity: 1;
+    pointer-events: auto;
+}
+
+.fileRowSelected:hover .fileActions,
+.fileRowSelected:focus-within .fileActions {
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(var(--accent-rgb), 0.14) 10px,
+        rgba(var(--accent-rgb), 0.14)
+    );
 }
 
 .fileAction {

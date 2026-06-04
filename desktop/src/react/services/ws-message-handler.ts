@@ -210,6 +210,10 @@ export function applyStreamingStatus(isStreaming: boolean, sessionPath: string |
 
   if (!isStreaming && wasStreaming) {
     requestInputFocusForCurrentSession(sessionPath);
+    const focused = useStore.getState().currentSessionPath;
+    if (sessionPath && sessionPath !== focused) {
+      useStore.getState().markSessionOutputUnread?.(sessionPath);
+    }
   }
 
   // 渲染层：只有焦点 session 才影响 UI 占位 / sessions 列表。
@@ -263,6 +267,39 @@ function replayUserMessageAlreadyHydrated(sessionPath: string, message: any): bo
     (last.data.quotedText || '') === (message?.quotedText || '') &&
     attachmentsEqual(last.data.attachments, message?.attachments) &&
     sameJsonish(last.data.deskContext, message?.deskContext);
+}
+
+function applyVoiceTranscriptionUpdate(msg: any): void {
+  const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath : '';
+  const fileId = typeof msg.fileId === 'string' ? msg.fileId : '';
+  const transcription = msg.transcription && typeof msg.transcription === 'object' ? msg.transcription : null;
+  if (!sessionPath || !fileId || !transcription) return;
+
+  let changed = false;
+  useStore.setState((s: any) => {
+    const session = s.chatSessions?.[sessionPath];
+    if (!session) return {};
+    const items = session.items.map((item: any) => {
+      if (item?.type !== 'message' || !Array.isArray(item.data?.attachments)) return item;
+      let itemChanged = false;
+      const attachments = item.data.attachments.map((attachment: any) => {
+        if (attachment?.fileId !== fileId) return attachment;
+        itemChanged = true;
+        return { ...attachment, transcription };
+      });
+      if (!itemChanged) return item;
+      changed = true;
+      return { ...item, data: { ...item.data, attachments } };
+    });
+    if (!changed) return {};
+    return {
+      chatSessions: {
+        ...s.chatSessions,
+        [sessionPath]: { ...session, items },
+      },
+    };
+  });
+  if (changed) bumpMessageLiveVersion(sessionPath);
 }
 
 // ── 消息分发（大 switch） ──
@@ -530,6 +567,11 @@ export function handleServerMessage(msg: any): void {
       break;
     }
 
+    case 'voice_transcription_update': {
+      applyVoiceTranscriptionUpdate(msg);
+      break;
+    }
+
     case 'bridge_rc_attached': {
       const sp = msg.sessionPath;
       if (sp && msg.sessionKey) {
@@ -565,7 +607,7 @@ export function handleServerMessage(msg: any): void {
       const sp = msg.sessionPath;
       if (!sp || sp === useStore.getState().currentSessionPath) {
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-          detail: { enabled: !!msg.enabled, mode: msg.enabled ? 'read_only' : 'operate' },
+          detail: { enabled: !!msg.enabled, mode: msg.mode || (msg.enabled ? 'read_only' : 'operate') },
         }));
       }
       break;
@@ -753,6 +795,8 @@ function applyContentBlockSessionFile(msg: any): void {
     mime: block.mime,
     kind: block.kind,
     storageKind: block.storageKind,
+    presentation: block.presentation,
+    listed: block.listed,
     status: block.status,
     missingAt: block.missingAt,
     mtimeMs: block.mtimeMs,

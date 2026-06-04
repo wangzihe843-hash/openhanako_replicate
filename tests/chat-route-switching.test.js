@@ -200,6 +200,120 @@ describe("chat route model switch guard", () => {
     handlers.onClose({}, ws);
   });
 
+  it("delays visible deferred result blocks until the parent turn ends", () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+    };
+    const engine = {
+      agentName: "Hanako",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    subscriber?.({ type: "session_status", isStreaming: true }, "/tmp/interlude-session.jsonl");
+    subscriber?.({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "派出去了。\n" },
+    }, "/tmp/interlude-session.jsonl");
+    subscriber?.({
+      type: "deferred_result",
+      taskId: "subagent-fast",
+      status: "success",
+      result: "回来了。",
+      meta: {
+        type: "subagent",
+        executorAgentNameSnapshot: "Hanako",
+        label: "凌晨诗行",
+        summary: "写一首关于凌晨五点三十九分的三行短诗。要求：不要使用常见意象。",
+      },
+    }, "/tmp/interlude-session.jsonl");
+
+    let payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    expect(payloads.some((payload) => payload.type === "deferred_result")).toBe(true);
+    expect(payloads.some((payload) => payload.type === "content_block" && payload.block?.type === "interlude")).toBe(false);
+
+    subscriber?.({ type: "turn_end" }, "/tmp/interlude-session.jsonl");
+
+    payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    const turnEndIndex = payloads.findIndex((payload) => payload.type === "turn_end");
+    const interludeIndex = payloads.findIndex((payload) => payload.type === "content_block" && payload.block?.type === "interlude");
+    expect(turnEndIndex).toBeGreaterThanOrEqual(0);
+    expect(interludeIndex).toBeGreaterThan(turnEndIndex);
+    expect(payloads[interludeIndex].block).toMatchObject({
+      type: "interlude",
+      taskId: "subagent-fast",
+      sourceLabel: "Hanako · 凌晨诗行",
+    });
+
+    handlers.onClose({}, ws);
+  });
+
+  it("keeps standalone deferred results immediate across repeated deliveries", () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+    };
+    const engine = {
+      agentName: "Hana",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    for (const taskId of ["standalone-1", "standalone-2"]) {
+      subscriber?.({
+        type: "deferred_result",
+        taskId,
+        status: "success",
+        result: `result ${taskId}`,
+        meta: { type: "subagent", executorAgentNameSnapshot: "明", label: "回执" },
+      }, "/tmp/standalone-deferred.jsonl");
+    }
+
+    const interludeTaskIds = ws.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .filter((payload) => payload.type === "content_block" && payload.block?.type === "interlude")
+      .map((payload) => payload.block.taskId);
+
+    expect(interludeTaskIds).toEqual(["standalone-1", "standalone-2"]);
+
+    handlers.onClose({}, ws);
+  });
+
   it("emits plugin_card blocks from extension custom messages", () => {
     let createHandlers;
     let subscriber;

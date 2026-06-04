@@ -75,6 +75,7 @@ describe("agents route: tools.disabled", () => {
       getThinkingLevel: vi.fn(() => "auto"),
       getLearnSkills: vi.fn(() => true),
       getHeartbeatMaster: vi.fn(() => true),
+      getComputerUseSettings: vi.fn(() => ({ enabled: false })),
       pluginManager: {
         getAllTools: vi.fn(() => [{ name: "beautify_create-cover", _pluginId: "beautify" }]),
       },
@@ -158,7 +159,7 @@ describe("agents route: tools.disabled", () => {
     expect(body.error).toContain("must be an array");
   });
 
-  it("GET response includes availableTools array from engine.getAgent", async () => {
+  it("GET response hides global Computer Use while the global gate is disabled", async () => {
     const res = await app.request(`/api/agents/${agentId}/config`);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -166,16 +167,26 @@ describe("agents route: tools.disabled", () => {
     expect(body.availableTools).toContain("read");
     expect(body.availableTools).toContain("browser");
     expect(body.availableTools).toContain("beautify");
-    expect(body.availableTools).toContain("computer");
+    expect(body.availableTools).not.toContain("computer");
     expect(body.availableTools).toContain("cron");
     expect(engine.getAgent).toHaveBeenCalledWith(agentId);
+  });
+
+  it("GET response exposes Computer Use when the global gate is enabled", async () => {
+    engine.getComputerUseSettings.mockReturnValue({ enabled: true });
+
+    const res = await app.request(`/api/agents/${agentId}/config`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.availableTools).toContain("computer");
   });
 
   it("GET response exposes settings tool surface for config-only agents", async () => {
     engine.getAgent.mockReturnValue({
       id: agentId,
       runtimeInitialized: false,
-      tools: [{ name: "wait" }],
+      tools: [{ name: "current_status" }],
     });
 
     const res = await app.request(`/api/agents/${agentId}/config`);

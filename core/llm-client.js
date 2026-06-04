@@ -4,6 +4,10 @@ import { normalizeProviderPayload } from './provider-compat.js';
 import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.js';
 import { appendProviderApiPath, withDefaultProviderHeaders } from '../lib/llm/provider-client.js';
 import { normalizeProviderHeaders } from '../shared/provider-auth.js';
+import {
+  serializeOpenAICompatibleContentBlock,
+  serializeResponsesContentBlock,
+} from './provider-media-serializer.js';
 
 const EMPTY_AFTER_THINKING_MESSAGE = "模型未回复正文，请检查思考内容或稍后重试。";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -25,12 +29,6 @@ const CODEX_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth";
  * 与 chat 路径（engine.js 的 Pi SDK extension）共享同一个 provider-compat 模块。callText
  * 不从模型能力元数据合成输出预算；需要限制输出长度的具体任务必须显式传 maxTokens。
  */
-
-function toDataUrl(block) {
-  const mime = block?.mimeType || (block?.type === "video" ? "video/mp4" : "image/png");
-  const data = block?.data || "";
-  return `data:${mime};base64,${data}`;
-}
 
 function normalizeTextFromContent(content) {
   if (typeof content === "string") return content;
@@ -252,18 +250,10 @@ function convertContentForApi(content, api) {
   }
 
   if (api === "openai-responses" || api === "openai-codex-responses") {
-    return content.map((block) => {
-      if (block?.type === "text") return { type: "input_text", text: block.text || "" };
-      if (block?.type === "image") return { type: "input_image", image_url: toDataUrl(block) };
-      return { type: "input_text", text: JSON.stringify(block) };
-    });
+    return content.map(serializeResponsesContentBlock);
   }
 
-  return content.map((block) => {
-    if (block?.type === "text") return { type: "text", text: block.text || "" };
-    if (block?.type === "image" || block?.type === "video") return { type: "image_url", image_url: { url: toDataUrl(block) } };
-    return { type: "text", text: JSON.stringify(block) };
-  });
+  return content.map(serializeOpenAICompatibleContentBlock);
 }
 
 /**

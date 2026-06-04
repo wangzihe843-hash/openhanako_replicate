@@ -58,8 +58,8 @@ const HANAKO_CUSTOM_OBJS = [
   "search_memory", "pin_memory", "unpin_memory", "web_search",
   "web_fetch", "todo_write", "notify",
   "stage_files", "subagent", "channel", "record_experience",
-  "recall_experience", "check_pending_tasks", "current_status", "wait", "stop_task",
-  "browser", "cron", "dm", "install_skill", "update_settings",
+  "recall_experience", "check_pending_tasks", "current_status", "stop_task",
+  "session_folders", "browser", "cron", "dm", "install_skill", "update_settings",
 ].map(makeTool);
 
 function allNames() {
@@ -442,6 +442,25 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(appliedList).toContain("browser");
   });
 
+  it("Case C: fresh sessions exclude computer when its global experiment gate is closed", async () => {
+    const computerTool = {
+      ...makeTool("computer"),
+      isEnabledForAgentConfig: () => false,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, computerTool],
+    });
+    currentAgentConfig = { tools: { disabled: [] } };
+
+    await coord.createSession(null, tmpDir, true);
+
+    const appliedList = activeToolsSpy.mock.calls[0][0];
+    expect(appliedList).not.toContain("computer");
+    expect(appliedList).toContain("read");
+    expect(appliedList).toContain("browser");
+  });
+
   it("Case C: beautify plugin tools are default-off for fresh configs", async () => {
     const beautifyTool = {
       ...makeTool("beautify_create-cover"),
@@ -563,6 +582,27 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       customTools: [...HANAKO_CUSTOM_OBJS, mcpTool],
     });
     const replayList = ["read", "mcp_github_search"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+    expect(activeToolsSpy).toHaveBeenCalledTimes(1);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(replayList);
+  });
+
+  it("Case A: restore replays frozen computer snapshot even if its global gate is now closed", async () => {
+    const computerTool = {
+      ...makeTool("computer"),
+      isEnabledForAgentConfig: () => false,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, computerTool],
+    });
+    const replayList = ["read", "computer"];
     await fsp.writeFile(
       path.join(sessionDir, "session-meta.json"),
       JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),

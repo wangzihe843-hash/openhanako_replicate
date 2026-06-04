@@ -115,6 +115,117 @@ describe("callText provider-compat routing", () => {
     expect(body.temperature).toBe(0);
   });
 
+  it("serializes MiMo audio content to provider-visible input_audio parts", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      model: {
+        id: "mimo-v2.5",
+        provider: "mimo",
+        api: "openai-completions",
+        baseUrl: "https://api.xiaomimimo.com/v1",
+        input: ["text", "image"],
+        compat: { hanaAudioInput: true },
+      },
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "[attached_audio: /tmp/voice.wav]\n听一下" },
+          { type: "audio", data: "UklGRg==", mimeType: "audio/wav" },
+        ],
+      }],
+      timeoutMs: 5_000,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "听一下" },
+      { type: "input_audio", input_audio: { data: "UklGRg==", format: "wav" } },
+    ]);
+  });
+
+  it("lets future OpenAI-compatible audio providers opt in through an explicit transport", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: {
+        id: "deepseek-v4.1-audio",
+        provider: "deepseek",
+        api: "openai-completions",
+        baseUrl: "https://api.deepseek.com/v1",
+        input: ["text"],
+        compat: {
+          hanaAudioInput: true,
+          audioTransport: "openai-input-audio",
+        },
+      },
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "listen" },
+          { type: "audio", data: "UklGRg==", mimeType: "audio/wav" },
+        ],
+      }],
+      timeoutMs: 5_000,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "listen" },
+      { type: "input_audio", input_audio: { data: "UklGRg==", format: "wav" } },
+    ]);
+  });
+
+  it("fails before fetch when OpenAI-compatible audio input uses an unsupported format", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    });
+
+    await expect(callText({
+      api: "openai-completions",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      model: {
+        id: "mimo-v2.5",
+        provider: "mimo",
+        api: "openai-completions",
+        baseUrl: "https://api.xiaomimimo.com/v1",
+        compat: { hanaAudioInput: true },
+      },
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "listen" },
+          { type: "audio", data: "T2dnUw==", mimeType: "audio/ogg" },
+        ],
+      }],
+      timeoutMs: 5_000,
+    })).rejects.toThrow(/unsupported OpenAI input_audio payload.*audio\/ogg/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not synthesize utility output caps from model capability metadata", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

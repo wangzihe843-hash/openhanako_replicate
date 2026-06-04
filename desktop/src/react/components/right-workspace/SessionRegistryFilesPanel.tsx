@@ -7,6 +7,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui';
 import { isMediaKind } from '../../utils/file-kind';
 import { fileRefDownloadUrl, isWebRuntime, openFileRefPreview } from '../../utils/remote-file-preview';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
+import { FileKindIcon } from '../shared/FileKindIcon';
 import {
   clearAppFileDragPayload,
   writeAppFileDragPayload,
@@ -202,40 +203,6 @@ function SortIcon() {
   );
 }
 
-function FileKindIcon({ file }: { file: FileRef }) {
-  if (file.kind === 'image' || file.kind === 'svg') {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <circle cx="8.5" cy="8.5" r="1.5" />
-        <polyline points="21 15 16 10 5 21" />
-      </svg>
-    );
-  }
-  if (file.kind === 'video') {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <rect x="3" y="5" width="18" height="14" rx="2" />
-        <polygon points="10 9 15 12 10 15 10 9" />
-      </svg>
-    );
-  }
-  if (file.kind === 'code') {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <polyline points="16 18 22 12 16 6" />
-        <polyline points="8 6 2 12 8 18" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}
-
 function ActionIcon({ type }: { type: 'preview' | 'open' | 'reveal' | 'copy' | 'download' }) {
   if (type === 'preview') {
     return (
@@ -330,7 +297,7 @@ function SessionFileRow({
       onDragStart={(event) => onDragStart(event, file)}
     >
       <div className={styles.fileIcon} aria-hidden="true">
-        <FileKindIcon file={file} />
+        <FileKindIcon kind={file.kind} size={16} />
       </div>
       <div className={styles.fileMain}>
         <div className={styles.fileName} data-testid="session-file-name" title={file.name}>{file.name}</div>

@@ -13,6 +13,7 @@ import { createDefaultSettings } from "./session-defaults.js";
 import { computeHardTruncation } from "./compaction-utils.js";
 import {
   appendCompactionResultToSession,
+  createCachePreservingCompactionResult,
   runCachePreservingCompactionForSession,
 } from "./session-compactor.js";
 import { teardownSessionResources } from "./session-teardown.js";
@@ -35,13 +36,25 @@ import {
   toolNamesFromObjects,
 } from "./tool-availability.js";
 import { extractTextContent, isActiveSessionPath } from "./message-utils.js";
-import { formatWorkspaceScopePrompt, normalizeWorkspaceScope } from "../shared/workspace-scope.js";
+import { formatWorkspaceScopePrompt, normalizeSessionFolderScope, normalizeWorkspaceScope } from "../shared/workspace-scope.js";
 import { getProviderPromptPatches } from "./provider-prompt-patches.js";
 import { prepareVisionInputForTextOnlyModel } from "./vision-prepare.js";
 import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
-import { pruneSessionInlineMediaHistory } from "./session-inline-media-prune.js";
+import {
+  pruneSessionInlineMediaHistory,
+  repairSessionInlineMediaEntriesInFile,
+} from "./session-inline-media-prune.js";
+import {
+  repairOversizedSessionEntries,
+  repairOversizedSessionEntriesInFile,
+} from "./session-jsonl-file.js";
 import { createVisionContextInjectionExtension } from "./vision-context-injector.js";
-import { modelSupportsDirectVideoInput, modelSupportsVideoInput } from "../shared/model-capabilities.js";
+import {
+  modelSupportsDirectAudioInput,
+  modelSupportsAudioInput,
+  modelSupportsDirectVideoInput,
+  modelSupportsVideoInput,
+} from "../shared/model-capabilities.js";
 import {
   normalizeSessionThinkingLevel,
   normalizeThinkingLevelForModel,
@@ -57,6 +70,7 @@ import {
   diffCachePrefixContracts,
   summarizeCachePrefixContract,
 } from "../lib/llm/cache-prefix-contract.js";
+import { buildSessionCacheSnapshot as buildSessionCacheSnapshotValue } from "./session-cache-snapshot.js";
 import {
   SESSION_PROMPT_SNAPSHOT_VERSION,
   freezeAgentsFilesResult,
@@ -69,6 +83,12 @@ const log = createModuleLogger("session");
 
 /** 巡检/定时任务默认工具白名单（"*" = 与 chat 一致，全部放行） */
 export const PATROL_TOOLS_DEFAULT = "*";
+
+function isPathInsideDir(parentDir, childPath) {
+  if (!parentDir || !childPath) return false;
+  const rel = path.relative(path.resolve(parentDir), path.resolve(childPath));
+  return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+}
 
 function cacheContractDebugEnabled() {
   return process.env.HANA_CACHE_CONTRACT_DEBUG === "1";
@@ -84,17 +104,86 @@ function assertVideoInputSupported(model, videos) {
   }
 }
 
+function assertAudioInputSupported(model, audios) {
+  if (!audios?.length) return;
+  if (!modelSupportsAudioInput(model)) {
+    throw new Error("current model does not support audio input");
+  }
+  if (!modelSupportsDirectAudioInput(model)) {
+    throw new Error("current provider does not support direct audio input");
+  }
+}
+
 function buildPromptMediaOptions(opts) {
   const media = [
     ...(opts?.images || []),
     ...(opts?.videos || []),
+    ...(opts?.audios || []),
   ];
   if (!media.length) return undefined;
   return {
     images: media,
     ...(opts.imageAttachmentPaths?.length ? { imageAttachmentPaths: opts.imageAttachmentPaths } : {}),
     ...(opts.videoAttachmentPaths?.length ? { videoAttachmentPaths: opts.videoAttachmentPaths } : {}),
+    ...(opts.audioAttachmentPaths?.length ? { audioAttachmentPaths: opts.audioAttachmentPaths } : {}),
   };
+}
+
+function extractPlainTextFromContent(content, { stripThink = false } = {}) {
+  let text = "";
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter(block => block?.type === "text" && typeof block.text === "string")
+      .map(block => block.text)
+      .join("");
+  }
+  if (!stripThink) return text;
+  return text.replace(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>\n*/g, "");
+}
+
+function timestampFromHistoryMessage(message, fallback = Date.now()) {
+  if (typeof message?.timestamp === "number" && Number.isFinite(message.timestamp)) return message.timestamp;
+  if (typeof message?.timestamp === "string") {
+    const parsed = Date.parse(message.timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames) {
+  const allowed = snapshotToolNames === null ? null : new Set(snapshotToolNames || []);
+  return (allToolObjects || [])
+    .filter((tool) => tool?.name && (allowed === null || allowed.has(tool.name)))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description ?? "",
+      parameters: tool.parameters ?? tool.input_schema ?? tool.schema ?? null,
+    }));
+}
+
+function normalizeDeletedAgentTranscriptMessage(message) {
+  if (!message || typeof message !== "object") return null;
+  if (message.role !== "user" && message.role !== "assistant") return null;
+  const text = extractPlainTextFromContent(message.content, { stripThink: message.role === "assistant" }).trim();
+  if (!text) return null;
+  return {
+    role: message.role,
+    content: [{ type: "text", text }],
+    timestamp: timestampFromHistoryMessage(message),
+  };
+}
+
+function readSessionBranchMessages(sessionPath) {
+  const manager = SessionManager.open(sessionPath, path.dirname(sessionPath));
+  const branch = manager.getBranch();
+  return branch
+    .filter(entry => entry?.type === "message" && entry.message)
+    .map(entry => ({
+      ...entry.message,
+      timestamp: entry.message.timestamp ?? entry.timestamp ?? null,
+    }));
 }
 
 function textOrNull(value) {
@@ -328,7 +417,7 @@ function makeBackgroundTaskPrompt(locale) {
 
 1. 先继续做手头还没做完的工作，不要立刻停下来等
 2. 手头工作做完后，调 check_pending_tasks 查看后台任务状态
-3. 如果还有任务未完成，根据任务复杂度自行估算等待时间，调 wait 等待后再查。最多查 2 次，之后不再轮询，告知用户任务仍在后台运行，完成后会自动处理
+3. 如果还有任务未完成，不要轮询等待；告知用户任务仍在后台运行，完成后会自动处理
 4. 只有需要你继续处理的后台任务，系统才会以 <hana-background-result> 消息送达结果；媒体生成成功由界面和 Bridge 自动处理，不要等待或主动追问。媒体生成失败可能会以 <hana-background-result> 送达：只说明失败原因，并询问用户是否要你新生成一张；原地重新生成只由用户在 UI 中操作`
     : `## Background Tasks
 
@@ -336,7 +425,7 @@ After dispatching subagent or other background tasks:
 
 1. Continue with any remaining work first — do not stop immediately to wait
 2. Once your other work is done, call check_pending_tasks to check status
-3. If tasks are still pending, estimate a reasonable wait time based on task complexity, then call wait and check again. Check at most 2 times — after that, stop polling and tell the user the task is still running and will be handled in the background
+3. If tasks are still pending, do not poll or wait; tell the user the task is still running and will be handled in the background
 4. Only background tasks that need your follow-up are delivered via <hana-background-result> messages. Successful media generation is handled by the UI and Bridge automatically; do not wait for it or ask about it again. Failed media generation may be delivered via <hana-background-result>: explain only why it failed, then ask whether the user wants you to create a new image. In-place regeneration is a UI-only action for the user`;
 }
 
@@ -417,6 +506,31 @@ export class SessionCoordinator {
     return this._session?.sessionManager?.getSessionFile?.() ?? this._currentSessionPath ?? null;
   }
 
+  buildSessionCacheSnapshot(sessionPath, { reason = "unknown", messages = null } = {}) {
+    const entry = this._sessions.get(sessionPath);
+    if (!entry?.session) {
+      throw new Error(`Session cache snapshot unavailable: unknown session ${sessionPath || "(empty)"}`);
+    }
+    const session = entry.session;
+    const state = session.agent?.state || {};
+    return buildSessionCacheSnapshotValue({
+      sessionPath,
+      reason,
+      model: session.model || state.model || null,
+      cacheKeyParams: {
+        thinkingLevel: entry.thinkingLevel || state.thinkingLevel || session.thinkingLevel || "off",
+      },
+      systemPrompt: this._getFinalSystemPrompt(session) ?? state.systemPrompt ?? "",
+      tools: entry.activeToolDefinitions || [],
+      messages: Array.isArray(messages) ? messages : (Array.isArray(state.messages) ? state.messages : []),
+    });
+  }
+
+  getSessionStreamFn(sessionPath) {
+    const entry = this._sessions.get(sessionPath);
+    return entry?.session?.agent?.streamFn || null;
+  }
+
   async reloadExtensionRunners(reason = "extension_factories_changed") {
     const summary = { reloaded: 0, skipped: 0, failed: 0 };
     for (const [sessionPath, entry] of this._sessions) {
@@ -465,6 +579,7 @@ export class SessionCoordinator {
     agentId: explicitAgentId = null,
     preserveAgentMemoryState = false,
     workspaceFolders = [],
+    authorizedFolders = [],
     visibleInSessionList = false,
   } = {}) {
     const t0 = Date.now();
@@ -528,14 +643,26 @@ export class SessionCoordinator {
       primaryCwd: effectiveCwd,
       workspaceFolders,
     });
+    let folderScope = normalizeSessionFolderScope({
+      primaryCwd: effectiveCwd,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders,
+    });
     if (restore && sessionPathForMeta) {
       try {
         const metaPath = path.join(agent.sessionDir, "session-meta.json");
         const meta = await this._readMetaCached(metaPath);
-        const restoredFolders = meta[path.basename(sessionPathForMeta)]?.workspaceFolders;
+        const metaEntry = meta[path.basename(sessionPathForMeta)];
+        const restoredFolders = metaEntry?.workspaceFolders;
+        const restoredAuthorizedFolders = metaEntry?.authorizedFolders;
         workspaceScope = normalizeWorkspaceScope({
           primaryCwd: effectiveCwd,
           workspaceFolders: restoredFolders,
+        });
+        folderScope = normalizeSessionFolderScope({
+          primaryCwd: effectiveCwd,
+          workspaceFolders: workspaceScope.workspaceFolders,
+          authorizedFolders: restoredAuthorizedFolders,
         });
       } catch {
         // session-meta 可选：读取或解析失败时沿用上面 fresh 算出的 workspaceScope。
@@ -718,7 +845,13 @@ export class SessionCoordinator {
     const { tools: sessionTools, customTools: sessionCustomTools } = this._d.buildTools(
       effectiveCwd,
       agentToolsSnapshot,
-      { workspace: effectiveCwd, workspaceFolders: workspaceScope.workspaceFolders, agentDir: agent.agentDir },
+      {
+        workspace: effectiveCwd,
+        workspaceFolders: workspaceScope.workspaceFolders,
+        authorizedFolders: folderScope.authorizedFolders,
+        getAuthorizedFolders: () => this.getSessionAuthorizedFolders(sessionPathRef.current || sessionPathForMeta),
+        agentDir: agent.agentDir,
+      },
     );
     const sessionOpts = {
       cwd: effectiveCwd,
@@ -886,12 +1019,15 @@ export class SessionCoordinator {
       experienceEnabled: frozenExperienceEnabled,
       modelId: resolvedModel?.id || effectiveModel?.id || null,
       modelProvider: resolvedModel?.provider || effectiveModel?.provider || null,
+      cwd: effectiveCwd,
       workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: folderScope.authorizedFolders,
       permissionMode: initialPermissionMode,
       accessMode: initialAccessMode,
       planMode: initialPlanMode,
       thinkingLevel: initialThinkingLevel,
       toolNames: snapshotToolNames,  // null for legacy sessions (Case B), array otherwise
+      activeToolDefinitions: activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames),
       memoryReflectionSnapshot,
       lastTouchedAt: Date.now(),
       unsub,
@@ -925,6 +1061,7 @@ export class SessionCoordinator {
         memoryEnabled: frozenMemoryEnabled,
         experienceEnabled: frozenExperienceEnabled,
         workspaceFolders: workspaceScope.workspaceFolders,
+        authorizedFolders: folderScope.authorizedFolders,
         permissionMode: initialPermissionMode,
         accessMode: initialAccessMode,
         planMode: initialPlanMode,
@@ -968,10 +1105,300 @@ export class SessionCoordinator {
     return { session, sessionPath: sessionPath || mapKey, agentId: creatingAgentId };
   }
 
+  async continueDeletedAgentSession(sourceSessionPath) {
+    this._assertActiveDesktopSessionPath(sourceSessionPath, "continueDeletedAgentSession");
+    const sourceAgentId = this._d.agentIdFromSessionPath(sourceSessionPath);
+    if (!sourceAgentId) {
+      throw new Error(`continueDeletedAgentSession: cannot resolve source agentId for ${sourceSessionPath}`);
+    }
+    if (!this._d.isAgentDeleted?.(sourceAgentId)) {
+      throw new Error(`continueDeletedAgentSession: source agent "${sourceAgentId}" is not deleted`);
+    }
+    try {
+      await fsp.access(sourceSessionPath);
+    } catch {
+      throw new Error(`continueDeletedAgentSession: source session not found`);
+    }
+
+    const primaryAgentId = this._d.getPrefs?.()?.getPrimaryAgent?.() || this._d.getActiveAgentId?.();
+    const targetAgent = primaryAgentId ? this._d.getAgentById?.(primaryAgentId) : this._d.getAgent();
+    if (!targetAgent) {
+      throw new Error(`continueDeletedAgentSession: primary agent "${primaryAgentId || "(missing)"}" not found`);
+    }
+    if (this._d.isAgentDeleted?.(targetAgent.id)) {
+      throw new Error(`continueDeletedAgentSession: primary agent "${targetAgent.id}" has been deleted`);
+    }
+
+    const sourceManager = SessionManager.open(sourceSessionPath, path.dirname(sourceSessionPath));
+    const sourceCwd = sourceManager.getCwd?.() || null;
+    const targetCwd = sourceCwd || this._d.getHomeCwd(targetAgent.id) || process.cwd();
+    const sourceMessages = readSessionBranchMessages(sourceSessionPath);
+    const transcriptMessages = sourceMessages
+      .map(normalizeDeletedAgentTranscriptMessage)
+      .filter(Boolean);
+    if (transcriptMessages.length === 0) {
+      throw new Error("continueDeletedAgentSession: source session has no displayable transcript");
+    }
+
+    let createdSessionPath = null;
+    try {
+      const result = await this.createSession(null, targetCwd, true, null, {
+        agent: targetAgent,
+        agentId: targetAgent.id,
+        visibleInSessionList: true,
+      });
+      const session = result.session;
+      createdSessionPath = result.sessionPath;
+      const manager = session.sessionManager;
+      for (const message of transcriptMessages) {
+        manager.appendMessage(message);
+      }
+      if (session.model?.provider && session.model?.id) {
+        manager.appendModelChange(session.model.provider, session.model.id);
+      }
+      manager._rewriteFile?.();
+
+      await this.writeSessionMeta(createdSessionPath, {
+        continuedFrom: {
+          sourceSessionPath,
+          sourceAgentId,
+          sourceAgentDeleted: true,
+          migratedAt: new Date().toISOString(),
+        },
+      });
+      await this._freshCompactDeletedAgentContinuation(session, transcriptMessages, {
+        sourceSessionPath,
+        sourceAgentId,
+      });
+      manager._rewriteFile?.();
+      return {
+        session,
+        sessionPath: createdSessionPath,
+        agentId: targetAgent.id,
+        agentName: targetAgent.agentName || targetAgent.name || targetAgent.id,
+        cwd: manager.getCwd?.() || targetCwd,
+        workspaceFolders: this.getSessionWorkspaceFolders(createdSessionPath),
+        compacted: true,
+      };
+    } catch (err) {
+      if (createdSessionPath) {
+        try { await this.discardSessionRuntime(createdSessionPath, "deleted agent continuation failed"); } catch {}
+        try { await fsp.rm(createdSessionPath, { force: true }); } catch {}
+      }
+      throw err;
+    }
+  }
+
+  async _freshCompactDeletedAgentContinuation(session, transcriptMessages, { sourceSessionPath, sourceAgentId }) {
+    if (!session?.sessionManager) throw new Error("deleted-agent continuation compaction requires a session manager");
+    const model = session.model;
+    if (!model) throw new Error("deleted-agent continuation compaction requires a model");
+    const settings = session.settingsManager?.getCompactionSettings?.() || this._createSettings(model)?.getCompactionSettings?.();
+    const tokensBefore = transcriptMessages.reduce((sum, message) => sum + estimateTokens(message), 0);
+    const preparation = {
+      messagesToSummarize: transcriptMessages,
+      turnPrefixMessages: [],
+      previousSummary: null,
+      isSplitTurn: false,
+      firstKeptEntryId: null,
+      tokensBefore,
+      settings,
+      fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+    };
+    session?._emit?.({ type: "compaction_start", reason: "deleted_agent_continue" });
+    try {
+      const result = await createCachePreservingCompactionResult({
+        preparation,
+        model,
+        systemPrompt: session.agent?.state?.systemPrompt ?? session.systemPrompt,
+        customInstructions: [
+          "This is a fresh continuation summary created from a read-only session whose Agent was deleted.",
+          `Source agent id: ${sourceAgentId}.`,
+          `Source session path: ${sourceSessionPath}.`,
+          "Summarize the old transcript so the new primary Agent can continue without depending on the deleted Agent runtime.",
+        ].join(" "),
+        thinkingLevel: session.thinkingLevel ?? session.agent?.state?.thinkingLevel,
+        streamFn: session.agent?.streamFn,
+        streamOptions: {
+          sessionId: session.agent?.sessionId,
+          onPayload: session.agent?.onPayload,
+          onResponse: session.agent?.onResponse,
+          transport: session.agent?.transport,
+          thinkingBudgets: session.agent?.thinkingBudgets,
+          maxRetryDelayMs: session.agent?.maxRetryDelayMs,
+        },
+        convertToLlm: session.agent?.convertToLlm,
+        usageLedger: this._d.getUsageLedger?.(),
+        usageContext: {
+          source: {
+            subsystem: "compaction",
+            operation: "deleted_agent_continue",
+            surface: "desktop",
+            trigger: "user",
+          },
+          attribution: {
+            kind: "session",
+            agentId: session.agentId || session.agent?.id || null,
+            sessionPath: session.sessionManager?.getSessionFile?.() || null,
+          },
+        },
+      });
+      const saved = await appendCompactionResultToSession(session, result, { fromExtension: false });
+      session?._emit?.({
+        type: "compaction_end",
+        reason: "deleted_agent_continue",
+        result: saved,
+        aborted: false,
+        willRetry: false,
+      });
+      return saved;
+    } catch (error) {
+      session?._emit?.({
+        type: "compaction_end",
+        reason: "deleted_agent_continue",
+        aborted: false,
+        willRetry: false,
+        errorMessage: `Compaction failed: ${error.message || error}`,
+      });
+      throw error;
+    }
+  }
+
   getSessionWorkspaceFolders(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return [];
-    const entry = this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath);
-    return Array.isArray(entry?.workspaceFolders) ? [...entry.workspaceFolders] : [];
+    const entry = this._sessionFolderEntry(sessionPath);
+    const folders = Array.isArray(entry?.workspaceFolders)
+      ? entry.workspaceFolders
+      : this._readSessionMetaEntrySync(sessionPath)?.workspaceFolders;
+    return Array.isArray(folders) ? [...folders] : [];
+  }
+
+  getSessionAuthorizedFolders(sessionPath = this.currentSessionPath) {
+    if (!sessionPath) return [];
+    const entry = this._sessionFolderEntry(sessionPath);
+    const folders = Array.isArray(entry?.authorizedFolders)
+      ? entry.authorizedFolders
+      : this._readSessionMetaEntrySync(sessionPath)?.authorizedFolders;
+    return Array.isArray(folders) ? [...folders] : [];
+  }
+
+  getSessionFolderScope(sessionPath = this.currentSessionPath) {
+    const entry = sessionPath ? this._sessionFolderEntry(sessionPath) : null;
+    const metaEntry = sessionPath && !entry ? this._readSessionMetaEntrySync(sessionPath) : null;
+    const cwd = this._sessionCwdFor(sessionPath, entry) || null;
+    const scope = normalizeSessionFolderScope({
+      primaryCwd: cwd,
+      workspaceFolders: Array.isArray(entry?.workspaceFolders)
+        ? entry.workspaceFolders
+        : metaEntry?.workspaceFolders,
+      authorizedFolders: Array.isArray(entry?.authorizedFolders)
+        ? entry.authorizedFolders
+        : metaEntry?.authorizedFolders,
+    });
+    return {
+      sessionPath: sessionPath || null,
+      cwd: scope.primaryCwd,
+      workspaceFolders: scope.workspaceFolders,
+      authorizedFolders: scope.authorizedFolders,
+      sandboxFolders: scope.sandboxFolders,
+    };
+  }
+
+  async setSessionAuthorizedFolders(sessionPath, folders) {
+    this._assertActiveDesktopSessionPath(sessionPath, "setSessionAuthorizedFolders");
+    if (this._isDeletedAgentSessionPath(sessionPath)) {
+      throw new Error("setSessionAuthorizedFolders: session belongs to a deleted agent");
+    }
+    const current = this.getSessionFolderScope(sessionPath);
+    const scope = normalizeSessionFolderScope({
+      primaryCwd: current.cwd,
+      workspaceFolders: current.workspaceFolders,
+      authorizedFolders: folders,
+    });
+    this._updateSessionFolderRuntimeMeta(sessionPath, {
+      cwd: current.cwd,
+      workspaceFolders: scope.workspaceFolders,
+      authorizedFolders: scope.authorizedFolders,
+    });
+    await this.writeSessionMeta(sessionPath, {
+      workspaceFolders: scope.workspaceFolders,
+      authorizedFolders: scope.authorizedFolders,
+    });
+    this._d.emitEvent?.({
+      type: "app_event",
+      event: {
+        type: "session-authorized-folders-updated",
+        payload: {
+          sessionPath,
+          authorizedFolders: scope.authorizedFolders,
+          workspaceFolders: scope.workspaceFolders,
+          sandboxFolders: scope.sandboxFolders,
+        },
+        source: "server",
+      },
+    }, sessionPath);
+    return this.getSessionFolderScope(sessionPath);
+  }
+
+  async addSessionAuthorizedFolder(sessionPath, folder) {
+    const current = this.getSessionAuthorizedFolders(sessionPath);
+    return this.setSessionAuthorizedFolders(sessionPath, [...current, folder]);
+  }
+
+  async removeSessionAuthorizedFolder(sessionPath, folder) {
+    const target = normalizeSessionFolderScope({ authorizedFolders: [folder] }).authorizedFolders[0];
+    const current = this.getSessionAuthorizedFolders(sessionPath);
+    const next = target
+      ? current.filter((item) => item !== target)
+      : current;
+    return this.setSessionAuthorizedFolders(sessionPath, next);
+  }
+
+  _sessionFolderEntry(sessionPath) {
+    if (!sessionPath) return null;
+    return this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath) || null;
+  }
+
+  _sessionCwdFor(sessionPath, entry = null) {
+    if (entry?.cwd) return entry.cwd;
+    const liveCwd = entry?.session?.sessionManager?.getCwd?.();
+    if (liveCwd) return liveCwd;
+    if (sessionPath && this._session?.sessionManager?.getSessionFile?.() === sessionPath) {
+      return this._session.sessionManager?.getCwd?.() || null;
+    }
+    if (!sessionPath) return null;
+    try {
+      return SessionManager.open(sessionPath, path.dirname(sessionPath)).getCwd?.() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _readSessionMetaEntrySync(sessionPath) {
+    if (!sessionPath) return null;
+    try {
+      const metaPath = this._sessionMetaPathFor(sessionPath);
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      const entry = meta[path.basename(sessionPath)];
+      return entry && typeof entry === "object" ? entry : null;
+    } catch {
+      return null;
+    }
+  }
+
+  _updateSessionFolderRuntimeMeta(sessionPath, patch) {
+    const liveEntry = this._sessions.get(sessionPath);
+    if (liveEntry) {
+      if (patch.cwd) liveEntry.cwd = patch.cwd;
+      liveEntry.workspaceFolders = [...(patch.workspaceFolders || [])];
+      liveEntry.authorizedFolders = [...(patch.authorizedFolders || [])];
+    }
+    const hibernated = this._hibernatedSessionMeta.get(sessionPath);
+    if (hibernated) {
+      if (patch.cwd) hibernated.cwd = patch.cwd;
+      hibernated.workspaceFolders = [...(patch.workspaceFolders || [])];
+      hibernated.authorizedFolders = [...(patch.authorizedFolders || [])];
+    }
   }
 
   async switchSession(sessionPath) {
@@ -980,6 +1407,9 @@ export class SessionCoordinator {
     // 它伪造成"新对话"幻影条目（不能归档、重启即消失）。
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) {
       throw new Error(`switchSession: path must be in active desktop session agents/{id}/sessions/*.jsonl; got ${sessionPath}`);
+    }
+    if (this._isDeletedAgentSessionPath(sessionPath)) {
+      throw new Error("switchSession: session belongs to a deleted agent");
     }
 
     // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
@@ -1044,8 +1474,11 @@ export class SessionCoordinator {
     // 说明用户已经撞到了"反复 empty_stream"循环，给前端发警告事件让 UI 提示用户
     // 新建会话或修复。restore 本身仍然继续，避免破坏用户预期。
     this._emitSessionHealthWarning(sessionPath);
+    // 在 open 前修复巨型/坏 JSONL 行，避免 SessionManager.open 整文件 parse 卡住。
+    this._repairOversizedSessionHistory(sessionPath);
     // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
     this._repairOrphanToolHistory(sessionPath);
+    this._repairInlineMediaHistory(sessionPath);
 
     // 冷启动恢复：model 由 PI SDK 从 session JSONL 恢复（单一数据源），不从 session-meta.json 读
     const sessionMgr = SessionManager.open(sessionPath, this._d.getAgent().sessionDir);
@@ -1101,6 +1534,52 @@ export class SessionCoordinator {
     }
   }
 
+  _repairOversizedSessionHistory(sessionPath) {
+    try {
+      const result = repairOversizedSessionEntriesInFile(sessionPath);
+      if (result.repaired) {
+        log.warn(
+          `session restore: ${path.basename(sessionPath)} repaired oversized JSONL lines `
+          + `(projected=${result.projected}, skipped=${result.skipped})`
+        );
+      }
+    } catch (err) {
+      log.warn(`oversized session history repair failed for ${path.basename(sessionPath)}: ${err.message}`);
+    }
+  }
+
+  _projectOversizedSessionHistory(session, sessionPath) {
+    try {
+      const manager = session?.sessionManager;
+      if (!Array.isArray(manager?.fileEntries)) return;
+      const result = repairOversizedSessionEntries(manager.fileEntries);
+      if (result.projected === 0) return;
+      manager.fileEntries = result.entries;
+      manager._buildIndex?.();
+      manager._rewriteFile?.();
+      log.warn(
+        `session turn: ${path.basename(sessionPath || manager.getSessionFile?.() || "session")} `
+        + `projected ${result.projected} oversized JSONL entries`
+      );
+    } catch (err) {
+      log.warn(`oversized session projection failed: ${err.message}`);
+    }
+  }
+
+  _repairInlineMediaHistory(sessionPath) {
+    try {
+      const result = repairSessionInlineMediaEntriesInFile(sessionPath);
+      if (result.repaired) {
+        log.warn(
+          `session restore: ${path.basename(sessionPath)} 清理 ${result.stripped} 个 inline media `
+          + `(image=${result.strippedImages}, video=${result.strippedVideos}, audio=${result.strippedAudios})`
+        );
+      }
+    } catch (err) {
+      log.warn(`inline media history repair failed for ${path.basename(sessionPath)}: ${err.message}`);
+    }
+  }
+
   async prompt(text, opts) {
     if (!this._session) {
       const currentPath = this.currentSessionPath;
@@ -1125,11 +1604,15 @@ export class SessionCoordinator {
     }));
     ({ text, opts } = await prepareModelImageInputsForPrompt({ text, opts }));
     assertVideoInputSupported(this._session.model, opts?.videos);
+    assertAudioInputSupported(this._session.model, opts?.audios);
     const promptOpts = buildPromptMediaOptions(opts);
+    const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sp, opts);
     try {
       await this._session.prompt(text, promptOpts);
     } finally {
+      engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
       pruneSessionInlineMediaHistory(this._session);
+      this._projectOversizedSessionHistory(this._session, sp);
       if (sp) this._scheduleRuntimePressureCheck(sp, "prompt");
     }
     if (sp) {
@@ -1209,6 +1692,7 @@ export class SessionCoordinator {
       }
     }
     assertVideoInputSupported(entry.session.model, opts?.videos);
+    assertAudioInputSupported(entry.session.model, opts?.audios);
     const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
     if (agent && typeof agent.buildSystemPrompt === "function") {
       const workspaceRoot = entry.session?.sessionManager?.getCwd?.()
@@ -1225,10 +1709,13 @@ export class SessionCoordinator {
       this._applyFinalPromptSnapshot(entry.session, runtimePrompt);
     }
     const promptOpts = buildPromptMediaOptions(opts);
+    const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sessionPath, opts);
     try {
       await entry.session.prompt(text, promptOpts);
     } finally {
+      engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
       pruneSessionInlineMediaHistory(entry.session);
+      this._projectOversizedSessionHistory(entry.session, sessionPath);
       this._scheduleRuntimePressureCheck(sessionPath, "prompt_session");
     }
     agent?._memoryTicker?.notifyTurn(sessionPath);
@@ -1631,10 +2118,12 @@ export class SessionCoordinator {
     const accessMode = legacyAccessModeFromPermissionMode(normalized);
     this._d.emitEvent({ type: "permission_mode", mode: normalized, readOnly }, sessionPath);
     this._d.emitEvent({ type: "access_mode", mode: accessMode, permissionMode: normalized, readOnly }, sessionPath);
-    this._d.emitEvent({ type: "plan_mode", enabled: readOnly }, sessionPath);
+    this._d.emitEvent({ type: "plan_mode", enabled: readOnly, mode: normalized }, sessionPath);
     const label = normalized === SESSION_PERMISSION_MODES.READ_ONLY
       ? "只读"
-      : (normalized === SESSION_PERMISSION_MODES.ASK ? "先问" : "操作");
+      : (normalized === SESSION_PERMISSION_MODES.ASK
+        ? "先问"
+        : (normalized === SESSION_PERMISSION_MODES.AUTO ? "自动审核" : "操作"));
     this._d.emitDevLog(`Permission Mode: ${label}`, "info");
   }
 
@@ -1784,7 +2273,9 @@ export class SessionCoordinator {
       experienceEnabled: entry.experienceEnabled,
       modelId: entry.modelId,
       modelProvider: entry.modelProvider,
+      cwd: entry.cwd || entry.session?.sessionManager?.getCwd?.() || null,
       workspaceFolders: Array.isArray(entry.workspaceFolders) ? [...entry.workspaceFolders] : [],
+      authorizedFolders: Array.isArray(entry.authorizedFolders) ? [...entry.authorizedFolders] : [],
       permissionMode: entry.permissionMode,
       accessMode: entry.accessMode,
       planMode: entry.planMode,
@@ -1914,6 +2405,24 @@ export class SessionCoordinator {
     return !!entry || hadHibernated;
   }
 
+  async discardSessionsForAgent(agentId, reason = "agent deleted") {
+    if (!agentId) return 0;
+    const paths = new Set();
+    for (const [sessionPath, entry] of this._sessions) {
+      const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
+      if (entryAgentId === agentId) paths.add(sessionPath);
+    }
+    for (const [sessionPath, entry] of this._hibernatedSessionMeta) {
+      const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
+      if (entryAgentId === agentId) paths.add(sessionPath);
+    }
+    let discarded = 0;
+    for (const sessionPath of paths) {
+      if (await this.discardSessionRuntime(sessionPath, reason)) discarded += 1;
+    }
+    return discarded;
+  }
+
   async closeSession(sessionPath) {
     return this.discardSessionRuntime(sessionPath, "close");
   }
@@ -1989,8 +2498,14 @@ export class SessionCoordinator {
     }
   }
 
+  _isDeletedAgentSessionPath(sessionPath) {
+    const agentId = this._d.agentIdFromSessionPath?.(sessionPath);
+    return !!agentId && this._d.isAgentDeleted?.(agentId) === true;
+  }
+
   isRunnableSessionPath(sessionPath) {
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) return false;
+    if (this._isDeletedAgentSessionPath(sessionPath)) return false;
     if (this._sessions.has(sessionPath) || this._hibernatedSessionMeta.has(sessionPath)) return true;
     try {
       return fs.existsSync(sessionPath);
@@ -2001,6 +2516,9 @@ export class SessionCoordinator {
 
   async reloadSessionRuntime(sessionPath) {
     this._assertActiveDesktopSessionPath(sessionPath, "reloadSessionRuntime");
+    if (this._isDeletedAgentSessionPath(sessionPath)) {
+      throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
+    }
     const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
     if (!targetAgentId) {
       throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
@@ -2035,6 +2553,7 @@ export class SessionCoordinator {
     this._emitSessionHealthWarning(sessionPath);
     // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
     this._repairOrphanToolHistory(sessionPath);
+    this._repairInlineMediaHistory(sessionPath);
     const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
     const cwd = sessionMgr.getCwd?.() || undefined;
     const result = await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
@@ -2061,6 +2580,9 @@ export class SessionCoordinator {
    */
   async ensureSessionLoaded(sessionPath) {
     this._assertActiveDesktopSessionPath(sessionPath, "ensureSessionLoaded");
+    if (this._isDeletedAgentSessionPath(sessionPath)) {
+      throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
+    }
     const existing = this._sessions.get(sessionPath);
     if (existing) {
       existing.lastTouchedAt = Date.now();
@@ -2097,8 +2619,10 @@ export class SessionCoordinator {
     try {
       // #521: attach 路径同样要做健康度评估，否则 bridge / RC 自动恢复时也会反复失败
       this._emitSessionHealthWarning(sessionPath);
+      this._repairOversizedSessionHistory(sessionPath);
       // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
       this._repairOrphanToolHistory(sessionPath);
+      this._repairInlineMediaHistory(sessionPath);
       const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
       const cwd = sessionMgr.getCwd?.() || undefined;
       await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
@@ -2135,7 +2659,12 @@ export class SessionCoordinator {
   }
 
   async listSessions() {
-    const agents = this._d.listAgents();
+    const activeAgents = this._d.listAgents();
+    const deletedAgents = this._d.listDeletedAgents?.() || [];
+    const agents = [
+      ...activeAgents.map(agent => ({ ...agent, agentDeleted: false })),
+      ...deletedAgents.map(agent => ({ ...agent, agentDeleted: true })),
+    ];
 
     // 并行处理每个 agent，避免串行同步 I/O 阻塞事件循环
     const perAgent = await Promise.all(agents.map(async (agent) => {
@@ -2151,6 +2680,12 @@ export class SessionCoordinator {
           if (titles[s.path]) s.title = titles[s.path];
           s.agentId = agent.id;
           s.agentName = agent.name;
+          if (agent.agentDeleted) {
+            s.agentDeleted = true;
+            s.readOnlyReason = "agent_deleted";
+            s.continuationAvailable = true;
+            s.deletedAt = agent.deletedAt || null;
+          }
           const sessKey = path.basename(s.path);
           const metaEntry = meta[sessKey];
           s.pinnedAt = typeof metaEntry?.pinnedAt === "string" ? metaEntry.pinnedAt : null;
@@ -2188,7 +2723,9 @@ export class SessionCoordinator {
         || (sessionPath === currentPath && this._sessionStarted);
       if (!shouldExpose) continue;
 
-      const agent = this._d.getAgentById?.(entry.agentId) || this._d.getAgent();
+      const deletedInfo = this._d.getDeletedAgentInfo?.(entry.agentId);
+      const isDeleted = !!deletedInfo || this._d.isAgentDeleted?.(entry.agentId);
+      const agent = isDeleted ? deletedInfo : (this._d.getAgentById?.(entry.agentId) || this._d.getAgent());
       allSessions.push({
         path: sessionPath,
         title: null,
@@ -2202,6 +2739,12 @@ export class SessionCoordinator {
         modelProvider: entry.modelProvider || null,
         pinnedAt: null,
         projectId: null,
+        ...(isDeleted ? {
+          agentDeleted: true,
+          readOnlyReason: "agent_deleted",
+          continuationAvailable: true,
+          deletedAt: deletedInfo?.deletedAt || null,
+        } : {}),
       });
       projectedPaths.add(sessionPath);
     }
@@ -2580,6 +3123,89 @@ export class SessionCoordinator {
     return path.join(sessionDir, "session-meta.json");
   }
 
+  _isPromotableActivitySession(agent, sessionPath) {
+    return !!agent?.agentDir && isPathInsideDir(path.join(agent.agentDir, "activity"), sessionPath);
+  }
+
+  async _writePromotableActivitySessionMeta(agent, activitySessionPath, partial) {
+    if (!agent?.sessionDir || !activitySessionPath) return;
+    const promotedSessionPath = path.join(agent.sessionDir, path.basename(activitySessionPath));
+    await this.writeSessionMeta(promotedSessionPath, partial);
+  }
+
+  async _ensurePromotedActivitySessionToolMeta(agent, sessionPath) {
+    if (!agent?.sessionDir || !sessionPath) return;
+    const sessionFileName = path.basename(sessionPath);
+    const metaPath = path.join(agent.sessionDir, "session-meta.json");
+    try {
+      const meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+      if (Array.isArray(meta?.[sessionFileName]?.toolNames)) return;
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        log.warn(`promoteActivitySession meta read failed: ${err.message}`);
+      }
+    }
+
+    let cwd = this._d.getHomeCwd?.(agent.id) || process.cwd();
+    try {
+      const manager = SessionManager.open(sessionPath, agent.sessionDir);
+      cwd = manager?.getCwd?.() || cwd;
+    } catch (err) {
+      log.warn(`promoteActivitySession could not open session for cwd: ${err.message}`);
+    }
+
+    const models = this._d.getModels?.() || {};
+    const preferredRef = agent.config?.models?.chat;
+    let model = models.defaultModel || null;
+    if (preferredRef?.id && preferredRef?.provider && Array.isArray(models.availableModels)) {
+      model = findModel(models.availableModels, preferredRef.id, preferredRef.provider) || model;
+    }
+    let execModel = model;
+    if (model && typeof models.resolveExecutionModel === "function") {
+      execModel = models.resolveExecutionModel(model);
+    }
+    const toolsSnapshot = typeof agent.getToolsSnapshot === "function"
+      ? agent.getToolsSnapshot({
+        forceMemoryEnabled: agent.memoryMasterEnabled !== false,
+        model: execModel,
+        ...(typeof agent.experienceEnabled === "boolean"
+          ? { forceExperienceEnabled: agent.experienceEnabled === true }
+          : {}),
+      })
+      : agent.tools;
+    const workspaceScope = normalizeWorkspaceScope({ primaryCwd: cwd, workspaceFolders: [] });
+    const folderScope = normalizeSessionFolderScope({
+      primaryCwd: cwd,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: [],
+    });
+    const built = this._d.buildTools?.(cwd, toolsSnapshot, {
+      agentDir: agent.agentDir,
+      workspace: cwd,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: folderScope.authorizedFolders,
+      getAuthorizedFolders: () => folderScope.authorizedFolders,
+      getSessionPath: () => sessionPath,
+      fileReadSessionPaths: [],
+      getPermissionMode: () => SESSION_PERMISSION_MODES.OPERATE,
+      permissionContext: { isSubagent: false },
+    }) || { tools: [], customTools: [] };
+    const toolNames = uniqueToolNames(toolNamesFromObjects([
+      ...(built.tools || []),
+      ...(built.customTools || []),
+    ]));
+    await this.writeSessionMeta(sessionPath, {
+      memoryEnabled: agent.memoryMasterEnabled !== false,
+      experienceEnabled: agent.experienceEnabled === true,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: folderScope.authorizedFolders,
+      permissionMode: SESSION_PERMISSION_MODES.OPERATE,
+      accessMode: legacyAccessModeFromPermissionMode(SESSION_PERMISSION_MODES.OPERATE),
+      planMode: false,
+      toolNames,
+    });
+  }
+
   // ── Session Context ──
 
   createSessionContext() {
@@ -2620,7 +3246,7 @@ export class SessionCoordinator {
     };
   }
 
-  promoteActivitySession(activitySessionFile, agentId) {
+  async promoteActivitySession(activitySessionFile, agentId) {
     const agent = agentId ? this._d.getAgentById(agentId) : this._d.getAgent();
     if (!agent) return null;
     const oldPath = path.join(agent.agentDir, "activity", activitySessionFile);
@@ -2630,6 +3256,11 @@ export class SessionCoordinator {
     try {
       fs.mkdirSync(agent.sessionDir, { recursive: true });
       fs.renameSync(oldPath, newPath);
+      try {
+        await this._ensurePromotedActivitySessionToolMeta(agent, newPath);
+      } catch (err) {
+        log.warn(`promoteActivitySession meta backfill failed: ${err.message}`);
+      }
       agent._memoryTicker?.notifyPromoted(newPath);
       log.log(`promoted activity session: ${activitySessionFile} (agent=${agent.id})`);
       return newPath;
@@ -2697,9 +3328,17 @@ export class SessionCoordinator {
       const inheritedWorkspaceFolders = Array.isArray(opts.workspaceFolders)
         ? opts.workspaceFolders
         : this.getSessionWorkspaceFolders(workspaceSourceSessionPath);
+      const inheritedAuthorizedFolders = Array.isArray(opts.authorizedFolders)
+        ? opts.authorizedFolders
+        : this.getSessionAuthorizedFolders(workspaceSourceSessionPath);
       const execWorkspaceScope = normalizeWorkspaceScope({
         primaryCwd: execCwd,
         workspaceFolders: inheritedWorkspaceFolders,
+      });
+      const execFolderScope = normalizeSessionFolderScope({
+        primaryCwd: execCwd,
+        workspaceFolders: execWorkspaceScope.workspaceFolders,
+        authorizedFolders: inheritedAuthorizedFolders,
       });
       const fileReadSessionPaths = Array.isArray(opts.fileReadSessionPaths)
         ? opts.fileReadSessionPaths.filter((sp) => typeof sp === "string" && sp.trim())
@@ -2734,12 +3373,17 @@ export class SessionCoordinator {
         && opts.resumeSessionPath.trim()
         && fs.existsSync(opts.resumeSessionPath);
       if (resumeExisting) {
+        this._repairOversizedSessionHistory(opts.resumeSessionPath);
         this._repairOrphanToolHistory(opts.resumeSessionPath);
+        this._repairInlineMediaHistory(opts.resumeSessionPath);
         tempSessionMgr = SessionManager.open(opts.resumeSessionPath, sessionDir);
         isResumedSession = true;
       } else {
         tempSessionMgr = SessionManager.create(execCwd, sessionDir);
       }
+      const execPermissionMode = normalizeSessionPermissionMode({
+        permissionMode: opts.permissionMode || SESSION_PERMISSION_MODES.OPERATE,
+      });
       const targetAgentToolsSnapshot = typeof targetAgent.getToolsSnapshot === "function"
         ? targetAgent.getToolsSnapshot({
           forceMemoryEnabled: targetAgent.memoryMasterEnabled !== false,
@@ -2756,9 +3400,11 @@ export class SessionCoordinator {
           agentDir: targetAgent.agentDir,
           workspace: execCwd,
           workspaceFolders: execWorkspaceScope.workspaceFolders,
+          authorizedFolders: execFolderScope.authorizedFolders,
+          getAuthorizedFolders: () => execFolderScope.authorizedFolders,
           getSessionPath: () => tempSessionMgr?.getSessionFile?.() || null,
           fileReadSessionPaths,
-          getPermissionMode: () => opts.permissionMode || SESSION_PERMISSION_MODES.OPERATE,
+          getPermissionMode: () => execPermissionMode,
           permissionContext: { isSubagent: !!opts.subagentContext },
         },
       );
@@ -2812,6 +3458,11 @@ export class SessionCoordinator {
         execResourceLoaderProps.getSkills = { value: () => skills.getSkillsForAgent(targetAgent) };
       }
       const execResourceLoader = Object.create(resourceLoader, execResourceLoaderProps);
+      const execThinkingLevel = resolveThinkingLevelForModel(
+        this._d.getPrefs().getThinkingLevel(),
+        execModel,
+        (level) => models.resolveThinkingLevel(level),
+      );
 
       const { session } = await createAgentSession({
         cwd: execCwd,
@@ -2820,17 +3471,45 @@ export class SessionCoordinator {
         authStorage: models.authStorage,
         modelRegistry: models.modelRegistry,
         model: execModel,
-        thinkingLevel: resolveThinkingLevelForModel(
-          this._d.getPrefs().getThinkingLevel(),
-          execModel,
-          (level) => models.resolveThinkingLevel(level),
-        ),
+        thinkingLevel: execThinkingLevel,
         resourceLoader: execResourceLoader,
         tools: actTools,
         customTools: [...actCustomTools, ...extraCustomTools],
       });
 
       childSessionPath = session.sessionManager?.getSessionFile?.() || null;
+      if (!isResumedSession && childSessionPath && this._isPromotableActivitySession(targetAgent, childSessionPath)) {
+        const promotedSessionPath = path.join(targetAgent.sessionDir, path.basename(childSessionPath));
+        const isolatedSkillsResult = targetAgent !== agent && skills?.getSkillsForAgent
+          ? freezeSkillsResult(skills.getSkillsForAgent(targetAgent))
+          : freezeSkillsResult(resourceLoader.getSkills?.());
+        const promptSnapshot = {
+          version: SESSION_PROMPT_SNAPSHOT_VERSION,
+          systemPrompt: isolatedPrompt,
+          appendSystemPrompt: normalizeStringArray(execResourceLoader.getAppendSystemPrompt?.()),
+          skillsResult: freezeSkillsResult(await snapshotSkillsForSession(isolatedSkillsResult, promotedSessionPath)),
+          agentsFilesResult: freezeAgentsFilesResult(resourceLoader.getAgentsFiles?.()),
+          ...(this._getFinalSystemPrompt(session)
+            ? { finalSystemPrompt: this._getFinalSystemPrompt(session) }
+            : {}),
+        };
+        await this._writePromotableActivitySessionMeta(targetAgent, childSessionPath, {
+          memoryEnabled: targetAgent.memoryMasterEnabled !== false,
+          experienceEnabled: targetAgent.experienceEnabled === true,
+          workspaceFolders: execWorkspaceScope.workspaceFolders,
+          authorizedFolders: execFolderScope.authorizedFolders,
+          permissionMode: execPermissionMode,
+          accessMode: legacyAccessModeFromPermissionMode(execPermissionMode),
+          planMode: isReadOnlyPermissionMode(execPermissionMode),
+          thinkingLevel: execThinkingLevel,
+          promptSnapshot,
+          toolNames: uniqueToolNames(toolNamesFromObjects([
+            ...(actTools || []),
+            ...(actCustomTools || []),
+            ...(extraCustomTools || []),
+          ])),
+        });
+      }
 
       // 通知调用方 session 已就绪（subagent 用它来后补 streamKey）
       try { opts.onSessionReady?.(childSessionPath); } catch (err) { log.warn(`isolated onSessionReady callback failed: ${err?.message}`); }

@@ -7,9 +7,12 @@ import { t } from "../i18n.js";
 import { modelRefEquals, parseModelRef } from "../../shared/model-ref.js";
 import { lookupKnown } from "../../shared/known-models.js";
 import {
+  modelSupportsAudioInput,
   modelSupportsImageInput,
+  modelSupportsDirectAudioInput,
   modelSupportsDirectVideoInput,
   modelSupportsVideoInput,
+  resolveModelAudioInputTransport,
   resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.js";
 import { callText } from "../../core/llm-client.js";
@@ -72,6 +75,7 @@ function classifyModelSwitchError(err) {
 function serializeModelInfo(model, { current = null, overrides = null } = {}) {
   if (!model) return null;
   const videoTransport = resolveModelVideoInputTransport(model);
+  const audioTransport = resolveModelAudioInputTransport(model);
   return {
     id: model.id,
     name: resolveModelName(model.id, model.name, overrides, model.provider),
@@ -81,6 +85,9 @@ function serializeModelInfo(model, { current = null, overrides = null } = {}) {
     video: modelSupportsVideoInput(model),
     videoTransport,
     videoTransportSupported: modelSupportsDirectVideoInput(model),
+    audio: modelSupportsAudioInput(model),
+    audioTransport,
+    audioTransportSupported: modelSupportsDirectAudioInput(model),
     reasoning: model.reasoning,
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,

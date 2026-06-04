@@ -1,3 +1,5 @@
+import type { AudioWaveform } from './chat-types';
+
 export interface AttachedFile {
   fileId?: string;
   path: string;
@@ -6,6 +8,7 @@ export interface AttachedFile {
   /** 内联 base64 数据（粘贴图片时使用，跳过文件读取） */
   base64Data?: string;
   mimeType?: string;
+  waveform?: AudioWaveform;
 }
 
 export interface DocContextFile {
@@ -44,6 +47,7 @@ export interface QuotedSelection {
   sourceRole?: 'user' | 'assistant';
   lineStart?: number;
   lineEnd?: number;
+  selectionAnchorKind?: 'native' | 'codemirror';
   charCount: number;
   anchorRect?: FloatingAnchorRect;
   updatedAt?: number;

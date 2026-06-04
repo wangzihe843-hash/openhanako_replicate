@@ -9,7 +9,7 @@ import fs from "fs";
 import { getPiModel } from "../lib/pi-sdk/index.js";
 import { lookupKnown } from "../shared/known-models.js";
 import { atomicWriteSync } from "../shared/safe-fs.js";
-import { normalizeVisionCapabilities, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.js";
+import { normalizeVisionCapabilities, withHanaAudioInputCompat, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.js";
 import { normalizeProviderHeaders, providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.js";
 import { validateProviderModels } from "../shared/provider-model-validation.js";
 import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.js";
@@ -85,6 +85,7 @@ function buildModelOverride(modelEntry) {
   if (modelEntry.maxTokens !== undefined) override.maxTokens = modelEntry.maxTokens;
   const image = modelEntry.image ?? modelEntry.vision;
   const video = modelEntry.video;
+  const audio = modelEntry.audio;
   if (image !== undefined || video !== undefined) {
     override.input = buildPiInputModalities({
       image: image === true,
@@ -92,7 +93,8 @@ function buildModelOverride(modelEntry) {
   }
   if (modelEntry.reasoning !== undefined) override.reasoning = modelEntry.reasoning;
 
-  const finalOverride = video === true ? withHanaVideoInputCompat(override, true) : override;
+  let finalOverride = video === true ? withHanaVideoInputCompat(override, true) : override;
+  finalOverride = audio === true ? withHanaAudioInputCompat(finalOverride, true) : finalOverride;
   return Object.keys(finalOverride).length > 0 ? finalOverride : null;
 }
 
@@ -115,6 +117,9 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   const userVideo = isObj ? modelEntry.video : undefined;
   const knownVideo = known?.video;
   const video = userVideo !== undefined ? userVideo : (knownVideo === true);
+  const userAudio = isObj ? modelEntry.audio : undefined;
+  const knownAudio = known?.audio;
+  const audio = userAudio !== undefined ? userAudio : (knownAudio === true);
   const entry = {
     id,
     name: (isObj && modelEntry.name) || known?.name || humanizeName(id),
@@ -158,8 +163,9 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
     entry.compat = compat;
   }
 
-  const videoAwareEntry = video === true ? withHanaVideoInputCompat(entry, true) : entry;
-  return withThinkingFormatCompat(videoAwareEntry, { provider, api, baseUrl });
+  let mediaAwareEntry = video === true ? withHanaVideoInputCompat(entry, true) : entry;
+  mediaAwareEntry = audio === true ? withHanaAudioInputCompat(mediaAwareEntry, true) : mediaAwareEntry;
+  return withThinkingFormatCompat(mediaAwareEntry, { provider, api, baseUrl });
 }
 
 function filterChatModelEntries(provider, models) {

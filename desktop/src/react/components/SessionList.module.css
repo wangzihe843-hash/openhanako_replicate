@@ -216,7 +216,7 @@
 
 @media (any-hover: hover) and (any-pointer: fine) {
     .sessionItem:hover .sessionItemMeta {
-        padding-right: 68px;
+        padding-right: 52px;
     }
 }
 
@@ -238,45 +238,8 @@
     text-overflow: ellipsis;
 }
 
-/* 重命名按钮 */
+/* 行内操作按钮 */
 .sessionPinBtn {
-    position: absolute;
-    bottom: 4px;
-    right: 52px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    background: none;
-    border: none;
-    border-radius: 3px;
-    color: var(--text-muted);
-    cursor: default;
-    opacity: 0;
-    pointer-events: none;
-    transition: all var(--duration-fast);
-    z-index: 1;
-}
-
-.sessionPinBtn svg {
-    pointer-events: none;
-}
-
-@media (any-hover: hover) and (any-pointer: fine) {
-    .sessionItem:hover .sessionPinBtn {
-        opacity: 0.5;
-        pointer-events: auto;
-    }
-
-    .sessionPinBtn:hover {
-        opacity: 1 !important;
-        background: var(--accent-light);
-        color: var(--accent);
-    }
-}
-
-.sessionRenameBtn {
     position: absolute;
     bottom: 4px;
     right: 28px;
@@ -292,21 +255,21 @@
     cursor: default;
     opacity: 0;
     pointer-events: none;
-    transition: all var(--duration-fast);
+    transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
     z-index: 1;
 }
 
-.sessionRenameBtn svg {
+.sessionPinBtn svg {
     pointer-events: none;
 }
 
 @media (any-hover: hover) and (any-pointer: fine) {
-    .sessionItem:hover .sessionRenameBtn {
+    .sessionItem:hover .sessionPinBtn {
         opacity: 0.5;
         pointer-events: auto;
     }
 
-    .sessionRenameBtn:hover {
+    .sessionPinBtn:hover {
         opacity: 1 !important;
         background: var(--accent-light);
         color: var(--accent);
@@ -354,7 +317,7 @@
     cursor: default;
     opacity: 0;
     pointer-events: none;
-    transition: all var(--duration-fast);
+    transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
     z-index: 1;
 }
 
@@ -374,43 +337,44 @@
     }
 }
 
-.sessionItemActive .sessionItemMeta,
-.sessionItem:focus-visible .sessionItemMeta {
-    padding-right: 68px;
+.sessionItemReadOnly .sessionItemTitle {
+    color: color-mix(in srgb, var(--text) 76%, var(--text-muted));
 }
 
-.sessionItemActive .sessionPinBtn,
-.sessionItemActive .sessionRenameBtn,
-.sessionItemActive .sessionArchiveBtn,
-.sessionItem:focus-visible .sessionPinBtn,
-.sessionItem:focus-visible .sessionRenameBtn,
-.sessionItem:focus-visible .sessionArchiveBtn {
-    opacity: 0.5;
-    pointer-events: auto;
+.sessionItemReadOnly .sessionItemMeta,
+.sessionItemReadOnly:hover .sessionItemMeta,
+.sessionItemReadOnly:focus-visible .sessionItemMeta {
+    padding-right: 0;
 }
 
-/* streaming 呼吸动画 */
 .sessionStreamingDot {
     width: 5px;
     height: 5px;
     border-radius: 50%;
     background: var(--accent, #b89a7a);
     flex-shrink: 0;
+}
+
+.sessionStreamingDot[data-state="running"] {
     animation: hana-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sessionStreamingDot {
+        animation: none;
+    }
 }
 
 /* 浏览器标记 */
 .sessionBrowserBadge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
     color: var(--text-muted);
-    opacity: 0.5;
+    opacity: 0.72;
     cursor: default;
     pointer-events: auto;
     border-radius: 3px;
@@ -459,7 +423,24 @@
     gap: 0.35rem;
     min-width: 0;
     overflow: hidden;
-    padding-right: 22px;
+}
+
+.sessionItemHeader > .sessionItemTitle,
+.sessionItemHeader > .sessionRenameInput {
+    flex: 1 1 auto;
+}
+
+.sessionItemHeader > .sessionRenameInput {
+    width: auto;
+}
+
+.sessionStatusSlot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    min-width: max-content;
+    flex-shrink: 0;
 }
 
 /* 分组标题 */

@@ -11,6 +11,7 @@ const deskActionMocks = vi.hoisted(() => ({
   revealDeskDirectory: vi.fn(async () => true),
   searchDeskFiles: vi.fn(async () => []),
   toggleJianSidebar: vi.fn(),
+  continueDeletedAgentSession: vi.fn(),
 }));
 
 vi.mock('@tiptap/react', () => ({
@@ -77,6 +78,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 vi.mock('../../stores/session-actions', () => ({
   ensureSession: vi.fn(async () => true),
   loadSessions: vi.fn(),
+  continueDeletedAgentSession: deskActionMocks.continueDeletedAgentSession,
 }));
 
 vi.mock('../../stores/desk-actions', () => ({
@@ -287,5 +289,41 @@ describe('InputArea status stack', () => {
     expect(deskActionMocks.toggleJianSidebar).toHaveBeenCalledWith(true);
     expect(deskActionMocks.revealDeskDirectory).toHaveBeenCalledWith('/workspace/OH-Works');
     expect(deskActionMocks.loadDeskFiles).not.toHaveBeenCalled();
+  });
+
+  it('covers deleted-agent sessions with a read-only continuation action and progress bar', () => {
+    const deletedPath = '/session/deleted-agent.jsonl';
+    deskActionMocks.continueDeletedAgentSession.mockReturnValue(new Promise<boolean>(() => {}));
+    useStore.setState({
+      currentSessionPath: deletedPath,
+      sessions: [{
+        path: deletedPath,
+        title: 'Old chat',
+        firstMessage: 'old hello',
+        modified: new Date().toISOString(),
+        messageCount: 2,
+        agentId: 'deleted',
+        agentName: 'Deleted Agent',
+        cwd: '/tmp/work',
+        agentDeleted: true,
+        readOnlyReason: 'agent_deleted',
+        continuationAvailable: true,
+      }],
+      chatSessions: {},
+      compactingSessions: [],
+      attachedFiles: [],
+      attachedFilesBySession: {},
+      quotedSelections: [],
+      todosBySession: {},
+    } as never);
+
+    render(React.createElement(InputArea));
+
+    expect(screen.getByText('session.deletedAgent.title')).toBeTruthy();
+    const button = screen.getByRole('button', { name: 'session.deletedAgent.continueButton' });
+    fireEvent.click(button);
+
+    expect(deskActionMocks.continueDeletedAgentSession).toHaveBeenCalledWith(deletedPath);
+    expect(screen.getByTestId('deleted-agent-progress')).toBeTruthy();
   });
 });

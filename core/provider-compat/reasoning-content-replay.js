@@ -89,6 +89,11 @@ export function ensureReasoningContentForToolCalls(messages, options = {}) {
   return changed ? next : messages;
 }
 
+export function isReasoningReplayUnavailable(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("reasoning_content is missing for tool_calls history");
+}
+
 /**
  * OpenAI 兼容工具调用历史中，部分供应商要求 assistant.content 不能是 null。
  *

@@ -1,5 +1,7 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, type RefObject } from 'react';
 import type { FileMentionItem } from '../../utils/file-mention-items';
+import { kindOfFileName } from '../../utils/file-kind';
+import { FileKindIcon } from '../shared/FileKindIcon';
 import { FolderIcon } from '../shared/FolderIcon';
 import styles from './InputArea.module.css';
 
@@ -19,40 +21,65 @@ export const FileMentionMenu = memo(function FileMentionMenu({
   const selectedRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: 'nearest' });
+    if (typeof selectedRef.current?.scrollIntoView === 'function') {
+      selectedRef.current.scrollIntoView({ block: 'nearest' });
+    }
   }, [selected]);
 
   return (
     <div className={styles['file-mention-menu']}>
       {items.map((item, i) => (
-        <button
+        <FileMentionButton
           key={item.id}
-          ref={i === selected ? selectedRef : undefined}
-          className={`${styles['file-mention-item']}${i === selected ? ` ${styles.selected}` : ''}`}
-          onMouseEnter={() => onHover(i)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            onSelect(item);
-          }}
-        >
-          <span className={styles['file-mention-icon']} aria-hidden="true">
-            {item.isDirectory ? <FolderIcon /> : <FileIcon />}
-          </span>
-          <span className={styles['file-mention-main']}>
-            <span className={styles['file-mention-name']}>{item.name}</span>
-            <span className={styles['file-mention-detail']}>{item.detail || item.path}</span>
-          </span>
-        </button>
+          item={item}
+          selected={i === selected}
+          refProp={i === selected ? selectedRef : undefined}
+          onHover={() => onHover(i)}
+          onSelect={() => onSelect(item)}
+        />
       ))}
       {items.length === 0 && busy && <div className={styles['file-mention-empty']}>...</div>}
     </div>
   );
 });
 
-function FileIcon() {
+function FileMentionButton({
+  item,
+  selected,
+  refProp,
+  onHover,
+  onSelect,
+}: {
+  item: FileMentionItem;
+  selected: boolean;
+  refProp?: RefObject<HTMLButtonElement | null>;
+  onHover: () => void;
+  onSelect: () => void;
+}) {
+  const fileKind = kindOfFileName(item.name || item.path, item.mimeType);
+  const thumbnailUrl = !item.isDirectory && (fileKind === 'image' || fileKind === 'svg') && item.path && typeof window !== 'undefined'
+    ? window.platform?.getFileUrl?.(item.path)
+    : null;
+
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" strokeLinecap="round">
-      <path d="M4 1.8h5.2L12 4.7v9.5H4z M9.2 1.8v3h2.8" />
-    </svg>
+    <button
+      ref={refProp}
+      className={`${styles['file-mention-item']}${selected ? ` ${styles.selected}` : ''}`}
+      onMouseEnter={onHover}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onSelect();
+      }}
+    >
+      <span className={styles['file-mention-icon']} aria-hidden="true">
+        {thumbnailUrl ? (
+          <img className={styles['file-mention-thumbnail']} src={thumbnailUrl} alt="" />
+        ) : item.isDirectory ? <FolderIcon size={18} /> : <FileKindIcon kind={fileKind} size={18} />}
+      </span>
+      <span className={styles['file-mention-main']}>
+        <span className={styles['file-mention-name']}>{item.name}</span>
+        <span className={styles['file-mention-detail']}>{item.detail || item.path}</span>
+      </span>
+    </button>
   );
 }

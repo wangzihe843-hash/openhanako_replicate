@@ -20,6 +20,8 @@ async function loadCoord(tmpDir) {
       const rel = path.relative(path.join(tmpDir, "agents"), p);
       return rel.split(path.sep)[0];
     },
+    listDeletedAgents: () => [],
+    isAgentDeleted: () => false,
   };
   return new SessionCoordinator(deps);
 }
@@ -112,5 +114,42 @@ describe("session-coordinator: archived helpers", () => {
     const coord = await loadCoord(tmpDir);
     const list = await coord.listArchivedSessions();
     expect(list[0].title).toBe("Preserved");
+  });
+
+  it("listSessions includes tombstoned agent sessions as read-only deleted-agent history", async () => {
+    const sessDir = path.join(tmpDir, "agents", "deleted", "sessions");
+    await fs.mkdir(sessDir, { recursive: true });
+    const sessionPath = path.join(sessDir, "d1.jsonl");
+    await fs.writeFile(
+      sessionPath,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "d1", timestamp: "2026-06-03T01:00:00.000Z", cwd: "/tmp/deleted" }),
+        JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-06-03T01:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "old hello" }], timestamp: 1 } }),
+        JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-06-03T01:02:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "old reply" }], timestamp: 2 } }),
+      ].join("\n") + "\n",
+    );
+
+    const { SessionCoordinator } = await import("../core/session-coordinator.js");
+    const coord = new SessionCoordinator({
+      agentsDir: path.join(tmpDir, "agents"),
+      listAgents: () => [],
+      listDeletedAgents: () => [{ id: "deleted", name: "Deleted Agent", deletedAt: "2026-06-03T01:03:00.000Z" }],
+      isAgentDeleted: (id) => id === "deleted",
+      getAgent: () => ({ id: "a", agentName: "AgentA" }),
+      getActiveAgentId: () => "a",
+      agentIdFromSessionPath: (p) => path.relative(path.join(tmpDir, "agents"), p).split(path.sep)[0],
+    });
+
+    const list = await coord.listSessions();
+    expect(list).toEqual([
+      expect.objectContaining({
+        path: sessionPath,
+        agentId: "deleted",
+        agentName: "Deleted Agent",
+        agentDeleted: true,
+        readOnlyReason: "agent_deleted",
+        continuationAvailable: true,
+      }),
+    ]);
   });
 });

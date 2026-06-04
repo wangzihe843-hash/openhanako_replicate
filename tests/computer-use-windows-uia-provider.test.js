@@ -16,6 +16,13 @@ function writeHelperResult(args, payload) {
   return true;
 }
 
+function writeTextHelperResult(args, text) {
+  const resultPath = argValue(args, "-ResultPath");
+  if (!resultPath) return null;
+  fs.writeFileSync(resultPath, text, "utf8");
+  return resultPath;
+}
+
 function readHelperRequest(args) {
   return JSON.parse(fs.readFileSync(argValue(args, "-RequestPath"), "utf8"));
 }
@@ -114,6 +121,12 @@ describe("Windows UIA provider", () => {
     expect(violations).toEqual([]);
   });
 
+  it("writes UIA helper results through a temporary file before publishing the result path", () => {
+    expect(WINDOWS_UIA_HELPER_SCRIPT).toContain("[System.IO.File]::WriteAllText($tempResultPath, $json, $script:WindowsUiaUtf8NoBom)");
+    expect(WINDOWS_UIA_HELPER_SCRIPT).toContain("[System.IO.File]::Move($tempResultPath, $script:WindowsUiaResultPath)");
+    expect(WINDOWS_UIA_HELPER_SCRIPT).not.toContain("[System.IO.File]::WriteAllText($script:WindowsUiaResultPath, $json");
+  });
+
   it("reports unavailable on non-Windows platforms", async () => {
     const provider = createWindowsUiaProvider({ platform: "darwin" });
 
@@ -170,22 +183,116 @@ describe("Windows UIA provider", () => {
     ]);
   });
 
-  it("reports stdout stderr and result previews when helper result JSON is invalid", async () => {
+  it("reports bounded stdout stderr result head tail and file metadata when helper result JSON is invalid", async () => {
+    const middle = "middle-content-that-must-not-leak";
+    const invalidResult = `{ ${"a".repeat(3000)}${middle}${"z".repeat(3000)}`;
+    let helperResultPath = null;
     const { runner } = makeRunner((_command, args) => {
-      fs.writeFileSync(argValue(args, "-ResultPath"), "{ invalid-json", "utf8");
+      helperResultPath = writeTextHelperResult(args, invalidResult);
       return { stdout: "banner before result\n".repeat(20), stderr: "warning stream\n", exitCode: 0 };
     });
     const provider = createWindowsUiaProvider({ platform: "win32", command: "powershell.exe", runner });
 
-    await expect(provider.listApps()).rejects.toMatchObject({
+    let error = null;
+    try {
+      await provider.listApps();
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toMatchObject({
       code: COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
       message: expect.stringContaining("Windows UIA helper returned invalid JSON."),
       details: expect.objectContaining({
         stdoutPreview: expect.stringContaining("banner before result"),
         stderrPreview: expect.stringContaining("warning stream"),
-        resultPreview: "{ invalid-json",
+        resultPath: helperResultPath,
+        resultSize: Buffer.byteLength(invalidResult, "utf8"),
+        resultHeadPreview: expect.stringContaining("{ aaa"),
+        resultTailPreview: expect.stringContaining("zzz"),
       }),
     });
+    expect(error).toMatchObject({
+      details: expect.not.objectContaining({
+        resultHeadPreview: expect.stringContaining(middle),
+        resultTailPreview: expect.stringContaining(middle),
+      }),
+    });
+  });
+
+  it("reports result path and missing size when the helper does not write a result file", async () => {
+    let helperResultPath = null;
+    const { runner } = makeRunner((_command, args) => {
+      helperResultPath = argValue(args, "-ResultPath");
+      return { stdout: "banner without result\n", stderr: "warning without result\n", exitCode: 0 };
+    });
+    const provider = createWindowsUiaProvider({ platform: "win32", command: "powershell.exe", runner });
+
+    await expect(provider.listApps()).rejects.toMatchObject({
+      code: COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+      message: expect.stringContaining("Windows UIA helper did not write result JSON."),
+      details: expect.objectContaining({
+        stdoutPreview: expect.stringContaining("banner without result"),
+        stderrPreview: expect.stringContaining("warning without result"),
+        resultPath: helperResultPath,
+        resultSize: null,
+        readCode: "ENOENT",
+      }),
+    });
+  });
+
+  it("refuses oversized helper result files before parsing payloads into memory", async () => {
+    const parseSpy = vi.spyOn(JSON, "parse");
+    try {
+      const runner = {
+        run: vi.fn(async (_command, args) => {
+          const resultPath = argValue(args, "-ResultPath");
+          fs.writeFileSync(resultPath, '{"ok":true,"data":{"apps":[]}}', "utf8");
+          fs.truncateSync(resultPath, 129);
+          return { stdout: "banner\n", stderr: "warning\n", exitCode: 0 };
+        }),
+      };
+      const provider = createWindowsUiaProvider({
+        platform: "win32",
+        command: "powershell.exe",
+        runner,
+        maxResultBytes: 128,
+      });
+
+      await expect(provider.listApps()).rejects.toMatchObject({
+        code: COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+        message: expect.stringContaining("Windows UIA helper result JSON exceeded the payload limit."),
+        details: expect.objectContaining({
+          resultSize: 129,
+          maxResultBytes: 128,
+          resultHeadPreview: expect.any(String),
+          resultTailPreview: expect.any(String),
+        }),
+      });
+      expect(parseSpy).not.toHaveBeenCalled();
+    } finally {
+      parseSpy.mockRestore();
+    }
+  });
+
+  it("preserves structured helper error code message and details", async () => {
+    const { runner } = makeRunner((_command, args) => {
+      writeHelperResult(args, {
+        ok: false,
+        errorCode: "ACTION_REQUIRES_FOREGROUND",
+        message: "Element needs foreground input.",
+        details: { elementId: "uia:7", reason: "missing-pattern" },
+      });
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    const provider = createWindowsUiaProvider({ platform: "win32", command: "powershell.exe", runner });
+
+    await expect(provider.getAppState({}, { leaseId: "lease-1", providerState: { processId: 12 } }))
+      .rejects.toMatchObject({
+        code: COMPUTER_USE_ERRORS.ACTION_REQUIRES_FOREGROUND,
+        message: expect.stringContaining("Element needs foreground input."),
+        details: { elementId: "uia:7", reason: "missing-pattern" },
+      });
   });
 
   it("maps helper launch ENAMETOOLONG into a typed provider error", async () => {

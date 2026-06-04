@@ -62,16 +62,18 @@ describe('InterfaceTab appearance state', () => {
     seedSettings();
   });
 
-  it('updates the serif font toggle from component state after the preference changes', () => {
+  it('updates the reading font card from component state after the preference changes', () => {
     localStorage.setItem('hana-font-serif', '1');
 
     render(React.createElement(InterfaceTab));
 
-    expect(screen.getAllByRole('switch')[0].getAttribute('aria-checked')).toBe('true');
+    const sansCard = screen.getByText('settings.fonts.sansName').closest('button');
+    expect(sansCard).toBeTruthy();
 
-    fireEvent.click(screen.getAllByRole('switch')[0]);
+    fireEvent.click(sansCard!);
 
-    expect(screen.getAllByRole('switch')[0].getAttribute('aria-checked')).toBe('false');
+    expect(globalThis.setSerifFont).toHaveBeenCalledWith(false);
+    expect(localStorage.getItem('hana-font-serif')).toBe('0');
   });
 
   it('recomputes paper texture availability when the selected theme changes', () => {
@@ -80,7 +82,7 @@ describe('InterfaceTab appearance state', () => {
 
     render(React.createElement(InterfaceTab));
 
-    const paperSwitch = () => screen.getAllByRole('switch')[1] as HTMLButtonElement;
+    const paperSwitch = () => screen.getAllByRole('switch')[0] as HTMLButtonElement;
     expect(paperSwitch().getAttribute('aria-checked')).toBe('true');
     expect(paperSwitch().disabled).toBe(false);
 
@@ -105,7 +107,14 @@ describe('InterfaceTab appearance state', () => {
     render(React.createElement(InterfaceTab));
 
     expect(screen.getByText('settings.interface.hardwareAcceleration')).toBeTruthy();
-    expect(screen.getAllByRole('switch')[3].getAttribute('aria-checked')).toBe('false');
+    expect(screen.getAllByRole('switch')[2].getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('renders a markdown font selector in the editor section', () => {
+    render(React.createElement(InterfaceTab));
+
+    expect(screen.getByText('settings.editor.markdownFont')).toBeTruthy();
+    expect(screen.getByTitle('settings.fonts.followReading')).toBeTruthy();
   });
 
   it('hides fourth through sixth heading typography controls', () => {
@@ -118,5 +127,15 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.queryByText('settings.editor.markdownHeading4FontSize')).toBeNull();
     expect(screen.queryByText('settings.editor.markdownHeading5FontSize')).toBeNull();
     expect(screen.queryByText('settings.editor.markdownHeading6FontSize')).toBeNull();
+  });
+
+  it('renders the app-local voice recording shortcut in the interface tab', () => {
+    useSettingsStore.setState({ platformName: 'darwin' } as never);
+
+    render(React.createElement(InterfaceTab));
+
+    expect(screen.getByText('settings.interface.shortcuts')).toBeTruthy();
+    expect(screen.getByText('settings.interface.voiceRecordingShortcut')).toBeTruthy();
+    expect(screen.getByLabelText('⌘ + ⇧ + M')).toBeTruthy();
   });
 });

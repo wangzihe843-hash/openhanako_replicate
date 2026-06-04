@@ -75,6 +75,7 @@ function seedSessions() {
     pendingNewSession: false,
     agents: [],
     streamingSessions: [],
+    unreadOutputSessionPaths: [],
     browserBySession: {},
     locale: 'zh',
   });
@@ -338,15 +339,79 @@ describe('SessionList context menu', () => {
     expect(css).toMatch(/:global\(\.mobile-desktop-root\) \.sessionSearchInput\s*\{[\s\S]*font-size:\s*16px/);
   });
 
-  it('shows row action controls for the active or focused session without requiring hover', () => {
+  it('keeps row action controls hover-only and leaves active rows from reserving empty action space', () => {
     const css = fs.readFileSync(
       path.join(__dirname, '../../components/SessionList.module.css'),
       'utf-8',
     );
 
-    expect(css).toMatch(/\.sessionItemActive \.sessionPinBtn,\s*\.sessionItemActive \.sessionRenameBtn,\s*\.sessionItemActive \.sessionArchiveBtn/);
-    expect(css).toMatch(/\.sessionItem:focus-visible \.sessionPinBtn,\s*\.sessionItem:focus-visible \.sessionRenameBtn,\s*\.sessionItem:focus-visible \.sessionArchiveBtn/);
-    expect(css).toMatch(/\.sessionItemActive \.sessionItemMeta,\s*\.sessionItem:focus-visible \.sessionItemMeta/);
+    expect(css).toMatch(/\.sessionItem:hover \.sessionPinBtn\s*\{/);
+    expect(css).toMatch(/\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
+    expect(css).toMatch(/\.sessionItem:hover \.sessionItemMeta\s*\{[\s\S]*padding-right:\s*52px/);
+    expect(css).not.toMatch(/\.sessionItemActive \.sessionPinBtn/);
+    expect(css).not.toMatch(/\.sessionItemActive \.sessionArchiveBtn/);
+    expect(css).not.toMatch(/\.sessionItem:focus-visible \.sessionPinBtn/);
+    expect(css).not.toMatch(/\.sessionItem:focus-visible \.sessionArchiveBtn/);
+    expect(css).not.toMatch(/\.sessionItemActive \.sessionItemMeta/);
+    expect(css).not.toMatch(/sessionRenameBtn/);
+  });
+
+  it('keeps rename in the context menu without rendering an inline rename button', async () => {
+    render(<SessionList />);
+
+    expect(screen.queryByTitle('session.rename')).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(sessionButton('No summary'), { clientX: 24, clientY: 32 });
+    fireEvent.click(await screen.findByText('session.rename'));
+
+    expect(screen.getByDisplayValue('No summary')).toBeInTheDocument();
+  });
+
+  it('renders unread output and running status as row-level status signals', async () => {
+    useStore.setState({
+      currentSessionPath: '/tmp/agents/hana/sessions/no-summary.jsonl',
+      streamingSessions: ['/tmp/agents/hana/sessions/with-summary.jsonl'],
+      unreadOutputSessionPaths: ['/tmp/agents/hana/sessions/with-summary.jsonl'],
+    } as never);
+
+    render(<SessionList />);
+
+    const row = sessionButton('Has summary');
+    expect(row).toHaveAttribute('data-unread-output', 'true');
+    const dot = row.querySelector('[data-session-status-dot]');
+    expect(dot).toBeInTheDocument();
+    expect(dot).toHaveAttribute('data-state', 'running');
+  });
+
+  it('keeps the status dot after a background session finishes until the user opens it', () => {
+    useStore.setState({
+      currentSessionPath: '/tmp/agents/hana/sessions/no-summary.jsonl',
+      streamingSessions: [],
+      unreadOutputSessionPaths: ['/tmp/agents/hana/sessions/with-summary.jsonl'],
+    } as never);
+
+    render(<SessionList />);
+
+    const row = sessionButton('Has summary');
+    const dot = row.querySelector('[data-session-status-dot]');
+    expect(dot).toBeInTheDocument();
+    expect(dot).toHaveAttribute('data-state', 'unread');
+  });
+
+  it('does not reference removed session row status affordances', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../components/SessionList.tsx'),
+      'utf-8',
+    );
+
+    expect(source).not.toContain('sessionItemHeaderWithStatus');
+    expect(source).not.toContain('sessionStreamingRing');
+    const css = fs.readFileSync(
+      path.join(__dirname, '../../components/SessionList.module.css'),
+      'utf-8',
+    );
+    expect(css).not.toContain('sessionItemUnreadOutput');
+    expect(css).not.toContain('sessionStreamingRing');
   });
 
   it('reveals section heading actions on focus without depending on hover media queries', () => {

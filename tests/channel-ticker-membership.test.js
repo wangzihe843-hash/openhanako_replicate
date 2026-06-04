@@ -363,7 +363,7 @@ describe("channel-ticker membership source", () => {
     ]);
   });
 
-  it("advances the bookmark after a missing channel decision without summarizing memory", async () => {
+  it("advances the bookmark after an implicit skipped channel decision without summarizing memory", async () => {
     tmpDir = mktemp();
     const channelsDir = path.join(tmpDir, "channels");
     const agentsDir = path.join(tmpDir, "agents");
@@ -379,7 +379,7 @@ describe("channel-ticker membership source", () => {
     const channelFile = path.join(channelsDir, `${channelId}.md`);
     await appendMessage(channelFile, "user", "这条消息不应该无限重投");
 
-    const executeCheck = vi.fn(async () => ({ replied: false, missingDecision: true }));
+    const executeCheck = vi.fn(async () => ({ replied: false, missingDecision: true, implicitPass: true }));
     const onMemorySummarize = vi.fn();
     const ticker = createChannelTicker({
       channelsDir,

@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeMessagesForModel,
+  stripAllInlineMediaForHistory,
   stripHistoricalInlineMediaForReplay,
   modelSupportsImage,
   modelSupportsVideo,
@@ -19,6 +20,7 @@ import {
 
 const IMG_BLOCK = { type: "image", data: "BASE64DATA", mimeType: "image/png" };
 const VIDEO_BLOCK = { type: "video", data: "BASE64VIDEO", mimeType: "video/mp4" };
+const AUDIO_BLOCK = { type: "audio", data: "BASE64AUDIO", mimeType: "audio/wav" };
 const TEXT_BLOCK = (text) => ({ type: "text", text });
 
 describe("modelSupportsImage", () => {
@@ -136,6 +138,38 @@ describe("sanitizeMessagesForModel", () => {
     expect(messages[0].content).toEqual([TEXT_BLOCK("what is this?"), VIDEO_BLOCK]);
   });
 
+  it("不支持 audio 的模型：user 消息里的 audio block 换占位并单独计数", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("what is this?"), AUDIO_BLOCK] },
+    ];
+    const res = sanitizeMessagesForModel(messages, textOnlyModel);
+    expect(res.stripped).toBe(1);
+    expect(res.strippedAudios).toBe(1);
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("what is this?"),
+      { type: "text", text: "[音频已省略：当前模型不支持音频输入]" },
+    ]);
+    expect(messages[0].content).toEqual([TEXT_BLOCK("what is this?"), AUDIO_BLOCK]);
+  });
+
+  it("显式声明 openai-input-audio transport 的模型直传当前轮 audio", () => {
+    const audioModel = {
+      id: "future-audio-model",
+      provider: "deepseek",
+      api: "openai-completions",
+      input: ["text"],
+      compat: { hanaAudioInput: true, audioTransport: "openai-input-audio" },
+    };
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("listen"), AUDIO_BLOCK] },
+    ];
+
+    const res = sanitizeMessagesForModel(messages, audioModel);
+
+    expect(res.stripped).toBe(0);
+    expect(res.messages).toBe(messages);
+  });
+
   it("支持 video 但不支持 image 的模型只剥 image", () => {
     const messages = [
       { role: "user", content: [IMG_BLOCK, VIDEO_BLOCK] },
@@ -223,8 +257,8 @@ describe("sanitizeMessagesForModel", () => {
   });
 
   it("messages 非数组或 null：防御式放行", () => {
-    expect(sanitizeMessagesForModel(null, textOnlyModel)).toEqual({ messages: null, stripped: 0, strippedImages: 0, strippedVideos: 0 });
-    expect(sanitizeMessagesForModel(undefined, textOnlyModel)).toEqual({ messages: undefined, stripped: 0, strippedImages: 0, strippedVideos: 0 });
+    expect(sanitizeMessagesForModel(null, textOnlyModel)).toEqual({ messages: null, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 });
+    expect(sanitizeMessagesForModel(undefined, textOnlyModel)).toEqual({ messages: undefined, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 });
     expect(sanitizeMessagesForModel("oops", textOnlyModel).stripped).toBe(0);
   });
 
@@ -275,6 +309,26 @@ describe("stripHistoricalInlineMediaForReplay", () => {
     expect(res.messages[2].content).toEqual([TEXT_BLOCK("[attached_image: /tmp/current.png]\ncurrent"), IMG_BLOCK]);
   });
 
+  it("剥离历史音频但保留最后一个 assistant 之后的当前轮音频", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("[attached_audio: /tmp/old.wav]\nold"), AUDIO_BLOCK] },
+      { role: "assistant", content: [TEXT_BLOCK("heard")] },
+      { role: "user", content: [TEXT_BLOCK("[attached_audio: /tmp/current.wav]\ncurrent"), AUDIO_BLOCK] },
+    ];
+
+    const res = stripHistoricalInlineMediaForReplay(messages);
+
+    expect(res.strippedAudios).toBe(1);
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("[attached_audio: /tmp/old.wav]\nold"),
+    ]);
+    expect(res.messages[2]).toBe(messages[2]);
+    expect(res.messages[2].content).toEqual([
+      TEXT_BLOCK("[attached_audio: /tmp/current.wav]\ncurrent"),
+      AUDIO_BLOCK,
+    ]);
+  });
+
   it("没有 attached_image 引用的 legacy inline 图片会留下轻量占位", () => {
     const messages = [
       { role: "user", content: [TEXT_BLOCK("legacy image"), IMG_BLOCK] },
@@ -287,6 +341,25 @@ describe("stripHistoricalInlineMediaForReplay", () => {
     expect(res.messages[0].content).toEqual([
       TEXT_BLOCK("legacy image"),
       { type: "text", text: "[图片已省略：历史图片保留为文件引用，避免重复发送原始 base64]" },
+    ]);
+  });
+});
+
+describe("stripAllInlineMediaForHistory", () => {
+  it("一轮结束后剥离 audio inline bytes，只留下 attached_audio 引用文本", () => {
+    const messages = [
+      { role: "user", content: [TEXT_BLOCK("[attached_audio: /tmp/current.wav]\ncurrent"), AUDIO_BLOCK] },
+    ];
+
+    const res = stripAllInlineMediaForHistory(messages);
+
+    expect(res.strippedAudios).toBe(1);
+    expect(res.messages[0].content).toEqual([
+      TEXT_BLOCK("[attached_audio: /tmp/current.wav]\ncurrent"),
+    ]);
+    expect(messages[0].content).toEqual([
+      TEXT_BLOCK("[attached_audio: /tmp/current.wav]\ncurrent"),
+      AUDIO_BLOCK,
     ]);
   });
 });

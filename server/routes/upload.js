@@ -25,6 +25,13 @@ import {
   isAllowedChatImageMime,
   isChatImageBase64WithinLimit,
 } from "../../shared/image-mime.js";
+import {
+  MAX_CHAT_AUDIO_BASE64_CHARS,
+  extensionFromChatAudioMime,
+  isAllowedChatAudioMime,
+  isAllowedUploadAudioMime,
+  isChatAudioBase64WithinLimit,
+} from "../../shared/audio-mime.js";
 import { registerSessionFileFromRequest } from "../../lib/session-files/session-file-response.js";
 import { sessionFilesCacheDir } from "../../lib/session-files/session-file-registry.js";
 
@@ -55,9 +62,47 @@ const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
   "lpt8",
   "lpt9",
 ]);
+const SESSION_FILE_PRESENTATIONS = new Set(["attachment", "voice-input"]);
 
 function extFromMime(mimeType) {
-  return extensionFromChatImageMime(mimeType);
+  return extensionFromChatImageMime(mimeType) || extensionFromChatAudioMime(mimeType);
+}
+
+function isAllowedUploadBlobMime(mimeType) {
+  return isAllowedChatImageMime(mimeType) || isAllowedUploadAudioMime(mimeType);
+}
+
+function isUploadBlobBase64WithinLimit(base64Data, mimeType) {
+  if (isAllowedChatImageMime(mimeType)) return isChatImageBase64WithinLimit(base64Data);
+  if (isAllowedUploadAudioMime(mimeType)) return isChatAudioBase64WithinLimit(base64Data);
+  return false;
+}
+
+function uploadBlobMaxBase64Chars(mimeType) {
+  if (isAllowedUploadAudioMime(mimeType)) return MAX_CHAT_AUDIO_BASE64_CHARS;
+  return MAX_CHAT_IMAGE_BASE64_CHARS;
+}
+
+function normalizeSessionFilePresentation(value) {
+  if (value == null || value === "") return "attachment";
+  if (typeof value !== "string") return null;
+  return SESSION_FILE_PRESENTATIONS.has(value) ? value : null;
+}
+
+function originForPresentation(presentation) {
+  return presentation === "voice-input" ? "voice_input" : "user_upload";
+}
+
+function listedForPresentation(presentation) {
+  return presentation !== "voice-input";
+}
+
+function waveformForUploadPath(body, srcPath) {
+  const metadataByPath = body?.metadataByPath;
+  if (!metadataByPath || typeof metadataByPath !== "object" || Array.isArray(metadataByPath)) return undefined;
+  const direct = metadataByPath[srcPath];
+  if (!direct || typeof direct !== "object" || Array.isArray(direct)) return undefined;
+  return direct.waveform;
 }
 
 function isControlCodePoint(codePoint) {
@@ -108,7 +153,8 @@ function sanitizeFileNameCandidate(value) {
 }
 
 function sanitizeBlobName(name, mimeType) {
-  const fallback = `pasted${extFromMime(mimeType) || ".png"}`;
+  const fallbackBase = isAllowedChatAudioMime(mimeType) ? "recording" : "pasted";
+  const fallback = `${fallbackBase}${extFromMime(mimeType) || ".bin"}`;
   if (!name || typeof name !== "string") return fallback;
   // 用户传入的 name 不可信：只保留跨平台 basename，再清理文件系统保留字符。
   let base = sanitizeFileNameCandidate(name);
@@ -286,6 +332,7 @@ export function createUploadRoute(engine) {
           label: name,
           origin: "user_upload",
           storageKind: uploadTarget.storageKind,
+          waveform: waveformForUploadPath(body, srcPath),
         });
 
         results.push({
@@ -309,13 +356,20 @@ export function createUploadRoute(engine) {
 
   // POST /api/upload-blob
   // Body: { blobs: [{ name, base64Data, mimeType }, ...] }  (also accepts singular { name, base64Data, mimeType })
-  // 把内存中的 base64 数据落到与 /api/upload 同一个 uploads 目录，输出形态保持一致
+  // 把内存中的 base64 图片/音频数据落到与 /api/upload 同一个 uploads 目录，输出形态保持一致
   route.post("/upload-blob", async (c) => {
     const body = await safeJson(c);
     const sessionPath = normalizeSessionPath(body?.sessionPath);
     let blobs = body?.blobs;
     if (!Array.isArray(blobs)) {
-      if (body?.base64Data) blobs = [{ name: body.name, base64Data: body.base64Data, mimeType: body.mimeType }];
+      if (body?.base64Data) {
+        blobs = [{
+          name: body.name,
+          base64Data: body.base64Data,
+          mimeType: body.mimeType,
+          presentation: body.presentation,
+        }];
+      }
       else return c.json({ error: t("error.pathsRequired") }, 400);
     }
     if (blobs.length === 0) return c.json({ error: t("error.pathsRequired") }, 400);
@@ -339,12 +393,21 @@ export function createUploadRoute(engine) {
           results.push({ error: "base64Data required" });
           continue;
         }
-        if (typeof mimeType !== "string" || !isAllowedChatImageMime(mimeType)) {
+        if (typeof mimeType !== "string" || !isAllowedUploadBlobMime(mimeType)) {
           results.push({ error: "unsupported mimeType" });
           continue;
         }
-        if (!isChatImageBase64WithinLimit(base64Data)) {
-          results.push({ error: `blob too large (max ${MAX_CHAT_IMAGE_BASE64_CHARS} bytes)` });
+        if (!isUploadBlobBase64WithinLimit(base64Data, mimeType)) {
+          results.push({ error: `blob too large (max ${uploadBlobMaxBase64Chars(mimeType)} bytes)` });
+          continue;
+        }
+        const presentation = normalizeSessionFilePresentation(blobs[i]?.presentation ?? body?.presentation);
+        if (!presentation) {
+          results.push({ error: "unsupported presentation" });
+          continue;
+        }
+        if (presentation === "voice-input" && !isAllowedUploadAudioMime(mimeType)) {
+          results.push({ error: "voice-input requires audio mimeType" });
           continue;
         }
         const buf = Buffer.from(base64Data, "base64");
@@ -365,8 +428,11 @@ export function createUploadRoute(engine) {
           sessionPath,
           filePath: destPath,
           label: safeName,
-          origin: "user_upload",
+          origin: originForPresentation(presentation),
           storageKind: uploadTarget.storageKind,
+          presentation,
+          listed: listedForPresentation(presentation),
+          waveform: blobs[i]?.waveform ?? body?.waveform,
         });
 
         results.push({

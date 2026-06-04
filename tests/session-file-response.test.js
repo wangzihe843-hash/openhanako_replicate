@@ -19,6 +19,8 @@ describe("serializeSessionFile", () => {
       origin: "agent_write",
       operations: ["created"],
       storageKind: "external",
+      presentation: "voice-input",
+      listed: false,
       status: "available",
       missingAt: null,
       createdAt: 123,
@@ -34,6 +36,8 @@ describe("serializeSessionFile", () => {
       label: "report.md",
       mtimeMs: 456,
       size: 42,
+      presentation: "voice-input",
+      listed: false,
       version: { mtimeMs: 456, size: 42 },
       resource: {
         resourceId: "res_sf_response",

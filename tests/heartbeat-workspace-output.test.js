@@ -37,6 +37,74 @@ describe("heartbeat workspace output directories", () => {
     expect(prompt).not.toContain("HeartBeat");
   });
 
+  it("gives workspace patrols a program-owned UTF-8 patrol log tool", async () => {
+    const onBeat = vi.fn(async (_prompt, opts) => {
+      const logTool = opts.customTools.find((tool) => tool.name === "patrol_update_log");
+      await logTool.execute("tool-call-1", {
+        status: "completed",
+        note: "整理了中文资料，等待用户查看。",
+      });
+    });
+    const heartbeat = createHeartbeat({
+      getDeskFiles: async () => [],
+      getWorkspacePath: () => tempRoot,
+      getAgentName: () => "Hana",
+      registryPath: path.join(tempRoot, ".registry", "jian-registry.json"),
+      onBeat,
+      intervalMinutes: 31,
+      locale: "zh-CN",
+    });
+
+    await heartbeat.beat();
+
+    expect(onBeat).toHaveBeenCalledOnce();
+    const [prompt, opts] = onBeat.mock.calls[0];
+    expect(prompt).toContain("patrol_update_log");
+    expect(prompt).not.toContain("追加到");
+    expect(opts.customTools.map((tool) => tool.name)).toContain("patrol_update_log");
+
+    const logPath = path.join(tempRoot, "OH-Works", "Hana的巡检", "patrol-log.md");
+    const raw = fs.readFileSync(logPath);
+    expect(() => new TextDecoder("utf-8", { fatal: true }).decode(raw)).not.toThrow();
+    expect(raw.toString("utf-8")).toContain("整理了中文资料，等待用户查看。");
+  });
+
+  it("normalizes legacy mixed cp936 and UTF-8 patrol logs before appending", async () => {
+    const logPath = path.join(tempRoot, "OH-Works", "Hana的巡检", "patrol-log.md");
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, Buffer.concat([
+      Buffer.from("- [2026-06-03 09:00] UTF-8 正常\n", "utf-8"),
+      Buffer.from("- [2026-06-03 10:00] ", "ascii"),
+      Buffer.from([0xd6, 0xd0, 0xce, 0xc4]),
+      Buffer.from(" cp936\n", "ascii"),
+    ]));
+
+    const onBeat = vi.fn(async (_prompt, opts) => {
+      const logTool = opts.customTools.find((tool) => tool.name === "patrol_update_log");
+      await logTool.execute("tool-call-1", {
+        status: "completed",
+        note: "追加新的中文日志。",
+      });
+    });
+    const heartbeat = createHeartbeat({
+      getDeskFiles: async () => [],
+      getWorkspacePath: () => tempRoot,
+      getAgentName: () => "Hana",
+      registryPath: path.join(tempRoot, ".registry", "jian-registry.json"),
+      onBeat,
+      intervalMinutes: 31,
+      locale: "zh-CN",
+    });
+
+    await heartbeat.beat();
+
+    const raw = fs.readFileSync(logPath);
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    expect(decoded).toContain("UTF-8 正常");
+    expect(decoded).toContain("中文 cp936");
+    expect(decoded).toContain("追加新的中文日志。");
+  });
+
   it("gives jian patrols a status tool that writes a program-owned snapshot", async () => {
     const jianPath = path.join(tempRoot, "jian.md");
     const instructions = "帮我巡检这个目录，执行五次。";

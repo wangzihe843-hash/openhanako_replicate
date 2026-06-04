@@ -116,6 +116,7 @@ describe('extractScreenshotPayload', () => {
       { type: 'markdown', content: '看这张图' },
       { type: 'image', content: '/tmp/aux.png' },
       { type: 'image', content: '/tmp/native.png' },
+      { type: 'attachment', kind: 'markdown', name: 'readme.md' },
     ]);
   });
 
@@ -132,6 +133,41 @@ describe('extractScreenshotPayload', () => {
     const result = extractScreenshotPayload(messages, 'solarized-light');
     expect(result.messages![0].blocks).toEqual([
       { type: 'image', content: 'data:image/webp;base64,INLINE' },
+    ]);
+  });
+
+  it('keeps non-image user attachments as semantic attachment blocks', () => {
+    const messages = [
+      {
+        id: '1',
+        role: 'user' as const,
+        text: '请看这些附件',
+        attachments: [
+          { path: '/tmp/pic.png', name: 'pic.png', isDir: false, mimeType: 'image/png' },
+          {
+            path: '/tmp/voice.wav',
+            name: 'voice.wav',
+            isDir: false,
+            mimeType: 'audio/wav',
+            presentation: 'voice-input',
+            listed: false,
+          },
+          { path: '/tmp/note.md', name: 'note.md', isDir: false, mimeType: 'text/markdown' },
+          { path: '/tmp/spec.pdf', name: 'spec.pdf', isDir: false, mimeType: 'application/pdf', status: 'expired' },
+          { path: '/tmp/folder', name: 'folder', isDir: true },
+        ],
+      },
+    ];
+
+    const result = extractScreenshotPayload(messages, 'solarized-light');
+
+    expect(result.messages![0].blocks).toEqual([
+      { type: 'markdown', content: '请看这些附件' },
+      { type: 'image', content: '/tmp/pic.png' },
+      { type: 'attachment', kind: 'audio', name: 'voice.wav', presentation: 'voice-input' },
+      { type: 'attachment', kind: 'markdown', name: 'note.md' },
+      { type: 'attachment', kind: 'pdf', name: 'spec.pdf', status: 'expired' },
+      { type: 'attachment', kind: 'directory', name: 'folder' },
     ]);
   });
 

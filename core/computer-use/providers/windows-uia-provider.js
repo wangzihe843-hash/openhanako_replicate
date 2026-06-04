@@ -28,6 +28,9 @@ function helperRunPaths(helperDir) {
   };
 }
 
+const DEFAULT_MAX_RESULT_BYTES = 32 * 1024 * 1024;
+const RESULT_PREVIEW_BYTES = 2048;
+
 function removeIfPresent(filePath) {
   try {
     fs.unlinkSync(filePath);
@@ -40,13 +43,102 @@ function textPreview(value, limit = 4000) {
   return `${text.slice(0, limit)}...[truncated ${text.length - limit} chars]`;
 }
 
-function helperDiagnostics(providerId, result, resultText = "") {
+function decodePreviewBuffer(buffer) {
+  return buffer.toString("utf8").replace(/\0+$/g, "");
+}
+
+function readFileSegment(filePath, start, length) {
+  if (length <= 0) return "";
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const bytesRead = fs.readSync(fd, buffer, 0, length, start);
+    return decodePreviewBuffer(buffer.subarray(0, bytesRead));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function resultTextPreview(resultText, resultSize) {
+  const text = String(resultText || "");
+  if (Buffer.byteLength(text, "utf8") <= RESULT_PREVIEW_BYTES * 2) {
+    return {
+      resultHeadPreview: text,
+      resultTailPreview: text,
+    };
+  }
+  return {
+    resultHeadPreview: textPreview(text.slice(0, RESULT_PREVIEW_BYTES), RESULT_PREVIEW_BYTES),
+    resultTailPreview: textPreview(text.slice(Math.max(0, text.length - RESULT_PREVIEW_BYTES)), RESULT_PREVIEW_BYTES),
+    resultTruncated: true,
+    resultSize,
+  };
+}
+
+function resultFileDiagnostics(resultPath, resultText = null, stat = null) {
+  const size = stat?.size ?? (resultText == null ? null : Buffer.byteLength(String(resultText), "utf8"));
+  const base = { resultPath, resultSize: size };
+  if (!resultPath || size == null) return base;
+  if (resultText != null) {
+    return { ...base, ...resultTextPreview(resultText, size) };
+  }
+  try {
+    const headLength = Math.min(RESULT_PREVIEW_BYTES, size);
+    const tailLength = Math.min(RESULT_PREVIEW_BYTES, size);
+    const tailStart = Math.max(0, size - tailLength);
+    return {
+      ...base,
+      resultHeadPreview: readFileSegment(resultPath, 0, headLength),
+      resultTailPreview: readFileSegment(resultPath, tailStart, tailLength),
+      resultTruncated: size > RESULT_PREVIEW_BYTES * 2,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      resultPreviewReadCode: err?.code || null,
+      resultPreviewReadError: err?.message || String(err),
+    };
+  }
+}
+
+function helperDiagnostics(providerId, result, resultInfo = {}) {
+  const resultDiagnostics = typeof resultInfo === "string"
+    ? resultFileDiagnostics(null, resultInfo)
+    : resultInfo;
   return {
     providerId,
     stdoutPreview: textPreview(result?.stdout),
     stderrPreview: textPreview(result?.stderr),
-    resultPreview: textPreview(resultText),
+    ...resultDiagnostics,
   };
+}
+
+function readHelperResultFile(resultPath, providerId, result, maxResultBytes) {
+  let stat;
+  try {
+    stat = fs.statSync(resultPath);
+  } catch (err) {
+    throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper did not write result JSON.", {
+      ...helperDiagnostics(providerId, result, resultFileDiagnostics(resultPath)),
+      readCode: err?.code || null,
+    });
+  }
+
+  if (stat.size > maxResultBytes) {
+    throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper result JSON exceeded the payload limit.", {
+      ...helperDiagnostics(providerId, result, resultFileDiagnostics(resultPath, null, stat)),
+      maxResultBytes,
+    });
+  }
+
+  try {
+    return fs.readFileSync(resultPath, "utf8");
+  } catch (err) {
+    throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper result JSON could not be read.", {
+      ...helperDiagnostics(providerId, result, resultFileDiagnostics(resultPath, null, stat)),
+      readCode: err?.code || null,
+    });
+  }
 }
 
 function ensureHelperFile(helperDir, helperScript) {
@@ -248,6 +340,7 @@ export function createWindowsUiaProvider({
   helperScript = WINDOWS_UIA_HELPER_SCRIPT,
   helperDir = defaultHelperDir(),
   timeoutMs = 30000,
+  maxResultBytes = DEFAULT_MAX_RESULT_BYTES,
 } = {}) {
   let helperPath = null;
 
@@ -297,21 +390,17 @@ export function createWindowsUiaProvider({
         );
       }
 
-      let resultText = "";
-      try {
-        resultText = fs.readFileSync(resultPath, "utf8");
-      } catch (err) {
-        throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper did not write result JSON.", {
-          ...helperDiagnostics(providerId, result),
-          readCode: err?.code || null,
-        });
-      }
+      const resultText = readHelperResultFile(resultPath, providerId, result, maxResultBytes);
 
       let parsed;
       try {
         parsed = JSON.parse(String(resultText || "").trim());
       } catch {
-        throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED, "Windows UIA helper returned invalid JSON.", helperDiagnostics(providerId, result, resultText));
+        throw computerUseError(
+          COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+          "Windows UIA helper returned invalid JSON.",
+          helperDiagnostics(providerId, result, resultFileDiagnostics(resultPath, resultText)),
+        );
       }
 
       if (!parsed?.ok) {

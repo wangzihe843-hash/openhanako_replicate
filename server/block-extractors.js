@@ -319,11 +319,33 @@ export function resolveMediaGenerationBlocks(blocks, results = new Map(), standa
   const consumedTaskIds = new Set();
   const seenFiles = new Set();
   const resultMap = results && typeof results.get === "function" ? results : new Map();
+  const mediaInterludesByTask = new Map();
+  const emittedInterludeIds = new Set();
 
   for (const block of blocks || []) {
+    if (block?.type !== "interlude" || !block.taskId || !resultMap.has(block.taskId)) continue;
+    if (!mediaInterludesByTask.has(block.taskId)) mediaInterludesByTask.set(block.taskId, []);
+    mediaInterludesByTask.get(block.taskId).push(block);
+  }
+
+  const pushInterludesForTask = (taskId) => {
+    const interludes = mediaInterludesByTask.get(taskId) || [];
+    for (const interlude of interludes) {
+      const key = interlude.id || `${interlude.taskId}:${interlude.status || ""}:${interlude.text || ""}`;
+      if (emittedInterludeIds.has(key)) continue;
+      emittedInterludeIds.add(key);
+      resolved.push(interlude);
+    }
+  };
+
+  for (const block of blocks || []) {
+    if (block?.type === "interlude" && block.taskId && resultMap.has(block.taskId)) {
+      continue;
+    }
     if (block?.type === "media_generation" && block.taskId && resultMap.has(block.taskId)) {
       const result = resultMap.get(block.taskId);
       consumedTaskIds.add(block.taskId);
+      pushInterludesForTask(block.taskId);
       for (const replacement of mediaGenerationReplacementBlocks(block, result)) {
         pushUniqueBlock(resolved, seenFiles, replacement);
       }
@@ -341,9 +363,14 @@ export function resolveMediaGenerationBlocks(blocks, results = new Map(), standa
       status: "pending",
       ...(result.afterIndex !== undefined ? { afterIndex: result.afterIndex } : {}),
     };
+    pushInterludesForTask(result.taskId);
     for (const replacement of mediaGenerationReplacementBlocks(syntheticBlock, result)) {
       pushUniqueBlock(resolved, seenFiles, replacement);
     }
+  }
+
+  for (const taskId of mediaInterludesByTask.keys()) {
+    pushInterludesForTask(taskId);
   }
 
   return resolved;

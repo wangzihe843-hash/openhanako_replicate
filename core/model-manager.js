@@ -236,7 +236,7 @@ export class ModelManager {
     return model;
   }
 
-  /** auto -> medium，其余原样 */
+  /** legacy auto -> medium，其余原样 */
   resolveThinkingLevel(level) {
     return level === "auto" ? "medium" : level;
   }

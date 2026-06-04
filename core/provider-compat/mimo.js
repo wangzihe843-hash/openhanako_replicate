@@ -20,12 +20,18 @@
  * 接口契约：见 ./README.md
  */
 
-import { getReasoningProfile, isOfficialMimoEndpoint } from "../../shared/model-capabilities.js";
+import {
+  MODEL_AUDIO_TRANSPORTS,
+  getReasoningProfile,
+  isOfficialMimoEndpoint,
+  resolveModelAudioInputTransport,
+} from "../../shared/model-capabilities.js";
 import {
   ensureAssistantContentForToolCalls,
   ensureReasoningContentForToolCalls,
   stripReasoningContent,
 } from "./reasoning-content-replay.js";
+import { normalizeOpenAIInputAudioPayload } from "./input-audio.js";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -90,9 +96,12 @@ export function apply(payload, model, options = {}) {
   const mode = options.mode || "chat";
   const reasoningLevel = options.reasoningLevel;
 
-  let next = payload;
+  const base = resolveModelAudioInputTransport(model) === MODEL_AUDIO_TRANSPORTS.MIMO_INPUT_AUDIO
+    ? normalizeOpenAIInputAudioPayload(payload)
+    : payload;
+  let next = base;
   const editable = () => {
-    if (next === payload) next = { ...payload };
+    if (next === base) next = { ...base };
     return next;
   };
 

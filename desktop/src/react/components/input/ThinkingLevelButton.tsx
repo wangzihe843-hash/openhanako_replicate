@@ -3,10 +3,10 @@ import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { invalidateConfigCache } from '../../hooks/use-config';
 import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
-import type { ThinkingLevel } from '../../stores/model-slice';
+import { normalizeThinkingLevel, type ThinkingLevel } from '../../stores/model-slice';
 import styles from './InputArea.module.css';
 
-const ALL_THINKING_LEVELS: ThinkingLevel[] = ['off', 'auto', 'high', 'xhigh'];
+const ALL_THINKING_LEVELS: ThinkingLevel[] = ['off', 'medium', 'high', 'xhigh'];
 
 export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
   level: ThinkingLevel;
@@ -18,6 +18,7 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
   const ref = useRef<HTMLDivElement>(null);
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const pendingNewSession = useStore(s => s.pendingNewSession);
+  const activeLevel = normalizeThinkingLevel(level);
 
   const availableLevels = useMemo(() => {
     return ALL_THINKING_LEVELS.filter(lv => lv !== 'xhigh' || modelXhigh);
@@ -47,7 +48,7 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || 'failed to save thinking level');
       }
-      onChange((data?.thinkingLevel || next) as ThinkingLevel);
+      onChange(normalizeThinkingLevel((data?.thinkingLevel || next) as ThinkingLevel));
       if (!useSessionThinking) invalidateConfigCache();
     } catch (err) {
       console.error('[thinking-level] save failed:', err);
@@ -59,7 +60,7 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
     return v !== key ? v : fallback;
   };
 
-  const isOff = level === 'off';
+  const isOff = activeLevel === 'off';
 
   return (
     <div className={`${styles['thinking-selector']}${open ? ` ${styles.open}` : ''}`} ref={ref}>
@@ -78,7 +79,7 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
           {availableLevels.map(lv => (
             <button
               key={lv}
-              className={`${styles['thinking-option']}${lv === level ? ` ${styles.active}` : ''}`}
+              className={`${styles['thinking-option']}${lv === activeLevel ? ` ${styles.active}` : ''}`}
               onClick={() => selectLevel(lv)}
             >
               <span>{tLevel(`input.thinkingLevel.${lv}`, lv)}</span>

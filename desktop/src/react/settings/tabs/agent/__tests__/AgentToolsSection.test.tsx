@@ -141,7 +141,7 @@ describe("AgentToolsSection", () => {
     });
   });
 
-  it("renders the section note and tool summaries", () => {
+  it("renders the section description and tool summaries", () => {
     const { container } = render(
       <AgentToolsSection availableTools={["browser"]} disabled={[]} />
     );

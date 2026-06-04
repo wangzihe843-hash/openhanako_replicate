@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../stores';
-import { Tooltip } from '../../ui';
 import { computeFloatingInputPosition } from '../floating-input/position';
 import styles from './SelectionQuoteActionSurface.module.css';
 
-const TOOLBAR_SIZE = 26;
+const DEFAULT_TOOLBAR_SIZE = { width: 92, height: 32 };
 const TOOLBAR_CROSS_AXIS_OFFSET = 20;
 
 function getViewportSize() {
@@ -20,8 +19,10 @@ export function SelectionQuoteActionSurface() {
   const addQuotedSelection = useStore(s => s.addQuotedSelection);
   const clearQuoteCandidate = useStore(s => s.clearQuoteCandidate);
   const requestInputFocus = useStore(s => s.requestInputFocus);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState(() => getViewportSize());
   const [scrollTick, setScrollTick] = useState(0);
+  const [toolbarSize, setToolbarSize] = useState(DEFAULT_TOOLBAR_SIZE);
 
   useEffect(() => {
     const handleResize = () => setViewport(getViewportSize());
@@ -45,6 +46,30 @@ export function SelectionQuoteActionSurface() {
     };
   }, []);
 
+  useLayoutEffect(() => {
+    if (!quoteCandidate) return undefined;
+    const surface = surfaceRef.current;
+    if (!surface) return undefined;
+
+    const measure = () => {
+      const rect = surface.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      setToolbarSize((current) => {
+        if (Math.round(current.width) === Math.round(rect.width)
+          && Math.round(current.height) === Math.round(rect.height)) {
+          return current;
+        }
+        return { width: rect.width, height: rect.height };
+      });
+    };
+
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [quoteCandidate]);
+
   const position = useMemo(() => {
     const liveAnchorRect = getLiveSelectionAnchorRect(quoteCandidate?.text, viewport);
     if (liveAnchorRect === null) return null;
@@ -53,13 +78,13 @@ export function SelectionQuoteActionSurface() {
     return computeFloatingInputPosition(
       anchorRect,
       viewport,
-      { width: TOOLBAR_SIZE, height: TOOLBAR_SIZE },
+      toolbarSize,
       8,
       16,
       'top',
       TOOLBAR_CROSS_AXIS_OFFSET,
     );
-  }, [quoteCandidate?.anchorRect, quoteCandidate?.text, viewport, scrollTick]);
+  }, [quoteCandidate?.anchorRect, quoteCandidate?.text, toolbarSize, viewport, scrollTick]);
 
   const handleAddQuote = useCallback(() => {
     if (!quoteCandidate) return;
@@ -71,7 +96,6 @@ export function SelectionQuoteActionSurface() {
   if (!quoteCandidate || !position) return null;
 
   const t = window.t ?? ((key: string) => key);
-  const tooltipId = 'selection-quote-action-tooltip';
   const actions = [{
     id: 'quote',
     label: t('selection.quoteToChat'),
@@ -81,32 +105,25 @@ export function SelectionQuoteActionSurface() {
 
   return (
     <div
+      ref={surfaceRef}
       className={styles.surface}
       data-origin={position.origin}
+      data-selection-quote-action="true"
       data-selection-ignore="true"
       style={{ left: `${position.left}px`, top: `${position.top}px` }}
     >
       {actions.map(action => (
-        <Tooltip
+        <button
           key={action.id}
-          id={tooltipId}
-          content={action.label}
-          placement={position.origin === 'top-center' ? 'bottom' : 'top'}
+          type="button"
+          className={styles.button}
+          aria-label={action.label}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={action.onClick}
         >
-          {({ ref, ...tooltipProps }) => (
-            <button
-              ref={(node) => ref(node)}
-              type="button"
-              className={styles.button}
-              aria-label={action.label}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={action.onClick}
-              {...tooltipProps}
-            >
-              {action.icon}
-            </button>
-          )}
-        </Tooltip>
+          {action.icon}
+          <span className={styles.label}>{action.label}</span>
+        </button>
       ))}
     </div>
   );

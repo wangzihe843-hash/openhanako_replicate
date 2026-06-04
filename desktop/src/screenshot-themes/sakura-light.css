@@ -27,7 +27,7 @@ html {
 
 /* body 全宽，不做限宽，让 ::after 能贴到画面边缘 */
 body {
-  font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", "Lora", "Georgia", serif;
+  font-family: var(--screenshot-font-family, "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", "Lora", "Georgia", serif);
   font-size: 1rem;
   line-height: 1.65;
   color: var(--sakura-text);

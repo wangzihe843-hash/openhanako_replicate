@@ -66,6 +66,14 @@ function requestChatInputFocus(path: string | null): void {
   if (shouldRestoreInputFocus(path)) useStore.getState().requestInputFocus?.();
 }
 
+function findSessionProjection(path: string): any | null {
+  return useStore.getState().sessions.find((session: any) => session.path === path) || null;
+}
+
+function isDeletedAgentSession(path: string): boolean {
+  return findSessionProjection(path)?.agentDeleted === true;
+}
+
 async function resetDeskForSessionCwd(cwd?: string | null): Promise<void> {
   // Session 切换后的 cwd 以服务端显式返回值为准；右侧 desk 视图归 workspace/CWD 所有。
   // 切到同一 workspace 时保留当前子目录；切到不同 workspace 时恢复该 workspace 的上次子目录。
@@ -88,6 +96,7 @@ function clearSessionRuntimeCaches(path: string): void {
     const { [path]: _scroll, ...scrollPositions } = s.scrollPositions || {};
     const { [path]: _todos, ...todosBySession } = s.todosBySession || {};
     const { [path]: _todosLive, ...todosLiveVersionBySession } = s.todosLiveVersionBySession || {};
+    const { [path]: _authorizedFolders, ...sessionAuthorizedFoldersByPath } = s.sessionAuthorizedFoldersByPath || {};
     return {
       attachedFilesBySession,
       sessionRegistryFilesByPath,
@@ -97,8 +106,10 @@ function clearSessionRuntimeCaches(path: string): void {
       computerOverlayBySession,
       scrollPositions,
       streamingSessions: (s.streamingSessions || []).filter((sessionPath: string) => sessionPath !== path),
+      unreadOutputSessionPaths: (s.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
       todosBySession,
       todosLiveVersionBySession,
+      sessionAuthorizedFoldersByPath,
       inlineErrors: s.inlineErrors ? { ...s.inlineErrors, [path]: null } : s.inlineErrors,
     };
   });
@@ -252,11 +263,19 @@ export async function switchSession(path: string): Promise<void> {
   _switchAbortController = null;
 
   if (path === s.currentSessionPath && !s.pendingNewSession) {
-    useStore.setState({ pendingSessionSwitchPath: null });
+    useStore.setState(state => ({
+      pendingSessionSwitchPath: null,
+      unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
+    }));
     return;
   }
 
   useStore.setState({ pendingSessionSwitchPath: path });
+
+  if (isDeletedAgentSession(path)) {
+    await switchDeletedAgentSession(path, myVersion);
+    return;
+  }
 
   // 关闭浮动面板
   const activePanel = useStore.getState().activePanel;
@@ -322,10 +341,15 @@ export async function switchSession(path: string): Promise<void> {
       pendingProjectId: null,
       selectedFolder: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
+      sessionAuthorizedFoldersByPath: {
+        ...state.sessionAuthorizedFoldersByPath,
+        [path]: Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+      },
       selectedAgentId: null,
       welcomeVisible: false,
       memoryEnabled: data.memoryEnabled !== false,
       streamingSessions,
+      unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
       attachedFiles: state.attachedFilesBySession[path] || [],
       deskContextAttached: false,
       docContextAttached: false,
@@ -377,6 +401,9 @@ export async function switchSession(path: string): Promise<void> {
         video: data.currentModelVideo ?? undefined,
         videoTransport: data.currentModelVideoTransport ?? undefined,
         videoTransportSupported: data.currentModelVideoTransportSupported ?? undefined,
+        audio: data.currentModelAudio ?? undefined,
+        audioTransport: data.currentModelAudioTransport ?? undefined,
+        audioTransportSupported: data.currentModelAudioTransportSupported ?? undefined,
         reasoning: data.currentModelReasoning ?? undefined,
         xhigh: data.currentModelXhigh ?? undefined,
         contextWindow: data.currentModelContextWindow ?? undefined,
@@ -414,6 +441,51 @@ export async function switchSession(path: string): Promise<void> {
     if (_switchAbortController === abortController) {
       _switchAbortController = null;
     }
+  }
+}
+
+async function switchDeletedAgentSession(path: string, version: number): Promise<void> {
+  const state = useStore.getState();
+  const projection = findSessionProjection(path);
+  const currentPath = state.currentSessionPath;
+  const currentAttachments = state.attachedFiles;
+  if (currentPath) {
+    useStore.setState(prev => ({
+      attachedFilesBySession: { ...prev.attachedFilesBySession, [currentPath]: [...currentAttachments] },
+    }));
+  }
+
+  useStore.setState({
+    currentSessionPath: path,
+    pendingSessionSwitchPath: null,
+    pendingNewSession: false,
+    pendingProjectId: null,
+    selectedFolder: null,
+    workspaceFolders: [],
+    sessionAuthorizedFoldersByPath: {
+      ...state.sessionAuthorizedFoldersByPath,
+      [path]: [],
+    },
+    selectedAgentId: null,
+    welcomeVisible: false,
+    streamingSessions: state.streamingSessions.filter((sessionPath: string) => sessionPath !== path),
+    unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
+    attachedFiles: state.attachedFilesBySession[path] || [],
+    deskContextAttached: false,
+    docContextAttached: false,
+  });
+
+  await resetDeskForSessionCwd(projection?.cwd || null);
+  if (version !== _switchVersion) return;
+
+  useStore.getState().clearQuotedSelection();
+  window.dispatchEvent(new CustomEvent('hana-plan-mode', {
+    detail: { enabled: true, mode: 'read_only' },
+  }));
+
+  const hasData = !!useStore.getState().chatSessions?.[path];
+  if (!hasData) {
+    await loadMessages(path);
   }
 }
 
@@ -549,6 +621,10 @@ export async function ensureSession(): Promise<boolean> {
 
     if (data.path) {
       patch.currentSessionPath = data.path;
+      patch.sessionAuthorizedFoldersByPath = {
+        ...useStore.getState().sessionAuthorizedFoldersByPath,
+        [data.path]: Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+      };
       // 初始化空 session，ChatArea 自动渲染
       useStore.getState().initSession(data.path, [], false);
     }
@@ -585,6 +661,31 @@ export async function ensureSession(): Promise<boolean> {
   } catch (err) {
     console.error('[session] create failed:', err);
     showSessionCreationError(errorMessage(err));
+    return false;
+  }
+}
+
+export async function continueDeletedAgentSession(path: string): Promise<boolean> {
+  try {
+    const res = await hanaFetch('/api/sessions/continue-deleted-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error || !data.path) {
+      const message = data.error || res.statusText || 'continue failed';
+      console.error('[session] continue deleted-agent session failed:', message);
+      useStore.getState().addToast(`${tr('session.deletedAgent.continueFailed')}: ${message}`, 'error', 6000);
+      return false;
+    }
+
+    await loadSessions();
+    await switchSession(data.path);
+    return true;
+  } catch (err) {
+    console.error('[session] continue deleted-agent session failed:', err);
+    useStore.getState().addToast(`${tr('session.deletedAgent.continueFailed')}: ${errorMessage(err)}`, 'error', 6000);
     return false;
   }
 }

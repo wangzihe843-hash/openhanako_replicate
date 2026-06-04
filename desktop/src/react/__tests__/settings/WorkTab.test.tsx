@@ -55,6 +55,10 @@ describe('WorkTab workspace persistence', () => {
             heartbeat_enabled: true,
             heartbeat_interval: 17,
           },
+          workspace_context: {
+            inject_agents_md: false,
+            inject_claude_md: true,
+          },
         }));
       }
       if (url === '/api/agents/agent-a/config' && options?.method === 'PUT') {
@@ -124,5 +128,37 @@ describe('WorkTab workspace persistence', () => {
     render(<WorkTab />);
 
     expect(await screen.findByDisplayValue('31')).toBeTruthy();
+  });
+
+  it('saves the selected agent AGENTS.md injection toggle', async () => {
+    const { WorkTab } = await import('../../settings/tabs/WorkTab');
+
+    render(<WorkTab />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'settings.work.injectAgentsMd' }));
+
+    await waitFor(() => {
+      expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/agent-a/config', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ workspace_context: { inject_agents_md: true } }),
+      }));
+    });
+    expect(window.platform.settingsChanged).not.toHaveBeenCalled();
+  });
+
+  it('saves the selected agent CLAUDE.md injection toggle', async () => {
+    const { WorkTab } = await import('../../settings/tabs/WorkTab');
+
+    render(<WorkTab />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'settings.work.injectClaudeMd' }));
+
+    await waitFor(() => {
+      expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/agent-a/config', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ workspace_context: { inject_claude_md: false } }),
+      }));
+    });
+    expect(window.platform.settingsChanged).not.toHaveBeenCalled();
   });
 });

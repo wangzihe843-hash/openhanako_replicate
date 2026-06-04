@@ -79,7 +79,13 @@ describe("sessions route", () => {
       cwd: "/tmp/workspace",
       currentAgentId: "hana",
       agentName: "Hana",
-      currentModel: { id: "gpt-test", provider: "openai" },
+      currentModel: {
+        id: "mimo-v2.5",
+        provider: "mimo",
+        api: "openai-completions",
+        baseUrl: "https://api.xiaomimimo.com/v1",
+        input: ["text"],
+      },
       isSessionStreaming: vi.fn(() => false),
       switchSession: vi.fn(async (sessionPath) => {
         engine.currentSessionPath = sessionPath;
@@ -108,6 +114,9 @@ describe("sessions route", () => {
     expect(browserManagerMock.resumeForSession).toHaveBeenCalledWith("/tmp/agents/a/sessions/new.jsonl");
     expect(data.browserRunning).toBe(true); // resumeForSession sets it running
     expect(data.browserUrl).toBe("https://after.example.com"); // per-session URL
+    expect(data.currentModelAudio).toBe(true);
+    expect(data.currentModelAudioTransport).toBe("mimo-input-audio");
+    expect(data.currentModelAudioTransportSupported).toBe(true);
   });
 
   it("passes workspaceFolders when creating a new session and returns the normalized scope", async () => {
@@ -157,6 +166,57 @@ describe("sessions route", () => {
       }),
       "/tmp/agents/hana/sessions/new.jsonl",
     );
+  });
+
+  it("adds a session authorized folder through an explicit session route", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "new.jsonl");
+    const cwd = path.join(tmpDir, "workspace");
+    const authorizedFolder = path.join(tmpDir, "assets");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(authorizedFolder, { recursive: true });
+    fs.writeFileSync(sessionPath, "{}\n");
+    const engine = {
+      agentsDir: path.join(tmpDir, "agents"),
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getSessionFolderScope: vi.fn(() => ({
+        sessionPath,
+        cwd,
+        workspaceFolders: [],
+        authorizedFolders: [authorizedFolder],
+        sandboxFolders: [cwd, authorizedFolder],
+      })),
+      addSessionAuthorizedFolder: vi.fn(async () => ({
+        sessionPath,
+        cwd,
+        workspaceFolders: [],
+        authorizedFolders: [authorizedFolder],
+        sandboxFolders: [cwd, authorizedFolder],
+      })),
+      isAgentDeleted: vi.fn(() => false),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/authorized-folders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: sessionPath, action: "add", folder: authorizedFolder }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.addSessionAuthorizedFolder).toHaveBeenCalledWith(sessionPath, authorizedFolder);
+    expect(data).toMatchObject({
+      ok: true,
+      sessionPath,
+      cwd,
+      workspaceFolders: [],
+      authorizedFolders: [authorizedFolder],
+      sandboxFolders: [cwd, authorizedFolder],
+    });
   });
 
   it("assigns a new session to the requested project before broadcasting it", async () => {
@@ -427,6 +487,132 @@ describe("sessions route", () => {
       permissionMode: "read_only",
     });
     expect(getSessionPermissionMode).toHaveBeenCalledWith(session.path);
+  });
+
+  it("marks deleted-agent sessions read-only in the session list response", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const session = {
+      path: "/tmp/agents/deleted/sessions/a.jsonl",
+      title: "Old agent chat",
+      firstMessage: "hello",
+      modified: new Date("2026-06-03T07:00:00.000Z"),
+      messageCount: 2,
+      cwd: "/tmp/work",
+      agentId: "deleted",
+      agentName: "Deleted Agent",
+      agentDeleted: true,
+      readOnlyReason: "agent_deleted",
+      continuationAvailable: true,
+    };
+
+    app.route("/api", createSessionsRoute({
+      listSessions: vi.fn(async () => [session]),
+      rcState: null,
+    }));
+
+    const res = await app.request("/api/sessions");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data[0]).toMatchObject({
+      path: session.path,
+      agentDeleted: true,
+      readOnlyReason: "agent_deleted",
+      continuationAvailable: true,
+    });
+  });
+
+  it("creates a primary-agent continuation from a deleted-agent session", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const hub = { eventBus: { emit: vi.fn() } };
+    const agentsDir = path.join(tmpDir, "agents");
+    const oldPath = path.join(agentsDir, "deleted", "sessions", "old.jsonl");
+    const newPath = path.join(agentsDir, "hana", "sessions", "new.jsonl");
+    fs.mkdirSync(path.dirname(oldPath), { recursive: true });
+    fs.writeFileSync(oldPath, JSON.stringify({ role: "user", content: "old hello" }) + "\n");
+    const engine = {
+      agentsDir,
+      agentIdFromSessionPath: vi.fn(() => "deleted"),
+      isAgentDeleted: vi.fn(() => true),
+      continueDeletedAgentSession: vi.fn(async () => ({
+        sessionPath: newPath,
+        agentId: "hana",
+        agentName: "Hana",
+        cwd: "/tmp/work",
+        workspaceFolders: [],
+        compacted: true,
+      })),
+      getSessionWorkspaceFolders: vi.fn(() => []),
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      planMode: false,
+      permissionMode: "ask",
+      accessMode: "ask",
+      getSessionThinkingLevel: vi.fn(() => "medium"),
+      memoryModelUnavailableReason: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine, hub));
+
+    const res = await app.request("/api/sessions/continue-deleted-agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: oldPath }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.continueDeletedAgentSession).toHaveBeenCalledWith(oldPath);
+    expect(data).toMatchObject({ ok: true, path: newPath, agentId: "hana", compacted: true });
+    expect(hub.eventBus.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session_created",
+        session: expect.objectContaining({ path: newPath, agentId: "hana" }),
+      }),
+      newPath,
+    );
+  });
+
+  it("rejects write operations against deleted-agent sessions", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const app = new Hono();
+    const deletedPath = "/tmp/agents/deleted/sessions/old.jsonl";
+    const engine = {
+      agentsDir: "/tmp/agents",
+      agentIdFromSessionPath: vi.fn(() => "deleted"),
+      isAgentDeleted: vi.fn(() => true),
+      setSessionPinned: vi.fn(),
+      switchSession: vi.fn(),
+      saveSessionTitle: vi.fn(),
+      rcState: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const pin = await app.request("/api/sessions/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: deletedPath, pinned: true }),
+    });
+    const rename = await app.request("/api/sessions/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: deletedPath, title: "Nope" }),
+    });
+    const switchRes = await app.request("/api/sessions/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: deletedPath }),
+    });
+
+    expect(pin.status).toBe(409);
+    expect(rename.status).toBe(409);
+    expect(switchRes.status).toBe(409);
+    expect(await pin.json()).toMatchObject({ error: "agent_deleted" });
+    expect(engine.setSessionPinned).not.toHaveBeenCalled();
+    expect(engine.saveSessionTitle).not.toHaveBeenCalled();
+    expect(engine.switchSession).not.toHaveBeenCalled();
   });
 
   it("rejects session projection when the authenticated Studio differs from the server Studio", async () => {
@@ -795,6 +981,72 @@ describe("sessions route", () => {
       agentName: "Hanako",
       streamKey: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
     });
+  });
+
+  it("restores deferred subagent result as an interlude block", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.js");
+    const msgUtils = await import("../core/message-utils.js");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/subagent-result.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-1",
+          task: "评估大纲",
+          taskTitle: "大纲评估",
+          streamStatus: "done",
+        },
+      },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
+        display: false,
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "子助手完整回复",
+          meta: {
+            type: "subagent",
+            executorAgentNameSnapshot: "明",
+            label: "大纲评估",
+            summary: "请阅读整份长任务说明并输出完整评估",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    const interlude = data.blocks.find((b) => b.type === "interlude");
+    expect(interlude).toMatchObject({
+      afterIndex: 0,
+      taskId: "subagent-1",
+      sourceKind: "subagent",
+      sourceLabel: "明 · 大纲评估",
+      text: "小花收到了来自 明 · 大纲评估 的回复",
+      detailMarkdown: "子助手完整回复",
+    });
+    expect(interlude.text).not.toContain("长任务说明");
   });
 
   it("reload 时从 runStore 回填 workflow inline 块终态（running→done + 补 finishedAt）", async () => {
@@ -1297,19 +1549,30 @@ describe("sessions route", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.blocks).toEqual([{
-      type: "file",
-      afterIndex: 0,
-      replacesTaskId: "task-img",
-      fileId: "sf_img",
-      filePath: "/cache/generated.png",
-      label: "generated.png",
-      ext: "png",
-      mime: "image/png",
-      kind: "image",
-      storageKind: "plugin_data",
-      status: "available",
-    }]);
+    expect(data.blocks).toEqual([
+      expect.objectContaining({
+        type: "interlude",
+        afterIndex: 0,
+        taskId: "task-img",
+        sourceKind: "tool",
+        sourceLabel: "图片生成",
+        text: "Hana拿到了来自 图片生成 工具的结果",
+        detailMarkdown: expect.stringContaining("generated.png"),
+      }),
+      {
+        type: "file",
+        afterIndex: 0,
+        replacesTaskId: "task-img",
+        fileId: "sf_img",
+        filePath: "/cache/generated.png",
+        label: "generated.png",
+        ext: "png",
+        mime: "image/png",
+        kind: "image",
+        storageKind: "plugin_data",
+        status: "available",
+      },
+    ]);
   });
 
   it("restores plugin_card blocks from extension custom messages", async () => {
@@ -1418,19 +1681,30 @@ describe("sessions route", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.blocks).toEqual([{
-      type: "file",
-      afterIndex: 0,
-      replacesTaskId: "task-img",
-      fileId: "sf_img",
-      filePath: "/cache/generated.png",
-      label: "generated.png",
-      ext: "png",
-      mime: "image/png",
-      kind: "image",
-      storageKind: "plugin_data",
-      status: "available",
-    }]);
+    expect(data.blocks).toEqual([
+      expect.objectContaining({
+        type: "interlude",
+        afterIndex: 0,
+        taskId: "task-img",
+        sourceKind: "tool",
+        sourceLabel: "图片生成",
+        text: "Hana拿到了来自 图片生成 工具的结果",
+        detailMarkdown: "生成文件：\n- generated.png (image)",
+      }),
+      {
+        type: "file",
+        afterIndex: 0,
+        replacesTaskId: "task-img",
+        fileId: "sf_img",
+        filePath: "/cache/generated.png",
+        label: "generated.png",
+        ext: "png",
+        mime: "image/png",
+        kind: "image",
+        storageKind: "plugin_data",
+        status: "available",
+      },
+    ]);
   });
 
   it("prefers explicit executor metadata over owner-path inference", async () => {

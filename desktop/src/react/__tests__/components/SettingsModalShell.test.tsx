@@ -24,8 +24,8 @@ vi.mock('../../settings/SettingsContent', () => ({
           返回
         </button>
       )}
-      <button type="button" aria-label="切到使用电脑" onClick={() => onActiveTabChange?.('computer')}>
-        切到使用电脑
+      <button type="button" aria-label="切到实验" onClick={() => onActiveTabChange?.('experiments')}>
+        切到实验
       </button>
       <div data-testid="settings-content" data-variant={variant}>
         settings content
@@ -192,11 +192,11 @@ describe('SettingsModalShell', () => {
     } as never);
 
     render(<SettingsModalShell />);
-    fireEvent.click(screen.getByRole('button', { name: '切到使用电脑' }));
+    fireEvent.click(screen.getByRole('button', { name: '切到实验' }));
 
     expect(useStore.getState().settingsModal).toEqual({
       open: true,
-      activeTab: 'computer',
+      activeTab: 'experiments',
     });
   });
 });

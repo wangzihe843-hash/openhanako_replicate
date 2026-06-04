@@ -29,6 +29,12 @@
     position: relative;
 }
 
+.messageGroupInterludeOnly {
+    align-items: stretch;
+    padding-left: 0;
+    margin-left: 0;
+}
+
 /* 头像行 */
 .avatarRow {
     display: flex;
@@ -130,13 +136,13 @@
 }
 
 .messageFooterActionsRight {
+    align-self: flex-end;
     justify-content: flex-end;
-    padding-right: 5px;
 }
 
 .messageFooterActionsLeft {
+    align-self: flex-start;
     justify-content: flex-start;
-    padding-left: 5px;
 }
 
 .messageGroupUser:hover .messageFooterActions,
@@ -145,6 +151,10 @@
 .messageFooterActionsVisible {
     opacity: 0.72;
     pointer-events: auto;
+}
+
+.messageFooterActionsTimePersistent {
+    opacity: 0.72;
 }
 
 .messageFooterActions:hover {
@@ -188,6 +198,19 @@
     cursor: default;
 }
 
+.messageFooterActionsTimePersistent .messageFooterBtn {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.messageGroupUser:hover .messageFooterActionsTimePersistent .messageFooterBtn,
+.messageGroupAssistant:hover .messageFooterActionsTimePersistent .messageFooterBtn,
+.messageFooterActionsTimePersistent:focus-within .messageFooterBtn,
+.messageFooterActionsTimePersistent:hover .messageFooterBtn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
 .messageFooterBtnActive {
     color: var(--accent);
     background: transparent;
@@ -201,8 +224,47 @@
     margin-bottom: 0.3rem;
 }
 
+.messageGroupUser .userAttachments {
+    align-self: flex-end;
+    justify-content: flex-end;
+    max-width: 92%;
+}
+
 .userAttachments:last-child {
     margin-bottom: 0;
+}
+
+.voiceInputCard {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.42rem;
+    max-width: min(18rem, 100%);
+    padding: 0.72rem 0.72rem 0.52rem;
+    color: var(--text);
+    background: color-mix(in srgb, var(--bg-card) 88%, rgba(var(--accent-rgb), 0.08));
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+}
+
+.voiceInputTranscript {
+    max-width: 100%;
+    padding: 0 0.08rem;
+    color: var(--text);
+    font-size: 0.98rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.voiceInputCard .voiceInputAudioStrip {
+    height: 2rem;
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .attachCard {
@@ -259,15 +321,34 @@
     font-family: var(--font-serif);
 }
 
+.messageAssistantInterludeOnly {
+    width: 100%;
+    max-width: 100%;
+}
+
 /* ── Message action buttons (shared by user & assistant) ── */
 
 .msgActions {
+    --msg-actions-gap: 6px;
+    --msg-actions-hotspot-width: 78px;
     position: absolute;
     bottom: 4px;
     right: 4px;
     opacity: 0;
+    padding: 3px;
+    margin: -3px;
     transition: opacity var(--duration-fast);
     z-index: 2;
+}
+
+.msgActions::before {
+    content: "";
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    right: 100%;
+    width: calc(var(--msg-actions-hotspot-width) + var(--msg-actions-gap));
+    pointer-events: auto;
 }
 
 .msgActionsLeft {
@@ -275,21 +356,29 @@
     right: auto;
 }
 
+.msgActionsLeft::before {
+    right: auto;
+    left: 100%;
+}
+
 .msgActionsVisible { opacity: 1 !important; }
 
 .messageGroupAssistant:hover .msgActions,
-.messageGroupUser:hover .msgActions { opacity: 0.6; }
+.messageGroupUser:hover .msgActions { opacity: 1; }
 .msgActions:hover { opacity: 1 !important; }
 
 .msgActionsPopover {
     position: absolute;
     top: 50%;
-    right: 100%;
+    right: calc(100% + var(--msg-actions-gap));
     transform: translateY(-50%);
     display: flex;
     gap: 2px;
-    background: var(--hana-bg);
-    border: 1px solid var(--hana-border);
+    box-sizing: border-box;
+    width: max-content;
+    min-width: 0;
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
     border-radius: 6px;
     padding: 2px 3px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -305,7 +394,7 @@
 
 .msgActionsLeft .msgActionsPopover {
     right: auto;
-    left: 100%;
+    left: calc(100% + var(--msg-actions-gap));
 }
 
 .msgActionBtn {
@@ -439,6 +528,87 @@
     border-left: 2px solid var(--mood-accent);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     opacity: 0.7;
+}
+
+/* ── 幕间消息 ── */
+
+.interludeRow {
+    width: 100%;
+    margin: var(--space-lg) 0;
+    display: flex;
+    justify-content: center;
+    font-family: var(--font-sans);
+}
+
+.interludeTrigger {
+    width: min(100%, 680px);
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 2px 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    cursor: default;
+}
+
+.interludeTriggerInteractive {
+    transition: color var(--duration-instant) var(--ease-out);
+}
+
+.interludeTriggerInteractive:hover,
+.interludeTriggerInteractive:focus-visible {
+    color: var(--text);
+    outline: none;
+}
+
+.interludeLine {
+    flex: 0 1 44px;
+    min-width: 18px;
+    height: 1px;
+    background: color-mix(in srgb, var(--text-muted) 32%, transparent);
+}
+
+.interludeText {
+    min-width: 0;
+    max-width: min(72%, 520px);
+    overflow: hidden;
+    color: inherit;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.interludePopover {
+    position: fixed;
+    z-index: 2147482500;
+    box-sizing: border-box;
+    overflow: auto;
+    padding: 12px 14px;
+    color: var(--text);
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16), 0 4px 14px rgba(0, 0, 0, 0.08);
+    animation: hana-fade-up var(--duration-fast) var(--ease-out);
+}
+
+.interludePopoverMarkdown {
+    font-family: var(--font-serif);
+    font-size: 0.82rem;
+    line-height: 1.62;
+}
+
+.interludePopoverMarkdown :global(pre) {
+    max-height: 220px;
+}
+
+:global(.mobile-desktop-root) .interludeTrigger {
+    pointer-events: none;
 }
 
 /* ── Cron 确认卡片 ── */
@@ -892,11 +1062,12 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    min-width: 0;
     font-size: 0.78rem;
     color: var(--tool-text);
     padding: 0.2rem 0;
     line-height: 1.5;
-    max-width: 400px;
+    max-width: 100%;
 }
 
 .toolGroupSingle .toolIndicator {
@@ -905,7 +1076,11 @@
 }
 
 .toolDesc {
-    flex-shrink: 0;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .toolDetail {
@@ -931,12 +1106,18 @@
 }
 
 .toolTag {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 9rem;
     font-size: 0.68rem;
     color: var(--text-muted);
     background: var(--overlay-subtle);
     padding: 0.1rem 0.4rem;
     border-radius: 3px;
     font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .toolDots {
@@ -1025,68 +1206,7 @@
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
-/* ── 文件输出卡片 ── */
-
-.fileOutputCard {
-    display: flex;
-    align-items: center;
-    gap: var(--space-md);
-    min-width: 300px;
-    max-width: 420px;
-    margin: var(--space-sm) 0;
-    padding: 0.7rem 0.9rem;
-    background: var(--bg-card, var(--bg));
-    border: 1px solid var(--border, rgba(0,0,0,0.1));
-    border-radius: var(--radius-chat-card);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    transition: background var(--duration-fast), border-color var(--duration-fast);
-}
-
-.fileOutputPreviewable:hover {
-    border-color: var(--text-muted, rgba(0,0,0,0.2));
-}
-
-.fileOutputExpired {
-    border-style: dashed;
-    background: var(--overlay-subtle, rgba(0,0,0,0.03));
-    box-shadow: none;
-    opacity: 0.82;
-}
-
-.fileOutputIcon {
-    flex-shrink: 0;
-    width: 40px;
-    height: 40px;
-    color: var(--text-muted);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--overlay-subtle, rgba(0,0,0,0.03));
-    border-radius: var(--radius-chat-card);
-}
-
-.fileOutputInfo {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.fileOutputName {
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.fileOutputType {
-    font-size: 0.72rem;
-    color: var(--text-muted);
-}
+/* ── 文件输出卡片操作按钮 ── */
 
 .fileOutputActions {
     flex-shrink: 0;
@@ -1406,27 +1526,6 @@
     opacity: 0.9;
 }
 
-/* ── Skill 卡片（复用 legacy artifact 样式） ── */
-
-.skillCard {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    margin: var(--space-xs) 0;
-    padding: 0.55rem 0.85rem;
-    background: var(--tool-bg);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-chat-card);
-    max-width: 100%;
-    cursor: default;
-    transition: background var(--duration-fast), box-shadow var(--duration-fast);
-}
-
-.skillCard:hover {
-    background: var(--accent-light);
-    box-shadow: 0 2px 8px var(--shadow);
-}
-
 /* ── Session Panel ── */
 
 .sessionShell {
@@ -1726,48 +1825,10 @@
     display: block;
 }
 
-/* ── Subagent 实时卡片（对齐 cronConfirmCard 风格） ── */
+/* ── Subagent 资源卡片 ── */
 
-.subagentCard {
+.subagentResourceCard {
     --subagent-preview-height: 260px;
-    margin: var(--space-sm) 0;
-    background: var(--bg-card, #fff);
-    border-radius: var(--radius-chat-card);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
-    width: 420px;
-    max-width: 90%;
-    font-size: 0.82rem;
-    overflow: hidden;
-}
-
-.subagentCardHeader {
-    display: flex;
-    align-items: stretch;
-    transition: background var(--duration-fast) ease;
-}
-
-.subagentCardHeader:hover {
-    background: rgba(0, 0, 0, 0.02);
-}
-
-.subagentCardButton {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    cursor: default;
-    min-width: 0;
-}
-
-.subagentCardButton:focus-visible {
-    outline: 1px solid rgba(0, 0, 0, 0.18);
-    outline-offset: -1px;
 }
 
 .subagent-running .subagentAvatar {
@@ -1776,32 +1837,8 @@
     animation: hana-pulse 2s ease-in-out infinite;
 }
 
-.subagentStatus {
-    font-weight: normal;
-    font-size: 0.75rem;
-    margin-left: 6px;
-    color: var(--text-muted);
-}
-
-/* 复用实例后缀（如 毛毛·探索）：紧贴名字、低对比度，作身份标注而非状态 */
-.subagentInstance {
-    font-weight: normal;
-    font-size: 0.78rem;
-    margin-left: 5px;
-    color: var(--text-muted);
-}
-
-.subagent-done .subagentStatus {
-    color: #7a9e7a;
-}
-
-.subagent-failed .subagentStatus {
-    color: #a67272;
-}
-
 .subagentAbortBtn {
     align-self: center;
-    margin-right: 8px;
     background: transparent;
     border: none;
     color: var(--text-muted);
@@ -1814,7 +1851,7 @@
     transition: opacity var(--duration-fast);
 }
 
-.subagentCardHeader:hover .subagentAbortBtn {
+.subagentResourceCard:hover .subagentAbortBtn {
     opacity: 1;
 }
 
@@ -1823,70 +1860,17 @@
     background: transparent;
 }
 
-.subagent-aborted .subagentStatus {
-    color: var(--text-muted);
-}
-
 .subagentAvatar {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     flex-shrink: 0;
     object-fit: cover;
-}
-
-.subagentBody {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-}
-
-.subagentName {
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 2px;
-}
-
-.subagentDisplay {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--overlay-subtle, rgba(0,0,0,0.03));
     color: var(--text-muted);
-    font-size: 0.75rem;
-    line-height: 1.3;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-.subagentPreviewWrap {
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height var(--duration-fast) cubic-bezier(0.33, 1, 0.68, 1);
-    border-top: 1px solid transparent;
-}
-
-.subagentPreviewWrapOpen {
-    max-height: calc(var(--subagent-preview-height) + 22px);
-    border-top-color: rgba(0, 0, 0, 0.06);
-}
-
-.subagentPreviewWrapClosing {
-    border-top-color: rgba(0, 0, 0, 0.06);
-}
-
-.subagentPreviewScroll {
-    height: var(--subagent-preview-height);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 0 12px 0;
-    opacity: 0;
-    transform: translateY(-6px);
-    transition: padding var(--duration-fast) cubic-bezier(0.33, 1, 0.68, 1), opacity 140ms ease, transform var(--duration-fast) cubic-bezier(0.33, 1, 0.68, 1);
-}
-
-.subagentPreviewWrapOpen .subagentPreviewScroll,
-.subagentPreviewWrapClosing .subagentPreviewScroll {
-    padding: 10px 12px 12px;
-    opacity: 1;
-    transform: translateY(0);
 }
 
 .subagentPreviewTranscript {

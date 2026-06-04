@@ -3,6 +3,7 @@ import { useTypewriterText } from '../../hooks/use-typewriter-text';
 import { splitGraphemes } from '../../utils/grapheme';
 import { renderMarkdown } from '../../utils/markdown';
 import type { LinkOpenContext } from '../../utils/link-open';
+import { useI18n } from '../../hooks/use-i18n';
 import { MarkdownContent } from './MarkdownContent';
 
 interface Props {
@@ -45,14 +46,16 @@ export const StreamingMarkdownContent = memo(function StreamingMarkdownContent({
   className,
   linkContext,
 }: Props) {
+  const { locale } = useI18n();
   const shouldType = !!source && active && isTypewriterEligibleMarkdownSource(source);
   const previousVisibleSourceRef = useRef<string | null>(null);
   const visibleSource = useTypewriterText(source || '', {
     active: shouldType,
-    displayFps: 30,
+    displayFps: 24,
     minBatch: 1,
     maxBatch: 24,
     catchUpThreshold: 24,
+    locale,
   });
   const visibleHtml = useMemo(
     () => shouldType ? renderMarkdown(visibleSource) : html,

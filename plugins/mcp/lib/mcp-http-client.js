@@ -122,6 +122,13 @@ function methodErrorMessage(status, body) {
   return `MCP connector HTTP request failed with status ${status}${body ? `: ${body}` : ""}`;
 }
 
+export function isSessionExpiredHttpError(err) {
+  if (!(err instanceof McpHttpError)) return false;
+  if (err.status === 404) return true;
+  if (err.status !== 400) return false;
+  return /\binvalid\s+session\s+id\b/i.test(String(err.body || err.message || ""));
+}
+
 function resolveEndpoint(endpoint, baseUrl) {
   return new URL(endpoint, baseUrl).href;
 }
@@ -356,8 +363,7 @@ export class McpStreamableHttpClient {
     } catch (err) {
       if (
         retryOnSessionExpired &&
-        err instanceof McpHttpError &&
-        err.status === 404 &&
+        isSessionExpiredHttpError(err) &&
         this.sessionId
       ) {
         this.sessionId = "";
@@ -526,6 +532,9 @@ export class McpLegacySseClient {
         const newToken = stringOrEmpty(await this.refreshAuthToken());
         if (newToken) return this._sendRequest(method, params, timeout);
       }
+      if (isSessionExpiredHttpError(err)) {
+        this._failLiveSession(err);
+      }
       throw err;
     }
   }
@@ -576,6 +585,21 @@ export class McpLegacySseClient {
       pending.reject(new Error("MCP connector stopped"));
     }
     this._pending.clear();
+  }
+
+  _failLiveSession(err) {
+    if (this._stopping || this._closed) return;
+    this.messageEndpoint = "";
+    this._closed = true;
+    for (const pending of this._pending.values()) {
+      pending.reject(err);
+    }
+    this._pending.clear();
+    this.onClose?.({
+      reason: err?.message || "connection lost",
+      expected: false,
+      needsAuth: isAuthTerminalError(err),
+    });
   }
 
   async _connectSse() {

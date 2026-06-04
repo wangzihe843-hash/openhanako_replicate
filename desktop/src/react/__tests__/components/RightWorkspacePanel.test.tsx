@@ -4,6 +4,8 @@ import '@testing-library/jest-dom/vitest';
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { useStore } from '../../stores';
 import type { ChatListItem } from '../../stores/chat-types';
 import { RightWorkspacePanel } from '../../components/right-workspace/RightWorkspacePanel';
@@ -173,6 +175,19 @@ describe('RightWorkspacePanel', () => {
     expect(screen.getByRole('tab', { name: '对话文件' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('lets file names use the row width until hover or focus reveals file actions', () => {
+    const css = fs.readFileSync(
+      path.join(__dirname, '../../components/right-workspace/RightWorkspacePanel.module.css'),
+      'utf-8',
+    );
+
+    expect(css).toMatch(/\.fileActions\s*\{[\s\S]*position:\s*absolute/);
+    expect(css).toMatch(/\.fileActions\s*\{[\s\S]*opacity:\s*0/);
+    expect(css).toMatch(/\.fileRow:hover \.fileMain,\s*\.fileRow:focus-within \.fileMain\s*\{[\s\S]*padding-right:\s*122px/);
+    expect(css).toMatch(/\.fileRow:hover \.fileActions,\s*\.fileRow:focus-within \.fileActions\s*\{[\s\S]*opacity:\s*1/);
+    expect(css).not.toMatch(/\.fileRowSelected \.fileActions\s*\{[\s\S]*opacity:\s*1/);
+  });
+
   it('places the preview toggle before the open-folder icon in the workspace toolbar', () => {
     render(<RightWorkspacePanel />);
 
@@ -227,6 +242,36 @@ describe('RightWorkspacePanel', () => {
     expect(screen.getByText('report.pdf')).toBeInTheDocument();
     expect(screen.getByText('session-block-file')).toBeInTheDocument();
     expect(screen.getByText('可用')).toBeInTheDocument();
+  });
+
+  it('uses file-kind icons for audio session files', () => {
+    resetStore([
+      {
+        type: 'message',
+        data: {
+          id: 'a1',
+          role: 'assistant',
+          timestamp: 1700000000000,
+          blocks: [
+            {
+              type: 'file',
+              fileId: 'sf_audio',
+              filePath: '/tmp/session-files/recording.wav',
+              label: 'recording.wav',
+              ext: 'wav',
+              status: 'available',
+            },
+          ],
+        },
+      },
+    ]);
+
+    const { container } = render(<RightWorkspacePanel />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '对话文件' }));
+
+    expect(screen.getByText('recording.wav')).toBeInTheDocument();
+    expect(container.querySelector('svg[data-file-kind="audio"]')).not.toBeNull();
   });
 
   it('wires session file actions to preview, open, reveal and copy path consumers', () => {

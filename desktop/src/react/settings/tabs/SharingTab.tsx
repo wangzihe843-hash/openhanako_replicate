@@ -4,6 +4,14 @@ import styles from '../Settings.module.css';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { NumberInput } from '../components/NumberInput';
+import { SelectWidget } from '@/ui';
+import {
+  FOLLOW_READING_FONT_ID,
+  READING_FONT_PRESETS,
+  SCREENSHOT_FONT_STORAGE_KEY,
+  normalizeFontSelectionId,
+  readScreenshotFontSelectionId,
+} from '../../utils/font-presets';
 import {
   SCREENSHOT_SEGMENT_VISIBLE_CHAR_LIMIT,
   SCREENSHOT_SEGMENT_VISIBLE_CHAR_LIMIT_STORAGE_KEY,
@@ -34,7 +42,15 @@ export function SharingTab() {
   const [screenshotWidth, setScreenshotWidth] = useState(
     () => localStorage.getItem('hana-screenshot-width') || 'mobile'
   );
+  const [screenshotFont, setScreenshotFont] = useState(() => readScreenshotFontSelectionId());
   const [segmentLimit, setSegmentLimit] = useState(() => readScreenshotSegmentVisibleCharLimit());
+  const fontSelectOptions = [
+    { value: FOLLOW_READING_FONT_ID, label: t('settings.fonts.followReading') },
+    ...READING_FONT_PRESETS.map(preset => ({
+      value: preset.id,
+      label: t(preset.labelKey),
+    })),
+  ];
 
   const handleSegmentLimitChange = (value: number) => {
     const next = Math.max(1_000, Math.min(100_000, Math.round(value)));
@@ -43,6 +59,19 @@ export function SharingTab() {
       localStorage.removeItem(SCREENSHOT_SEGMENT_VISIBLE_CHAR_LIMIT_STORAGE_KEY);
     } else {
       localStorage.setItem(SCREENSHOT_SEGMENT_VISIBLE_CHAR_LIMIT_STORAGE_KEY, String(next));
+    }
+  };
+
+  const handleScreenshotFontChange = (value: string) => {
+    const next = normalizeFontSelectionId(value, {
+      allowFollow: true,
+      fallback: FOLLOW_READING_FONT_ID,
+    });
+    setScreenshotFont(next);
+    if (next === FOLLOW_READING_FONT_ID) {
+      localStorage.removeItem(SCREENSHOT_FONT_STORAGE_KEY);
+    } else {
+      localStorage.setItem(SCREENSHOT_FONT_STORAGE_KEY, next);
     }
   };
 
@@ -95,6 +124,20 @@ export function SharingTab() {
             );
           })}
         </div>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.screenshot.font')}>
+        <SettingsRow
+          label={t('settings.screenshot.fontLabel')}
+          hint={t('settings.screenshot.fontHint')}
+          control={
+            <SelectWidget
+              options={fontSelectOptions}
+              value={screenshotFont}
+              onChange={handleScreenshotFontChange}
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection title={t('settings.screenshot.segmentTitle')}>

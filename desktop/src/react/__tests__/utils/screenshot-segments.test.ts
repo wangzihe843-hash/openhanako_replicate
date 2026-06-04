@@ -56,4 +56,33 @@ describe('splitScreenshotMessages', () => {
       ['u2', 'a2'],
     ]);
   });
+
+  it('counts ready voice-input transcriptions as visible screenshot text', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        attachments: [{
+          path: '/tmp/voice.wav',
+          name: 'voice.wav',
+          isDir: false,
+          mimeType: 'audio/wav',
+          presentation: 'voice-input',
+          transcription: {
+            status: 'ready',
+            text: '转录'.repeat(10),
+          },
+        }],
+      },
+      assistant('a1', '<p>短答</p>'),
+      user('u2', '第二轮'),
+    ];
+
+    const chunks = splitScreenshotMessages(messages, 12);
+
+    expect(chunks.map(chunk => chunk.map(message => message.id))).toEqual([
+      ['u1', 'a1'],
+      ['u2'],
+    ]);
+  });
 });

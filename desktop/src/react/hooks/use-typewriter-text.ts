@@ -7,12 +7,36 @@ export interface TypewriterTextOptions {
   minBatch?: number;
   maxBatch?: number;
   catchUpThreshold?: number;
+  locale?: string;
+  useIntlSegmenter?: boolean;
 }
 
 const DEFAULT_DISPLAY_FPS = 30;
 const DEFAULT_MIN_BATCH = 1;
 const DEFAULT_MAX_BATCH = 24;
 const DEFAULT_CATCH_UP_THRESHOLD = 24;
+const ASCII_WORD_CHAR = /^[A-Za-z0-9_'’-]$/;
+const WHITESPACE = /^\s+$/;
+const CJK_GRAPHEME = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
+const STANDALONE_PUNCTUATION = /^[\p{Punctuation}]+$/u;
+
+type SegmenterPart = { segment: string };
+type SegmenterLike = { segment(input: string): Iterable<SegmenterPart> };
+type SegmenterConstructor = new (
+  locale: string | undefined,
+  options: { granularity: 'word' },
+) => SegmenterLike;
+
+export interface TypewriterChunkOptions {
+  locale?: string;
+  useIntlSegmenter?: boolean;
+}
+
+export interface TypewriterAdvanceOptions extends TypewriterChunkOptions {
+  minBatch: number;
+  maxBatch: number;
+  catchUpThreshold: number;
+}
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined'
@@ -35,6 +59,126 @@ function chooseBatchSize(
   return Math.min(maxBatch, Math.max(8, Math.ceil(backlog / 8)));
 }
 
+function isAsciiWordChar(value: string): boolean {
+  return ASCII_WORD_CHAR.test(value);
+}
+
+function isCjkGrapheme(value: string): boolean {
+  return CJK_GRAPHEME.test(value);
+}
+
+function isStandalonePunctuation(value: string): boolean {
+  return STANDALONE_PUNCTUATION.test(value);
+}
+
+function normalizeStreamingChunks(segments: readonly string[]): string[] {
+  const chunks: string[] = [];
+  let prefix = '';
+
+  for (const segment of segments) {
+    if (!segment) continue;
+    if (WHITESPACE.test(segment)) {
+      prefix += segment;
+      continue;
+    }
+
+    const next = prefix + segment;
+    prefix = '';
+
+    if (chunks.length > 0 && isStandalonePunctuation(next.trim())) {
+      chunks[chunks.length - 1] += next;
+      continue;
+    }
+    chunks.push(next);
+  }
+
+  if (prefix) {
+    if (chunks.length > 0) chunks[chunks.length - 1] += prefix;
+    else chunks.push(prefix);
+  }
+
+  return chunks;
+}
+
+function splitWithIntlSegmenter(text: string, locale?: string): string[] {
+  const Segmenter = (Intl as unknown as { Segmenter?: SegmenterConstructor }).Segmenter;
+  if (!Segmenter) return [];
+  try {
+    const segmenter = new Segmenter(locale, { granularity: 'word' });
+    return normalizeStreamingChunks(Array.from(segmenter.segment(text), part => part.segment));
+  } catch {
+    return [];
+  }
+}
+
+function splitWithFallback(text: string): string[] {
+  const graphemes = splitGraphemes(text);
+  const raw: string[] = [];
+  let i = 0;
+
+  while (i < graphemes.length) {
+    const current = graphemes[i];
+
+    if (WHITESPACE.test(current)) {
+      let chunk = current;
+      i += 1;
+      while (i < graphemes.length && WHITESPACE.test(graphemes[i])) {
+        chunk += graphemes[i];
+        i += 1;
+      }
+      raw.push(chunk);
+      continue;
+    }
+
+    if (isAsciiWordChar(current)) {
+      let chunk = current;
+      i += 1;
+      while (i < graphemes.length && isAsciiWordChar(graphemes[i])) {
+        chunk += graphemes[i];
+        i += 1;
+      }
+      raw.push(chunk);
+      continue;
+    }
+
+    if (isCjkGrapheme(current)) {
+      let chunk = current;
+      i += 1;
+      while (i < graphemes.length && chunk.length < 2 && isCjkGrapheme(graphemes[i])) {
+        chunk += graphemes[i];
+        i += 1;
+      }
+      raw.push(chunk);
+      continue;
+    }
+
+    raw.push(current);
+    i += 1;
+  }
+
+  return normalizeStreamingChunks(raw);
+}
+
+export function splitTypewriterChunks(text: string, options: TypewriterChunkOptions = {}): string[] {
+  if (!text) return [];
+  if (options.useIntlSegmenter !== false) {
+    const intlChunks = splitWithIntlSegmenter(text, options.locale);
+    if (intlChunks.length > 0) return intlChunks;
+  }
+  return splitWithFallback(text);
+}
+
+export function planTypewriterAdvance(remaining: string, options: TypewriterAdvanceOptions): string {
+  const chunks = splitTypewriterChunks(remaining, options);
+  const batchSize = chooseBatchSize(
+    chunks.length,
+    options.minBatch,
+    options.maxBatch,
+    options.catchUpThreshold,
+  );
+  return chunks.slice(0, batchSize).join('');
+}
+
 export function useTypewriterText(target: string, options: TypewriterTextOptions = {}): string {
   const {
     active = true,
@@ -42,6 +186,8 @@ export function useTypewriterText(target: string, options: TypewriterTextOptions
     minBatch = DEFAULT_MIN_BATCH,
     maxBatch = DEFAULT_MAX_BATCH,
     catchUpThreshold = DEFAULT_CATCH_UP_THRESHOLD,
+    locale,
+    useIntlSegmenter,
   } = options;
 
   const [visible, setVisible] = useState(target);
@@ -49,9 +195,9 @@ export function useTypewriterText(target: string, options: TypewriterTextOptions
   const targetRef = useRef(target);
   const rafRef = useRef<number | null>(null);
   const lastAdvanceTimeRef = useRef<number | null>(null);
-  const configRef = useRef({ active, displayFps, minBatch, maxBatch, catchUpThreshold });
+  const configRef = useRef({ active, displayFps, minBatch, maxBatch, catchUpThreshold, locale, useIntlSegmenter });
 
-  configRef.current = { active, displayFps, minBatch, maxBatch, catchUpThreshold };
+  configRef.current = { active, displayFps, minBatch, maxBatch, catchUpThreshold, locale, useIntlSegmenter };
   targetRef.current = target;
 
   useEffect(() => {
@@ -93,14 +239,14 @@ export function useTypewriterText(target: string, options: TypewriterTextOptions
       if (lastAdvanceTime == null || timestamp - lastAdvanceTime >= intervalMs) {
         lastAdvanceTimeRef.current = timestamp;
         const remaining = nextTarget.slice(current.length);
-        const remainingSegments = splitGraphemes(remaining);
-        const batchSize = chooseBatchSize(
-          remainingSegments.length,
-          config.minBatch,
-          config.maxBatch,
-          config.catchUpThreshold,
-        );
-        const nextVisible = current + remainingSegments.slice(0, batchSize).join('');
+        const advanceText = planTypewriterAdvance(remaining, {
+          minBatch: config.minBatch,
+          maxBatch: config.maxBatch,
+          catchUpThreshold: config.catchUpThreshold,
+          locale: config.locale,
+          useIntlSegmenter: config.useIntlSegmenter,
+        });
+        const nextVisible = current + advanceText;
         visibleRef.current = nextVisible;
         setVisible(nextVisible);
       }

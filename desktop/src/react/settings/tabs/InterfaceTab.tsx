@@ -17,6 +17,13 @@ import {
   isPaperTextureEnabled,
 } from '../../../shared/appearance-preferences';
 import { persistAppearancePreferences } from '../../services/appearance-sync';
+import {
+  FOLLOW_READING_FONT_ID,
+  READING_FONT_PRESETS,
+  fontPresetIdFromSerif,
+  normalizeFontSelectionId,
+  serifFromFontPresetId,
+} from '../../utils/font-presets';
 import styles from '../Settings.module.css';
 import registry from '../../../shared/theme-registry';
 
@@ -33,7 +40,10 @@ const THEME_MODE_KEYS: Record<string, string> = Object.fromEntries([
   [registry.AUTO_OPTION.id, registry.AUTO_OPTION.i18nMode],
 ]);
 
-type MarkdownTypographyKey = keyof EditorMarkdownTypography;
+const VOICE_RECORD_SHORTCUT_MAC = ['⌘', '⇧', 'M'];
+const VOICE_RECORD_SHORTCUT_DEFAULT = ['Ctrl', 'Shift', 'M'];
+
+type MarkdownTypographyKey = Exclude<keyof EditorMarkdownTypography, 'fontPreset'>;
 
 interface AppearancePrefs {
   currentTheme: string;
@@ -69,6 +79,7 @@ const EDITOR_FONT_SIZE_ROWS: Array<{
 
 export function InterfaceTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
+  const platformName = useSettingsStore(s => s.platformName);
   const [appearancePrefs, setAppearancePrefs] = useState<AppearancePrefs>(() => readAppearancePrefs());
   const refreshAppearancePrefs = useCallback(() => {
     setAppearancePrefs(readAppearancePrefs());
@@ -85,11 +96,22 @@ export function InterfaceTab() {
     paperTextureBlocked,
     leavesOverlayEnabled,
   } = appearancePrefs;
+  const readingFontPresetId = fontPresetIdFromSerif(serifEnabled);
   const editorTypography = useMemo(
     () => normalizeEditorTypography(settingsConfig?.editor),
     [settingsConfig?.editor],
   );
+  const fontSelectOptions = [
+    { value: FOLLOW_READING_FONT_ID, label: t('settings.fonts.followReading') },
+    ...READING_FONT_PRESETS.map(preset => ({
+      value: preset.id,
+      label: t(preset.labelKey),
+    })),
+  ];
   const hardwareAccelerationEnabled = settingsConfig?.hardware_acceleration !== false;
+  const voiceShortcutKeys = platformName === 'darwin'
+    ? VOICE_RECORD_SHORTCUT_MAC
+    : VOICE_RECORD_SHORTCUT_DEFAULT;
 
   const saveEditorTypography = async (patch: Partial<EditorMarkdownTypography>) => {
     const previousConfig = useSettingsStore.getState().settingsConfig || {};
@@ -176,22 +198,36 @@ export function InterfaceTab() {
         </div>
       </SettingsSection>
 
-      <SettingsSection title={t('settings.appearance.title')}>
-        <SettingsRow
-          label={t('settings.appearance.serifFont')}
-          hint={t('settings.appearance.serifFontHint')}
-          control={
-            <Toggle
-              on={serifEnabled}
-              onChange={(next) => {
+      <SettingsSection
+        title={t('settings.appearance.font')}
+        description={t('settings.appearance.fontHint')}
+        variant="flush"
+      >
+        <div className={styles['font-options']} aria-label={t('settings.appearance.font')}>
+          {READING_FONT_PRESETS.map(preset => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`${styles['font-card']}${readingFontPresetId === preset.id ? ' ' + styles['active'] : ''}`}
+              aria-pressed={readingFontPresetId === preset.id}
+              onClick={() => {
+                const next = serifFromFontPresetId(preset.id);
                 window.setSerifFont?.(next);
                 platform?.settingsChanged?.('font-changed', { serif: next });
                 syncAppearancePrefs({ serif: next });
                 refreshAppearancePrefs();
               }}
-            />
-          }
-        />
+            >
+              <span className={styles['font-card-sample']} style={{ fontFamily: preset.fontFamily }}>
+                {t(preset.labelKey)}
+              </span>
+              <span className={styles['font-card-desc']}>{t(preset.descriptionKey)}</span>
+            </button>
+          ))}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.appearance.title')}>
         <SettingsRow
           label={t('settings.appearance.paperTexture')}
           hint={paperTextureBlocked
@@ -244,6 +280,22 @@ export function InterfaceTab() {
       </SettingsSection>
 
       <SettingsSection title={t('settings.editor.title')}>
+        <SettingsRow
+          label={t('settings.editor.markdownFont')}
+          hint={t('settings.editor.markdownFontHint')}
+          control={
+            <SelectWidget
+              options={fontSelectOptions}
+              value={editorTypography.markdown.fontPreset}
+              onChange={(value) => saveEditorTypography({
+                fontPreset: normalizeFontSelectionId(value, {
+                  allowFollow: true,
+                  fallback: FOLLOW_READING_FONT_ID,
+                }),
+              })}
+            />
+          }
+        />
         {EDITOR_FONT_SIZE_ROWS.map(row => (
           <SettingsRow
             key={row.key}
@@ -322,6 +374,23 @@ export function InterfaceTab() {
               value={currentTz}
               onChange={(val) => autoSaveConfig({ timezone: val })}
             />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.interface.shortcuts')}>
+        <SettingsRow
+          label={t('settings.interface.voiceRecordingShortcut')}
+          hint={t('settings.interface.voiceRecordingShortcutHint')}
+          control={
+            <div
+              className={styles['shortcut-keycaps']}
+              aria-label={voiceShortcutKeys.join(' + ')}
+            >
+              {voiceShortcutKeys.map(key => (
+                <kbd key={key} className={styles['shortcut-keycap']}>{key}</kbd>
+              ))}
+            </div>
           }
         />
       </SettingsSection>

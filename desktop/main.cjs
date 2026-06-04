@@ -2575,7 +2575,8 @@ function buildScreenshotHTML(payload) {
 
   const katexCSS = _getKatexCSS();
 
-  let extraCSS = `:root { --screenshot-page-bg: ${themeConf.backgroundColor}; }`;
+  const screenshotFontFamily = sanitizeScreenshotFontFamily(payload.fontFamily);
+  let extraCSS = `:root { --screenshot-page-bg: ${themeConf.backgroundColor}; --screenshot-font-family: ${screenshotFontFamily}; }`;
   if (themeName.startsWith("sakura-")) {
     const isDesktop = themeName.endsWith("-desktop");
     const branchFile = isDesktop ? "sakura-branch-desktop.png" : "sakura-branch-mobile.png";
@@ -2600,10 +2601,116 @@ function buildScreenshotHTML(payload) {
     logoUrl = `data:image/png;base64,${logoBuf.toString("base64")}`;
   } catch { /* logo 加载失败时水印无图 */ }
 
+  const screenshotAttachmentKinds = new Set(["image", "svg", "video", "audio", "pdf", "doc", "code", "markdown", "directory", "other"]);
+
+  function normalizeScreenshotAttachmentKind(kind) {
+    const normalized = typeof kind === "string" ? kind : "other";
+    return screenshotAttachmentKinds.has(normalized)
+      ? normalized
+      : "other";
+  }
+
+  function renderScreenshotAttachmentIcon(kind) {
+    const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+    if (kind === "audio") {
+      return `<svg ${common}><path d="M4 10v4"/><path d="M8 7v10"/><path d="M12 5v14"/><path d="M16 8v8"/><path d="M20 11v2"/></svg>`;
+    }
+    if (kind === "markdown") {
+      return `<svg ${common}><path d="M4 5h16v14H4z"/><path d="M7 15V9l3 3 3-3v6"/><path d="M16 9v6"/><path d="M14.5 13.5 16 15l1.5-1.5"/></svg>`;
+    }
+    if (kind === "code") {
+      return `<svg ${common}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+    }
+    if (kind === "pdf" || kind === "doc" || kind === "other") {
+      return `<svg ${common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>`;
+    }
+    if (kind === "directory") {
+      return `<svg ${common}><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>`;
+    }
+    if (kind === "video") {
+      return `<svg ${common}><rect x="3" y="5" width="18" height="14" rx="2"/><polygon points="10 9 15 12 10 15 10 9"/></svg>`;
+    }
+    return `<svg ${common}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+  }
+
+  function renderScreenshotAttachmentStatus(status) {
+    if (status !== "expired") return "";
+    const locale = String(payload.locale || "").toLowerCase();
+    const label = locale.startsWith("zh") ? "已过期" : "expired";
+    return `<span class="chat-attachment-status">${escapeAttr(label)}</span>`;
+  }
+
+  function normalizeScreenshotWaveformPeaks(waveform) {
+    const fallback = [0.28, 0.62, 0.44, 0.82, 0.36, 0.72, 0.32, 0.54, 0.78, 0.44, 0.66, 0.28];
+    if (!waveform || typeof waveform !== "object" || !Array.isArray(waveform.peaks) || !waveform.peaks.length) return fallback;
+    const peaks = waveform.peaks
+      .slice(0, 80)
+      .map((peak) => Number(peak))
+      .filter((peak) => Number.isFinite(peak))
+      .map((peak) => Math.max(0, Math.min(1, peak)));
+    return peaks.length ? peaks : fallback;
+  }
+
+  function renderScreenshotAudioWave(waveform) {
+    return normalizeScreenshotWaveformPeaks(waveform)
+      .map((peak) => `<span style="height:${Math.max(4, Math.round(4 + peak * 18))}px"></span>`)
+      .join("");
+  }
+
+  function renderScreenshotAudioCard(b, { name, statusHTML, expiredClass, showName }) {
+    return `
+      <span class="chat-audio-card${expiredClass}" title="${escapeAttr(name)}">
+        <span class="chat-audio-play">${renderScreenshotAttachmentIcon("audio")}</span>
+        <span class="chat-audio-wave" aria-hidden="true">${renderScreenshotAudioWave(b.waveform)}</span>
+        ${showName ? `<span class="chat-attachment-name">${escapeAttr(name)}</span>` : ""}
+        ${statusHTML}
+      </span>
+    `;
+  }
+
+  function renderScreenshotAttachment(b) {
+    const kind = normalizeScreenshotAttachmentKind(b.kind);
+    const name = typeof b.name === "string" && b.name.trim() ? b.name.trim() : "attachment";
+    const presentation = typeof b.presentation === "string" ? b.presentation : "attachment";
+    const status = typeof b.status === "string" ? b.status : "";
+    const expiredClass = status === "expired" ? " chat-attachment-expired" : "";
+    const statusHTML = renderScreenshotAttachmentStatus(status);
+
+    if (kind === "audio") {
+      const transcript = b.transcription?.status === "ready" && typeof b.transcription.text === "string"
+        ? b.transcription.text.trim()
+        : "";
+      const audioCard = renderScreenshotAudioCard(b, {
+        name,
+        statusHTML,
+        expiredClass,
+        showName: presentation !== "voice-input",
+      });
+      if (transcript) {
+        return `
+          <span class="chat-voice-card${expiredClass}" title="${escapeAttr(name)}">
+            <span class="chat-voice-transcript">${escapeAttr(transcript)}</span>
+            ${audioCard}
+          </span>
+        `;
+      }
+      return audioCard;
+    }
+
+    return `
+      <span class="chat-attachment${expiredClass}" title="${escapeAttr(name)}">
+        <span class="chat-attachment-icon">${renderScreenshotAttachmentIcon(kind)}</span>
+        <span class="chat-attachment-name">${escapeAttr(name)}</span>
+        ${statusHTML}
+      </span>
+    `;
+  }
+
   function renderBlock(b) {
     if (b.type === "html") return b.content;
     if (b.type === "markdown") return md.render(b.content, { sourceFilePath: payload.filePath || null });
     if (b.type === "image") return `<img src="${escapeAttr(b.content)}" class="chat-image" />`;
+    if (b.type === "attachment") return renderScreenshotAttachment(b);
     return "";
   }
 
@@ -2649,6 +2756,109 @@ function buildScreenshotHTML(payload) {
     .chat-body { padding-left: 0; }
     .chat-body p:last-child { margin-bottom: 0; }
     .chat-image { width: ${themeName.endsWith("-desktop") ? "66.666%" : "100%"}; max-width: 100%; height: auto; border-radius: 6px; margin: 0.8em 0; display: block; }
+    .chat-attachment,
+    .chat-audio-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.38em;
+      max-width: 100%;
+      min-height: 2em;
+      margin: 0.25em 0.38em 0.45em 0;
+      padding: 0.3em 0.55em;
+      color: currentColor;
+      background: color-mix(in srgb, currentColor 7%, transparent);
+      border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      font-size: 0.78em;
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .chat-attachment-expired {
+      opacity: 0.68;
+      border-style: dashed;
+      box-shadow: none;
+    }
+    .chat-attachment-icon,
+    .chat-audio-play {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 1.2em;
+      height: 1.2em;
+    }
+    .chat-attachment-icon svg,
+    .chat-audio-play svg {
+      width: 1em;
+      height: 1em;
+    }
+    .chat-attachment-name {
+      min-width: 0;
+      max-width: 18em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chat-attachment-status {
+      flex: 0 0 auto;
+      opacity: 0.72;
+      font-size: 0.9em;
+    }
+    .chat-audio-card {
+      gap: 0.32em;
+      padding-right: 0.6em;
+      border: none;
+    }
+    .chat-audio-play {
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      border-radius: 6px;
+    }
+    .chat-audio-wave {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      width: 4.2em;
+      height: 1.18em;
+      overflow: hidden;
+    }
+    .chat-audio-wave span {
+      display: block;
+      width: 2px;
+      min-height: 4px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.58;
+    }
+    .chat-voice-card {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.42em;
+      max-width: min(18em, 100%);
+      margin: 0.25em 0.38em 0.45em 0;
+      padding: 0.72em 0.72em 0.52em;
+      color: currentColor;
+      background: color-mix(in srgb, currentColor 7%, transparent);
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      vertical-align: middle;
+    }
+    .chat-voice-card .chat-audio-card {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .chat-voice-transcript {
+      padding: 0 0.08em;
+      color: currentColor;
+      font-size: 1em;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .screenshot-cover {
       display: block;
       overflow: visible;
@@ -2708,6 +2918,15 @@ function buildScreenshotHTML(payload) {
   </footer>
 </body>
 </html>`;
+}
+
+function sanitizeScreenshotFontFamily(value) {
+  const fallback = `"Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", "Lora", "Georgia", serif`;
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  if (/[;{}()<>\n\r]/.test(trimmed)) return fallback;
+  return trimmed;
 }
 
 async function screenshotCapture(htmlContent, width) {

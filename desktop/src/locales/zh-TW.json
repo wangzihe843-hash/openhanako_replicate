@@ -1,6 +1,6 @@
 {
   "cover": {
-    "make": "製作 cover",
+    "make": "新增封面",
     "agentGenerate": {
       "beautifyDisabled": "需要先在主 Agent 的工具設定裡開啟小花美术。",
       "defaultModelMissing": "需要先在設定裡設定預設圖片模型。",
@@ -155,6 +155,14 @@
     "pinFailed": "置頂 session 失敗",
     "unpinFailed": "取消置頂失敗",
     "archive": "封存",
+    "deletedAgent": {
+      "title": "Agent 已刪除",
+      "description": "這段對話會保留為唯讀歷史。繼續聊天會用主 Agent 新建一個 session，並先壓縮舊上下文。",
+      "continueButton": "遷移到現有主 Agent",
+      "continuing": "正在壓縮並新建 session",
+      "continueFailed": "遷移失敗",
+      "meta": "唯讀"
+    },
     "summary": {
       "title": "Session 摘要",
       "open": "摘要",
@@ -270,7 +278,8 @@
     "addExternalFolder": "加入工作台以外的資料夾",
     "planMode": "權限模式",
     "accessMode": "會話權限模式",
-    "operateMode": "自動操作",
+    "autoMode": "自動審核",
+    "operateMode": "完整權限",
     "askMode": "操作前詢問",
     "readOnlyMode": "唯讀模式",
     "accessModeLocked": "目前無法更改權限模式",
@@ -278,8 +287,18 @@
     "pastedImage": "貼上圖片",
     "textModelImageBlocked": "目前模型是文字模型，不能直接傳送圖片。請在設定中調整模型能力，或設定並啟用輔助視覺。",
     "textModelVideoBlocked": "目前模型不支援影片輸入。請在設定中開啟影片能力，或切換到支援影片的模型。",
+    "textModelAudioBlocked": "目前模型不支援音訊輸入。請切換到支援音訊的模型。",
     "imageReadFailed": "圖片讀取失敗，訊息沒有傳送。請重新貼上或重新加入圖片。",
     "videoReadFailed": "影片讀取失敗，訊息沒有傳送。請重新加入影片。",
+    "audioReadFailed": "音訊讀取失敗，訊息沒有傳送。請重新加入音訊。",
+    "recordAudio": "錄音",
+    "stopRecording": "結束錄音",
+    "audioRecording": "正在錄音",
+    "audioRecordingStarting": "準備錄音",
+    "audioRecordingSaving": "儲存錄音",
+    "audioRecordingUnavailable": "目前環境無法使用麥克風錄音。",
+    "audioRecordingFailed": "錄音失敗，請檢查麥克風權限後重試。",
+    "recordedAudioName": "錄音 {index}.wav",
     "openModelSettings": "開啟模型設定",
     "attachFiles": "新增檔案",
     "commandMenu": "命令選單",
@@ -287,12 +306,14 @@
     "thinkingLevel": {
       "off": "關閉",
       "auto": "自動",
+      "medium": "中等",
       "high": "深度",
       "xhigh": "極限"
     },
     "thinkingDesc": {
       "off": "不推理",
       "auto": "模型決定深度",
+      "medium": "平衡推理",
       "high": "深度推理",
       "xhigh": "最強推理"
     },
@@ -590,11 +611,6 @@
       "done": "🧭 分身出發了",
       "failed": "🧭 分身出了岔子"
     },
-    "wait": {
-      "running": "⏳ {name} 正在等待結果",
-      "done": "⏳ 等待結束",
-      "failed": "⏳ 等待被中斷"
-    },
     "check_pending_tasks": {
       "running": "📋 {name} 正在找找沒做完的事兒",
       "done": "📋 {name} 找完了",
@@ -687,7 +703,6 @@
       "models": "模型",
       "memory": "記憶",
       "work": "工作台",
-      "computer": "使用電腦",
       "skills": "技能",
       "mcp": "連接器",
       "bridge": "社群平台",
@@ -745,6 +760,8 @@
       "midnightContrastMode": "清晰",
       "auto": "自動",
       "autoMode": "跟隨系統",
+      "font": "字體",
+      "fontHint": "選擇正文閱讀使用的字體",
       "serifFont": "襯線字體",
       "serifFontHint": "使用襯線體顯示正文內容",
       "paperTexture": "紙質紋理",
@@ -753,13 +770,25 @@
       "leavesOverlay": "晴天模式",
       "leavesOverlayHint": "沒事兒曬曬太陽"
     },
+    "fonts": {
+      "followReading": "跟隨閱讀字體",
+      "serifName": "襯線",
+      "serifDesc": "適合正文閱讀",
+      "sansName": "非襯線",
+      "sansDesc": "更接近系統介面"
+    },
     "interface": {
       "system": "系統",
       "hardwareAcceleration": "硬體加速",
-      "hardwareAccelerationHint": "使用顯示卡繪製視窗內容。關閉後會在下次啟動使用軟體渲染，可用於恢復 Windows 顯示卡驅動導致的啟動閃退。"
+      "hardwareAccelerationHint": "使用顯示卡繪製視窗內容。關閉後會在下次啟動使用軟體渲染，可用於恢復 Windows 顯示卡驅動導致的啟動閃退。",
+      "shortcuts": "快捷鍵",
+      "voiceRecordingShortcut": "語音錄製/傳送",
+      "voiceRecordingShortcutHint": "主聊天頁面聚焦時，按一次開始錄音，再按一次結束並傳送。"
     },
     "editor": {
       "title": "編輯器",
+      "markdownFont": "字體",
+      "markdownFontHint": "預設跟隨外觀裡的閱讀字體，也可以單獨指定。",
       "markdownBodyFontSize": "正文字號",
       "markdownBodyFontSizeHint": "Markdown 編輯器正文預設使用 15px。",
       "markdownHeading1FontSize": "一級標題字號",
@@ -837,7 +866,6 @@
           "automation": { "label": "自動化", "summary": "讓 Agent 建立通知和外掛定時動作" },
           "beautify": { "label": "小花美术", "summary": "讓 Agent 為文件生成封面和審美增強內容" },
           "browser": { "label": "瀏覽器", "summary": "控制無頭瀏覽器瀏覽網頁" },
-          "computer": { "label": "電腦控制", "summary": "控制已批准的桌面應用，並顯示即時動作游標" },
           "cron": { "label": "定時任務", "summary": "在指定時間自動執行任務" },
           "dm": { "label": "私訊", "summary": "向其他 Agent 傳送一對一訊息" },
           "install_skill": { "label": "安裝技能", "summary": "從 GitHub 或技能庫安裝新技能" },
@@ -845,19 +873,6 @@
           "workflow": { "label": "Workflow", "summary": "讓 Agent 把多 Agent 編排腳本作為背景任務執行" },
           "xingye_propose_draft": { "label": "星野草稿提議", "summary": "心跳巡檢裡給角色小手機/秘密空間生成待確認草稿（目前覆蓋：日記本；其它模組陸續接入）。關掉只阻止新草稿，已有的不受影響。" }
         }
-      },
-      "computerUse": {
-        "title": "電腦控制狀態",
-        "description": "這裡展示底層 provider、系統權限和已批准應用。啟停仍在上面的工具開關裡完成。",
-        "provider": "Provider",
-        "availability": "可用性",
-        "available": "可用",
-        "unavailable": "不可用",
-        "permissions": "系統權限",
-        "permissionsEmpty": "無需額外權限或尚未返回",
-        "approvals": "已批准應用",
-        "approvalsEmpty": "暫無",
-        "refresh": "重新整理"
       }
     },
     "about": {
@@ -1108,6 +1123,9 @@
       "watermark": "浮水印",
       "aspectRatio": "長寬比",
       "speechRecognition": "語音辨識",
+      "speechRecognitionEnabled": "傳送語音條時轉錄",
+      "defaultSpeechModel": "語音條轉錄模型",
+      "speechModels": "轉錄模型",
       "speechSynthesis": "語音合成",
       "comingSoon": "即將推出",
       "noProvider": "請選擇一個供應商查看詳情",
@@ -1196,10 +1214,12 @@
       "displayName": "顯示名稱",
       "vision": "視覺",
       "video": "影片",
+      "audio": "音訊",
       "reasoning": "推理",
       "capability": {
         "image": "支援圖像輸入",
         "video": "支援影片輸入",
+        "audio": "支援音訊輸入",
         "reasoning": "支援推理"
       }
     },
@@ -1322,7 +1342,13 @@
       "socialGlobalThresholdDesc": "距上次主動私訊其他助手超過這麼多則對話後，巡檢會輕輕提醒它找人聊聊（僅提醒，從不強制）。調高 = 更少主動社交",
       "socialPerPeerThreshold": "單一聯絡人冷落上限",
       "socialPerPeerThresholdDesc": "與某位助手超過這麼多則對話沒聯絡後，會單獨提醒「很久沒聯絡」，避免有人被一直遺忘",
-      "socialUnit": "則對話"
+      "socialUnit": "則對話",
+      "contextFilesTitle": "工作區說明注入",
+      "contextFilesDesc": "把目前工作台專案裡的 AGENTS.md / CLAUDE.md 注入到新建會話的系統提示詞中，位置在記憶之前。",
+      "injectAgentsMd": "注入 AGENTS.md",
+      "injectAgentsMdDesc": "開啟後，新會話會讀取目前工作目錄到 Git 根目錄之間的 AGENTS.md。",
+      "injectClaudeMd": "注入 CLAUDE.md",
+      "injectClaudeMdDesc": "開啟後，新會話會讀取目前工作目錄到 Git 根目錄之間的 CLAUDE.md。"
     },
     "toolCaps": {
       "title": "技能安裝權限"
@@ -1507,6 +1533,9 @@
       "desc": "選擇你分享對話的截圖樣式與排版",
       "color": "配色",
       "width": "寬度",
+      "font": "字體",
+      "fontLabel": "截圖字體",
+      "fontHint": "不選單獨字體時，截圖會跟隨外觀裡的閱讀字體。",
       "light": "淺色",
       "dark": "深色",
       "sakura": "青空與櫻",
@@ -1660,6 +1689,7 @@
       "contextLength": "上下文長度",
       "maxOutput": "最大輸出",
       "imageInput": "支援圖片",
+      "audioInput": "支援音訊",
       "reasoning": "推理模型",
       "cancelEdit": "取消",
       "saveEdit": "儲存",
@@ -1766,7 +1796,9 @@
       "title": "本次對話",
       "cwd": "工作目錄",
       "model": "模型",
-      "files": "檔案"
+      "files": "檔案",
+      "authorizedFolders": "授權目錄",
+      "addAuthorizedFolder": "新增授權目錄"
     },
     "tabs": {
       "label": "右側工作台",
@@ -1927,12 +1959,16 @@
     "compactFailed": "壓縮失敗: {msg}",
     "maxImages": "最多支援 {max} 張圖片",
     "maxVideos": "最多支援 {max} 個影片",
+    "maxAudios": "最多支援 {max} 個音訊",
     "unsupportedImageFormat": "不支援的圖片格式: {mime}",
     "unsupportedVideoFormat": "不支援的影片格式: {mime}",
+    "unsupportedAudioFormat": "不支援的音訊格式: {mime}",
     "imageTooLarge": "單張圖片不得超過 20MB",
     "videoTooLarge": "單個影片不得超過 20MB",
+    "audioTooLarge": "單個音訊不得超過 50MB",
     "viewImage": "（看圖）",
     "viewVideo": "（看影片）",
+    "listenAudio": "（聽音訊）",
     "modelNoVision": "目前模型不支援圖片，請切換到支援圖片的模型後再試",
     "searchProviderNotConfigured": "未設定搜尋 provider",
     "searchProviderMissingKey": "搜尋 provider \"{provider}\" 缺少 API Key",
@@ -2308,9 +2344,9 @@
     },
     "currentStatus": {
       "label": "當前狀態",
-      "description": "查詢當前環境的輕量狀態。可查：時間、邏輯日期、agent 身份、使用者/agent 頭像外觀、模型身份、Bridge 平台上下文、開放子 Agent 實例，以及使用者當前可見的介面視野。重要：系統提示裡的日期時間是 session 建立時的快照，可能已過時；需要精確當前時間、排程、提醒、按鐘點算日期、問候等任何在意時分的場景，用 action=get、key=time。key=logical_date 僅用於判斷 4:00 邊界下 Hana 該把哪一天當今天，不返回時分秒。key=appearance 用於使用者問「我/當前 agent 長什麼樣」。當使用者用「這個檔案、這裡、當前/開啟的/可見的/選中的項、釘住的視窗、當前 Bridge 會話/平台、當前資料夾」指代介面時，先用 action=get、key=ui_context 取當前視野再繼續。",
+      "description": "查詢當前環境的輕量狀態。可查：時間、邏輯日期、agent 身份、使用者/agent 頭像外觀、模型身份、本對話資料夾範圍、Bridge 平台上下文、開放子 Agent 實例，以及使用者當前可見的介面視野。重要：系統提示裡的日期時間是 session 建立時的快照，可能已過時；需要精確當前時間、排程、提醒、按鐘點算日期、問候等任何在意時分的場景，用 action=get、key=time。key=logical_date 僅用於判斷 4:00 邊界下 Hana 該把哪一天當今天，不返回時分秒。key=appearance 用於使用者問「我/當前 agent 長什麼樣」。需要確認當前對話能存取哪些資料夾時，用 key=session_folders。當使用者用「這個檔案、這裡、當前/開啟的/可見的/選中的項、釘住的視窗、當前 Bridge 會話/平台、當前資料夾」指代介面時，先用 action=get、key=ui_context 取當前視野再繼續。",
       "actionDesc": "list 返回所有可查詢的狀態鍵；get 取某個狀態鍵的值。",
-      "keyDesc": "action=get 時要取的狀態鍵。常用鍵：time、logical_date、agent、appearance、model、ui_context、session_files、bridge_context、subagents。引用當前 Bridge 平台/會話用 bridge_context；續接或關閉子 Agent 前用 subagents。"
+      "keyDesc": "action=get 時要取的狀態鍵。常用鍵：time、logical_date、agent、appearance、model、ui_context、session_files、session_folders、bridge_context、subagents。引用當前 Bridge 平台/會話用 bridge_context；續接或關閉子 Agent 前用 subagents。"
     },
     "pinnedMemory": {
       "pinLabel": "釘選記憶",
@@ -2335,11 +2371,6 @@
       "filepathsDesc": "要交付的本機檔案絕對路徑陣列。找到檔案後把路徑傳到這裡，由 StageFile 統一登記並交給桌面、Bridge 或未來行動端消費。",
       "filePathDesc": "（相容）單一個本機檔案的絕對路徑；新呼叫優先使用 filepaths。",
       "labelDesc": "（相容）顯示給使用者的檔案名稱，通常可以省略，預設使用檔名。"
-    },
-    "wait": {
-      "label": "等待",
-      "description": "等待指定秒數。用於等待後台任務完成時保持 turn 活躍。",
-      "secondsDesc": "等待秒數（1-300）"
     },
     "subagent": {
       "label": "啟動子 Agent",
@@ -2393,6 +2424,8 @@
       "timezoneDesc": "IANA 時區（如 Asia/Shanghai）",
       "bridgeMediaPublicBaseUrl": "Bridge 檔案公網 URL",
       "bridgeMediaPublicBaseUrlDesc": "外部平台拉取本機 staged 檔案時使用的公網 HTTP/HTTPS base URL，通常來自反向代理或 tunnel；留空則回退到 HANA_BRIDGE_PUBLIC_BASE_URL。",
+      "computerUse": "電腦控制",
+      "computerUseDesc": "開啟後，新會話會向主助手暴露電腦控制工具；關閉後，新會話看不到該工具，已凍結的舊會話呼叫時會被拒絕。",
       "thinkingBudget": "思考深度",
       "memory": "記憶系統",
       "memoryDesc": "開啟/關閉目前 Agent 的記憶功能",

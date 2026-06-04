@@ -372,6 +372,9 @@ describe("openai codex oauth adapter", () => {
       quality: "high",
       output_format: "png",
     });
+    expect(body.tools[0]).not.toHaveProperty("ratio");
+    expect(body.tools[0]).not.toHaveProperty("resolution");
+    expect(body.tools[0]).not.toHaveProperty("aspect_ratio");
 
     expect(result.files).toHaveLength(1);
     expect(typeof result.taskId).toBe("string");
@@ -453,6 +456,68 @@ describe("openai codex oauth adapter", () => {
       prompt: "test",
     }, ctx)).rejects.toThrow(/account/i);
   });
+
+  it("rejects generic resolution values instead of passing them to the Codex image tool", async () => {
+    const { openaiCodexImageAdapter } = await import("../plugins/image-gen/adapters/openai-codex.js");
+
+    const fakeB64 = Buffer.from("fake-codex-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output: [{ type: "image_generation_call", result: fakeB64 }],
+      }),
+    });
+
+    const ctx = makeBusCtx("oauth-token", "https://chatgpt.com/backend-api", "openai-codex-oauth");
+    ctx.bus.request = vi.fn(async (type, payload) => {
+      if (type === "provider:credentials" && payload.providerId === "openai-codex-oauth") {
+        return {
+          apiKey: "oauth-token",
+          baseUrl: "https://chatgpt.com/backend-api",
+          api: "openai-codex-responses",
+          accountId: "acct_123",
+        };
+      }
+      return { error: "not_found" };
+    });
+
+    await expect(openaiCodexImageAdapter.submit({
+      prompt: "a quiet notebook",
+      resolution: "2K",
+    }, ctx)).rejects.toThrow(/Codex.*resolution/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported Codex image sizes instead of raw passthrough", async () => {
+    const { openaiCodexImageAdapter } = await import("../plugins/image-gen/adapters/openai-codex.js");
+
+    const fakeB64 = Buffer.from("fake-codex-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output: [{ type: "image_generation_call", result: fakeB64 }],
+      }),
+    });
+
+    const ctx = makeBusCtx("oauth-token", "https://chatgpt.com/backend-api", "openai-codex-oauth");
+    ctx.bus.request = vi.fn(async (type, payload) => {
+      if (type === "provider:credentials" && payload.providerId === "openai-codex-oauth") {
+        return {
+          apiKey: "oauth-token",
+          baseUrl: "https://chatgpt.com/backend-api",
+          api: "openai-codex-responses",
+          accountId: "acct_123",
+        };
+      }
+      return { error: "not_found" };
+    });
+
+    await expect(openaiCodexImageAdapter.submit({
+      prompt: "a quiet notebook",
+      size: "2K",
+    }, ctx)).rejects.toThrow(/Codex.*size/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe("minimax adapter", () => {
@@ -528,6 +593,9 @@ describe("gemini image adapter", () => {
       aspectRatio: "4:3",
       imageSize: "2K",
     });
+    expect(body.generationConfig.responseFormat.image).not.toHaveProperty("ratio");
+    expect(body.generationConfig.responseFormat.image).not.toHaveProperty("resolution");
+    expect(body.generationConfig.responseFormat.image).not.toHaveProperty("size");
     expect(result.files).toHaveLength(1);
   });
 
@@ -568,6 +636,31 @@ describe("gemini image adapter", () => {
         data: Buffer.from("input-image").toString("base64"),
       },
     });
+  });
+
+  it("rejects unsupported Gemini image sizes instead of raw passthrough", async () => {
+    const { geminiImageAdapter } = await import("../plugins/image-gen/adapters/gemini.js");
+
+    const fakeB64 = Buffer.from("gemini-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{ inlineData: { mimeType: "image/png", data: fakeB64 } }],
+          },
+        }],
+      }),
+    });
+
+    const ctx = makeBusCtx("gemini-key", "https://generativelanguage.googleapis.com/v1beta", "gemini");
+    await expect(geminiImageAdapter.submit({
+      prompt: "a quiet library",
+      modelId: "gemini-3.1-flash-image-preview",
+      size: "1024x1024",
+      providerId: "gemini",
+    }, ctx)).rejects.toThrow(/Gemini.*size/i);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { renderMarkdownPreview } from '../../utils/markdown';
 import {
   parseMarkdownCover,
+  removeMarkdownCover,
   resolveMarkdownCoverImagePath,
   stripMarkdownFrontMatterForPreview,
   updateMarkdownCoverLayout,
@@ -17,8 +18,12 @@ import {
 } from '../../utils/markdown-cover';
 import {
   dispatchCoverNotice,
-  requestMarkdownCoverGeneration,
 } from '../../utils/markdown-cover-generation';
+import {
+  isExternalCoverImagePath,
+  regenerateMarkdownCoverWithPrompt,
+  saveMarkdownCoverImage,
+} from '../../utils/markdown-cover-actions';
 import {
   applyMarkdownCoverImageDrop,
   hasMarkdownCoverDropImage,
@@ -147,16 +152,6 @@ function coverLayout(cover: MarkdownCover): Required<MarkdownCoverLayoutPatch> {
   };
 }
 
-function localBasename(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, '/');
-  return normalized.slice(normalized.lastIndexOf('/') + 1) || 'cover.png';
-}
-
-function joinLocalPath(dirPath: string, fileName: string): string {
-  const sep = dirPath.includes('\\') && !dirPath.includes('/') ? '\\' : '/';
-  return `${dirPath.replace(/[\\/]+$/, '')}${sep}${fileName}`;
-}
-
 function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; cover: MarkdownCover }) {
   const [layout, setLayout] = useState(() => coverLayout(cover));
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -184,7 +179,7 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
   }, [menu]);
 
   const imagePath = resolveMarkdownCoverImagePath(previewItem.filePath, cover.image);
-  const imageUrl = imagePath && /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(imagePath)
+  const imageUrl = imagePath && isExternalCoverImagePath(imagePath)
     ? imagePath
     : imagePath ? window.platform?.getFileUrl?.(imagePath) || imagePath : null;
 
@@ -209,6 +204,32 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
       return;
     }
     dispatchCoverNotice('Cover 布局保存失败，文件可能已被外部修改。', 'error');
+  }, [previewItem]);
+
+  const deleteCover = useCallback(async () => {
+    setMenu(null);
+    if (!previewItem.filePath || !window.platform?.writeFileIfUnchanged) return;
+    const writeNext = async (content: string, version: PreviewItem['fileVersion']) => {
+      const nextContent = removeMarkdownCover(content);
+      if (nextContent === content) return { result: { ok: true, version }, nextContent };
+      const result = await window.platform?.writeFileIfUnchanged?.(previewItem.filePath!, nextContent, version || null);
+      return { result, nextContent };
+    };
+
+    let { result, nextContent } = await writeNext(previewItem.content, previewItem.fileVersion);
+    if (!result?.ok && result?.conflict && window.platform?.readFileSnapshot) {
+      const snapshot = await window.platform.readFileSnapshot(previewItem.filePath);
+      if (snapshot?.content != null) {
+        ({ result, nextContent } = await writeNext(snapshot.content, snapshot.version));
+      }
+    }
+
+    if (result?.ok) {
+      upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: result.version });
+      dispatchCoverNotice('已删除封面。', 'success');
+      return;
+    }
+    dispatchCoverNotice('封面删除失败，文件可能已被外部修改。', 'error');
   }, [previewItem]);
 
   const finishDrag = useCallback(() => {
@@ -257,26 +278,12 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
 
   const saveImage = useCallback(async () => {
     setMenu(null);
-    if (!imagePath || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(imagePath)) {
-      dispatchCoverNotice('当前 cover 不是本地图片，无法直接保存。', 'error');
-      return;
-    }
-    const folder = await window.platform?.selectFolder?.();
-    if (!folder || !window.platform?.copyFile) return;
-    const ok = await window.platform.copyFile(imagePath, joinLocalPath(folder, localBasename(imagePath)));
-    dispatchCoverNotice(ok ? 'Cover 图片已保存。' : 'Cover 图片保存失败。', ok ? 'success' : 'error');
+    await saveMarkdownCoverImage(imagePath);
   }, [imagePath]);
 
   const regenerateWithPrompt = useCallback(async () => {
     setMenu(null);
-    if (!previewItem.filePath) return;
-    const prompt = window.prompt('这张 cover 想往哪个方向调整？');
-    if (prompt === null) return;
-    const result = await requestMarkdownCoverGeneration({
-      filePath: previewItem.filePath,
-      userGuidance: prompt,
-    });
-    dispatchCoverNotice(result.ok ? '已提交新的 cover 生成任务。' : `Cover 生成失败：${result.error}`, result.ok ? 'success' : 'error');
+    await regenerateMarkdownCoverWithPrompt(previewItem.filePath);
   }, [previewItem.filePath]);
 
   const handleCoverDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -343,6 +350,7 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
         >
           <button type="button" onClick={saveImage}>保存图片</button>
           <button type="button" onClick={regenerateWithPrompt}>自定义提示词生成图片</button>
+          <button type="button" className="markdown-cover-menu-danger" onClick={deleteCover}>删除封面</button>
         </div>
       )}
     </div>
@@ -469,7 +477,7 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
       {cover ? (
         <div
           ref={divRef}
-          className="preview-markdown md-content"
+          className="preview-markdown md-content markdown-has-cover"
           onClick={handleLinkClick}
           onContextMenu={handleLinkContextMenu}
           dangerouslySetInnerHTML={{

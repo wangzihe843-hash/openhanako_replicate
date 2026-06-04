@@ -29,7 +29,7 @@ vi.mock('../../widgets/Toggle', () => ({
   ),
 }));
 
-import { ComputerUseTab } from '../ComputerUseTab';
+import { ComputerUseSection } from '../ComputerUseSection';
 import { useSettingsStore } from '../../store';
 
 afterEach(() => {
@@ -42,7 +42,7 @@ function jsonResponse(body: unknown) {
   return { json: async () => body } as Response;
 }
 
-describe('ComputerUseTab', () => {
+describe('ComputerUseSection', () => {
   it('renders the experimental risk warning near the top of the Computer Use page', async () => {
     hanaFetchMock.mockResolvedValue(jsonResponse({
       selectedProviderId: 'macos:cua',
@@ -53,7 +53,7 @@ describe('ComputerUseTab', () => {
       },
     }));
 
-    render(<ComputerUseTab />);
+    render(<ComputerUseSection />);
 
     await waitFor(() => expect(hanaFetchMock).toHaveBeenCalledWith('/api/preferences/computer-use'));
     const warning = screen.getByTestId('computer-use-experimental-warning');
@@ -74,7 +74,7 @@ describe('ComputerUseTab', () => {
       }))
       .mockRejectedValueOnce(new Error('hanaFetch /api/preferences/computer-use/request-permissions: 400 Bad Request'));
 
-    render(<ComputerUseTab />);
+    render(<ComputerUseSection />);
 
     await waitFor(() => expect(hanaFetchMock).toHaveBeenCalledWith('/api/preferences/computer-use'));
     fireEvent.click(screen.getByText('settings.computerUse.requestPermissions'));

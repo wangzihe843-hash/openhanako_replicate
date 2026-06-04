@@ -15,6 +15,10 @@
  * - 不存在 / 解析错误 → 一律视为 healthy（容错优先，绝不阻塞合法会话）
  */
 import fs from "fs";
+import {
+  readSessionEntriesFile,
+  writeSessionEntriesFile,
+} from "./session-jsonl-file.js";
 
 const DEFAULT_LOOKBACK = 10;
 const DEFAULT_ERROR_THRESHOLD = 3;
@@ -190,45 +194,6 @@ export function repairOrphanToolResultEntries(entries) {
 }
 
 /**
- * 解析 jsonl 为 entry 数组。镜像 SDK loadEntriesFromFile 的容错：跳过空行 / 坏行，
- * 校验首行是合法 session header，否则返回空（视为不可修复，交还上层不动）。
- *
- * @param {string} raw
- * @returns {Array|null} entries（含 header）；不可解析时返回 null
- */
-function parseSessionEntries(raw) {
-  const entries = [];
-  const lines = raw.split("\n");
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      entries.push(JSON.parse(line));
-    } catch {
-      // 坏行：跳过。注意——坏行存在意味着我们无法保证无损 round-trip 重写整个文件，
-      // 调用方据此放弃修复（见 repairOrphanToolResultEntriesInFile）。
-      return null;
-    }
-  }
-  if (entries.length === 0) return null;
-  const header = entries[0];
-  if (!header || header.type !== "session" || typeof header.id !== "string") {
-    return null;
-  }
-  return entries;
-}
-
-/**
- * 序列化 entry 数组为 jsonl，字节格式与 SDK SessionManager._rewriteFile 一致
- * （每行一个 JSON，尾随单个换行），保证 SessionManager.open 能原样读回。
- *
- * @param {Array} entries
- * @returns {string}
- */
-function serializeSessionEntries(entries) {
-  return `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
-}
-
-/**
  * 读时结构修复（落盘）：在 SessionManager.open 之前直接修复 jsonl 文件，删除孤儿
  * toolResult entry。修复发生在文件层而非 SDK 内部状态，open 之后 SessionManager 会
  * 从已清理的文件自然加载，无需触碰 SDK 私有索引/leaf。
@@ -241,21 +206,14 @@ function serializeSessionEntries(entries) {
  * @returns {{ repaired: boolean, removed: number }}
  */
 export function repairOrphanToolResultEntriesInFile(sessionPath) {
-  let raw;
-  try {
-    raw = fs.readFileSync(sessionPath, "utf-8");
-  } catch {
-    return { repaired: false, removed: 0 };
-  }
+  const loaded = readSessionEntriesFile(sessionPath);
+  if (!loaded) return { repaired: false, removed: 0 };
 
-  const entries = parseSessionEntries(raw);
-  if (!entries) return { repaired: false, removed: 0 };
-
-  const { entries: repaired, removed } = repairOrphanToolResultEntries(entries);
+  const { entries: repaired, removed } = repairOrphanToolResultEntries(loaded.entries);
   if (removed === 0) return { repaired: false, removed: 0 };
 
   try {
-    fs.writeFileSync(sessionPath, serializeSessionEntries(repaired));
+    writeSessionEntriesFile(sessionPath, repaired);
   } catch {
     // 写失败：保持原文件不变，运行时兜底（provider-compat/tool-pairing）仍会防 400。
     return { repaired: false, removed: 0 };

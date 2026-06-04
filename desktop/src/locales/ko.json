@@ -1,6 +1,6 @@
 {
   "cover": {
-    "make": "cover 만들기",
+    "make": "커버 추가",
     "agentGenerate": {
       "beautifyDisabled": "먼저 메인 에이전트의 도구 설정에서 '小花美术'를 활성화하세요.",
       "defaultModelMissing": "먼저 설정에서 기본 이미지 모델을 구성하세요.",
@@ -155,6 +155,14 @@
     "pinFailed": "세션 고정 실패",
     "unpinFailed": "세션 고정 해제 실패",
     "archive": "보관",
+    "deletedAgent": {
+      "title": "Agent가 삭제됨",
+      "description": "이 대화는 읽기 전용 기록으로 유지됩니다. 계속하면 이전 컨텍스트를 압축한 뒤 기본 Agent에서 새 세션을 만듭니다.",
+      "continueButton": "기본 Agent로 이전",
+      "continuing": "압축하고 세션 만드는 중",
+      "continueFailed": "이전 실패",
+      "meta": "읽기 전용"
+    },
     "summary": {
       "title": "세션 요약",
       "open": "세션 요약",
@@ -270,7 +278,8 @@
     "addExternalFolder": "작업 공간 외부 폴더 추가",
     "planMode": "접근 모드",
     "accessMode": "세션 접근 모드",
-    "operateMode": "자동 작업",
+    "autoMode": "자동 승인",
+    "operateMode": "전체 권한",
     "askMode": "작업 전 묻기",
     "readOnlyMode": "읽기 전용 모드",
     "accessModeLocked": "지금은 접근 모드를 변경할 수 없습니다",
@@ -278,8 +287,18 @@
     "pastedImage": "붙여넣은 이미지",
     "textModelImageBlocked": "현재 모델은 텍스트 전용이라 이미지를 직접 보낼 수 없습니다. 설정에서 모델 기능을 조정하거나 보조 시각을 설정하고 켜 주세요.",
     "textModelVideoBlocked": "현재 모델은 비디오 입력을 지원하지 않아요. 설정에서 비디오 기능을 켜거나 비디오 지원 모델로 전환해 주세요.",
+    "textModelAudioBlocked": "현재 모델은 오디오 입력을 지원하지 않아요. 오디오 지원 모델로 전환해 주세요.",
     "imageReadFailed": "이미지를 읽지 못해 메시지를 보내지 않았어요. 다시 붙여넣거나 첨부해 주세요.",
     "videoReadFailed": "비디오를 읽지 못해 메시지를 보내지 않았어요. 다시 첨부해 주세요.",
+    "audioReadFailed": "오디오를 읽지 못해 메시지를 보내지 않았어요. 다시 첨부해 주세요.",
+    "recordAudio": "녹음",
+    "stopRecording": "녹음 종료",
+    "audioRecording": "녹음 중",
+    "audioRecordingStarting": "녹음 준비 중",
+    "audioRecordingSaving": "녹음 저장 중",
+    "audioRecordingUnavailable": "현재 환경에서는 마이크 녹음을 사용할 수 없어요.",
+    "audioRecordingFailed": "녹음에 실패했어요. 마이크 권한을 확인한 뒤 다시 시도해 주세요.",
+    "recordedAudioName": "녹음 {index}.wav",
     "openModelSettings": "모델 설정 열기",
     "attachFiles": "파일 추가",
     "commandMenu": "명령 메뉴",
@@ -287,12 +306,14 @@
     "thinkingLevel": {
       "off": "끔",
       "auto": "자동",
+      "medium": "중간",
       "high": "깊은",
       "xhigh": "최대"
     },
     "thinkingDesc": {
       "off": "추론 없음",
       "auto": "모델이 깊이를 결정",
+      "medium": "균형 추론",
       "high": "깊은 추론",
       "xhigh": "전체 추론"
     },
@@ -590,11 +611,6 @@
       "done": "🧭 분신을 보냈어요",
       "failed": "🧭 분신이 문제가 생겼어요"
     },
-    "wait": {
-      "running": "⏳ {name} 이(가) 결과를 기다리고 있어요",
-      "done": "⏳ 대기가 끝났어요",
-      "failed": "⏳ 대기가 중단됐어요"
-    },
     "check_pending_tasks": {
       "running": "📋 {name}이(가) 안 끝난 일을 찾고 있어요",
       "done": "📋 {name} 확인 끝",
@@ -687,7 +703,6 @@
       "models": "모델",
       "memory": "기억",
       "work": "워크스페이스",
-      "computer": "컴퓨터 사용",
       "skills": "스킬",
       "mcp": "Connectors",
       "bridge": "소셜",
@@ -745,6 +760,8 @@
       "midnightContrastMode": "선명",
       "auto": "자동",
       "autoMode": "시스템",
+      "font": "글꼴",
+      "fontHint": "본문 읽기에 사용할 글꼴을 선택해요",
       "serifFont": "명조 글꼴",
       "serifFontHint": "본문에 명조 글꼴을 사용해요",
       "paperTexture": "종이 질감",
@@ -753,13 +770,25 @@
       "leavesOverlay": "맑은 날 모드",
       "leavesOverlayHint": "가끔은 햇볕도 쬐어요"
     },
+    "fonts": {
+      "followReading": "읽기 글꼴 따르기",
+      "serifName": "명조",
+      "serifDesc": "본문 읽기에 적합",
+      "sansName": "고딕",
+      "sansDesc": "시스템 UI에 가까움"
+    },
     "interface": {
       "system": "시스템",
       "hardwareAcceleration": "하드웨어 가속",
-      "hardwareAccelerationHint": "GPU로 앱 창을 렌더링합니다. 끄면 다음 실행부터 소프트웨어 렌더링을 사용해 Windows GPU 드라이버로 인한 시작 충돌 복구에 도움이 됩니다."
+      "hardwareAccelerationHint": "GPU로 앱 창을 렌더링합니다. 끄면 다음 실행부터 소프트웨어 렌더링을 사용해 Windows GPU 드라이버로 인한 시작 충돌 복구에 도움이 됩니다.",
+      "shortcuts": "단축키",
+      "voiceRecordingShortcut": "음성 녹음/전송",
+      "voiceRecordingShortcutHint": "메인 채팅 화면에 포커스가 있을 때 한 번 누르면 녹음을 시작하고, 다시 누르면 종료 후 전송합니다."
     },
     "editor": {
       "title": "편집기",
+      "markdownFont": "글꼴",
+      "markdownFontHint": "기본값은 외관의 읽기 글꼴을 따르며, 편집기만 따로 지정할 수도 있어요.",
       "markdownBodyFontSize": "본문 크기",
       "markdownBodyFontSizeHint": "Markdown 편집기 본문은 15px를 기본값으로 사용해요.",
       "markdownHeading1FontSize": "제목 1 크기",
@@ -837,7 +866,6 @@
           "automation": { "label": "자동화", "summary": "Agent가 알림과 플러그인 예약 동작을 만들 수 있게 합니다" },
           "beautify": { "label": "小花美术", "summary": "Agent가 문서 커버와 미적 보강을 생성할 수 있게 합니다" },
           "browser": { "label": "브라우저", "summary": "헤드리스 브라우저로 웹 페이지를 탐색" },
-          "computer": { "label": "Computer Use", "summary": "승인된 데스크톱 앱을 제어하고 실시간 동작 커서를 표시합니다" },
           "cron": { "label": "예약 작업", "summary": "지정한 시간에 작업을 자동 실행" },
           "dm": { "label": "다이렉트 메시지", "summary": "다른 에이전트에게 1대1 메시지 전송" },
           "install_skill": { "label": "스킬 설치", "summary": "GitHub 또는 스킬 라이브러리에서 새 스킬 설치" },
@@ -845,19 +873,6 @@
           "workflow": { "label": "Workflow", "summary": "Agent가 다중 에이전트 워크플로 스크립트를 백그라운드 작업으로 실행하도록 허용" },
           "xingye_propose_draft": { "label": "Xingye 초안 제안", "summary": "하트비트 순찰 중에 캐릭터 폰/비밀 공간에 확인 대기 초안을 생성합니다(현재 지원: 일기; 다른 모듈은 순차적으로 추가). 끄면 새 초안만 중단되고 기존 초안은 유지됩니다." }
         }
-      },
-      "computerUse": {
-        "title": "Computer Use 상태",
-        "description": "기반 provider, OS 권한, 승인된 앱을 표시합니다. 켜고 끄는 것은 위의 도구 스위치에서 합니다.",
-        "provider": "Provider",
-        "availability": "사용 가능 여부",
-        "available": "사용 가능",
-        "unavailable": "사용 불가",
-        "permissions": "OS 권한",
-        "permissionsEmpty": "추가 권한 없음 또는 아직 상태 없음",
-        "approvals": "승인된 앱",
-        "approvalsEmpty": "없음",
-        "refresh": "새로고침"
       }
     },
     "about": {
@@ -1116,6 +1131,9 @@
       "watermark": "워터마크",
       "aspectRatio": "가로세로 비율",
       "speechRecognition": "음성 인식",
+      "speechRecognitionEnabled": "음성 메시지를 보낼 때 전사",
+      "defaultSpeechModel": "음성 메시지 전사 모델",
+      "speechModels": "전사 모델",
       "speechSynthesis": "음성 합성",
       "comingSoon": "곧 제공 예정",
       "noProvider": "제공자를 선택해 자세히 보기",
@@ -1204,10 +1222,12 @@
       "displayName": "표시 이름",
       "vision": "비전",
       "video": "비디오",
+      "audio": "오디오",
       "reasoning": "추론",
       "capability": {
         "image": "이미지 입력 지원",
         "video": "비디오 입력 지원",
+        "audio": "오디오 입력 지원",
         "reasoning": "추론 지원"
       }
     },
@@ -1330,7 +1350,13 @@
       "socialGlobalThresholdDesc": "다른 어시스턴트에게 마지막으로 메시지를 보낸 뒤 이 대화 수를 넘으면 순찰이 가볍게 소셜을 권합니다(제안일 뿐 강제 아님). 클수록 덜 자주",
       "socialPerPeerThreshold": "개별 연락 방치 상한",
       "socialPerPeerThresholdDesc": "특정 어시스턴트와 이 대화 수만큼 연락이 없으면 '오래 연락 없음'으로 따로 알려 누구도 잊히지 않게 합니다",
-      "socialUnit": "대화"
+      "socialUnit": "대화",
+      "contextFilesTitle": "워크스페이스 지침 주입",
+      "contextFilesDesc": "현재 워크스페이스 프로젝트의 AGENTS.md / CLAUDE.md를 새 세션 시스템 프롬프트에 기억보다 앞서 주입합니다.",
+      "injectAgentsMd": "AGENTS.md 주입",
+      "injectAgentsMdDesc": "켜면 새 세션이 현재 작업 디렉토리에서 Git 루트까지의 AGENTS.md를 읽습니다.",
+      "injectClaudeMd": "CLAUDE.md 주입",
+      "injectClaudeMdDesc": "켜면 새 세션이 현재 작업 디렉토리에서 Git 루트까지의 CLAUDE.md를 읽습니다."
     },
     "toolCaps": {
       "title": "스킬 설치 권한"
@@ -1515,6 +1541,9 @@
       "desc": "대화 스크린샷의 스타일과 레이아웃을 선택하세요",
       "color": "색상",
       "width": "너비",
+      "font": "글꼴",
+      "fontLabel": "스크린샷 글꼴",
+      "fontHint": "별도 글꼴을 선택하지 않으면 외관의 읽기 글꼴을 따릅니다.",
       "light": "라이트",
       "dark": "다크",
       "sakura": "푸른 하늘과 벚꽃",
@@ -1668,6 +1697,7 @@
       "contextLength": "컨텍스트 길이",
       "maxOutput": "최대 출력",
       "imageInput": "이미지 입력",
+      "audioInput": "오디오 입력",
       "reasoning": "추론 모델",
       "cancelEdit": "취소",
       "saveEdit": "저장",
@@ -1774,7 +1804,9 @@
       "title": "이 대화",
       "cwd": "작업 폴더",
       "model": "모델",
-      "files": "파일"
+      "files": "파일",
+      "authorizedFolders": "허용 폴더",
+      "addAuthorizedFolder": "허용 폴더 추가"
     },
     "tabs": {
       "label": "오른쪽 작업공간",
@@ -1935,12 +1967,16 @@
     "compactFailed": "압축 실패: {msg}",
     "maxImages": "이미지는 최대 {max}장까지 가능해요",
     "maxVideos": "비디오는 최대 {max}개까지 가능해요",
+    "maxAudios": "오디오는 최대 {max}개까지 가능해요",
     "unsupportedImageFormat": "지원하지 않는 이미지 형식: {mime}",
     "unsupportedVideoFormat": "지원하지 않는 비디오 형식: {mime}",
+    "unsupportedAudioFormat": "지원하지 않는 오디오 형식: {mime}",
     "imageTooLarge": "이미지 한 장당 20MB를 초과할 수 없어요",
     "videoTooLarge": "비디오 하나는 20MB를 초과할 수 없어요",
+    "audioTooLarge": "오디오 하나는 50MB를 초과할 수 없어요",
     "viewImage": "(이미지 보기)",
     "viewVideo": "(비디오 보기)",
+    "listenAudio": "(오디오 듣기)",
     "modelNoVision": "현재 모델은 이미지를 지원하지 않아요. 이미지를 지원하는 모델로 전환해 주세요",
     "searchProviderNotConfigured": "검색 provider가 설정되지 않았어요",
     "searchProviderMissingKey": "검색 provider \"{provider}\"의 API Key가 없어요",
@@ -2336,11 +2372,6 @@
       "filePathDesc": "(호환) 단일 로컬 파일의 절대 경로. 새 호출은 filepaths를 우선 사용하세요.",
       "labelDesc": "(호환) 사용자에게 표시할 파일 이름. 보통 생략할 수 있고 기본값은 파일명이에요."
     },
-    "wait": {
-      "label": "대기",
-      "description": "지정한 초만큼 대기해요. 백그라운드 작업이 끝날 때까지 기다리는 동안 턴을 활성 상태로 유지하는 데 사용해요.",
-      "secondsDesc": "대기할 초 (1-300)"
-    },
     "subagent": {
       "label": "서브 에이전트 시작",
       "description": "위임 작업을 위한 계속 가능한 서브 에이전트 인스턴스를 만들고 taskId와 threadId를 바로 반환해요. 결과는 백그라운드에서 현재 대화로 전달돼요. agent=\"?\"로 목록을 볼 수 있어요.",
@@ -2392,6 +2423,8 @@
       "timezoneDesc": "IANA 시간대 (예: Asia/Shanghai)",
       "bridgeMediaPublicBaseUrl": "Bridge 파일 공개 URL",
       "bridgeMediaPublicBaseUrlDesc": "외부 플랫폼이 로컬 staged 파일을 가져갈 때 사용하는 공개 HTTP/HTTPS base URL이에요. 보통 리버스 프록시나 tunnel에서 제공해요. 비워두면 HANA_BRIDGE_PUBLIC_BASE_URL로 돌아가요.",
+      "computerUse": "Computer Use",
+      "computerUseDesc": "켜면 새 대화에서 주 에이전트에게 computer 도구를 노출합니다. 끄면 새 대화에는 보이지 않고, 이미 고정된 오래된 대화가 호출하면 거부됩니다.",
       "thinkingBudget": "사고 깊이",
       "memory": "메모리 시스템",
       "memoryDesc": "현재 Agent의 메모리 기능 켜기/끄기",

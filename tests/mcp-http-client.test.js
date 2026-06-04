@@ -276,6 +276,50 @@ describe("MCP HTTP clients", () => {
     expect(headerValue(listRequests.at(-1).init.headers, "MCP-Session-Id")).toBe("session-2");
   });
 
+  it("reinitializes once when a Streamable HTTP session reports Invalid session ID with status 400", async () => {
+    const requests = [];
+    let initializeCount = 0;
+    let expiredOnce = false;
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = requestBody(init);
+      requests.push({ url: String(url), init, body });
+      if (body?.method === "initialize") {
+        initializeCount += 1;
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+        }, { headers: { "MCP-Session-Id": `session-${initializeCount}` } });
+      }
+      if (body?.method === "notifications/initialized") return emptyResponse();
+      if (body?.method === "tools/list" && headerValue(init.headers, "MCP-Session-Id") === "session-1" && !expiredOnce) {
+        expiredOnce = true;
+        return new Response("Invalid session ID", { status: 400 });
+      }
+      if (body?.method === "tools/list") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [{ name: "fresh" }] },
+        });
+      }
+      throw new Error(`unexpected method ${body?.method}`);
+    });
+
+    const client = new McpStreamableHttpClient({
+      id: "github",
+      url: "https://mcp.github.com/mcp",
+    }, { fetchImpl });
+
+    await client.start();
+    const tools = await client.listTools();
+
+    expect(tools).toEqual([{ name: "fresh" }]);
+    expect(initializeCount).toBe(2);
+    const listRequests = requests.filter(r => r.body?.method === "tools/list");
+    expect(headerValue(listRequests.at(-1).init.headers, "MCP-Session-Id")).toBe("session-2");
+  });
+
   it("uses one initial Streamable HTTP protocol version source and then negotiated headers", async () => {
     const requests = [];
     const fetchImpl = vi.fn(async (url, init) => {
@@ -411,6 +455,27 @@ describe("MCP HTTP clients", () => {
     expect(client.running).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ expected: false }));
+  });
+
+  it("reports an unexpected close when legacy SSE message POST says Invalid session ID", async () => {
+    const onClose = vi.fn();
+    const fetchImpl = vi.fn(async () => new Response("Invalid session ID", { status: 400 }));
+    const client = new McpLegacySseClient({
+      id: "legacy",
+      url: "https://legacy.example.com/sse",
+    }, { fetchImpl, onClose });
+
+    client.messageEndpoint = "https://legacy.example.com/messages";
+    client._closed = false;
+
+    await expect(client.callTool("search", { q: "hana" })).rejects.toThrow(/Invalid session ID/i);
+
+    expect(client.running).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith(expect.objectContaining({
+      expected: false,
+      needsAuth: false,
+    }));
   });
 
   it("does not report an unexpected close after the SSE stream ends due to stop()", async () => {

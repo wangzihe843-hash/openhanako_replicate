@@ -153,8 +153,8 @@ function escapeXmlText(value) {
     .replaceAll(">", "&gt;");
 }
 
-function buildDimensionNoteLine(note, path, index) {
-  const name = path || `image-${index + 1}`;
+function buildDimensionNoteLine(note, _path, index) {
+  const name = `image-${index + 1}`;
   return `<file name="${escapeXmlAttr(name)}">${escapeXmlText(note)}</file>`;
 }
 

@@ -218,6 +218,9 @@ function isSettingsReadRoute(verb, routePath) {
     || routePath === "/api/providers/summary"
     || routePath === "/api/preferences/models"
     || routePath === "/api/preferences/appearance"
+    || routePath === "/api/speech-recognition/providers"
+    || routePath === "/api/experiments"
+    || routePath === "/api/experiments/memory/cache-snapshot-reflection/observation"
     || routePath === "/api/bridge/status"
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath);
 }
@@ -238,10 +241,13 @@ function isDeskFileWriteRoute(verb, routePath) {
 
 function isSettingsWriteRoute(verb, routePath) {
   if (verb === "POST" && routePath === "/api/preferences/setup-complete") return true;
+  if (verb === "PATCH" && /^\/api\/experiments\/[^/]+$/.test(routePath)) return true;
+  if (verb === "DELETE" && routePath === "/api/experiments/memory/cache-snapshot-reflection/observation") return true;
   return (verb === "PUT" && (
     routePath === "/api/config"
     || routePath === "/api/preferences/models"
     || routePath === "/api/preferences/appearance"
+    || routePath === "/api/speech-recognition/config"
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath)
   ));
 }

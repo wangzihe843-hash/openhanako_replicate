@@ -16,17 +16,25 @@ export function serializeEditor(json: JSONContent): { text: string; skills: stri
   const fileRefs: EditorFileRef[] = [];
   const textParts: string[] = [];
 
-  function walk(node: JSONContent) {
+  function fileBadgeLabel(attrs: Record<string, unknown>): string {
+    const name = typeof attrs.name === 'string' ? attrs.name : '';
+    const filePath = typeof attrs.path === 'string' ? attrs.path : '';
+    return name || filePath.split(/[\\/]/).pop() || filePath;
+  }
+
+  function paragraphHasText(content: JSONContent[] | undefined): boolean {
+    return (content || []).some(child => child.type === 'text' && typeof child.text === 'string' && child.text.trim().length > 0);
+  }
+
+  function walk(node: JSONContent, options: { emitFileBadgeText?: boolean } = {}) {
     if (node.type === 'skillBadge' && node.attrs?.name) {
       skills.push(node.attrs.name as string);
       return;
     }
     if (node.type === 'fileBadge' && node.attrs) {
-      const name = typeof node.attrs.name === 'string' ? node.attrs.name : '';
       const path = typeof node.attrs.path === 'string' ? node.attrs.path : '';
-      if (name || path) {
-        const label = name || path.split('/').pop() || path;
-        textParts.push(`@${label}`);
+      const label = fileBadgeLabel(node.attrs);
+      if (label || path) {
         fileRefs.push({
           ...(typeof node.attrs.fileId === 'string' && node.attrs.fileId ? { fileId: node.attrs.fileId } : {}),
           path,
@@ -34,6 +42,9 @@ export function serializeEditor(json: JSONContent): { text: string; skills: stri
           isDirectory: node.attrs.isDirectory === true,
           ...(typeof node.attrs.mimeType === 'string' && node.attrs.mimeType ? { mimeType: node.attrs.mimeType } : {}),
         });
+        if (options.emitFileBadgeText) {
+          textParts.push(`@${label}`);
+        }
       }
       return;
     }
@@ -45,11 +56,18 @@ export function serializeEditor(json: JSONContent): { text: string; skills: stri
       textParts.push('\n');
       return;
     }
+    if (node.type === 'paragraph') {
+      const emitFileBadgeText = paragraphHasText(node.content);
+      if (node.content) {
+        for (const child of node.content) walk(child, { emitFileBadgeText });
+      }
+      if (textParts.length > 0) {
+        textParts.push('\n');
+      }
+      return;
+    }
     if (node.content) {
       for (const child of node.content) walk(child);
-    }
-    if (node.type === 'paragraph' && textParts.length > 0) {
-      textParts.push('\n');
     }
   }
 

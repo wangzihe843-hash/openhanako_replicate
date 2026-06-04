@@ -1,7 +1,14 @@
 // @ts-expect-error — shared JS module
 import * as sharedEditorTypography from '../../../../shared/editor-typography.js';
+import {
+  FOLLOW_READING_FONT_ID,
+  getCssVariableFontFamilyForPreset,
+  normalizeFontSelectionId,
+  type FontSelectionId,
+} from '../utils/font-presets';
 
 export interface EditorMarkdownTypography {
+  fontPreset: FontSelectionId;
   bodyFontSize: number;
   heading1FontSize: number;
   heading2FontSize: number;
@@ -36,6 +43,15 @@ export function applyEditorTypography(
 
   if (!root?.style) return typography;
 
+  const fontSelection = normalizeFontSelectionId(markdown.fontPreset, {
+    allowFollow: true,
+    fallback: FOLLOW_READING_FONT_ID,
+  });
+  const fontFamily = fontSelection === FOLLOW_READING_FONT_ID
+    ? 'var(--font-serif)'
+    : getCssVariableFontFamilyForPreset(fontSelection);
+
+  root.style.setProperty('--editor-markdown-font-family', fontFamily);
   root.style.setProperty('--editor-markdown-font-size', `${markdown.bodyFontSize}px`);
   root.style.setProperty('--editor-markdown-h1-font-size', `${markdown.heading1FontSize}px`);
   root.style.setProperty('--editor-markdown-h2-font-size', `${markdown.heading2FontSize}px`);

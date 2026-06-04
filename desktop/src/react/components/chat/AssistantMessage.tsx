@@ -10,10 +10,13 @@ import { ToolGroupBlock } from './ToolGroupBlock';
 import { PluginCardBlock } from './PluginCardBlock';
 import { SubagentCard } from './SubagentCard';
 import { WorkflowInlineCard } from './WorkflowInlineCard';
+import { InterludeBlock } from './InterludeBlock';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { SettingsUpdateCard } from './SettingsUpdateCard';
 import { MessageActions } from './MessageActions';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
+import { ChatResourceCard } from './ChatResourceCard';
+import { FileResourceIcon, SkillResourceIcon } from './ChatResourceIcons';
 import { BLOCK_RENDERERS } from './block-renderers';
 import { FileOutputActions } from './FileOutputActions';
 const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
@@ -43,6 +46,7 @@ interface Props {
   agentId?: string | null;
   readOnly?: boolean;
   isLatestAssistantMessage?: boolean;
+  showTurnCompletionTime?: boolean;
   retrySourceMessage?: ChatMessage | null;
   messageRef?: (element: HTMLDivElement | null) => void;
 }
@@ -58,6 +62,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   agentId,
   readOnly = false,
   isLatestAssistantMessage = false,
+  showTurnCompletionTime,
   retrySourceMessage = null,
   messageRef,
 }: Props) {
@@ -85,6 +90,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       .filter(block => block.type !== 'session_confirmation' || block.surface !== 'input'),
     [message.blocks],
   );
+  const isInterludeOnly = blocks.length > 0 && blocks.every(block => block.type === 'interlude');
 
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -125,9 +131,11 @@ export const AssistantMessage = memo(function AssistantMessage({
     }
   }, [isStreaming, retrying, retrySourceMessage, sessionPath]);
 
-  const canShowCompletionFooter = !readOnly && isLatestAssistantMessage && !!retrySourceMessage && !isStreaming;
-  const timeText = formatMessageTime(message.timestamp);
-  const footerActions: MessageFooterAction[] = useMemo(() => [
+  const canShowRegenerateAction = !readOnly && isLatestAssistantMessage && !!retrySourceMessage && !isStreaming;
+  const shouldShowCompletionTime = showTurnCompletionTime ?? isLatestAssistantMessage;
+  const shouldPersistCompletionTime = shouldShowCompletionTime && isLatestAssistantMessage && !isStreaming;
+  const timeText = shouldShowCompletionTime ? formatMessageTime(message.timestamp) : null;
+  const regenerateActions: MessageFooterAction[] = useMemo(() => [
     {
       id: 'regenerate',
       title: t('common.regenerate'),
@@ -136,12 +144,13 @@ export const AssistantMessage = memo(function AssistantMessage({
       disabled: retrying || isStreaming,
     },
   ], [handleRegenerate, isStreaming, retrying, t]);
+  const footerActions = canShowRegenerateAction ? regenerateActions : [];
 
   return (
-    <div className={`${styles.messageGroup} ${styles.messageGroupAssistant}${isSelected ? ` ${styles.messageGroupSelected}` : ''}`}
+    <div className={`${styles.messageGroup} ${styles.messageGroupAssistant}${isInterludeOnly ? ` ${styles.messageGroupInterludeOnly}` : ''}${isSelected ? ` ${styles.messageGroupSelected}` : ''}`}
          ref={messageRef}
          data-message-id={message.id}>
-      {showAvatar && (
+      {showAvatar && !isInterludeOnly && (
         <div className={styles.avatarRow}>
           <AgentAvatar
             info={displayInfo}
@@ -151,7 +160,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <span className={styles.avatarName}>{displayName}</span>
         </div>
       )}
-      <div className={`${styles.message} ${styles.messageAssistant}`}>
+      <div className={`${styles.message} ${styles.messageAssistant}${isInterludeOnly ? ` ${styles.messageAssistantInterludeOnly}` : ''}`}>
         {blocks.map((block, i) => (
           <ContentBlockErrorBoundary
             key={`block-${i}`}
@@ -173,7 +182,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           </ContentBlockErrorBoundary>
         ))}
       </div>
-      {!readOnly && (
+      {!readOnly && !isInterludeOnly && (
         <MessageActions
           messageId={message.id}
           sessionPath={sessionPath}
@@ -183,11 +192,11 @@ export const AssistantMessage = memo(function AssistantMessage({
           isStreaming={isStreaming}
         />
       )}
-      {canShowCompletionFooter && (
+      {!isInterludeOnly && (timeText || footerActions.length > 0) && (
         <MessageFooterActions
           align="left"
-          visible
           timeText={timeText}
+          timePersistent={shouldPersistCompletionTime}
           actions={footerActions}
           testId="assistant-completion-actions"
         />
@@ -199,8 +208,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 function RegenerateIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
+      <path d="M21 3v5m0 0h-5m5 0-3-2.708A9 9 0 1 0 20.777 14" />
     </svg>
   );
 }
@@ -285,6 +293,8 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
       );
     case 'media_generation':
       return <MediaGenerationBlock block={block} sessionPath={sessionPath} readOnly={readOnly} />;
+    case 'interlude':
+      return <InterludeBlock block={block} />;
     default: {
       const Renderer = BLOCK_RENDERERS[block.type];
       return Renderer ? <Renderer block={block} agentId={agentId} /> : null;
@@ -515,28 +525,19 @@ const FileOutputCard = memo(function FileOutputCard({ fileId, filePath, label, e
     });
   };
 
-  const typeLabel = expired ? expiredLabel : (EXT_LABELS[ext] || ext.toUpperCase());
+  const typeLabel = EXT_LABELS[ext] || ext.toUpperCase();
 
   return (
-    <div
-      className={`${styles.fileOutputCard}${expired ? ` ${styles.fileOutputExpired}` : ` ${styles.fileOutputPreviewable}`}`}
-      onClick={handlePreview}
-      style={{ cursor: expired ? 'default' : 'pointer' }}
-      aria-disabled={expired}
-    >
-      <div className={styles.fileOutputIcon}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
-      </div>
-      <div className={styles.fileOutputInfo}>
-        <div className={styles.fileOutputName}>{displayName}</div>
-        <div className={styles.fileOutputType}>
-          {typeLabel}{!expired && ext ? ` \u00b7 ${ext.toUpperCase()}` : ''}
-        </div>
-      </div>
-      {!expired && (
+    <ChatResourceCard
+      icon={<FileResourceIcon />}
+      title={displayName}
+      subtitle={ext ? `${typeLabel} \u00b7 ${ext.toUpperCase()}` : typeLabel}
+      statusLabel={expired ? expiredLabel : undefined}
+      statusTone={expired ? 'muted' : 'neutral'}
+      disabled={expired}
+      onClick={expired ? undefined : handlePreview}
+      ariaLabel={displayName}
+      actionSlot={!expired && (
         <FileOutputActions
           filePath={filePath}
           displayName={displayName}
@@ -544,7 +545,7 @@ const FileOutputCard = memo(function FileOutputCard({ fileId, filePath, label, e
           downloadName={displayName}
         />
       )}
-    </div>
+    />
   );
 });
 
@@ -679,16 +680,15 @@ const ScreenshotBlock = memo(function ScreenshotBlock({ block, sessionPath, mess
 const SkillBlock = memo(function SkillBlock({ block }: { block: any }) {
   const skillFilePath = typeof block.installedSkillSource?.filePath === 'string'
     ? block.installedSkillSource.filePath
-    : block.skillFilePath;
+    : (typeof block.skillFilePath === 'string' ? block.skillFilePath : '');
   return (
-    <div className={styles.skillCard} onClick={() => openSkillPreview(block.skillName, skillFilePath)} style={{ cursor: 'default' }}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2L2 7l10 5 10-5-10-5z" />
-        <path d="M2 17l10 5 10-5" />
-        <path d="M2 12l10 5 10-5" />
-      </svg>
-      <span>{block.skillName}</span>
-    </div>
+    <ChatResourceCard
+      icon={<SkillResourceIcon />}
+      title={block.skillName}
+      subtitle="Skill"
+      onClick={() => openSkillPreview(block.skillName, skillFilePath, block.installedSkillSource)}
+      ariaLabel={block.skillName}
+    />
   );
 });
 

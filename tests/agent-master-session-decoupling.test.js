@@ -208,6 +208,57 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     await agent.dispose();
   });
 
+  it("workspace instruction files are opt-in and disabled by default", async () => {
+    const cwd = path.join(tmpDir, "workspace");
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.writeFileSync(path.join(cwd, "AGENTS.md"), "DEFAULT_DISABLED_AGENTS_BEACON\n", "utf-8");
+    fs.writeFileSync(path.join(cwd, "CLAUDE.md"), "DEFAULT_DISABLED_CLAUDE_BEACON\n", "utf-8");
+
+    const agent = makeAgent(agentsDir, tmpDir);
+    await agent.init(() => {});
+
+    const prompt = agent.buildSystemPrompt({
+      forceMemoryEnabled: false,
+      cwdOverride: cwd,
+    });
+
+    expect(prompt).not.toContain("DEFAULT_DISABLED_AGENTS_BEACON");
+    expect(prompt).not.toContain("DEFAULT_DISABLED_CLAUDE_BEACON");
+
+    await agent.dispose();
+  });
+
+  it("injects enabled workspace instruction files before memory for new prompt snapshots", async () => {
+    const repoRoot = path.join(tmpDir, "workspace");
+    const nestedCwd = path.join(repoRoot, "packages", "app");
+    fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
+    fs.mkdirSync(nestedCwd, { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "AGENTS.md"), "OUTSIDE_WORKSPACE_BEACON\n", "utf-8");
+    fs.writeFileSync(path.join(repoRoot, "AGENTS.md"), "ROOT_AGENTS_BEACON\n", "utf-8");
+    fs.writeFileSync(path.join(nestedCwd, "CLAUDE.md"), "NESTED_CLAUDE_BEACON\n", "utf-8");
+
+    const agent = makeAgent(agentsDir, tmpDir);
+    await agent.init(() => {});
+    agent._config.workspace_context = {
+      inject_agents_md: true,
+      inject_claude_md: true,
+    };
+
+    const prompt = agent.buildSystemPrompt({
+      forceMemoryEnabled: true,
+      cwdOverride: nestedCwd,
+    });
+
+    expect(prompt).toContain("## Workspace Instructions");
+    expect(prompt).toContain("ROOT_AGENTS_BEACON");
+    expect(prompt).toContain("NESTED_CLAUDE_BEACON");
+    expect(prompt).not.toContain("OUTSIDE_WORKSPACE_BEACON");
+    expect(prompt.indexOf("ROOT_AGENTS_BEACON")).toBeLessThan(prompt.indexOf("NESTED_CLAUDE_BEACON"));
+    expect(prompt.indexOf("NESTED_CLAUDE_BEACON")).toBeLessThan(prompt.indexOf("MEMORY_MD_BEACON"));
+
+    await agent.dispose();
+  });
+
   it("main system prompt guides Codex-like subagent instance reuse without injecting runtime state", async () => {
     const agent = makeAgent(agentsDir, tmpDir);
     await agent.init(() => {});

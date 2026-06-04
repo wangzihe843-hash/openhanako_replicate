@@ -20,9 +20,9 @@ export const markdownTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     overflow: 'auto',
-    fontFamily: 'var(--font-serif)',
+    fontFamily: 'var(--editor-markdown-font-family, var(--font-serif))',
     lineHeight: 'var(--editor-markdown-line-height)',
-    padding: 'var(--space-md) 0',
+    padding: 'calc(var(--space-xl) + var(--space-lg)) 0 var(--space-md)',
   },
   '&.cm-markdown-has-top-cover .cm-scroller': {
     paddingTop: '0',
@@ -40,7 +40,7 @@ export const markdownTheme = EditorView.theme({
     padding: '0 1px',
   },
   '.cm-math-widget': {
-    fontFamily: 'var(--font-serif)',
+    fontFamily: 'var(--editor-markdown-font-family, var(--font-serif))',
   },
   '.cm-math-block-widget': {
     display: 'block',
@@ -56,7 +56,7 @@ export const markdownTheme = EditorView.theme({
     position: 'relative',
     minHeight: '160px',
     maxHeight: '720px',
-    margin: '0 auto var(--space-md)',
+    margin: '0 auto var(--space-lg)',
     overflow: 'hidden',
     backgroundColor: 'transparent',
     userSelect: 'none',

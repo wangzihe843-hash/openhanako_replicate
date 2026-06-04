@@ -35,25 +35,7 @@ export const ChatTranscript = memo(function ChatTranscript({
       : items.map((item, originalIndex) => ({ type: 'source' as const, item, originalIndex })),
     [enableProcessFold, isStreaming, items],
   );
-  const latestTurn = useMemo(() => {
-    let latestUserIndex = -1;
-    let latestAssistantIndex = -1;
-    for (let i = items.length - 1; i >= 0; i -= 1) {
-      const item = items[i];
-      if (item.type !== 'message') continue;
-      if (latestUserIndex < 0 && item.data.role === 'user') latestUserIndex = i;
-      if (latestAssistantIndex < 0 && item.data.role === 'assistant') latestAssistantIndex = i;
-      if (latestUserIndex >= 0 && latestAssistantIndex >= 0) break;
-    }
-    const latestUserItem = latestUserIndex >= 0 ? items[latestUserIndex] : null;
-    return {
-      latestUserIndex,
-      latestAssistantIndex,
-      latestUserMessage: latestUserItem?.type === 'message' && latestUserItem.data.role === 'user'
-        ? latestUserItem.data
-        : null,
-    };
-  }, [items]);
+  const turnState = useMemo(() => buildTurnState(items), [items]);
 
   return (
     <>
@@ -67,9 +49,11 @@ export const ChatTranscript = memo(function ChatTranscript({
           readOnly={readOnly}
           hideUserIdentity={hideUserIdentity}
           userIdentity={userIdentity}
-          latestUserMessage={latestTurn.latestUserMessage}
-          latestUserIndex={latestTurn.latestUserIndex}
-          latestAssistantIndex={latestTurn.latestAssistantIndex}
+          latestUserMessage={turnState.latestUserMessage}
+          latestUserIndex={turnState.latestUserIndex}
+          latestAssistantIndex={turnState.latestAssistantIndex}
+          turnCompletionAssistantIndexes={turnState.turnCompletionAssistantIndexes}
+          isStreamingSession={isStreaming}
           registerMessageElement={registerMessageElement}
         />
       ))}
@@ -83,6 +67,46 @@ function renderItemKey(renderItem: TranscriptRenderItem): string {
   return item.type === 'message' ? item.data.id : `c-${renderItem.originalIndex}`;
 }
 
+function buildTurnState(items: ChatListItem[]): {
+  latestUserIndex: number;
+  latestAssistantIndex: number;
+  latestUserMessage: ChatMessage | null;
+  turnCompletionAssistantIndexes: ReadonlySet<number>;
+} {
+  let latestUserIndex = -1;
+  let latestAssistantIndex = -1;
+  let latestUserMessage: ChatMessage | null = null;
+  let pendingAssistantIndex = -1;
+  const turnCompletionAssistantIndexes = new Set<number>();
+
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item.type !== 'message') continue;
+
+    if (item.data.role === 'user') {
+      if (pendingAssistantIndex >= 0) turnCompletionAssistantIndexes.add(pendingAssistantIndex);
+      pendingAssistantIndex = -1;
+      latestUserIndex = i;
+      latestUserMessage = item.data;
+      continue;
+    }
+
+    if (item.data.role === 'assistant') {
+      pendingAssistantIndex = i;
+      latestAssistantIndex = i;
+    }
+  }
+
+  if (pendingAssistantIndex >= 0) turnCompletionAssistantIndexes.add(pendingAssistantIndex);
+
+  return {
+    latestUserIndex,
+    latestAssistantIndex,
+    latestUserMessage,
+    turnCompletionAssistantIndexes,
+  };
+}
+
 const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   renderItem,
   sourceItems,
@@ -94,6 +118,8 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   latestUserMessage,
   latestUserIndex,
   latestAssistantIndex,
+  turnCompletionAssistantIndexes,
+  isStreamingSession,
   registerMessageElement,
 }: {
   renderItem: TranscriptRenderItem;
@@ -106,6 +132,8 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   latestUserMessage?: ChatMessage | null;
   latestUserIndex: number;
   latestAssistantIndex: number;
+  turnCompletionAssistantIndexes: ReadonlySet<number>;
+  isStreamingSession: boolean;
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const originalIndex = renderItem.originalIndex;
@@ -120,6 +148,13 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
         sessionPath={sessionPath}
         agentId={agentId}
         readOnly={readOnly}
+        turnCompletionAssistantIndexes={turnCompletionAssistantIndexes}
+        completionTimePersistent={
+          turnCompletionAssistantIndexes.has(groupLastOriginalIndex(renderItem))
+          && groupLastOriginalIndex(renderItem) === latestAssistantIndex
+          && latestAssistantIndex > latestUserIndex
+          && !isStreamingSession
+        }
         registerMessageElement={registerMessageElement}
       />
     );
@@ -140,10 +175,15 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
         originalIndex === latestAssistantIndex
         && latestAssistantIndex > latestUserIndex
       }
+      showTurnCompletionTime={turnCompletionAssistantIndexes.has(originalIndex)}
       registerMessageElement={registerMessageElement}
     />
   );
 });
+
+function groupLastOriginalIndex(renderItem: Extract<TranscriptRenderItem, { type: 'process_fold' }>): number {
+  return renderItem.items[renderItem.items.length - 1]?.originalIndex ?? renderItem.originalIndex;
+}
 
 const TranscriptItemView = memo(function TranscriptItemView({
   item,
@@ -156,6 +196,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   latestUserMessage,
   isLatestUserMessage,
   isLatestAssistantMessage,
+  showTurnCompletionTime,
   registerMessageElement,
 }: {
   item: ChatListItem;
@@ -168,6 +209,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   latestUserMessage?: ChatMessage | null;
   isLatestUserMessage: boolean;
   isLatestAssistantMessage: boolean;
+  showTurnCompletionTime: boolean;
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const messageId = item.type === 'message' ? item.data.id : null;
@@ -204,6 +246,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
       agentId={agentId}
       readOnly={readOnly}
       isLatestAssistantMessage={isLatestAssistantMessage}
+      showTurnCompletionTime={showTurnCompletionTime}
       retrySourceMessage={latestUserMessage}
       messageRef={messageRef}
     />

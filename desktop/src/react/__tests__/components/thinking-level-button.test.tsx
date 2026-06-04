@@ -43,7 +43,7 @@ describe('ThinkingLevelButton', () => {
     } as never);
     const onChange = vi.fn();
 
-    const { container } = render(<ThinkingLevelButton level="auto" onChange={onChange} modelXhigh />);
+    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
     fireEvent.click(screen.getByRole('button', { name: 'high' }));
 
@@ -60,7 +60,7 @@ describe('ThinkingLevelButton', () => {
     vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ ok: true }));
     const onChange = vi.fn();
 
-    const { container } = render(<ThinkingLevelButton level="auto" onChange={onChange} modelXhigh={false} />);
+    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh={false} />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
     fireEvent.click(screen.getByRole('button', { name: 'high' }));
 
@@ -71,5 +71,14 @@ describe('ThinkingLevelButton', () => {
       }));
     });
     expect(onChange).toHaveBeenCalledWith('high');
+  });
+
+  it('shows Medium instead of Auto for legacy auto state', () => {
+    const { container } = render(<ThinkingLevelButton level="auto" onChange={vi.fn()} modelXhigh={false} />);
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    expect(screen.queryByRole('button', { name: /auto/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'medium' })).toBeTruthy();
   });
 });

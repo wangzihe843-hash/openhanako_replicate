@@ -1,6 +1,7 @@
 import { lookupKnown } from "../shared/known-models.js";
 
-const VALID_THINKING_LEVELS = new Set(["off", "auto", "low", "medium", "high", "xhigh"]);
+export const DEFAULT_SESSION_THINKING_LEVEL = "medium";
+const VALID_THINKING_LEVELS = new Set(["off", "low", "medium", "high", "xhigh"]);
 const OPENAI_XHIGH_MODEL_MARKERS = [
   "gpt-5.2",
   "gpt-5.3",
@@ -20,8 +21,20 @@ function lower(value) {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
+function canonicalThinkingLevel(level) {
+  const normalized = lower(level);
+  if (normalized === "auto") return "medium";
+  return VALID_THINKING_LEVELS.has(normalized) ? normalized : null;
+}
+
 export function normalizeSessionThinkingLevel(level) {
-  return VALID_THINKING_LEVELS.has(level) ? level : "auto";
+  return canonicalThinkingLevel(level) || DEFAULT_SESSION_THINKING_LEVEL;
+}
+
+export function normalizeRequestThinkingLevel(level, fallback = "off") {
+  return canonicalThinkingLevel(level)
+    || canonicalThinkingLevel(fallback)
+    || "off";
 }
 
 function idIncludesAny(id, markers) {

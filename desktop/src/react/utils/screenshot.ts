@@ -3,6 +3,7 @@ import { useStore } from '../stores';
 import { selectSelectedIdsBySession } from '../stores/session-selectors';
 import { extractScreenshotPayload, buildThemeName, type ScreenshotPayload } from './screenshot-extract';
 import { readScreenshotSegmentVisibleCharLimit, splitScreenshotMessages } from './screenshot-segments';
+import { resolveScreenshotFontFamily } from './font-presets';
 import type { ChatMessage } from '../stores/chat-types';
 import {
   appendConnectionAuth,
@@ -25,6 +26,7 @@ type StoreSnapshot = ReturnType<typeof useStore.getState>;
 type ScreenshotRenderPayload = ScreenshotPayload & {
   saveDir?: string | null;
   locale?: string;
+  fontFamily?: string;
   segmentIndex?: number;
   segmentTotal?: number;
 };
@@ -118,6 +120,7 @@ async function buildScreenshotPayloadForMessages(
   const payload = extractScreenshotPayload(messages, theme) as ScreenshotRenderPayload;
   payload.saveDir = state.homeFolder || null;
   payload.locale = window.i18n?.locale || state.locale || window.navigator?.language || 'zh';
+  payload.fontFamily = resolveScreenshotFontFamily();
   if (segment.total > 1) {
     payload.segmentIndex = segment.index;
     payload.segmentTotal = segment.total;
@@ -255,6 +258,7 @@ export async function takeArticleScreenshot(markdown: string, options: ArticleSc
       language: options.language || null,
       saveDir: homeFolder,
       locale: window.i18n?.locale || useStore.getState().locale || window.navigator?.language || 'zh',
+      fontFamily: resolveScreenshotFontFamily(),
     });
 
     if (result.success) {

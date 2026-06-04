@@ -68,6 +68,24 @@ describe('UserMessage Codex-style actions', () => {
     expect(screen.getByText('05:42')).toBeInTheDocument();
   });
 
+  it('keeps the timestamp available for older user messages without latest-turn controls', () => {
+    const message = { id: 'u1', role: 'user' as const, text: '旧消息', textHtml: '<p>旧消息</p>', timestamp: new Date(2026, 4, 7, 5, 42).getTime() };
+
+    render(
+      <UserMessage
+        message={message}
+        showAvatar={false}
+        sessionPath="/session/a.jsonl"
+        isLatestUserMessage={false}
+      />,
+    );
+
+    expect(screen.getByText('05:42')).toBeInTheDocument();
+    expect(screen.queryByTitle('复制文本')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('重新生成')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('编辑')).not.toBeInTheDocument();
+  });
+
   it('submits inline edits through the latest-turn replay action', async () => {
     const message = { id: 'u1', sourceEntryId: 'entry-u1', role: 'user' as const, text: '旧消息', textHtml: '<p>旧消息</p>' };
 

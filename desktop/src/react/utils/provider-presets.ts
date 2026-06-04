@@ -25,6 +25,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
   { value: 'minimax-token-plan', label: 'MiniMax Token Plan', url: 'https://api.minimaxi.com/anthropic', api: 'anthropic-messages' },
   { value: 'openrouter',  label: 'OpenRouter',           url: 'https://openrouter.ai/api/v1', api: 'openai-completions' },
   { value: 'mimo',        label: 'Xiaomi (MiMo)',        url: 'https://api.xiaomimimo.com/v1', api: 'openai-completions' },
+  { value: 'mimo-token-plan', label: 'Xiaomi MiMo Token Plan', url: 'https://token-plan-cn.xiaomimimo.com/v1', api: 'openai-completions' },
 ];
 
 function currentLocale(): string | undefined {

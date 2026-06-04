@@ -2,8 +2,8 @@
  * 消息发送前净化器 — capability-aware message adaptation layer
  *
  * 职责：按 Pi SDK Model.input 声明的输入模态，把历史 messages 里不兼容的
- * content block 替换为 TextContent 占位。目前处理 ImageContent / VideoContent；
- * 未来可扩展 AudioContent。
+ * content block 替换为 TextContent 占位。目前处理 ImageContent / VideoContent /
+ * AudioContent。
  *
  * 定位：注册为 Pi SDK "context" extension event handler（engine.js 内）。
  * "context" 事件在每次 LLM 调用前触发，允许修改 messages。
@@ -13,17 +13,22 @@
  */
 import {
   modelSupportsDirectImageInput,
+  modelSupportsDirectAudioInput,
   modelSupportsDirectVideoInput,
+  modelSupportsAudioInput,
   modelSupportsImageInput,
   modelSupportsVideoInput,
 } from "../shared/model-capabilities.js";
 
 const IMAGE_PLACEHOLDER_TEXT = "[图片已省略：当前模型不支持图像输入]";
 const VIDEO_PLACEHOLDER_TEXT = "[视频已省略：当前模型不支持视频输入]";
+const AUDIO_PLACEHOLDER_TEXT = "[音频已省略：当前模型不支持音频输入]";
 const HISTORICAL_IMAGE_PLACEHOLDER_TEXT = "[图片已省略：历史图片保留为文件引用，避免重复发送原始 base64]";
 const HISTORICAL_VIDEO_PLACEHOLDER_TEXT = "[视频已省略：历史视频保留为文件引用，避免重复发送原始 base64]";
+const HISTORICAL_AUDIO_PLACEHOLDER_TEXT = "[音频已省略：历史音频保留为文件引用，避免重复发送原始 base64]";
 const ATTACHED_IMAGE_MARKER_RE = /\[attached_image:\s*[^\]]+\]/g;
 const ATTACHED_VIDEO_MARKER_RE = /\[attached_video:\s*[^\]]+\]/g;
+const ATTACHED_AUDIO_MARKER_RE = /\[attached_audio:\s*[^\]]+\]/g;
 
 /**
  * 模型是否支持 image 输入（Pi SDK 标准字段 input 数组）。
@@ -42,25 +47,35 @@ export function modelSupportsVideo(model) {
 }
 
 /**
+ * 模型是否支持 audio 输入（Hana 扩展能力，兼容读取旧 input 数组）。
+ * @param {{ input?: readonly string[] } | null | undefined} model
+ */
+export function modelSupportsAudio(model) {
+  return modelSupportsAudioInput(model);
+}
+
+/**
  * 对 messages 做 provider 能力适配。
  *
  * @param {ReadonlyArray<any>} messages
  * @param {{ input?: readonly string[] } | null | undefined} model
- * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number }}
+ * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number, strippedAudios: number }}
  */
 export function sanitizeMessagesForModel(messages, model) {
   if (!Array.isArray(messages)) return emptySanitizeResult(messages);
   const supportsImage = modelSupportsDirectImageInput(model);
   const supportsVideo = modelSupportsDirectVideoInput(model);
-  if (supportsImage && supportsVideo) return emptySanitizeResult(messages);
+  const supportsAudio = modelSupportsDirectAudioInput(model);
+  if (supportsImage && supportsVideo && supportsAudio) return emptySanitizeResult(messages);
 
   // 快速探测：没有任何需要剥离的媒体 block 就返回原数组，避免无谓分配
-  if (!hasUnsupportedMediaContent(messages, { supportsImage, supportsVideo })) {
+  if (!hasUnsupportedMediaContent(messages, { supportsImage, supportsVideo, supportsAudio })) {
     return emptySanitizeResult(messages);
   }
 
   let strippedImages = 0;
   let strippedVideos = 0;
+  let strippedAudios = 0;
   const out = messages.map((msg) => {
     if (!msg || typeof msg !== "object") return msg;
     // 只扫可能携带 ImageContent 的消息种类：
@@ -81,6 +96,10 @@ export function sanitizeMessagesForModel(messages, model) {
         localStripped++;
         strippedVideos++;
         newContent.push({ type: "text", text: VIDEO_PLACEHOLDER_TEXT });
+      } else if (block && typeof block === "object" && block.type === "audio" && !supportsAudio) {
+        localStripped++;
+        strippedAudios++;
+        newContent.push({ type: "text", text: AUDIO_PLACEHOLDER_TEXT });
       } else {
         newContent.push(block);
       }
@@ -89,8 +108,8 @@ export function sanitizeMessagesForModel(messages, model) {
     return { ...msg, content: newContent };
   });
 
-  const stripped = strippedImages + strippedVideos;
-  return { messages: out, stripped, strippedImages, strippedVideos };
+  const stripped = strippedImages + strippedVideos + strippedAudios;
+  return { messages: out, stripped, strippedImages, strippedVideos, strippedAudios };
 }
 
 /**
@@ -101,7 +120,7 @@ export function sanitizeMessagesForModel(messages, model) {
  * 模型的输入（当前用户图，或工具刚返回给下一次 assistant 的图）。
  *
  * @param {ReadonlyArray<any>} messages
- * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number }}
+ * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number, strippedAudios: number }}
  */
 export function stripHistoricalInlineMediaForReplay(messages) {
   if (!Array.isArray(messages)) return emptySanitizeResult(messages);
@@ -111,6 +130,7 @@ export function stripHistoricalInlineMediaForReplay(messages) {
     shouldStripMessage: (_msg, index) => index < lastAssistantIndex,
     imagePlaceholder: HISTORICAL_IMAGE_PLACEHOLDER_TEXT,
     videoPlaceholder: HISTORICAL_VIDEO_PLACEHOLDER_TEXT,
+    audioPlaceholder: HISTORICAL_AUDIO_PLACEHOLDER_TEXT,
   });
 }
 
@@ -119,7 +139,7 @@ export function stripHistoricalInlineMediaForReplay(messages) {
  * runtime state；此时模型已经看过当前轮图片，历史里只应留下轻量引用。
  *
  * @param {ReadonlyArray<any>} messages
- * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number }}
+ * @returns {{ messages: any[], stripped: number, strippedImages: number, strippedVideos: number, strippedAudios: number }}
  */
 export function stripAllInlineMediaForHistory(messages) {
   if (!Array.isArray(messages)) return emptySanitizeResult(messages);
@@ -127,15 +147,16 @@ export function stripAllInlineMediaForHistory(messages) {
     shouldStripMessage: () => true,
     imagePlaceholder: HISTORICAL_IMAGE_PLACEHOLDER_TEXT,
     videoPlaceholder: HISTORICAL_VIDEO_PLACEHOLDER_TEXT,
+    audioPlaceholder: HISTORICAL_AUDIO_PLACEHOLDER_TEXT,
   });
 }
 
 function emptySanitizeResult(messages) {
-  return { messages, stripped: 0, strippedImages: 0, strippedVideos: 0 };
+  return { messages, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
 }
 
 /** 快速判断 messages 里是否存在至少一个当前模型不支持的媒体 block。 */
-function hasUnsupportedMediaContent(messages, { supportsImage, supportsVideo }) {
+function hasUnsupportedMediaContent(messages, { supportsImage, supportsVideo, supportsAudio }) {
   for (const msg of messages) {
     if (!msg || typeof msg !== "object") continue;
     if (msg.role !== "user" && msg.role !== "toolResult") continue;
@@ -144,6 +165,7 @@ function hasUnsupportedMediaContent(messages, { supportsImage, supportsVideo }) 
       if (!block || typeof block !== "object") continue;
       if (block.type === "image" && !supportsImage) return true;
       if (block.type === "video" && !supportsVideo) return true;
+      if (block.type === "audio" && !supportsAudio) return true;
     }
   }
   return false;
@@ -160,9 +182,11 @@ function stripInlineMediaBlocks(messages, {
   shouldStripMessage,
   imagePlaceholder,
   videoPlaceholder,
+  audioPlaceholder,
 }) {
   let strippedImages = 0;
   let strippedVideos = 0;
+  let strippedAudios = 0;
   let changed = false;
 
   const out = messages.map((msg, index) => {
@@ -174,9 +198,11 @@ function stripInlineMediaBlocks(messages, {
     let localStripped = 0;
     let usedImageMarkers = 0;
     let usedVideoMarkers = 0;
+    let usedAudioMarkers = 0;
     const text = contentText(msg.content);
     const imageMarkerCount = countMatches(text, ATTACHED_IMAGE_MARKER_RE);
     const videoMarkerCount = countMatches(text, ATTACHED_VIDEO_MARKER_RE);
+    const audioMarkerCount = countMatches(text, ATTACHED_AUDIO_MARKER_RE);
     const newContent = [];
 
     for (const block of msg.content) {
@@ -204,6 +230,16 @@ function stripInlineMediaBlocks(messages, {
         newContent.push({ type: "text", text: videoPlaceholder });
         continue;
       }
+      if (block.type === "audio") {
+        localStripped++;
+        strippedAudios++;
+        if (usedAudioMarkers < audioMarkerCount) {
+          usedAudioMarkers++;
+          continue;
+        }
+        newContent.push({ type: "text", text: audioPlaceholder });
+        continue;
+      }
       newContent.push(block);
     }
     if (localStripped === 0) return msg;
@@ -211,12 +247,13 @@ function stripInlineMediaBlocks(messages, {
     return { ...msg, content: newContent };
   });
 
-  const stripped = strippedImages + strippedVideos;
+  const stripped = strippedImages + strippedVideos + strippedAudios;
   return {
     messages: changed ? out : messages,
     stripped,
     strippedImages,
     strippedVideos,
+    strippedAudios,
   };
 }
 

@@ -49,7 +49,7 @@ function StatusText({ ok, text }: { ok: boolean; text: string }) {
   );
 }
 
-export function ComputerUseTab() {
+export function ComputerUseSection() {
   const [data, setData] = useState<ComputerUseStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -160,46 +160,45 @@ export function ComputerUseTab() {
   );
 
   return (
-    <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="computer">
-      <SettingsSection title={t('settings.computerUse.title')} context={refreshButton}>
-        <SettingsSection.Warning data-testid="computer-use-experimental-warning">
-          {t('settings.computerUse.experimentalWarning')}
-        </SettingsSection.Warning>
-        <SettingsSection.Note>
-          {t('settings.computerUse.description')}
-        </SettingsSection.Note>
-        <SettingsRow
-          label={t('settings.computerUse.enabled')}
-          hint={t('settings.computerUse.enabledHint')}
-          control={<Toggle on={enabled} onChange={(next) => saveEnabled(next)} disabled={saving} />}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.provider')}
-          control={<StatusText ok={!!data?.selectedProviderId} text={data?.selectedProviderId || '-'} />}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.availability')}
-          hint={availabilityIssue || undefined}
-          control={<StatusText ok={available} text={available ? t('settings.computerUse.available') : t('settings.computerUse.unavailable')} />}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.permissions')}
-          hint={t('settings.computerUse.permissionsHint')}
-          control={permissionsButton}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.permissionsStatus')}
-          control={<StatusText ok={permissions.every((p) => p.granted !== false)} text={permissionText} />}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.approvals')}
-          control={<StatusText ok={approvals.length > 0} text={approvalsText} />}
-        />
-        <SettingsRow
-          label={t('settings.computerUse.activeSession')}
-          control={<StatusText ok={!activeLease} text={activeLeaseText} />}
-        />
-      </SettingsSection>
-    </div>
+    <SettingsSection
+      title={t('settings.computerUse.title')}
+      description={t('settings.computerUse.description')}
+      context={refreshButton}
+    >
+      <SettingsSection.Warning data-testid="computer-use-experimental-warning">
+        {t('settings.computerUse.experimentalWarning')}
+      </SettingsSection.Warning>
+      <SettingsRow
+        label={t('settings.computerUse.enabled')}
+        hint={t('settings.computerUse.enabledHint')}
+        control={<Toggle on={enabled} onChange={(next) => saveEnabled(next)} disabled={saving} />}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.provider')}
+        control={<StatusText ok={!!data?.selectedProviderId} text={data?.selectedProviderId || '-'} />}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.availability')}
+        hint={availabilityIssue || undefined}
+        control={<StatusText ok={available} text={available ? t('settings.computerUse.available') : t('settings.computerUse.unavailable')} />}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.permissions')}
+        hint={t('settings.computerUse.permissionsHint')}
+        control={permissionsButton}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.permissionsStatus')}
+        control={<StatusText ok={permissions.every((p) => p.granted !== false)} text={permissionText} />}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.approvals')}
+        control={<StatusText ok={approvals.length > 0} text={approvalsText} />}
+      />
+      <SettingsRow
+        label={t('settings.computerUse.activeSession')}
+        control={<StatusText ok={!activeLease} text={activeLeaseText} />}
+      />
+    </SettingsSection>
   );
 }

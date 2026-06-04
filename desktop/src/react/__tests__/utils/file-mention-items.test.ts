@@ -36,6 +36,7 @@ describe('file mention items', () => {
         parentSubdir: 'src',
         isDir: false,
       }],
+      includeWorkspace: true,
     });
 
     expect(items.map(item => ({
@@ -48,6 +49,44 @@ describe('file mention items', () => {
       { source: 'session', name: 'read-later.txt', path: '/workspace/notes/read-later.txt', fileId: undefined },
       { source: 'workspace', name: 'reader.ts', path: '/workspace/src/reader.ts', fileId: undefined },
     ]);
+  });
+
+  it('filters the full attached/session candidate pool before applying the visible limit', () => {
+    const sessionFiles = Array.from({ length: 6 }, (_, index) => ({
+      id: `ref-${index + 1}`,
+      source: 'session-registry' as const,
+      kind: 'other' as const,
+      path: `/workspace/session-file-${index + 1}.txt`,
+      name: `session-file-${index + 1}.txt`,
+    }));
+
+    const unfiltered = buildFileMentionItems({
+      query: '',
+      attachedFiles: [],
+      sessionFiles,
+      deskFiles: [],
+      deskBasePath: '/workspace',
+      deskCurrentPath: '',
+      searchResults: [],
+    });
+    expect(unfiltered.map(item => item.name)).toEqual([
+      'session-file-1.txt',
+      'session-file-2.txt',
+      'session-file-3.txt',
+      'session-file-4.txt',
+      'session-file-5.txt',
+    ]);
+
+    const filtered = buildFileMentionItems({
+      query: 'session-file-6',
+      attachedFiles: [],
+      sessionFiles,
+      deskFiles: [],
+      deskBasePath: '/workspace',
+      deskCurrentPath: '',
+      searchResults: [],
+    });
+    expect(filtered.map(item => item.name)).toEqual(['session-file-6.txt']);
   });
 
   it('merges editor file refs into attachments without duplicating already attached files', () => {

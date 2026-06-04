@@ -51,6 +51,12 @@ const KNOWN_MODELS = {
       image: true,
       visionCapabilities: { grounding: true, boxes: true, points: true, coordinateSpace: "norm-1000", boxOrder: "xyxy", outputFormat: "anchor", groundingMode: "prompted" },
     },
+    "gpt-audio-mini": {
+      name: "GPT Audio Mini",
+      context: 128000,
+      maxOutput: 16384,
+      audio: true,
+    },
     "gpt-image-1": { name: "GPT Image 1", type: "image" },
   },
   gemini: {
@@ -102,6 +108,7 @@ const KNOWN_MODELS = {
       maxOutput: 131072,
       image: true,
       video: true,
+      audio: true,
       reasoning: true,
     },
   },
@@ -632,6 +639,54 @@ describe("syncModels", () => {
     ]);
   });
 
+  it("projects explicit audio capability into Hana compat and keeps Pi input schema-compatible", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      custom: {
+        base_url: "https://custom.api.com/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [
+          { id: "custom-audio", audio: true },
+          { id: "custom-full-modal", image: true, video: true, audio: true },
+          "custom-unknown",
+        ],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.custom.models.map((m) => [m.id, m.input, m.compat?.hanaVideoInput, m.compat?.hanaAudioInput])).toEqual([
+      ["custom-audio", ["text"], undefined, true],
+      ["custom-full-modal", ["text", "image"], true, true],
+      ["custom-unknown", ["text"], undefined, undefined],
+    ]);
+  });
+
+  it("projects known OpenAI audio models into Hana compat without invalid Pi input", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      openai: {
+        base_url: "https://api.openai.com/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["gpt-audio-mini"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.openai.models[0]).toMatchObject({
+      id: "gpt-audio-mini",
+      input: ["text"],
+      compat: { hanaAudioInput: true },
+    });
+  });
+
   it("projects known video-capable models into Hana compat without invalid Pi input", async () => {
     const syncModels = await loadSync();
 
@@ -700,6 +755,7 @@ describe("syncModels", () => {
     expect(model.compat).toMatchObject({
       supportsDeveloperRole: false,
       hanaVideoInput: true,
+      hanaAudioInput: true,
       thinkingFormat: "qwen-chat-template",
       reasoningProfile: "mimo-openai",
     });

@@ -41,6 +41,7 @@ import {
 } from "../lib/conversations/agent-phone-prompt.js";
 
 const log = createModuleLogger("channel");
+const MAX_CHANNEL_DECISION_REPAIR_ATTEMPTS = 1;
 
 export class ChannelRouter {
   /**
@@ -247,7 +248,15 @@ export class ChannelRouter {
               details: { action: "reply", error: "channel not found" },
             };
           }
-          if (!isCurrentMember()) return notMemberResult("reply");
+          if (!isCurrentMember()) {
+            markDecision({
+              type: "permission_blocked",
+              replied: false,
+              permissionBlocked: true,
+              reason: "not a channel member",
+            });
+            return notMemberResult("reply");
+          }
 
           const { timestamp } = await appendMessage(channelFile, agentId, content);
           const decision = {
@@ -293,7 +302,15 @@ export class ChannelRouter {
               details: { action: "pass", error: "already decided" },
             };
           }
-          if (!isCurrentMember()) return notMemberResult("pass");
+          if (!isCurrentMember()) {
+            markDecision({
+              type: "permission_blocked",
+              replied: false,
+              permissionBlocked: true,
+              reason: "not a channel member",
+            });
+            return notMemberResult("pass");
+          }
           const decision = {
             type: "pass",
             replied: false,
@@ -496,7 +513,8 @@ export class ChannelRouter {
           droppedUnreadCount: deliveryWindow?.droppedUnreadCount ?? 0,
         },
       );
-      const decision = await this._executeReply(agentId, channelName, msgText, {
+      let repairAttempts = 0;
+      let decision = await this._executeReply(agentId, channelName, msgText, {
         signal,
         messageCount: newMessages.length,
         deliveryWindow,
@@ -504,6 +522,38 @@ export class ChannelRouter {
         mentionedAgents,
         mentionTargeted,
       });
+
+      while (
+        decision?.missingDecision === true
+        && repairAttempts < MAX_CHANNEL_DECISION_REPAIR_ATTEMPTS
+        && !signal?.aborted
+      ) {
+        repairAttempts += 1;
+        await this._recordPhoneActivity(
+          agentId,
+          channelName,
+          "retrying",
+          isZh ? "未完成频道决定，正在补交本轮动作" : "Repairing missing channel decision",
+          {
+            messageCount: newMessages.length,
+            repairAttempt: repairAttempts,
+            maxRepairAttempts: MAX_CHANNEL_DECISION_REPAIR_ATTEMPTS,
+            ...(decision?.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+            ...(this._resolvePhoneSessionPath(agentId, channelName)
+              ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+              : {}),
+          },
+        );
+        decision = await this._executeReply(agentId, channelName, msgText, {
+          signal,
+          messageCount: newMessages.length,
+          deliveryWindow,
+          proactive,
+          mentionedAgents,
+          mentionTargeted,
+          decisionRepairAttempt: repairAttempts,
+        });
+      }
 
       if (decision?.replied) {
         log.log(`${agentId} replied #${channelName} (${decision.replyContent.length} chars)`);
@@ -541,20 +591,45 @@ export class ChannelRouter {
         return { replied: false, passed: true };
       }
 
+      if (decision?.permissionBlocked) {
+        await this._recordPhoneActivity(
+          agentId,
+          channelName,
+          "error",
+          isZh ? "频道成员身份已变化，跳过本轮手机处理" : "Channel membership changed; skipped this phone check",
+          {
+            messageCount: newMessages.length,
+            reason: decision.reason || "permission blocked",
+            ...(decision?.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+            ...(this._resolvePhoneSessionPath(agentId, channelName)
+              ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+              : {}),
+          },
+        );
+        return { replied: false, permissionBlocked: true };
+      }
+
       await this._recordPhoneActivity(
-        agentId,
-        channelName,
-        "error",
-        isZh ? "没有调用频道回复工具" : "Did not call a channel decision tool",
-        {
-          messageCount: newMessages.length,
-          ...(decision?.diagnostics ? { diagnostics: decision.diagnostics } : {}),
-          ...(this._resolvePhoneSessionPath(agentId, channelName)
-            ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
-            : {}),
-        },
-      );
-      return { replied: false, missingDecision: true };
+          agentId,
+          channelName,
+          "error",
+          isZh ? "没有调用频道回复工具" : "Did not call a channel decision tool",
+          {
+            messageCount: newMessages.length,
+            repairAttempts,
+            implicitPass: repairAttempts >= MAX_CHANNEL_DECISION_REPAIR_ATTEMPTS,
+            ...(decision?.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+            ...(this._resolvePhoneSessionPath(agentId, channelName)
+              ? { sessionPath: this._resolvePhoneSessionPath(agentId, channelName) }
+              : {}),
+          },
+        );
+      return {
+        replied: false,
+        missingDecision: true,
+        implicitPass: repairAttempts >= MAX_CHANNEL_DECISION_REPAIR_ATTEMPTS,
+        repairAttempts,
+      };
     } catch (err) {
       log.error(`回复失败 (${agentId}/#${channelName}): ${err.message}`);
       await this._recordPhoneActivity(
@@ -634,6 +709,20 @@ export class ChannelRouter {
       ].join("\n");
   }
 
+  _formatDecisionRepairGuidance(isZh) {
+    return isZh
+      ? [
+        "上一轮手机处理没有调用 channel_reply 或 channel_pass。",
+        "这不是重复推送新消息，而是让你补交本轮频道决定：现在必须调用 channel_reply 或 channel_pass 之一。",
+        "如果不需要在频道发言，请调用 channel_pass；不要只输出普通文本。",
+      ].join("\n")
+      : [
+        "The previous phone turn did not call channel_reply or channel_pass.",
+        "This is not a duplicate delivery of new messages; it is a repair turn for the same channel decision. You must now call exactly one of channel_reply or channel_pass.",
+        "If no channel post is needed, call channel_pass; do not only write ordinary text.",
+      ].join("\n");
+  }
+
   async _executeReply(agentId, channelName, msgText, {
     signal,
     messageCount = null,
@@ -641,12 +730,14 @@ export class ChannelRouter {
     proactive = false,
     mentionedAgents = [],
     mentionTargeted = false,
+    decisionRepairAttempt = 0,
   } = {}) {
     const isZh = getLocale().startsWith("zh");
     const phoneSettings = this._resolveChannelPhoneSettings(channelName);
     const promptGuidance = this._formatPhonePromptGuidance(agentId, phoneSettings, isZh);
     const behaviorGuidance = this._formatChannelBehaviorGuidance(agentId, mentionedAgents, mentionTargeted, isZh);
     const deliveryWindowGuidance = this._formatDeliveryWindowGuidance(deliveryWindow, isZh);
+    const repairGuidance = decisionRepairAttempt > 0 ? this._formatDecisionRepairGuidance(isZh) : "";
     const zhIntro = proactive
       ? `你的手机收到了 #${channelName} 的频道提醒。\n\n`
         + `以下是最近的频道内容，来源是频道聊天记录 Truth，不是用户单独发给你的请求，也不一定是新消息：\n\n`
@@ -669,6 +760,7 @@ export class ChannelRouter {
               ? zhIntro
                 + `${msgText || "（没有新消息）"}\n\n`
                 + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
+                + `${repairGuidance ? `${repairGuidance}\n\n` : ""}`
                 + `请像群聊成员一样阅读并行动：\n`
                 + `${behaviorGuidance}\n`
                 + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
@@ -679,6 +771,7 @@ export class ChannelRouter {
               : enIntro
                 + `${msgText || "(No new messages)"}\n\n`
                 + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
+                + `${repairGuidance ? `${repairGuidance}\n\n` : ""}`
                 + `Read and act like a group chat member:\n`
                 + `${behaviorGuidance}\n`
                 + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
@@ -737,7 +830,9 @@ export class ChannelRouter {
       throw err;
     }
 
-    return decision || { replied: false, missingDecision: true, diagnostics: phoneDiagnostics };
+    return decision
+      ? { ...decision, diagnostics: phoneDiagnostics }
+      : { replied: false, missingDecision: true, diagnostics: phoneDiagnostics };
   }
 
   _resolveChannelMemorySenderName(sender, isZh) {

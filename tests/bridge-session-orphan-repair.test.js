@@ -46,6 +46,29 @@ vi.mock("../core/session-health.js", async (importOriginal) => {
   };
 });
 
+const repairInlineMediaMock = vi.fn(() => ({
+  repaired: false,
+  stripped: 0,
+  strippedImages: 0,
+  strippedVideos: 0,
+  strippedAudios: 0,
+}));
+const pruneInlineMediaMock = vi.fn(() => ({
+  stripped: 0,
+  strippedImages: 0,
+  strippedVideos: 0,
+  strippedAudios: 0,
+}));
+
+vi.mock("../core/session-inline-media-prune.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    pruneSessionInlineMediaHistory: (...args) => pruneInlineMediaMock(...args),
+    repairSessionInlineMediaEntriesInFile: (...args) => repairInlineMediaMock(...args),
+  };
+});
+
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
   createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
@@ -129,6 +152,19 @@ beforeEach(() => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-orphan-repair-"));
   fs.mkdirSync(path.join(rootDir, "cwd"), { recursive: true });
   repairMock.mockReset().mockReturnValue({ repaired: false, removed: 0 });
+  repairInlineMediaMock.mockReset().mockReturnValue({
+    repaired: false,
+    stripped: 0,
+    strippedImages: 0,
+    strippedVideos: 0,
+    strippedAudios: 0,
+  });
+  pruneInlineMediaMock.mockReset().mockReturnValue({
+    stripped: 0,
+    strippedImages: 0,
+    strippedVideos: 0,
+    strippedAudios: 0,
+  });
   sessionManagerOpenMock.mockReset();
   sessionManagerCreateMock.mockReset();
   createAgentSessionMock.mockReset();
@@ -169,8 +205,12 @@ describe("executeExternalMessage — 冷恢复 open 前调 repairOrphanToolResul
 
     const callOrder = [];
     repairMock.mockImplementation((p) => {
-      callOrder.push("repair");
+      callOrder.push("orphan-repair");
       return { repaired: false, removed: 0 };
+    });
+    repairInlineMediaMock.mockImplementation((p) => {
+      callOrder.push("inline-media-repair");
+      return { repaired: false, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
     });
 
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "existing.jsonl");
@@ -184,8 +224,9 @@ describe("executeExternalMessage — 冷恢复 open 前调 repairOrphanToolResul
 
     await manager.executeExternalMessage("hello", "tg_dm_owner@agent-a", null, { agentId: "agent-a" });
 
-    expect(callOrder).toEqual(["repair", "open"]);
+    expect(callOrder).toEqual(["orphan-repair", "inline-media-repair", "open"]);
     expect(repairMock).toHaveBeenCalledWith(absFile);
+    expect(repairInlineMediaMock).toHaveBeenCalledWith(absFile);
   });
 
   it("repair 抛错时，open 仍正常执行（失败不阻塞）", async () => {
@@ -208,6 +249,7 @@ describe("executeExternalMessage — 冷恢复 open 前调 repairOrphanToolResul
 
     // open 必须仍被调用
     expect(sessionManagerOpenMock).toHaveBeenCalledOnce();
+    expect(repairInlineMediaMock).toHaveBeenCalledOnce();
   });
 
   it("新建 session（无 existingPath）时不调 repair", async () => {
@@ -224,6 +266,23 @@ describe("executeExternalMessage — 冷恢复 open 前调 repairOrphanToolResul
     await manager.executeExternalMessage("hello", "tg_dm_new@agent-a", null, { agentId: "agent-a" });
 
     expect(repairMock).not.toHaveBeenCalled();
+    expect(repairInlineMediaMock).not.toHaveBeenCalled();
+  });
+
+  it("prompt 结束后清理 bridge runtime/session 文件里的 inline media", async () => {
+    const agent = makeAgent(rootDir);
+    const manager = new BridgeSessionManager(makeDeps(agent, rootDir));
+
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "new.jsonl");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+
+    const session = makeMinimalSession(mgrPath);
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await manager.executeExternalMessage("hello", "tg_dm_media@agent-a", null, { agentId: "agent-a" });
+
+    expect(pruneInlineMediaMock).toHaveBeenCalledWith(session);
+    expect(pruneInlineMediaMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -240,8 +299,12 @@ describe("compactBridgeSession — reopen 前调 repairOrphanToolResultEntriesIn
 
     const callOrder = [];
     repairMock.mockImplementation(() => {
-      callOrder.push("repair");
+      callOrder.push("orphan-repair");
       return { repaired: false, removed: 0 };
+    });
+    repairInlineMediaMock.mockImplementation(() => {
+      callOrder.push("inline-media-repair");
+      return { repaired: false, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
     });
 
     sessionManagerOpenMock.mockImplementation(() => {
@@ -267,8 +330,9 @@ describe("compactBridgeSession — reopen 前调 repairOrphanToolResultEntriesIn
 
     await manager.compactSession(sessionKey, { agentId: "agent-a" });
 
-    expect(callOrder).toEqual(["repair", "open"]);
+    expect(callOrder).toEqual(["orphan-repair", "inline-media-repair", "open"]);
     expect(repairMock).toHaveBeenCalledWith(absFile);
+    expect(repairInlineMediaMock).toHaveBeenCalledWith(absFile);
   });
 
   it("repair 抛错时，compaction open 仍正常执行（失败不阻塞）", async () => {
@@ -301,5 +365,6 @@ describe("compactBridgeSession — reopen 前调 repairOrphanToolResultEntriesIn
     ).resolves.toBeDefined();
 
     expect(sessionManagerOpenMock).toHaveBeenCalledOnce();
+    expect(repairInlineMediaMock).toHaveBeenCalledOnce();
   });
 });

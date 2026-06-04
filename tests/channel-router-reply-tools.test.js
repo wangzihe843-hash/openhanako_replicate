@@ -431,10 +431,12 @@ describe("ChannelRouter reply tool boundary", () => {
       [],
     );
 
-    expect(result).toMatchObject({ replied: false, missingDecision: true });
+    expect(result).toMatchObject({ replied: false, permissionBlocked: true });
+    expect(runAgentPhoneSessionMock).toHaveBeenCalledOnce();
     const errorActivity = activityRecord.mock.calls.find((call) => call[0]?.state === "error")?.[0];
     expect(errorActivity).toMatchObject({
       details: {
+        reason: "not a channel member",
         diagnostics: {
           toolCallCount: 1,
           toolCallNames: ["channel_reply"],
@@ -498,6 +500,88 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(emit).not.toHaveBeenCalledWith(expect.objectContaining({ type: "channel_new_message" }), null);
     expect(activityRecord.mock.calls.map((call) => call[0].state)).toContain("no_reply");
     expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("RAW MODEL TEXT SHOULD NOT BE POSTED");
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("retries once with repair guidance before treating a missing channel decision as skipped", async () => {
+    runAgentSessionMock.mockClear();
+    runAgentPhoneSessionMock.mockClear();
+    runAgentPhoneSessionMock
+      .mockResolvedValueOnce({
+        text: "普通文本不应进入频道",
+        diagnostics: {
+          activeToolNames: ["channel_reply", "channel_pass"],
+          toolCallCount: 0,
+          toolCallNames: [],
+          ordinaryTextLength: 10,
+        },
+      })
+      .mockResolvedValueOnce({
+        text: "仍然没有调用工具",
+        diagnostics: {
+          activeToolNames: ["channel_reply", "channel_pass"],
+          toolCallCount: 0,
+          toolCallNames: [],
+          ordinaryTextLength: 9,
+        },
+      });
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-missing-decision-repair-"));
+    const channelsDir = path.join(root, "channels");
+    const agentsDir = path.join(root, "agents");
+    const userDir = path.join(root, "user");
+    const productDir = path.join(root, "product");
+    fs.mkdirSync(path.join(agentsDir, "hanako"), { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(path.join(productDir, "yuan"), { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, "hanako", "config.yaml"), "agent:\n  name: Hanako\n", "utf-8");
+    fs.writeFileSync(path.join(channelsDir, "ch_crew.md"), "---\nid: ch_crew\nmembers: [hanako]\n---\n", "utf-8");
+
+    const activityRecord = vi.fn();
+    const router = new ChannelRouter({
+      hub: {
+        engine: {
+          channelsDir,
+          agentsDir,
+          userDir,
+          productDir,
+          isChannelsEnabled: () => true,
+        },
+        eventBus: { emit: vi.fn() },
+        agentPhoneActivities: { record: activityRecord },
+      },
+    });
+
+    const result = await router._executeCheck(
+      "hanako",
+      "ch_crew",
+      [{ sender: "user", timestamp: "2026-05-07 17:00:00", body: "需要你决定一下" }],
+      [],
+    );
+
+    expect(result).toMatchObject({
+      replied: false,
+      missingDecision: true,
+      implicitPass: true,
+      repairAttempts: 1,
+    });
+    expect(runAgentPhoneSessionMock).toHaveBeenCalledTimes(2);
+    expect(runAgentPhoneSessionMock.mock.calls[1][1][0].text).toContain("上一轮手机处理没有调用 channel_reply 或 channel_pass");
+    const states = activityRecord.mock.calls.map((call) => call[0].state);
+    expect(states).toContain("retrying");
+    const errorActivity = activityRecord.mock.calls.find((call) => call[0].state === "error")?.[0];
+    expect(errorActivity.details).toMatchObject({
+      repairAttempts: 1,
+      implicitPass: true,
+      diagnostics: {
+        toolCallCount: 0,
+        toolCallNames: [],
+        ordinaryTextLength: 9,
+      },
+    });
+    expect(fs.readFileSync(path.join(channelsDir, "ch_crew.md"), "utf-8")).not.toContain("普通文本不应进入频道");
 
     fs.rmSync(root, { recursive: true, force: true });
   });

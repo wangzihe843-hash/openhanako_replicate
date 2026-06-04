@@ -6,7 +6,20 @@ vi.mock("../lib/sandbox/platform.js", () => ({
 }));
 
 vi.mock("../lib/pi-sdk/index.js", () => {
-  const makeTool = (name) => ({ name, execute: vi.fn(async () => ({ content: [] })) });
+  const makeTool = (name) => ({
+    name,
+    parameters: name === "read"
+      ? {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          offset: { type: "number" },
+        },
+        required: ["path"],
+      }
+      : undefined,
+    execute: vi.fn(async (_toolCallId, params) => ({ content: [], details: { params } })),
+  });
   return {
     createReadTool: vi.fn(() => makeTool("read")),
     createWriteTool: vi.fn(() => makeTool("write")),
@@ -63,5 +76,37 @@ describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", (
     const output = await bash.execute("call-2", { command: "pwd" });
 
     expect(output.content[0].text).toBe("direct bash");
+  });
+
+  it("resolves read fileId through the current session before path guard and SDK execution", async () => {
+    const { createSandboxedTools } = await import("../lib/sandbox/index.js");
+    const result = createSandboxedTools("/work", [], {
+      agentDir: "/hana/agents/hana",
+      workspace: "/work",
+      workspaceFolders: [],
+      hanakoHome: "/hana",
+      getSandboxEnabled: () => true,
+      getSessionPath: () => "/hana/agents/hana/sessions/main.jsonl",
+      resolveSessionFile: vi.fn((fileId, options) => {
+        expect(fileId).toBe("sf_cjk_digits");
+        expect(options).toEqual({ sessionPath: "/hana/agents/hana/sessions/main.jsonl" });
+        return {
+          fileId,
+          filePath: "/work/测试123/报告2026.txt",
+          realPath: "/work/测试123/报告2026.txt",
+          status: "available",
+        };
+      }),
+    });
+
+    const read = result.tools.find((tool) => tool.name === "read");
+    expect(read.parameters.required).not.toContain("path");
+    expect(read.parameters.properties.fileId).toBeTruthy();
+    const output = await read.execute("call-fileid", {
+      fileId: "sf_cjk_digits",
+    });
+
+    expect(output.details.params.path).toBe("/work/测试123/报告2026.txt");
+    expect(output.details.params.fileId).toBe("sf_cjk_digits");
   });
 });

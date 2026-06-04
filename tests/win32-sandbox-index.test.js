@@ -13,7 +13,14 @@ vi.mock("../lib/pi-sdk/index.js", () => {
     createReadTool: vi.fn(() => makeTool("read")),
     createWriteTool: vi.fn(() => makeTool("write")),
     createEditTool: vi.fn(() => makeTool("edit")),
-    createBashTool: vi.fn((_cwd, opts = {}) => ({ name: "bash", execute: opts.operations?.exec || vi.fn() })),
+    createBashTool: vi.fn((cwd, opts = {}) => ({
+      name: "bash",
+      execute: vi.fn((toolCallId, params = {}) => {
+        const exec = opts.operations?.exec;
+        if (!exec) return { content: [] };
+        return exec(params.command, cwd, params);
+      }),
+    })),
     createGrepTool: vi.fn(() => makeTool("grep")),
     createFindTool: vi.fn(() => makeTool("find")),
     createLsTool: vi.fn(() => makeTool("ls")),
@@ -33,7 +40,7 @@ describe("createSandboxedTools on Windows", () => {
 
     const getExternalReadPaths = () => ["C:\\outside\\brief.md"];
     const getSandboxNetworkEnabled = () => true;
-    createSandboxedTools("C:\\work", [], {
+    const { tools } = createSandboxedTools("C:\\work", [], {
       agentDir: "C:\\hana\\agents\\hana",
       workspace: "C:\\work",
       workspaceFolders: [],
@@ -44,6 +51,8 @@ describe("createSandboxedTools on Windows", () => {
     });
 
     expect(createWin32Exec).toHaveBeenCalledWith();
+    const bashTool = tools.find((tool) => tool.name === "bash");
+    await bashTool.execute("call-1", { command: "echo ok" });
     expect(createWin32Exec).toHaveBeenCalledWith(expect.objectContaining({
       sandbox: expect.objectContaining({
         policy: expect.objectContaining({ mode: "standard" }),
