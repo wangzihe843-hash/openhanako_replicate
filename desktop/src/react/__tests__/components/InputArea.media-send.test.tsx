@@ -621,14 +621,14 @@ describe('InputArea media send', () => {
     useStore.setState({
       attachedFiles: [{
         fileId: 'sf_cjk_digits',
-        path: '/Users/tangli/Desktop/测试123/报告2026.txt',
+        path: '/Users/testuser/Desktop/测试123/报告2026.txt',
         name: '报告2026.txt',
         isDirectory: false,
       }],
       attachedFilesBySession: {
         '/session/media.jsonl': [{
           fileId: 'sf_cjk_digits',
-          path: '/Users/tangli/Desktop/测试123/报告2026.txt',
+          path: '/Users/testuser/Desktop/测试123/报告2026.txt',
           name: '报告2026.txt',
           isDirectory: false,
         }],
@@ -644,7 +644,7 @@ describe('InputArea media send', () => {
     });
     const payload = JSON.parse(String(mocks.wsSend.mock.calls[0][0]));
     expect(payload.text).toBe('[附件] 报告2026.txt');
-    expect(payload.text).not.toContain('/Users/tangli/Desktop/测试123');
+    expect(payload.text).not.toContain('/Users/testuser/Desktop/测试123');
     expect(payload.sessionFileRefs).toEqual([{
       fileId: 'sf_cjk_digits',
       sessionPath: '/session/media.jsonl',
@@ -653,7 +653,7 @@ describe('InputArea media send', () => {
     }]);
     expect(payload.displayMessage.attachments[0]).toMatchObject({
       fileId: 'sf_cjk_digits',
-      path: '/Users/tangli/Desktop/测试123/报告2026.txt',
+      path: '/Users/testuser/Desktop/测试123/报告2026.txt',
       name: '报告2026.txt',
     });
   });
