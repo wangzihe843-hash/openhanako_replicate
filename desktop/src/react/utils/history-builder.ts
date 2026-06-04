@@ -243,6 +243,7 @@ function attachmentFromRef(
     : fallback?.missingAt;
   const presentation = presentationForSessionFile(sessionFile, fallback);
   const listed = listedForSessionFile(sessionFile, fallback);
+  const transcription = sessionFile?.transcription || fallback?.transcription;
   return {
     ...(fileId ? { fileId } : {}),
     path: filePath,
@@ -253,6 +254,7 @@ function attachmentFromRef(
     ...(listed === false ? { listed } : {}),
     ...(status ? { status } : {}),
     ...(hasMissingAt ? { missingAt } : {}),
+    ...(transcription ? { transcription } : {}),
   };
 }
 

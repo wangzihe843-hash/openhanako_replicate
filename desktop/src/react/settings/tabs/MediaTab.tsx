@@ -6,6 +6,7 @@ import { MediaProviderDetail } from './media/MediaProviderDetail';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { SelectWidget } from '@/ui';
+import { Toggle } from '../widgets/Toggle';
 import styles from '../Settings.module.css';
 
 interface MediaProvider {
@@ -22,6 +23,33 @@ interface MediaConfig {
   providerDefaults?: Record<string, any>;
 }
 
+interface SpeechModel {
+  id: string;
+  name?: string;
+  displayName?: string;
+  protocolId?: string;
+  adapterAvailable?: boolean;
+}
+
+interface SpeechProvider {
+  providerId: string;
+  displayName?: string;
+  hasCredentials: boolean;
+  unavailableReason?: string | null;
+  models: SpeechModel[];
+  availableModels?: { id: string; name: string }[];
+}
+
+interface SpeechConfig {
+  enabled: boolean;
+  defaultModel?: { id: string; provider: string };
+}
+
+type SpeechConfigPatch = {
+  enabled?: boolean;
+  defaultModel?: SpeechConfig['defaultModel'] | null;
+};
+
 function encodeConfigPatch(updates: Partial<MediaConfig>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(updates).map(([key, value]) => [key, value === undefined ? null : value]),
@@ -37,13 +65,60 @@ function applyConfigPatch(prev: MediaConfig, updates: Partial<MediaConfig>): Med
   return next;
 }
 
+function encodeSpeechConfigPatch(updates: SpeechConfigPatch): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(updates).map(([key, value]) => [key, value === undefined ? null : value]),
+  );
+}
+
+function applySpeechConfigPatch(prev: SpeechConfig, updates: SpeechConfigPatch): SpeechConfig {
+  const next: SpeechConfig = { ...prev };
+  if (typeof updates.enabled === 'boolean') next.enabled = updates.enabled;
+  if ('defaultModel' in updates) {
+    if (updates.defaultModel) next.defaultModel = updates.defaultModel;
+    else delete next.defaultModel;
+  }
+  return next;
+}
+
+function mergeSpeechConfig(prev: SpeechConfig, incoming: any): SpeechConfig {
+  const next: SpeechConfig = { ...prev };
+  if (typeof incoming?.enabled === 'boolean') next.enabled = incoming.enabled;
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'defaultModel')) {
+    if (incoming.defaultModel) next.defaultModel = incoming.defaultModel;
+    else delete next.defaultModel;
+  }
+  return next;
+}
+
+function speechModelLabel(model: SpeechModel | { id: string; name: string }): string {
+  return 'displayName' in model && model.displayName ? model.displayName : model.name || model.id;
+}
+
+function getRunnableSpeechModels(provider: SpeechProvider): Array<{ id: string; name: string }> {
+  if (!provider.hasCredentials) return [];
+  if (Array.isArray(provider.availableModels)) {
+    return provider.availableModels.map(model => ({ id: model.id, name: model.name || model.id }));
+  }
+  return (provider.models || [])
+    .filter(model => model.adapterAvailable !== false)
+    .map(model => ({ id: model.id, name: speechModelLabel(model) }));
+}
+
+function textOrFallback(key: string, fallback: string): string {
+  const value = t(key);
+  return value === key ? fallback : value;
+}
+
 export function MediaTab() {
   const [providers, setProviders] = useState<Record<string, MediaProvider>>({});
   const [config, setConfig] = useState<MediaConfig>({});
+  const [speechProviders, setSpeechProviders] = useState<Record<string, SpeechProvider>>({});
+  const [speechConfig, setSpeechConfig] = useState<SpeechConfig | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const showToast = useSettingsStore(s => s.showToast);
 
-  const load = useCallback(async () => {
+  const loadImageProviders = useCallback(async () => {
     try {
       const res = await hanaFetch('/api/plugins/image-gen/providers');
       const data = await res.json();
@@ -58,12 +133,35 @@ export function MediaTab() {
     } catch { /* plugin not loaded yet */ }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadSpeechProviders = useCallback(async () => {
+    try {
+      const res = await hanaFetch('/api/speech-recognition/providers');
+      const data = await res.json();
+      setSpeechProviders(data.providers || {});
+      setSpeechConfig(mergeSpeechConfig({ enabled: false }, data.config || {}));
+    } catch (err: any) {
+      setSpeechProviders({});
+      setSpeechConfig({ enabled: false });
+      showToast(err.message || 'Failed to load speech recognition providers', 'error');
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    loadImageProviders();
+    loadSpeechProviders();
+  }, [loadImageProviders, loadSpeechProviders]);
 
   const providerIds = Object.keys(providers);
+  const speechProviderIds = Object.keys(speechProviders);
   const allImageModels = providerIds.flatMap(pid =>
     (providers[pid].models || []).map(m => ({ ...m, provider: pid }))
   );
+  const allSpeechModels = speechProviderIds.flatMap(pid =>
+    getRunnableSpeechModels(speechProviders[pid]).map(m => ({ ...m, provider: pid }))
+  );
+  const speechEnabled = speechConfig?.enabled === true;
+  const speechRecognitionEnabledLabel = textOrFallback('settings.media.speechRecognitionEnabled', '语音识别启用');
+  const defaultSpeechModelLabel = textOrFallback('settings.media.defaultSpeechModel', '默认语音识别模型');
 
   const saveConfig = async (updates: Partial<MediaConfig>) => {
     try {
@@ -75,6 +173,26 @@ export function MediaTab() {
       const data = await res.json().catch(() => null);
       if (data?.values) setConfig(data.values);
       else setConfig(prev => applyConfigPatch(prev, updates));
+      showToast(t('settings.saved'), 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Save failed', 'error');
+    }
+  };
+
+  const saveSpeechConfig = async (updates: SpeechConfigPatch) => {
+    try {
+      const res = await hanaFetch('/api/speech-recognition/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: encodeSpeechConfigPatch(updates) }),
+      });
+      const data = await res.json().catch(() => null);
+      setSpeechConfig(prev => {
+        const base = prev || { enabled: false };
+        if (data?.config) return mergeSpeechConfig(base, data.config);
+        if (data?.values) return mergeSpeechConfig(base, data.values);
+        return applySpeechConfigPatch(base, updates);
+      });
       showToast(t('settings.saved'), 'success');
     } catch (err: any) {
       showToast(err.message || 'Save failed', 'error');
@@ -106,15 +224,24 @@ export function MediaTab() {
 
             {/* Placeholder sections for future capabilities */}
             <div className={styles['pv-list-divider']} />
-            <div className={styles['pv-list-group-label']} style={{ color: 'var(--text-muted)' }}>
+            <div className={styles['pv-list-group-label']}>
               {t('settings.media.speechRecognition')}
             </div>
-            <div className={styles['pv-list-item']} style={{ opacity: 0.3, pointerEvents: 'none' }}>
-              <span className={styles['pv-status-dot']} />
-              <span className={styles['pv-list-item-name']} style={{ fontStyle: 'italic', fontSize: '0.7rem' }}>
-                {t('settings.media.comingSoon')}
-              </span>
-            </div>
+            {speechProviderIds.map(pid => {
+              const p = speechProviders[pid];
+              const runnableCount = getRunnableSpeechModels(p).length;
+              return (
+                <div
+                  key={pid}
+                  className={`${styles['pv-list-item']}${!p.hasCredentials || runnableCount === 0 ? ' ' + styles['dim'] : ''}`}
+                  title={p.unavailableReason || undefined}
+                >
+                  <span className={`${styles['pv-status-dot']}${p.hasCredentials && runnableCount > 0 ? ' ' + styles['on'] : ''}`} />
+                  <span className={styles['pv-list-item-name']}>{p.displayName || pid}</span>
+                  <span className={styles['pv-list-item-count']}>{runnableCount}</span>
+                </div>
+              );
+            })}
 
             <div className={styles['pv-list-divider']} />
             <div className={styles['pv-list-group-label']} style={{ color: 'var(--text-muted)' }}>
@@ -136,7 +263,7 @@ export function MediaTab() {
                 provider={providers[selected]}
                 config={config}
                 onSaveConfig={saveConfig}
-                onRefresh={load}
+                onRefresh={loadImageProviders}
               />
             ) : (
               <div className={styles['pv-empty']}>
@@ -179,6 +306,40 @@ export function MediaTab() {
                     disabled: !providerHasCredentials || !adapterAvailable,
                   };
                 }),
+              ]}
+            />
+          }
+        />
+        <SettingsRow
+          label={speechRecognitionEnabledLabel}
+          control={
+            <Toggle
+              ariaLabel={speechRecognitionEnabledLabel}
+              on={speechConfig ? speechEnabled : undefined}
+              onChange={(enabled) => saveSpeechConfig({ enabled })}
+            />
+          }
+        />
+        <SettingsRow
+          label={defaultSpeechModelLabel}
+          control={
+            <SelectWidget
+              value={speechConfig?.defaultModel ? `${speechConfig.defaultModel.provider}/${speechConfig.defaultModel.id}` : ''}
+              onChange={(val) => {
+                if (!val) {
+                  saveSpeechConfig({ defaultModel: undefined });
+                  return;
+                }
+                const [provider, ...rest] = val.split('/');
+                saveSpeechConfig({ defaultModel: { id: rest.join('/'), provider } });
+              }}
+              disabled={!speechEnabled || allSpeechModels.length === 0}
+              options={[
+                { value: '', label: '—' },
+                ...(speechEnabled ? allSpeechModels.map(m => ({
+                  value: `${m.provider}/${m.id}`,
+                  label: `${m.provider} / ${m.name || m.id}`,
+                })) : []),
               ]}
             />
           }

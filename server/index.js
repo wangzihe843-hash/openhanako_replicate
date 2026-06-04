@@ -70,6 +70,7 @@ import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.js";
 import { createMobileStaticRoute } from "./routes/mobile-static.js";
 import { createHtmlPreviewRoute } from "./routes/html-preview.js";
 import { createAccessRoute } from "./routes/access.js";
+import { createSpeechRecognitionRoute } from "./routes/speech-recognition.js";
 import { registerTaskRegistryBusHandlers } from "./task-bus-handlers.js";
 import { configureProcessPiSdkEnv, ensureHanaPiSdkDirs, resolveHanakoHome } from "../shared/hana-runtime-paths.js";
 // internal-browser WS is handled directly via raw ws.WebSocketServer in the
@@ -684,6 +685,7 @@ app.route("/api", createCheckpointsRoute(engine));
 app.route("/api", createCommandsRoute(engine));
 app.route("/api", createResourcesRoute(engine));
 app.route("/api", createUsageRoute(engine));
+app.route("/api", createSpeechRecognitionRoute(engine));
 app.route("/api", createServerIdentityRoute({
   hanakoHome: engine.hanakoHome,
   appVersion,

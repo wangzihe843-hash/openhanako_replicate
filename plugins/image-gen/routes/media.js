@@ -151,12 +151,20 @@ function adapterAvailableForModel(providerId, model, ctx) {
 function annotateAdapterAvailability(providers, ctx) {
   const next = {};
   for (const [providerId, provider] of Object.entries(providers || {})) {
-    next[providerId] = {
-      ...provider,
-      models: (provider?.models || []).map((model) => ({
+    const models = (provider?.models || [])
+      .map((model) => ({
         ...model,
         adapterAvailable: adapterAvailableForModel(providerId, model, ctx),
-      })),
+      }))
+      .filter((model) => model.adapterAvailable);
+    if (models.length === 0) continue;
+    const modelIds = new Set(models.map((model) => model.id));
+    next[providerId] = {
+      ...provider,
+      models,
+      availableModels: Array.isArray(provider?.availableModels)
+        ? provider.availableModels.filter((model) => modelIds.has(model.id))
+        : provider?.availableModels,
     };
   }
   return next;

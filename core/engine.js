@@ -136,6 +136,7 @@ import {
 import { SessionFileRegistry } from "../lib/session-files/session-file-registry.js";
 import { serializeSessionFile } from "../lib/session-files/session-file-response.js";
 import { NotificationService } from "../lib/notifications/notification-service.js";
+import { SpeechRecognitionService } from "./speech-recognition-service.js";
 import {
   getSkillNameTranslationCachePath,
   translateSkillNamesWithCache,
@@ -209,6 +210,12 @@ export class HanaEngine {
     // ── Core managers ──
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
     this._models = new ModelManager({ hanakoHome });
+    this._speechRecognition = new SpeechRecognitionService({
+      providerRegistry: this._models.providerRegistry,
+      preferences: this._prefs,
+      sessionFiles: this._sessionFiles,
+      emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+    });
     this._sessionProjects = new SessionProjectCatalogStore({ userDir: this.userDir });
 
     // 确定启动时焦点 agent
@@ -547,6 +554,8 @@ export class HanaEngine {
   getSessionFile(fileId, options) { return this._sessionFiles.get(fileId, options); }
   getSessionFileByPath(filePath, options) { return this._sessionFiles.getByFilePath(filePath, options); }
   listSessionFiles(sessionPath) { return this._sessionFiles.list(sessionPath); }
+  updateSessionFileTranscription(fileId, transcription, options) { return this._sessionFiles.updateTranscription(fileId, transcription, options); }
+  get speechRecognition() { return this._speechRecognition; }
   get resources() { return this._resources; }
   getResourceService() {
     if (!this._resources) throw new Error("resource service is not initialized");

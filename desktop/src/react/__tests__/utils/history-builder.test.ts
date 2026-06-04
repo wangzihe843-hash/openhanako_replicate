@@ -236,6 +236,48 @@ describe('buildItemsFromHistory user image restoration', () => {
     }]);
   });
 
+  it('从 SessionFile 账本恢复 voice-input 转录展示元数据，但不把它写进消息正文', () => {
+    const filePath = '/Users/test/.hanako/session-files/hash/录音 1_mpykkdz7_35680467.wav';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-voice-transcript',
+        role: 'user',
+        content: `[attached_audio: ${filePath}]\n（听音频）`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_voice_1',
+        filePath,
+        displayName: '录音 1.wav',
+        mime: 'audio/wav',
+        kind: 'audio',
+        presentation: 'voice-input',
+        listed: false,
+        transcription: {
+          status: 'ready',
+          text: '今晚我们先把语音输入跑通。',
+          providerId: 'mimo',
+          modelId: 'mimo-v2.5-asr',
+          protocolId: 'mimo-chat-completions-asr',
+        },
+      }],
+    } as any);
+
+    const first = items[0];
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('');
+    expect(first.data.textHtml).toBeUndefined();
+    expect(first.data.attachments?.[0]).toMatchObject({
+      fileId: 'sf_voice_1',
+      presentation: 'voice-input',
+      transcription: {
+        status: 'ready',
+        text: '今晚我们先把语音输入跑通。',
+        providerId: 'mimo',
+        modelId: 'mimo-v2.5-asr',
+      },
+    });
+  });
+
   it('从 SessionFile 账本恢复旧版图片附件，并把模型传输说明排除出可见正文', () => {
     const filePath = '/Users/test/.hanako/uploads/粘贴图片_mpyjx6zr_fc3d70a9.png';
     const items = buildItemsFromHistory({

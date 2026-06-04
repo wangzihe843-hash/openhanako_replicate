@@ -38,12 +38,17 @@ const MEDIA_CAPABILITY_KEYS = {
   video_generation: "videoGeneration",
   video: "videoGeneration",
   speech_generation: "speechGeneration",
+  speech_recognition: "speechRecognition",
+  speechRecognition: "speechRecognition",
+  transcription: "speechRecognition",
+  asr: "speechRecognition",
   speech: "speechGeneration",
 };
 const MEDIA_USER_CONFIG_KEYS = {
   imageGeneration: "image_generation",
   videoGeneration: "video_generation",
   speechGeneration: "speech_generation",
+  speechRecognition: "speech_recognition",
 };
 
 function isPlainObject(value) {
@@ -167,7 +172,7 @@ function normalizeCredentialLane(lane, fallbackProviderId) {
   };
 }
 
-function normalizeImageGenerationCapability(capability, entry) {
+function normalizeMediaCapability(capability, entry) {
   if (!capability || typeof capability !== "object") return null;
   const models = [];
   const seen = new Set();
@@ -207,12 +212,16 @@ function normalizeCapabilities(plugin, entry) {
     ...raw,
     chat: raw.chat ? { ...defaultChatCapability(entry.id), ...raw.chat } : defaultChatCapability(entry.id),
   };
-  const media = raw.media || {};
-  const imageGeneration = normalizeImageGenerationCapability(media.imageGeneration, entry);
-  if (imageGeneration) {
-    capabilities.media = { ...media, imageGeneration };
-  } else if (Object.keys(media).length > 0) {
-    capabilities.media = { ...media };
+  const rawMedia = raw.media || {};
+  const media = {};
+  for (const [rawKey, rawCapability] of Object.entries(rawMedia)) {
+    const key = capabilityKey(rawKey);
+    const normalized = normalizeMediaCapability(rawCapability, entry);
+    if (normalized) media[key] = normalized;
+    else if (rawCapability !== undefined) media[key] = rawCapability;
+  }
+  if (Object.keys(media).length > 0) {
+    capabilities.media = media;
   }
   return capabilities;
 }
@@ -237,6 +246,14 @@ function inferImageGenerationProtocolId(providerId, modelId) {
 function inferMediaProtocolId(providerId, capability, modelId) {
   if (capabilityKey(capability) === "imageGeneration") {
     return inferImageGenerationProtocolId(providerId, modelId);
+  }
+  if (capabilityKey(capability) === "speechRecognition") {
+    const id = String(modelId || "");
+    if (providerId === "openai" && (id.includes("transcribe") || id === "whisper-1")) return "openai-audio-transcriptions";
+    if (providerId === "mimo" && id.includes("asr")) return "mimo-chat-completions-asr";
+    if (providerId === "dashscope" && id.includes("asr")) return "dashscope-qwen-asr-chat";
+    if (providerId === "volcengine-speech" && id.includes("bigasr")) return "volcengine-bigasr-transcription";
+    if (providerId === "system-speech") return "system-speech-recognition";
   }
   return "";
 }
@@ -298,11 +315,13 @@ import { moonshotPlugin } from "../lib/providers/moonshot.js";
 import { baichuanPlugin } from "../lib/providers/baichuan.js";
 import { stepfunPlugin } from "../lib/providers/stepfun.js";
 import { volcenginePlugin } from "../lib/providers/volcengine.js";
+import { volcengineSpeechPlugin } from "../lib/providers/volcengine-speech.js";
 import { hunyuanPlugin } from "../lib/providers/hunyuan.js";
 import { baiduCloudPlugin } from "../lib/providers/baidu-cloud.js";
 import { modelscopePlugin } from "../lib/providers/modelscope.js";
 import { infiniPlugin } from "../lib/providers/infini.js";
 import { mimoPlugin } from "../lib/providers/mimo.js";
+import { systemSpeechPlugin } from "../lib/providers/system-speech.js";
 // 国际
 import { groqPlugin } from "../lib/providers/groq.js";
 import { togetherPlugin } from "../lib/providers/together.js";
@@ -333,11 +352,13 @@ const BUILTIN_PLUGINS = [
   baichuanPlugin,
   stepfunPlugin,
   volcenginePlugin,
+  volcengineSpeechPlugin,
   hunyuanPlugin,
   baiduCloudPlugin,
   modelscopePlugin,
   infiniPlugin,
   mimoPlugin,
+  systemSpeechPlugin,
   // 国际
   groqPlugin,
   togetherPlugin,

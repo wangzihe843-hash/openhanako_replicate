@@ -33,6 +33,20 @@ export interface UserAttachment {
   status?: 'available' | 'expired' | string;
   missingAt?: number | null;
   visionAuxiliary?: boolean;
+  transcription?: VoiceTranscription;
+}
+
+export interface VoiceTranscription {
+  status: 'pending' | 'ready' | 'failed';
+  text?: string;
+  providerId?: string;
+  modelId?: string;
+  protocolId?: string;
+  language?: string;
+  durationMs?: number;
+  error?: string;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface DeskContext {
@@ -65,6 +79,7 @@ export interface SessionRegistryFile {
   version?: FileVersion | null;
   isDirectory?: boolean;
   resource?: ResourceEnvelope;
+  transcription?: VoiceTranscription;
 }
 
 export interface ResourceEnvelope {

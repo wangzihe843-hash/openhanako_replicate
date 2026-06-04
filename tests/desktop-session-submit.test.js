@@ -311,9 +311,11 @@ describe("submitDesktopSessionMessage", () => {
         storageKind,
         createdAt: 1,
       }));
+      const queueVoiceTranscription = vi.fn();
       const engine = {
         hanakoHome: tmpDir,
         registerSessionFile,
+        speechRecognition: { queueVoiceTranscription },
         ensureSessionLoaded: vi.fn(async () => session),
         promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
         emitEvent: vi.fn(),
@@ -369,9 +371,11 @@ describe("submitDesktopSessionMessage", () => {
         storageKind,
         createdAt: 1,
       }));
+      const queueVoiceTranscription = vi.fn();
       const engine = {
         hanakoHome: tmpDir,
         registerSessionFile,
+        speechRecognition: { queueVoiceTranscription },
         ensureSessionLoaded: vi.fn(async () => session),
         promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
         emitEvent: vi.fn(),
@@ -408,6 +412,88 @@ describe("submitDesktopSessionMessage", () => {
         {
           audios: [{ type: "audio", data: "BASE64", mimeType: "audio/wav" }],
           audioAttachmentPaths: [filePath],
+        },
+      );
+      expect(queueVoiceTranscription).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("queues transcription only for voice-input audio attachments with registered file ids", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-display-voice-input-"));
+    try {
+      const voicePath = path.join(tmpDir, "voice.wav");
+      fs.writeFileSync(voicePath, Buffer.from([0x52, 0x49, 0x46, 0x46]));
+      const session = makeFakeSession();
+      const sessionPath = path.join(tmpDir, "main.jsonl");
+      fs.writeFileSync(sessionPath, "{}\n");
+      const registerSessionFile = vi.fn(({ sessionPath, filePath, label, origin, storageKind, presentation, listed }) => ({
+        id: "sf_voice_input",
+        fileId: "sf_voice_input",
+        sessionPath,
+        filePath,
+        realPath: filePath,
+        displayName: label,
+        filename: path.basename(filePath),
+        label,
+        ext: "wav",
+        mime: "audio/wav",
+        size: 4,
+        kind: "audio",
+        origin,
+        storageKind,
+        presentation,
+        listed,
+        createdAt: 1,
+      }));
+      const queueVoiceTranscription = vi.fn();
+      const engine = {
+        hanakoHome: tmpDir,
+        registerSessionFile,
+        speechRecognition: { queueVoiceTranscription },
+        ensureSessionLoaded: vi.fn(async () => session),
+        promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+      };
+
+      await submitDesktopSessionMessage(engine, {
+        sessionPath,
+        text: "",
+        audios: [{ type: "audio", data: "BASE64", mimeType: "audio/wav" }],
+        displayMessage: {
+          text: "",
+          attachments: [{
+            path: voicePath,
+            name: "录音 1.wav",
+            isDir: false,
+            mimeType: "audio/wav",
+            presentation: "voice-input",
+          }],
+        },
+      });
+
+      expect(registerSessionFile).toHaveBeenCalledWith({
+        sessionPath,
+        filePath: voicePath,
+        label: "录音 1.wav",
+        origin: "voice_input",
+        storageKind: "external",
+        presentation: "voice-input",
+        listed: false,
+      });
+      expect(queueVoiceTranscription).toHaveBeenCalledTimes(1);
+      expect(queueVoiceTranscription).toHaveBeenCalledWith({
+        sessionPath,
+        fileId: "sf_voice_input",
+      });
+      expect(engine.promptSession).toHaveBeenCalledWith(
+        sessionPath,
+        `[attached_audio: ${voicePath}]`,
+        {
+          audios: [{ type: "audio", data: "BASE64", mimeType: "audio/wav" }],
+          audioAttachmentPaths: [voicePath],
         },
       );
     } finally {

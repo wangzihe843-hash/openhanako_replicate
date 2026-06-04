@@ -181,6 +181,46 @@ describe('ws-message-handler session-scoped desktop events', () => {
     expect(first.data.attachments).toEqual([{ path: '/tmp/voice.wav', name: 'voice.wav', isDir: false, mimeType: 'audio/wav' }]);
   });
 
+  it('voice_transcription_update 按 fileId 回填现有用户语音附件', () => {
+    handleServerMessage({
+      type: 'session_user_message',
+      sessionPath: '/session/a.jsonl',
+      message: {
+        text: '',
+        attachments: [{
+          fileId: 'sf_voice',
+          path: '/tmp/voice.wav',
+          name: '录音 1.wav',
+          isDir: false,
+          mimeType: 'audio/wav',
+          presentation: 'voice-input',
+        }],
+      },
+    });
+
+    handleServerMessage({
+      type: 'voice_transcription_update',
+      sessionPath: '/session/a.jsonl',
+      fileId: 'sf_voice',
+      transcription: {
+        status: 'ready',
+        text: '今晚我们先把语音输入跑通。',
+      },
+    });
+
+    const items = useStore.getState().chatSessions['/session/a.jsonl']?.items || [];
+    expect(items).toHaveLength(1);
+    const first = items[0];
+    if (!first || first.type !== 'message') throw new Error('expected message item');
+    expect(first.data.attachments?.[0]).toMatchObject({
+      fileId: 'sf_voice',
+      transcription: {
+        status: 'ready',
+        text: '今晚我们先把语音输入跑通。',
+      },
+    });
+  });
+
   it('session_created 乐观插入后延迟刷新 session 列表，避免同一波事件重复全量拉取', async () => {
     vi.useFakeTimers();
 

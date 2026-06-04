@@ -45,7 +45,7 @@ describe("image-gen provider discovery", () => {
     });
   });
 
-  it("marks media models without a registered protocol adapter as unavailable", async () => {
+  it("filters media models without a registered protocol adapter from selectable provider lists", async () => {
     const app = new Hono();
     mediaRoute(app, {
       dataDir: "/tmp/hana-image-gen-test",
@@ -80,11 +80,7 @@ describe("image-gen provider discovery", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.providers.axis.models[0]).toMatchObject({
-      id: "gpt-image-2",
-      protocolId: "axis-images",
-      adapterAvailable: false,
-    });
+    expect(body.providers).toEqual({});
   });
 
   it("adds and removes image models through media provider bus handlers", async () => {

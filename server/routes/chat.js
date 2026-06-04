@@ -706,6 +706,13 @@ export function createChatRoute(engine, hub, { upgradeWebSocket }) {
     } else if (event.type === "session_user_message") {
       if (!ss) return;
       emitStreamEvent(sessionPath, ss, { type: "session_user_message", message: event.message });
+    } else if (event.type === "voice_transcription_update") {
+      broadcast({
+        type: "voice_transcription_update",
+        sessionPath: event.sessionPath || sessionPath,
+        fileId: event.fileId || null,
+        transcription: event.transcription || null,
+      });
     } else if (event.type === "session_created") {
       broadcast({
         type: "session_created",

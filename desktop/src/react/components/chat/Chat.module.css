@@ -228,6 +228,27 @@
     margin-bottom: 0;
 }
 
+.voiceInputStack {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    max-width: min(24rem, 100%);
+}
+
+.voiceInputTranscript {
+    max-width: min(24rem, 100%);
+    padding: 0.48rem 0.62rem;
+    color: var(--text);
+    background: color-mix(in srgb, var(--bg-card) 84%, rgba(var(--accent-rgb), 0.08));
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .attachCard {
     border-radius: var(--radius-chat-card);
     overflow: hidden;

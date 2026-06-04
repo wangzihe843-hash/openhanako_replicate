@@ -218,6 +218,44 @@ describe('expired session file presentation', () => {
     expect(screen.getByLabelText('Play 录音 1.wav')).toBeInTheDocument();
   });
 
+  it('renders voice-input transcript above the playable audio strip without an empty text bubble', () => {
+    const { container } = render(
+      <UserMessage
+        showAvatar={false}
+        sessionPath="/sessions/main.jsonl"
+        readOnly
+        message={{
+          id: 'u-voice-transcript',
+          role: 'user',
+          text: '',
+          attachments: [
+            {
+              fileId: 'sf_audio',
+              path: '/cache/voice.wav',
+              name: '录音 1.wav',
+              isDir: false,
+              mimeType: 'audio/wav',
+              presentation: 'voice-input',
+              listed: false,
+              transcription: {
+                status: 'ready',
+                text: '今晚我们先把语音输入跑通。',
+              },
+            } as any,
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('今晚我们先把语音输入跑通。')).toBeInTheDocument();
+    expect(screen.getByTestId('audio-attachment-wave')).toBeInTheDocument();
+    const userTextBubble = Array.from(container.querySelectorAll('div')).find((node) => {
+      const className = String(node.getAttribute('class') || '');
+      return className.includes('messageUser') && !className.includes('messageGroupUser');
+    });
+    expect(userTextBubble).toBeUndefined();
+  });
+
   it('renders assistant file actions as a split button with reveal and copy menu actions', async () => {
     render(
       <AssistantMessage

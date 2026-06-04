@@ -267,6 +267,25 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
         const imageSrc = !expired && isImage(att) ? getUserAttachmentImageSrc(att) : null;
         const kind = att.isDir ? 'directory' : kindOfFileName(att.name || att.path, att.mimeType);
         if (!expired && kind === 'audio') {
+          const transcriptText = att.presentation === 'voice-input' && att.transcription?.status === 'ready'
+            ? att.transcription.text?.trim()
+            : '';
+          if (transcriptText) {
+            return (
+              <div key={att.fileId || att.path || att.name || `att-${i}`} className={styles.voiceInputStack}>
+                <div className={styles.voiceInputTranscript}>{transcriptText}</div>
+                <AudioAttachmentChip
+                  file={{
+                    path: att.path,
+                    name: att.name,
+                    base64Data: att.base64Data,
+                    mimeType: att.mimeType,
+                  }}
+                  showName={false}
+                />
+              </div>
+            );
+          }
           return (
             <AudioAttachmentChip
               key={att.fileId || att.path || att.name || `att-${i}`}

@@ -269,6 +269,39 @@ function replayUserMessageAlreadyHydrated(sessionPath: string, message: any): bo
     sameJsonish(last.data.deskContext, message?.deskContext);
 }
 
+function applyVoiceTranscriptionUpdate(msg: any): void {
+  const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath : '';
+  const fileId = typeof msg.fileId === 'string' ? msg.fileId : '';
+  const transcription = msg.transcription && typeof msg.transcription === 'object' ? msg.transcription : null;
+  if (!sessionPath || !fileId || !transcription) return;
+
+  let changed = false;
+  useStore.setState((s: any) => {
+    const session = s.chatSessions?.[sessionPath];
+    if (!session) return {};
+    const items = session.items.map((item: any) => {
+      if (item?.type !== 'message' || !Array.isArray(item.data?.attachments)) return item;
+      let itemChanged = false;
+      const attachments = item.data.attachments.map((attachment: any) => {
+        if (attachment?.fileId !== fileId) return attachment;
+        itemChanged = true;
+        return { ...attachment, transcription };
+      });
+      if (!itemChanged) return item;
+      changed = true;
+      return { ...item, data: { ...item.data, attachments } };
+    });
+    if (!changed) return {};
+    return {
+      chatSessions: {
+        ...s.chatSessions,
+        [sessionPath]: { ...session, items },
+      },
+    };
+  });
+  if (changed) bumpMessageLiveVersion(sessionPath);
+}
+
 // ── 消息分发（大 switch） ──
 
 export function handleServerMessage(msg: any): void {
@@ -531,6 +564,11 @@ export function handleServerMessage(msg: any): void {
       if (sp === useStore.getState().currentSessionPath) {
         useStore.setState({ welcomeVisible: false });
       }
+      break;
+    }
+
+    case 'voice_transcription_update': {
+      applyVoiceTranscriptionUpdate(msg);
       break;
     }
 

@@ -218,6 +218,7 @@ function isSettingsReadRoute(verb, routePath) {
     || routePath === "/api/providers/summary"
     || routePath === "/api/preferences/models"
     || routePath === "/api/preferences/appearance"
+    || routePath === "/api/speech-recognition/providers"
     || routePath === "/api/experiments"
     || routePath === "/api/experiments/memory/cache-snapshot-reflection/observation"
     || routePath === "/api/bridge/status"
@@ -246,6 +247,7 @@ function isSettingsWriteRoute(verb, routePath) {
     routePath === "/api/config"
     || routePath === "/api/preferences/models"
     || routePath === "/api/preferences/appearance"
+    || routePath === "/api/speech-recognition/config"
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath)
   ));
 }

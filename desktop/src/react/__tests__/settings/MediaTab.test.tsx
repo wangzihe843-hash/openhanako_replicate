@@ -39,14 +39,15 @@ vi.mock('../../settings/tabs/media/MediaProviderDetail', () => ({
 }));
 
 vi.mock('@/ui', () => ({
-  SelectWidget: ({ value, onChange, options }: {
+  SelectWidget: ({ value, onChange, options, disabled }: {
     value: string;
     onChange: (value: string) => void;
     options: Array<{ value: string; label: string; disabled?: boolean }>;
+    disabled?: boolean;
   }) => (
     <select
-      aria-label="settings.media.defaultModel"
       value={value}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
     >
       {options.map(option => (
@@ -199,5 +200,142 @@ describe('MediaTab image-gen config', () => {
     expect(option).toBeTruthy();
     expect(option).toBeDisabled();
     expect(option?.textContent).toContain('settings.media.adapterMissing');
+  });
+
+  it('loads speech-recognition providers from the speech endpoint', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/speech-recognition/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI Speech',
+              hasCredentials: true,
+              models: [{ id: 'whisper-1', name: 'Whisper 1', adapterAvailable: true }],
+            },
+          },
+          config: { enabled: false },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    expect(await screen.findByText('OpenAI Speech')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/speech-recognition/providers');
+    });
+  });
+
+  it('saves speech-recognition enabled state through the speech config endpoint', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/speech-recognition/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI Speech',
+              hasCredentials: true,
+              models: [{ id: 'whisper-1', name: 'Whisper 1', adapterAvailable: true }],
+            },
+          },
+          config: { enabled: false },
+        }));
+      }
+      if (path === '/api/speech-recognition/config') {
+        return Promise.resolve(jsonResponse({ ok: true, config: { enabled: true } }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const toggle = await screen.findByRole('switch', { name: '语音识别启用' });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/speech-recognition/config', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ values: { enabled: true } }),
+      }));
+    });
+  });
+
+  it('saves the default speech-recognition model through the speech config endpoint', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/speech-recognition/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI Speech',
+              hasCredentials: true,
+              models: [{ id: 'whisper-1', name: 'Whisper 1', adapterAvailable: true }],
+            },
+          },
+          config: { enabled: true },
+        }));
+      }
+      if (path === '/api/speech-recognition/config') {
+        return Promise.resolve(jsonResponse({
+          values: { enabled: true, defaultModel: { provider: 'openai', id: 'whisper-1' } },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const select = await screen.findByLabelText('默认语音识别模型');
+    fireEvent.change(select, { target: { value: 'openai/whisper-1' } });
+
+    await waitFor(() => {
+      expect(mocks.hanaFetch.mock.calls.some(([path]) => path === '/api/speech-recognition/config')).toBe(true);
+    });
+    const saveCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/speech-recognition/config');
+    expect(saveCall?.[1]).toMatchObject({ method: 'PUT' });
+    expect(JSON.parse(String((saveCall?.[1] as RequestInit).body))).toEqual({
+      values: { defaultModel: { provider: 'openai', id: 'whisper-1' } },
+    });
+  });
+
+  it('does not offer speech models without runnable adapters as selectable defaults', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+      }
+      if (path === '/api/speech-recognition/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI Speech',
+              hasCredentials: true,
+              models: [{ id: 'whisper-1', name: 'Whisper 1', adapterAvailable: false }],
+              availableModels: [],
+            },
+          },
+          config: { enabled: true },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const select = await screen.findByLabelText('默认语音识别模型');
+    const option = Array.from(select.querySelectorAll('option')).find((item) => item.value === 'openai/whisper-1');
+    expect(option).toBeUndefined();
+    expect(select).toBeDisabled();
   });
 });
