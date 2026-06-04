@@ -91,7 +91,7 @@ export function normalizeRelationshipStateSuggestion(value: unknown): XingyeRela
     corruptionDelta: clampDelta(asNumber(record.corruptionDelta), -8, 8),
     mood: asShortString(record.mood, '平静', 12),
     stateSummary: asShortString(record.stateSummary, '上下文不足，状态保持平稳。', 180),
-    reason: asShortString(record.reason, '上下文不足，本次建议保持保守。', 180),
+    reason: asShortString(record.reason, '也说不太清是为什么，这会儿对你，心里就是这样。', 180),
   };
 }
 
