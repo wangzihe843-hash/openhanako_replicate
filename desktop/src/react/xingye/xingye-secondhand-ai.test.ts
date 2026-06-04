@@ -297,6 +297,30 @@ describe('buildSecondhandDraftPrompt', () => {
     expect(prompt).toContain('过去 14 天');
     expect(prompt).toContain('drafts 长度 = 5');
   });
+
+  it('renders the recent-items anti-repeat anchor when provided, fallback when absent', () => {
+    const base = {
+      agent: { id: 'agent-r', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      userIntent: '',
+      recentSceneBlock: '',
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      heartbeatBlock: '',
+    };
+    const withItems = buildSecondhandDraftPrompt({
+      ...base,
+      recentItemsBlock: '「旧胶片相机」、「闲置书架」',
+    });
+    expect(withItems).toContain('【近期已挂出 / 卖过的闲置 · 不要重复】');
+    expect(withItems).toContain('「旧胶片相机」、「闲置书架」');
+    expect(withItems).toContain('同一件东西不会反复挂、反复卖');
+
+    const withoutItems = buildSecondhandDraftPrompt(base);
+    expect(withoutItems).toContain('【近期已挂出 / 卖过的闲置 · 不要重复】');
+    expect(withoutItems).toContain('（无；TA 还没记过二手，放手写）');
+  });
 });
 
 describe('buildSecondhandBuyerChatPrompt · mode=append_closing', () => {

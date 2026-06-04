@@ -1,5 +1,16 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import {
+  CONTACT_LORE_DEDUPE_INSTRUCTION,
+  contactsHaveLoreAlias,
+  formatContactLoreListingBlock,
+  type XingyeContactLoreHint,
+} from './xingye-contact-lore-link';
+import {
+  FILES_FOLDER_SCATTER_GUARD,
+  formatFilesFolderEntryGuide,
+  formatFilesFolderGuideListing,
+} from './xingye-files-folder-taxonomy';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 export type FilesDraftFolderHint = {
@@ -64,6 +75,11 @@ export function buildFilesDraftPrompt(args: {
   keywordLoreBlock: string;
   relationshipBlock: string;
   heartbeatBlock: string;
+  /**
+   * 通讯录候选池（仅「人际关系 / 关于 user」等关系类文件夹注入）：整理人际资料时的参考亲友，
+   * 带昵称 + 印象 + 与设定库的身份对齐。由 generateFilesDraftWithAI 视目标文件夹决定是否传入。
+   */
+  virtualContacts?: ReadonlyArray<XingyeContactLoreHint>;
 }): string {
   const {
     agent,
@@ -79,6 +95,7 @@ export function buildFilesDraftPrompt(args: {
     relationshipBlock,
     heartbeatBlock,
   } = args;
+  const virtualContacts = args.virtualContacts ?? [];
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
@@ -88,15 +105,16 @@ export function buildFilesDraftPrompt(args: {
     gender: profile?.gender,
   });
 
-  const folderListing = folderOptions.length
-    ? folderOptions
-        .map((f) => `- ${f.name}${f.description ? `：${f.description}` : ''}`)
-        .join('\n')
-    : '（资料柜里目前还没有文件夹，请在 folderName 里给出一个 2–6 字的中文新分类名）';
+  const folderListing = formatFilesFolderGuideListing(
+    folderOptions,
+    '（资料柜里目前还没有文件夹，请在 folderName 里给出一个 2–6 字的中文新分类名）',
+  );
 
   const targetFolderLine = targetFolder
     ? `${targetFolder.name}${targetFolder.description ? `（${targetFolder.description}）` : ''}`
     : '（未指定，请从下面已有文件夹中挑一个最贴切的；都不合适才能新建）';
+  // 已知目标夹时，把这个夹的「放什么 / 体例」顶到正文跟前（世界观夹尤其需要归纳口吻而非小说体）。
+  const targetFolderGuide = targetFolder ? formatFilesFolderEntryGuide(targetFolder.name) : '';
 
   const parts: string[] = [
     '你是星野模式「小手机文件管理」资料草稿生成器。只返回严格 JSON，不要 Markdown，不要解释。',
@@ -133,8 +151,9 @@ export function buildFilesDraftPrompt(args: {
     '',
     '【目标文件夹】',
     targetFolderLine,
+    ...(targetFolderGuide ? ['', targetFolderGuide] : []),
     '',
-    '【资料柜里已有文件夹（folderName 必须从中选一个完整复制；无目标文件夹时尤其重要）】',
+    '【资料柜里已有文件夹（folderName 必须从中选一个完整复制；无目标文件夹时尤其重要）；每个夹括号下注明专放什么】',
     folderListing,
     '',
     '【资料柜里已有的条目（id · 文件夹 · 标题 — 摘要；最多 30 条）】',
@@ -144,6 +163,7 @@ export function buildFilesDraftPrompt(args: {
     '- 翻阅上面已有条目；如果当前要整理的内容**和某条已有 entry 是同一主题** —— 不要新建，而是在 body 里追加新的补充段落（让用户后续决定是否合并）。',
     '- 真正全新主题才新建；宁可不写也不要写一条几乎同名的新条目。',
     '- 如果你确认要新建，title 要明显区别于已有同 folder 的所有 title（不要 "师父说过的几句话" vs "师父说的几句话" 这种几乎同名）。',
+    `- ${FILES_FOLDER_SCATTER_GUARD}`,
     '',
     '当前角色（基础身份）：',
     JSON.stringify(
@@ -168,6 +188,15 @@ export function buildFilesDraftPrompt(args: {
     '',
     '【按需命中的设定库关键词条目（仅命中项）】',
     keywordLoreBlock.trim() || '（无）',
+    '',
+    ...(virtualContacts.length
+      ? [
+        '【通讯录里的人（整理人际关系类资料时的参考候选；昵称 / 印象均为 TA 视角，勿当作 user 视角）】',
+        ...(contactsHaveLoreAlias(virtualContacts) ? [CONTACT_LORE_DEDUPE_INSTRUCTION] : []),
+        formatContactLoreListingBlock(virtualContacts),
+        '',
+      ]
+      : []),
     `【当前对 ${currentUserName} 的关系状态摘要（若有；情绪 / 边界参考）】`,
     relationshipBlock.trim() || '（无）',
     '',

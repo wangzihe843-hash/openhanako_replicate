@@ -15,9 +15,28 @@ vi.mock('./xingye-storage-api', () => ({
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
+  folderBoostCategories,
   generateFilesDraftWithAI,
   normalizeFilesDraftResult,
 } from './xingye-files-ai';
+
+describe('folderBoostCategories', () => {
+  it('maps relationship-ish folders to relationship', () => {
+    expect(folderBoostCategories({ id: 'a', name: '人际关系', description: '' })).toEqual(['relationship']);
+    expect(folderBoostCategories({ id: 'b', name: '关于 user', description: '' })).toEqual(['relationship']);
+    expect(folderBoostCategories({ id: 'c', name: '亲友名单', description: '' })).toEqual(['relationship']);
+  });
+
+  it('maps worldview folders to worldview', () => {
+    expect(folderBoostCategories({ id: 'd', name: '世界观整理', description: '' })).toEqual(['worldview']);
+  });
+
+  it('returns [] for folders with no clear category or when folder is null', () => {
+    expect(folderBoostCategories({ id: 'e', name: '待确认', description: '' })).toEqual([]);
+    expect(folderBoostCategories({ id: 'f', name: '线索与发现', description: '' })).toEqual([]);
+    expect(folderBoostCategories(null)).toEqual([]);
+  });
+});
 
 describe('normalizeFilesDraftResult', () => {
   it('requires folderName / title / body', () => {

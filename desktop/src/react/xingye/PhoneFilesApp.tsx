@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import { useStore } from '../stores';
 import styles from './XingyeShell.module.css';
 import { generateFilesDraftWithAI } from './xingye-files-ai';
+import { runFilesBatchAdd, runFilesInit, type FilesBatchSummary } from './xingye-files-batch-ai';
 import {
   appendFileEntry,
   confirmFileDraft,
@@ -283,6 +284,22 @@ function renderPaperBody(body: string): ReactNode {
   });
 }
 
+function isEmptyBatch(summary: FilesBatchSummary): boolean {
+  return summary.created === 0 && summary.skipped === 0 && summary.failed === 0;
+}
+
+function summarizeBatch(mode: 'init' | 'add', summary: FilesBatchSummary): string {
+  const verb = mode === 'init' ? '新增' : '生成草稿';
+  const parts = [`${verb} ${summary.created} 条`];
+  if (summary.skipped) parts.push(`跳过 ${summary.skipped}`);
+  if (summary.failed) parts.push(`失败 ${summary.failed}`);
+  const dest = mode === 'add' ? '，已放到下方「待确认」区' : '';
+  // 计划条数超过本轮上限时，未执行的尾部不会静默丢弃——明确告知并提示可续跑
+  //（再点一次时规划会看到已生成条目、自动接着整理剩下的）。
+  const more = summary.truncated > 0 ? `；还有 ${summary.truncated} 条未整理，可再点一次继续` : '';
+  return `整理完成：${parts.join('，')}${dest}${more}。`;
+}
+
 export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneFilesAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
 
@@ -308,6 +325,15 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFolderName, setAiFolderName] = useState<string | null>(null);
+  /**
+   * 批量动作（初始化 / 批量整理最近聊天）状态。两者互斥（共用 batchBusy），
+   * batchMode 决定文案；batchProgress 是 Phase-2 逐条生成的进度。
+   */
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMode, setBatchMode] = useState<'init' | 'add' | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
   /**
    * 「待确认草稿」行内编辑缓冲（**仅 action='add' 用**）。Key = draft.id。
    * folderId 可由用户改（下拉选 folder）；title/body 也能编辑。
@@ -372,7 +398,14 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     return () => clearTimeout(timer);
   }, [sharedToChatKey]);
 
+  /**
+   * 防跨角色脏写：切角色 / 跑批量动作时会有多轮异步读取在飞，落 setState 前用单调请求号
+   * 校验仍是最新一轮（与 PhoneMailApp 同语义）。批量 handler 也快照本 ref 守卫自己的写入。
+   */
+  const reloadSeqRef = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setFolders([]);
       setEntries([]);
@@ -389,13 +422,15 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         listFileEntries(ownerAgentId),
         listFileDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮取代，丢弃本次结果
       setFolders(f);
       setEntries(e);
       setPendingDrafts(drafts);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setListError(err instanceof Error ? err.message : String(err));
     } finally {
-      setListLoading(false);
+      if (seq === reloadSeqRef.current) setListLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -570,10 +605,19 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     setComposeMode(null);
     setSaveError(null);
     setListError(null);
+    setBatchBusy(false);
+    setBatchMode(null);
+    setBatchProgress(null);
+    setBatchNotice(null);
+    setBatchError(null);
   }, [ownerAgentId]);
 
   useEffect(() => {
     void reload();
+    // 卸载 / 切角色时让在飞的 reload 与批量 handler 都失效（seq 前移）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reload]);
 
   useEffect(() => {
@@ -702,6 +746,97 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
       setAiBusy(false);
+    }
+  };
+
+  /**
+   * 「让 TA 初始化资料柜」：两阶段——先一次规划调用看 lore 目录，再逐条只喂选中设定生成，
+   * 结果直接写入 entries（去重命中跳过计数）。seq 快照守卫 agent 切换时丢弃 UI 写入。
+   */
+  const handleRunInit = async () => {
+    if (!ownerAgent || !ownerAgentId || batchBusy) return;
+    const seq = reloadSeqRef.current;
+    setBatchBusy(true);
+    setBatchMode('init');
+    setBatchProgress(null);
+    setBatchNotice(null);
+    setBatchError(null);
+    try {
+      const { summary, createdEntries } = await runFilesInit({
+        agent: ownerAgent,
+        ownerAgentId,
+        ownerProfile: ownerProfile ?? null,
+        folders,
+        existingEntries: entries,
+        userName,
+        onProgress: (done, total) => {
+          if (seq === reloadSeqRef.current) setBatchProgress({ done, total });
+        },
+      });
+      if (seq !== reloadSeqRef.current) return;
+      if (isEmptyBatch(summary)) {
+        setBatchNotice('TA 的设定库还没有可整理的条目，先去「设定库」加一些再来。');
+      } else {
+        setEntries((prev) => {
+          const ids = new Set(createdEntries.map((c) => c.id));
+          return [...createdEntries, ...prev.filter((p) => !ids.has(p.id))];
+        });
+        setBatchNotice(summarizeBatch('init', summary));
+      }
+    } catch (err) {
+      if (seq === reloadSeqRef.current) setBatchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (seq === reloadSeqRef.current) {
+        setBatchBusy(false);
+        setBatchMode(null);
+        setBatchProgress(null);
+      }
+    }
+  };
+
+  /**
+   * 「批量整理最近聊天」：两阶段——先一次规划调用看最近聊天+目录，再逐条只喂相关聊天/设定生成，
+   * 结果写入「待确认」草稿（add / update 补丁），复用现有确认区。
+   */
+  const handleRunBatchAdd = async () => {
+    if (!ownerAgent || !ownerAgentId || batchBusy) return;
+    const seq = reloadSeqRef.current;
+    setBatchBusy(true);
+    setBatchMode('add');
+    setBatchProgress(null);
+    setBatchNotice(null);
+    setBatchError(null);
+    try {
+      const { summary, appendedDrafts } = await runFilesBatchAdd({
+        agent: ownerAgent,
+        ownerAgentId,
+        ownerProfile: ownerProfile ?? null,
+        folders,
+        existingEntries: entries,
+        pendingDrafts,
+        userName,
+        onProgress: (done, total) => {
+          if (seq === reloadSeqRef.current) setBatchProgress({ done, total });
+        },
+      });
+      if (seq !== reloadSeqRef.current) return;
+      if (isEmptyBatch(summary)) {
+        setBatchNotice('最近没有可整理的聊天，先和 TA 聊几句再来。');
+      } else {
+        setPendingDrafts((prev) => {
+          const ids = new Set(appendedDrafts.map((d) => d.id));
+          return [...appendedDrafts, ...prev.filter((p) => !ids.has(p.id))];
+        });
+        setBatchNotice(summarizeBatch('add', summary));
+      }
+    } catch (err) {
+      if (seq === reloadSeqRef.current) setBatchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (seq === reloadSeqRef.current) {
+        setBatchBusy(false);
+        setBatchMode(null);
+        setBatchProgress(null);
+      }
     }
   };
 
@@ -1110,6 +1245,49 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
               </span>
             </header>
 
+            {folders.length > 0 ? (
+              <div style={{ padding: '0 18px' }} data-testid="phone-files-batch-actions">
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className={styles.xyBtnGhost}
+                    onClick={() => void handleRunInit()}
+                    disabled={batchBusy || listLoading || !ownerAgent}
+                    data-testid="phone-files-init-batch-button"
+                    title="让 TA 翻一遍设定库，按文件夹批量整理资料（逐条单独生成）"
+                  >
+                    {batchBusy && batchMode === 'init' ? '整理中…' : '让 TA 初始化资料柜'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.xyBtnGhost}
+                    onClick={() => void handleRunBatchAdd()}
+                    disabled={batchBusy || listLoading || !ownerAgent}
+                    data-testid="phone-files-batch-add-button"
+                    title="根据最近聊天，批量补几条资料到「待确认」区"
+                  >
+                    {batchBusy && batchMode === 'add' ? '整理中…' : '批量整理最近聊天'}
+                  </button>
+                </div>
+                {batchBusy ? (
+                  <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }}>
+                    {batchMode === 'init' ? '正在翻看 TA 的设定库' : '正在整理最近聊天'}
+                    {batchProgress ? `（${batchProgress.done}/${batchProgress.total}）` : '…'}
+                  </p>
+                ) : null}
+                {batchNotice ? (
+                  <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }} data-testid="phone-files-batch-notice">
+                    {batchNotice}
+                  </p>
+                ) : null}
+                {batchError ? (
+                  <p className={styles.xyEditorError} role="alert" style={{ margin: '8px 0 0' }}>
+                    批量整理失败：{batchError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className={styles.xyBreadcrumb}>
               <span>本机</span>
               <span className={styles.xyBcSep}>›</span>
@@ -1124,7 +1302,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                 aria-label="待确认资料柜草稿"
                 data-testid="phone-files-pending-drafts"
               >
-                <p className={styles.xyDraftHeader}>待确认草稿 · 来自心跳巡检</p>
+                <p className={styles.xyDraftHeader}>待确认草稿 · 来自巡检 / 批量整理</p>
                 {pendingDraftError ? (
                   <p className={styles.xyDraftError} role="alert">{pendingDraftError}</p>
                 ) : null}

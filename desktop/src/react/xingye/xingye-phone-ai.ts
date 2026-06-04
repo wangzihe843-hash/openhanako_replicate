@@ -105,6 +105,8 @@ function buildLoreContextForPhone(params: {
     purpose,
     queryText,
     maxChars: 2_000,
+    // 通讯录/短信本质是「关系」场景：让关系类设定优先占预算，别被背景/世界观等高优先 lore 挤掉。
+    priorityBoostCategories: ['relationship'],
   });
   return formatXingyeLoreRuntimeContextBlock(context);
 }

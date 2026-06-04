@@ -3,9 +3,13 @@ import {
   FILES_DUPLICATE_EDIT_DISTANCE_THRESHOLD,
   FILES_DUPLICATE_JACCARD_THRESHOLD,
   bigramJaccard,
+  bodyBigramJaccard,
+  detectCrossFolderDuplicate,
   detectFilesDuplicate,
   levenshtein,
+  normalizeBodyForDedup,
   normalizeTitleForDedup,
+  titleSimilarity,
   toBigramSet,
 } from './xingye-files-dedupe';
 import type { XingyeFileEntry } from './xingye-files-store';
@@ -186,5 +190,98 @@ describe('detectFilesDuplicate', () => {
   it('阈值常量曝光给调用方', () => {
     expect(FILES_DUPLICATE_EDIT_DISTANCE_THRESHOLD).toBe(2);
     expect(FILES_DUPLICATE_JACCARD_THRESHOLD).toBe(0.75);
+  });
+});
+
+describe('normalizeBodyForDedup', () => {
+  it('去掉换行 / 空白 / 标点，只留内容字', () => {
+    expect(normalizeBodyForDedup('  红盐码头，\n我十七岁待过的走私港。 ')).toBe('红盐码头我十七岁待过的走私港');
+  });
+  it('全角标点归一后被删', () => {
+    expect(normalizeBodyForDedup('账房先生（粮铺）说……')).toBe('账房先生粮铺说');
+  });
+  it('非字符串 / 空白 → 空串', () => {
+    expect(normalizeBodyForDedup('')).toBe('');
+    expect(normalizeBodyForDedup('   \n ')).toBe('');
+    expect(normalizeBodyForDedup(undefined as never)).toBe('');
+  });
+});
+
+describe('bodyBigramJaccard / titleSimilarity', () => {
+  it('几乎一字不差的正文 → 高分；完全不相干 → 0 附近', () => {
+    const a = '莉莉丝今天说以后受伤不会瞒着我，她语气很认真，我记下来。';
+    const aReworded = '莉莉丝今天说，以后受伤不会瞒着我；她语气很认真，我记下来！';
+    expect(bodyBigramJaccard(a, aReworded)).toBeGreaterThan(0.8);
+    expect(bodyBigramJaccard(a, '今天去码头收了三箱货，账房先生不在。')).toBeLessThan(0.2);
+  });
+  it('titleSimilarity：近乎同名高、无关低', () => {
+    expect(titleSimilarity('师父说过的几句话', '师父说的几句话')).toBeGreaterThan(0.7);
+    expect(titleSimilarity('红盐码头', '蓝线风铃')).toBeLessThan(0.3);
+  });
+});
+
+describe('detectCrossFolderDuplicate', () => {
+  it('正文几乎一样、但在不同文件夹 → cross_dup（via=body，哪怕标题被改写）', () => {
+    const existing = [
+      entry({
+        id: 'e-user',
+        title: '莉莉丝承诺不再瞒伤',
+        folderId: 'f-user',
+        body: '今天莉莉丝主动跟我说，以后受伤不会瞒着我。她讲这话时语气很认真，没有躲闪。',
+      }),
+    ];
+    const result = detectCrossFolderDuplicate(
+      {
+        title: '莉莉丝主动承诺不隐瞒伤势', // 改写过的标题
+        folderId: 'f-clue', // 不同文件夹
+        body: '今天莉莉丝主动跟我说，以后受伤不会瞒着我。她讲这话时语气很认真，没有躲闪。',
+      },
+      existing,
+    );
+    expect(result.kind).toBe('cross_dup');
+    if (result.kind === 'cross_dup') {
+      expect(result.entry.id).toBe('e-user');
+      expect(result.via).toBe('body');
+    }
+  });
+
+  it('同一文件夹里的雷同条目不算跨夹重复（那是 detectFilesDuplicate 的活）', () => {
+    const existing = [
+      entry({ id: 'e1', title: 'A', folderId: 'f-user', body: '完全一样的内容拿来比对一下你看看。' }),
+    ];
+    const result = detectCrossFolderDuplicate(
+      { title: 'B', folderId: 'f-user', body: '完全一样的内容拿来比对一下你看看。' },
+      existing,
+    );
+    expect(result.kind).toBe('unique');
+  });
+
+  it('不同文件夹但内容确实不同 → unique（不误杀）', () => {
+    const existing = [
+      entry({ id: 'e1', title: '红盐码头与七月不渡', folderId: 'f-world', body: '红盐码头是个走私港，当地七月不出海。' }),
+    ];
+    const result = detectCrossFolderDuplicate(
+      { title: '账房先生提的岑姨', folderId: 'f-clue', body: '账房先生说岑姨以前在北门诊所干过，后来不知去向。' },
+      existing,
+    );
+    expect(result.kind).toBe('unique');
+  });
+
+  it('标题和正文都为空 → unique', () => {
+    const existing = [entry({ id: 'e1', title: '随便', folderId: 'f-a', body: '随便写点东西。' })];
+    expect(detectCrossFolderDuplicate({ title: '', folderId: 'f-b', body: '' }, existing).kind).toBe('unique');
+  });
+
+  it('取相似度最高的那条作为命中', () => {
+    const existing = [
+      entry({ id: 'e-lo', title: '别的事', folderId: 'f-a', body: '完全不相关的另一段内容写在这里。' }),
+      entry({ id: 'e-hi', title: '莉莉丝承诺不再瞒伤', folderId: 'f-a', body: '今天莉莉丝主动跟我说，以后受伤不会瞒着我。' }),
+    ];
+    const result = detectCrossFolderDuplicate(
+      { title: '莉莉丝承诺不再瞒伤', folderId: 'f-b', body: '今天莉莉丝主动跟我说，以后受伤不会瞒着我。' },
+      existing,
+    );
+    expect(result.kind).toBe('cross_dup');
+    if (result.kind === 'cross_dup') expect(result.entry.id).toBe('e-hi');
   });
 });

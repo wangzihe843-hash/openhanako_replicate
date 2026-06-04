@@ -59,6 +59,12 @@ export type XingyeLoreRuntimeContextOptions = {
   maxChars?: number;
   includeAlways?: boolean;
   includeKeyword?: boolean;
+  /**
+   * 让这些分类的命中条目优先占用 `maxChars` 预算：稳定置顶到候选队首，
+   * 组内仍按既有的 priority desc / updatedAt desc 排序。不传 / 空数组 → 行为完全不变。
+   * 通讯录链路传 `['relationship']`，避免关系设定被同预算里其它高优先 lore 挤掉。
+   */
+  priorityBoostCategories?: XingyeLoreCategory[];
 };
 
 export type XingyeLoreRuntimeContextEntry = {
@@ -162,6 +168,24 @@ function toCandidate(entry: XingyeLoreEntry, reason: 'always' | 'keyword', match
   };
 }
 
+/**
+ * 把 `boostCategories` 命中的分类**稳定置顶**——让这些 lore 在后续按预算截断时优先入选。
+ * - `boostCategories` 为空：原样返回一份浅拷贝，行为不变。
+ * - 非空：返回新数组，命中分类整体排到队首，组内保持入参既有顺序（通常已是
+ *   `priority` 降序 → `updatedAt` 降序）。
+ * 同时服务两条取 lore 路径：`collectXingyeLoreRuntimeContext` 的候选重排，
+ * 以及各小手机模块 always 块（`buildStableLoreFromAlwaysEntries`）的同款重排。
+ */
+export function applyCategoryBoostOrder<T extends { category: XingyeLoreCategory }>(
+  items: ReadonlyArray<T>,
+  boostCategories: ReadonlyArray<XingyeLoreCategory>,
+): T[] {
+  if (!boostCategories.length) return items.slice();
+  const boostSet = new Set<XingyeLoreCategory>(boostCategories);
+  // Array.prototype.sort 自 ES2019 起稳定：同组（都命中 / 都未命中）保持原相对次序。
+  return items.slice().sort((a, b) => (boostSet.has(b.category) ? 1 : 0) - (boostSet.has(a.category) ? 1 : 0));
+}
+
 export function collectXingyeLoreRuntimeContext(
   agentId: string | null | undefined,
   options: XingyeLoreRuntimeContextOptions = {},
@@ -212,8 +236,14 @@ export function collectXingyeLoreRuntimeContext(
 
   result.candidateCount = candidates.length;
 
+  // boost 分类置顶后再按预算截断；不传 priorityBoostCategories 时顺序不变。
+  const ordered = applyCategoryBoostOrder(
+    candidates,
+    Array.isArray(options.priorityBoostCategories) ? options.priorityBoostCategories : [],
+  );
+
   let total = 0;
-  for (const candidate of candidates) {
+  for (const candidate of ordered) {
     const blockText = formatEntryBlock(candidate);
     const blockLength = blockText.length;
     if (total + blockLength > maxChars) {

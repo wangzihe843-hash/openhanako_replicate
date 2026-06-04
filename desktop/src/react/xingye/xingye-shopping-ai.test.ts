@@ -302,4 +302,28 @@ describe('buildShoppingDraftPrompt', () => {
     expect(prompt).toContain('过去 14 天');
     expect(prompt).toContain('drafts 长度 = 5');
   });
+
+  it('renders the recent-items anti-repeat anchor when provided, fallback when absent', () => {
+    const base = {
+      agent: { id: 'agent-s', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      userIntent: '',
+      recentSceneBlock: '',
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      heartbeatBlock: '',
+    };
+    const withItems = buildShoppingDraftPrompt({
+      ...base,
+      recentItemsBlock: '「深色台灯」、「保温杯」、「帆布袋」',
+    });
+    expect(withItems).toContain('【近期已记录的物品 · 不要重复】');
+    expect(withItems).toContain('「深色台灯」、「保温杯」、「帆布袋」');
+    expect(withItems).toContain('不是把同一件再记一遍');
+
+    const withoutItems = buildShoppingDraftPrompt(base);
+    expect(withoutItems).toContain('【近期已记录的物品 · 不要重复】');
+    expect(withoutItems).toContain('（无；TA 还没记过购物，放手写）');
+  });
 });

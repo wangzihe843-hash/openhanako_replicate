@@ -6,11 +6,13 @@ import {
   type XingyeLoreEntry,
 } from './xingye-lore-store';
 import {
+  applyCategoryBoostOrder,
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
   type XingyeLoreRuntimeContextPurpose,
 } from './xingye-lore-runtime-context';
+import type { XingyeLoreCategory } from './xingye-lore-store';
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -55,6 +57,47 @@ describe('buildXingyeLoreRuntimeQueryText', () => {
 
   it('returns empty string when no usable input', () => {
     expect(buildXingyeLoreRuntimeQueryText([null, undefined, '', '  '])).toBe('');
+  });
+});
+
+describe('applyCategoryBoostOrder', () => {
+  function item(id: string, category: XingyeLoreCategory) {
+    return { id, category };
+  }
+
+  it('returns a fresh copy unchanged when no boost categories given', () => {
+    const items = [item('a', 'background'), item('b', 'relationship')];
+    const out = applyCategoryBoostOrder(items, []);
+    expect(out).not.toBe(items);
+    expect(out.map(i => i.id)).toEqual(['a', 'b']);
+  });
+
+  it('lifts boosted categories to the front while preserving relative order (stable)', () => {
+    const items = [
+      item('bg1', 'background'),
+      item('rel1', 'relationship'),
+      item('wv1', 'worldview'),
+      item('rel2', 'relationship'),
+    ];
+    const out = applyCategoryBoostOrder(items, ['relationship']);
+    // 关系整体置顶（rel1 在 rel2 前，保持入参序）；非关系保持入参序紧随其后。
+    expect(out.map(i => i.id)).toEqual(['rel1', 'rel2', 'bg1', 'wv1']);
+  });
+
+  it('supports multiple boosted categories, keeping their interleaved input order', () => {
+    const items = [
+      item('bg1', 'background'),
+      item('rel1', 'relationship'),
+      item('wv1', 'worldview'),
+    ];
+    const out = applyCategoryBoostOrder(items, ['relationship', 'worldview']);
+    expect(out.map(i => i.id)).toEqual(['rel1', 'wv1', 'bg1']);
+  });
+
+  it('does not mutate the input array', () => {
+    const items = [item('bg1', 'background'), item('rel1', 'relationship')];
+    applyCategoryBoostOrder(items, ['relationship']);
+    expect(items.map(i => i.id)).toEqual(['bg1', 'rel1']);
   });
 });
 
@@ -169,6 +212,50 @@ describe('collectXingyeLoreRuntimeContext — selection rules', () => {
     const loose = collectXingyeLoreRuntimeContext('agent-1', { maxChars: 5_000 }, storage);
     expect(loose.entries).toHaveLength(3);
     expect(loose.truncated).toBe(false);
+  });
+
+  it('priorityBoostCategories lifts the named category ahead in the maxChars budget', () => {
+    const long = '关系内容'.repeat(50); // ~200 chars，单条就接近预算上限
+    // 背景类 priority 更高：默认会先占预算、把关系挤掉。
+    makeEntry({ title: '高优背景', category: 'background', priority: 90, insertionMode: 'always', content: long });
+    makeEntry({ title: '低优关系', category: 'relationship', priority: 10, insertionMode: 'always', content: long });
+
+    const noBoost = collectXingyeLoreRuntimeContext('agent-1', { maxChars: 250 }, storage);
+    expect(noBoost.entries.map(e => e.title)).toEqual(['高优背景']);
+    expect(noBoost.truncated).toBe(true);
+
+    const boosted = collectXingyeLoreRuntimeContext(
+      'agent-1',
+      { maxChars: 250, priorityBoostCategories: ['relationship'] },
+      storage,
+    );
+    // 即便 priority 更低，关系类也被置顶占住预算。
+    expect(boosted.entries.map(e => e.title)).toEqual(['低优关系']);
+    expect(boosted.truncated).toBe(true);
+  });
+
+  it('priorityBoostCategories keeps priority desc within and across groups', () => {
+    makeEntry({ title: '关系-低', category: 'relationship', priority: 10, insertionMode: 'always' });
+    makeEntry({ title: '关系-高', category: 'relationship', priority: 80, insertionMode: 'always' });
+    makeEntry({ title: '背景-高', category: 'background', priority: 90, insertionMode: 'always' });
+    const ctx = collectXingyeLoreRuntimeContext(
+      'agent-1',
+      { priorityBoostCategories: ['relationship'] },
+      storage,
+    );
+    // 关系组整体置顶（组内 priority desc），背景组紧随其后。
+    expect(ctx.entries.map(e => e.title)).toEqual(['关系-高', '关系-低', '背景-高']);
+  });
+
+  it('empty priorityBoostCategories leaves ordering unchanged', () => {
+    makeEntry({ title: '关系-低', category: 'relationship', priority: 10, insertionMode: 'always' });
+    makeEntry({ title: '背景-高', category: 'background', priority: 90, insertionMode: 'always' });
+    const ctx = collectXingyeLoreRuntimeContext(
+      'agent-1',
+      { priorityBoostCategories: [] },
+      storage,
+    );
+    expect(ctx.entries.map(e => e.title)).toEqual(['背景-高', '关系-低']);
   });
 
   it('does not leak entries between agents', () => {

@@ -24,6 +24,7 @@ import {
   generateSecondhandPolishWithAI,
 } from './xingye-secondhand-ai';
 import { normalizeAmount, normalizeCurrency, parseAmountText } from './xingye-money';
+import { collectionKeywordSourceText, dedupeItemDrafts, extractCollectionKeywords } from './xingye-item-dedupe';
 import {
   distributeOccurredAtFallback,
   loadHistoryState,
@@ -770,9 +771,28 @@ export function PhoneSecondhandApp({
           },
         });
         // 见 PhoneAccountingApp 同名注释：填上模型没给的 occurredAt 空槽。
-        const drafts = distributeOccurredAtFallback(rawDrafts, plan.endDays);
-        if (drafts.length === 0) {
+        const allDrafts = distributeOccurredAtFallback(rawDrafts, plan.endDays);
+        if (allDrafts.length === 0) {
           throw new Error('模型未生成任何可用条目');
+        }
+        // 入库前硬去重兜底：一件闲置只挂 / 卖一次 → 按核心品类折叠变体一律去重（不豁免消耗品）；
+        // 仅 lore 收藏品（藏家陆续出手不同款）放行。
+        const existingRows = await listAppEntries(ownerAgentId, 'secondhand');
+        const existingItems = existingRows.map((r) => ({
+          itemName: (typeof r.metadata?.itemName === 'string' && r.metadata.itemName.trim()) || r.title,
+          category: typeof r.metadata?.category === 'string' ? r.metadata.category : undefined,
+          tags: Array.isArray(r.metadata?.tags) ? (r.metadata.tags as string[]) : undefined,
+          occurredAt: typeof r.metadata?.occurredAt === 'string' ? r.metadata.occurredAt : r.createdAt,
+        }));
+        // 与 AI 侧 prompt 反锚点同源（collectionKeywordSourceText），避免「prompt 劝阻 ↔ 兜底放行」打架。
+        const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile));
+        const { kept: drafts, dropped } = dedupeItemDrafts(allDrafts, existingItems, {
+          exemptConsumables: false,
+          collectionKeywords,
+        });
+        if (drafts.length === 0) {
+          setBulkNotice('本次生成的闲置都和已有记录重复了，已全部跳过。');
+          return;
         }
         if (kind === 'initial') {
           for (const d of drafts) {
@@ -824,10 +844,11 @@ export function PhoneSecondhandApp({
           lastBulkAt: now.toISOString(),
           lastCoveredDate: toYmd(now),
         });
+        const dupNote = dropped.length ? `，跳过 ${dropped.length} 条重复` : '';
         setBulkNotice(
           kind === 'initial'
-            ? `已为 TA 生成 ${drafts.length} 条过去 ${plan.endDays} 天的二手清单历史`
-            : `已生成 ${drafts.length} 条草稿，请在待确认区检查（${plan.hintText}）`,
+            ? `已为 TA 生成 ${drafts.length} 条过去 ${plan.endDays} 天的二手清单历史${dupNote}`
+            : `已生成 ${drafts.length} 条草稿，请在待确认区检查（${plan.hintText}）${dupNote}`,
         );
         await reloadEntries();
       } catch (err) {

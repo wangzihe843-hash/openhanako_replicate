@@ -17,6 +17,11 @@ export type XingyeMomentVirtualContactHint = {
    * 与 peerAgents 的 impressionOfAuthor（联系人 → 发帖人）方向相反——prompt 里要标清楚。
    */
   impression?: string;
+  /**
+   * 与该联系人指向同一个人的设定库条目标题（本地匹配得到）。非空表示「这个联系人也出现在设定库里」，
+   * 让模型写 TA 时把通讯录与设定库当作同一个人，别各写一份。与邮件 / 文件管理同源。
+   */
+  loreAliases?: string[];
 };
 
 /**
@@ -104,6 +109,7 @@ export function buildMomentDraftPrompt(args: {
           kind: c.kind ?? undefined,
           relationshipHint: c.relationshipHint ?? undefined,
           impression: c.impression ?? undefined,
+          loreAliases: c.loreAliases?.length ? c.loreAliases : undefined,
         })),
         null,
         2,
@@ -223,6 +229,7 @@ export function buildMomentDraftPrompt(args: {
     '',
     '【可选互动者池 · 当前角色的虚拟联系人（vc:<id>，仅本人可见）】',
     '（kind 是 TA 与发帖人的关系类型，relationshipHint 是关系线索，impression 是**发帖人对 TA**的印象（发帖人视角，不是 TA 对发帖人的看法）——写 TA 的评论时三者一起定亲疏冷热。）',
+    '（若某互动者带 loreAliases，表示 TA 也是设定库《…》里描述的同一个人——写到 TA 时按同一人处理，别和设定库内容打架或写成两个人。）',
     virtualContactsBlock,
     '',
     '【可选互动者池 · 其他星野角色（agent:<id>，共同好友式可见）】',

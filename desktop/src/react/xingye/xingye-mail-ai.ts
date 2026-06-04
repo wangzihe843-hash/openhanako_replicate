@@ -12,14 +12,14 @@ import {
   MAIL_AI_MAILBOXES,
   type XingyeMailAiFromKind,
   type XingyeMailAiMailbox,
-  type XingyeVirtualContactHint,
 } from './xingye-mail-prompts';
 import {
+  applyCategoryBoostOrder,
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
 } from './xingye-lore-runtime-context';
-import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
+import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries, type XingyeLoreCategory } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -32,7 +32,7 @@ import {
 } from './xingye-speaker-context';
 import { getRelationshipState } from './xingye-state-store';
 import { postXingyeStorage } from './xingye-storage-api';
-import { getVirtualContacts } from './xingye-phone-store';
+import { buildContactLoreHints } from './xingye-contact-lore-link';
 import { listMailMessages, type XingyeMailMessageDraft } from './xingye-mail-store';
 
 export type XingyeMailAiDraft = {
@@ -75,16 +75,22 @@ async function readLoreMemoryMarkdown(agentId: string): Promise<string | null> {
   }
 }
 
-function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): string {
+function buildStableLoreFromAlwaysEntries(
+  agentId: string,
+  maxChars: number,
+  boostCategories: ReadonlyArray<XingyeLoreCategory> = [],
+): string {
   try {
     const storage = getXingyePersistenceStorage();
     const entries = listLoreEntries(agentId, storage).filter(
       (e) => e.enabled && e.visibility === 'canonical' && e.insertionMode === 'always',
     );
     if (!entries.length) return '';
+    // boostCategories 命中的分类置顶后再按预算截断；不传则保持 listLoreEntries 的 priority/updatedAt 序。
+    const ordered = applyCategoryBoostOrder(entries, boostCategories);
     const lines: string[] = [];
     let used = 0;
-    for (const e of entries) {
+    for (const e of ordered) {
       const label = XINGYE_LORE_CATEGORY_LABELS[e.category] ?? e.category;
       const block = `- 《${e.title}》（${label}）\n${e.content.trim()}`;
       if (used + block.length > maxChars && lines.length > 0) break;
@@ -98,10 +104,14 @@ function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): st
   }
 }
 
-async function buildStableLoreBlock(agentId: string): Promise<string> {
+async function buildStableLoreBlock(
+  agentId: string,
+  boostCategories: ReadonlyArray<XingyeLoreCategory> = [],
+): Promise<string> {
   const fromFile = await readLoreMemoryMarkdown(agentId);
+  // markdown 形态是自由文本、无分类维度，无法提权——只能原样截断；提权仅作用于 always 条目回退路径。
   if (fromFile && fromFile.trim()) return truncateChars(fromFile, 3200);
-  return buildStableLoreFromAlwaysEntries(agentId, 2800).trim();
+  return buildStableLoreFromAlwaysEntries(agentId, 2800, boostCategories).trim();
 }
 
 function formatRelationshipBlock(agentId: string): string {
@@ -253,17 +263,15 @@ export async function generateMailInitDraftsWithAI(params: {
   const userName = await resolveXingyeSpeakerUserName(params.userName);
   const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
 
-  const stableLoreBlock = await buildStableLoreBlock(agent.id);
-
-  // 跨期反重复锚点：拉已有邮箱 messages，按发件人聚合抽样塞 prompt。
-  // listMailMessages 失败 → 走空数组（不阻断生成；首次 init 也是空的）。
+  // —— 共享上下文（两段生成共用，只算一次）——
+  // 跨期反重复锚点的原料：拉已有邮箱 messages。listMailMessages 失败 → 空数组（不阻断；首次 init 也是空的）。
+  // 锚点 block 不在此处统一构建——而是在 runPass 内按 scope 过滤后再构建，避免私人发件人/主题泄漏进 bulk 段。
   let existingMailMessages: Awaited<ReturnType<typeof listMailMessages>> = [];
   try {
     existingMailMessages = await listMailMessages(agent.id);
   } catch {
     existingMailMessages = [];
   }
-  const continuityAnchorBlock = buildMailContinuityAnchorBlock(existingMailMessages);
 
   let recentContext;
   try {
@@ -294,95 +302,126 @@ export async function generateMailInitDraftsWithAI(params: {
   const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
   const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
 
-  let virtualContacts: XingyeVirtualContactHint[] = [];
-  try {
-    virtualContacts = getVirtualContacts(agent.id)
-      .slice(0, 12)
-      .map((c) => ({
-        id: c.id,
-        displayName: c.displayName,
-        kind: c.kind,
-        shortBio: c.shortBio,
-        relationshipHint: c.relationshipHint,
-      }));
-  } catch {
-    virtualContacts = [];
-  }
+  // 通讯录候选池：带昵称（remark/备注名优先）+ 印象 + 与设定库的身份对齐（loreAliases）。
+  // buildContactLoreHints 内部已对读取失败优雅降级为空数组。
+  const virtualContacts = buildContactLoreHints(agent.id);
 
-  const queryText = buildXingyeLoreRuntimeQueryText([
-    ...profilePartsForQuery(ownerProfile ?? null),
-    userName,
-    agentName,
-    typeof recentContext.summaryText === 'string' ? recentContext.summaryText : '',
-    relationshipBlock,
-    stableLoreBlock.slice(0, 2000),
-    heartbeatLine ?? '',
-    virtualContacts.map((c) => c.displayName).join(' '),
+  // —— 单段构造 + 调用 ——
+  // personal（inbox/sent/drafts）吃 relationship 提权的 lore + 通讯录 + 关系状态；
+  // bulk（promotions/spam）吃 worldview 提权的 lore，不喂私人关系/通讯录，硬隔离避免私人信息泄漏到垃圾/推广。
+  const runPass = async (
+    scope: 'personal' | 'bulk',
+    boost: XingyeLoreCategory[],
+  ): Promise<{ drafts: XingyeMailAiDraft[]; error?: Error }> => {
+    try {
+      const isPersonal = scope === 'personal';
+      // 该 scope 允许的 mailbox：personal=私人三类，bulk=推广/垃圾两类。既用于过滤产物，也用于过滤锚点原料。
+      const inScope = (mb: string): boolean =>
+        isPersonal
+          ? mb === 'inbox' || mb === 'sent' || mb === 'drafts'
+          : mb === 'promotions' || mb === 'spam';
+      // 跨期反重复锚点按 scope 隔离：bulk 段只看 promotions/spam 历史，不让私人发件人名/主题进它的 prompt。
+      const continuityAnchorBlock = buildMailContinuityAnchorBlock(
+        existingMailMessages.filter((m) => inScope(m.mailbox)),
+      );
+      const stableLoreBlock = await buildStableLoreBlock(agent.id, boost);
+      const queryText = buildXingyeLoreRuntimeQueryText([
+        ...profilePartsForQuery(ownerProfile ?? null),
+        userName,
+        agentName,
+        typeof recentContext.summaryText === 'string' ? recentContext.summaryText : '',
+        // personal 用关系/联系人帮 keyword 命中；bulk 不喂这些，靠世界观文本命中。
+        isPersonal ? relationshipBlock : '',
+        stableLoreBlock.slice(0, 2000),
+        heartbeatLine ?? '',
+        isPersonal ? virtualContacts.map((c) => c.displayName).join(' ') : '',
+      ]);
+
+      let keywordLoreBlock = '';
+      try {
+        const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
+          purpose: 'generic',
+          queryText,
+          maxChars: 2000,
+          includeAlways: false,
+          includeKeyword: true,
+          priorityBoostCategories: boost,
+        });
+        keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
+      } catch {
+        keywordLoreBlock = '';
+      }
+
+      const prompt = buildMailInitPrompt({
+        agent,
+        userName,
+        profile: ownerProfile,
+        ownerAddress,
+        scope,
+        virtualContacts: isPersonal ? virtualContacts : [],
+        recentSceneBlock,
+        stableLoreBlock,
+        keywordLoreBlock,
+        relationshipBlock: isPersonal ? relationshipBlock : '',
+        heartbeatBlock,
+        continuityAnchorBlock,
+      });
+
+      const response = await hanaFetch('/api/xingye/phone-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        timeout: timeoutMs,
+        body: JSON.stringify({
+          kind: 'mail_init',
+          ownerAgentId: agent.id,
+          agentId: agent.id,
+          prompt,
+          timeoutMs,
+        }),
+      });
+
+      let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error('解析服务器响应失败');
+      }
+      if (!response.ok || data?.ok === false || data?.error) {
+        const details = Array.isArray(data?.details)
+          ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
+          : '';
+        throw new Error(`${data?.error || '模型调用失败'}${details}`);
+      }
+      // scope 硬过滤：把模型越界生成的 mailbox（如 bulk 段吐出一封 inbox 私人邮件）丢弃，
+      // 把 prompt 软指令升级为本地确定性兜底，与项目其它模块的后处理范式一致。
+      const drafts = normalizeMailInitResult(data?.result).filter((d) => inScope(d.mailbox));
+      return { drafts };
+    } catch (err) {
+      return { drafts: [], error: err instanceof Error ? err : new Error(String(err)) };
+    }
+  };
+
+  // 两段独立、并行发起以缩短墙钟。
+  const [personal, bulk] = await Promise.all([
+    runPass('personal', ['relationship']),
+    runPass('bulk', ['worldview']),
   ]);
 
-  let keywordLoreBlock = '';
-  try {
-    const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
-      purpose: 'generic',
-      queryText,
-      maxChars: 2000,
-      includeAlways: false,
-      includeKeyword: true,
-    });
-    keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
-  } catch {
-    keywordLoreBlock = '';
-  }
-
-  const prompt = buildMailInitPrompt({
-    agent,
-    userName,
-    profile: ownerProfile,
-    ownerAddress,
-    virtualContacts,
-    recentSceneBlock,
-    stableLoreBlock,
-    keywordLoreBlock,
-    relationshipBlock,
-    heartbeatBlock,
-    continuityAnchorBlock,
-  });
-
-  const response = await hanaFetch('/api/xingye/phone-generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    timeout: timeoutMs,
-    body: JSON.stringify({
-      kind: 'mail_init',
-      ownerAgentId: agent.id,
-      agentId: agent.id,
-      prompt,
-      timeoutMs,
-    }),
-  });
-
-  let data: { ok?: boolean; error?: string; result?: unknown; details?: unknown };
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error('解析服务器响应失败');
-  }
-
-  if (!response.ok || data?.ok === false || data?.error) {
-    const details = Array.isArray(data?.details)
-      ? `：${(data.details as { message?: string }[]).map((item) => item.message ?? '').join('；')}`
-      : '';
-    throw new Error(`${data?.error || '模型调用失败'}${details}`);
-  }
-
-  const normalized = normalizeMailInitResult(data?.result);
+  const normalized = [...personal.drafts, ...bulk.drafts];
   if (!normalized.length) {
-    throw new Error('模型返回无效：未生成任何模拟邮件');
+    // 两段都没产出：抛可读错误（优先 personal——它是主内容）。
+    throw personal.error ?? bulk.error ?? new Error('模型返回无效：未生成任何模拟邮件');
+  }
+  if (personal.error) {
+    console.warn(`[xingye-mail-ai] 私人邮件生成失败，仅返回推广/垃圾：${personal.error.message}`);
+  }
+  if (bulk.error) {
+    console.warn(`[xingye-mail-ai] 推广/垃圾邮件生成失败，仅返回私人邮件：${bulk.error.message}`);
   }
 
   // 后置硬过滤：anchor block 已经提示过模型按发件人换主题，但模型仍可能复读
-  // 同一封 newsletter 主题、或批内自重复。按 fromAddress 分桶比对主题，丢掉
-  // exact_dup；similar 保留（避免把整批过滤光，邮件列表本来就允许相近主题）。
+  // 同一封 newsletter 主题、或批内自重复。两段合并后一起按 fromAddress 分桶比对主题，
+  // 丢掉 exact_dup；similar 保留（避免把整批过滤光，邮件列表本来就允许相近主题）。
   const { kept, dropped } = filterMailDraftsByDuplicates(
     normalized.map((d) => ({
       from: { address: d.from.address, name: d.from.name },

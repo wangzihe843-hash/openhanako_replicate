@@ -56,6 +56,14 @@ export function buildSecondhandDraftPrompt(args: {
    */
   currencyAnchorBlock?: string;
   /**
+   * 已有二手 entries 的近期 itemName 列表（去重、最近优先），作为「别重复」反锚点。
+   * 由 xingye-secondhand-ai.ts 的 buildSecondhandRecentItemsBlock 计算后传入。
+   * 仿记账 buildRecentTitlesBlock：防止反复点「批量历史」/ 单条新增时，模型又把 TA 已经
+   * 挂过 / 卖过的同一件闲置再挂一遍（二手没有"餐次/通勤"槽位，所以是扁平 itemName 列表）。
+   * 缺省（首次生成 / 读取失败）→ 空字符串，prompt 渲染「（无；TA 还没记过二手）」。
+   */
+  recentItemsBlock?: string;
+  /**
    * 「批量历史生成」模式。无 → 单条 draft（原行为）；有 → 多条 + 强制 occurredAtHint。
    */
   historyMode?: {
@@ -78,6 +86,7 @@ export function buildSecondhandDraftPrompt(args: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    recentItemsBlock,
     historyMode,
     desiredCount,
   } = args;
@@ -303,6 +312,15 @@ export function buildSecondhandDraftPrompt(args: {
     currencyAnchorBlock && currencyAnchorBlock.trim()
       ? currencyAnchorBlock.trim()
       : '（无；这是 TA 第一次写二手记录，请按 Layer 3 规则挑一个单位并锁定）',
+    '',
+    '──────────────────',
+    '【近期已挂出 / 卖过的闲置 · 不要重复】',
+    '──────────────────',
+    '下面是 TA 账户里近期已经写过的二手闲置。生成时**避开这些**——不要再产出 itemName 与下列任意一项'
+    + '相同或几乎相同的条目（哪怕换了 status / 价格 / 买家 / 措辞）。同一件东西不会反复挂、反复卖。',
+    recentItemsBlock && recentItemsBlock.trim()
+      ? recentItemsBlock.trim()
+      : '（无；TA 还没记过二手，放手写）',
     '',
     '──────────────────',
     '',

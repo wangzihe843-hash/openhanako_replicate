@@ -27,6 +27,12 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { listAppEntries } from './xingye-app-entry-store';
+import {
+  collectionKeywordSourceText,
+  extractCollectionKeywords,
+  extractItemCoreType,
+  itemMatchesCollection,
+} from './xingye-item-dedupe';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -192,6 +198,53 @@ async function buildSecondhandCurrencyAnchorBlock(agentId: string): Promise<stri
   }
 }
 
+/** 近期已记录闲置的取样上限：扁平去重列表，最近优先（与购物 SHOPPING_RECENT_ITEMS_LIMIT 对齐）。 */
+const SECONDHAND_RECENT_ITEMS_LIMIT = 200;
+
+/**
+ * 读取已有二手 entries 的近期 itemName，去重后作为「别重复」反锚点喂回 prompt。
+ *
+ * 仿记账 `buildRecentTitlesBlock` / 购物 `buildShoppingRecentItemsBlock`：跨次调用看不见上次
+ * 生成了什么，模型会把 TA 已经挂过 / 卖过的同一件闲置再挂一遍。把近期 itemName 列给模型让它避开。
+ *
+ * 与入库前 `dedupeItemDrafts`（二手 exemptConsumables=false）口径对齐：
+ *  - **收藏品**（命中 collectionKeywords）不喂——藏家会陆续出手不同款。
+ *  - 其余按**核心品类**去重展示（黑 / 白台灯只列一次）。二手不涉消耗品窗口（闲置只出一次）。
+ *  失败 → 返回 ''，generation 主流程不受影响。
+ */
+async function buildSecondhandRecentItemsBlock(
+  agentId: string,
+  options?: { collectionKeywords?: readonly string[] },
+): Promise<string> {
+  try {
+    const rows = await listAppEntries(agentId, 'secondhand');
+    if (!rows.length) return '';
+    const collectionKeywords = options?.collectionKeywords ?? [];
+    const names: string[] = [];
+    const seenCore = new Set<string>();
+    // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前，确保截断到 LIMIT 时留下的是
+    // **最近**挂出/卖过的品类（与购物 buildShoppingRecentItemsBlock 镜像）。
+    for (const row of [...rows].reverse()) {
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const raw =
+        typeof meta.itemName === 'string' && meta.itemName.trim()
+          ? meta.itemName.trim()
+          : row.title.trim();
+      if (!raw) continue;
+      if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品不劝阻
+      const core = extractItemCoreType(raw);
+      if (!core || seenCore.has(core)) continue; // 按核心品类去重展示
+      seenCore.add(core);
+      names.push(raw.length > 24 ? `${raw.slice(0, 23)}…` : raw);
+      if (names.length >= SECONDHAND_RECENT_ITEMS_LIMIT) break;
+    }
+    if (!names.length) return '';
+    return names.map((n) => `「${n}」`).join('、');
+  } catch {
+    return '';
+  }
+}
+
 function formatRelationshipBlock(agentId: string): string {
   try {
     const storage = getXingyePersistenceStorage();
@@ -331,6 +384,8 @@ export async function generateSecondhandDraftWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildSecondhandCurrencyAnchorBlock(agent.id);
+  const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
+  const recentItemsBlock = await buildSecondhandRecentItemsBlock(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -397,6 +452,7 @@ export async function generateSecondhandDraftWithAI(params: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    recentItemsBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -455,6 +511,8 @@ export async function generateSecondhandHistoryWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildSecondhandCurrencyAnchorBlock(agent.id);
+  const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
+  const recentItemsBlock = await buildSecondhandRecentItemsBlock(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -520,6 +578,7 @@ export async function generateSecondhandHistoryWithAI(params: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    recentItemsBlock,
     historyMode,
     desiredCount,
   });

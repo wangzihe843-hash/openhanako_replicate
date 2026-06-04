@@ -75,10 +75,71 @@ describe('buildFilesDraftPrompt · existingEntriesBlock', () => {
     expect(prompt).not.toContain(`[e${FILES_DRAFT_EXISTING_ENTRIES_PROMPT_LIMIT}]`);
   });
 
-  it('附带去重原则文案', () => {
+  it('附带去重原则文案 + 跨夹散落防护', () => {
     const prompt = buildFilesDraftPrompt(basePromptArgs());
     expect(prompt).toContain('重要去重原则');
     expect(prompt).toContain('不要新建');
     expect(prompt).toContain('几乎同名');
+    expect(prompt).toContain('只归进'); // FILES_FOLDER_SCATTER_GUARD
+  });
+});
+
+describe('buildFilesDraftPrompt · 文件夹分工指南', () => {
+  it('文件夹清单为已知夹附「放/不放/体例」', () => {
+    const prompt = buildFilesDraftPrompt({
+      ...basePromptArgs(),
+      folderOptions: [{ id: 'f', name: '世界观整理', description: '关于 TA 所处世界的设定与规则。' }],
+    });
+    expect(prompt).toContain('· 放：');
+    expect(prompt).toContain('· 体例：');
+    expect(prompt).toMatch(/不要写成第一人称回忆或小说叙事/);
+  });
+
+  it('已知目标夹时把该夹体例顶到正文跟前', () => {
+    const prompt = buildFilesDraftPrompt({
+      ...basePromptArgs(),
+      targetFolder: { id: 'f', name: '世界观整理', description: '关于 TA 所处世界的设定与规则。' },
+    });
+    expect(prompt).toContain('【这个文件夹专放什么 / 该怎么写】');
+  });
+
+  it('无目标夹（首页快捷入口）时不渲染目标夹体例块', () => {
+    const prompt = buildFilesDraftPrompt(basePromptArgs());
+    expect(prompt).not.toContain('【这个文件夹专放什么 / 该怎么写】');
+  });
+});
+
+describe('buildFilesDraftPrompt · 通讯录候选池', () => {
+  it('未传 virtualContacts 时不渲染通讯录块', () => {
+    const prompt = buildFilesDraftPrompt(basePromptArgs());
+    expect(prompt).not.toContain('通讯录里的人');
+  });
+
+  it('传入联系人时渲染候选池（昵称 + 印象）', () => {
+    const prompt = buildFilesDraftPrompt({
+      ...basePromptArgs(),
+      virtualContacts: [
+        { id: 'vc-1', displayName: '老周', kind: 'friend', impression: '话少但靠谱' },
+      ],
+    });
+    expect(prompt).toContain('通讯录里的人');
+    expect(prompt).toContain('老周');
+    expect(prompt).toContain('印象：话少但靠谱');
+  });
+
+  it('联系人带 loreAliases 时注入「同一人对齐」去重指令', () => {
+    const withAlias = buildFilesDraftPrompt({
+      ...basePromptArgs(),
+      virtualContacts: [{ id: 'vc-1', displayName: '老周', loreAliases: ['周律师'] }],
+    });
+    expect(withAlias).toContain('同一人对齐');
+    expect(withAlias).toContain('《周律师》');
+
+    // 没有任何对齐标注时，不插入这行说明（避免噪声指令）。
+    const noAlias = buildFilesDraftPrompt({
+      ...basePromptArgs(),
+      virtualContacts: [{ id: 'vc-1', displayName: '老周' }],
+    });
+    expect(noAlias).not.toContain('同一人对齐');
   });
 });

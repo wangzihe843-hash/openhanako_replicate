@@ -17,6 +17,13 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { listAppEntries } from './xingye-app-entry-store';
+import {
+  collectionKeywordSourceText,
+  extractCollectionKeywords,
+  extractItemCoreType,
+  isRepurchasableConsumable,
+  itemMatchesCollection,
+} from './xingye-item-dedupe';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -179,6 +186,66 @@ async function buildShoppingCurrencyAnchorBlock(agentId: string): Promise<string
   }
 }
 
+/** 近期已记录物品的取样上限：扁平去重列表，最近优先（按核心品类去重后最多喂这么多个不同品类）。 */
+const SHOPPING_RECENT_ITEMS_LIMIT = 200;
+/** 消耗品「别重复」窗口：超过这个天数的消耗品不再喂给模型（允许 TA 隔段时间再买）。 */
+const SHOPPING_CONSUMABLE_WINDOW_DAYS = 30;
+
+/**
+ * 读取已有购物 entries 的近期 itemName，去重后作为「别重复」反锚点喂回 prompt。
+ *
+ * 仿记账 `buildRecentTitlesBlock`：模型反复点「批量历史」/ 单条新增时跨次看不见上次生成了什么，
+ * 会把 TA 已记过的同一件物品再生成一遍。把近期 itemName 列给模型让它从源头避开。
+ *
+ * 与入库前的 `dedupeItemDrafts` 口径对齐（避免 prompt 劝阻 ↔ 兜底放行打架）：
+ *  - **收藏品**（命中 collectionKeywords）不喂——TA 就是会继续攒不同款，别劝它别买。
+ *  - **消耗品**（日用 / 食饮 / 药品）只喂窗口期（默认 30 天）内的——超期的允许重新购买，不再提示避免。
+ *  - 其余按**核心品类**去重展示（黑 / 白台灯只列一次），最近优先。
+ *
+ * 失败（agentId 非法 / 读盘错）→ 返回 ''，generation 主流程不受影响。
+ */
+async function buildShoppingRecentItemsBlock(
+  agentId: string,
+  options?: { collectionKeywords?: readonly string[] },
+): Promise<string> {
+  try {
+    const rows = await listAppEntries(agentId, 'shopping');
+    if (!rows.length) return '';
+    const collectionKeywords = options?.collectionKeywords ?? [];
+    const windowMs = SHOPPING_CONSUMABLE_WINDOW_DAYS * 86_400_000;
+    const nowMs = Date.now();
+    const names: string[] = [];
+    const seenCore = new Set<string>();
+    // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前，确保截断到 LIMIT 时留下的是
+    // **最近**记录的品类（重度用户最该被避开重复的就是刚记过的），而非最古老的那批。
+    for (const row of [...rows].reverse()) {
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const raw =
+        typeof meta.itemName === 'string' && meta.itemName.trim()
+          ? meta.itemName.trim()
+          : row.title.trim();
+      if (!raw) continue;
+      if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品不劝阻
+      const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : undefined;
+      const category = typeof meta.category === 'string' ? meta.category : undefined;
+      if (isRepurchasableConsumable(category, tags)) {
+        const occurred = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
+        const t = Date.parse(occurred);
+        if (Number.isFinite(t) && nowMs - t > windowMs) continue; // 超窗口的消耗品不喂
+      }
+      const core = extractItemCoreType(raw);
+      if (!core || seenCore.has(core)) continue; // 按核心品类去重展示
+      seenCore.add(core);
+      names.push(raw.length > 24 ? `${raw.slice(0, 23)}…` : raw);
+      if (names.length >= SHOPPING_RECENT_ITEMS_LIMIT) break;
+    }
+    if (!names.length) return '';
+    return names.map((n) => `「${n}」`).join('、');
+  } catch {
+    return '';
+  }
+}
+
 function formatRelationshipBlock(agentId: string): string {
   try {
     const storage = getXingyePersistenceStorage();
@@ -321,6 +388,8 @@ export async function generateShoppingDraftWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
+  const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
+  const recentItemsBlock = await buildShoppingRecentItemsBlock(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -387,6 +456,7 @@ export async function generateShoppingDraftWithAI(params: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    recentItemsBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -449,6 +519,8 @@ export async function generateShoppingHistoryWithAI(params: {
 
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
+  const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
+  const recentItemsBlock = await buildShoppingRecentItemsBlock(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -514,6 +586,7 @@ export async function generateShoppingHistoryWithAI(params: {
     relationshipBlock,
     heartbeatBlock,
     currencyAnchorBlock,
+    recentItemsBlock,
     historyMode,
     desiredCount,
   });

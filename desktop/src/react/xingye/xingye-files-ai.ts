@@ -9,11 +9,14 @@ import {
   type FilesDraftFolderHint,
 } from './xingye-files-prompts';
 import {
+  applyCategoryBoostOrder,
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
 } from './xingye-lore-runtime-context';
-import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
+import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries, type XingyeLoreCategory } from './xingye-lore-store';
+import { buildContactLoreHints } from './xingye-contact-lore-link';
+import { classifyXingyeFilesFolder } from './xingye-files-folder-taxonomy';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectRecentContextForAgent,
@@ -35,7 +38,7 @@ export type XingyeFilesAiDraft = {
   tags?: string[];
 };
 
-function truncateChars(text: string, max: number): string {
+export function truncateChars(text: string, max: number): string {
   const t = text.trim();
   if (t.length <= max) return t;
   return `${t.slice(0, Math.max(0, max - 1))}…`;
@@ -60,16 +63,22 @@ async function readLoreMemoryMarkdown(agentId: string): Promise<string | null> {
   }
 }
 
-function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): string {
+function buildStableLoreFromAlwaysEntries(
+  agentId: string,
+  maxChars: number,
+  boostCategories: ReadonlyArray<XingyeLoreCategory> = [],
+): string {
   try {
     const storage = getXingyePersistenceStorage();
     const entries = listLoreEntries(agentId, storage).filter(
       (e) => e.enabled && e.visibility === 'canonical' && e.insertionMode === 'always',
     );
     if (!entries.length) return '';
+    // boostCategories 命中的分类置顶后再按预算截断；不传则保持 listLoreEntries 的 priority/updatedAt 序。
+    const ordered = applyCategoryBoostOrder(entries, boostCategories);
     const lines: string[] = [];
     let used = 0;
-    for (const e of entries) {
+    for (const e of ordered) {
       const label = XINGYE_LORE_CATEGORY_LABELS[e.category] ?? e.category;
       const block = `- 《${e.title}》（${label}）\n${e.content.trim()}`;
       if (used + block.length > maxChars && lines.length > 0) break;
@@ -83,13 +92,33 @@ function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): st
   }
 }
 
-async function buildStableLoreBlock(agentId: string): Promise<string> {
+export async function buildStableLoreBlock(
+  agentId: string,
+  boostCategories: ReadonlyArray<XingyeLoreCategory> = [],
+): Promise<string> {
   const fromFile = await readLoreMemoryMarkdown(agentId);
+  // markdown 形态是自由文本、无分类维度，无法提权——只能原样截断；提权仅作用于 always 条目回退路径。
   if (fromFile && fromFile.trim()) return truncateChars(fromFile, 3200);
-  return buildStableLoreFromAlwaysEntries(agentId, 2800).trim();
+  return buildStableLoreFromAlwaysEntries(agentId, 2800, boostCategories).trim();
 }
 
-function formatRelationshipBlock(agentId: string): string {
+/**
+ * 把目标文件夹名映射到要提权的 lore 分类：
+ * - 「人际关系 / 关于 user / 人脉 / 人物 / 联系人」等记人夹 → relationship；「世界观/设定/规则」→ worldview。
+ * - 猜不出（自定义夹）返回 []（不提权、安全降级）。仅在已知 targetFolder 时调用。
+ *
+ * 复用 `classifyXingyeFilesFolder` 作为「这个夹放什么」的单一口径——避免本函数与 taxonomy 各维护一套
+ * 关键词集而漂移（曾漏掉「联系人/人物/人脉」，导致这类记人夹拿不到通讯录注入）。粒度差异（people≠aboutUser）
+ * 在 taxonomy 内体现内容分工，这里只关心提权分类，故 people 与 aboutUser 都归 relationship。
+ */
+export function folderBoostCategories(folder: FilesDraftFolderHint | null): XingyeLoreCategory[] {
+  const kind = classifyXingyeFilesFolder(folder?.name ?? '');
+  if (kind === 'people' || kind === 'aboutUser') return ['relationship'];
+  if (kind === 'worldview') return ['worldview'];
+  return [];
+}
+
+export function formatRelationshipBlock(agentId: string): string {
   try {
     const storage = getXingyePersistenceStorage();
     const state = getRelationshipState(agentId, storage);
@@ -111,7 +140,7 @@ function formatRelationshipBlock(agentId: string): string {
   }
 }
 
-function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
+export function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): string[] {
   if (!profile) return [];
   return [
     profile.displayName,
@@ -126,14 +155,14 @@ function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): st
   ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
 }
 
-function normalizeOptional(value: unknown, max: number): string | undefined {
+export function normalizeOptional(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   if (!text) return undefined;
   return truncateChars(text, max);
 }
 
-function normalizeTags(value: unknown): string[] | undefined {
+export function normalizeTags(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out: string[] = [];
   for (const item of value) {
@@ -195,7 +224,19 @@ export async function generateFilesDraftWithAI(params: {
   const folderOptions = Array.isArray(params.folderOptions) ? params.folderOptions : [];
   const targetFolder = params.targetFolder ?? null;
 
-  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  // 按目标文件夹给对应分类的 lore 提权（人际关系夹→relationship、世界观夹→worldview）；
+  // 文件夹未知或猜不出分类时为空数组 = 不提权。两条取 lore 路径都带上它。
+  const loreBoostCategories = folderBoostCategories(targetFolder);
+
+  // 关系类文件夹（folderBoostCategories 命中 relationship）才注入通讯录候选池；世界观 / 线索等保持干净。
+  // 无目标文件夹（首页快捷入口）时模型会自己从 folderOptions 里挑——只要候选里有关系类夹，就也注入，
+  // 否则模型挑了「人际关系」却没通讯录可参考（见 PhoneFilesApp 的 targetFolder=null 路径）。
+  const includeContacts = targetFolder
+    ? loreBoostCategories.includes('relationship')
+    : folderOptions.some((f) => folderBoostCategories(f).includes('relationship'));
+  const virtualContacts = includeContacts ? buildContactLoreHints(agent.id) : [];
+
+  const stableLoreBlock = await buildStableLoreBlock(agent.id, loreBoostCategories);
 
   let recentContext;
   try {
@@ -238,6 +279,9 @@ export async function generateFilesDraftWithAI(params: {
     relationshipBlock,
     stableLoreBlock.slice(0, 2000),
     heartbeatLine ?? '',
+    // 把候选联系人的名字折进 queryText，让关系/人物类 lore 在冷启动也能被 keyword 命中
+    // （与 mail-ai 同款手法）；includeContacts=false 时为空字符串，无副作用。
+    virtualContacts.map((c) => c.displayName).join(' '),
   ]);
 
   let keywordLoreBlock = '';
@@ -248,6 +292,7 @@ export async function generateFilesDraftWithAI(params: {
       maxChars: 2000,
       includeAlways: false,
       includeKeyword: true,
+      priorityBoostCategories: loreBoostCategories,
     });
     keywordLoreBlock = formatXingyeLoreRuntimeContextBlock(keywordCtx);
   } catch {
@@ -269,6 +314,7 @@ export async function generateFilesDraftWithAI(params: {
     keywordLoreBlock,
     relationshipBlock,
     heartbeatBlock,
+    virtualContacts,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {

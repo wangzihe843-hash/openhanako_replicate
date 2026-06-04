@@ -59,18 +59,24 @@ export function toBigramSet(text: string): Set<string> {
 }
 
 /**
- * Jaccard 相似度：|A ∩ B| / |A ∪ B|，0–1 区间。
+ * Jaccard 相似度（已切好的两个 bigram 集合）：|A ∩ B| / |A ∪ B|，0–1 区间。
  * 空集合相比为 0（不当作"完全相同"——那是 exact_dup 的活）。
  */
-export function bigramJaccard(a: string, b: string): number {
-  const A = toBigramSet(normalizeTitleForDedup(a));
-  const B = toBigramSet(normalizeTitleForDedup(b));
+function jaccardOfSets(A: Set<string>, B: Set<string>): number {
   if (A.size === 0 || B.size === 0) return 0;
   let inter = 0;
   for (const ch of A) if (B.has(ch)) inter += 1;
   const union = A.size + B.size - inter;
   if (union === 0) return 0;
   return inter / union;
+}
+
+/**
+ * 标题 bigram Jaccard：先 normalizeTitleForDedup 归一再切 bigram。
+ * 空集合相比为 0（不当作"完全相同"——那是 exact_dup 的活）。
+ */
+export function bigramJaccard(a: string, b: string): number {
+  return jaccardOfSets(toBigramSet(normalizeTitleForDedup(a)), toBigramSet(normalizeTitleForDedup(b)));
 }
 
 /**
@@ -189,4 +195,111 @@ export function detectFilesDuplicate(
   }
   if (bestSimilar) return { kind: 'similar', ...bestSimilar };
   return { kind: 'unique' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  跨文件夹查重（content-aware）
+//
+//  detectFilesDuplicate **只比同 folder 内的 title**（同名笔记跨柜子是合理的）。
+//  但模型常犯另一种错：把同一件事（同一个人、同一段往事）几乎一字不差地塞进
+//  **不同**文件夹（例：「莉莉丝答应不再瞒伤」同时进「关于 user」和「线索与发现」）。
+//  同夹查重拦不到，title 还可能被改写过，所以这里**以正文为主信号**跨夹查重。
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 正文归一化（跨文件夹内容查重用）：
+ *   1. trim
+ *   2. 全角标点 → 半角
+ *   3. 删掉所有空白与常见标点（聚焦内容字——换行/逗号/书名号的差异不该影响判重）
+ *   4. 英文小写
+ *
+ * 与 normalizeTitleForDedup 的区别：正文更长、含换行/段落，去标点+去空白后比 bigram 才稳。
+ */
+export function normalizeBodyForDedup(body: string): string {
+  if (typeof body !== 'string') return '';
+  let s = body.trim();
+  if (!s) return '';
+  s = s.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  s = s.replace(/\s+/g, '');
+  s = s.replace(/[，。、；：！？,.;:!?"'""''（）()【】[\]《》「」『』~·・—\-…]/g, '');
+  s = s.toLowerCase();
+  return s;
+}
+
+/** 正文 bigram Jaccard（跨文件夹内容相似度的主信号）。 */
+export function bodyBigramJaccard(a: string, b: string): number {
+  return jaccardOfSets(toBigramSet(normalizeBodyForDedup(a)), toBigramSet(normalizeBodyForDedup(b)));
+}
+
+/**
+ * 标题相似度（0–1）：取「编辑距离归一相似」与「bigram Jaccard」的较大值。
+ * 编辑距离路径要求较短串 ≥ 3 字（与同夹查重一致，避免短前缀误判）。
+ */
+export function titleSimilarity(a: string, b: string): number {
+  const A = normalizeTitleForDedup(a);
+  const B = normalizeTitleForDedup(b);
+  if (!A || !B) return 0;
+  const jac = jaccardOfSets(toBigramSet(A), toBigramSet(B));
+  const minLen = Math.min(A.length, B.length);
+  const maxLen = Math.max(A.length, B.length);
+  const edit =
+    minLen >= FILES_DUPLICATE_MIN_LEN_FOR_EDIT && maxLen > 0 ? 1 - levenshtein(A, B) / maxLen : 0;
+  return Math.max(jac, edit);
+}
+
+/** 跨夹查重：正文强相似——单凭正文就判重（哪怕标题被改写）。 */
+export const FILES_CROSS_FOLDER_BODY_STRONG = 0.6;
+/** 跨夹查重：标题近乎同名——不同夹里几乎一样的标题。 */
+export const FILES_CROSS_FOLDER_TITLE_STRONG = 0.72;
+/** 跨夹查重：标题 + 正文双中等同时命中（同一主题被改写）。两者都要过，降低误判。 */
+export const FILES_CROSS_FOLDER_TITLE_MID = 0.42;
+export const FILES_CROSS_FOLDER_BODY_MID = 0.42;
+
+/** 跨夹查重只读这几个字段，所以接结构子集——既能传真 entry，也能传本批草稿的合成条目。 */
+export type CrossFolderDedupEntry = Pick<XingyeFileEntry, 'id' | 'title' | 'body' | 'folderId'>;
+
+export type CrossFolderDuplicateResult =
+  | { kind: 'unique' }
+  | { kind: 'cross_dup'; entry: CrossFolderDedupEntry; score: number; via: 'body' | 'title' | 'combined' };
+
+/**
+ * candidate 是否与**别的文件夹**里某条形成「几乎一样的内容」。
+ *
+ * 命中规则（取相似度最高的那条）：
+ *   1. 正文 bigram Jaccard ≥ BODY_STRONG → cross_dup（via=body，最可靠）
+ *   2. 标题相似度 ≥ TITLE_STRONG → cross_dup（via=title，"换个夹同名"）
+ *   3. 标题 ≥ TITLE_MID **且** 正文 ≥ BODY_MID → cross_dup（via=combined，改写但两信号都指向同主题）
+ *
+ * 只比 `entry.folderId !== candidate.folderId` 的条目——同夹是 detectFilesDuplicate 的活。
+ * candidate 标题与正文都为空 → unique（没料可比，放过）。
+ */
+export function detectCrossFolderDuplicate(
+  candidate: { title: string; body: string; folderId: string },
+  existingEntries: ReadonlyArray<CrossFolderDedupEntry>,
+): CrossFolderDuplicateResult {
+  const candFolder = candidate.folderId.trim();
+  if (!normalizeTitleForDedup(candidate.title) && !normalizeBodyForDedup(candidate.body)) {
+    return { kind: 'unique' };
+  }
+
+  let best: { entry: CrossFolderDedupEntry; score: number; via: 'body' | 'title' | 'combined' } | null = null;
+  for (const entry of existingEntries) {
+    if (candFolder && entry.folderId.trim() === candFolder) continue; // 跳过同夹
+    const tSim = titleSimilarity(candidate.title, entry.title);
+    const bSim = bodyBigramJaccard(candidate.body, entry.body);
+    let via: 'body' | 'title' | 'combined' | null = null;
+    let score = 0;
+    if (bSim >= FILES_CROSS_FOLDER_BODY_STRONG) {
+      via = 'body';
+      score = bSim;
+    } else if (tSim >= FILES_CROSS_FOLDER_TITLE_STRONG) {
+      via = 'title';
+      score = tSim;
+    } else if (tSim >= FILES_CROSS_FOLDER_TITLE_MID && bSim >= FILES_CROSS_FOLDER_BODY_MID) {
+      via = 'combined';
+      score = (tSim + bSim) / 2;
+    }
+    if (via && (!best || score > best.score)) best = { entry, score, via };
+  }
+  return best ? { kind: 'cross_dup', ...best } : { kind: 'unique' };
 }

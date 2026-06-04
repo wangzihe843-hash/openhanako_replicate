@@ -92,6 +92,20 @@ collectXingyeLoreRuntimeContext(
 
 - **排序**：`listLoreEntries` 已按 `priority` 降序、`updatedAt` 降序排序，
   `always` 与 `keyword` 候选**共用同一份排序**，没有为 `always` 单独提权。
+- **分类提权（可选）**：当调用方传入非空 `options.priorityBoostCategories` 时，
+  属于这些分类的候选会被**稳定置顶**——整体排到队首，组内仍保持
+  `priority` 降序 → `updatedAt` 降序，从而**优先占用 `maxChars` 预算**。
+  不传 / 空数组时此步**完全不生效**，排序与上一行一致。具体置顶用的是导出的
+  纯函数 `applyCategoryBoostOrder`，同一函数也被各小手机模块的 always 块
+  （`buildStableLoreFromAlwaysEntries`）复用，使两条取 lore 路径同步提权。
+  当前传入提权的调用方：通讯录/短信（合并读，`['relationship']`）、
+  邮件（init **拆 personal / bulk 两段调用**：私人邮件 inbox/sent/drafts 段 `['relationship']`、
+  推广/垃圾 promotions/spam 段 `['worldview']` 且硬隔离掉关系状态/通讯录——见
+  `generateMailInitDraftsWithAI` 的 `runPass`；两段各自 keyword + always 两路）、
+  文件管理（keyword + always 两路，按目标文件夹映射，人际关系/关于 user→`['relationship']`、世界观→`['worldview']`）。
+  **TA 状态、朋友圈经评估刻意不提权**：TA 状态只关心「对 user」、笼统提
+  `relationship` 会把「对其他 agent」的关系噪声一起提上来；朋友圈对具体实体的
+  「看法」来自 phone_contact meta / 关系状态并已按场景分路径注入，lore 分类提权不是正确杠杆。
 - **`maxChars`**：默认 `2_000`，三个桌面端调用方目前都显式传 `2_000`（对齐默认）。
 - **截断策略**：按排序逐条尝试加入，**累计 `formatEntryBlock` 文本长度**
   超过 `maxChars` 时跳过该条（不做内容截断、不做无界拼接），
@@ -140,6 +154,7 @@ collectXingyeLoreRuntimeContext(
     purpose,                    // 'phone_contacts' | 'phone_sms'
     queryText,
     maxChars: 2_000,
+    priorityBoostCategories: ['relationship'], // 关系类设定优先占预算，别被高优先背景/世界观挤掉
   });
   return formatXingyeLoreRuntimeContextBlock(context);
   ```
@@ -159,6 +174,11 @@ collectXingyeLoreRuntimeContext(
     （也就是 owner 资料 + 最近聊天摘要 + 联系人摘要 + 短信摘要 + 变更原因里
     的任一子串）；
   - `manual` 条目**永远不会**出现在小手机的 prompt 背景里。
+- `priorityBoostCategories: ['relationship']` 是小手机链路**独有**的一步：通讯录 / 短信
+  本质是关系场景，命中的 `relationship` 类设定会被置顶、优先占满 `maxChars`，避免被
+  同预算里 `priority` 更高的背景 / 世界观 lore 挤掉。它**只影响排序与预算占用**，不改变
+  「哪些条目有资格成为候选」——`always` 仍默认进、`keyword` 仍要命中 `queryText`、
+  `manual` 仍永不进。其它调用点（TA 状态 / 秘密空间预留）都不传此项。
 
 ### 4.2 TA 状态（Relationship State）
 
@@ -241,6 +261,11 @@ collectXingyeLoreRuntimeContext(
   `renderLoreContextSection` 已实现这一约束。
 - 排序由 `listLoreEntries` 一次性完成（`priority` 降序 → `updatedAt` 降序），
   `always` 与 `keyword` 共用同一序，没有为 `always` 单独提权或单独限额。
+  唯一例外是调用方显式传 `priorityBoostCategories`（通讯录/短信、邮件、文件管理传；
+  TA 状态、朋友圈刻意不传，理由见 §3）：该分类候选会被稳定置顶、优先占预算，
+  但仍只在「已是候选」的条目里重排，不改变候选资格。提权对默认关系 lore 真正
+  生效需同时覆盖 always 块——邮件 / 文件管理因此在 `buildStableLoreFromAlwaysEntries`
+  里复用同一个 `applyCategoryBoostOrder`（markdown 形态的 lore-memory 无分类维度，无法提权）。
 
 ---
 

@@ -16,7 +16,8 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
-import { getPhoneContactMeta, getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
+import { getPhoneContactMeta } from './xingye-phone-store';
+import { buildContactLoreHints } from './xingye-contact-lore-link';
 import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
@@ -417,24 +418,10 @@ export async function generateXingyeMomentDraftWithAI(params: {
   const heartbeatLine = peekDeskHeartbeatUiOutcome(agent.id);
   const heartbeatBlock = heartbeatLine ? heartbeatLine.trim() : '';
 
-  // 镜像 mail-ai：从通讯录拉 12 条 virtual_contact 作为可选互动者池。
-  // displayName 走通讯录 UI 同源的 `resolveContactDisplayName`（meta.remark 优先 → contact.displayName），
-  // 保证朋友圈里显示的互动者名字与通讯录里看到的一致。
-  let virtualContacts: XingyeMomentVirtualContactHint[] = [];
-  try {
-    virtualContacts = getVirtualContacts(agent.id)
-      .slice(0, 12)
-      .map((c) => ({
-        id: c.id,
-        displayName: resolveContactDisplayName(agent.id, 'virtual_contact', c.id, [], {}),
-        kind: c.kind,
-        relationshipHint: c.relationshipHint,
-        // 发帖人对该联系人的印象（发帖人视角）——补 vc 评论的关系质感。
-        impression: c.impression,
-      }));
-  } catch {
-    virtualContacts = [];
-  }
+  // 通讯录候选池（互动者池）：昵称（remark 优先，走 resolveContactDisplayName 与通讯录 UI 同源）
+  // + 发帖人对 TA 的印象 + 与设定库的身份对齐（loreAliases）。与邮件 / 文件管理共用 buildContactLoreHints；
+  // 内部读取失败已优雅降级为空数组。
+  const virtualContacts: XingyeMomentVirtualContactHint[] = buildContactLoreHints(agent.id);
 
   // peerAgents：roster 里除发帖 agent 外的其他角色。逐个补 `impressionOfAuthor`——
   // 即该 peer 在自己小手机通讯录里对「发帖人」的备注 / 印象。这是 agent↔agent 之间唯一

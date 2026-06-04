@@ -1,5 +1,11 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
+import {
+  CONTACT_LORE_DEDUPE_INSTRUCTION,
+  contactsHaveLoreAlias,
+  formatContactLoreListingBlock,
+  type XingyeContactLoreHint,
+} from './xingye-contact-lore-link';
 import { formatXingyeSpeakerContextForPrompt } from './xingye-speaker-context';
 
 /**
@@ -18,13 +24,12 @@ export const MAIL_AI_FROM_KINDS = [
 ] as const;
 export type XingyeMailAiFromKind = (typeof MAIL_AI_FROM_KINDS)[number];
 
-export type XingyeVirtualContactHint = {
-  id?: string;
-  displayName: string;
-  kind?: string;
-  shortBio?: string;
-  relationshipHint?: string;
-};
+/**
+ * 邮件初始化的虚拟联系人 hint = 通讯录候选池统一 hint。
+ * 与文件管理 / 朋友圈共用 xingye-contact-lore-link 的 XingyeContactLoreHint：
+ * 带昵称（remark 优先）+ 印象 + 与设定库的身份对齐（loreAliases）。
+ */
+export type XingyeVirtualContactHint = XingyeContactLoreHint;
 
 /**
  * 构造「邮箱历史邮件初始化」prompt：让模型基于当前 agent 的设定 / lore / 通讯录 / 最近聊天，
@@ -37,12 +42,19 @@ export type XingyeVirtualContactHint = {
  * - 邮件以 agent 第一人称视角的世界为背景；普通邮件可以来自 virtual_contact、其他 agent 或系统通知。
  * - 推广邮件 (promotion) 与垃圾邮件 (spam) 必须有清楚的语气区分（推广=营销腔，垃圾=低质 / 钓鱼感）。
  * - 任意输入块缺失允许为「（无）」，模型仍需返回若干合理邮件。
+ *
+ * scope：把生成拆成两段、各吃各的 lore（见 generateMailInitDraftsWithAI）——
+ * - 'personal'：私人邮件（inbox / sent / drafts），吃 relationship 提权的 lore + 通讯录 + 关系状态。
+ * - 'bulk'：推广 / 垃圾（promotions / spam），吃 worldview 提权的 lore，**不**注入私人关系 / 通讯录，
+ *   要像「这个世界里」会收到的营销 / 钓鱼，而非现实世界通用 newsletter。
  */
 export function buildMailInitPrompt(args: {
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>;
   userName?: string;
   profile: XingyeRoleProfile | null | undefined;
   ownerAddress: string;
+  /** 'personal'=inbox/sent/drafts；'bulk'=promotions/spam。 */
+  scope: 'personal' | 'bulk';
   virtualContacts: XingyeVirtualContactHint[];
   recentSceneBlock: string;
   stableLoreBlock: string;
@@ -60,6 +72,7 @@ export function buildMailInitPrompt(args: {
     userName,
     profile,
     ownerAddress,
+    scope,
     virtualContacts,
     recentSceneBlock,
     stableLoreBlock,
@@ -68,6 +81,7 @@ export function buildMailInitPrompt(args: {
     heartbeatBlock,
     continuityAnchorBlock = '',
   } = args;
+  const isBulk = scope === 'bulk';
 
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
@@ -83,18 +97,23 @@ export function buildMailInitPrompt(args: {
     agentName: currentAgentName,
   });
 
-  const contactListing = virtualContacts.length
-    ? virtualContacts
-        .slice(0, 12)
-        .map((c) => {
-          const parts = [c.displayName];
-          if (c.kind) parts.push(`关系：${c.kind}`);
-          if (c.relationshipHint) parts.push(`备注：${c.relationshipHint}`);
-          if (c.shortBio) parts.push(`简介：${c.shortBio}`);
-          return `- ${parts.join('，')}`;
-        })
-        .join('\n')
-    : '（无）';
+  const contactListing = formatContactLoreListingBlock(virtualContacts);
+
+  const distributionLines = isBulk
+    ? [
+      '邮件分布建议（总计 2–3 封，只用 promotions / spam）：',
+      '- 推广邮件 (mailbox=promotions, kind=promotion) 1–2 封：订阅 newsletter、商家促销、活动通知，营销腔。',
+      '- 垃圾邮件 (mailbox=spam, kind=spam) 1 封：明显诈骗 / 中奖 / 钓鱼，措辞收敛、不出现真实公司名。',
+      '禁止生成 inbox / sent / drafts（这三类由另一处单独生成）。',
+      '【世界观融入（本段最关键）】推广与垃圾要像「这个世界里」会收到的——参考下方世界观设定里的机构 / 地点 / 商品 / 习俗 / 货币来虚构商家、活动、骗局；不要写成现实世界的通用 newsletter。这两类与 TA 的私人关系无关：不要牵扯亲友 / 关系状态 / 对 user 的态度。',
+    ]
+    : [
+      '邮件分布建议（总计 4–6 封，只用 inbox / sent / drafts）：',
+      '- 普通邮件 (mailbox=inbox, kind=virtual_contact / agent / system) 3–4 封，主要来自 contactListing 里的虚拟联系人或合理的系统通知。',
+      '- 发件箱 (mailbox=sent, kind=agent) 0–1 封，由 agent 自己以 ownerAddress 视角发出，用以补全发件历史。',
+      '- 草稿箱 (mailbox=drafts, kind=agent) 1–2 封：agent「想发但最终没有发出」的邮件，收件人 (to) 是 virtual_contact / user / 另一个 agent；内容贴着 TA 的设定与近期关系状态，可以是：不好意思说出口的道歉、欲言又止的关心、想问又怕越界的问题、深夜写下又决定明早再说的告白 / 解释。请把这种「写完又咽回去」的语气写出来，并在 draftReason 里点一句没发的理由。',
+      '禁止生成 promotions / spam（这两类由另一处单独生成）。',
+    ];
 
   const parts: string[] = [
     '你是星野模式「小手机模拟邮箱」历史邮件生成器。只返回严格 JSON，不要 Markdown，不要解释。',
@@ -136,12 +155,7 @@ export function buildMailInitPrompt(args: {
     '- isStarred 在初始化阶段保持 false，让 autoStarred 字段独立呈现。',
     '- isRead 大部分为 false，可以少量为 true，模拟历史阅读状态；drafts 与 sent 视为 agent 自己写过的内容，isRead 建议 true。',
     '',
-    '邮件分布建议（总计 6–9 封）：',
-    '- 普通邮件 (mailbox=inbox, kind=virtual_contact / agent / system) 3–4 封，主要来自 contactListing 里的虚拟联系人或合理的系统通知。',
-    '- 推广邮件 (mailbox=promotions, kind=promotion) 1–2 封，可写订阅 newsletter、虚构商家促销活动。',
-    '- 垃圾邮件 (mailbox=spam, kind=spam) 1 封，可写明显诈骗 / 中奖 / 钓鱼，但措辞收敛、不出现真实公司名。',
-    '- 发件箱 (mailbox=sent, kind=agent) 0–1 封，由 agent 自己以 ownerAddress 视角发出，用以补全发件历史。',
-    '- 草稿箱 (mailbox=drafts, kind=agent) 1–2 封：agent「想发但最终没有发出」的邮件，收件人 (to) 是 virtual_contact / user / 另一个 agent；内容贴着 TA 的设定与近期关系状态，可以是：不好意思说出口的道歉、欲言又止的关心、想问又怕越界的问题、深夜写下又决定明早再说的告白 / 解释。请把这种「写完又咽回去」的语气写出来，并在 draftReason 里点一句没发的理由。',
+    ...distributionLines,
     '',
     speakerContextBlock,
     `- 视角：邮件正文里如果出现 ${currentAgentName} 是收件人，请直接称呼为「${currentAgentName}」或「你」；不要凭空写出真实姓名外的别号。`,
@@ -159,24 +173,36 @@ export function buildMailInitPrompt(args: {
       2,
     ),
     '',
-    '【可参考的虚拟联系人 / 关系（可作为发件人名字与关系语气来源）】',
-    contactListing,
-    '',
-    '【最近 OpenHanako 聊天（可能提示工作 / 关系动向；勿在邮件里交代信息来源）】',
-    recentSceneBlock.trim() || '（无）',
-    '',
-    '【星野核心设定摘录（stable lore；角色边界与世界观参考）】',
+    // 私人邮件才注入通讯录 / 最近聊天 / 关系状态 / 巡检；推广垃圾段刻意不喂这些（与营销/钓鱼无关，且避免私人关系泄漏到 spam）。
+    ...(isBulk
+      ? []
+      : [
+        '【可参考的虚拟联系人 / 关系（可作为发件人名字与关系语气来源）】',
+        ...(contactsHaveLoreAlias(virtualContacts) ? [CONTACT_LORE_DEDUPE_INSTRUCTION] : []),
+        contactListing,
+        '',
+        '【最近 OpenHanako 聊天（可能提示工作 / 关系动向；勿在邮件里交代信息来源）】',
+        recentSceneBlock.trim() || '（无）',
+        '',
+      ]),
+    isBulk
+      ? '【星野核心设定摘录（stable lore；世界观 / 机构 / 地点 / 习俗——推广垃圾的素材来源）】'
+      : '【星野核心设定摘录（stable lore；角色边界与世界观参考）】',
     stableLoreBlock.trim() || '（无）',
     '',
     '【按需命中的设定库关键词条目（仅命中项）】',
     keywordLoreBlock.trim() || '（无）',
     '',
-    `【当前对 ${currentUserName} 的关系状态摘要（若有；情绪 / 边界参考）】`,
-    relationshipBlock.trim() || '（无）',
-    '',
-    '【最近一次手机首页巡检结果（若有；仅作背景参考）】',
-    heartbeatBlock.trim() || '（无）',
-    '',
+    ...(isBulk
+      ? []
+      : [
+        `【当前对 ${currentUserName} 的关系状态摘要（若有；情绪 / 边界参考）】`,
+        relationshipBlock.trim() || '（无）',
+        '',
+        '【最近一次手机首页巡检结果（若有；仅作背景参考）】',
+        heartbeatBlock.trim() || '（无）',
+        '',
+      ]),
     '【已有邮箱里的最近邮件（跨期防重复，必读；同一发件人不要再发雷同主题，整体上换主题/换笔调）】',
     continuityAnchorBlock.trim() || '（无；这是 TA 第一次整理邮箱）',
   ];

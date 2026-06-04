@@ -67,6 +67,11 @@ const PHONE_GENERATE_KINDS = new Set([
   "secret_interview_draft",
   "health_day",
   "files_secret_seed",
+  "files_draft",
+  "files_init_plan",
+  "files_init_entry",
+  "files_batch_plan",
+  "files_batch_entry",
 ]);
 
 const FORBIDDEN_TERMS = [
