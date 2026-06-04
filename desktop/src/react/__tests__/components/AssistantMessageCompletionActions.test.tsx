@@ -105,13 +105,30 @@ describe('AssistantMessage completion actions', () => {
     expect(replayMock).toHaveBeenCalledWith(sessionPath, userMessage);
   });
 
-  it('keeps time available for older assistant replies without retry controls', () => {
+  it('hides time for older assistant replies that are not the turn ending', () => {
     render(
       <AssistantMessage
         message={assistantMessage}
         showAvatar={false}
         sessionPath={sessionPath}
         isLatestAssistantMessage={false}
+        retrySourceMessage={userMessage}
+      />,
+    );
+
+    expect(screen.queryByText('05:43')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('assistant-completion-actions')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('重新生成')).not.toBeInTheDocument();
+  });
+
+  it('keeps time available for older turn-ending assistant replies without retry controls', () => {
+    render(
+      <AssistantMessage
+        message={assistantMessage}
+        showAvatar={false}
+        sessionPath={sessionPath}
+        isLatestAssistantMessage={false}
+        showTurnCompletionTime
         retrySourceMessage={userMessage}
       />,
     );

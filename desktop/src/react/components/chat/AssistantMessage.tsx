@@ -46,6 +46,7 @@ interface Props {
   agentId?: string | null;
   readOnly?: boolean;
   isLatestAssistantMessage?: boolean;
+  showTurnCompletionTime?: boolean;
   retrySourceMessage?: ChatMessage | null;
   messageRef?: (element: HTMLDivElement | null) => void;
 }
@@ -61,6 +62,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   agentId,
   readOnly = false,
   isLatestAssistantMessage = false,
+  showTurnCompletionTime,
   retrySourceMessage = null,
   messageRef,
 }: Props) {
@@ -130,8 +132,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [isStreaming, retrying, retrySourceMessage, sessionPath]);
 
   const canShowRegenerateAction = !readOnly && isLatestAssistantMessage && !!retrySourceMessage && !isStreaming;
-  const shouldPersistCompletionTime = isLatestAssistantMessage && !isStreaming;
-  const timeText = formatMessageTime(message.timestamp);
+  const shouldShowCompletionTime = showTurnCompletionTime ?? isLatestAssistantMessage;
+  const shouldPersistCompletionTime = shouldShowCompletionTime && isLatestAssistantMessage && !isStreaming;
+  const timeText = shouldShowCompletionTime ? formatMessageTime(message.timestamp) : null;
   const regenerateActions: MessageFooterAction[] = useMemo(() => [
     {
       id: 'regenerate',
