@@ -41,7 +41,7 @@ describe('PlanModeButton', () => {
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/session-permission-mode', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ mode: 'auto', pendingNewSession: true }),
+        body: JSON.stringify({ mode: 'auto', pendingNewSession: true, persistDefault: true }),
       }));
     });
     expect(onChange).toHaveBeenCalledWith('auto');
@@ -65,6 +65,7 @@ describe('PlanModeButton', () => {
         body: JSON.stringify({
           mode: 'operate',
           pendingNewSession: false,
+          persistDefault: true,
           sessionPath: '/tmp/hana-session.jsonl',
         }),
       }));

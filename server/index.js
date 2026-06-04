@@ -778,14 +778,14 @@ app.post("/api/session-thinking-level", async (c) => {
 });
 
 app.post("/api/session-permission-mode", async (c) => {
-  const { mode, pendingNewSession, currentSessionOnly, sessionPath } = await safeJson(c);
+  const { mode, pendingNewSession, currentSessionOnly, sessionPath, persistDefault } = await safeJson(c);
   const targetSessionPath = typeof sessionPath === "string" && sessionPath ? sessionPath : null;
   const result = currentSessionOnly === true
     ? engine.setCurrentSessionPermissionMode(mode)
     : pendingNewSession === true
     ? engine.setPendingSessionPermissionMode(mode)
     : targetSessionPath
-    ? engine.setSessionPermissionModeForSession(targetSessionPath, mode)
+    ? engine.setSessionPermissionModeForSession(targetSessionPath, mode, { persistDefault: persistDefault === true })
     : engine.setSessionPermissionMode(mode);
   const explicitSession = currentSessionOnly === true || !!targetSessionPath;
   if (explicitSession && result?.ok === false) {
