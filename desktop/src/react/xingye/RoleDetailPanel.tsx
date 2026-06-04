@@ -12,6 +12,7 @@ import {
   saveXingyeRoleProfile,
   useXingyeRoleProfile,
   type XingyeRoleGender,
+  type XingyeCorruptionTendency,
 } from './xingye-profile-store';
 import { getXingyePersistenceDiagnostics } from './xingye-persistence';
 import { useXingyeLoreEntries, XINGYE_LORE_CATEGORIES } from './xingye-lore-store';
@@ -43,6 +44,8 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
   const [taboos, setTaboos] = useState('');
   const [relationshipMode, setRelationshipMode] = useState('');
   const [gender, setGender] = useState<XingyeRoleGender>('unspecified');
+  /** 阴暗面预设档位；'' = 自动判断（由关系状态初始化的本地关键词扫描兜底决定）。 */
+  const [corruptionTendency, setCorruptionTendency] = useState<XingyeCorruptionTendency | ''>('');
   const [allowAutoMoments, setAllowAutoMoments] = useState(false);
   const [allowProactiveDM, setAllowProactiveDM] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -68,6 +71,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
     setTaboos(profile?.taboos ?? '');
     setRelationshipMode(profile?.relationshipMode ?? '');
     setGender(profile?.gender ?? 'unspecified');
+    setCorruptionTendency(profile?.corruptionTendency ?? '');
     setAllowAutoMoments(profile?.allowAutoMoments ?? false);
     setAllowProactiveDM(profile?.allowProactiveDM ?? false);
   }, [agent?.id, profile]);
@@ -167,6 +171,7 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
         taboos,
         relationshipMode,
         gender,
+        corruptionTendency: corruptionTendency || undefined,
         allowAutoMoments,
         allowProactiveDM,
       });
@@ -293,6 +298,9 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
       if (typeof extracted.taboos === 'string') setTaboos(extracted.taboos.trim());
       if (typeof extracted.relationshipMode === 'string') setRelationshipMode(extracted.relationshipMode.trim());
       if (typeof extracted.speakingStyle === 'string') setSpeakingStyle(extracted.speakingStyle.trim());
+      if (extracted.corruptionTendency === 'none' || extracted.corruptionTendency === 'latent' || extracted.corruptionTendency === 'marked') {
+        setCorruptionTendency(extracted.corruptionTendency);
+      }
       setExtractState('done');
     } catch (error) {
       setExtractState('error');
@@ -386,6 +394,22 @@ export function RoleDetailPanel({ agent, isOpenHanakoCurrent, onBack, onChat, on
               ))}
             </div>
           </div>
+          <label className={styles.profileField} data-testid="xingye-role-corruption-tendency">
+            <span>阴暗面预设（黑化值起点）</span>
+            <select
+              value={corruptionTendency}
+              onChange={(event) => setCorruptionTendency(event.target.value as XingyeCorruptionTendency | '')}
+              data-testid="xingye-role-corruption-tendency-select"
+            >
+              <option value="">自动判断（按设定关键词）</option>
+              <option value="none">无 · 不黑化</option>
+              <option value="latent">潜藏 · 一点占有/不安</option>
+              <option value="marked">明显 · 病娇/强占有</option>
+            </select>
+            <small style={{ opacity: 0.7 }}>
+              只决定黑化值的初始起点；留「自动判断」则由角色设定 / 设定库里的关键词决定。
+            </small>
+          </label>
           <label className={styles.profileField}>
             <span>简介</span>
             <textarea

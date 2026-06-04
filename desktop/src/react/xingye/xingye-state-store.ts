@@ -1,6 +1,32 @@
 import { useEffect, useState } from 'react';
 import { saveXingyeRoleProfile, type XingyeRoleProfile } from './xingye-profile-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
+import { scaleRelationshipDeltas } from './xingye-state-curve';
+import { listLoreEntries } from './xingye-lore-store';
+import {
+  deriveInitialLoyaltyFromAffection,
+  deriveInitialTrustFromAffection,
+  resolveInitialCorruption,
+} from './xingye-state-init';
+
+/**
+ * 初始化播种时会读取的 profile 字段子集：relationshipLabel 推好感；其余自由文本段
+ * 供「黑化值」关键词兜底扫描；corruptionTendency 是 LLM / 用户给的显式档位（优先）。
+ * 全部可选——调用方（panel）通常传完整 display profile，缺字段时优雅降级。
+ */
+export type RelationshipInitProfile = Partial<Pick<
+  XingyeRoleProfile,
+  | 'relationshipLabel'
+  | 'shortBio'
+  | 'identitySummary'
+  | 'backgroundSummary'
+  | 'personalitySummary'
+  | 'behaviorLogic'
+  | 'values'
+  | 'taboos'
+  | 'relationshipMode'
+  | 'corruptionTendency'
+>>;
 
 export type XingyeStateTargetType = 'user';
 
@@ -229,30 +255,70 @@ export function getRelationshipState(
   return loadRelationshipStates(storage)[agentId] ?? null;
 }
 
+/**
+ * 拼出供「黑化值」关键词兜底扫描的文本：profile 自由文本摘要 + 启用的 canonical lore 正文。
+ * lore 读取是同步的（localStorage 后端）；读不到（离线 / 测试）就只用 profile，安全降级。
+ */
+function buildCorruptionScanText(
+  profile: RelationshipInitProfile | null | undefined,
+  agentId: string,
+  storage: StorageLike | null,
+): string {
+  const profileParts = [
+    profile?.shortBio,
+    profile?.identitySummary,
+    profile?.backgroundSummary,
+    profile?.personalitySummary,
+    profile?.behaviorLogic,
+    profile?.values,
+    profile?.taboos,
+    profile?.relationshipMode,
+  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+
+  let loreParts: string[] = [];
+  try {
+    loreParts = listLoreEntries(agentId, storage)
+      .filter((entry) => entry.enabled && entry.visibility === 'canonical')
+      .map((entry) => `${entry.title} ${entry.content}`);
+  } catch (error) {
+    console.warn('[xingye-state-store] lore scan for corruption seed failed:', error);
+    loreParts = [];
+  }
+
+  return [...profileParts, ...loreParts].join('\n');
+}
+
 export function ensureRelationshipState(
   agentId: string,
-  profile?: Pick<XingyeRoleProfile, 'relationshipLabel'> | null,
+  profile?: RelationshipInitProfile | null,
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeRelationshipState {
   const existing = getRelationshipState(agentId, storage);
   if (existing) return existing;
 
+  // 分治播种（详见 xingye-state-init）：好感从标签推；信任/忠诚机械跟好感走；
+  // 醋意是当下情绪态、初始化不播种（保持 0）；黑化只能从设定信号来——LLM 档位优先，
+  // 否则关键词扫 profile + 启用 lore 兜底，且必须在初始化设基线（曲线让黑化几乎只进难退）。
   const affection = deriveInitialAffectionFromLabel(profile?.relationshipLabel);
+  const corruption = resolveInitialCorruption(
+    profile?.corruptionTendency,
+    buildCorruptionScanText(profile, agentId, storage),
+  );
   return saveRelationshipState({
     agentId,
     targetType: 'user',
     targetId: USER_TARGET_ID,
     affection,
-    trust: 0,
-    loyalty: 0,
+    trust: deriveInitialTrustFromAffection(affection),
+    loyalty: deriveInitialLoyaltyFromAffection(affection),
     jealousy: 0,
-    corruption: 0,
+    corruption,
     mood: '平静',
     relationshipKey: deriveRelationshipStage(affection),
     relationshipLabel: getRelationshipLabelFromStage(deriveRelationshipStage(affection)),
-    stateSummary: '尚未刷新状态，当前仅根据角色关系标签初始化。',
+    stateSummary: '尚未刷新状态，当前仅根据角色设定初始化。',
     lastReason: profile?.relationshipLabel
-      ? `根据关系标签「${profile.relationshipLabel}」初始化。`
+      ? `根据关系标签「${profile.relationshipLabel}」与角色设定初始化。`
       : '未命中关系标签，使用默认初始状态。',
     source: 'initial',
     updatedAt: new Date().toISOString(),
@@ -302,13 +368,17 @@ export function updateRelationshipState(
     toRelationshipStateHistoryItem(current),
     ...(current.previousStates ?? []),
   ].slice(0, MAX_PREVIOUS_STATES);
+  // patch 里的 5 个 delta 是 LLM 给的「原始情绪冲量」；按当前关系阶段 / 方向 / 数值
+  // 重塑成实际 delta（早期好感涨得快、深关系大背叛跌得狠、信任慢涨快跌、忠诚黏、
+  // 醋意绑忠诚、黑化几乎只进难退）。绝对上下限仍由下方 clampRelationshipState 收口。
+  const scaled = scaleRelationshipDeltas(current, patch);
   const next = saveRelationshipState({
     ...current,
-    affection: current.affection + asFiniteNumber(patch.affectionDelta),
-    trust: current.trust + asFiniteNumber(patch.trustDelta),
-    loyalty: current.loyalty + asFiniteNumber(patch.loyaltyDelta),
-    jealousy: current.jealousy + asFiniteNumber(patch.jealousyDelta),
-    corruption: current.corruption + asFiniteNumber(patch.corruptionDelta),
+    affection: current.affection + scaled.affectionDelta,
+    trust: current.trust + scaled.trustDelta,
+    loyalty: current.loyalty + scaled.loyaltyDelta,
+    jealousy: current.jealousy + scaled.jealousyDelta,
+    corruption: current.corruption + scaled.corruptionDelta,
     mood: normalizeString(patch.mood, current.mood),
     stateSummary: normalizeString(patch.stateSummary, current.stateSummary ?? '') || current.stateSummary,
     lastReason: normalizeString(patch.reason, current.lastReason ?? '') || current.lastReason,
@@ -324,7 +394,7 @@ export function updateRelationshipState(
 
 export function resetRelationshipState(
   agentId: string,
-  profile?: Pick<XingyeRoleProfile, 'relationshipLabel'> | null,
+  profile?: RelationshipInitProfile | null,
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeRelationshipState {
   const previous = getRelationshipState(agentId, storage);
@@ -351,7 +421,7 @@ export function getStateDisplayBadges(state: XingyeRelationshipState): Array<{ l
 
 export function useRelationshipState(
   agentId: string | null | undefined,
-  profile?: Pick<XingyeRoleProfile, 'relationshipLabel'> | null,
+  profile?: RelationshipInitProfile | null,
 ) {
   const [state, setState] = useState<XingyeRelationshipState | null>(() => (
     agentId ? ensureRelationshipState(agentId, profile) : null

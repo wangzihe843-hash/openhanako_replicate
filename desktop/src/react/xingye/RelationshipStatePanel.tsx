@@ -17,6 +17,7 @@ import {
   type XingyeRelationshipState,
   type XingyeRelationshipStateHistoryItem,
 } from './xingye-state-store';
+import { scaleRelationshipDeltas } from './xingye-state-curve';
 import {
   confirmRelationshipStateDraft,
   discardRelationshipStateDraft,
@@ -273,6 +274,10 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
     setError(null);
   };
 
+  // 展示的「建议变化」是按当前状态重塑后、真正会落地的 delta（所见即所得）——
+  // 与 updateRelationshipState 接受时走的同一条曲线、同一份当前状态。
+  const scaledSuggestion = suggestion ? scaleRelationshipDeltas(relationshipState, suggestion) : null;
+
   return (
     <section className={styles.detailSection} aria-label="TA 当前状态">
       <div className={styles.relationshipStateHeader}>
@@ -357,8 +362,11 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
               <span>这是 TA 主动提议的状态变化，应用后才会落到本地</span>
             </div>
             {pendingDrafts.map((d) => {
+              // 草稿里存的是 TA 提议的原始冲量；预览同样按当前状态重塑成真正会落地的值，
+              // 与确认（confirmRelationshipStateDraft → updateRelationshipState）走同一条曲线。
+              const scaledDraft = scaleRelationshipDeltas(relationshipState, d);
               const deltaItems = METRICS
-                .map((metric) => ({ metric, delta: d[metric.key] }))
+                .map((metric) => ({ metric, delta: scaledDraft[metric.key] }))
                 .filter(({ delta }) => delta !== 0);
               return (
                 <div
@@ -442,7 +450,7 @@ export function RelationshipStatePanel({ agent, profile }: RelationshipStatePane
             </div>
             <div className={styles.relationshipDeltaGrid}>
               {METRICS.map((metric) => {
-                const delta = formatDelta(suggestion[metric.key]);
+                const delta = formatDelta(scaledSuggestion?.[metric.key] ?? 0);
                 return (
                   <div key={metric.key} aria-label={`${metric.label} 建议变化 ${delta}`}>
                     <span>{metric.label} 建议变化</span>

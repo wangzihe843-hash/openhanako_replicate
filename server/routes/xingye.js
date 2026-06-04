@@ -22,6 +22,13 @@ const PROFILE_FIELDS = [
   "speakingStyle",
 ];
 
+/**
+ * 角色「阴暗面预设」档位（黑化 / 占有 / 病娇倾向）。与渲染端 XingyeCorruptionTendency 对齐，
+ * 仅用于关系状态初始化时给「黑化值 corruption」播种——none/latent/marked。
+ * 非枚举值丢弃 → 渲染端回退到本地关键词扫描兜底。
+ */
+const CORRUPTION_TENDENCIES = new Set(["none", "latent", "marked"]);
+
 const ALLOWED_LORE_CATEGORIES = new Set([
   "background",
   "worldview",
@@ -138,6 +145,14 @@ function normalizeProfile(value) {
   for (const field of PROFILE_FIELDS) {
     profile[field] = cleanString(value[field]);
   }
+  // corruptionTendency 是 enum，不走 cleanString；只接受合法档位，否则不输出该键
+  // （渲染端见到 undefined → 走本地关键词扫描兜底）。
+  const rawTendency = typeof value.corruptionTendency === "string"
+    ? value.corruptionTendency.trim().toLowerCase()
+    : "";
+  if (CORRUPTION_TENDENCIES.has(rawTendency)) {
+    profile.corruptionTendency = rawTendency;
+  }
   return profile;
 }
 
@@ -191,10 +206,15 @@ function buildPrompt({ displayName, relationshipLabel, shortBio, loreEntries, pa
     "- personalitySummary、behaviorLogic、values、taboos、relationshipMode、speakingStyle 必须从背景推导角色运行逻辑。",
     "- 每个字段都写短摘要，适合用户二次编辑。",
     "- 不要把原始背景故事整段塞入任何字段。",
+    "- corruptionTendency 是角色「阴暗面预设」档位，只看正式设定里 TA 对 user 是否带黑化 / 病娇 / 强占有 / 控制欲 / 极端不安全感的底色：完全没有 → \"none\"；有苗头（占有欲、善妒、缺乏安全感、依赖）→ \"latent\"；明显（病娇、极端占有、控制欲极强、不许离开）→ \"marked\"。这是底色不是当下情绪；拿不准就给 \"none\"。",
     `- 不要输出这些工程词：${FORBIDDEN_TERMS.join("、")}。`,
     "",
     "返回 JSON schema：",
-    JSON.stringify(Object.fromEntries(PROFILE_FIELDS.map((field) => [field, "string"])), null, 2),
+    JSON.stringify(
+      { ...Object.fromEntries(PROFILE_FIELDS.map((field) => [field, "string"])), corruptionTendency: "none | latent | marked" },
+      null,
+      2,
+    ),
     "",
     "输入：",
     JSON.stringify(context, null, 2),

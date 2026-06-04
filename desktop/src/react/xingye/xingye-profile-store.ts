@@ -25,6 +25,22 @@ export const XINGYE_ROLE_GENDERS: readonly XingyeRoleGender[] = [
   'unspecified',
 ];
 
+/**
+ * 角色「阴暗面预设」——黑化 / 占有 / 病娇倾向的定性档位。**只**用于关系状态初始化时给
+ * 「黑化值 corruption」播种（none→0 / latent→潜在基线 / marked→明显基线），不在主对话里
+ * 直接当事实陈述。语义上：
+ *  - undefined → 没有显式信号，由本地关键词扫描 profile/lore 自行兜底判断。
+ *  - 'none'    → 显式判定「不黑」（LLM 权威），会压过关键词误命中。
+ * 由「自动生成人设」(extract-profile) 的 LLM 顺带产出，用户可在详情页覆盖。
+ */
+export type XingyeCorruptionTendency = 'none' | 'latent' | 'marked';
+
+export const XINGYE_CORRUPTION_TENDENCIES: readonly XingyeCorruptionTendency[] = [
+  'none',
+  'latent',
+  'marked',
+];
+
 export type XingyeRoleProfile = {
   agentId: string;
   displayName?: string;
@@ -43,6 +59,8 @@ export type XingyeRoleProfile = {
    * 缺省视为 'unspecified'——不强制代词。
    */
   gender?: XingyeRoleGender;
+  /** 阴暗面预设（黑化 / 占有倾向档位），用于 corruption 初值播种；见 {@link XingyeCorruptionTendency}。 */
+  corruptionTendency?: XingyeCorruptionTendency;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   /** workspace 落盘引用（由 xingye-persistence / v2 layout 写入/加载） */
@@ -70,6 +88,7 @@ export type XingyeRoleProfileDisplay = {
   taboos?: string;
   relationshipMode?: string;
   gender?: XingyeRoleGender;
+  corruptionTendency?: XingyeCorruptionTendency;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   allowAutoMoments: boolean;
@@ -176,6 +195,13 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
   if (typeof rawGender === 'string'
       && (XINGYE_ROLE_GENDERS as readonly string[]).includes(rawGender)) {
     profile.gender = rawGender as XingyeRoleGender;
+  }
+
+  // corruptionTendency 同为 enum；非法 / 缺省丢弃 → undefined（语义 = 无显式信号，交关键词扫描兜底）
+  const rawTendency = value.corruptionTendency;
+  if (typeof rawTendency === 'string'
+      && (XINGYE_CORRUPTION_TENDENCIES as readonly string[]).includes(rawTendency)) {
+    profile.corruptionTendency = rawTendency as XingyeCorruptionTendency;
   }
 
   const avatarMediaPath = normalizeOptionalString(value.avatarMediaPath);
@@ -320,6 +346,7 @@ export function getXingyeRoleProfileDisplay(
     taboos: profile?.taboos,
     relationshipMode: profile?.relationshipMode,
     gender: profile?.gender,
+    corruptionTendency: profile?.corruptionTendency,
     avatarDataUrl: profile?.avatarDataUrl,
     chatBackgroundDataUrl: profile?.chatBackgroundDataUrl,
     allowAutoMoments: profile?.allowAutoMoments ?? false,

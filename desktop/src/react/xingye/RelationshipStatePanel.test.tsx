@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
 import { saveRelationshipState } from './xingye-state-store';
+import { scaleRelationshipDeltas } from './xingye-state-curve';
 
 const appendEventOnceMock = vi.hoisted(() => vi.fn(async () => ({ id: 'event-1' })));
 const generateSuggestionMock = vi.hoisted(() => vi.fn(async () => ({
@@ -46,6 +47,22 @@ vi.mock('./xingye-relationship-state-drafts', () => ({
 }));
 
 const rsDraftsModule = await import('./xingye-relationship-state-drafts');
+
+/**
+ * 面板展示/落地的 delta 是「原始冲量经关系曲线重塑后」的值（所见即所得）。
+ * 这里用同一个曲线函数算期望，断言「面板正确接线并展示缩放结果」——
+ * 具体曲线数值由 xingye-state-curve.test.ts 单独锁，避免在面板测试里硬编码常量。
+ */
+const FIXTURE_CURVE_STATE = { affection: 10, trust: 1, loyalty: 1, jealousy: 0, corruption: 0 };
+const FIXTURE_SUGGESTION_DELTAS = {
+  affectionDelta: 5,
+  trustDelta: -3,
+  loyaltyDelta: 2,
+  jealousyDelta: 0,
+  corruptionDelta: 0,
+};
+const SCALED = scaleRelationshipDeltas(FIXTURE_CURVE_STATE, FIXTURE_SUGGESTION_DELTAS);
+const fmtDelta = (n: number) => (n > 0 ? `+${n}` : String(n));
 
 describe('RelationshipStatePanel', () => {
   const agent: Agent = {
@@ -101,8 +118,9 @@ describe('RelationshipStatePanel', () => {
     await waitFor(() => {
       expect(screen.getByText('accepted from recent chat')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText(/建议变化 \+5/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/建议变化 -3/)).toBeInTheDocument();
+    // 展示的是按当前状态重塑后、真正会落地的 delta（萍水相逢早期好感涨得快：+5 → +6）
+    expect(screen.getByLabelText(`好感度 建议变化 ${fmtDelta(SCALED.affectionDelta)}`)).toBeInTheDocument();
+    expect(screen.getByLabelText(`信任 建议变化 ${fmtDelta(SCALED.trustDelta)}`)).toBeInTheDocument();
     expect(screen.getAllByLabelText(/建议变化 0/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getAllByRole('button')[1]);
@@ -111,7 +129,7 @@ describe('RelationshipStatePanel', () => {
     expect(screen.getByText('accepted summary')).toBeInTheDocument();
     });
     expect(screen.getByText('steady')).toBeInTheDocument();
-    expect(screen.getByText('15')).toBeInTheDocument();
+    expect(screen.getByText(String(FIXTURE_CURVE_STATE.affection + SCALED.affectionDelta))).toBeInTheDocument();
 
     const history = screen.getByRole('group', { name: /old mood/ });
     expect(history).toBeInTheDocument();
@@ -213,8 +231,8 @@ describe('RelationshipStatePanel', () => {
             mood: 'old mood',
           }),
           next: expect.objectContaining({
-            affection: 15,
-            trust: -2,
+            affection: FIXTURE_CURVE_STATE.affection + SCALED.affectionDelta,
+            trust: FIXTURE_CURVE_STATE.trust + SCALED.trustDelta,
             mood: 'steady',
           }),
           appliedFields: expect.arrayContaining(['affectionDelta', 'trustDelta', 'loyaltyDelta', 'mood', 'stateSummary', 'reason']),

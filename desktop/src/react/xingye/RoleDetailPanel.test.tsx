@@ -225,6 +225,22 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(window.localStorage.getItem('xingye.roleProfiles')).toBeNull();
   });
 
+  it('阴暗面预设 select：默认「自动判断」，可手动切换（黑化值起点）', () => {
+    render(
+      <RoleDetailPanel
+        agent={agent}
+        isOpenHanakoCurrent={false}
+        onBack={vi.fn()}
+        onChat={vi.fn()}
+        onPhone={vi.fn()}
+      />,
+    );
+    const select = screen.getByTestId('xingye-role-corruption-tendency-select') as HTMLSelectElement;
+    expect(select.value).toBe(''); // 默认自动判断 → 由本地关键词扫描兜底
+    fireEvent.change(select, { target: { value: 'marked' } });
+    expect(select.value).toBe('marked');
+  });
+
   it('shows save failure when profile storage write fails', async () => {
     render(
       <RoleDetailPanel

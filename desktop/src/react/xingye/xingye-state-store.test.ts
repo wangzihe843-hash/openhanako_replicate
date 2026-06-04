@@ -29,6 +29,10 @@ import {
   updateRelationshipState,
   type XingyeRelationshipState,
 } from './xingye-state-store';
+import {
+  deriveInitialLoyaltyFromAffection,
+  deriveInitialTrustFromAffection,
+} from './xingye-state-init';
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -96,8 +100,10 @@ describe('xingye-state-store', () => {
       targetType: 'user',
       targetId: '__user__',
       affection: 90,
-      trust: 0,
-      loyalty: 0,
+      // 信任 / 忠诚机械跟好感走（恋人不再是 0 信任 0 忠诚）；醋意是当下情绪态、初始仍 0；
+      // 黑化无 profile/lore 信号 → 0。
+      trust: deriveInitialTrustFromAffection(90),
+      loyalty: deriveInitialLoyaltyFromAffection(90),
       jealousy: 0,
       corruption: 0,
       mood: '平静',
@@ -107,6 +113,31 @@ describe('xingye-state-store', () => {
     });
     expect(getRelationshipState('agent-1', storage)).toEqual(state);
     expect(storage.getItem(XINGYE_RELATIONSHIP_STATES_STORAGE_KEY)).toContain('agent-1');
+  });
+
+  it('黑化初始化：profile.corruptionTendency（LLM/用户显式档位）优先播种', () => {
+    const state = ensureRelationshipState(
+      'agent-dark',
+      { relationshipLabel: '朋友', corruptionTendency: 'marked' },
+      storage,
+    );
+    expect(state.corruption).toBe(28);
+  });
+
+  it('黑化初始化：无显式档位时，扫 profile 自由文本关键词兜底', () => {
+    const state = ensureRelationshipState(
+      'agent-latent',
+      { relationshipLabel: '朋友', personalitySummary: '有点占有欲，缺乏安全感' },
+      storage,
+    );
+    expect(state.corruption).toBeGreaterThan(0);
+    // 没有任何阴暗信号 → 仍是 0
+    const clean = ensureRelationshipState(
+      'agent-clean',
+      { relationshipLabel: '朋友', personalitySummary: '温和、理性、尊重边界' },
+      storage,
+    );
+    expect(clean.corruption).toBe(0);
   });
 
   it('clamps deltas and re-derives the stage after updates', () => {
@@ -328,7 +359,7 @@ describe('xingye-state-store', () => {
       ensureRelationshipState('agent-1', { relationshipLabel: '朋友' }, storage);
       mockSaveXingyeRoleProfile.mockClear();
 
-      // +25 affection → 55 → close_friend → 知己相照（跨阶段）
+      // +25 原始冲量 → 经关系曲线重塑（君子之交早期≈+29）→ 59 → close_friend → 知己相照（跨阶段）
       updateRelationshipState('agent-1', { affectionDelta: 25, mood: '靠近' }, storage);
 
       expect(mockSaveXingyeRoleProfile).toHaveBeenCalledTimes(1);
