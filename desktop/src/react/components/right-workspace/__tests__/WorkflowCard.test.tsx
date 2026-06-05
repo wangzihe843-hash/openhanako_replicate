@@ -66,4 +66,32 @@ describe('WorkflowCard', () => {
     expect(container.textContent).toContain('5s');
     delete (window as any).t;
   });
+
+  it('按 phaseLabel 分组显示 Phase 名称', () => {
+    mockState.agentActivitiesBySession = {
+      '/s/a.jsonl': [
+        wf({ id: 'w1' }),
+        node({ id: 'w1::node-1', label: '探索', phaseLabel: 'Research' }),
+        node({ id: 'w1::node-2', label: '验证', phaseLabel: 'Verify' }),
+      ],
+    };
+    const { container } = render(<WorkflowCard />);
+    const wfRow = container.querySelector('[data-status]') as HTMLElement;
+    fireEvent.click(wfRow);
+    expect(container.textContent).toContain('Research');
+    expect(container.textContent).toContain('Verify');
+  });
+
+  it('workflow_step 节点显示 stepKind 标签', () => {
+    mockState.agentActivitiesBySession = {
+      '/s/a.jsonl': [
+        wf({ id: 'w1' }),
+        { ...node({ id: 'w1::step-1' }), kind: 'workflow_step' as const, stepKind: 'parallel' as const, label: null, agentId: null },
+      ],
+    };
+    const { container } = render(<WorkflowCard />);
+    const wfRow = container.querySelector('[data-status]') as HTMLElement;
+    fireEvent.click(wfRow);
+    expect(container.textContent).toContain('parallel');
+  });
 });
