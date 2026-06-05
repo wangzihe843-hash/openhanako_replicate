@@ -1,4 +1,7 @@
 // tests/workflow-tool.test.js
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWorkflowTool } from "../lib/tools/workflow-tool.js";
 
@@ -351,5 +354,65 @@ describe("workflow tool", () => {
     expect(peak).toBeGreaterThanOrEqual(64);
     releases.forEach((release) => release());
     await flush();
+  });
+
+  it("budget 硬上限按 attribution.taskId 实时归集 UsageLedger，超额时拒绝新 agent", async () => {
+    // 回归：makeBudget.spent() 曾按 attributionKind:"subagent" + parentTaskId/subagentTaskId 过滤，
+    // 但 session-coordinator 实际记成 attribution.{kind:"session", taskId}，导致 spent() 恒为 0、
+    // 硬上限永不触发。修后按 attribution.taskId 归集——这里 mock executeIsolated 仿照 coordinator
+    // 在每次调用后把一条 1000-token 的 usage（attribution.taskId = isoOpts.subagentTaskId）落账。
+    const store = makeStore();
+    const entries = [];
+    const ledger = { list: () => ({ entries }) };
+    const exec = vi.fn(async (_p, o) => {
+      entries.push({ usage: { totalTokens: 1000 }, attribution: { kind: "session", taskId: o.subagentTaskId } });
+      return { replyText: "ok", error: null };
+    });
+    const tool = createWorkflowTool({
+      executeIsolated: exec, getAgentId: () => "a1", emitEvent: () => {},
+      getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
+      getUsageLedger: () => ledger,
+    });
+    // total=2500：node1(spent0)→1000, node2(1000)→2000, node3(2000)→3000, node4 spent3000 remaining<=0 → 抛
+    const res = await tool.execute(
+      "c1",
+      { args: { budgetTokens: 2500 }, script: META + `const o=[]; while(o.length<5){o.push(await agent('x'))} return o` },
+      undefined, undefined, makeCtx(),
+    );
+    await vi.waitFor(() => expect(store.fail).toHaveBeenCalled());
+    expect(exec).toHaveBeenCalledTimes(3); // 第 4 个被预算拦下（修前会跑满 5 个）
+    expect(store.fail).toHaveBeenCalledWith(res.details.taskId, expect.stringMatching(/预算/));
+  });
+
+  it("嵌套 workflow 用独立 journal 子路径，父子 nodeSeq 不撞键（不污染续跑）", async () => {
+    // 回归：父 hostApi 与嵌套子 hostApi 各自 nodeSeq 从 0 起，曾共享同一个按 nodeSeq 索引的 journal，
+    // 子节点 seq=1 覆盖父节点 seq=1（内存 Map）+ 往同一 JSONL 追加重复 nodeSeq 行。修后子 workflow
+    // 走独立 ${taskId}.child-N journal。
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wf-nest-"));
+    try {
+      const store = makeStore();
+      const exec = vi.fn(async () => ({ replyText: "ok", error: null }));
+      const tool = createWorkflowTool({
+        executeIsolated: exec, getAgentId: () => "a1", emitEvent: () => {},
+        getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
+        getJournalDir: () => dir,
+      });
+      const child = `export const meta = { name: 'c', description: 'd' }\nawait agent('cx'); return 'child-done'`;
+      const parentScript = META + `await agent('px'); await workflow(${JSON.stringify(child)}); return 'parent-done'`;
+      const res = await tool.execute("c1", { script: parentScript }, undefined, undefined, makeCtx());
+      await vi.waitFor(() => expect(store.resolve).toHaveBeenCalled());
+      const taskId = res.details.taskId;
+      const parentJournal = path.join(dir, `${taskId}.jsonl`);
+      const childJournal = path.join(dir, `${taskId}.child-1.jsonl`);
+      expect(fs.existsSync(parentJournal)).toBe(true);
+      expect(fs.existsSync(childJournal)).toBe(true); // 修前不存在（子共享父 journal）
+      const parentLines = fs.readFileSync(parentJournal, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      const childLines = fs.readFileSync(childJournal, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      // 父子各自的 nodeSeq=1 互不覆盖、分处两文件，各自只有一条
+      expect(parentLines.filter((l) => l.nodeSeq === 1)).toHaveLength(1);
+      expect(childLines.filter((l) => l.nodeSeq === 1)).toHaveLength(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
