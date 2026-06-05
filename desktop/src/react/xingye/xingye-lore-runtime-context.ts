@@ -50,6 +50,8 @@ export type XingyeLoreRuntimeContextPurpose =
   | 'journal_draft'
   /** MM Chat：角色向通用助手咨询；keyword 设定仅按需命中 */
   | 'mm_chat'
+  /** 阅读笔记初始化：首次打开按 lore 铺读书史；keyword 设定仅按需命中 */
+  | 'reading_history'
   | 'generic';
 
 export type XingyeLoreRuntimeContextOptions = {

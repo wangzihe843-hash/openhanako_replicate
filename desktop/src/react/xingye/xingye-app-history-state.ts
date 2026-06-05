@@ -29,13 +29,14 @@ const backend = createAgentXingyeStorageBackend(postXingyeStorage);
 /**
  * 支持「初始化 / 批量 / 补齐」流程的 appId。
  *
- * journal / trips / mail 只用 initializedAt（+ mail 另用 lastBulkAt 记最近一次批量）字段做
- * marker；planBulkRequest / planInitialBulkRequest（14 天窗口）专给 accounting/shopping/secondhand 用，
+ * journal / trips / mail / reading_notes 只用 initializedAt（+ mail 另用 lastBulkAt 记最近一次批量）
+ * 字段做 marker；planBulkRequest / planInitialBulkRequest（14 天窗口）专给 accounting/shopping/secondhand 用，
  * journal 自己有 buildJournalHistoryPrompt / generateJournalHistoryWithAI、trips 有
- * buildTripsHistoryPrompt / generateTripsHistoryWithAI、mail 有 generateMailInitDraftsWithAI
- * 走各自的批量策略（mail 无 occurredAt/dayRange 维度，一次生成固定一批），不调用这俩 planner。
+ * buildTripsHistoryPrompt / generateTripsHistoryWithAI、mail 有 generateMailInitDraftsWithAI、
+ * reading_notes 有 buildReadingHistoryPrompt / generateReadingHistoryWithAI（一次铺 3–5 本书 + 批注，
+ * 时间不设上限）走各自的批量策略，不调用这俩 planner。
  */
-export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand', 'journal', 'trips', 'mail'] as const;
+export const HISTORY_APP_IDS = ['accounting', 'shopping', 'secondhand', 'journal', 'trips', 'mail', 'reading_notes'] as const;
 export type HistoryAppId = (typeof HISTORY_APP_IDS)[number];
 
 export type XingyeAppHistoryState = {

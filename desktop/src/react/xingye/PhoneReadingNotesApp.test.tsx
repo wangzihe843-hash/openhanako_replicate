@@ -47,6 +47,15 @@ const readingDraftsMock = vi.hoisted(() => ({
   listReadingNoteDrafts: vi.fn().mockResolvedValue([]),
 }));
 
+const historyStateMock = vi.hoisted(() => ({
+  loadHistoryState: vi.fn(),
+  saveHistoryState: vi.fn(),
+}));
+
+const readingHistoryAiMock = vi.hoisted(() => ({
+  generateReadingHistoryWithAI: vi.fn(),
+}));
+
 vi.mock('./xingye-reading-book-catalog', () => catalogMock);
 vi.mock('./xingye-app-entry-store', () => appEntryStoreMock);
 vi.mock('./xingye-open-library-adapter', () => openLibraryMock);
@@ -54,6 +63,8 @@ vi.mock('./xingye-reading-topics-ai', () => readingTopicsAiMock);
 vi.mock('./xingye-wikiquote-adapter', () => wikiquoteMock);
 vi.mock('./xingye-reading-annotation-ai', () => annotationAiMock);
 vi.mock('./xingye-reading-notes-drafts', () => readingDraftsMock);
+vi.mock('./xingye-app-history-state', () => historyStateMock);
+vi.mock('./xingye-reading-history-ai', () => readingHistoryAiMock);
 
 import { PhoneReadingNotesApp } from './PhoneReadingNotesApp';
 import type { XingyeRoleProfile } from './xingye-profile-store';
@@ -122,6 +133,19 @@ describe('PhoneReadingNotesApp', () => {
     appEntryStoreMock.deleteAppEntry.mockResolvedValue(true);
     catalogMock.deleteBookForAgent.mockResolvedValue(true);
 
+    /**
+     * 默认让首次打开初始化跑不起来——绝大多数已有用例都不依赖 init，pretending
+     * 「已初始化过」最简单（与 PhoneJournalApp.test 同款）。需要测 init 的用例自己改 mock。
+     */
+    historyStateMock.loadHistoryState.mockReset();
+    historyStateMock.saveHistoryState.mockReset();
+    readingHistoryAiMock.generateReadingHistoryWithAI.mockReset();
+    historyStateMock.loadHistoryState.mockResolvedValue({
+      version: 1,
+      initializedAt: '2026-05-01T00:00:00.000Z',
+    });
+    historyStateMock.saveHistoryState.mockResolvedValue({ version: 1 });
+
     openLibraryMock.searchOpenLibraryBooks.mockReset();
     openLibraryMock.searchOpenLibraryBooksViaProxy.mockReset();
     readingTopicsAiMock.inferReadingTopicsWithAI.mockReset();
@@ -164,6 +188,129 @@ describe('PhoneReadingNotesApp', () => {
         interests: ['医疗', '雪地'],
       });
     });
+  });
+
+  it('first open with empty shelf bootstraps reading history (books + backdated annotations + marker)', async () => {
+    // 未初始化 → 触发首次打开 bootstrap
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 });
+    readingHistoryAiMock.generateReadingHistoryWithAI.mockResolvedValue([
+      {
+        book: { title: '霍乱时期的爱情', authors: ['马尔克斯'], subjects: ['爱情'], description: '等待。' },
+        annotations: [
+          {
+            title: '等待',
+            annotation: '原来等待本身也是一种生活。',
+            mood: '怅然',
+            occurredAt: '2024-03-15T00:00:00.000Z',
+          },
+          {
+            title: '泛黄的一页',
+            annotation: '不知道是哪天写下的了。',
+            occurredAt: null,
+            dateSmudged: true,
+          },
+        ],
+      },
+    ]);
+
+    renderReadingNotes();
+
+    await waitFor(() => {
+      expect(readingHistoryAiMock.generateReadingHistoryWithAI).toHaveBeenCalledTimes(1);
+    });
+    // 书写进书库（key 空、reason 含 init）
+    await waitFor(() => {
+      expect(catalogMock.importBooksForAgent).toHaveBeenCalledWith(
+        'test01',
+        [{ key: '', title: '霍乱时期的爱情', authors: ['马尔克斯'], subjects: ['爱情'], description: '等待。' }],
+        expect.objectContaining({ reason: expect.stringContaining('init') }),
+      );
+    });
+    // 有时间的批注：createdAt 回填到 occurredAt；metadata 形态正确（无 quote）
+    await waitFor(() => {
+      expect(appEntryStoreMock.appendAppEntry).toHaveBeenCalledWith(
+        'test01',
+        'reading_notes',
+        expect.objectContaining({
+          title: '等待',
+          content: '原来等待本身也是一种生活。',
+          createdAt: '2024-03-15T00:00:00.000Z',
+          metadata: expect.objectContaining({
+            bookId: 'book-1',
+            noteType: 'reading_note',
+            annotationSource: 'ai',
+            occurredAt: '2024-03-15T00:00:00.000Z',
+            mood: '怅然',
+          }),
+        }),
+      );
+    });
+    // 时间不可考的批注：storage 存 null + dateSmudged；createdAt 用 epoch 哨兵（排到底部）
+    await waitFor(() => {
+      expect(appEntryStoreMock.appendAppEntry).toHaveBeenCalledWith(
+        'test01',
+        'reading_notes',
+        expect.objectContaining({
+          title: '泛黄的一页',
+          createdAt: new Date(0).toISOString(),
+          metadata: expect.objectContaining({
+            bookId: 'book-1',
+            noteType: 'reading_note',
+            annotationSource: 'ai',
+            occurredAt: null,
+            dateSmudged: true,
+          }),
+        }),
+      );
+    });
+    // 成功后写 initializedAt marker
+    await waitFor(() => {
+      expect(historyStateMock.saveHistoryState).toHaveBeenCalledWith(
+        'test01',
+        'reading_notes',
+        expect.objectContaining({ initializedAt: expect.any(String) }),
+      );
+    });
+  });
+
+  it('renders a smudged phrase (not a real date) in the detail of a time-unknown annotation', async () => {
+    catalogMock.listBooksForAgent.mockResolvedValue([{
+      id: 'book-1',
+      key: 'k',
+      dedupeKey: 'k',
+      title: '泛黄的书',
+      authors: ['佚名'],
+      subjects: [],
+      agentTags: [{ agentId: 'test01', reason: 'init', interests: [], createdAt: '2026-05-16T01:00:00.000Z' }],
+      createdAt: '2026-05-16T01:00:00.000Z',
+      updatedAt: '2026-05-16T01:00:00.000Z',
+    }]);
+    appEntryStoreMock.listAppEntries.mockResolvedValue([{
+      id: 'note-smudged',
+      agentId: 'test01',
+      appId: 'reading_notes',
+      title: '旧批注',
+      content: '不知道是哪天写下的了。',
+      metadata: {
+        bookId: 'book-1',
+        noteType: 'reading_note',
+        annotationSource: 'ai',
+        occurredAt: null,
+        dateSmudged: true,
+      },
+      source: 'ai_reading_init',
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    }]);
+
+    renderReadingNotes();
+    fireEvent.click(await screen.findByText('泛黄的书'));
+    fireEvent.click(await screen.findByText('旧批注'));
+
+    const meta = await screen.findByTestId('phone-reading-note-smudged');
+    // 显示的是污损短语之一，而不是真实日期
+    expect(meta.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(meta.textContent).toMatch(/字迹|墨水|年代|纸角|翻看/);
   });
 
   it('opens a book, creates a manual note, and stores quote only as manual metadata', async () => {

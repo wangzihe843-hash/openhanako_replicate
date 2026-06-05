@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import {
@@ -7,6 +7,8 @@ import {
   listAppEntries,
   type AppEntry,
 } from './xingye-app-entry-store';
+import { loadHistoryState, saveHistoryState } from './xingye-app-history-state';
+import { generateReadingHistoryWithAI } from './xingye-reading-history-ai';
 import {
   confirmReadingNoteDraft,
   discardReadingNoteDraft,
@@ -60,6 +62,16 @@ type ReadingNoteMetadata = {
   annotationSource?: 'ai' | 'manual';
   /** AI 给出的情绪标签，仅 annotationSource='ai' 时有意义。 */
   mood?: string;
+  /**
+   * 「TA 写下这条批注时」的 in-world 时间（init 历史回填用）。ISO 字符串 = 已知；
+   * null = 时间不可考（与 dateSmudged 同步）。manual / 现有 AI 批注不带这个字段。
+   */
+  occurredAt?: string | null;
+  /**
+   * 时间不可考标记（init 历史里模型给的时间解析不出来时）。true 时 UI 不显示真实日期，
+   * 改渲染「字迹模糊」类短语；entry.createdAt 写哨兵 epoch 让它排到列表底部（与日记 dateSmudged 同理）。
+   */
+  dateSmudged?: boolean;
 };
 
 type ReadingNoteEntry = AppEntry & {
@@ -132,6 +144,24 @@ function formatDateTime(iso: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * 「时间不可考」批注（init 历史里模型给的时间解析不出来 → storage 存 null）的污损短语池。
+ * UI 不显示真实日期，改从池里挑一句；按 note id 确定性取，避免每次渲染抖动（与日记 dateSmudged 同理）。
+ */
+const SMUDGED_DATE_PHRASES = [
+  '字迹太旧，落笔的日子已经看不清了',
+  '墨水晕开，写于何时再难辨认',
+  '这一页年代久远，日期模糊成一团',
+  '纸角磨损，时间已无从考据',
+  '被反复翻看得发白，记不清是哪天了',
+];
+
+function smudgedDatePhrase(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return SMUDGED_DATE_PHRASES[h % SMUDGED_DATE_PHRASES.length];
+}
+
 function excerpt(text: string, max = 64): string {
   const one = text.replace(/\s+/g, ' ').trim();
   if (!one) return '没有正文。';
@@ -186,6 +216,18 @@ function normalizeReadingNote(entry: AppEntry): ReadingNoteEntry | null {
   if (typeof entry.metadata?.mood === 'string' && entry.metadata.mood.trim()) {
     metadata.mood = entry.metadata.mood.trim();
   }
+  if (entry.metadata?.dateSmudged === true) {
+    metadata.dateSmudged = true;
+    metadata.occurredAt = null;
+  } else {
+    const occ = entry.metadata?.occurredAt;
+    if (occ === null) {
+      metadata.occurredAt = null;
+      metadata.dateSmudged = true;
+    } else if (typeof occ === 'string' && occ.trim()) {
+      metadata.occurredAt = occ.trim();
+    }
+  }
   return {
     ...entry,
     appId: 'reading_notes',
@@ -199,8 +241,8 @@ function normalizePassageForHash(text: string): string {
     .normalize('NFKC')
     // 先把标点（含中英文标点 + 符号）换成空格，避免相邻空格-标点-空格挤压时丢字
     .replace(/[\p{P}\p{S}]/gu, ' ')
-    // 再把所有空白（含全角空格、不间断空格）压成一个空格
-    .replace(/[\s　]+/g, ' ')
+    // 再把所有空白（\s 已含全角空格 U+3000、不间断空格 U+00A0 等）压成一个空格
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -280,7 +322,20 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   const [draftBusyId, setDraftBusyId] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  /**
+   * 首次打开阅读笔记 app 的一次性初始化（按 lore 铺 3–5 本书 + 每本 1–3 条批注）。
+   * 与日记 init 同款：成功才写 history-state.initializedAt；失败不写、下次打开重试，
+   * 但同一 mount 周期最多尝试一次（initialBootstrapTriedRef）。
+   */
+  const initialBootstrapTriedRef = useRef<string | null>(null);
+  const [initBusy, setInitBusy] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [initNotice, setInitNotice] = useState<string | null>(null);
+  /** 跨角色 stale-write 守卫：AgentPhonePanel 原地换角色（无 key），异步 reload 必须带序号守卫。 */
+  const reloadSeqRef = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setBooks([]);
       setNotes([]);
@@ -296,6 +351,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         listAppEntries(ownerAgentId, READING_NOTES_APP_ID),
         listReadingNoteDrafts(ownerAgentId),
       ]);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload / 换角色取代，丢弃本次结果
       setBooks(bookRows.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)));
       setNotes(noteRows
         .map(normalizeReadingNote)
@@ -303,9 +359,10 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
       setPendingDrafts(draftRows);
     } catch (err) {
+      if (seq !== reloadSeqRef.current) return;
       setMessage(`加载失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -438,9 +495,137 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
     setAnnotationError(null);
     setAnnotationSuggestionError(null);
     setAnnotationSaving(false);
+    initialBootstrapTriedRef.current = null;
+    setInitError(null);
+    setInitNotice(null);
     void reload();
+    return () => {
+      reloadSeqRef.current += 1; // 卸载 / 换 agent 时作废在途 reload
+    };
     // ownerProfile/agent-name changes don't need to reset discovery; only the agent identity does.
   }, [ownerAgentId, reload]);
+
+  /**
+   * 「首次打开阅读笔记」初始化：按 lore 铺 3–5 本书，每本配 1–3 条 TA 的批注，直接写入
+   * 书库 + entries.jsonl（绕过待确认草稿流——首开不该被一堆草稿淹没；和日记 / 购物 init 一致）。
+   *  - 书走 importBooksForAgent；批注走 appendAppEntry（annotationSource='ai'，无 quote——init
+   *    不伪造书中原文）。
+   *  - 批注 createdAt 回填到模型给的 occurredAt（解析失败由 normalizeReadingHistoryResults 兜底
+   *    散布到过去），让列表呈现真实读书史的时间感，而不是清一色「刚刚」。
+   *  - 成功才写 initializedAt——失败不写，用户下次打开会重试（同一 mount 周期不反复触发）。
+   */
+  const runInitialBootstrap = useCallback(async () => {
+    if (!ownerAgent || !ownerAgentId) return;
+    const aid = ownerAgentId;
+    setInitBusy(true);
+    setInitError(null);
+    setInitNotice(null);
+    try {
+      const desiredBookCount = 3 + Math.floor(Math.random() * 3); // [3,5]
+      const result = await generateReadingHistoryWithAI({
+        agent: ownerAgent,
+        ownerProfile: ownerProfile ?? null,
+        desiredBookCount,
+      });
+      if (aid !== ownerAgentId) return; // 换角色了，丢弃
+      let bookCount = 0;
+      let noteCount = 0;
+      for (const { book, annotations } of result) {
+        const imported = await importBooksForAgent(
+          aid,
+          [{
+            key: '',
+            title: book.title,
+            authors: book.authors,
+            subjects: book.subjects,
+            description: book.description,
+          }],
+          { reason: 'init: reading history bootstrap', interests: book.subjects ?? [] },
+        );
+        const bookId = imported[0]?.id;
+        if (!bookId) continue;
+        bookCount += 1;
+        // 写序：有时间的按 occurredAt 升序；时间不可考（smudged）的统一排到最后。
+        const EPOCH = new Date(0).toISOString();
+        const sortKey = (a: typeof annotations[number]) =>
+          (a.dateSmudged || a.occurredAt === null) ? Number.POSITIVE_INFINITY : Date.parse(a.occurredAt);
+        const sorted = [...annotations].sort((a, b) => sortKey(a) - sortKey(b));
+        for (const a of sorted) {
+          const smudged = a.dateSmudged === true || a.occurredAt === null;
+          await appendAppEntry(aid, READING_NOTES_APP_ID, {
+            title: a.title || '未命名批注',
+            content: a.annotation,
+            source: 'ai_reading_init',
+            metadata: {
+              bookId,
+              noteType: 'reading_note',
+              annotationSource: 'ai',
+              // 时间不可考：storage 存 null + dateSmudged；UI 渲染「字迹模糊」短语。
+              occurredAt: smudged ? null : a.occurredAt,
+              ...(smudged ? { dateSmudged: true } : {}),
+              ...(a.mood ? { mood: a.mood } : {}),
+            },
+            // 已知时间回填到那天；不可考 → 哨兵 epoch，让 createdAt desc 排序把它压到底部。
+            createdAt: smudged ? EPOCH : (a.occurredAt ?? undefined),
+          });
+          noteCount += 1;
+        }
+      }
+      await saveHistoryState(aid, 'reading_notes', { initializedAt: new Date().toISOString() });
+      if (aid !== ownerAgentId) return;
+      setInitNotice(`已为 TA 铺好 ${bookCount} 本书、${noteCount} 条批注`);
+      await reload();
+    } catch (e) {
+      if (aid !== ownerAgentId) return;
+      setInitError(`初始化阅读笔记失败：${e instanceof Error ? e.message : String(e)}（下次打开会重试）`);
+    } finally {
+      if (aid === ownerAgentId) setInitBusy(false);
+    }
+  }, [ownerAgent, ownerAgentId, ownerProfile, reload]);
+
+  useEffect(() => {
+    if (!ownerAgent || !ownerAgentId) return;
+    if (loading) return;
+    if (initBusy) return;
+    if (initialBootstrapTriedRef.current === ownerAgentId) return;
+    // 已经有书 / 批注 / 待确认草稿 → 视为已初始化过（或心跳已垫草稿），跳过。
+    if (books.length > 0 || notes.length > 0 || pendingDrafts.length > 0) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
+    }
+    initialBootstrapTriedRef.current = ownerAgentId;
+    (async () => {
+      try {
+        const state = await loadHistoryState(ownerAgentId, 'reading_notes');
+        if (state.initializedAt) return;
+        // 二次确认（首挂载时 reload 可能还没跑完，外层计数不能当真）：直接落盘问一次。
+        // 也覆盖老用户——加这功能前已有书/批注但没 marker：只补 marker、不真跑生成。
+        const [freshBooks, freshNotes, freshDrafts] = await Promise.all([
+          listBooksForAgent(ownerAgentId),
+          listAppEntries(ownerAgentId, READING_NOTES_APP_ID),
+          listReadingNoteDrafts(ownerAgentId),
+        ]);
+        if (freshBooks.length > 0 || freshNotes.length > 0 || freshDrafts.length > 0) {
+          await saveHistoryState(ownerAgentId, 'reading_notes', {
+            initializedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        await runInitialBootstrap();
+      } catch (err) {
+        console.warn('[PhoneReadingNotesApp] init bootstrap failed:', err);
+      }
+    })();
+  }, [
+    ownerAgent,
+    ownerAgentId,
+    loading,
+    initBusy,
+    books.length,
+    notes.length,
+    pendingDrafts.length,
+    runInitialBootstrap,
+  ]);
 
   const selectedBook = useMemo(
     () => books.find((book) => book.id === selectedBookId) ?? null,
@@ -1073,8 +1258,14 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               {selectedNote.metadata.annotationSource === 'ai' ? ' · TA 批注' : ''}
             </span>
             <h2 className={styles.phoneReadingTitle}>{selectedNote.title}</h2>
-            <p className={styles.phoneReadingMeta}>
-              {formatDateTime(selectedNote.createdAt)}
+            <p
+              className={styles.phoneReadingMeta}
+              data-smudged={selectedNote.metadata.dateSmudged ? 'true' : undefined}
+              data-testid={selectedNote.metadata.dateSmudged ? 'phone-reading-note-smudged' : undefined}
+            >
+              {selectedNote.metadata.dateSmudged
+                ? smudgedDatePhrase(selectedNote.id)
+                : formatDateTime(selectedNote.metadata.occurredAt ?? selectedNote.createdAt)}
               {selectedNote.metadata.mood ? ` · 情绪：${selectedNote.metadata.mood}` : ''}
             </p>
             {selectedNote.metadata.quote ? (
@@ -1136,6 +1327,18 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               <h2 className={styles.phoneReadingTitle}>{displayName || ownerAgent?.name || 'TA'} 的阅读笔记</h2>
               <p className={styles.phoneReadingSafeNote}>本页只使用当前 agent 的本地书目和手动笔记。</p>
             </header>
+
+            {initBusy ? (
+              <p className={styles.phoneAppHint} data-testid="phone-reading-init-busy">
+                正在为 TA 初始化阅读笔记…（按设定铺几本读过的书和一些批注，可能要十几秒）
+              </p>
+            ) : null}
+            {initNotice ? (
+              <p className={styles.phoneAppHint} data-testid="phone-reading-init-notice">{initNotice}</p>
+            ) : null}
+            {initError ? (
+              <p className={styles.phoneAppHint} role="alert" data-testid="phone-reading-init-error">{initError}</p>
+            ) : null}
 
             {pendingDrafts.length > 0 ? (
               <section
@@ -1232,7 +1435,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
               </section>
             ) : null}
 
-            {books.length === 0 && !loading ? (
+            {books.length === 0 && !loading && !initBusy ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-reading-empty">还没有阅读书目。</p>
             ) : (
               <div className={styles.phoneReadingList}>
