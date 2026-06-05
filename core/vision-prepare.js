@@ -1,4 +1,4 @@
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 import { modelSupportsDirectImageInput } from "../shared/model-capabilities.js";
 import { prepareModelImageInputsForPrompt } from "./model-image-preprocess.js";
 import { requireVisionAuxiliaryEnabled } from "./vision-auxiliary-policy.js";

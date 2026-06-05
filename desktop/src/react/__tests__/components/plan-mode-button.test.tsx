@@ -41,7 +41,7 @@ describe('PlanModeButton', () => {
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/session-permission-mode', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ mode: 'auto', pendingNewSession: true }),
+        body: JSON.stringify({ mode: 'auto', pendingNewSession: true, persistDefault: true }),
       }));
     });
     expect(onChange).toHaveBeenCalledWith('auto');
@@ -65,6 +65,7 @@ describe('PlanModeButton', () => {
         body: JSON.stringify({
           mode: 'operate',
           pendingNewSession: false,
+          persistDefault: true,
           sessionPath: '/tmp/hana-session.jsonl',
         }),
       }));
@@ -97,6 +98,17 @@ describe('PlanModeButton', () => {
     expect(dropdown?.querySelector('svg[data-permission-mode="operate"]')).not.toBeNull();
     expect(dropdown?.querySelector('svg[data-permission-mode="ask"]')).not.toBeNull();
     expect(dropdown?.querySelector('svg[data-permission-mode="read_only"]')).not.toBeNull();
+  });
+
+  it('scales the read-only book icon visually without changing its layout slot', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/input/InputArea.module.css'),
+      'utf8',
+    );
+    const readOnlyIconBlock = css.match(/svg\[data-permission-mode="read_only"\]\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+
+    expect(readOnlyIconBlock).toMatch(/transform\s*:\s*scale\(0\.8\)/);
+    expect(readOnlyIconBlock).toMatch(/transform-origin\s*:\s*center/);
   });
 
   it('keeps ask neutral, trigger modes colored, and menu mode colors text-only', () => {

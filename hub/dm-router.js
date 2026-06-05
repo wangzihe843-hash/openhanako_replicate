@@ -22,7 +22,7 @@ import {
 import { runAgentPhoneSession } from "./agent-executor.js";
 import { buildXingyePeerRelationshipLore } from "../shared/xingye-peer-lore.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.js";
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 import {
   getAgentPhoneProjectionPath,
   readAgentPhoneProjection,

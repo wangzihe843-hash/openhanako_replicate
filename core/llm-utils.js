@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { callText } from "./llm-client.js";
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 import { normalizePlainDescription } from "../lib/text/internal-narration.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 

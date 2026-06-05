@@ -40,6 +40,10 @@ function makeScrollContainerRefWithMetrics(metrics: { scrollHeight: number; clie
   return { current: el };
 }
 
+beforeEach(() => {
+  window.t = ((key: string) => key) as typeof window.t;
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -81,7 +85,7 @@ describe('SubagentSessionPreview session binding', () => {
   it('sessionPath 未就绪时显示占位态，且不触发加载', () => {
     render(<SubagentSessionPreview taskId="task-a" sessionPath={null} streamStatus="running" scrollContainerRef={makeScrollContainerRef()} />);
 
-    expect(screen.getByText('正在连接 subagent session...')).toBeTruthy();
+    expect(screen.getByText('chat.subagentPreview.connecting')).toBeTruthy();
     expect(mockedLoadMessages).not.toHaveBeenCalled();
   });
 

@@ -4,20 +4,20 @@
  * Non-blocking video generation. Submits via adapter, returns card immediately.
  */
 import path from "node:path";
+import { t } from "../../../lib/i18n.js";
 
 export const name = "generate-video";
-export const description =
-  "根据文字描述生成视频。非阻塞：提交后立即返回，完成后自动显示。";
+export const description = t("toolDef.generateVideo.description");
 
 export const parameters = {
   type: "object",
   properties: {
-    prompt:   { type: "string", description: "视频描述（中英文均可）" },
-    image:    { type: "string", description: "参考图路径（图生视频）" },
-    duration: { type: "number", description: "视频时长 4-15 秒（默认 5）" },
-    ratio:    { type: "string", description: "长宽比：1:1, 16:9, 9:16, 4:3, 3:4, 21:9" },
-    model:    { type: "string", description: "模型版本：seedance2.0, seedance2.0fast（默认 seedance2.0）" },
-    provider: { type: "string", description: "指定 provider（可选）" },
+    prompt:   { type: "string", description: t("toolDef.generateVideo.promptDesc") },
+    image:    { type: "string", description: t("toolDef.generateVideo.imageDesc") },
+    duration: { type: "number", description: t("toolDef.generateVideo.durationDesc") },
+    ratio:    { type: "string", description: t("toolDef.generateVideo.ratioDesc") },
+    model:    { type: "string", description: t("toolDef.generateVideo.modelDesc") },
+    provider: { type: "string", description: t("toolDef.generateVideo.providerDesc") },
   },
   required: ["prompt"],
 };
@@ -25,7 +25,7 @@ export const parameters = {
 export async function execute(input, ctx) {
   const { registry, store, poller } = ctx._mediaGen || {};
   if (!registry || !store || !poller) {
-    return { content: [{ type: "text", text: "视频生成插件未初始化" }] };
+    return { content: [{ type: "text", text: t("toolDef.generateVideo.notInitialized") }] };
   }
 
   // Build adapter context
@@ -37,7 +37,7 @@ export async function execute(input, ctx) {
     ? registry.get(input.provider)
     : registry.getByType("video").at(-1) || null;
   if (!adapter) {
-    return { content: [{ type: "text", text: "没有可用的视频生成 provider" }] };
+    return { content: [{ type: "text", text: t("toolDef.generateVideo.noProvider") }] };
   }
 
   const batchId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -57,13 +57,13 @@ export async function execute(input, ctx) {
     result = await adapter.submit(params, submitCtx);
   } catch (err) {
     return {
-      content: [{ type: "text", text: `视频提交失败：${err?.message || "未知错误"}` }],
+      content: [{ type: "text", text: t("toolDef.generateVideo.submitFailed", { error: err?.message || t("plugin.imageGen.unknownError") }) }],
     };
   }
 
   if (!result?.taskId) {
     return {
-      content: [{ type: "text", text: "视频提交失败：未知错误" }],
+      content: [{ type: "text", text: t("toolDef.generateVideo.submitFailedUnknown") }],
     };
   }
 
@@ -113,7 +113,7 @@ export async function execute(input, ctx) {
   poller.add(result.taskId);
 
   return {
-    content: [{ type: "text", text: "已提交视频生成，完成后会自动显示在下方卡片中。" }],
+    content: [{ type: "text", text: t("toolDef.generateVideo.submitted") }],
     details: {
       mediaGeneration: {
         kind: "video",

@@ -72,6 +72,7 @@ export function getThinkingFormat(model) {
   const declared = getDeclaredThinkingFormat(model);
   if (declared) return declared;
   if (isDeepSeekModel(model)) return "deepseek";
+  if (zhipu.matches(model)) return "zhipu";
   return null;
 }
 
@@ -96,7 +97,7 @@ function stripIncompatibleThinking(payload, model) {
   // 没有 model 信息时保守保留（旧降级路径），避免误删 anthropic 调用。
   if (!model) return payload;
   const thinkingFormat = getThinkingFormat(model);
-  if (thinkingFormat === "anthropic" || thinkingFormat === "deepseek") return payload;
+  if (thinkingFormat === "anthropic" || thinkingFormat === "deepseek" || thinkingFormat === "zhipu") return payload;
   const { thinking, ...rest } = payload;
   return rest;
 }

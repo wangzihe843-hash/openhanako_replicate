@@ -156,7 +156,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   return (
     <nav
       className={navClassName}
-      aria-label="对话轮次导航"
+      aria-label={window.t?.('chat.timeline.navAriaLabel') || 'Turn navigation'}
       onBlur={(event) => {
         const nextFocus = event.relatedTarget;
         if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) return;
@@ -179,7 +179,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
                 type="button"
                 className={`${styles.timelineMarker}${selected ? ` ${styles.timelineMarkerActive}` : ''}`}
                 style={markerStyle}
-                aria-label={`跳转到 ${anchor.label}`}
+                aria-label={(window.t?.('chat.timeline.jumpTo') || 'Jump to {label}').replace('{label}', anchor.label)}
                 title={anchor.label}
                 onFocus={() => setFocusOpen(true)}
                 onMouseEnter={() => setCardHover(true)}

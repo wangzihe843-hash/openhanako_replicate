@@ -11,7 +11,7 @@ import { createDefaultSettings } from "./session-defaults.js";
 import { compactSessionWithCachePreservation } from "./session-compactor.js";
 import { repairOrphanToolResultEntriesInFile } from "./session-health.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.js";
-import { t, getLocale } from "../server/i18n.js";
+import { t, getLocale } from "../lib/i18n.js";
 import { atomicWriteSync, safeReadJSON } from "../shared/safe-fs.js";
 import { findModel } from "../shared/model-ref.js";
 import { teardownSessionResources } from "./session-teardown.js";

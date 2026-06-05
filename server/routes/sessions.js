@@ -6,7 +6,7 @@ import fs from "fs/promises";
 import path from "path";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { extractBlocks, resolveMediaGenerationBlocks } from "../block-extractors.js";
 import { buildDeferredResultInterludeBlock, resolveDeferredReceiverName } from "../deferred-result-interlude.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
@@ -887,13 +887,13 @@ export function createSessionsRoute(engine, hub = null) {
 
           if (run?.status === "pending" && !task) {
             b.streamStatus = "failed";
-            b.summary = "历史子会话运行状态不可恢复";
+            b.summary = t("session.subagentRunStateUnrecoverable");
             continue;
           }
 
           if (!b.streamKey && !run && !task) {
             b.streamStatus = "failed";
-            b.summary = "历史子会话链接不可恢复";
+            b.summary = t("session.subagentLinkUnrecoverable");
           }
         }
       }
@@ -1113,6 +1113,66 @@ export function createSessionsRoute(engine, hub = null) {
         planMode: engine.planMode,
         permissionMode: engine.permissionMode,
         accessMode: engine.accessMode,
+        thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.()),
+        memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
+      };
+      hub?.eventBus?.emit?.({
+        type: "session_created",
+        session: response,
+      }, newSessionPath);
+      return c.json(response);
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.post("/sessions/new-detached", async (c) => {
+    try {
+      const requestContext = createRequestContext(c, engine);
+      const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+        kind: "studio",
+        studioId: requestContext.studioId,
+      });
+      if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+      if (typeof engine.createDetachedSession !== "function") {
+        return c.json({ error: "detached session creation unavailable" }, 500);
+      }
+
+      const body = await safeJson(c);
+      const { cwd, memoryEnabled, agentId, permissionMode } = body;
+      const workspaceFolders = Array.isArray(body.workspaceFolders)
+        ? body.workspaceFolders.filter(p => typeof p === "string" && p.trim())
+        : [];
+      const memFlag = memoryEnabled !== false;
+
+      const result = await engine.createDetachedSession({
+        cwd: cwd || undefined,
+        memoryEnabled: memFlag,
+        agentId: typeof agentId === "string" && agentId.trim() ? agentId.trim() : null,
+        workspaceFolders,
+        visibleInSessionList: true,
+        permissionMode: permissionMode || null,
+      });
+      const newSessionPath = result.sessionPath;
+      const newAgentId = result.agentId;
+      engine.persistSessionMeta?.();
+
+      const resolvedPermissionMode = engine.getSessionPermissionMode?.(newSessionPath)
+        || permissionMode
+        || engine.permissionMode
+        || "ask";
+      const response = {
+        ok: true,
+        path: newSessionPath,
+        cwd: result.session?.sessionManager?.getCwd?.() || cwd || engine.cwd || null,
+        workspaceFolders: engine.getSessionWorkspaceFolders?.(newSessionPath) || workspaceFolders,
+        authorizedFolders: engine.getSessionAuthorizedFolders?.(newSessionPath) || [],
+        agentId: newAgentId,
+        agentName: engine.getAgent?.(newAgentId)?.agentName || newAgentId || engine.agentName,
+        currentSessionPath: engine.currentSessionPath || null,
+        planMode: resolvedPermissionMode === "read_only",
+        permissionMode: resolvedPermissionMode,
+        accessMode: resolvedPermissionMode === "read_only" ? "read_only" : "operate",
         thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.()),
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
       };

@@ -79,6 +79,7 @@ export function apply(payload, model, options) { ... }
 | `anthropic` | `thinking: { type, budget_tokens }` | Anthropic、Kimi Coding、MiniMax Anthropic API |
 | `qwen` | `enable_thinking: boolean` | DashScope / SiliconFlow / ModelScope 上的 Qwen-style 模型 |
 | `qwen-chat-template` | `chat_template_kwargs: { enable_thinking, preserve_thinking }` | MiMo OpenAI-compatible API, including Xiaomi Token Plan `/v1` endpoints |
+| `zhipu` | `thinking: { type, clear_thinking }` | Zhipu / BigModel GLM OpenAI-compatible API |
 | `deepseek` | DeepSeek 子模块统一转换 | DeepSeek V4 / reasoner |
 | `openrouter` | `reasoning: { effort }`，历史推理细节由 SDK 通过 `reasoning_details` 回放 | OpenRouter-hosted reasoning models, e.g. DeepSeek / MiMo via OpenRouter |
 

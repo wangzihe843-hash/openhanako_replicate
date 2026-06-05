@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
+import { getNativeSelectionAnchorRect } from '../../stores/selection-actions';
 import { computeFloatingInputPosition } from '../floating-input/position';
 import styles from './SelectionQuoteActionSurface.module.css';
 
 const DEFAULT_TOOLBAR_SIZE = { width: 92, height: 32 };
-const TOOLBAR_CROSS_AXIS_OFFSET = 20;
+const QUOTE_ACTION_GAP = 12;
+const TOOLBAR_CROSS_AXIS_OFFSET = 0;
 
 function getViewportSize() {
   if (typeof window === 'undefined') return { width: 0, height: 0 };
@@ -21,7 +23,7 @@ export function SelectionQuoteActionSurface() {
   const requestInputFocus = useStore(s => s.requestInputFocus);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState(() => getViewportSize());
-  const [scrollTick, setScrollTick] = useState(0);
+  const [, setScrollTick] = useState(0);
   const [toolbarSize, setToolbarSize] = useState(DEFAULT_TOOLBAR_SIZE);
 
   useEffect(() => {
@@ -70,21 +72,19 @@ export function SelectionQuoteActionSurface() {
     return () => observer.disconnect();
   }, [quoteCandidate]);
 
-  const position = useMemo(() => {
-    const liveAnchorRect = getLiveSelectionAnchorRect(quoteCandidate?.text, viewport);
-    if (liveAnchorRect === null) return null;
-    const anchorRect = liveAnchorRect ?? quoteCandidate?.anchorRect;
-    if (!anchorRect || viewport.width <= 0 || viewport.height <= 0) return null;
-    return computeFloatingInputPosition(
+  const liveAnchorRect = getLiveSelectionAnchorRect(quoteCandidate?.text, viewport);
+  const anchorRect = liveAnchorRect === null ? null : liveAnchorRect ?? quoteCandidate?.anchorRect;
+  const position = anchorRect && viewport.width > 0 && viewport.height > 0
+    ? computeFloatingInputPosition(
       anchorRect,
       viewport,
       toolbarSize,
-      8,
+      QUOTE_ACTION_GAP,
       16,
       'top',
       TOOLBAR_CROSS_AXIS_OFFSET,
-    );
-  }, [quoteCandidate?.anchorRect, quoteCandidate?.text, toolbarSize, viewport, scrollTick]);
+    )
+    : null;
 
   const handleAddQuote = useCallback(() => {
     if (!quoteCandidate) return;
@@ -135,10 +135,8 @@ function getLiveSelectionAnchorRect(candidateText: string | undefined, viewport:
   const selectionText = sel?.toString().trim();
   if (!sel || sel.rangeCount === 0 || !selectionText) return undefined;
   if (selectionText !== candidateText && !selectionText.startsWith(candidateText)) return undefined;
-  const range = sel.getRangeAt(0);
-  if (typeof range.getBoundingClientRect !== 'function') return undefined;
-  const rect = range.getBoundingClientRect();
-  if (rect.width <= 0 && rect.height <= 0) return undefined;
+  const rect = getNativeSelectionAnchorRect(sel);
+  if (!rect) return undefined;
   if (rect.bottom < 0 || rect.top > viewport.height || rect.right < 0 || rect.left > viewport.width) {
     return null;
   }

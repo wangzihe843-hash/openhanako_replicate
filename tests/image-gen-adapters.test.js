@@ -100,6 +100,27 @@ describe("volcengine adapter", () => {
     expect(body.output_format).toBe("png");
   });
 
+  it("maps generic 1k resolution to the nearest Seedream size tier", async () => {
+    const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
+
+    const fakeB64 = Buffer.from("img").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    const ctx = makeBusCtx("key", "https://test.com");
+    await volcengineImageAdapter.submit({
+      prompt: "a cat",
+      model: "doubao-seedream-4-0-250828",
+      ratio: "1:1",
+      resolution: "1k",
+    }, ctx);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.size).toBe("2048x2048");
+  });
+
   it("applies Seedream 3-only providerDefaults without leaking them to newer models", async () => {
     const { volcengineImageAdapter } = await import("../plugins/image-gen/adapters/volcengine.js");
 
@@ -248,6 +269,29 @@ describe("openai adapter", () => {
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.model).toBe("gpt-image-1.5");
+  });
+
+  it("maps generic 4k resolution to gpt-image-2 size", async () => {
+    const { openaiImageAdapter } = await import("../plugins/image-gen/adapters/openai.js");
+
+    const fakeB64 = Buffer.from("img").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: fakeB64 }] }),
+    });
+
+    const ctx = makeBusCtx("key", "https://api.openai.com/v1", "openai");
+    await openaiImageAdapter.submit({
+      prompt: "a notebook on a quiet desk",
+      model: "gpt-image-2",
+      ratio: "16:9",
+      resolution: "4K",
+    }, ctx);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.size).toBe("3840x2160");
+    expect(body).not.toHaveProperty("resolution");
+    expect(body).not.toHaveProperty("ratio");
   });
 
   it("uses JSON images references for OpenAI URL edits", async () => {
@@ -457,7 +501,7 @@ describe("openai codex oauth adapter", () => {
     }, ctx)).rejects.toThrow(/account/i);
   });
 
-  it("rejects generic resolution values instead of passing them to the Codex image tool", async () => {
+  it("maps generic 4k resolution to the nearest Codex image tool size", async () => {
     const { openaiCodexImageAdapter } = await import("../plugins/image-gen/adapters/openai-codex.js");
 
     const fakeB64 = Buffer.from("fake-codex-image").toString("base64");
@@ -481,14 +525,22 @@ describe("openai codex oauth adapter", () => {
       return { error: "not_found" };
     });
 
-    await expect(openaiCodexImageAdapter.submit({
+    await openaiCodexImageAdapter.submit({
       prompt: "a quiet notebook",
-      resolution: "2K",
-    }, ctx)).rejects.toThrow(/Codex.*resolution/i);
-    expect(mockFetch).not.toHaveBeenCalled();
+      ratio: "16:9",
+      resolution: "4K",
+    }, ctx);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.tools[0]).toMatchObject({
+      type: "image_generation",
+      size: "3840x2160",
+    });
+    expect(body.tools[0]).not.toHaveProperty("resolution");
+    expect(body.tools[0]).not.toHaveProperty("ratio");
   });
 
-  it("rejects unsupported Codex image sizes instead of raw passthrough", async () => {
+  it("accepts generic Codex size tiers but still rejects impossible pixel sizes", async () => {
     const { openaiCodexImageAdapter } = await import("../plugins/image-gen/adapters/openai-codex.js");
 
     const fakeB64 = Buffer.from("fake-codex-image").toString("base64");
@@ -512,9 +564,16 @@ describe("openai codex oauth adapter", () => {
       return { error: "not_found" };
     });
 
-    await expect(openaiCodexImageAdapter.submit({
+    await openaiCodexImageAdapter.submit({
       prompt: "a quiet notebook",
       size: "2K",
+    }, ctx);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).tools[0].size).toBe("2048x2048");
+
+    mockFetch.mockReset();
+    await expect(openaiCodexImageAdapter.submit({
+      prompt: "a quiet notebook",
+      size: "4096x4096",
     }, ctx)).rejects.toThrow(/Codex.*size/i);
     expect(mockFetch).not.toHaveBeenCalled();
   });
@@ -554,6 +613,18 @@ describe("minimax adapter", () => {
       response_format: "base64",
     });
     expect(result.files).toHaveLength(1);
+  });
+
+  it("rejects MiniMax image resolution instead of silently dropping it", async () => {
+    const { minimaxImageAdapter } = await import("../plugins/image-gen/adapters/minimax.js");
+
+    const ctx = makeBusCtx("minimax-key", "https://api.minimaxi.com/v1", "minimax");
+    await expect(minimaxImageAdapter.submit({
+      prompt: "a quiet library",
+      resolution: "4k",
+      providerId: "minimax",
+    }, ctx)).rejects.toThrow(/MiniMax.*resolution/i);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -698,13 +769,15 @@ describe("dashscope image adapter", () => {
     const submitted = await dashscopeImageAdapter.submit({
       prompt: "a flower shop",
       modelId: "wan2.7-image-pro",
-      size: "2K",
+      resolution: "4k",
       providerId: "dashscope",
     }, ctx);
 
     expect(submitted).toEqual({ taskId: "dash-task-1" });
     expect(mockFetch.mock.calls[0][0]).toBe("https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation");
     expect(mockFetch.mock.calls[0][1].headers["X-DashScope-Async"]).toBe("enable");
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.parameters.size).toBe("4K");
 
     const queried = await dashscopeImageAdapter.query("dash-task-1", ctx);
     expect(mockFetch.mock.calls[1][0]).toBe("https://dashscope.aliyuncs.com/api/v1/tasks/dash-task-1");

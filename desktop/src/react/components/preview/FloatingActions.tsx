@@ -313,34 +313,34 @@ export function FloatingActions({
                         disabled={coverBusy || !agentGenerateEnabled}
                       >
                         <span className={styles.coverMenuIcon}><GenerateCoverIcon /></span>
-                        <span>Agent 生成</span>
+                        <span>{t('cover.agentGenerate.label')}</span>
                       </button>
                     </span>
                   )}
                 </Tooltip>
                 <button type="button" onClick={handlePresetCover}>
                   <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
-                  <span>小花美术馆</span>
+                  <span>{t('cover.gallery.title')}</span>
                 </button>
                 <button type="button" onClick={handleUploadCover}>
                   <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
-                  <span>自己上传</span>
+                  <span>{t('cover.gallery.upload')}</span>
                 </button>
               </div>
             )}
           </div>
         )}
         {coverGalleryOpen && (
-          <div className={styles.coverGalleryCard} role="dialog" aria-label="小花美术馆">
+          <div className={styles.coverGalleryCard} role="dialog" aria-label={t('cover.gallery.title')}>
             <div className={styles.coverGalleryHeader}>
               <div>
-                <div className={styles.coverGalleryTitle}>小花美术馆</div>
+                <div className={styles.coverGalleryTitle}>{t('cover.gallery.title')}</div>
               </div>
               <button
                 type="button"
                 className={styles.coverGalleryClose}
                 onClick={() => setCoverGalleryOpen(false)}
-                aria-label="关闭小花美术馆"
+                aria-label={t('cover.gallery.close')}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

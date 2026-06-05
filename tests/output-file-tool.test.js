@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStageFilesTool } from "../lib/tools/output-file-tool.js";
-import { loadLocale } from "../server/i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 
 describe("stage_files tool", () => {
   let tmpDir = null;

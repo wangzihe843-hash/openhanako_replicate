@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { hanaUrl } from '../api';
+import { t } from '../helpers';
 import { displayInitial } from '../../utils/grapheme';
 import styles from '../Settings.module.css';
 
@@ -66,20 +67,20 @@ export function CharacterCardPreviewOverlay({
   const skillNames = plan.skills.bundles.flatMap(bundle => bundle.skills.map(skill => skill.name));
   const visibleSkillNames = skillNames.slice(0, 3);
   const hasMoreSkills = skillNames.length > visibleSkillNames.length;
-  const memoryLabel = mode === 'export' ? '导出记忆' : '导入记忆';
-  const memoryUnavailableLabel = mode === 'export' ? '无可导出记忆' : '无可导入记忆';
-  const confirmLabel = processing ? (mode === 'export' ? '正在导出' : '正在导入') : '确定';
-  const descriptionText = plan.agent.description || '这个角色卡没有写入 Description。';
-  const ishikiText = plan.prompts?.ishiki || '未提供 Ishiki';
+  const memoryLabel = mode === 'export' ? t('settings.characterCard.exportMemory') : t('settings.characterCard.importMemory');
+  const memoryUnavailableLabel = mode === 'export' ? t('settings.characterCard.noExportableMemory') : t('settings.characterCard.noImportableMemory');
+  const confirmLabel = processing ? (mode === 'export' ? t('settings.characterCard.exporting') : t('settings.characterCard.importing')) : t('settings.characterCard.confirm');
+  const descriptionText = plan.agent.description || t('settings.characterCard.noDescription');
+  const ishikiText = plan.prompts?.ishiki || t('settings.characterCard.noIshiki');
   const yuanKey = (plan.agent.yuan || 'hanako').toLowerCase();
   const memoryInputId = `character-card-memory-${plan.token || plan.agentId || 'preview'}`;
   const memoryAvailable = plan.memory.available;
-  const memoryPreviewText = plan.memory.preview || '无记忆';
+  const memoryPreviewText = plan.memory.preview || t('settings.characterCard.noMemory');
   const memoryDetailBlocks = [
-    { key: 'facts', title: '重要事实', value: plan.memory.compiled?.facts || '' },
-    { key: 'today', title: '今天', value: plan.memory.compiled?.today || '' },
-    { key: 'week', title: '本周早些时候', value: plan.memory.compiled?.week || '' },
-    { key: 'longterm', title: '长期情况', value: plan.memory.compiled?.longterm || '' },
+    { key: 'facts', title: t('settings.characterCard.factsSectionTitle'), value: plan.memory.compiled?.facts || '' },
+    { key: 'today', title: t('settings.characterCard.todaySectionTitle'), value: plan.memory.compiled?.today || '' },
+    { key: 'week', title: t('settings.characterCard.weekSectionTitle'), value: plan.memory.compiled?.week || '' },
+    { key: 'longterm', title: t('settings.characterCard.longtermSectionTitle'), value: plan.memory.compiled?.longterm || '' },
   ];
 
   const assetUrl = (key: string) => (
@@ -117,7 +118,7 @@ export function CharacterCardPreviewOverlay({
           <div className={styles['character-card-detail-grid']}>
             <section>
               <h4>Identity</h4>
-              <p>{plan.prompts?.identity || plan.agent.identitySummary || '未提供 Identity'}</p>
+              <p>{plan.prompts?.identity || plan.agent.identitySummary || t('settings.characterCard.noIdentity')}</p>
             </section>
             <section>
               <h4>Ishiki</h4>
@@ -129,12 +130,12 @@ export function CharacterCardPreviewOverlay({
             </section>
             <section>
               <h4>Memory</h4>
-              <p>{memoryAvailable ? `${plan.memory.count} 个记忆项目，可选${mode === 'export' ? '导出' : '导入'}` : memoryUnavailableLabel}</p>
+              <p>{memoryAvailable ? t('settings.characterCard.memoryCount', { count: String(plan.memory.count), action: mode === 'export' ? t('settings.characterCard.memoryCountExport') : t('settings.characterCard.memoryCountImport') }) : memoryUnavailableLabel}</p>
               <div className={styles['character-card-memory-detail-list']}>
                 {memoryDetailBlocks.map(block => (
                   <div className={styles['character-card-memory-detail-block']} key={block.key}>
                     <strong>{block.title}</strong>
-                    <pre>{block.value || '无'}</pre>
+                    <pre>{block.value || t('settings.characterCard.emptySection')}</pre>
                   </div>
                 ))}
               </div>
@@ -149,7 +150,7 @@ export function CharacterCardPreviewOverlay({
                     {bundle.skills.map(skill => <li key={skill.name}>{skill.name}</li>)}
                   </ul>
                 </div>
-              )) : <p>未包含 Skill</p>}
+              )) : <p>{t('settings.characterCard.noSkills')}</p>}
             </section>
           </div>
         </section>
@@ -175,7 +176,7 @@ export function CharacterCardPreviewOverlay({
                   <button
                     className={styles['character-card-detail-trigger']}
                     type="button"
-                    aria-label="查看角色卡详情"
+                    aria-label={t('settings.characterCard.viewDetail')}
                     onClick={() => setDetailOpen(true)}
                     disabled={processing}
                   >
@@ -224,7 +225,7 @@ export function CharacterCardPreviewOverlay({
                           {visibleSkillNames.map(name => <span key={name}>{name}</span>)}
                           {hasMoreSkills ? <span>...</span> : null}
                         </span>
-                      ) : '无'}
+                      ) : t('settings.characterCard.emptySection')}
                     </span>
                   </div>
                 </div>
@@ -249,7 +250,7 @@ export function CharacterCardPreviewOverlay({
               onClick={onCancel}
               disabled={processing}
             >
-              取消
+              {t('settings.characterCard.cancel')}
             </button>
           </div>
         </section>

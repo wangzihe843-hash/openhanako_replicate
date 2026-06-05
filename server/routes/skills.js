@@ -18,7 +18,7 @@ import {
   installSkillPackageFromPath,
   sanitizeSkillName,
 } from "../../lib/skills/skill-package-installer.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { resolveAgent } from "../utils/resolve-agent.js";
 import { validateId, agentExists } from "../utils/validation.js";
 import { registerSessionFileFromRequest } from "../../lib/session-files/session-file-response.js";

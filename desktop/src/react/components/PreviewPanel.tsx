@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useStore } from '../stores';
 import { selectPreviewItems, selectActiveTabId, selectMarkdownPreviewIds } from '../stores/preview-slice';
 import { setMarkdownPreviewActive, upsertPreviewItem } from '../stores/preview-actions';
@@ -18,7 +19,7 @@ import { PreviewEditor, type PreviewEditorStats } from './PreviewEditor';
 import { PreviewRenderer } from './preview/PreviewRenderer';
 import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
-import { clearSelection, scheduleCaptureSelection } from '../stores/selection-actions';
+import { clearSelection, getSelectionCommitAnchorRect, scheduleCaptureSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
 import { saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
 import { watchFileChanges } from '../services/file-change-events';
@@ -138,9 +139,9 @@ export function PreviewPanel() {
   }, []);
 
   // DOM 模式选区捕获（非编辑模式下 mouseup 时检测选中文本）
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     if (!previewItem || editable) return;
-    scheduleCaptureSelection(previewItem);
+    scheduleCaptureSelection(previewItem, undefined, getSelectionCommitAnchorRect(event.nativeEvent));
   }, [previewItem, editable]);
 
   // 切换 tab 时清除选区

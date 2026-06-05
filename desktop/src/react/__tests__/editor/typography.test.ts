@@ -136,7 +136,10 @@ describe('editor typography settings', () => {
 
     expect(theme).toMatch(/padding:\s*'calc\(var\(--space-xl\) \+ var\(--space-lg\)\) 0 var\(--space-md\)'/);
     expect(theme).toMatch(/'&\.cm-markdown-has-top-cover \.cm-scroller':\s*\{[\s\S]*paddingTop:\s*'0'/);
-    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*margin:\s*'0 auto var\(--space-lg\)'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*margin:\s*'0 auto'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*paddingBottom:\s*'var\(--space-lg\)'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*boxSizing:\s*'content-box'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover-resize':\s*\{[\s\S]*bottom:\s*'var\(--space-lg\)'/);
   });
 
   it('uses the same typography variables in markdown editor and preview rendering', () => {

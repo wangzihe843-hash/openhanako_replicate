@@ -265,7 +265,7 @@ if (fs.existsSync(skillsSrc)) {
   console.log("[build-server]   skills2set/");
 }
 
-// i18n locales（server/i18n.js 通过 fromRoot("desktop","src","locales") 引用）
+// i18n locales（lib/i18n.js 通过 fromRoot("desktop","src","locales") 引用）
 const localesSrc = path.join(ROOT, "desktop", "src", "locales");
 fs.mkdirSync(path.join(outDir, "desktop", "src", "locales"), { recursive: true });
 fs.cpSync(localesSrc, path.join(outDir, "desktop", "src", "locales"), { recursive: true });

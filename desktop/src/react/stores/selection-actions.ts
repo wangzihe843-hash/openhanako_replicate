@@ -84,20 +84,21 @@ export function initQuotedSelectionLifecycle(target: Document = document): () =>
  * 捕获 previewItem 中的文本选中。
  * CM 模式传入 cmView，DOM 模式不传。
  */
-export function captureSelection(previewItem: PreviewItem, cmView?: EditorView): void {
+export function captureSelection(previewItem: PreviewItem, cmView?: EditorView, fallbackAnchorRect?: FloatingAnchorRect): void {
   if (cmView) {
     captureCMSelection(previewItem, cmView);
   } else {
-    captureDOMSelection(previewItem);
+    captureDOMSelection(previewItem, fallbackAnchorRect);
   }
 }
 
-export function scheduleCaptureSelection(previewItem: PreviewItem, cmView?: EditorView): void {
-  captureSelection(previewItem, cmView);
+export function scheduleCaptureSelection(previewItem: PreviewItem, cmView?: EditorView, fallbackAnchorRect?: FloatingAnchorRect): void {
+  captureSelection(previewItem, cmView, fallbackAnchorRect);
 }
 
 function captureCMSelection(previewItem: PreviewItem, view: EditorView): void {
-  const { from, to } = view.state.selection.main;
+  const selection = view.state.selection.main;
+  const { from, to } = selection;
   if (from === to) {
     clearSelection(previewClearScope(previewItem));
     return;
@@ -124,12 +125,12 @@ function captureCMSelection(previewItem: PreviewItem, view: EditorView): void {
     lineEnd,
     selectionAnchorKind: 'codemirror',
     charCount: text.length,
-    anchorRect: getCMSelectionAnchorRect(view, textStart, textEnd) ?? getElementAnchorRect((view as EditorView & { dom?: Element }).dom ?? null),
+    anchorRect: getCMSelectionAnchorRect(view, textStart, textEnd, selection.head <= selection.anchor) ?? getElementAnchorRect((view as EditorView & { dom?: Element }).dom ?? null),
     updatedAt: Date.now(),
   });
 }
 
-function captureDOMSelection(previewItem: PreviewItem): void {
+function captureDOMSelection(previewItem: PreviewItem, fallbackAnchorRect?: FloatingAnchorRect): void {
   const sel = window.getSelection();
   const text = sel?.toString().trim();
   if (!text) {
@@ -146,7 +147,7 @@ function captureDOMSelection(previewItem: PreviewItem): void {
     selectionAnchorKind: 'native',
     charCount: text.length,
     anchorRect: sel && sel.rangeCount > 0
-      ? getRangeAnchorRect(sel.getRangeAt(0)) ?? getElementAnchorRect(nodeElement(sel.anchorNode))
+      ? getNativeSelectionAnchorRect(sel, fallbackAnchorRect) ?? getElementAnchorRect(nodeElement(sel.anchorNode))
       : undefined,
     updatedAt: Date.now(),
   });
@@ -184,7 +185,7 @@ export function captureChatSelection(sessionPath: string, fallbackAnchorRect?: F
     sourceRole: message.role,
     selectionAnchorKind: 'native',
     charCount: text.length,
-    anchorRect: getRangeAnchorRect(sel.getRangeAt(0)) ?? getElementAnchorRect(anchorMessage) ?? fallbackAnchorRect,
+    anchorRect: getNativeSelectionAnchorRect(sel, fallbackAnchorRect) ?? getElementAnchorRect(anchorMessage),
     updatedAt: Date.now(),
   };
   useStore.getState().setQuoteCandidate(quotedSelection);
@@ -289,6 +290,10 @@ function pointAnchorRect(left: number, top: number): FloatingAnchorRect | undefi
   return { left, right: left + 1, top, bottom: top + 1, width: 1, height: 1 };
 }
 
+export function getSelectionCommitAnchorRect(event: Event): FloatingAnchorRect | undefined {
+  return eventAnchorRect(event);
+}
+
 function getElementAnchorRect(element: Element | null): FloatingAnchorRect | undefined {
   if (!element || typeof element.getBoundingClientRect !== 'function') return undefined;
   const rect = element.getBoundingClientRect();
@@ -312,10 +317,15 @@ function unionRects(rects: Array<DOMRect | ClientRect>): FloatingAnchorRect | un
   return { left, right, top, bottom, width: right - left, height: bottom - top };
 }
 
-export function getRangeAnchorRect(range: Range): FloatingAnchorRect | undefined {
+function getRangeClientRects(range: Range): Array<DOMRect | ClientRect> {
   const clientRects = typeof range.getClientRects === 'function'
     ? Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0)
     : [];
+  return clientRects;
+}
+
+export function getRangeAnchorRect(range: Range): FloatingAnchorRect | undefined {
+  const clientRects = getRangeClientRects(range);
   if (clientRects.length > 0) return unionRects(clientRects);
 
   if (typeof range.getBoundingClientRect !== 'function') return undefined;
@@ -324,16 +334,68 @@ export function getRangeAnchorRect(range: Range): FloatingAnchorRect | undefined
   return toPlainRect(rect);
 }
 
-function getCMSelectionAnchorRect(view: EditorView, from: number, to: number): FloatingAnchorRect | undefined {
+export function getNativeSelectionAnchorRect(sel: Selection, fallbackAnchorRect?: FloatingAnchorRect): FloatingAnchorRect | undefined {
+  if (sel.rangeCount === 0) return fallbackAnchorRect;
+  const range = sel.getRangeAt(0);
+  return getSelectionFocusAnchorRect(sel, range)
+    ?? fallbackAnchorRect
+    ?? getRangeAnchorRect(range);
+}
+
+function getSelectionFocusAnchorRect(sel: Selection, range: Range): FloatingAnchorRect | undefined {
+  const collapsedFocusRect = getCollapsedFocusAnchorRect(sel);
+  if (collapsedFocusRect) return collapsedFocusRect;
+
+  const clientRects = getRangeClientRects(range);
+  if (clientRects.length === 0) return undefined;
+
+  const backward = isSelectionBackward(sel);
+  const endpointRect = backward ? clientRects[0] : clientRects[clientRects.length - 1];
+  const endpointX = backward ? endpointRect.left : endpointRect.right;
+  return pointAnchorRect(endpointX, endpointRect.top);
+}
+
+function getCollapsedFocusAnchorRect(sel: Selection): FloatingAnchorRect | undefined {
+  if (!sel.focusNode) return undefined;
+  const ownerDocument = sel.focusNode.ownerDocument ?? document;
+  const range = ownerDocument.createRange();
+  try {
+    range.setStart(sel.focusNode, sel.focusOffset);
+    range.collapse(true);
+  } catch {
+    return undefined;
+  }
+
+  const rect = getRangeClientRects(range)[0];
+  if (!rect) return undefined;
+  return pointAnchorRect(rect.left, rect.top);
+}
+
+function isSelectionBackward(sel: Selection): boolean {
+  const { anchorNode, focusNode } = sel;
+  if (!anchorNode || !focusNode) return false;
+  if (anchorNode === focusNode) return sel.anchorOffset > sel.focusOffset;
+
+  const position = anchorNode.compareDocumentPosition(focusNode);
+  if (position & Node.DOCUMENT_POSITION_PRECEDING) return true;
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING) return false;
+  return false;
+}
+
+function getCMSelectionAnchorRect(view: EditorView, from: number, to: number, focusAtStart: boolean): FloatingAnchorRect | undefined {
   const withCoords = view as EditorView & {
     coordsAtPos?: (pos: number, side?: -1 | 1) => DOMRect | null;
   };
   if (typeof withCoords.coordsAtPos !== 'function') return undefined;
 
-  const start = withCoords.coordsAtPos(from, 1);
-  const end = withCoords.coordsAtPos(to, -1) || withCoords.coordsAtPos(Math.max(from, to - 1), 1);
-  const rects = [start, end].filter((rect): rect is DOMRect => !!rect);
-  return unionRects(rects);
+  const primary = focusAtStart
+    ? withCoords.coordsAtPos(from, 1)
+    : withCoords.coordsAtPos(to, -1);
+  const fallback = withCoords.coordsAtPos(Math.max(from, to - 1), 1)
+    ?? withCoords.coordsAtPos(from, 1);
+  const rect = primary ?? fallback;
+  if (!rect) return undefined;
+  return pointAnchorRect(focusAtStart ? rect.left : rect.right, rect.top);
 }
 
 export function clearSelection(scope?: QuoteClearScope): void {

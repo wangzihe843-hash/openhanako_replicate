@@ -167,7 +167,7 @@ describe('AgentTab settings agent selection', () => {
     });
 
     await act(async () => {
-      fireEvent.click(await screen.findByText('确定'));
+      fireEvent.click(await screen.findByText('settings.characterCard.confirm'));
       await Promise.resolve();
     });
 

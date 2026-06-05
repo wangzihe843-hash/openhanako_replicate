@@ -108,7 +108,7 @@ export function MeTab() {
         </div>
 
         <SettingsRow
-          label="名字"
+          label={t('settings.me.nameLabel')}
           hint={t('settings.me.userNameHint')}
           layout="stacked"
           control={

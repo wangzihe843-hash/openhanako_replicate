@@ -57,7 +57,7 @@ describe('SelectionQuoteActionSurface', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
-  it('renders a labeled SVG quote action shifted slightly to the right of the selection center', () => {
+  it('renders a labeled SVG quote action above the selection anchor with breathing room', () => {
     useStore.getState().setQuoteCandidate({
       text: '第一段引用',
       sourceTitle: 'Assistant message',
@@ -76,8 +76,8 @@ describe('SelectionQuoteActionSurface', () => {
     expect(icon?.getAttribute('fill')).toBe('currentColor');
     expect(icon?.hasAttribute('stroke')).toBe(false);
     expect(button.textContent).toContain('selection.quoteToChat');
-    expect(surface.style.left).toBe('114px');
-    expect(surface.style.top).toBe('80px');
+    expect(surface.style.left).toBe('94px');
+    expect(surface.style.top).toBe('76px');
   });
 
   it('follows the live native selection rect when the transcript scrolls', () => {
@@ -107,14 +107,14 @@ describe('SelectionQuoteActionSurface', () => {
     render(<SelectionQuoteActionSurface />);
 
     const surface = screen.getByRole('button', { name: 'selection.quoteToChat' }).closest('[data-selection-ignore="true"]') as HTMLElement;
-    expect(surface.style.top).toBe('80px');
+    expect(surface.style.top).toBe('76px');
 
     liveRect = { left: 100, right: 180, top: 70, bottom: 90, width: 80, height: 20 };
     act(() => {
       document.dispatchEvent(new Event('scroll'));
     });
 
-    expect(surface.style.top).toBe('30px');
+    expect(surface.style.top).toBe('26px');
 
     getSelection.mockRestore();
     requestAnimationFrame.mockRestore();

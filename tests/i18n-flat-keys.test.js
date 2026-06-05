@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadLocale, t } from "../server/i18n.js";
+import { loadLocale, t } from "../lib/i18n.js";
 
 describe("server i18n flat dotted keys", () => {
   it("resolves exact flat dotted locale keys", () => {

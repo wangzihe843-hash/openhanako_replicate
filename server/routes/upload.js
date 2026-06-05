@@ -17,7 +17,7 @@ import path from "path";
 import crypto from "crypto";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { isSensitivePath } from "../utils/path-security.js";
 import {
   MAX_CHAT_IMAGE_BASE64_CHARS,

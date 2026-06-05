@@ -30,7 +30,7 @@ describe('SkillBundleTree', () => {
     expect(screen.getByText('Writing Bundle')).toBeTruthy();
     expect(screen.queryByText('writer')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '展开 Bundle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.expandBundleAriaLabel' }));
 
     expect(screen.getByText('writer')).toBeTruthy();
   });

@@ -5,6 +5,7 @@ import {
   normalizeImageInput,
   saveBase64Images,
 } from "./common.js";
+import { t } from "../../../lib/i18n.js";
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/api/v1";
 
@@ -21,7 +22,7 @@ async function getCredentials(ctx, params = {}) {
   const providerId = params.credentialProviderId || params.providerId || "dashscope";
   const creds = await ctx.bus.request("provider:credentials", { providerId });
   if (creds.error || !creds.apiKey) {
-    throw new Error(`Provider "${providerId}" 未配置 API Key。请在设置 → Providers 中配置。`);
+    throw new Error(t("plugin.imageGen.providerNoApiKey", { providerId }));
   }
   return creds;
 }
@@ -96,10 +97,19 @@ function modelFamily(modelId) {
   return "wan";
 }
 
+function normalizeDashScopeSize(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const tier = raw.toLowerCase().match(/^([124])\s*k$/);
+  if (tier) return `${tier[1]}K`;
+  return raw;
+}
+
 function generationParameters(params, family) {
+  const size = normalizeDashScopeSize(params.size || params.resolution);
   const parameters = {
     n: 1,
-    ...(params.size || params.resolution ? { size: params.size || params.resolution } : {}),
+    ...(size ? { size } : {}),
   };
   if (family === "wan") {
     if (params.aspect_ratio || params.aspectRatio || params.ratio) {

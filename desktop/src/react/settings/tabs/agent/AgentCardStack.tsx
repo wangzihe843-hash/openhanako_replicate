@@ -333,7 +333,7 @@ export function AgentCardStack({
             onClick={() => onExport(selectedAgent.id)}
             disabled={!!exportingAgentId}
           >
-            {isExportingSelected ? '正在生成预览' : '导出助手'}
+            {isExportingSelected ? t('settings.agent.generatingPreview') : t('settings.agent.exportAgent')}
           </button>
           {canDeleteSelected && (
             <button

@@ -81,7 +81,7 @@ export function PluginTabOverflow({ tabs, currentTab, onSelect, onPin, onContext
               {onPin && (
                 <button
                   className={s.pinBtn}
-                  title="固定到标签栏"
+                  title={t('plugin.tab.pinToBar')}
                   onClick={(e) => { e.stopPropagation(); onPin(tab.id); setOpen(false); }}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

@@ -8,6 +8,7 @@
  */
 
 import path from "path";
+import { t } from "../lib/i18n.js";
 import { materializeExecutorIdentity } from "../lib/subagent-executor-metadata.js";
 
 export const BLOCK_EXTRACTORS = {
@@ -181,16 +182,16 @@ function buildComputerAppApprovalBlock(confirmation) {
     kind: "computer_app_approval",
     surface: "input",
     status: confirmation.status || "pending",
-    title: "允许 Hana 使用电脑",
-    body: "Hana 想控制这个应用来继续当前任务。",
+    title: t("approval.computerApp.title"),
+    body: t("approval.computerApp.body"),
     subject: {
       label: appName,
       detail: `${approval.providerId} · ${approval.appId}`,
     },
     severity: "elevated",
     actions: {
-      confirmLabel: "同意",
-      rejectLabel: "拒绝",
+      confirmLabel: t("approval.confirm"),
+      rejectLabel: t("approval.reject"),
     },
     payload: { approval },
   };
@@ -285,7 +286,7 @@ function mediaGenerationReplacementBlocks(block, result) {
     const fileBlocks = resultSessionFileBlocks(result.result, block.taskId, block.afterIndex);
     return fileBlocks.length ? fileBlocks : [mediaGenerationFallbackBlock(block, {
       status: "failed",
-      reason: "生成结果没有可显示文件",
+      reason: t("deferred.mediaNoDisplayableFiles"),
     })];
   }
   if (result.status === "failed" || result.status === "aborted") {

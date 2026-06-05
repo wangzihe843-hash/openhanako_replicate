@@ -3,7 +3,7 @@
  */
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { modelRefEquals, parseModelRef } from "../../shared/model-ref.js";
 import { lookupKnown } from "../../shared/known-models.js";
 import {

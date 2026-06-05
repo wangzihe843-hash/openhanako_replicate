@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExperimentsTab } from '../ExperimentsTab';
 import { useSettingsStore } from '../../store';
 
-const hanaFetchMock = vi.fn(async (url: string) => {
+const hanaFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (url === '/api/preferences/computer-use') {
     return new Response(JSON.stringify({
       selectedProviderId: 'macos:cua',
@@ -17,11 +17,40 @@ const hanaFetchMock = vi.fn(async (url: string) => {
       },
     }));
   }
+  if (url === '/api/experiments/session.compaction_mode' && init?.method === 'PATCH') {
+    const body = JSON.parse(String(init.body || '{}'));
+    return new Response(JSON.stringify({ ok: true, value: body.value }));
+  }
+  if (url === '/api/experiments') {
+    return new Response(JSON.stringify({
+      experiments: [
+        {
+          id: 'session.compaction_mode',
+          titleKey: 'settings.experiments.compaction.title',
+          descriptionKey: 'settings.experiments.compaction.description',
+          owner: 'session',
+          value: 'auto',
+          status: 'beta',
+          risk: 'low',
+          restartPolicy: 'immediate',
+          valueSchema: {
+            type: 'enum',
+            presentation: { type: 'select' },
+            options: [
+              { value: 'auto', labelKey: 'settings.experiments.compaction.auto' },
+              { value: 'cache_preserving', labelKey: 'settings.experiments.compaction.cachePreserving' },
+              { value: 'pi_compatible', labelKey: 'settings.experiments.compaction.piCompatible' },
+            ],
+          },
+        },
+      ],
+    }));
+  }
   return new Response(JSON.stringify({ experiments: [] }));
 });
 
 vi.mock('../../api', () => ({
-  hanaFetch: (...args: [string]) => hanaFetchMock(...args),
+  hanaFetch: (...args: [string, RequestInit?]) => hanaFetchMock(...args),
 }));
 
 describe('ExperimentsTab', () => {
@@ -52,6 +81,31 @@ describe('ExperimentsTab', () => {
       .find((sectionBody) => sectionBody.textContent?.includes('settings.experiments.empty'));
     expect(body?.textContent).toContain('settings.experiments.empty');
     expect(body?.textContent).not.toContain('settings.experiments.cacheSnapshot.description');
+  });
+
+  it('renders the three-mode compaction selector in experiments', async () => {
+    render(React.createElement(ExperimentsTab));
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.experiments.compactionTitle')).toBeTruthy();
+    });
+
+    expect(screen.getByText('settings.experiments.compaction.title')).toBeTruthy();
+    expect(screen.getByText('settings.experiments.compaction.description')).toBeTruthy();
+    expect(screen.getByTitle('settings.experiments.compaction.auto')).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle('settings.experiments.compaction.auto'));
+    fireEvent.click(screen.getByRole('option', { name: 'settings.experiments.compaction.piCompatible' }));
+
+    await waitFor(() => {
+      expect(hanaFetchMock).toHaveBeenCalledWith(
+        '/api/experiments/session.compaction_mode',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ value: 'pi_compatible' }),
+        }),
+      );
+    });
   });
 
   it('hides Computer Use on Linux preview', () => {

@@ -7,7 +7,7 @@
  */
 import { createModuleLogger } from "../lib/debug-log.js";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.js";
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import { resolveDefaultWorkspacePath } from "../shared/default-workspace.js";
 import {
   AUTO_SEARCH_PROVIDER,

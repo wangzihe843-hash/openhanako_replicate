@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PreferencesManager } from "../core/preferences-manager.js";
 import {
   CACHE_SNAPSHOT_EXPERIMENT_ID,
+  COMPACTION_MODE_EXPERIMENT_ID,
   getExperimentDefinitions,
   getResolvedExperimentValue,
   setExperimentValue,
@@ -37,6 +38,27 @@ describe("experiment registry", () => {
     expect(entry.valueSchema.options.map((opt) => opt.value)).toEqual(["off", "shadow", "write"]);
   });
 
+  it("defines compaction mode as a three-option select defaulting to auto", () => {
+    const defs = getExperimentDefinitions();
+    const entry = defs.find((def) => def.id === COMPACTION_MODE_EXPERIMENT_ID);
+
+    expect(entry).toMatchObject({
+      id: COMPACTION_MODE_EXPERIMENT_ID,
+      owner: "session",
+      scope: "global",
+      defaultValue: "auto",
+      valueSchema: {
+        type: "enum",
+        presentation: { type: "select" },
+      },
+    });
+    expect(entry.valueSchema.options.map((opt) => opt.value)).toEqual([
+      "auto",
+      "cache_preserving",
+      "pi_compatible",
+    ]);
+  });
+
   it("rejects unknown experiment ids without writing preferences", () => {
     const { prefs } = makePrefs();
 
@@ -51,6 +73,11 @@ describe("experiment registry", () => {
     expect(setExperimentValue(prefs, CACHE_SNAPSHOT_EXPERIMENT_ID, "shadow")).toBe("shadow");
     expect(getResolvedExperimentValue(prefs, CACHE_SNAPSHOT_EXPERIMENT_ID)).toBe("shadow");
     expect(prefs.getPreferences().experiments[CACHE_SNAPSHOT_EXPERIMENT_ID]).toBe("shadow");
+
+    expect(getResolvedExperimentValue(prefs, COMPACTION_MODE_EXPERIMENT_ID)).toBe("auto");
+    expect(setExperimentValue(prefs, COMPACTION_MODE_EXPERIMENT_ID, "pi_compatible")).toBe("pi_compatible");
+    expect(getResolvedExperimentValue(prefs, COMPACTION_MODE_EXPERIMENT_ID)).toBe("pi_compatible");
+    expect(prefs.getPreferences().experiments[COMPACTION_MODE_EXPERIMENT_ID]).toBe("pi_compatible");
   });
 
   it("rejects invalid enum values", () => {

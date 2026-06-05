@@ -38,7 +38,10 @@ function normalizedPreviewSource(message: ChatMessage): string {
   const firstAttachment = message.attachments?.find(attachment => attachment.name?.trim());
   if (firstAttachment?.name) return firstAttachment.name.trim();
 
-  return message.role === 'user' ? '用户消息' : '助手消息';
+  const t = typeof window !== 'undefined' ? window.t : undefined;
+  return message.role === 'user'
+    ? (t?.('chat.timeline.fallbackUser') || 'User message')
+    : (t?.('chat.timeline.fallbackAssistant') || 'Assistant message');
 }
 
 export function formatTimelinePromptPreview(text: string, maxChars = 10): string {

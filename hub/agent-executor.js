@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.js";
 import { debugLog } from "../lib/debug-log.js";
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import { createDefaultSettings } from "../core/session-defaults.js";
 import { SESSION_PERMISSION_MODES } from "../core/session-permission-mode.js";
 import { teardownSessionResources } from "../core/session-teardown.js";

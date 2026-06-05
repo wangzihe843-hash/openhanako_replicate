@@ -43,6 +43,9 @@ const KNOWN_MODELS = {
     "deepseek-chat": { name: "DeepSeek Chat", context: 128000, maxOutput: 8192 },
     "deepseek-v4-pro": { name: "DeepSeek V4 Pro", context: 1000000, maxOutput: 384000, reasoning: true, xhigh: true },
   },
+  zhipu: {
+    "glm-4.7-flash": { name: "GLM-4.7 Flash", context: 200000, maxOutput: 128000, reasoning: true },
+  },
   openai: {
     "gpt-4o": {
       name: "GPT-4o",
@@ -1255,6 +1258,8 @@ describe("syncModels", () => {
       supportsDeveloperRole: false,
       supportsStore: false,
       supportsReasoningEffort: false,
+      thinkingFormat: "zhipu",
+      reasoningProfile: "zhipu-openai",
     });
   });
 

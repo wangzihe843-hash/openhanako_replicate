@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "js-yaml";
 import { atomicWriteSync } from "../../../shared/safe-fs.js";
+import { t } from "../../../lib/i18n.js";
 
-export const MARKDOWN_ATTACHMENT_DIR_NAME = "文本附件";
+export const MARKDOWN_ATTACHMENT_DIR_NAME = t("plugin.beautify.attachmentDirName");
 
 const FRONT_MATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SUPPORTED_IMAGE_EXTS = new Set([

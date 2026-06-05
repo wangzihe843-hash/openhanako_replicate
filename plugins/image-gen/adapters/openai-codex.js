@@ -2,6 +2,12 @@
 import fs from "fs";
 import path from "path";
 import { saveImage } from "../lib/download.js";
+import {
+  IMAGE_RESOLUTION_TIERS,
+  OPENAI_IMAGE_RATIOS,
+  resolveOpenAiImageSize,
+} from "../lib/resolution-tiers.js";
+import { t } from "../../../lib/i18n.js";
 
 const PROVIDER_ID = "openai-codex-oauth";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -13,17 +19,6 @@ const FORMAT_TO_MIME = {
   jpeg: "image/jpeg",
   webp: "image/webp",
 };
-
-const RATIO_TO_SIZE = {
-  "1:1": "1024x1024",
-  "4:3": "1536x1024",
-  "3:4": "1024x1536",
-  "16:9": "1536x1024",
-  "9:16": "1024x1536",
-  "3:2": "1536x1024",
-  "2:3": "1024x1536",
-};
-const SUPPORTED_CODEX_SIZES = new Set(Object.values(RATIO_TO_SIZE));
 
 function resolveCodexResponsesUrl(baseUrl) {
   const raw = (baseUrl || DEFAULT_CODEX_BASE_URL).replace(/\/+$/, "");
@@ -154,38 +149,17 @@ function resolveResponsesModel(params, providerDefaults) {
   return DEFAULT_RESPONSES_MODEL;
 }
 
-function normalizeCodexRatio(value) {
-  if (!value) return null;
-  const ratio = String(value).trim();
-  const size = RATIO_TO_SIZE[ratio];
-  if (size) return { ratio, size };
-  throw new Error(`Codex image ratio "${ratio}" is unsupported`);
-}
-
-function normalizeCodexSize(value, source = "size") {
-  if (!value) return null;
-  const size = String(value).trim();
-  if (SUPPORTED_CODEX_SIZES.has(size)) return size;
-  throw new Error(`Codex image ${source} "${size}" is unsupported`);
-}
-
 function resolveCodexToolSize(params, providerDefaults) {
-  if (params.resolution) {
-    throw new Error(`Codex image resolution "${params.resolution}" is unsupported`);
-  }
-  if (params.size) return normalizeCodexSize(params.size, "size");
-
-  const effectiveRatio = params.aspect_ratio || params.aspectRatio || params.ratio || providerDefaults?.aspect_ratio;
-  const ratio = normalizeCodexRatio(effectiveRatio);
-  if (ratio) return ratio.size;
-
-  return normalizeCodexSize(providerDefaults?.size, "default size");
+  return resolveOpenAiImageSize(params, providerDefaults, {
+    sourceName: "Codex image",
+    flexible: true,
+  });
 }
 
 async function getCredentials(ctx) {
   const creds = await ctx.bus.request("provider:credentials", { providerId: PROVIDER_ID });
   if (creds.error || !creds.apiKey) {
-    throw new Error(`Provider "${PROVIDER_ID}" 未登录。请先在设置 → Providers 登录 OpenAI Codex。`);
+    throw new Error(t("plugin.imageGen.providerNotLoggedIn", { providerId: PROVIDER_ID }));
   }
   const accountId = creds.accountId || extractAccountIdFromToken(creds.apiKey);
   if (!accountId) {
@@ -200,8 +174,8 @@ export const openaiCodexImageAdapter = {
   name: "OpenAI Codex (OAuth)",
   types: ["image"],
   capabilities: {
-    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"],
-    resolutions: [],
+    ratios: [...OPENAI_IMAGE_RATIOS],
+    resolutions: [...IMAGE_RESOLUTION_TIERS],
   },
 
   async checkAuth(ctx) {

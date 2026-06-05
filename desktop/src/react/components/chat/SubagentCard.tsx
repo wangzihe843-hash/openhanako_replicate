@@ -37,11 +37,12 @@ interface SubagentCardProps {
 
 export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardProps) {
   const [status, setStatus] = useState(block.streamStatus);
+  const t = window.t ?? ((k: string) => k);
   const [display, setDisplay] = useState<string>(() => {
-    if (block.streamStatus === 'done') return block.summary || '已完成';
-    if (block.streamStatus === 'failed') return block.summary || '失败';
-    if (block.streamStatus === 'aborted') return block.summary || '已终止';
-    return '准备中...';
+    if (block.streamStatus === 'done') return block.summary || t('subagent.status.done');
+    if (block.streamStatus === 'failed') return block.summary || t('subagent.status.failed');
+    if (block.streamStatus === 'aborted') return block.summary || t('subagent.status.aborted');
+    return t('subagent.status.preparing');
   });
   const textRef = useRef('');
 
@@ -59,9 +60,9 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   // Sync block prop changes (from block_update patch)
   useEffect(() => {
     setStatus(block.streamStatus);
-    if (block.streamStatus === 'done') setDisplay(block.summary || '已完成');
-    if (block.streamStatus === 'failed') setDisplay(block.summary || '失败');
-    if (block.streamStatus === 'aborted') setDisplay(block.summary || '已终止');
+    if (block.streamStatus === 'done') setDisplay(block.summary || t('subagent.status.done'));
+    if (block.streamStatus === 'failed') setDisplay(block.summary || t('subagent.status.failed'));
+    if (block.streamStatus === 'aborted') setDisplay(block.summary || t('subagent.status.aborted'));
   }, [block.streamStatus, block.summary]);
 
   // Subscribe to live events
@@ -74,14 +75,14 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
         if (textRef.current.length > 100) textRef.current = textRef.current.slice(-100);
         setDisplay(textRef.current);
       } else if (event.type === 'thinking_start') {
-        setDisplay('正在思考...');
+        setDisplay(t('subagent.status.thinking'));
       } else if (event.type === 'thinking_end') {
         if (textRef.current) setDisplay(textRef.current);
       } else if (event.type === 'tool_start') {
-        setDisplay(`正在调用 ${event.name}...`);
+        setDisplay(t('subagent.status.callingTool').replace('{name}', event.name));
       } else if (event.type === 'tool_end') {
         if (textRef.current) setDisplay(textRef.current);
-        else setDisplay('执行中...');
+        else setDisplay(t('subagent.status.executing'));
       }
     });
 
@@ -104,7 +105,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
       const res = await fetch(hanaUrl(`/api/task/${block.taskId}/abort`), { method: 'POST' });
       if (res.ok) {
         setStatus('aborted');
-        setDisplay(window.t?.('subagentAborted') || '已终止');
+        setDisplay(t('subagentAborted'));
       }
     } catch { /* user-initiated abort; silent on network failure */ }
   }, [block.taskId]);
@@ -112,14 +113,14 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   const headerDisplay = status === 'running' && display ? display : block.taskTitle;
   const displayLabel = block.label || block.reuseInstance || null;
   const statusLabel = isInterrupted
-    ? '已中断'
+    ? t('subagent.status.interrupted')
     : status === 'aborted'
-      ? '已终止'
+      ? t('subagent.status.aborted')
       : status === 'done'
-        ? '已完成'
+        ? t('subagent.status.done')
         : status === 'failed'
-          ? '失败'
-          : '已派出';
+          ? t('subagent.status.failed')
+          : t('subagent.status.dispatched');
   const statusTone: ChatResourceCardStatusTone = status === 'done'
     ? 'success'
     : status === 'failed'
@@ -151,7 +152,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
             event.stopPropagation();
             void handleAbort();
           }}
-          title={window.t?.('subagentAbort') || '终止'}
+          title={t('subagentAbort')}
         >
           ✕
         </button>

@@ -28,6 +28,7 @@ export const CONFIG_SCHEMA = {
   file_backup:                  { scope: 'global', setter: 'setFileBackup',    getter: 'getFileBackup' },
   update_channel:               { scope: 'global', setter: 'setUpdateChannel',  getter: 'getUpdateChannel', defaultValue: 'stable' },
   auto_check_updates:           { scope: 'global', setter: 'setAutoCheckUpdates', getter: 'getAutoCheckUpdates', defaultValue: true },
+  keep_awake:                   { scope: 'global', setter: 'setKeepAwake', getter: 'getKeepAwake', defaultValue: false },
   thinking_level:               { scope: 'global', setter: 'setThinkingLevel',  getter: 'getThinkingLevel', defaultValue: 'medium' },
   editor:                       { scope: 'global', setter: 'setEditor',         getter: 'getEditor' },
   'capabilities.learn_skills':  { scope: 'global', setter: 'setLearnSkills',    getter: 'getLearnSkills', prefsPath: 'learn_skills' },

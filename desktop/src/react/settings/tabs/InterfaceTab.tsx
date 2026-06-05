@@ -348,11 +348,11 @@ export function InterfaceTab() {
           control={
             <SelectWidget
               options={[
-                { value: 'zh-CN', label: '简体中文' },
-                { value: 'zh-TW', label: '繁體中文' },
-                { value: 'ja', label: '日本語' },
-                { value: 'ko', label: '한국어' },
-                { value: 'en', label: 'English' },
+                { value: 'zh-CN', label: t('settings.locale.zhCN') },
+                { value: 'zh-TW', label: t('settings.locale.zhTW') },
+                { value: 'ja', label: t('settings.locale.ja') },
+                { value: 'ko', label: t('settings.locale.ko') },
+                { value: 'en', label: t('settings.locale.en') },
               ]}
               value={localeVal}
               onChange={async (val) => {

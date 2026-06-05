@@ -325,21 +325,23 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
     ? [...items, { type: 'message' as const, data: streamMessage }]
     : items;
 
+  const t = window.t ?? ((k: string) => k);
+
   if (!sessionPath) {
     if (streamStatus !== 'running') {
-      return <div>{summary || (streamStatus === 'failed' ? '历史子会话链接不可恢复' : '暂无可打开的 subagent session')}</div>;
+      return <div>{summary || (streamStatus === 'failed' ? t('chat.subagentPreview.historyUnrecoverable') : t('chat.subagentPreview.noSession'))}</div>;
     }
-    return <div>正在连接 subagent session...</div>;
+    return <div>{t('chat.subagentPreview.connecting')}</div>;
   }
 
   return (
     <div ref={contentRef} className={styles.subagentPreviewTranscript}>
       {entry?.loading && mergedItems.length === 0 ? (
-        <div>正在加载会话...</div>
+        <div>{t('chat.subagentPreview.loadingSession')}</div>
       ) : streamStatus === 'running' && mergedItems.length === 0 ? (
-        <div>正在等待会话内容...</div>
+        <div>{t('chat.subagentPreview.waitingContent')}</div>
       ) : mergedItems.length === 0 ? (
-        <div>暂无会话内容</div>
+        <div>{t('chat.subagentPreview.noContent')}</div>
       ) : (
         <ChatTranscript
           items={mergedItems}

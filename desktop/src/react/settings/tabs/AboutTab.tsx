@@ -8,7 +8,6 @@ import { SettingsRow } from '../components/SettingsRow';
 import { ExpandableRow } from '../components/ExpandableRow';
 import { AutoUpdateStatus } from '../../components/AutoUpdateStatus';
 import { useAutoUpdateState } from '../../hooks/use-auto-update-state';
-import type { AutoLaunchStatus } from '../../types';
 import appIconUrl from '../../../icon.png';
 import styles from '../Settings.module.css';
 
@@ -16,8 +15,6 @@ export function AboutTab() {
   const hana = window.hana;
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
   const [version, setVersion] = useState('');
-  const [autoLaunch, setAutoLaunch] = useState<AutoLaunchStatus | null>(null);
-  const [autoLaunchSaving, setAutoLaunchSaving] = useState(false);
   const autoUpdate = useAutoUpdateState();
   const isBeta = settingsConfig?.update_channel === 'beta';
   // 默认 true：老用户（preferences 里没写这个字段）保持原有"自动检查"行为
@@ -25,20 +22,6 @@ export function AboutTab() {
 
   useEffect(() => {
     hana?.getAppVersion?.().then((v: string) => setVersion(v || ''));
-  }, [hana]);
-
-  useEffect(() => {
-    let alive = true;
-    hana?.getAutoLaunchStatus?.()
-      .then((status) => {
-        if (alive && status) setAutoLaunch(status);
-      })
-      .catch(() => {
-        if (alive) setAutoLaunch(null);
-      });
-    return () => {
-      alive = false;
-    };
   }, [hana]);
 
   const handleCheck = useCallback(() => {
@@ -61,20 +44,6 @@ export function AboutTab() {
     await autoSaveConfig({ auto_check_updates: on }, { silent: true });
     await loadSettingsConfig();
   }, []);
-
-  const handleAutoLaunchToggle = useCallback(async (on: boolean) => {
-    if (!hana?.setAutoLaunchEnabled) return;
-    const previous = autoLaunch;
-    setAutoLaunchSaving(true);
-    try {
-      const next = await hana.setAutoLaunchEnabled(on);
-      setAutoLaunch(next || previous);
-    } catch {
-      setAutoLaunch(previous);
-    } finally {
-      setAutoLaunchSaving(false);
-    }
-  }, [autoLaunch, hana]);
 
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="about">
@@ -126,19 +95,6 @@ export function AboutTab() {
             </a>
           }
         />
-        {autoLaunch?.supported && (
-          <SettingsRow
-            label={t('settings.about.launchAtLogin')}
-            control={
-              <Toggle
-                on={autoLaunch.openAtLogin}
-                onChange={handleAutoLaunchToggle}
-                label={t('settings.about.launchAtLogin')}
-                disabled={autoLaunchSaving}
-              />
-            }
-          />
-        )}
         <SettingsRow
           label={t('settings.about.autoCheckUpdates')}
           control={<Toggle on={autoCheck} onChange={handleAutoCheckToggle} />}

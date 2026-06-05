@@ -72,7 +72,7 @@ describe('FloatingActions cover gallery', () => {
 
     await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText('cover.make'));
-    fireEvent.click(screen.getByText('小花美术馆'));
+    fireEvent.click(screen.getByText('cover.gallery.title'));
 
     const firstItem = COVER_GALLERY_ITEMS[0];
     const itemButton = screen.getByRole('button', { name: firstItem.title });
@@ -89,9 +89,9 @@ describe('FloatingActions cover gallery', () => {
 
     await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText('cover.make'));
-    fireEvent.click(screen.getByText('小花美术馆'));
+    fireEvent.click(screen.getByText('cover.gallery.title'));
 
-    expect(screen.getByRole('dialog', { name: '小花美术馆' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'cover.gallery.title' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: COVER_GALLERY_PRESETS[0].title }));
 
     await waitFor(() => {
@@ -141,9 +141,9 @@ describe('FloatingActions cover gallery', () => {
     await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText('cover.make'));
 
-    expect(screen.getByRole('button', { name: 'Agent 生成' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '小花美术馆' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: '自己上传' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'cover.agentGenerate.label' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'cover.gallery.title' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'cover.gallery.upload' })).toBeEnabled();
   });
 
   it('refreshes markdown preview toggle i18n after locale sync', async () => {
@@ -194,7 +194,7 @@ describe('FloatingActions cover gallery', () => {
 
     await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText('cover.make'));
-    const generateButton = screen.getByRole('button', { name: 'Agent 生成' });
+    const generateButton = screen.getByRole('button', { name: 'cover.agentGenerate.label' });
     fireEvent.mouseEnter(generateButton.parentElement as HTMLElement);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('cover.agentGenerate.defaultModelMissing');
     fireEvent.click(generateButton);
@@ -210,7 +210,7 @@ describe('FloatingActions cover gallery', () => {
 
     await waitFor(() => expect(screen.getByLabelText('cover.make')).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText('cover.make'));
-    fireEvent.click(screen.getByText('自己上传'));
+    fireEvent.click(screen.getByText('cover.gallery.upload'));
 
     await waitFor(() => {
       expect(mocks.hanaFetch).toHaveBeenCalledWith(

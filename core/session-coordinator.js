@@ -20,7 +20,7 @@ import { teardownSessionResources } from "./session-teardown.js";
 import { evaluateSessionHealth, repairOrphanToolResultEntriesInFile } from "./session-health.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
-import { t, getLocale } from "../server/i18n.js";
+import { t, getLocale } from "../lib/i18n.js";
 import {
   DEFAULT_SESSION_PERMISSION_MODE,
   SESSION_PERMISSION_MODES,
@@ -488,7 +488,7 @@ export class SessionCoordinator {
     this._metaCache = new Map();   // metaPath → { data, ts }
     this._sessionListProjectionCache = deps.sessionListProjectionCache || new SessionListProjectionCache();
     this._pendingPermissionMode = null;
-    this._runtimePermissionModeDefault = DEFAULT_SESSION_PERMISSION_MODE;
+    this._runtimePermissionModeDefault = null;
     this._metaWriteQueue = Promise.resolve();
     this._prePromptAbortControllers = new Map();
   }
@@ -1103,6 +1103,45 @@ export class SessionCoordinator {
     }
 
     return { session, sessionPath: sessionPath || mapKey, agentId: creatingAgentId };
+  }
+
+  async createDetachedSession({
+    sessionMgr = null,
+    cwd = undefined,
+    memoryEnabled = true,
+    model = null,
+    agent = null,
+    agentId = null,
+    preserveAgentMemoryState = false,
+    workspaceFolders = [],
+    authorizedFolders = [],
+    visibleInSessionList = true,
+    permissionMode = null,
+  } = {}) {
+    const prevFocus = this._session;
+    const prevCurrentSessionPath = this._currentSessionPath;
+    const prevSessionStarted = this._sessionStarted;
+    const prevPendingPermissionMode = this._pendingPermissionMode;
+
+    if (permissionMode !== null && permissionMode !== undefined) {
+      this._pendingPermissionMode = normalizeSessionPermissionMode(permissionMode);
+    }
+
+    try {
+      return await this.createSession(sessionMgr, cwd, memoryEnabled, model, {
+        agent,
+        agentId,
+        preserveAgentMemoryState,
+        workspaceFolders,
+        authorizedFolders,
+        visibleInSessionList,
+      });
+    } finally {
+      this._session = prevFocus;
+      this._currentSessionPath = prevCurrentSessionPath;
+      this._sessionStarted = prevSessionStarted;
+      this._pendingPermissionMode = prevPendingPermissionMode;
+    }
   }
 
   async continueDeletedAgentSession(sourceSessionPath) {
@@ -1964,12 +2003,31 @@ export class SessionCoordinator {
     return isReadOnlyPermissionMode(this.getPermissionMode());
   }
 
-  _getDefaultPermissionMode() {
-    return normalizeSessionPermissionMode(this._runtimePermissionModeDefault);
+  _readStoredPermissionModeDefault() {
+    const prefs = this._d.getPrefs?.();
+    if (typeof prefs?.getSessionPermissionModeDefault !== "function") {
+      return DEFAULT_SESSION_PERMISSION_MODE;
+    }
+    return normalizeSessionPermissionMode(prefs.getSessionPermissionModeDefault());
   }
 
-  _setDefaultPermissionMode(mode) {
-    this._runtimePermissionModeDefault = normalizeSessionPermissionMode(mode);
+  _getDefaultPermissionMode() {
+    return normalizeSessionPermissionMode(
+      this._runtimePermissionModeDefault ?? this._readStoredPermissionModeDefault(),
+    );
+  }
+
+  _setDefaultPermissionMode(mode, { persist = true } = {}) {
+    let normalized = normalizeSessionPermissionMode(mode);
+    this._runtimePermissionModeDefault = normalized;
+    if (!persist) return normalized;
+
+    const prefs = this._d.getPrefs?.();
+    if (typeof prefs?.setSessionPermissionModeDefault === "function") {
+      normalized = normalizeSessionPermissionMode(prefs.setSessionPermissionModeDefault(normalized));
+      this._runtimePermissionModeDefault = normalized;
+    }
+    return normalized;
   }
 
   getPermissionModeDefault() {
@@ -2064,7 +2122,7 @@ export class SessionCoordinator {
     return this._applyPermissionModeToEntry(sp, entry, nextMode);
   }
 
-  setSessionPermissionMode(sessionPath, mode) {
+  setSessionPermissionMode(sessionPath, mode, { persistDefault = false } = {}) {
     const nextMode = normalizeSessionPermissionMode(mode);
     if (!sessionPath) {
       return {
@@ -2076,14 +2134,24 @@ export class SessionCoordinator {
     const entry = this._sessions.get(sessionPath);
     if (!entry) {
       const meta = this._hibernatedSessionMeta.get(sessionPath);
-      if (meta) return this._applyPermissionModeToEntry(sessionPath, meta, nextMode);
+      if (meta) {
+        const result = this._applyPermissionModeToEntry(sessionPath, meta, nextMode);
+        if (result.ok && persistDefault === true) {
+          this._setDefaultPermissionMode(nextMode);
+        }
+        return result;
+      }
       return {
         ok: false,
         error: "session not found",
         mode: this.getPermissionMode(sessionPath),
       };
     }
-    return this._applyPermissionModeToEntry(sessionPath, entry, nextMode);
+    const result = this._applyPermissionModeToEntry(sessionPath, entry, nextMode);
+    if (result.ok && persistDefault === true) {
+      this._setDefaultPermissionMode(nextMode);
+    }
+    return result;
   }
 
   setPermissionMode(mode) {

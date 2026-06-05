@@ -221,8 +221,11 @@ export function SkillsTab() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const skipped = Array.isArray(data.warnings) ? data.warnings.length : 0;
-      const suffix = skipped > 0 ? `，跳过 ${skipped} 个缺失 Skill` : '';
-      showToast(`已导出 ${data.fileName || bundle.name}${suffix}`, 'success');
+      const fileName = data.fileName || bundle.name;
+      const msg = skipped > 0
+        ? t('settings.skills.exportedWithSkipped', { fileName, count: String(skipped) })
+        : t('settings.skills.exported', { fileName });
+      showToast(msg, 'success');
       if (data.filePath) {
         window.platform?.showInFinder?.(data.filePath);
       }
@@ -586,25 +589,25 @@ export function SkillsTab() {
             aria-modal="true"
             aria-label={
               bundleDialog.type === 'create'
-                ? '新建 Bundle'
+                ? t('settings.skills.bundleDialog.createTitle')
                 : bundleDialog.type === 'rename'
-                  ? '重命名 Bundle'
-                  : '打散 Bundle'
+                  ? t('settings.skills.bundleDialog.renameTitle')
+                  : t('settings.skills.bundleDialog.dissolveTitle')
             }
             onSubmit={submitBundleDialog}
           >
             <div className={styles['skill-bundle-dialog-header']}>
               <h3>
                 {bundleDialog.type === 'create'
-                  ? '新建 Bundle'
+                  ? t('settings.skills.bundleDialog.createTitle')
                   : bundleDialog.type === 'rename'
-                    ? '重命名 Bundle'
-                    : '打散 Bundle'}
+                    ? t('settings.skills.bundleDialog.renameTitle')
+                    : t('settings.skills.bundleDialog.dissolveTitle')}
               </h3>
               <button
                 type="button"
-                title="取消"
-                aria-label="取消"
+                title={t('settings.skills.bundleDialog.cancel')}
+                aria-label={t('settings.skills.bundleDialog.closeAriaLabel')}
                 onClick={() => setBundleDialog(null)}
               >
                 ×
@@ -612,11 +615,11 @@ export function SkillsTab() {
             </div>
             {bundleDialog.type === 'delete' ? (
               <p className={styles['skill-bundle-dialog-text']}>
-                打散 {bundleDialog.bundle.name}？Skill 会保留在公共库里，并显示为散装 Skill。
+                {t('settings.skills.bundleDialog.dissolveConfirm', { name: bundleDialog.bundle.name })}
               </p>
             ) : (
               <label className={styles['skill-bundle-dialog-field']}>
-                <span>Bundle 名字</span>
+                <span>{t('settings.skills.bundleDialog.bundleNameLabel')}</span>
                 <input
                   value={bundleDialog.name}
                   autoFocus
@@ -629,14 +632,14 @@ export function SkillsTab() {
             )}
             <div className={styles['skill-bundle-dialog-actions']}>
               <button type="button" onClick={() => setBundleDialog(null)}>
-                取消
+                {t('settings.skills.bundleDialog.cancelBtn')}
               </button>
               <button type="submit" className={styles['skill-bundle-dialog-primary']}>
                 {bundleDialog.type === 'create'
-                  ? '创建'
+                  ? t('settings.skills.bundleDialog.createBtn')
                   : bundleDialog.type === 'rename'
-                    ? '保存'
-                    : '打散'}
+                    ? t('settings.skills.bundleDialog.saveBtn')
+                    : t('settings.skills.bundleDialog.dissolveBtn')}
               </button>
             </div>
           </form>

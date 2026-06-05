@@ -12,7 +12,7 @@ import { debugLog } from "../../lib/debug-log.js";
 import { parseSessionKey, collectKnownUsers, KNOWN_PLATFORMS } from "../../lib/bridge/session-key.js";
 import { isBridgeOwner, resolveBridgeOwnerUserId } from "../../lib/bridge/owner-policy.js";
 import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../lib/bridge/media-roots.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { resolveAgent, resolveAgentStrict } from "../utils/resolve-agent.js";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.js";
 import {

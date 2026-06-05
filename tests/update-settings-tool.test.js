@@ -4,7 +4,7 @@
  * 覆盖：apply 签名、toggle boolean 转换、agent null guard
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { loadLocale } from "../server/i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 
 // ── Mock 工厂 ──
 

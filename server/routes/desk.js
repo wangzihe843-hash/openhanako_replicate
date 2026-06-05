@@ -20,7 +20,7 @@ import { resolveCoverGalleryPresetImagePath } from "../../plugins/beautify/lib/c
 import { buildCoverStyleGuideForAgent } from "../../plugins/beautify/lib/cover-style-guide.js";
 import { createSubmitContext, validateImageModelRef } from "../../plugins/image-gen/lib/image-task-runner.js";
 import { emitAppEvent } from "../app-events.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { realPath, isSensitivePath } from "../utils/path-security.js";
 import { readAuthPrincipal } from "../http/capability-guard.js";
 import { isLocalOwnerPrincipal } from "../http/route-security.js";

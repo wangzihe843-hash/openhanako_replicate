@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../server/i18n.js", () => ({
+vi.mock("../lib/i18n.js", () => ({
   getLocale: () => "zh-CN",
   t: (key) => key,
 }));

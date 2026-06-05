@@ -39,6 +39,8 @@ import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 import type { PreviewItem } from '../../types';
 
+declare function t(key: string, vars?: Record<string, string | number>): string;
+
 // ── LegacyMediaFallback ──
 // image / svg 旧类型 previewItem 的隔离渲染组件。
 // currentSessionPath 订阅收窄到此组件，不影响 html/markdown/code/csv 等主流路径。
@@ -348,9 +350,9 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
           style={{ left: `${menu.x}px`, top: `${menu.y}px` }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <button type="button" onClick={saveImage}>保存图片</button>
-          <button type="button" onClick={regenerateWithPrompt}>自定义提示词生成图片</button>
-          <button type="button" className="markdown-cover-menu-danger" onClick={deleteCover}>删除封面</button>
+          <button type="button" onClick={saveImage}>{t('preview.cover.saveImage')}</button>
+          <button type="button" onClick={regenerateWithPrompt}>{t('preview.cover.regenerateWithPrompt')}</button>
+          <button type="button" className="markdown-cover-menu-danger" onClick={deleteCover}>{t('preview.cover.deleteCover')}</button>
         </div>
       )}
     </div>

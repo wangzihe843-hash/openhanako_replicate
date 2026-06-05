@@ -1,5 +1,7 @@
+import { t } from "../../../lib/i18n.js";
+
 export const name = "list-capabilities";
-export const description = "列出 Beautify 工具目前支持的审美增强能力。";
+export const description = t("toolDef.listCapabilities.description");
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig } from "../lib/availability.js";
 
@@ -12,7 +14,7 @@ export async function execute() {
   return {
     content: [{
       type: "text",
-      text: "Beautify 当前支持 Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。",
+      text: t("toolDef.listCapabilities.text"),
     }],
     details: {
       capabilities: [{

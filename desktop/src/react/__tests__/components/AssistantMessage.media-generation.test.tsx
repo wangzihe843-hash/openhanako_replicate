@@ -54,7 +54,7 @@ describe('AssistantMessage media generation placeholder', () => {
       />,
     );
 
-    expect(screen.getByLabelText('图片生成中...')).toBeInTheDocument();
+    expect(screen.getByLabelText('chat.media.generationInProgress...')).toBeInTheDocument();
     expect(container.querySelector('[class*="mediaGenerationDots"]')).toBeInTheDocument();
     expect(screen.getByText(/^Low-poly 3D illustration/)).toBeInTheDocument();
   });
@@ -94,7 +94,7 @@ describe('AssistantMessage media generation placeholder', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '重新生成图片' }));
+    fireEvent.click(screen.getByRole('button', { name: 'chat.media.retryLabel' }));
 
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/plugins/image-gen/tasks/task-img/retry', {

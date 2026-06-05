@@ -18,7 +18,7 @@ import {
   executePluginAutomationAction,
   getAutomationExecutor,
 } from "../lib/desk/automation-executors.js";
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 import { runXingyeHeartbeatConsumer } from "../lib/xingye/heartbeat-consumer.js";
 import { resolveSocialThresholds } from "../lib/desk/social-awareness.js";
 import { createFreshCompactDailyScheduler } from "../lib/fresh-compact/daily-scheduler.js";

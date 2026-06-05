@@ -6,7 +6,7 @@ import path from "path";
 import { Hono } from "hono";
 import { emitAppEvent } from "../app-events.js";
 import { safeJson } from "../hono-helpers.js";
-import { t } from "../i18n.js";
+import { t } from "../../lib/i18n.js";
 import { debugLog } from "../../lib/debug-log.js";
 import { getRawConfig, clearConfigCache } from "../../lib/memory/config-loader.js";
 import { FactStore } from "../../lib/memory/fact-store.js";
@@ -97,6 +97,13 @@ function emitConfigAppEvents(engine, { globalFields, agentPartial, providersChan
   if (networkProxy !== undefined) {
     emitAppEvent(engine, "network-proxy-changed", {
       network_proxy: typeof engine.getNetworkProxy === "function" ? engine.getNetworkProxy() : networkProxy,
+    });
+  }
+
+  const keepAwake = getGlobalValue(globalFields, "keep_awake");
+  if (keepAwake !== undefined) {
+    emitAppEvent(engine, "keep-awake-changed", {
+      keep_awake: typeof engine.getKeepAwake === "function" ? engine.getKeepAwake() : keepAwake === true,
     });
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadLocale, t } from "../server/i18n.js";
+import { loadLocale, t } from "../lib/i18n.js";
 
 describe("sandbox i18n contract", () => {
   it("guides English agents to diagnose path boundaries before changing sandbox settings", () => {

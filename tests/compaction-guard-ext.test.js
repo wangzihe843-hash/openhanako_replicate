@@ -226,6 +226,27 @@ describe("CompactionGuardExtension", () => {
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
+    it("lets Pi SDK native compaction run when pi-compatible mode is selected", async () => {
+      pi = createMockPi();
+      createCompactionGuardExtension({
+        cacheCompactor,
+        buildSessionCacheSnapshot,
+        getCompactionMode: () => "pi_compatible",
+      })(pi);
+      estimatePreparationTokens.mockReturnValue(50_000);
+
+      const res = await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        ctx,
+      );
+
+      expect(res).toBeUndefined();
+      expect(cacheCompactor).not.toHaveBeenCalled();
+      expect(buildSessionCacheSnapshot).not.toHaveBeenCalled();
+      expect(computeHardTruncation).not.toHaveBeenCalled();
+    });
+
     it("strips inline media from compaction preparation before estimating or snapshotting history", async () => {
       estimatePreparationTokens.mockReturnValue(50_000);
       const mediaPreparation = {
@@ -453,14 +474,99 @@ describe("CompactionGuardExtension", () => {
       expect(res).toMatchObject({ compaction: expect.any(Object) });
       expect(cacheCompactor).toHaveBeenCalledWith(expect.objectContaining({
         model: glmModel,
-        thinkingLevel: "off",
-        cacheKeyParams: { thinkingLevel: "off" },
+        thinkingLevel: "high",
+        cacheKeyParams: { thinkingLevel: "high", reasoningReplay: "clear" },
         cacheMetadataOverride: expect.objectContaining({
           cacheStrategy: "cache_recovery",
           strict: false,
           degradeReason: "reasoning_replay_unavailable",
         }),
       }));
+      const call = cacheCompactor.mock.calls[0][0];
+      const recoveredPayload = call.streamOptions.onPayload({
+        model: "glm-4.5",
+        messages: [{
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }],
+        }],
+      }, glmModel);
+      expect(recoveredPayload.thinking).toEqual({ type: "enabled", clear_thinking: true });
+      expect(recoveredPayload.messages[0]).toMatchObject({ content: "" });
+      expect(recoveredPayload.messages[0]).not.toHaveProperty("reasoning_content");
+    });
+
+    it("auto-recovers when reasoning replay only fails during the compaction request", async () => {
+      pi = createMockPi();
+      const requestStageCompactor = vi.fn()
+        .mockRejectedValueOnce(new Error(
+          "Zhipu thinking mode reasoning_content is missing for tool_calls history. Compact this session or start a new session before continuing with Zhipu thinking mode.",
+        ))
+        .mockResolvedValueOnce({
+          summary: "request-stage recovery summary",
+          firstKeptEntryId: "uuid-42",
+          tokensBefore: 90_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        });
+      createCompactionGuardExtension({
+        cacheCompactor: requestStageCompactor,
+        buildSessionCacheSnapshot,
+        getCompactionMode: () => "auto",
+      })(pi);
+      estimatePreparationTokens.mockReturnValue(50_000);
+      const glmModel = {
+        id: "glm-5.1",
+        provider: "zhipu",
+        api: "openai-completions",
+        reasoning: true,
+        contextWindow: 128_000,
+      };
+
+      const res = await pi.trigger(
+        "session_before_compact",
+        { preparation, signal: { aborted: false } },
+        {
+          ...ctx,
+          model: glmModel,
+          sessionManager: {
+            ...ctx.sessionManager,
+            buildSessionContext: () => ({ thinkingLevel: "high" }),
+          },
+        },
+      );
+
+      expect(res).toEqual({
+        compaction: {
+          summary: "request-stage recovery summary",
+          firstKeptEntryId: "uuid-42",
+          tokensBefore: 90_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        },
+      });
+      expect(requestStageCompactor).toHaveBeenCalledTimes(2);
+      expect(requestStageCompactor.mock.calls[0][0]).toMatchObject({
+        model: glmModel,
+        cacheMetadataOverride: null,
+      });
+      expect(requestStageCompactor.mock.calls[1][0]).toMatchObject({
+        model: glmModel,
+        thinkingLevel: "high",
+        cacheKeyParams: { thinkingLevel: "high", reasoningReplay: "clear" },
+        cacheMetadataOverride: expect.objectContaining({
+          cacheStrategy: "cache_recovery",
+          strict: false,
+          degradeReason: "reasoning_replay_unavailable",
+        }),
+      });
+      const recoveryPayload = requestStageCompactor.mock.calls[1][0].streamOptions.onPayload({
+        model: "glm-5.1",
+        messages: [{
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }],
+        }],
+      }, glmModel);
+      expect(recoveryPayload.thinking).toEqual({ type: "enabled", clear_thinking: true });
     });
 
     it("returns hard truncation when the full cache-preserving request would exceed the budget", async () => {

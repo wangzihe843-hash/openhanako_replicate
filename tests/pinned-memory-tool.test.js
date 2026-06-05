@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, beforeEach } from "vitest";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
-import { loadLocale } from "../server/i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-pinned-"));

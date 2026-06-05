@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Value } from "typebox/value";
-import { loadLocale } from "../server/i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 import { createTodoTool } from "../lib/tools/todo.js";
 import { TODO_WRITE_TOOL_NAME } from "../lib/tools/todo-constants.js";
 

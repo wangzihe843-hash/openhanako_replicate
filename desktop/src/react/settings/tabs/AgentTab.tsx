@@ -202,7 +202,7 @@ export function AgentTab() {
       if (typeof data.filePath === 'string' && data.filePath) {
         window.platform?.showInFinder?.(data.filePath);
       }
-      showToast(`已导出到 ${data.filePath}`, 'success');
+      showToast(t('settings.agent.exportedTo', { path: data.filePath }), 'success');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(t('settings.saveFailed') + ': ' + msg, 'error');
@@ -403,7 +403,7 @@ export function AgentTab() {
 
       {exportPlanningAgentId && createPortal((
         <div className={styles['character-card-preview-overlay']} role="dialog" aria-modal="true">
-          <div className={styles['character-card-loading-card']}>正在生成角色卡预览</div>
+          <div className={styles['character-card-loading-card']}>{t('settings.agent.generatingCardPreview')}</div>
         </div>
       ), document.body)}
       {exportPlan && (

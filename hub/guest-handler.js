@@ -6,7 +6,7 @@
  * B: system prompt 注入对话上下文（不暴露任何主人隐私）
  */
 
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 
 export class GuestHandler {
   /**

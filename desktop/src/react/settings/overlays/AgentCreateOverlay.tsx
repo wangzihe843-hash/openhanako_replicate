@@ -80,7 +80,7 @@ export function AgentCreateOverlay() {
       setCardPlan(data.plan);
       setImportMemory(false);
     } catch (err: any) {
-      showToast('角色卡读取失败: ' + err.message, 'error');
+      showToast(t('settings.characterCard.readFailed') + ': ' + err.message, 'error');
     } finally {
       setPlanning(false);
       setDragActive(false);
@@ -104,7 +104,7 @@ export function AgentCreateOverlay() {
       close();
       showToast(t('settings.agent.created', { name: data.agent.name }), 'success');
     } catch (err: any) {
-      showToast('角色卡导入失败: ' + err.message, 'error');
+      showToast(t('settings.characterCard.importFailed') + ': ' + err.message, 'error');
     } finally {
       setCreating(false);
     }
@@ -193,7 +193,7 @@ export function AgentCreateOverlay() {
             }}
           >
             <span className={styles['character-card-drop-plus']}>+</span>
-            <span>{planning ? '正在读取角色卡' : '拖入角色卡或点击打开'}</span>
+            <span>{planning ? t('settings.characterCard.readingCard') : t('settings.characterCard.dropOrClick')}</span>
           </button>
         </div>
         <div className={styles['agent-create-actions']}>

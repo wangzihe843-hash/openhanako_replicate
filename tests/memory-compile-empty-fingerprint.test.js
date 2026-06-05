@@ -18,7 +18,7 @@ vi.mock("../core/llm-client.js", () => ({
   callText: vi.fn().mockResolvedValue("compiled content from llm"),
 }));
 
-vi.mock("../server/i18n.js", () => ({
+vi.mock("../lib/i18n.js", () => ({
   getLocale: () => "zh-CN",
 }));
 

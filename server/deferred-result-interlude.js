@@ -1,12 +1,20 @@
+import { t } from "../lib/i18n.js";
+
 const MAX_DETAIL_CHARS = 6000;
 const MAX_LABEL_CHARS = 80;
 
-const TYPE_LABELS = {
-  subagent: "子助手",
-  workflow: "workflow",
-  "image-generation": "图片生成",
-  "video-generation": "视频生成",
-};
+function typeLabel(type) {
+  const key = {
+    subagent: "deferred.typeLabel.subagent",
+    workflow: "workflow",
+    "image-generation": "deferred.typeLabel.imageGeneration",
+    "video-generation": "deferred.typeLabel.videoGeneration",
+  }[type];
+  if (!key) return type || t("deferred.typeLabel.backgroundTask");
+  // "workflow" stays as-is (English loanword in both locales)
+  if (key === "workflow") return "workflow";
+  return t(key);
+}
 
 const PREFERRED_TEXT_KEYS = [
   "replyText",
@@ -68,8 +76,8 @@ function summarizeFiles(files) {
       return `- ${name}${kind ? ` (${kind})` : ""}`;
     })
     .filter(Boolean);
-  if (files.length > lines.length) lines.push(`- 还有 ${files.length - lines.length} 个文件`);
-  return lines.length ? `生成文件：\n${lines.join("\n")}` : "";
+  if (files.length > lines.length) lines.push(t("deferred.fileSummaryMore", { count: files.length - lines.length }));
+  return lines.length ? `${t("deferred.fileSummaryHeader")}\n${lines.join("\n")}` : "";
 }
 
 function extractTextBlocks(content) {
@@ -146,8 +154,8 @@ function extractReadableResult(value, depth = 0) {
 export function extractDeferredResultDetailMarkdown({ status, result, reason }) {
   const text = status === "success"
     ? extractReadableResult(result)
-    : cleanText(reason) || "后台任务没有返回可展示的原因。";
-  return truncateText(text || "后台任务完成了，但没有返回可预览的文本。");
+    : cleanText(reason) || t("deferred.noReason");
+  return truncateText(text || t("deferred.noPreviewText"));
 }
 
 function sourceKindFromType(type) {
@@ -161,31 +169,25 @@ function resolveSource(meta = {}, type = "background-task") {
   if (type === "subagent") {
     const agentName = meta.executorAgentNameSnapshot || meta.agentName || meta.requestedAgentNameSnapshot || meta.requestedAgentName;
     const parts = uniqueParts([agentName, meta.label]);
-    return { kind: "subagent", label: parts.join(" · ") || TYPE_LABELS.subagent };
+    return { kind: "subagent", label: parts.join(" · ") || typeLabel("subagent") };
   }
   if (type === "workflow") {
-    const label = compactLabel(meta.summary || meta.workflow || meta.name, TYPE_LABELS.workflow);
+    const label = compactLabel(meta.summary || meta.workflow || meta.name, typeLabel("workflow"));
     return { kind: "workflow", label };
   }
-  const label = compactLabel(meta.toolName || meta.name || TYPE_LABELS[type] || type || "后台任务");
+  const label = compactLabel(meta.toolName || meta.name || typeLabel(type));
   return { kind: sourceKindFromType(type), label };
 }
 
 function interludeText({ receiverName, source, status }) {
   const receiver = compactLabel(receiverName, "Hana");
-  if (source.kind === "subagent") {
-    if (status === "failed") return `${receiver}收到了来自 ${source.label} 的失败回复`;
-    if (status === "aborted") return `${receiver}停止了来自 ${source.label} 的回复`;
-    return `${receiver}收到了来自 ${source.label} 的回复`;
-  }
-  if (source.kind === "workflow") {
-    if (status === "failed") return `${receiver}收到了来自 ${source.label} workflow 的失败回复`;
-    if (status === "aborted") return `${receiver}停止了 ${source.label} workflow`;
-    return `${receiver}收到了来自 ${source.label} workflow 的回复`;
-  }
-  if (status === "failed") return `${receiver}没有拿到来自 ${source.label} 工具的结果`;
-  if (status === "aborted") return `${receiver}停止了来自 ${source.label} 工具的结果`;
-  return `${receiver}拿到了来自 ${source.label} 工具的结果`;
+  const keyMap = {
+    subagent: { success: "deferred.interlude.subagent.success", failed: "deferred.interlude.subagent.failed", aborted: "deferred.interlude.subagent.aborted" },
+    workflow: { success: "deferred.interlude.workflow.success", failed: "deferred.interlude.workflow.failed", aborted: "deferred.interlude.workflow.aborted" },
+  };
+  const keys = keyMap[source.kind] || { success: "deferred.interlude.tool.success", failed: "deferred.interlude.tool.failed", aborted: "deferred.interlude.tool.aborted" };
+  const statusKey = status === "failed" ? "failed" : status === "aborted" ? "aborted" : "success";
+  return t(keys[statusKey], { receiver, source: source.label });
 }
 
 export function buildDeferredResultInterludeBlock(event, { receiverName = "Hana", meta = null } = {}) {

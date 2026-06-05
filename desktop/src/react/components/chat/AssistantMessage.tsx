@@ -319,13 +319,14 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState('');
   const [localBlock, setLocalBlock] = useState<any | null>(null);
+  const t = window.t ?? ((k: string) => k);
   const viewBlock = localBlock?.taskId === block.taskId ? { ...block, ...localBlock } : block;
   const failed = viewBlock.status === 'failed' || viewBlock.status === 'aborted';
-  const kindLabel = viewBlock.kind === 'video' ? '视频' : '图片';
+  const kindLabel = viewBlock.kind === 'video' ? t('chat.media.kindVideo') : t('chat.media.kindImage');
   const canRetry = failed && viewBlock.kind !== 'video' && !readOnly && typeof viewBlock.taskId === 'string';
   const titleText = failed
-    ? `${kindLabel}生成失败`
-    : `${kindLabel}生成中`;
+    ? t('chat.media.generationFailed').replace('{kind}', kindLabel)
+    : t('chat.media.generationInProgress').replace('{kind}', kindLabel);
   const reason = retryError || (typeof viewBlock.reason === 'string' ? viewBlock.reason : '');
   const prompt = typeof viewBlock.prompt === 'string' ? viewBlock.prompt : '';
 
@@ -354,7 +355,7 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
       setLocalBlock(placeholder);
       useStore.getState().resolveBlockByTaskId(sessionPath, viewBlock.taskId, placeholder);
     } catch (err) {
-      setRetryError(err instanceof Error ? err.message : '重新生成失败');
+      setRetryError(err instanceof Error ? err.message : t('chat.media.retryFailed'));
       setRetrying(false);
     }
   }, [canRetry, prompt, retrying, sessionPath, viewBlock.taskId]);
@@ -376,9 +377,9 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
               className={styles.mediaGenerationRetryButton}
               onClick={handleRetry}
               disabled={retrying}
-              aria-label={`重新生成${kindLabel}`}
+              aria-label={t('chat.media.retryLabel').replace('{kind}', kindLabel)}
             >
-              {retrying ? '提交中' : '重新生成'}
+              {retrying ? t('chat.media.submitting') : t('common.regenerate')}
             </button>
           )}
         </div>

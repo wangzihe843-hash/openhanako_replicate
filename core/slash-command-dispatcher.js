@@ -1,4 +1,5 @@
 import { createModuleLogger } from "../lib/debug-log.js";
+import { t } from "../lib/i18n.js";
 
 const log = createModuleLogger("slash");
 const CMD_RE = /^\s*\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*?))?\s*$/;
@@ -62,7 +63,7 @@ export class SlashCommandDispatcher {
     let timer;
     const timeoutPromise = new Promise((_, rej) => {
       timer = setTimeout(
-        () => rej(new Error(`命令超时（>${this._timeoutMs}ms）`)),
+        () => rej(new Error(t("slash.commandTimeout", { ms: this._timeoutMs }))),
         this._timeoutMs,
       );
     });
@@ -76,14 +77,14 @@ export class SlashCommandDispatcher {
         if (result.silent) return { handled: true };
         if (result.error) {
           // I3 fix：result.error 有独立 try/catch，避免 reply 失败被外层 catch 误当作 handler exception 处理
-          try { await ctx.reply(`[命令错误] ${result.error}`); } catch {}
+          try { await ctx.reply(t("slash.commandError", { message: result.error })); } catch {}
         } else if (result.reply) {
           try { await ctx.reply(result.reply); } catch {}
         }
       }
     } catch (err) {
-      const base = `[命令错误] ${err?.message || String(err)}`;
-      const full = def.usage ? `${base}\n用法：${def.usage}` : base;
+      const base = t("slash.commandError", { message: err?.message || String(err) });
+      const full = def.usage ? `${base}\n${t("slash.usage", { usage: def.usage })}` : base;
       try { await ctx.reply(full); } catch {}
     } finally {
       clearTimeout(timer);

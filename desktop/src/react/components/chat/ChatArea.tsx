@@ -6,10 +6,10 @@
  */
 
 import { memo, useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { loadMoreMessages } from '../../stores/session-actions';
-import { scheduleCaptureChatSelection } from '../../stores/selection-actions';
+import { getSelectionCommitAnchorRect, scheduleCaptureChatSelection } from '../../stores/selection-actions';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 
@@ -113,9 +113,9 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return ids;
   }, [items]);
   const boxSelection = useBoxSelection({ messageElementsRef, orderedIds, sessionPath: path, active });
-  const handleCaptureSelection = useCallback(() => {
+  const handleCaptureSelection = useCallback((event: ReactMouseEvent<HTMLDivElement> | ReactKeyboardEvent<HTMLDivElement>) => {
     if (!active) return;
-    scheduleCaptureChatSelection(path);
+    scheduleCaptureChatSelection(path, getSelectionCommitAnchorRect(event.nativeEvent));
   }, [active, path]);
   const handleShellPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();

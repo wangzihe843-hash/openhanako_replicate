@@ -223,7 +223,7 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
                 value={defaults.aspect_ratio || ''}
                 onChange={(v) => updateDefault('aspect_ratio', v || undefined)}
                 options={[
-                  { value: '',     label: '默认' },
+                  { value: '',     label: t('settings.media.defaultOption') },
                   { value: '1:1',  label: '1:1' },
                   { value: '4:3',  label: '4:3' },
                   { value: '3:4',  label: '3:4' },
@@ -243,7 +243,7 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
                 value={defaults.format || ''}
                 onChange={(v) => updateDefault('format', v || undefined)}
                 options={[
-                  { value: '',     label: '默认' },
+                  { value: '',     label: t('settings.media.defaultOption') },
                   { value: 'png',  label: 'PNG' },
                   { value: 'jpeg', label: 'JPEG' },
                   { value: 'webp', label: 'WebP' },
@@ -258,10 +258,10 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
                 value={defaults.quality || ''}
                 onChange={(v) => updateDefault('quality', v || undefined)}
                 options={[
-                  { value: '',       label: '默认' },
-                  { value: 'low',    label: '低' },
-                  { value: 'medium', label: '中' },
-                  { value: 'high',   label: '高' },
+                  { value: '',       label: t('settings.media.defaultOption') },
+                  { value: 'low',    label: t('settings.media.qualityLow') },
+                  { value: 'medium', label: t('settings.media.qualityMedium') },
+                  { value: 'high',   label: t('settings.media.qualityHigh') },
                 ]}
               />
             </div>

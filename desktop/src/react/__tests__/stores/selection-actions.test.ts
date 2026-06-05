@@ -246,6 +246,98 @@ describe('captureSelection', () => {
     });
   });
 
+  it('anchors a forward multi-line chat quote to the focus edge instead of the whole selection bounds', () => {
+    seedChatFixture();
+    document.body.innerHTML = `
+      <section data-chat-selection-root="" data-session-path="/session/a.jsonl">
+        <article data-message-id="assistant-1">
+          <p><span id="start-text">first selected line</span></p>
+          <p><span id="end-text">second selected line</span></p>
+        </article>
+      </section>
+    `;
+    const range = selectAcrossElements(
+      document.getElementById('start-text')!,
+      document.getElementById('end-text')!,
+    );
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [
+        domRect({ left: 96, right: 420, top: 100, bottom: 128, width: 324, height: 28 }),
+        domRect({ left: 96, right: 260, top: 140, bottom: 168, width: 164, height: 28 }),
+      ] as unknown as DOMRectList,
+    });
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => domRect({
+        left: 96,
+        right: 420,
+        top: 100,
+        bottom: 168,
+        width: 324,
+        height: 68,
+      }),
+    });
+
+    captureChatSelection('/session/a.jsonl');
+
+    expect(useStore.getState().quoteCandidate?.anchorRect).toEqual({
+      left: 260,
+      right: 261,
+      top: 140,
+      bottom: 141,
+      width: 1,
+      height: 1,
+    });
+  });
+
+  it('uses the mouseup point when the browser cannot expose a selection endpoint rect', () => {
+    const dispose = initQuotedSelectionLifecycle(document);
+    try {
+      seedChatFixture();
+      document.body.innerHTML = `
+        <section data-chat-selection-root="" data-session-path="/session/a.jsonl">
+          <article data-message-id="assistant-1">
+            <p><span id="selected-text">document mouseup quote</span></p>
+          </article>
+        </section>
+      `;
+      const range = selectElementText(document.getElementById('selected-text')!);
+      Object.defineProperty(range, 'getClientRects', {
+        configurable: true,
+        value: () => [] as unknown as DOMRectList,
+      });
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => domRect({
+          left: 96,
+          right: 420,
+          top: 100,
+          bottom: 168,
+          width: 324,
+          height: 68,
+        }),
+      });
+
+      window.dispatchEvent(new MouseEvent('mouseup', {
+        bubbles: true,
+        clientX: 380,
+        clientY: 220,
+      }));
+
+      expect(useStore.getState().quoteCandidate?.anchorRect).toEqual({
+        left: 380,
+        right: 381,
+        top: 220,
+        bottom: 221,
+        width: 1,
+        height: 1,
+      });
+    } finally {
+      dispose();
+    }
+  });
+
   it('keeps added quotes when composer focus cancels the native selection candidate', () => {
     const dispose = initQuotedSelectionLifecycle(document);
     try {
@@ -580,7 +672,7 @@ function selectElementText(element: HTMLElement): Range {
   return range;
 }
 
-function selectAcrossElements(startElement: HTMLElement, endElement: HTMLElement): void {
+function selectAcrossElements(startElement: HTMLElement, endElement: HTMLElement): Range {
   const startNode = startElement.firstChild;
   const endNode = endElement.firstChild;
   if (!startNode || !endNode) throw new Error('test fixture must contain text nodes');
@@ -590,6 +682,7 @@ function selectAcrossElements(startElement: HTMLElement, endElement: HTMLElement
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
+  return range;
 }
 
 function placeCollapsedSelection(element: HTMLElement): void {

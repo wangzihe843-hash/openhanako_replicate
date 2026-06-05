@@ -1,10 +1,10 @@
 import path from "node:path";
 import { applyMarkdownCoverFromGeneratedFile } from "../lib/markdown-cover-service.js";
 import { isBeautifyEnabledForAgentConfig } from "../lib/availability.js";
+import { t } from "../../../lib/i18n.js";
 
 export const name = "create-cover";
-export const description =
-  "把一张已有图片应用为 Markdown Notion-like cover。若用户要求生成新封面，请先调用 beautify_get-cover-style-guide，再调用生图工具准备图片，最后用本工具写入 Markdown。";
+export const description = t("toolDef.createCover.description");
 
 export const promptGuidelines = [
   "Use beautify_create-cover only after an image already exists on disk.",
@@ -23,12 +23,12 @@ export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig };
 export const parameters = {
   type: "object",
   properties: {
-    targetFilePath: { type: "string", description: "Markdown 文件绝对路径。路径不确定时先向用户确认。" },
-    filePath: { type: "string", description: "targetFilePath 的兼容别名。" },
-    generatedFilePath: { type: "string", description: "已有图片的绝对路径，可以来自生图工具、内置头图或用户本地图片。" },
-    imageFilePath: { type: "string", description: "generatedFilePath 的兼容别名。" },
-    pixelWidth: { type: "number", description: "图片像素宽，可选；不传时工具会尽量从图片头读取。" },
-    pixelHeight: { type: "number", description: "图片像素高，可选；不传时工具会尽量从图片头读取。" },
+    targetFilePath: { type: "string", description: t("toolDef.createCover.targetFilePathDesc") },
+    filePath: { type: "string", description: t("toolDef.createCover.filePathDesc") },
+    generatedFilePath: { type: "string", description: t("toolDef.createCover.generatedFilePathDesc") },
+    imageFilePath: { type: "string", description: t("toolDef.createCover.imageFilePathDesc") },
+    pixelWidth: { type: "number", description: t("toolDef.createCover.pixelWidthDesc") },
+    pixelHeight: { type: "number", description: t("toolDef.createCover.pixelHeightDesc") },
   },
   required: ["targetFilePath", "generatedFilePath"],
 };
@@ -66,15 +66,15 @@ function emitMarkdownCoverUpdated(ctx, filePath) {
 export async function execute(input, ctx) {
   const targetFilePath = resolveTargetFilePath(input);
   if (!targetFilePath || !path.isAbsolute(targetFilePath)) {
-    return textResult("需要一个明确的 Markdown 文件绝对路径；如果你是从普通聊天里发起，请先确认目标文件路径。");
+    return textResult(t("toolDef.createCover.targetFilePathRequired"));
   }
   if (path.extname(targetFilePath).toLowerCase() !== ".md") {
-    return textResult("目标文件必须是 .md Markdown 文件。");
+    return textResult(t("toolDef.createCover.mustBeMarkdown"));
   }
 
   const generatedFilePath = resolveGeneratedFilePath(input);
   if (!generatedFilePath || !path.isAbsolute(generatedFilePath)) {
-    return textResult("需要已有图片的绝对路径 generatedFilePath。请先调用 image-gen_generate-image 并等待任务完成，或选择内置/本地图片后，把图片 filePath 传给本工具。");
+    return textResult(t("toolDef.createCover.generatedFilePathRequired"));
   }
 
   try {
@@ -85,10 +85,10 @@ export async function execute(input, ctx) {
       pixelHeight: input.pixelHeight,
     });
     emitMarkdownCoverUpdated(ctx, targetFilePath);
-    return textResult("已把图片应用为 Markdown cover，并写入 frontmatter。", {
+    return textResult(t("toolDef.createCover.applied"), {
       beautifyCover: result,
     });
   } catch (err) {
-    return textResult(`应用 cover 失败：${err?.message || err}`);
+    return textResult(t("toolDef.createCover.failed", { error: err?.message || err }));
   }
 }

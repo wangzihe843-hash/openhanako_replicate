@@ -711,11 +711,11 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     render(<SkillsTab />);
     await flushMicrotasks(6);
 
-    fireEvent.click(screen.getByRole('button', { name: '新建 Skill Bundle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.createBundleAriaLabel' }));
     expect(promptSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: '新建 Bundle' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Bundle 名字'), { target: { value: 'Research Bundle' } });
-    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    expect(screen.getByRole('dialog', { name: 'settings.skills.bundleDialog.createTitle' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('settings.skills.bundleDialog.bundleNameLabel'), { target: { value: 'Research Bundle' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.bundleDialog.createBtn' }));
     await flushMicrotasks(6);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/skills/bundles?agentId=agent-a'),
@@ -725,10 +725,10 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       }),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '重命名 Writing Bundle' }));
-    expect(screen.getByRole('dialog', { name: '重命名 Bundle' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Bundle 名字'), { target: { value: 'Writing Pack' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.renameBundleAriaLabel' }));
+    expect(screen.getByRole('dialog', { name: 'settings.skills.bundleDialog.renameTitle' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('settings.skills.bundleDialog.bundleNameLabel'), { target: { value: 'Writing Pack' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.bundleDialog.saveBtn' }));
     await flushMicrotasks(6);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/skills/bundles/writing-bundle?agentId=agent-a'),
@@ -738,10 +738,10 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       }),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '打散 Writing Bundle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.dissolveBundleAriaLabel' }));
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: '打散 Bundle' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '打散' }));
+    expect(screen.getByRole('dialog', { name: 'settings.skills.bundleDialog.dissolveTitle' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.bundleDialog.dissolveBtn' }));
     await flushMicrotasks(6);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/skills/bundles/writing-bundle'),
@@ -796,7 +796,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     render(<SkillsTab />);
     await flushMicrotasks(6);
 
-    fireEvent.click(screen.getByRole('button', { name: '导出 Writing Bundle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.exportBundleAriaLabel' }));
     await flushMicrotasks(6);
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -804,7 +804,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       expect.objectContaining({ method: 'POST' }),
     );
     expect(showInFinder).toHaveBeenCalledWith('/tmp/Writing Bundle-skillbundle.zip');
-    expect(useSettingsStore.getState().toastMessage).toContain('Writing Bundle-skillbundle.zip');
+    expect(useSettingsStore.getState().toastMessage).toBe('settings.skills.exported');
   });
 
   it('persists bundle and bundled-skill order after drag and drop', async () => {
@@ -873,7 +873,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
       }),
     );
 
-    fireEvent.click(screen.getAllByRole('button', { name: '展开 Bundle' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'settings.skills.expandBundleAriaLabel' })[0]);
 
     const skillDrag = createDragData();
     fireEvent.dragStart(screen.getAllByTestId('skill-row-reader')[0], { dataTransfer: skillDrag });

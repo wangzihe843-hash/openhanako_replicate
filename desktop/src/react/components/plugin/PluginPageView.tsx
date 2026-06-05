@@ -5,6 +5,8 @@ import { hanaUrl } from '../../hooks/use-hana-fetch';
 import s from './PluginPageView.module.css';
 import { DEFAULT_THEME } from '../../../shared/theme-registry';
 
+declare function t(key: string, vars?: Record<string, string | number>): string;
+
 interface Props {
   pluginId: string;
 }
@@ -38,7 +40,7 @@ export function PluginPageView({ pluginId }: Props) {
   if (!page) {
     return (
       <div className={s.container}>
-        <div className={s.error}>插件未找到</div>
+        <div className={s.error}>{t('plugin.page.notFound')}</div>
       </div>
     );
   }
@@ -50,8 +52,8 @@ export function PluginPageView({ pluginId }: Props) {
       )}
       {status === 'error' && (
         <div className={s.overlay}>
-          <p>插件加载失败</p>
-          <button className={s.retryBtn} onClick={retry}>重试</button>
+          <p>{t('plugin.page.loadFailed')}</p>
+          <button className={s.retryBtn} onClick={retry}>{t('plugin.page.retry')}</button>
         </div>
       )}
       <iframe

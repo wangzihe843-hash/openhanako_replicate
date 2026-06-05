@@ -459,23 +459,18 @@ export async function createCachePreservingCompactionResult({
         tools,
         messages: prefixMessages,
       });
-    let sideTask;
-    try {
-      sideTask = await runSessionSnapshotSideTask({
-        snapshot: snapshotForRequest,
-        model,
-        cacheKeyParams: effectiveCacheKeyParams,
-        suffixMessage,
-        streamFn,
-        options,
-        cacheGroup: request.kind === "turn-prefix" ? "compaction.turn_prefix" : "compaction.history",
-        templateVersion: "v1",
-        usageLedger,
-        usageContext,
-      });
-    } catch (error) {
-      throw error;
-    }
+    const sideTask = await runSessionSnapshotSideTask({
+      snapshot: snapshotForRequest,
+      model,
+      cacheKeyParams: effectiveCacheKeyParams,
+      suffixMessage,
+      streamFn,
+      options,
+      cacheGroup: request.kind === "turn-prefix" ? "compaction.turn_prefix" : "compaction.history",
+      templateVersion: "v1",
+      usageLedger,
+      usageContext,
+    });
 
     const text = sideTask.text;
     if (!text) {

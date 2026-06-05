@@ -33,6 +33,24 @@ contextBridge.exposeInMainWorld("hana", {
   autoUpdateSetChannel: (ch) => ipcRenderer.invoke("auto-update-set-channel", ch),
   getAutoLaunchStatus: () => ipcRenderer.invoke("get-auto-launch-status"),
   setAutoLaunchEnabled: (enabled) => ipcRenderer.invoke("set-auto-launch-enabled", enabled),
+  getKeepAwakeStatus: () => ipcRenderer.invoke("get-keep-awake-status"),
+  setKeepAwakeEnabled: (enabled) => ipcRenderer.invoke("set-keep-awake-enabled", enabled),
+  quickChatReloadShortcut: () => ipcRenderer.invoke("quick-chat-reload-shortcut"),
+  quickChatShortcutStatus: () => ipcRenderer.invoke("quick-chat-shortcut-status"),
+  quickChatShow: () => ipcRenderer.invoke("quick-chat-show"),
+  quickChatHide: () => ipcRenderer.invoke("quick-chat-hide"),
+  quickChatResize: (mode) => ipcRenderer.invoke("quick-chat-resize", mode),
+  quickChatOpenSession: (sessionPath) => ipcRenderer.invoke("quick-chat-open-session", sessionPath),
+  onQuickChatOpenSession: (cb) => {
+    const handler = (_, payload) => cb(payload);
+    ipcRenderer.on("quick-chat-open-session", handler);
+    return () => ipcRenderer.removeListener("quick-chat-open-session", handler);
+  },
+  onQuickChatShown: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("quick-chat-shown", handler);
+    return () => ipcRenderer.removeListener("quick-chat-shown", handler);
+  },
   onAutoUpdateState: (cb) => {
     const handler = (_, state) => cb(state);
     ipcRenderer.on("auto-update-state", handler);
@@ -122,7 +140,7 @@ contextBridge.exposeInMainWorld("hana", {
   // 原生拖拽（书桌文件拖到 Finder / 聊天区）
   startDrag: (filePaths) => ipcRenderer.send("start-drag", filePaths),
   // 系统通知（agentId 标识触发的助手，主进程据此设头像 icon；缺失则无 icon）
-  showNotification: (title, body, agentId) => ipcRenderer.invoke("show-notification", title, body, agentId ?? null),
+  showNotification: (title, body, agentId, options) => ipcRenderer.invoke("show-notification", title, body, agentId ?? null, options || null),
   // 窗口控制（Windows/Linux 自绘标题栏）
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),

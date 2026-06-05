@@ -105,6 +105,35 @@ describe("session cache snapshot", () => {
     });
   });
 
+  it("tracks reasoning replay mode as part of the cache contract", () => {
+    const snapshot = buildSessionCacheSnapshot({
+      sessionPath: "/sessions/a.jsonl",
+      model,
+      cacheKeyParams: { thinkingLevel: "high", reasoningReplay: "clear" },
+      systemPrompt: "stable system",
+      tools: [tool("read")],
+      messages: [{ role: "user", content: "first" }],
+      reason: "compaction",
+    });
+
+    expect(snapshot.cacheKeyParams).toEqual({
+      thinkingLevel: "high",
+      reasoningReplay: "clear",
+    });
+
+    const changedReplay = buildSessionSnapshotRequestContract({
+      snapshot,
+      model,
+      cacheKeyParams: { thinkingLevel: "high", reasoningReplay: "preserve" },
+      systemPrompt: "stable system",
+      tools: [tool("read")],
+      messages: [{ role: "user", content: "first" }, { role: "user", content: "suffix" }],
+      prefixMessageCount: 1,
+    });
+
+    expect(assertSessionSnapshotRequest(snapshot, changedReplay).diffs.map((d) => d.field)).toContain("cacheKeyParamsHash");
+  });
+
   it("accepts a side request that appends only an internal suffix", () => {
     const snapshot = buildSessionCacheSnapshot({
       sessionPath: "/sessions/a.jsonl",

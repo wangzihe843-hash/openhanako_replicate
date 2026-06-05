@@ -254,6 +254,11 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
         window.platform?.settingsChanged?.('network-proxy-changed', data);
       }
       break;
+    case 'keep-awake-changed':
+      if (options.source === 'server') {
+        window.platform?.settingsChanged?.('keep-awake-changed', data);
+      }
+      break;
     case 'paper-texture-changed':
       window.setPaperTexture(data.enabled);
       break;

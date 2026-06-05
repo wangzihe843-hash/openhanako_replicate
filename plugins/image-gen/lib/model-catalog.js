@@ -6,11 +6,12 @@
  * Routes use getKnownModels() for provider summary and settings UI.
  *
  * Adding a new model: append one entry to the relevant provider array.
+ * Set default: true only when the provider's implicit model should change.
  * Everything else (adapter fallback, settings UI, tool description) picks it up automatically.
  */
 
 /**
- * @typedef {{ id: string, name: string, aliases?: string[] }} ModelEntry
+ * @typedef {{ id: string, name: string, aliases?: string[], default?: boolean }} ModelEntry
  */
 
 /** @type {Record<string, ModelEntry[]>} */
@@ -25,12 +26,17 @@ export const MODEL_CATALOG = {
     { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"] },
     { id: "gpt-image-1-mini", name: "GPT Image 1 Mini", aliases: ["1-mini", "mini"] },
     { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"] },
-    { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"] },
+    { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"], default: true },
+    { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },
   ],
   "openai-codex-oauth": [
     { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },
   ],
 };
+
+function getDefaultEntry(catalog) {
+  return catalog.find(entry => entry.default) || catalog[catalog.length - 1];
+}
 
 /**
  * Resolve a raw model identifier to a valid API model ID.
@@ -38,7 +44,7 @@ export const MODEL_CATALOG = {
  * Resolution order:
  *   1. Exact match on id (already a full ID)
  *   2. Alias match (short name like "5.0")
- *   3. Fallback to the last entry in the catalog (latest model)
+ *   3. Fallback to the provider default entry
  *
  * @param {string} provider   Provider key in MODEL_CATALOG
  * @param {string | undefined | null} raw  Raw model string from user/config
@@ -62,8 +68,7 @@ export function resolveModelId(provider, raw) {
     }
   }
 
-  // 3. Fallback: last entry (latest/default model)
-  return catalog[catalog.length - 1].id;
+  return getDefaultEntry(catalog).id;
 }
 
 /**
@@ -80,7 +85,7 @@ export function getKnownModels(provider) {
 }
 
 /**
- * Get the default (latest) model ID for a provider.
+ * Get the default model ID for a provider.
  *
  * @param {string} provider
  * @returns {string | null}
@@ -88,5 +93,5 @@ export function getKnownModels(provider) {
 export function getDefaultModelId(provider) {
   const catalog = MODEL_CATALOG[provider];
   if (!catalog?.length) return null;
-  return catalog[catalog.length - 1].id;
+  return getDefaultEntry(catalog).id;
 }

@@ -86,6 +86,37 @@ describe("provider-compat/zhipu — apply", () => {
     })).toThrow(/Zhipu.*reasoning_content.*tool_calls/);
   });
 
+  it("chat recovery mode clears historical reasoning without disabling current GLM thinking", () => {
+    const payload = {
+      model: "glm-5.1",
+      messages: [
+        { role: "user", content: "查一下最新资料" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "web_search", arguments: "{}" },
+          }],
+        },
+      ],
+      tools: [{ type: "function", function: { name: "web_search" } }],
+      enable_thinking: true,
+    };
+
+    const result = normalizeProviderPayload(payload, zhipuModel, {
+      mode: "chat",
+      reasoningLevel: "high",
+      reasoningReplay: "clear",
+    });
+
+    expect(result.thinking).toEqual({ type: "enabled", clear_thinking: true });
+    expect(result).not.toHaveProperty("enable_thinking");
+    expect(result.messages[1]).toMatchObject({ content: "" });
+    expect(result.messages[1]).not.toHaveProperty("reasoning_content");
+  });
+
   it("chat thinking off disables GLM thinking and strips stale reasoning_content", () => {
     const payload = {
       model: "glm-5.1",

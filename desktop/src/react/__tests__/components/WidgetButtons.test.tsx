@@ -49,7 +49,7 @@ describe('WidgetButtons', () => {
   it('opens a hidden widget when its dropdown label is selected', () => {
     render(<WidgetButtons />);
 
-    fireEvent.click(screen.getByTitle('已隐藏的插件'));
+    fireEvent.click(screen.getByTitle('plugin.widget.hiddenPlugins'));
     fireEvent.click(screen.getByRole('button', { name: 'Dream Notes' }));
 
     expect(useStore.getState().hiddenWidgets).toEqual([]);

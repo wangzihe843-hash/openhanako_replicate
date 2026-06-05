@@ -10,7 +10,7 @@
  */
 import path from "path";
 import { AuthStorage, createModelRegistry } from "../lib/pi-sdk/index.js";
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { ExecutionRouter } from "./execution-router.js";
 import { findModel, parseModelRef } from "../shared/model-ref.js";

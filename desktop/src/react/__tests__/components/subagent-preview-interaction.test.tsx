@@ -21,6 +21,10 @@ function makeSlice(): SubagentPreviewSlice {
   });
 }
 
+beforeEach(() => {
+  window.t = ((key: string) => key) as typeof window.t;
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -152,7 +156,7 @@ describe('SubagentCard static resource card', () => {
 
     expect(screen.getByText('SORA')).toBeTruthy();
     expect(screen.getByText('任务：do work')).toBeTruthy();
-    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.getByText('subagent.status.done')).toBeTruthy();
     expect(screen.queryByText('Preview A')).toBeNull();
     expect(screen.queryByRole('button', { name: /SORA/i })).toBeNull();
     expect(useStore.getState().subagentPreviewByTaskId).toEqual({});
@@ -212,14 +216,14 @@ describe('SubagentCard static resource card', () => {
       />,
     );
 
-    expect(screen.getByText('已派出')).toBeTruthy();
+    expect(screen.getByText('subagent.status.dispatched')).toBeTruthy();
 
     act(() => {
       dispatchStreamKey('/session/subagent-a', { type: 'turn_end', sessionPath: '/session/subagent-a' });
     });
 
-    expect(screen.getByText('已派出')).toBeTruthy();
-    expect(screen.queryByText('已完成')).toBeNull();
+    expect(screen.getByText('subagent.status.dispatched')).toBeTruthy();
+    expect(screen.queryByText('subagent.status.done')).toBeNull();
   });
 
   it('运行中卡片只保留终止按钮，不提供展开入口', async () => {
@@ -236,7 +240,7 @@ describe('SubagentCard static resource card', () => {
       />,
     );
 
-    const abort = screen.getByTitle('终止');
+    const abort = screen.getByTitle('subagentAbort');
     fireEvent.click(abort);
 
     await waitFor(() => {

@@ -21,6 +21,12 @@ describe("MODEL_CATALOG", () => {
       }
     }
   });
+
+  it("has no more than one explicit default per provider", () => {
+    for (const [, models] of Object.entries(MODEL_CATALOG)) {
+      expect(models.filter(m => m.default).length).toBeLessThanOrEqual(1);
+    }
+  });
 });
 
 describe("resolveModelId", () => {
@@ -29,6 +35,8 @@ describe("resolveModelId", () => {
       .toBe("doubao-seedream-3-0-t2i");
     expect(resolveModelId("openai", "gpt-image-1.5"))
       .toBe("gpt-image-1.5");
+    expect(resolveModelId("openai", "gpt-image-2"))
+      .toBe("gpt-image-2");
   });
 
   it("resolves short aliases to full IDs", () => {
@@ -45,6 +53,8 @@ describe("resolveModelId", () => {
       .toBe("gpt-image-1.5");
     expect(resolveModelId("openai", "mini"))
       .toBe("gpt-image-1-mini");
+    expect(resolveModelId("openai", "2"))
+      .toBe("gpt-image-2");
   });
 
   it("is case-insensitive for aliases", () => {
@@ -52,7 +62,7 @@ describe("resolveModelId", () => {
       .toBe("doubao-seedream-5-0-lite-260128");
   });
 
-  it("falls back to the latest model when input is null/undefined", () => {
+  it("falls back to the provider default model when input is null/undefined", () => {
     expect(resolveModelId("volcengine", null))
       .toBe("doubao-seedream-5-0-lite-260128");
     expect(resolveModelId("volcengine", undefined))
@@ -61,7 +71,7 @@ describe("resolveModelId", () => {
       .toBe("gpt-image-1.5");
   });
 
-  it("falls back to the latest model for unrecognized strings", () => {
+  it("falls back to the provider default model for unrecognized strings", () => {
     expect(resolveModelId("volcengine", "nonexistent-model"))
       .toBe("doubao-seedream-5-0-lite-260128");
   });
@@ -92,7 +102,7 @@ describe("getKnownModels", () => {
 });
 
 describe("getDefaultModelId", () => {
-  it("returns the last catalog entry (latest model)", () => {
+  it("returns the provider default model", () => {
     expect(getDefaultModelId("volcengine")).toBe("doubao-seedream-5-0-lite-260128");
     expect(getDefaultModelId("openai")).toBe("gpt-image-1.5");
   });

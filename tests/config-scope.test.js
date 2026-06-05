@@ -130,10 +130,13 @@ describe("splitByScope", () => {
   });
 
   it("returns empty agent when only global fields present", () => {
-    const partial = { locale: "en", sandbox: true, update_channel: "beta" };
+    const partial = { locale: "en", sandbox: true, update_channel: "beta", keep_awake: true };
     const { global: g, agent } = splitByScope(partial);
 
     expect(g.length).toBeGreaterThan(0);
+    expect(g).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "keep_awake", value: true }),
+    ]));
     expect(Object.keys(agent)).toHaveLength(0);
   });
 
@@ -188,6 +191,7 @@ describe("injectGlobalFields", () => {
       getBridgeReadOnly: () => true,
       getBridgeReceiptEnabled: () => false,
       getNetworkProxy: () => ({ mode: "direct" }),
+      getKeepAwake: () => true,
     };
     const config = {};
     injectGlobalFields(config, engine);
@@ -204,6 +208,7 @@ describe("injectGlobalFields", () => {
     expect(config.bridge?.readOnly).toBe(true);
     expect(config.bridge?.receiptEnabled).toBe(false);
     expect(config.network_proxy).toEqual({ mode: "direct" });
+    expect(config.keep_awake).toBe(true);
   });
 
   it("skips getters that don't exist on engine (doesn't throw)", () => {

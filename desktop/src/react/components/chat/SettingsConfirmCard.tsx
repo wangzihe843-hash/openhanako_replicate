@@ -37,9 +37,15 @@ const THINKING_I18N: Record<string, string> = {
   'high': 'settings.agent.thinkingLevels.high',
 };
 
-const LOCALE_LABELS: Record<string, string> = {
-  'zh-CN': '简体中文', 'zh-TW': '繁體中文', 'ja': '日本語', 'ko': '한국어', 'en': 'English',
-};
+function buildLocaleLabels(t: (k: string) => string): Record<string, string> {
+  return {
+    'zh-CN': t('settings.locale.zhCN'),
+    'zh-TW': t('settings.locale.zhTW'),
+    'ja': t('settings.locale.ja'),
+    'ko': t('settings.locale.ko'),
+    'en': t('settings.locale.en'),
+  };
+}
 
 const SETTING_LABEL_KEYS: Record<string, string> = {
   'sandbox': 'toolDef.updateSettings.sandbox',
@@ -71,7 +77,7 @@ export const SettingsConfirmCard = memo(function SettingsConfirmCard(props: Prop
     if (externalLabels && Object.keys(externalLabels).length) return externalLabels;
     if (settingKey === 'theme') return Object.fromEntries(Object.entries(THEME_I18N).map(([k, v]) => [k, t(v)]));
     if (settingKey === 'thinking_level') return Object.fromEntries(Object.entries(THINKING_I18N).map(([k, v]) => [k, t(v)]));
-    if (settingKey === 'locale') return LOCALE_LABELS;
+    if (settingKey === 'locale') return buildLocaleLabels(t);
     return undefined;
   }, [externalLabels, settingKey, t]);
 

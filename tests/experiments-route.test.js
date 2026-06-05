@@ -3,7 +3,10 @@ import os from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import { createExperimentsRoute } from "../server/routes/experiments.js";
-import { CACHE_SNAPSHOT_EXPERIMENT_ID } from "../lib/experiments/registry.js";
+import {
+  CACHE_SNAPSHOT_EXPERIMENT_ID,
+  COMPACTION_MODE_EXPERIMENT_ID,
+} from "../lib/experiments/registry.js";
 import {
   readCacheSnapshotObservation,
   writeCacheSnapshotObservation,
@@ -43,6 +46,9 @@ describe("experiments route", () => {
     const entry = body.experiments.find((item) => item.id === CACHE_SNAPSHOT_EXPERIMENT_ID);
     expect(entry.value).toBe("off");
     expect(entry.valueSchema.presentation.type).toBe("paired_toggles");
+    const compactionEntry = body.experiments.find((item) => item.id === COMPACTION_MODE_EXPERIMENT_ID);
+    expect(compactionEntry.value).toBe("auto");
+    expect(compactionEntry.valueSchema.presentation.type).toBe("select");
   });
 
   it("updates known experiment ids and rejects unknown ids", async () => {
@@ -56,6 +62,14 @@ describe("experiments route", () => {
     });
     expect(ok.status).toBe(200);
     expect(ok.body.value).toBe("shadow");
+
+    const mode = await routeFetch(route, `/experiments/${encodeURIComponent(COMPACTION_MODE_EXPERIMENT_ID)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "cache_preserving" }),
+    });
+    expect(mode.status).toBe(200);
+    expect(mode.body.value).toBe("cache_preserving");
 
     const bad = await routeFetch(route, "/experiments/unknown.flag", {
       method: "PATCH",

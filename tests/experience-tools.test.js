@@ -8,7 +8,7 @@ import {
   recordEntry,
   rebuildIndex,
 } from "../lib/tools/experience.js";
-import { loadLocale } from "../server/i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-experience-"));

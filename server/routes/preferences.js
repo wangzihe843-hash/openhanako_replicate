@@ -5,6 +5,10 @@
  * PUT  /api/preferences/models  — 更新全局模型 + 搜索配置
  * GET  /api/preferences/appearance  — 读取跨前端外观偏好
  * PUT  /api/preferences/appearance  — 更新跨前端外观偏好
+ * GET  /api/preferences/notifications  — 读取跨前端通知偏好
+ * PUT  /api/preferences/notifications  — 更新跨前端通知偏好
+ * GET  /api/preferences/quick-chat  — 读取快速聊天入口偏好
+ * PUT  /api/preferences/quick-chat  — 更新快速聊天入口偏好
  * POST /api/preferences/setup-complete — 提交首次配置完成意图
  * GET  /api/preferences/computer-use  — 读取 Computer Use provider/approval 状态
  * PUT  /api/preferences/computer-use  — 更新 Computer Use 全局设置
@@ -23,6 +27,8 @@ import {
   normalizeWorkspaceUiSurface,
 } from "../../shared/workspace-ui-state.js";
 import { normalizeSidebarUiPrefs } from "../../shared/sidebar-ui-state.js";
+import { normalizeNotificationPreferences } from "../../shared/notification-preferences.js";
+import { normalizeQuickChatPreferences } from "../../shared/quick-chat-preferences.js";
 import {
   SEARCH_API_PROVIDER_IDS,
   normalizeSearchApiKeys,
@@ -218,6 +224,56 @@ export function createPreferencesRoute(engine, { platform = process.platform } =
       const appearance = engine.setAppearance?.(patch) || {};
       emitAppearanceEvents(engine, before, appearance);
       return c.json({ ok: true, appearance });
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  route.get("/preferences/notifications", async (c) => {
+    try {
+      return c.json({ notifications: engine.getNotificationPreferences?.() || normalizeNotificationPreferences({}) });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/preferences/notifications", async (c) => {
+    try {
+      const body = await safeJson(c);
+      if (!body || typeof body !== "object") {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      if (typeof engine.setNotificationPreferences !== "function") {
+        return c.json({ error: "notification preferences unavailable" }, 500);
+      }
+      const patch = body.notifications && typeof body.notifications === "object" ? body.notifications : body;
+      const notifications = engine.setNotificationPreferences(patch);
+      return c.json({ ok: true, notifications });
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  route.get("/preferences/quick-chat", async (c) => {
+    try {
+      return c.json({ quickChat: engine.getQuickChatPreferences?.() || normalizeQuickChatPreferences({}) });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/preferences/quick-chat", async (c) => {
+    try {
+      const body = await safeJson(c);
+      if (!body || typeof body !== "object") {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      if (typeof engine.setQuickChatPreferences !== "function") {
+        return c.json({ error: "quick chat preferences unavailable" }, 500);
+      }
+      const patch = body.quickChat && typeof body.quickChat === "object" ? body.quickChat : body;
+      const quickChat = engine.setQuickChatPreferences(patch);
+      return c.json({ ok: true, quickChat });
     } catch (err) {
       return c.json({ error: err.message }, 400);
     }

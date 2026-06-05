@@ -84,6 +84,14 @@ export function isOfficialMimoEndpoint(model, context = {}) {
   return host === "xiaomimimo.com" || host.endsWith(".xiaomimimo.com");
 }
 
+function isOfficialZhipuEndpoint(model, context = {}) {
+  const provider = getProvider(model, context);
+  if (provider === "zhipu") return true;
+
+  const host = getBaseHost(model, context);
+  return host === "open.bigmodel.cn" || host.endsWith(".open.bigmodel.cn");
+}
+
 function isDeepSeekV4ModelId(id) {
   return id === "deepseek-v4" || id.startsWith("deepseek-v4-") || id.startsWith("deepseek-v4.");
 }
@@ -167,6 +175,14 @@ export function getThinkingFormat(model, context = {}) {
     return "qwen-chat-template";
   }
 
+  if (
+    isOfficialZhipuEndpoint(model, context)
+    && model.reasoning === true
+    && (api === "openai-completions" || api === "openai-responses" || api === "")
+  ) {
+    return "zhipu";
+  }
+
   return null;
 }
 
@@ -187,6 +203,13 @@ export function getReasoningProfile(model, context = {}) {
     const api = getApi(model, context);
     if (api === "openai-completions" || api === "openai-responses" || api === "") {
       return "mimo-openai";
+    }
+  }
+
+  if (isOfficialZhipuEndpoint(model, context) && model.reasoning === true) {
+    const api = getApi(model, context);
+    if (api === "openai-completions" || api === "openai-responses" || api === "") {
+      return "zhipu-openai";
     }
   }
 

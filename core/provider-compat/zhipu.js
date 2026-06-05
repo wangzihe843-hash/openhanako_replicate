@@ -89,12 +89,37 @@ function hasAssistantToolCallHistory(messages) {
   });
 }
 
+function hasAssistantReasoningHistory(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((message) => {
+    return message
+      && typeof message === "object"
+      && message.role === "assistant"
+      && typeof message.reasoning_content === "string"
+      && message.reasoning_content.length > 0;
+  });
+}
+
+function resolveReasoningReplay(payload, options) {
+  const value = typeof options?.reasoningReplay === "string"
+    ? lower(options.reasoningReplay)
+    : "";
+  if (value === "clear" || value === "none" || value === "strip") return "clear";
+  if (value === "preserve" || value === "replay") return "preserve";
+  if (hasOwn(payload.thinking || {}, "clear_thinking")) {
+    return payload.thinking.clear_thinking === true ? "clear" : "preserve";
+  }
+  return "preserve";
+}
+
 function normalizeThinking(payload, model, options) {
   const off = options?.mode === "utility"
     || isThinkingOff(options?.reasoningLevel)
-    || payload.thinking?.type === "disabled";
+    || payload.thinking?.type === "disabled"
+    || payload.enable_thinking === false;
   const wantsThinking = !off && (
     hasOwn(payload, "reasoning_effort")
+    || payload.enable_thinking === true
     || model?.reasoning === true
     || payload.thinking?.type === "enabled"
   );
@@ -102,6 +127,7 @@ function normalizeThinking(payload, model, options) {
 
   const next = { ...payload };
   delete next.reasoning_effort;
+  delete next.enable_thinking;
 
   if (off) {
     next.thinking = { type: "disabled" };
@@ -113,13 +139,26 @@ function normalizeThinking(payload, model, options) {
   }
 
   next.thinking = { type: "enabled" };
+  const reasoningReplay = resolveReasoningReplay(payload, options);
+  const clearHistory = reasoningReplay === "clear";
+  const hasToolCalls = hasAssistantToolCallHistory(next.messages);
 
-  if (hasAssistantToolCallHistory(next.messages)) {
+  if (clearHistory) {
+    next.thinking.clear_thinking = true;
+    if (Array.isArray(next.messages)) {
+      const stripped = stripReasoningContent(next.messages);
+      if (stripped !== next.messages) next.messages = stripped;
+    }
+  } else if (hasToolCalls || hasAssistantReasoningHistory(next.messages)) {
     next.thinking.clear_thinking = false;
+  }
 
-    const ensured = ensureReasoningContentForToolCalls(next.messages, { providerLabel: "Zhipu" });
-    if (ensured !== next.messages) {
-      next.messages = ensured;
+  if (hasToolCalls) {
+    if (!clearHistory) {
+      const ensured = ensureReasoningContentForToolCalls(next.messages, { providerLabel: "Zhipu" });
+      if (ensured !== next.messages) {
+        next.messages = ensured;
+      }
     }
 
     const contentEnsured = ensureAssistantContentForToolCalls(next.messages);

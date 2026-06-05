@@ -16,7 +16,7 @@
  * 设计来源：Hana 自己的三通道 API 概念（两个参考项目都没有）
  */
 
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import { isLocalBaseUrl } from "../shared/net-utils.js";
 
 // 角色名称 -> preferences 字段名（SHARED_MODEL_KEYS 兼容）

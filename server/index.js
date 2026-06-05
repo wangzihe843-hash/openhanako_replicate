@@ -36,7 +36,7 @@ import { authorizeHttpRoute, isPublicHttpRoute } from "./http/route-security.js"
 // Pi SDK 的 fetch 请求会累积 AbortSignal listener，提高上限避免无害警告
 setMaxListeners(50);
 
-import { loadLocale } from "./i18n.js";
+import { loadLocale } from "../lib/i18n.js";
 import { createChatRoute } from "./routes/chat.js";
 import { createSessionsRoute } from "./routes/sessions.js";
 import { createSessionProjectsRoute } from "./routes/session-projects.js";
@@ -86,6 +86,7 @@ import { WorkflowActivityStore } from "../lib/workflow-activity-store.js";
 import { normalizeDeferredResolveResult } from "../lib/deferred-result-payload.js";
 import { createDeferredResultExtension } from "../lib/extensions/deferred-result-ext.js";
 import { createCompactionGuardExtension } from "../lib/extensions/compaction-guard-ext.js";
+import { getResolvedCompactionMode } from "../shared/compaction-mode.js";
 import { Hub } from "../hub/index.js";
 import { startCLI } from "./cli.js";
 import { fromRoot } from "../shared/hana-root.js";
@@ -520,6 +521,7 @@ await engine.registerExtensionFactory(createDeferredResultExtension(deferredResu
 // Cache-preserving compaction — 接管 Pi auto/manual compact，避免原生 summarizer 冷读上下文
 await engine.registerExtensionFactory(createCompactionGuardExtension({
   usageLedger: engine.usageLedger,
+  getCompactionMode: () => getResolvedCompactionMode(engine.preferences),
   buildSessionCacheSnapshot: (sessionPath, options) => engine.buildSessionCacheSnapshot(sessionPath, options),
   buildUsageContext: ({ ctx }) => {
     const sessionPath = ctx?.sessionManager?.getSessionFile?.() || null;
@@ -782,14 +784,14 @@ app.post("/api/session-thinking-level", async (c) => {
 });
 
 app.post("/api/session-permission-mode", async (c) => {
-  const { mode, pendingNewSession, currentSessionOnly, sessionPath } = await safeJson(c);
+  const { mode, pendingNewSession, currentSessionOnly, sessionPath, persistDefault } = await safeJson(c);
   const targetSessionPath = typeof sessionPath === "string" && sessionPath ? sessionPath : null;
   const result = currentSessionOnly === true
     ? engine.setCurrentSessionPermissionMode(mode)
     : pendingNewSession === true
     ? engine.setPendingSessionPermissionMode(mode)
     : targetSessionPath
-    ? engine.setSessionPermissionModeForSession(targetSessionPath, mode)
+    ? engine.setSessionPermissionModeForSession(targetSessionPath, mode, { persistDefault: persistDefault === true })
     : engine.setSessionPermissionMode(mode);
   const explicitSession = currentSessionOnly === true || !!targetSessionPath;
   if (explicitSession && result?.ok === false) {

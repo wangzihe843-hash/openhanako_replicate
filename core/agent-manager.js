@@ -13,7 +13,7 @@ import { safeReadYAMLSync } from "../shared/safe-fs.js";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { clearConfigCache } from "../lib/memory/config-loader.js";
 import { hasCompiledMemory, writeCompiledMemorySnapshot } from "../lib/memory/compiled-memory-snapshot.js";
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import { ActivityStore } from "../lib/desk/activity-store.js";
 import { createHash } from "crypto";
 import {

@@ -3,14 +3,21 @@ import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { useSettingsStore } from '../store';
 import { renderMarkdown } from '../../utils/markdown';
+import { SelectWidget, type SelectOption } from '@/ui';
 import { SettingsRow } from '../components/SettingsRow';
 import { SettingsSection } from '../components/SettingsSection';
 import { ComputerUseSection } from './ComputerUseSection';
+import {
+  COMPACTION_MODE_EXPERIMENT_ID,
+  COMPACTION_MODES,
+  normalizeCompactionMode,
+} from '../../../../../shared/compaction-mode.js';
 import styles from '../Settings.module.css';
 
 const CACHE_SNAPSHOT_EXPERIMENT_ID = 'memory.cache_snapshot_reflection';
 
-type ExperimentMode = 'off' | 'shadow' | 'write';
+type CacheSnapshotMode = 'off' | 'shadow' | 'write';
+type CompactionMode = 'auto' | 'cache_preserving' | 'pi_compatible';
 
 type ExperimentDefinition = {
   id: string;
@@ -26,6 +33,11 @@ type ExperimentDefinition = {
     presentation?: {
       type: string;
     };
+    options?: Array<{
+      value: string;
+      labelKey?: string;
+      label?: string;
+    }>;
   };
 };
 
@@ -45,8 +57,12 @@ type CacheSnapshotObservation = {
   memoryMdPreview?: string;
 };
 
-function normalizeMode(value: unknown): ExperimentMode {
+function normalizeCacheSnapshotMode(value: unknown): CacheSnapshotMode {
   return value === 'shadow' || value === 'write' ? value : 'off';
+}
+
+function normalizeUiCompactionMode(value: unknown): CompactionMode {
+  return normalizeCompactionMode(value) as CompactionMode;
 }
 
 function formatObservationTime(value?: string): string {
@@ -158,7 +174,7 @@ function ObservationPanel({ observation, onClear }: {
 
 function CacheSnapshotExperiment({ experiment, onValueChange }: {
   experiment: ExperimentDefinition;
-  onValueChange: (id: string, value: ExperimentMode) => Promise<void>;
+  onValueChange: (id: string, value: CacheSnapshotMode) => Promise<void>;
 }) {
   const primaryAgentId = useSettingsStore(s => (
     s.agents.find((agent) => agent.isPrimary)?.id || null
@@ -166,7 +182,7 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
   const [observation, setObservation] = useState<CacheSnapshotObservation | null>(null);
   const [observationLoaded, setObservationLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const mode = normalizeMode(experiment.value);
+  const mode = normalizeCacheSnapshotMode(experiment.value);
   const enabled = mode !== 'off';
   const observeOnly = mode === 'shadow';
 
@@ -190,7 +206,7 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
     });
   }, [observationUrl]);
 
-  const setMode = async (next: ExperimentMode) => {
+  const setMode = async (next: CacheSnapshotMode) => {
     setSaving(true);
     try {
       await onValueChange(experiment.id, next);
@@ -249,11 +265,61 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
   );
 }
 
+function compactionModeOptions(experiment: ExperimentDefinition): SelectOption[] {
+  const fromSchema = experiment.valueSchema?.options
+    ?.filter((option) => typeof option?.value === 'string')
+    .map((option) => ({
+      value: option.value,
+      label: option.labelKey ? t(option.labelKey) : (option.label || option.value),
+    })) || [];
+  if (fromSchema.length > 0) return fromSchema;
+  return [
+    { value: COMPACTION_MODES.AUTO, label: t('settings.experiments.compaction.auto') },
+    { value: COMPACTION_MODES.CACHE_PRESERVING, label: t('settings.experiments.compaction.cachePreserving') },
+    { value: COMPACTION_MODES.PI_COMPATIBLE, label: t('settings.experiments.compaction.piCompatible') },
+  ];
+}
+
+function CompactionModeExperiment({ experiment, onValueChange }: {
+  experiment: ExperimentDefinition;
+  onValueChange: (id: string, value: CompactionMode) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const mode = normalizeUiCompactionMode(experiment.value);
+  const options = useMemo(() => compactionModeOptions(experiment), [experiment]);
+
+  const setMode = async (next: string) => {
+    const normalized = normalizeUiCompactionMode(next);
+    setSaving(true);
+    try {
+      await onValueChange(experiment.id, normalized);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsRow
+      label={t(experiment.titleKey)}
+      hint={t(experiment.descriptionKey)}
+      control={(
+        <SelectWidget
+          options={options}
+          value={mode}
+          onChange={setMode}
+          disabled={saving}
+        />
+      )}
+    />
+  );
+}
+
 export function ExperimentsTab() {
   const showToast = useSettingsStore(s => s.showToast);
   const platformName = useSettingsStore(s => s.platformName);
   const [experiments, setExperiments] = useState<ExperimentDefinition[]>([]);
   const [loading, setLoading] = useState(true);
+  const sessionExperiments = experiments.filter((experiment) => experiment.owner === 'session');
   const memoryExperiments = experiments.filter((experiment) => experiment.owner === 'memory');
   const showComputerUse = platformName !== 'linux';
 
@@ -264,7 +330,7 @@ export function ExperimentsTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  const updateExperimentValue = async (id: string, value: ExperimentMode) => {
+  const updateExperimentValue = async (id: string, value: unknown) => {
     const res = await hanaFetch(`/api/experiments/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -282,6 +348,22 @@ export function ExperimentsTab() {
   return (
     <>
       {showComputerUse && <ComputerUseSection />}
+      {!loading && sessionExperiments.length > 0 && (
+        <SettingsSection
+          title={t('settings.experiments.compactionTitle')}
+          description={t('settings.experiments.compactionSectionDescription')}
+        >
+          {sessionExperiments.map((experiment) => (
+            experiment.id === COMPACTION_MODE_EXPERIMENT_ID ? (
+              <CompactionModeExperiment
+                key={experiment.id}
+                experiment={experiment}
+                onValueChange={updateExperimentValue}
+              />
+            ) : null
+          ))}
+        </SettingsSection>
+      )}
       <SettingsSection
         title={t('settings.experiments.memoryTitle')}
         description={t('settings.experiments.cacheSnapshot.description')}

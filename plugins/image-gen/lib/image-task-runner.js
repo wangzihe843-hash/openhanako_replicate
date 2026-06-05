@@ -1,11 +1,12 @@
 import path from "node:path";
+import { t } from "../../../lib/i18n.js";
 
 export function createTaskId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
 function errorMessage(err) {
-  return err?.message || String(err || "未知错误");
+  return err?.message || String(err || t("plugin.imageGen.unknownError"));
 }
 
 function isObject(value) {
@@ -50,6 +51,7 @@ export function buildImageParams(input) {
     prompt: input.prompt,
     ...(input.ratio && { ratio: input.ratio }),
     ...(input.resolution && { resolution: input.resolution }),
+    ...(input.quality && { quality: input.quality }),
     ...(input.model && { model: input.model }),
     ...(input.image && { image: input.image }),
   };
@@ -115,11 +117,15 @@ async function resolveMediaModel(submitCtx, ref) {
 }
 
 function explicitProviderError(providerId, detail = "") {
-  return `指定的图片生成 provider "${providerId}" 不可用${detail ? `：${detail}` : ""}`;
+  return detail
+    ? t("plugin.imageGen.providerUnavailableDetail", { providerId, detail })
+    : t("plugin.imageGen.providerUnavailable", { providerId });
 }
 
 function explicitModelError(modelId, detail = "") {
-  return `指定的图片生成模型 "${modelId}" 不可用${detail ? `：${detail}` : ""}`;
+  return detail
+    ? t("plugin.imageGen.modelUnavailableDetail", { modelId, detail })
+    : t("plugin.imageGen.modelUnavailable", { modelId });
 }
 
 async function availableAdapterOrThrow(adapter, submitCtx, providerId) {
@@ -145,7 +151,7 @@ async function targetFromMediaRef(input, registry, submitCtx, ref, { strict = fa
     modelId = providers[ref.providerId]?.models?.[0]?.id || null;
     if (!modelId) {
       if (strict && providers[ref.providerId]) {
-        throw new Error(explicitProviderError(ref.providerId, "没有配置可用的生图模型"));
+        throw new Error(explicitProviderError(ref.providerId, t("plugin.imageGen.noConfiguredModel")));
       }
       return null;
     }
@@ -153,12 +159,12 @@ async function targetFromMediaRef(input, registry, submitCtx, ref, { strict = fa
 
   const { media, error } = await resolveMediaModel(submitCtx, { providerId: ref.providerId, modelId });
   if (!media) {
-    if (strict) throw new Error(explicitProviderError(ref.providerId, error || `找不到模型 ${modelId}`));
+    if (strict) throw new Error(explicitProviderError(ref.providerId, error || t("plugin.imageGen.modelNotFound", { modelId })));
     return null;
   }
   const adapter = registry.getProtocol?.(media.protocolId) || registry.get(media.providerId);
   if (!adapter) {
-    if (strict) throw new Error(explicitProviderError(ref.providerId, `没有注册协议 ${media.protocolId}`));
+    if (strict) throw new Error(explicitProviderError(ref.providerId, t("plugin.imageGen.noRegisteredProtocol", { protocolId: media.protocolId })));
     return null;
   }
   return targetFromAdapter(adapter, input, media);
@@ -207,9 +213,9 @@ async function targetFromExplicitModel(input, registry, submitCtx) {
     return targetFromMediaRef(input, registry, submitCtx, matches[0], { strict: true });
   }
   if (matches.length > 1) {
-    throw new Error(explicitModelError(input.model, "多个 provider 都有同名模型，请同时指定 provider"));
+    throw new Error(explicitModelError(input.model, t("plugin.imageGen.multipleProvidersSameModel")));
   }
-  throw new Error(explicitModelError(input.model, "没有在 media provider 中找到这个模型"));
+  throw new Error(explicitModelError(input.model, t("plugin.imageGen.modelNotInMediaProvider")));
 }
 
 async function targetFromConfiguredDefault(input, registry, submitCtx) {
@@ -296,7 +302,7 @@ export async function runSubmitInBackground({ taskId, adapter, params, submitCtx
     const files = Array.isArray(result?.files) ? result.files.filter(Boolean) : [];
 
     if (!hasProviderTaskId && files.length === 0) {
-      throw new Error("图片生成 provider 没有返回 taskId 或文件");
+      throw new Error(t("plugin.imageGen.noTaskIdOrFile"));
     }
 
     store.update(taskId, {
@@ -334,7 +340,7 @@ function normalizeRetryParams(task) {
 export async function retryImageTask({ taskId, ctx }) {
   const { registry, store, poller } = ctx?._mediaGen || {};
   if (!registry || !store || !poller) {
-    return retryError(503, "图片生成插件未初始化");
+    return retryError(503, t("plugin.imageGen.notInitialized"));
   }
 
   const task = store.get(taskId);

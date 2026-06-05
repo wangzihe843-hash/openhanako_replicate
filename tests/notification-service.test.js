@@ -12,11 +12,60 @@ describe("NotificationService", () => {
     const result = await service.notify({ title: "提醒", body: "该喝水了" }, { agentId: "hana" });
 
     expect(desktopEvents).toEqual([
-      { title: "提醒", body: "该喝水了", agentId: "hana" },
+      { title: "提醒", body: "该喝水了", agentId: "hana", desktopFocusPolicy: "always" },
     ]);
     expect(result).toMatchObject({
       ok: true,
       deliveries: [{ channel: "desktop", status: "sent" }],
+    });
+  });
+
+  it("passes desktop focus policy to the desktop notification boundary", async () => {
+    const emitDesktop = vi.fn();
+    const service = new NotificationService({
+      emitDesktop,
+      getBridgeManager: () => null,
+    });
+
+    await service.notify(
+      {
+        title: "完成",
+        body: "这一轮已经结束",
+        desktopFocusPolicy: "when_unfocused",
+      },
+      { agentId: "hana" },
+    );
+
+    expect(emitDesktop).toHaveBeenCalledWith({
+      title: "完成",
+      body: "这一轮已经结束",
+      agentId: "hana",
+      desktopFocusPolicy: "when_unfocused",
+    });
+  });
+
+  it("passes the notification sessionPath to the desktop notification boundary", async () => {
+    const emitDesktop = vi.fn();
+    const service = new NotificationService({
+      emitDesktop,
+      getBridgeManager: () => null,
+    });
+
+    await service.notify(
+      {
+        title: "完成",
+        body: "这一轮已经结束",
+        sessionPath: "/tmp/finished.jsonl",
+      },
+      { agentId: "hana" },
+    );
+
+    expect(emitDesktop).toHaveBeenCalledWith({
+      title: "完成",
+      body: "这一轮已经结束",
+      agentId: "hana",
+      desktopFocusPolicy: "always",
+      sessionPath: "/tmp/finished.jsonl",
     });
   });
 

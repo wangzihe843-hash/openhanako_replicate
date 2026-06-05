@@ -3,7 +3,7 @@ import os from "os";
 import fs from "fs";
 import path from "path";
 
-vi.mock("../server/i18n.js", () => ({
+vi.mock("../lib/i18n.js", () => ({
   getLocale: () => "zh-CN",
 }));
 

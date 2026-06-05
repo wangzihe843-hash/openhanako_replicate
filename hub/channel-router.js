@@ -23,7 +23,7 @@ import { loadConfig } from "../lib/memory/config-loader.js";
 import { callText } from "../core/llm-client.js";
 import { runAgentPhoneSession } from "./agent-executor.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.js";
-import { getLocale } from "../server/i18n.js";
+import { getLocale } from "../lib/i18n.js";
 import {
   recordAgentPhoneActivity,
 } from "../lib/conversations/agent-phone-projection.js";

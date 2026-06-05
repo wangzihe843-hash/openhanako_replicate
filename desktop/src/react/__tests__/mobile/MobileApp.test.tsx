@@ -96,8 +96,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
-    expect(screen.getByLabelText('访问密钥')).toBeInTheDocument();
+    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
+    expect(screen.getByLabelText('mobile.auth.deviceField')).toBeInTheDocument();
   });
 
   it('can submit a username and password login without sending a device credential', async () => {
@@ -116,10 +116,10 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '用户名密码' }));
-    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'hana-owner' } });
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret-password' } });
-    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'mobile.auth.passwordTab' }));
+    fireEvent.change(screen.getByLabelText('mobile.auth.usernameField'), { target: { value: 'hana-owner' } });
+    fireEvent.change(screen.getByLabelText('mobile.auth.passwordField'), { target: { value: 'secret-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'mobile.auth.submit' }));
 
     await waitFor(() => {
       const loginCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/api/web-auth/login'));
@@ -144,8 +144,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
-    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
+    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
+    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));
@@ -165,8 +165,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
-    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
+    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
+    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));

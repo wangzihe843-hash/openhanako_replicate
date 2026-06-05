@@ -8,11 +8,12 @@ import {
   resolveImageTarget,
   runSubmitInBackground,
 } from "./image-task-runner.js";
+import { t } from "../../../lib/i18n.js";
 
 function assertMediaRuntime(ctx) {
   const { registry, store, poller } = ctx?._mediaGen || {};
   if (!registry || !store || !poller) {
-    throw new Error("图片生成插件未初始化");
+    throw new Error(t("plugin.imageGen.notInitialized"));
   }
   return { registry, store, poller };
 }
@@ -21,13 +22,13 @@ export async function submitImageGeneration({ input = {}, ctx, metadata = null, 
   const { registry, store, poller } = assertMediaRuntime(ctx);
   const sessionPath = normalizeSessionPath(ctx);
   if (!sessionPath) {
-    throw new Error("图片生成需要明确的会话归属，当前工具调用缺少 sessionPath");
+    throw new Error(t("plugin.imageGen.noSessionPath"));
   }
 
   const submitCtx = createSubmitContext(ctx);
   const target = await resolveImageTarget(input, registry, submitCtx);
   const adapter = target?.adapter || null;
-  if (!adapter) throw new Error("没有可用的图片生成 provider");
+  if (!adapter) throw new Error(t("plugin.imageGen.noProvider"));
 
   const count = Math.min(Math.max(input.count || 1, 1), 9);
   const batchId = createTaskId();

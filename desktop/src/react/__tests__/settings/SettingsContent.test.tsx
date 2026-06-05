@@ -64,6 +64,7 @@ vi.mock('../../components/InputContextMenu', () => ({ InputContextMenu: () => nu
 vi.mock('../../settings/tabs/AgentTab', () => ({ AgentTab: () => <div data-testid="active-tab">agent tab</div> }));
 vi.mock('../../settings/tabs/MeTab', () => ({ MeTab: () => <div data-testid="active-tab">me tab</div> }));
 vi.mock('../../settings/tabs/InterfaceTab', () => ({ InterfaceTab: () => <div data-testid="active-tab">interface tab</div> }));
+vi.mock('../../settings/tabs/GeneralTab', () => ({ GeneralTab: () => <div data-testid="active-tab">general tab</div> }));
 vi.mock('../../settings/tabs/WorkTab', () => ({ WorkTab: () => <div data-testid="active-tab">work tab</div> }));
 vi.mock('../../settings/tabs/SkillsTab', () => ({ SkillsTab: () => <div data-testid="active-tab">skills tab</div> }));
 vi.mock('../../settings/tabs/BridgeTab', () => ({ BridgeTab: () => <div data-testid="active-tab">bridge tab</div> }));
@@ -116,8 +117,8 @@ describe('SettingsContent title placement', () => {
     const header = container.querySelector('.settings-header');
     expect(header).not.toBeNull();
     expect(within(header as HTMLElement).getByRole('heading', { name: '设置' })).toBeInTheDocument();
-    expect(within(header as HTMLElement).getByRole('heading', { name: '助手' })).toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { name: '助手' })).toHaveLength(1);
+    expect(within(header as HTMLElement).getByRole('heading', { name: 'settings.tabs.agent' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'settings.tabs.agent' })).toHaveLength(1);
   });
 
   it('keeps the tab title in the content area for the standalone settings window', async () => {
@@ -126,8 +127,8 @@ describe('SettingsContent title placement', () => {
 
     const header = container.querySelector('.settings-header');
     expect(header).not.toBeNull();
-    expect(within(header as HTMLElement).queryByRole('heading', { name: '助手' })).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '助手' })).toBeInTheDocument();
+    expect(within(header as HTMLElement).queryByRole('heading', { name: 'settings.tabs.agent' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'settings.tabs.agent' })).toBeInTheDocument();
   });
 
   it('notifies the modal shell when the active settings tab changes', async () => {
@@ -157,7 +158,7 @@ describe('SettingsContent title placement', () => {
     const { SettingsContent } = await import('../../settings/SettingsContent');
     render(<SettingsContent variant="window" />);
 
-    expect(screen.getByRole('heading', { name: '插件市场' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'settings.tabs.pluginMarketplace' })).toBeInTheDocument();
     expect(screen.queryByText('agent tab')).not.toBeInTheDocument();
   });
 

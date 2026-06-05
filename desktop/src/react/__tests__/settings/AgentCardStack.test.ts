@@ -119,7 +119,7 @@ describe('AgentCardStack actions', () => {
     }));
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agent.setPrimary' }));
-    fireEvent.click(screen.getByRole('button', { name: '导出助手' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agent.exportAgent' }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.agent.deleteBtn' }));
 
     expect(onSetPrimary).toHaveBeenCalledWith('deepseek');
@@ -141,7 +141,7 @@ describe('AgentCardStack actions', () => {
     }));
 
     expect(screen.queryByRole('button', { name: 'settings.agent.setPrimary' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '导出助手' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'settings.agent.exportAgent' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'settings.agent.deleteBtn' })).not.toBeInTheDocument();
   });
 

@@ -75,6 +75,7 @@ export function PlanModeButton({ mode, onChange, locked = false }: {
       const body = {
         mode: nextMode,
         pendingNewSession,
+        persistDefault: true,
         ...(sessionPath ? { sessionPath } : {}),
       };
       const res = await hanaFetch('/api/session-permission-mode', {

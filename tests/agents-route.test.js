@@ -72,6 +72,27 @@ describe("agents route", () => {
     expect(engine.emitEvent).not.toHaveBeenCalled();
   });
 
+  it("invalidates the agent list cache when a fresh list is requested", async () => {
+    const { createAgentsRoute } = await import("../server/routes/agents.js");
+    const app = new Hono();
+    const engine = {
+      gcWorkspacePersistence: vi.fn(),
+      invalidateAgentListCache: vi.fn(),
+      listAgents: vi.fn(() => [{ id: "hana", name: "Hana", isCurrent: true }]),
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const res = await app.request("/api/agents?fresh=1");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.agents).toEqual([{ id: "hana", name: "Hana", isCurrent: true }]);
+    expect(engine.invalidateAgentListCache).toHaveBeenCalledTimes(1);
+    expect(engine.invalidateAgentListCache.mock.invocationCallOrder[0])
+      .toBeLessThan(engine.listAgents.mock.invocationCallOrder[0]);
+  });
+
   it("returns create validation status codes without emitting agent-created", async () => {
     const { createAgentsRoute } = await import("../server/routes/agents.js");
     const app = new Hono();

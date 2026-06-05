@@ -22,8 +22,8 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 - `count`：并发生成张数（1-9），用户说"多来几张"/"再抽几张"时用
 - `image`：参考图路径（图生图、图片编辑、风格迁移时传入）
 - `ratio`：长宽比（1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9）
-- `resolution`：分辨率（2k, 4k）
-- `quality`：画质（low, medium, high）
+- `resolution`：统一分辨率档位（1k, 2k, 4k），adapter 会映射为供应商最接近的尺寸
+- `quality`：画质（low, medium, high, auto）
 - `provider`：指定生图 provider（可选，默认自动选择）。可用 provider 来自 Hana Provider Registry 的 `media.imageGeneration` capability，不从聊天模型列表推断
 
 ### image-gen_generate-video

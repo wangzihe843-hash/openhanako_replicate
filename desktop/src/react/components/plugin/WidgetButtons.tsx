@@ -12,6 +12,8 @@ import { openWidget, openDesk, hideWidget, showWidget, showAndOpenWidget } from 
 import { ContextMenu, type ContextMenuItem } from '../../ui';
 import s from './WidgetButtons.module.css';
 
+declare function t(key: string, vars?: Record<string, string | number>): string;
+
 interface MenuState { items: ContextMenuItem[]; position: { x: number; y: number } }
 
 export function WidgetButtons() {
@@ -38,7 +40,7 @@ export function WidgetButtons() {
     e.stopPropagation();
     setMenu({
       position: { x: e.clientX, y: e.clientY },
-      items: [{ label: `隐藏「${title}」`, action: () => hideWidget(pluginId) }],
+      items: [{ label: t('plugin.widget.hideTitle', { title }), action: () => hideWidget(pluginId) }],
     });
   }, []);
 
@@ -71,7 +73,7 @@ export function WidgetButtons() {
       {/* Dropdown for hidden widgets — show button to restore */}
       {hiddenWidgetList.length > 0 && (
         <div ref={dropdownRef} style={{ position: 'relative' }}>
-          <button className={s.btn} title="已隐藏的插件" onClick={() => setDropdownOpen(!dropdownOpen)}>
+          <button className={s.btn} title={t('plugin.widget.hiddenPlugins')} onClick={() => setDropdownOpen(!dropdownOpen)}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
               <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
             </svg>
@@ -88,7 +90,7 @@ export function WidgetButtons() {
                     </button>
                     <button
                       className={s.pinBtn}
-                      title="显示"
+                      title={t('plugin.widget.show')}
                       onClick={(e) => { e.stopPropagation(); showWidget(w.pluginId); setDropdownOpen(false); }}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -107,7 +109,7 @@ export function WidgetButtons() {
       {/* Desk toggle */}
       <button
         className={`${s.btn}${jianView === 'desk' ? ` ${s.active}` : ''}`}
-        title="工作台"
+        title={t('plugin.widget.desk')}
         onClick={() => openDesk()}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

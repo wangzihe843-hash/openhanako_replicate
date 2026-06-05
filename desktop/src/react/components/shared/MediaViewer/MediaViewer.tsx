@@ -6,6 +6,8 @@ import { ImageStage } from './ImageStage';
 import { VideoStage } from './VideoStage';
 import styles from './MediaViewer.module.css';
 
+declare function t(key: string, vars?: Record<string, string | number>): string;
+
 export function MediaViewer() {
   const state = useStore(s => s.mediaViewer);
   const closeMediaViewer = useStore(s => s.closeMediaViewer);
@@ -123,7 +125,7 @@ export function MediaViewer() {
       className={styles.overlay}
       role="dialog"
       aria-modal="true"
-      aria-label="媒体预览"
+      aria-label={t('mediaViewer.ariaLabel')}
       data-testid="media-viewer-overlay"
       onClick={onOverlayClick}
     >
@@ -137,7 +139,7 @@ export function MediaViewer() {
         <button
           className={styles.closeBtn}
           data-testid="media-viewer-close"
-          aria-label="关闭"
+          aria-label={t('mediaViewer.close')}
           onClick={(e) => { e.stopPropagation(); closeMediaViewer(); }}
         >×</button>
       </div>
@@ -148,14 +150,14 @@ export function MediaViewer() {
           <button
             className={`${styles.navBtn} ${styles.navPrev} ${chromeVisible ? '' : styles.hidden}`}
             data-testid="media-viewer-prev"
-            aria-label="上一张"
+            aria-label={t('mediaViewer.prev')}
             disabled={!canPrev}
             onClick={(e) => { e.stopPropagation(); goPrev(); }}
           >‹</button>
           <button
             className={`${styles.navBtn} ${styles.navNext} ${chromeVisible ? '' : styles.hidden}`}
             data-testid="media-viewer-next"
-            aria-label="下一张"
+            aria-label={t('mediaViewer.next')}
             disabled={!canNext}
             onClick={(e) => { e.stopPropagation(); goNext(); }}
           >›</button>

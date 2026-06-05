@@ -50,6 +50,7 @@ describe('PreviewRenderer HTML isolation', () => {
   };
 
   beforeEach(() => {
+    window.t = ((key: string) => key) as typeof window.t;
     mocks.hanaFetch.mockReset();
     mocks.hanaFetch.mockResolvedValue(new Response(JSON.stringify({
       previewUrl: 'http://127.0.0.1:14500/preview/html/pv_123?previewToken=preview_only_token',
@@ -243,7 +244,7 @@ describe('PreviewRenderer HTML isolation', () => {
     expect(cover).toBeTruthy();
 
     fireEvent.contextMenu(cover!, { clientX: 44, clientY: 72 });
-    fireEvent.click(screen.getByRole('button', { name: '删除封面' }));
+    fireEvent.click(screen.getByRole('button', { name: 'preview.cover.deleteCover' }));
 
     await waitFor(() => {
       expect(window.platform?.writeFileIfUnchanged).toHaveBeenCalledWith(

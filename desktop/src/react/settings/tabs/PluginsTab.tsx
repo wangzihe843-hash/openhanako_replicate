@@ -438,7 +438,7 @@ export function PluginsTab() {
 
       {/* 管理插件：dropzone + 列表 + 路径提示，同一 flush section；reload 按钮放 context */}
       <SettingsSection
-        title="管理插件"
+        title={t('settings.plugins.manageTitle')}
         variant="flush"
         context={<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>{diagnosticsButton}{reloadButton}</div>}
       >
@@ -684,7 +684,7 @@ export function PluginsTab() {
       )}
 
       {/* 权限：标准白卡片 row */}
-      <SettingsSection title="权限">
+      <SettingsSection title={t('settings.plugins.permissionTitle')}>
         <SettingsRow
           label={t('settings.plugins.fullAccessToggle')}
           hint={t('settings.plugins.fullAccessDesc')}

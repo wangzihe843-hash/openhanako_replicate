@@ -17,6 +17,7 @@ import { Toast } from './Toast';
 import { AgentTab } from './tabs/AgentTab';
 import { MeTab } from './tabs/MeTab';
 import { InterfaceTab } from './tabs/InterfaceTab';
+import { GeneralTab } from './tabs/GeneralTab';
 import { WorkTab } from './tabs/WorkTab';
 import { SkillsTab } from './tabs/SkillsTab';
 import { BridgeTab } from './tabs/BridgeTab';
@@ -49,6 +50,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   agent: AgentTab,
   me: MeTab,
   interface: InterfaceTab,
+  general: GeneralTab,
   work: WorkTab,
   skills: SkillsTab,
   bridge: BridgeTab,
@@ -81,23 +83,24 @@ function connectionState(connection: ServerConnection | null) {
 }
 
 /** Tab 顶部大标题（对应左栏导航 label），所有 tab 都会显示 */
-const TAB_TITLES: Record<string, string> = {
-  agent: '助手',
-  me: '我',
-  interface: '界面',
-  work: '工作台',
+const TAB_TITLE_KEYS: Record<string, string> = {
+  agent: 'settings.tabs.agent',
+  me: 'settings.tabs.me',
+  interface: 'settings.tabs.interface',
+  general: 'settings.tabs.general',
+  work: 'settings.tabs.work',
   workflow: 'Workflow',
-  skills: '技能',
-  bridge: '社交平台',
-  providers: '供应商',
-  media: '多媒体',
-  sharing: '分享',
-  access: '访问与设备',
-  plugins: '插件',
-  experiments: '实验',
-  'plugin-marketplace': '插件市场',
-  security: '安全',
-  about: '关于',
+  skills: 'settings.tabs.skills',
+  bridge: 'settings.tabs.bridge',
+  providers: 'settings.tabs.providers',
+  media: 'settings.tabs.media',
+  sharing: 'settings.tabs.sharing',
+  access: 'settings.tabs.access',
+  plugins: 'settings.tabs.plugins',
+  experiments: 'settings.tabs.experiments',
+  'plugin-marketplace': 'settings.tabs.pluginMarketplace',
+  security: 'settings.tabs.security',
+  about: 'settings.tabs.about',
 };
 
 const TAB_DESCRIPTION_KEYS: Record<string, string> = {
@@ -230,7 +233,8 @@ export function SettingsContent({
     || (dynamicTab ? getNativeSettingsTabComponent(dynamicTab.nativeComponent) : null)
     || AgentTab;
   const isModal = variant === 'modal';
-  const activeTabTitle = TAB_TITLES[effectiveActiveTab] || titleToLabel(dynamicTab?.title);
+  const tabTitleKey = TAB_TITLE_KEYS[effectiveActiveTab];
+  const activeTabTitle = tabTitleKey ? t(tabTitleKey) : titleToLabel(dynamicTab?.title);
   const activeTabDescriptionKey = TAB_DESCRIPTION_KEYS[effectiveActiveTab];
   const activeTabDescription = activeTabDescriptionKey ? t(activeTabDescriptionKey) : '';
   const isWideTab = effectiveActiveTab === 'plugin-marketplace' || effectiveActiveTab === 'providers';

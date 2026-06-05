@@ -9,7 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { createModuleLogger } from "../lib/debug-log.js";
-import { t } from "../server/i18n.js";
+import { t } from "../lib/i18n.js";
 import {
   addBookmarkEntry,
   createChannel,

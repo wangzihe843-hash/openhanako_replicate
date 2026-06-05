@@ -18,7 +18,7 @@
  */
 import fs from "fs";
 import { callText } from "../llm-client.js";
-import { getLocale } from "../../server/i18n.js";
+import { getLocale } from "../../lib/i18n.js";
 import { isToolCallBlock } from "../llm-utils.js";
 import { createModuleLogger } from "../../lib/debug-log.js";
 

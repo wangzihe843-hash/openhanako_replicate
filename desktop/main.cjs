@@ -8,7 +8,7 @@
  * 4. 关闭 splash，显示主窗口
  * 5. 优雅关闭
  */
-const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, dialog, session, shell, nativeTheme, Tray, Menu, nativeImage, systemPreferences, Notification, webContents, screen } = require("electron");
+const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, dialog, session, shell, nativeTheme, Tray, Menu, nativeImage, systemPreferences, Notification, webContents, screen, powerSaveBlocker } = require("electron");
 const os = require("os");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
@@ -20,6 +20,7 @@ const {
   getAutoLaunchStatus,
   setAutoLaunchEnabled,
 } = require("./login-item-settings.cjs");
+const { createKeepAwakeManager } = require("./keep-awake.cjs");
 const { createFileWatchRegistry } = require("./file-watch-registry.cjs");
 const { createStableFileWatcher } = require("./file-watch-adapter.cjs");
 const { createWorkspaceWatchRegistry } = require("./workspace-watch-registry.cjs");
@@ -33,6 +34,10 @@ const {
 } = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
 const { resolveAgentAvatarPath } = require("./src/shared/agent-avatar-path.cjs");
+const {
+  normalizeDesktopNotificationOptions,
+  shouldSuppressDesktopNotification,
+} = require("./src/shared/desktop-notification-policy.cjs");
 const { redactLogText } = require("../shared/log-redactor.cjs");
 const {
   configureClientSingleInstance,
@@ -82,6 +87,9 @@ const {
 const {
   sanitizeWindowState,
 } = require("./src/shared/window-state.cjs");
+const {
+  normalizeQuickChatPreferences,
+} = require("../shared/quick-chat-preferences.cjs");
 const {
   decorateScreenshotMarkdownIt,
   escapeAttr,
@@ -152,6 +160,8 @@ process.env.HANA_HOME = hanakoHome;
 ensureHanaPiSdkDirs(hanakoHome);
 configureProcessPiSdkEnv(hanakoHome);
 
+const keepAwakeManager = createKeepAwakeManager({ powerSaveBlocker });
+
 function redactMainLogText(value) {
   return redactLogText(value, { homeDir: os.homedir(), extraPaths: [hanakoHome] });
 }
@@ -160,6 +170,18 @@ function readNetworkProxyPreference() {
   const prefsPath = path.join(hanakoHome, "user", "preferences.json");
   const prefs = safeReadJSON(prefsPath, {});
   return normalizeNetworkProxyConfig(prefs?.network_proxy);
+}
+
+function readKeepAwakePreference() {
+  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
+  const prefs = safeReadJSON(prefsPath, {});
+  return prefs?.keep_awake === true;
+}
+
+function readQuickChatPreferences() {
+  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
+  const prefs = safeReadJSON(prefsPath, {});
+  return normalizeQuickChatPreferences(prefs?.quick_chat);
 }
 
 async function applyDesktopNetworkProxy(config, { reason = "runtime" } = {}) {
@@ -327,6 +349,9 @@ app.on("gpu-info-update", () => {
 let splashWindow = null;
 let mainWindow = null;
 let onboardingWindow = null;
+let quickChatWindow = null;
+let quickChatMode = "compact";
+let registeredQuickChatShortcut = null;
 
 let settingsWindow = null;
 
@@ -338,6 +363,12 @@ let _currentBrowserSession = null; // 当前浏览器绑定的 sessionPath
 /** Vite 入口页面统一加载（dev → Vite dev server，其他优先 dist-renderer，最后才回退 src） */
 const _isDev = process.argv.includes("--dev");
 const _distRenderer = path.join(__dirname, "dist-renderer");
+
+const QUICK_CHAT_WIDTH = 480;
+const QUICK_CHAT_COMPACT_HEIGHT = 142;
+const QUICK_CHAT_CHAT_HEIGHT = 520;
+const QUICK_CHAT_MIN_WIDTH = 360;
+const QUICK_CHAT_MIN_HEIGHT = 118;
 
 function loadWindowURL(win, pageName, opts) {
   if (_isDev && process.env.VITE_DEV_URL) {
@@ -542,6 +573,15 @@ function applyWindowThemeColors(win, rawTheme) {
     } catch (err) {
       console.warn("[desktop] set window border color failed:", redactMainLogText(err.message));
     }
+  }
+}
+
+function applyTransparentWindowBackground(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.setBackgroundColor("#00000000");
+  } catch (err) {
+    console.warn("[desktop] set transparent window background failed:", redactMainLogText(err.message));
   }
 }
 
@@ -1226,6 +1266,243 @@ function saveWindowState() {
   }, 500);
 }
 
+// ── Quick Chat 小窗状态与全局快捷键 ──
+const quickChatWindowStatePath = path.join(hanakoHome, "user", "quick-chat-window-state.json");
+
+function quickChatHeightForMode(mode, requestedHeight = null) {
+  const base = mode === "chat" ? QUICK_CHAT_CHAT_HEIGHT : QUICK_CHAT_COMPACT_HEIGHT;
+  const height = Number.isFinite(requestedHeight) ? Math.max(base, Math.round(requestedHeight)) : base;
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const area = display?.workArea || display?.bounds || { height };
+  const maxHeight = Math.max(QUICK_CHAT_MIN_HEIGHT, (area.height || height) - 24);
+  return Math.min(height, maxHeight);
+}
+
+function loadQuickChatWindowState() {
+  try {
+    return JSON.parse(fs.readFileSync(quickChatWindowStatePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function defaultQuickChatWindowState(mode, requestedHeight = null) {
+  const height = quickChatHeightForMode(mode, requestedHeight);
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: QUICK_CHAT_WIDTH, height };
+  return {
+    width: QUICK_CHAT_WIDTH,
+    height,
+    x: Math.round(area.x + (area.width - QUICK_CHAT_WIDTH) / 2),
+    y: Math.round(area.y + (area.height - height) / 3),
+  };
+}
+
+function resolveQuickChatWindowBounds(mode, state = loadQuickChatWindowState(), requestedHeight = null) {
+  const height = quickChatHeightForMode(mode, requestedHeight);
+  const base = state || defaultQuickChatWindowState(mode, requestedHeight);
+  const sanitized = sanitizeWindowState(
+    { ...base, width: QUICK_CHAT_WIDTH, height },
+    screen.getAllDisplays(),
+    {
+      defaultWidth: QUICK_CHAT_WIDTH,
+      defaultHeight: height,
+      minWidth: QUICK_CHAT_MIN_WIDTH,
+      minHeight: Math.min(QUICK_CHAT_MIN_HEIGHT, height),
+      minVisibleWidth: 96,
+      minVisibleHeight: 72,
+    },
+  ) || defaultQuickChatWindowState(mode, requestedHeight);
+  return {
+    x: sanitized.x,
+    y: sanitized.y,
+    width: Math.max(QUICK_CHAT_MIN_WIDTH, Math.min(QUICK_CHAT_WIDTH, sanitized.width || QUICK_CHAT_WIDTH)),
+    height: sanitized.height || height,
+  };
+}
+
+let _saveQuickChatWindowStateTimer = null;
+let _saveQuickChatWindowStateChain = Promise.resolve();
+function saveQuickChatWindowState() {
+  if (_saveQuickChatWindowStateTimer) clearTimeout(_saveQuickChatWindowStateTimer);
+  _saveQuickChatWindowStateTimer = setTimeout(() => {
+    _saveQuickChatWindowStateTimer = null;
+    if (!quickChatWindow || quickChatWindow.isDestroyed()) return;
+    const bounds = quickChatWindow.getBounds();
+    const state = {
+      x: bounds.x,
+      y: bounds.y,
+      width: QUICK_CHAT_WIDTH,
+      height: quickChatHeightForMode(quickChatMode),
+    };
+    _saveQuickChatWindowStateChain = _saveQuickChatWindowStateChain.then(async () => {
+      await fs.promises.mkdir(path.dirname(quickChatWindowStatePath), { recursive: true });
+      await fs.promises.writeFile(quickChatWindowStatePath, JSON.stringify(state, null, 2) + "\n");
+    }).catch(e => {
+      console.error("[desktop] 保存 Quick Chat 窗口状态失败:", e.message);
+    });
+  }, 300);
+}
+
+function normalizeQuickChatResizeRequest(request) {
+  if (request && typeof request === "object") {
+    return {
+      mode: request.mode === "chat" ? "chat" : "compact",
+      height: Number.isFinite(request.height) ? request.height : null,
+    };
+  }
+  return {
+    mode: request === "chat" ? "chat" : "compact",
+    height: null,
+  };
+}
+
+function applyQuickChatMode(request) {
+  if (!quickChatWindow || quickChatWindow.isDestroyed()) return;
+  const { mode, height } = normalizeQuickChatResizeRequest(request);
+  quickChatMode = mode;
+  const bounds = resolveQuickChatWindowBounds(quickChatMode, quickChatWindow.getBounds(), height);
+  quickChatWindow.setBounds(bounds, true);
+  saveQuickChatWindowState();
+}
+
+function createQuickChatWindow() {
+  if (quickChatWindow && !quickChatWindow.isDestroyed()) return quickChatWindow;
+
+  quickChatMode = "compact";
+  const bounds = resolveQuickChatWindowBounds(quickChatMode);
+
+  quickChatWindow = new BrowserWindow({
+    ...bounds,
+    minWidth: QUICK_CHAT_MIN_WIDTH,
+    minHeight: QUICK_CHAT_MIN_HEIGHT,
+    maxWidth: QUICK_CHAT_WIDTH,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: process.platform !== "darwin",
+    frame: false,
+    alwaysOnTop: true,
+    title: "Hana Quick Chat",
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    show: false,
+    acceptFirstMouse: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.bundle.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  attachRendererLaunchDiagnostics(quickChatWindow, "quick-chat");
+  applyTransparentWindowBackground(quickChatWindow);
+  loadWindowURL(quickChatWindow, "quick-chat");
+
+  quickChatWindow.on("move", saveQuickChatWindowState);
+  quickChatWindow.on("close", (event) => {
+    if (!isQuitting && !_isUpdating && !forceQuitApp) {
+      event.preventDefault();
+      hideQuickChatWindow();
+    }
+  });
+  quickChatWindow.on("closed", () => {
+    quickChatWindow = null;
+  });
+
+  return quickChatWindow;
+}
+
+function suspendMainWindowFocusForQuickChatHide() {
+  if (process.platform !== "darwin") return;
+  if (!quickChatWindow || quickChatWindow.isDestroyed() || !quickChatWindow.isFocused()) return;
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
+  try {
+    mainWindow.setFocusable(false);
+    setTimeout(() => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFocusable(true);
+      } catch {}
+    }, 300);
+  } catch (err) {
+    console.warn("[desktop] Quick Chat 隐藏时焦点保护失败:", redactMainLogText(err.message));
+  }
+}
+
+function hideQuickChatWindow() {
+  if (!quickChatWindow || quickChatWindow.isDestroyed()) return;
+  saveQuickChatWindowState();
+  suspendMainWindowFocusForQuickChatHide();
+  quickChatWindow.hide();
+}
+
+function showQuickChatWindow() {
+  const win = createQuickChatWindow();
+  if (win.isMinimized()) win.restore();
+  try {
+    win.setAlwaysOnTop(true, "floating");
+    if (process.platform === "darwin") {
+      app.dock.show();
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+  } catch (err) {
+    console.warn("[desktop] Quick Chat 浮窗置顶失败:", redactMainLogText(err.message));
+  }
+  if (process.platform === "darwin") {
+    app.focus({ steal: true });
+  }
+  win.show();
+  win.focus();
+  win.webContents.send("quick-chat-shown");
+}
+
+function toggleQuickChatWindow() {
+  if (quickChatWindow && !quickChatWindow.isDestroyed() && quickChatWindow.isVisible() && quickChatWindow.isFocused()) {
+    hideQuickChatWindow();
+    return;
+  }
+  showQuickChatWindow();
+}
+
+function registerQuickChatShortcut(shortcut = readQuickChatPreferences().shortcut) {
+  if (registeredQuickChatShortcut && registeredQuickChatShortcut !== shortcut) {
+    globalShortcut.unregister(registeredQuickChatShortcut);
+    registeredQuickChatShortcut = null;
+  }
+
+  if (!shortcut || typeof shortcut !== "string") {
+    return { ok: false, shortcut: shortcut || "", error: "invalid shortcut" };
+  }
+
+  if (registeredQuickChatShortcut === shortcut && globalShortcut.isRegistered(shortcut)) {
+    return { ok: true, shortcut };
+  }
+
+  if (registeredQuickChatShortcut) {
+    globalShortcut.unregister(registeredQuickChatShortcut);
+    registeredQuickChatShortcut = null;
+  }
+
+  const ok = globalShortcut.register(shortcut, toggleQuickChatWindow);
+  if (!ok) {
+    return { ok: false, shortcut, error: "shortcut is unavailable" };
+  }
+  registeredQuickChatShortcut = shortcut;
+  return { ok: true, shortcut };
+}
+
+function reloadQuickChatShortcut() {
+  return registerQuickChatShortcut(readQuickChatPreferences().shortcut);
+}
+
+function registerQuickChatShortcutBestEffort() {
+  const result = reloadQuickChatShortcut();
+  if (!result.ok) {
+    console.error("[desktop] Quick Chat 快捷键注册失败:", redactMainLogText(result.error || result.shortcut || "unknown"));
+  }
+  return result;
+}
+
 // ── 创建主窗口 ──
 function createMainWindow() {
   const saved = sanitizeWindowState(loadWindowState(), screen.getAllDisplays(), {
@@ -1349,6 +1626,7 @@ function createMainWindow() {
       // 同时隐藏子窗口
       if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide();
       if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.hide();
+      hideQuickChatWindow();
       // 派生 viewer 跟着主窗口一起隐藏（不保留后台 viewer）
       for (const [, vw] of _viewerWindows) {
         if (vw && !vw.isDestroyed()) vw.hide();
@@ -1366,6 +1644,10 @@ function createMainWindow() {
     if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
       browserViewerWindow.destroy();
       browserViewerWindow = null;
+    }
+    if (quickChatWindow && !quickChatWindow.isDestroyed()) {
+      quickChatWindow.destroy();
+      quickChatWindow = null;
     }
     // 销毁所有派生 viewer
     for (const [, vw] of _viewerWindows) {
@@ -3017,6 +3299,26 @@ wrapIpcHandler("check-update", () => {
 });
 wrapIpcHandler("get-auto-launch-status", () => getAutoLaunchStatus({ app }));
 wrapIpcHandler("set-auto-launch-enabled", (_event, enabled) => setAutoLaunchEnabled({ app, enabled: enabled === true }));
+wrapIpcHandler("get-keep-awake-status", () => keepAwakeManager.getStatus());
+wrapIpcHandler("set-keep-awake-enabled", (_event, enabled) => keepAwakeManager.setEnabled(enabled === true));
+wrapIpcHandler("quick-chat-reload-shortcut", () => reloadQuickChatShortcut());
+wrapIpcHandler("quick-chat-shortcut-status", () => ({
+  shortcut: registeredQuickChatShortcut || readQuickChatPreferences().shortcut,
+  registered: !!registeredQuickChatShortcut && globalShortcut.isRegistered(registeredQuickChatShortcut),
+}));
+wrapIpcBestEffortHandler("quick-chat-show", () => showQuickChatWindow());
+wrapIpcBestEffortHandler("quick-chat-hide", () => hideQuickChatWindow());
+wrapIpcBestEffortHandler("quick-chat-resize", (_event, mode) => applyQuickChatMode(mode));
+wrapIpcBestEffortHandler("quick-chat-open-session", (_event, sessionPath) => {
+  if (typeof sessionPath !== "string" || !sessionPath.trim()) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send("quick-chat-open-session", { sessionPath });
+  }
+  hideQuickChatWindow();
+});
 
 wrapIpcBestEffortHandler("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 
@@ -3124,6 +3426,10 @@ wrapIpcBestEffortHandler("viewer-close", (event) => {
 
 wrapIpcOn("window-theme-changed", (event, theme) => {
   const win = BrowserWindow.fromWebContents(event.sender);
+  if (quickChatWindow && win && win.id === quickChatWindow.id) {
+    applyTransparentWindowBackground(win);
+    return;
+  }
   applyWindowThemeColors(win, theme);
 });
 
@@ -3147,6 +3453,19 @@ wrapIpcOn("settings-changed", (_event, type, data) => {
     applyDesktopNetworkProxy(data?.network_proxy || readNetworkProxyPreference(), { reason: "settings" }).catch(err => {
       console.error("[desktop] apply network proxy failed:", redactMainLogText(err.message));
     });
+  }
+  if (type === "keep-awake-changed") {
+    try {
+      keepAwakeManager.setEnabled(data?.keep_awake === true);
+    } catch (err) {
+      console.error("[desktop] apply keep awake failed:", redactMainLogText(err.message));
+    }
+  }
+  if (type === "quick-chat-shortcut-changed") {
+    const result = reloadQuickChatShortcut();
+    if (!result.ok) {
+      console.error("[desktop] Quick Chat 快捷键注册失败:", redactMainLogText(result.error || result.shortcut || "unknown"));
+    }
   }
   if (type === "locale-changed") {
     resetMainI18n();
@@ -3637,8 +3956,12 @@ wrapIpcBestEffortHandler("reload-main-window", () => {
 // agentId 标识触发的助手；据此读取该 agent 头像作为通知 icon，让多 agent 并发通知可分辨身份。
 // agentId 缺失或头像不存在时退回无 icon，禁止用当前焦点 agent 兜底（会张冠李戴）。
 // Windows 自定义 icon 依赖 AppUserModelID 已注册（见上方 app.setAppUserModelId），已满足；三平台同一套逻辑。
-wrapIpcBestEffortHandler("show-notification", (_event, title, body, agentId) => {
-  if (!Notification.isSupported()) return;
+wrapIpcBestEffortHandler("show-notification", (_event, title, body, agentId, rawOptions) => {
+  const notificationOptions = normalizeDesktopNotificationOptions(rawOptions);
+  if (shouldSuppressDesktopNotification(notificationOptions, { getFocusedWindow: () => BrowserWindow.getFocusedWindow() })) {
+    return { shown: false, reason: "hana_focused" };
+  }
+  if (!Notification.isSupported()) return { shown: false, reason: "unsupported" };
   /** @type {Electron.NotificationConstructorOptions} */
   const options = {
     title: title || "Hana",
@@ -3660,6 +3983,7 @@ wrapIpcBestEffortHandler("show-notification", (_event, title, body, agentId) => 
     }
   });
   notif.show();
+  return { shown: true };
 });
 
 // Debug: 打开 Onboarding 窗口（DevTools 用）
@@ -3687,6 +4011,7 @@ wrapIpcHandler("onboarding-complete", async () => {
     serverToken,
     createMainWindow,
   });
+  registerQuickChatShortcutBestEffort();
 });
 
 // ── 窗口控制 IPC（Windows/Linux 自绘标题栏用）──
@@ -3758,6 +4083,7 @@ app.whenReady().then(async () => {
     const splashShownAt = Date.now();
     await resolveLoginShellPath();
     await applyDesktopNetworkProxy(readNetworkProxyPreference(), { reason: "startup" });
+    keepAwakeManager.setEnabled(readKeepAwakePreference());
 
     // 2. 后台启动 server（PATH 已就绪）
     if (process.platform === "win32") {
@@ -3798,6 +4124,7 @@ app.whenReady().then(async () => {
     if (isSetupComplete() || migratedSetupComplete) {
       // 已完成配置：直接创建主窗口
       createMainWindow();
+      registerQuickChatShortcutBestEffort();
       if (process.platform === "win32") {
         markGpuStartupPhase({
           hanakoHome,
@@ -3898,6 +4225,7 @@ app.on("activate", () => {
 
 // ── 优雅关闭 ──
 app.on("will-quit", () => {
+  keepAwakeManager.dispose();
   globalShortcut.unregisterAll();
   // 销毁托盘图标
   if (tray && !tray.isDestroyed()) {
