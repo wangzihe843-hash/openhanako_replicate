@@ -29,8 +29,8 @@ export type TranscriptRenderItem = SourceTranscriptRenderItem | ProcessFoldRende
 
 export type ProcessFoldTranslator = (key: string, vars?: Record<string, string | number>) => string;
 
-const MIN_PROCESS_MESSAGES_TO_FOLD = 2;
-const PROCESS_NARRATION_TEXT_LIMIT = 160;
+const MIN_PROCESS_MESSAGES_TO_FOLD = 3;
+const PROCESS_NARRATION_TEXT_LIMIT = 100;
 
 function isAssistantMessage(item: ChatListItem): item is Extract<ChatListItem, { type: 'message' }> {
   return item.type === 'message' && item.data.role === 'assistant';

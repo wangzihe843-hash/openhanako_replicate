@@ -87,6 +87,11 @@ describe('ProcessFoldBlock', () => {
         toolGroup([tool('read'), tool('write', false)]),
       ]),
       assistant('a3', [
+        thinking('第三段思考'),
+        textBlock('<p>第三步：核对结果。</p>', '第三步：核对结果。'),
+        toolGroup([tool('verify')]),
+      ]),
+      assistant('a4', [
         thinking('正文前思考'),
         { type: 'mood', yuan: 'butter', text: 'PULSE' },
         { type: 'text', html: '<p>正文来了</p>' },
@@ -102,7 +107,7 @@ describe('ProcessFoldBlock', () => {
     );
 
     const summary = screen.getByRole('button', {
-      name: '✨ 小花忙活了一阵子 · 3 个工具 · 2 次思考 · 1 次尝试未成功',
+      name: '✨ 小花忙活了一阵子 · 4 个工具 · 3 次思考 · 1 次尝试未成功',
     });
     expect(summary).toBeInTheDocument();
     expect(summary).toHaveAttribute('aria-expanded', 'false');
@@ -118,6 +123,6 @@ describe('ProcessFoldBlock', () => {
     expect(summary).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('npm test')).toBeInTheDocument();
     expect(screen.getByText('现在开始执行。')).toBeInTheDocument();
-    expect(screen.getAllByText('思考完成')).toHaveLength(3);
+    expect(screen.getAllByText('思考完成')).toHaveLength(4);
   });
 });
