@@ -46,7 +46,7 @@ function measurePopover(anchor: HTMLElement): FloatingPosition {
   const rect = anchor.getBoundingClientRect();
   const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
   const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
-  const width = Math.min(Math.max(320, viewportW * 0.72), 860, Math.max(320, viewportW - 32));
+  const width = Math.min(Math.max(320, viewportW * 0.6), 640, Math.max(320, viewportW - 32));
   const maxHeight = Math.min(560, Math.max(220, viewportH * 0.72));
   const left = clamp(rect.left + rect.width / 2 - width / 2, 16, viewportW - width - 16);
   const belowTop = rect.bottom + 8;
