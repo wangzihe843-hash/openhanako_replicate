@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { makeHealthDay, type XingyeHealthDay } from './xingye-health-data';
-import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
+import {
+  createMemoryXingyeStorageBackend,
+  type XingyeStorageBackend,
+} from './xingye-storage-backend';
 import { createXingyeHealthStore, XINGYE_HEALTH_DAYS_JSONL } from './xingye-health-store';
 
 function aiDay(isoDate: string): XingyeHealthDay {
@@ -57,6 +60,30 @@ describe('xingye-health-store', () => {
     const store = createXingyeHealthStore(createMemoryXingyeStorageBackend());
     await store.upsertHealthDay('agent-a', aiDay('2026-05-21'));
     await expect(store.listHealthDays('agent-b')).resolves.toEqual([]);
+  });
+
+  it('aborts without overwriting when the existing read fails (no silent data wipe)', async () => {
+    // 回归：upsert 是整表重写。若读既有记录失败被吞成空、再 merge 成只剩今天，
+    // 会把过往健康日全部清空（线上「健康历史丢失」事故的同款路径）。读失败必须抛错、
+    // 且绝不触发 writeJsonl。
+    const writeJsonl = vi.fn(async () => {});
+    const failingBackend: XingyeStorageBackend = {
+      async readJson() {
+        return null;
+      },
+      async writeJson() {},
+      async appendJsonl() {},
+      async listJsonl() {
+        throw new Error('backend offline');
+      },
+      writeJsonl,
+      async deleteJsonlRecord() {
+        return false;
+      },
+    };
+    const store = createXingyeHealthStore(failingBackend);
+    await expect(store.upsertHealthDay('agent-a', aiDay('2026-05-21'))).rejects.toThrow('backend offline');
+    expect(writeJsonl).not.toHaveBeenCalled();
   });
 
   it('normalizes malformed rows: bad scenario falls back to calm, empty advice becomes null', async () => {

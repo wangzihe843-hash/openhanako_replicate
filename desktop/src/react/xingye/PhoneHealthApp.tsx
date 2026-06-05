@@ -9,7 +9,7 @@
  * isoDate 播种随机生成。不接任何真实健康 SDK。
  */
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import { generateHealthDayWithAI } from './xingye-health-ai';
@@ -875,7 +875,15 @@ export function PhoneHealthApp({ ownerAgent, displayName, onBack }: PhoneHealthA
   const [detail, setDetail] = useState<{ metric: HealthMetricKey; isoDate: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  /**
+   * 防跨角色脏写：切角色时 ownerAgentId 变化触发新一轮 reload，但上一个角色还在飞的
+   * listHealthDays 可能后落地、用旧角色数据 setDays 覆盖新角色（与 PhoneAccountingApp /
+   * PhoneSecondhandApp 同语义）。每次 reload 自增请求号，落 setState 前校验仍是最新一轮。
+   */
+  const reloadSeqRef = useRef(0);
+
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setDays([]);
       return;
@@ -883,11 +891,14 @@ export function PhoneHealthApp({ ownerAgent, displayName, onBack }: PhoneHealthA
     setLoading(true);
     setLoadError(null);
     try {
-      setDays(await listHealthDays(ownerAgentId));
+      const next = await listHealthDays(ownerAgentId);
+      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
+      setDays(next);
     } catch (e) {
+      if (seq !== reloadSeqRef.current) return;
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -897,6 +908,10 @@ export function PhoneHealthApp({ ownerAgent, displayName, onBack }: PhoneHealthA
     setToast(null);
     setAiError(null);
     void reload();
+    // cleanup：作废本轮 reload，让切角色后旧角色的在飞读取无法再 setState（与请求号双保险）。
+    return () => {
+      reloadSeqRef.current += 1;
+    };
   }, [reload]);
 
   useEffect(() => {

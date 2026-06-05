@@ -548,7 +548,9 @@ export function PhoneAccountingApp({
       if (!ownerAgent || !ownerAgentId) return;
       const plan: BulkPlan = kind === 'initial'
         ? planInitialBulkRequest()
-        : planBulkRequest(await loadHistoryState(ownerAgentId, 'accounting'));
+        // 手动「批量新增」是非破坏性的（只产草稿待确认）：状态读失败时退化成「无历史」
+        // 计划即可，不必中断；破坏性的首启初始化路径不走这里。
+        : planBulkRequest(await loadHistoryState(ownerAgentId, 'accounting').catch(() => ({ version: 1 as const })));
       setBulkBusy(true);
       setBulkBusyKind(kind);
       setBulkError(null);
@@ -671,8 +673,11 @@ export function PhoneAccountingApp({
   useEffect(() => {
     if (!ownerAgent || !ownerAgentId) return;
     if (loading) return;
+    // 本轮 reload 失败时 ledger.entries 为空是「读失败」而非「真的空」，绝不能拿来当
+    // 初始化依据——否则一次瞬时读空会在真实账本上重灌历史。
+    if (listError) return;
     if (initialBootstrapTriedRef.current === ownerAgentId) return;
-    if (ledger.entries.length > 0) {
+    if (ledger.entries.length > 0 || pendingDrafts.length > 0) {
       initialBootstrapTriedRef.current = ownerAgentId;
       return;
     }
@@ -681,12 +686,26 @@ export function PhoneAccountingApp({
       try {
         const state = await loadHistoryState(ownerAgentId, 'accounting');
         if (state.initializedAt) return;
+        // 二次确认（对齐 journal / trips / reading_notes）：首挂载时 ledger.entries=0
+        // 不能当真，直接落盘再问一次。读失败会抛出（loadLedger / listAccountingDrafts
+        // 不吞错）→ 被外层 catch 接住、不初始化，杜绝瞬时读空触发重灌；也覆盖老用户
+        // （加这功能前已有账目但没 initializedAt marker）：有内容只补 marker、不真生成。
+        const [freshLedger, freshDrafts] = await Promise.all([
+          loadLedger(ownerAgentId),
+          listAccountingDrafts(ownerAgentId),
+        ]);
+        if (freshLedger.entries.length > 0 || freshDrafts.length > 0) {
+          await saveHistoryState(ownerAgentId, 'accounting', {
+            initializedAt: new Date().toISOString(),
+          });
+          return;
+        }
         await runBulkGeneration('initial');
       } catch (err) {
         console.warn('[PhoneAccountingApp] init bootstrap failed:', err);
       }
     })();
-  }, [ownerAgent, ownerAgentId, loading, ledger.entries.length, runBulkGeneration]);
+  }, [ownerAgent, ownerAgentId, loading, listError, ledger.entries.length, pendingDrafts.length, runBulkGeneration]);
 
   /**
    * 账本行筛选：只展示「已实现的真实现金流」——

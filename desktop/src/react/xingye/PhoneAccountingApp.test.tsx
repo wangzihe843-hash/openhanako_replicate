@@ -275,3 +275,89 @@ describe('PhoneAccountingApp · 跨角色 reload 竞态', () => {
     expect(screen.queryByText('甲账目样本')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * 首启自动初始化的安全护栏（回归 2026-06-05「健康/记账历史丢失」排查）：
+ *  - 读失败（listError）时绝不拿空账本去触发初始化；
+ *  - 二次确认发现已有账目时只补 initializedAt marker、不重灌；
+ *  - 真·空账本 + 未初始化时仍正常首灌。
+ */
+describe('PhoneAccountingApp · 首启初始化护栏', () => {
+  const emptyLedger = { entries: [], summary: { byCurrency: [], missingAmountCount: 0 } };
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ledgerMock.loadLedger.mockReset();
+    ledgerMock.loadLedger.mockResolvedValue(emptyLedger);
+    accountingDraftsMock.listAccountingDrafts.mockReset();
+    accountingDraftsMock.listAccountingDrafts.mockResolvedValue([]);
+    accountingAiMock.generateAccountingDraftsWithAI.mockReset();
+    accountingAiMock.generateAccountingDraftsWithAI.mockResolvedValue([]);
+    historyStateMock.loadHistoryState.mockReset();
+    historyStateMock.saveHistoryState.mockReset();
+    historyStateMock.saveHistoryState.mockResolvedValue(undefined);
+    historyStateMock.planInitialBulkRequest.mockReturnValue({ count: 0, hintText: '' });
+    fxRatesMock.loadFxConfig.mockResolvedValue({ version: 1, displayCurrency: '', rates: {} });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function makeLedgerWithEntry() {
+    return {
+      entries: [
+        {
+          id: 'e-1',
+          source: 'accounting' as const,
+          origin: 'native' as const,
+          direction: 'expense' as const,
+          title: '已有账目',
+          amount: 30,
+          currency: '¥',
+          realized: true,
+          occurredAt: '2026-05-26T08:00:00.000Z',
+        },
+      ],
+      summary: { byCurrency: [], missingAmountCount: 0 },
+    };
+  }
+
+  it('空账本 + 未初始化 → 触发首灌生成', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 }); // 无 initializedAt
+    renderApp();
+    await waitFor(() => {
+      expect(accountingAiMock.generateAccountingDraftsWithAI).toHaveBeenCalled();
+    });
+  });
+
+  it('二次确认发现已有账目 → 只补 marker、不重灌', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 }); // 无 initializedAt
+    // 首挂载 reload 读到空（才会进 bootstrap），二次确认落盘再读到已有账目。
+    ledgerMock.loadLedger
+      .mockResolvedValueOnce(emptyLedger)
+      .mockResolvedValueOnce(makeLedgerWithEntry());
+    renderApp();
+    await waitFor(() => {
+      expect(historyStateMock.saveHistoryState).toHaveBeenCalledWith(
+        'linwu',
+        'accounting',
+        expect.objectContaining({ initializedAt: expect.any(String) }),
+      );
+    });
+    expect(accountingAiMock.generateAccountingDraftsWithAI).not.toHaveBeenCalled();
+  });
+
+  it('reload 读失败 → 不初始化、不生成（空账本是读失败不是真空）', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 }); // 无 initializedAt
+    ledgerMock.loadLedger.mockRejectedValue(new Error('backend offline'));
+    renderApp();
+    await waitFor(() => {
+      expect(screen.getByText(/加载失败/)).toBeInTheDocument();
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(accountingAiMock.generateAccountingDraftsWithAI).not.toHaveBeenCalled();
+    expect(historyStateMock.saveHistoryState).not.toHaveBeenCalled();
+  });
+});

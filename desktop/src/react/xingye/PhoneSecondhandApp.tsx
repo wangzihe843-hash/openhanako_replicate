@@ -753,7 +753,9 @@ export function PhoneSecondhandApp({
       if (!ownerAgent || !ownerAgentId) return;
       const plan: BulkPlan = kind === 'initial'
         ? planInitialBulkRequest()
-        : planBulkRequest(await loadHistoryState(ownerAgentId, 'secondhand'));
+        // 手动「批量新增」是非破坏性的：状态读失败时退化成「无历史」计划即可，不必中断；
+        // 破坏性的首启初始化路径不走这里。
+        : planBulkRequest(await loadHistoryState(ownerAgentId, 'secondhand').catch(() => ({ version: 1 as const })));
       setBulkBusy(true);
       setBulkBusyKind(kind);
       setBulkError(null);

@@ -93,12 +93,14 @@ export async function loadHistoryState(
 ): Promise<XingyeAppHistoryState> {
   const aid = String(agentId ?? '').trim();
   if (!aid) return { version: 1 };
-  try {
-    const raw = await backend.readJson<unknown>(aid, statePath(appId));
-    return normalize(raw);
-  } catch {
-    return { version: 1 };
-  }
+  // 不要把后端读取异常吞成 {version:1}：缺文件时 backend.readJson 返回 null
+  // （normalize(null) → {version:1}，确为「未初始化」），但传输/服务端错误（含文件
+  // 存在却损坏）必须抛出。否则一次瞬时读失败会被各 app 的首启 bootstrap 误判成
+  // 「从未初始化」、在真实数据上重灌历史；saveHistoryState 也会因读到假的 {version:1}
+  // 而把磁盘上已有的 initializedAt 抹掉，导致下次再次重灌。调用方（bootstrap /
+  // runBulkGeneration / saveHistoryState）都在 try/catch 内，抛出 = 安全地「这次不动」。
+  const raw = await backend.readJson<unknown>(aid, statePath(appId));
+  return normalize(raw);
 }
 
 export async function saveHistoryState(

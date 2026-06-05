@@ -2,14 +2,21 @@
  * @vitest-environment jsdom
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const apiMock = vi.hoisted(() => ({
+  postXingyeStorage: vi.fn<(body: Record<string, unknown>) => Promise<unknown>>(),
+}));
+vi.mock('./xingye-storage-api', () => apiMock);
 
 import {
   daysBetweenYmd,
   distributeOccurredAtFallback,
+  loadHistoryState,
   parseChineseTimeHint,
   planBulkRequest,
   planInitialBulkRequest,
+  saveHistoryState,
   toYmd,
 } from './xingye-app-history-state';
 
@@ -141,5 +148,82 @@ describe('distributeOccurredAtFallback', () => {
 
   it('returns empty array unchanged', () => {
     expect(distributeOccurredAtFallback([], 14)).toEqual([]);
+  });
+});
+
+/**
+ * loadHistoryState / saveHistoryState 的错误语义（回归 2026-06-05 的 clobber 加固）：
+ * 缺文件 = 「未初始化」返默认；后端/传输错误必须抛出，绝不能吞成 {version:1}，
+ * 否则首启 bootstrap 误判重灌、saveHistoryState 抹掉已有 initializedAt。
+ */
+describe('loadHistoryState · 错误语义', () => {
+  it('文件缺失（readJson→null）返回 {version:1}，视为未初始化', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    apiMock.postXingyeStorage.mockResolvedValue({ ok: true, data: null, missing: true });
+    await expect(loadHistoryState('agent-a', 'accounting')).resolves.toEqual({ version: 1 });
+  });
+
+  it('正常读到已初始化状态时如实归一化', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    apiMock.postXingyeStorage.mockResolvedValue({
+      ok: true,
+      data: { version: 1, initializedAt: '2026-05-01T00:00:00.000Z', lastCoveredDate: '2026-05-01' },
+    });
+    await expect(loadHistoryState('agent-a', 'accounting')).resolves.toMatchObject({
+      version: 1,
+      initializedAt: '2026-05-01T00:00:00.000Z',
+      lastCoveredDate: '2026-05-01',
+    });
+  });
+
+  it('后端读取报错时抛出（不吞成 {version:1}）', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    apiMock.postXingyeStorage.mockRejectedValue(new Error('server connection not ready'));
+    await expect(loadHistoryState('agent-a', 'accounting')).rejects.toThrow('server connection not ready');
+  });
+
+  it('空 agentId 直接返回默认（不打后端）', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    await expect(loadHistoryState('', 'accounting')).resolves.toEqual({ version: 1 });
+    expect(apiMock.postXingyeStorage).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveHistoryState · 读当前失败时不写', () => {
+  it('读当前状态报错 → 抛出且不发起 writeJson（不把已有 initializedAt 抹掉）', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    apiMock.postXingyeStorage.mockImplementation(async (body) => {
+      if (body.action === 'readJson') throw new Error('server connection not ready');
+      return { ok: true };
+    });
+    await expect(
+      saveHistoryState('agent-a', 'accounting', { lastBulkAt: '2026-06-05T00:00:00.000Z' }),
+    ).rejects.toThrow('server connection not ready');
+    const writeCalls = apiMock.postXingyeStorage.mock.calls.filter(
+      ([body]) => body.action === 'writeJson',
+    );
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it('读到当前状态时合并 patch 写回（保留已有 initializedAt）', async () => {
+    apiMock.postXingyeStorage.mockReset();
+    apiMock.postXingyeStorage.mockImplementation(async (body) => {
+      if (body.action === 'readJson') {
+        return { ok: true, data: { version: 1, initializedAt: '2026-05-01T00:00:00.000Z' } };
+      }
+      return { ok: true };
+    });
+    await saveHistoryState('agent-a', 'accounting', { lastCoveredDate: '2026-06-05' });
+    const writeCall = apiMock.postXingyeStorage.mock.calls.find(
+      ([body]) => body.action === 'writeJson',
+    );
+    expect(writeCall?.[0]).toMatchObject({
+      action: 'writeJson',
+      data: {
+        version: 1,
+        initializedAt: '2026-05-01T00:00:00.000Z',
+        lastCoveredDate: '2026-06-05',
+      },
+    });
   });
 });

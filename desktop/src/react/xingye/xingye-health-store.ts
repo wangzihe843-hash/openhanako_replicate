@@ -69,22 +69,32 @@ function sortDaysDesc(a: XingyeHealthDay, b: XingyeHealthDay): number {
 export function createXingyeHealthStore(backend?: XingyeStorageBackend) {
   const store = createXingyeStore(backend);
 
+  /**
+   * 读取 + 归一化某 agent 的全部健康日。后端读失败会**抛出**（不吞错）。
+   * 给 upsert 用：读不到既有记录就绝不继续整表覆写。listHealthDays 在它外面再包一层
+   * catch，让纯展示 / 取历史的只读场景仍能容忍读失败。
+   */
+  async function readHealthDaysStrict(aid: string): Promise<XingyeHealthDay[]> {
+    const rows = await store.listJsonl<unknown>(aid, XINGYE_HEALTH_DAYS_JSONL);
+    const seen = new Set<string>();
+    const out: XingyeHealthDay[] = [];
+    // 后写的同一天覆盖先写的：倒序遍历，第一次见到的 isoDate 即最新。
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const day = normalizeRow(rows[i]);
+      if (!day || seen.has(day.isoDate)) continue;
+      seen.add(day.isoDate);
+      out.push(day);
+    }
+    return out.sort(sortDaysDesc);
+  }
+
   async function listHealthDays(agentId: string): Promise<XingyeHealthDay[]> {
     const aid = agentId.trim();
     if (!aid) return [];
     try {
-      const rows = await store.listJsonl<unknown>(aid, XINGYE_HEALTH_DAYS_JSONL);
-      const seen = new Set<string>();
-      const out: XingyeHealthDay[] = [];
-      // 后写的同一天覆盖先写的：倒序遍历，第一次见到的 isoDate 即最新。
-      for (let i = rows.length - 1; i >= 0; i -= 1) {
-        const day = normalizeRow(rows[i]);
-        if (!day || seen.has(day.isoDate)) continue;
-        seen.add(day.isoDate);
-        out.push(day);
-      }
-      return out.sort(sortDaysDesc);
+      return await readHealthDaysStrict(aid);
     } catch {
+      // 只读场景（列表展示 / AI 取历史）容忍读失败：当作空，不影响后续。
       return [];
     }
   }
@@ -105,7 +115,10 @@ export function createXingyeHealthStore(backend?: XingyeStorageBackend) {
     if (!aid) throw new Error('保存健康数据失败：缺少 agentId。');
     const normalized = normalizeRow(day);
     if (!normalized) throw new Error('保存健康数据失败：记录格式无效。');
-    const existing = await listHealthDays(aid);
+    // 关键：用「读失败会抛出」的严格读取。upsert 是整表重写（writeJsonl 先截断再写），
+    // 一旦既有记录没读到就 merge 成只剩今天，会把过往健康日全部清空。读不到直接抛错
+    // 中止写入，把瞬时读失败暴露成 setAiError，而不是静默把历史抹平成一条。
+    const existing = await readHealthDaysStrict(aid);
     const merged = [normalized, ...existing.filter((d) => d.isoDate !== normalized.isoDate)].sort(sortDaysDesc);
     const rows: HealthDayRow[] = merged.map((d) => ({ ...d, key: d.isoDate }));
     await store.writeJsonl<HealthDayRow>(aid, XINGYE_HEALTH_DAYS_JSONL, rows);
