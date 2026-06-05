@@ -419,26 +419,38 @@ export async function generateMailInitDraftsWithAI(params: {
     console.warn(`[xingye-mail-ai] 推广/垃圾邮件生成失败，仅返回私人邮件：${bulk.error.message}`);
   }
 
-  // 后置硬过滤：anchor block 已经提示过模型按发件人换主题，但模型仍可能复读
-  // 同一封 newsletter 主题、或批内自重复。两段合并后一起按 fromAddress 分桶比对主题，
-  // 丢掉 exact_dup；similar 保留（避免把整批过滤光，邮件列表本来就允许相近主题）。
-  const { kept, dropped } = filterMailDraftsByDuplicates(
-    normalized.map((d) => ({
-      from: { address: d.from.address, name: d.from.name },
-      subject: d.subject,
-      body: d.body,
-      __original: d,
-    })),
-    existingMailMessages,
+  // 后置硬过滤：anchor block 已经提示过模型换主题，但模型仍可能复读。**按 scope 分两套去重**：
+  //  - 私人邮件（inbox/sent/drafts）：按发件人分桶、只丢 exact_dup（同一联系人主题相近正常，
+  //    且 init 一次没几封，全丢 similar 会剩不下）。
+  //  - 推广 / 垃圾（promotions/spam）：跨发件人比主题 + similar 也丢 + 套路主题签名——因为模型
+  //    每次都给这类邮件编新发件地址，按发件人分桶根本判不出「换汤不换药的中奖/限时优惠」复读。
+  const isPersonalMailbox = (mb: XingyeMailAiMailbox): boolean =>
+    mb === 'inbox' || mb === 'sent' || mb === 'drafts';
+  const toCandidate = (d: XingyeMailAiDraft) => ({
+    from: { address: d.from.address, name: d.from.name },
+    subject: d.subject,
+    body: d.body,
+    __original: d,
+  });
+  const personalRes = filterMailDraftsByDuplicates(
+    normalized.filter((d) => isPersonalMailbox(d.mailbox)).map(toCandidate),
+    existingMailMessages.filter((m) => isPersonalMailbox(m.mailbox)),
   );
-  if (dropped.length > 0) {
+  const bulkRes = filterMailDraftsByDuplicates(
+    normalized.filter((d) => !isPersonalMailbox(d.mailbox)).map(toCandidate),
+    existingMailMessages.filter((m) => !isPersonalMailbox(m.mailbox)),
+    { crossSender: true, dropSimilar: true, useThemeSignature: true },
+  );
+  const droppedCount = personalRes.dropped.length + bulkRes.dropped.length;
+  if (droppedCount > 0) {
     console.warn(
-      `[xingye-mail-ai] 丢弃 ${dropped.length} 封与已有邮箱重复的草稿（同发件人 + 同/近主题）。`,
+      `[xingye-mail-ai] 丢弃 ${droppedCount} 封重复草稿（私人 ${personalRes.dropped.length} 同发件人重复 / ` +
+        `推广垃圾 ${bulkRes.dropped.length} 跨发件人同主题或同套路）。`,
     );
   }
-  const keptDrafts = kept.map((k) => k.__original);
+  const keptDrafts = [...personalRes.kept, ...bulkRes.kept].map((k) => k.__original);
   if (!keptDrafts.length) {
-    // 全部都被判为 exact_dup 的极端情况：直接返回原列表，避免阻塞 init 流程。
+    // 全部被判重的极端情况：直接返回原列表，避免阻塞 init 流程。
     // anchor block 下一次会更严，模型应该会换主题；如果还不换，用户可以手动整理。
     return normalized;
   }

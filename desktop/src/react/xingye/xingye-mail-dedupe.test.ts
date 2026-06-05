@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMailContinuityAnchorBlock,
+  bulkMailThemeKey,
   detectMailDuplicate,
   filterMailDraftsByDuplicates,
   MAIL_ANCHOR_PER_SENDER_LIMIT,
@@ -193,5 +194,115 @@ describe('filterMailDraftsByDuplicates', () => {
     const out = filterMailDraftsByDuplicates([], []);
     expect(out.kept).toEqual([]);
     expect(out.dropped).toEqual([]);
+  });
+});
+
+describe('detectMailDuplicate · crossSender（推广/垃圾跨发件人）', () => {
+  it('crossSender=true：不同发件人 + 同主题 → exact_dup', () => {
+    const existing = [mail({ fromAddress: 'a@x', subject: '本周精选' })];
+    const result = detectMailDuplicate(
+      { from: { address: 'b@y' }, subject: '本周精选' },
+      existing,
+      { crossSender: true },
+    );
+    expect(result.kind).toBe('exact_dup');
+  });
+
+  it('crossSender=true：candidate 没有发件地址也照常比主题', () => {
+    const existing = [mail({ fromAddress: 'a@x', subject: '限时优惠' })];
+    const result = detectMailDuplicate(
+      { from: { address: '' }, subject: '限时优惠' },
+      existing,
+      { crossSender: true },
+    );
+    expect(result.kind).toBe('exact_dup');
+  });
+
+  it('默认（不传 crossSender）行为不变：跨发件人同主题 → unique', () => {
+    const existing = [mail({ fromAddress: 'a@x', subject: '本周精选' })];
+    const result = detectMailDuplicate(
+      { from: { address: 'b@y' }, subject: '本周精选' },
+      existing,
+    );
+    expect(result.kind).toBe('unique');
+  });
+});
+
+describe('bulkMailThemeKey', () => {
+  it('中奖类 → lottery', () => {
+    expect(bulkMailThemeKey('恭喜您被抽中本月幸运大奖')).toBe('lottery');
+    expect(bulkMailThemeKey('您有一份待领取的奖品')).toBe('lottery');
+  });
+
+  it('账户钓鱼类 → account-phish', () => {
+    expect(bulkMailThemeKey('您的账户出现异地登录，请立即验证')).toBe('account-phish');
+  });
+
+  it('折扣促销类 → sale', () => {
+    expect(bulkMailThemeKey('限时五折，全场清仓')).toBe('sale');
+  });
+
+  it('归不出套路 → null', () => {
+    expect(bulkMailThemeKey('一封普通的私人问候')).toBeNull();
+    expect(bulkMailThemeKey('')).toBeNull();
+  });
+});
+
+describe('filterMailDraftsByDuplicates · 推广/垃圾选项', () => {
+  it('crossSender + dropSimilar：跨发件人近似主题被丢', () => {
+    const existing = [mail({ fromAddress: 'win@a.junk', subject: '恭喜中奖啦' })];
+    const drafts = [
+      { from: { address: 'prize@b.junk' }, subject: '恭喜中奖了' }, // 跨发件人 + 近似 → 丢
+      { from: { address: 'shop@c.demo' }, subject: '春季新品上市预告' }, // 全新 → 留
+    ];
+    const { kept, dropped } = filterMailDraftsByDuplicates(drafts, existing, {
+      crossSender: true,
+      dropSimilar: true,
+      useThemeSignature: true,
+    });
+    expect(kept.length).toBe(1);
+    expect(kept[0].subject).toBe('春季新品上市预告');
+    expect(dropped.length).toBe(1);
+  });
+
+  it('useThemeSignature：同套路但主题用词不同也判重（中奖 vs 待领奖金）', () => {
+    const existing = [mail({ fromAddress: 'win@a.junk', subject: '恭喜中奖啦' })];
+    const drafts = [
+      // 与已有主题 bigram 重叠低，但同属 lottery 套路 → 被主题签名拦下
+      { from: { address: 'gift@d.junk' }, subject: '您有一笔待领取的幸运奖品' },
+    ];
+    const { kept, dropped } = filterMailDraftsByDuplicates(drafts, existing, {
+      crossSender: true,
+      dropSimilar: true,
+      useThemeSignature: true,
+    });
+    expect(kept.length).toBe(0);
+    expect(dropped.length).toBe(1);
+  });
+
+  it('批内同套路自重复：两封 lottery 只留一封', () => {
+    const drafts = [
+      { from: { address: 'a@junk' }, subject: '恭喜抽中头等奖' },
+      { from: { address: 'b@junk' }, subject: '您被随机抽中赢取大奖' },
+    ];
+    const { kept } = filterMailDraftsByDuplicates(drafts, [], {
+      crossSender: true,
+      dropSimilar: true,
+      useThemeSignature: true,
+    });
+    expect(kept.length).toBe(1);
+  });
+
+  it('不同套路不互相误杀（lottery + sale 都保留）', () => {
+    const drafts = [
+      { from: { address: 'a@junk' }, subject: '恭喜中奖' },
+      { from: { address: 'b@demo' }, subject: '全场限时五折' },
+    ];
+    const { kept } = filterMailDraftsByDuplicates(drafts, [], {
+      crossSender: true,
+      dropSimilar: true,
+      useThemeSignature: true,
+    });
+    expect(kept.length).toBe(2);
   });
 });

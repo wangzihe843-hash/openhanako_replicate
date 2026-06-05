@@ -30,13 +30,19 @@ const mailStoreMock = vi.hoisted(() => ({
 }));
 
 const mailAiMock = vi.hoisted(() => ({
-  buildFallbackMailDrafts: vi.fn(() => []),
+  buildFallbackMailDrafts: vi.fn((): unknown[] => []),
   generateMailInitDraftsWithAI: vi.fn(),
-  toMailMessageDrafts: vi.fn(() => []),
+  toMailMessageDrafts: vi.fn((): unknown[] => []),
+}));
+
+const historyStateMock = vi.hoisted(() => ({
+  loadHistoryState: vi.fn(),
+  saveHistoryState: vi.fn(),
 }));
 
 vi.mock('./xingye-mail-store', () => mailStoreMock);
 vi.mock('./xingye-mail-ai', () => mailAiMock);
+vi.mock('./xingye-app-history-state', () => historyStateMock);
 
 import { PhoneMailApp } from './PhoneMailApp';
 
@@ -66,9 +72,24 @@ beforeEach(() => {
   for (const fn of Object.values(mailStoreMock)) {
     if (typeof fn === 'function' && 'mockReset' in fn) (fn as ReturnType<typeof vi.fn>).mockReset();
   }
+  for (const fn of Object.values(mailAiMock)) {
+    if (typeof fn === 'function' && 'mockReset' in fn) (fn as ReturnType<typeof vi.fn>).mockReset();
+  }
+  historyStateMock.loadHistoryState.mockReset();
+  historyStateMock.saveHistoryState.mockReset();
   mailStoreMock.getMailProfile.mockResolvedValue(mailProfile);
   mailStoreMock.listMailMessages.mockResolvedValue([]);
   mailStoreMock.listMailDrafts.mockResolvedValue([]);
+  // 默认「已初始化过」，让首次打开自动 bootstrap 对绝大多数已有用例保持沉默；
+  // 需要测 bootstrap 的用例自己改成未初始化。
+  historyStateMock.loadHistoryState.mockResolvedValue({
+    version: 1,
+    initializedAt: '2026-05-15T10:00:00.000Z',
+  });
+  historyStateMock.saveHistoryState.mockResolvedValue({ version: 1 });
+  // mailAiMock 被 mockReset 清掉了默认实现，这里补回（fallback 默认返回空，避免误触发）。
+  mailAiMock.buildFallbackMailDrafts.mockReturnValue([]);
+  mailAiMock.toMailMessageDrafts.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -194,5 +215,103 @@ describe('PhoneMailApp · pending draft section', () => {
     } finally {
       window.confirm = originalConfirm;
     }
+  });
+});
+
+describe('PhoneMailApp · 首次打开自动初始化', () => {
+  const aiDrafts = [
+    {
+      mailbox: 'inbox',
+      from: { name: '爱丽丝', address: 'alice@hana.mail', kind: 'virtual_contact' },
+      subject: '周末喝茶',
+      body: '想约你周末喝茶。',
+      isRead: false,
+      isStarred: false,
+      autoStarred: false,
+      labels: [],
+    },
+  ];
+  const messageDrafts = [
+    {
+      mailbox: 'inbox',
+      from: { name: '爱丽丝', address: 'alice@hana.mail', kind: 'virtual_contact' },
+      to: [],
+      subject: '周末喝茶',
+      body: '想约你周末喝茶。',
+    },
+  ];
+  const stored = [
+    {
+      id: 'm1',
+      key: 'm1',
+      agentId: 'linwu',
+      mailbox: 'inbox',
+      from: { name: '爱丽丝', address: 'alice@hana.mail', kind: 'virtual_contact' },
+      to: [],
+      subject: '周末喝茶',
+      body: '想约你周末喝茶。',
+      isRead: false,
+      isStarred: false,
+      labels: [],
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    },
+  ];
+
+  it('未初始化 + 邮箱空 → 自动生成历史邮件并写 initializedAt', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 }); // 无 initializedAt
+    mailStoreMock.ensureMailProfile.mockResolvedValue(mailProfile);
+    mailAiMock.generateMailInitDraftsWithAI.mockResolvedValue(aiDrafts);
+    mailAiMock.toMailMessageDrafts.mockReturnValue(messageDrafts);
+    mailStoreMock.appendMailMessages.mockResolvedValue(stored);
+
+    renderMailApp();
+
+    await waitFor(() => {
+      expect(mailAiMock.generateMailInitDraftsWithAI).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(mailStoreMock.appendMailMessages).toHaveBeenCalledWith('linwu', messageDrafts);
+    });
+    await waitFor(() => {
+      expect(historyStateMock.saveHistoryState).toHaveBeenCalledWith(
+        'linwu',
+        'mail',
+        expect.objectContaining({ initializedAt: expect.any(String) }),
+      );
+    });
+  });
+
+  it('已初始化（initializedAt 存在）→ 不自动生成', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({
+      version: 1,
+      initializedAt: '2026-05-15T10:00:00.000Z',
+    });
+    mailAiMock.generateMailInitDraftsWithAI.mockResolvedValue(aiDrafts);
+
+    renderMailApp();
+
+    await waitFor(() => {
+      expect(historyStateMock.loadHistoryState).toHaveBeenCalledWith('linwu', 'mail');
+    });
+    // loadHistoryState 已结算；若要触发生成会在下一拍发生，给微任务一点时间后断言「未触发」。
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mailAiMock.generateMailInitDraftsWithAI).not.toHaveBeenCalled();
+  });
+
+  it('邮箱已有邮件 → 不自动生成（即便未写 initializedAt）', async () => {
+    historyStateMock.loadHistoryState.mockResolvedValue({ version: 1 });
+    mailStoreMock.listMailMessages.mockResolvedValue(stored);
+    mailAiMock.generateMailInitDraftsWithAI.mockResolvedValue(aiDrafts);
+
+    renderMailApp();
+
+    await waitFor(() => {
+      expect(mailStoreMock.listMailMessages).toHaveBeenCalledWith('linwu');
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mailAiMock.generateMailInitDraftsWithAI).not.toHaveBeenCalled();
   });
 });

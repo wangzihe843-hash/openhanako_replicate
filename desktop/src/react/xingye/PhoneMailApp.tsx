@@ -26,6 +26,7 @@ import {
   generateMailInitDraftsWithAI,
   toMailMessageDrafts,
 } from './xingye-mail-ai';
+import { loadHistoryState, saveHistoryState } from './xingye-app-history-state';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 
 export interface PhoneMailAppProps {
@@ -114,8 +115,13 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initBusy, setInitBusy] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
+  /** 批量生成（初始化 bootstrap / 手动批量新增）忙碌态；kind 区分两种以便文案不同。 */
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkBusyKind, setBulkBusyKind] = useState<'initial' | 'manual' | null>(null);
+  /** 首次打开自动初始化（建号 + 铺历史）整体忙碌态，盖住 ensureMailProfile 那一小段。 */
+  const [bootstrapBusy, setBootstrapBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
   const [page, setPage] = useState<Page>({ kind: 'home' });
   const [starBusyId, setStarBusyId] = useState<string | null>(null);
   const [draftSubject, setDraftSubject] = useState('');
@@ -143,6 +149,12 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
    * 请求号覆盖所有调用点——星标 / 删除 / 草稿确认失败兜底也复用 reload）。
    */
   const reloadSeqRef = useRef(0);
+
+  /**
+   * 「首次打开 app 自动初始化」的每角色一次性守卫（与 PhoneShoppingApp 同款）。
+   * 记最近一次尝试过 bootstrap 的 ownerAgentId，避免 messages/profile 变化触发的重渲染里反复发起。
+   */
+  const initialBootstrapTriedRef = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     const seq = ++reloadSeqRef.current;
@@ -261,6 +273,9 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
     setPage({ kind: 'home' });
     setError(null);
     setAiError(null);
+    setAiNotice(null);
+    // 切角色时重置 bootstrap 守卫，让新角色首次打开能各自触发一次自动初始化。
+    initialBootstrapTriedRef.current = null;
   }, [ownerAgentId]);
 
   useEffect(() => {
@@ -290,44 +305,131 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
     }
   };
 
-  const handleGenerateHistory = async () => {
-    if (!ownerAgent || !profile || aiBusy) return;
-    setAiBusy(true);
-    setAiError(null);
-    try {
-      let drafts;
+  /**
+   * 批量生成历史邮件的统一实现，被「首次打开自动初始化」与手动「批量新增」按钮共用。
+   *
+   *  - kind='initial'：首次打开 app 自动跑一次，成功后写 history-state.initializedAt，之后即使
+   *    删光邮件也不再自动 bootstrap（避免反复灌爆）。
+   *  - kind='manual'：用户点「批量新增」时跑，成功只更新 lastBulkAt。
+   *
+   * 两者吃同一份上下文（最近聊天 / Lore / 通讯录 / 关系状态 / 巡检）并走同一套查重——
+   * generateMailInitDraftsWithAI 内部已按 scope 去重（私人按发件人、推广垃圾跨发件人 + 套路签名），
+   * 这里只负责把去重后的结果直接落进 messages.jsonl（不经待确认草稿流，邮箱批量本就该直接进箱）。
+   *
+   * profileOverride：bootstrap 阶段 profile state 可能还没 setState 落定，直接把刚 ensure 出来的传进来。
+   */
+  const runMailBulkGeneration = useCallback(
+    async (kind: 'initial' | 'manual', profileOverride?: XingyeMailProfile): Promise<number> => {
+      if (!ownerAgent || !ownerAgentId) return 0;
+      const activeProfile = profileOverride ?? profile;
+      if (!activeProfile) return 0;
+      setBulkBusy(true);
+      setBulkBusyKind(kind);
+      setAiError(null);
+      setAiNotice(null);
       try {
-        drafts = await generateMailInitDraftsWithAI({
-          agent: ownerAgent,
-          ownerProfile: ownerProfile ?? null,
-          ownerAddress: profile.address,
-        });
-      } catch (err) {
-        drafts = buildFallbackMailDrafts({
-          ownerAddress: profile.address,
-          displayName: profile.displayName,
-        });
-        setAiError(
-          err instanceof Error
-            ? `模型未返回历史邮件，已使用本地模拟样例：${err.message}`
-            : '模型未返回历史邮件，已使用本地模拟样例。',
+        let drafts;
+        try {
+          drafts = await generateMailInitDraftsWithAI({
+            agent: ownerAgent,
+            ownerProfile: ownerProfile ?? null,
+            ownerAddress: activeProfile.address,
+          });
+        } catch (err) {
+          drafts = buildFallbackMailDrafts({
+            ownerAddress: activeProfile.address,
+            displayName: activeProfile.displayName,
+          });
+          setAiError(
+            err instanceof Error
+              ? `模型未返回历史邮件，已使用本地模拟样例：${err.message}`
+              : '模型未返回历史邮件，已使用本地模拟样例。',
+          );
+        }
+        const toAddress = { name: activeProfile.displayName, address: activeProfile.address };
+        const ready = toMailMessageDrafts(drafts, toAddress);
+        if (!ready.length) {
+          throw new Error('未生成任何模拟邮件');
+        }
+        const stored = await appendMailMessages(ownerAgentId, ready);
+        setMessages((prev) => [...stored, ...prev].sort((a, b) =>
+          Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        ));
+        const now = new Date().toISOString();
+        try {
+          await saveHistoryState(ownerAgentId, 'mail', {
+            ...(kind === 'initial' ? { initializedAt: now } : {}),
+            lastBulkAt: now,
+          });
+        } catch (err) {
+          // marker 落盘失败不影响已入箱的邮件；只是下次可能再触发一次 bootstrap。
+          console.warn('[PhoneMailApp] saveHistoryState failed:', err);
+        }
+        setAiNotice(
+          kind === 'initial'
+            ? `已为 TA 初始化 ${stored.length} 封历史邮件`
+            : `已新增 ${stored.length} 封邮件（已自动去重）`,
         );
+        return stored.length;
+      } catch (err) {
+        setAiError(err instanceof Error ? err.message : String(err));
+        return 0;
+      } finally {
+        setBulkBusy(false);
+        setBulkBusyKind(null);
       }
-      const toAddress = { name: profile.displayName, address: profile.address };
-      const ready = toMailMessageDrafts(drafts, toAddress);
-      if (!ready.length) {
-        throw new Error('未生成任何模拟邮件');
-      }
-      const stored = await appendMailMessages(ownerAgentId, ready);
-      setMessages((prev) => [...stored, ...prev].sort((a, b) =>
-        Date.parse(b.createdAt) - Date.parse(a.createdAt),
-      ));
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAiBusy(false);
+    },
+    [ownerAgent, ownerAgentId, ownerProfile, profile],
+  );
+
+  /**
+   * 首次打开邮箱自动初始化：messages 空 + history-state 无 initializedAt → 建号 + 铺一批历史邮件。
+   *
+   * 与记账 / 购物同款守卫：每角色只尝试一次（initialBootstrapTriedRef）；已有邮件或已 init 过都跳过，
+   * 防止「删光后又自动重灌」。建号失败 / 生成失败都软降级——用户仍可手动点「初始化邮箱」「批量新增」。
+   */
+  useEffect(() => {
+    if (!ownerAgent || !ownerAgentId) return;
+    if (loading || bulkBusy || bootstrapBusy) return;
+    if (initialBootstrapTriedRef.current === ownerAgentId) return;
+    if (messages.length > 0) {
+      initialBootstrapTriedRef.current = ownerAgentId;
+      return;
     }
-  };
+    initialBootstrapTriedRef.current = ownerAgentId;
+    setBootstrapBusy(true);
+    (async () => {
+      try {
+        const state = await loadHistoryState(ownerAgentId, 'mail');
+        if (state.initializedAt) return;
+        // 首次打开自动建号，省掉手动「初始化邮箱」那一步。
+        let activeProfile = profile;
+        if (!activeProfile) {
+          activeProfile = await ensureMailProfile(ownerAgentId, {
+            displayName: ownerProfile?.displayName?.trim() || ownerAgent.name || ta,
+            agentName: ownerAgent.name,
+          });
+          setProfile(activeProfile);
+        }
+        await runMailBulkGeneration('initial', activeProfile);
+      } catch (err) {
+        console.warn('[PhoneMailApp] init bootstrap failed:', err);
+      } finally {
+        setBootstrapBusy(false);
+      }
+    })();
+  }, [
+    ownerAgent,
+    ownerAgentId,
+    loading,
+    bulkBusy,
+    bootstrapBusy,
+    messages.length,
+    profile,
+    ownerProfile,
+    ta,
+    runMailBulkGeneration,
+  ]);
 
   const handleToggleStar = async (message: XingyeMailMessage) => {
     if (!ownerAgentId) return;
@@ -807,11 +909,17 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
               加载失败：{error}
             </p>
           ) : null}
-          {loading && !profile && messages.length === 0 ? (
+          {loading && !profile && messages.length === 0 && !bootstrapBusy ? (
             <p className={styles.phoneAppHint}>加载中…</p>
           ) : null}
 
-          {!profile ? (
+          {bootstrapBusy && !profile ? (
+            <p className={styles.phoneAppHint} data-testid="phone-mail-bootstrap-hint">
+              正在为 {ta} 初始化邮箱并整理历史邮件…
+            </p>
+          ) : null}
+
+          {!profile && !bootstrapBusy ? (
             <section className={styles.phoneAppCard}>
               <h3 className={styles.phoneAppTitle}>邮箱尚未初始化</h3>
               <p className={styles.phoneAppHint}>
@@ -827,7 +935,7 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                 {initBusy ? '初始化中…' : '初始化邮箱'}
               </button>
             </section>
-          ) : (
+          ) : !profile ? null : (
             <>
               {pendingDrafts.length > 0 ? (
                 <section
@@ -945,11 +1053,12 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                 <button
                   type="button"
                   className={styles.phonePrimaryAction}
-                  onClick={() => void handleGenerateHistory()}
-                  disabled={aiBusy}
+                  onClick={() => void runMailBulkGeneration('manual')}
+                  disabled={bulkBusy}
                   data-testid="phone-mail-generate-history"
+                  title="按最近聊天 / Lore / 通讯录补一批历史邮件，自动跳过和已有邮箱重复或同套路的内容"
                 >
-                  {aiBusy ? '整理中…' : '整理一批历史邮件'}
+                  {bulkBusy && bulkBusyKind === 'manual' ? '批量生成中…' : '批量新增'}
                 </button>
                 <button
                   type="button"
@@ -960,6 +1069,16 @@ export function PhoneMailApp({ ownerAgent, ownerProfile, displayName, onBack }: 
                   写一封模拟邮件
                 </button>
               </div>
+              {bulkBusy && bulkBusyKind === 'initial' ? (
+                <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }}>
+                  正在为 {ta} 初始化历史邮件…
+                </p>
+              ) : null}
+              {aiNotice ? (
+                <p className={styles.phoneAppHint} style={{ margin: '8px 0 0' }}>
+                  {aiNotice}
+                </p>
+              ) : null}
               {aiError ? (
                 <p className={styles.phoneAppHint} role="alert">
                   {aiError}
