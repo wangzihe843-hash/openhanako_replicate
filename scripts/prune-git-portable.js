@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * prune-git-portable.js — 裁剪 PortableGit 运行时，砍掉 agent 用不到的部分。
  *
