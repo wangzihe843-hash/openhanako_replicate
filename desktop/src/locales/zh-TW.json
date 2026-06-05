@@ -1709,6 +1709,7 @@
       "wechat": "微信",
       "wechatHint": "透過微信 iLink 協議接入個人號",
       "wechatExclusive": "一個微信號只能綁定一個 Agent，綁定新 Agent 後舊的會自動失效",
+      "wechatReplyWindowReminder": "微信主動通知依賴最近一次收到訊息後的回覆窗口。如果提醒沒有送達，可以先傳一則微信給這個 Agent 來啟用窗口。",
       "wechatScan": "掃碼登入",
       "wechatRescan": "重新登入",
       "wechatLoggedIn": "已登入",

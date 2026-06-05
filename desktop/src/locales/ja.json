@@ -1717,6 +1717,7 @@
       "wechat": "WeChat",
       "wechatHint": "WeChat iLink プロトコルで個人アカウントに接続",
       "wechatExclusive": "1 つの WeChat アカウントは 1 つの Agent にのみ紐付けできます。新しい Agent を紐付けると、以前のものは自動的に無効になります",
+      "wechatReplyWindowReminder": "WeChat の能動通知には、直近の受信メッセージまたは返信可能な時間枠が必要です。通知が届かない場合は、この Agent に WeChat メッセージを送って時間枠を有効にしてください。",
       "wechatScan": "QR コードでログイン",
       "wechatRescan": "再ログイン",
       "wechatLoggedIn": "ログイン済み",

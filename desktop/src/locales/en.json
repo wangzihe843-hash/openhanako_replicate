@@ -1877,6 +1877,7 @@
       "wechat": "WeChat",
       "wechatHint": "Connect via WeChat iLink protocol",
       "wechatExclusive": "Each WeChat account can only be bound to one Agent. Binding a new Agent will invalidate the previous one.",
+      "wechatReplyWindowReminder": "Proactive WeChat notifications require a recent incoming message or reply window. If reminders do not arrive, send this Agent a WeChat message to activate that window.",
       "wechatScan": "Scan to Login",
       "wechatRescan": "Re-login",
       "wechatLoggedIn": "Logged in",

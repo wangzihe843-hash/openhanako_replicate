@@ -21,3 +21,21 @@
     justify-content: center;
     padding: var(--space-sm) 0;
 }
+
+.wechat-hints {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.wechat-info-reminder {
+    margin-top: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    color: #426f8d;
+    background: rgba(83, 125, 150, 0.08);
+    border-left: 2px solid rgba(83, 125, 150, 0.45);
+}
