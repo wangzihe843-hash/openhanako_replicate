@@ -29,7 +29,7 @@ import {
   normalizeSessionPermissionMode,
 } from "./session-permission-mode.js";
 import { findModel } from "../shared/model-ref.js";
-import { computeToolSnapshot, DEFAULT_DISABLED_TOOL_NAMES, uniqueToolNames } from "../shared/tool-categories.js";
+import { CORE_TOOL_NAMES, computeToolSnapshot, DEFAULT_DISABLED_TOOL_NAMES, uniqueToolNames } from "../shared/tool-categories.js";
 import {
   computeRuntimeDisabledToolNames,
   getStableFeatureDisabledToolNames,
@@ -161,6 +161,29 @@ function activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames) {
       description: tool.description ?? "",
       parameters: tool.parameters ?? tool.input_schema ?? tool.schema ?? null,
     }));
+}
+
+function ensureAvailableCoreToolNames(snapshotToolNames, allToolNames) {
+  const available = new Set(allToolNames || []);
+  const result = [];
+  const seen = new Set();
+  for (const name of uniqueToolNames(snapshotToolNames)) {
+    if (!available.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  for (const name of CORE_TOOL_NAMES) {
+    if (!available.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
+}
+
+function sameToolNames(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  return left.every((name, index) => name === right[index]);
 }
 
 function normalizeDeletedAgentTranscriptMessage(message) {
@@ -966,12 +989,11 @@ export class SessionCoordinator {
         }
         if (metaEntry && Array.isArray(metaEntry.toolNames)) {
           const restoredToolNames = uniqueToolNames(metaEntry.toolNames);
-          snapshotToolNames = computeToolSnapshot(restoredToolNames, [], {
+          const gatedRestoredToolNames = computeToolSnapshot(restoredToolNames, [], {
             extraDisabled: stableFeatureDisabledToolNames,
           });  // Case A, with current global feature gates enforced
-          shouldPersistRestoredToolNames = restoredToolNames.length !== metaEntry.toolNames.length
-            || restoredToolNames.some((name, index) => name !== metaEntry.toolNames[index])
-            || snapshotToolNames.length !== restoredToolNames.length;
+          snapshotToolNames = ensureAvailableCoreToolNames(gatedRestoredToolNames, allToolNames);
+          shouldPersistRestoredToolNames = !sameToolNames(snapshotToolNames, metaEntry.toolNames);
         } else {
           // Legacy sessions created before tool snapshots had no stable tool
           // identity boundary. Establish one on first restore so future plugin

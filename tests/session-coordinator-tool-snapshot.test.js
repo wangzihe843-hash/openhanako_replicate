@@ -38,6 +38,7 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { SessionCoordinator } from "../core/session-coordinator.js";
 import { isBeautifyEnabledForAgentConfig } from "../plugins/beautify/lib/availability.js";
+import { CORE_TOOL_NAMES } from "../shared/tool-categories.js";
 
 // Fake tool objects — only needs `.name` to satisfy `.map(t => t.name)` paths
 function makeTool(name) {
@@ -71,6 +72,23 @@ function allNames() {
 
 function defaultBaselineNames() {
   return allNames().filter((name) => name !== "dm");
+}
+
+function restoredSnapshot(names, availableNames = allNames()) {
+  const available = new Set(availableNames);
+  const seen = new Set();
+  const result = [];
+  for (const name of names || []) {
+    if (typeof name !== "string" || name.length === 0 || seen.has(name) || !available.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  for (const name of CORE_TOOL_NAMES) {
+    if (!available.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
 }
 
 describe("session-coordinator tool snapshot (createSession)", () => {
@@ -439,9 +457,9 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).toEqual(["read", "browser"]);
+    expect(appliedList).toEqual(restoredSnapshot(["read", "browser"]));
     const entry = coord._sessions.get(sessionPath);
-    expect(entry.toolNames).toEqual(["read", "browser"]);
+    expect(entry.toolNames).toEqual(restoredSnapshot(["read", "browser"]));
   });
 
   it("Case C: snapshot includes Pi SDK built-ins (regression for P1 — bundle must carry read/bash/etc)", async () => {
@@ -569,7 +587,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
   it("Case A: restore with meta containing toolNames replays that exact snapshot", async () => {
     // Pre-write meta with a specific short snapshot
-    const replayList = ["read", "bash", "edit", "todo_write"];
+    const replayList = restoredSnapshot(["read", "bash", "edit", "todo_write"]);
     const metaPath = path.join(sessionDir, "session-meta.json");
     await fsp.writeFile(
       metaPath,
@@ -592,10 +610,34 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(["read", "bash", "todo_write"]);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(restoredSnapshot(["read", "bash", "todo_write"]));
 
     const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
-    expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(["read", "bash", "todo_write"]);
+    expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(restoredSnapshot(["read", "bash", "todo_write"]));
+  });
+
+  it("Case A: restore repairs corrupted snapshots that lost available core tools only", async () => {
+    currentAgentConfig = { tools: { disabled: ["browser", "dm"] } };
+    const replayList = ["todo_write", "retired_tool", "todo_write"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+    const expected = restoredSnapshot(["todo_write"]);
+    expect(activeToolsSpy).toHaveBeenCalledTimes(1);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(expected);
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("retired_tool");
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("browser");
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("dm");
+
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).toEqual(expected);
+
+    const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(expected);
   });
 
   it("Case A: restore keeps newly registered tools inactive when they are absent from the frozen snapshot", async () => {
@@ -613,7 +655,9 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(replayList);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(
+      restoredSnapshot(replayList, [...allNames(), "mcp_new_dynamic_tool"]),
+    );
     expect(activeToolsSpy.mock.calls[0][0]).not.toContain("mcp_new_dynamic_tool");
   });
 
@@ -635,7 +679,9 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(replayList);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(
+      restoredSnapshot(replayList, [...allNames(), "mcp_github_search"]),
+    );
   });
 
   it("Case A: restore replays frozen computer snapshot even if its global gate is now closed", async () => {
@@ -656,7 +702,9 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(replayList);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(
+      restoredSnapshot(replayList, [...allNames(), "computer"]),
+    );
   });
 
   // ── Case B tests ─────────────────────────────────────────────
