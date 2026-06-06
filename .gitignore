@@ -61,6 +61,7 @@ __pycache__/
 *.pyc
 /index.html
 homepage/
+desktop/src/react/animation-mockup/
 
 # 环境变量 / 凭证
 .env
