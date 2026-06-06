@@ -5,7 +5,7 @@ Hana's plugin SDK is split into small packages so plugin authors can choose only
 | Package | Runs In | Purpose |
 | --- | --- | --- |
 | `@hana/plugin-protocol` | iframe / host | Shared protocol constants and message shapes for plugin UI. |
-| `@hana/plugin-sdk` | iframe browser code | Typed helpers for `ready`, resize, toast, external links, clipboard, and lower-level host requests. |
+| `@hana/plugin-sdk` | iframe browser code | Typed helpers for `ready`, asset URLs, resize, toast, external links, clipboard, and lower-level host requests. |
 | `@hana/plugin-runtime` | plugin Node runtime | Helpers for tools, lifecycle plugins, EventBus handlers, SessionFile media details, providers, and Pi SDK extensions. |
 | `@hana/plugin-components` | iframe React UI | Hana-styled React primitives with theme fallback: controls, cards, rows, lists, and empty states. |
 
@@ -61,6 +61,22 @@ hana.ready();
 hana.ui.resize({ height: 320 });
 await hana.toast.show({ message: 'Ready' });
 ```
+
+Use `hana.assets.url(path)` for browser-side references to files bundled under the plugin's `assets/` directory:
+
+```ts
+const logoUrl = hana.assets.url('images/logo.svg');
+```
+
+Hana uses a VS Code-like webview resource boundary. The iframe entry route is authenticated by the host, then the host issues a short-lived, HttpOnly cookie scoped only to `/api/plugins/{pluginId}/assets/`. Static JS, CSS, fonts, images, JSON, and wasm files are served from the plugin's own `assets/` directory through that path. Do not rely on `?token` or `pluginIframeTicket` being copied to Vite chunks, `React.lazy()` imports, modulepreload links, or CSS requests.
+
+For a built UI, put compiled files under `assets/` and point the shell at the host-served resource URL:
+
+```html
+<script type="module" src="/api/plugins/my-plugin/assets/dist/app.js"></script>
+```
+
+Keep source files, secrets, config, and private data outside `assets/`. The host rejects path traversal, dotfiles, source maps, and non-web asset extensions by default. Use plugin routes or SDK host requests for dynamic data.
 
 Use `@hana/plugin-components` for iframe UI:
 

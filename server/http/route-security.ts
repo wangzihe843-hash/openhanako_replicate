@@ -91,6 +91,7 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   if (isSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isProviderManagementRoute(verb, routePath)) return scoped("providers.manage");
   if (isBridgeManagementRoute(verb, routePath)) return scoped("bridge.manage");
+  if (isPluginAssetReadRoute(verb, routePath)) return scoped("chat");
   if (isPluginUiReadRoute(verb, routePath)) return scoped("chat");
   if (verb === "POST" && routePath === "/api/plugins/iframe-ticket") return scoped("chat");
   if (verb === "POST" && /^\/api\/resources\/[^/]+\/ticket$/.test(routePath)) {
@@ -285,4 +286,9 @@ function isPluginUiReadRoute(verb, routePath) {
     || routePath === "/api/plugins/widgets"
     || routePath === "/api/plugins/ui-host-capabilities"
     || routePath === "/api/plugins/theme.css";
+}
+
+function isPluginAssetReadRoute(verb, routePath) {
+  if (verb !== "GET" && verb !== "HEAD") return false;
+  return /^\/api\/plugins\/[^/]+\/assets\/.+$/.test(routePath);
 }

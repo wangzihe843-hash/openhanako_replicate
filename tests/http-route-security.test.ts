@@ -175,6 +175,8 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/plugins/widgets"],
       ["GET", "/api/plugins/ui-host-capabilities"],
       ["GET", "/api/plugins/theme.css"],
+      ["GET", "/api/plugins/demo/assets/dist/app.js"],
+      ["HEAD", "/api/plugins/demo/assets/dist/app.js"],
       ["POST", "/api/plugins/iframe-ticket"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal }))
@@ -182,6 +184,12 @@ describe("HTTP route security policy", () => {
     }
 
     expect(authorizeHttpRoute({ method: "GET", path: "/api/plugins/demo/page", principal }))
+      .toMatchObject({
+        allowed: false,
+        status: 403,
+        error: "local_only_route",
+      });
+    expect(authorizeHttpRoute({ method: "POST", path: "/api/plugins/demo/assets/dist/app.js", principal }))
       .toMatchObject({
         allowed: false,
         status: 403,

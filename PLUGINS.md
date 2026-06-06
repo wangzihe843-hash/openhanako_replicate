@@ -577,6 +577,24 @@ window.parent.postMessage({ type: 'ready' }, '*');
 <link rel="stylesheet" href="${new URLSearchParams(location.search).get('hana-css')}">
 ```
 
+静态前端资源放在插件目录的 `assets/` 下，由 Hana 宿主通过 `/api/plugins/{pluginId}/assets/...` 统一服务。这个模型参考 VS Code Webview 的资源边界：入口 route 通过本地 token 或 `pluginIframeTicket` 打开，成功返回页面后，宿主下发一个只作用于 `/api/plugins/{pluginId}/assets/` 的 HttpOnly 短会话 cookie。Vite split chunks、`React.lazy()`、CSS、字体、图片、JSON、wasm 等资源请求不需要也不应该携带 `?token` 或 `pluginIframeTicket`。
+
+浏览器代码优先使用 SDK 生成资源 URL：
+
+```js
+import { hana } from '@hana/plugin-sdk';
+
+const iconUrl = hana.assets.url('images/icon.svg');
+```
+
+服务端 shell 可以直接引用同一个 host-served 资源路径：
+
+```html
+<script type="module" src="/api/plugins/my-plugin/assets/dist/app.js"></script>
+```
+
+`assets/` 是公开静态资源根，只放构建产物和公开素材。不要放源码、密钥、私有配置或运行时数据。宿主默认拒绝路径穿越、隐藏文件、source map 和非 Web 静态扩展；动态数据继续走插件 route API 或 SDK host request。
+
 React 插件 UI 建议使用 `@hana/plugin-components`，它提供和 Hana 当前控件接近的 Button、IconButton、TextInput、Textarea、Select、Switch、SettingRow、CardShell、List、EmptyState 等基础组件：
 
 ```tsx

@@ -11,6 +11,12 @@ import {
   verifyPluginIframeTicketForHostRequest,
 } from "../server/routes/plugins.ts";
 import { PluginIframeTicketError } from "../core/plugin-iframe-ticket-service.ts";
+import { PluginAssetSessionError } from "../core/plugin-asset-session-service.ts";
+import {
+  isMalformedPluginAssetRequest,
+  isPluginAssetRequest,
+  verifyPluginAssetSessionForHostRequest,
+} from "../server/http/plugin-assets.ts";
 
 describe("plugin route proxy", () => {
   it("dispatches to registered plugin route", async () => {
@@ -119,6 +125,52 @@ function createAppWithProductionPluginTicketBypass(engine) {
       }
       await next();
       return;
+    }
+    await next();
+  });
+  app.route("/api", createPluginsRoute(engine));
+  return app;
+}
+
+function createAppWithProductionPluginResourceAuth(engine) {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    const routePath = new URL(c.req.url).pathname;
+    if (
+      (c.req.method === "GET" || c.req.method === "HEAD")
+      && /^\/api\/plugins\/[^/]+\/.+$/.test(routePath)
+      && c.req.query("pluginIframeTicket")
+    ) {
+      try {
+        verifyPluginIframeTicketForHostRequest(c, engine, { requireTicket: true });
+      } catch (err) {
+        if (err instanceof PluginIframeTicketError) {
+          return c.json({ error: err.code, detail: err.message }, err.status);
+        }
+        throw err;
+      }
+      await next();
+      return;
+    }
+    if (isMalformedPluginAssetRequest(c.req.url, routePath)) {
+      return c.json({ error: "plugin_asset_not_found" }, 404);
+    }
+    if ((c.req.method === "GET" || c.req.method === "HEAD") && isPluginAssetRequest(routePath)) {
+      try {
+        const session = verifyPluginAssetSessionForHostRequest(c, engine, { requireSession: false });
+        if (session) {
+          await next();
+          return;
+        }
+      } catch (err) {
+        if (err instanceof PluginAssetSessionError) {
+          return c.json({ error: err.code, detail: err.message }, err.status);
+        }
+        throw err;
+      }
+    }
+    if (/^\/api\/plugins\/[^/]+\/.+$/.test(routePath)) {
+      return c.json({ error: "forbidden" }, 403);
     }
     await next();
   });
@@ -494,6 +546,153 @@ describe("plugin management API", () => {
         expect(await wrongRouteRes.json()).toMatchObject({
           error: "plugin_iframe_ticket_invalid",
         });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("issues a path-scoped asset session from iframe pages and serves static plugin assets", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-assets-"));
+      try {
+        const pluginDir = path.join(tmpDir, "plugins", "demo");
+        fs.mkdirSync(path.join(pluginDir, "assets", "dist"), { recursive: true });
+        fs.writeFileSync(path.join(pluginDir, "assets", "dist", "dashboard.js"), "export const ok = true;\n");
+
+        const engine = mockEngine({
+          hanakoHome: tmpDir,
+          pm: {
+            getPlugin: (id) => (
+              id === "demo"
+                ? { id: "demo", status: "loaded", pluginDir }
+                : null
+            ),
+          },
+        });
+        const pluginApp = new Hono();
+        pluginApp.get("/page", (c) => c.html("<!doctype html><script type=\"module\" src=\"/api/plugins/demo/assets/dist/dashboard.js\"></script>"));
+        engine.pluginManager.routeRegistry.set("demo", pluginApp);
+        const app = createAppWithProductionPluginResourceAuth(engine);
+
+        const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeUrl: "/api/plugins/demo/page" }),
+        });
+        expect(ticketRes.status).toBe(200);
+        const ticketBody = await ticketRes.json();
+
+        const pageRes = await app.request(
+          `/api/plugins/demo/page?pluginIframeTicket=${encodeURIComponent(ticketBody.ticket)}`,
+        );
+        expect(pageRes.status).toBe(200);
+        const cookie = pageRes.headers.get("set-cookie");
+        expect(cookie).toContain("HttpOnly");
+        expect(cookie).toContain("SameSite=Strict");
+        expect(cookie).toContain("Path=/api/plugins/demo/assets/");
+
+        const assetRes = await app.request("/api/plugins/demo/assets/dist/dashboard.js", {
+          headers: { Cookie: cookie },
+        });
+        expect(assetRes.status).toBe(200);
+        expect(assetRes.headers.get("content-type")).toContain("text/javascript");
+        expect(assetRes.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(await assetRes.text()).toBe("export const ok = true;\n");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps asset sessions confined to static files under the plugin assets root", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-assets-confined-"));
+      try {
+        const pluginDir = path.join(tmpDir, "plugins", "demo");
+        fs.mkdirSync(path.join(pluginDir, "assets", "dist"), { recursive: true });
+        fs.writeFileSync(path.join(pluginDir, "assets", "dist", "app.js"), "console.log('ok');\n");
+        fs.writeFileSync(path.join(pluginDir, "assets", "dist", "app.js.map"), "{}\n");
+        fs.writeFileSync(path.join(pluginDir, "assets", ".secret"), "nope\n");
+        fs.mkdirSync(path.join(pluginDir, "routes"), { recursive: true });
+        fs.writeFileSync(path.join(pluginDir, "routes", "page.js"), "export default function route() {}\n");
+
+        const engine = mockEngine({
+          hanakoHome: tmpDir,
+          pm: {
+            getPlugin: (id) => (
+              id === "demo"
+                ? { id: "demo", status: "loaded", pluginDir }
+                : null
+            ),
+          },
+        });
+        const pluginApp = new Hono();
+        pluginApp.get("/page", (c) => c.html("<!doctype html><title>Demo</title>"));
+        engine.pluginManager.routeRegistry.set("demo", pluginApp);
+        const app = createAppWithProductionPluginResourceAuth(engine);
+
+        const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeUrl: "/api/plugins/demo/page" }),
+        });
+        const ticketBody = await ticketRes.json();
+        const pageRes = await app.request(
+          `/api/plugins/demo/page?pluginIframeTicket=${encodeURIComponent(ticketBody.ticket)}`,
+        );
+        const cookie = pageRes.headers.get("set-cookie");
+        expect(cookie).toContain("Path=/api/plugins/demo/assets/");
+
+        for (const [unsafePath, expectedStatus] of [
+          ["/api/plugins/demo/assets/%2e%2e/routes/page.js", 403],
+          ["/api/plugins/demo/assets/.secret", 404],
+          ["/api/plugins/demo/assets/dist/app.js.map", 404],
+        ]) {
+          const res = await app.request(unsafePath, {
+            headers: { Cookie: cookie },
+          });
+          expect(res.status, unsafePath).toBe(expectedStatus);
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not let a plugin asset session authorize plugin route apps", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-assets-api-"));
+      try {
+        const pluginDir = path.join(tmpDir, "plugins", "demo");
+        fs.mkdirSync(path.join(pluginDir, "assets"), { recursive: true });
+        fs.writeFileSync(path.join(pluginDir, "assets", "entry.js"), "export {};\n");
+
+        const engine = mockEngine({
+          hanakoHome: tmpDir,
+          pm: {
+            getPlugin: (id) => (
+              id === "demo"
+                ? { id: "demo", status: "loaded", pluginDir }
+                : null
+            ),
+          },
+        });
+        const pluginApp = new Hono();
+        pluginApp.get("/page", (c) => c.html("<!doctype html><title>Demo</title>"));
+        pluginApp.get("/api/private", (c) => c.json({ secret: true }));
+        engine.pluginManager.routeRegistry.set("demo", pluginApp);
+        const app = createAppWithProductionPluginResourceAuth(engine);
+
+        const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeUrl: "/api/plugins/demo/page" }),
+        });
+        const ticketBody = await ticketRes.json();
+        const pageRes = await app.request(
+          `/api/plugins/demo/page?pluginIframeTicket=${encodeURIComponent(ticketBody.ticket)}`,
+        );
+        const cookie = pageRes.headers.get("set-cookie");
+
+        const apiRes = await app.request("/api/plugins/demo/api/private", {
+          headers: { Cookie: cookie },
+        });
+        expect(apiRes.status).toBe(403);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

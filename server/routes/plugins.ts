@@ -24,6 +24,12 @@ import {
   issuePluginIframeTicket,
   verifyPluginIframeTicket,
 } from "../../core/plugin-iframe-ticket-service.ts";
+import {
+  DEFAULT_PLUGIN_ASSET_SESSION_TTL_MS,
+  createPluginAssetSessionCookie,
+  issuePluginAssetSession,
+} from "../../core/plugin-asset-session-service.ts";
+import { servePluginAsset } from "../http/plugin-assets.ts";
 
 const log = createModuleLogger("plugin-install");
 
@@ -139,6 +145,52 @@ function verifyPluginIframeTicketForRequest(c: any, engine: any, pluginId: strin
     pluginId,
     surfacePath: surface.surfacePath,
   } as any);
+}
+
+function readAuthPrincipal(c: any) {
+  try {
+    return c.get("authPrincipal");
+  } catch {
+    return null;
+  }
+}
+
+function responseNeedsPluginAssetSession(c: any, response: Response, iframeTicket: any) {
+  const method = String(c.req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  if (response.status >= 400) return false;
+  if (iframeTicket) return true;
+  return String(response.headers.get("content-type") || "").toLowerCase().includes("text/html");
+}
+
+function appendPluginAssetSessionCookie(c: any, engine: any, pluginId: string, response: Response, iframeTicket: any) {
+  if (!responseNeedsPluginAssetSession(c, response, iframeTicket)) return response;
+  if (!engine?.hanakoHome) return response;
+  const principal = readAuthPrincipal(c);
+  const principalId = iframeTicket?.principalId || principal?.principalId;
+  if (!principalId) return response;
+  const issued = issuePluginAssetSession({
+    hanakoHome: engine.hanakoHome,
+    pluginId,
+    principalId,
+  } as any);
+  const maxAgeSeconds = Math.max(
+    1,
+    Math.floor((Date.parse(issued.expiresAt) - Date.now()) / 1000)
+      || Math.ceil(DEFAULT_PLUGIN_ASSET_SESSION_TTL_MS / 1000),
+  );
+  const headers = new Headers(response.headers);
+  headers.append("Set-Cookie", createPluginAssetSessionCookie({
+    pluginId,
+    token: issued.token,
+    maxAgeSeconds,
+    secure: new URL(c.req.url).protocol === "https:",
+  } as any));
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 export function verifyPluginIframeTicketForHostRequest(c: any, engine: any, { requireTicket = true } = {}) {
@@ -1184,14 +1236,18 @@ export function createPluginsRoute(engine: any) {
     return c.body(css);
   });
 
+  route.get("/plugins/:pluginId/assets/*", (c) => servePluginAsset(c, engine, false));
+  route.on("HEAD", "/plugins/:pluginId/assets/*", (c) => servePluginAsset(c, engine, true));
+
   // ── Plugin route proxy (catch-all last) ──
 
   route.all("/plugins/:pluginId/*", async (c) => {
     const pluginId = c.req.param("pluginId");
     const pluginApp = engine.pluginManager?.getRouteApp(pluginId);
     if (!pluginApp) return c.json({ error: `Plugin "${pluginId}" not found` }, 404);
+    let iframeTicket = null;
     try {
-      verifyPluginIframeTicketForRequest(c, engine, pluginId);
+      iframeTicket = verifyPluginIframeTicketForRequest(c, engine, pluginId);
     } catch (err) {
       if (err instanceof PluginIframeTicketError) {
         return c.json({ error: (err as any).code, detail: err.message }, (err as any).status);
@@ -1207,7 +1263,8 @@ export function createPluginsRoute(engine: any) {
     await engine.pluginManager?.activatePluginRoute?.(pluginId, subPath);
     const agent = resolveAgent(engine, c);
     const agentId = agent?.id || null;
-    return proxyToPlugin(c, pluginApp, pluginId, agentId);
+    const response = await proxyToPlugin(c, pluginApp, pluginId, agentId);
+    return appendPluginAssetSessionCookie(c, engine, pluginId, response, iframeTicket);
   });
 
   return route;

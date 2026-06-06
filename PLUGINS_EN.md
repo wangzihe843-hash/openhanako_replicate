@@ -511,6 +511,24 @@ The host appends `hana-theme` and `hana-css` query parameters to the iframe URL.
 <link rel="stylesheet" href="${new URLSearchParams(location.search).get('hana-css')}">
 ```
 
+Static frontend resources belong under the plugin's `assets/` directory and are served by the Hana host at `/api/plugins/{pluginId}/assets/...`. This follows the same boundary idea as VS Code Webview resources: the entry route is opened with the local token or `pluginIframeTicket`; after a successful page response, the host issues a short-lived HttpOnly cookie scoped only to `/api/plugins/{pluginId}/assets/`. Vite split chunks, `React.lazy()` imports, CSS, fonts, images, JSON, wasm, and related static requests should not depend on `?token` or `pluginIframeTicket`.
+
+Browser code should prefer the SDK helper:
+
+```js
+import { hana } from '@hana/plugin-sdk';
+
+const iconUrl = hana.assets.url('images/icon.svg');
+```
+
+The server-side shell can also point directly at the same host-served path:
+
+```html
+<script type="module" src="/api/plugins/my-plugin/assets/dist/app.js"></script>
+```
+
+Treat `assets/` as a public static root. Put only built files and public media there. Do not put source files, secrets, private config, or runtime data in it. The host rejects path traversal, dotfiles, source maps, and non-web static extensions by default. Use plugin route APIs or SDK host requests for dynamic data.
+
 React plugin UIs should use `@hana/plugin-components`. It provides Button, IconButton, TextInput, Textarea, Select, Switch, SettingRow, CardShell, List, EmptyState, and related primitives that match Hana's current controls:
 
 ```tsx

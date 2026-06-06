@@ -15,6 +15,7 @@ describe("plugin SDK examples and docs", () => {
     expect(guide).toContain("@hana/plugin-sdk");
     expect(guide).toContain("@hana/plugin-runtime");
     expect(guide).toContain("@hana/plugin-components");
+    expect(guide).toContain("hana.assets.url");
     expect(guide).toContain("npm run build:packages");
   });
 
@@ -50,6 +51,7 @@ describe("plugin SDK examples and docs", () => {
     expect(panel).toContain("@hana/plugin-components");
     expect(panel).toContain("HanaThemeProvider");
     expect(readme).toContain("bundle the UI");
+    expect(readme).toContain("hana.assets.url");
   });
 
   it("scaffolds provider contribution plugins with explicit media capabilities", () => {
