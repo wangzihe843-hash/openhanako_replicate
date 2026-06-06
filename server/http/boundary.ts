@@ -1,6 +1,8 @@
 import { authorizeCapability } from "../../core/capability-policy.ts";
 import { findActiveGrantsForPrincipal } from "../../core/grant-registry.ts";
 import { normalizePrincipal } from "../../core/security-principal.ts";
+import { assertRouteErrorStatus, jsonRouteError } from "./route-errors.ts";
+export { HttpRouteError, jsonRouteError } from "./route-errors.ts";
 
 export function createRequestContext(c, engine) {
   const runtimeContext = readRuntimeContext(engine);
@@ -49,10 +51,12 @@ export function jsonError(c, {
   detail,
   status = 500,
 }) {
-  return c.json({
-    error: code,
-    ...(detail ? { detail } : {}),
-  }, status);
+  assertRouteErrorStatus(status);
+  return jsonRouteError(c, {
+    code,
+    message: typeof detail === "string" && detail.trim() ? detail : code,
+    status,
+  });
 }
 
 function readRuntimeContext(engine) {

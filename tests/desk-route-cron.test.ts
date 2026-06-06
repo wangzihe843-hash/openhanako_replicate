@@ -62,6 +62,48 @@ describe("desk cron route", () => {
     expect(secondJobs.map((job) => job.id).sort()).toEqual(firstJobs.map((job) => job.id).sort());
   });
 
+  it("returns a route error when the cron store is unavailable", async () => {
+    const app = await createApp({
+      getStudioCronStore: () => null,
+      listAgents: () => [],
+    });
+
+    const res = await app.request("/api/desk/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggle", id: "job_missing" }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "cron_store_unavailable",
+        message: "Desk not initialized",
+      },
+    });
+  });
+
+  it("returns a route error for unknown cron actions", async () => {
+    const app = await createApp({
+      getStudioCronStore: () => ({ listJobs: () => [] }),
+      listAgents: () => [],
+    });
+
+    const res = await app.request("/api/desk/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "snooze" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "unknown_cron_action",
+        message: "unknown action: snooze",
+      },
+    });
+  });
+
   it("mutates jobs by studio job id without resolving the focused agent", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-cron-"));
     roots.push(root);

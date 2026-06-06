@@ -167,8 +167,10 @@ describe("resources route", () => {
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
-      error: "resource_error",
-      detail: "identity context not initialized",
+      error: {
+        code: "resource_error",
+        message: "identity context not initialized",
+      },
     });
   });
 
@@ -335,6 +337,10 @@ describe("resources route", () => {
 
     const wrongRes = await app.request(`/api/resources/res_other/content?ticket=${encodeURIComponent(ticketBody.ticket)}`);
     expect(wrongRes.status).toBe(403);
-    expect(await wrongRes.json()).toMatchObject({ error: "resource_ticket_invalid" });
+    expect(await wrongRes.json()).toMatchObject({
+      error: {
+        code: "resource_ticket_invalid",
+      },
+    });
   });
 });

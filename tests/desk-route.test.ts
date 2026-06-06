@@ -270,6 +270,101 @@ describe("desk route", () => {
     }
   });
 
+  it("returns route errors for missing activity session lookups", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
+    try {
+      const activityStore = {
+        get: vi.fn((id) => {
+          if (id === "no-session") {
+            return {
+              id,
+              type: "beautify",
+              label: "No session",
+              summary: "missing session file",
+              startedAt: 1,
+              finishedAt: null,
+              sessionFile: null,
+            };
+          }
+          if (id === "missing-file") {
+            return {
+              id,
+              type: "beautify",
+              label: "Missing file",
+              summary: "missing file",
+              startedAt: 1,
+              finishedAt: null,
+              sessionFile: "missing.jsonl",
+            };
+          }
+          return null;
+        }),
+      };
+      const engine = {
+        agentsDir: tempRoot,
+        listAgents: () => [{ id: "agent-a", name: "Agent A" }],
+        getActivityStore: () => activityStore,
+      };
+
+      const { createDeskRoute } = await import("../server/routes/desk.ts");
+      const app = new Hono();
+      app.route("/api", createDeskRoute(engine, null));
+
+      const notFound = await app.request("/api/desk/activities/missing/session");
+      expect(notFound.status).toBe(404);
+      expect(await notFound.json()).toEqual({
+        error: {
+          code: "activity_not_found",
+          message: "activity not found",
+        },
+      });
+
+      const noSession = await app.request("/api/desk/activities/no-session/session");
+      expect(noSession.status).toBe(404);
+      expect(await noSession.json()).toEqual({
+        error: {
+          code: "activity_session_unavailable",
+          message: "no session file",
+        },
+      });
+
+      const missingFile = await app.request("/api/desk/activities/missing-file/session");
+      expect(missingFile.status).toBe(404);
+      expect(await missingFile.json()).toEqual({
+        error: {
+          code: "activity_session_missing",
+          message: "session file missing",
+        },
+      });
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a route error when heartbeat is unavailable", async () => {
+    const { createDeskRoute } = await import("../server/routes/desk.ts");
+    const app = new Hono();
+    app.route("/api", createDeskRoute({
+      listAgents: () => [],
+    }, {
+      scheduler: {
+        getHeartbeat: vi.fn(() => null),
+      },
+    }));
+
+    const res = await app.request("/api/desk/heartbeat?agentId=agent-a", {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "heartbeat_unavailable",
+        message: "Heartbeat not initialized",
+      },
+    });
+  });
+
   it("moves workspace tree items by explicit subdir and reports affected folders", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
     try {
@@ -348,6 +443,73 @@ describe("desk route", () => {
       expect(fs.existsSync(path.join(cwd, "evil.md"))).toBe(false);
       expect(fs.existsSync(path.join(cwd, "nested"))).toBe(false);
       expect(fs.existsSync(path.join(cwd, "old.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns route errors for workspace file action validation misses", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-"));
+    try {
+      const cwd = path.join(tempRoot, "workspace");
+      fs.mkdirSync(cwd, { recursive: true });
+
+      const engine = {
+        deskCwd: cwd,
+        homeCwd: cwd,
+      };
+
+      const { createDeskRoute } = await import("../server/routes/desk.ts");
+      const app = new Hono();
+      app.use("*", async (c, next) => {
+        (c as any).set("authPrincipal", Object.freeze({
+          kind: "local_user",
+          connectionKind: "local",
+          credentialKind: "loopback_token",
+          scopes: ["*"],
+        }));
+        await next();
+      });
+      app.route("/api", createDeskRoute(engine, null));
+
+      const uploadMissingPaths = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "upload", paths: [] }),
+      });
+      expect(uploadMissingPaths.status).toBe(400);
+      expect(await uploadMissingPaths.json()).toEqual({
+        error: {
+          code: "workspace_file_validation_failed",
+          message: "paths required",
+        },
+      });
+
+      const createMissingFields = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", content: "" }),
+      });
+      expect(createMissingFields.status).toBe(400);
+      expect(await createMissingFields.json()).toEqual({
+        error: {
+          code: "workspace_file_validation_failed",
+          message: "name and content required",
+        },
+      });
+
+      const unknownAction = await app.request("/api/desk/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "compress" }),
+      });
+      expect(unknownAction.status).toBe(400);
+      expect(await unknownAction.json()).toEqual({
+        error: {
+          code: "unknown_workspace_file_action",
+          message: "unknown action: compress",
+        },
+      });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

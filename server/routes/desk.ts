@@ -26,6 +26,7 @@ import { emitAppEvent } from "../app-events.ts";
 import { t } from "../../lib/i18n.ts";
 import { realPath, isSensitivePath } from "../utils/path-security.ts";
 import { readAuthPrincipal } from "../http/capability-guard.ts";
+import { jsonRouteError } from "../http/route-errors.ts";
 import { isLocalOwnerPrincipal } from "../http/route-security.ts";
 import { createRequestContext } from "../http/boundary.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
@@ -100,6 +101,10 @@ function isPlainEntryName(value) {
 
 function normalizeMountId(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function deskRouteError(c, code, message, status) {
+  return jsonRouteError(c, { code, message, status });
 }
 
 function getStudioCronStore(engine) {
@@ -825,12 +830,12 @@ export function createDeskRoute(engine, hub) {
     const id = c.req.param("id");
     // 从所有 agent 的 activityStore 中查找
     const { entry, agentId: foundAgentId } = findActivityEntry(id);
-    if (!entry) return c.json({ error: "activity not found" });
-    if (!entry.sessionFile) return c.json({ error: "no session file" });
+    if (!entry) return deskRouteError(c, "activity_not_found", "activity not found", 404);
+    if (!entry.sessionFile) return deskRouteError(c, "activity_session_unavailable", "no session file", 404);
 
     const activityDir = path.join(engine.agentsDir, foundAgentId, "activity");
     const sessionPath = path.join(activityDir, entry.sessionFile);
-    if (!fs.existsSync(sessionPath)) return c.json({ error: "session file missing" });
+    if (!fs.existsSync(sessionPath)) return deskRouteError(c, "activity_session_missing", "session file missing", 404);
 
     try {
       const raw = fs.readFileSync(sessionPath, "utf-8");
@@ -911,7 +916,7 @@ export function createDeskRoute(engine, hub) {
     const agentId = c.req.query("agentId");
     if (!agentId) return c.json({ error: "agentId is required" }, 400);
     const hb = hub?.scheduler?.getHeartbeat(agentId);
-    if (!hb) return c.json({ error: "Heartbeat not initialized" });
+    if (!hb) return deskRouteError(c, "heartbeat_unavailable", "Heartbeat not initialized", 503);
     hb.triggerNow();
     return c.json({ ok: true, message: t("error.heartbeatTriggered") });
   });
@@ -930,7 +935,7 @@ export function createDeskRoute(engine, hub) {
   /** 操作 cron 任务 */
   route.post("/desk/cron", async (c) => {
     const store = getStudioCronStore(engine);
-    if (!store) return c.json({ error: "Desk not initialized" });
+    if (!store) return deskRouteError(c, "cron_store_unavailable", "Desk not initialized", 503);
 
     const body = await safeJson(c);
     const { action, ...params } = body;
@@ -1061,7 +1066,7 @@ export function createDeskRoute(engine, hub) {
       }
 
       default:
-        return c.json({ error: `unknown action: ${action}` });
+        return deskRouteError(c, "unknown_cron_action", `unknown action: ${action}`, 400);
     }
   });
 
@@ -1330,7 +1335,7 @@ export function createDeskRoute(engine, hub) {
           return c.json({ error: "upload by absolute path requires local owner" }, 403);
         }
         if (!Array.isArray(paths) || paths.length === 0) {
-          return c.json({ error: "paths required" });
+          return deskRouteError(c, "workspace_file_validation_failed", "paths required", 400);
         }
         const results = [];
         for (const srcPath of paths) {
@@ -1361,7 +1366,7 @@ export function createDeskRoute(engine, hub) {
 
       case "create": {
         if (!name || content === undefined) {
-          return c.json({ error: "name and content required" });
+          return deskRouteError(c, "workspace_file_validation_failed", "name and content required", 400);
         }
         if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
         const createTarget = path.join(dir, name);
@@ -1372,7 +1377,7 @@ export function createDeskRoute(engine, hub) {
       }
 
       case "mkdir": {
-        if (!name) return c.json({ error: "name required" });
+        if (!name) return deskRouteError(c, "workspace_file_validation_failed", "name required", 400);
         if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
         const mkTarget = path.join(dir, name);
         if (!isInsidePath(mkTarget, dir)) return c.json({ error: "invalid name" });
@@ -1382,7 +1387,7 @@ export function createDeskRoute(engine, hub) {
       }
 
       case "rename": {
-        if (!oldName || !newName) return c.json({ error: "oldName and newName required" });
+        if (!oldName || !newName) return deskRouteError(c, "workspace_file_validation_failed", "oldName and newName required", 400);
         if (!isPlainEntryName(oldName) || !isPlainEntryName(newName)) return c.json({ error: "invalid name" });
         const src = path.join(dir, oldName);
         const dest = path.join(dir, newName);
@@ -1397,7 +1402,7 @@ export function createDeskRoute(engine, hub) {
         const names = body.names;
         const destFolder = body.destFolder;
         if (!Array.isArray(names) || names.length === 0 || !destFolder) {
-          return c.json({ error: "names[] and destFolder required" });
+          return deskRouteError(c, "workspace_file_validation_failed", "names[] and destFolder required", 400);
         }
         if (names.includes(destFolder)) {
           return c.json({ error: "cannot move folder into itself" });
@@ -1428,7 +1433,9 @@ export function createDeskRoute(engine, hub) {
         const items = body.items;
         const destSubdir = body.destSubdir || "";
         const currentSubdir = body.currentSubdir || "";
-        if (!Array.isArray(items) || items.length === 0) return c.json({ error: "items[] required" });
+        if (!Array.isArray(items) || items.length === 0) {
+          return deskRouteError(c, "workspace_file_validation_failed", "items[] required", 400);
+        }
         const destDir = subdirToDir(destSubdir);
         if (!destDir) return c.json({ error: "invalid destSubdir" });
         if (!fs.existsSync(destDir) || !fs.statSync(destDir).isDirectory()) {
@@ -1482,7 +1489,7 @@ export function createDeskRoute(engine, hub) {
       }
 
       case "remove": {
-        if (!name) return c.json({ error: "name required" });
+        if (!name) return deskRouteError(c, "workspace_file_validation_failed", "name required", 400);
         const rmTarget = path.join(dir, path.basename(name));
         if (!isInsidePath(rmTarget, dir)) return c.json({ error: "invalid name" });
         if (!fs.existsSync(rmTarget)) return c.json({ error: "not found" });
@@ -1491,7 +1498,7 @@ export function createDeskRoute(engine, hub) {
       }
 
       default:
-        return c.json({ error: `unknown action: ${action}` });
+        return deskRouteError(c, "unknown_workspace_file_action", `unknown action: ${action}`, 400);
     }
   });
 
