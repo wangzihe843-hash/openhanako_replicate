@@ -130,6 +130,7 @@ export function QuickChatApp() {
   const reuseTimeoutMinutesRef = useRef(DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES);
   const isStreamingRef = useRef(false);
   const sendingRef = useRef(false);
+  const isComposingRef = useRef(false);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) || agents[0] || null,
@@ -361,6 +362,7 @@ export function QuickChatApp() {
 
   useEffect(() => {
     const dispose = window.hana?.onQuickChatShown?.(() => {
+      textareaRef.current?.focus();
       void (async () => {
         const runtime = await refreshQuickChatRuntimeState({
           adoptAgent: shouldAdoptRuntimeAgentForQuickChat(sessionPathRef.current),
@@ -708,11 +710,13 @@ export function QuickChatApp() {
             onChange={(event) => setDraft(event.target.value)}
             onPaste={handlePaste}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.key === 'Enter' && !event.shiftKey && !isComposingRef.current && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void send();
               }
             }}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder={t('input.placeholder')}
             rows={expanded ? 2 : 3}
           />

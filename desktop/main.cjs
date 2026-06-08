@@ -1664,6 +1664,7 @@ function showQuickChatWindow() {
   }
   win.show();
   win.focus();
+  win.webContents.focus();
   win.webContents.send("quick-chat-shown");
 }
 
