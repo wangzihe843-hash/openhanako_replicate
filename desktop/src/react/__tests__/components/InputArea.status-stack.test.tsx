@@ -134,13 +134,11 @@ vi.mock('../../components/input/InputContextRow', () => ({
   InputContextRow: ({
     attachedFiles,
     hasQuotedSelection,
-    sessionTodos,
   }: {
     attachedFiles?: unknown[];
     hasQuotedSelection?: boolean;
-    sessionTodos?: unknown[];
   }) => (
-    (attachedFiles?.length || hasQuotedSelection || sessionTodos?.length)
+    (attachedFiles?.length || hasQuotedSelection)
       ? React.createElement('div', { 'data-testid': 'input-context-row' })
       : null
   ),
@@ -289,6 +287,29 @@ describe('InputArea status stack', () => {
     expect(deskActionMocks.toggleJianSidebar).toHaveBeenCalledWith(true);
     expect(deskActionMocks.revealDeskDirectory).toHaveBeenCalledWith('/workspace/OH-Works');
     expect(deskActionMocks.loadDeskFiles).not.toHaveBeenCalled();
+  });
+
+  it('does not show the composer context row for todos alone', () => {
+    const sessionPath = '/session/todos-only.jsonl';
+    useStore.setState({
+      currentSessionPath: sessionPath,
+      attachedFiles: [],
+      attachedFilesBySession: {},
+      quotedSelections: [],
+      todosBySession: {
+        [sessionPath]: [{
+          content: '读上下文',
+          activeForm: '正在读上下文',
+          status: 'in_progress',
+        }],
+      },
+      compactingSessions: [],
+      chatSessions: {},
+    } as never);
+
+    render(React.createElement(InputArea));
+
+    expect(screen.queryByTestId('input-context-row')).toBeNull();
   });
 
   it('covers deleted-agent sessions with a read-only continuation action and progress bar', () => {

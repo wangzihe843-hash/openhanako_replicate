@@ -21,6 +21,10 @@ const hanaFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init.body || '{}'));
     return new Response(JSON.stringify({ ok: true, value: body.value }));
   }
+  if (url === '/api/experiments/provider.deepseek_roleplay_reasoning_patch' && init?.method === 'PATCH') {
+    const body = JSON.parse(String(init.body || '{}'));
+    return new Response(JSON.stringify({ ok: true, value: body.value }));
+  }
   if (url === '/api/experiments') {
     return new Response(JSON.stringify({
       experiments: [
@@ -41,6 +45,20 @@ const hanaFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
               { value: 'cache_preserving', labelKey: 'settings.experiments.compaction.cachePreserving' },
               { value: 'pi_compatible', labelKey: 'settings.experiments.compaction.piCompatible' },
             ],
+          },
+        },
+        {
+          id: 'provider.deepseek_roleplay_reasoning_patch',
+          titleKey: 'settings.experiments.deepseekRoleplay.title',
+          descriptionKey: 'settings.experiments.deepseekRoleplay.description',
+          owner: 'provider',
+          value: false,
+          status: 'alpha',
+          risk: 'medium',
+          restartPolicy: 'new_session',
+          valueSchema: {
+            type: 'boolean',
+            presentation: { type: 'toggle' },
           },
         },
       ],
@@ -103,6 +121,27 @@ describe('ExperimentsTab', () => {
         expect.objectContaining({
           method: 'PATCH',
           body: JSON.stringify({ value: 'pi_compatible' }),
+        }),
+      );
+    });
+  });
+
+  it('renders and saves the DeepSeek roleplay reasoning patch toggle', async () => {
+    render(React.createElement(ExperimentsTab));
+
+    const toggle = await screen.findByRole('switch', {
+      name: 'settings.experiments.deepseekRoleplay.title',
+    });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(hanaFetchMock).toHaveBeenCalledWith(
+        '/api/experiments/provider.deepseek_roleplay_reasoning_patch',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ value: true }),
         }),
       );
     });

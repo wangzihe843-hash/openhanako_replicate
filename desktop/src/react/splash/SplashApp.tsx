@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { getYuanVisual } from '../../../../shared/yuan-visuals.js';
+import { getYuanVisual } from '../../../../shared/yuan-visuals.ts';
 
 const DEFAULT_NAME = 'Hanako';
 const DEFAULT_VISUAL = getYuanVisual('hanako');

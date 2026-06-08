@@ -30,15 +30,18 @@ function Harness({
   routeUrl,
   capabilities,
   capabilityGrants,
+  readyOnTimeout,
 }: {
   routeUrl: string | null;
   capabilities?: PluginUiCapability[];
   capabilityGrants?: string[];
+  readyOnTimeout?: boolean;
 }) {
   const { iframeRef, status, postToIframe } = usePluginIframe(routeUrl, {
     pluginId: 'demo-plugin',
     capabilities,
     capabilityGrants,
+    readyOnTimeout,
   });
   return (
     <div>
@@ -53,6 +56,7 @@ describe('usePluginIframe', () => {
   afterEach(() => {
     cleanup();
     switchTab.mockReset();
+    vi.useRealTimers();
   });
 
   it('只接受来自预期 iframe 窗口和 origin 的 ready 消息', () => {
@@ -259,5 +263,36 @@ describe('usePluginIframe', () => {
       }),
       'http://127.0.0.1:3210',
     ));
+  });
+
+  it('can treat a loaded plain iframe as ready after the handshake timeout', () => {
+    vi.useFakeTimers();
+    render(
+      <Harness
+        routeUrl="http://127.0.0.1:3210/api/plugins/plain/page?token=abc"
+        readyOnTimeout
+      />,
+    );
+
+    expect(screen.getByTestId('status').textContent).toBe('loading');
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(screen.getByTestId('status').textContent).toBe('ready');
+  });
+
+  it('keeps the default handshake contract strict when timeout fallback is not enabled', () => {
+    vi.useFakeTimers();
+    render(
+      <Harness routeUrl="http://127.0.0.1:3210/api/plugins/strict/widget?token=abc" />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(screen.getByTestId('status').textContent).toBe('error');
   });
 });

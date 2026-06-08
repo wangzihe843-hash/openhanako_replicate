@@ -19,6 +19,7 @@ import { snapshotStreamBuffer, clearSessionStreamMeta, type StreamBufferSnapshot
 import { renderMarkdown } from '../utils/markdown';
 import type { ChatMessage, ContentBlock } from './chat-types';
 import { readMessageLiveVersion } from './message-live-version';
+import type { SessionPermissionMode } from '../types';
 
 // ── 防竞争计数器 ──
 
@@ -66,6 +67,30 @@ function requestChatInputFocus(path: string | null): void {
   if (shouldRestoreInputFocus(path)) useStore.getState().requestInputFocus?.();
 }
 
+function isPendingNewSessionDraftView(): boolean {
+  const state = useStore.getState() as Record<string, any>;
+  return state.pendingNewSession === true
+    && state.currentSessionPath === null
+    && !state.pendingSessionSwitchPath;
+}
+
+const SESSION_PERMISSION_MODES = new Set(['auto', 'operate', 'ask', 'read_only']);
+
+function normalizeSessionPermissionMode(mode: unknown): SessionPermissionMode {
+  return typeof mode === 'string' && SESSION_PERMISSION_MODES.has(mode)
+    ? mode as SessionPermissionMode
+    : 'ask';
+}
+
+function emitSessionPermissionMode(mode: unknown): SessionPermissionMode {
+  const normalized = normalizeSessionPermissionMode(mode);
+  useStore.getState().setSessionPermissionMode?.(normalized);
+  window.dispatchEvent(new CustomEvent('hana-plan-mode', {
+    detail: { enabled: normalized === 'read_only', mode: normalized },
+  }));
+  return normalized;
+}
+
 function findSessionProjection(path: string): any | null {
   return useStore.getState().sessions.find((session: any) => session.path === path) || null;
 }
@@ -74,10 +99,39 @@ function isDeletedAgentSession(path: string): boolean {
   return findSessionProjection(path)?.agentDeleted === true;
 }
 
-async function resetDeskForSessionCwd(cwd?: string | null): Promise<void> {
+function reconcileStreamingSessionsForPath(streamingSessions: string[] | undefined, path: string, isStreaming: boolean): string[] {
+  const current = Array.isArray(streamingSessions) ? streamingSessions : [];
+  if (isStreaming) {
+    return current.includes(path) ? current : [...current, path];
+  }
+  return current.filter((sessionPath) => sessionPath !== path);
+}
+
+async function requestActiveSessionStreamResume(path: string, isStreaming: boolean): Promise<void> {
+  if (!isStreaming) return;
+  try {
+    const { requestStreamResume } = await import('../services/stream-resume');
+    requestStreamResume(path);
+  } catch (err) {
+    console.warn('[session] stream resume request skipped after switch:', err);
+  }
+}
+
+async function resetDeskForSessionWorkspace({
+  cwd,
+  workspaceMountId,
+  workspaceLabel,
+}: {
+  cwd?: string | null;
+  workspaceMountId?: string | null;
+  workspaceLabel?: string | null;
+}): Promise<void> {
   // Session 切换后的 cwd 以服务端显式返回值为准；右侧 desk 视图归 workspace/CWD 所有。
   // 切到同一 workspace 时保留当前子目录；切到不同 workspace 时恢复该 workspace 的上次子目录。
-  await activateWorkspaceDesk(cwd || null);
+  await activateWorkspaceDesk(cwd || null, {
+    mountId: workspaceMountId || null,
+    label: workspaceLabel || null,
+  });
 }
 
 function clearSessionRuntimeCaches(path: string): void {
@@ -186,6 +240,27 @@ export async function loadMessages(forPath?: string): Promise<void> {
       });
     }
   } catch (err) { console.error('[loadMessages] error:', err); }
+}
+
+export async function completeSessionTodos(sessionPath: string): Promise<boolean> {
+  if (!sessionPath) return false;
+  const state = useStore.getState();
+  if (state.streamingSessions.includes(sessionPath)) return false;
+
+  try {
+    await hanaFetch('/api/sessions/todos/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: sessionPath }),
+    });
+    useStore.getState().setSessionTodosForPath(sessionPath, []);
+    useStore.getState().bumpTodosLiveVersion(sessionPath);
+    return true;
+  } catch (err) {
+    const message = errorMessage(err);
+    useStore.getState().addToast(message, 'error', 6000);
+    return false;
+  }
 }
 
 function buildInflightAssistantMessage(snap: StreamBufferSnapshot): ChatMessage {
@@ -304,13 +379,9 @@ export async function switchSession(path: string): Promise<void> {
 
     const state = useStore.getState();
 
-    // 同步 streamingSessions：切入的 session 可能正在 streaming
-    let streamingSessions = state.streamingSessions;
-    if (data.isStreaming && path) {
-      if (!streamingSessions.includes(path)) {
-        streamingSessions = [...streamingSessions, path];
-      }
-    }
+    // 以服务端事实对齐当前 session 的流式状态。刷新或重连后，renderer 的本地集合可能已经过期。
+    const isStreaming = data.isStreaming === true;
+    const streamingSessions = reconcileStreamingSessionsForPath(state.streamingSessions, path, isStreaming);
 
     // 同步全局 agent 上下文
     const switchedAgent = data.agentId && data.agentId !== state.currentAgentId;
@@ -340,6 +411,8 @@ export async function switchSession(path: string): Promise<void> {
       pendingNewSession: false,
       pendingProjectId: null,
       selectedFolder: null,
+      selectedWorkspaceMountId: null,
+      selectedWorkspaceLabel: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       sessionAuthorizedFoldersByPath: {
         ...state.sessionAuthorizedFoldersByPath,
@@ -356,7 +429,11 @@ export async function switchSession(path: string): Promise<void> {
       ...agentPatch,
     });
 
-    await resetDeskForSessionCwd(data.cwd || null);
+    await resetDeskForSessionWorkspace({
+      cwd: data.cwd || null,
+      workspaceMountId: data.workspaceMountId || null,
+      workspaceLabel: data.workspaceLabel || null,
+    });
     if (myVersion !== _switchVersion) return;
 
     // 同步浏览器状态到 keyed store（服务端返回当前 session 的 browser 状态）
@@ -375,13 +452,7 @@ export async function switchSession(path: string): Promise<void> {
       useStore.getState().clearQuoteCandidate();
     }
 
-    // Sync plan mode for the switched-to session
-    window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-      detail: {
-        enabled: data.permissionMode === 'read_only' || data.accessMode === 'read_only' || data.planMode === true,
-        mode: data.permissionMode || data.accessMode,
-      },
-    }));
+    emitSessionPermissionMode(data.permissionMode || data.accessMode);
     if (data.thinkingLevel) {
       useStore.getState().setThinkingLevel(data.thinkingLevel);
     }
@@ -416,6 +487,9 @@ export async function switchSession(path: string): Promise<void> {
       await loadMessages(path);
       if (myVersion !== _switchVersion) return;
     }
+
+    await requestActiveSessionStreamResume(path, isStreaming);
+    if (myVersion !== _switchVersion) return;
 
     // 切换会话后刷新 context ring
     useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
@@ -461,6 +535,8 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
     pendingNewSession: false,
     pendingProjectId: null,
     selectedFolder: null,
+    selectedWorkspaceMountId: null,
+    selectedWorkspaceLabel: null,
     workspaceFolders: [],
     sessionAuthorizedFoldersByPath: {
       ...state.sessionAuthorizedFoldersByPath,
@@ -475,13 +551,15 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
     docContextAttached: false,
   });
 
-  await resetDeskForSessionCwd(projection?.cwd || null);
+  await resetDeskForSessionWorkspace({
+    cwd: projection?.cwd || null,
+    workspaceMountId: (projection as any)?.workspaceMountId || null,
+    workspaceLabel: (projection as any)?.workspaceLabel || null,
+  });
   if (version !== _switchVersion) return;
 
   useStore.getState().clearQuotedSelection();
-  window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-    detail: { enabled: true, mode: 'read_only' },
-  }));
+  emitSessionPermissionMode('read_only');
 
   const hasData = !!useStore.getState().chatSessions?.[path];
   if (!hasData) {
@@ -510,7 +588,9 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
 
   const s = useStore.getState();
   const requestedFolder = typeof options.cwd === 'string' && options.cwd.trim() ? options.cwd.trim() : null;
-  const defaultFolder = requestedFolder || s.homeFolder || s.deskBasePath || null;
+  const defaultWorkspaceMountId = requestedFolder ? null : (s.deskWorkspaceMountId || null);
+  const defaultWorkspaceLabel = defaultWorkspaceMountId ? (s.deskWorkspaceLabel || null) : null;
+  const defaultFolder = requestedFolder || s.homeFolder || (defaultWorkspaceMountId ? null : s.deskBasePath) || null;
   const pendingProjectId = typeof options.projectId === 'string' && options.projectId.trim()
     ? options.projectId.trim()
     : null;
@@ -522,16 +602,23 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
     // 有显式 Agent home 时以 home 为准；没有绑定 workspace 的 agent
     // 以当前 session cwd 延续工作流，不从其他 agent 的 home_folder 推导。
     selectedFolder: defaultFolder,
+    selectedWorkspaceMountId: defaultWorkspaceMountId,
+    selectedWorkspaceLabel: defaultWorkspaceLabel,
     workspaceFolders: [],
     selectedAgentId: null,
     pendingNewSession: true,
     pendingProjectId,
+    pendingNewSessionThinkingLevel: null,
+    pendingNewSessionPermissionMode: null,
     attachedFiles: [],
     deskContextAttached: false,
     docContextAttached: false,
   });
 
-  await activateWorkspaceDesk(defaultFolder);
+  await activateWorkspaceDesk(defaultFolder, {
+    mountId: defaultWorkspaceMountId,
+    label: defaultWorkspaceLabel,
+  });
 
   // 重置 context ring
   useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
@@ -539,11 +626,20 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
     const res = await hanaFetch('/api/session-permission-mode');
     const data = await res.json();
     const mode = data.defaultMode || data.mode || 'ask';
-    window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-      detail: { enabled: mode === 'read_only', mode },
-    }));
+    if (isPendingNewSessionDraftView()) emitSessionPermissionMode(mode);
   } catch {
-    window.dispatchEvent(new CustomEvent('hana-plan-mode', { detail: { enabled: false, mode: 'ask' } }));
+    if (isPendingNewSessionDraftView()) emitSessionPermissionMode('ask');
+  }
+
+  try {
+    const res = await hanaFetch('/api/session-thinking-level');
+    const data = await res.json();
+    if (data.thinkingLevel && isPendingNewSessionDraftView()) {
+      useStore.getState().setThinkingLevel(data.thinkingLevel);
+      useStore.getState().setPendingNewSessionThinkingLevel(data.thinkingLevel);
+    }
+  } catch {
+    useStore.getState().setPendingNewSessionThinkingLevel(null);
   }
 
   // pending 状态下刷新 model 列表，让 ModelSelector 显示 agent Chat 默认 model
@@ -562,7 +658,9 @@ export async function ensureSession(): Promise<boolean> {
 
   try {
     const body: Record<string, any> = { memoryEnabled: s.memoryEnabled };
-    if (s.selectedFolder) {
+    if (s.selectedWorkspaceMountId) {
+      body.workspaceMountId = s.selectedWorkspaceMountId;
+    } else if (s.selectedFolder) {
       body.cwd = s.selectedFolder;
     }
     if (s.workspaceFolders?.length) {
@@ -570,6 +668,12 @@ export async function ensureSession(): Promise<boolean> {
     }
     if (s.pendingProjectId) {
       body.projectId = s.pendingProjectId;
+    }
+    if (s.pendingNewSessionThinkingLevel) {
+      body.thinkingLevel = s.pendingNewSessionThinkingLevel;
+    }
+    if (s.pendingNewSessionPermissionMode) {
+      body.permissionMode = s.pendingNewSessionPermissionMode;
     }
     if (s.selectedAgentId && s.selectedAgentId !== s.currentAgentId) {
       body.agentId = s.selectedAgentId;
@@ -590,13 +694,18 @@ export async function ensureSession(): Promise<boolean> {
     }
 
     const justSelected = s.selectedFolder;
+    const justSelectedMount = s.selectedWorkspaceMountId;
 
     // 基础状态更新
     const patch: Record<string, any> = {
       pendingNewSession: false,
       pendingSessionSwitchPath: null,
       selectedFolder: null,
+      selectedWorkspaceMountId: null,
+      selectedWorkspaceLabel: null,
       pendingProjectId: null,
+      pendingNewSessionThinkingLevel: null,
+      pendingNewSessionPermissionMode: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       selectedAgentId: null,
     };
@@ -634,14 +743,13 @@ export async function ensureSession(): Promise<boolean> {
       useStore.getState().setThinkingLevel(data.thinkingLevel);
     }
 
-    await resetDeskForSessionCwd(data.cwd || null);
+    await resetDeskForSessionWorkspace({
+      cwd: data.cwd || null,
+      workspaceMountId: data.workspaceMountId || justSelectedMount || null,
+      workspaceLabel: data.workspaceLabel || s.selectedWorkspaceLabel || null,
+    });
 
-    window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-      detail: {
-        enabled: data.permissionMode === 'read_only' || data.accessMode === 'read_only' || data.planMode === true,
-        mode: data.permissionMode || data.accessMode,
-      },
-    }));
+    emitSessionPermissionMode(data.permissionMode || data.accessMode || s.pendingNewSessionPermissionMode);
 
     await loadSessions();
 
@@ -649,7 +757,7 @@ export async function ensureSession(): Promise<boolean> {
     loadModels();
 
     // 更新 cwdHistory
-    if (justSelected) {
+    if (justSelected && !justSelectedMount) {
       const currentState = useStore.getState();
       let cwdHistory = currentState.cwdHistory.filter((p: string) => p !== justSelected);
       cwdHistory = [justSelected, ...cwdHistory];

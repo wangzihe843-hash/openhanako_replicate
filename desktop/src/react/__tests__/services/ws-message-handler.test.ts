@@ -477,6 +477,88 @@ describe('ws-message-handler session-scoped desktop events', () => {
 
     expect(useStore.getState().sessions[0]?.rcAttachment).toBeNull();
   });
+
+  it('patches session metadata updates and syncs focused thinking level', () => {
+    useStore.setState({
+      currentSessionPath: '/session/a.jsonl',
+      thinkingLevel: 'medium',
+      sessions: [
+        {
+          path: '/session/a.jsonl',
+          title: 'A',
+          firstMessage: 'hello',
+          modified: '2026-04-24T10:00:00.000Z',
+          messageCount: 1,
+          agentId: 'a1',
+          agentName: 'Hana',
+          cwd: null,
+          pinnedAt: null,
+        },
+        {
+          path: '/session/b.jsonl',
+          title: 'B',
+          firstMessage: 'other',
+          modified: '2026-04-24T10:00:00.000Z',
+          messageCount: 1,
+          agentId: 'a1',
+          agentName: 'Hana',
+          cwd: null,
+          pinnedAt: null,
+        },
+      ],
+    } as never);
+
+    handleServerMessage({
+      type: 'session_metadata_updated',
+      sessionPath: '/session/a.jsonl',
+      metadata: {
+        pinnedAt: '2026-04-29T08:00:00.000Z',
+        thinkingLevel: 'high',
+      },
+    });
+
+    expect(useStore.getState().sessions.map(session => ({
+      path: session.path,
+      pinnedAt: session.pinnedAt,
+    }))).toEqual([
+      { path: '/session/a.jsonl', pinnedAt: '2026-04-29T08:00:00.000Z' },
+      { path: '/session/b.jsonl', pinnedAt: null },
+    ]);
+    expect(useStore.getState().thinkingLevel).toBe('high');
+
+    handleServerMessage({
+      type: 'session_metadata_updated',
+      sessionPath: '/session/b.jsonl',
+      metadata: {
+        thinkingLevel: 'off',
+      },
+    });
+
+    expect(useStore.getState().thinkingLevel).toBe('high');
+  });
+});
+
+describe('ws-message-handler activity updates', () => {
+  beforeEach(() => {
+    useStore.setState({
+      activities: [
+        { id: 'activity-1', type: 'beautify', status: 'running', summary: '旧状态' },
+        { id: 'activity-2', type: 'cron', status: 'done', summary: '另一条活动' },
+      ],
+    } as never);
+  });
+
+  it('merges activity_update by id so stale running cards do not remain in the panel', () => {
+    handleServerMessage({
+      type: 'activity_update',
+      activity: { id: 'activity-1', type: 'beautify', status: 'done', summary: '新状态' },
+    });
+
+    expect(useStore.getState().activities).toEqual([
+      { id: 'activity-1', type: 'beautify', status: 'done', summary: '新状态' },
+      { id: 'activity-2', type: 'cron', status: 'done', summary: '另一条活动' },
+    ]);
+  });
 });
 
 describe('ws-message-handler permission mode events', () => {

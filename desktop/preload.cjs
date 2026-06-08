@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld("hana", {
   getFileUrl: (filePath) => pathToFileUrl(filePath),
   readDocxHtml: (path) => ipcRenderer.invoke("read-docx-html", path),
   readXlsxHtml: (path) => ipcRenderer.invoke("read-xlsx-html", path),
+  showHtmlPreview: (payload) => ipcRenderer.invoke("html-preview-show", payload),
+  updateHtmlPreviewBounds: (previewId, bounds) => ipcRenderer.invoke("html-preview-update-bounds", previewId, bounds),
+  closeHtmlPreview: (previewId) => ipcRenderer.invoke("html-preview-close", previewId),
   getFilePath: (file) => webUtils.getPathForFile(file),
   getAvatarPath: (role) => ipcRenderer.invoke("get-avatar-path", role),
   getSplashInfo: () => ipcRenderer.invoke("get-splash-info"),
@@ -120,10 +123,17 @@ contextBridge.exposeInMainWorld("hana", {
   },
   // 浏览器查看器窗口
   openBrowserViewer: (url) => ipcRenderer.invoke("open-browser-viewer", resolveTheme(), url),
-  onBrowserUpdate: (cb) => ipcRenderer.on("browser-update", (_, data) => cb(data)),
+  onBrowserUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on("browser-update", handler);
+    return () => ipcRenderer.removeListener("browser-update", handler);
+  },
   browserGoBack: () => ipcRenderer.invoke("browser-go-back"),
   browserGoForward: () => ipcRenderer.invoke("browser-go-forward"),
   browserReload: () => ipcRenderer.invoke("browser-reload"),
+  browserNewTab: () => ipcRenderer.invoke("browser-new-tab"),
+  browserSwitchTab: (tabId) => ipcRenderer.invoke("browser-switch-tab", tabId),
+  browserCloseTab: (tabId) => ipcRenderer.invoke("browser-close-tab", tabId),
   closeBrowserViewer: () => ipcRenderer.invoke("close-browser-viewer"),
   browserEmergencyStop: () => ipcRenderer.invoke("browser-emergency-stop"),
   // 派生 Viewer 窗口（只读文件副本，多实例）

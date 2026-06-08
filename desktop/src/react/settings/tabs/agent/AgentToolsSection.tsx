@@ -13,9 +13,9 @@ const OPTIONAL_TOOL_NAMES = [
   "automation",
   "beautify",
   "browser",
-  "cron",
   "dm",
   "install_skill",
+  "office",
   "update_settings",
   "workflow",
   "xingye_propose_draft",
@@ -30,7 +30,7 @@ function normalizeDisabledTools(disabled: string[]) {
 
 interface Props {
   availableTools?: string[];
-  disabled: string[];
+  disabled?: string[];
 }
 
 export function AgentToolsSection({ availableTools, disabled }: Props) {
@@ -51,13 +51,14 @@ export function AgentToolsSection({ availableTools, disabled }: Props) {
   // by prop sync below and optimistically after each toggleTool call) so
   // two consecutive toggles on different tools before the first PUT+GET
   // round-trip both survive.
-  const normalizedDisabled = normalizeDisabledTools(disabled);
+  const normalizedDisabled = disabled ? normalizeDisabledTools(disabled) : undefined;
   const disabledRef = useRef(normalizedDisabled);
   useEffect(() => {
     disabledRef.current = normalizedDisabled;
   }, [normalizedDisabled]);
 
   const toggleTool = (name: OptionalToolName) => {
+    if (!disabledRef.current) return;
     const current = disabledRef.current;
     const currentlyOff = current.includes(name);
     const newDisabled = currentlyOff
@@ -77,7 +78,7 @@ export function AgentToolsSection({ availableTools, disabled }: Props) {
       description={t("settings.agent.tools.description")}
     >
       {renderable.map((name) => {
-        const isOn = !normalizedDisabled.includes(name);
+        const isOn = normalizedDisabled ? !normalizedDisabled.includes(name) : undefined;
         return (
           <SettingsRow
             key={name}

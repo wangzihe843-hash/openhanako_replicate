@@ -7,6 +7,7 @@
 import type {
   ChatMessage,
   ChatListItem,
+  ContentBlock,
   SessionRegistryFile,
   UserAttachment,
 } from '../stores/chat-types';
@@ -305,6 +306,20 @@ function normalizeHistoryBlock(raw: unknown): Record<string, any> | null {
     };
   }
 
+  if (type === 'suggestion_card') {
+    const kind = nonEmptyString(raw.kind);
+    const title = nonEmptyString(raw.title);
+    if (!kind || !title) return null;
+    return {
+      ...raw,
+      type,
+      afterIndex,
+      kind,
+      title,
+      status: nonEmptyString(raw.status) || 'pending',
+    };
+  }
+
   if (type === 'screenshot') {
     if (!nonEmptyString(raw.base64) || !nonEmptyString(raw.mimeType)) return null;
   } else if (type === 'settings_update') {
@@ -319,6 +334,36 @@ function normalizeHistoryBlock(raw: unknown): Record<string, any> | null {
 }
 
 // ── 构建 ──
+
+type InterludeContentBlock = Extract<ContentBlock, { type: 'interlude' }>;
+
+function isInterludeHistoryBlock(block: Record<string, any>): block is InterludeContentBlock & { afterIndex: number } {
+  return block.type === 'interlude';
+}
+
+function interludeContentBlock(block: Record<string, any>, fallbackId: string): InterludeContentBlock {
+  const { afterIndex: _afterIndex, ...content } = block;
+  return {
+    ...content,
+    type: 'interlude',
+    id: nonEmptyString(content.id) || fallbackId,
+    variant: nonEmptyString(content.variant) || 'deferred_result',
+    text: nonEmptyString(content.text) || '',
+  } as InterludeContentBlock;
+}
+
+function isMediaInterludeAnchor(block: Record<string, any>, taskId: string): boolean {
+  return (
+    (block.type === 'media_generation' && block.taskId === taskId) ||
+    (block.type === 'file' && block.replacesTaskId === taskId)
+  );
+}
+
+function shouldPlaceInterludeBeforeMessage(interlude: Record<string, any>, inlineBlocks: Record<string, any>[]): boolean {
+  const taskId = nonEmptyString(interlude.taskId);
+  if (!taskId) return false;
+  return inlineBlocks.some((block) => isMediaInterludeAnchor(block, taskId));
+}
 
 function normalizeHistoryTimestamp(value: number | string | null | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -394,17 +439,41 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
       };
       items.push({ type: 'message', data: msg });
     } else if (m.role === 'assistant') {
-      const msgBlocks = blockMap[i];
+      const msgBlocks = blockMap[i] || [];
+      const inlineBlocks = msgBlocks.filter((block) => !isInterludeHistoryBlock(block));
+      const interludeBlocks = msgBlocks.filter(isInterludeHistoryBlock);
+      const beforeInterludes = interludeBlocks.filter((block) => shouldPlaceInterludeBeforeMessage(block, inlineBlocks));
+      const afterInterludes = interludeBlocks.filter((block) => !shouldPlaceInterludeBeforeMessage(block, inlineBlocks));
       const blocks = buildAssistantBlocksFromContent({
         content: m.content,
         thinking: m.thinking,
         toolCalls: m.toolCalls,
-        extraBlocks: msgBlocks,
+        extraBlocks: inlineBlocks,
       });
+
+      for (let j = 0; j < beforeInterludes.length; j += 1) {
+        const data = interludeContentBlock(beforeInterludes[j], `interlude:${i}:before:${j}`);
+        items.push({
+          type: 'interlude',
+          id: data.id,
+          data,
+        });
+      }
 
       const msg: ChatMessage = { id, sourceEntryId: m.entryId, role: 'assistant', blocks };
       if (timestamp !== undefined) msg.timestamp = timestamp;
-      items.push({ type: 'message', data: msg });
+      if (blocks.length > 0) {
+        items.push({ type: 'message', data: msg });
+      }
+
+      for (let j = 0; j < afterInterludes.length; j += 1) {
+        const data = interludeContentBlock(afterInterludes[j], `interlude:${i}:after:${j}`);
+        items.push({
+          type: 'interlude',
+          id: data.id,
+          data,
+        });
+      }
     }
   }
 

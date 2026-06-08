@@ -4,6 +4,11 @@
     flex-direction: column;
     padding: var(--space-sm) var(--space-md);
     gap: 4px;
+    transition: gap 0.25s var(--ease-out);
+}
+
+.card[data-collapsed] {
+    gap: 0;
 }
 
 .header {
@@ -56,8 +61,8 @@
 }
 
 .folderIcon {
-    width: 17px;
-    height: 17px;
+    width: 14px;
+    height: 14px;
 }
 
 .title {

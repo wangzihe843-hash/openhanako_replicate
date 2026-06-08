@@ -49,6 +49,27 @@
     to   { opacity: 0; transform: translateY(var(--slide-y, 4px)); }
 }
 
+/* ── Chat Stream Motion（短促、轻柔，仅 opacity/微位移）── */
+@keyframes hana-stream-tail-in {
+    from { opacity: 0.18; }
+    to   { opacity: 1; }
+}
+
+@keyframes hana-chat-soft-down-in {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hana-chat-soft-up-in {
+    from { opacity: 0; transform: translateY(3px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hana-tool-bar-in {
+    from { opacity: 0; transform: scaleY(0); }
+    to   { opacity: 1; transform: scaleY(1); }
+}
+
 
 /* ── Scale + Fade ──
    旧名：svSlideIn（scale 0.96 + translateY 8px）  */

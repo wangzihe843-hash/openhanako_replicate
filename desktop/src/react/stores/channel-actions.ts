@@ -613,8 +613,9 @@ export async function removeChannelMember(channelId: string, memberId: string): 
 // 切换频道功能开关
 // ══════════════════════════════════════════════════════
 
-export async function toggleChannelsEnabled(): Promise<boolean> {
+export async function toggleChannelsEnabled(): Promise<boolean | undefined> {
   const s = useStore.getState();
+  if (s.channelsEnabled === undefined) return undefined;
   const newEnabled = !s.channelsEnabled;
   useStore.setState({ channelsEnabled: newEnabled });
 

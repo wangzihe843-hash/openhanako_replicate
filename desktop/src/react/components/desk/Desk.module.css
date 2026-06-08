@@ -151,8 +151,8 @@
     min-height: 0;
     overflow-y: auto;
     display: block;
-    padding: 4px 2px calc(var(--right-workspace-jian-reserved, 56px) + 8px);
-    scroll-padding-bottom: calc(var(--right-workspace-jian-reserved, 56px) + 8px);
+    padding: 4px 2px calc(var(--right-workspace-jian-reserved, 56px) + var(--panel-edge-gap));
+    scroll-padding-bottom: calc(var(--right-workspace-jian-reserved, 56px) + var(--panel-edge-gap));
 }
 
 .tree:empty {

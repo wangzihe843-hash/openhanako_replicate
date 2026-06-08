@@ -65,7 +65,6 @@ describe('PlanModeButton', () => {
         body: JSON.stringify({
           mode: 'operate',
           pendingNewSession: false,
-          persistDefault: true,
           sessionPath: '/tmp/hana-session.jsonl',
         }),
       }));

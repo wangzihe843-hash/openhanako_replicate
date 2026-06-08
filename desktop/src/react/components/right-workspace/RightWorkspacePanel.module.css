@@ -3,8 +3,8 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 0;
-    gap: var(--space-sm);
+    padding: var(--panel-edge-gap) 0;
+    gap: var(--panel-edge-gap);
     /* 整列平级卡片栈：卡片总高超出时整列滚动 */
     overflow-y: auto;
     overflow-x: hidden;
@@ -13,7 +13,7 @@
 .workspaceCard {
     --right-workspace-jian-open-height: 320px;
     --right-workspace-jian-closed-height: 40px;
-    --right-workspace-jian-bottom: var(--space-sm);
+    --right-workspace-jian-bottom: var(--panel-edge-gap);
     --right-workspace-jian-reserved: calc(var(--right-workspace-jian-closed-height) + var(--right-workspace-jian-bottom));
     position: relative;
     /* desk 卡撑满优先：独处（下方无平级卡片）时 flex-grow 顶满整列，避免短卡 + 下方空隙的不对称。
@@ -202,8 +202,8 @@
     min-height: 0;
     overflow-y: auto;
     display: block;
-    padding: 4px 2px calc(var(--right-workspace-jian-reserved, 56px) + 8px);
-    scroll-padding-bottom: calc(var(--right-workspace-jian-reserved, 56px) + 8px);
+    padding: 4px 2px calc(var(--right-workspace-jian-reserved, 56px) + var(--panel-edge-gap));
+    scroll-padding-bottom: calc(var(--right-workspace-jian-reserved, 56px) + var(--panel-edge-gap));
     outline: none;
 }
 
@@ -362,8 +362,8 @@
     --right-workspace-jian-close-dur: var(--duration-slow);
     --right-workspace-jian-ease: cubic-bezier(0.22, 1, 0.36, 1);
     position: absolute;
-    left: var(--space-sm);
-    right: var(--space-sm);
+    left: var(--panel-edge-gap);
+    right: var(--panel-edge-gap);
     bottom: var(--right-workspace-jian-bottom);
     z-index: 2;
     height: var(--right-workspace-jian-open-height);
@@ -409,8 +409,8 @@
 
 .jianToggle {
     position: absolute;
-    right: calc(var(--space-sm) + 6px);
-    bottom: calc(var(--space-sm) + 6px);
+    right: calc(var(--panel-edge-gap) + 6px);
+    bottom: calc(var(--panel-edge-gap) + 6px);
     z-index: 3;
     width: 28px;
     height: 28px;

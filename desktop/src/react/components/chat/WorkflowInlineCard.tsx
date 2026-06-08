@@ -5,9 +5,12 @@
  * 详细节点分布在右侧 WorkflowCard。
  */
 import { memo } from 'react';
+import { useStore } from '../../stores';
+import { selectAgentActivities } from '../../stores/agent-activity-slice';
 import { formatElapsed } from '../../utils/format-duration';
 import { ChatResourceCard } from './ChatResourceCard';
 import { WorkflowResourceIcon } from './ChatResourceIcons';
+import { WorkflowProgressDots } from '../shared/WorkflowProgressDots';
 
 interface WorkflowInlineCardProps {
   block: {
@@ -44,16 +47,34 @@ function statusLabel(status: WorkflowInlineCardProps['block']['streamStatus']) {
 
 export const WorkflowInlineCard = memo(function WorkflowInlineCard({ block }: WorkflowInlineCardProps) {
   const t: (k: string, v?: Record<string, string | number>) => string = window.t ?? ((k: string) => k);
+  const sessionPath = useStore((s) => s.currentSessionPath);
+  const all = useStore(selectAgentActivities(sessionPath));
+  const agents = useStore((s) => s.agents);
+
+  const childNodes = all.filter(
+    (a) => (a.kind === 'workflow_agent' || a.kind === 'workflow_step') && a.parentTaskId === block.taskId
+  );
+  const agentCount = childNodes.filter((a) => a.kind === 'workflow_agent').length;
+
   let duration = '';
   if (block.finishedAt && block.startedAt) {
-    duration = t('activity.duration', { text: formatElapsed(block.finishedAt - block.startedAt) });
+    duration = formatElapsed(block.finishedAt - block.startedAt);
   }
+
+  const metaParts: string[] = [];
+  if (agentCount > 0) metaParts.push(t('rightWorkspace.workflow.agents', { n: agentCount }));
+  if (duration) metaParts.push(duration);
+  const titleMeta = metaParts.join(' · ') || undefined;
 
   return (
     <ChatResourceCard
       icon={<WorkflowResourceIcon />}
       title={block.taskTitle || t('rightWorkspace.workflow.title')}
-      subtitle={duration || block.summary || 'Workflow'}
+      titleMeta={titleMeta}
+      subtitle={childNodes.length > 0
+        ? <WorkflowProgressDots nodes={childNodes} agents={agents} size="sm" />
+        : (block.summary || undefined)
+      }
       statusLabel={statusLabel(block.streamStatus)}
       statusTone={statusTone(block.streamStatus)}
     />

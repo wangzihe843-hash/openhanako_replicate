@@ -9,6 +9,7 @@ import { ToastContainer } from '../components/ToastContainer';
 import { toggleSidebar } from '../components/SidebarLayout';
 import { toggleJianSidebar } from '../stores/desk-actions';
 import { togglePreviewPanel } from '../stores/preview-actions';
+import { openSettingsModal } from '../stores/settings-modal-actions';
 import { useStore } from '../stores';
 import { createNewSession } from '../stores/session-actions';
 import {
@@ -25,10 +26,13 @@ const MOBILE_EDGE_GESTURE_WIDTH = 28;
 const MOBILE_EDGE_GESTURE_MIN_DISTANCE = 56;
 const MOBILE_EDGE_GESTURE_MAX_VERTICAL_DRIFT = 80;
 const MOBILE_EDGE_GESTURE_DOMINANCE = 1.25;
+const MOBILE_UPDATE_AVAILABLE_EVENT = 'hana-mobile-update-available';
+const MOBILE_APPLY_UPDATE_EVENT = 'hana-mobile-apply-update';
 
 const LazyPreviewPanel = lazy(() => import('../components/PreviewPanel').then(module => ({ default: module.PreviewPanel })));
 const LazyMediaViewer = lazy(() => import('../components/shared/MediaViewer/MediaViewer').then(module => ({ default: module.MediaViewer })));
 const LazyWorkspaceCompanionRail = lazy(() => import('../components/app/WorkspaceCompanionRail').then(module => ({ default: module.WorkspaceCompanionRail })));
+const LazySettingsModalShell = lazy(() => import('../components/SettingsModalShell').then(module => ({ default: module.SettingsModalShell })));
 
 type MobileEdgeGesture = {
   edge: 'left' | 'right';
@@ -140,6 +144,7 @@ function MobileDesktopShell({
   const edgeGestureRef = useRef<MobileEdgeGesture | null>(null);
   const previousWsStateRef = useRef(wsState);
   const t = window.t ?? ((p: string) => p);
+  const [mobileUpdateAvailable, setMobileUpdateAvailable] = useState(false);
 
   const titlebarTitle = useMemo(() => {
     if (pendingNewSession) return t('sidebar.newChat');
@@ -154,6 +159,19 @@ function MobileDesktopShell({
   useEffect(() => {
     if (isNarrow) useStore.setState({ sidebarOpen: false, jianOpen: false, previewOpen: false });
   }, [isNarrow]);
+
+  useEffect(() => {
+    const unsubscribe = window.platform?.onOpenSettingsModal?.((tab?: string) => {
+      openSettingsModal(tab);
+    });
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, []);
+
+  useEffect(() => {
+    const handleUpdateAvailable = () => setMobileUpdateAvailable(true);
+    window.addEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
+    return () => window.removeEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
+  }, []);
 
   const refreshMobileSessions = useCallback(() => {
     void loadMobileSessions().catch((err) => {
@@ -193,6 +211,10 @@ function MobileDesktopShell({
     }
     useStore.setState({ sidebarOpen: false });
     toggleJianSidebar(true);
+  }, []);
+
+  const applyMobileUpdate = useCallback(() => {
+    window.dispatchEvent(new Event(MOBILE_APPLY_UPDATE_EVENT));
   }, []);
 
   const handleTouchStart = useCallback((event: React.TouchEvent<HTMLElement>) => {
@@ -290,6 +312,12 @@ function MobileDesktopShell({
           togglePreviewPanel();
         }}
       />
+      {mobileUpdateAvailable && (
+        <div className="mobile-update-banner" role="status">
+          <span>{t('mobile.update.available')}</span>
+          <button type="button" onClick={applyMobileUpdate}>{t('mobile.update.reload')}</button>
+        </div>
+      )}
       <div className="app mobile-desktop-app">
         <ChatSidebar
           open={sidebarOpen && currentTab === 'chat'}
@@ -316,6 +344,9 @@ function MobileDesktopShell({
       </div>
       {showDrawerScrim && <button className="mobile-drawer-scrim" type="button" aria-label={t('mobile.closeSidebar')} onClick={closeMobileDrawers} />}
       <StatusBar />
+      <Suspense fallback={null}>
+        <LazySettingsModalShell />
+      </Suspense>
       {mediaViewer && (
         <Suspense fallback={null}>
           <LazyMediaViewer />

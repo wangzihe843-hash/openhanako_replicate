@@ -11,13 +11,21 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
-import { activateWorkspaceDesk, addWorkspaceFolder, applyFolder, removeRecentWorkspace, removeWorkspaceFolder } from '../stores/desk-actions';
+import {
+  activateWorkspaceDesk,
+  addWorkspaceFolder,
+  applyFolder,
+  applyStudioWorkspace,
+  createLocalStudioWorkspaceFromFolder,
+  loadStudioWorkspaces,
+  removeRecentWorkspace,
+  removeWorkspaceFolder,
+} from '../stores/desk-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
-import type { Agent } from '../types';
+import type { Agent, StudioWorkspace } from '../types';
 import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../utils/agent-display';
 import styles from './Welcome.module.css';
-// @ts-expect-error — shared JS module
-import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
+import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.ts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调 (s: any) */
 
@@ -54,6 +62,9 @@ function WelcomeInner() {
   const memoryEnabled = useStore(s => s.memoryEnabled);
   const activeMemoryMasterEnabled = useStore(s => s.memoryMasterEnabled);
   const selectedFolder = useStore(s => s.selectedFolder);
+  const selectedWorkspaceMountId = useStore(s => s.selectedWorkspaceMountId);
+  const selectedWorkspaceLabel = useStore(s => s.selectedWorkspaceLabel);
+  const studioWorkspaces = useStore(s => s.studioWorkspaces);
   const homeFolder = useStore(s => s.homeFolder);
   const workspaceFolders = useStore(s => s.workspaceFolders);
   const cwdHistory = useStore(s => s.cwdHistory);
@@ -111,6 +122,9 @@ function WelcomeInner() {
         agents={agents}
         currentAgentId={currentAgentId}
         selectedFolder={selectedFolder}
+        selectedWorkspaceMountId={selectedWorkspaceMountId}
+        selectedWorkspaceLabel={selectedWorkspaceLabel}
+        studioWorkspaces={studioWorkspaces}
         homeFolder={homeFolder}
         workspaceFolders={workspaceFolders}
         cwdHistory={cwdHistory}
@@ -152,9 +166,11 @@ function AgentChips({ agents, selectedId }: {
     if (homeFolder) {
       useStore.setState({
         selectedFolder: homeFolder,
+        selectedWorkspaceMountId: null,
+        selectedWorkspaceLabel: null,
         workspaceFolders: [],
       });
-      void activateWorkspaceDesk(homeFolder);
+      void activateWorkspaceDesk(homeFolder, { mountId: null });
     }
     // 切换到该 agent 的 chat model
     if (agent?.chatModel?.id && agent.chatModel.provider) {
@@ -211,10 +227,23 @@ function AgentChip({ agent, isSelected, onClick }: {
 
 // ── Folder Picker ──
 
-function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, workspaceFolders, cwdHistory }: {
+function FolderPicker({
+  agents,
+  currentAgentId,
+  selectedFolder,
+  selectedWorkspaceMountId,
+  selectedWorkspaceLabel,
+  studioWorkspaces,
+  homeFolder,
+  workspaceFolders,
+  cwdHistory,
+}: {
   agents: Agent[];
   currentAgentId: string | null;
   selectedFolder: string | null;
+  selectedWorkspaceMountId: string | null;
+  selectedWorkspaceLabel: string | null;
+  studioWorkspaces: StudioWorkspace[];
   homeFolder: string | null;
   workspaceFolders: string[];
   cwdHistory: string[];
@@ -223,6 +252,10 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
   const [showHistory, setShowHistory] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const agentHomeFolders = useMemo(() => collectAgentHomeFolders(agents), [agents]);
+
+  useEffect(() => {
+    void loadStudioWorkspaces();
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -243,7 +276,8 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
     setShowHistory(false);
     const folder = await window.platform?.selectFolder?.();
     if (!folder) return;
-    applyFolder(folder);
+    const workspace = await createLocalStudioWorkspaceFromFolder(folder);
+    if (workspace) await applyStudioWorkspace(workspace);
   }, []);
 
   const handleAddWorkspaceFolder = useCallback(async () => {
@@ -253,12 +287,17 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
   }, []);
 
   const handleButtonClick = useCallback(() => {
-    if (selectedFolder || cwdHistory.length > 0 || workspaceFolders.length > 0 || agentHomeFolders.length > 0) {
+    if (selectedWorkspaceMountId || selectedFolder || studioWorkspaces.length > 0 || cwdHistory.length > 0 || workspaceFolders.length > 0 || agentHomeFolders.length > 0) {
       setShowHistory(prev => !prev);
     } else {
       handleBrowse();
     }
-  }, [agentHomeFolders.length, cwdHistory.length, handleBrowse, selectedFolder, workspaceFolders.length]);
+  }, [agentHomeFolders.length, cwdHistory.length, handleBrowse, selectedFolder, selectedWorkspaceMountId, studioWorkspaces.length, workspaceFolders.length]);
+
+  const handleSelectWorkspace = useCallback((workspace: StudioWorkspace) => {
+    setShowHistory(false);
+    void applyStudioWorkspace(workspace);
+  }, []);
 
   const handleSelectHistory = useCallback((folder: string) => {
     setShowHistory(false);
@@ -268,9 +307,11 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
       useStore.setState({
         selectedAgentId: agent.id === currentAgentId ? null : agent.id,
         selectedFolder: homeFolder,
+        selectedWorkspaceMountId: null,
+        selectedWorkspaceLabel: null,
         workspaceFolders: [],
       });
-      void activateWorkspaceDesk(homeFolder);
+      void activateWorkspaceDesk(homeFolder, { mountId: null });
       if (agent.chatModel?.id && agent.chatModel.provider) {
         hanaFetch('/api/models/set', {
           method: 'POST',
@@ -283,7 +324,12 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
     applyFolder(folder);
   }, [agents, currentAgentId]);
 
-  const folderName = selectedFolder ? selectedFolder.split('/').pop() || selectedFolder : null;
+  const selectedWorkspace = selectedWorkspaceMountId
+    ? studioWorkspaces.find(workspace => workspace.mountId === selectedWorkspaceMountId) || null
+    : null;
+  const folderName = selectedWorkspaceMountId
+    ? (selectedWorkspaceLabel || selectedWorkspace?.label || selectedWorkspaceMountId)
+    : (selectedFolder ? selectedFolder.split('/').pop() || selectedFolder : null);
   const label = folderName
     ? `${t('input.workspace')}${folderName}`
     : t('input.selectWorkspace');
@@ -294,7 +340,7 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
       ref={wrapRef}
     >
       <button
-        className={`${styles.folderSelectBtn}${selectedFolder ? ` ${styles.folderSelectBtnHasFolder}` : ''}`}
+        className={`${styles.folderSelectBtn}${(selectedFolder || selectedWorkspaceMountId) ? ` ${styles.folderSelectBtnHasFolder}` : ''}`}
         onClick={handleButtonClick}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -313,8 +359,11 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
           cwdHistory={cwdHistory}
           agentHomeFolders={agentHomeFolders}
           selectedFolder={selectedFolder}
+          selectedWorkspaceMountId={selectedWorkspaceMountId}
+          studioWorkspaces={studioWorkspaces}
           homeFolder={homeFolder}
           workspaceFolders={workspaceFolders}
+          onSelectWorkspace={handleSelectWorkspace}
           onSelect={handleSelectHistory}
           onBrowse={handleBrowse}
           onAddWorkspaceFolder={handleAddWorkspaceFolder}
@@ -326,12 +375,15 @@ function FolderPicker({ agents, currentAgentId, selectedFolder, homeFolder, work
   );
 }
 
-function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolder, workspaceFolders, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveRecentWorkspace, onRemoveWorkspaceFolder }: {
+function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, selectedWorkspaceMountId, studioWorkspaces, homeFolder, workspaceFolders, onSelectWorkspace, onSelect, onBrowse, onAddWorkspaceFolder, onRemoveRecentWorkspace, onRemoveWorkspaceFolder }: {
   cwdHistory: string[];
   agentHomeFolders: string[];
   selectedFolder: string | null;
+  selectedWorkspaceMountId: string | null;
+  studioWorkspaces: StudioWorkspace[];
   homeFolder: string | null;
   workspaceFolders: string[];
+  onSelectWorkspace: (workspace: StudioWorkspace) => void;
   onSelect: (folder: string) => void;
   onBrowse: () => void;
   onAddWorkspaceFolder: () => void;
@@ -350,6 +402,24 @@ function FolderHistory({ cwdHistory, agentHomeFolders, selectedFolder, homeFolde
       <div className={styles.folderHistorySectionLabel}>
         {t('input.currentWorkspace')}
       </div>
+      {studioWorkspaces.map(workspace => {
+        const isActive = workspace.mountId === selectedWorkspaceMountId;
+        return (
+          <div
+            key={`studio:${workspace.mountId}`}
+            className={`${styles.folderHistoryItem}${isActive ? ` ${styles.folderHistoryItemActive}` : ''}`}
+            title={workspace.label}
+            onClick={(e) => { e.stopPropagation(); onSelectWorkspace(workspace); }}
+          >
+            <span className={styles.folderHistoryItemIcon}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </span>
+            <span className={styles.folderHistoryItemName}>{workspace.label}</span>
+          </div>
+        );
+      })}
       {primaryItems.map(p => {
         const name = p.split('/').pop() || p;
         const isActive = p === selectedFolder;

@@ -11,7 +11,7 @@ import {
   autoProjectIdForCwd as makeAutoProjectIdForCwd,
   autoProjectNameForCwd,
   isAutoProjectId,
-} from '../../../../shared/session-projects.js';
+} from '../../../../shared/session-projects.ts';
 
 export type {
   SessionProject,

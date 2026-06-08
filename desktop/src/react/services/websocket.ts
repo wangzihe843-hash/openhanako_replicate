@@ -15,10 +15,8 @@ import {
   createLocalServerConnection,
   resolveServerConnection,
 } from './server-connection';
-// @ts-expect-error -- shared JS module, no type declarations
-import { AppError } from '../../../../shared/errors.js';
-// @ts-expect-error -- shared JS module, no type declarations
-import { errorBus } from '../../../../shared/error-bus.js';
+import { AppError } from '../../../../shared/errors.ts';
+import { errorBus } from '../../../../shared/error-bus.ts';
 
 // ── 模块级 WS 实例 ──
 let _ws: WebSocket | null = null;

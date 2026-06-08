@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.290.4",
+  "version": "0.305.6",
   "type": "module",
   "description": "HanaAgent - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -20,10 +20,10 @@
   ],
   "main": "desktop/bootstrap.cjs",
   "bin": {
-    "hana": "cli/entry.js"
+    "hana": "cli/entry.ts"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.12.0 <25"
   },
   "scripts": {
     "start": "npm run build:preload && npm run build:renderer && npm run build:theme && node scripts/launch.js electron",
@@ -34,7 +34,7 @@
     "build:renderer": "vite build --config vite.config.ts",
     "build:theme": "vite build --config vite.config.theme.js",
     "build:preload": "vite build --config vite.config.preload.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "cli": "node scripts/launch.js cli",
     "server": "node scripts/launch.js server",
     "build:main": "vite build --config vite.config.main.js",
@@ -92,6 +92,7 @@
     "markdown-it": "^14.1.1",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "11.10.1",
+    "motion": "12.40.0",
     "node-pty": "1.1.0",
     "node-telegram-bot-api": "^0.67.0",
     "proxy-agent": "6.5.0",
@@ -140,6 +141,7 @@
     "files": [
       "desktop/main.bundle.cjs",
       "desktop/bootstrap.cjs",
+      "desktop/src/office-pdf-helper.cjs",
       "desktop/src/shared/launch-integrity.cjs",
       "shared/hana-runtime-paths.cjs",
       "desktop/preload.bundle.cjs",

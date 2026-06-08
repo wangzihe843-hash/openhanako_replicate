@@ -15,7 +15,7 @@ const block = {
   status: 'success',
   sourceKind: 'subagent',
   sourceLabel: '明 · 大纲评估',
-  text: '小花收到了来自 明 · 大纲评估 的回复',
+  text: '小花 收到了来自 明 · 大纲评估 的回复',
   detailMarkdown: '**内部详情**\n\n- 第一条',
 } as const;
 
@@ -46,7 +46,7 @@ describe('InterludeBlock', () => {
     mockMatchMedia(false);
     render(<InterludeBlock block={block} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /小花收到了/ }));
+    fireEvent.click(screen.getByRole('button', { name: /小花 收到了/ }));
 
     expect(screen.getByRole('dialog')).toHaveTextContent('内部详情');
     expect(screen.getByRole('dialog')).toHaveTextContent('第一条');
@@ -63,7 +63,7 @@ describe('InterludeBlock', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /小花收到了/ }));
+    fireEvent.click(screen.getByRole('button', { name: /小花 收到了/ }));
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveTextContent('✿ MOOD');
@@ -76,7 +76,7 @@ describe('InterludeBlock', () => {
     mockMatchMedia(false);
     render(<InterludeBlock block={block} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /小花收到了/ }));
+    fireEvent.click(screen.getByRole('button', { name: /小花 收到了/ }));
     const dialog = screen.getByRole('dialog');
     fireEvent.scroll(dialog);
 

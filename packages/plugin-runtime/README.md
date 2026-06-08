@@ -67,7 +67,10 @@ export default definePlugin({
       },
     }));
 
-    await requestBus(ctx, 'session:send', { text: 'Plugin loaded' }, { timeout: 5000 });
+    await requestBus(ctx, 'session:send', {
+      sessionPath: '/absolute/path/to/session.jsonl',
+      text: 'Plugin loaded',
+    }, { timeout: 5000 });
   },
 });
 ```
@@ -76,6 +79,72 @@ export default definePlugin({
 
 Use `ctx.bus.listCapabilities?.()` or `ctx.bus.getCapability?.(type)` to inspect
 the host EventBus capability directory before making optional requests.
+
+## Session, Agent, model, and media helpers
+
+Plugins that need their own chat surface should use the typed helpers instead of
+writing session files or importing host internals. `createSession()` creates a
+detached Hana session, so it does not switch the main UI focus.
+
+```ts
+import {
+  createAgent,
+  createSession,
+  generateImage,
+  sampleText,
+  sendSessionMessage,
+  subscribeSessionEvents,
+} from '@hana/plugin-runtime';
+
+export default definePlugin({
+  async onload(ctx, { register }) {
+    const agent = await createAgent(ctx, {
+      name: 'Tavern Character',
+      visibility: 'plugin_private',
+      memoryPolicy: { enabled: true },
+    });
+
+    const session = await createSession(ctx, {
+      agentId: (agent as any).agent.id,
+      kind: 'tavern',
+      visibility: 'plugin_private',
+      cwd: ctx.dataDir,
+    });
+
+    const query = await sampleText(ctx, {
+      operation: 'tavern-rag-query',
+      messages: [{ role: 'user', content: 'Extract world-lore keywords for this turn' }],
+      maxTokens: 80,
+    });
+
+    await sendSessionMessage(ctx, (session as any).sessionPath, {
+      text: 'I push the door open.',
+      context: {
+        beforeUser: [
+          { label: 'world', text: 'Rainy city night; the old theater is still open.' },
+          { label: 'rag_query', text: (query as any).text },
+        ],
+      },
+    });
+
+    register(subscribeSessionEvents(ctx, (session as any).sessionPath, (event) => {
+      ctx.log.info('session event', event);
+    }));
+
+    await generateImage(ctx, {
+      sessionPath: (session as any).sessionPath,
+      prompt: 'A handwritten character card on warm paper',
+      ratio: '3:2',
+    });
+  },
+});
+```
+
+Declare ordinary needs in manifest `capabilities`, such as `session`, `agent`,
+`model.sample`, and `media.generate`. `sensitiveCapabilities` records future
+user-granted permission intent. `session:send.context` is injected only into the
+current provider request; it does not rewrite the visible user message or the
+persisted user text.
 
 ## Usage ledger helpers
 

@@ -12,13 +12,13 @@ interface SkillInstallConfig {
 }
 
 interface SkillCapabilitiesProps {
-  installCfg: SkillInstallConfig;
+  installCfg: SkillInstallConfig | undefined;
 }
 
 export function SkillCapabilities({ installCfg }: SkillCapabilitiesProps) {
-  const installEnabled = installCfg.enabled === true;
-  const githubEnabled = installCfg.allow_github_fetch === true;
-  const safetyReviewEnabled = installCfg.safety_review !== false;
+  const installEnabled = installCfg ? installCfg.enabled === true : undefined;
+  const githubEnabled = installCfg ? installCfg.allow_github_fetch === true : undefined;
+  const safetyReviewEnabled = installCfg ? installCfg.safety_review !== false : undefined;
 
   const [showGithubWarning, setShowGithubWarning] = useState(false);
   const [showSafetyWarning, setShowSafetyWarning] = useState(false);
@@ -70,7 +70,7 @@ export function SkillCapabilities({ installCfg }: SkillCapabilitiesProps) {
             }}
           />
         </div>
-        {installEnabled && (
+        {installEnabled === true && (
           <div className={`${styles['capability-row']} ${styles['capability-row-nested']}`}>
             <div className={styles['capability-row-label']}>
               <span className={styles['capability-row-name']}>{t('settings.skills.fetchRemote')}</span>
@@ -82,7 +82,7 @@ export function SkillCapabilities({ installCfg }: SkillCapabilitiesProps) {
             />
           </div>
         )}
-        {installEnabled && (
+        {installEnabled === true && (
           <div className={`${styles['capability-row']} ${styles['capability-row-nested']}`}>
             <div className={styles['capability-row-label']}>
               <span className={styles['capability-row-name']}>{t('settings.skills.safetyReview')}</span>

@@ -59,14 +59,14 @@ describe('AssistantMessage interlude-only rendering', () => {
             status: 'success',
             sourceKind: 'subagent',
             sourceLabel: '明 · 大纲评估',
-            text: '小花收到了来自 明 · 大纲评估 的回复',
+            text: '小花 收到了来自 明 · 大纲评估 的回复',
             detailMarkdown: '内部详情',
           }],
         }}
       />,
     );
 
-    expect(screen.getByText('小花收到了来自 明 · 大纲评估 的回复')).toBeInTheDocument();
+    expect(screen.getByText('小花 收到了来自 明 · 大纲评估 的回复')).toBeInTheDocument();
     expect(container.textContent).not.toContain('Hanako');
     expect(container.querySelector('[data-message-actions]')).toBeNull();
     expect(container.querySelector('[data-testid="assistant-completion-actions"]')).toBeNull();

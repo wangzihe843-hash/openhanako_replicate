@@ -8,6 +8,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "noEmit": false,
+    "allowImportingTsExtensions": false,
     "paths": {
       "@hana/plugin-protocol": [
         "../plugin-protocol/dist/index.d.ts"

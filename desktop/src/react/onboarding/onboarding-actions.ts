@@ -3,7 +3,7 @@
  */
 
 import { AGENT_ID } from './constants';
-import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from '../../../../shared/default-workspace-constants.js';
+import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from '../../../../shared/default-workspace-constants.ts';
 
 export type HanaFetch = (path: string, opts?: RequestInit) => Promise<Response>;
 

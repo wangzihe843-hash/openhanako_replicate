@@ -37,6 +37,12 @@ declare function t(key: string, vars?: Record<string, string>): any;
 
 let requestContextUsage: (sessionPath: string) => void = () => {};
 
+function syncSessionPermissionMode(mode: unknown) {
+  if (mode === 'auto' || mode === 'operate' || mode === 'ask' || mode === 'read_only') {
+    useStore.getState().setSessionPermissionMode?.(mode);
+  }
+}
+
 export function configureWsMessageHandler(options: {
   requestContextUsage?: (sessionPath: string) => void;
 }): void {
@@ -509,7 +515,17 @@ export function handleServerMessage(msg: any): void {
 
     case 'activity_update':
       if (msg.activity) {
-        useStore.setState({ activities: [msg.activity, ...state.activities.slice(0, 499)] });
+        useStore.setState((current: any) => {
+          const incoming = msg.activity;
+          const existing = current.activities.find((activity: any) => activity.id === incoming.id);
+          const merged = existing ? { ...existing, ...incoming } : incoming;
+          return {
+            activities: [
+              merged,
+              ...current.activities.filter((activity: any) => activity.id !== incoming.id),
+            ].slice(0, 500),
+          };
+        });
       }
       break;
 
@@ -617,11 +633,41 @@ export function handleServerMessage(msg: any): void {
       break;
     }
 
+    case 'session_metadata_updated': {
+      const sp = msg.sessionPath;
+      const metadata = msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {};
+      if (!sp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
+      const hasPinnedAt = Object.prototype.hasOwnProperty.call(metadata, 'pinnedAt');
+      const hasProjectId = Object.prototype.hasOwnProperty.call(metadata, 'projectId');
+      if (hasPinnedAt || hasProjectId) {
+        useStore.setState((s) => ({
+          sessions: s.sessions.map((session) => {
+            if (session.path !== sp) return session;
+            return {
+              ...session,
+              ...(hasPinnedAt
+                ? { pinnedAt: typeof metadata.pinnedAt === 'string' ? metadata.pinnedAt : null }
+                : {}),
+              ...(hasProjectId
+                ? { projectId: typeof metadata.projectId === 'string' && metadata.projectId.trim() ? metadata.projectId.trim() : null }
+                : {}),
+            };
+          }),
+        }));
+      }
+      if (sp === useStore.getState().currentSessionPath && typeof metadata.thinkingLevel === 'string') {
+        useStore.getState().setThinkingLevel(metadata.thinkingLevel);
+      }
+      break;
+    }
+
     case 'plan_mode': {
       const sp = msg.sessionPath;
       if (!sp || sp === useStore.getState().currentSessionPath) {
+        const mode = msg.mode || (msg.enabled ? 'read_only' : 'operate');
+        syncSessionPermissionMode(mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
-          detail: { enabled: !!msg.enabled, mode: msg.mode || (msg.enabled ? 'read_only' : 'operate') },
+          detail: { enabled: !!msg.enabled, mode },
         }));
       }
       break;
@@ -630,6 +676,7 @@ export function handleServerMessage(msg: any): void {
     case 'permission_mode': {
       const sp = msg.sessionPath;
       if (!sp || sp === useStore.getState().currentSessionPath) {
+        syncSessionPermissionMode(msg.mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
           detail: { enabled: msg.mode === 'read_only', mode: msg.mode },
         }));
@@ -640,10 +687,12 @@ export function handleServerMessage(msg: any): void {
     case 'access_mode': {
       const sp = msg.sessionPath;
       if (!sp || sp === useStore.getState().currentSessionPath) {
+        const mode = msg.permissionMode || msg.mode;
+        syncSessionPermissionMode(mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
           detail: {
             enabled: msg.readOnly === true,
-            mode: msg.permissionMode || msg.mode,
+            mode,
           },
         }));
       }
@@ -724,7 +773,7 @@ export function handleServerMessage(msg: any): void {
       // 更新所有 session 中匹配 confirmId 的确认卡片状态。确认块可能不在最后一条消息，
       // 输入区也从消息块派生 pending 状态，所以这里按 session/message/block 三层显式定位。
       const nextStatusFor = (blockType: string): string => {
-        if (msg.action === 'confirmed') return blockType === 'cron_confirm' ? 'approved' : 'confirmed';
+        if (msg.action === 'confirmed') return blockType === 'cron_confirm' || blockType === 'suggestion_card' ? 'approved' : 'confirmed';
         if (msg.action === 'timeout') return 'timeout';
         return 'rejected';
       };
@@ -742,6 +791,7 @@ export function handleServerMessage(msg: any): void {
             const blocks = item.data.blocks.map((b: any) => {
               const matchesType = b.type === 'settings_confirm'
                 || b.type === 'cron_confirm'
+                || b.type === 'suggestion_card'
                 || b.type === 'session_confirmation';
               if (!matchesType || b.confirmId !== msg.confirmId) return b;
               messageChanged = true;

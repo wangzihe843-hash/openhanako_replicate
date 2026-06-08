@@ -437,6 +437,7 @@
     "hourly": "Hourly",
     "dailyAt": "Daily at {hour}:{min}",
     "weeklyAt": "{days} {hour}:{min}",
+    "monthlyAt": "Monthly on day {day} at {hour}:{min}",
     "dayNames": [
       "Sun",
       "Mon",
@@ -854,6 +855,7 @@
     "tabs": {
       "interface": "Interface",
       "general": "General",
+      "browser": "Browser",
       "agent": "Agent",
       "me": "Me",
       "providers": "Providers",
@@ -872,16 +874,33 @@
       "security": "Security",
       "pluginMarketplace": "Plugin Marketplace"
     },
+    "browser": {
+      "cookiesTitle": "Cookies",
+      "acceptCookies": "Accept Cookies",
+      "acceptCookiesHint": "When enabled, the in-app browser saves and sends website Cookies like a normal browser.",
+      "clearCookies": "Clear Cookies",
+      "clearCookiesHint": "Clear Cookies and site data saved by the in-app browser.",
+      "clearCookiesButton": "Clear",
+      "clearCookiesSuccess": "Cookies cleared",
+      "agentTitle": "Agent Default Behavior",
+      "agentOpenBehavior": "When opening webpages",
+      "agentOpenBehaviorHint": "Choose whether the agent reuses the current tab or opens a new tab by default.",
+      "agentOpenBehaviorCurrentTab": "Use current tab",
+      "agentOpenBehaviorNewTab": "Open new tab"
+    },
     "experiments": {
       "title": "Experiments",
       "compactionTitle": "Context Compaction",
       "compactionSectionDescription": "Choose whether compact prioritizes prompt-cache preservation or broad history compatibility.",
+      "modelPersonaTitle": "Models & Persona",
+      "modelPersonaDescription": "Observe how providers adapt to Hana's persona, mood, and output contracts.",
       "memoryTitle": "Cache Memory",
       "description": "Forward-looking features land here first. Once stable, they move to the settings page where they belong.",
       "empty": "No visible experiments",
       "owner": {
         "memory": "Memory",
-        "session": "Session"
+        "session": "Session",
+        "provider": "Provider"
       },
       "status": {
         "alpha": "Alpha",
@@ -920,7 +939,17 @@
         "auto": "Auto",
         "cachePreserving": "Cache-preserving compaction",
         "piCompatible": "Normal compaction"
-      }
+      },
+      "deepseekRoleplay": {
+        "title": "DeepSeek persona immersion patch",
+        "description": "When enabled, new DeepSeek V4 thinking sessions temporarily append a persona-immersion marker to the first outbound user message. It is not displayed, saved, or restored in chat history. Turning it off keeps the old behavior."
+      },
+      "proactiveSubagent": {
+        "title": "Proactive subagent delegation",
+        "description": "When enabled, the agent proactively delegates broad exploration and research tasks to subagents, conserving the main chat's context attention. May yield better results for complex tasks."
+      },
+      "subagentTitle": "Subagent",
+      "subagentSectionDescription": "Control how the agent decides when to delegate work to subagents."
     },
     "appearance": {
       "title": "Appearance",
@@ -1102,6 +1131,10 @@
             "label": "Install Skill",
             "summary": "Install new skills from GitHub or the skill library"
           },
+          "office": {
+            "label": "Office",
+            "summary": "Let the agent read documents and convert HTML to PDF"
+          },
           "update_settings": {
             "label": "Update Settings",
             "summary": "Allow the agent to modify application configuration"
@@ -1219,6 +1252,16 @@
       "remoteServerKeyHint": "Enter the computer access key generated on that server",
       "remoteServerConnected": "LAN server connected",
       "remoteServerFailed": "Connection failed",
+      "remoteConnection": "Connected to Remote Hana",
+      "remoteConnectionDesc": "Local account, password, LAN switches, and access keys in Access & Devices belong only to the local Hana instance.",
+      "remoteConnectionName": "Connection Name",
+      "remoteConnectionKind": "Connection Type",
+      "remoteConnectionUrl": "Server URL",
+      "remoteConnectionUnknown": "Unknown",
+      "remoteLocalOnlyNote": "Switch back to local Hana before managing this computer's LAN access, device keys, or local account.",
+      "returnToLocal": "Return to Local Hana",
+      "returnedToLocal": "Returned to local Hana",
+      "localConnectionUnavailable": "Local Hana connection is not ready",
       "pairedDevices": "Paired Devices",
       "noDevices": "No paired devices",
       "revoke": "Revoke",
@@ -1348,7 +1391,7 @@
       "totalTokens": "Total tokens",
       "cacheRead": "Cache read",
       "cacheHitRate": "Hit rate",
-      "estimatedCost": "Estimated cost",
+
       "uncached": "Uncached",
       "modelMix": "Model mix",
       "dailyUsage": "Daily usage",
@@ -1616,10 +1659,8 @@
       "heartbeatInterval": "Patrol interval",
       "heartbeatUnit": "minutes",
       "heartbeatDesc": "How often the assistant auto-checks the workspace",
-      "cronAutoApprove": "Auto-approve cron jobs",
-      "cronAutoApproveOn": "On",
-      "cronAutoApproveOff": "Off",
-      "cronAutoApproveDesc": "Allow the assistant to create scheduled tasks without confirmation",
+      "automationPermissionMode": "Automation permission mode",
+      "automationPermissionModeDesc": "Controls whether background automation Agent runs auto-review tool calls, run with full access, or stay read-only",
       "homeFolder": "Workspace",
       "homeFolderDesc": "Default working directory for new chats, patrol and cron tasks",
       "homeFolderPlaceholder": "Not set (choose manually each time)",
@@ -1891,6 +1932,7 @@
       "wechat": "WeChat",
       "wechatHint": "Connect via WeChat iLink protocol",
       "wechatExclusive": "Each WeChat account can only be bound to one Agent. Binding a new Agent will invalidate the previous one.",
+      "wechatReplyWindowReminder": "Proactive WeChat notifications require a recent incoming message or reply window. If reminders do not arrive, send this Agent a WeChat message to activate that window.",
       "wechatScan": "Scan to Login",
       "wechatRescan": "Re-login",
       "wechatLoggedIn": "Logged in",
@@ -1912,6 +1954,11 @@
       "noCredentials": "Please enter App ID and App Secret first",
       "globalSettings": "Global Settings",
       "agentSettings": "Agents",
+      "permissionMode": "Permission mode",
+      "permissionModeDesc": "Controls whether Bridge bots auto-review tool calls, run with full access, or stay read-only",
+      "permissionModeAuto": "Auto review",
+      "permissionModeOperate": "Full access",
+      "permissionModeReadOnly": "Read-only mode",
       "receiptEnabled": "Reply receipt",
       "receiptEnabledDesc": "Send a short \"received and replying\" notice before the actual response",
       "readOnly": "Read-only mode",
@@ -2103,17 +2150,81 @@
     "heartbeat": "Routine patrol",
     "subagent": "Sub-agent task",
     "cron": "Scheduled task",
+    "automationRuns": "Custom automations",
+    "patrolRuns": "Patrols",
+    "otherRuns": "Other background work",
+    "agentTabs": "Filter activity by Agent",
+    "categoryTabs": "Filter by activity type",
+    "emptyForCategory": "No activity in this category yet.",
     "patrolDone": "Patrol completed",
     "cronDone": "Scheduled task completed",
     "error": "Execution error",
-    "viewSession": "View session →",
+    "viewSession": "Expand run",
+    "expand": "Expand run",
+    "collapse": "Collapse run",
+    "loadingSession": "Loading this background session...",
+    "sessionLoadFailed": "This background session cannot be loaded right now.",
+    "noSessionMessages": "No messages to show for this background session.",
     "duration": "Took {text}",
     "promote": "Keep as chat"
   },
   "automation": {
     "title": "Scheduled Tasks",
     "empty": "No scheduled tasks yet.\nThe assistant will create them when needed.",
+    "emptyForAgent": "No scheduled tasks for this Agent yet.",
+    "agentTabs": "Filter automations by Agent",
+    "draftTitle": "Automation draft",
+    "suggestionTitle": "Suggestion",
+    "suggested": "Suggested",
+    "viewSuggestion": "View suggestion",
+    "openDraft": "Open automation draft",
+    "closeDraft": "Close automation draft",
+    "confirmCreate": "Confirm",
+    "confirmUpdate": "Update",
     "defaultModel": "Default model",
+    "add": "Add automation",
+    "enable": "Enable",
+    "disable": "Disable",
+    "newAutomation": "New automation",
+    "newPrompt": "",
+    "promptPlaceholder": "Write what you want {agent} to do",
+    "promptRequired": "Write what the Agent should do before enabling this automation.",
+    "createFailed": "Failed to create automation",
+    "agentRequired": "Choose an Agent first",
+    "field": {
+      "label": "Name",
+      "agent": "Agent",
+      "scheduleType": "Type",
+      "schedule": "Time",
+      "prompt": "Run prompt"
+    },
+    "schedule": {
+      "at": "Once",
+      "every": "Every",
+      "unit": "Unit",
+      "time": "Time",
+      "hour": "Hour",
+      "minute": "Minute",
+      "weekday": "Day",
+      "monthDay": "Date",
+      "dateTime": "Date and time",
+      "cronExpression": "Cron expression",
+      "onceAt": "Once: {date}",
+      "advancedCron": "Advanced Cron: {cron}",
+      "mode": {
+        "interval": "Every interval",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "once": "Once",
+        "advanced": "Advanced Cron"
+      },
+      "unitLabel": {
+        "minutes": "minutes",
+        "hours": "hours",
+        "days": "days"
+      }
+    },
     "executor": {
       "agentSession": "Agent",
       "notify": "Notify",
@@ -2134,7 +2245,8 @@
       "title": "Activity"
     },
     "todo": {
-      "title": "To-dos"
+      "title": "Progress",
+      "waitForOutput": "Wait for output to finish"
     },
     "subagent": {
       "title": "Sub-agents"
@@ -2274,6 +2386,8 @@
     "back": "Back",
     "forward": "Forward",
     "reload": "Reload",
+    "newTab": "New Tab",
+    "closeTab": "Close tab",
     "emergencyStop": "Emergency stop AI control",
     "backgroundHint": "Background browser running, click to view",
     "background": "Background browser"
@@ -2618,154 +2732,11 @@
     "installFailed": "Install failed: "
   },
   "toolDef": {
-    "webSearch": {
-      "label": "Web Search",
-      "description": "Search the internet for real-time information. Use when you need the latest news, technical docs, current events, or any external knowledge not in memory.",
-      "queryDesc": "Search keywords",
-      "maxResultsDesc": "Number of results to return, default 10"
-    },
-    "webFetch": {
-      "label": "Fetch Web Page",
-      "description": "Fetch the content of a given URL and extract text. Useful for reading articles, docs, API responses, etc. Pair with web_search: first search to find a URL, then use web_fetch to read the full content.",
-      "urlDesc": "Full URL to fetch (including https://)",
-      "maxLenDesc": "Maximum characters to return, default {max}"
-    },
-    "browser": {
-      "label": "Browser",
-      "description": "Control a headless browser (navigate, click, type, scroll, screenshot, evaluate JS). Use the action parameter to pick an operation; see its description for per-action parameters. Element [ref] ids from snapshot become stale after any navigate/click/type — those operations auto-return a fresh snapshot, always use refs from the latest one.",
-      "actionDesc": "Which operation to run. Required params per action: navigate→url; click→ref; type→text (optional ref, pressEnter); scroll→direction (optional amount); select→ref+value; key→key; wait→(optional timeout, state); evaluate→expression. start, stop, snapshot, screenshot, show take no extra params.",
-      "urlDesc": "URL (required for navigate)",
-      "refDesc": "Element ref number (used for click/type/select)",
-      "textDesc": "Input text (required for type)",
-      "directionDesc": "Scroll direction (required for scroll)",
-      "amountDesc": "Scroll amount (optional for scroll, default 3)",
-      "valueDesc": "Option value (required for select)",
-      "keyDesc": "Key name (required for key), e.g. Enter, Escape, Tab, Control+a",
-      "expressionDesc": "JavaScript expression (required for evaluate)",
-      "timeoutDesc": "Timeout in milliseconds (optional for wait, default 5000)",
-      "stateDesc": "Wait state (optional for wait): domcontentloaded / load / stable / networkidle (idle is accepted)",
-      "pressEnterDesc": "Press Enter after typing (optional for type)"
-    },
-    "channel": {
-      "label": "Channel",
-      "description": "Manage channel messages (for broadcasts and group discussions).\nActions:\n- read(channel, count?): View recent messages in a channel\n- post(channel, content): Send a message to a channel\n- create(name, members, intro?): Create a new channel\n- list: View channels you have joined\nNote: For one-on-one messaging with an agent, use the dm tool instead of simulating a private chat via channels.",
-      "actionDesc": "Action type",
-      "channelDesc": "Channel name (required for read/post)",
-      "contentDesc": "Message content (required for post)",
-      "nameDesc": "New channel name (required for create)",
-      "membersDesc": "Member list (required for create), e.g. [\"hana\", \"butter\"]",
-      "introDesc": "Channel description (optional for create)",
-      "countDesc": "Number of messages to read (optional for read, default 20)"
-    },
-    "artifact": {
-      "label": "Create Preview",
-      "description": "Call this tool when you need to show the user an HTML page, code snippet, or long-form Markdown content.\nContent is rendered in a standalone preview panel where the user can view results in real time.\nGood for: runnable HTML/CSS/JS pages, interactive visualizations, SVG charts, complete code files, long formatted documents.\nNot for: short text replies, conversational answers, one-line code snippets (just show those inline).",
-      "typeDesc": "Content type: html (rendered page), code (syntax highlighted), markdown (document)",
-      "titleDesc": "Display title, a short description of the content",
-      "contentDesc": "Full content (HTML source / code / Markdown text)",
-      "languageDesc": "Programming language (only for type=code), e.g. javascript, python, css"
-    },
-    "dm": {
-      "label": "Direct Message",
-      "description": "Send a single direct message to another agent to inform them of something.\nDo not use this tool to assign tasks or get results; that is subagent's job.",
-      "toDesc": "Target agent's id field value (the one in parentheses in the team roster, not the bold display name)",
-      "messageDesc": "Message content"
-    },
-    "cron": {
-      "label": "Scheduled Tasks",
-      "description": "Create and manage scheduled tasks. Scheduled tasks run automatically in the background, spawning an independent session to execute the specified prompt when triggered.\nActions:\n- list: View all tasks\n- add(scheduleType, schedule, prompt, label?, model?): Create a task\n  - scheduleType \"at\": One-time, schedule is an ISO time string\n  - scheduleType \"every\": Interval, schedule is minutes (e.g. 60 = hourly)\n  - scheduleType \"cron\": Cron expression (e.g. \"0 7 * * *\" = every day at 7 AM)\n  - model: Optional, specify the model for task execution (defaults to the chat model)\n- remove(id): Delete a task\n- toggle(id): Enable/disable a task",
-      "actionDesc": "Action type",
-      "scheduleTypeDesc": "Schedule type (required for add)",
-      "scheduleDesc": "Schedule: ISO time (at), minutes (every, e.g. 60=hourly), cron expression (cron)",
-      "promptDesc": "Prompt to execute when triggered (required for add)",
-      "labelDesc": "Task display label (optional)",
-      "modelDesc": "Specify execution model as provider/id (optional, defaults to the chat model)",
-      "idDesc": "Task ID (required for remove/toggle)"
-    },
-    "notify": {
-      "label": "Notification",
-      "description": "Send a notification to the user. Choose desktop popup, Bridge owner chat, or the default channel according to the task; pass bridgePlatforms when delivery must stay on WeChat, Feishu, or another Bridge platform.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent or asks to send it through Bridge/WeChat\n- A monitoring/scheduled task discovers something requiring user attention\nIf everything is normal with no issues, do not call this tool. Successful Bridge notifications can be appended to that conversation context according to contextPolicy.",
-      "titleDesc": "Notification title (brief)",
-      "bodyDesc": "Notification content"
-    },
     "todoWrite": {
-      "label": "Todo",
-      "description": "Manage the todo list for the current session. Use it to break down and track multi-step work: when you receive a complex or multi-step task, decompose it into sub-tasks before executing step by step. Simple single-step tasks (answering questions, single lookups, simple edits) do not need it. Pass the complete todos array each call to replace the current state (replacement style).\nEach todo needs:\n- content: static description (e.g. 'Read spec')\n- activeForm: in-progress description (e.g. 'Reading spec')\n- status: pending | in_progress | completed\nConvention: at most one in_progress at a time. Mark a todo in_progress when starting it, immediately change it to completed when done and set the next one to in_progress; do not batch up completions.",
-      "contentDesc": "Static description of the todo",
-      "activeFormDesc": "In-progress form description (shown in UI while in_progress)",
-      "statusDesc": "One of: pending / in_progress / completed",
-      "todosDesc": "Complete todo list; each call replaces the previous list",
       "summaryEmpty": "Cleared todos",
       "summaryStats": "{total} todos: {completed} completed, {in_progress} in progress, {pending} pending"
     },
-    "currentStatus": {
-      "label": "Current Status",
-      "description": "Lightweight current-environment status. Use it to check fresh state such as time, logical date, agent identity, user/agent avatar appearance, model identity, current session folder scope, Bridge platform context, open sub-agent instances, and the user's visible UI context. IMPORTANT: The date/time shown in the system prompt is a snapshot from when the session was created and may be outdated. For precise current time, scheduling, reminders, date calculations that need clock time, greetings, or any case where hour/minute matters, call this tool with action=\"get\", key=\"time\". Use key=\"logical_date\" only when you need to know which calendar day Hana should treat as today under the 4:00 boundary; it does not return hour/minute/second. Use key=\"appearance\" when the user asks what the user or current agent looks like. Use key=\"session_folders\" to inspect which folders the current session can access. When the user refers to this file, here, the current/open/visible/selected item, the pinned window, current Bridge chat/platform, or the current folder, call this tool with action=\"get\", key=\"ui_context\" first to resolve the reference.",
-      "actionDesc": "list returns available status keys; get returns one status key value.",
-      "keyDesc": "Status key to fetch when action=get. Common keys: time, logical_date, agent, appearance, model, ui_context, session_files, session_folders, bridge_context, subagents. Use bridge_context for references to the current Bridge platform/chat; use subagents before continuing or closing a sub-agent."
-    },
-    "pinnedMemory": {
-      "pinLabel": "Pin Memory",
-      "pinDescription": "Save an item to pinned memory. Use when the user says 'remember this', 'note this down', 'don't forget this later'. Pinned memories are always kept in context.",
-      "pinContentDesc": "Content to remember",
-      "unpinLabel": "Unpin Memory",
-      "unpinDescription": "Remove an item from pinned memory. Use when the user says 'forget xxx' or 'delete this memory'. Supports fuzzy matching: any line containing the keyword you provide will be removed.",
-      "unpinKeywordDesc": "Keyword of the memory to remove, matched fuzzily"
-    },
-    "experience": {
-      "recallLabel": "Recall Experience",
-      "recallDescription": "Browse the experience library. Without parameters, returns an overview of all categories. With a category name, returns specific experiences in that category. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
-      "recallCategoryDesc": "Category name. Omit to get an overview of all categories",
-      "recordLabel": "Record Experience",
-      "recordDescription": "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, the user shows frustration or repeatedly emphasizes something, you discover an effective method after trying multiple approaches, the user explicitly says 'from now on do/don't do this', or you hit a pitfall during patrol or autonomous work. Each entry should be concise and direct, one sentence.",
-      "recordCategoryDesc": "Category for the experience, a 2-4 word phrase, e.g. 'tool usage', 'search tips', 'response style'",
-      "recordContentDesc": "The specific experience content, concise and direct, one sentence"
-    },
-    "outputFile": {
-      "label": "Stage Files",
-      "description": "Call this tool when you need to hand one or more local files to the user, present them on desktop, or send them through Bridge/remote platforms. Use it after creating a file, finding a requested local file, receiving a browser screenshot, installer/package source, or file contribution from a plugin or sub-agent. Only call it when the file really exists and the path is a local absolute path. Do not merely mention file paths in text, and do not decide how the target platform should render or send the file; consumers choose the platform-specific delivery.",
-      "filepathsDesc": "Local absolute file paths to deliver. After locating files, pass them here so StageFile can register them for desktop, Bridge, or future mobile consumers.",
-      "filePathDesc": "(Compat) Single local absolute file path. Prefer filepaths for new calls.",
-      "labelDesc": "(Compat) File name shown to the user. Usually omit this; the filename is used by default."
-    },
-    "subagent": {
-      "label": "Launch Sub-agent",
-      "description": "Create a continuable sub-agent instance for a delegated task. Returns immediately with taskId and threadId; results are delivered back in the background. Use agent to target an agent, or agent=\"?\" to list agents.",
-      "taskDesc": "Complete instructions and required context for the subagent. The subagent cannot see the current conversation history unless you include it here.",
-      "agentDesc": "Target agent id from the team roster, using the value shown in backticks. Choose the agent whose persona, strengths, and model best fit the task; the roster shows each model and summary. Omit for the current agent; pass \"?\" to list agents.",
-      "labelDesc": "Optional display label, such as \"research 1\" or \"draft 2\". Display-only; resume by passing the returned threadId to subagent_reply.",
-      "instanceDesc": "Legacy field, accepted only as label compatibility. New calls should use label; resume with threadId.",
-      "accessDesc": "Optional permission tier: \"read\" for read-only research, exploration, or review; \"write\" for execution, edits, or commands. Omit to inherit the current session permission.",
-      "modelDesc": "Optional model override as provider/id. Omit to use the target agent's configured chat model."
-    },
-    "subagentReply": {
-      "label": "Continue Sub-agent",
-      "description": "Append a task to an open sub-agent instance in the current session. Use current_status with subagents first to see available threadIds.",
-      "threadIdDesc": "The threadId of the sub-agent instance to continue. It must be an open subagent instance in the current session.",
-      "taskDesc": "Complete instructions and required context to append to that sub-agent.",
-      "accessDesc": "Optional permission tier: \"read\" or \"write\". Omit to reuse the instance access, still bounded by the current session permission."
-    },
-    "subagentClose": {
-      "label": "Close Sub-agent",
-      "description": "Close a no-longer-needed sub-agent instance in the current session and free a continuable instance slot.",
-      "threadIdDesc": "The threadId of the open sub-agent instance to close.",
-      "reasonDesc": "Optional closing reason, saved as the instance's final summary."
-    },
-    "installSkill": {
-      "label": "Install Skill",
-      "description": "Install a new skill into the shared skill pool, enabled only for the current Agent by default. Mode A: Provide a GitHub repo URL (containing SKILL.md) to auto-fetch and install. Mode B: Directly provide skill_content + skill_name, for self-authored skills.",
-      "githubUrlDesc": "GitHub repo URL (Mode A)",
-      "skillContentDesc": "Full content of SKILL.md (Mode B)",
-      "skillNameDesc": "Skill name (required for Mode B)",
-      "reasonDesc": "Explain why this skill is needed (for audit, required)"
-    },
     "updateSettings": {
-      "label": "Settings",
-      "description": "Modify HanaAgent's settings. When the user mentions changing settings without naming a specific app, assume this application. For preferences like appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory, or MCP connectors, use this tool, and do not search the web or edit config files directly. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly. When intent is clear, apply directly and report the result in one sentence; when unsure, search first.",
-      "actionDesc": "Action: search to find settings / apply to change a setting",
-      "queryDesc": "Search keyword (required for search)",
-      "keyDesc": "Setting key (found via search)",
-      "valueDesc": "Proposed new value",
       "searchResult": "Found {count} matching setting(s):\n\n{results}\n\nUse action \"apply\" with key and value to change a setting.",
       "searchNoResults": "No settings matching \"{query}\". Try a broader keyword.",
       "searchMissingQuery": "The search action requires a query parameter.",
@@ -2796,60 +2767,6 @@
       "fileBackup": "File Backup",
       "fileBackupDesc": "Auto-backup files before AI modifications"
     },
-    "stopTask": {
-      "label": "Stop background task",
-      "description": "Stop a running background task. Pass the task_id to terminate it. Supported task types include sub-agent tasks, image/video generation tasks, etc.",
-      "taskIdDesc": "The task ID to stop"
-    },
-    "automation": {
-      "label": "Automation",
-      "description": "Create and manage scheduled deterministic automation jobs such as notifications and plugin actions. Use cron for Agent-session prompt jobs.",
-      "actionDesc": "Action to perform.",
-      "scheduleTypeDesc": "Trigger type for add actions.",
-      "scheduleDesc": "Trigger schedule. For every, use minutes. For cron, use a 5-field cron expression.",
-      "labelDesc": "Short display label.",
-      "titleDesc": "Notification title.",
-      "bodyDesc": "Notification body.",
-      "pluginIdDesc": "Plugin id for plugin actions.",
-      "actionIdDesc": "Plugin action id. V0 maps this to the plugin tool name.",
-      "paramsDesc": "Plugin action parameters.",
-      "idDesc": "Automation job id for remove/toggle."
-    },
-    "terminal": {
-      "label": "Terminal",
-      "description": "Manage per-session persistent terminal sessions. Use the existing bash tool for short one-shot commands. Use terminal only for long-running or interactive processes that need continued stdin/stdout, such as dev servers, REPLs, ssh, or shells. Actions: start, write, read, close, list.",
-      "actionDesc": "One of: start, write, read, close, list.",
-      "terminalIdDesc": "Terminal id returned by action=start or action=list.",
-      "commandDesc": "Command to start in a PTY. Omit to start an interactive shell.",
-      "charsDesc": "Input to write to the terminal for action=write.",
-      "cwdDesc": "Working directory for action=start. Defaults to the current session cwd.",
-      "labelDesc": "Short human label for action=start.",
-      "sinceSeqDesc": "Only return transcript chunks after this sequence number for action=read.",
-      "colsDesc": "PTY columns for action=start.",
-      "rowsDesc": "PTY rows for action=start."
-    },
-    "computer": {
-      "label": "Computer Use",
-      "description": "Inspect and control an approved desktop app or window through Hana Computer Use."
-    },
-    "checkPendingTasks": {
-      "label": "Check Pending Tasks",
-      "description": "Check the status of all background async tasks in the current conversation (image/video generation, subagent, etc.). Only returns tasks from the current conversation.",
-      "statusDesc": "Filter by status: pending / resolved / failed. Omit to return all."
-    },
-    "sessionFolders": {
-      "label": "Session Folders",
-      "description": "List or request changes to the current session's extra authorized sandbox folders. Use action=list to inspect cwd, prompt-visible workspace folders, user-authorized folders, and effective sandbox roots. Use add/remove only after the user wants this session to gain or drop folder access; changes require user confirmation and do not modify CWD or prompt text.",
-      "actionDesc": "list returns the current folder scope. add/remove asks the user to confirm changing the current session's extra authorized folders.",
-      "folderDesc": "Absolute or resolvable folder path for add/remove."
-    },
-    "workflow": {
-      "label": "Workflow",
-      "description": "Orchestrate multiple sub-agents with a deterministic JS script (agent/parallel/pipeline/workflow).\nUse for: controlled fan-out, ensuring thoroughness, synthesizing results from multiple sub-agents.\nScript must start with `export const meta = { name, description }` (pure literal).\nAvailable globals: agent(prompt, {model?, schema?, agentType?}) returns result synchronously (with schema returns validated object); parallel(thunks) runs concurrently and awaits all (throwing thunks resolve to null); pipeline(items, ...stages) runs each item through stages independently; workflow(script, args?) runs another workflow inline (shares limiter/signal/budget, one level only); log/phase/budget/args.\nbudget: { total: number|null, spent(): number, remaining(): number }. total comes from args.budgetTokens; spent() queries UsageLedger in real-time; remaining() = total - spent() or Infinity if no total. Use for dynamic loops: `while (budget.remaining() > 50000) { ... }`.\nScript body (two equivalent forms): 1. use globals at top level, top-level return for result; 2. `export default async function({ agent, parallel, pipeline, workflow, log, phase, budget, args }) { ... }` destructure params, return inside function.\nScript cannot access require/process/fs/net; Math.random/Date.now are disabled.\nTool returns task id (= runId) immediately and runs in the background (non-blocking), script return value becomes the background task's final result, automatically returns to conversation when done.\nResume: pass resumeFromRunId with a previous runId to resume from checkpoint — completed agent() calls with unchanged (prompt, opts) return cached results instantly; first changed call and everything after re-executes.\nWorkflow agent nodes are controlled one-shot threads, allowing high concurrency fan-out (up to 256 concurrent, 1000 total dispatched).",
-      "scriptDesc": "Orchestration script, must start with export const meta = {...}",
-      "argsDesc": "Arguments passed to the script's args global. Pass { budgetTokens: N } to set a token budget ceiling.",
-      "resumeFromRunIdDesc": "Previous workflow runId (taskId) to resume from — cached agent nodes with unchanged prompt+opts return instantly, first change onward re-executes."
-    },
     "generateImage": {
       "description": "Generate images from text descriptions. Non-blocking: returns immediately after submission, displays automatically when complete.",
       "promptDesc": "Image description (Chinese or English)",
@@ -2860,6 +2777,7 @@
       "qualityDesc": "Quality tier: low, medium, high, auto (adapter maps to vendor parameters)",
       "modelDesc": "Model ID or short name (e.g. 5.0, dall-e-3). Uses configured default when omitted",
       "providerDesc": "Specify provider (optional)",
+      "suggestedFilenameDesc": "Short human filename hint for generated files, without extension. Use a concise slug or title, not the full prompt.",
       "submitted": "Submitted {count} image generation(s); results will appear in the card below when complete."
     },
     "generateVideo": {
@@ -3125,7 +3043,11 @@
       "submit": "Sign In"
     },
     "loading": "Connecting to Hana...",
-    "closeSidebar": "Close sidebar"
+    "closeSidebar": "Close sidebar",
+    "update": {
+      "available": "A new Hana version is ready",
+      "reload": "Refresh"
+    }
   },
   "approval": {
     "toolAction": {
@@ -3159,18 +3081,18 @@
     "interlude": {
       "subagent": {
         "success": "{receiver} received a reply from {source}",
-        "failed": "{receiver} received a failed reply from {source}",
-        "aborted": "{receiver} stopped the reply from {source}"
+        "failed": "{receiver} received a reply from {source}",
+        "aborted": "{receiver} received a reply from {source}"
       },
       "workflow": {
-        "success": "{receiver} received a reply from {source} workflow",
-        "failed": "{receiver} received a failed reply from {source} workflow",
-        "aborted": "{receiver} stopped {source} workflow"
+        "success": "{receiver} received results from {source} workflow",
+        "failed": "{receiver} received results from {source} workflow",
+        "aborted": "{receiver} received results from {source} workflow"
       },
       "tool": {
-        "success": "{receiver} got results from {source} tool",
-        "failed": "{receiver} did not get results from {source} tool",
-        "aborted": "{receiver} stopped results from {source} tool"
+        "success": "{receiver} received results from {source} tool",
+        "failed": "{receiver} received results from {source} tool",
+        "aborted": "{receiver} received results from {source} tool"
       }
     },
     "noReason": "The background task did not return a displayable reason.",

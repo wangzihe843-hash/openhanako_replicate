@@ -113,6 +113,37 @@ static std::wstring win32Message(DWORD code) {
     return out;
 }
 
+static std::wstring hexDword(DWORD code) {
+    wchar_t buffer[16] = {};
+    swprintf_s(buffer, L"0x%08lX", static_cast<unsigned long>(code));
+    return buffer;
+}
+
+static std::wstring boolDiagnosticValue(bool value) {
+    return value ? L"true" : L"false";
+}
+
+static std::wstring escapeDiagnosticValue(const std::wstring& value) {
+    std::wstring out;
+    out.reserve(value.size());
+    for (wchar_t ch : value) {
+        if (ch == L'\\') {
+            out += L"\\\\";
+        } else if (ch == L'"') {
+            out += L"\\\"";
+        } else if (ch == L'\r') {
+            out += L"\\r";
+        } else if (ch == L'\n') {
+            out += L"\\n";
+        } else if (ch == L'\t') {
+            out += L"\\t";
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
 static bool isDirectory(const std::wstring& p) {
     DWORD attrs = GetFileAttributesW(p.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
@@ -766,6 +797,85 @@ static void closeSandboxDesktop(SandboxDesktop& desktop) {
     desktop.name.clear();
 }
 
+static std::wstring probeNamedObjectNamespace(HANDLE restrictedToken);
+
+static std::wstring probeRestrictedDesktopAccess(HANDLE restrictedToken, const std::wstring& desktopName) {
+    if (desktopName.empty()) return L"skipped:no-desktop";
+    if (!ImpersonateLoggedOnUser(restrictedToken)) {
+        DWORD rc = GetLastError();
+        return L"impersonate-failed:" + std::to_wstring(rc) + L":" + win32Message(rc);
+    }
+
+    HDESK desktop = OpenDesktopW(
+        desktopName.c_str(),
+        0,
+        FALSE,
+        DESKTOP_CREATEWINDOW | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS
+    );
+    DWORD rc = desktop ? ERROR_SUCCESS : GetLastError();
+    if (desktop) CloseDesktop(desktop);
+    RevertToSelf();
+
+    if (rc == ERROR_SUCCESS) return L"ok";
+    return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+}
+
+static std::wstring probeProcessWindowStationName() {
+    HWINSTA station = GetProcessWindowStation();
+    if (!station) {
+        DWORD rc = GetLastError();
+        return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+    }
+
+    DWORD needed = 0;
+    GetUserObjectInformationW(station, UOI_NAME, nullptr, 0, &needed);
+    if (needed == 0) return L"ok";
+
+    std::wstring name((needed / sizeof(wchar_t)) + 1, L'\0');
+    if (!GetUserObjectInformationW(station, UOI_NAME, name.data(), needed, &needed)) {
+        DWORD rc = GetLastError();
+        return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+    }
+    while (!name.empty() && name.back() == L'\0') name.pop_back();
+    return L"ok:" + name;
+}
+
+static void emitCreateProcessLaunchFailureDiagnostic(
+    const Options& opts,
+    HANDLE restrictedToken,
+    const SandboxDesktop& desktop,
+    const std::wstring& commandLine,
+    DWORD errorCode,
+    DWORD flags,
+    BOOL inheritHandles,
+    size_t inheritedHandleCount
+) {
+    fail(L"CreateProcessAsUserW failed: " + win32Message(errorCode));
+    std::wcerr
+        << L"hana-win-sandbox: launch-failure"
+        << L" error=\"" << errorCode << L"\""
+        << L" errorHex=\"" << hexDword(errorCode) << L"\""
+        << L" message=\"" << escapeDiagnosticValue(win32Message(errorCode)) << L"\""
+        << std::endl;
+    std::wcerr
+        << L"hana-win-sandbox: launch-failure-context"
+        << L" executable=\"" << escapeDiagnosticValue(opts.executable) << L"\""
+        << L" cwd=\"" << escapeDiagnosticValue(opts.cwd) << L"\""
+        << L" commandLine=\"" << escapeDiagnosticValue(commandLine) << L"\""
+        << L" desktop=\"" << escapeDiagnosticValue(desktop.name) << L"\""
+        << L" flags=\"" << flags << L"\""
+        << L" flagsHex=\"" << hexDword(flags) << L"\""
+        << L" inheritHandles=\"" << boolDiagnosticValue(inheritHandles != FALSE) << L"\""
+        << L" inheritedHandleCount=\"" << inheritedHandleCount << L"\""
+        << std::endl;
+    std::wcerr
+        << L"hana-win-sandbox: launch-failure-probes"
+        << L" desktopProbe=\"" << escapeDiagnosticValue(probeRestrictedDesktopAccess(restrictedToken, desktop.name)) << L"\""
+        << L" windowStation=\"" << escapeDiagnosticValue(probeProcessWindowStationName()) << L"\""
+        << L" namedObjectsProbe=\"" << escapeDiagnosticValue(probeNamedObjectNamespace(restrictedToken)) << L"\""
+        << std::endl;
+}
+
 static bool isValidInheritableCandidate(HANDLE handle) {
     return handle && handle != INVALID_HANDLE_VALUE;
 }
@@ -870,7 +980,17 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
     freeStartupAttributeList(inheritedAttributes);
 
     if (!ok) {
-        fail(L"CreateProcessAsUserW failed: " + win32Message(GetLastError()));
+        DWORD errorCode = GetLastError();
+        emitCreateProcessLaunchFailureDiagnostic(
+            opts,
+            restrictedToken,
+            desktop,
+            commandLine,
+            errorCode,
+            flags,
+            inheritHandles,
+            inheritedHandles.size()
+        );
         closeSandboxDesktop(desktop);
         return 1;
     }

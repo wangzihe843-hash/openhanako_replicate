@@ -759,7 +759,11 @@ describe('SessionList context menu', () => {
     await switchToProjectView();
 
     expect(await screen.findByText('Root Project')).toBeInTheDocument();
-    expect(screen.queryByText('Project item 1')).not.toBeInTheDocument();
+    // 折叠状态通过 Collapse 组件的 AnimatePresence 退场控制。
+    // jsdom 下退场动画可能延迟完成，用 waitFor 等待内容消失。
+    await waitFor(() => {
+      expect(screen.queryByText('Project item 1')).not.toBeInTheDocument();
+    });
     fireEvent.click(screen.getByText('Root Project'));
 
     await waitFor(() => {
@@ -815,7 +819,9 @@ describe('SessionList context menu', () => {
     await switchToProjectView();
 
     expect(await screen.findByText('Work Folder')).toBeInTheDocument();
-    expect(screen.queryByText('Child Project')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Child Project')).not.toBeInTheDocument();
+    });
     fireEvent.click(screen.getByText('Work Folder'));
 
     await waitFor(() => {

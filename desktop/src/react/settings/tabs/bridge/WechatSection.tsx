@@ -82,14 +82,12 @@ export function WechatSection({ status, showToast, onSaveConfig, onReload, agent
             </button>
           </div>
         )}
-        <div style={{
-          marginTop: 'var(--space-sm)',
-          fontSize: '0.7rem',
-          color: 'var(--text-muted)',
-          lineHeight: 1.4,
-        }}>
+        <div className={bridgeStyles['wechat-hints']}>
           <div>{t('settings.bridge.wechatHint')}</div>
           <div>{t('settings.bridge.wechatExclusive')}</div>
+          <div className={bridgeStyles['wechat-info-reminder']}>
+            {t('settings.bridge.wechatReplyWindowReminder')}
+          </div>
         </div>
       </div>
     </SettingsSection>

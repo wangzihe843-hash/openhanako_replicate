@@ -16,7 +16,7 @@ import { ChannelsPanel } from './components/ChannelsPanel';
 import { ChannelCreateOverlay } from './components/channels/ChannelCreateOverlay';
 import { ChannelRenameOverlay } from './components/channels/ChannelRenameOverlay';
 import { SidebarLayout, toggleSidebar } from './components/SidebarLayout';
-import { FloatPreviewCard, useFloatCard } from './components/FloatPreviewCard';
+import { FloatSidebar, useFloatSidebar } from './components/FloatSidebar';
 import { useSidebarResize } from './hooks/use-sidebar-resize';
 import { createNewSession } from './stores/session-actions';
 import { toggleJianSidebar } from './stores/desk-actions';
@@ -71,7 +71,7 @@ function App() {
   const jianOpen = useStore(s => s.jianOpen);
   const currentTab = useStore(s => s.currentTab);
   const isPluginTab = typeof currentTab === 'string' && currentTab.startsWith('plugin:');
-  const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
+  const { side: floatSide, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatSidebar();
 
   useEffect(() => {
     console.info('[hana-launch] init-start');
@@ -102,8 +102,8 @@ function App() {
           jianOpen={jianOpen}
           onToggleSidebar={() => { hideFloat(); toggleSidebar(); }}
           onToggleJian={() => { hideFloat(); toggleJianSidebar(); }}
-          onLeftMouseEnter={(e) => showFloat('left', e.currentTarget)}
-          onRightMouseEnter={(e) => showFloat('right', e.currentTarget)}
+          onLeftMouseEnter={() => showFloat('left')}
+          onRightMouseEnter={() => showFloat('right')}
           onToggleMouseLeave={scheduleFloatHide}
         />
 
@@ -141,15 +141,13 @@ function App() {
       {/* Skill viewer overlay */}
       <Suspense fallback={null}><SkillViewerOverlay /></Suspense>
 
-      {/* Float preview card */}
-      {floatCard && (
-        <FloatPreviewCard
-          state={floatCard}
-          onMouseEnter={cancelFloatHide}
-          onMouseLeave={scheduleFloatHide}
-          onAction={hideFloat}
-        />
-      )}
+      {/* Float sidebar */}
+      <FloatSidebar
+        side={floatSide}
+        onMouseEnter={cancelFloatHide}
+        onMouseLeave={scheduleFloatHide}
+        onAction={hideFloat}
+      />
 
       {/* Connection status bar */}
       <StatusBar />

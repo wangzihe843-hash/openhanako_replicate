@@ -202,6 +202,7 @@ export function McpTab() {
           </div>
         )}
         <ConnectorForm
+          key={editingConnectorId || 'new'}
           disabled={busyKey === 'add' || (editingConnectorId ? busyKey === `update-${editingConnectorId}` : false)}
           editingConnector={state.connectors.find(connector => connector.id === editingConnectorId) || null}
           onAdd={addConnector}
@@ -211,6 +212,7 @@ export function McpTab() {
         <ConnectorList
           connectors={state.connectors}
           globalEnabled={state.enabled}
+          loading={loadingState}
           busyKey={busyKey}
           onAction={connectorAction}
           onEdit={setEditingConnectorId}

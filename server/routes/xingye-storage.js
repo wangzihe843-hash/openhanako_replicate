@@ -17,8 +17,8 @@ import {
   appendXingyeEventOnce,
   withXingyeAgentEventLock,
 } from "../../lib/xingye/events.js";
-import { safeJson } from "../hono-helpers.js";
-import { realPath } from "../utils/path-security.js";
+import { safeJson } from "../hono-helpers.ts";
+import { realPath } from "../utils/path-security.ts";
 
 const XINGYE_ROOT_DIR = "xingye";
 /**

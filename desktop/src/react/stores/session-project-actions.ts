@@ -2,7 +2,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from './index';
 import type { SessionProject, SessionProjectCatalog, SessionProjectFolder } from '../types/session-projects';
 import { EMPTY_SESSION_PROJECT_CATALOG } from './session-project-slice';
-import { UNCATEGORIZED_PROJECT_ID } from '../../../../shared/session-projects.js';
+import { UNCATEGORIZED_PROJECT_ID } from '../../../../shared/session-projects.ts';
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

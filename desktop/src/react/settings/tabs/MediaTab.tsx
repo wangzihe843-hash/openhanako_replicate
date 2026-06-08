@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
+import { updateSettingsSnapshot } from '../actions';
 import { MediaProviderDetail } from './media/MediaProviderDetail';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
@@ -53,6 +54,8 @@ type SpeechConfigPatch = {
 type MediaSelection =
   | { kind: 'imageGeneration'; providerId: string }
   | { kind: 'speechRecognition'; providerId: string };
+
+const LOADING_SELECT_VALUE = '__loading';
 
 function encodeConfigPatch(updates: Partial<MediaConfig>): Record<string, unknown> {
   return Object.fromEntries(
@@ -176,14 +179,25 @@ function SpeechProviderDetail({
 }
 
 export function MediaTab() {
+  const snapshotSpeechConfig = useSettingsStore(s => s.settingsSnapshot.data?.preferences?.speechRecognition);
   const [providers, setProviders] = useState<Record<string, MediaProvider>>({});
-  const [config, setConfig] = useState<MediaConfig>({});
+  const [config, setConfig] = useState<MediaConfig | null>(null);
+  const [imageConfigLoading, setImageConfigLoading] = useState(true);
   const [speechProviders, setSpeechProviders] = useState<Record<string, SpeechProvider>>({});
-  const [speechConfig, setSpeechConfig] = useState<SpeechConfig | null>(null);
+  const [speechConfig, setSpeechConfig] = useState<SpeechConfig | null>(() => (
+    snapshotSpeechConfig ? mergeSpeechConfig({ enabled: false }, snapshotSpeechConfig) : null
+  ));
+  const [speechConfigLoading, setSpeechConfigLoading] = useState(() => !snapshotSpeechConfig);
   const [selected, setSelected] = useState<MediaSelection | null>(null);
   const showToast = useSettingsStore(s => s.showToast);
 
+  useEffect(() => {
+    if (!snapshotSpeechConfig) return;
+    setSpeechConfig(mergeSpeechConfig({ enabled: false }, snapshotSpeechConfig));
+  }, [snapshotSpeechConfig]);
+
   const loadImageProviders = useCallback(async () => {
+    setImageConfigLoading(true);
     try {
       const res = await hanaFetch('/api/plugins/image-gen/providers');
       const data = await res.json();
@@ -197,7 +211,12 @@ export function MediaTab() {
         const providerId = ids.find(id => nextProviders[id]?.hasCredentials) || ids[0] || null;
         return providerId ? { kind: 'imageGeneration', providerId } : null;
       });
-    } catch { /* plugin not loaded yet */ }
+    } catch {
+      setProviders({});
+      setConfig({});
+    } finally {
+      setImageConfigLoading(false);
+    }
   }, []);
 
   const loadSpeechProviders = useCallback(async () => {
@@ -214,8 +233,9 @@ export function MediaTab() {
       });
     } catch (err: any) {
       setSpeechProviders({});
-      setSpeechConfig({ enabled: false });
       showToast(err.message || 'Failed to load speech recognition providers', 'error');
+    } finally {
+      setSpeechConfigLoading(false);
     }
   }, [showToast]);
 
@@ -237,6 +257,14 @@ export function MediaTab() {
   const defaultSpeechModelLabel = textOrFallback('settings.media.defaultSpeechModel', '语音条转录模型');
   const selectedImageProviderId = selected?.kind === 'imageGeneration' ? selected.providerId : null;
   const selectedSpeechProviderId = selected?.kind === 'speechRecognition' ? selected.providerId : null;
+  const imageConfigReady = !imageConfigLoading && config !== null;
+  const imageDefaultValue = imageConfigReady && config?.defaultImageModel
+    ? `${config.defaultImageModel.provider}/${config.defaultImageModel.id}`
+    : imageConfigReady ? '' : LOADING_SELECT_VALUE;
+  const speechConfigReady = !speechConfigLoading && speechConfig !== null;
+  const speechDefaultValue = speechConfigReady && speechConfig?.defaultModel
+    ? `${speechConfig.defaultModel.provider}/${speechConfig.defaultModel.id}`
+    : speechConfigReady ? '' : LOADING_SELECT_VALUE;
 
   const saveConfig = async (updates: Partial<MediaConfig>) => {
     try {
@@ -247,7 +275,7 @@ export function MediaTab() {
       });
       const data = await res.json().catch(() => null);
       if (data?.values) setConfig(data.values);
-      else setConfig(prev => applyConfigPatch(prev, updates));
+      else setConfig(prev => applyConfigPatch(prev || {}, updates));
       showToast(t('settings.saved'), 'success');
     } catch (err: any) {
       showToast(err.message || 'Save failed', 'error');
@@ -264,9 +292,16 @@ export function MediaTab() {
       const data = await res.json().catch(() => null);
       setSpeechConfig(prev => {
         const base = prev || { enabled: false };
-        if (data?.config) return mergeSpeechConfig(base, data.config);
-        if (data?.values) return mergeSpeechConfig(base, data.values);
-        return applySpeechConfigPatch(base, updates);
+        const next = data?.config
+          ? mergeSpeechConfig(base, data.config)
+          : data?.values
+            ? mergeSpeechConfig(base, data.values)
+            : applySpeechConfigPatch(base, updates);
+        updateSettingsSnapshot(snapshot => ({
+          ...snapshot,
+          preferences: { ...snapshot.preferences, speechRecognition: next },
+        }));
+        return next;
       });
       showToast(t('settings.saved'), 'success');
     } catch (err: any) {
@@ -338,7 +373,7 @@ export function MediaTab() {
               <MediaProviderDetail
                 providerId={selectedImageProviderId}
                 provider={providers[selectedImageProviderId]}
-                config={config}
+                config={config || {}}
                 onSaveConfig={saveConfig}
                 onRefresh={loadImageProviders}
               />
@@ -363,8 +398,9 @@ export function MediaTab() {
           label={t('settings.media.defaultModel')}
           control={
             <SelectWidget
-              value={config.defaultImageModel ? `${config.defaultImageModel.provider}/${config.defaultImageModel.id}` : ''}
+              value={imageDefaultValue}
               onChange={(val) => {
+                if (val === LOADING_SELECT_VALUE) return;
                 if (!val) {
                   saveConfig({ defaultImageModel: undefined });
                   return;
@@ -372,9 +408,17 @@ export function MediaTab() {
                 const [provider, ...rest] = val.split('/');
                 saveConfig({ defaultImageModel: { id: rest.join('/'), provider } });
               }}
+              disabled={!imageConfigReady}
               options={[
-                { value: '', label: '—' },
-                ...allImageModels.map(m => {
+                ...(imageConfigReady ? [{ value: '', label: '—' }] : [{ value: LOADING_SELECT_VALUE, label: t('common.loading'), disabled: true }]),
+                ...(imageConfigReady && config?.defaultImageModel && !allImageModels.some(m => `${m.provider}/${m.id}` === imageDefaultValue)
+                  ? [{
+                      value: imageDefaultValue,
+                      label: `${config.defaultImageModel.provider} / ${config.defaultImageModel.id}`,
+                      disabled: true,
+                    }]
+                  : []),
+                ...(imageConfigReady ? allImageModels.map(m => {
                   const providerHasCredentials = providers[m.provider]?.hasCredentials === true;
                   const adapterAvailable = m.adapterAvailable !== false;
                   const label = `${m.provider} / ${m.name || m.id}`;
@@ -388,7 +432,7 @@ export function MediaTab() {
                     label: unavailableReason ? `${label} (${unavailableReason})` : label,
                     disabled: !providerHasCredentials || !adapterAvailable,
                   };
-                }),
+                }) : []),
               ]}
             />
           }
@@ -407,8 +451,9 @@ export function MediaTab() {
           label={defaultSpeechModelLabel}
           control={
             <SelectWidget
-              value={speechConfig?.defaultModel ? `${speechConfig.defaultModel.provider}/${speechConfig.defaultModel.id}` : ''}
+              value={speechDefaultValue}
               onChange={(val) => {
+                if (val === LOADING_SELECT_VALUE) return;
                 if (!val) {
                   saveSpeechConfig({ defaultModel: undefined });
                   return;
@@ -416,10 +461,17 @@ export function MediaTab() {
                 const [provider, ...rest] = val.split('/');
                 saveSpeechConfig({ defaultModel: { id: rest.join('/'), provider } });
               }}
-              disabled={!speechEnabled || allSpeechModels.length === 0}
+              disabled={!speechConfigReady || !speechEnabled || (allSpeechModels.length === 0 && !speechConfig?.defaultModel)}
               options={[
-                { value: '', label: '—' },
-                ...(speechEnabled ? allSpeechModels.map(m => ({
+                ...(speechConfigReady ? [{ value: '', label: '—' }] : [{ value: LOADING_SELECT_VALUE, label: t('common.loading'), disabled: true }]),
+                ...(speechConfigReady && speechConfig?.defaultModel && !allSpeechModels.some(m => `${m.provider}/${m.id}` === speechDefaultValue)
+                  ? [{
+                      value: speechDefaultValue,
+                      label: `${speechConfig.defaultModel.provider} / ${speechConfig.defaultModel.id}`,
+                      disabled: true,
+                    }]
+                  : []),
+                ...(speechConfigReady && speechEnabled ? allSpeechModels.map(m => ({
                   value: `${m.provider}/${m.id}`,
                   label: `${m.provider} / ${m.name || m.id}`,
                 })) : []),

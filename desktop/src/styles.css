@@ -11,6 +11,11 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2.5rem;
+    --panel-edge-gap: var(--space-sm);
+    --panel-card-bg: var(--bg-card, var(--bg));
+    --panel-card-radius: var(--radius-lg);
+    --panel-card-border: 1px solid rgba(0, 0, 0, 0.08);
+    --panel-card-shadow: none;
 
     /* 对话列宽 */
     --chat-column-width: 45rem;
@@ -19,14 +24,15 @@
     --welcome-chat-input-column-width: 40rem;
 
     /* 圆角 */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 16px;
+    --radius-sm: 5px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
 
     /* 主题可覆盖的抽象 token（默认值和现有视觉一致；主题 CSS 可 override） */
-    --radius-input: 4px;        /* input / select widget / textarea / ghost button / media dropdown */
-    --radius-card: 10px;        /* SettingsSection body / skill-list-item 首尾 / tool-caps 首尾 */
-    --radius-chat-card: 4px; /* in-message chat cards */
+    --radius-input: 6px;        /* input / select widget / textarea / ghost button / media dropdown */
+    --radius-chat-surface: 16px; /* 聊天输入框外壳 */
+    --radius-card: 8px;         /* SettingsSection body / skill-list-item 首尾 / tool-caps 首尾 */
+    --radius-chat-card: 8px; /* in-message chat cards */
     --radius-chat-card-inner: max(2px, calc(var(--radius-chat-card) - 2px));
     --border-width: 1px;        /* 表单控件 / section body 边框粗细 */
     --link: var(--accent, #537D96);
@@ -50,6 +56,7 @@
     --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in:       cubic-bezier(0.7, 0, 0.84, 0);
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-smooth:   cubic-bezier(0.22, 0.68, 0, 1);
 
     /* 字体默认值：主题 CSS 可 override */
     --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -343,178 +350,100 @@ html[data-platform="linux"] .tb-toggle-right {
     color: #fff;
 }
 
-/* ── 浮动卡片（hover toggle 时弹出精简列表） ── */
-.float-card {
+/* ── 浮出侧边栏（hover toggle 时滑入的面板） ── */
+.float-sidebar {
     position: fixed;
     z-index: 300;
-    width: 240px;
-    max-height: 420px;
-    background: var(--bg);
-    border: 1px solid var(--overlay-light);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.13),
-                0 2px 6px rgba(0, 0, 0, 0.08);
-    padding: 6px;
-    opacity: 0;
-    transform: translateY(-4px);
-    transition: opacity var(--duration-fast), transform var(--duration-fast);
-    overflow: hidden;
+    top: var(--titlebar-h);
+}
+
+.float-sidebar[data-side="left"] {
+    left: 0;
+    height: 75vh;
+    padding: var(--space-sm);
+    transform: translateX(-100%);
+}
+
+.float-sidebar[data-side="right"] {
+    right: 0;
+    bottom: 0;
+    padding: 0 var(--panel-edge-gap);
+    transform: translateX(100%);
+}
+
+.float-sidebar[data-stage="enter"],
+.float-sidebar[data-stage="exit"] {
+    animation-duration: var(--duration-slow);
+    animation-timing-function: var(--ease-smooth);
+    animation-fill-mode: forwards;
+}
+
+.float-sidebar[data-side="left"][data-stage="enter"]  { animation-name: float-sidebar-in-left; }
+.float-sidebar[data-side="left"][data-stage="exit"]   { animation-name: float-sidebar-out-left; }
+.float-sidebar[data-side="right"][data-stage="enter"] { animation-name: float-sidebar-in-right; }
+.float-sidebar[data-side="right"][data-stage="exit"]  { animation-name: float-sidebar-out-right; }
+
+.float-sidebar[data-stage="idle"] {
+    transform: translateX(0);
+}
+
+@keyframes float-sidebar-in-left {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(0); }
+}
+@keyframes float-sidebar-out-left {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-100%); }
+}
+@keyframes float-sidebar-in-right {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+@keyframes float-sidebar-out-right {
+    from { transform: translateX(0); }
+    to   { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .float-sidebar[data-stage="enter"],
+    .float-sidebar[data-stage="exit"] {
+        animation: none;
+    }
+    .float-sidebar[data-stage="enter"],
+    .float-sidebar[data-stage="idle"] {
+        transform: translateX(0);
+    }
+}
+
+/* ── 面板（卡片容器） ── */
+.float-sidebar-panel {
+    height: 100%;
     display: flex;
     flex-direction: column;
 }
 
-.float-card.visible {
-    opacity: 1;
-    transform: translateY(0);
-}
-
-.float-card-list {
-    overflow-y: auto;
-}
-
-.float-card-item {
-    padding: 6px 10px;
-    font-size: 0.78rem;
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    cursor: default;
-    white-space: nowrap;
+.float-sidebar-panel-left {
+    width: var(--sidebar-width, 240px);
     overflow: hidden;
-    text-overflow: ellipsis;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: background var(--duration-instant);
+    background: var(--sidebar-bg, var(--bg));
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04),
+                0 1px 4px rgba(0, 0, 0, 0.03);
 }
 
-.float-card-item:hover {
-    background: var(--overlay-light);
-}
-
-.float-card-item.active {
-    color: var(--accent);
-    font-weight: 500;
-}
-
-.float-card-avatar {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    object-fit: cover;
-    flex-shrink: 0;
-}
-
-.float-card-item-text {
+.float-sidebar-panel-right {
+    width: var(--jian-sidebar-width, 260px);
+    background: var(--bg);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
 }
 
-.float-card-item.is-dir {
-    color: var(--text-muted);
-}
-
-.float-card-item.is-dir::before {
-    content: "";
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    margin-right: 4px;
-    vertical-align: -1px;
-    background: currentColor;
-    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
-    mask-size: contain;
-    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
-    -webkit-mask-size: contain;
-}
-
-.float-card-bar {
+/* ── 左侧面板内部：覆盖 sidebar 原有样式 ── */
+.float-sidebar-panel-left .sidebar-chat-content {
     display: flex;
-    align-items: center;
-    border-top: 1px solid var(--overlay-light);
-    margin-top: 2px;
-    padding: 2px;
-}
-
-.float-card-bar-btn {
+    flex-direction: column;
     flex: 1;
-    padding: 5px 8px;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    cursor: default;
-    border-radius: var(--radius-sm);
-    transition: color var(--duration-instant), background var(--duration-instant);
-    text-align: center;
-}
-
-.float-card-bar-btn:hover {
-    color: var(--accent);
-    background: var(--accent-light);
-}
-
-.float-card-bar-icon {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    padding: 5px 0;
-}
-
-.float-card-bar-divider {
-    width: 1px;
-    height: 14px;
-    background: var(--overlay-light);
-    flex-shrink: 0;
-}
-
-.float-card-empty {
-    padding: 16px 10px;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    text-align: center;
-}
-
-/* 笺 mini 编辑器 */
-.float-card-jian {
-    border-top: 1px solid var(--overlay-light);
-    margin-top: 2px;
-    padding: 6px;
-}
-
-.float-card-jian-label {
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    letter-spacing: 0.04em;
-    padding: 0 4px 4px;
-}
-
-.float-card-jian-input {
-    width: 100%;
-    min-height: 56px;
-    max-height: 100px;
-    padding: 6px 8px;
-    font-family: inherit;
-    font-size: 0.76rem;
-    line-height: 1.5;
-    color: var(--text);
-    background: var(--jian-note-bg, #FAF0E2);
-    border: 1px solid var(--jian-note-border, rgba(200, 160, 110, 0.2));
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    outline: none;
-    transition: border-color var(--duration-fast);
-}
-
-.float-card-jian-input:focus {
-    border-color: var(--accent);
-}
-
-.float-card-jian-input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
+    min-height: 0;
 }
 
 
@@ -986,9 +915,10 @@ html[data-platform="linux"] .tb-toggle-right {
 .md-content .mermaid-diagram {
     margin: var(--space-sm) 0;
     padding: var(--space-sm);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--overlay-subtle);
+    border: var(--panel-card-border);
+    border-radius: var(--radius-chat-card);
+    background: var(--panel-card-bg);
+    box-shadow: var(--panel-card-shadow);
     overflow-x: auto;
 }
 
@@ -2223,15 +2153,16 @@ html[data-platform="linux"] .tb-toggle-right {
     min-width: var(--jian-sidebar-width);
     height: 100%;
     overflow: hidden;
-    padding: 10px 7px 7px 0;
+    padding: 0 var(--panel-edge-gap) 0 0;
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
 }
 
 /* ── 卡片容器 ── */
 .jian-card {
-    background-color: var(--bg-card, var(--bg));
-    border-radius: var(--radius-lg);
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: var(--panel-card-bg);
+    border-radius: var(--panel-card-radius);
+    border: var(--panel-card-border);
+    box-shadow: var(--panel-card-shadow);
     overflow: hidden;
 }
 
@@ -2825,7 +2756,7 @@ body.resizing .channel-inspector-rail {
     padding: 10px 14px;
     width: 320px;
     background-color: var(--bg-card, var(--bg));
-    border-radius: 14px;
+    border-radius: var(--radius-chat-surface);
     box-shadow: 0 4px 16px rgba(0,0,0,0.09), 0 2px 6px rgba(0,0,0,0.06);
     display: flex;
     align-items: center;
@@ -4059,7 +3990,7 @@ html[data-platform="linux"] .onboarding {
    ============================================================ */
 .context-menu,
 .hana-toast,
-.float-card,
+.float-sidebar,
 .browser-floating-card,
 .drop-overlay {
     -webkit-app-region: no-drag;

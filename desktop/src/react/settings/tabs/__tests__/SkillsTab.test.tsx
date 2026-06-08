@@ -20,7 +20,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // ─── Mocks (hoisted) ──────────────────────────────────────────────────────────
 
@@ -246,6 +246,53 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     );
     expect(skillsCalls.length).toBeGreaterThanOrEqual(1);
     expect(skillsCalls[0][0]).toContain('agentId=agent-a');
+  });
+
+  it('uploads a selected skill package when no local path picker is available', async () => {
+    seedStore({ currentAgentId: 'agent-a' });
+    fetchMock.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.includes('/api/skills/install')) {
+        expect(opts).toMatchObject({ method: 'POST' });
+        return Promise.resolve(jsonResponse({ ok: true, skill: { name: 'uploaded-skill' } }));
+      }
+      if (url.includes('/api/skills/external-paths')) {
+        return Promise.resolve(jsonResponse({ configured: [], discovered: [] }));
+      }
+      if (url.includes('/api/skills/bundles')) {
+        return Promise.resolve(jsonResponse({ bundles: [] }));
+      }
+      if (url.includes('/api/skills?agentId=agent-a')) {
+        return Promise.resolve(jsonResponse({ skills: [] }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { container } = render(<SkillsTab />);
+    await flushMicrotasks();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+    const file = new File(['fake zip'], 'uploaded-skill.zip', { type: 'application/zip' });
+    fireEvent.change(input!, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((call) =>
+        typeof call[0] === 'string' && call[0].includes('/api/skills/install'))).toBe(true);
+    });
+    await flushMicrotasks(6);
+
+    const installCall = fetchMock.mock.calls.find((call) =>
+      typeof call[0] === 'string' && call[0].includes('/api/skills/install'));
+    expect(installCall).toBeTruthy();
+    const body = JSON.parse(String((installCall?.[1] as RequestInit).body || '{}'));
+    expect(body).toMatchObject({
+      file: {
+        filename: 'uploaded-skill.zip',
+      },
+    });
+    expect(typeof body.file.contentBase64).toBe('string');
+    expect(body.file.contentBase64.length).toBeGreaterThan(0);
+    expect(body.path).toBeUndefined();
   });
 
   // ── Test 2: sticky — external currentAgentId change does NOT resync ─────────

@@ -36,7 +36,8 @@ describe('process fold grouping', () => {
       user('u1'),
       assistant('a1', [thinking(), toolGroup([tool('bash')])]),
       assistant('a2', [thinking(), toolGroup([tool('read'), tool('write')])]),
-      assistant('a3', [textBlock('<p>正文</p>')]),
+      assistant('a3', [thinking(), toolGroup([tool('grep')])]),
+      assistant('a4', [textBlock('<p>正文</p>')]),
     ];
 
     const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
@@ -44,14 +45,14 @@ describe('process fold grouping', () => {
     expect(rendered).toHaveLength(3);
     expect(rendered[1]).toMatchObject({
       type: 'process_fold',
-      id: 'process-fold-a1-a2',
+      id: 'process-fold-a1-a3',
       stats: {
-        toolCount: 3,
-        thinkingCount: 2,
+        toolCount: 4,
+        thinkingCount: 3,
         unsuccessfulCount: 0,
       },
     });
-    expect(rendered[2]).toMatchObject({ type: 'source', item: items[3] });
+    expect(rendered[2]).toMatchObject({ type: 'source', item: items[4] });
   });
 
   it('does not treat assistant messages that contain mood, pulse, or reflect as foldable process', () => {
@@ -79,6 +80,11 @@ describe('process fold grouping', () => {
       ]),
       assistant('a3', [
         thinking(),
+        textBlock('<p>第三步：核对结果。</p>', '第三步：核对结果。'),
+        toolGroup([tool('verify')]),
+      ]),
+      assistant('a4', [
+        thinking(),
         textBlock('<p>全部检查完成。以下是总结。</p>', '全部检查完成。以下是总结。'),
       ]),
     ];
@@ -88,14 +94,14 @@ describe('process fold grouping', () => {
     expect(rendered).toHaveLength(3);
     expect(rendered[1]).toMatchObject({
       type: 'process_fold',
-      id: 'process-fold-a1-a2',
+      id: 'process-fold-a1-a3',
       stats: {
-        toolCount: 2,
-        thinkingCount: 2,
+        toolCount: 3,
+        thinkingCount: 3,
         unsuccessfulCount: 1,
       },
     });
-    expect(rendered[2]).toMatchObject({ type: 'source', item: items[3] });
+    expect(rendered[2]).toMatchObject({ type: 'source', item: items[4] });
   });
 
   it('keeps user steer messages as hard fold boundaries', () => {
@@ -103,9 +109,10 @@ describe('process fold grouping', () => {
       user('u1'),
       assistant('a1', [thinking(), toolGroup([tool('read')])]),
       assistant('a2', [thinking(), toolGroup([tool('write')])]),
+      assistant('a3', [thinking(), toolGroup([tool('stat')])]),
       user('u2', '先暂停一下，换个文件看'),
-      assistant('a3', [thinking(), toolGroup([tool('grep')])]),
-      assistant('a4', [textBlock('<p>第二轮总结。</p>', '第二轮总结。')]),
+      assistant('a4', [thinking(), toolGroup([tool('grep')])]),
+      assistant('a5', [textBlock('<p>第二轮总结。</p>', '第二轮总结。')]),
     ];
 
     const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
@@ -117,8 +124,8 @@ describe('process fold grouping', () => {
       'source',
       'source',
     ]);
-    expect(rendered[1]).toMatchObject({ id: 'process-fold-a1-a2' });
-    expect(rendered[2]).toMatchObject({ type: 'source', item: items[3] });
+    expect(rendered[1]).toMatchObject({ id: 'process-fold-a1-a3' });
+    expect(rendered[2]).toMatchObject({ type: 'source', item: items[4] });
   });
 
   it('keeps long middle text visible instead of treating it as process narration', () => {
@@ -133,7 +140,8 @@ describe('process fold grouping', () => {
       ]),
       assistant('a3', [thinking(), toolGroup([tool('grep')])]),
       assistant('a4', [thinking(), toolGroup([tool('ls')])]),
-      assistant('a5', [textBlock('<p>最后总结。</p>', '最后总结。')]),
+      assistant('a5', [thinking(), toolGroup([tool('pwd')])]),
+      assistant('a6', [textBlock('<p>最后总结。</p>', '最后总结。')]),
     ];
 
     const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
@@ -147,7 +155,7 @@ describe('process fold grouping', () => {
     ]);
     expect(rendered[1]).toMatchObject({ type: 'source', item: items[1] });
     expect(rendered[2]).toMatchObject({ type: 'source', item: items[2] });
-    expect(rendered[3]).toMatchObject({ id: 'process-fold-a3-a4' });
+    expect(rendered[3]).toMatchObject({ id: 'process-fold-a3-a5' });
   });
 
   it('leaves the current trailing process segment expanded while the session is streaming', () => {
@@ -155,7 +163,8 @@ describe('process fold grouping', () => {
       user('u1'),
       assistant('old-a1', [thinking(), toolGroup([tool('bash')])]),
       assistant('old-a2', [thinking(), toolGroup([tool('read')])]),
-      assistant('old-a3', [textBlock('<p>旧正文</p>')]),
+      assistant('old-a3', [thinking(), toolGroup([tool('stat')])]),
+      assistant('old-a4', [textBlock('<p>旧正文</p>')]),
       user('u2'),
       assistant('live-a1', [thinking(), toolGroup([tool('grep')])]),
       assistant('live-a2', [thinking(), toolGroup([tool('ls')])]),
@@ -171,9 +180,9 @@ describe('process fold grouping', () => {
       'source',
       'source',
     ]);
-    expect(rendered[1]).toMatchObject({ id: 'process-fold-old-a1-old-a2' });
-    expect(rendered[4]).toMatchObject({ type: 'source', item: items[5] });
-    expect(rendered[5]).toMatchObject({ type: 'source', item: items[6] });
+    expect(rendered[1]).toMatchObject({ id: 'process-fold-old-a1-old-a3' });
+    expect(rendered[4]).toMatchObject({ type: 'source', item: items[6] });
+    expect(rendered[5]).toMatchObject({ type: 'source', item: items[7] });
   });
 
   it('formats unsuccessful attempts as light process copy', () => {

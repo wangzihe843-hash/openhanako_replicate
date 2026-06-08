@@ -17,6 +17,48 @@ body,
   height: 100%;
 }
 
+.mobile-update-banner {
+  position: fixed;
+  top: calc(var(--titlebar-h, 44px) + 8px);
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  z-index: 120;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--overlay-light);
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-card, var(--bg)) 94%, var(--accent) 6%);
+  box-shadow: 0 8px 24px rgba(40, 34, 24, 0.12);
+  -webkit-app-region: no-drag;
+}
+
+.mobile-update-banner span {
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.mobile-update-banner button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  background: var(--accent-light);
+  font: inherit;
+}
+
+.mobile-update-banner button:active {
+  transform: translateY(1px);
+}
+
 /* 桌面已把 titlebar 改为文档流布局行；移动端维持 fixed overlay——
    移动端侧栏是 fixed 抽屉、preview 全屏、chat-area 等都依赖 --titlebar-h 避让，
    移动端 titlebar 正规化留作后续。特异性 (0,2,0) 覆盖桌面的 .titlebar (0,1,0)。 */
@@ -162,7 +204,7 @@ body,
   }
 
   .mobile-desktop-root #previewPanel[data-preview-open="true"] [data-preview-body-shell] {
-    margin: var(--space-sm);
+    margin: var(--panel-edge-gap);
   }
 
   .mobile-desktop-root .main-content.welcome-mode .chat-area {
@@ -170,7 +212,7 @@ body,
   }
 
   .mobile-desktop-root .jian-sidebar-inner {
-    padding-right: 7px;
-    padding-left: 7px;
+    padding-right: var(--panel-edge-gap);
+    padding-left: var(--panel-edge-gap);
   }
 }

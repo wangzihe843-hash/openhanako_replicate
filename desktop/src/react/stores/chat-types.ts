@@ -170,6 +170,34 @@ export interface SettingsUpdatePayload {
   changes?: SettingsUpdateChange[];
 }
 
+export interface SuggestionCardBlock {
+  type: 'suggestion_card';
+  kind: 'automation_draft' | string;
+  confirmId?: string;
+  suggestionId?: string;
+  suggestionShortCode?: string;
+  operation?: 'create' | 'update' | string;
+  status: 'pending' | 'approved' | 'rejected' | string;
+  title: string;
+  description?: string;
+  target?: {
+    type?: string;
+    id?: string | null;
+    label?: string | null;
+  };
+  detail?: {
+    kind?: string;
+    operation?: 'create' | 'update' | string;
+    jobData?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  actions?: Array<{
+    id?: string;
+    kind?: string;
+    label?: string;
+  }>;
+}
+
 // 物种 A：文本装饰器（流式组装，upsert 到 blocks 数组）
 export type TextDecorator =
   | { type: 'thinking'; content: string; sealed: boolean }
@@ -186,6 +214,7 @@ export type RichBlock =
   | { type: 'screenshot'; base64: string; mimeType: string }
   | { type: 'skill'; skillName: string; skillFilePath: string; fileId?: string; installedFile?: Record<string, unknown>; installedSkillSource?: Record<string, unknown> }
   | { type: 'cron_confirm'; confirmId?: string; jobData: Record<string, unknown>; status: 'pending' | 'approved' | 'rejected' }
+  | SuggestionCardBlock
   | { type: 'settings_confirm'; confirmId?: string; settingKey: string; cardType: 'toggle' | 'list' | 'text'; currentValue: string; proposedValue: string; options?: string[]; optionLabels?: Record<string, string>; label: string; description?: string; frontend?: boolean; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' }
   | { type: 'settings_update'; update: SettingsUpdatePayload }
   | SessionConfirmationBlock
@@ -256,6 +285,7 @@ export interface ChatMessage {
 
 export type ChatListItem =
   | { type: 'message'; data: ChatMessage }
+  | { type: 'interlude'; id: string; data: Extract<ContentBlock, { type: 'interlude' }> }
   | { type: 'compaction'; id: string; yuan: string };
 
 // ── Per-session 模型快照 ──

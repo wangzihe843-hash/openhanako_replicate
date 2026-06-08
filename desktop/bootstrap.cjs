@@ -201,4 +201,28 @@ function loadDesktopMain() {
   }
 }
 
-loadDesktopMain();
+function tryStartOfficePdfHelper() {
+  let helper;
+  try {
+    helper = require("./src/office-pdf-helper.cjs");
+  } catch (err) {
+    if (process.argv.some((arg) => arg === "--hana-office-html-to-pdf" || arg.startsWith("--hana-office-html-to-pdf="))) {
+      console.error("[office-pdf-helper] failed to load helper:", err?.stack || err?.message || err);
+      process.exitCode = 1;
+      try { app.exit(1); } catch {}
+      return true;
+    }
+    return false;
+  }
+  if (!helper.isOfficePdfHelperInvocation(process.argv)) return false;
+  helper.runOfficePdfHelperFromArgv(process.argv).catch((err) => {
+    console.error("[office-pdf-helper]", err?.stack || err?.message || err);
+    process.exitCode = 1;
+    try { app.exit(1); } catch {}
+  });
+  return true;
+}
+
+if (!tryStartOfficePdfHelper()) {
+  loadDesktopMain();
+}

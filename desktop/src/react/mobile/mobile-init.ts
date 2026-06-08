@@ -9,6 +9,8 @@ import { configureWsMessageHandler } from '../services/ws-message-handler';
 import { createBrowserServerConnection, upsertServerConnection, type ServerIdentity } from '../services/server-connection';
 import { loadModels } from '../utils/ui-helpers';
 import { applySyncedAppearancePreferences, type SyncedAppearancePreferences } from '../services/appearance-sync';
+import { applyEditorTypography } from '../editor/typography';
+import type { ThinkingLevel } from '../stores/model-slice';
 import type { Agent, Session, SessionPermissionMode } from '../types';
 
 export interface MobilePrincipal {
@@ -41,6 +43,9 @@ export interface MobileBootstrap {
   homeFolder?: string | null;
   cwdHistory?: string[];
   memoryMasterEnabled?: boolean;
+  memoryEnabled?: boolean;
+  thinkingLevel?: ThinkingLevel;
+  editor?: unknown;
   avatars?: Record<string, boolean>;
   agents?: Agent[];
   appearance?: SyncedAppearancePreferences;
@@ -84,6 +89,7 @@ export async function initializeMobileRuntime(principal: MobilePrincipal): Promi
   const bootstrapRes = await hanaFetch('/api/mobile/bootstrap');
   const bootstrap = await bootstrapRes.json() as MobileBootstrap;
   applySyncedAppearancePreferences(bootstrap.appearance);
+  applyEditorTypography(bootstrap.editor);
 
   if (window.i18n?.load) {
     await window.i18n.load(bootstrap.locale || 'zh-CN');
@@ -115,6 +121,8 @@ export async function initializeMobileRuntime(principal: MobilePrincipal): Promi
       memoryMasterEnabled: typeof bootstrap.memoryMasterEnabled === 'boolean'
         ? bootstrap.memoryMasterEnabled
         : currentAgent.memoryMasterEnabled !== false,
+      memoryEnabled: typeof bootstrap.memoryEnabled === 'boolean' ? bootstrap.memoryEnabled : useStore.getState().memoryEnabled,
+      ...(bootstrap.thinkingLevel ? { thinkingLevel: bootstrap.thinkingLevel } : {}),
     });
   }
   loadAvatars(bootstrap.avatars);
@@ -197,6 +205,7 @@ export async function createMobileSession(): Promise<string | null> {
   };
   if (state.selectedFolder) body.cwd = state.selectedFolder;
   if (state.workspaceFolders?.length) body.workspaceFolders = state.workspaceFolders;
+  if (state.pendingNewSessionThinkingLevel) body.thinkingLevel = state.pendingNewSessionThinkingLevel;
   if (state.selectedAgentId && state.selectedAgentId !== state.currentAgentId) {
     body.agentId = state.selectedAgentId;
   }
@@ -220,6 +229,7 @@ export async function createMobileSession(): Promise<string | null> {
     pendingSessionSwitchPath: null,
     pendingNewSession: false,
     welcomeVisible: false,
+    pendingNewSessionThinkingLevel: null,
     workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
     selectedAgentId: null,
   };

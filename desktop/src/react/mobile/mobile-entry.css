@@ -7,6 +7,11 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2.5rem;
+    --panel-edge-gap: var(--space-sm);
+    --panel-card-bg: var(--bg-card, var(--bg));
+    --panel-card-radius: var(--radius-lg);
+    --panel-card-border: 1px solid rgba(0, 0, 0, 0.08);
+    --panel-card-shadow: none;
     --chat-column-width: 45rem;
     --chat-input-column-extra: 1.25rem;
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
@@ -834,15 +839,16 @@ html[data-platform="linux"] .tb-toggle-right {
     min-width: var(--jian-sidebar-width);
     height: 100%;
     overflow: hidden;
-    padding: 10px 7px 7px 0;
+    padding: 0 var(--panel-edge-gap) 0 0;
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
 }
 
 .jian-card {
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: var(--radius-lg);
-    background-color: var(--bg-card, var(--bg));
+    border: var(--panel-card-border);
+    border-radius: var(--panel-card-radius);
+    background: var(--panel-card-bg);
+    box-shadow: var(--panel-card-shadow);
 }
 
 .resize-handle {

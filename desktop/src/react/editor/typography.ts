@@ -1,5 +1,4 @@
-// @ts-expect-error — shared JS module
-import * as sharedEditorTypography from '../../../../shared/editor-typography.js';
+import * as sharedEditorTypography from '../../../../shared/editor-typography.ts';
 import {
   FOLLOW_READING_FONT_ID,
   getCssVariableFontFamilyForPreset,
@@ -27,11 +26,11 @@ export interface EditorTypography {
 export const DEFAULT_EDITOR_TYPOGRAPHY: EditorTypography = sharedEditorTypography.DEFAULT_EDITOR_TYPOGRAPHY;
 
 export function normalizeEditorTypography(value: unknown): EditorTypography {
-  return sharedEditorTypography.normalizeEditorTypography(value);
+  return sharedEditorTypography.normalizeEditorTypography(value) as EditorTypography;
 }
 
 export function mergeEditorTypography(base: unknown, patch: unknown): EditorTypography {
-  return sharedEditorTypography.mergeEditorTypography(base, patch);
+  return sharedEditorTypography.mergeEditorTypography(base, patch) as EditorTypography;
 }
 
 export function applyEditorTypography(

@@ -24,10 +24,72 @@ void import('./react/mobile/MobileApp').then(({ MobileApp }) => {
   root.textContent = 'HanaAgent 启动失败';
 });
 
-if ('serviceWorker' in navigator && window.isSecureContext) {
+const MOBILE_UPDATE_AVAILABLE_EVENT = 'hana-mobile-update-available';
+const MOBILE_APPLY_UPDATE_EVENT = 'hana-mobile-apply-update';
+
+function registerMobileServiceWorker(): void {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+
+  let hadController = Boolean(navigator.serviceWorker.controller);
+  let reloadOnControllerChange = false;
+  let reloadStarted = false;
+
+  const notifyUpdateAvailable = () => {
+    window.dispatchEvent(new CustomEvent(MOBILE_UPDATE_AVAILABLE_EVENT));
+  };
+
+  const reloadForUpdate = () => {
+    if (reloadStarted) return;
+    reloadStarted = true;
+    window.location.reload();
+  };
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloadOnControllerChange) {
+      reloadForUpdate();
+      return;
+    }
+    if (hadController) notifyUpdateAvailable();
+    hadController = true;
+  });
+
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
+    navigator.serviceWorker.register('./sw.js').then((registration) => {
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        notifyUpdateAvailable();
+      }
+
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            notifyUpdateAvailable();
+          }
+        });
+      });
+
+      const checkForUpdate = () => {
+        if (document.visibilityState === 'hidden') return;
+        void registration.update().catch((err) => {
+          console.warn('[mobile] service worker update check failed:', err);
+        });
+      };
+
+      window.addEventListener(MOBILE_APPLY_UPDATE_EVENT, () => {
+        if (registration.waiting) {
+          reloadOnControllerChange = true;
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          return;
+        }
+        reloadForUpdate();
+      });
+      window.addEventListener('focus', checkForUpdate);
+      document.addEventListener('visibilitychange', checkForUpdate);
+    }).catch((err) => {
       console.warn('[mobile] service worker registration failed:', err);
     });
   });
 }
+
+registerMobileServiceWorker();

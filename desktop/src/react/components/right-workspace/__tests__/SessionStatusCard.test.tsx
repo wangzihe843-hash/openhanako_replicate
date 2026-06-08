@@ -94,4 +94,13 @@ describe('SessionStatusCard', () => {
     });
     expect(mockState.setSessionAuthorizedFolders).toHaveBeenCalledWith('/s/a.jsonl', ['/Users/x/Assets']);
   });
+
+  it('PWA 没有目录选择能力时不显示添加授权目录按钮', () => {
+    mockState.currentSessionPath = '/s/a.jsonl';
+    (window as any).platform = {};
+
+    render(<SessionStatusCard />);
+
+    expect(screen.queryByRole('button', { name: 'rightWorkspace.session.addAuthorizedFolder' })).toBeNull();
+  });
 });

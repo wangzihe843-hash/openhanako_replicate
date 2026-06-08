@@ -7,6 +7,7 @@ import { SelectWidget } from '@/ui';
 import { KeyInput } from '../../widgets/KeyInput';
 import { getApiKeySavePlan } from './api-key-save-plan';
 import { parseProviderHeaderLines, ProviderHeadersField, serializeProviderHeaders } from './ProviderHeadersField';
+import { isMaskedSecretValue } from '../../../../../../shared/secret-custody.ts';
 import styles from '../../Settings.module.css';
 
 interface DiscoveredProviderModel {
@@ -67,7 +68,7 @@ async function resolveModelsForInitialSave(
   return payload;
 }
 
-export function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup, presetInfo, onRefresh }: {
+export function ApiKeyCredentials({ providerId, summary, providerConfig: _providerConfig, isPresetSetup, presetInfo, onRefresh }: {
   providerId: string;
   summary: ProviderSummary;
   providerConfig?: Record<string, unknown>;
@@ -164,6 +165,12 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig, isPrese
 
   const [connStatus, setConnStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 
+  const revealSavedApiKey = async () => {
+    const res = await hanaFetch(`/api/providers/${encodeURIComponent(providerId)}/api-key`);
+    const data = await res.json();
+    return typeof data.api_key === 'string' ? data.api_key : '';
+  };
+
   const verifyOnly = async (btn: HTMLButtonElement) => {
     setConnStatus('testing');
     btn.classList.add(styles['spinning']);
@@ -194,6 +201,12 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig, isPrese
           <KeyInput
             value={keyVal}
             onChange={(v) => { setKeyVal(v); setKeyEdited(true); setConnStatus('idle'); }}
+            onReveal={isMaskedSecretValue(keyVal) ? revealSavedApiKey : undefined}
+            onRevealValue={(v) => { setKeyVal(v); setConnStatus('idle'); }}
+            onRevealError={(err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              showToast(msg, 'error');
+            }}
             placeholder={isPresetSetup ? t('settings.providers.setupHint') : ''}
           />
           <button

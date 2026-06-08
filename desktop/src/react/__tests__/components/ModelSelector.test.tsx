@@ -14,6 +14,8 @@ const storeState = {
   sessionModelsByPath: {} as Record<string, unknown>,
   setModelSwitching: vi.fn(),
   updateSessionModel: vi.fn(),
+  setThinkingLevel: vi.fn(),
+  setPendingNewSessionThinkingLevel: vi.fn(),
   addToast,
 };
 
@@ -85,7 +87,7 @@ describe('ModelSelector', () => {
     );
 
     expect(screen.getByRole('button', { name: /model.unavailable/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Removed Model/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: /Removed Model/ })).toBeNull();
   });
 
   it('maps a server streaming-switch rejection to the same explicit warning', async () => {
@@ -107,7 +109,7 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector models={models} sessionModel={storeState.sessionModelsByPath['/sessions/a.jsonl'] as any} />);
     fireEvent.click(screen.getByRole('button', { name: /DeepSeek V4 Flash/ }));
-    fireEvent.click(screen.getByRole('button', { name: /MiMo V2 Omni/ }));
+    fireEvent.click(screen.getByRole('option', { name: /MiMo V2 Omni/ }));
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith('model.switchWhileStreaming', 'warning', 4000, {
@@ -116,6 +118,25 @@ describe('ModelSelector', () => {
     });
     expect(hanaFetch).toHaveBeenCalledWith('/api/models/switch', expect.objectContaining({
       throwOnHttpError: false,
+    }));
+  });
+
+  it('applies the selected model thinking default while preparing a new session', async () => {
+    vi.mocked(hanaFetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true, thinkingLevel: 'high' }))
+      .mockResolvedValueOnce(jsonResponse({ models: [{ ...models[1], isCurrent: true }] }));
+
+    render(<ModelSelector models={[{ ...models[0], isCurrent: true }, models[1]]} />);
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek V4 Flash/ }));
+    fireEvent.click(screen.getByRole('option', { name: /MiMo V2 Omni/ }));
+
+    await waitFor(() => {
+      expect(storeState.setThinkingLevel).toHaveBeenCalledWith('high');
+    });
+    expect(storeState.setPendingNewSessionThinkingLevel).toHaveBeenCalledWith('high');
+    expect(hanaFetch).toHaveBeenCalledWith('/api/models/set', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ modelId: 'mimo-v2-omni', provider: 'mimo' }),
     }));
   });
 
@@ -147,7 +168,7 @@ describe('ModelSelector', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: /DeepSeek V4 Flash/ }));
-    fireEvent.click(screen.getByRole('button', { name: /MiniMax M2.7/ }));
+    fireEvent.click(screen.getByRole('option', { name: /MiniMax M2.7/ }));
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith('Model not found: minimax-token-plan/MiniMax-M2.7', 'error');

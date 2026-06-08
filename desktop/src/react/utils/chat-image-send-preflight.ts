@@ -1,7 +1,6 @@
 import { isImageFile, isVideoFile } from './format';
 import { isAudioFileName } from './file-kind';
-// @ts-expect-error shared JS module
-import { modelSupportsDirectAudioInput } from '../../../../shared/model-capabilities.js';
+import { modelSupportsDirectAudioInput } from '../../../../shared/model-capabilities.ts';
 
 export interface ChatImageAttachment {
   path: string;

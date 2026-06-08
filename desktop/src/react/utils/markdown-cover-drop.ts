@@ -4,7 +4,13 @@ import {
   type AppDraggedFile,
 } from './app-file-drag';
 import { extOfName, isImageOrSvgExt } from './file-kind';
-import { applyMarkdownCoverImage, dispatchCoverNotice } from './markdown-cover-generation';
+import {
+  applyMarkdownCoverImage,
+  dispatchCoverNotice,
+  type MarkdownCoverTargetInput,
+  type WorkbenchMarkdownCoverTarget,
+} from './markdown-cover-generation';
+import type { RemoteWorkbenchContentRef } from '../types';
 
 function draggedFileIsImage(file: AppDraggedFile): boolean {
   if (file.isDirectory || !file.path) return false;
@@ -16,27 +22,83 @@ function draggedFileIsImage(file: AppDraggedFile): boolean {
 export function getMarkdownCoverDropImagePath(dataTransfer?: DataTransfer | null): string | null {
   const payload = readAppFileDragPayload(dataTransfer);
   const file = payload?.files.find(draggedFileIsImage);
-  return file?.path || null;
+  if (file?.path) return file.path;
+  const browserFile = getMarkdownCoverDropImageFile(dataTransfer);
+  return browserFile ? window.platform?.getFilePath?.(browserFile) || null : null;
 }
 
 export function hasMarkdownCoverDropImage(dataTransfer?: DataTransfer | null): boolean {
-  return Boolean(getMarkdownCoverDropImagePath(dataTransfer));
+  return Boolean(getMarkdownCoverDropImagePath(dataTransfer) || getMarkdownCoverDropImageFile(dataTransfer));
+}
+
+function dataTransferFiles(dataTransfer?: DataTransfer | null): File[] {
+  if (!dataTransfer) return [];
+  const files = Array.from(dataTransfer.files || []);
+  if (files.length > 0) return files;
+  return Array.from(dataTransfer.items || [])
+    .filter(item => item.kind === 'file')
+    .map(item => item.getAsFile())
+    .filter((file): file is File => !!file);
+}
+
+function browserFileIsImage(file: File): boolean {
+  const mime = file.type?.toLowerCase() || '';
+  if (mime.startsWith('image/')) return true;
+  return isImageOrSvgExt(extOfName(file.name));
+}
+
+function getMarkdownCoverDropImageFile(dataTransfer?: DataTransfer | null): File | null {
+  return dataTransferFiles(dataTransfer).find(browserFileIsImage) || null;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('failed to read cover image'));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function coverTargetInput(filePath: string | null | undefined, target?: WorkbenchMarkdownCoverTarget | RemoteWorkbenchContentRef | null): MarkdownCoverTargetInput | null {
+  if (filePath) return { filePath };
+  if (target) return { target };
+  return null;
 }
 
 export async function applyMarkdownCoverImageDrop({
   filePath,
+  target,
   dataTransfer,
 }: {
-  filePath: string | null | undefined;
+  filePath?: string | null;
+  target?: WorkbenchMarkdownCoverTarget | RemoteWorkbenchContentRef | null;
   dataTransfer?: DataTransfer | null;
 }): Promise<boolean> {
-  if (!filePath) return false;
+  const targetInput = coverTargetInput(filePath, target);
+  if (!targetInput) return false;
   const payload = readAppFileDragPayload(dataTransfer);
   const imageFilePath = getMarkdownCoverDropImagePath(dataTransfer);
-  if (!imageFilePath) return false;
+  const imageFile = getMarkdownCoverDropImageFile(dataTransfer);
+  if (!imageFilePath && !imageFile) return false;
 
   try {
-    const result = await applyMarkdownCoverImage({ filePath, imageFilePath });
+    const useUpload = Boolean(target) && imageFile;
+    const result = useUpload
+      ? await applyMarkdownCoverImage({
+        ...targetInput,
+        image: {
+          filename: imageFile.name || 'cover.png',
+          contentBase64: await fileToBase64(imageFile),
+        },
+      })
+      : await applyMarkdownCoverImage({
+        ...targetInput,
+        imageFilePath: imageFilePath!,
+      });
     dispatchCoverNotice(
       result.ok ? 'Cover 已更新。' : `Cover 更新失败：${result.error}`,
       result.ok ? 'success' : 'error',

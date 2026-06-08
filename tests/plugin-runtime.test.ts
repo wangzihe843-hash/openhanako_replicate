@@ -11,14 +11,28 @@ import {
   defineTool,
   failTask,
   HANA_BUS_SKIP,
+  createAgent,
+  createSession,
+  getAgentProfile,
+  getSession,
+  generateImage,
   listUsageEntries,
+  listAgents,
+  listMediaProviders,
+  listSessions,
+  resolveMediaModel,
   registerTask,
   requestBus,
+  sampleText,
   scheduleTask,
+  sendSessionMessage,
+  subscribeSessionEvents,
   sessionFileToMediaItem,
   subscribeUsageEvents,
   unscheduleTask,
   updateTask,
+  updateAgent,
+  updateSession,
 } from '@hana/plugin-runtime';
 
 describe('plugin runtime SDK', () => {
@@ -191,6 +205,71 @@ describe('plugin runtime SDK', () => {
     ).resolves.toEqual({ sent: true });
 
     expect(request).toHaveBeenCalledWith('session:send', { text: 'hello' }, { timeoutMs: 5000 });
+  });
+
+  it('wraps session, agent, model, and media bus calls with typed helpers', async () => {
+    const unsubscribe = vi.fn();
+    const request = vi.fn(async (type: string, payload: unknown) => {
+      if (type === 'session:create') return { sessionPath: '/s/new.jsonl', agentId: 'agent-a' };
+      if (type === 'session:get') return { session: { path: (payload as any).sessionPath } };
+      if (type === 'session:list') return { sessions: [] };
+      if (type === 'session:update') return { ok: true, session: { path: (payload as any).sessionPath } };
+      if (type === 'session:send') return { accepted: true, sessionPath: (payload as any).sessionPath };
+      if (type === 'agent:list') return { agents: [] };
+      if (type === 'agent:profile') return { profile: { id: (payload as any).agentId, name: 'A' } };
+      if (type === 'agent:create') return { agent: { id: 'plugin-agent', name: 'Plugin Agent' } };
+      if (type === 'agent:update') return { ok: true, agent: { id: (payload as any).agentId } };
+      if (type === 'model:sample-text') return { text: 'sample' };
+      if (type === 'provider:media-providers') return { providers: {} };
+      if (type === 'provider:resolve-media-model') return { providerId: 'openai', modelId: 'gpt-image-1', protocolId: 'openai-images' };
+      if (type === 'media:generate-image') return { ok: true, batchId: 'batch-1' };
+      throw new Error(type);
+    });
+    const subscribe = vi.fn(() => unsubscribe);
+    const ctx = { pluginId: 'tavern', bus: { request, subscribe } };
+
+    await createSession(ctx as any, { agentId: 'agent-a', kind: 'tavern', visibility: 'plugin_private' });
+    await getSession(ctx as any, '/s/new.jsonl');
+    await listSessions(ctx as any, { ownerPluginId: 'tavern' });
+    await updateSession(ctx as any, '/s/new.jsonl', { pinned: true });
+    await sendSessionMessage(ctx as any, '/s/new.jsonl', {
+      text: 'hello',
+      context: { beforeUser: 'world lore' },
+    });
+    subscribeSessionEvents(ctx as any, '/s/new.jsonl', () => {});
+    await listAgents(ctx as any, { includePluginPrivate: true });
+    await getAgentProfile(ctx as any, 'agent-a');
+    await createAgent(ctx as any, { name: 'Plugin Agent', visibility: 'plugin_private' });
+    await updateAgent(ctx as any, 'plugin-agent', { visibility: 'public' });
+    await sampleText(ctx as any, { messages: [{ role: 'user', content: 'sample' }] });
+    await listMediaProviders(ctx as any, { capability: 'image_generation' });
+    await resolveMediaModel(ctx as any, { providerId: 'openai', modelId: 'gpt-image-1' });
+    await generateImage(ctx as any, { sessionPath: '/s/new.jsonl', prompt: 'a quiet room' });
+
+    expect(request).toHaveBeenCalledWith('session:create', {
+      agentId: 'agent-a',
+      kind: 'tavern',
+      visibility: 'plugin_private',
+      ownerPluginId: 'tavern',
+    }, undefined);
+    expect(request).toHaveBeenCalledWith('session:send', {
+      sessionPath: '/s/new.jsonl',
+      text: 'hello',
+      context: { beforeUser: 'world lore', metadata: { pluginId: 'tavern' } },
+    }, undefined);
+    expect(subscribe).toHaveBeenCalledWith(expect.any(Function), {
+      sessionPath: '/s/new.jsonl',
+    });
+    expect(request).toHaveBeenCalledWith('agent:create', {
+      name: 'Plugin Agent',
+      visibility: 'plugin_private',
+      ownerPluginId: 'tavern',
+    }, undefined);
+    expect(request).toHaveBeenCalledWith('media:generate-image', {
+      sessionPath: '/s/new.jsonl',
+      prompt: 'a quiet room',
+      pluginId: 'tavern',
+    }, undefined);
   });
 
   it('wraps task bus calls with typed helper payloads', async () => {

@@ -4,6 +4,7 @@ import { t, autoSaveConfig, savePins } from '../../helpers';
 import { hanaFetch } from '../../api';
 import { PinItem } from './AgentPins';
 import { SettingsSection } from '../../components/SettingsSection';
+import { Toggle } from '../../widgets/Toggle';
 import styles from '../../Settings.module.css';
 
 type MemoryHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'disabled' | 'unavailable';
@@ -105,8 +106,8 @@ function MemoryHealthNotice({ health, error }: {
 
 export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, currentPins }: {
   agentId: string | null;
-  hasUtilityModel: boolean;
-  memoryEnabled: boolean;
+  hasUtilityModel: boolean | undefined;
+  memoryEnabled: boolean | undefined;
   currentPins: string[];
 }) {
   const [pinInput, setPinInput] = useState('');
@@ -114,7 +115,7 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, current
   const [healthError, setHealthError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!agentId || !hasUtilityModel || !memoryEnabled) {
+    if (!agentId || hasUtilityModel !== true || memoryEnabled !== true) {
       setHealth(null);
       setHealthError(null);
       return;
@@ -163,23 +164,27 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, current
 
   /* 记忆开关作为 section title 右侧 context（和 WorkTab 的 AgentSelect 作 context 同构）
    * hasUtilityModel=false 时 toggle 禁用，below 显示提示 */
+  const utilityModelReady = hasUtilityModel !== undefined;
+  const memoryToggleOn = !utilityModelReady ? undefined : hasUtilityModel ? memoryEnabled : false;
   const memoryToggle = (
-    <button
-      className={`hana-toggle${hasUtilityModel && memoryEnabled ? ' on' : ''}${!hasUtilityModel ? ' disabled' : ''}`}
-      onClick={() => hasUtilityModel && autoSaveConfig({ memory: { enabled: !memoryEnabled } })}
-      disabled={!hasUtilityModel}
-      title={!hasUtilityModel ? t('settings.memory.needsUtilityModel') : undefined}
+    <Toggle
+      on={memoryToggleOn}
+      onChange={(enabled) => {
+        if (hasUtilityModel) autoSaveConfig({ memory: { enabled } });
+      }}
+      disabled={!utilityModelReady || !hasUtilityModel}
+      title={utilityModelReady && !hasUtilityModel ? t('settings.memory.needsUtilityModel') : undefined}
     />
   );
 
   return (
     <SettingsSection title={t('settings.memory.sectionTitle')} context={memoryToggle}>
       <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
-        {!hasUtilityModel && (
+        {utilityModelReady && !hasUtilityModel && (
           <p className={styles['settings-inline-note']} style={{ opacity: 0.6, marginTop: 0, marginBottom: 'var(--space-md)' }}>{t('settings.memory.needsUtilityModel')}</p>
         )}
 
-        <div className={!hasUtilityModel || !memoryEnabled ? 'settings-disabled' : ''}>
+        <div className={hasUtilityModel !== true || memoryEnabled !== true ? 'settings-disabled' : ''}>
           <MemoryHealthNotice health={health} error={healthError} />
 
           <div className={styles['settings-subsection']}>

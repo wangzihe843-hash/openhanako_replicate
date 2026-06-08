@@ -18,11 +18,6 @@
  *     bundle/                 ← Vite bundle 产出
  *       index.js              ← 入口（~750KB）
  *       cli.js                ← server-first CLI 入口
- *       chunks/               ← 按模块拆分的 chunk
- *         shared-XXXX.js
- *         core-XXXX.js
- *         lib-XXXX.js
- *         hub-XXXX.js
  *     lib/                    ← 数据文件（非源码，运行时 fromRoot() 读取）
  *       known-models.json
  *       known-model-fallbacks.json
@@ -45,6 +40,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { createHash } from "crypto";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { builtinModules } from "module";
@@ -77,7 +73,14 @@ fs.mkdirSync(outDir, { recursive: true });
 
 // ── 1. 下载 / 缓存 Node.js runtime ──
 // 先拿到目标 Node，后续 npm install 全用它跑，保证 ABI 一致
-const NODE_VERSION = "v22.16.0";
+const NODE_VERSION = "v24.15.0";
+const NODE_RUNTIME_SHA256 = {
+  [`node-${NODE_VERSION}-darwin-arm64.tar.gz`]: "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
+  [`node-${NODE_VERSION}-darwin-x64.tar.gz`]: "ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b",
+  [`node-${NODE_VERSION}-linux-arm64.tar.gz`]: "73afc234d558c24919875f51c2d1ea002a2ada4ea6f83601a383869fefa64eed",
+  [`node-${NODE_VERSION}-linux-x64.tar.gz`]: "44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89",
+  [`node-${NODE_VERSION}-win-x64.zip`]: "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+};
 const cacheDir = path.join(ROOT, ".cache", "node-runtime");
 fs.mkdirSync(cacheDir, { recursive: true });
 
@@ -106,10 +109,28 @@ const cachedNpmCli = isWin
   ? path.join(cacheDir, nodeDirName, "node_modules", "npm", "bin", "npm-cli.js")
   : path.join(cacheDir, nodeDirName, "lib", "node_modules", "npm", "bin", "npm-cli.js");
 
+function verifyNodeRuntimeArchive(archivePath, archiveName) {
+  const expected = NODE_RUNTIME_SHA256[archiveName];
+  if (!expected) {
+    throw new Error(`[build-server] missing pinned Node runtime checksum for ${archiveName}`);
+  }
+  const actual = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+  if (actual !== expected) {
+    try { fs.rmSync(archivePath, { force: true }); } catch {
+      // Best-effort cleanup; the checksum error below is the actionable failure.
+    }
+    throw new Error(
+      `[build-server] node runtime archive checksum mismatch for ${archiveName}: expected ${expected}, got ${actual}`,
+    );
+  }
+  console.log(`[build-server] Node.js runtime checksum verified: ${archiveName}`);
+}
+
 if (!fs.existsSync(cachedNodeBin)) {
   const url = `https://nodejs.org/dist/${NODE_VERSION}/${filename}`;
   console.log(`[build-server] downloading Node.js ${NODE_VERSION} for ${platform}-${arch}...`);
-  execSync(`curl -L -o "${cachedArchive}" "${url}"`, { stdio: "inherit" });
+  execSync(`curl --fail --location --show-error -o "${cachedArchive}" "${url}"`, { stdio: "inherit" });
+  verifyNodeRuntimeArchive(cachedArchive, filename);
 
   if (isWin) {
     execSync(`powershell -command "Expand-Archive -Path '${cachedArchive}' -DestinationPath '${cacheDir}' -Force"`, { stdio: "inherit" });
@@ -117,7 +138,9 @@ if (!fs.existsSync(cachedNodeBin)) {
     execSync(`tar xzf "${cachedArchive}" -C "${cacheDir}"`, { stdio: "inherit" });
   }
 
-  try { fs.unlinkSync(cachedArchive); } catch {}
+  try { fs.unlinkSync(cachedArchive); } catch {
+    // Best-effort cache cleanup after a verified extraction.
+  }
   console.log("[build-server] Node.js runtime cached");
 } else {
   console.log(`[build-server] using cached Node.js ${NODE_VERSION}`);
@@ -205,7 +228,7 @@ console.log("[build-server] Vite bundle copied to bundle/");
 
 console.log("[build-server] running CLI bundle...");
 execSync(
-  `npx esbuild "${path.join(ROOT, "cli", "entry.js")}" --bundle --platform=node --format=esm --target=node22 --external:ws --outfile="${path.join(bundleOutDir, "cli.js")}"`,
+  `npx esbuild "${path.join(ROOT, "cli", "entry.ts")}" --bundle --platform=node --format=esm --target=node24 --external:ws --outfile="${path.join(bundleOutDir, "cli.js")}"`,
   {
     cwd: ROOT,
     stdio: "inherit",
@@ -213,7 +236,7 @@ execSync(
 );
 console.log("[build-server] CLI bundle copied to bundle/cli.js");
 
-fs.copyFileSync(path.join(ROOT, "server", "bootstrap.js"), path.join(outDir, "bootstrap.js"));
+fs.copyFileSync(path.join(ROOT, "server", "bootstrap.ts"), path.join(outDir, "bootstrap.js"));
 console.log("[build-server] bootstrap copied");
 
 // ── 3. 复制运行时数据文件 ──

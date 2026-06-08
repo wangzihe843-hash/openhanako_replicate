@@ -1,4 +1,4 @@
-import { COVER_GALLERY_PRESETS, type CoverGalleryPreset } from '../../../../../shared/cover-gallery-presets.js';
+import { COVER_GALLERY_PRESETS, type CoverGalleryPreset } from '../../../../../shared/cover-gallery-presets.ts';
 import bambooShadowMinimal from '../../../assets/cover-gallery/bamboo-shadow-minimal.jpg';
 import blueSkyScreenprint from '../../../assets/cover-gallery/blue-sky-screenprint.jpg';
 import blueIslandWatercolor from '../../../assets/cover-gallery/blue-island-watercolor.jpg';

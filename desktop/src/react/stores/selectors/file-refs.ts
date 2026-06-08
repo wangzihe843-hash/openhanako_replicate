@@ -6,6 +6,7 @@ import { inferKindByExt, buildFileRefId } from '../../utils/file-kind';
 type StateShape = {
   deskFiles: DeskFile[];
   deskBasePath: string;
+  deskWorkspaceMountId?: string | null;
   deskCurrentPath: string;
   chatSessions?: Record<string, unknown>;
   sessionRegistryFilesByPath?: Record<string, readonly SessionRegistryFile[] | undefined>;
@@ -32,7 +33,8 @@ function extOf(name: string): string | undefined {
 let cachedDesk: { files: DeskFile[]; basePath: string; result: FileRef[] } | null = null;
 
 export function selectDeskFiles(state: StateShape): FileRef[] {
-  const { deskFiles, deskBasePath } = state;
+  const { deskFiles, deskBasePath, deskWorkspaceMountId } = state;
+  if (deskWorkspaceMountId) return [];
   if (
     cachedDesk
     && cachedDesk.files === deskFiles

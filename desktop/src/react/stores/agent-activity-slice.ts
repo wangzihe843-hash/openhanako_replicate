@@ -7,7 +7,7 @@
 
 export interface AgentActivityEntry {
   id: string;
-  kind: 'subagent' | 'workflow' | 'workflow_agent' | 'heartbeat' | 'cron';
+  kind: 'subagent' | 'workflow' | 'workflow_agent' | 'workflow_step' | 'heartbeat' | 'cron';
   status: 'running' | 'done' | 'failed' | 'aborted';
   sessionPath: string | null;
   agentId: string | null;
@@ -24,6 +24,7 @@ export interface AgentActivityEntry {
   label?: string | null;
   phaseLabel?: string | null;
   tokens?: number | null;
+  stepKind?: 'parallel' | 'pipeline' | 'log' | null;
 }
 
 export interface AgentActivitySlice {

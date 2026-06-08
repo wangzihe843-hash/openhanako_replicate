@@ -1,7 +1,7 @@
 .tabBar {
     display: flex;
     align-items: center;
-    padding: 10px 14px 2px;
+    padding: var(--panel-edge-gap) 14px 2px;
     gap: 4px;
     flex-shrink: 0;
 }

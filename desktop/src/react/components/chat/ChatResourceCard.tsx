@@ -7,6 +7,7 @@ interface ChatResourceCardProps {
   icon: ReactNode;
   title: ReactNode;
   titleMeta?: ReactNode;
+  titleTail?: ReactNode;
   subtitle?: ReactNode;
   statusLabel?: ReactNode;
   statusTone?: ChatResourceCardStatusTone;
@@ -29,12 +30,13 @@ function CardBody({
   icon,
   title,
   titleMeta,
+  titleTail,
   subtitle,
   statusLabel,
   statusTone = 'neutral',
   expandable = false,
   expanded = false,
-}: Pick<ChatResourceCardProps, 'icon' | 'title' | 'titleMeta' | 'subtitle' | 'statusLabel' | 'statusTone' | 'expandable' | 'expanded'>) {
+}: Pick<ChatResourceCardProps, 'icon' | 'title' | 'titleMeta' | 'titleTail' | 'subtitle' | 'statusLabel' | 'statusTone' | 'expandable' | 'expanded'>) {
   return (
     <>
       <span className={styles.icon} aria-hidden="true">{icon}</span>
@@ -47,6 +49,7 @@ function CardBody({
               {statusLabel}
             </span>
           )}
+          {titleTail && <span className={styles.titleTail}>{titleTail}</span>}
         </span>
         {subtitle && <span className={styles.subtitle}>{subtitle}</span>}
       </span>
@@ -63,6 +66,7 @@ export function ChatResourceCard({
   icon,
   title,
   titleMeta,
+  titleTail,
   subtitle,
   statusLabel,
   statusTone = 'neutral',
@@ -101,6 +105,7 @@ export function ChatResourceCard({
               icon={icon}
               title={title}
               titleMeta={titleMeta}
+              titleTail={titleTail}
               subtitle={subtitle}
               statusLabel={statusLabel}
               statusTone={statusTone}
@@ -118,6 +123,7 @@ export function ChatResourceCard({
               icon={icon}
               title={title}
               titleMeta={titleMeta}
+              titleTail={titleTail}
               subtitle={subtitle}
               statusLabel={statusLabel}
               statusTone={statusTone}

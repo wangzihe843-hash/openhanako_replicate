@@ -111,4 +111,24 @@ describe('SecurityTab Windows sandbox network control', () => {
     expect(await screen.findByText('Archived conversations window')).toBeTruthy();
     expect(screen.getByText('No archived conversations')).toBeTruthy();
   });
+
+  it('does not render optimistic sandbox or backup states before settings config is ready', () => {
+    useSettingsStore.setState({
+      settingsConfig: null,
+      platformName: 'darwin',
+    } as never);
+
+    render(React.createElement(SecurityTab));
+
+    const switches = screen.getAllByRole('switch') as HTMLButtonElement[];
+    expect(switches).toHaveLength(3);
+    for (const item of switches) {
+      expect(item.getAttribute('aria-checked')).toBe('mixed');
+      expect(item.getAttribute('aria-busy')).toBe('true');
+      expect(item.disabled).toBe(true);
+      fireEvent.click(item);
+    }
+    expect(autoSaveConfigMock).not.toHaveBeenCalled();
+    expect(loadSettingsConfigMock).not.toHaveBeenCalled();
+  });
 });

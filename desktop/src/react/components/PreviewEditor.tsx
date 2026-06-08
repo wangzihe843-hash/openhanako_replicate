@@ -51,7 +51,8 @@ import {
   applyMarkdownCoverImageDrop,
   hasMarkdownCoverDropImage,
 } from '../utils/markdown-cover-drop';
-import type { FileVersion, VersionedWriteResult } from '../types';
+import { isRemoteWorkbenchContentRef } from '../utils/remote-file-preview';
+import type { FileVersion, RemoteWorkbenchContentRef, VersionedWriteResult } from '../types';
 
 /* ── Types ── */
 
@@ -73,6 +74,7 @@ export type PreviewEditorSaveDocument = (
 export interface PreviewEditorProps {
   content: string;
   filePath?: string;
+  remoteContentRef?: RemoteWorkbenchContentRef | null;
   fileVersion?: FileVersion | null;
   saveDocument?: PreviewEditorSaveDocument;
   mode: 'markdown' | 'code' | 'csv' | 'text';
@@ -257,14 +259,15 @@ function clearEditorCoverDropState(view: EditorView): void {
 function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
   if (parseMarkdownCover(view.state.doc.toString())) return false;
   const rect = view.scrollDOM.getBoundingClientRect();
-  const y = Number.isFinite(event.clientY) ? event.clientY : rect.top;
+  if (!Number.isFinite(event.clientY)) return false;
+  const y = event.clientY;
   return y >= rect.top && y <= rect.top + 40;
 }
 
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, readOnly = false }, ref) {
+  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, readOnly = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -277,6 +280,8 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     const lastCheckpointAtRef = useRef<number>(0);
     const filePathRef = useRef(filePath);
     filePathRef.current = filePath;
+    const remoteContentRefRef = useRef(remoteContentRef);
+    remoteContentRefRef.current = remoteContentRef;
     const saveDocumentRef = useRef(saveDocument);
     saveDocumentRef.current = saveDocument;
     const selectionCbRef = useRef(onSelectionChange);
@@ -596,8 +601,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         selectionCommitCbRef.current?.(view);
       };
       const onCoverDragOver = (event: DragEvent) => {
+        const canApplyCover = Boolean(filePathRef.current || isRemoteWorkbenchContentRef(remoteContentRefRef.current));
         const coverElement = editorCoverElementFromEvent(event);
-        if (coverElement && filePathRef.current && hasMarkdownCoverDropImage(event.dataTransfer)) {
+        if (coverElement && canApplyCover && hasMarkdownCoverDropImage(event.dataTransfer)) {
           event.preventDefault();
           event.stopPropagation();
           if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
@@ -606,7 +612,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           return;
         }
 
-        if (filePathRef.current && hasMarkdownCoverDropImage(event.dataTransfer) && isEditorCoverRailDrop(view, event)) {
+        if (canApplyCover && hasMarkdownCoverDropImage(event.dataTransfer) && isEditorCoverRailDrop(view, event)) {
           event.preventDefault();
           event.stopPropagation();
           if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
@@ -626,16 +632,20 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         }
       };
       const onCoverDrop = (event: DragEvent) => {
+        const remoteRef = isRemoteWorkbenchContentRef(remoteContentRefRef.current)
+          ? remoteContentRefRef.current
+          : null;
         const coverElement = editorCoverElementFromEvent(event);
         const isCoverTarget = Boolean(coverElement)
           || (hasMarkdownCoverDropImage(event.dataTransfer) && isEditorCoverRailDrop(view, event));
-        if (!filePathRef.current || !isCoverTarget || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+        if ((!filePathRef.current && !remoteRef) || !isCoverTarget || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
         clearEditorCoverDropState(view);
         void applyMarkdownCoverImageDrop({
           filePath: filePathRef.current,
+          target: remoteRef,
           dataTransfer: event.dataTransfer,
         });
       };
@@ -664,7 +674,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.destroy();
         viewRef.current = null;
       };
-    }, [mode, language, readOnly, filePath, emitStatsIfChanged, insertMarkdownAttachments]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+    }, [mode, language, readOnly, filePath, remoteContentRef, emitStatsIfChanged, insertMarkdownAttachments]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath/remoteContentRef 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
 
     // content prop change → update editor (skip if already in sync)
     useEffect(() => {

@@ -13,7 +13,6 @@ import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
 import { selectSessionFiles } from '../stores/selectors/file-refs';
 import { isImageFile, isVideoFile } from '../utils/format';
 import { isAudioFileName } from '../utils/file-kind';
-import { fetchConfig } from '../hooks/use-config';
 import { useI18n } from '../hooks/use-i18n';
 import { continueDeletedAgentSession, ensureSession, loadSessions } from '../stores/session-actions';
 import { revealDeskDirectory, toggleJianSidebar } from '../stores/desk-actions';
@@ -52,6 +51,7 @@ import { shouldShowThinkingControl } from '../utils/model-thinking';
 import { shouldAllowInputFocus } from '../utils/input-focus-policy';
 import { calculateInputCardBottomInset, parseCssPixels } from '../utils/input-card-layout';
 import { buildWaveformFromBlob, buildWaveformFromPcmChunks } from '../utils/audio-waveform';
+import { prepareChatImageUpload } from '../utils/chat-image-upload-compression';
 import {
   XING_PROMPT, executeDiary, executeCompact, buildSlashCommands, getSlashMatches,
   resolveSlashSubmitSelection,
@@ -60,11 +60,9 @@ import {
 import { attachFilesFromPaths } from '../MainContent';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import styles from './input/InputArea.module.css';
-import type { TodoItem } from '../types';
 import type { ChatListItem, SessionConfirmationBlock } from '../stores/chat-types';
 import type { AudioWaveform } from '../stores/chat-types';
 
-const EMPTY_TODOS: TodoItem[] = [];
 const EMPTY_FILE_REFS: readonly import('../types/file-ref').FileRef[] = Object.freeze([]);
 
 function chatVideoMimeTypeForName(name: string, fallback?: string): string {
@@ -291,7 +289,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const screenshotBusy = useStore(s => s.screenshotTaskCount > 0);
   const screenshotProgress = useStore(s => s.screenshotProgress);
   const inlineError = useStore(s => s.inlineErrors[s.currentSessionPath || ''] ?? null);
-  const sessionTodos = useStore(s => (s.currentSessionPath && s.todosBySession[s.currentSessionPath]) || EMPTY_TODOS);
   const sessionFiles = useStore(s => (s.currentSessionPath ? selectSessionFiles(s, s.currentSessionPath) : EMPTY_FILE_REFS));
   const attachedFiles = useStore(s => s.attachedFiles);
   const docContextAttached = useStore(s => s.docContextAttached);
@@ -326,7 +323,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [currentSessionItems]);
 
   // Local state
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
+  const permissionMode = useStore(s => s.sessionPermissionMode);
+  const setPermissionMode = useStore(s => s.setSessionPermissionMode);
   const [sending, setSending] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelected, setSlashSelected] = useState(0);
@@ -355,7 +353,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const [fileMentionRange, setFileMentionRange] = useState<FileMentionRange | null>(null);
   const [fileMentionQuery, setFileMentionQuery] = useState('');
   const [fileMentionBusy] = useState(false);
-  const [completingTodos, setCompletingTodos] = useState(false);
   const [continuingDeletedAgentSession, setContinuingDeletedAgentSession] = useState(false);
   const [deletedAgentContinueError, setDeletedAgentContinueError] = useState<string | null>(null);
   const [audioRecorderOpen, setAudioRecorderOpen] = useState(false);
@@ -717,6 +714,19 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         const mimeType = file.type || (isAudioFileName(file.name) ? chatAudioMimeTypeForName(file.name) : chatImageMimeTypeForName(file.name));
         try {
           const base64Data = await readFileAsBase64(file);
+          const uploadPayload = mimeType.startsWith('image/')
+            ? await prepareChatImageUpload({
+              file,
+              name: file.name,
+              base64Data,
+              mimeType,
+            })
+            : {
+              name: file.name,
+              base64Data,
+              mimeType,
+              compressed: false,
+            };
           const waveform = mimeType.startsWith('audio/')
             ? await buildWaveformFromBlob(file).catch((err) => {
               console.warn('[upload] failed to compute audio waveform', err);
@@ -727,9 +737,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name: file.name,
-              base64Data,
-              mimeType,
+              name: uploadPayload.name,
+              base64Data: uploadPayload.base64Data,
+              mimeType: uploadPayload.mimeType,
               ...(waveform ? { waveform } : {}),
               ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
             }),
@@ -740,10 +750,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             addAttachedFile({
               fileId: upload.fileId,
               path: upload.dest,
-              name: upload.name || file.name,
+              name: upload.name || uploadPayload.name,
               isDirectory: false,
-              base64Data,
-              mimeType,
+              base64Data: uploadPayload.base64Data,
+              mimeType: uploadPayload.mimeType,
               waveform: upload.waveform || waveform,
             });
           } else {
@@ -1185,10 +1195,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     };
   }, [surface]);
 
-  // ── Paste image ──
-  // 与拖拽对齐：剪贴板图片同样落盘到 uploads 目录，入 store 的形态和拖拽完全一致
-  // （只有 path/name/isDirectory，没有 base64Data）。是否走 vision 桥由发送阶段的
-  // visionAuxiliary 标记统一决定，handlePaste 不再做能力判断。
+  // ── Paste attachments ──
+  // 剪贴板里能解析出文件系统路径的 file item 直接复用拖拽附件注册。
+  // 无路径图片 blob 才上传到 session-files，入 store 时保持 path-backed 附件形态。
   const handlePaste = useCallback((e: ClipboardEvent): boolean => {
     if (inputLocked) {
       e.preventDefault();
@@ -1196,7 +1205,26 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     }
     const items = e.clipboardData?.items;
     if (items) {
-      for (const item of items) {
+      const pathItems: string[] = [];
+      const nameMap: Record<string, string> = {};
+      for (const item of Array.from(items)) {
+        if (item.kind && item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        const filePath = window.platform?.getFilePath?.(file);
+        if (!filePath) continue;
+        pathItems.push(filePath);
+        nameMap[filePath] = file.name;
+      }
+      if (pathItems.length > 0) {
+        e.preventDefault();
+        void Promise.resolve(attachFilesFromPaths(pathItems, nameMap)).catch((err) => {
+          console.warn('[paste] attach clipboard file paths failed', err);
+        });
+        return true;
+      }
+
+      for (const item of Array.from(items)) {
         if (!item.type.startsWith('image/')) continue;
         e.preventDefault();
         const file = item.getAsFile();
@@ -1210,20 +1238,26 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : (mimeType.split('/')[1] || 'png');
           const name = `${t('input.pastedImage')}.${ext}`;
           try {
+            const uploadPayload = await prepareChatImageUpload({
+              file,
+              name,
+              base64Data,
+              mimeType,
+            });
             const res = await hanaFetch('/api/upload-blob', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                name,
-                base64Data,
-                mimeType,
+                name: uploadPayload.name,
+                base64Data: uploadPayload.base64Data,
+                mimeType: uploadPayload.mimeType,
                 ...(useStore.getState().currentSessionPath ? { sessionPath: useStore.getState().currentSessionPath } : {}),
               }),
             });
             const data = await res.json();
             const upload = data?.uploads?.[0];
             if (upload?.dest) {
-              addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || name, isDirectory: false });
+              addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || uploadPayload.name, isDirectory: false });
             } else {
               notifyPasteUploadFailure(t, upload?.error);
               console.warn('[paste] upload-blob failed', upload?.error || data);
@@ -1253,9 +1287,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const activeServerConnection = useStore(s => s.activeServerConnection);
   useEffect(() => {
     if (activeServerConnection && surface !== 'mobile') {
-      fetchConfig()
-        .then(d => { if (d.thinking_level) setThinkingLevel(d.thinking_level as ThinkingLevel); })
-        .catch((err: unknown) => console.warn('[InputArea] load config failed', err));
+      hanaFetch('/api/session-thinking-level')
+        .then(r => r.json())
+        .then(d => { if (d.thinkingLevel) setThinkingLevel(d.thinkingLevel as ThinkingLevel); })
+        .catch((err: unknown) => console.warn('[InputArea] load thinking level failed', err));
     }
 
     const handler = (e: Event) => {
@@ -1264,7 +1299,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     };
     window.addEventListener('hana-plan-mode', handler);
     return () => window.removeEventListener('hana-plan-mode', handler);
-  }, [activeServerConnection, setThinkingLevel, surface]);
+  }, [activeServerConnection, setPermissionMode, setThinkingLevel, surface]);
 
   // ── Handle slash selection (builtin vs skill) ──
   const handleSlashSelect = useCallback((item: SlashItem) => {
@@ -1658,26 +1693,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     void revealDeskDirectory(slashResult.deskDir);
   }, [slashResult?.deskDir]);
 
-  const handleCompleteTodos = useCallback(async () => {
-    const path = currentSessionPath;
-    if (!path || completingTodos || sessionTodos.length === 0) return;
-    setCompletingTodos(true);
-    try {
-      await hanaFetch('/api/sessions/todos/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      useStore.getState().setSessionTodosForPath(path, []);
-      useStore.getState().bumpTodosLiveVersion(path);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      addToast(message, 'error', 6000);
-    } finally {
-      setCompletingTodos(false);
-    }
-  }, [addToast, completingTodos, currentSessionPath, sessionTodos.length]);
-
   const handleContinueDeletedAgentSession = useCallback(async () => {
     const path = currentSessionPath;
     if (!path || continuingDeletedAgentSession) return;
@@ -1703,9 +1718,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         attachedFiles={attachedFiles}
         removeAttachedFile={removeAttachedFile}
         hasQuotedSelection={quotedSelections.length > 0}
-        sessionTodos={sessionTodos}
-        onCompleteTodos={handleCompleteTodos}
-        completingTodos={completingTodos}
       />
       <InputStatusBars
         slashBusy={slashBusy}

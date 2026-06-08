@@ -7,6 +7,7 @@
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Collapse } from '@/ui';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
@@ -35,7 +36,7 @@ import {
 } from '../stores/session-project-actions';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
-import { cwdFromAutoProjectId } from '../../../../shared/session-projects.js';
+import { cwdFromAutoProjectId } from '../../../../shared/session-projects.ts';
 import { FolderIcon } from './shared/FolderIcon';
 import styles from './SessionList.module.css';
 
@@ -1073,12 +1074,6 @@ function ProjectBlock({
   onCreateProjectSession: (project: SessionProjectGroup) => void;
   onOpenProjectMenu: (position: { x: number; y: number }, project: SessionProjectGroup) => void;
 }) {
-  const visibleItems = collapsed
-    ? []
-    : showAll
-      ? project.items
-      : project.items.slice(0, PROJECT_SESSION_PREVIEW_LIMIT);
-  const hasMore = !collapsed && !showAll && project.items.length > PROJECT_SESSION_PREVIEW_LIMIT;
   const lastDragEndAtRef = useRef(0);
   const { t } = useI18n();
   return (
@@ -1141,14 +1136,16 @@ function ProjectBlock({
           <NewChatIcon />
         </button>
       </div>
-      <div className={styles.projectSessionList}>
-        {visibleItems.map(session => renderSessionItem(session))}
-        {hasMore && (
-          <button type="button" className={styles.projectShowMoreButton} onClick={onShowAll}>
-            {t('sidebar.projects.showMore')}
-          </button>
-        )}
-      </div>
+      <Collapse open={!collapsed}>
+        <div className={styles.projectSessionList}>
+          {(showAll ? project.items : project.items.slice(0, PROJECT_SESSION_PREVIEW_LIMIT)).map(session => renderSessionItem(session))}
+          {!showAll && project.items.length > PROJECT_SESSION_PREVIEW_LIMIT && (
+            <button type="button" className={styles.projectShowMoreButton} onClick={onShowAll}>
+              {t('sidebar.projects.showMore')}
+            </button>
+          )}
+        </div>
+      </Collapse>
     </div>
   );
 }
@@ -1233,7 +1230,7 @@ function FolderBlock({
         <FolderIcon className={styles.projectIcon} size={16} open={!collapsed} />
         <span className={styles.projectName}>{folder.name}</span>
       </div>
-      {!collapsed && (
+      <Collapse open={!collapsed}>
         <div className={styles.folderProjectList}>
           {folder.projects.map(project => (
             <ProjectBlock
@@ -1254,7 +1251,7 @@ function FolderBlock({
             />
           ))}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

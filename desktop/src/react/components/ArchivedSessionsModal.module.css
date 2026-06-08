@@ -14,7 +14,7 @@
   background: color-mix(in srgb, var(--bg, #fcfaf5) 94%, white 6%);
   color: var(--text, #3b3d3f);
   border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
-  border-radius: var(--radius-lg, 14px);
+  border-radius: var(--radius-lg, 12px);
   width: min(700px, calc(100vw - 64px));
   max-height: min(72vh, 620px);
   display: flex;
@@ -77,7 +77,7 @@
   padding: 0.6rem var(--space-md);
   background: var(--bg-card, #fff);
   border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
-  border-radius: var(--radius-card, 10px);
+  border-radius: var(--radius-card, 8px);
 }
 
 .summaryText {
@@ -95,7 +95,7 @@
 .cleanupBtns button {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card, #fff) 92%, white 8%), var(--bg-card, #fff));
   border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
-  border-radius: var(--radius-input, 4px);
+  border-radius: var(--radius-input, 6px);
   min-height: 32px;
   padding: 0 var(--space-md);
   cursor: default;
@@ -118,7 +118,7 @@
   flex-direction: column;
   background: var(--bg-card, #fff);
   border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
-  border-radius: var(--radius-card, 10px);
+  border-radius: var(--radius-card, 8px);
   overflow: hidden;
 }
 
@@ -182,7 +182,7 @@
 .rowActions button {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card, #fff) 92%, white 8%), var(--bg-card, #fff));
   border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
-  border-radius: var(--radius-input, 4px);
+  border-radius: var(--radius-input, 6px);
   min-height: 32px;
   padding: 0 var(--space-md);
   cursor: default;

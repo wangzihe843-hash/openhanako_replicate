@@ -10,15 +10,6 @@
     transform-origin: bottom center;
     animation: hana-popout var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;
-    overflow: visible;
-}
-
-.surface::before {
-    content: '';
-    position: absolute;
-    inset: calc(-1 * var(--space-sm));
-    background: transparent;
-    pointer-events: auto;
 }
 
 .surface[data-origin="top-center"] {

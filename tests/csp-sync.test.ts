@@ -49,7 +49,7 @@ describe('CSP sync', () => {
 
   for (const [filename, profileCsp] of Object.entries(profiles)) {
     it(`${filename}: HTML source matches CSP_PROFILES`, () => {
-      if (filename === 'index.html') {
+      if (filename === 'index.html' || filename === 'settings.html') {
         const html = fs.readFileSync(path.join(htmlDir, filename), 'utf-8');
         expect(html).toContain('modules/connection-csp.js');
         expect(extractHtmlCsp(path.join(htmlDir, filename))).toBeNull();
@@ -71,6 +71,19 @@ describe('CSP sync', () => {
     expect(indexCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
     expect(indexCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
     expect(indexCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
+    expect(runtimeCsp).toContain('activeServerConnectionId');
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
+    expect(runtimeCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
+  });
+
+  it('settings window uses the same dynamic scoped connection CSP as the desktop index', () => {
+    const html = fs.readFileSync(path.join(htmlDir, 'settings.html'), 'utf-8');
+    const runtimeCsp = fs.readFileSync(path.join(htmlDir, 'modules', 'connection-csp.js'), 'utf-8');
+
+    expect(html).toContain('modules/connection-csp.js');
+    expect(extractHtmlCsp(path.join(htmlDir, 'settings.html'))).toBeNull();
     expect(runtimeCsp).toContain('activeServerConnectionId');
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);

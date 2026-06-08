@@ -49,8 +49,12 @@ describe('trusted space access contract', () => {
         'files.openLocal',
         'tools.run',
         'plugins.use',
+        'studio.owner',
         'settings.read',
         'settings.write',
+        'providers.manage',
+        'secrets.write',
+        'bridge.manage',
       ],
     });
   });

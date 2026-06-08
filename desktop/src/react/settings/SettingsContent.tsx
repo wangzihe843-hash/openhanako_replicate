@@ -10,7 +10,7 @@ import {
   type ServerConnection,
 } from '../services/server-connection';
 import { t } from './helpers';
-import { loadAgents, loadAvatars, loadSettingsConfig, loadPluginSettings } from './actions';
+import { loadAgents, loadAvatars, loadSettingsSnapshot } from './actions';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SettingsNav } from './SettingsNav';
 import { Toast } from './Toast';
@@ -18,6 +18,7 @@ import { AgentTab } from './tabs/AgentTab';
 import { MeTab } from './tabs/MeTab';
 import { InterfaceTab } from './tabs/InterfaceTab';
 import { GeneralTab } from './tabs/GeneralTab';
+import { BrowserTab } from './tabs/BrowserTab';
 import { WorkTab } from './tabs/WorkTab';
 import { SkillsTab } from './tabs/SkillsTab';
 import { BridgeTab } from './tabs/BridgeTab';
@@ -51,6 +52,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   me: MeTab,
   interface: InterfaceTab,
   general: GeneralTab,
+  browser: BrowserTab,
   work: WorkTab,
   skills: SkillsTab,
   bridge: BridgeTab,
@@ -67,18 +69,17 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
 
 function connectionState(connection: ServerConnection | null) {
   const persisted = readPersistedServerConnectionState();
-  if (!connection) {
-    return {
-      serverConnections: persisted.serverConnections,
-      activeServerConnectionId: null,
-      activeServerConnection: null,
-    };
-  }
-  const serverConnections = upsertServerConnection(persisted.serverConnections, connection);
+  const serverConnections = connection
+    ? upsertServerConnection(persisted.serverConnections, connection)
+    : persisted.serverConnections;
+  const persistedActive = persisted.activeServerConnectionId
+    ? serverConnections[persisted.activeServerConnectionId] || null
+    : null;
+  const activeServerConnection = persistedActive || connection || null;
   return {
     serverConnections,
-    activeServerConnectionId: connection.connectionId,
-    activeServerConnection: connection,
+    activeServerConnectionId: activeServerConnection?.connectionId ?? null,
+    activeServerConnection,
   };
 }
 
@@ -88,6 +89,7 @@ const TAB_TITLE_KEYS: Record<string, string> = {
   me: 'settings.tabs.me',
   interface: 'settings.tabs.interface',
   general: 'settings.tabs.general',
+  browser: 'settings.tabs.browser',
   work: 'settings.tabs.work',
   workflow: 'Workflow',
   skills: 'settings.tabs.skills',
@@ -192,7 +194,7 @@ export function SettingsContent({
         ...nextConnectionState,
       });
       loadAgents().catch(() => {});
-      loadSettingsConfig().catch(() => {});
+      loadSettingsSnapshot().catch(() => {});
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, []);
@@ -328,21 +330,29 @@ export function SettingsContent({
 async function initSettings() {
   const platform = window.platform;
   const store = useSettingsStore.getState();
+  store.set({ ready: false });
 
   // 超时保护：15 秒后强制显示，防止无限白屏
   const timeout = setTimeout(() => {
-    if (!store.ready) {
+    if (!useSettingsStore.getState().ready) {
       console.warn('[settings] init timeout (15s), forcing ready');
-      store.set({ ready: true });
+      useSettingsStore.getState().set({ ready: true });
     }
   }, 15_000);
 
   try {
-    const serverPort = Number(await platform.getServerPort());
-    const serverToken = await platform.getServerToken();
+    const rawServerPort = typeof platform?.getServerPort === 'function'
+      ? await platform.getServerPort()
+      : null;
+    const serverPort = rawServerPort === null || rawServerPort === undefined
+      ? null
+      : Number(rawServerPort);
+    const serverToken = typeof platform?.getServerToken === 'function'
+      ? await platform.getServerToken()
+      : null;
     let platformName: string | null = null;
     try {
-      platformName = typeof platform.getPlatform === 'function' ? await platform.getPlatform() : null;
+      platformName = typeof platform?.getPlatform === 'function' ? await platform.getPlatform() : null;
     } catch {
       platformName = null;
     }
@@ -370,8 +380,8 @@ async function initSettings() {
     // avatars
     await loadAvatars();
 
-    // config + plugin settings
-    await Promise.all([loadSettingsConfig(), loadPluginSettings()]);
+    // Unified backend settings truth source.
+    await loadSettingsSnapshot();
 
     store.set({ ready: true });
   } catch (err) {

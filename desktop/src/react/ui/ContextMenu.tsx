@@ -7,6 +7,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
+import { spring } from './motion';
 
 export interface ContextMenuItem {
   label?: string;
@@ -78,10 +80,13 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   }, [onClose]);
 
   return createPortal(
-    <div
+    <motion.div
       className="context-menu"
       ref={menuRef}
       style={{ left: position.x, top: position.y }}
+      initial={{ opacity: 0, scale: 0.95, y: -2 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={spring.paperSnap}
     >
       {items.map((item, i) => {
         if (item.divider) {
@@ -149,7 +154,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
           </div>
         );
       })}
-    </div>,
+    </motion.div>,
     document.body,
   );
 }

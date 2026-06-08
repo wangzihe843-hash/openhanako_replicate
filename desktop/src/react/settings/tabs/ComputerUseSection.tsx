@@ -5,6 +5,7 @@ import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { Toggle } from '../widgets/Toggle';
 import { useSettingsStore } from '../store';
+import { updateSettingsSnapshot } from '../actions';
 import styles from '../Settings.module.css';
 
 interface ComputerProviderStatus {
@@ -49,9 +50,22 @@ function StatusText({ ok, text }: { ok: boolean; text: string }) {
   );
 }
 
+function rememberComputerUseSnapshot(data: ComputerUseStatusResponse) {
+  updateSettingsSnapshot((snapshot) => ({
+    ...snapshot,
+    preferences: {
+      ...snapshot.preferences,
+      computerUse: data,
+    },
+  }));
+}
+
 export function ComputerUseSection() {
-  const [data, setData] = useState<ComputerUseStatusResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const snapshotComputerUse = useSettingsStore(
+    (state) => state.settingsSnapshot?.data?.preferences?.computerUse as ComputerUseStatusResponse | undefined,
+  );
+  const [data, setData] = useState<ComputerUseStatusResponse | null>(() => snapshotComputerUse || null);
+  const [loading, setLoading] = useState(() => !snapshotComputerUse);
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const showToast = useSettingsStore((state) => state.showToast);
@@ -60,14 +74,23 @@ export function ComputerUseSection() {
     setLoading(true);
     try {
       const res = await hanaFetch('/api/preferences/computer-use');
-      setData(await res.json());
+      const body = await res.json();
+      setData(body);
+      rememberComputerUseSnapshot(body);
     } catch (err) {
       console.warn('[computer-use] load status failed:', err);
-      setData(null);
+      const latestSnapshot = useSettingsStore.getState().settingsSnapshot?.data?.preferences?.computerUse as ComputerUseStatusResponse | undefined;
+      setData(latestSnapshot || null);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!snapshotComputerUse) return;
+    setData(snapshotComputerUse);
+    setLoading(false);
+  }, [snapshotComputerUse]);
 
   useEffect(() => {
     load();
@@ -105,13 +128,15 @@ export function ComputerUseSection() {
         body: JSON.stringify({ settings: { enabled: next } }),
       });
       const body = await res.json();
-      setData((prev) => ({
-        ...(prev || {}),
+      const nextData = {
+        ...(data || {}),
         settings: {
-          ...(prev?.settings || {}),
+          ...(data?.settings || {}),
           ...(body.settings || {}),
         },
-      }));
+      };
+      setData(nextData);
+      rememberComputerUseSnapshot(nextData);
       await load();
     } catch (err: unknown) {
       showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');

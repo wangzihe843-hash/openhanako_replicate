@@ -89,11 +89,11 @@ function canPreviewFile(file: FileRef): boolean {
 }
 
 function canUseFilePath(file: FileRef): boolean {
-  return !isExpired(file) && !!file.path;
+  return !isWebRuntime() && !isExpired(file) && !!file.path;
 }
 
 function canCopyFilePath(file: FileRef): boolean {
-  return !!file.path;
+  return !isWebRuntime() && !!file.path;
 }
 
 function canDragFile(file: FileRef): boolean {
@@ -265,6 +265,7 @@ function SessionFileRow({
   const canDrag = canDragFile(file);
   const canUsePath = canUseFilePath(file);
   const canCopyPath = canCopyFilePath(file);
+  const showPathActions = !isWebRuntime();
   const downloadUrl = fileRefDownloadUrl(file);
 
   const stopAction = (event: React.MouseEvent, action: () => void) => {
@@ -319,28 +320,32 @@ function SessionFileRow({
         >
           <ActionIcon type="preview" />
         </button>
-        <button
-          type="button"
-          className={styles.fileAction}
-          data-session-file-action=""
-          aria-label={actionLabel('rightWorkspace.sessionFiles.actions.open', file)}
-          title={actionLabel('rightWorkspace.sessionFiles.actions.open', file)}
-          disabled={!canUsePath}
-          onClick={(event) => stopAction(event, () => openFile(file))}
-        >
-          <ActionIcon type="open" />
-        </button>
-        <button
-          type="button"
-          className={styles.fileAction}
-          data-session-file-action=""
-          aria-label={actionLabel('rightWorkspace.sessionFiles.actions.reveal', file)}
-          title={actionLabel('rightWorkspace.sessionFiles.actions.reveal', file)}
-          disabled={!canUsePath}
-          onClick={(event) => stopAction(event, () => revealFile(file))}
-        >
-          <ActionIcon type="reveal" />
-        </button>
+        {showPathActions && (
+          <>
+            <button
+              type="button"
+              className={styles.fileAction}
+              data-session-file-action=""
+              aria-label={actionLabel('rightWorkspace.sessionFiles.actions.open', file)}
+              title={actionLabel('rightWorkspace.sessionFiles.actions.open', file)}
+              disabled={!canUsePath}
+              onClick={(event) => stopAction(event, () => openFile(file))}
+            >
+              <ActionIcon type="open" />
+            </button>
+            <button
+              type="button"
+              className={styles.fileAction}
+              data-session-file-action=""
+              aria-label={actionLabel('rightWorkspace.sessionFiles.actions.reveal', file)}
+              title={actionLabel('rightWorkspace.sessionFiles.actions.reveal', file)}
+              disabled={!canUsePath}
+              onClick={(event) => stopAction(event, () => revealFile(file))}
+            >
+              <ActionIcon type="reveal" />
+            </button>
+          </>
+        )}
         {downloadUrl && (
           <a
             className={styles.fileAction}
@@ -354,17 +359,19 @@ function SessionFileRow({
             <ActionIcon type="download" />
           </a>
         )}
-        <button
-          type="button"
-          className={styles.fileAction}
-          data-session-file-action=""
-          aria-label={actionLabel('rightWorkspace.sessionFiles.actions.copyPath', file)}
-          title={actionLabel('rightWorkspace.sessionFiles.actions.copyPath', file)}
-          disabled={!canCopyPath}
-          onClick={(event) => stopAction(event, () => copyPaths([file]))}
-        >
-          <ActionIcon type="copy" />
-        </button>
+        {showPathActions && (
+          <button
+            type="button"
+            className={styles.fileAction}
+            data-session-file-action=""
+            aria-label={actionLabel('rightWorkspace.sessionFiles.actions.copyPath', file)}
+            title={actionLabel('rightWorkspace.sessionFiles.actions.copyPath', file)}
+            disabled={!canCopyPath}
+            onClick={(event) => stopAction(event, () => copyPaths([file]))}
+          >
+            <ActionIcon type="copy" />
+          </button>
+        )}
       </div>
     </article>
   );
@@ -602,8 +609,10 @@ export function SessionRegistryFilesPanel() {
 
     return [
       { label: tr('rightWorkspace.sessionFiles.actions.preview'), disabled: !canPreviewFile(file), action: () => previewFile(file, currentSessionPath) },
-      { label: tr('rightWorkspace.sessionFiles.actions.open'), disabled: !canUseFilePath(file), action: () => openFile(file) },
-      { label: tr('rightWorkspace.sessionFiles.actions.reveal'), disabled: !canUseFilePath(file), action: () => revealFile(file) },
+      ...(!isWebRuntime() ? [
+        { label: tr('rightWorkspace.sessionFiles.actions.open'), disabled: !canUseFilePath(file), action: () => openFile(file) },
+        { label: tr('rightWorkspace.sessionFiles.actions.reveal'), disabled: !canUseFilePath(file), action: () => revealFile(file) },
+      ] : []),
       {
         label: tr('rightWorkspace.sessionFiles.actions.downloadToDevice'),
         disabled: !downloadUrl,
@@ -617,13 +626,13 @@ export function SessionRegistryFilesPanel() {
           a.click();
         },
       },
-      {
+      ...(!isWebRuntime() ? [{
         label: pathFiles.length > 1
           ? tr('rightWorkspace.sessionFiles.actions.copySelectedPaths', { n: pathFiles.length })
           : tr('rightWorkspace.sessionFiles.actions.copyPath'),
         disabled: pathFiles.length === 0,
         action: () => copyPaths(pathFiles),
-      },
+      }] : []),
       { divider: true },
       {
         label: tr('rightWorkspace.sessionFiles.actions.sendToBridge'),

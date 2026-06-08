@@ -6,7 +6,7 @@
  */
 
 import { QUOTE_ORIGINAL_END, QUOTE_ORIGINAL_START, QUOTE_SOURCE_PREFIX } from './quoted-selection';
-import { moodLabelForYuan } from '../../../../shared/yuan-visuals.js';
+import { moodLabelForYuan } from '../../../../shared/yuan-visuals.ts';
 
 // ── Mood 解析 ──
 

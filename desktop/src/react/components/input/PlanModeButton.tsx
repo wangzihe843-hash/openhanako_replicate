@@ -15,7 +15,7 @@ function permissionModeLabelKey(mode: PermissionMode) {
   return 'input.operateMode';
 }
 
-function PermissionModeIcon({ mode }: { mode: PermissionMode }) {
+export function PermissionModeIcon({ mode }: { mode: PermissionMode }) {
   if (mode === 'auto') {
     return (
       <svg data-permission-mode={mode} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -75,7 +75,7 @@ export function PlanModeButton({ mode, onChange, locked = false }: {
       const body = {
         mode: nextMode,
         pendingNewSession,
-        persistDefault: true,
+        ...(pendingNewSession ? { persistDefault: true } : {}),
         ...(sessionPath ? { sessionPath } : {}),
       };
       const res = await hanaFetch('/api/session-permission-mode', {

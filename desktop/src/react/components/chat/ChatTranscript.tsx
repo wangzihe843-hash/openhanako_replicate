@@ -3,6 +3,7 @@ import type { ChatListItem, ChatMessage } from '../../stores/chat-types';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { ProcessFoldBlock } from './ProcessFoldBlock';
+import { InterludeBlock } from './InterludeBlock';
 import { buildTranscriptRenderItems, type TranscriptRenderItem } from './process-fold';
 import { useStore } from '../../stores';
 import { selectIsStreamingSession } from '../../stores/session-selectors';
@@ -64,7 +65,9 @@ export const ChatTranscript = memo(function ChatTranscript({
 function renderItemKey(renderItem: TranscriptRenderItem): string {
   if (renderItem.type === 'process_fold') return renderItem.id;
   const item = renderItem.item;
-  return item.type === 'message' ? item.data.id : `c-${renderItem.originalIndex}`;
+  if (item.type === 'message') return item.data.id;
+  if (item.type === 'interlude') return `i-${item.id}`;
+  return `c-${renderItem.originalIndex}`;
 }
 
 function buildTurnState(items: ChatListItem[]): {
@@ -137,10 +140,10 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const originalIndex = renderItem.originalIndex;
-  const prevItem = originalIndex > 0 ? sourceItems[originalIndex - 1] : undefined;
+  const prevMessageItem = previousMessageItem(sourceItems, originalIndex);
 
   if (renderItem.type === 'process_fold') {
-    const prevRole = prevItem?.type === 'message' ? prevItem.data.role : null;
+    const prevRole = prevMessageItem?.data.role ?? null;
     return (
       <ProcessFoldBlock
         group={renderItem}
@@ -163,7 +166,7 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   return (
     <TranscriptItemView
       item={renderItem.item}
-      prevItem={prevItem}
+      prevItem={prevMessageItem}
       sessionPath={sessionPath}
       agentId={agentId}
       readOnly={readOnly}
@@ -180,6 +183,14 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
     />
   );
 });
+
+function previousMessageItem(items: ChatListItem[], beforeIndex: number): Extract<ChatListItem, { type: 'message' }> | undefined {
+  for (let i = beforeIndex - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item.type === 'message') return item;
+  }
+  return undefined;
+}
 
 function groupLastOriginalIndex(renderItem: Extract<TranscriptRenderItem, { type: 'process_fold' }>): number {
   return renderItem.items[renderItem.items.length - 1]?.originalIndex ?? renderItem.originalIndex;
@@ -218,6 +229,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   }, [messageId, registerMessageElement]);
 
   if (item.type === 'compaction') return null;
+  if (item.type === 'interlude') return <InterludeBlock block={item.data} />;
 
   const msg = item.data;
   const prevRole = prevItem?.type === 'message' ? prevItem.data.role : null;

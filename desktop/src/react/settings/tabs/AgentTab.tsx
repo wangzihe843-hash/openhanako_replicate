@@ -4,8 +4,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t, autoSaveConfig } from '../helpers';
-import { SelectWidget } from '@/ui';
-import { browseAgent, switchToAgent, setPrimaryAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { SelectWidget, ProviderGroupHeader, selectWidgetStyles } from '@/ui';
+import { browseAgent, setPrimaryAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { AgentCardStack } from './agent/AgentCardStack';
 import { YuanSelector } from './agent/YuanSelector';
 import { MemorySection } from './agent/AgentMemory';
@@ -14,6 +14,7 @@ import { CharacterCardPreviewOverlay, type CharacterCardPlan } from '../overlays
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { Toggle } from '../widgets/Toggle';
+import { readConfigBoolean } from '../resource-state';
 import styles from '../Settings.module.css';
 import {
   type ExpCategory, parseExperience,
@@ -38,7 +39,9 @@ export function AgentTab() {
   const set = useSettingsStore(s => s.set);
   const getSettingsAgentId = useSettingsStore(s => s.getSettingsAgentId);
 
-  const hasUtilityModel = !!(globalModelsConfig?.models?.utility && globalModelsConfig?.models?.utility_large);
+  const hasUtilityModel = globalModelsConfig
+    ? !!(globalModelsConfig.models?.utility && globalModelsConfig.models?.utility_large)
+    : undefined;
   const selectedSettingsAgentId = settingsAgentId || currentAgentId;
 
   const [agentName, setAgentName] = useState('');
@@ -96,38 +99,54 @@ export function AgentTab() {
   }, [availableModels, currentModel]);
   const currentModelUnavailable = !!currentModel && !availableModels.some(m => `${m.provider}/${m.id}` === currentModel);
 
-  const memoryEnabled = settingsConfig?.memory?.enabled !== false;
-  const experienceEnabled = settingsConfig?.experience?.enabled === true;
+  const memoryEnabled = readConfigBoolean(settingsConfig, cfg => cfg.memory?.enabled, true);
+  const experienceEnabled = readConfigBoolean(settingsConfig, cfg => cfg.experience?.enabled, false);
   const hasAvailableToolsField = !!settingsConfig && Object.prototype.hasOwnProperty.call(settingsConfig, 'availableTools');
   const availableTools = hasAvailableToolsField ? settingsConfig?.availableTools : undefined;
 
-  const saveAgent = async () => {
+  const saveAgentName = async () => {
     try {
       const agentId = getSettingsAgentId()!;
-      const agentBase = `/api/agents/${agentId}`;
-      const isActive = agentId === currentAgentId;
+      const currentName = settingsConfig?.agent?.name || '';
 
-      const configPartial: Record<string, unknown> = {};
-      if (agentName && agentName !== (settingsConfig?.agent?.name || '')) {
-        configPartial.agent = { name: agentName };
-      }
-
-      const identityChanged = identity !== (settingsConfig?._identity || '');
-      const ishikiChanged = ishiki !== (settingsConfig?._ishiki || '');
-
-      if (!Object.keys(configPartial).length && !identityChanged && !ishikiChanged) {
+      if (!agentName || agentName === currentName) {
         showToast(t('settings.noChanges'), 'success');
         return;
       }
 
-      const requests: Promise<Response>[] = [];
-      if (Object.keys(configPartial).length) {
-        requests.push(hanaFetch(`${agentBase}/config`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(configPartial),
-        }));
+      const res = await hanaFetch(`/api/agents/${agentId}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: { name: agentName } }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      showToast(t('settings.saved'), 'success');
+      if (agentId === currentAgentId) {
+        set({ agentName });
       }
+      await loadSettingsConfig();
+      await loadAgents();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(t('settings.saveFailed') + ': ' + msg, 'error');
+    }
+  };
+
+  const saveAgent = async () => {
+    try {
+      const agentId = getSettingsAgentId()!;
+      const identityChanged = identity !== (settingsConfig?._identity || '');
+      const ishikiChanged = ishiki !== (settingsConfig?._ishiki || '');
+
+      if (!identityChanged && !ishikiChanged) {
+        showToast(t('settings.noChanges'), 'success');
+        return;
+      }
+
+      const agentBase = `/api/agents/${agentId}`;
+      const requests: Promise<Response>[] = [];
       if (identityChanged) {
         requests.push(hanaFetch(`${agentBase}/identity`, {
           method: 'PUT',
@@ -150,9 +169,6 @@ export function AgentTab() {
       }
 
       showToast(t('settings.saved'), 'success');
-      if (isActive && (configPartial as { agent?: { name: string } })?.agent?.name) {
-        set({ agentName: (configPartial as { agent: { name: string } }).agent.name });
-      }
       await loadSettingsConfig();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -256,7 +272,7 @@ export function AgentTab() {
               // 否则用拼音输入时按回车确认候选词会误触发保存（#1306）。
               if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                void saveAgent();
+                void saveAgentName();
               }
             }}
           />
@@ -282,12 +298,17 @@ export function AgentTab() {
                 await autoSaveConfig({ models: { chat: { id, provider } } });
               }}
               placeholder={t('settings.api.selectModel')}
+              renderGroupHeader={(g) => <ProviderGroupHeader provider={g} />}
+              popupClassName={selectWidgetStyles.providerInset}
             />
           </div>
           <span className={styles['settings-form-hint']}>{t('settings.agent.chatModelHint')}</span>
           {currentModelUnavailable && (
             <span className={styles['settings-form-hint']}>{t('settings.agent.modelUnavailableHint')}</span>
           )}
+          <button className={styles['agent-name-save-btn']} onClick={saveAgentName}>
+            {t('settings.save')}
+          </button>
         </div>
         {/* 图片模型选择器暂时隐藏，后续重新设计 */}
       </section>
@@ -368,7 +389,7 @@ export function AgentTab() {
           />}
         />
         <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
-          {!experienceEnabled ? (
+          {experienceEnabled === undefined ? null : experienceEnabled === false ? (
             <div className={styles['exp-empty']}>{t('settings.experience.paused')}</div>
           ) : expCategories.length === 0 ? (
             <div className={styles['exp-empty']}>{t('settings.experience.empty')}</div>
@@ -398,7 +419,7 @@ export function AgentTab() {
       {/* 默认关闭 dm / beautify / workflow，与后端 DEFAULT_DISABLED_TOOL_NAMES 保持同步 */}
       <AgentToolsSection
         availableTools={availableTools}
-        disabled={settingsConfig?.tools?.disabled ?? ["dm", "beautify", "workflow"]}
+        disabled={settingsConfig ? settingsConfig.tools?.disabled ?? ["dm", "beautify", "workflow"] : undefined}
       />
 
       {exportPlanningAgentId && createPortal((

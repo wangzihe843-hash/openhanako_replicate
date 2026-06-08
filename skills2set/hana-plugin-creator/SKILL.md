@@ -1,6 +1,7 @@
 ---
 name: hana-plugin-creator
-description: Create Hana plugin scaffolds and guide users through beginner or developer plugin planning, capability checks, manifest setup, runtime tools, iframe UI, SDK templates, and install-ready plugin directories. Use when HanaAgent/Codex needs to explain what Hana plugins can do, help a user describe a plugin idea, check whether the SDK supports it, or generate/update a Hana plugin with @hana/plugin-runtime, @hana/plugin-sdk, and @hana/plugin-components.
+description: Create Hana plugin scaffolds and guide users through beginner or developer plugin planning, capability checks, manifest setup, runtime tools, iframe UI, Session/Agent APIs, model/media APIs, SDK templates, and install-ready plugin directories. Use when HanaAgent/Codex needs to explain what Hana plugins can do, help a user describe a plugin idea, check whether the SDK supports it, or generate/update a Hana plugin with @hana/plugin-runtime, @hana/plugin-sdk, and @hana/plugin-components.
+compatibility: "Uses a bundled Node preflight plus a Python scaffold script. No third-party Python packages are required."
 metadata:
   default-enabled: false
 ---
@@ -37,13 +38,33 @@ Hana plugins can provide:
 - Skills, agents, and knowledge that guide model behavior.
 - Iframe pages, widgets, and cards using Hana theme and host capabilities.
 - Lifecycle and EventBus handlers for full-access integrations.
+- Session and Agent control through `@hana/plugin-runtime`: create/list/update/send/abort/history sessions, subscribe to session events, create/read/update plugin-owned agents, and hide plugin-private resources from the main Hana UI.
+- Per-turn model context injection through `sendSessionMessage(..., { context })` or `session:send.context`, suitable for plugin-owned RAG, world lore, mood, character state, or routing hints. This affects only the current provider request and does not rewrite visible user text.
+- Non-streaming utility model calls through `sampleText()` for plugin-side summarization, RAG query rewriting, routing, and classification.
+- Media discovery and generation through `listMediaProviders()`, `resolveMediaModel()`, and `generateImage()`, with generated files delivered as `SessionFile` resources.
 - Provider contributions for chat and media capabilities, including image/video/speech providers backed by HTTP, OAuth HTTP, local CLI, browser CLI, or plugin runtimes.
 - Pi SDK extension-style integrations under `extensions/*.js` where the plugin must observe or transform the LLM request pipeline.
 - SessionFile-backed outputs for files and media.
 
 Hana provides install/enable/reload, per-agent skill toggles, manifest capability checks, iframe host messaging, theme tokens, toast/clipboard/external host APIs, EventBus, data directories, and SDK packages.
 
-Current boundaries: iframe UI is the stable extension surface. Native renderer components and code sandboxing are not the default path yet. If a request depends on those, explain the gap and propose the closest supported shape.
+Current boundaries: iframe UI is the stable extension surface. Native renderer components and code sandboxing are not the default path yet. Ordinary manifest `capabilities` are declaration metadata and can be used directly through the SDK/EventBus; `sensitiveCapabilities` records future user-granted permission intent. If a request depends on native renderer hooks, code sandboxing, or fine-grained permission prompts, explain the gap and propose the closest supported shape.
+
+## Environment Preflight
+
+Run the bundled Node preflight before invoking the Python scaffold script:
+
+```bash
+node skills2set/hana-plugin-creator/scripts/check_env.mjs --capability scaffold
+```
+
+Behavior:
+
+- The preflight itself is JavaScript and uses only Node built-ins.
+- It finds Python through `HANA_PLUGIN_CREATOR_PYTHON`, `python3`, `python`, or Windows `py -3`.
+- It requires Python 3.10+ because the scaffold script uses modern Python syntax.
+- If it returns `ok: false`, stop and show the user the `message` or `installGuidance`. Do not auto-install dependencies.
+- Use the same Python command that passed preflight for the scaffold examples below. The examples use `python3`.
 
 ## Workflow
 
@@ -116,6 +137,13 @@ python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "Jimeng Pro
 - Static `tools/*.js` must export `name`, `description`, `parameters`, and `execute`.
 - React templates may use `@hana/plugin-runtime`, `@hana/plugin-sdk`, and `@hana/plugin-components`.
 - Dev authority is not a manifest permission. Hana grants it from the remembered dev install slot under `${HANA_HOME}/plugins-dev/`, and Agent dev tools are hidden until the user enables the dev tools setting.
+- Declare ordinary SDK needs in manifest `capabilities`, such as `session`, `agent`, `model.sample`, and `media.generate`. Put future high-risk needs in `sensitiveCapabilities`.
+- Prefer runtime helpers over raw bus calls for stable host capabilities: `createSession`, `getSession`, `listSessions`, `updateSession`, `sendSessionMessage`, `subscribeSessionEvents`, `createAgent`, `updateAgent`, `sampleText`, `listMediaProviders`, `resolveMediaModel`, and `generateImage`.
+- `createSession()` creates a detached Hana session and does not switch the main UI focus. Use `visibility: "plugin_private"` and `ownerPluginId` for plugin-only sessions or Tavern-style parallel chat surfaces.
+- `createAgent()` / `updateAgent()` can create plugin-owned hidden agents. Keep plugin-only characters and resources marked `visibility: "plugin_private"` unless the user expects them in the main Agent list.
+- Use `sendSessionMessage()` with `context.system`, `context.beforeUser`, or `context.afterUser` for per-turn RAG/world-lore/mood injection. Do not write JSONL history directly and do not mutate the visible user message to smuggle hidden context.
+- Use `sampleText()` for plugin-side reasoning tasks that do not need a full chat turn, such as query rewriting, summaries, classifiers, or routing.
+- Use `generateImage()` for host media generation instead of calling provider internals directly. The media task pipeline owns progress, cancellation, delivery, and `SessionFile` registration.
 - Local files returned to users must go through `toolCtx.stageFile({ sessionPath, filePath, label })`, then media details. Do not hand-build local `MEDIA:` or `file://` output.
 - Page and widget contributions require `"trust": "full-access"` and route-backed iframe UI.
 - Pi SDK extension factories under `extensions/*.js` require `"trust": "full-access"`. They are for provider request rewriting, context filtering, and tool-call observation; use ordinary `tools/*.js` for Agent-callable actions.

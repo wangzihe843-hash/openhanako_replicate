@@ -84,12 +84,66 @@ const pairedSummary = {
   }],
 };
 
+const lanSummary = {
+  ...baseSummary,
+  network: {
+    ...baseSummary.network,
+    mode: 'lan',
+    listenHost: '0.0.0.0',
+    runtimeMode: 'lan',
+    runtimeHost: '0.0.0.0',
+    lanServerUrl: 'http://192.168.31.75:14500/',
+    lanMobileUrl: 'http://192.168.31.75:14500/mobile/',
+    lanDesktopUrl: 'http://192.168.31.75:14500/desktop/',
+  },
+};
+
+const localConnection = {
+  connectionId: 'local',
+  kind: 'local',
+  serverId: 'local',
+  studioId: 'local',
+  label: 'Local Hana',
+  baseUrl: 'http://127.0.0.1:14500',
+  wsUrl: 'ws://127.0.0.1:14500',
+  token: 'local',
+  authState: 'paired',
+  trustState: 'local',
+  credentialKind: 'loopback_token',
+  platformAccountId: null,
+  officialServiceKind: null,
+  capabilities: ['chat', 'resources', 'files', 'tools'],
+};
+
+const remoteConnection = {
+  ...localConnection,
+  connectionId: 'lan:node_lan:studio_lan',
+  kind: 'lan',
+  label: 'LAN Studio',
+  baseUrl: 'http://192.168.31.75:14500',
+  wsUrl: 'ws://192.168.31.75:14500',
+  token: 'hana_dev_remote_secret',
+  trustState: 'lan',
+  credentialKind: 'device_credential',
+};
+
 describe('AccessTab', () => {
   beforeEach(() => {
     Object.keys(mockState).forEach(key => delete mockState[key]);
     Object.assign(mockState, {
       set: vi.fn((partial: Partial<MockState>) => Object.assign(mockState, partial)),
       showToast: vi.fn(),
+      serverConnections: { local: localConnection },
+      activeServerConnectionId: 'local',
+      activeServerConnection: localConnection,
+      settingsSnapshot: {
+        key: null,
+        status: 'idle',
+        data: null,
+        error: null,
+        requestId: 0,
+        updatedAt: null,
+      },
     });
     mockHanaFetch.mockReset();
     mockHanaFetch.mockImplementation((url: string, options?: RequestInit) => {
@@ -225,6 +279,43 @@ describe('AccessTab', () => {
     expect(screen.queryByText('settings.access.restartRequired')).not.toBeInTheDocument();
   });
 
+  it('uses snapshot access summary for the LAN switch before the refresh request settles', async () => {
+    let resolveSummary: (value: Response) => void = () => {};
+    mockState.settingsSnapshot = {
+      key: 'local:snapshot:agent-a',
+      status: 'ready',
+      data: {
+        agentId: 'agent-a',
+        access: lanSummary,
+      },
+      error: null,
+      requestId: 1,
+      updatedAt: Date.now(),
+    };
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/access/summary') {
+        return new Promise<Response>((resolve) => {
+          resolveSummary = resolve;
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+
+    render(<AccessTab />);
+
+    expect(screen.getByRole('switch', { name: 'settings.access.lanToggle' }))
+      .toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByDisplayValue('14500')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('http://192.168.31.75:14500/mobile/')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('http://192.168.31.75:14500/desktop/')).toBeInTheDocument();
+
+    resolveSummary(jsonResponse(lanSummary));
+    await waitFor(() => {
+      expect(mockHanaFetch).toHaveBeenCalledWith('/api/access/summary');
+    });
+  });
+
   it('keeps the phone URL on the runtime port and hides QR when a saved port change needs restart', async () => {
     mockHanaFetch.mockImplementation((url: string) => {
       if (url === '/api/access/summary') {
@@ -292,7 +383,18 @@ describe('AccessTab', () => {
       method: 'POST',
       body: JSON.stringify({
         displayName: 'Desktop Frontend',
-        scopes: ['chat', 'resources.read', 'files.read', 'files.write'],
+        scopes: [
+          'chat',
+          'resources.read',
+          'files.read',
+          'files.write',
+          'studio.owner',
+          'settings.read',
+          'settings.write',
+          'providers.manage',
+          'secrets.write',
+          'bridge.manage',
+        ],
       }),
     }));
   });
@@ -324,6 +426,31 @@ describe('AccessTab', () => {
       }));
       expect(window.hana.reloadMainWindow).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('renders remote connections as local-only management and can return to the local server', async () => {
+    Object.assign(mockState, {
+      serverConnections: {
+        local: localConnection,
+        [remoteConnection.connectionId]: remoteConnection,
+      },
+      activeServerConnectionId: remoteConnection.connectionId,
+      activeServerConnection: remoteConnection,
+    });
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+
+    render(<AccessTab />);
+
+    expect(await screen.findByText('settings.access.remoteConnection')).toBeInTheDocument();
+    expect(screen.getByText('LAN Studio')).toBeInTheDocument();
+    expect(screen.queryByText('settings.access.localAccount')).not.toBeInTheDocument();
+    expect(mockHanaFetch).not.toHaveBeenCalledWith('/api/access/summary');
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.access.returnToLocal' }));
+
+    expect(mockState.activeServerConnectionId).toBe('local');
+    expect(mockState.activeServerConnection).toBe(localConnection);
+    expect(window.hana.reloadMainWindow).toHaveBeenCalledTimes(1);
   });
 
   it('saves the local owner profile and password from the account section', async () => {

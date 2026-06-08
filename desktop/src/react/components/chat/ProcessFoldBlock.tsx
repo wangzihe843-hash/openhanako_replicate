@@ -1,4 +1,5 @@
 import { memo, useCallback, useId, useMemo, useState } from 'react';
+import { Collapse } from '@/ui';
 import { useStore } from '../../stores';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { AssistantMessage } from './AssistantMessage';
@@ -86,7 +87,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
             </span>
           </button>
         </div>
-        {open && (
+        <Collapse open={open}>
           <div id={panelId} className={`${styles.message} ${styles.messageAssistant} ${styles.processFoldPanel}`}>
             {group.items.map((entry) => (
               <AssistantMessage
@@ -101,7 +102,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
               />
             ))}
           </div>
-        )}
+        </Collapse>
         {!open && completionTimeText && (
           <MessageFooterActions
             align="left"

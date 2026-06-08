@@ -1,4 +1,4 @@
-import type { DeskFile } from '../types';
+import type { DeskFile, StudioWorkspace } from '../types';
 import type { RightWorkspaceTab } from '../types';
 
 export interface CwdSkillInfo {
@@ -7,6 +7,7 @@ export interface CwdSkillInfo {
   source: string;
   filePath: string;
   baseDir: string;
+  workspaceMountId?: string | null;
 }
 
 export interface WorkspaceDeskState {
@@ -39,6 +40,11 @@ export interface DeskSlice {
   cwdSkillsOpen: boolean;
   homeFolder: string | null;
   selectedFolder: string | null;
+  selectedWorkspaceMountId: string | null;
+  selectedWorkspaceLabel: string | null;
+  deskWorkspaceMountId: string | null;
+  deskWorkspaceLabel: string | null;
+  studioWorkspaces: StudioWorkspace[];
   workspaceFolders: string[];
   cwdHistory: string[];
   workspaceDeskStateByRoot: Record<string, WorkspaceDeskState>;
@@ -57,6 +63,9 @@ export interface DeskSlice {
   setDeskJianContent: (content: string | null) => void;
   setHomeFolder: (folder: string | null) => void;
   setSelectedFolder: (folder: string | null) => void;
+  setSelectedWorkspaceMount: (mountId: string | null, label?: string | null) => void;
+  setDeskWorkspaceMount: (mountId: string | null, label?: string | null) => void;
+  setStudioWorkspaces: (workspaces: StudioWorkspace[]) => void;
   setWorkspaceFolders: (folders: string[]) => void;
   setCwdHistory: (history: string[]) => void;
   setWorkspaceDeskState: (root: string, state: WorkspaceDeskState) => void;
@@ -77,6 +86,11 @@ export const createDeskSlice = (
   cwdSkillsOpen: false,
   homeFolder: null,
   selectedFolder: null,
+  selectedWorkspaceMountId: null,
+  selectedWorkspaceLabel: null,
+  deskWorkspaceMountId: null,
+  deskWorkspaceLabel: null,
+  studioWorkspaces: [],
   workspaceFolders: [],
   cwdHistory: [],
   workspaceDeskStateByRoot: {},
@@ -115,6 +129,15 @@ export const createDeskSlice = (
   setDeskJianContent: (content) => set({ deskJianContent: content }),
   setHomeFolder: (folder) => set({ homeFolder: folder }),
   setSelectedFolder: (folder) => set({ selectedFolder: folder }),
+  setSelectedWorkspaceMount: (mountId, label = null) => set({
+    selectedWorkspaceMountId: mountId,
+    selectedWorkspaceLabel: label ?? null,
+  }),
+  setDeskWorkspaceMount: (mountId, label = null) => set({
+    deskWorkspaceMountId: mountId,
+    deskWorkspaceLabel: label ?? null,
+  }),
+  setStudioWorkspaces: (workspaces) => set({ studioWorkspaces: workspaces }),
   setWorkspaceFolders: (folders) => set({ workspaceFolders: folders }),
   setCwdHistory: (history) => set({ cwdHistory: history }),
   setWorkspaceDeskState: (root, state) => set((s) => ({

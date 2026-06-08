@@ -114,11 +114,11 @@ Server 以独立 Node.js 进程运行（由 Electron spawn 或独立启动），
 
 | 层级 | 技术 |
 |------|------|
-| 桌面端 | Electron 38 |
+| 桌面端 | Electron 42 |
 | 前端 | React 19 + Zustand 5 + CSS Modules |
 | 构建 | Vite 7 |
 | 服务端 | Hono + @hono/node-server |
-| Agent 运行时 | [Pi SDK](https://github.com/earendil-works/pi) |
+| Agent 运行时 | [Pi SDK](https://github.com/badlogic/pi-mono) |
 | 数据库 | better-sqlite3（WAL 模式） |
 | 测试 | Vitest |
 | 国际化 | 5 语言（zh / en / ja / ko / zh-TW） |

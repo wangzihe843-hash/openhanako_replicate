@@ -25,12 +25,8 @@ describe('AttachedFilesBar media chips', () => {
     />);
 
     expect(screen.getByText('pasted.png')).toBeInTheDocument();
-    expect(screen.getByText('@')).toBeInTheDocument();
     const image = container.querySelector('img');
     expect(image).toHaveAttribute('src', 'file:///tmp/pasted.png');
-    const chipChildren = Array.from(container.querySelector('span')?.children || []);
-    expect(chipChildren[0]).toHaveTextContent('@');
-    expect(chipChildren[1]).toContainElement(image);
     expect(window.platform.getFileUrl).toHaveBeenCalledWith('/tmp/pasted.png');
 
     fireEvent.click(screen.getByLabelText('Remove pasted.png'));
@@ -64,14 +60,9 @@ describe('AttachedFilesBar media chips', () => {
       onRemove={onRemove}
     />);
 
-    expect(screen.getByText('@')).toBeInTheDocument();
     expect(screen.getByTestId('audio-attachment-wave')).toBeInTheDocument();
     expect(screen.getByText('clip.wav')).toBeInTheDocument();
-    const chipChildren = Array.from(container.querySelector('span')?.children || []);
-    expect(chipChildren[0]).toHaveTextContent('@');
-    expect(chipChildren[1]).toBe(screen.getByLabelText('Play clip.wav'));
-    expect(chipChildren[2]).toBe(screen.getByTestId('audio-attachment-wave'));
-    expect(chipChildren[3]).toHaveTextContent('clip.wav');
+    expect(screen.getByLabelText('Play clip.wav')).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText('Play clip.wav'));
 

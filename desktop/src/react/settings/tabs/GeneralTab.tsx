@@ -2,21 +2,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { autoSaveConfig, t } from '../helpers';
-import { loadSettingsConfig } from '../actions';
+import { loadSettingsConfig, updateSettingsSnapshot } from '../actions';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { Toggle } from '../widgets/Toggle';
 import { SelectWidget } from '../widgets/SelectWidget';
+import { readConfigBoolean } from '../resource-state';
 import type { AutoLaunchStatus } from '../../types';
 import {
   normalizeNotificationPreferences as normalizeSharedNotificationPreferences,
   normalizeTurnCompletionNotificationMode,
-} from '../../../../../shared/notification-preferences.js';
+} from '../../../../../shared/notification-preferences.ts';
 import {
   DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES,
   DEFAULT_QUICK_CHAT_SHORTCUT,
   normalizeQuickChatPreferences,
-} from '../../../../../shared/quick-chat-preferences.js';
+} from '../../../../../shared/quick-chat-preferences.ts';
 import styles from '../Settings.module.css';
 
 type TurnCompletionNotificationMode = 'never' | 'when_unfocused' | 'when_session_unfocused';
@@ -103,12 +104,14 @@ function ShortcutKeycaps({ shortcut }: { shortcut: string }) {
 
 function ShortcutRecorder({
   value,
+  loading,
   recording,
   saving,
   onStart,
   onRestoreDefault,
 }: {
   value: string;
+  loading?: boolean;
   recording: boolean;
   saving: boolean;
   onStart: () => void;
@@ -121,15 +124,15 @@ function ShortcutRecorder({
         className={`${styles['quick-chat-shortcut-button']} ${recording ? styles['recording'] : ''}`}
         aria-label={t('settings.general.quickChat.shortcut')}
         onClick={onStart}
-        disabled={saving}
+        disabled={saving || loading}
       >
-        {recording ? t('settings.general.quickChat.recording') : <ShortcutKeycaps shortcut={value} />}
+        {recording ? t('settings.general.quickChat.recording') : loading ? t('common.loading') : <ShortcutKeycaps shortcut={value} />}
       </button>
       <button
         type="button"
         className={styles['quick-chat-reset-button']}
         onClick={onRestoreDefault}
-        disabled={saving || value === DEFAULT_QUICK_CHAT_SHORTCUT}
+        disabled={saving || loading || value === DEFAULT_QUICK_CHAT_SHORTCUT}
       >
         {t('settings.general.quickChat.restoreDefault')}
       </button>
@@ -142,7 +145,7 @@ function ReuseTimeoutInput({
   saving,
   onChange,
 }: {
-  value: number;
+  value: number | null;
   saving: boolean;
   onChange: (value: number) => void;
 }) {
@@ -156,7 +159,7 @@ function ReuseTimeoutInput({
         step={1}
         inputMode="numeric"
         aria-label={t('settings.general.quickChat.reuseTimeout')}
-        value={Number.isFinite(value) ? value : DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES}
+        value={typeof value === 'number' && Number.isFinite(value) ? value : ''}
         disabled={saving}
         onChange={(event) => onChange(Number(event.currentTarget.value))}
       />
@@ -176,16 +179,24 @@ function normalizeNotificationPreferences(value: unknown): NotificationPreferenc
 export function GeneralTab() {
   const hana = window.hana;
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
+  const snapshotQuickChat = useSettingsStore(s => s.settingsSnapshot.data?.preferences?.quickChat);
+  const snapshotNotifications = useSettingsStore(s => s.settingsSnapshot.data?.preferences?.notifications);
   const showToast = useSettingsStore(s => s.showToast);
   const [autoLaunch, setAutoLaunch] = useState<AutoLaunchStatus | null>(null);
   const [autoLaunchSaving, setAutoLaunchSaving] = useState(false);
   const [keepAwakeSaving, setKeepAwakeSaving] = useState(false);
-  const [quickChatPrefs, setQuickChatPrefs] = useState<QuickChatPreferences>(() => normalizeQuickChatPreferences());
+  const [quickChatPrefs, setQuickChatPrefs] = useState<QuickChatPreferences | null>(() => {
+    const snapshot = useSettingsStore.getState().settingsSnapshot.data?.preferences?.quickChat;
+    return snapshot ? normalizeQuickChatPreferences(snapshot) : null;
+  });
   const [quickChatSaving, setQuickChatSaving] = useState(false);
   const [quickChatRecording, setQuickChatRecording] = useState(false);
   const [notificationSaving, setNotificationSaving] = useState(false);
-  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
-  const keepAwake = settingsConfig?.keep_awake === true;
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences | null>(() => {
+    const snapshot = useSettingsStore.getState().settingsSnapshot.data?.preferences?.notifications;
+    return snapshot ? normalizeNotificationPreferences(snapshot) : null;
+  });
+  const keepAwake = readConfigBoolean(settingsConfig, cfg => cfg.keep_awake, false);
 
   useEffect(() => {
     let alive = true;
@@ -202,6 +213,10 @@ export function GeneralTab() {
   }, [hana]);
 
   useEffect(() => {
+    if (snapshotQuickChat) {
+      setQuickChatPrefs(normalizeQuickChatPreferences(snapshotQuickChat));
+      return undefined;
+    }
     let alive = true;
     hanaFetch('/api/preferences/quick-chat')
       .then(res => res.json())
@@ -216,9 +231,13 @@ export function GeneralTab() {
     return () => {
       alive = false;
     };
-  }, [showToast]);
+  }, [showToast, snapshotQuickChat]);
 
   useEffect(() => {
+    if (snapshotNotifications) {
+      setNotificationPrefs(normalizeNotificationPreferences(snapshotNotifications));
+      return undefined;
+    }
     let alive = true;
     hanaFetch('/api/preferences/notifications')
       .then(res => res.json())
@@ -233,12 +252,13 @@ export function GeneralTab() {
     return () => {
       alive = false;
     };
-  }, [showToast]);
+  }, [showToast, snapshotNotifications]);
 
   const saveQuickChatPreferences = useCallback(async (
     patch: Partial<QuickChatPreferences>,
     options: { reloadShortcut?: boolean; eventName?: string } = {},
   ) => {
+    if (!quickChatPrefs) return;
     const previous = quickChatPrefs;
     const next = normalizeQuickChatPreferences({ ...quickChatPrefs, ...patch });
     setQuickChatPrefs(next);
@@ -253,6 +273,10 @@ export function GeneralTab() {
       if (data?.error) throw new Error(data.error);
       const saved = normalizeQuickChatPreferences(data?.quickChat);
       setQuickChatPrefs(saved);
+      updateSettingsSnapshot(snapshot => ({
+        ...snapshot,
+        preferences: { ...snapshot.preferences, quickChat: saved },
+      }));
       if (options.reloadShortcut) {
         const registration = await hana?.quickChatReloadShortcut?.();
         if (registration && registration.ok === false) {
@@ -320,7 +344,7 @@ export function GeneralTab() {
 
   const handleKeepAwakeToggle = useCallback(async (on: boolean) => {
     if (!hana?.setKeepAwakeEnabled) return;
-    const previous = settingsConfig?.keep_awake === true;
+    const previous = keepAwake === true;
     setKeepAwakeSaving(true);
     try {
       const saved = await autoSaveConfig({ keep_awake: on }, { silent: true });
@@ -335,9 +359,10 @@ export function GeneralTab() {
     } finally {
       setKeepAwakeSaving(false);
     }
-  }, [hana, settingsConfig?.keep_awake, showToast]);
+  }, [hana, keepAwake, showToast]);
 
   const handleTurnCompletionChange = useCallback(async (value: string) => {
+    if (!notificationPrefs) return;
     const turnCompletion = normalizeTurnCompletionMode(value);
     const previous = notificationPrefs;
     const next = { turnCompletion };
@@ -351,7 +376,12 @@ export function GeneralTab() {
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
-      setNotificationPrefs(normalizeNotificationPreferences(data?.notifications));
+      const saved = normalizeNotificationPreferences(data?.notifications);
+      setNotificationPrefs(saved);
+      updateSettingsSnapshot(snapshot => ({
+        ...snapshot,
+        preferences: { ...snapshot.preferences, notifications: saved },
+      }));
     } catch (err: any) {
       setNotificationPrefs(previous);
       showToast(t('settings.saveFailed') + ': ' + (err?.message || String(err)), 'error');
@@ -395,9 +425,10 @@ export function GeneralTab() {
           hint={t('settings.general.quickChat.shortcutHint')}
           control={
             <ShortcutRecorder
-              value={quickChatPrefs.shortcut}
+              value={quickChatPrefs?.shortcut || ''}
+              loading={!quickChatPrefs}
               recording={quickChatRecording}
-              saving={quickChatSaving}
+              saving={quickChatSaving || !quickChatPrefs}
               onStart={() => setQuickChatRecording(true)}
               onRestoreDefault={() => void saveQuickChatShortcut(DEFAULT_QUICK_CHAT_SHORTCUT)}
             />
@@ -408,8 +439,8 @@ export function GeneralTab() {
           hint={t('settings.general.quickChat.reuseTimeoutHint')}
           control={
             <ReuseTimeoutInput
-              value={quickChatPrefs.reuseTimeoutMinutes}
-              saving={quickChatSaving}
+              value={quickChatPrefs?.reuseTimeoutMinutes ?? null}
+              saving={quickChatSaving || !quickChatPrefs}
               onChange={(value) => void saveQuickChatReuseTimeout(value)}
             />
           }
@@ -426,9 +457,10 @@ export function GeneralTab() {
                 { value: 'when_unfocused', label: t('settings.general.notifications.turnCompletionWhenUnfocused') },
                 { value: 'when_session_unfocused', label: t('settings.general.notifications.turnCompletionWhenSessionUnfocused') },
               ]}
-              value={notificationPrefs.turnCompletion}
+              value={notificationPrefs?.turnCompletion || ''}
               onChange={handleTurnCompletionChange}
-              disabled={notificationSaving}
+              placeholder={t('common.loading')}
+              disabled={notificationSaving || !notificationPrefs}
             />
           }
         />

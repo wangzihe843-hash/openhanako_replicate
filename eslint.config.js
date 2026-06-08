@@ -46,15 +46,15 @@ export default [
   // Node-side JS files
   {
     files: [
-      'cli/**/*.js',
-      'core/**/*.js',
-      'hub/**/*.js',
+      'cli/**/*.{js,ts}',
+      'core/**/*.{js,ts}',
+      'hub/**/*.{js,ts}',
       'index.js',
-      'lib/**/*.js',
-      'plugins/**/*.js',
-      'scripts/**/*.{js,mjs}',
-      'server/**/*.js',
-      'shared/**/*.js',
+      'lib/**/*.{js,ts}',
+      'plugins/**/*.{js,ts}',
+      'scripts/**/*.{js,mjs,ts}',
+      'server/**/*.{js,ts}',
+      'shared/**/*.{js,ts}',
       'tests/**/*.{js,ts,tsx}',
     ],
     languageOptions: {
@@ -157,7 +157,7 @@ export default [
 
   // 禁止绕过 adapter 直接导入 PI SDK（后端全覆盖）
   {
-    files: ['core/**/*.js', 'lib/**/*.js', 'hub/**/*.js', 'server/**/*.js'],
+    files: ['core/**/*.{js,ts}', 'lib/**/*.{js,ts}', 'hub/**/*.{js,ts}', 'server/**/*.{js,ts}'],
     ignores: ['lib/pi-sdk/**'],
     rules: {
       'no-restricted-imports': ['error', {
@@ -171,7 +171,7 @@ export default [
 
   // Prevent engine._ access in server routes
   {
-    files: ['server/routes/**/*.js'],
+    files: ['server/routes/**/*.{js,ts}'],
     rules: {
       'no-restricted-syntax': [
         'error',

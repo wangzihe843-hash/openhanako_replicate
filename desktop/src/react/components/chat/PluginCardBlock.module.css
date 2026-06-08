@@ -4,6 +4,7 @@
   border-radius: var(--radius-chat-card);
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+  animation: hana-chat-soft-up-in 130ms var(--ease-out) both;
 }
 .iframe {
   display: block;
@@ -21,4 +22,10 @@
   color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .container {
+    animation: none;
+  }
 }

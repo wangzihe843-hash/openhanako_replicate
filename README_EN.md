@@ -108,11 +108,11 @@ User data is rooted at `HANA_HOME` (`~/.hanako` in production, `~/.hanako-dev` i
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop | Electron 38 |
+| Desktop | Electron 42 |
 | Frontend | React 19 + Zustand 5 + CSS Modules |
 | Build | Vite 7 |
 | Server | Hono + @hono/node-server |
-| Agent Runtime | [Pi SDK](https://github.com/nicepkg/pi) |
+| Agent Runtime | [Pi SDK](https://github.com/badlogic/pi-mono) |
 | Database | better-sqlite3 (WAL mode) |
 | Testing | Vitest |
 | i18n | 5 languages (zh / en / ja / ko / zh-TW) |

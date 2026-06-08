@@ -10,7 +10,6 @@ import {
   categoryKey,
   categoryLabel,
   formatCompactNumber,
-  formatCost,
   formatPercent,
   groupDateWindowEntries,
   groupEntries,
@@ -134,7 +133,6 @@ function OverallView({ totals, models, requests }: { totals: UsageAggregate; mod
           <div className={styles['usage-hero-stats']}>
             <UsageHeroStat label={t('settings.usage.requests')} value={formatCompactNumber(totals.requests)} />
             <UsageHeroStat label={t('settings.usage.cacheRead')} value={formatCompactNumber(totals.cacheReadTokens)} />
-            <UsageHeroStat label={t('settings.usage.estimatedCost')} value={formatCost(totals.costTotal)} />
           </div>
           <UsageLegend />
         </div>

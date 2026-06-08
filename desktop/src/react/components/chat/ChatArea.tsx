@@ -170,7 +170,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   // prepend 后保持滚动位置：监听 items 变化，如果头部变了就修正 scrollTop
   const prevFirstId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    const firstId = items[0]?.type === 'message' ? items[0].data.id : undefined;
+    const firstId = items.find((item) => item.type === 'message')?.data.id;
     const el = ref.current;
     if (el && prevFirstId.current && firstId !== prevFirstId.current) {
       // 头部 id 变了 → prepend 发生，修正 scrollTop 让原来的内容不跳

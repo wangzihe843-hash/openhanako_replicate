@@ -6,6 +6,8 @@ import { t } from '../helpers';
 import styles from '../Settings.module.css';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
+import { SelectWidget, type SelectOption } from '../widgets/SelectWidget';
+import { Toggle } from '../widgets/Toggle';
 
 const platform = window.platform;
 
@@ -220,6 +222,7 @@ export function PluginsTab() {
   /* ── full-access toggle ── */
 
   const toggleFullAccess = async () => {
+    if (pluginAllowFullAccess === undefined) return;
     const next = !pluginAllowFullAccess;
     set({ pluginAllowFullAccess: next });
     try {
@@ -238,6 +241,7 @@ export function PluginsTab() {
   };
 
   const togglePluginDevTools = async () => {
+    if (pluginDevToolsEnabled === undefined) return;
     const next = !pluginDevToolsEnabled;
     set({ pluginDevToolsEnabled: next });
     try {
@@ -642,15 +646,11 @@ export function PluginsTab() {
                 onClick={() => updateConfigDraft(key, value !== true)}
               />
             ) : property.enum ? (
-              <select
-                className={styles['settings-input']}
+              <SelectWidget
+                options={property.enum.map((item): SelectOption => ({ value: String(item), label: String(item) }))}
                 value={formatConfigValue(property, value)}
-                onChange={(e) => updateConfigDraft(key, parseConfigValue(property, e.target.value))}
-              >
-                {property.enum.map((item) => (
-                  <option key={String(item)} value={String(item)}>{String(item)}</option>
-                ))}
-              </select>
+                onChange={(v) => updateConfigDraft(key, parseConfigValue(property, v))}
+              />
             ) : property.type === 'object' || property.type === 'array' ? (
               <textarea
                 className={styles['settings-input']}
@@ -689,9 +689,9 @@ export function PluginsTab() {
           label={t('settings.plugins.fullAccessToggle')}
           hint={t('settings.plugins.fullAccessDesc')}
           control={
-            <button
-              className={`hana-toggle${pluginAllowFullAccess ? ' on' : ''}`}
-              onClick={toggleFullAccess}
+            <Toggle
+              on={pluginAllowFullAccess}
+              onChange={toggleFullAccess}
             />
           }
         />
@@ -699,9 +699,9 @@ export function PluginsTab() {
           label={t('settings.plugins.devToolsToggle')}
           hint={t('settings.plugins.devToolsDesc')}
           control={
-            <button
-              className={`hana-toggle${pluginDevToolsEnabled ? ' on' : ''}`}
-              onClick={togglePluginDevTools}
+            <Toggle
+              on={pluginDevToolsEnabled}
+              onChange={togglePluginDevTools}
             />
           }
         />

@@ -54,7 +54,7 @@ export function ConnectorForm({
   onUpdate,
   onCancelEdit,
 }: ConnectorFormProps) {
-  const [form, setForm] = useState(INITIAL_FORM);
+  const [form, setForm] = useState(() => editingConnector ? formFromConnector(editingConnector) : INITIAL_FORM);
   const [error, setError] = useState('');
 
   useEffect(() => {

@@ -133,6 +133,8 @@ export interface HanaToolContext {
   pluginId: string;
   pluginDir: string;
   dataDir: string;
+  capabilities?: string[];
+  sensitiveCapabilities?: string[];
   sessionPath?: string | null;
   bus: HanaEventBus;
   config: HanaPluginConfigStore;
@@ -284,6 +286,118 @@ export interface HanaPluginConfigScopeOptions {
   scope?: 'global' | 'per-agent' | 'per-session';
   agentId?: string;
   sessionPath?: string;
+}
+
+export interface HanaSessionTurnContext {
+  system?: string | Array<string | { text: string; label?: string }>;
+  beforeUser?: string | Array<string | { text: string; label?: string }>;
+  afterUser?: string | Array<string | { text: string; label?: string }>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface HanaSessionCreateInput {
+  agentId?: string | null;
+  cwd?: string | null;
+  memoryEnabled?: boolean;
+  model?: string | { id?: string; modelId?: string; provider?: string; providerId?: string };
+  workspaceFolders?: string[];
+  authorizedFolders?: string[];
+  thinkingLevel?: string;
+  permissionMode?: string;
+  ownerPluginId?: string | null;
+  kind?: string | null;
+  sessionKind?: string | null;
+  visibility?: 'public' | 'plugin_private' | 'private' | string;
+}
+
+export interface HanaSessionSendInput {
+  text: string;
+  context?: HanaSessionTurnContext | null;
+  images?: unknown[];
+  videos?: unknown[];
+  audios?: unknown[];
+  imageAttachmentPaths?: string[];
+  videoAttachmentPaths?: string[];
+  audioAttachmentPaths?: string[];
+  [key: string]: unknown;
+}
+
+export interface HanaSessionListFilter {
+  agentId?: string;
+  ownerPluginId?: string;
+  includePluginPrivate?: boolean;
+}
+
+export interface HanaSessionUpdateInput {
+  title?: string;
+  pinned?: boolean;
+  projectId?: string | null;
+  thinkingLevel?: string;
+  permissionMode?: string;
+  ownerPluginId?: string | null;
+  kind?: string | null;
+  visibility?: 'public' | 'plugin_private' | 'private' | string;
+}
+
+export interface HanaAgentCreateInput {
+  id?: string;
+  name: string;
+  yuan?: string;
+  ownerPluginId?: string | null;
+  visibility?: 'public' | 'plugin_private' | 'private' | string;
+  kind?: string | null;
+  initialFiles?: Record<string, string>;
+  initialMemory?: Record<string, unknown>;
+  memoryPolicy?: { enabled?: boolean };
+}
+
+export interface HanaAgentUpdateInput {
+  name?: string;
+  yuan?: string;
+  ownerPluginId?: string | null;
+  visibility?: 'public' | 'plugin_private' | 'private' | string;
+  kind?: string | null;
+  memoryPolicy?: { enabled?: boolean };
+  toolPolicy?: { disabled?: string[] };
+  config?: Record<string, unknown>;
+}
+
+export interface HanaModelSampleInput {
+  systemPrompt?: string;
+  messages: Array<{ role: string; content: unknown }>;
+  sessionPath?: string;
+  agentId?: string;
+  temperature?: number;
+  maxTokens?: number;
+  operation?: string;
+}
+
+export interface HanaMediaProviderFilter {
+  capability?: string;
+}
+
+export interface HanaMediaModelRef {
+  providerId?: string;
+  provider?: string;
+  modelId?: string;
+  model?: string;
+  capability?: string;
+  credentialLaneId?: string;
+}
+
+export interface HanaGenerateImageInput {
+  sessionPath: string;
+  prompt: string;
+  count?: number;
+  image?: string;
+  ratio?: string;
+  resolution?: string;
+  quality?: string;
+  model?: string;
+  provider?: string;
+  input?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  deliveryTarget?: unknown;
 }
 
 export interface HanaEventBus {
@@ -462,6 +576,8 @@ export interface HanaPluginContext {
   pluginId: string;
   pluginDir: string;
   dataDir: string;
+  capabilities?: string[];
+  sensitiveCapabilities?: string[];
   bus: HanaEventBus;
   config: HanaPluginConfigStore;
   log: HanaPluginLogger;
@@ -618,6 +734,165 @@ export function requestBus<Result = unknown, Payload = unknown>(
     throw new Error('plugin bus request unavailable');
   }
   return ctx.bus.request<Result>(type, payload, options);
+}
+
+function pluginIdFromContext(ctx: { pluginId?: string | null }): string | null {
+  return typeof ctx.pluginId === 'string' && ctx.pluginId.length > 0 ? ctx.pluginId : null;
+}
+
+function withOwnerPlugin<T extends Record<string, unknown>>(
+  ctx: { pluginId?: string | null },
+  input: T,
+): T {
+  const pluginId = pluginIdFromContext(ctx);
+  if (!pluginId || input.ownerPluginId) return input;
+  return { ...input, ownerPluginId: pluginId };
+}
+
+function withContextMetadata(
+  ctx: { pluginId?: string | null },
+  context: HanaSessionTurnContext | null | undefined,
+): HanaSessionTurnContext | null | undefined {
+  if (!context) return context;
+  const pluginId = pluginIdFromContext(ctx);
+  if (!pluginId) return context;
+  return {
+    ...context,
+    metadata: {
+      pluginId,
+      ...(context.metadata || {}),
+    },
+  };
+}
+
+export function createSession(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  input: HanaSessionCreateInput = {},
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'session:create', withOwnerPlugin(ctx, { ...input }), options);
+}
+
+export function getSession(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  sessionPath: string,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'session:get', { sessionPath }, options);
+}
+
+export function listSessions(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  filter: HanaSessionListFilter = {},
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'session:list', filter, options);
+}
+
+export function updateSession(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  sessionPath: string,
+  patch: HanaSessionUpdateInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'session:update', { sessionPath, ...withOwnerPlugin(ctx, { ...patch }) }, options);
+}
+
+export function sendSessionMessage(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  sessionPath: string,
+  input: HanaSessionSendInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'session:send', {
+    ...input,
+    sessionPath,
+    context: withContextMetadata(ctx, input.context),
+  }, options);
+}
+
+export function subscribeSessionEvents(
+  ctx: { bus?: Pick<HanaEventBus, 'subscribe'> | null },
+  sessionPath: string,
+  handler: (event: unknown, meta: { sessionPath: string | null }) => void,
+): () => void {
+  if (!ctx.bus || typeof ctx.bus.subscribe !== 'function') {
+    throw new Error('plugin bus subscribe unavailable');
+  }
+  return ctx.bus.subscribe((event, scopedSessionPath) => {
+    handler(event, { sessionPath: scopedSessionPath || null });
+  }, { sessionPath });
+}
+
+export function listAgents(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  filter: { ownerPluginId?: string; includePluginPrivate?: boolean } = {},
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'agent:list', filter, options);
+}
+
+export function getAgentProfile(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  agentId: string,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'agent:profile', { agentId }, options);
+}
+
+export function createAgent(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  input: HanaAgentCreateInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'agent:create', withOwnerPlugin(ctx, { ...input }), options);
+}
+
+export function updateAgent(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  agentId: string,
+  patch: HanaAgentUpdateInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'agent:update', { agentId, ...withOwnerPlugin(ctx, { ...patch }) }, options);
+}
+
+export function sampleText(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  input: HanaModelSampleInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'model:sample-text', {
+    ...input,
+    ...(pluginIdFromContext(ctx) ? { pluginId: pluginIdFromContext(ctx) } : {}),
+  }, options);
+}
+
+export function listMediaProviders(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  filter: HanaMediaProviderFilter = {},
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'provider:media-providers', filter, options);
+}
+
+export function resolveMediaModel(
+  ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
+  ref: HanaMediaModelRef,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'provider:resolve-media-model', ref, options);
+}
+
+export function generateImage(
+  ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
+  input: HanaGenerateImageInput,
+  options?: Record<string, unknown>,
+): Promise<unknown> {
+  return requestBus(ctx, 'media:generate-image', {
+    ...input,
+    ...(pluginIdFromContext(ctx) ? { pluginId: pluginIdFromContext(ctx) } : {}),
+  }, options);
 }
 
 export function listUsageEntries(

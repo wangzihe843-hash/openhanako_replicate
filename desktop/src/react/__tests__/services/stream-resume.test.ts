@@ -32,7 +32,13 @@ vi.mock('../../services/websocket', () => ({
 }));
 
 import { useStore } from '../../stores';
-import { clearSessionStreamMeta, getSessionStreamMeta, injectHandlers, replayStreamResume, updateSessionStreamMeta } from '../../services/stream-resume';
+import { invalidateStreamResumeMeta } from '../../stores/stream-invalidator';
+import {
+  injectHandlers,
+  replayStreamResume,
+  requestStreamResume,
+  updateSessionStreamMeta,
+} from '../../services/stream-resume';
 
 describe('stream-resume', () => {
   beforeEach(() => {
@@ -161,34 +167,49 @@ describe('stream-resume', () => {
     })).toBe(false);
   });
 
-  describe('clearSessionStreamMeta', () => {
-    it('drops the per-session meta so a previously consumed seq is accepted again (no unbounded retention)', () => {
-      const path = '/evict.jsonl';
-      // 第一次 seq 入账，再次重复被判已消费
-      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(true);
-      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(false);
-
-      clearSessionStreamMeta(path);
-
-      // 清后该 path 的 consumedSeqs 重置：同一 seq 被当成全新事件再次入账
-      expect(updateSessionStreamMeta({ sessionPath: path, streamId: 'sX', seq: 7 })).toBe(true);
+  it('requests the current stream from the beginning after render state is invalidated', () => {
+    updateSessionStreamMeta({
+      sessionPath: '/background.jsonl',
+      streamId: 'stream_lost_render_cache',
+      seq: 42,
     });
 
-    it('resets the lazily-recreated meta to a fresh empty entry', () => {
-      const path = '/evict-2.jsonl';
-      const before = getSessionStreamMeta(path);
-      before!.streamId = 'old';
-      before!.lastSeq = 42;
+    invalidateStreamResumeMeta('/background.jsonl');
+    requestStreamResume('/background.jsonl');
 
-      clearSessionStreamMeta(path);
+    expect(mocks.ws.send).toHaveBeenCalledWith(JSON.stringify({
+      type: 'resume_stream',
+      sessionPath: '/background.jsonl',
+      streamId: null,
+      sinceSeq: 0,
+    }));
+  });
 
-      const after = getSessionStreamMeta(path);
-      expect(after).not.toBe(before);
-      expect(after).toEqual({ streamId: null, lastSeq: 0, consumedSeqs: new Set() });
+  it('keeps the session marked streaming when resume replay is empty but runtime says it is still running', () => {
+    const statuses: Array<{ isStreaming: boolean; sessionPath: string | null }> = [];
+    injectHandlers(vi.fn(), (isStreaming, sessionPath) => {
+      statuses.push({ isStreaming, sessionPath });
+      useStore.setState((state) => ({
+        streamingSessions: isStreaming
+          ? Array.from(new Set([...state.streamingSessions, sessionPath].filter(Boolean))) as string[]
+          : state.streamingSessions.filter((path) => path !== sessionPath),
+      }));
     });
 
-    it('is a no-op for an empty path', () => {
-      expect(() => clearSessionStreamMeta('')).not.toThrow();
+    replayStreamResume({
+      type: 'stream_resume',
+      sessionPath: '/background.jsonl',
+      streamId: null,
+      sinceSeq: 42,
+      nextSeq: 1,
+      isStreaming: false,
+      runtimeIsStreaming: true,
+      reset: false,
+      truncated: false,
+      events: [],
     });
+
+    expect(statuses).toEqual([{ isStreaming: true, sessionPath: '/background.jsonl' }]);
+    expect(useStore.getState().streamingSessions).toEqual(['/background.jsonl']);
   });
 });

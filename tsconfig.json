@@ -1,16 +1,7 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
     "baseUrl": ".",
     "paths": {
       "@hana/plugin-protocol": ["packages/plugin-protocol/src/index.ts"],
@@ -23,8 +14,6 @@
   "include": [
     "desktop/src/**/*.ts",
     "desktop/src/**/*.tsx",
-    "tests/**/*.ts",
-    "tests/**/*.tsx",
     "packages/*/src/**/*.ts",
     "packages/*/src/**/*.tsx"
   ],

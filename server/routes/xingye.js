@@ -1,14 +1,14 @@
 import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
-import { safeJson } from "../hono-helpers.js";
-import { callText } from "../../core/llm-client.js";
-import { isLocalBaseUrl } from "../../shared/net-utils.js";
+import { safeJson } from "../hono-helpers.ts";
+import { callText } from "../../core/llm-client.ts";
+import { isLocalBaseUrl } from "../../shared/net-utils.ts";
 import {
   appendMessage as appendChannelMessage,
   getChannelMembers,
   getChannelMeta,
-} from "../../lib/channels/channel-store.js";
+} from "../../lib/channels/channel-store.ts";
 
 const PROFILE_FIELDS = [
   "shortBio",

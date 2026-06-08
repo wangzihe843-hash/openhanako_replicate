@@ -28,7 +28,7 @@ const CSP_PROFILES: Record<string, string> = {
     "default-src 'self'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*; img-src 'self' data: blob: file: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:",
   // Onboarding：需要 API 连接、图片、字体
   'onboarding.html':
-    "default-src 'self'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*; img-src 'self' data: file: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:",
+    "default-src 'self'; connect-src 'self' http: https: ws: wss:; img-src 'self' data: file: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:",
   // 以下窗口不加载第三方字体，保持严格策略
   'splash.html':
     "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' file:",
@@ -184,6 +184,40 @@ function injectDevWebConfig(): Plugin {
   };
 }
 
+function serveMobilePwaStaticFiles(): Plugin {
+  const srcDir = path.resolve(__dirname, 'desktop/src');
+  const filesByUrl = new Map<string, { file: string; contentType: string }>([
+    ['/sw.js', { file: path.join(srcDir, 'mobile-sw.js'), contentType: 'application/javascript; charset=utf-8' }],
+    ['/manifest.webmanifest', { file: path.join(srcDir, 'mobile-manifest.webmanifest'), contentType: 'application/manifest+json; charset=utf-8' }],
+    ['/icon.png', { file: path.join(srcDir, 'icon.png'), contentType: 'image/png' }],
+  ]);
+
+  return {
+    name: 'hana-serve-mobile-pwa-static-files',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = req.url?.split('?')[0] || '';
+        const asset = filesByUrl.get(pathname);
+        if (!asset) {
+          next();
+          return;
+        }
+        fs.readFile(asset.file, (err, data) => {
+          if (err) {
+            next(err);
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('Content-Type', asset.contentType);
+          res.setHeader('Cache-Control', 'no-cache');
+          res.end(data);
+        });
+      });
+    },
+  };
+}
+
 function createDevWebProxy(): Record<string, ProxyOptions> | undefined {
   if (process.env.HANA_DEV_WEB !== '1') return undefined;
   const target = process.env.HANA_DEV_WEB_SERVER_URL?.trim();
@@ -268,6 +302,7 @@ export default defineConfig({
     react(),
     injectCsp(),
     injectDevWebConfig(),
+    serveMobilePwaStaticFiles(),
     useSourceThemeInDev(),
     restoreLegacyCss(),
     copyLegacyFiles(),

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
+import { spring } from '@/ui/motion';
 import { useStore } from '../../../stores';
 import { isMediaKind } from '../../../utils/file-kind';
 import { fileRefVersionToken } from '../../../services/resource-url';
@@ -120,7 +122,7 @@ export function MediaViewer() {
   };
 
   return (
-    <div
+    <motion.div
       ref={containerRef}
       className={styles.overlay}
       role="dialog"
@@ -128,6 +130,9 @@ export function MediaViewer() {
       aria-label={t('mediaViewer.ariaLabel')}
       data-testid="media-viewer-overlay"
       onClick={onOverlayClick}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={spring.paperSnap}
     >
       {/* 顶栏 */}
       <div className={`${styles.topbar} ${chromeVisible ? '' : styles.hidden}`}>
@@ -185,6 +190,6 @@ export function MediaViewer() {
       >
         <span className={styles.name} data-testid="media-viewer-name">{current.name}</span>
       </div>
-    </div>
+    </motion.div>
   );
 }

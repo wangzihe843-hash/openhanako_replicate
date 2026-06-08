@@ -634,6 +634,17 @@ describe('channel-actions', () => {
   });
 
   describe('toggleChannelsEnabled', () => {
+    it('未知频道开关状态时不猜测下一值', async () => {
+      mockState.channelsEnabled = undefined;
+
+      const { toggleChannelsEnabled } = await import('../../stores/channel-actions');
+      const result = await toggleChannelsEnabled();
+
+      expect(result).toBeUndefined();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(setStateCalls).toEqual([]);
+    });
+
     it('切换开关状态', async () => {
       mockState.channelsEnabled = true;
 

@@ -36,6 +36,13 @@ function dataTransferStub() {
   } as unknown as DataTransfer;
 }
 
+function editorDragEvent(type: 'dragover' | 'drop', dataTransfer: DataTransfer, clientY: number): DragEvent {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  Object.defineProperty(event, 'clientY', { value: clientY });
+  return event as DragEvent;
+}
+
 function putWorkspaceImageOnDrag(dataTransfer: DataTransfer) {
   writeAppFileDragPayload(dataTransfer, {
     source: 'workspace',
@@ -191,9 +198,9 @@ describe('PreviewEditor markdown cover drop', () => {
 
     const editorDom = ref.current?.getView()?.dom;
     expect(editorDom).toBeTruthy();
-    fireEvent.dragOver(editorDom!, { dataTransfer, clientY: 12 });
+    editorDom!.dispatchEvent(editorDragEvent('dragover', dataTransfer, 12));
     expect(ref.current?.getView()?.dom).toHaveClass('cm-markdown-cover-rail-active');
-    fireEvent.drop(editorDom!, { dataTransfer, clientY: 12 });
+    editorDom!.dispatchEvent(editorDragEvent('drop', dataTransfer, 12));
 
     await waitFor(() => {
       expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/desk/beautify/cover/apply', expect.objectContaining({

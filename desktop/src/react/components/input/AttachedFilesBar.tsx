@@ -18,7 +18,6 @@ export const AttachedFilesBar = memo(function AttachedFilesBar({ files, onRemove
             <AudioAttachmentChip
               key={f.path}
               file={f}
-              showAt
               onRemove={() => onRemove(i)}
             />
           );
@@ -55,7 +54,6 @@ function ImageAttachmentChip({
   const src = getMediaUrl(file);
   return (
     <span className={styles['media-attachment-chip']} title={file.name}>
-      <span className={styles['media-attachment-at']} aria-hidden="true">@</span>
       <span className={styles['image-attachment-preview']} aria-hidden="true">
         {src ? (
           <img src={src} alt="" />

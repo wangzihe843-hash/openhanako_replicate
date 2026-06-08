@@ -26,7 +26,7 @@ vi.mock('../../settings/helpers', () => ({
       'settings.usage.totalTokens': 'Total tokens',
       'settings.usage.cacheRead': 'Cache read',
       'settings.usage.cacheHitRate': 'Hit rate',
-      'settings.usage.estimatedCost': 'Cost',
+
       'settings.usage.uncached': 'Uncached',
       'settings.usage.modelMix': 'Model mix',
       'settings.usage.dailyUsage': 'Daily usage',

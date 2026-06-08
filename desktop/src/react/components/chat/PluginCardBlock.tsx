@@ -1,10 +1,9 @@
-import { useState, useMemo } from 'react';
-import { hanaUrl } from '../../hooks/use-hana-fetch';
+import { useState } from 'react';
 import { usePluginIframe } from '../../hooks/use-plugin-iframe';
+import { usePluginSurfaceUrl } from '../../hooks/use-plugin-surface-url';
 import { useStore } from '../../stores';
 import type { PluginCardDetails } from '../../types';
 import s from './PluginCardBlock.module.css';
-import { DEFAULT_THEME } from '../../../shared/theme-registry';
 
 interface Props {
   card: PluginCardDetails;
@@ -34,15 +33,8 @@ export function PluginCardBlock({ card, agentId }: Props) {
 
   const isIframe = !card.type || card.type === 'iframe';
 
-  const src = useMemo(() => {
-    if (!isIframe) return '';
-    const theme = document.documentElement.dataset.theme || DEFAULT_THEME;
-    const cssUrl = hanaUrl(`/api/plugins/theme.css?theme=${encodeURIComponent(theme)}`);
-    const base = hanaUrl(`/api/plugins/${card.pluginId}${card.route}`);
-    const sep = base.includes('?') ? '&' : '?';
-    return `${base}${sep}agentId=${encodeURIComponent(agentId || '')}&hana-theme=${encodeURIComponent(theme)}&hana-css=${encodeURIComponent(cssUrl)}`;
-  }, [card.pluginId, card.route, isIframe, agentId]);
-  const { iframeRef, status, size } = usePluginIframe(isIframe ? src : null, {
+  const surfaceUrl = usePluginSurfaceUrl(isIframe ? `/api/plugins/${card.pluginId}${card.route}` : null, agentId);
+  const { iframeRef, status: iframeStatus, size } = usePluginIframe(isIframe ? surfaceUrl.iframeSrc : null, {
     pluginId: card.pluginId,
     agentId,
     slot: 'card',
@@ -50,6 +42,7 @@ export function PluginCardBlock({ card, agentId }: Props) {
     initialSize: { width: defaultW, height: defaultH },
     readyOnTimeout: true,
   });
+  const status = surfaceUrl.status === 'ready' ? iframeStatus : surfaceUrl.status;
   const ready = status === 'ready';
 
   if (!isIframe || error) {
@@ -67,7 +60,7 @@ export function PluginCardBlock({ card, agentId }: Props) {
       <iframe
         ref={iframeRef}
         className={s.iframe}
-        src={src}
+        src={surfaceUrl.iframeSrc || undefined}
         sandbox="allow-scripts allow-same-origin"
         style={{
           width: size.width ?? defaultW,

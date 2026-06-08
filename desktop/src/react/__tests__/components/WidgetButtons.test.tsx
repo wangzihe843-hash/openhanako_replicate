@@ -47,10 +47,19 @@ describe('WidgetButtons', () => {
   });
 
   it('opens a hidden widget when its dropdown label is selected', () => {
-    render(<WidgetButtons />);
+    const { container } = render(
+      <div className="titlebar">
+        <WidgetButtons />
+      </div>,
+    );
+    const titlebar = container.querySelector('.titlebar');
+    expect(titlebar).not.toBeNull();
 
     fireEvent.click(screen.getByTitle('plugin.widget.hiddenPlugins'));
-    fireEvent.click(screen.getByRole('button', { name: 'Dream Notes' }));
+    const hiddenWidgetButton = screen.getByRole('button', { name: 'Dream Notes' });
+    expect(titlebar).not.toContainElement(hiddenWidgetButton);
+
+    fireEvent.click(hiddenWidgetButton);
 
     expect(useStore.getState().hiddenWidgets).toEqual([]);
     expect(useStore.getState().jianView).toBe('widget:dream-notes');

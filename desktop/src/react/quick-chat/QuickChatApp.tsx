@@ -20,7 +20,7 @@ import chatStyles from '../components/chat/Chat.module.css';
 import {
   DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES,
   normalizeQuickChatPreferences,
-} from '../../../../shared/quick-chat-preferences.js';
+} from '../../../../shared/quick-chat-preferences.ts';
 import { shouldResetQuickChatSessionAfterIdle } from './quick-chat-lifecycle';
 import {
   pickQuickChatRuntimeAgent,

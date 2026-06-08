@@ -49,6 +49,8 @@ export interface Session {
   agentId: string | null;
   agentName: string | null;
   cwd: string | null;
+  workspaceMountId?: string | null;
+  workspaceLabel?: string | null;
   projectId?: string | null;
   permissionMode?: SessionPermissionMode | null;
   pinnedAt?: string | null;
@@ -204,6 +206,17 @@ export interface DeskFile {
   mtime?: string;
 }
 
+export interface StudioWorkspace {
+  workspaceId: string;
+  mountId: string;
+  label: string;
+  sourceKind?: string | null;
+  provider?: string | null;
+  presentation?: string | null;
+  capabilities?: string[];
+  isDefault?: boolean;
+}
+
 export interface WorkspaceChangePayload {
   rootPath: string;
   changedPath: string;
@@ -251,8 +264,9 @@ export interface VersionedWriteResult {
 }
 
 export interface RemoteWorkbenchContentRef {
-  kind: 'mobile-workbench';
-  rootId: string;
+  kind: 'workbench-file' | 'mobile-workbench';
+  mountId?: string;
+  rootId?: string;
   subdir: string;
   name: string;
   contentPath: string;
@@ -295,6 +309,41 @@ export interface PluginUiHostCapabilityGrant {
   hostCapabilities: string[];
 }
 
+export interface BrowserViewerTab {
+  tabId: string;
+  title?: string;
+  url?: string | null;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface BrowserViewerUpdate {
+  title?: string;
+  url?: string | null;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  running?: boolean;
+  reason?: string | null;
+  sessionPath?: string | null;
+  activeTabId?: string | null;
+  tabs?: BrowserViewerTab[];
+}
+
+export interface HtmlPreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface HtmlPreviewShowPayload {
+  previewId: string;
+  previewUrl: string;
+  bounds: HtmlPreviewBounds;
+}
+
 // ── Platform API 类型声明 ──
 export interface PlatformApi {
   getServerPort(): Promise<string>;
@@ -323,6 +372,9 @@ export interface PlatformApi {
   getFileUrl?(path: string): string;
   readDocxHtml(path: string): Promise<string | null>;
   readXlsxHtml(path: string): Promise<string | null>;
+  showHtmlPreview?(payload: HtmlPreviewShowPayload): Promise<boolean>;
+  updateHtmlPreviewBounds?(previewId: string, bounds: HtmlPreviewBounds): Promise<boolean>;
+  closeHtmlPreview?(previewId: string): Promise<boolean>;
   /** 派生一个只读 Viewer 窗口展示指定文件。返回 windowId（主进程 BrowserWindow.id）。 */
   spawnViewer(data: { filePath: string; title: string; type: string; language?: string | null }): Promise<number | null>;
   /** Viewer 窗口接收文件元信息（viewer-window-entry 调用）。 */
@@ -365,12 +417,15 @@ export interface PlatformApi {
     thumbnailUrl?: string | null;
     thumbnailFresh?: boolean;
   }): void;
-  onBrowserUpdate?(callback: (data: { title?: string; canGoBack?: boolean; canGoForward?: boolean; running?: boolean }) => void): void;
+  onBrowserUpdate?(callback: (data: BrowserViewerUpdate) => void): void | (() => void);
   closeBrowserViewer?(): void;
   closeBrowser?(): void;
   browserGoBack?(): void;
   browserGoForward?(): void;
   browserReload?(): void;
+  browserNewTab?(): void;
+  browserSwitchTab?(tabId: string): void;
+  browserCloseTab?(tabId: string): void;
 
   // ── Skill viewer (preload) ──
   listSkillFiles?(baseDir: string): Promise<unknown[]>;

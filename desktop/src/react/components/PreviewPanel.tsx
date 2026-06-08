@@ -21,7 +21,7 @@ import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
 import { clearSelection, getSelectionCommitAnchorRect, scheduleCaptureSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
-import { saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
+import { isRemoteWorkbenchContentRef, saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
 import { watchFileChanges } from '../services/file-change-events';
 import { refreshPreviewItemsFromFile } from '../utils/preview-file-refresh';
 import previewStyles from './Preview.module.css';
@@ -31,11 +31,13 @@ const EDITABLE_TYPES = new Set(['markdown', 'code', 'csv']);
 function isEditable(previewItem: PreviewItem | null): boolean {
   if (!previewItem) return false;
   return EDITABLE_TYPES.has(previewItem.type)
-    && (!!previewItem.filePath || previewItem.remoteContentRef?.kind === 'mobile-workbench');
+    && (!!previewItem.filePath || isRemoteWorkbenchContentRef(previewItem.remoteContentRef));
 }
 
 function isMarkdownFile(previewItem: PreviewItem | null): boolean {
-  return !!previewItem?.filePath && previewItem.type === 'markdown';
+  return !!previewItem
+    && previewItem.type === 'markdown'
+    && (!!previewItem.filePath || isRemoteWorkbenchContentRef(previewItem.remoteContentRef));
 }
 
 function getEditorMode(previewItem: PreviewItem): 'markdown' | 'code' | 'csv' | 'text' {
@@ -115,7 +117,7 @@ export function PreviewPanel() {
   const showMarkdownEditorStatus = editable && previewItem?.type === 'markdown';
   const saveDocument = useMemo(() => {
     const remoteRef = previewItem?.remoteContentRef;
-    if (remoteRef?.kind !== 'mobile-workbench') return undefined;
+    if (!isRemoteWorkbenchContentRef(remoteRef)) return undefined;
     return (content: string, expectedVersion?: PreviewItem['fileVersion']) =>
       saveRemoteWorkbenchContent(remoteRef, content, expectedVersion ?? null);
   }, [previewItem?.remoteContentRef]);
@@ -168,6 +170,7 @@ export function PreviewPanel() {
             <FloatingActions
               content={previewItem.content}
               filePath={previewItem.filePath}
+              remoteContentRef={previewItem.remoteContentRef}
               contentType={previewItem.type}
               language={previewItem.language}
               showMarkdownPreviewToggle={isMarkdownFile(previewItem)}
@@ -175,7 +178,7 @@ export function PreviewPanel() {
               onToggleMarkdownPreview={handleToggleMarkdownPreview}
             />
           )}
-          <div className={previewStyles.previewPanelBody} id="previewBody" data-preview-panel-body="" onMouseUp={handleMouseUp}>
+          <div className={`jian-card ${previewStyles.previewPanelBody}`} id="previewBody" data-preview-panel-body="" onMouseUp={handleMouseUp}>
             {previewOpen && previewItem && !editable && (
               <PreviewRenderer previewItem={previewItem} />
             )}
@@ -183,6 +186,7 @@ export function PreviewPanel() {
               <PreviewEditor
                 content={previewItem.content}
                 filePath={previewItem.filePath}
+                remoteContentRef={previewItem.remoteContentRef}
                 fileVersion={previewItem.fileVersion ?? previewItem.remoteContentRef?.version ?? null}
                 saveDocument={saveDocument}
                 mode={getEditorMode(previewItem)}

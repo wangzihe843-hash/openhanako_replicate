@@ -237,9 +237,31 @@ function tiptapBeforeInputHandler(): ((view: unknown, event: InputEvent) => bool
   return domEvents?.beforeinput as ((view: unknown, event: InputEvent) => boolean | void) | undefined;
 }
 
+function installImageCompressionMocks() {
+  const close = vi.fn();
+  const drawImage = vi.fn();
+  vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
+    width: 4000,
+    height: 3000,
+    close,
+  })));
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    drawImage,
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function toBlob(
+    callback: BlobCallback,
+    type?: string,
+  ) {
+    callback(new Blob([new Uint8Array([4, 5, 6])], { type: type || 'image/jpeg' }));
+  });
+  return { close, drawImage };
+}
+
 describe('InputArea paste and slash menu behavior', () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   beforeEach(() => {
@@ -399,6 +421,134 @@ describe('InputArea paste and slash menu behavior', () => {
     });
   });
 
+  it('passes pasted clipboard files with filesystem paths through the drag attachment path', async () => {
+    const { attachFilesFromPaths } = await import('../../MainContent');
+    const file = new File(['report'], 'report.pdf', { type: 'application/pdf' });
+    const getFilePath = vi.fn(() => '/Users/hana/Desktop/report.pdf');
+    window.platform = { getFilePath } as unknown as typeof window.platform;
+    render(React.createElement(InputArea));
+
+    const preventDefault = vi.fn();
+    const handled = tiptapPasteHandler()?.(null, {
+      preventDefault,
+      clipboardData: {
+        items: [{
+          kind: 'file',
+          type: 'application/pdf',
+          getAsFile: () => file,
+        }],
+        getData: () => '',
+      },
+    } as unknown as ClipboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(attachFilesFromPaths).toHaveBeenCalledWith(['/Users/hana/Desktop/report.pdf'], {
+        '/Users/hana/Desktop/report.pdf': 'report.pdf',
+      });
+    });
+    expect(mocks.hanaFetch).not.toHaveBeenCalledWith('/api/upload-blob', expect.anything());
+  });
+
+  it('registers pasted image blob uploads as path-backed attachments without base64Data', async () => {
+    mocks.hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/upload-blob') {
+        return new Response(JSON.stringify({
+          uploads: [{
+            fileId: 'sf_pasted_image',
+            dest: '/hana/session-files/pasted.png',
+            name: 'pasted.png',
+            isDirectory: false,
+          }],
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    const getFilePath = vi.fn(() => null);
+    window.platform = { getFilePath } as unknown as typeof window.platform;
+    render(React.createElement(InputArea));
+
+    const preventDefault = vi.fn();
+    const file = new File([new Uint8Array([1, 2, 3])], 'clipboard.png', { type: 'image/png' });
+    const handled = tiptapPasteHandler()?.(null, {
+      preventDefault,
+      clipboardData: {
+        items: [{
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => file,
+        }],
+      },
+    } as unknown as ClipboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/upload-blob', expect.objectContaining({
+        method: 'POST',
+        body: expect.any(String),
+      }));
+    });
+    await waitFor(() => {
+      expect(useStore.getState().attachedFiles).toEqual([{
+        fileId: 'sf_pasted_image',
+        path: '/hana/session-files/pasted.png',
+        name: 'pasted.png',
+        isDirectory: false,
+      }]);
+    });
+    expect(useStore.getState().attachedFiles[0]).not.toHaveProperty('base64Data');
+  });
+
+  it('compresses oversized pasted images before upload-blob', async () => {
+    installImageCompressionMocks();
+    mocks.hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/upload-blob') {
+        return new Response(JSON.stringify({
+          uploads: [{
+            fileId: 'sf_compressed_paste',
+            dest: '/hana/session-files/pasted.jpg',
+            name: 'pasted.jpg',
+            isDirectory: false,
+          }],
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    const getFilePath = vi.fn(() => null);
+    window.platform = { getFilePath } as unknown as typeof window.platform;
+    render(React.createElement(InputArea));
+
+    const preventDefault = vi.fn();
+    const file = new File([new Uint8Array(900 * 1024)], 'clipboard.png', { type: 'image/png' });
+    const handled = tiptapPasteHandler()?.(null, {
+      preventDefault,
+      clipboardData: {
+        items: [{
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => file,
+        }],
+      },
+    } as unknown as ClipboardEvent);
+
+    expect(handled).toBe(true);
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/upload-blob', expect.objectContaining({
+        method: 'POST',
+        body: expect.any(String),
+      }));
+    });
+    const body = JSON.parse(String(mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/upload-blob')?.[1]?.body));
+    expect(body).toMatchObject({
+      name: 'input.pastedImage.jpg',
+      mimeType: 'image/jpeg',
+      base64Data: 'BAUG',
+      sessionPath: '/session/input.jsonl',
+    });
+  });
+
   it('sends chat quoted selection through the existing prompt quote contract', async () => {
     seedInputState({
       quotedSelections: [
@@ -498,6 +648,54 @@ describe('InputArea paste and slash menu behavior', () => {
       isDirectory: false,
       base64Data: 'AQID',
       mimeType: 'image/png',
+    });
+  });
+
+  it('compresses oversized mobile browser image files before upload-blob', async () => {
+    installImageCompressionMocks();
+    const uploadJson = {
+      uploads: [{
+        fileId: 'sf_mobile_compressed',
+        dest: '/hana/session-files/mobile.jpg',
+        name: 'mobile.jpg',
+        isDirectory: false,
+      }],
+    };
+    mocks.hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/upload-blob') {
+        return new Response(JSON.stringify(uploadJson), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    window.platform = { selectFiles: vi.fn(async () => []) } as unknown as typeof window.platform;
+    render(<InputArea surface="mobile" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'attach' }));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+    const file = new File([new Uint8Array(900 * 1024)], 'mobile.png', { type: 'image/png' });
+    fireEvent.change(input!, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/upload-blob', expect.objectContaining({
+        method: 'POST',
+        body: expect.any(String),
+      }));
+    });
+    const body = JSON.parse(String(mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/upload-blob')?.[1]?.body));
+    expect(body).toMatchObject({
+      name: 'mobile.jpg',
+      mimeType: 'image/jpeg',
+      base64Data: 'BAUG',
+      sessionPath: '/session/input.jsonl',
+    });
+    expect(useStore.getState().attachedFiles[0]).toMatchObject({
+      fileId: 'sf_mobile_compressed',
+      path: '/hana/session-files/mobile.jpg',
+      name: 'mobile.jpg',
+      isDirectory: false,
+      base64Data: 'BAUG',
+      mimeType: 'image/jpeg',
     });
   });
 });

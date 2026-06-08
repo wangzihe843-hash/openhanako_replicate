@@ -373,7 +373,7 @@ export function register(app, ctx) {
 }
 ```
 
-三种写法向后兼容：不使用 ctx 的老插件无需改动。`ctx.bus` 可直接调用内置 session 操作：`session:send`、`session:abort`、`session:history`、`session:list`、`agent:list`。所有 session 相关操作必须携带 `sessionPath` 参数。详见下方 Route Context 和 Session Bus Handlers 章节。
+三种写法向后兼容：不使用 ctx 的老插件无需改动。`ctx.bus` 可直接调用内置 session 操作：`session:create`、`session:get`、`session:update`、`session:send`、`session:abort`、`session:history`、`session:list`、`agent:list`、`agent:profile`、`agent:create`、`agent:update`。所有针对已有 session 的操作必须携带 `sessionPath` 参数。详见下方 Route Context 和 Session Bus Handlers 章节。
 
 ### Extensions（Pi SDK 事件拦截）⚡ full-access
 
@@ -577,6 +577,24 @@ window.parent.postMessage({ type: 'ready' }, '*');
 <link rel="stylesheet" href="${new URLSearchParams(location.search).get('hana-css')}">
 ```
 
+静态前端资源放在插件目录的 `assets/` 下，由 Hana 宿主通过 `/api/plugins/{pluginId}/assets/...` 统一服务。这个模型参考 VS Code Webview 的资源边界：入口 route 通过本地 token 或 `pluginIframeTicket` 打开，成功返回页面后，宿主下发一个只作用于 `/api/plugins/{pluginId}/assets/` 的 HttpOnly 短会话 cookie。Vite split chunks、`React.lazy()`、CSS、字体、图片、JSON、wasm 等资源请求不需要也不应该携带 `?token` 或 `pluginIframeTicket`。
+
+浏览器代码优先使用 SDK 生成资源 URL：
+
+```js
+import { hana } from '@hana/plugin-sdk';
+
+const iconUrl = hana.assets.url('images/icon.svg');
+```
+
+服务端 shell 可以直接引用同一个 host-served 资源路径：
+
+```html
+<script type="module" src="/api/plugins/my-plugin/assets/dist/app.js"></script>
+```
+
+`assets/` 是公开静态资源根，只放构建产物和公开素材。不要放源码、密钥、私有配置或运行时数据。宿主默认拒绝路径穿越、隐藏文件、source map 和非 Web 静态扩展；动态数据继续走插件 route API 或 SDK host request。
+
 React 插件 UI 建议使用 `@hana/plugin-components`，它提供和 Hana 当前控件接近的 Button、IconButton、TextInput、Textarea、Select、Switch、SettingRow、CardShell、List、EmptyState 等基础组件：
 
 ```tsx
@@ -646,6 +664,7 @@ Widget 同样通过 iframe 渲染，需要发送 `ready` 握手信号。
 
 - 声明 `trust: "full-access"` 获取完整权限
 - 声明 iframe UI 需要的宿主能力（`ui.hostCapabilities`）
+- 声明插件希望使用的普通能力（`capabilities`）或未来需要用户授权的敏感能力（`sensitiveCapabilities`）
 - Configuration schema（JSON Schema 声明）
 - Plugin 元信息（名称、版本、描述，给管理 UI 展示）
 - 软依赖声明
@@ -659,6 +678,8 @@ Widget 同样通过 iframe 渲染，需要发送 `ready` 握手信号。
   "description": "What this plugin does",
   "trust": "full-access",
   "activationEvents": ["onToolCall:search"],
+  "capabilities": ["session", "agent", "model.sample", "media.generate"],
+  "sensitiveCapabilities": ["filesystem.write"],
   "ui": {
     "hostCapabilities": ["external.open"]
   },
@@ -672,6 +693,8 @@ Widget 同样通过 iframe 渲染，需要发送 `ready` 握手信号。
 ```
 
 没有 manifest 时，`id` 从目录名推导，其他字段默认空，权限为 restricted。
+
+`capabilities` 是普通能力声明，加载后会出现在 `ctx.capabilities`，当前版本声明后即可通过 SDK / EventBus 使用对应稳定能力。`sensitiveCapabilities` 只记录插件意图，加载后出现在 `ctx.sensitiveCapabilities`；用户授权式权限系统接入后，文件系统写入、凭证读取、外部网络等高危能力会从这里进入授权流程。
 
 ## 有状态 Plugin（生命周期）⚡ full-access
 
@@ -826,6 +849,70 @@ this.register(
 - handler 业务错误 → 直接透传
 
 **软依赖**：manifest 的 `depends.capabilities` 只是提示，系统不会因缺失而阻止安装。Plugin 代码优先用 `bus.getCapability(type)?.available`，旧插件也可以继续用 `bus.hasHandler()` 在运行时做优雅降级。
+
+### 内置 Session / Agent / 模型 / 媒体能力
+
+插件可以直接使用 `@hana/plugin-runtime` 的 typed helpers；底层对应 EventBus 能力如下：
+
+| 能力 | 说明 |
+|------|------|
+| `session:create` | 创建不切换主界面焦点的普通 Hana session，可指定 `agentId`、`cwd`、`memoryEnabled`、`workspaceFolders`、`thinkingLevel`、`permissionMode`、`ownerPluginId`、`kind`、`visibility` |
+| `session:get` / `session:list` | 读取 session 投影；插件私有 session 默认不进主列表，插件可按 `ownerPluginId` 查自己的 session |
+| `session:update` | 更新标题、置顶、项目、思考等级、权限模式、插件归属和可见性 |
+| `session:send` | 向指定 session 发送消息；支持 `context.system`、`context.beforeUser`、`context.afterUser` |
+| `session:abort` / `session:history` | 中止 session 当前工作、读取历史消息 |
+| `agent:list` / `agent:profile` | 列出 agent、读取 agent 公开资料 |
+| `agent:create` / `agent:update` | 创建或更新插件拥有的 agent，可设置 `visibility: "plugin_private"` |
+| `model:sample-text` | 使用系统配置的 utility 模型做非流式文本采样，适合 RAG 查询改写、摘要、路由 |
+| `provider:media-providers` / `provider:resolve-media-model` | 读取已配置的媒体供应商和模型 |
+| `media:generate-image` | 通过内置媒体任务管线提交生图任务，完成后以 `SessionFile` 交付 |
+
+`session:send.context` 只注入到当轮 provider 请求，不会改写可见用户消息，也不会写入用户消息文本。插件可以在自己的 RAG、世界观、mood、角色状态系统里生成这些片段，然后在发送时附带：
+
+```js
+import {
+  createAgent,
+  createSession,
+  generateImage,
+  sampleText,
+  sendSessionMessage,
+} from "@hana/plugin-runtime";
+
+const agent = await createAgent(ctx, {
+  name: "Tavern Character",
+  visibility: "plugin_private",
+  memoryPolicy: { enabled: true },
+});
+
+const session = await createSession(ctx, {
+  agentId: agent.agent.id,
+  kind: "tavern",
+  visibility: "plugin_private",
+  cwd: ctx.dataDir,
+});
+
+const query = await sampleText(ctx, {
+  operation: "tavern-rag-query",
+  messages: [{ role: "user", content: "提取这一轮需要检索的世界观关键词" }],
+  maxTokens: 80,
+});
+
+await sendSessionMessage(ctx, session.sessionPath, {
+  text: "我推开门。",
+  context: {
+    beforeUser: [
+      { label: "world", text: "雨夜城市，旧剧院仍在营业。" },
+      { label: "rag_query", text: query.text },
+    ],
+  },
+});
+
+await generateImage(ctx, {
+  sessionPath: session.sessionPath,
+  prompt: "A handwritten character card on warm paper",
+  ratio: "3:2",
+});
+```
 
 ### LLM 用量账本
 
@@ -1033,8 +1120,8 @@ https://raw.githubusercontent.com/liliMozi/OH-Plugins/main/marketplace.json
 
 Hana 支持多 session / 多 agent 并行运行。插件开发时需注意：
 
-- 所有 EventBus 的 session 相关事件（`session:send`、`session:abort` 等）必须携带 `sessionPath` 参数，用于标识目标 session
-- 工具（tool）通过 `ctx.sessionManager.getSessionFile()` 获取当前 session 路径
+- 所有针对已有 session 的 EventBus 事件（`session:get`、`session:update`、`session:send`、`session:abort`、`session:history` 等）必须携带 `sessionPath` 参数，用于标识目标 session
+- 工具（tool）通过 `toolCtx.sessionPath` 获取当前 session 路径
 - 不要使用 `engine.currentSessionPath` 或 `engine.currentAgentId`（这些是 UI 焦点指针，不代表当前执行的 session）
 
 ```js
@@ -1042,6 +1129,9 @@ Hana 支持多 session / 多 agent 并行运行。插件开发时需注意：
 await bus.request("session:send", {
   text: "你好",
   sessionPath: "/path/to/session.jsonl",
+  context: {
+    beforeUser: "插件本轮 RAG / 世界观上下文",
+  },
 });
 
 await bus.request("session:abort", {

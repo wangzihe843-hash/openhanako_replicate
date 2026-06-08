@@ -7,7 +7,7 @@ import type {
 import type { DeskFile } from '../types';
 import type { FileRef } from '../types/file-ref';
 import { hanaFetch } from '../hooks/use-hana-fetch';
-import { openPreview } from '../stores/preview-actions';
+import { openPreview, upsertPreviewItem } from '../stores/preview-actions';
 import { useStore } from '../stores';
 import { resolveServerConnection } from '../services/server-connection';
 import { resolveFileRefUrl } from '../services/resource-url';
@@ -15,9 +15,13 @@ import { BINARY_PREVIEW_TYPES, PREVIEWABLE_EXTS, openFilePreview } from './file-
 import { extOfName, inferKindByExt, isMediaKind } from './file-kind';
 import { openMediaViewerForRef } from './open-media-viewer';
 import { showError } from './ui-helpers';
+import { isWebRuntime } from './platform-runtime';
+
+export { isWebRuntime };
 
 export interface WorkbenchPreviewInput {
   file: DeskFile;
+  mountId?: string;
   rootId?: string;
   subdir: string;
 }
@@ -33,25 +37,42 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function isWebRuntime(): boolean {
-  return typeof document !== 'undefined'
-    && document.documentElement.getAttribute('data-platform') === 'web';
-}
-
 function encodeWorkbenchContentPath({
-  rootId = 'default',
+  mountId = 'default',
+  rootId,
   subdir,
   name,
 }: {
+  mountId?: string;
   rootId?: string;
   subdir: string;
   name: string;
 }): string {
   const params = new URLSearchParams();
-  params.set('rootId', rootId || 'default');
+  params.set('mountId', mountId || rootId || 'default');
   params.set('subdir', subdir || '');
   params.set('name', name);
-  return `/api/mobile/workbench/content?${params.toString()}`;
+  return `/api/workbench/content?${params.toString()}`;
+}
+
+export function isRemoteWorkbenchContentRef(value: unknown): value is RemoteWorkbenchContentRef {
+  if (!isRecord(value)) return false;
+  return (value.kind === 'workbench-file' || value.kind === 'mobile-workbench')
+    && (typeof value.mountId === 'string' || typeof value.rootId === 'string')
+    && typeof value.subdir === 'string'
+    && typeof value.name === 'string';
+}
+
+export function normalizeWorkbenchContentRef(ref: RemoteWorkbenchContentRef): RemoteWorkbenchContentRef {
+  const mountId = ref.mountId || ref.rootId || 'default';
+  return {
+    ...ref,
+    kind: 'workbench-file',
+    mountId,
+    rootId: ref.rootId || mountId,
+    subdir: ref.subdir || '',
+    name: ref.name,
+  };
 }
 
 function previewId(prefix: string, key: string): string {
@@ -169,14 +190,15 @@ export async function saveRemoteWorkbenchContent(
   content: string,
   expectedVersion?: FileVersion | null,
 ): Promise<VersionedWriteResult> {
-  const res = await hanaFetch('/api/mobile/workbench/actions', {
+  const normalized = normalizeWorkbenchContentRef(ref);
+  const res = await hanaFetch('/api/workbench/actions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       action: 'writeText',
-      rootId: ref.rootId || 'default',
-      subdir: ref.subdir || '',
-      name: ref.name,
+      mountId: normalized.mountId || 'default',
+      subdir: normalized.subdir || '',
+      name: normalized.name,
       content,
       expectedVersion: expectedVersion ?? null,
     }),
@@ -190,12 +212,43 @@ export async function saveRemoteWorkbenchContent(
   };
 }
 
+function refsPointToSameWorkbenchFile(
+  left: RemoteWorkbenchContentRef | null | undefined,
+  right: RemoteWorkbenchContentRef,
+): boolean {
+  if (!isRemoteWorkbenchContentRef(left)) return false;
+  const normalizedLeft = normalizeWorkbenchContentRef(left);
+  const normalizedRight = normalizeWorkbenchContentRef(right);
+  return (normalizedLeft.mountId || 'default') === (normalizedRight.mountId || 'default')
+    && (normalizedLeft.subdir || '') === (normalizedRight.subdir || '')
+    && normalizedLeft.name === normalizedRight.name;
+}
+
+export async function refreshPreviewItemsFromRemoteWorkbenchTarget(target: RemoteWorkbenchContentRef): Promise<void> {
+  const normalized = normalizeWorkbenchContentRef(target);
+  const state = useStore.getState();
+  const matching = (state.previewItems || []).filter(item =>
+    refsPointToSameWorkbenchFile(item.remoteContentRef, normalized));
+  for (const item of matching) {
+    const contentPath = item.remoteContentRef?.contentPath || encodeWorkbenchContentPath(normalized);
+    const separator = contentPath.includes('?') ? '&' : '?';
+    const cacheBustedPath = `${contentPath}${separator}v=${encodeURIComponent(String(Date.now()))}`;
+    const content = await readContentForPreview(cacheBustedPath, item.type);
+    upsertPreviewItem({
+      ...item,
+      content,
+      status: 'available',
+      missingAt: null,
+    });
+  }
+}
+
 export async function openMobileWorkbenchPreview(input: WorkbenchPreviewInput): Promise<void> {
   if (input.file.isDir) return;
   const name = input.file.name;
   const ext = extOfName(name) || '';
-  const rootId = input.rootId || 'default';
-  const contentPath = encodeWorkbenchContentPath({ rootId, subdir: input.subdir, name });
+  const mountId = input.mountId || input.rootId || 'default';
+  const contentPath = encodeWorkbenchContentPath({ mountId, subdir: input.subdir, name });
   const version = versionFromDeskFile(input.file);
   const versionedContentPath = appendVersionQuery(contentPath, version);
   const connection = resolveServerConnection(useStore.getState());
@@ -203,7 +256,7 @@ export async function openMobileWorkbenchPreview(input: WorkbenchPreviewInput): 
   const mediaKind = inferKindByExt(ext);
   const mediaRef: FileRef | undefined = isMediaKind(mediaKind)
     ? {
-        id: `workbench:${rootId}:${input.subdir}:${name}`,
+        id: `workbench:${mountId}:${input.subdir}:${name}`,
         kind: mediaKind,
         source: 'desk',
         name,
@@ -211,7 +264,7 @@ export async function openMobileWorkbenchPreview(input: WorkbenchPreviewInput): 
         ext,
         version,
         resource: {
-          resourceId: `workbench:${rootId}:${input.subdir}:${name}`,
+          resourceId: `workbench:${mountId}:${input.subdir}:${name}`,
           studioId,
           links: { self: contentPath, content: contentPath },
         },
@@ -221,14 +274,15 @@ export async function openMobileWorkbenchPreview(input: WorkbenchPreviewInput): 
   try {
     await openRemoteContentPreview({
       contentPath: versionedContentPath,
-      id: previewId('workbench', `${rootId}:${input.subdir}:${name}`),
+      id: previewId('workbench', `${mountId}:${input.subdir}:${name}`),
       title: name,
       ext,
       mediaRef,
       mediaContext: { origin: 'desk' },
       remoteContentRef: {
-        kind: 'mobile-workbench',
-        rootId,
+        kind: 'workbench-file',
+        mountId,
+        rootId: input.rootId || mountId,
         subdir: input.subdir || '',
         name,
         contentPath,

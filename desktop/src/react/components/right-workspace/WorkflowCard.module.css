@@ -4,6 +4,11 @@
     flex-direction: column;
     padding: var(--space-sm) var(--space-md);
     gap: 6px;
+    transition: gap 0.25s var(--ease-out);
+}
+
+.card[data-collapsed] {
+    gap: 0;
     /* 解禁硬高度上限 + overflow:hidden：原本 40% 截断 + .list 不滚动，导致展开后
        内容被裁、与下方卡重合。改为卡片随内容自然增高，整列滚动交给外层 panel
        （RightWorkspacePanel .shell overflow-y:auto）。节点 preview 自带 3 行滚动（见 .scroll）。 */
@@ -67,7 +72,7 @@
     min-height: 32px;
     padding: 6px 8px;
     display: grid;
-    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+    grid-template-columns: 16px minmax(0, 1fr) auto auto auto;
     gap: 7px;
     align-items: center;
     border: 0;
@@ -151,7 +156,7 @@
     min-height: 28px;
     padding: 4px 6px;
     display: grid;
-    grid-template-columns: 14px 18px minmax(0, 1fr) auto;
+    grid-template-columns: 14px 16px minmax(0, 1fr) auto;
     gap: 6px;
     align-items: center;
     border: 0;
@@ -167,8 +172,10 @@
 }
 
 .nodeAvatar {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--overlay-light);
@@ -178,10 +185,11 @@
 }
 
 .nodeAvatarImg {
-    width: 18px;
-    height: 18px;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
     border-radius: 50%;
+    display: block;
 }
 
 .nodeName {
@@ -213,4 +221,110 @@
 
 .scroll :global(.message) {
     max-width: 100%;
+}
+
+/* Phase 折叠区 */
+.phaseSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.phaseHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  cursor: default;
+  text-align: left;
+}
+
+.phaseHeader:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.phaseName {
+  font-size: 0.78rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.miniDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+}
+
+.miniDot[data-step-kind="parallel"] { color: #8da4b8; }
+.miniDot[data-step-kind="pipeline"] { color: #c4a87d; }
+.miniDot[data-step-kind="log"] { color: #8baa8b; }
+
+.miniAvatar {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 50%;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.miniAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.miniEllipsis {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.phaseCount {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.phaseNodes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 6px 4px 18px;
+}
+
+/* 脚本步骤图标容器（替代 nodeAvatar） */
+.stepIcon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* tokens 汇总（workflow row 增加） */
+.tokenSum {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

@@ -3,8 +3,7 @@ import { hasServerConnection } from '../services/server-connection';
 import type { PreviewItem, RightWorkspaceTab } from '../types';
 import { readFileForPreviewType } from '../utils/preview-file-content';
 import { useStore } from './index';
-// @ts-expect-error — shared JS module
-import { normalizeWorkspacePath } from '../../../../shared/workspace-history.js';
+import { normalizeWorkspacePath } from '../../../../shared/workspace-history.ts';
 
 interface PersistedPreviewTab {
   id: string;

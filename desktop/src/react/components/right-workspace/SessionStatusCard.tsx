@@ -5,11 +5,11 @@
  * 无当前对话时返回 null（welcome 态不显示）。
  */
 import { type MouseEvent, useState } from 'react';
+import { Collapse } from '@/ui';
 import { useStore } from '../../stores';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import styles from './SessionStatusCard.module.css';
-// @ts-expect-error — shared JS module
-import { workspaceDisplayName } from '../../../../../shared/workspace-history.js';
+import { workspaceDisplayName } from '../../../../../shared/workspace-history.ts';
 
 const EMPTY_AUTHORIZED_FOLDERS: string[] = [];
 
@@ -23,7 +23,7 @@ function Chevron({ open }: { open: boolean }) {
 
 function FolderAddIcon() {
   return (
-    <svg className={styles.folderIcon} width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg className={styles.folderIcon} width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12.0601 16.5V11.5" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M14.5 14H9.5" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M22 11V17C22 21 21 22 17 22H7C3 22 2 21 2 17V7C2 3 3 2 7 2H8.5C10 2 10.33 2.44 10.9 3.2L12.4 5.2C12.78 5.7 13 6 14 6H17C21 6 22 7 22 11Z" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" />
@@ -36,6 +36,8 @@ export function SessionStatusCard() {
   const [addingFolder, setAddingFolder] = useState(false);
   const sessionPath = useStore((s) => s.currentSessionPath);
   const deskBasePath = useStore((s) => s.deskBasePath);
+  const deskWorkspaceMountId = useStore((s) => s.deskWorkspaceMountId);
+  const deskWorkspaceLabel = useStore((s) => s.deskWorkspaceLabel);
   const currentModel = useStore((s) => s.currentModel);
   const sessionModel = useStore((s) => (sessionPath ? s.sessionModelsByPath[sessionPath] : null));
   const filesCount = useStore((s) => (sessionPath ? (s.sessionRegistryFilesByPath[sessionPath]?.length ?? 0) : 0));
@@ -51,13 +53,17 @@ export function SessionStatusCard() {
   if (!sessionPath) return null;
 
   const modelId = sessionModel?.id || currentModel?.id || '—';
-  const cwd = deskBasePath ? workspaceDisplayName(deskBasePath, '—') : '—';
+  const cwd = deskWorkspaceMountId
+    ? (deskWorkspaceLabel || deskWorkspaceMountId)
+    : (deskBasePath ? workspaceDisplayName(deskBasePath, '—') : '—');
+  const cwdTitle = deskWorkspaceMountId ? cwd : (deskBasePath || undefined);
   const authorizedFolderTitle = authorizedFolders.length > 0 ? authorizedFolders.join('\n') : undefined;
   const authorizedFolderValue = authorizedFolders.length === 0
     ? '0'
     : authorizedFolders.length === 1
       ? workspaceDisplayName(authorizedFolders[0], authorizedFolders[0])
       : `${workspaceDisplayName(authorizedFolders[0], authorizedFolders[0])} +${authorizedFolders.length - 1}`;
+  const canSelectAuthorizedFolder = typeof window.platform?.selectFolder === 'function';
 
   async function handleAddAuthorizedFolder(event: MouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
@@ -91,22 +97,24 @@ export function SessionStatusCard() {
   }
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.session.title')}>
+    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.session.title')} data-collapsed={collapsed || undefined}>
       <div className={styles.header}>
         <button className={styles.headerToggle} type="button" onClick={() => setCollapsed((c) => !c)} aria-expanded={!collapsed}>
           <span className={styles.title}>{t('rightWorkspace.session.title')}</span>
         </button>
         <div className={styles.headerActions}>
-          <button
-            className={styles.iconButton}
-            type="button"
-            onClick={handleAddAuthorizedFolder}
-            disabled={addingFolder}
-            aria-label={t('rightWorkspace.session.addAuthorizedFolder')}
-            title={t('rightWorkspace.session.addAuthorizedFolder')}
-          >
-            <FolderAddIcon />
-          </button>
+          {canSelectAuthorizedFolder && (
+            <button
+              className={styles.iconButton}
+              type="button"
+              onClick={handleAddAuthorizedFolder}
+              disabled={addingFolder}
+              aria-label={t('rightWorkspace.session.addAuthorizedFolder')}
+              title={t('rightWorkspace.session.addAuthorizedFolder')}
+            >
+              <FolderAddIcon />
+            </button>
+          )}
           <button
             className={styles.iconButton}
             type="button"
@@ -118,11 +126,11 @@ export function SessionStatusCard() {
           </button>
         </div>
       </div>
-      {!collapsed && (
+      <Collapse open={!collapsed}>
         <dl className={styles.body}>
           <div className={styles.row}>
             <dt className={styles.label}>{t('rightWorkspace.session.cwd')}</dt>
-            <dd className={styles.value} title={deskBasePath || undefined}>{cwd}</dd>
+            <dd className={styles.value} title={cwdTitle}>{cwd}</dd>
           </div>
           <div className={styles.row}>
             <dt className={styles.label}>{t('rightWorkspace.session.authorizedFolders')}</dt>
@@ -137,7 +145,7 @@ export function SessionStatusCard() {
             <dd className={styles.value}>{filesCount}</dd>
           </div>
         </dl>
-      )}
+      </Collapse>
     </section>
   );
 }

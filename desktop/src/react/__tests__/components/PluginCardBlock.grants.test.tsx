@@ -9,8 +9,13 @@ import { useStore } from '../../stores';
 import { PluginCardBlock } from '../../components/chat/PluginCardBlock';
 import { usePluginIframe } from '../../hooks/use-plugin-iframe';
 
-vi.mock('../../hooks/use-hana-fetch', () => ({
-  hanaUrl: (path: string) => `http://127.0.0.1:3210${path}`,
+vi.mock('../../hooks/use-plugin-surface-url', () => ({
+  usePluginSurfaceUrl: (routeUrl: string | null) => ({
+    iframeSrc: routeUrl ? `http://127.0.0.1:3210${routeUrl}` : null,
+    status: 'ready',
+    error: null,
+    retry: vi.fn(),
+  }),
 }));
 
 vi.mock('../../hooks/use-plugin-iframe', () => ({

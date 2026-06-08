@@ -52,7 +52,7 @@ function providerSummary(overrides: Partial<ProviderSummary>): ProviderSummary {
 
 describe('ApiKeyCredentials', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mocks.hanaFetch.mockReset();
     mocks.hanaFetch.mockResolvedValue(jsonResponse({ ok: true }));
   });
 
@@ -115,6 +115,29 @@ describe('ApiKeyCredentials', () => {
       api: 'openai-completions',
       api_key: 'saved-groq-key',
     });
+  });
+
+  it('reveals a masked saved api key through the explicit provider endpoint', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch.mockResolvedValueOnce(jsonResponse({ api_key: 'sk-real-provider-key' }));
+
+    const { container } = render(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api_key: '********', has_credentials: true })}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector('input[type="password"]')).toHaveValue('********'));
+    const revealButton = Array.from(container.querySelectorAll('button'))
+      .find(button => button.textContent === 'settings.api.showKey') as HTMLButtonElement | undefined;
+
+    expect(revealButton).toBeTruthy();
+    fireEvent.click(revealButton as HTMLButtonElement);
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/providers/deepseek/api-key'));
+    await waitFor(() => expect(container.querySelector('input[type="text"]')).toHaveValue('sk-real-provider-key'));
   });
 
   it('saves discovered Gemini models during preset setup instead of static defaults', async () => {

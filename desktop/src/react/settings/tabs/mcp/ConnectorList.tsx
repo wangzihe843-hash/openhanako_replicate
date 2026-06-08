@@ -6,6 +6,7 @@ import type { McpConnector } from './types';
 interface ConnectorListProps {
   connectors: McpConnector[];
   globalEnabled: boolean;
+  loading?: boolean;
   busyKey: string | null;
   onAction: (connectorId: string, action: 'start' | 'stop' | 'refresh-tools') => void;
   onEdit: (connectorId: string) => void;
@@ -17,6 +18,7 @@ interface ConnectorListProps {
 export function ConnectorList({
   connectors,
   globalEnabled,
+  loading = false,
   busyKey,
   onAction,
   onEdit,
@@ -24,6 +26,10 @@ export function ConnectorList({
   onOAuthStart,
   onOAuthLogout,
 }: ConnectorListProps) {
+  if (loading) {
+    return <p className={styles['settings-muted-note']}>{t('status.loading')}</p>;
+  }
+
   if (connectors.length === 0) {
     return <p className={styles['settings-muted-note']}>{t('settings.mcp.noConnectors')}</p>;
   }

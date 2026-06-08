@@ -355,7 +355,7 @@ describe('buildItemsFromHistory user image restoration', () => {
     });
   });
 
-  it('恢复 deferred 幕间消息 block', () => {
+  it('恢复 deferred 幕间消息为独立时间线条目', () => {
     const items = buildItemsFromHistory({
       messages: [{
         id: 'a1',
@@ -371,19 +371,49 @@ describe('buildItemsFromHistory user image restoration', () => {
         status: 'success',
         sourceKind: 'subagent',
         sourceLabel: '明 · 大纲评估',
-        text: '小花收到了来自 明 · 大纲评估 的回复',
+        text: '小花 收到了来自 明 · 大纲评估 的回复',
         detailMarkdown: '完成了',
       }],
     });
 
     const first = items[0];
+    const second = items[1];
+    expect(items).toHaveLength(2);
     expect(first.type).toBe('message');
-    if (first.type !== 'message') throw new Error('expected message');
-    expect(first.data.blocks?.map(block => block.type)).toEqual(['text', 'interlude']);
-    expect(first.data.blocks?.[1]).toMatchObject({
+    expect(second.type).toBe('interlude');
+    if (first.type !== 'message' || second.type !== 'interlude') {
+      throw new Error('expected assistant message followed by interlude item');
+    }
+    expect(first.data.blocks?.map(block => block.type)).toEqual(['text']);
+    expect(second.data).toMatchObject({
       type: 'interlude',
       taskId: 'subagent-1',
-      text: '小花收到了来自 明 · 大纲评估 的回复',
+      text: '小花 收到了来自 明 · 大纲评估 的回复',
     });
+  });
+
+  it('只有 deferred 幕间消息的历史行不会留下空 assistant 外壳', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+      }],
+      blocks: [{
+        type: 'interlude',
+        afterIndex: 0,
+        id: 'deferred:subagent-2:success',
+        variant: 'deferred_result',
+        taskId: 'subagent-2',
+        status: 'success',
+        sourceKind: 'subagent',
+        text: '后台回复已抵达',
+      }],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.type).toBe('interlude');
+    if (items[0]?.type !== 'interlude') throw new Error('expected interlude item');
+    expect(items[0].data.text).toBe('后台回复已抵达');
   });
 });

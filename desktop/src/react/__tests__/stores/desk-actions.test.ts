@@ -43,6 +43,8 @@ describe('desk-actions workspace roots', () => {
     useStore.setState({
       serverPort: 62950,
       deskBasePath: '',
+      deskWorkspaceMountId: null,
+      deskWorkspaceLabel: null,
       deskCurrentPath: '',
       deskFiles: [],
       deskTreeFilesByPath: {},
@@ -57,6 +59,9 @@ describe('desk-actions workspace roots', () => {
       openTabs: [],
       activeTabId: null,
       selectedFolder: '/home-folder',
+      selectedWorkspaceMountId: null,
+      selectedWorkspaceLabel: null,
+      studioWorkspaces: [],
       homeFolder: '/fallback-home',
       workspaceFolders: [],
       pendingNewSession: true,
@@ -98,6 +103,31 @@ describe('desk-actions workspace roots', () => {
       1,
       '/api/desk/files?dir=%2Fworkspace%2FMio&agentId=mio',
     );
+  });
+
+  it('loads files through the workbench mount route when a Studio workspace is active', async () => {
+    useStore.setState({
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceLabel: 'Docs',
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({
+        mountId: 'mount_docs',
+        mount: { label: 'Docs' },
+        files: [{ name: 'remote.md', isDir: false }],
+      }))
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => '' } as unknown as Response);
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/workbench/files?mountId=mount_docs',
+    );
+    expect(useStore.getState().deskFiles).toEqual([{ name: 'remote.md', isDir: false }]);
+    expect(useStore.getState().deskBasePath).toBe('studio:mount_docs');
   });
 
   it('adds and removes extra workspace folders without changing the primary folder', async () => {
@@ -683,6 +713,128 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskFiles).toEqual([{ name: 'draft.md', isDir: false }]);
     expect(useStore.getState().deskTreeFilesByPath).toEqual({
       notes: [{ name: 'chapter.md', isDir: false }],
+    });
+  });
+
+  it('safe-deletes tree items through the mobile workbench route in the PWA shell', async () => {
+    (globalThis as any).document = {
+      documentElement: {
+        getAttribute: (name: string) => (name === 'data-platform' ? 'web' : null),
+      },
+    };
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskTreeFilesByPath: {
+        notes: [{ name: 'chapter.md', isDir: false }],
+      },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [],
+    }));
+
+    const { deskTrashTreeItems } = await import('../../stores/desk-actions');
+    const ok = await deskTrashTreeItems([{ sourceSubdir: 'notes', name: 'chapter.md', isDirectory: false }]);
+
+    expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/workbench/actions', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'safeDelete',
+        mountId: 'default',
+        subdir: 'notes',
+        name: 'chapter.md',
+      }),
+    }));
+    expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([]);
+  });
+
+  it('safe-deletes mounted workspace tree items with the active mountId', async () => {
+    useStore.setState({
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskTreeFilesByPath: {
+        notes: [{ name: 'chapter.md', isDir: false }],
+      },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [],
+    }));
+
+    const { deskTrashTreeItems } = await import('../../stores/desk-actions');
+    const ok = await deskTrashTreeItems([{ sourceSubdir: 'notes', name: 'chapter.md', isDirectory: false }]);
+
+    expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/workbench/actions', expect.objectContaining({
+      body: JSON.stringify({
+        action: 'safeDelete',
+        mountId: 'mount_docs',
+        subdir: 'notes',
+        name: 'chapter.md',
+      }),
+    }));
+  });
+
+  it('uploads browser File objects through the workbench upload route', async () => {
+    useStore.setState({
+      deskBasePath: '/workspace',
+      deskTreeFilesByPath: {
+        notes: [],
+      },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [{ name: 'note.md', isDir: false }],
+    }));
+    const file = new File(['hello'], 'note.md', { type: 'text/markdown' });
+
+    const { deskUploadBrowserFilesToSubdir } = await import('../../stores/desk-actions');
+    const ok = await deskUploadBrowserFilesToSubdir([file], 'notes');
+
+    expect(ok).toBe(true);
+    const call = mockHanaFetch.mock.calls[0];
+    expect(call[0]).toBe('/api/workbench/upload');
+    expect(call[1]).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(JSON.parse(call[1].body)).toEqual({
+      mountId: 'default',
+      subdir: 'notes',
+      files: [{
+        name: 'note.md',
+        type: 'text/markdown',
+        contentBase64: 'aGVsbG8=',
+      }],
+    });
+    expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([{ name: 'note.md', isDir: false }]);
+  });
+
+  it('uploads browser File objects to the active mounted workspace', async () => {
+    useStore.setState({
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskTreeFilesByPath: {
+        notes: [],
+      },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [{ name: 'note.md', isDir: false }],
+    }));
+    const file = new File(['hello'], 'note.md', { type: 'text/markdown' });
+
+    const { deskUploadBrowserFilesToSubdir } = await import('../../stores/desk-actions');
+    const ok = await deskUploadBrowserFilesToSubdir([file], 'notes');
+
+    expect(ok).toBe(true);
+    const call = mockHanaFetch.mock.calls[0];
+    expect(call[0]).toBe('/api/workbench/upload');
+    expect(JSON.parse(call[1].body)).toMatchObject({
+      mountId: 'mount_docs',
+      subdir: 'notes',
     });
   });
 

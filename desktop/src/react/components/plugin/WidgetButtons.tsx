@@ -5,11 +5,11 @@
  * go into a dropdown menu where they can be shown again.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useStore } from '../../stores';
 import { resolvePluginTitle, resolvePluginIcon } from '../../utils/resolve-plugin-title';
 import { openWidget, openDesk, hideWidget, showWidget, showAndOpenWidget } from '../../stores/plugin-ui-actions';
-import { ContextMenu, type ContextMenuItem } from '../../ui';
+import { AnchoredPortal, ContextMenu, type ContextMenuItem } from '../../ui';
 import s from './WidgetButtons.module.css';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
@@ -24,16 +24,7 @@ export function WidgetButtons() {
   const locale = useStore(st => st.locale);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (!dropdownRef.current?.contains(e.target as Node)) setDropdownOpen(false);
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [dropdownOpen]);
+  const hiddenMenuTriggerRef = useRef<HTMLButtonElement>(null);
 
   const handleContextVisible = useCallback((e: React.MouseEvent, pluginId: string, title: string) => {
     e.preventDefault();
@@ -58,6 +49,7 @@ export function WidgetButtons() {
         const active = jianView === `widget:${w.pluginId}`;
         return (
           <button
+            type="button"
             key={w.pluginId}
             className={`${s.btn}${active ? ` ${s.active}` : ''}`}
             title={title}
@@ -72,23 +64,38 @@ export function WidgetButtons() {
 
       {/* Dropdown for hidden widgets — show button to restore */}
       {hiddenWidgetList.length > 0 && (
-        <div ref={dropdownRef} style={{ position: 'relative' }}>
-          <button className={s.btn} title={t('plugin.widget.hiddenPlugins')} onClick={() => setDropdownOpen(!dropdownOpen)}>
+        <>
+          <button
+            type="button"
+            ref={hiddenMenuTriggerRef}
+            className={s.btn}
+            title={t('plugin.widget.hiddenPlugins')}
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+          >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
               <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
             </svg>
           </button>
-          {dropdownOpen && (
-            <div className={s.dropdown}>
+          <AnchoredPortal
+            open={dropdownOpen}
+            anchorRef={hiddenMenuTriggerRef}
+            className={s.dropdown}
+            minWidth={130}
+            onClose={() => setDropdownOpen(false)}
+            role="menu"
+          >
               {hiddenWidgetList.map(w => {
                 const title = resolvePluginTitle(w.title, locale, w.pluginId);
                 return (
                   <div key={w.pluginId} className={s.dropdownRow}>
-                    <button className={s.dropdownItem}
+                    <button
+                      type="button"
+                      className={s.dropdownItem}
                       onClick={() => { showAndOpenWidget(w.pluginId); setDropdownOpen(false); }}>
                       {title}
                     </button>
                     <button
+                      type="button"
                       className={s.pinBtn}
                       title={t('plugin.widget.show')}
                       onClick={(e) => { e.stopPropagation(); showWidget(w.pluginId); setDropdownOpen(false); }}
@@ -101,13 +108,13 @@ export function WidgetButtons() {
                   </div>
                 );
               })}
-            </div>
-          )}
-        </div>
+          </AnchoredPortal>
+        </>
       )}
 
       {/* Desk toggle */}
       <button
+        type="button"
         className={`${s.btn}${jianView === 'desk' ? ` ${s.active}` : ''}`}
         title={t('plugin.widget.desk')}
         onClick={() => openDesk()}

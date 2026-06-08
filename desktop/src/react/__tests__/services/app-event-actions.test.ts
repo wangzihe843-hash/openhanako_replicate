@@ -324,7 +324,7 @@ describe('handleAppEvent', () => {
     expect(mockState.selectedFolder).toBe('/new-home');
     expect(mockState.workspaceFolders).toEqual([]);
     expect(mockState.cwdHistory).toEqual(['/old-home']);
-    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith('/new-home');
+    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith('/new-home', { mountId: null });
 
     mockActivateWorkspaceDesk.mockClear();
     handleAppEvent('agent-workspace-changed', {

@@ -110,6 +110,19 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.getAllByRole('switch')[2].getAttribute('aria-checked')).toBe('false');
   });
 
+  it('keeps hardware acceleration loading until settings config is ready', () => {
+    useSettingsStore.setState({
+      settingsConfig: null,
+    } as never);
+
+    render(React.createElement(InterfaceTab));
+
+    const hardwareSwitch = screen.getAllByRole('switch')[2] as HTMLButtonElement;
+    expect(hardwareSwitch.getAttribute('aria-checked')).toBe('mixed');
+    expect(hardwareSwitch.getAttribute('aria-busy')).toBe('true');
+    expect(hardwareSwitch.disabled).toBe(true);
+  });
+
   it('renders a markdown font selector in the editor section', () => {
     render(React.createElement(InterfaceTab));
 

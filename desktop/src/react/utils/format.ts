@@ -77,7 +77,7 @@ export function cronToHuman(schedule: number | string): string {
   const s = String(schedule);
   const parts = s.split(' ');
   if (parts.length !== 5) return s;
-  const [min, hour, , , dow] = parts;
+  const [min, hour, dayOfMonth, month, dow] = parts;
   if (min.startsWith('*/') && hour === '*' && dow === '*') {
     return t('cron.everyMinutes', { n: min.slice(2) });
   }
@@ -86,8 +86,11 @@ export function cronToHuman(schedule: number | string): string {
   }
   if (min === '0' && hour === '*' && dow === '*') return t('cron.hourly');
   if (hour === '*' && dow === '*' && /^\d+$/.test(min)) return t('cron.hourly');
-  if (dow === '*' && hour !== '*' && min !== '*') {
+  if (dow === '*' && dayOfMonth === '*' && month === '*' && hour !== '*' && min !== '*') {
     return t('cron.dailyAt', { hour, min: min.padStart(2, '0') });
+  }
+  if (dow === '*' && month === '*' && /^\d+$/.test(dayOfMonth) && hour !== '*' && min !== '*') {
+    return t('cron.monthlyAt', { day: dayOfMonth, hour, min: min.padStart(2, '0') });
   }
   const dayNames: string[] = (window.t as (...args: unknown[]) => unknown)('cron.dayNames') as string[] || ['日', '一', '二', '三', '四', '五', '六'];
   const weekPrefix = t('cron.weekPrefix');

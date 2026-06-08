@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import styles from './FloatingActions.module.css';
 import { COVER_GALLERY_ITEMS, type CoverGalleryItem } from './cover-gallery-assets';
 import {
@@ -11,12 +11,23 @@ import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import { Tooltip } from '../../ui';
 import { extOfName, inferKindByExt } from '../../utils/file-kind';
+import type { RemoteContentRef, RemoteWorkbenchContentRef } from '../../types';
+import {
+  isRemoteWorkbenchContentRef,
+  normalizeWorkbenchContentRef,
+} from '../../utils/remote-file-preview';
+import type {
+  MarkdownCoverImageInput,
+  MarkdownCoverTargetInput,
+  WorkbenchMarkdownCoverTarget,
+} from '../../utils/markdown-cover-generation';
 
 interface Props {
   content: string;
   filePath?: string;
   contentType?: string;
   language?: string | null;
+  remoteContentRef?: RemoteContentRef | null;
   showMarkdownPreviewToggle?: boolean;
   markdownPreviewActive?: boolean;
   onToggleMarkdownPreview?: () => void;
@@ -106,11 +117,38 @@ function UploadCoverIcon() {
   );
 }
 
+function fileNameFromPath(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() || 'cover.png';
+}
+
+function remoteRefToCoverTarget(ref: RemoteWorkbenchContentRef): WorkbenchMarkdownCoverTarget {
+  const normalized = normalizeWorkbenchContentRef(ref);
+  return {
+    kind: 'workbench-file',
+    mountId: normalized.mountId || normalized.rootId || 'default',
+    subdir: normalized.subdir,
+    name: normalized.name,
+  };
+}
+
+function readBrowserFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('failed to read cover image'));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export function FloatingActions({
   content,
   filePath,
   contentType,
   language,
+  remoteContentRef,
   showMarkdownPreviewToggle = false,
   markdownPreviewActive = false,
   onToggleMarkdownPreview,
@@ -124,7 +162,15 @@ export function FloatingActions({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverMenuRef = useRef<HTMLDivElement | null>(null);
   const floatingActionsRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { t } = useI18n();
+  const coverTarget = useMemo<MarkdownCoverTargetInput | null>(() => {
+    if (filePath) return { filePath };
+    if (isRemoteWorkbenchContentRef(remoteContentRef)) {
+      return { target: remoteRefToCoverTarget(remoteContentRef) };
+    }
+    return null;
+  }, [filePath, remoteContentRef]);
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
@@ -140,7 +186,7 @@ export function FloatingActions({
   }, [coverGalleryOpen, coverMenuOpen]);
 
   useEffect(() => {
-    if (contentType !== 'markdown' || !filePath) {
+    if (contentType !== 'markdown' || !coverTarget) {
       setCoverStatus(null);
       return;
     }
@@ -156,7 +202,7 @@ export function FloatingActions({
     return () => {
       cancelled = true;
     };
-  }, [contentType, filePath]);
+  }, [contentType, coverTarget]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content).then(() => {
@@ -179,12 +225,12 @@ export function FloatingActions({
   const handleGenerateCover = useCallback(async () => {
     const generationStatus = coverStatus?.agentGenerate ?? {};
     const generationEnabled = Boolean(generationStatus.enabled ?? coverStatus?.enabled);
-    if (!filePath || contentType !== 'markdown' || !generationEnabled) return;
+    if (!coverTarget || contentType !== 'markdown' || !generationEnabled) return;
     setCoverMenuOpen(false);
     setCoverBusy(true);
     try {
       const executorAgentId = generationStatus.executorAgentId || coverStatus?.agentId || undefined;
-      const result = await requestMarkdownCoverGeneration({ filePath, executorAgentId });
+      const result = await requestMarkdownCoverGeneration({ ...coverTarget, executorAgentId });
       dispatchCoverNotice(
         result.ok ? '已创建 cover 后台任务。' : `Cover 生成失败：${result.error}`,
         result.ok ? 'success' : 'error',
@@ -194,22 +240,13 @@ export function FloatingActions({
     } finally {
       setCoverBusy(false);
     }
-  }, [contentType, coverStatus, filePath]);
+  }, [contentType, coverStatus, coverTarget]);
 
-  const handleUploadCover = useCallback(async () => {
-    if (!filePath || contentType !== 'markdown') return;
-    setCoverMenuOpen(false);
-    const paths = await window.platform?.selectFiles?.();
-    const imageFilePath = paths?.[0];
-    if (!imageFilePath) return;
-    const kind = inferKindByExt(extOfName(imageFilePath));
-    if (kind !== 'image' && kind !== 'svg') {
-      dispatchCoverNotice('请选择图片文件作为 cover。', 'error');
-      return;
-    }
+  const applySelectedCoverImage = useCallback(async (image: MarkdownCoverImageInput) => {
+    if (!coverTarget) return;
     setCoverBusy(true);
     try {
-      const result = await applyMarkdownCoverImage({ filePath, imageFilePath });
+      const result = await applyMarkdownCoverImage({ ...coverTarget, ...image });
       dispatchCoverNotice(
         result.ok ? '已应用上传图片为 cover。' : `Cover 应用失败：${result.error}`,
         result.ok ? 'success' : 'error',
@@ -219,7 +256,66 @@ export function FloatingActions({
     } finally {
       setCoverBusy(false);
     }
-  }, [contentType, filePath]);
+  }, [coverTarget]);
+
+  const handleUploadCover = useCallback(async () => {
+    if (!coverTarget || contentType !== 'markdown') return;
+    setCoverMenuOpen(false);
+    if (typeof window.platform?.selectFiles === 'function') {
+      const paths = await window.platform.selectFiles();
+      const imageFilePath = paths?.[0];
+      if (!imageFilePath) return;
+      const kind = inferKindByExt(extOfName(imageFilePath));
+      if (kind !== 'image' && kind !== 'svg') {
+        dispatchCoverNotice('请选择图片文件作为 cover。', 'error');
+        return;
+      }
+      if ('filePath' in coverTarget && coverTarget.filePath) {
+        await applySelectedCoverImage({ imageFilePath });
+        return;
+      }
+      const contentBase64 = await window.platform.readFileBase64?.(imageFilePath);
+      if (!contentBase64) {
+        dispatchCoverNotice('读取图片失败。', 'error');
+        return;
+      }
+      await applySelectedCoverImage({
+        image: {
+          filename: fileNameFromPath(imageFilePath),
+          contentBase64,
+        },
+      });
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [applySelectedCoverImage, contentType, coverTarget]);
+
+  const handleBrowserCoverInputChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!coverTarget) return;
+    const file = event.currentTarget.files?.[0] || null;
+    event.currentTarget.value = '';
+    if (!file) return;
+    const kind = inferKindByExt(extOfName(file.name));
+    if (kind !== 'image' && kind !== 'svg') {
+      dispatchCoverNotice('请选择图片文件作为 cover。', 'error');
+      return;
+    }
+    try {
+      const contentBase64 = await readBrowserFileAsBase64(file);
+      if (!contentBase64) {
+        dispatchCoverNotice('读取图片失败。', 'error');
+        return;
+      }
+      await applySelectedCoverImage({
+        image: {
+          filename: file.name || 'cover.png',
+          contentBase64,
+        },
+      });
+    } catch (err) {
+      dispatchCoverNotice(`Cover 应用失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [applySelectedCoverImage, coverTarget]);
 
   const handlePresetCover = useCallback(() => {
     setCoverMenuOpen(false);
@@ -227,10 +323,10 @@ export function FloatingActions({
   }, []);
 
   const handleApplyPresetCover = useCallback(async (item: CoverGalleryItem) => {
-    if (!filePath || contentType !== 'markdown') return;
+    if (!coverTarget || contentType !== 'markdown') return;
     setCoverBusy(true);
     try {
-      const result = await applyMarkdownCoverPreset({ filePath, presetId: item.id });
+      const result = await applyMarkdownCoverPreset({ ...coverTarget, presetId: item.id });
       dispatchCoverNotice(
         result.ok ? `已应用「${item.title}」为 cover。` : `Cover 应用失败：${result.error}`,
         result.ok ? 'success' : 'error',
@@ -241,7 +337,7 @@ export function FloatingActions({
     } finally {
       setCoverBusy(false);
     }
-  }, [contentType, filePath]);
+  }, [contentType, coverTarget]);
 
   const visibleCoverGalleryItems = useMemo(
     () => COVER_GALLERY_ITEMS.filter(item => !brokenCoverGalleryIds.has(item.id)),
@@ -252,6 +348,8 @@ export function FloatingActions({
   const agentGenerateStatus = coverStatus?.agentGenerate ?? {};
   const agentGenerateEnabled = Boolean(agentGenerateStatus.enabled ?? coverStatus?.enabled);
   const agentGenerateDisabledText = getAgentGenerateDisabledText(agentGenerateStatus);
+  const canSelectCoverFile = typeof window.platform?.selectFiles === 'function'
+    || typeof window.FileReader === 'function';
 
   const handleCoverGalleryImageError = useCallback((itemId: string) => {
     setBrokenCoverGalleryIds((current) => {
@@ -277,7 +375,7 @@ export function FloatingActions({
           </svg>
           <span>{copyLabel ?? t('attach.copy')}</span>
         </button>
-        {contentType === 'markdown' && filePath && systemCoverAvailable && (
+        {contentType === 'markdown' && coverTarget && systemCoverAvailable && (
           <div className={styles.coverActionWrap} ref={coverMenuRef}>
             <Tooltip content={t('cover.make')} placement="top" align="end">
               {({ ref, ...tooltipProps }) => (
@@ -322,10 +420,12 @@ export function FloatingActions({
                   <span className={styles.coverMenuIcon}><GalleryCoverIcon /></span>
                   <span>{t('cover.gallery.title')}</span>
                 </button>
-                <button type="button" onClick={handleUploadCover}>
-                  <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
-                  <span>{t('cover.gallery.upload')}</span>
-                </button>
+                {canSelectCoverFile && (
+                  <button type="button" onClick={handleUploadCover}>
+                    <span className={styles.coverMenuIcon}><UploadCoverIcon /></span>
+                    <span>{t('cover.gallery.upload')}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -395,6 +495,13 @@ export function FloatingActions({
             )}
           </Tooltip>
         )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,.svg"
+          hidden
+          onChange={handleBrowserCoverInputChange}
+        />
         <Tooltip content={t('common.screenshot')} placement="top" align="end">
           {({ ref, ...tooltipProps }) => (
             <button

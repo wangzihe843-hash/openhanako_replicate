@@ -5,7 +5,7 @@
  * 每种 previewItem 类型对应一个 JSX 分支或子组件。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { renderMarkdownPreview } from '../../utils/markdown';
 import {
   parseMarkdownCover,
@@ -18,6 +18,7 @@ import {
 } from '../../utils/markdown-cover';
 import {
   dispatchCoverNotice,
+  type MarkdownCoverTargetInput,
 } from '../../utils/markdown-cover-generation';
 import {
   isExternalCoverImagePath,
@@ -35,6 +36,7 @@ import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../..
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { upsertPreviewItem } from '../../stores/preview-actions';
+import { isRemoteWorkbenchContentRef, normalizeWorkbenchContentRef, saveRemoteWorkbenchContent } from '../../utils/remote-file-preview';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 import type { PreviewItem } from '../../types';
@@ -87,17 +89,37 @@ interface PreviewRendererProps {
 }
 
 // ── HtmlPreview ──
-// srcDoc/blob 会继承主窗口 CSP，无法安全地为 Tailwind 等 CDN 单独放权。
-// HTML preview 改走短期 server 文档：iframe 继续 sandbox，响应自己携带 preview 专用 CSP。
+// HTML 内容由 server 注册为 token 化短期文档；renderer 只负责把该 URL
+// 和 Preview 面板里的占位矩形交给主进程，实际渲染跑在专用 WebContentsView。
+
+function readHtmlPreviewBounds(element: HTMLElement | null) {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y) || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
+    return null;
+  }
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
 
 function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
-  const [src, setSrc] = useState<string | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const shownRef = useRef(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setSrc(null);
+    setPreviewUrl(null);
     setError(null);
+    shownRef.current = false;
 
     hanaFetch('/api/preview/html', {
       method: 'POST',
@@ -113,7 +135,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
         if (!data || typeof data.previewUrl !== 'string' || !data.previewUrl) {
           throw new Error('invalid html preview response');
         }
-        if (!cancelled) setSrc(data.previewUrl);
+        if (!cancelled) setPreviewUrl(data.previewUrl);
       })
       .catch((err) => {
         console.error('[PreviewRenderer] HTML preview registration failed:', err);
@@ -125,16 +147,57 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
     };
   }, [previewItem.content, previewItem.filePath, previewItem.title]);
 
+  useLayoutEffect(() => {
+    if (!previewUrl || !window.platform?.showHtmlPreview) return undefined;
+
+    let closed = false;
+    const syncBounds = () => {
+      if (closed) return;
+      const bounds = readHtmlPreviewBounds(hostRef.current);
+      if (!bounds) return;
+      if (!shownRef.current) {
+        const showResult = window.platform.showHtmlPreview?.({
+          previewId: previewItem.id,
+          previewUrl,
+          bounds,
+        });
+        void Promise.resolve(showResult).then((ok) => {
+          if (!closed && ok) shownRef.current = true;
+        });
+        return;
+      }
+      void window.platform.updateHtmlPreviewBounds?.(previewItem.id, bounds);
+    };
+
+    syncBounds();
+    const host = hostRef.current;
+    const resizeObserver = host && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(syncBounds)
+      : null;
+    if (host && resizeObserver) resizeObserver.observe(host);
+    window.addEventListener('resize', syncBounds);
+    window.addEventListener('scroll', syncBounds, true);
+
+    return () => {
+      closed = true;
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', syncBounds);
+      window.removeEventListener('scroll', syncBounds, true);
+      shownRef.current = false;
+      void window.platform?.closeHtmlPreview?.(previewItem.id);
+    };
+  }, [previewItem.id, previewUrl]);
+
   if (error) {
     return <pre className="preview-code">{error}</pre>;
   }
 
   return (
-    <iframe
-      title={previewItem.title}
-      sandbox="allow-scripts"
-      referrerPolicy="no-referrer"
-      src={src || undefined}
+    <div
+      ref={hostRef}
+      className="preview-html-native-host"
+      data-html-preview-host=""
+      aria-label={previewItem.title}
     />
   );
 }
@@ -152,6 +215,46 @@ function coverLayout(cover: MarkdownCover): Required<MarkdownCoverLayoutPatch> {
     positionX: clamp(cover.positionX ?? 50, 0, 100),
     positionY: clamp(cover.positionY ?? 50, 0, 100),
   };
+}
+
+function remoteWorkbenchCoverImageUrl(previewItem: PreviewItem, image: string | null | undefined): string | null {
+  if (!image || !isRemoteWorkbenchContentRef(previewItem.remoteContentRef)) return null;
+  if (isExternalCoverImagePath(image)) return image;
+  const normalized = normalizeWorkbenchContentRef(previewItem.remoteContentRef);
+  const parts = image.replace(/^\.?\//, '').split('/').filter(Boolean);
+  const name = parts.pop();
+  if (!name) return null;
+  const subdir = [normalized.subdir, ...parts].filter(Boolean).join('/');
+  const params = new URLSearchParams();
+  params.set('mountId', normalized.mountId || normalized.rootId || 'default');
+  params.set('subdir', subdir);
+  params.set('name', name);
+  return `/api/workbench/content?${params.toString()}`;
+}
+
+function markdownCoverTargetForPreviewItem(previewItem: PreviewItem): MarkdownCoverTargetInput | null {
+  if (previewItem.filePath) return { filePath: previewItem.filePath };
+  if (!isRemoteWorkbenchContentRef(previewItem.remoteContentRef)) return null;
+  const normalized = normalizeWorkbenchContentRef(previewItem.remoteContentRef);
+  return {
+    target: {
+      kind: 'workbench-file',
+      mountId: normalized.mountId || normalized.rootId || 'default',
+      rootId: normalized.rootId || normalized.mountId || 'default',
+      subdir: normalized.subdir || '',
+      name: normalized.name,
+    },
+  };
+}
+
+async function writeMarkdownPreviewContent(previewItem: PreviewItem, content: string) {
+  if (isRemoteWorkbenchContentRef(previewItem.remoteContentRef)) {
+    const result = await saveRemoteWorkbenchContent(previewItem.remoteContentRef, content, previewItem.fileVersion ?? null);
+    return { result, nextVersion: result.version ?? null };
+  }
+  if (!previewItem.filePath || !window.platform?.writeFileIfUnchanged) return null;
+  const result = await window.platform.writeFileIfUnchanged(previewItem.filePath, content, previewItem.fileVersion || null);
+  return { result, nextVersion: result?.version ?? null };
 }
 
 function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; cover: MarkdownCover }) {
@@ -180,29 +283,30 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
     return () => window.removeEventListener('pointerdown', close);
   }, [menu]);
 
-  const imagePath = resolveMarkdownCoverImagePath(previewItem.filePath, cover.image);
-  const imageUrl = imagePath && isExternalCoverImagePath(imagePath)
+  const remoteImageUrl = remoteWorkbenchCoverImageUrl(previewItem, cover.image);
+  const imagePath = remoteImageUrl ? null : resolveMarkdownCoverImagePath(previewItem.filePath, cover.image);
+  const imageUrl = remoteImageUrl || (imagePath && isExternalCoverImagePath(imagePath)
     ? imagePath
-    : imagePath ? window.platform?.getFileUrl?.(imagePath) || imagePath : null;
+    : imagePath ? window.platform?.getFileUrl?.(imagePath) || imagePath : null);
+  const coverTarget = useMemo(() => markdownCoverTargetForPreviewItem(previewItem), [previewItem]);
 
   const persistLayout = useCallback(async (nextLayout: Required<MarkdownCoverLayoutPatch>) => {
-    if (!previewItem.filePath || !window.platform?.writeFileIfUnchanged) return;
     const writeNext = async (content: string, version: PreviewItem['fileVersion']) => {
       const nextContent = updateMarkdownCoverLayout(content, nextLayout);
-      const result = await window.platform?.writeFileIfUnchanged?.(previewItem.filePath!, nextContent, version || null);
-      return { result, nextContent };
+      const result = await writeMarkdownPreviewContent({ ...previewItem, fileVersion: version }, nextContent);
+      return { result: result?.result, nextContent, nextVersion: result?.nextVersion };
     };
 
-    let { result, nextContent } = await writeNext(previewItem.content, previewItem.fileVersion);
-    if (!result?.ok && result?.conflict && window.platform?.readFileSnapshot) {
+    let { result, nextContent, nextVersion } = await writeNext(previewItem.content, previewItem.fileVersion);
+    if (!result?.ok && result?.conflict && previewItem.filePath && window.platform?.readFileSnapshot) {
       const snapshot = await window.platform.readFileSnapshot(previewItem.filePath);
       if (snapshot?.content != null) {
-        ({ result, nextContent } = await writeNext(snapshot.content, snapshot.version));
+        ({ result, nextContent, nextVersion } = await writeNext(snapshot.content, snapshot.version));
       }
     }
 
     if (result?.ok) {
-      upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: result.version });
+      upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: nextVersion });
       return;
     }
     dispatchCoverNotice('Cover 布局保存失败，文件可能已被外部修改。', 'error');
@@ -210,24 +314,23 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
 
   const deleteCover = useCallback(async () => {
     setMenu(null);
-    if (!previewItem.filePath || !window.platform?.writeFileIfUnchanged) return;
     const writeNext = async (content: string, version: PreviewItem['fileVersion']) => {
       const nextContent = removeMarkdownCover(content);
-      if (nextContent === content) return { result: { ok: true, version }, nextContent };
-      const result = await window.platform?.writeFileIfUnchanged?.(previewItem.filePath!, nextContent, version || null);
-      return { result, nextContent };
+      if (nextContent === content) return { result: { ok: true, version }, nextContent, nextVersion: version };
+      const result = await writeMarkdownPreviewContent({ ...previewItem, fileVersion: version }, nextContent);
+      return { result: result?.result, nextContent, nextVersion: result?.nextVersion };
     };
 
-    let { result, nextContent } = await writeNext(previewItem.content, previewItem.fileVersion);
-    if (!result?.ok && result?.conflict && window.platform?.readFileSnapshot) {
+    let { result, nextContent, nextVersion } = await writeNext(previewItem.content, previewItem.fileVersion);
+    if (!result?.ok && result?.conflict && previewItem.filePath && window.platform?.readFileSnapshot) {
       const snapshot = await window.platform.readFileSnapshot(previewItem.filePath);
       if (snapshot?.content != null) {
-        ({ result, nextContent } = await writeNext(snapshot.content, snapshot.version));
+        ({ result, nextContent, nextVersion } = await writeNext(snapshot.content, snapshot.version));
       }
     }
 
     if (result?.ok) {
-      upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: result.version });
+      upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: nextVersion });
       dispatchCoverNotice('已删除封面。', 'success');
       return;
     }
@@ -285,16 +388,16 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
 
   const regenerateWithPrompt = useCallback(async () => {
     setMenu(null);
-    await regenerateMarkdownCoverWithPrompt(previewItem.filePath);
-  }, [previewItem.filePath]);
+    await regenerateMarkdownCoverWithPrompt(coverTarget);
+  }, [coverTarget]);
 
   const handleCoverDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!previewItem.filePath || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+    if (!coverTarget || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'copy';
     setCoverDropActive(true);
-  }, [previewItem.filePath]);
+  }, [coverTarget]);
 
   const handleCoverDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
@@ -302,15 +405,15 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
   }, []);
 
   const handleCoverDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!previewItem.filePath || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
+    if (!coverTarget || !hasMarkdownCoverDropImage(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     setCoverDropActive(false);
     void applyMarkdownCoverImageDrop({
-      filePath: previewItem.filePath,
+      ...coverTarget,
       dataTransfer: event.dataTransfer,
     });
-  }, [previewItem.filePath]);
+  }, [coverTarget]);
 
   if (!imageUrl) return null;
 
@@ -374,11 +477,11 @@ function MarkdownCoverDropRail({ active }: { active: boolean }) {
   );
 }
 
-function MarkdownNoCoverDropHost({ filePath, children }: { filePath?: string; children: ReactNode }) {
+function MarkdownNoCoverDropHost({ coverTarget, children }: { coverTarget: MarkdownCoverTargetInput | null; children: ReactNode }) {
   const [active, setActive] = useState(false);
 
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!filePath || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) {
+    if (!coverTarget || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) {
       setActive(false);
       return;
     }
@@ -386,7 +489,7 @@ function MarkdownNoCoverDropHost({ filePath, children }: { filePath?: string; ch
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'copy';
     setActive(true);
-  }, [filePath]);
+  }, [coverTarget]);
 
   const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
@@ -394,17 +497,17 @@ function MarkdownNoCoverDropHost({ filePath, children }: { filePath?: string; ch
   }, []);
 
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!filePath || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) return;
+    if (!coverTarget || !hasMarkdownCoverDropImage(event.dataTransfer) || !isMarkdownTopCoverDrop(event)) return;
     event.preventDefault();
     event.stopPropagation();
     setActive(false);
     void applyMarkdownCoverImageDrop({
-      filePath,
+      ...coverTarget,
       dataTransfer: event.dataTransfer,
     });
-  }, [filePath]);
+  }, [coverTarget]);
 
-  if (!filePath) return <>{children}</>;
+  if (!coverTarget) return <>{children}</>;
   return (
     <div
       className="markdown-cover-drop-host"
@@ -422,6 +525,7 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
   const divRef = useRef<HTMLDivElement>(null);
   const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   const cover = useMemo(() => parseMarkdownCover(previewItem.content), [previewItem.content]);
+  const coverTarget = useMemo(() => markdownCoverTargetForPreviewItem(previewItem), [previewItem]);
   const body = useMemo(() => stripMarkdownFrontMatterForPreview(previewItem.content), [previewItem.content]);
   const linkContext = useMemo<LinkOpenContext>(() => ({
     origin: 'desk',
@@ -490,7 +594,7 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
           }}
         />
       ) : (
-        <MarkdownNoCoverDropHost filePath={previewItem.filePath}>
+        <MarkdownNoCoverDropHost coverTarget={coverTarget}>
           <div
             ref={divRef}
             className="preview-markdown md-content"

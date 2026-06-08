@@ -35,14 +35,11 @@ describe('selection quote action surface layout', () => {
     expect(declarationValue(selectionButton, 'white-space')).toBe('nowrap');
   });
 
-  it('gives the quote action a transparent hit area larger than its visible chrome', () => {
+  it('does not cover the quote action with a transparent hit layer', () => {
     const selectionCss = readCss('desktop/src/react/components/selection/SelectionQuoteActionSurface.module.css');
     const hitArea = cssRule(selectionCss, '.surface::before');
 
-    expect(declarationValue(hitArea, 'content')).toBe("''");
-    expect(declarationValue(hitArea, 'position')).toBe('absolute');
-    expect(declarationValue(hitArea, 'inset')).toBe('calc(-1 * var(--space-sm))');
-    expect(declarationValue(hitArea, 'background')).toBe('transparent');
+    expect(hitArea).toBe('');
   });
 
   it('keeps preview actions hidden until the expanded hover zone is active', () => {

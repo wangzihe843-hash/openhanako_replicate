@@ -590,7 +590,7 @@ describe('initApp bridge indicator', () => {
 
     expect(mockState.homeFolder).toBe('/new-home');
     expect(mockState.selectedFolder).toBe('/new-home');
-    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith('/new-home');
+    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith('/new-home', { mountId: null });
   });
 
   it('ignores workspace changes for non-current agents', async () => {
@@ -711,7 +711,7 @@ describe('initApp bridge indicator', () => {
     expect(mockState.homeFolder).toBeNull();
     expect(mockState.selectedFolder).toBeNull();
     expect(mockState.deskBasePath).toBe('');
-    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith(null);
+    expect(mockActivateWorkspaceDesk).toHaveBeenCalledWith(null, { mountId: null });
   });
 
   it('configures context usage requests before settings and websocket handlers dispatch app events', async () => {

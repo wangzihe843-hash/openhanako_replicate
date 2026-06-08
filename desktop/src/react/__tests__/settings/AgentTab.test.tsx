@@ -8,7 +8,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSettingsStore } from '../../settings/store';
 
-type MockResponse = { json: () => Promise<any> };
+type MockResponse = { json: () => Promise<unknown> };
 
 const hanaFetchMock = vi.fn(async (_url: string, _opts?: RequestInit): Promise<MockResponse> => ({
   json: async () => ({ models: [] }),
@@ -37,6 +37,8 @@ vi.mock('@/ui', () => ({
   SelectWidget: ({ value }: { value?: string }) => (
     <div data-testid="model-select">{value || ''}</div>
   ),
+  ProviderGroupHeader: ({ provider }: { provider: string }) => <div>{provider}</div>,
+  selectWidgetStyles: { providerInset: 'providerInset' },
 }));
 
 vi.mock('../../settings/tabs/agent/AgentCardStack', () => ({
@@ -63,7 +65,19 @@ vi.mock('../../settings/tabs/agent/YuanSelector', () => ({
 }));
 
 vi.mock('../../settings/tabs/agent/AgentMemory', () => ({
-  MemorySection: () => <div data-testid="memory-section" />,
+  MemorySection: ({
+    hasUtilityModel,
+    memoryEnabled,
+  }: {
+    hasUtilityModel?: boolean;
+    memoryEnabled?: boolean;
+  }) => (
+    <div
+      data-testid="memory-section"
+      data-has-utility={hasUtilityModel === undefined ? 'loading' : hasUtilityModel ? 'true' : 'false'}
+      data-memory-enabled={memoryEnabled === undefined ? 'loading' : memoryEnabled ? 'true' : 'false'}
+    />
+  ),
 }));
 
 vi.mock('../../settings/tabs/agent/AgentToolsSection', () => ({
@@ -121,8 +135,18 @@ describe('AgentTab settings agent selection', () => {
     expect(screen.getByTestId('selected-agent')).toHaveTextContent('deepseek');
   });
 
+  it('does not force memory off while global model settings are still loading', async () => {
+    useSettingsStore.setState({ globalModelsConfig: null });
+    const { AgentTab } = await import('../../settings/tabs/AgentTab');
+
+    render(<AgentTab />);
+
+    expect(screen.getByTestId('memory-section')).toHaveAttribute('data-has-utility', 'loading');
+    expect(screen.getByTestId('memory-section')).toHaveAttribute('data-memory-enabled', 'true');
+  });
+
   it('confirms character-card export from the live preview overlay', async () => {
-    hanaFetchMock.mockImplementation(async (url: string, opts?: RequestInit): Promise<MockResponse> => {
+    hanaFetchMock.mockImplementation(async (url: string, _opts?: RequestInit): Promise<MockResponse> => {
       if (url === '/api/models') return { json: async () => ({ models: [] }) };
       if (url === '/api/character-cards/export/preview') {
         return {
@@ -202,6 +226,37 @@ describe('AgentTab settings agent selection', () => {
     }) as [string, RequestInit | undefined] | undefined;
     expect(cfgCall).toBeTruthy();
     expect(JSON.parse(String(cfgCall?.[1]?.body))).toEqual({ agent: { name: 'NewName' } });
+  });
+
+  it('saves only the agent name from the compact name save button', async () => {
+    const { AgentTab } = await import('../../settings/tabs/AgentTab');
+    const { container } = render(<AgentTab />);
+
+    const nameInput = screen.getByPlaceholderText('settings.agent.agentNameHint');
+    const identityInput = container.querySelectorAll('textarea')[0];
+    expect(identityInput).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: 'NewName' } });
+      fireEvent.change(identityInput, { target: { value: 'changed identity' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'settings.save' })[0]);
+      await Promise.resolve();
+    });
+
+    const cfgCall = hanaFetchMock.mock.calls.find((call) => {
+      const [url, opts] = call as [string, RequestInit | undefined];
+      return url === '/api/agents/hana/config' && opts?.method === 'PUT';
+    }) as [string, RequestInit | undefined] | undefined;
+    const identityCall = hanaFetchMock.mock.calls.find((call) => {
+      const [url, opts] = call as [string, RequestInit | undefined];
+      return url === '/api/agents/hana/identity' && opts?.method === 'PUT';
+    });
+
+    expect(cfgCall).toBeTruthy();
+    expect(JSON.parse(String(cfgCall?.[1]?.body))).toEqual({ agent: { name: 'NewName' } });
+    expect(identityCall).toBeUndefined();
   });
 
   it('does not save on Enter while composing with an IME (#1306)', async () => {

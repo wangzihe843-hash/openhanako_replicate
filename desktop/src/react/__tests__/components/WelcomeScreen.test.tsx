@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
@@ -63,6 +63,11 @@ describe('WelcomeScreen workspace picker', () => {
       selectedAgentId: null,
       memoryEnabled: true,
       selectedFolder: '/workspace/Desktop',
+      selectedWorkspaceMountId: null,
+      selectedWorkspaceLabel: null,
+      deskWorkspaceMountId: null,
+      deskWorkspaceLabel: null,
+      studioWorkspaces: [],
       homeFolder: '/workspace/Desktop/project-hana',
       cwdHistory: ['/workspace/Desktop/project-hana'],
       workspaceFolders: ['/workspace/Reference'],
@@ -99,6 +104,42 @@ describe('WelcomeScreen workspace picker', () => {
     expect(currentLabel.compareDocumentPosition(selectOther) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectOther.compareDocumentPosition(extraLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(extraLabel.compareDocumentPosition(addExternal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('selects a Studio workspace by mountId instead of a local path', async () => {
+    mocks.hanaFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/studio/workspaces') {
+        return new Response(JSON.stringify({
+          workspaces: [{ workspaceId: 'mount_docs', mountId: 'mount_docs', label: 'Docs', capabilities: ['list', 'read', 'write'] }],
+        }), { status: 200 });
+      }
+      if (path.startsWith('/api/preferences/workspace-ui-state')) {
+        return new Response(JSON.stringify({ state: null }), { status: 200 });
+      }
+      if (path === '/api/workbench/files?mountId=mount_docs') {
+        return new Response(JSON.stringify({
+          mountId: 'mount_docs',
+          mount: { label: 'Docs' },
+          files: [{ name: 'remote.md', isDir: false }],
+        }), { status: 200 });
+      }
+      if (path.startsWith('/api/workbench/content')) {
+        return new Response('', { status: 404 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    await waitFor(() => expect(useStore.getState().studioWorkspaces).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: /工作台：Desktop/ }));
+    fireEvent.click(screen.getByText('Docs'));
+
+    await waitFor(() => {
+      expect(useStore.getState().selectedWorkspaceMountId).toBe('mount_docs');
+      expect(useStore.getState().deskBasePath).toBe('studio:mount_docs');
+    });
+    expect(mocks.hanaFetch.mock.calls.some(([path]) => path === '/api/workbench/files?mountId=mount_docs')).toBe(true);
   });
 
   it('removes a recent workspace from the picker without switching workspace', async () => {

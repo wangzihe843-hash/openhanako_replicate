@@ -45,7 +45,7 @@ describe('ThinkingLevelButton', () => {
 
     const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
-    fireEvent.click(screen.getByRole('button', { name: 'high' }));
+    fireEvent.click(screen.getByRole('option', { name: 'high' }));
 
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({
@@ -56,20 +56,19 @@ describe('ThinkingLevelButton', () => {
     expect(onChange).toHaveBeenCalledWith('high');
   });
 
-  it('keeps pending new-session thinking changes on the global default path', async () => {
-    vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ ok: true }));
+  it('saves pending new-session thinking changes as the model default draft', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ ok: true, thinkingLevel: 'high' }));
     const onChange = vi.fn();
 
     const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh={false} />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
-    fireEvent.click(screen.getByRole('button', { name: 'high' }));
+    fireEvent.click(screen.getByRole('option', { name: 'high' }));
 
-    await waitFor(() => {
-      expect(hanaFetch).toHaveBeenCalledWith('/api/config', expect.objectContaining({
-        method: 'PUT',
-        body: JSON.stringify({ thinking_level: 'high' }),
-      }));
-    });
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('high'));
+    expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ level: 'high' }),
+    }));
     expect(onChange).toHaveBeenCalledWith('high');
   });
 
@@ -78,7 +77,16 @@ describe('ThinkingLevelButton', () => {
 
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
 
-    expect(screen.queryByRole('button', { name: /auto/i })).toBeNull();
-    expect(screen.getByRole('button', { name: 'medium' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /auto/i })).toBeNull();
+    expect(screen.getByRole('option', { name: 'medium' })).toBeTruthy();
+  });
+
+  it('hides the xhigh level when the model does not support it', () => {
+    const { container } = render(<ThinkingLevelButton level="off" onChange={vi.fn()} modelXhigh={false} />);
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    expect(screen.getByRole('option', { name: 'high' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'xhigh' })).toBeNull();
   });
 });

@@ -119,7 +119,7 @@ export async function attachFilesFromPaths(
 
   // Desk 文件直接附加（保留原始路径，不走 upload）
   const s = useStore.getState();
-  const deskBase = toSlash(s.deskBasePath ?? '').replace(/\/+$/, '');
+  const deskBase = s.deskWorkspaceMountId ? '' : toSlash(s.deskBasePath ?? '').replace(/\/+$/, '');
   if (deskBase) {
     const prefix = deskBase + '/';
     const deskFileMap = new Map(s.deskFiles.map((f: any) => [f.name, f]));

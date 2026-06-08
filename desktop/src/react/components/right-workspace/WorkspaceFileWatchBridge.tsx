@@ -51,11 +51,12 @@ function workspaceSubdirForAffectedDirectory(basePath: string, payload: Workspac
 
 export function WorkspaceFileWatchBridge() {
   const deskBasePath = useStore(s => s.deskBasePath);
+  const deskWorkspaceMountId = useStore(s => s.deskWorkspaceMountId);
   const deskExpandedPaths = useStore(s => s.deskExpandedPaths);
   const activeRootsRef = useRef<Set<string>>(new Set());
   const watchedRoots = useMemo(
-    () => workspaceWatchRoots(deskBasePath, deskExpandedPaths),
-    [deskBasePath, deskExpandedPaths],
+    () => (deskWorkspaceMountId ? [] : workspaceWatchRoots(deskBasePath, deskExpandedPaths)),
+    [deskBasePath, deskExpandedPaths, deskWorkspaceMountId],
   );
   const watchedRootsKey = watchedRoots.join('\n');
 
@@ -63,7 +64,7 @@ export function WorkspaceFileWatchBridge() {
     const platform = window.platform;
     if (!platform?.unwatchWorkspace) return undefined;
     const activeRoots = activeRootsRef.current;
-    const desiredRoots = deskBasePath ? new Set(watchedRoots) : new Set<string>();
+    const desiredRoots = deskBasePath && !deskWorkspaceMountId ? new Set(watchedRoots) : new Set<string>();
 
     for (const root of [...activeRoots]) {
       if (desiredRoots.has(root)) continue;
@@ -71,7 +72,7 @@ export function WorkspaceFileWatchBridge() {
       void platform.unwatchWorkspace(root);
     }
 
-    if (!deskBasePath || !platform.watchWorkspace) return undefined;
+    if (!deskBasePath || deskWorkspaceMountId || !platform.watchWorkspace) return undefined;
 
     for (const root of desiredRoots) {
       if (activeRoots.has(root)) continue;
@@ -92,7 +93,7 @@ export function WorkspaceFileWatchBridge() {
     }
 
     return undefined;
-  }, [deskBasePath, watchedRoots, watchedRootsKey]);
+  }, [deskBasePath, deskWorkspaceMountId, watchedRoots, watchedRootsKey]);
 
   useEffect(() => () => {
     const platform = window.platform;
@@ -105,6 +106,7 @@ export function WorkspaceFileWatchBridge() {
 
   useEffect(() => subscribeWorkspaceChanges((payload) => {
     const state = useStore.getState();
+    if (state.deskWorkspaceMountId) return;
     const subdir = workspaceSubdirForAffectedDirectory(state.deskBasePath, payload);
     if (subdir == null) return;
     state.markDeskTreeDirty(subdir);

@@ -459,10 +459,7 @@ function normalizeBrowserCapabilities(
 ): string[] {
   const out = new Set(identityCapabilities?.length ? identityCapabilities : LOCAL_CAPABILITIES);
   for (const scope of scopes || []) {
-    if (scope === 'chat') out.add('chat');
-    else if (scope === 'resources' || scope.startsWith('resources.')) out.add('resources');
-    else if (scope === 'files' || scope.startsWith('files.')) out.add('files');
-    else if (scope === 'tools' || scope.startsWith('tools.')) out.add('tools');
+    addScopeCapability(out, scope);
   }
   return [...out];
 }
@@ -473,13 +470,19 @@ function normalizeRemoteCapabilities(identityCapabilities: string[] | null | und
   }
   const out = new Set<string>();
   for (const capability of identityCapabilities) {
-    if (capability === 'chat') out.add('chat');
-    else if (capability === 'resources' || capability.startsWith('resources.')) out.add('resources');
-    else if (capability === 'files' || capability.startsWith('files.')) out.add('files');
-    else if (capability === 'tools' || capability.startsWith('tools.')) out.add('tools');
-    else if (capability === 'settings' || capability.startsWith('settings.')) out.add('settings');
+    addScopeCapability(out, capability);
   }
   return out.size > 0 ? [...out] : [...REMOTE_FALLBACK_CAPABILITIES];
+}
+
+function addScopeCapability(out: Set<string>, capability: string): void {
+  if (!capability) return;
+  out.add(capability);
+  if (capability === 'chat') out.add('chat');
+  else if (capability === 'resources' || capability.startsWith('resources.')) out.add('resources');
+  else if (capability === 'files' || capability.startsWith('files.')) out.add('files');
+  else if (capability === 'tools' || capability.startsWith('tools.')) out.add('tools');
+  else if (capability === 'settings' || capability.startsWith('settings.')) out.add('settings');
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -510,6 +513,10 @@ export function requireServerConnection(
 
 export function hasServerConnection(source: ServerConnectionSource): boolean {
   return !!resolveServerConnection(source);
+}
+
+export function isLocalOwnerConnection(connection: ServerConnection | null | undefined): boolean {
+  return connection?.kind === 'local' && connection.credentialKind === 'loopback_token';
 }
 
 export function upsertServerConnection(

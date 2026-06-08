@@ -26,7 +26,9 @@ function shouldSkipTailFadeNode(node: Text): boolean {
 }
 
 function clearTailFade(root: HTMLElement): void {
-  const tailSpans = Array.from(root.querySelectorAll<HTMLElement>('[data-stream-tail-char="true"]'));
+  const tailSpans = Array.from(root.querySelectorAll<HTMLElement>(
+    '[data-stream-tail-char="true"], [data-stream-tail-chunk="true"]'
+  ));
   for (const span of tailSpans) {
     span.replaceWith(document.createTextNode(span.textContent || ''));
   }
@@ -59,22 +61,19 @@ function applyTailFade(root: HTMLElement, count: number): void {
     remaining -= take;
   }
 
-  let index = 0;
   for (const item of tailNodes.reverse()) {
     const splitAt = item.segments.length - item.take;
     const before = item.segments.slice(0, splitAt).join('');
-    const tail = item.segments.slice(splitAt);
+    const tail = item.segments.slice(splitAt).join('');
     const fragment = document.createDocumentFragment();
     if (before) fragment.appendChild(document.createTextNode(before));
-    for (const segment of tail) {
-      // eslint-disable-next-line no-restricted-syntax -- 流式 tail-fade 需在 dangerouslySetInnerHTML 渲染后的 DOM 上拆分文本节点，无法用 JSX
+    if (tail) {
+      // eslint-disable-next-line no-restricted-syntax -- post-render markdown stream tail decoration needs DOM text-node surgery
       const span = document.createElement('span');
-      span.className = styles.streamTailChar;
-      span.dataset.streamTailChar = 'true';
-      span.style.setProperty('--stream-tail-index', String(index));
-      span.textContent = segment;
+      span.className = styles.streamTailChunk;
+      span.dataset.streamTailChunk = 'true';
+      span.textContent = tail;
       fragment.appendChild(span);
-      index += 1;
     }
     item.node.parentNode?.replaceChild(fragment, item.node);
   }

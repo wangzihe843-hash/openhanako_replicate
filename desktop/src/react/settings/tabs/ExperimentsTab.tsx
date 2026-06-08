@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
+import { updateSettingsSnapshot } from '../actions';
 import { useSettingsStore } from '../store';
 import { renderMarkdown } from '../../utils/markdown';
 import { SelectWidget, type SelectOption } from '@/ui';
@@ -11,10 +12,12 @@ import {
   COMPACTION_MODE_EXPERIMENT_ID,
   COMPACTION_MODES,
   normalizeCompactionMode,
-} from '../../../../../shared/compaction-mode.js';
+} from '../../../../../shared/compaction-mode.ts';
 import styles from '../Settings.module.css';
 
 const CACHE_SNAPSHOT_EXPERIMENT_ID = 'memory.cache_snapshot_reflection';
+const DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID = 'provider.deepseek_roleplay_reasoning_patch';
+const PROACTIVE_SUBAGENT_EXPERIMENT_ID = 'subagent.proactive_delegation';
 
 type CacheSnapshotMode = 'off' | 'shadow' | 'write';
 type CompactionMode = 'auto' | 'cache_preserving' | 'pi_compatible';
@@ -314,21 +317,72 @@ function CompactionModeExperiment({ experiment, onValueChange }: {
   );
 }
 
+function BooleanExperiment({ experiment, onValueChange }: {
+  experiment: ExperimentDefinition;
+  onValueChange: (id: string, value: boolean) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const enabled = experiment.value === true;
+  const hint = [
+    t(experiment.descriptionKey),
+    experimentHint(experiment),
+  ].filter(Boolean).join(' · ');
+
+  const setEnabled = async (next: boolean) => {
+    setSaving(true);
+    try {
+      await onValueChange(experiment.id, next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsRow
+      label={t(experiment.titleKey)}
+      hint={hint}
+      control={(
+        <SwitchButton
+          checked={enabled}
+          disabled={saving}
+          label={t(experiment.titleKey)}
+          onClick={() => setEnabled(!enabled)}
+        />
+      )}
+    />
+  );
+}
+
 export function ExperimentsTab() {
   const showToast = useSettingsStore(s => s.showToast);
   const platformName = useSettingsStore(s => s.platformName);
-  const [experiments, setExperiments] = useState<ExperimentDefinition[]>([]);
-  const [loading, setLoading] = useState(true);
+  const snapshotExperiments = useSettingsStore(s => s.settingsSnapshot?.data?.preferences?.experiments);
+  const [experiments, setExperiments] = useState<ExperimentDefinition[]>(() => (
+    Array.isArray(useSettingsStore.getState().settingsSnapshot?.data?.preferences?.experiments)
+      ? useSettingsStore.getState().settingsSnapshot.data!.preferences.experiments as ExperimentDefinition[]
+      : []
+  ));
+  const [loading, setLoading] = useState(!Array.isArray(snapshotExperiments));
   const sessionExperiments = experiments.filter((experiment) => experiment.owner === 'session');
+  const providerExperiments = experiments.filter((experiment) => (
+    experiment.owner === 'provider'
+    && experiment.id === DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID
+  ));
   const memoryExperiments = experiments.filter((experiment) => experiment.owner === 'memory');
   const showComputerUse = platformName !== 'linux';
 
   useEffect(() => {
+    if (Array.isArray(snapshotExperiments)) {
+      setExperiments(snapshotExperiments as ExperimentDefinition[]);
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
     hanaFetch('/api/experiments')
       .then((res) => res.json())
       .then((data) => setExperiments(Array.isArray(data.experiments) ? data.experiments : []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [snapshotExperiments]);
 
   const updateExperimentValue = async (id: string, value: unknown) => {
     const res = await hanaFetch(`/api/experiments/${id}`, {
@@ -339,9 +393,17 @@ export function ExperimentsTab() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     const nextValue = data.value ?? value;
-    setExperiments((items) => items.map((item) => (
+    const applyNextValue = (items: ExperimentDefinition[]) => items.map((item) => (
       item.id === id ? { ...item, value: nextValue } : item
-    )));
+    ));
+    setExperiments(applyNextValue);
+    updateSettingsSnapshot(snapshot => ({
+      ...snapshot,
+      preferences: {
+        ...snapshot.preferences,
+        experiments: applyNextValue(snapshot.preferences.experiments as ExperimentDefinition[]),
+      },
+    }));
     showToast(t('settings.autoSaved'), 'success');
   };
 
@@ -356,6 +418,38 @@ export function ExperimentsTab() {
           {sessionExperiments.map((experiment) => (
             experiment.id === COMPACTION_MODE_EXPERIMENT_ID ? (
               <CompactionModeExperiment
+                key={experiment.id}
+                experiment={experiment}
+                onValueChange={updateExperimentValue}
+              />
+            ) : null
+          ))}
+        </SettingsSection>
+      )}
+      {!loading && sessionExperiments.some(e => e.id === PROACTIVE_SUBAGENT_EXPERIMENT_ID) && (
+        <SettingsSection
+          title={t('settings.experiments.subagentTitle')}
+          description={t('settings.experiments.subagentSectionDescription')}
+        >
+          {sessionExperiments.map((experiment) => (
+            experiment.id === PROACTIVE_SUBAGENT_EXPERIMENT_ID ? (
+              <BooleanExperiment
+                key={experiment.id}
+                experiment={experiment}
+                onValueChange={updateExperimentValue}
+              />
+            ) : null
+          ))}
+        </SettingsSection>
+      )}
+      {!loading && providerExperiments.length > 0 && (
+        <SettingsSection
+          title={t('settings.experiments.modelPersonaTitle')}
+          description={t('settings.experiments.modelPersonaDescription')}
+        >
+          {providerExperiments.map((experiment) => (
+            experiment.id === DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID ? (
+              <BooleanExperiment
                 key={experiment.id}
                 experiment={experiment}
                 onValueChange={updateExperimentValue}

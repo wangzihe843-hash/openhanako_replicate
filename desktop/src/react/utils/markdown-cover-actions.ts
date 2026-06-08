@@ -1,5 +1,6 @@
 import {
   dispatchCoverNotice,
+  type MarkdownCoverTargetInput,
   requestMarkdownCoverGeneration,
 } from './markdown-cover-generation';
 
@@ -28,12 +29,13 @@ export async function saveMarkdownCoverImage(imagePath: string | null | undefine
   dispatchCoverNotice(ok ? 'Cover 图片已保存。' : 'Cover 图片保存失败。', ok ? 'success' : 'error');
 }
 
-export async function regenerateMarkdownCoverWithPrompt(filePath: string | null | undefined): Promise<void> {
-  if (!filePath) return;
+export async function regenerateMarkdownCoverWithPrompt(input: string | null | undefined | MarkdownCoverTargetInput): Promise<void> {
+  if (!input) return;
+  const targetInput = typeof input === 'string' ? { filePath: input } : input;
   const prompt = window.prompt('这张 cover 想往哪个方向调整？');
   if (prompt === null) return;
   const result = await requestMarkdownCoverGeneration({
-    filePath,
+    ...targetInput,
     userGuidance: prompt,
   });
   dispatchCoverNotice(result.ok ? '已提交新的 cover 生成任务。' : `Cover 生成失败：${result.error}`, result.ok ? 'success' : 'error');

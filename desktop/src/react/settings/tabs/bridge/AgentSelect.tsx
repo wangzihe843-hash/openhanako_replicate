@@ -30,7 +30,9 @@ export function AgentSelect({ value, onChange }: AgentSelectProps) {
           onError={(e) => { (e.target as HTMLImageElement).src = yuanFallbackAvatar(agent?.yuan || 'hanako'); }}
         />
         <span className={styles['bridge-agent-name']}>{agent?.name || '—'}</span>
-        <span className={`${styles['bridge-agent-arrow']}${isOpen ? ` ${styles['open']}` : ''}`}>▾</span>
+        <svg className={`${styles['bridge-agent-arrow']}${isOpen ? ` ${styles['open']}` : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 6l4 4 4-4" />
+        </svg>
       </>
     );
   };

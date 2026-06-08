@@ -3,6 +3,7 @@
  */
 
 import { Component, memo, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { StreamingMarkdownContent } from './StreamingMarkdownContent';
 import { MoodBlock } from './MoodBlock';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -35,6 +36,14 @@ import { replayLatestUserMessage } from '../../stores/message-turn-actions';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts } from '../../utils/message-text';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { ScheduleEditor } from '../automation/ScheduleEditor';
+import { SelectWidget, type SelectOption } from '@/ui';
+import {
+  scheduleDraftFromStored,
+  schedulePreviewFromDraft,
+  storedScheduleFromDraft,
+  type ScheduleDraft,
+} from '../automation/schedule-draft';
 import styles from './Chat.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -297,7 +306,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
       return <InterludeBlock block={block} />;
     default: {
       const Renderer = BLOCK_RENDERERS[block.type];
-      return Renderer ? <Renderer block={block} agentId={agentId} /> : null;
+      return Renderer ? <Renderer block={block} agentId={agentId} sessionPath={sessionPath} /> : null;
     }
   }
 });
@@ -695,30 +704,189 @@ const SkillBlock = memo(function SkillBlock({ block }: { block: any }) {
 
 // cron_confirm block
 
-const CronConfirmBlock = memo(function CronConfirmBlock({ block }: { block: any }) {
+function automationRecord(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : {};
+}
+
+function defaultAutomationAgentId(agents: any[], currentAgentId: string | null, draftAgentId: string | null) {
+  return draftAgentId
+    || currentAgentId
+    || agents.find((agent: any) => agent?.isPrimary)?.id
+    || agents[0]?.id
+    || null;
+}
+
+function buildAutomationExecutionContext({
+  agent,
+  agentId,
+  baseContext,
+  sessionPath,
+}: {
+  agent: any;
+  agentId: string | null;
+  baseContext: Record<string, any>;
+  sessionPath?: string;
+}) {
+  const homeFolder = typeof agent?.homeFolder === 'string' && agent.homeFolder.trim()
+    ? agent.homeFolder.trim()
+    : null;
+  return {
+    kind: typeof baseContext.kind === 'string' && baseContext.kind.trim()
+      ? baseContext.kind
+      : 'session_workspace',
+    cwd: homeFolder || (typeof baseContext.cwd === 'string' && baseContext.cwd.trim() ? baseContext.cwd : null),
+    workspaceFolders: homeFolder
+      ? [homeFolder]
+      : (Array.isArray(baseContext.workspaceFolders)
+        ? baseContext.workspaceFolders.filter((folder: unknown) => typeof folder === 'string' && folder.trim())
+        : []),
+    sourceSessionPath: typeof baseContext.sourceSessionPath === 'string' && baseContext.sourceSessionPath.trim()
+      ? baseContext.sourceSessionPath
+      : (sessionPath || null),
+    createdByAgentId: agentId || null,
+  };
+}
+
+const CronConfirmBlock = memo(function CronConfirmBlock({ block, sessionPath }: { block: any; sessionPath?: string }) {
   const [status, setStatus] = useState(block.status);
-  const label = (block.jobData.label as string) || (block.jobData.prompt as string)?.slice(0, 40) || '';
+  const [modalOpen, setModalOpen] = useState(false);
+  const isSuggestionCard = block.type === 'suggestion_card';
+  const isAutomationSuggestion = block.type !== 'suggestion_card'
+    || block.kind === 'automation_draft'
+    || block.detail?.kind === 'automation_draft';
+  const jobData = block.jobData || block.detail?.jobData || {};
+  const operation = block.operation || block.detail?.operation || 'create';
+  const confirmLabelKey = operation === 'update' ? 'automation.confirmUpdate' : 'automation.confirmCreate';
+  const initialType = (jobData.type || jobData.scheduleType || 'cron') as string;
+  const agents = useStore(s => s.agents);
+  const currentAgentId = useStore(s => s.currentAgentId);
+  const fallbackAgentName = useStore(s => s.agentName) || 'Hanako';
+  const fallbackAgentYuan = useStore(s => s.agentYuan) || 'hanako';
+  const initialPrompt = (jobData.prompt as string) || (block.description as string) || '';
+  const [draftLabel, setDraftLabel] = useState((jobData.label as string) || (block.title as string) || initialPrompt.slice(0, 40) || '');
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => scheduleDraftFromStored(initialType, jobData.schedule));
+  const [draftPrompt, setDraftPrompt] = useState(initialPrompt);
+  const label = draftLabel || (draftPrompt || '').slice(0, 40) || '';
+  const schedulePreview = schedulePreviewFromDraft(scheduleDraft);
+  const pending = status === 'pending';
+  const canOpenDraft = isSuggestionCard || pending;
+  const draftAgentId = typeof jobData.actorAgentId === 'string' && jobData.actorAgentId.trim()
+    ? jobData.actorAgentId.trim()
+    : typeof jobData.executor?.agentId === 'string' && jobData.executor.agentId.trim()
+      ? jobData.executor.agentId.trim()
+      : typeof block.target?.id === 'string' && block.target.id.trim()
+        ? block.target.id.trim()
+        : null;
+  const initialAgentId = defaultAutomationAgentId(agents, currentAgentId, draftAgentId);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(initialAgentId);
+  const effectiveAgentId = selectedAgentId || initialAgentId;
+  const selectedAgent = agents.find((agent: any) => agent.id === effectiveAgentId) || null;
+  const agentInfo = resolveAgentDisplayInfo({
+    id: effectiveAgentId,
+    agents,
+    fallbackAgentName,
+    fallbackAgentYuan,
+  });
+
+  useEffect(() => {
+    setStatus(block.status);
+  }, [block.status]);
+
+  useEffect(() => {
+    if (effectiveAgentId && agents.some((agent: any) => agent.id === effectiveAgentId)) return;
+    setSelectedAgentId(initialAgentId);
+  }, [agents, effectiveAgentId, initialAgentId]);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [modalOpen]);
+
+  if (!isAutomationSuggestion) {
+    return (
+      <ChatResourceCard
+        icon={<AutomationDraftIcon />}
+        title={block.title || window.t('automation.suggestionTitle')}
+        subtitle={block.description}
+        statusLabel={status && status !== 'pending' ? status : undefined}
+        statusTone={status === 'rejected' ? 'muted' : 'accent'}
+        className={styles.automationDraftCard}
+      />
+    );
+  }
+
+  const buildDraftJobData = () => {
+    const nextSchedule = storedScheduleFromDraft(scheduleDraft);
+    const baseExecutor = automationRecord(jobData.executor);
+    const model = jobData.model ?? baseExecutor.model ?? '';
+    const executionContext = buildAutomationExecutionContext({
+      agent: selectedAgent,
+      agentId: effectiveAgentId,
+      baseContext: automationRecord(jobData.executionContext || baseExecutor.executionContext),
+      sessionPath,
+    });
+    return {
+      ...jobData,
+      type: nextSchedule.type,
+      schedule: nextSchedule.schedule,
+      label: draftLabel,
+      prompt: draftPrompt,
+      model,
+      actorAgentId: effectiveAgentId,
+      executionContext,
+      executor: {
+        ...baseExecutor,
+        kind: 'agent_session',
+        agentId: effectiveAgentId,
+        prompt: draftPrompt,
+        model,
+        executionContext,
+      },
+    };
+  };
+
+  const submitDraftJob = async (editedJobData: Record<string, unknown>) => {
+    const isUpdate = operation === 'update';
+    const { id, ...fields } = editedJobData;
+    await hanaFetch('/api/desk/cron', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(isUpdate
+        ? { action: 'update', id, ...fields }
+        : { action: 'add', ...editedJobData }),
+    });
+  };
 
   const handleApprove = async () => {
     try {
-      if (block.confirmId) {
+      const editedJobData = buildDraftJobData();
+      if (isSuggestionCard) {
+        await submitDraftJob(editedJobData);
+      } else if (block.confirmId) {
         await hanaFetch(`/api/confirm/${block.confirmId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'confirmed' }),
+          body: JSON.stringify({ action: 'confirmed', value: { jobData: editedJobData } }),
         });
       } else {
-        await hanaFetch('/api/desk/cron', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'add', ...block.jobData }),
-        });
+        await submitDraftJob(editedJobData);
       }
       setStatus('approved');
+      setModalOpen(false);
     } catch { /* silent */ }
   };
 
   const handleReject = async () => {
+    if (isSuggestionCard) {
+      setModalOpen(false);
+      return;
+    }
     if (block.confirmId) {
       try {
         await hanaFetch(`/api/confirm/${block.confirmId}`, {
@@ -729,29 +897,125 @@ const CronConfirmBlock = memo(function CronConfirmBlock({ block }: { block: any 
       } catch { /* silent */ }
     }
     setStatus('rejected');
+    setModalOpen(false);
   };
 
-  if (status !== 'pending') {
-    return (
-      <div className={styles.cronConfirmCard}>
-        <div className={styles.cronConfirmTitle}>{label}</div>
-        <div className={`${styles.cronConfirmStatus} ${status === 'approved' ? styles.cronConfirmStatusApproved : styles.cronConfirmStatusRejected}`}>
-          {status === 'approved' ? window.t('common.approved') : window.t('common.rejected')}
+  const card = (
+    <ChatResourceCard
+      icon={<AutomationDraftIcon />}
+      title={label || window.t('automation.draftTitle')}
+      titleMeta={!isSuggestionCard && pending ? window.t('automation.suggested') : undefined}
+      titleTail={isSuggestionCard ? window.t('automation.viewSuggestion') : undefined}
+      subtitle={`${agentInfo.displayName} · ${schedulePreview}`}
+      statusLabel={!isSuggestionCard && !pending ? (status === 'approved' ? window.t('common.approved') : window.t('common.rejected')) : undefined}
+      statusTone={!isSuggestionCard && !pending ? (status === 'approved' ? 'success' : 'muted') : 'accent'}
+      onClick={canOpenDraft ? () => setModalOpen(true) : undefined}
+      ariaLabel={window.t('automation.openDraft')}
+      className={styles.automationDraftCard}
+    />
+  );
+
+  const modal = canOpenDraft && modalOpen && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        className={styles.automationDraftOverlay}
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setModalOpen(false);
+        }}
+      >
+        <div className={styles.automationDraftModal} role="dialog" aria-modal="true" aria-label={window.t('automation.draftTitle')}>
+          <div className={styles.automationDraftHeader}>
+            <input
+              className={styles.automationDraftTitleInput}
+              value={draftLabel}
+              onChange={e => setDraftLabel(e.target.value)}
+              placeholder={window.t('automation.draftTitle')}
+            />
+            <button className={styles.automationDraftIconButton} type="button" title={window.t('automation.closeDraft')} onClick={() => setModalOpen(false)}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <textarea
+            className={styles.automationDraftPrompt}
+            value={draftPrompt}
+            onChange={e => setDraftPrompt(e.target.value)}
+            placeholder={window.t('automation.promptPlaceholder', { agent: agentInfo.displayName })}
+            aria-label={window.t('automation.field.prompt')}
+          />
+          <div className={styles.automationDraftFooter}>
+            <ScheduleEditor draft={scheduleDraft} onChange={setScheduleDraft} className={styles.automationDraftSchedule} />
+            <label className={styles.automationDraftField}>
+              <span>{window.t('automation.field.agent')}</span>
+              <SelectWidget
+                className={styles.automationDraftAgentSelect}
+                triggerClassName={styles.automationDraftControlButton}
+                popupClassName={styles.automationDraftAgentPopup}
+                value={effectiveAgentId || ''}
+                options={agents.map((agent: any): SelectOption => ({
+                  value: agent.id,
+                  label: agent.name || agent.id,
+                }))}
+                onChange={(value) => setSelectedAgentId(value)}
+                align="start"
+                placement="top"
+                density="comfortable"
+                renderTrigger={(_option, isOpen) => (
+                  <>
+                    <AgentAvatar info={agentInfo} className={styles.automationDraftAgentAvatar} />
+                    <span className={styles.automationDraftAgentName}>{agentInfo.displayName}</span>
+                    <svg className={styles.automationDraftControlArrow} data-open={isOpen} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </>
+                )}
+                renderOption={(option, selected) => {
+                  const info = resolveAgentDisplayInfo({
+                    id: option.value,
+                    agents,
+                    fallbackAgentName: option.label,
+                  });
+                  return (
+                    <span className={styles.automationDraftAgentOption} data-selected={selected}>
+                      <AgentAvatar info={info} className={styles.automationDraftAgentAvatar} />
+                      <span>{info.displayName}</span>
+                    </span>
+                  );
+                }}
+              />
+            </label>
+            <div className={styles.automationDraftActions}>
+              <button className={styles.automationDraftTextButton} type="button" onClick={handleReject}>{window.t('common.cancel')}</button>
+              <button className={styles.automationDraftPrimaryButton} type="button" onClick={handleApprove}>{window.t(confirmLabelKey)}</button>
+            </div>
+          </div>
         </div>
-      </div>
-    );
-  }
+      </div>,
+      document.body,
+    )
+    : null;
 
   return (
-    <div className={styles.cronConfirmCard}>
-      <div className={styles.cronConfirmTitle}>{label}</div>
-      <div className={styles.cronConfirmActions}>
-        <button className={`${styles.cronConfirmBtn} ${styles.cronConfirmBtnApprove}`} onClick={handleApprove}>{window.t('common.approve')}</button>
-        <button className={`${styles.cronConfirmBtn} ${styles.cronConfirmBtnReject}`} onClick={handleReject}>{window.t('common.reject')}</button>
-      </div>
-    </div>
+    <>
+      {card}
+      {modal}
+    </>
   );
 });
+
+function AutomationDraftIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l2.5 2" />
+      <path d="M6.5 5.5 5 4" />
+      <path d="M17.5 5.5 19 4" />
+    </svg>
+  );
+}
 
 // settings_confirm block
 
@@ -772,5 +1036,6 @@ BLOCK_RENDERERS['artifact'] = LegacyArtifactBlock;
 BLOCK_RENDERERS['plugin_card'] = PluginCardWrapper;
 BLOCK_RENDERERS['skill'] = SkillBlock;
 BLOCK_RENDERERS['cron_confirm'] = CronConfirmBlock;
+BLOCK_RENDERERS['suggestion_card'] = CronConfirmBlock;
 BLOCK_RENDERERS['settings_confirm'] = SettingsConfirmBlock;
 BLOCK_RENDERERS['settings_update'] = SettingsUpdateBlock;

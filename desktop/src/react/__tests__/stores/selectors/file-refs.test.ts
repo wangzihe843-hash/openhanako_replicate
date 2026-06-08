@@ -83,6 +83,14 @@ describe('selectDeskFiles', () => {
     expect(selectDeskFiles(state)[0].path).toBe('/root/a.png');
   });
 
+  it('does not emit path-backed desk refs for mounted Studio workspaces', () => {
+    const state = {
+      ...makeState([{ name: 'remote.md', isDir: false }], 'studio:mount_docs'),
+      deskWorkspaceMountId: 'mount_docs',
+    };
+    expect(selectDeskFiles(state)).toEqual([]);
+  });
+
   it('同一输入多次调用返回引用稳定（memoization）', () => {
     const files: DeskFile[] = [{ name: 'a.png', isDir: false }];
     const state = makeState(files);

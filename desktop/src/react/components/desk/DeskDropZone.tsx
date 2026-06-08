@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   deskCurrentDir,
   deskUploadFiles,
+  deskUploadBrowserFilesToSubdir,
   deskUploadFilesToSubdir,
   deskCreateFile,
   deskMoveTreeFiles,
@@ -14,6 +15,7 @@ import {
   clearAppFileDragPayload,
   readAppFileDragPayload,
 } from '../../utils/app-file-drag';
+import { isWebRuntime } from '../../utils/platform-runtime';
 import type { CtxMenuState } from './desk-types';
 import type { InlineCreateKind } from './DeskTree';
 import s from './Desk.module.css';
@@ -79,7 +81,9 @@ export function DeskDropZone({
       items: [
         { label: tFn('desk.ctx.newMdFile'), action: () => { void onStartCreate('', 'markdown'); } },
         { label: tFn('desk.ctx.newFolder'), action: () => { void onStartCreate('', 'folder'); } },
-        { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
+        ...(!isWebRuntime() ? [
+          { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
+        ] : []),
       ],
     });
   }, [onShowMenu, onStartCreate]);
@@ -118,6 +122,10 @@ export function DeskDropZone({
     const text = e.dataTransfer.getData('text/plain');
 
     if (files && files.length > 0) {
+      if (isWebRuntime()) {
+        await deskUploadBrowserFilesToSubdir(Array.from(files), '');
+        return;
+      }
       const paths: string[] = [];
       for (const f of Array.from(files)) {
         const p = window.platform?.getFilePath?.(f);

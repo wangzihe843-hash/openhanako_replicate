@@ -19,8 +19,7 @@ import { DeskDropZone } from './desk/DeskDropZone';
 import { DeskEmptyOverlay } from './desk/DeskEmptyOverlay';
 import { DeskCwdSkillsButton, DeskCwdSkillsPanel } from './desk/DeskCwdSkills';
 import s from './desk/Desk.module.css';
-// @ts-expect-error — shared JS module
-import { workspaceDisplayName } from '../../../../shared/workspace-history.js';
+import { workspaceDisplayName } from '../../../../shared/workspace-history.ts';
 
 const DESK_FILTER_KEY = 'hana-desk-type-filters';
 const VALID_TYPE_FILTERS = new Set<FileTypeFilter>(['image', 'text', 'video']);
@@ -97,6 +96,8 @@ export function DeskSection({
   const clearDeskTreeDirty = useStore(st => st.clearDeskTreeDirty);
   const setDeskExpandedPaths = useStore(st => st.setDeskExpandedPaths);
   const selectedFolder = useStore(st => st.selectedFolder);
+  const deskWorkspaceMountId = useStore(st => st.deskWorkspaceMountId);
+  const deskWorkspaceLabel = useStore(st => st.deskWorkspaceLabel);
   const homeFolder = useStore(st => st.homeFolder);
 
   const [sortMode, setSortMode] = useState<SortMode>(
@@ -157,9 +158,12 @@ export function DeskSection({
     setTypeFilters(filters);
   }, []);
 
-  const rootName = workspaceDisplayName(deskBasePath || selectedFolder || homeFolder, t('desk.title'));
+  const rootName = deskWorkspaceMountId
+    ? (deskWorkspaceLabel || deskWorkspaceMountId)
+    : workspaceDisplayName(deskBasePath || selectedFolder || homeFolder, t('desk.title'));
   const workspaceTitle = t('desk.workspaceTitle');
   const title = `${workspaceTitle} · ${rootName}`;
+  const titlePath = deskWorkspaceMountId ? rootName : (deskBasePath || selectedFolder || homeFolder || undefined);
 
   return (
     <>
@@ -171,7 +175,7 @@ export function DeskSection({
       >
         {showHeader && (
           <div className={s.header}>
-            <div className={`jian-section-title ${s.sectionTitle}`} title={deskBasePath || selectedFolder || homeFolder || undefined}>
+            <div className={`jian-section-title ${s.sectionTitle}`} title={titlePath}>
               {title}
             </div>
             <DeskCwdSkillsButton />

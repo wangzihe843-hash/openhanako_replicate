@@ -3,19 +3,6 @@
    从 styles.css 迁移，所有类名自动 scoped
    ======================================== */
 
-/* 输入框上方：仅 todo 书签 */
-.input-top-bar {
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    margin-bottom: 0;
-    min-height: 0;
-}
-
-.input-top-bar .todo-display.has-todos {
-    margin-right: auto;
-}
-
 /* 输入框内第二行 */
 .input-bottom-bar {
     display: flex;
@@ -342,7 +329,7 @@
     filter: drop-shadow(0 0 2px rgba(var(--accent-rgb), 0.5));
 }
 
-.thinking-selector.open .thinking-pill {
+.thinking-pill[data-open="true"] {
     color: var(--accent);
     border-color: rgba(var(--accent-rgb), 0.25);
 }
@@ -535,7 +522,7 @@
     border-color: rgba(var(--accent-rgb), 0.12);
 }
 
-.model-selector.open .model-pill {
+.model-pill[data-open="true"] {
     color: var(--accent);
     border-color: rgba(var(--accent-rgb), 0.25);
 }
@@ -545,7 +532,7 @@
     transition: transform var(--duration-slow);
 }
 
-.model-selector.open .model-arrow {
+.model-pill[data-open="true"] .model-arrow {
     transform: rotate(180deg);
 }
 
@@ -572,14 +559,6 @@
     display: block;
 }
 
-.model-group-header {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    padding: 6px 0.6rem 2px;
-    letter-spacing: 0.02em;
-    opacity: 0.7;
-}
-
 .model-option {
     display: block;
     width: 100%;
@@ -603,254 +582,6 @@
 .model-option.active {
     color: var(--accent);
     font-weight: 600;
-}
-
-/* Todo 书签 — 贴在输入框上方，像侧边栏的书签 */
-.todo-display {
-    display: none;
-    position: relative;
-}
-
-.todo-display.has-todos {
-    display: block;
-}
-
-/* 书签标签 */
-.todo-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
-    padding: 0.2rem 0.5rem;
-    font-family: inherit;
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    cursor: default;
-    transition: all var(--duration-slow) var(--ease-out);
-    box-shadow: none;
-    -webkit-app-region: no-drag;
-    opacity: 0.6;
-}
-
-/* 有 todo 时恢复存在感 */
-.todo-display.has-todos .todo-trigger {
-    color: var(--accent);
-    background: linear-gradient(rgba(var(--accent-rgb), 0.1), rgba(var(--accent-rgb), 0.1)), var(--bg-card);
-    box-shadow: 0 -1px 3px rgba(var(--accent-rgb), 0.1);
-    opacity: 1;
-}
-
-.todo-trigger:hover {
-    background: linear-gradient(rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0.18)), var(--bg-card);
-    box-shadow: 0 -1px 5px rgba(var(--accent-rgb), 0.18);
-    padding-bottom: 0.35rem;
-}
-
-.todo-display.open .todo-trigger {
-    background: linear-gradient(rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0.18)), var(--bg-card);
-    box-shadow: 0 -1px 5px rgba(var(--accent-rgb), 0.18);
-    padding-bottom: 0.35rem;
-}
-
-.todo-trigger-icon {
-    font-size: 0.68rem;
-    line-height: 1;
-}
-
-/* "To Do" 文字 — 默认隐藏，hover / open 时滑出 */
-.todo-trigger-label {
-    display: inline-block;
-    max-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    opacity: 0;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    margin-left: 0;
-    transition: max-width var(--duration-slow) var(--ease-out),
-                opacity var(--duration-fast) var(--ease-out),
-                margin-left var(--duration-slow) var(--ease-out);
-}
-
-.todo-trigger:hover .todo-trigger-label,
-.todo-display.open .todo-trigger-label {
-    max-width: 3.5em;
-    opacity: 1;
-    margin-left: 0.3rem;
-}
-
-.todo-trigger-count {
-    font-size: 0.65rem;
-    opacity: 0.7;
-    margin-left: 0.25rem;
-}
-
-/* 展开的待办列表 */
-.todo-list {
-    display: none;
-    padding: var(--space-xs) var(--space-sm);
-    background: linear-gradient(rgba(var(--accent-rgb), 0.06), rgba(var(--accent-rgb), 0.06)), var(--bg-card);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) var(--radius-sm);
-    font-size: 0.8rem;
-    line-height: 1.6;
-    color: var(--text);
-    animation: hana-fade-up var(--duration-fast) var(--ease-out);
-    box-shadow: 0 2px 6px rgba(var(--accent-rgb), 0.1);
-}
-
-.todo-display.open .todo-list {
-    display: block;
-}
-
-/* ── Todo Bar（accent 标签，靠右贴底） ── */
-
-.todo-bar {
-    position: relative;
-    margin-left: auto;
-    margin-right: 12px;
-    flex-shrink: 0;
-    align-self: flex-end;
-}
-
-.todo-bar-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.55rem;
-    font-family: inherit;
-    font-size: 0.72rem;
-    color: rgba(255, 255, 255, 0.9);
-    background: var(--accent);
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: default;
-    transition: opacity var(--duration-fast);
-    -webkit-app-region: no-drag;
-}
-
-.todo-bar-trigger:hover {
-    opacity: 0.9;
-}
-
-.todo-bar-icon {
-    font-size: 0.7rem;
-    line-height: 1;
-    flex-shrink: 0;
-    opacity: 0.8;
-}
-
-.todo-bar-preview {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.72rem;
-    max-width: 180px;
-}
-
-.todo-bar-count {
-    font-size: 0.62rem;
-    opacity: 0.7;
-    flex-shrink: 0;
-    margin-left: 0.3rem;
-}
-
-/* 展开列表 — 绝对定位向上弹出，白色卡片，和标签有间距；超 6 条滚动 */
-.todo-bar-list {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    min-width: 240px;
-    max-width: 360px;
-    max-height: calc(6 * 1.5rem + var(--space-sm) * 2);
-    overflow-y: auto;
-    padding: var(--space-sm);
-    background: var(--bg-card);
-    border: 1px solid var(--overlay-light);
-    border-radius: var(--radius-md);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    font-size: 0.78rem;
-    line-height: 1.6;
-    color: var(--text);
-    animation: hana-fade-up var(--duration-fast) var(--ease-out);
-    z-index: 10;
-}
-
-.todo-bar-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.1rem 0;
-}
-
-.todo-bar-done {
-    color: var(--text-muted);
-    text-decoration: line-through;
-}
-
-.todo-bar-check {
-    font-size: 0.7rem;
-    flex-shrink: 0;
-    color: var(--accent);
-}
-
-.todo-bar-done .todo-bar-check {
-    opacity: 0.5;
-}
-
-.todo-bar-complete-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    margin-top: 0.35rem;
-    padding: 0.42rem 0 0.08rem;
-    font: inherit;
-    font-size: 0.74rem;
-    line-height: 1.5;
-    color: var(--text-muted);
-    text-align: left;
-    background: transparent;
-    border: 0;
-    border-top: 1px solid var(--overlay-light);
-    cursor: default;
-    -webkit-app-region: no-drag;
-}
-
-.todo-bar-complete-row:hover {
-    color: var(--accent);
-}
-
-.todo-bar-complete-row:disabled {
-    cursor: default;
-    opacity: 0.55;
-}
-
-.todo-bar-complete-icon {
-    flex-shrink: 0;
-    color: var(--accent);
-    font-size: 0.7rem;
-}
-
-/* Three-state variants for Claude Code-aligned TodoWrite */
-.todo-bar-pending {
-    /* default (inherit from .todo-bar-item) */
-}
-
-.todo-bar-in-progress {
-    color: var(--accent);
-    font-weight: 500;
-}
-
-.todo-bar-in-progress .todo-bar-check {
-    color: var(--accent);
-    opacity: 1;
-}
-
-.todo-bar-pending .todo-bar-check {
-    color: var(--text-muted);
-    opacity: 0.7;
 }
 
 /* 斜杠命令菜单 */
@@ -943,7 +674,8 @@
     z-index: 101;
     display: flex;
     flex-direction: column;
-    width: min(420px, calc(100vw - 2rem));
+    width: fit-content;
+    max-width: min(240px, calc(100vw - 2rem));
     max-height: 320px;
     overflow-y: auto;
     overflow-x: hidden;
@@ -958,16 +690,17 @@
 .file-mention-item {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 6px;
     width: 100%;
     min-width: 0;
-    padding: 7px 9px;
+    padding: 4px 7px;
     border: none;
     background: none;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     color: var(--text);
     cursor: default;
     font-family: inherit;
+    font-size: 0.78rem;
     text-align: left;
     transition: background var(--duration-instant);
 }
@@ -983,23 +716,21 @@
     justify-content: center;
     flex-shrink: 0;
     color: var(--text-muted);
-    width: 30px;
-    height: 30px;
+    width: 18px;
+    height: 18px;
 }
 
 .file-mention-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
     display: block;
 }
 
 .file-mention-thumbnail {
-    width: 28px;
-    height: 28px;
-    border-radius: 5px;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
     object-fit: cover;
-    background: rgba(var(--accent-rgb), 0.08);
-    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.08);
 }
 
 .file-mention-main {
@@ -1014,17 +745,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.84rem;
-    font-weight: 500;
-    color: var(--accent);
+    font-size: inherit;
+    color: var(--text);
 }
 
 .file-mention-detail {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.72rem;
-    color: var(--text-muted);
+    display: none;
 }
 
 .file-mention-empty {
@@ -1041,9 +767,10 @@
     margin-bottom: 6px;
     font-size: 0.85rem;
     color: var(--text-muted);
-    background: var(--bg-card, var(--bg));
-    border-radius: 6px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    background: var(--panel-card-bg);
+    border: var(--panel-card-border);
+    border-radius: var(--panel-card-radius);
+    box-shadow: var(--panel-card-shadow);
 }
 
 .slash-busy-bar-clickable {
@@ -1052,8 +779,8 @@
 }
 
 .slash-busy-bar-clickable:hover {
-    color: var(--text-primary, var(--text-muted));
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
+    color: var(--text);
+    background: var(--overlay-subtle, rgba(0, 0, 0, 0.02));
 }
 
 .slash-busy-dot {
@@ -1126,10 +853,10 @@
     margin-bottom: 6px;
     font-size: 0.85rem;
     color: #c08080;
-    background: var(--bg-card, var(--bg));
-    border: 1px solid rgba(var(--accent-rgb), 0.12);
-    border-radius: 6px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    background: var(--panel-card-bg);
+    border: var(--panel-card-border);
+    border-radius: var(--panel-card-radius);
+    box-shadow: var(--panel-card-shadow);
 }
 
 /* 输入区内所有浮层共享同一个测量与宽度上下文 */
@@ -1365,7 +1092,7 @@
     gap: var(--space-sm);
     background: var(--bg-card);
     border: 1px solid var(--overlay-light);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-chat-surface, 16px);
     padding: var(--space-md) var(--space-md) var(--space-sm);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     transition: border-color 0.3s var(--ease-out),
@@ -1384,7 +1111,7 @@
 .input-surface-mobile .input-wrapper {
     gap: 0.45rem;
     padding: 0.65rem 0.75rem 0.55rem;
-    border-radius: min(var(--radius-lg), 14px);
+    border-radius: min(var(--radius-chat-surface, 16px), 14px);
 }
 
 .audio-recording-card {
@@ -1694,15 +1421,15 @@
 .media-attachment-chip {
     display: inline-flex;
     align-items: center;
-    gap: 0.28rem;
-    height: 2rem;
-    max-width: min(15rem, 100%);
-    padding: 0 0.5rem;
-    color: var(--accent);
-    background: color-mix(in srgb, var(--bg-card) 88%, rgba(var(--accent-rgb), 0.08));
-    border: none;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    max-width: 140px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: var(--bg-card);
+    border: 1px solid var(--overlay-light);
     border-radius: var(--radius-md);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     vertical-align: middle;
 }
 
@@ -1721,9 +1448,8 @@
     justify-content: center;
     width: 1.2rem;
     height: 1.2rem;
-    color: var(--accent);
-    background: rgba(var(--accent-rgb), 0.08);
-    border-radius: 5px;
+    color: var(--text-muted);
+    border-radius: 4px;
     overflow: hidden;
     flex: 0 0 auto;
 }
@@ -1737,14 +1463,10 @@
 
 .media-attachment-name {
     min-width: 0;
-    max-width: 10rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.76rem;
-    font-weight: 500;
-    line-height: 1;
-    color: var(--accent);
+    color: var(--text);
 }
 
 .audio-attachment-play,

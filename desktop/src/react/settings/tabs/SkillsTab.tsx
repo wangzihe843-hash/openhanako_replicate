@@ -9,8 +9,6 @@ import { AgentSelect } from './bridge/AgentSelect';
 import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
 
-const platform = window.platform;
-
 type BundleDialogState =
   | { type: 'create'; name: string }
   | { type: 'rename'; bundle: SkillBundleInfo; name: string }
@@ -19,6 +17,18 @@ type BundleDialogState =
 interface ExternalPathsData {
   configured: string[];
   discovered: { dirPath: string; label: string; exists: boolean }[];
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('failed to read file'));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export function SkillsTab() {
@@ -33,7 +43,10 @@ export function SkillsTab() {
 
   const [skillsList, setSkillsList] = useState<SkillInfo[]>([]);
   const [skillBundles, setSkillBundles] = useState<SkillBundleInfo[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const skillsListOwnerIdRef = useRef<string | null>(null);
   const [bundleDialog, setBundleDialog] = useState<BundleDialogState | null>(null);
+  const skillFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (skillsViewAgentId) return;
@@ -47,7 +60,19 @@ export function SkillsTab() {
 
   const loadSkills = useCallback(async () => {
     const agentId = skillsViewAgentIdRef.current;
-    if (!agentId) return;
+    if (!agentId) {
+      skillsListOwnerIdRef.current = null;
+      setSkillsList([]);
+      setSkillBundles([]);
+      setSkillsLoading(false);
+      return;
+    }
+    const ownerChanged = skillsListOwnerIdRef.current !== agentId;
+    if (ownerChanged) {
+      setSkillsLoading(true);
+      setSkillsList([]);
+      setSkillBundles([]);
+    }
     try {
       const snapshotAgentId = agentId;
       const [skillsRes, bundlesRes] = await Promise.all([
@@ -61,8 +86,13 @@ export function SkillsTab() {
       if (skillsViewAgentIdRef.current !== snapshotAgentId) return;
       setSkillsList(data.skills || []);
       setSkillBundles(bundleData.bundles || []);
+      skillsListOwnerIdRef.current = snapshotAgentId;
     } catch (err) {
       console.error('[skills] load failed:', err);
+    } finally {
+      if (skillsViewAgentIdRef.current === agentId && ownerChanged) {
+        setSkillsLoading(false);
+      }
     }
   }, []);
 
@@ -134,10 +164,41 @@ export function SkillsTab() {
     }
   };
 
+  const installSkillFromFile = async (file: File) => {
+    const filePath = window.platform?.getFilePath?.(file) || (file as File & { path?: string })?.path;
+    if (filePath) {
+      await installSkillFromPath(filePath);
+      return;
+    }
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const res = await hanaFetch('/api/skills/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file: {
+            filename: file.name || 'skill.skill',
+            contentBase64,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      showToast(t('settings.skills.installSuccess', { name: data.skill?.name || '' }), 'success');
+      await loadSkills();
+    } catch (err: unknown) {
+      showToast(t('settings.skills.installError') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+  };
+
   const installSkill = async () => {
-    const selectedPath = await platform?.selectSkill?.();
-    if (!selectedPath) return;
-    await installSkillFromPath(selectedPath);
+    if (typeof window.platform?.selectSkill === 'function') {
+      const selectedPath = await window.platform.selectSkill();
+      if (!selectedPath) return;
+      await installSkillFromPath(selectedPath);
+      return;
+    }
+    skillFileInputRef.current?.click();
   };
 
   const deleteSkill = async (name: string) => {
@@ -412,12 +473,11 @@ export function SkillsTab() {
     (e.currentTarget as HTMLElement).classList.remove(styles['drag-over']);
     const file = e.dataTransfer.files[0];
     if (!file) return;
-    const filePath = platform?.getFilePath?.(file) || (file as File & { path?: string })?.path;
-    if (filePath) await installSkillFromPath(filePath);
+    await installSkillFromFile(file);
   };
 
   const addExternalPath = async () => {
-    const folder = await platform?.selectFolder?.();
+    const folder = await window.platform?.selectFolder?.();
     if (!folder) return;
     const newPaths = [...externalPathsData.configured, folder];
     try {
@@ -450,7 +510,7 @@ export function SkillsTab() {
     }
   };
 
-  const skillInstallCfg = settingsConfig?.capabilities?.learn_skills || {};
+  const skillInstallCfg = settingsConfig ? settingsConfig.capabilities?.learn_skills || {} : undefined;
   const discoveredPaths = externalPathsData.discovered;
   const configuredOnlyPaths = externalPathsData.configured.filter(
     p => !discoveredPaths.some(d => d.dirPath === p),
@@ -475,8 +535,21 @@ export function SkillsTab() {
           </svg>
           <span>{t('settings.skills.dropzone')}</span>
         </div>
+        <input
+          ref={skillFileInputRef}
+          type="file"
+          accept=".zip,.skill"
+          hidden
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] || null;
+            event.currentTarget.value = '';
+            if (file) void installSkillFromFile(file);
+          }}
+        />
 
-        {userSkills.length === 0 && skillBundles.length === 0 ? (
+        {skillsLoading ? (
+          <p className={`${styles['settings-muted-note']} ${styles['skills-empty']}`}>{t('status.loading')}</p>
+        ) : userSkills.length === 0 && skillBundles.length === 0 ? (
           <p className={`${styles['settings-muted-note']} ${styles['skills-empty']}`}>{t('settings.skills.noUser')}</p>
         ) : (
           <SkillBundleTree
@@ -512,7 +585,11 @@ export function SkillsTab() {
           />
         }
       >
-        {userSkills.length === 0 && skillBundles.length === 0 ? (
+        {skillsLoading ? (
+          <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
+            {t('status.loading')}
+          </p>
+        ) : userSkills.length === 0 && skillBundles.length === 0 ? (
           <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
             {t('settings.skills.noUser')}
           </p>

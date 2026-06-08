@@ -14,6 +14,19 @@ function makeParentWindow() {
   return { postMessage: vi.fn() } as unknown as Window & { postMessage: ReturnType<typeof vi.fn> };
 }
 
+function makeTargetWindow(href: string) {
+  const location = new URL(href);
+  return {
+    parent: makeParentWindow(),
+    location,
+    document: { referrer: '' },
+    addEventListener: window.addEventListener.bind(window),
+    removeEventListener: window.removeEventListener.bind(window),
+    setTimeout: window.setTimeout.bind(window),
+    clearTimeout: window.clearTimeout.bind(window),
+  } as unknown as Window;
+}
+
 describe('plugin SDK', () => {
   it('posts ready and resize as versioned plugin UI events', () => {
     const parentWindow = makeParentWindow();
@@ -244,5 +257,30 @@ describe('plugin SDK', () => {
     }));
 
     await expect(pending).resolves.toEqual({ written: true });
+  });
+
+  it('resolves plugin asset URLs from the current iframe route', () => {
+    const parentWindow = makeParentWindow();
+    const targetWindow = makeTargetWindow('https://hana.example/api/plugins/demo-plugin/page?hana-host-origin=https%3A%2F%2Fhana.example');
+    const sdk = createHanaPluginSdk({
+      parentWindow,
+      targetWindow,
+      targetOrigin: 'https://hana.example',
+    });
+
+    expect(sdk.assets.url('dist/app.js')).toBe('https://hana.example/api/plugins/demo-plugin/assets/dist/app.js');
+    expect(sdk.assets.url('/images/logo.svg')).toBe('https://hana.example/api/plugins/demo-plugin/assets/images/logo.svg');
+  });
+
+  it('rejects unsafe plugin asset URL inputs', () => {
+    const sdk = createHanaPluginSdk({
+      parentWindow: makeParentWindow(),
+      targetWindow: makeTargetWindow('https://hana.example/api/plugins/demo/page'),
+      targetOrigin: 'https://hana.example',
+    });
+
+    for (const unsafePath of ['../secret.js', 'dist\\app.js', 'https://evil.test/app.js', '', './app.js']) {
+      expect(() => sdk.assets.url(unsafePath)).toThrow(/asset path/i);
+    }
   });
 });

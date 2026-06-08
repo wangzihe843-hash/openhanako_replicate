@@ -46,6 +46,20 @@ function thinking(content: string): ContentBlock {
   return { type: 'thinking', content, sealed: true };
 }
 
+function interlude(id: string, text: string): ChatListItem {
+  return {
+    type: 'interlude',
+    id,
+    data: {
+      type: 'interlude',
+      id,
+      variant: 'deferred_result',
+      status: 'success',
+      text,
+    },
+  };
+}
+
 describe('ChatTranscript turn timestamps', () => {
   beforeEach(() => {
     window.t = ((key: string) => ({
@@ -95,5 +109,38 @@ describe('ChatTranscript turn timestamps', () => {
     expect(screen.getByText('09:00')).toBeInTheDocument();
     expect(screen.queryByText('09:01')).not.toBeInTheDocument();
     expect(screen.getByText('09:02')).toBeInTheDocument();
+  });
+
+  it('renders interlude timeline items without an assistant message wrapper', () => {
+    const { container } = render(
+      <ChatTranscript
+        items={[
+          interlude('deferred:subagent-1:success', 'Hana 收到了后台回复'),
+        ]}
+        sessionPath={sessionPath}
+      />,
+    );
+
+    expect(screen.getByText('Hana 收到了后台回复')).toBeInTheDocument();
+    expect(container.querySelector('[data-interlude-status="success"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-message-id]')).toBeNull();
+  });
+
+  it('does not show a new assistant avatar only because an interlude sits between assistant messages', () => {
+    render(
+      <ChatTranscript
+        items={[
+          assistant('a1', new Date(2026, 4, 7, 8, 0).getTime(), [textBlock('前一段回复')]),
+          interlude('deferred:subagent-2:success', '后台回复已抵达'),
+          assistant('a2', new Date(2026, 4, 7, 8, 1).getTime(), [textBlock('继续接话')]),
+        ]}
+        sessionPath={sessionPath}
+      />,
+    );
+
+    expect(screen.getByText('前一段回复')).toBeInTheDocument();
+    expect(screen.getByText('后台回复已抵达')).toBeInTheDocument();
+    expect(screen.getByText('继续接话')).toBeInTheDocument();
+    expect(screen.getAllByText('Hana')).toHaveLength(1);
   });
 });

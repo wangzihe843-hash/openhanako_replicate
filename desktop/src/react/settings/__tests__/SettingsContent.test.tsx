@@ -10,7 +10,9 @@ vi.mock('../actions', () => ({
   loadAgents: vi.fn(async () => {}),
   loadAvatars: vi.fn(async () => {}),
   loadSettingsConfig: vi.fn(async () => {}),
+  loadSettingsSnapshot: vi.fn(async () => {}),
   loadPluginSettings: vi.fn(async () => {}),
+  updateSettingsSnapshot: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
@@ -64,5 +66,51 @@ describe('SettingsContent tab heading', () => {
     await waitFor(() => {
       expect(screen.getByText('settings.experiments.empty')).toBeTruthy();
     });
+  });
+
+  it('renders the built-in browser settings tab', async () => {
+    useSettingsStore.setState({
+      activeTab: 'browser',
+      platformName: 'darwin',
+      pluginSettingsTabs: [],
+      ready: true,
+      settingsSnapshot: {
+        status: 'ready',
+        key: 'snapshot:browser',
+        requestId: 1,
+        data: {
+          agentId: 'hana',
+          config: {},
+          identity: '',
+          ishiki: '',
+          publicIshiki: '',
+          userProfile: '',
+          experience: '',
+          pinned: { pins: [] },
+          globalModels: {},
+          preferences: {
+            quickChat: {},
+            notifications: {},
+            bridge: { permissionMode: 'auto', readOnly: false, receiptEnabled: true },
+            speechRecognition: {},
+            experiments: [],
+            browser: { acceptCookies: true, agentOpenBehavior: 'smart' },
+          },
+          plugins: {
+            allowFullAccess: false,
+            devToolsEnabled: false,
+            userDir: '',
+            settingsTabs: [],
+          },
+        },
+      },
+    } as never);
+
+    render(React.createElement(SettingsContent, { variant: 'window' }));
+
+    expect(screen.getAllByText('settings.tabs.browser').length).toBeGreaterThan(0);
+    expect(screen.getByText('settings.browser.acceptCookies')).toBeTruthy();
+    expect(screen.getByText('settings.browser.clearCookies')).toBeTruthy();
+    expect(screen.getByText('settings.browser.agentOpenBehavior')).toBeTruthy();
   });
 });

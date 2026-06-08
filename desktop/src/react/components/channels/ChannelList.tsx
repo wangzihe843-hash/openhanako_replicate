@@ -13,7 +13,7 @@ import {
   toggleChannelsEnabled,
 } from '../../stores/channel-actions';
 import { toggleSidebar } from '../SidebarLayout';
-import { ContextMenu, type ContextMenuItem } from '../../ui';
+import { ContextMenu, Toggle, type ContextMenuItem } from '../../ui';
 import { ChannelWarningModal } from './ChannelWarningModal';
 import type { Channel, Agent } from '../../types';
 import {
@@ -90,9 +90,10 @@ export function ChannelListSidebar() {
   const setChannelCreateOverlayVisible = useStore(s => s.setChannelCreateOverlayVisible);
   const [warningOpen, setWarningOpen] = useState(false);
 
-  const handleToggle = useCallback(() => {
-    const turningOn = !useStore.getState().channelsEnabled;
-    if (turningOn) {
+  const handleToggle = useCallback((next: boolean) => {
+    const current = useStore.getState().channelsEnabled;
+    if (current === undefined) return;
+    if (next) {
       setWarningOpen(true);
       return;
     }
@@ -122,9 +123,9 @@ export function ChannelListSidebar() {
         <span className="sidebar-title">{t('channel.tab')} <span className="beta-badge">Beta</span></span>
         <div className="sidebar-header-actions">
           <button
-            className={`sidebar-action-btn${!channelsEnabled ? ` ${styles.btnDisabled}` : ''}`}
+            className={`sidebar-action-btn${channelsEnabled !== true ? ` ${styles.btnDisabled}` : ''}`}
             title={t('channel.createTitle')}
-            disabled={!channelsEnabled}
+            disabled={channelsEnabled !== true}
             onClick={handleCreate}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -143,15 +144,12 @@ export function ChannelListSidebar() {
         <div className={styles.channelList}>
           <ChannelList />
         </div>
-        <div className={`${styles.channelDisabledOverlay}${channelsEnabled ? ` ${styles.channelDisabledOverlayHidden}` : ''}`}>
+        <div className={`${styles.channelDisabledOverlay}${channelsEnabled !== false ? ` ${styles.channelDisabledOverlayHidden}` : ''}`}>
           <span>{t('channel.disabled')}</span>
         </div>
         <div className={styles.channelToggleBar}>
           <span className={styles.channelToggleBarLabel}>{t('channel.toggleLabel')}</span>
-          <button
-            className={`hana-toggle${channelsEnabled ? ' on' : ''}`}
-            onClick={handleToggle}
-          ></button>
+          <Toggle on={channelsEnabled} onChange={handleToggle} />
         </div>
       </div>
       <ChannelWarningModal

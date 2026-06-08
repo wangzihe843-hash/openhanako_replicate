@@ -1,4 +1,3 @@
-import type { MouseEventHandler } from 'react';
 import { ChannelTabBar } from '../channels/ChannelTabBar';
 import { WidgetButtons } from '../plugin/WidgetButtons';
 import { WindowControls } from '../WindowControls';
@@ -16,9 +15,9 @@ interface AppTitlebarProps {
   showPreviewToggle?: boolean;
   showChannelTabs?: boolean;
   showWidgetButtons?: boolean;
-  onLeftMouseEnter?: MouseEventHandler<HTMLButtonElement>;
-  onRightMouseEnter?: MouseEventHandler<HTMLButtonElement>;
-  onToggleMouseLeave?: MouseEventHandler<HTMLButtonElement>;
+  onLeftMouseEnter?: () => void;
+  onRightMouseEnter?: () => void;
+  onToggleMouseLeave?: () => void;
 }
 
 export function AppTitlebar({

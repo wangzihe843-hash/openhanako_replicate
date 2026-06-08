@@ -358,7 +358,11 @@ function registerIpcHandlers() {
     try {
       await autoUpdater.checkForUpdates();
     } catch (err) {
-      setState({ status: "error", error: err?.message || String(err) });
+      if (isMissingLatestMetadataError(err)) {
+        setState({ status: "latest", error: null, progress: null });
+      } else {
+        setState({ status: "error", error: err?.message || String(err) });
+      }
     }
   });
 

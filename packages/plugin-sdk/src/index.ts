@@ -55,6 +55,9 @@ export interface HanaPluginSdkOptions {
 
 export interface HanaPluginSdk {
   ready(payload?: unknown): void;
+  assets: {
+    url(path: string): string;
+  };
   ui: {
     resize(size: HanaPluginSize): void;
   };
@@ -150,6 +153,42 @@ function externalOpenPayload(input: HanaExternalOpenInput): { url: string } {
 
 function clipboardWriteTextPayload(input: HanaClipboardWriteTextInput): { text: string } {
   return typeof input === 'string' ? { text: input } : input;
+}
+
+function readPluginIdFromIframeRoute(targetWindow: Window): string {
+  const match = /^\/api\/plugins\/([^/]+)(?:\/|$)/.exec(targetWindow.location.pathname || '');
+  if (!match) {
+    throw new Error('Plugin asset URL helper requires an iframe route under /api/plugins/:pluginId/.');
+  }
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    throw new Error('Plugin asset URL helper could not decode the current plugin id.');
+  }
+}
+
+function normalizeAssetPath(input: string): string {
+  if (typeof input !== 'string' || input.length === 0) {
+    throw new Error('Invalid plugin asset path.');
+  }
+  if (input.includes('\\') || input.includes('\0') || /^[a-z][a-z0-9+.-]*:/i.test(input)) {
+    throw new Error('Invalid plugin asset path.');
+  }
+  const stripped = input.replace(/^\/+/, '');
+  if (!stripped || stripped.startsWith('./')) {
+    throw new Error('Invalid plugin asset path.');
+  }
+  const segments = stripped.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.startsWith('.'))) {
+    throw new Error('Invalid plugin asset path.');
+  }
+  return segments.map((segment) => encodeURIComponent(segment)).join('/');
+}
+
+function pluginAssetUrl(targetWindow: Window, input: string): string {
+  const pluginId = readPluginIdFromIframeRoute(targetWindow);
+  const assetPath = normalizeAssetPath(input);
+  return `${targetWindow.location.origin}/api/plugins/${encodeURIComponent(pluginId)}/assets/${assetPath}`;
 }
 
 export function createHanaPluginSdk(options: HanaPluginSdkOptions = {}): HanaPluginSdk {
@@ -251,6 +290,11 @@ export function createHanaPluginSdk(options: HanaPluginSdkOptions = {}): HanaPlu
     ready(payload?: unknown) {
       postEvent('hana.ready', payload);
     },
+    assets: {
+      url(assetPath: string) {
+        return pluginAssetUrl(targetWindow, assetPath);
+      },
+    },
     ui: {
       resize(size: HanaPluginSize) {
         postEvent(PLUGIN_UI_CAPABILITY.UI_RESIZE, size);
@@ -309,6 +353,11 @@ function getSingleton(): HanaPluginSdk {
 export const hana: HanaPluginSdk = {
   ready(payload?: unknown) {
     return getSingleton().ready(payload);
+  },
+  assets: {
+    url(assetPath: string) {
+      return getSingleton().assets.url(assetPath);
+    },
   },
   ui: {
     resize(size: HanaPluginSize) {

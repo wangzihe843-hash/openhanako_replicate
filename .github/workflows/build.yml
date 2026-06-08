@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: "24.15.0"
           cache: npm
 
       - name: Install dependencies
@@ -220,7 +220,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: "24.15.0"
 
       # 所有 Release 默认 pre-release，手动在 GitHub 上将稳定版本标记为 latest
 

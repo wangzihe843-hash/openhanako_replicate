@@ -1,4 +1,13 @@
-import type { Session, SessionStream, TodoItem } from '../types';
+import type { Session, SessionPermissionMode, SessionStream, TodoItem } from '../types';
+import type { ThinkingLevel } from './model-slice';
+
+const SESSION_PERMISSION_MODES = new Set(['auto', 'operate', 'ask', 'read_only']);
+
+function normalizeSessionPermissionMode(mode: unknown): SessionPermissionMode {
+  return typeof mode === 'string' && SESSION_PERMISSION_MODES.has(mode)
+    ? mode as SessionPermissionMode
+    : 'ask';
+}
 
 export interface SessionSlice {
   sessions: Session[];
@@ -7,6 +16,9 @@ export interface SessionSlice {
   sessionStreams: Record<string, SessionStream>;
   pendingNewSession: boolean;
   pendingProjectId: string | null;
+  pendingNewSessionThinkingLevel: ThinkingLevel | null;
+  pendingNewSessionPermissionMode: SessionPermissionMode | null;
+  sessionPermissionMode: SessionPermissionMode;
   memoryEnabled: boolean;
   /** @deprecated 兼容层 — 读取当前 session 的 todos，新代码用 todosBySession */
   sessionTodos: TodoItem[];
@@ -25,6 +37,9 @@ export interface SessionSlice {
   removeSessionStream: (sessionPath: string) => void;
   setPendingNewSession: (pending: boolean) => void;
   setPendingProjectId: (projectId: string | null) => void;
+  setPendingNewSessionThinkingLevel: (level: ThinkingLevel | null) => void;
+  setPendingNewSessionPermissionMode: (mode: SessionPermissionMode | null) => void;
+  setSessionPermissionMode: (mode: SessionPermissionMode) => void;
   setMemoryEnabled: (enabled: boolean) => void;
   setSessionTodos: (todos: TodoItem[]) => void;
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
@@ -41,6 +56,9 @@ export const createSessionSlice = (
   sessionStreams: {},
   pendingNewSession: false,
   pendingProjectId: null,
+  pendingNewSessionThinkingLevel: null,
+  pendingNewSessionPermissionMode: null,
+  sessionPermissionMode: 'ask',
   memoryEnabled: true,
   sessionTodos: [],
   todosBySession: {},
@@ -60,6 +78,22 @@ export const createSessionSlice = (
     }),
   setPendingNewSession: (pending) => set({ pendingNewSession: pending }),
   setPendingProjectId: (projectId) => set({ pendingProjectId: projectId }),
+  setPendingNewSessionThinkingLevel: (level) => set({ pendingNewSessionThinkingLevel: level }),
+  setPendingNewSessionPermissionMode: (mode) => {
+    if (mode === null) {
+      set({ pendingNewSessionPermissionMode: null });
+      return;
+    }
+    const normalized = normalizeSessionPermissionMode(mode);
+    set({ pendingNewSessionPermissionMode: normalized, sessionPermissionMode: normalized });
+  },
+  setSessionPermissionMode: (mode) => {
+    const normalized = normalizeSessionPermissionMode(mode);
+    set((s) => ({
+      sessionPermissionMode: normalized,
+      ...(s.pendingNewSession ? { pendingNewSessionPermissionMode: normalized } : {}),
+    }));
+  },
   setMemoryEnabled: (enabled) => set({ memoryEnabled: enabled }),
   // 兼容：旧调用方仍可用，写入当前 session
   setSessionTodos: (todos) =>

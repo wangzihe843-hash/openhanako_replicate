@@ -4,6 +4,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { PreviewPanel } from '../../components/PreviewPanel';
 import { useStore, type StoreState } from '../../stores';
 import type { PlatformApi } from '../../types';
@@ -79,6 +81,24 @@ describe('PreviewPanel markdown editor status', () => {
     render(<PreviewPanel />);
 
     expect(screen.getByTestId('markdown-editor-status')).toHaveTextContent('选中 0 字 · 共 4 字');
+  });
+
+  it('uses the shared panel spacing and card chrome for the preview editor card', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/Preview.module.css'),
+      'utf8',
+    );
+    const shellBlock = css.match(/\.previewBodyShell\s*\{[\s\S]*?\}/)?.[0] ?? '';
+    const bodyBlock = css.match(/\.previewPanelBody\s*\{[\s\S]*?\}/)?.[0] ?? '';
+
+    render(<PreviewPanel />);
+
+    expect(document.getElementById('previewBody')).toHaveClass('jian-card');
+    expect(shellBlock).toMatch(/margin:\s*var\(--panel-edge-gap\);/);
+    expect(bodyBlock).toMatch(/background:\s*var\(--panel-card-bg\);/);
+    expect(bodyBlock).toMatch(/border-radius:\s*var\(--panel-card-radius\);/);
+    expect(bodyBlock).toMatch(/border:\s*var\(--panel-card-border\);/);
+    expect(bodyBlock).toMatch(/box-shadow:\s*var\(--panel-card-shadow\);/);
   });
 
   it('treats remote workbench markdown files as editable', () => {

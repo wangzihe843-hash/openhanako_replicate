@@ -102,7 +102,7 @@ describe('streamBufferManager.thinking 流式刷新', () => {
     useStore.getState().initSession(PATH, [userItem('u1', 'hi')], false);
   });
 
-  it('thinking_delta 按既有时间节流刷新，未 thinking_end 也能显示内容', () => {
+  it('thinking_delta 按 30Hz 节奏刷新，未 thinking_end 也能显示内容', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-04-28T00:00:00.000Z'));
@@ -113,7 +113,7 @@ describe('streamBufferManager.thinking 流式刷新', () => {
       const beforeFlush = getThinkingBlock();
       expect(beforeFlush).toEqual({ type: 'thinking', content: '', sealed: false });
 
-      vi.advanceTimersByTime(199);
+      vi.advanceTimersByTime(32);
       expect(getThinkingBlock()).toEqual({ type: 'thinking', content: '', sealed: false });
 
       vi.advanceTimersByTime(1);
@@ -268,7 +268,7 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
     ]);
   });
 
-  it('deferred 幕间消息在 turn 结束后插到媒体结果前，不新建空 assistant', () => {
+  it('deferred 幕间消息在 turn 结束后作为独立条目插到媒体结果前', () => {
     streamBufferManager.handle({
       type: 'content_block',
       sessionPath: PATH,
@@ -293,7 +293,7 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
         status: 'success',
         sourceKind: 'tool',
         sourceLabel: '图片生成',
-        text: '小花拿到了来自 图片生成 工具的结果',
+        text: '小花 收到了来自 图片生成 工具的结果',
         detailMarkdown: '生成文件：\n- quiet.png',
       },
     });
@@ -312,20 +312,26 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       },
     });
 
+    const items = getItems();
+    expect(items.map((item) => item.type)).toEqual(['message', 'interlude', 'message']);
+    const interludeItem = items[1];
+    expect(interludeItem?.type).toBe('interlude');
+    if (interludeItem?.type !== 'interlude') throw new Error('expected interlude item');
+    expect(interludeItem.data).toMatchObject({
+      type: 'interlude',
+      taskId: 'task-interlude-img',
+      text: '小花 收到了来自 图片生成 工具的结果',
+    });
+
     const assistantItems = getItems().filter((item) => item.type === 'message' && item.data.role === 'assistant');
     expect(assistantItems).toHaveLength(1);
     const assistant = assistantItems[0];
     expect(assistant?.type).toBe('message');
     if (assistant?.type !== 'message') throw new Error('expected assistant message');
-    expect(assistant.data.blocks?.map((block) => block.type)).toEqual(['interlude', 'file']);
-    expect(assistant.data.blocks?.[0]).toMatchObject({
-      type: 'interlude',
-      taskId: 'task-interlude-img',
-      text: '小花拿到了来自 图片生成 工具的结果',
-    });
+    expect(assistant.data.blocks?.map((block) => block.type)).toEqual(['file']);
   });
 
-  it('workflow 幕间回复在实时流里按时间成为独立消息，不回插到原 workflow 卡下面', () => {
+  it('workflow 幕间回复在实时流里成为独立时间线条目，不伪装成 assistant 消息', () => {
     streamBufferManager.handle({
       type: 'content_block',
       sessionPath: PATH,
@@ -350,25 +356,134 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
         status: 'success',
         sourceKind: 'workflow',
         sourceLabel: 'ten-writers',
-        text: 'Hanako收到了来自 ten-writers workflow 的回复',
+        text: 'Hanako 收到了来自 ten-writers workflow 的结果',
         detailMarkdown: 'workflow result',
       },
     });
 
-    const assistantItems = getItems().filter((item) => item.type === 'message' && item.data.role === 'assistant');
-    expect(assistantItems).toHaveLength(2);
-    const [workflowMessage, interludeMessage] = assistantItems;
-    expect(workflowMessage?.type).toBe('message');
-    expect(interludeMessage?.type).toBe('message');
-    if (workflowMessage?.type !== 'message' || interludeMessage?.type !== 'message') {
-      throw new Error('expected assistant messages');
-    }
-    expect(workflowMessage.data.blocks?.map((block) => block.type)).toEqual(['workflow']);
-    expect(interludeMessage.data.blocks?.map((block) => block.type)).toEqual(['interlude']);
-    expect(interludeMessage.data.blocks?.[0]).toMatchObject({
+    const items = getItems();
+    expect(items.map((item) => item.type)).toEqual(['message', 'message', 'interlude']);
+    const interludeItem = items[2];
+    expect(interludeItem?.type).toBe('interlude');
+    if (interludeItem?.type !== 'interlude') throw new Error('expected interlude item');
+    expect(interludeItem.data).toMatchObject({
       type: 'interlude',
       taskId: 'workflow-1',
       sourceKind: 'workflow',
     });
+
+    const assistantItems = getItems().filter((item) => item.type === 'message' && item.data.role === 'assistant');
+    expect(assistantItems).toHaveLength(1);
+    const [workflowMessage] = assistantItems;
+    expect(workflowMessage?.type).toBe('message');
+    if (workflowMessage?.type !== 'message') throw new Error('expected assistant message');
+    expect(workflowMessage.data.blocks?.map((block) => block.type)).toEqual(['workflow']);
+  });
+
+  it('workflow 幕间回复不会夹在同一轮后续正文前面', () => {
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'workflow',
+        taskId: 'workflow-late-text',
+        taskTitle: '冒烟测试',
+        streamStatus: 'running',
+        startedAt: 1000,
+      },
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath: PATH });
+
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'interlude',
+        id: 'deferred:workflow-late-text:success',
+        variant: 'deferred_result',
+        taskId: 'workflow-late-text',
+        status: 'success',
+        sourceKind: 'workflow',
+        sourceLabel: '冒烟测试',
+        text: 'Hanako 收到了来自 冒烟测试 workflow 的结果',
+      },
+    });
+
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath: PATH,
+      delta: 'Workflow 已经提交后台运行了。',
+    });
+    streamBufferManager.finishTurn(PATH);
+
+    const items = getItems();
+    expect(items.map((item) => (item.type === 'message' ? item.data.id : item.id))).toEqual([
+      'u1',
+      expect.stringMatching(/^stream-/),
+      'deferred:workflow-late-text:success',
+    ]);
+
+    const assistantItems = items.filter((item) => item.type === 'message' && item.data.role === 'assistant');
+    expect(assistantItems).toHaveLength(1);
+    const workflowMessage = assistantItems[0];
+    expect(workflowMessage?.type).toBe('message');
+    if (workflowMessage?.type !== 'message') throw new Error('expected assistant message');
+    expect(workflowMessage.data.blocks?.map((block) => block.type)).toEqual(['workflow', 'text']);
+    const textBlock = workflowMessage.data.blocks?.find((block) => block.type === 'text');
+    expect(textBlock).toMatchObject({
+      type: 'text',
+      source: 'Workflow 已经提交后台运行了。',
+    });
+  });
+
+  it('workflow 幕间早于锚点 replay 时先隐藏，锚点和正文到达后再落到同一轮后面', () => {
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'interlude',
+        id: 'deferred:workflow-early:success',
+        variant: 'deferred_result',
+        taskId: 'workflow-early',
+        status: 'success',
+        sourceKind: 'workflow',
+        sourceLabel: '早到结果',
+        text: 'Hanako 收到了来自 早到结果 workflow 的结果',
+      },
+    });
+
+    expect(getItems().map((item) => (item.type === 'message' ? item.data.id : item.id))).toEqual(['u1']);
+
+    streamBufferManager.handle({
+      type: 'content_block',
+      sessionPath: PATH,
+      block: {
+        type: 'workflow',
+        taskId: 'workflow-early',
+        taskTitle: '早到结果',
+        streamStatus: 'running',
+        startedAt: 1000,
+      },
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath: PATH,
+      delta: 'Workflow 已经提交后台运行了。',
+    });
+    streamBufferManager.finishTurn(PATH);
+
+    const items = getItems();
+    expect(items.map((item) => (item.type === 'message' ? item.data.id : item.id))).toEqual([
+      'u1',
+      expect.stringMatching(/^stream-/),
+      'deferred:workflow-early:success',
+    ]);
+
+    const assistantItems = items.filter((item) => item.type === 'message' && item.data.role === 'assistant');
+    expect(assistantItems).toHaveLength(1);
+    const workflowMessage = assistantItems[0];
+    expect(workflowMessage?.type).toBe('message');
+    if (workflowMessage?.type !== 'message') throw new Error('expected assistant message');
+    expect(workflowMessage.data.blocks?.map((block) => block.type)).toEqual(['workflow', 'text']);
   });
 });

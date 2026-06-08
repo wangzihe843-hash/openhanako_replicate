@@ -51,6 +51,22 @@ describe('PreviewRenderer HTML isolation', () => {
 
   beforeEach(() => {
     window.t = ((key: string) => key) as typeof window.t;
+    window.platform = {
+      showHtmlPreview: vi.fn(async () => true),
+      updateHtmlPreviewBounds: vi.fn(async () => true),
+      closeHtmlPreview: vi.fn(async () => true),
+    } as unknown as typeof window.platform;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 11,
+      y: 22,
+      width: 333,
+      height: 444,
+      top: 22,
+      right: 344,
+      bottom: 466,
+      left: 11,
+      toJSON: () => ({}),
+    } as DOMRect);
     mocks.hanaFetch.mockReset();
     mocks.hanaFetch.mockResolvedValue(new Response(JSON.stringify({
       previewUrl: 'http://127.0.0.1:14500/preview/html/pv_123?previewToken=preview_only_token',
@@ -61,12 +77,13 @@ describe('PreviewRenderer HTML isolation', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     clearAppFileDragPayload();
     cleanup();
   });
 
-  it('registers HTML and loads it through a sandboxed isolated preview URL instead of srcDoc', async () => {
-    const { container } = render(<PreviewRenderer previewItem={previewItem} />);
+  it('registers HTML and delegates rendering to the native HTML preview host instead of an iframe', async () => {
+    const { container, unmount } = render(<PreviewRenderer previewItem={previewItem} />);
 
     expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/preview/html', {
       method: 'POST',
@@ -78,16 +95,25 @@ describe('PreviewRenderer HTML isolation', () => {
       }),
     });
 
-    const iframe = container.querySelector('iframe');
-    expect(iframe).toBeTruthy();
-    expect(iframe).toHaveAttribute('sandbox', 'allow-scripts');
-    expect(iframe).toHaveAttribute('referrerpolicy', 'no-referrer');
-    expect(iframe).not.toHaveAttribute('srcdoc');
-    expect(iframe?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.querySelector('[data-html-preview-host]')).toBeTruthy();
 
     await waitFor(() => {
-      expect(iframe).toHaveAttribute('src', 'http://127.0.0.1:14500/preview/html/pv_123?previewToken=preview_only_token');
+      expect(window.platform.showHtmlPreview).toHaveBeenCalledWith({
+        previewId: 'html-demo',
+        previewUrl: 'http://127.0.0.1:14500/preview/html/pv_123?previewToken=preview_only_token',
+        bounds: {
+          x: 11,
+          y: 22,
+          width: 333,
+          height: 444,
+        },
+      });
     });
+
+    unmount();
+
+    expect(window.platform.closeHtmlPreview).toHaveBeenCalledWith('html-demo');
   });
 
   it('applies a workspace image dropped on the markdown cover', async () => {

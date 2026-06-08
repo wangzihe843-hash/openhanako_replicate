@@ -188,7 +188,7 @@ export async function handlePluginUiRequest({
   }
 
   const validation = capability.validatePayload(message.payload);
-  if (!validation.ok) {
+  if (validation.ok === false) {
     return createPluginUiError(
       message,
       PLUGIN_UI_ERROR_CODE.BAD_MESSAGE,

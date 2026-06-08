@@ -3,7 +3,7 @@ export {
   deriveStudioAccessGrant,
   getStudioConnectionProfile,
   validateStudioConnectionTrust,
-} from '../../../../shared/studio-access-contract.js';
+} from '../../../../shared/studio-access-contract.ts';
 
 export type {
   ConnectionCredentialKind,
@@ -17,4 +17,4 @@ export type {
   StudioConnectionKind,
   StudioConnectionProfile,
   StudioConnectionTransport,
-} from '../../../../shared/studio-access-contract.js';
+} from '../../../../shared/studio-access-contract.ts';

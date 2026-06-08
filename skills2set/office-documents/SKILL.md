@@ -1,7 +1,7 @@
 ---
 name: office-documents
 description: "Use when the user asks to open, read, inspect, understand, summarize, analyze, extract tables/text from, modify, update, repair, split, merge, rotate, or convert information from PDF, DOCX, XLSX, XLSM, or PPTX files, including when they mention Word, Excel, PowerPoint, spreadsheet, presentation, Office document, or PDF in passing. 读取或修改 PDF、Word、Excel、PPT 文件时必须使用。"
-compatibility: "Uses bundled Python scripts. Optional libraries improve coverage: markitdown, python-docx, openpyxl, python-pptx, pdfplumber, pypdf. No OfficeCLI, Microsoft Office, LibreOffice, or GUI viewer is required."
+compatibility: "Uses a bundled Node preflight plus Python worker scripts. Optional Python libraries improve coverage: markitdown, python-docx, openpyxl, python-pptx, pdfplumber, pypdf. No OfficeCLI, Microsoft Office, LibreOffice, or GUI viewer is required."
 metadata:
   default-enabled: true
 ---
@@ -23,11 +23,46 @@ Do not use Anthropic/Claude document skills as source material. This skill is in
 
 1. Identify the file type from the extension and the user's requested outcome.
 2. Read first, edit second. Always inspect the source file before modifying it.
-3. For reading, run `scripts/read_document.py`.
-4. For edits, write a small JSON operations file and run the matching edit script.
-5. Save edits to a new output file unless the user explicitly asks to overwrite.
-6. Read the output file again with `scripts/read_document.py` and verify the requested change.
-7. If the requested operation is outside the supported surface, say so clearly and stop.
+3. Run `scripts/check_env.mjs` for the exact capability before any Python worker script.
+4. For reading, run `scripts/read_document.py`.
+5. For edits, write a small JSON operations file and run the matching edit script.
+6. Save edits to a new output file unless the user explicitly asks to overwrite.
+7. Read the output file again with `scripts/read_document.py` and verify the requested change.
+8. If the requested operation is outside the supported surface, say so clearly and stop.
+
+## Environment Preflight
+
+Run the bundled Node preflight before invoking Python:
+
+```bash
+node skills2set/office-documents/scripts/check_env.mjs --capability read-docx
+node skills2set/office-documents/scripts/check_env.mjs --capability read-pdf
+node skills2set/office-documents/scripts/check_env.mjs --capability edit-xlsx
+```
+
+Behavior:
+
+- The preflight itself is JavaScript and uses only Node built-ins.
+- It finds Python through `HANA_OFFICE_PYTHON`, `python3`, `python`, or Windows `py -3`.
+- It requires Python 3.10+ because the bundled worker scripts use modern Python syntax.
+- It checks only the packages needed for the requested capability.
+- If it returns `ok: false`, stop and show the user the `message` and `installGuidance`. Do not auto-install dependencies.
+
+Capabilities:
+
+| Task | Preflight capability |
+| --- | --- |
+| Read DOCX | `read-docx` |
+| Read XLSX / XLSM | `read-xlsx` |
+| Read PPTX | `read-pptx` |
+| Read PDF | `read-pdf` |
+| Require MarkItDown specifically | `enhanced-read` |
+| DOCX `replace_text` | `edit-docx-basic` |
+| DOCX `append_paragraph` / `add_table` | `edit-docx-rich` |
+| XLSX / XLSM edits | `edit-xlsx` |
+| PPTX `replace_text` | `edit-pptx-basic` |
+| PPTX `set_shape_text` / `add_textbox` | `edit-pptx-rich` |
+| PDF structural edits | `edit-pdf` |
 
 ## Reading
 
