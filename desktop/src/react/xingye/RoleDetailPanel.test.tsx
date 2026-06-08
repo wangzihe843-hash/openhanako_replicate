@@ -10,6 +10,7 @@ import type { Agent } from '../types';
 import { useStore } from '../stores';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { XINGYE_LORE_ENTRIES_STORAGE_KEY } from './xingye-lore-store';
+import { getRelationshipState, saveRelationshipState } from './xingye-state-store';
 
 const profileHoisted = vi.hoisted(() => ({
   profileByAgent: new Map<string, Record<string, unknown>>(),
@@ -156,37 +157,18 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     }));
   });
 
-  it('extracts layered role fields from enabled lore without saving or syncing the agent', async () => {
-    window.localStorage.setItem(XINGYE_LORE_ENTRIES_STORAGE_KEY, JSON.stringify({
-      lore1: {
-        id: 'lore1',
-        agentId: 'agent-1',
-        title: '边境医生',
-        content: '林雾长期在边境救治伤患，幼年经历过战乱，因此不轻易信任他人。',
-        category: 'background',
-        keywords: [],
-        enabled: true,
-        priority: 80,
-        insertionMode: 'manual',
-        visibility: 'canonical',
-        createdAt: '2026-05-10T00:00:00.000Z',
-        updatedAt: '2026-05-10T00:00:00.000Z',
-      },
-      lore2: {
-        id: 'lore2',
-        agentId: 'agent-1',
-        title: '草稿',
-        content: '这条禁用内容不应作为提取输入。',
-        category: 'background',
-        keywords: [],
-        enabled: false,
-        priority: 20,
-        insertionMode: 'manual',
-        visibility: 'canonical',
-        createdAt: '2026-05-10T00:00:00.000Z',
-        updatedAt: '2026-05-10T00:00:00.000Z',
-      },
-    }));
+  it('工坊确认写入：lore 入库、人设回填表单，但不直接保存/同步 agent', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      summary: '',
+      loreEntries: [
+        { title: '边境医生', content: '林雾长期在边境救治伤患。', category: 'background', insertionMode: 'always', keywords: [] },
+      ],
+      profilePatch: [
+        { field: 'identitySummary', value: '林雾是一名边境医生，长期在动荡地区救治伤患。' },
+        { field: 'behaviorLogic', value: '先判断问题本质，再给出务实建议。' },
+      ],
+    });
 
     render(
       <RoleDetailPanel
@@ -197,32 +179,30 @@ describe('RoleDetailPanel OpenHanako sync', () => {
         onPhone={vi.fn()}
       />,
     );
-
     await waitFor(() => {
       expect(screen.getByLabelText('星野昵称')).toBeInTheDocument();
     });
-    vi.mocked(hanaFetch).mockClear();
 
-    fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '林雾' } });
-    fireEvent.change(screen.getByLabelText('关系标签'), { target: { value: '朋友' } });
-    fireEvent.click(screen.getByRole('button', { name: 'AI 提取设定' }));
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
 
+    // 人设补丁回填到表单
     await waitFor(() => {
       expect(screen.getByLabelText('身份摘要')).toHaveValue('林雾是一名边境医生，长期在动荡地区救治伤患。');
     });
-
-    expect(screen.getByLabelText('简介')).toHaveValue('边境医生，冷静可靠。');
-    expect(screen.getByLabelText('背景摘要')).toHaveValue('幼年经历过战乱，因此不轻易信任他人。');
     expect(screen.getByLabelText('行为逻辑')).toHaveValue('先判断问题本质，再给出务实建议。');
 
-    expect(hanaFetch).toHaveBeenCalledTimes(1);
-    expect(hanaFetch).toHaveBeenCalledWith('/api/xingye/extract-profile', expect.objectContaining({
-      method: 'POST',
-      body: expect.stringContaining('林雾长期在边境救治伤患'),
-    }));
+    // lore 已直接入库
+    const stored = JSON.parse(window.localStorage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY) ?? '{}') as Record<string, { title: string }>;
+    expect(Object.values(stored).map((e) => e.title)).toContain('边境医生');
+
+    // 确认即存：人设补丁直接落库（profile.json），但不同步 OpenHanako identity/ishiki
+    await waitFor(() => {
+      expect(profileHoisted.profileByAgent.get('agent-1')?.identitySummary).toBe('林雾是一名边境医生，长期在动荡地区救治伤患。');
+    });
+    expect(profileHoisted.profileByAgent.get('agent-1')?.behaviorLogic).toBe('先判断问题本质，再给出务实建议。');
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/identity');
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/ishiki');
-    expect(window.localStorage.getItem('xingye.roleProfiles')).toBeNull();
   });
 
   it('阴暗面预设 select：默认「自动判断」，可手动切换（黑化值起点）', () => {
@@ -239,6 +219,234 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(select.value).toBe(''); // 默认自动判断 → 由本地关键词扫描兜底
     fireEvent.change(select, { target: { value: 'marked' } });
     expect(select.value).toBe('marked');
+  });
+
+  // 让工坊一轮直接返回一份 plan（跳过提问），用于驱动「确认写入 → lore 入库 + 人设回填 + 黑化弹层」路径。
+  const mockStudioPlan = (turn: Record<string, unknown>) => {
+    vi.mocked(hanaFetch).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/xingye/lore-studio/turn') {
+        return { ok: true, json: async () => ({ ok: true, turn, modelTier: 'utility' }) } as Response;
+      }
+      if (path === '/api/xingye/storage') {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const aid = String(body.agentId ?? '');
+        if (body.action === 'readJson' && body.relativePath === 'profile.json') {
+          return { ok: true, json: async () => ({ data: profileHoisted.profileByAgent.get(aid) ?? null }) } as Response;
+        }
+        if (body.action === 'writeJson' && body.relativePath === 'profile.json') {
+          profileHoisted.profileByAgent.set(aid, body.data as Record<string, unknown>);
+          return { ok: true, json: async () => ({ ok: true }) } as Response;
+        }
+        // session.json 读/写等：返回空 → loadStudioSession 视作无会话（全新开始）。
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      return { ok: true, json: async () => ({ ok: true }) } as Response;
+    });
+  };
+
+  // 打开工坊 → 粘贴背景故事 → 开始整理 → 返回「确认写入」按钮（plan 已就绪）。
+  async function openStudioToPlan() {
+    fireEvent.click(screen.getByRole('button', { name: 'AI 整理设定' }));
+    const intro = await screen.findByPlaceholderText('粘贴完整背景故事…');
+    fireEvent.change(intro, { target: { value: '一段背景故事。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+    return screen.findByRole('button', { name: /确认写入/ });
+  }
+
+  it('工坊方案含非基线精确黑化值 → 确认写入后弹层确认，采用后覆盖档位并落库', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '青梅', content: '从小一起长大、对你格外上心。', category: 'background', insertionMode: 'always', keywords: [] }],
+      profilePatch: [{ field: 'shortBio', value: '占有欲偏重的青梅。' }],
+      corruptionTendency: 'latent',
+      corruptionSeed: 20,
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+
+    // 20 ≠ latent 基线 12 → 出现确认弹层，且此刻还没应用精确值
+    const confirm = await screen.findByTestId('xingye-corruption-seed-confirm');
+    expect(confirm).toHaveTextContent('20');
+    expect(confirm).toHaveTextContent('12');
+    expect(screen.queryByTestId('xingye-corruption-seed-applied')).not.toBeInTheDocument();
+
+    // 采用 → 弹层消失，显示已应用精确起点 20
+    fireEvent.click(screen.getByTestId('xingye-corruption-seed-accept'));
+    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+    expect(screen.getByTestId('xingye-corruption-seed-applied')).toHaveTextContent('20');
+
+    // 保存 → corruptionSeed 进 profile 落库（收紧到主保存键，避开 LoreEditor 的「保存设定条目」）
+    fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ }));
+    await waitFor(() => {
+      expect(profileHoisted.profileByAgent.get('agent-1')?.corruptionSeed).toBe(20);
+    });
+  });
+
+  it('工坊方案含非基线精确黑化值 → 选「按档位基线」则不落精确值', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '青梅', content: '青梅竹马。', category: 'background', insertionMode: 'always', keywords: [] }],
+      corruptionTendency: 'latent',
+      corruptionSeed: 20,
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+    await screen.findByTestId('xingye-corruption-seed-confirm');
+    fireEvent.click(screen.getByTestId('xingye-corruption-seed-reject'));
+
+    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('xingye-corruption-seed-applied')).not.toBeInTheDocument();
+  });
+
+  it('待确认精确黑化值持久化为草稿：关掉详情页再打开，待确认条仍在（无需重跑工坊）', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '青梅', content: '青梅竹马。', category: 'background', insertionMode: 'always', keywords: [] }],
+      corruptionTendency: 'latent',
+      corruptionSeed: 20,
+    });
+    const { unmount } = render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+    await screen.findByTestId('xingye-corruption-seed-confirm');
+
+    // 草稿（待确认精确值）已落到 profile.json
+    await waitFor(() => {
+      expect(profileHoisted.profileByAgent.get('agent-1')?.corruptionSeedPending).toBe(20);
+    });
+
+    // 关掉详情页（卸载）→ 重新打开（重挂载，不重跑工坊）
+    unmount();
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+
+    // 待确认条从持久化草稿恢复（仍是 20 vs 基线 12），不必再跑一遍工坊
+    const restored = await screen.findByTestId('xingye-corruption-seed-confirm');
+    expect(restored).toHaveTextContent('20');
+    expect(restored).toHaveTextContent('12');
+  });
+
+  it('工坊方案含基线黑化值（不偏离档位）→ 不弹确认层', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '青梅', content: '青梅竹马。', category: 'background', insertionMode: 'always', keywords: [] }],
+      corruptionTendency: 'latent',
+      corruptionSeed: 12,
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+    await waitFor(() => {
+      expect((screen.getByTestId('xingye-role-corruption-tendency-select') as HTMLSelectElement).value).toBe('latent');
+    });
+    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('xingye-corruption-seed-applied')).not.toBeInTheDocument();
+  });
+
+  it('确认即存：黑化未初始化时，按模型档位一并初始化「TA 的状态」黑化值', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '出身', content: '边境长大。', category: 'background', insertionMode: 'always', keywords: [] }],
+      corruptionTendency: 'marked',
+      corruptionSeed: 28, // = marked 基线 → 不弹待确认层
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    // 确认前还没有关系状态
+    expect(getRelationshipState('agent-1') ?? null).toBeNull();
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+
+    // 确认即存：黑化按模型档位 marked(基线 28)初始化进「TA 的状态」
+    await waitFor(() => {
+      expect(getRelationshipState('agent-1')?.corruption).toBe(28);
+    });
+    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+  });
+
+  it('重置黑化起点：选 marked 档 → 确认条显示目标 28，确定后给反馈并收起', () => {
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByTestId('xingye-role-corruption-tendency-select'), { target: { value: 'marked' } });
+
+    fireEvent.click(screen.getByTestId('xingye-corruption-reset-open'));
+    const confirm = screen.getByTestId('xingye-corruption-reset-confirm');
+    expect(confirm).toHaveTextContent('重置回设定起点 28');
+
+    fireEvent.click(screen.getByTestId('xingye-corruption-reset-confirm-btn'));
+    expect(screen.queryByTestId('xingye-corruption-reset-confirm')).not.toBeInTheDocument();
+    expect(screen.getByTestId('xingye-corruption-reset-msg')).toHaveTextContent('28');
+  });
+
+  it('重置黑化起点：取消则收起确认、不写反馈', () => {
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId('xingye-corruption-reset-open'));
+    expect(screen.getByTestId('xingye-corruption-reset-confirm')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('xingye-corruption-reset-cancel'));
+    expect(screen.queryByTestId('xingye-corruption-reset-confirm')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('xingye-corruption-reset-msg')).not.toBeInTheDocument();
+  });
+
+  it('保存设定：改了黑化档位 → 同步写入「TA 的状态」的黑化值', async () => {
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByTestId('xingye-role-corruption-tendency-select'), { target: { value: 'marked' } });
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+
+    await waitFor(() => {
+      expect(getRelationshipState('agent-1')?.corruption).toBe(28);
+    });
+    expect(screen.getByTestId('xingye-corruption-reset-msg')).toHaveTextContent('TA 的状态');
+  });
+
+  it('保存设定：只改别的字段 → 不碰「TA 的状态」里已漂移的黑化', async () => {
+    // 预置一个已存在、黑化已涨到 50 的状态
+    saveRelationshipState({
+      agentId: 'agent-1', targetType: 'user', targetId: '__user__',
+      affection: 30, trust: 0, loyalty: 0, jealousy: 0, corruption: 50,
+      mood: '平静', relationshipKey: 'friend', relationshipLabel: '朋友',
+      source: 'manual', updatedAt: '2026-05-13T00:00:00.000Z',
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '新名字' } });
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+
+    await waitFor(() => expect(screen.getByText(/上次保存/)).toBeInTheDocument());
+    expect(getRelationshipState('agent-1')?.corruption).toBe(50); // 黑化未被动
+    expect(screen.queryByTestId('xingye-corruption-reset-msg')).not.toBeInTheDocument();
   });
 
   it('shows save failure when profile storage write fails', async () => {

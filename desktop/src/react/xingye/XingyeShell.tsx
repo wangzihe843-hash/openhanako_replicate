@@ -27,6 +27,8 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
   const [selectedXingyeAgentId, setSelectedXingyeAgentId] = useState<string | null>(null);
   const [enteringAgentId, setEnteringAgentId] = useState<string | null>(null);
   const [enterChatError, setEnterChatError] = useState<string | null>(null);
+  /** 工坊批量生成 peer 角色后，跳转落地的目标 agent（其详情页挂载后自动展开工坊）。 */
+  const [studioAutoOpenAgentId, setStudioAutoOpenAgentId] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedXingyeAgentId && agents.some(agent => agent.id === selectedXingyeAgentId)) {
@@ -62,6 +64,14 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
 
   const handleNavigate = (tabId: XingyeTabId) => {
     setActiveTabId(tabId);
+  };
+
+  /** 跳转到某个（通常是刚生成的）角色，并请求其详情页自动展开设定工坊。 */
+  const handleOpenAgentStudio = (agentId: string) => {
+    setSelectedXingyeAgentId(agentId);
+    setActiveTabId('characters');
+    setCharacterPanelMode('detail');
+    setStudioAutoOpenAgentId(agentId);
   };
 
   const handleEnterChat = async (agentId: string) => {
@@ -117,6 +127,9 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               onBack={() => setCharacterPanelMode('list')}
               onChat={handleEnterChat}
               onPhone={() => handleNavigate('phone')}
+              onOpenAgentStudio={handleOpenAgentStudio}
+              autoOpenStudioFor={studioAutoOpenAgentId}
+              onAutoOpenStudioConsumed={() => setStudioAutoOpenAgentId(null)}
             />
           ) : activeTab.id === 'characters' ? (
             <RoleListPanel

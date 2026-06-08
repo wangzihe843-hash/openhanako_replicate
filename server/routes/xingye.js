@@ -34,7 +34,10 @@ const ALLOWED_LORE_CATEGORIES = new Set([
   "worldview",
   "relationship",
   "event",
+  "location",
+  "organization",
   "character",
+  "rule",
 ]);
 
 /**
@@ -159,6 +162,14 @@ function normalizeProfile(value) {
   if (CORRUPTION_TENDENCIES.has(rawTendency)) {
     profile.corruptionTendency = rawTendency;
   }
+  // corruptionSeed 是精确黑化起点（整数 0..100）。这里只做数值消毒（提取响应 = 提案、保存 = 落库都过此）；
+  // 「非基线值要不要采用」的人工闸在渲染端弹窗，不在后端。非数 / 越界 → 不输出该键。
+  const rawSeed = typeof value.corruptionSeed === "number"
+    ? value.corruptionSeed
+    : (typeof value.corruptionSeed === "string" && value.corruptionSeed.trim() !== "" ? Number(value.corruptionSeed) : NaN);
+  if (Number.isFinite(rawSeed)) {
+    profile.corruptionSeed = Math.min(100, Math.max(0, Math.round(rawSeed)));
+  }
   return profile;
 }
 
@@ -212,12 +223,13 @@ function buildPrompt({ displayName, relationshipLabel, shortBio, loreEntries, pa
     "- personalitySummary、behaviorLogic、values、taboos、relationshipMode、speakingStyle 必须从背景推导角色运行逻辑。",
     "- 每个字段都写短摘要，适合用户二次编辑。",
     "- 不要把原始背景故事整段塞入任何字段。",
-    "- corruptionTendency 是角色「阴暗面预设」档位，只看正式设定里 TA 对 user 是否带黑化 / 病娇 / 强占有 / 控制欲 / 极端不安全感的底色：完全没有 → \"none\"；有苗头（占有欲、善妒、缺乏安全感、依赖）→ \"latent\"；明显（病娇、极端占有、控制欲极强、不许离开）→ \"marked\"。这是底色不是当下情绪；拿不准就给 \"none\"。",
+    "- corruptionTendency 是角色「阴暗面预设」档位，**只依据 TA 本人的背景与性格**判断 TA 对 user 是否带黑化 / 病娇 / 强占有 / 控制欲 / 极端不安全感的底色——不要因为设定里其他角色（情敌 / 对手 / 朋友 / 家人）带占有欲、善妒或控制欲，就给 TA 套档位：完全没有 → \"none\"；有苗头（占有欲、善妒、缺乏安全感、依赖）→ \"latent\"；明显（病娇、极端占有、控制欲极强、不许离开）→ \"marked\"。这是底色不是当下情绪；拿不准就给 \"none\"。",
+    "- corruptionSeed 是与 corruptionTendency 自洽的精确黑化起点（整数 0–100），供更细的初始化用。档位基线为 none=0 / latent=12 / marked=28：多数情况直接回对应基线值即可；只有当 TA 的阴暗面强度明显落在两档之间、或在某档内偏轻 / 偏重时，才回一个介于其档区间的精确值（例如「比一般占有更重、但还没到病娇」可回 18–22）。务必与档位自洽，不要跨档（latent 不要回 0 或 ≥28）。判断口径同上——只看 TA 本人。",
     `- 不要输出这些工程词：${FORBIDDEN_TERMS.join("、")}。`,
     "",
     "返回 JSON schema：",
     JSON.stringify(
-      { ...Object.fromEntries(PROFILE_FIELDS.map((field) => [field, "string"])), corruptionTendency: "none | latent | marked" },
+      { ...Object.fromEntries(PROFILE_FIELDS.map((field) => [field, "string"])), corruptionTendency: "none | latent | marked", corruptionSeed: "integer 0-100 (与档位自洽)" },
       null,
       2,
     ),
@@ -225,6 +237,348 @@ function buildPrompt({ displayName, relationshipLabel, shortBio, loreEntries, pa
     "输入：",
     JSON.stringify(context, null, 2),
   ].join("\n");
+}
+
+// ─────────────────────────── 角色设定工坊 (lore-studio) ───────────────────────────
+
+/** 工坊 lore 条目允许的分类（与渲染端 XINGYE_LORE_CATEGORIES 全集对齐）。 */
+const STUDIO_LORE_CATEGORIES = new Set([
+  "background",
+  "worldview",
+  "relationship",
+  "event",
+  "location",
+  "organization",
+  "character",
+  "rule",
+]);
+
+const STUDIO_INSERTION_MODES = new Set(["always", "keyword", "manual"]);
+
+/**
+ * 与渲染端 defaultInsertionModeForCategory 对齐：模型漏给 / 给错 insertionMode 时按分类兜底，
+ * 而不是一律落 "manual"——背景 / 关系本应 always、世界观本应 keyword，落 manual = 默认不注入（静默失效）。
+ */
+function defaultStudioInsertionMode(category) {
+  if (category === "background" || category === "relationship") return "always";
+  if (category === "worldview") return "keyword";
+  return "manual";
+}
+
+/** 像 cleanString 但保留换行（lore 正文可能分段）。 */
+function clipText(value, maxLength = 1800) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[ \t\u00A0]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, maxLength);
+}
+
+/**
+ * 把 existingProfile 收口成「有界的字符串 / 数值键值对」。这是工坊 prompt 里唯一原样透传的输入，
+ * 其余字段都过 cleanString/clipText + slice；这里补上同档防护：限键数、限单值长度、丢非字符串/数值、
+ * 跳过 __proto__/constructor 等原型污染键，防止超大或任意内容灌进 LLM 输入。
+ */
+function sanitizeStudioProfile(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out = {};
+  let count = 0;
+  for (const [rawKey, v] of Object.entries(value)) {
+    if (count >= 24) break;
+    const key = cleanString(rawKey, 40);
+    if (!key || key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (typeof v === "string") {
+      const s = clipText(v, 800);
+      if (s) { out[key] = s; count += 1; }
+    } else if (typeof v === "number" && Number.isFinite(v)) {
+      out[key] = v;
+      count += 1;
+    }
+  }
+  return out;
+}
+
+function renderStudioTranscript(transcript) {
+  if (!Array.isArray(transcript)) return "（无）";
+  const lines = [];
+  for (const msg of transcript) {
+    const role = msg?.role === "assistant" ? "助手" : "用户";
+    const content = clipText(msg?.content, 4000);
+    if (content) lines.push(`${role}：${content}`);
+  }
+  return lines.length ? lines.join("\n\n") : "（无）";
+}
+
+function buildLoreStudioPrompt(input) {
+  const mode = input?.mode === "peer-suggest" ? "peer-suggest" : "extract";
+  const context = {
+    displayName: cleanString(input?.displayName, 120),
+    relationshipLabel: cleanString(input?.relationshipLabel, 120),
+    shortBio: cleanString(input?.shortBio, 400),
+    existingProfile: sanitizeStudioProfile(input?.existingProfile),
+    existingLoreAnchors: Array.isArray(input?.existingLoreAnchors)
+      ? input.existingLoreAnchors.slice(0, 80).map((a) => ({
+          title: cleanString(a?.title, 80),
+          category: cleanString(a?.category, 32),
+          insertionMode: cleanString(a?.insertionMode, 16),
+        }))
+      : [],
+  };
+  const backgroundStory = clipText(input?.backgroundStory, 8000);
+  const transcript = renderStudioTranscript(input?.transcript);
+
+  if (mode === "peer-suggest") {
+    const candidateNames = Array.isArray(input?.peerCandidateNames)
+      ? input.peerCandidateNames.map((n) => cleanString(n, 60)).filter(Boolean).slice(0, 30)
+      : [];
+    return [
+      "你在帮用户判断：当前角色所在的世界里，TA 的关系 / 人物设定里提到的哪些「非用户」角色，值得被升级成「用户可以直接对话的独立角色(agent)」。",
+      "给你：当前角色信息 + 既有设定库锚点 + 一组「在现有角色里还找不到对应的候选实体名」。",
+      "",
+      "【关键判断标准】升级后这个角色会成为用户能直接聊天的对象，所以**优先级 = 这个角色是否(会)和用户本人有互动、用户能否合理地认识或接触到 TA**：",
+      "- 优先：围绕「用户 + 当前角色」日常生活的人——会和用户打照面、说得上话、或迟早会产生交集的亲友 / 同伴 / 同事 / 对手 / 邻里等。结合当前角色与用户的关系(relationshipLabel)推断谁自然会进入用户的生活圈。",
+      "- 排除(不要列)：① 纯世界观 / 历史 / 传说里的名人或背景人物——只是设定底色、不在当下生活里、用户不可能去找 TA 聊；② 只与当前角色私下相关、和用户毫无交集、也没理由认识用户的角色。",
+      "- 数量与边界：只要存在合适的就要提（别因为保守而一个都不提）；但也别贪多——一般给 1–4 个最相关的，按「与用户互动可能性 + 重要度」排序，宁缺毋滥、但别漏掉明显该有的。",
+      "- whyUpgrade 里请说清 TA 会怎样和用户产生互动 / 为什么用户会想直接和 TA 聊。",
+      "",
+      "严格只返回如下 JSON（不要 Markdown，不要解释）：",
+      '{"type":"peer-suggestions","intro":"(可选，一句引导)","candidates":[',
+      '  {"name":"角色名","roleInWorld":"TA 在这个世界里的身份","whyUpgrade":"为什么值得升级——重点说 TA 与用户会如何互动","suggestedRelationshipToCurrent":"与当前角色的关系(一句话)","worldviewTweaks":"(可选)新角色背景若需要对共享世界观做的微调"}',
+      "]}",
+      "若候选里没有任何符合上述标准的（都是历史名人 / 与用户无交集），返回 candidates 为空数组即可，不要硬凑。",
+      "",
+      "[当前角色]",
+      JSON.stringify({ displayName: context.displayName, relationshipLabel: context.relationshipLabel, shortBio: context.shortBio }, null, 2),
+      "[既有设定库锚点]",
+      JSON.stringify(context.existingLoreAnchors, null, 2),
+      "[尚无对应角色的候选实体名]",
+      JSON.stringify(candidateNames, null, 2),
+      "[对话历史]",
+      transcript,
+    ].join("\n");
+  }
+
+  // mode === 'extract'（Phase 1 主流程）
+  // peer 微调上下文：新角色刚从某源角色分出来时，把已带来的世界观/关系正文喂给模型供其据新背景改写。
+  const peerName = cleanString(input?.peerContext?.sourceName, 60);
+  const fineTuneEntries = Array.isArray(input?.fineTuneEntries)
+    ? input.fineTuneEntries
+        .slice(0, 40)
+        .map((e) => ({
+          title: cleanString(e?.title, 80),
+          category: cleanString(e?.category, 32),
+          insertionMode: cleanString(e?.insertionMode, 16),
+          content: clipText(e?.content, 1500),
+        }))
+        .filter((e) => e.title && e.content)
+    : [];
+  const peerBlock = peerName
+    ? [
+        `【这是一个刚从「${peerName}」分出来的新角色】`,
+        `下面「已带来的条目」是从「${peerName}」带过来的：与「${peerName}」共享的世界观，以及这个新角色与「${peerName}」的关系（关系条目现在可能还是空模板）。`,
+        "用户接下来会给这个新角色的完整背景。请据新背景**微调 / 补全**这些条目，再照常整理这个新角色自己的设定：",
+        "- 要改动「已带来的条目」时，沿用同一个 title 并标 isUpdate:true（更新补丁，别新增重复）；",
+        `- 关系条目若还是空模板，请按新背景把它填成真正的、第一人称视角的关系设定（实体区分：新角色 ≠「${peerName}」≠ 用户）；`,
+        "- 世界观可按新角色视角微调，但必须与原世界保持一致，别另起炉灶。",
+        "[已带来的条目（正文）]",
+        JSON.stringify(fineTuneEntries, null, 2),
+      ]
+    : [];
+  return [
+    "你是「角色设定整理助手」，在一个沉浸式角色扮演 App 里帮用户把一整段背景故事整理成两样东西：",
+    "(1) 设定库条目(lore)；(2) 对当前角色「人设」字段的修改。",
+    "",
+    "【最重要的工作方式：先提问，别急着下结论】",
+    "- 除非背景故事已经把某一点写得毫无歧义，否则你必须先提问、再下结论。宁可多问。",
+    "- 经验上你应当有 ≥90% 的轮次是在「提问」，而不是直接给方案。只有当关键的人设 / 世界观 / 关系都已问清、你有把握时，才给方案。",
+    "- 每次提问都像 Claude Code 那样给「带选项的问题」：给 2–4 个具体候选答案，并永远允许用户自定义回答。",
+    "",
+    "【视角与知识边界——很重要】",
+    "- 用户粘贴的背景故事通常是这个角色的**完整设定**，往往含上帝视角：其他角色的隐情、剧情走向，甚至 TA 本人并不知道的内幕。但 lore 是写进**这个角色自己脑子里**的设定，只应包含**TA 本人会知道 / 相信的**东西。",
+    "- TA 不可能知道的内容（别人背着 TA 的秘密、TA 不在场发生的事、纯叙事旁白 / 剧透）**不要**写进世界观 / 关系 / 人物 lore；它们至多只作为你提问与判断的依据。写到他人时，只写**当前角色视角下所知所信的版本**。",
+    "- 拿不准某条信息 TA 是否知道、或 TA 眼里是什么样 → **提问确认**（这正是最该提问的场景之一）。",
+    "",
+    "【分类提问策略——按你要澄清的 lore 类型差异化】",
+    "- 背景 / 人设(background)：用「场景反推」。问『在【某个具体情境】下，TA 最可能怎么做？』给 2–4 个看似都合理的行为选项；再由用户的选择反推 TA 的行为逻辑(behaviorLogic)、价值观(values)、性格(personalitySummary)、禁忌(taboos)。",
+    "- 世界观(worldview)：用「结构关系」。问族群 / 阶层 / 势力之间通常如何相处、权力结构、通行规则。例：『【族群/阶层 A】与【B】之间通常如何互动？』",
+    "- 关系(relationship)：关系包含三类对象，必须分别覆盖，不要只问用户那一条：",
+    "    (i) 用户与 TA 的关系；(ii) TA 与其他【具名角色 / 同世界的 peer】的关系；(iii) TA 与【配角 / NPC】的关系。",
+    "- 事件 / 地点 / 组织 / 人物 / 规则：同样思路，针对模糊处提具体的二选一 / 多选一问题。",
+    "",
+    "【提问输出格式】要提问时，严格返回：",
+    '{"type":"questions","intro":"(可选，一句引导)","questions":[',
+    '  {"id":"q1","prompt":"...","category":"background|worldview|relationship|event|location|organization|character|rule","multiSelect":false,"allowCustom":true,',
+    '   "options":[{"label":"选项A","detail":"(可选解释)"},{"label":"选项B"}]}',
+    "]}",
+    "一次最多 3–4 个问题，聚焦当前最关键的不确定点。",
+    "",
+    "【方案输出格式】足够确定、要给方案时，严格返回：",
+    '{"type":"plan","summary":"(一句总览)",',
+    '  "loreEntries":[{"title":"...","content":"...","category":"background|worldview|relationship|event|location|organization|character|rule","insertionMode":"always|keyword|manual","keywords":["..."],"manualSuggested":false,"manualReason":"","isUpdate":false}],',
+    '  "profilePatch":[{"field":"behaviorLogic","value":"...","rationale":"为什么这么改(一句)"}],',
+    '  "corruptionTendency":"none|latent|marked","corruptionSeed":0,"notes":"(可选)"}',
+    "",
+    "方案规则：",
+    "- 分条原子化：一条 lore 只讲一件事，按分类分组。你只回定性内容——不要回 id / 时间 / 可见性，App 会补。",
+    "- insertionMode 默认值按分类：背景 / 关系→always，世界观→keyword，其余→manual。但默认不要产出 manual 条目；只有当某条内容优先级确实很低时，把它标 manualSuggested:true 并写一句 manualReason 建议用户手动注入。",
+    "- keyword 注入的条目必须给具体 keywords（命中词）。",
+    "- profilePatch 只列你确实要改的字段，每个带一句 rationale。字段只能是：shortBio / identitySummary / backgroundSummary / personalitySummary / behaviorLogic / values / taboos / relationshipMode / speakingStyle。",
+    "- corruptionTendency 与 corruptionSeed **必填**：基于你刚整理的整段背景，判断 TA 本人（只看 TA 自己——别因设定里其他角色带占有 / 善妒 / 控制欲就给 TA 套档）的黑化 / 病娇 / 强占有底色，给出档位 + 一个与之自洽的精确起点（整数 0–100）。完全没有阴暗面就 none / 0。档位基线 none=0 / latent=12 / marked=28；按强度在档内给精确值（如「比一般占有更重、但还没到病娇」给 18–22），不要跨档。这是 TA 的底色不是当下情绪，拿不准给 none / 0。",
+    "- 去重：existingLoreAnchors 列了既有条目的标题 / 分类。若你要补充的其实是在更新某个已有实体，请沿用同一个 title 并标 isUpdate:true，做「更新补丁」，不要新增重复条目。",
+    "- 关系 / 人物条目正文要做实体区分：写清『当前角色 ≠ 其他角色（NPC / 其他 agent）≠ 用户』分别是谁，别把对方写成主角本人；且只写**当前角色视角下所知所信**的内容，不要塞进 TA 不该知道的内幕。",
+    "",
+    "【解释 / 修改】用户若只是让你解释某条、或提出修改意见，你可以返回 {\"type\":\"message\",\"text\":\"...\"} 来解释，或返回一份修订后的 {\"type\":\"plan\",...}。",
+    "",
+    "【文风——按分类区别对待】",
+    "- 只有**角色本人的背景 / 性格**（background 及人设字段）可以带一点叙事质感——毕竟是在讲 TA 的来历；其余分类都不要写成小说。",
+    "- **世界观(worldview)** 要**简洁精确、归纳口吻**：讲清结构 / 规则 / 势力关系即可，不要写成小说场景或散文铺陈。",
+    "- **关系 / 人物(relationship / character)** 从**当前角色的视角**把『这是谁、和我什么关系、我对 TA 的态度』讲清楚，并显式做实体区分（当前角色 ≠ 该 NPC / 其他 agent ≠ 用户）；不要写成小说桥段，也别写进 TA 不该知道的内幕。",
+    "- 一律凝练可信，像这个世界里的设定残片；不要工程腔，也不要注水的小说腔。",
+    `- lore / 人设正文里不要出现这些工程词：${FORBIDDEN_TERMS.join("、")}。`,
+    "【硬性】只返回 JSON 本体，不要 Markdown 代码围栏，不要任何额外解释文字。",
+    "",
+    "[当前角色]",
+    JSON.stringify({ displayName: context.displayName, relationshipLabel: context.relationshipLabel, shortBio: context.shortBio }, null, 2),
+    "[当前人设]",
+    JSON.stringify(context.existingProfile, null, 2),
+    "[既有设定库条目锚点]",
+    JSON.stringify(context.existingLoreAnchors, null, 2),
+    ...peerBlock,
+    "[用户粘贴的背景故事]",
+    backgroundStory || "（用户尚未粘贴，请先引导其粘贴或口述背景）",
+    "[对话历史]",
+    transcript,
+    "",
+    "现在请产出下一轮（严格 JSON）。",
+  ].join("\n");
+}
+
+function normalizeStudioQuestionsTurn(parsed) {
+  const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : [];
+  const questions = [];
+  for (let i = 0; i < rawQuestions.length && questions.length < 6; i += 1) {
+    const q = rawQuestions[i];
+    const prompt = clipText(q?.prompt, 600);
+    if (!prompt) continue;
+    const rawOptions = Array.isArray(q?.options) ? q.options : [];
+    const options = [];
+    for (const opt of rawOptions) {
+      if (options.length >= 6) break;
+      const label = typeof opt === "string" ? cleanString(opt, 120) : cleanString(opt?.label, 120);
+      if (!label) continue;
+      const detail = typeof opt === "object" ? clipText(opt?.detail, 240) : "";
+      options.push(detail ? { label, detail } : { label });
+    }
+    const category = STUDIO_LORE_CATEGORIES.has(cleanString(q?.category, 32))
+      ? cleanString(q.category, 32)
+      : undefined;
+    questions.push({
+      id: cleanString(q?.id, 40) || `q${i + 1}`,
+      prompt,
+      ...(category ? { category } : {}),
+      multiSelect: q?.multiSelect === true,
+      allowCustom: q?.allowCustom !== false,
+      options,
+    });
+  }
+  if (!questions.length) return null;
+  return { type: "questions", intro: clipText(parsed.intro, 400) || undefined, questions };
+}
+
+function normalizeStudioPlanTurn(parsed) {
+  const rawEntries = Array.isArray(parsed.loreEntries) ? parsed.loreEntries : [];
+  const loreEntries = [];
+  for (const e of rawEntries) {
+    const title = cleanString(e?.title, 80);
+    const content = clipText(e?.content, 1800);
+    const category = cleanString(e?.category, 32);
+    if (!title || !content || !STUDIO_LORE_CATEGORIES.has(category)) continue;
+    const rawMode = cleanString(e?.insertionMode, 16);
+    const insertionMode = STUDIO_INSERTION_MODES.has(rawMode) ? rawMode : defaultStudioInsertionMode(category);
+    let keywords = Array.isArray(e?.keywords)
+      ? Array.from(new Set(e.keywords.map((k) => cleanString(k, 40)).filter(Boolean))).slice(0, 24)
+      : [];
+    // keyword 注入必须有命中词：模型在 keyword 条目上漏给 / 给空时用标题兜一个，避免变成「永远命不中」的死条目（用户仍可在 UI 改）。
+    if (insertionMode === "keyword" && keywords.length === 0) keywords = [title];
+    loreEntries.push({
+      title,
+      content,
+      category,
+      insertionMode,
+      keywords,
+      manualSuggested: e?.manualSuggested === true,
+      manualReason: clipText(e?.manualReason, 240) || undefined,
+      isUpdate: e?.isUpdate === true,
+    });
+  }
+
+  const rawPatch = Array.isArray(parsed.profilePatch) ? parsed.profilePatch : [];
+  const profilePatch = [];
+  for (const p of rawPatch) {
+    const field = cleanString(p?.field, 40);
+    const value = clipText(p?.value, 600);
+    if (!PROFILE_FIELDS.includes(field) || !value) continue;
+    profilePatch.push({ field, value, rationale: clipText(p?.rationale, 240) || undefined });
+  }
+
+  const turn = { type: "plan", loreEntries, profilePatch };
+  const summary = clipText(parsed.summary, 400);
+  if (summary) turn.summary = summary;
+  const notes = clipText(parsed.notes, 600);
+  if (notes) turn.notes = notes;
+  const tendency = typeof parsed.corruptionTendency === "string" ? parsed.corruptionTendency.trim().toLowerCase() : "";
+  if (CORRUPTION_TENDENCIES.has(tendency)) turn.corruptionTendency = tendency;
+  const rawSeed = typeof parsed.corruptionSeed === "number"
+    ? parsed.corruptionSeed
+    : (typeof parsed.corruptionSeed === "string" && parsed.corruptionSeed.trim() !== "" ? Number(parsed.corruptionSeed) : NaN);
+  if (Number.isFinite(rawSeed)) turn.corruptionSeed = Math.min(100, Math.max(0, Math.round(rawSeed)));
+  // 自洽兜底：模型给了精确 seed 却漏 / 给错档位时，按 seed 反推档位（基线 none=0 / latent=12 / marked=28，
+  // 阈值取两档中点 20）。否则客户端的黑化初始化以 tier 为门，tier 缺失会让这次 LLM 的黑化判断整段被
+  // 丢弃、退化回关键词扫描——正是「黑化必由 LLM 定、不退化到关键词」要避免的。
+  if (turn.corruptionSeed !== undefined && turn.corruptionTendency === undefined) {
+    turn.corruptionTendency = turn.corruptionSeed <= 0 ? "none" : turn.corruptionSeed < 20 ? "latent" : "marked";
+  }
+  return turn;
+}
+
+function normalizeStudioPeerSuggestionsTurn(parsed) {
+  const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+  const candidates = [];
+  for (const c of rawCandidates) {
+    const name = cleanString(c?.name, 60);
+    if (!name) continue;
+    candidates.push({
+      name,
+      roleInWorld: clipText(c?.roleInWorld, 200) || undefined,
+      whyUpgrade: clipText(c?.whyUpgrade, 400) || undefined,
+      suggestedRelationshipToCurrent: clipText(c?.suggestedRelationshipToCurrent, 400) || undefined,
+      worldviewTweaks: clipText(c?.worldviewTweaks, 600) || undefined,
+    });
+    if (candidates.length >= 20) break;
+  }
+  return { type: "peer-suggestions", intro: clipText(parsed.intro, 400) || undefined, candidates };
+}
+
+/**
+ * 把模型返回的一轮整理成受控结构。无法识别 / 校验失败时返回 null，由调用方决定回退。
+ */
+function normalizeStudioTurn(parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const type = typeof parsed.type === "string" ? parsed.type.trim() : "";
+  switch (type) {
+    case "questions":
+      return normalizeStudioQuestionsTurn(parsed);
+    case "plan":
+      return normalizeStudioPlanTurn(parsed);
+    case "peer-suggestions":
+      return normalizeStudioPeerSuggestionsTurn(parsed);
+    case "message": {
+      const text = clipText(parsed.text, 4000);
+      return text ? { type: "message", text } : null;
+    }
+    default: {
+      // 没有合法 type 但有 text → 当普通消息兜底
+      const text = clipText(parsed.text, 4000);
+      return text ? { type: "message", text } : null;
+    }
+  }
 }
 
 /**
@@ -464,6 +818,60 @@ export function createXingyeRoute(engine) {
         return found ?? { tier, message: "not attempted" };
       });
       return c.json({ error: "model call failed", details: collapsed }, 502);
+    } catch (err) {
+      return c.json({ error: err.message || String(err) }, 500);
+    }
+  });
+
+  /**
+   * 角色设定工坊：一轮交互。
+   *
+   * 多轮、非流式、结构化 JSON：客户端持有完整对话，每轮把上下文 + transcript POST 过来，
+   * 模型回 questions / plan / message / peer-suggestions 之一。复用三层模型降级
+   * (callWithModelFallback) 与 parseModelJson 容错解析；JSON 非法时回 502 + raw 供前端重试。
+   */
+  route.post("/xingye/lore-studio/turn", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const agentId = cleanString(body?.agentId, 120);
+      const mode = body?.mode === "peer-suggest" ? "peer-suggest" : "extract";
+
+      const prompt = buildLoreStudioPrompt({
+        mode,
+        displayName: body?.displayName,
+        relationshipLabel: body?.relationshipLabel,
+        shortBio: body?.shortBio,
+        existingProfile: body?.existingProfile,
+        existingLoreAnchors: body?.existingLoreAnchors,
+        backgroundStory: body?.backgroundStory,
+        transcript: body?.transcript,
+        peerCandidateNames: body?.peerCandidateNames,
+        peerContext: body?.peerContext,
+        fineTuneEntries: body?.fineTuneEntries,
+      });
+
+      let result;
+      try {
+        result = await callWithModelFallback({ prompt, agentId, timeoutMs: 90_000 });
+      } catch (err) {
+        let details;
+        try { details = JSON.parse(errorDetail(err)); } catch { details = errorDetail(err); }
+        return c.json({ error: "model call failed", details }, 502);
+      }
+
+      let parsed;
+      try {
+        parsed = parseModelJson(result.text);
+      } catch {
+        return c.json({ error: "invalid JSON from model", raw: String(result.text ?? "").trim() }, 502);
+      }
+
+      const turn = normalizeStudioTurn(parsed);
+      if (!turn) {
+        return c.json({ error: "unrecognized model output", raw: String(result.text ?? "").trim() }, 502);
+      }
+
+      return c.json({ ok: true, turn, modelTier: result.tier });
     } catch (err) {
       return c.json({ error: err.message || String(err) }, 500);
     }

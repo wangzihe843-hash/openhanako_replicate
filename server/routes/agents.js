@@ -213,7 +213,20 @@ export function createAgentsRoute(engine) {
       if (!name?.trim()) {
         return c.json({ error: "name is required" }, 400);
       }
-      const result = await engine.createAgent({ name, id, yuan });
+      // 可选：为新角色预置 identity / ishiki / public ishiki（如「设定工坊」批量建 peer 角色时）。
+      // 只透传这三个字段并做长度上限，避免注入任意键或超大正文。
+      let initialFiles;
+      const rawFiles = body?.initialFiles;
+      if (rawFiles && typeof rawFiles === "object" && !Array.isArray(rawFiles)) {
+        const pick = (v) => (typeof v === "string" && v.trim() ? v.slice(0, 20000) : undefined);
+        const identity = pick(rawFiles.identity);
+        const ishiki = pick(rawFiles.ishiki);
+        const publicIshiki = pick(rawFiles.publicIshiki);
+        if (identity || ishiki || publicIshiki) {
+          initialFiles = { ...(identity ? { identity } : {}), ...(ishiki ? { ishiki } : {}), ...(publicIshiki ? { publicIshiki } : {}) };
+        }
+      }
+      const result = await engine.createAgent({ name, id, yuan, ...(initialFiles ? { initialFiles } : {}) });
       emitAppEvent(engine, "agent-created", { agentId: result.id, name: result.name });
       return c.json({ ok: true, ...result });
     } catch (err) {
