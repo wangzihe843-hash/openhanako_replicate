@@ -11,7 +11,8 @@ import {
 
 /**
  * 初始化播种时会读取的 profile 字段子集：relationshipLabel 推好感；其余自由文本段
- * 供「黑化值」关键词兜底扫描；corruptionTendency 是 LLM / 用户给的显式档位（优先）。
+ * 供「黑化值」关键词兜底扫描；corruptionTendency 是 LLM / 用户给的显式档位；corruptionSeed 是
+ * 用户在详情页确认过的精确黑化起点（最高优先，见 resolveInitialCorruption）。
  * 全部可选——调用方（panel）通常传完整 display profile，缺字段时优雅降级。
  */
 export type RelationshipInitProfile = Partial<Pick<
@@ -26,6 +27,7 @@ export type RelationshipInitProfile = Partial<Pick<
   | 'taboos'
   | 'relationshipMode'
   | 'corruptionTendency'
+  | 'corruptionSeed'
 >>;
 
 export type XingyeStateTargetType = 'user';
@@ -256,7 +258,13 @@ export function getRelationshipState(
 }
 
 /**
- * 拼出供「黑化值」关键词兜底扫描的文本：profile 自由文本摘要 + 启用的 canonical lore 正文。
+ * 拼出供「黑化值」关键词兜底扫描的文本：profile 自由文本摘要 + 启用的 canonical **background** lore 正文。
+ *
+ * lore 部分**刻意只扫 `background` 分类**：黑化是「这个角色本人」的底色，背景 lore 写的正是 TA
+ * 自己的来历。而 `relationship / character / event` 等分类描述的是「世界与他人」——某个第三方
+ * NPC「占有欲极强、爱吃醋」会让 latent/marked 词表误命中，把别人的黑化算到主角头上。profile
+ * 字段是对角色本人的结构化描述、不存在串味问题，照旧全扫。
+ *
  * lore 读取是同步的（localStorage 后端）；读不到（离线 / 测试）就只用 profile，安全降级。
  */
 function buildCorruptionScanText(
@@ -278,7 +286,7 @@ function buildCorruptionScanText(
   let loreParts: string[] = [];
   try {
     loreParts = listLoreEntries(agentId, storage)
-      .filter((entry) => entry.enabled && entry.visibility === 'canonical')
+      .filter((entry) => entry.enabled && entry.visibility === 'canonical' && entry.category === 'background')
       .map((entry) => `${entry.title} ${entry.content}`);
   } catch (error) {
     console.warn('[xingye-state-store] lore scan for corruption seed failed:', error);
@@ -297,10 +305,12 @@ export function ensureRelationshipState(
   if (existing) return existing;
 
   // 分治播种（详见 xingye-state-init）：好感从标签推；信任/忠诚机械跟好感走；
-  // 醋意是当下情绪态、初始化不播种（保持 0）；黑化只能从设定信号来——LLM 档位优先，
-  // 否则关键词扫 profile + 启用 lore 兜底，且必须在初始化设基线（曲线让黑化几乎只进难退）。
+  // 醋意是当下情绪态、初始化不播种（保持 0）；黑化只能从设定信号来——三级优先：用户确认过的
+  // 精确值 corruptionSeed ＞ LLM 档位 corruptionTendency 基线 ＞ 关键词扫 profile + background
+  // lore 兜底（不扫关系/人物类，避免第三方关键词误判），且必须在初始化设基线（曲线让黑化几乎只进难退）。
   const affection = deriveInitialAffectionFromLabel(profile?.relationshipLabel);
   const corruption = resolveInitialCorruption(
+    profile?.corruptionSeed,
     profile?.corruptionTendency,
     buildCorruptionScanText(profile, agentId, storage),
   );
@@ -407,6 +417,50 @@ export function resetRelationshipState(
     syncRelationshipLabelToProfile(agentId, next.relationshipLabel);
   }
   return next;
+}
+
+/**
+ * 按当前设定预览「黑化起点」会被算成多少（精确值 ＞ 档位 ＞ 关键词扫 profile+background lore），
+ * 不写库。供详情页「重置黑化起点」在确认前展示目标值，也被 resetCorruptionToSeed 内部复用。
+ */
+export function computeInitialCorruption(
+  agentId: string,
+  profile?: RelationshipInitProfile | null,
+  storage: StorageLike | null = getLocalStorage(),
+): number {
+  return resolveInitialCorruption(
+    profile?.corruptionSeed,
+    profile?.corruptionTendency,
+    buildCorruptionScanText(profile, agentId, storage),
+  );
+}
+
+/**
+ * 只重置「黑化起点」：把当前关系 state 的 corruption 重新按设定算一遍写回，其余数值
+ * （好感 / 信任 / 忠诚 / 醋意 / 心情）与 previousStates 历史都保留。黑化是一次性懒播种——改了
+ * corruptionSeed / corruptionTendency 后老角色不会自动重播，这是详情页「重置黑化起点」显式补一刀
+ * 的入口。算出来与当前相等就原样返回、不抖历史。
+ */
+export function resetCorruptionToSeed(
+  agentId: string,
+  profile?: RelationshipInitProfile | null,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeRelationshipState {
+  const current = ensureRelationshipState(agentId, profile, storage);
+  const seed = computeInitialCorruption(agentId, profile, storage);
+  if (seed === current.corruption) return current;
+  const previousStates = [
+    toRelationshipStateHistoryItem(current),
+    ...(current.previousStates ?? []),
+  ].slice(0, MAX_PREVIOUS_STATES);
+  return saveRelationshipState({
+    ...current,
+    corruption: seed,
+    lastReason: `手动重置黑化起点至设定值 ${seed}。`,
+    source: 'manual',
+    previousStates,
+    updatedAt: new Date().toISOString(),
+  }, storage);
 }
 
 export function getStateDisplayBadges(state: XingyeRelationshipState): Array<{ label: string; value: string }> {

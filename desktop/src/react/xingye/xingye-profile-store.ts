@@ -6,6 +6,8 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
 import type { XingyeLoreEntry } from './xingye-lore-store';
+// 注：xingye-state-init 运行时只 `import type` 本模块（类型擦除），故此处反向 import 其纯函数不成循环。
+import { normalizeCorruptionSeed } from './xingye-state-init';
 
 /**
  * 性别枚举，用于驱动所有 AI 生成模块里的代词选择（她 / 他 / TA）与称谓约束。
@@ -61,6 +63,17 @@ export type XingyeRoleProfile = {
   gender?: XingyeRoleGender;
   /** 阴暗面预设（黑化 / 占有倾向档位），用于 corruption 初值播种；见 {@link XingyeCorruptionTendency}。 */
   corruptionTendency?: XingyeCorruptionTendency;
+  /**
+   * 精确黑化起点（0..100）。LLM 生成人设时给出、用户在详情页弹窗确认后落库的精确值，初始化时
+   * **压过 corruptionTendency 档位基线**（见 resolveInitialCorruption）。缺省 → 回退档位 / 关键词。
+   */
+  corruptionSeed?: number;
+  /**
+   * **待确认**的精确黑化起点（0..100）草稿：AI 在工坊整理时给的非基线精确值，尚未被用户在详情页
+   * 弹层「采用 / 按基线」拍板。持久化它让这条待确认条在关面板 / 切角色 / 重启后仍能恢复（详情页据此
+   * 重弹）。一旦采用 → 落到 corruptionSeed；按基线 / 手动改档位 / 保存时清空。不参与初始化播种。
+   */
+  corruptionSeedPending?: number;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   /** workspace 落盘引用（由 xingye-persistence / v2 layout 写入/加载） */
@@ -89,6 +102,8 @@ export type XingyeRoleProfileDisplay = {
   relationshipMode?: string;
   gender?: XingyeRoleGender;
   corruptionTendency?: XingyeCorruptionTendency;
+  corruptionSeed?: number;
+  corruptionSeedPending?: number;
   avatarDataUrl?: string;
   chatBackgroundDataUrl?: string;
   allowAutoMoments: boolean;
@@ -203,6 +218,14 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
       && (XINGYE_CORRUPTION_TENDENCIES as readonly string[]).includes(rawTendency)) {
     profile.corruptionTendency = rawTendency as XingyeCorruptionTendency;
   }
+
+  // corruptionSeed：用户确认过的精确黑化起点（0..100 整数）；非数 / 越界丢弃 → undefined（回退档位 / 关键词）
+  const seed = normalizeCorruptionSeed(value.corruptionSeed);
+  if (seed !== undefined) profile.corruptionSeed = seed;
+
+  // corruptionSeedPending：尚未拍板的精确黑化起点草稿（同样消毒；缺省/越界 → 不输出，详情页据此重弹待确认条）
+  const seedPending = normalizeCorruptionSeed(value.corruptionSeedPending);
+  if (seedPending !== undefined) profile.corruptionSeedPending = seedPending;
 
   const avatarMediaPath = normalizeOptionalString(value.avatarMediaPath);
   if (avatarMediaPath) profile.avatarMediaPath = avatarMediaPath;
@@ -347,6 +370,8 @@ export function getXingyeRoleProfileDisplay(
     relationshipMode: profile?.relationshipMode,
     gender: profile?.gender,
     corruptionTendency: profile?.corruptionTendency,
+    corruptionSeed: profile?.corruptionSeed,
+    corruptionSeedPending: profile?.corruptionSeedPending,
     avatarDataUrl: profile?.avatarDataUrl,
     chatBackgroundDataUrl: profile?.chatBackgroundDataUrl,
     allowAutoMoments: profile?.allowAutoMoments ?? false,

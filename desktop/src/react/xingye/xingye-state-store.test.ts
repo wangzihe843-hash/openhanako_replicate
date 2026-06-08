@@ -24,6 +24,7 @@ import {
   getRelationshipLabelFromStage,
   getRelationshipState,
   getStateDisplayBadges,
+  resetCorruptionToSeed,
   resetRelationshipState,
   saveRelationshipState,
   updateRelationshipState,
@@ -33,6 +34,7 @@ import {
   deriveInitialLoyaltyFromAffection,
   deriveInitialTrustFromAffection,
 } from './xingye-state-init';
+import { createLoreEntry } from './xingye-lore-store';
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -138,6 +140,76 @@ describe('xingye-state-store', () => {
       storage,
     );
     expect(clean.corruption).toBe(0);
+  });
+
+  it('黑化初始化：确认过的精确值 corruptionSeed 压过档位基线', () => {
+    // 档位是 latent（基线 12），但用户确认过精确值 18 → 初始化用 18
+    const state = ensureRelationshipState(
+      'agent-seed',
+      { relationshipLabel: '朋友', corruptionTendency: 'latent', corruptionSeed: 18 },
+      storage,
+    );
+    expect(state.corruption).toBe(18);
+    // 精确值 0 也算「已拍板」，压过看起来像 marked 的设定文本
+    const zero = ensureRelationshipState(
+      'agent-seed-zero',
+      { relationshipLabel: '朋友', corruptionSeed: 0, personalitySummary: '病娇，占有欲极强' },
+      storage,
+    );
+    expect(zero.corruption).toBe(0);
+  });
+
+  it('resetCorruptionToSeed：只把黑化重算回设定起点，其余数值与历史保留', () => {
+    const created = ensureRelationshipState(
+      'agent-reset',
+      { relationshipLabel: '恋人', corruptionTendency: 'latent' },
+      storage,
+    );
+    expect(created.corruption).toBe(12);
+    // 模拟互动后黑化涨到 50、好感也变了
+    saveRelationshipState({ ...created, corruption: 50, affection: 80, mood: '依恋' }, storage);
+
+    const reset = resetCorruptionToSeed(
+      'agent-reset',
+      { relationshipLabel: '恋人', corruptionTendency: 'latent' },
+      storage,
+    );
+    expect(reset.corruption).toBe(12); // 重算回 latent 基线
+    expect(reset.affection).toBe(80); // 其它数值不动
+    expect(reset.mood).toBe('依恋');
+    expect(reset.source).toBe('manual');
+    expect(reset.previousStates?.[0]?.corruption).toBe(50); // 历史保留重置前的值
+  });
+
+  it('resetCorruptionToSeed：精确值压过档位；与当前相等则不抖历史', () => {
+    ensureRelationshipState('agent-reset2', { relationshipLabel: '朋友', corruptionTendency: 'latent' }, storage);
+    const r1 = resetCorruptionToSeed('agent-reset2', { corruptionTendency: 'latent', corruptionSeed: 18 }, storage);
+    expect(r1.corruption).toBe(18);
+    const historyLen = r1.previousStates?.length ?? 0;
+    // 再次用同样设定重置 → 值未变，历史不增长
+    const r2 = resetCorruptionToSeed('agent-reset2', { corruptionTendency: 'latent', corruptionSeed: 18 }, storage);
+    expect(r2.corruption).toBe(18);
+    expect(r2.previousStates?.length ?? 0).toBe(historyLen);
+  });
+
+  it('黑化初始化：lore 兜底只扫 background——关系/人物类 lore 的关键词不误判', () => {
+    // 关系类 lore 描述的是第三方 NPC「占有欲极强、病娇」——不该算到主角头上
+    createLoreEntry('agent-rel-noise', {
+      title: '宿敌·林某',
+      content: '一个占有欲极强、近乎病娇的对手，总想囚禁主角。',
+      category: 'relationship',
+    }, storage);
+    const noisy = ensureRelationshipState('agent-rel-noise', { relationshipLabel: '朋友' }, storage);
+    expect(noisy.corruption).toBe(0);
+
+    // 同样的关键词，写在 background（角色自己的来历）里 → 命中 marked，正常播种
+    createLoreEntry('agent-bg-signal', {
+      title: '过往',
+      content: '童年的创伤让 TA 占有欲极强，几近病娇。',
+      category: 'background',
+    }, storage);
+    const signal = ensureRelationshipState('agent-bg-signal', { relationshipLabel: '朋友' }, storage);
+    expect(signal.corruption).toBe(28);
   });
 
   it('clamps deltas and re-derives the stage after updates', () => {

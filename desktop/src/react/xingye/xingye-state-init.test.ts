@@ -5,6 +5,7 @@ import {
   deriveInitialLoyaltyFromAffection,
   deriveInitialTrustFromAffection,
   detectCorruptionTendencyFromText,
+  normalizeCorruptionSeed,
   resolveInitialCorruption,
 } from './xingye-state-init';
 
@@ -54,16 +55,42 @@ describe('档位 → 初值基线', () => {
   });
 });
 
-describe('resolveInitialCorruption：LLM 档位优先 + 关键词兜底', () => {
-  it('显式档位优先，压过文本里的关键词', () => {
-    // 文本明明像 marked，但 LLM 显式判 none → 听 LLM（防关键词误命中）
-    expect(resolveInitialCorruption('none', '病娇，占有欲极强')).toBe(0);
-    // 显式 marked 即便文本平淡也按 marked
-    expect(resolveInitialCorruption('marked', '温和的人')).toBe(28);
+describe('normalizeCorruptionSeed：精确黑化起点合法化', () => {
+  it('有限数 → clamp 到 0..100 并取整', () => {
+    expect(normalizeCorruptionSeed(18)).toBe(18);
+    expect(normalizeCorruptionSeed(18.6)).toBe(19);
+    expect(normalizeCorruptionSeed(-5)).toBe(0);
+    expect(normalizeCorruptionSeed(250)).toBe(100);
+    expect(normalizeCorruptionSeed(0)).toBe(0);
   });
-  it('无显式档位 → 关键词扫描兜底', () => {
-    expect(resolveInitialCorruption(undefined, '典型病娇')).toBe(28);
-    expect(resolveInitialCorruption(undefined, '有点占有欲')).toBe(corruptionSeedFromTendency('latent'));
-    expect(resolveInitialCorruption(undefined, '温和理性')).toBe(0);
+  it('非数 / NaN / Infinity / 字符串 → undefined', () => {
+    expect(normalizeCorruptionSeed(undefined)).toBeUndefined();
+    expect(normalizeCorruptionSeed(null)).toBeUndefined();
+    expect(normalizeCorruptionSeed(NaN)).toBeUndefined();
+    expect(normalizeCorruptionSeed(Infinity)).toBeUndefined();
+    expect(normalizeCorruptionSeed('18')).toBeUndefined();
+  });
+});
+
+describe('resolveInitialCorruption：精确值 > 档位 > 关键词', () => {
+  it('确认过的精确值最高优先，压过档位与文本', () => {
+    // 精确值 18 介于 latent(12)/marked(28) 之间 → 直接用 18，不被档位或关键词改写
+    expect(resolveInitialCorruption(18, 'latent', '温和的人')).toBe(18);
+    expect(resolveInitialCorruption(18, 'marked', '病娇，占有欲极强')).toBe(18);
+    // 精确值越界先被 clamp
+    expect(resolveInitialCorruption(250, undefined, '温和')).toBe(100);
+    // 精确值 0 也是「已拍板」，压过像 marked 的文本
+    expect(resolveInitialCorruption(0, undefined, '病娇，占有欲极强')).toBe(0);
+  });
+  it('无精确值 → 退回档位优先，压过文本里的关键词', () => {
+    // 文本明明像 marked，但 LLM 显式判 none → 听 LLM（防关键词误命中）
+    expect(resolveInitialCorruption(undefined, 'none', '病娇，占有欲极强')).toBe(0);
+    // 显式 marked 即便文本平淡也按 marked
+    expect(resolveInitialCorruption(undefined, 'marked', '温和的人')).toBe(28);
+  });
+  it('无精确值、无显式档位 → 关键词扫描兜底', () => {
+    expect(resolveInitialCorruption(undefined, undefined, '典型病娇')).toBe(28);
+    expect(resolveInitialCorruption(undefined, undefined, '有点占有欲')).toBe(corruptionSeedFromTendency('latent'));
+    expect(resolveInitialCorruption(undefined, undefined, '温和理性')).toBe(0);
   });
 });

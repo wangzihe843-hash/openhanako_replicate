@@ -10,8 +10,10 @@
  *  - 醋意 jealousy：是「当下情绪态」不是性格特质，初始化时「没有正在吃醋」→ 保持 0
  *    （吃醋的*能力*由忠诚 gate 表达，见 xingye-state-curve）。本模块不播种它。
  *  - 黑化 corruption：和 affection 正交（深爱的人可以很纯也可以病娇），机械推不出来，
- *    只能从设定信号来 → 「LLM 定性档位优先（profile.corruptionTendency）+ 本地关键词
- *    扫描 profile/lore 兜底」。而且必须在初始化设基线——不能指望靠之后的 delta 慢慢爬
+ *    只能从设定信号来 → 三级优先：「用户确认过的精确值 profile.corruptionSeed（0..100，LLM 给的
+ *    非基线数值经详情页弹窗确认才落库）＞ LLM 定性档位 profile.corruptionTendency 的基线 ＞ 本地
+ *    关键词扫描 profile / background lore 兜底」（兜底刻意不扫关系/人物类 lore，免得第三方 NPC
+ *    的占有/善妒关键词误算到主角头上）。而且必须在初始化设基线——不能指望靠之后的 delta 慢慢爬
  *    （曲线让黑化「几乎只进难退」，靠单次互动累积既慢又不可靠）。
  *
  * 常量（比例 / 档位基线 / 关键词表）全部导出，跑起来不对味直接调。
@@ -108,7 +110,7 @@ export const CORRUPTION_LATENT_KEYWORDS: readonly string[] = [
 ];
 
 /**
- * 扫描自由文本（profile 摘要 + 启用 lore 内容）判定黑化档位。
+ * 扫描自由文本（调用方拼好的 profile 摘要 + background lore 内容）判定黑化档位。
  * 先查 marked 再查 latent（marked 词可能包含 latent 子串，顺序保证「极强」走 marked）。
  */
 export function detectCorruptionTendencyFromText(text: string): XingyeCorruptionTendency {
@@ -119,15 +121,34 @@ export function detectCorruptionTendencyFromText(text: string): XingyeCorruption
   return 'none';
 }
 
+/** 精确黑化起点合法区间（与 corruption 数值域一致）。 */
+export const CORRUPTION_SEED_MIN = 0;
+export const CORRUPTION_SEED_MAX = 100;
+
 /**
- * 解析黑化初值：
- *  - explicitTendency 有值（含 'none'）→ 用它（LLM / 用户的权威判断，'none' 会压过关键词误命中）。
- *  - 否则 → 关键词扫 scanText 兜底。
+ * 精确黑化起点的合法化：有限数 → clamp 到 0..100 并取整；其它（非数 / NaN / Infinity / 字符串）→ undefined。
+ * 用于「人工在详情页确认过的精确值」字段（profile.corruptionSeed）的前后端一致校验，
+ * 以及 resolveInitialCorruption 取用前的最后一道闸。
+ */
+export function normalizeCorruptionSeed(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return clampInt(value, CORRUPTION_SEED_MIN, CORRUPTION_SEED_MAX);
+}
+
+/**
+ * 解析黑化初值，三级优先（高 → 低）：
+ *  1. explicitSeed —— 用户在详情页**确认过**的精确值（0..100）。LLM 给的非基线数值要走弹窗确认
+ *     才会落到这里，所以它代表「人已拍板」，压过一切。
+ *  2. explicitTendency 有值（含 'none'）→ 档位基线（LLM / 用户的权威定性，'none' 压过关键词误命中）。
+ *  3. 否则 → 关键词扫 scanText 兜底。
  */
 export function resolveInitialCorruption(
+  explicitSeed: number | undefined,
   explicitTendency: XingyeCorruptionTendency | undefined,
   scanText: string,
 ): number {
+  const seed = normalizeCorruptionSeed(explicitSeed);
+  if (seed !== undefined) return seed;
   const tendency = explicitTendency ?? detectCorruptionTendencyFromText(scanText);
   return corruptionSeedFromTendency(tendency);
 }
