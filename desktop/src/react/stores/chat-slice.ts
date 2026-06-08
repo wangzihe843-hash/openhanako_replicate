@@ -4,7 +4,7 @@
 
 import type { ChatListItem, ChatMessage, ContentBlock, SessionMessages, SessionModel, SessionRegistryFile } from './chat-types';
 import { invalidateSessionCache } from './selectors/file-refs';
-import { invalidateStreamBuffer, clearSessionStreamMeta, invalidateStreamResumeMeta } from './stream-invalidator';
+import { invalidateStreamBuffer, clearSessionStreamMeta } from './stream-invalidator';
 import { clearMessageLiveVersion } from './message-live-version';
 
 export interface ChatSlice {
@@ -189,7 +189,6 @@ export const createChatSlice = (
       const items = latest.items.slice(0, latestIdx);
       invalidateSessionCache(path);
       invalidateStreamBuffer(path);
-      invalidateStreamResumeMeta(path);
       return {
         chatSessions: {
           ...s.chatSessions,

@@ -70,13 +70,14 @@ describe("AgentToolsSection", () => {
         disabled={["update_settings", "dm"]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(8);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(9);
     expect(getRow(container, "automation")).toBeTruthy();
     expect(getRow(container, "beautify")).toBeTruthy();
     expect(getRow(container, "browser")).toBeTruthy();
     expect(getRow(container, "computer")).toBeNull();
     expect(getRow(container, "office")).toBeTruthy();
     expect(getRow(container, "workflow")).toBeTruthy();
+    expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });
 
   it("hides dm row when dm is not in availableTools (single agent env)", () => {

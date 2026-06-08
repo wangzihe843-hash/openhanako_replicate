@@ -397,8 +397,8 @@ export class Scheduler {
     // 仅主巡检（onBeat 传了 xingyeConsumed）带；笺子巡检 / cron 不带。
     if (xingyeConsumed?.result) {
       const r = xingyeConsumed.result;
-      if (typeof r.summaryZh === "string" && r.summaryZh) entry.summaryZh = r.summaryZh;
-      if (typeof r.eventCount === "number") entry.consumedCount = r.eventCount;
+      if (typeof r.summaryZh === "string" && r.summaryZh) (entry as any).summaryZh = r.summaryZh;
+      if (typeof r.eventCount === "number") (entry as any).consumedCount = r.eventCount;
     }
 
     // 写入对应 agent 的 ActivityStore

@@ -19,6 +19,8 @@ export const WORKFLOW_ACTIVITY_STORE_VERSION = 1;
 export class WorkflowActivityStore {
   declare _persistPath: string | null;
   declare _entries: Map<string, any>;
+  declare _dirty: boolean;
+  declare _saveTimer: any;
 
   constructor(persistPath: any) {
     this._persistPath = persistPath || null;

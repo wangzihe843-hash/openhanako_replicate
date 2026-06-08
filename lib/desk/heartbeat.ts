@@ -1124,7 +1124,7 @@ export function createHeartbeat({
    *
    * 同步对外暴露 `triggerNow()` 给只要 fire-and-forget 的旧调用方；新代码统一走这条。
    */
-  async function runHeartbeatOnce(opts = {}) {
+  async function runHeartbeatOnce(opts: any = {}) {
     const reasonTag = opts.reason ? ` (${opts.reason})` : "";
     const now = Date.now();
     if (now - _lastTrigger < COOLDOWN) {

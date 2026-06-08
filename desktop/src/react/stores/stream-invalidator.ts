@@ -25,16 +25,11 @@ type Snapshotter = (sessionPath: string) => StreamBufferSnapshot | null;
 type SessionStreamMetaCleaner = (sessionPath: string) => void;
 
 let _invalidator: Invalidator | null = null;
-let _resumeMetaInvalidator: Invalidator | null = null;
 let _snapshotter: Snapshotter | null = null;
 let _sessionStreamMetaCleaner: SessionStreamMetaCleaner | null = null;
 
 export function registerStreamBufferInvalidator(fn: Invalidator): void {
   _invalidator = fn;
-}
-
-export function registerStreamResumeMetaInvalidator(fn: Invalidator): void {
-  _resumeMetaInvalidator = fn;
 }
 
 export function registerStreamBufferSnapshot(fn: Snapshotter): void {
@@ -53,11 +48,6 @@ export function registerSessionStreamMetaCleaner(fn: SessionStreamMetaCleaner): 
 /** 由 session 数据归属方调用：清除指定 session 的 streamBuffer 状态 */
 export function invalidateStreamBuffer(sessionPath?: string): void {
   _invalidator?.(sessionPath);
-}
-
-/** 由 session 数据归属方调用：清除指定 session 的 resume seq/去重状态 */
-export function invalidateStreamResumeMeta(sessionPath?: string): void {
-  _resumeMetaInvalidator?.(sessionPath);
 }
 
 /** 读取当前 in-flight streamBuffer 的快照；无内容或未注册时返回 null */

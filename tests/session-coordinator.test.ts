@@ -2696,6 +2696,10 @@ describe("SessionCoordinator", () => {
       messages: [{ role: "user", content: "hello" }],
     }, {})).resolves.toBe("ok");
 
+    // systemPrompt-only drift is a soft violation (fork behavior): warn, adopt the new
+    // baseline, and let the request through. agent.buildSystemPrompt embeds per-minute
+    // timestamps; strict equality on the prompt would block the chat each clock minute.
+    // Only modelHash/toolSchemaHash drift is a HARD throw (see the model-drift test below).
     await expect((session.agent.streamFn as any)(model, {
       systemPrompt: "MUTATED CACHE PREFIX",
       tools: [readTool, bashTool],
@@ -2703,8 +2707,8 @@ describe("SessionCoordinator", () => {
         { role: "user", content: "hello" },
         { role: "toolResult", content: [{ type: "text", text: "dynamic" }] },
       ],
-    }, {})).rejects.toThrow(/Cache prefix contract violated/);
-    expect(originalStreamFn).toHaveBeenCalledTimes(1);
+    }, {})).resolves.toBe("ok");
+    expect(originalStreamFn).toHaveBeenCalledTimes(2);
   });
 
   it("renews the cache prefix contract for an explicit model switch", async () => {

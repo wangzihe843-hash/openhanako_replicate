@@ -12,7 +12,7 @@ import { useStore } from '../stores';
 import { getWebSocket } from './websocket';
 import { clearChat } from '../stores/agent-actions';
 import { loadMessages } from '../stores/session-actions';
-import { registerSessionStreamMetaCleaner, registerStreamResumeMetaInvalidator } from '../stores/stream-invalidator';
+import { registerSessionStreamMetaCleaner } from '../stores/stream-invalidator';
 
 // 延迟导入，打破循环依赖
 let _handleServerMessage: ((msg: any) => void) | null = null;
@@ -40,14 +40,6 @@ type SessionStreamMeta = {
 };
 
 const _sessionStreams: Record<string, SessionStreamMeta> = {};
-
-export function invalidateSessionStreamMeta(sessionPath?: string): void {
-  if (sessionPath == null) {
-    for (const key of Object.keys(_sessionStreams)) delete _sessionStreams[key];
-    return;
-  }
-  delete _sessionStreams[sessionPath];
-}
 
 export function getSessionStreamMeta(sessionPath?: string): SessionStreamMeta | null {
   const path = sessionPath || useStore.getState().currentSessionPath;
@@ -282,6 +274,3 @@ export function replayStreamResume(msg: any): void {
   _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath);
 }
 
-registerStreamResumeMetaInvalidator((sessionPath) => {
-  invalidateSessionStreamMeta(sessionPath);
-});

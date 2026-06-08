@@ -139,6 +139,7 @@ export class Agent {
   declare _sessionFoldersTool: any;
   declare _stageFilesTool: any;
   declare _fileTool: any;
+  declare _xingyeProposeDraftTool: any;
   declare _stopTaskTool: any;
   declare _subagentCloseTool: any;
   declare _subagentReplyTool: any;

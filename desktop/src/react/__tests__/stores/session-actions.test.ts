@@ -133,6 +133,7 @@ vi.mock('../../stores/create-keyed-slice', () => ({
 vi.mock('../../stores/stream-invalidator', () => ({
   snapshotStreamBuffer: vi.fn(),
   invalidateStreamBuffer: vi.fn(),
+  clearSessionStreamMeta: vi.fn(),
   registerStreamBufferInvalidator: vi.fn(),
   registerStreamBufferSnapshot: vi.fn(),
 }));

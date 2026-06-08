@@ -10,7 +10,7 @@ import {
   type ServerConnection,
 } from '../services/server-connection';
 import { t } from './helpers';
-import { loadAgents, loadAvatars, loadSettingsSnapshot } from './actions';
+import { loadAgents, loadAvatars, loadSettingsSnapshot, loadSettingsConfig } from './actions';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SettingsNav } from './SettingsNav';
 import { Toast } from './Toast';

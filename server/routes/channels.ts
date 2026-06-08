@@ -633,7 +633,7 @@ export function createChannelsRoute(engine: any, hub: any) {
       if (!fs.existsSync(filePath)) return c.json({ error: "Channel not found" }, 404);
 
       const body = await safeJson(c);
-      const patch = {};
+      const patch: Record<string, any> = {};
       // frontmatter 是逐行 `key: value` 写的（serializeFrontmatter 不转义），所以
       // name/description 必须是单行：含换行就能注入 `members:` 等键、或用 `---` 行截断
       // frontmatter 篡改元数据。这里拒掉换行并限长。

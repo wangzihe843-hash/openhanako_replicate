@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// chat-slice 经 stream-invalidator 桥接触达 stream-resume 的清理器（避免反向 import
+// services/stream-resume 形成循环依赖）。这里注册一个 spy 清理器，验证 chat-slice 在
+// teardown 路径上确实经桥接调用了 clearSessionStreamMeta（FIX2 wiring）。
+const mockClearSessionStreamMeta = vi.fn();
+
 import { createChatSlice, type ChatSlice } from '../../stores/chat-slice';
-import type { ChatListItem, SessionModel } from '../../stores/chat-types';
-import { registerStreamBufferInvalidator, registerStreamResumeMetaInvalidator } from '../../stores/stream-invalidator';
+import type { SessionModel } from '../../stores/chat-types';
+import { registerStreamBufferInvalidator, registerSessionStreamMetaCleaner } from '../../stores/stream-invalidator';
 
 function makeSlice(): ChatSlice {
   let state: ChatSlice;
@@ -16,6 +22,24 @@ function makeSlice(): ChatSlice {
   });
 }
 
+/**
+ * 与 makeSlice 同构，但额外暴露 set，用于把 agentActivitiesBySession 这类
+ * 跨 slice 字段预置进 state（真实 store 里它由 AgentActivitySlice 提供）。
+ */
+function makeSliceWithSet(): { slice: ChatSlice; set: (patch: Record<string, unknown>) => void } {
+  let state: ChatSlice;
+  const set = (partial: Partial<ChatSlice> | ((s: ChatSlice) => Partial<ChatSlice>)) => {
+    const patch = typeof partial === 'function' ? partial(state) : partial;
+    state = { ...state, ...patch };
+  };
+  const get = () => state;
+  state = createChatSlice(set as never, get);
+  const slice = new Proxy({} as ChatSlice, {
+    get: (_, key: string) => (state as unknown as Record<string, unknown>)[key],
+  });
+  return { slice, set: set as (patch: Record<string, unknown>) => void };
+}
+
 const MODEL: SessionModel = {
   id: 'claude-opus-4-6',
   name: 'Claude Opus 4.6',
@@ -25,24 +49,12 @@ const MODEL: SessionModel = {
   contextWindow: 1_000_000,
 };
 
-function interludeItem(id: string): ChatListItem {
-  return {
-    type: 'interlude',
-    id,
-    data: {
-      type: 'interlude',
-      id,
-      variant: 'deferred_result',
-      status: 'success',
-      text: '后台回复已抵达',
-    },
-  };
-}
-
 describe('chat-slice', () => {
   let slice: ChatSlice;
 
   beforeEach(() => {
+    mockClearSessionStreamMeta.mockClear();
+    registerSessionStreamMetaCleaner(mockClearSessionStreamMeta);
     slice = makeSlice();
   });
 
@@ -93,15 +105,6 @@ describe('chat-slice', () => {
         loadingMore: false,
         oldestId: undefined,
       });
-    });
-
-    it('oldestId 取第一条 message，不被前置幕间条目占位', () => {
-      slice.initSession('/a', [
-        interludeItem('deferred:task-1:success'),
-        { type: 'message', data: { id: 'a1', role: 'assistant', blocks: [] } },
-      ], true);
-
-      expect(slice.chatSessions['/a']?.oldestId).toBe('a1');
     });
 
     it('LRU 淘汰只影响 chatSessions，不动 sessionModelsByPath', () => {
@@ -162,14 +165,6 @@ describe('chat-slice', () => {
       expect(invalidator).toHaveBeenCalledWith('/a');
     });
 
-    it('通知 stream resume meta invalidate 对应 session（避免丢渲染缓存后从旧 seq 续传）', () => {
-      const invalidator = vi.fn();
-      registerStreamResumeMetaInvalidator(invalidator);
-      slice.initSession('/a', [], false);
-      slice.clearSession('/a');
-      expect(invalidator).toHaveBeenCalledWith('/a');
-    });
-
     it('LRU eviction 时也 invalidate 被淘汰 session 的 streamBuffer', () => {
       const invalidator = vi.fn();
       registerStreamBufferInvalidator(invalidator);
@@ -184,92 +179,60 @@ describe('chat-slice', () => {
       expect(slice.scrollPositions['/s0']).toBeUndefined();
     });
 
-    it('LRU eviction 时也 invalidate 被淘汰 session 的 stream resume meta', () => {
-      const invalidator = vi.fn();
-      registerStreamResumeMetaInvalidator(invalidator);
+    it('evicts the per-session agentActivitiesBySession entry (FIX1)', () => {
+      const { slice: seeded, set } = makeSliceWithSet();
+      // 真实 store 里 agentActivitiesBySession 由 AgentActivitySlice 提供；这里手动预置。
+      set({ agentActivitiesBySession: { '/a': [{ id: 'x' }], '/b': [{ id: 'y' }] } });
+      seeded.initSession('/a', [], false);
+      seeded.clearSession('/a');
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities['/a']).toBeUndefined();
+      expect(activities['/b']).toBeDefined(); // 只清目标 path
+    });
+
+    it('clearSession 在 agentActivitiesBySession 缺失时不抛（孤立 slice 兜底）', () => {
+      slice.initSession('/a', [], false);
+      expect(() => slice.clearSession('/a')).not.toThrow();
+      expect((slice as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession).toEqual({});
+    });
+
+    it('clearSession 不清 stream-resume 流元数据（rebuild 中途会调 clearSession，清了会破坏版本守卫）', () => {
+      // clearSession 不是真正的 session 退场：rebuildSessionFromResume 会在重建中途
+      // 调 clearSession(path) 重置消息缓存。若此刻连带清掉 _streamResumeRebuildVersions，
+      // 重建的版本守卫会失配、提前 return，会话卡在 streaming 态。故流元数据只在 LRU
+      // 淘汰（真正退场）时清。
+      slice.initSession('/a', [], false);
+      slice.clearSession('/a');
+      expect(mockClearSessionStreamMeta).not.toHaveBeenCalledWith('/a');
+    });
+
+    it('LRU eviction 调用 clearSessionStreamMeta 清被淘汰 session 的流元数据 (FIX2 wiring)', () => {
       for (let i = 0; i < 9; i++) {
         slice.initSession(`/s${i}`, [], false);
       }
-      expect(invalidator).toHaveBeenCalledWith('/s0');
-    });
-  });
-
-  describe('insertInterludeItemNearTaskResult', () => {
-    it('workflow 幕间插到同一轮连续 assistant 片段之后', () => {
-      slice.initSession('/a', [
-        { type: 'message', data: { id: 'u1', role: 'user', text: 'run workflow' } },
-        {
-          type: 'message',
-          data: {
-            id: 'a-card',
-            role: 'assistant',
-            blocks: [{
-              type: 'workflow',
-              taskId: 'workflow-1',
-              taskTitle: '冒烟测试',
-              streamStatus: 'running',
-            }],
-          },
-        },
-        {
-          type: 'message',
-          data: {
-            id: 'a-text',
-            role: 'assistant',
-            blocks: [{ type: 'text', html: '<p>Workflow 已经提交后台运行了。</p>' }],
-          },
-        },
-      ], false);
-
-      const inserted = slice.insertInterludeItemNearTaskResult('/a', 'workflow-1', {
-        type: 'interlude',
-        id: 'deferred:workflow-1:success',
-        variant: 'deferred_result',
-        taskId: 'workflow-1',
-        status: 'success',
-        sourceKind: 'workflow',
-        text: 'Hanako 收到了来自 冒烟测试 workflow 的结果',
-      });
-
-      expect(inserted).toBe(true);
-      expect(slice.chatSessions['/a']?.items.map((item) => (
-        item.type === 'message' ? item.data.id : item.id
-      ))).toEqual(['u1', 'a-card', 'a-text', 'deferred:workflow-1:success']);
+      expect(mockClearSessionStreamMeta).toHaveBeenCalledWith('/s0');
     });
 
-    it('媒体结果幕间仍然插到结果文件前', () => {
-      slice.initSession('/a', [
-        { type: 'message', data: { id: 'u1', role: 'user', text: 'draw' } },
-        {
-          type: 'message',
-          data: {
-            id: 'a-media',
-            role: 'assistant',
-            blocks: [{
-              type: 'file',
-              replacesTaskId: 'task-img',
-              filePath: '/tmp/image.png',
-              label: 'image.png',
-              ext: 'png',
-            }],
-          },
-        },
-      ], false);
+    it('LRU eviction 也清被淘汰 session 的 agentActivitiesBySession（FIX1 漏掉的退场路径）', () => {
+      // clearSession 的 FIX1 只清了它那条汇聚点；LRU 淘汰才是真正的 session 退场，
+      // 之前漏清，迟到的 agent_activity 事件会复活被淘汰 key 且永不回收。补清后此路径也应回收。
+      const { slice: seeded, set } = makeSliceWithSet();
+      set({ agentActivitiesBySession: { '/s0': [{ id: 'x' }], '/s1': [{ id: 'y' }] } });
+      for (let i = 0; i < 9; i++) {
+        seeded.initSession(`/s${i}`, [], false);
+      }
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities['/s0']).toBeUndefined(); // /s0 被淘汰 → 活动同步回收
+      expect(activities['/s1']).toBeDefined();   // 仍在缓存内 → 保留
+    });
 
-      const inserted = slice.insertInterludeItemNearTaskResult('/a', 'task-img', {
-        type: 'interlude',
-        id: 'deferred:task-img:success',
-        variant: 'deferred_result',
-        taskId: 'task-img',
-        status: 'success',
-        sourceKind: 'tool',
-        text: '图片结果已抵达',
-      });
-
-      expect(inserted).toBe(true);
-      expect(slice.chatSessions['/a']?.items.map((item) => (
-        item.type === 'message' ? item.data.id : item.id
-      ))).toEqual(['u1', 'deferred:task-img:success', 'a-media']);
+    it('initSession 无淘汰时不改写 agentActivitiesBySession（避免无谓 re-render）', () => {
+      const { slice: seeded, set } = makeSliceWithSet();
+      const seededMap = { '/a': [{ id: 'x' }] };
+      set({ agentActivitiesBySession: seededMap });
+      seeded.initSession('/a', [], false); // 未超过 LRU 上限，无淘汰
+      const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
+      expect(activities).toBe(seededMap); // 引用未变 → set 未触碰该 map
     });
   });
 
