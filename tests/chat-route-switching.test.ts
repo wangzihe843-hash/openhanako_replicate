@@ -168,6 +168,57 @@ describe("chat route model switch guard", () => {
     handlers.onClose({}, ws);
   });
 
+  it("includes the active streamId on status start and finish messages", () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+    };
+    const engine = {
+      agentName: "Hana",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    subscriber?.({ type: "session_status", isStreaming: true }, "/tmp/identity-session.jsonl");
+    subscriber?.({ type: "session_status", isStreaming: false }, "/tmp/identity-session.jsonl");
+
+    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    const start = payloads.find((payload) => payload.type === "status" && payload.isStreaming === true);
+    const finish = payloads.find((payload) => payload.type === "status" && payload.isStreaming === false);
+    expect(start).toMatchObject({
+      type: "status",
+      sessionPath: "/tmp/identity-session.jsonl",
+      isStreaming: true,
+    });
+    expect(start.streamId).toEqual(expect.any(String));
+    expect(start.streamId.length).toBeGreaterThan(0);
+    expect(finish).toMatchObject({
+      type: "status",
+      sessionPath: "/tmp/identity-session.jsonl",
+      isStreaming: false,
+      streamId: start.streamId,
+    });
+
+    handlers.onClose({}, ws);
+  });
+
   it("keeps remote and host clients on the same server-side session stream", async () => {
     let createHandlers;
     let subscriber;

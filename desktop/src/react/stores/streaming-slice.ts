@@ -1,8 +1,20 @@
+export interface ActiveSessionStream {
+  streamId: string | null;
+  turnId: string | null;
+}
+
+export interface StreamingStatusIdentity {
+  streamId?: string | null;
+  turnId?: string | null;
+}
+
 export interface StreamingSlice {
   /** 所有正在 streaming 的 session path 集合（单一事实源） */
   streamingSessions: string[];
-  addStreamingSession: (path: string) => void;
-  removeStreamingSession: (path: string) => void;
+  /** 正在 streaming 的 session 身份。用于忽略旧 turn/status 迟到事件。 */
+  activeSessionStreams: Record<string, ActiveSessionStream>;
+  addStreamingSession: (path: string, identity?: StreamingStatusIdentity) => void;
+  removeStreamingSession: (path: string, identity?: StreamingStatusIdentity) => boolean;
   /** 后台 session 已完成新输出，但用户尚未切回查看。 */
   unreadOutputSessionPaths: string[];
   markSessionOutputUnread: (path: string) => void;
@@ -33,19 +45,75 @@ function cancelTimer(path: string): void {
   }
 }
 
+function normalizeIdentityPart(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function hasExplicitIdentity(identity: StreamingStatusIdentity | undefined): boolean {
+  return !!identity
+    && (Object.prototype.hasOwnProperty.call(identity, 'streamId')
+      || Object.prototype.hasOwnProperty.call(identity, 'turnId'));
+}
+
+function identitiesMatch(
+  current: ActiveSessionStream | undefined,
+  incoming: StreamingStatusIdentity | undefined,
+): boolean {
+  if (!current || !hasExplicitIdentity(incoming)) return true;
+  const currentStreamId = normalizeIdentityPart(current.streamId);
+  const incomingStreamId = normalizeIdentityPart(incoming?.streamId);
+  if (currentStreamId && incomingStreamId && currentStreamId !== incomingStreamId) return false;
+
+  const currentTurnId = normalizeIdentityPart(current.turnId);
+  const incomingTurnId = normalizeIdentityPart(incoming?.turnId);
+  if (currentTurnId && incomingTurnId && currentTurnId !== incomingTurnId) return false;
+
+  return true;
+}
+
 export const createStreamingSlice = (
   set: (partial: Partial<StreamingSlice> | ((s: StreamingSlice) => Partial<StreamingSlice>)) => void,
   get?: () => StreamingSlice,
 ): StreamingSlice => ({
   streamingSessions: [],
-  addStreamingSession: (path) => set((s) => ({
-    streamingSessions: s.streamingSessions.includes(path)
-      ? s.streamingSessions
-      : [...s.streamingSessions, path],
-  })),
-  removeStreamingSession: (path) => set((s) => ({
-    streamingSessions: s.streamingSessions.filter(p => p !== path),
-  })),
+  activeSessionStreams: {},
+  addStreamingSession: (path, identity) => set((s) => {
+    const active = s.activeSessionStreams || {};
+    const current = active[path];
+    const explicitIdentity = hasExplicitIdentity(identity);
+    return {
+      streamingSessions: s.streamingSessions.includes(path)
+        ? s.streamingSessions
+        : [...s.streamingSessions, path],
+      activeSessionStreams: {
+        ...active,
+        [path]: {
+          streamId: explicitIdentity
+            ? normalizeIdentityPart(identity?.streamId)
+            : (current?.streamId ?? null),
+          turnId: explicitIdentity
+            ? normalizeIdentityPart(identity?.turnId)
+            : (current?.turnId ?? null),
+        },
+      },
+    };
+  }),
+  removeStreamingSession: (path, identity) => {
+    let applied = true;
+    set((s) => {
+      const active = s.activeSessionStreams || {};
+      if (!identitiesMatch(active[path], identity)) {
+        applied = false;
+        return {};
+      }
+      const { [path]: _removed, ...restActive } = active;
+      return {
+        streamingSessions: s.streamingSessions.filter(p => p !== path),
+        activeSessionStreams: restActive,
+      };
+    });
+    return applied;
+  },
   unreadOutputSessionPaths: [],
   markSessionOutputUnread: (path) => set((s) => ({
     unreadOutputSessionPaths: s.unreadOutputSessionPaths.includes(path)

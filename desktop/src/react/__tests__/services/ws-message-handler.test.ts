@@ -63,6 +63,7 @@ describe('ws-message-handler applyStreamingStatus', () => {
       pendingNewSession: false,
       sessions: [],
       streamingSessions: [],
+      activeSessionStreams: {},
       unreadOutputSessionPaths: [],
       inlineErrors: {},
     } as never);
@@ -83,6 +84,22 @@ describe('ws-message-handler applyStreamingStatus', () => {
     useStore.setState({ streamingSessions: ['/focused.jsonl'] } as never);
     applyStreamingStatus(false, '/focused.jsonl');
     expect(useStore.getState().streamingSessions).toEqual([]);
+  });
+
+  it('ignores stale status=false when its streamId no longer matches the active stream', () => {
+    useStore.setState({
+      streamingSessions: ['/focused.jsonl'],
+      activeSessionStreams: {
+        '/focused.jsonl': { streamId: 'stream_new', turnId: null },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    const applied = applyStreamingStatus(false, '/focused.jsonl', { streamId: 'stream_old' });
+
+    expect(applied).toBe(false);
+    expect(useStore.getState().streamingSessions).toEqual(['/focused.jsonl']);
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
   it('isStreaming=true 时重复调用不会产生重复 path', () => {
@@ -854,6 +871,28 @@ describe('ws-message-handler turn_end side effects', () => {
 
     expect(useStore.getState().streamingSessions).toEqual([]);
     expect(useStore.getState().inputFocusTrigger).toBe(1);
+  });
+
+  it('stale status=false does not finish the newer local stream turn', () => {
+    vi.mocked(streamBufferManager.finishTurn).mockClear();
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      activeSessionStreams: {
+        '/session/a.jsonl': { streamId: 'stream_new', turnId: null },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'status',
+      sessionPath: '/session/a.jsonl',
+      streamId: 'stream_old',
+      isStreaming: false,
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual(['/session/a.jsonl']);
+    expect(streamBufferManager.finishTurn).not.toHaveBeenCalledWith('/session/a.jsonl');
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
   it('background status=false does not request input focus', () => {

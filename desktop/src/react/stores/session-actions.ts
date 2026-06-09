@@ -141,6 +141,7 @@ function clearSessionRuntimeCaches(path: string): void {
     const { [path]: _registryFiles, ...sessionRegistryFilesByPath } = s.sessionRegistryFilesByPath || {};
     const { [path]: _draft, ...drafts } = s.drafts || {};
     const { [path]: _streamMeta, ...sessionStreams } = s.sessionStreams || {};
+    const { [path]: _activeStream, ...activeSessionStreams } = s.activeSessionStreams || {};
     const { [path]: _browser, ...browserBySession } = s.browserBySession || {};
     const { [path]: _computerOverlay, ...computerOverlayBySession } = s.computerOverlayBySession || {};
     const { [path]: _scroll, ...scrollPositions } = s.scrollPositions || {};
@@ -152,6 +153,7 @@ function clearSessionRuntimeCaches(path: string): void {
       sessionRegistryFilesByPath,
       drafts,
       sessionStreams,
+      activeSessionStreams,
       browserBySession,
       computerOverlayBySession,
       scrollPositions,
@@ -378,6 +380,12 @@ export async function switchSession(path: string): Promise<void> {
     // 以服务端事实对齐当前 session 的流式状态。刷新或重连后，renderer 的本地集合可能已经过期。
     const isStreaming = data.isStreaming === true;
     const streamingSessions = reconcileStreamingSessionsForPath(state.streamingSessions, path, isStreaming);
+    const activeSessionStreams = { ...(state.activeSessionStreams || {}) };
+    if (isStreaming) {
+      activeSessionStreams[path] = activeSessionStreams[path] || { streamId: null, turnId: null };
+    } else {
+      delete activeSessionStreams[path];
+    }
 
     // 同步全局 agent 上下文
     const switchedAgent = data.agentId && data.agentId !== state.currentAgentId;
@@ -428,6 +436,7 @@ export async function switchSession(path: string): Promise<void> {
       welcomeVisible: false,
       memoryEnabled: data.memoryEnabled !== false,
       streamingSessions,
+      activeSessionStreams,
       unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
       attachedFiles: state.attachedFilesBySession[path] || [],
       deskContextAttached: false,
@@ -539,6 +548,9 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
     selectedAgentId: null,
     welcomeVisible: false,
     streamingSessions: state.streamingSessions.filter((sessionPath: string) => sessionPath !== path),
+    activeSessionStreams: Object.fromEntries(
+      Object.entries(state.activeSessionStreams || {}).filter(([sessionPath]) => sessionPath !== path),
+    ),
     unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
     attachedFiles: state.attachedFilesBySession[path] || [],
     deskContextAttached: false,

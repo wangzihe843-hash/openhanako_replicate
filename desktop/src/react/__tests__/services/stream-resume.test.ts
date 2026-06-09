@@ -46,6 +46,7 @@ describe('stream-resume', () => {
     useStore.setState({
       currentSessionPath: '/focused.jsonl',
       streamingSessions: ['/background.jsonl'],
+      activeSessionStreams: {},
       sessions: [
         { path: '/focused.jsonl', title: 'focused' },
         { path: '/background.jsonl', title: 'background' },

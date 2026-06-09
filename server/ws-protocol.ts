@@ -21,7 +21,7 @@
  *   { type: "tool_end", id?: "tool_call_id", name: "...", success: bool, details?: object }
  *   { type: "turn_end" }
  *   { type: "error", message: "..." }
- *   { type: "status", isStreaming: bool }
+ *   { type: "status", isStreaming: bool, streamId?: string|null, turnId?: string|null }
  *   { type: "session_title", title: "...", path: "..." }
  *   { type: "jian_update", content: "..." }
  *   { type: "devlog", text: "...", level: "info"|"heartbeat"|"error" }

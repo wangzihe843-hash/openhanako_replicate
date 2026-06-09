@@ -83,6 +83,7 @@ describe('ws stream lifecycle after abort', () => {
         cwd: null,
       }],
       streamingSessions: [PATH],
+      activeSessionStreams: {},
       inlineErrors: {},
       chatSessions: {},
     } as never);
