@@ -1,4 +1,4 @@
-export type XingyeTabId = 'characters' | 'chat' | 'group-chat' | 'phone' | 'moments' | 'secret-space';
+export type XingyeTabId = 'characters' | 'chat' | 'group-chat' | 'phone' | 'moments' | 'secret-space' | 'gifts';
 
 export interface XingyeTab {
   id: XingyeTabId;
@@ -50,5 +50,12 @@ export const xingyeTabs: XingyeTab[] = [
     title: '秘密空间',
     description: '角色侧隐藏内容占位区，用于承载 TA 私下保存但暂不公开的内容线索。',
     items: ['TA 的状态', 'TA 的草稿箱', 'TA 的梦境', 'TA 收藏的东西', 'TA 未发送的朋友圈', '私藏回忆'],
+  },
+  {
+    id: 'gifts',
+    label: '赠礼',
+    title: '赠礼',
+    description: '给 TA 挑一件礼物。全部世界观的礼物都可送；TA 的最爱不会被标出来，要自己试。',
+    items: ['礼物图集', '送礼反应', '送礼记录'],
   },
 ];

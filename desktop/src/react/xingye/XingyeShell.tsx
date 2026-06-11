@@ -6,6 +6,7 @@ import { ChatEntryPanel } from './ChatEntryPanel';
 import { GroupChatPanel } from './GroupChatPanel';
 import { MomentsPanel } from './MomentsPanel';
 import { SecretSpacePanel } from './SecretSpacePanel';
+import { GiftPanel } from './GiftPanel';
 import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import { enterXingyeAgentChat } from './xingye-chat-actions';
@@ -166,6 +167,8 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
             />
           ) : activeTab.id === 'secret-space' ? (
             <SecretSpacePanel agent={selectedAgent} />
+          ) : activeTab.id === 'gifts' ? (
+            <GiftPanel agent={selectedAgent} />
           ) : (
             <div className={styles.panelInner}>
               <h2 className={styles.panelTitle}>{activeTab.title}</h2>
