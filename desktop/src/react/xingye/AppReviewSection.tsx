@@ -3,6 +3,7 @@ import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import {
+  listAppReviews,
   readAppReview,
   reviewSentimentFromStars,
   saveAppReview,
@@ -11,9 +12,11 @@ import {
   type ReviewSentiment,
 } from './xingye-app-review-store';
 import {
+  computeShoppingPurchaseContext,
   generateSecondhandReviewWithAI,
   generateShoppingReviewWithAI,
 } from './xingye-review-ai';
+import { listAppEntries } from './xingye-app-entry-store';
 import { ensureSecondhandBuyerChat } from './xingye-secondhand-ai';
 
 /**
@@ -51,7 +54,16 @@ function StarRow({ stars }: { stars: number }) {
   );
 }
 
-function ReviewSideCard({ side, label }: { side: AppReviewSide; label: string }) {
+function ReviewSideCard({
+  side,
+  label,
+  purchaseCountLabel,
+}: {
+  side: AppReviewSide;
+  label: string;
+  /** 可选「已购买 N 次」小字，显示在星级旁（仅购物的买家侧传）。 */
+  purchaseCountLabel?: string;
+}) {
   const tier = reviewSentimentFromStars(side.stars);
   return (
     <div className={styles.xyReviewCard} data-testid={`xy-review-side-${side.by}`}>
@@ -59,7 +71,14 @@ function ReviewSideCard({ side, label }: { side: AppReviewSide; label: string })
         <span className={styles.xyReviewSideLabel}>{label}</span>
         <span className={`${styles.xyChip} ${TIER_CHIP_CLASS[tier]}`}>{TIER_LABEL[tier]}</span>
       </div>
-      <StarRow stars={side.stars} />
+      <div className={styles.xyReviewStarsRow}>
+        <StarRow stars={side.stars} />
+        {purchaseCountLabel ? (
+          <span className={styles.xyReviewPurchaseCount} data-testid={`xy-review-purchase-count-${side.by}`}>
+            {purchaseCountLabel}
+          </span>
+        ) : null}
+      </div>
       {side.reviewed && side.text ? (
         <p className={styles.xyReviewText}>{side.text}</p>
       ) : (
@@ -97,6 +116,8 @@ export interface ShoppingReviewSectionProps {
 export function ShoppingReviewSection({ ownerAgent, ownerProfile, entry, taDisplayName }: ShoppingReviewSectionProps) {
   const agentId = ownerAgent.id;
   const [state, setState] = useState<ReviewState>({ phase: 'loading' });
+  /** 同款（核心品类）累计购买次数；null=未算出。用于星级旁「已购买 N 次」小字。 */
+  const [purchaseCount, setPurchaseCount] = useState<number | null>(null);
   const initRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -107,8 +128,31 @@ export function ShoppingReviewSection({ ownerAgent, ownerProfile, entry, taDispl
     (async () => {
       setState({ phase: 'loading' });
       try {
-        const existing = await readAppReview(agentId, 'shopping', entry.id);
+        // 一次拉全量 entries + 已生成评价：既复用来查"本条是否已有评价"，又算复购上下文
+        // （已购买次数 + 是否复购 → 下调再评概率）。读失败优雅降级为空，不阻塞评价生成。
+        const [rows, reviews] = await Promise.all([
+          listAppEntries(agentId, 'shopping').catch(() => []),
+          listAppReviews(agentId, 'shopping').catch(() => []),
+        ]);
         if (cancelled) return;
+
+        const reviewBadByEntryId = new Set<string>();
+        for (const rec of reviews) {
+          const a = rec.sides?.find((s) => s.by === 'agent');
+          if (a?.reviewed && reviewSentimentFromStars(a.stars) === 'bad') reviewBadByEntryId.add(rec.entryId);
+        }
+        const ctx = computeShoppingPurchaseContext({
+          rows,
+          reviewBadByEntryId,
+          entryId: entry.id,
+          itemName: entry.metadata.itemName,
+          category: entry.metadata.category,
+          tags: entry.metadata.tags,
+          status: entry.metadata.status,
+        });
+        if (!cancelled) setPurchaseCount(ctx.purchaseCount);
+
+        const existing = reviews.find((r) => r.entryId === entry.id) ?? null;
         if (existing) {
           setState({ phase: 'ready', record: existing });
           return;
@@ -126,6 +170,7 @@ export function ShoppingReviewSection({ ownerAgent, ownerProfile, entry, taDispl
             content: entry.content,
             tags: entry.metadata.tags,
           },
+          repeatPurchase: ctx.repeatPurchase,
         });
         if (cancelled) return;
         const record: AppReviewRecord = {
@@ -152,6 +197,7 @@ export function ShoppingReviewSection({ ownerAgent, ownerProfile, entry, taDispl
   const sellerName = entry.metadata.seller?.trim() || '店家';
   const agentSide = state.phase === 'ready' ? state.record.sides.find((s) => s.by === 'agent') : null;
   const sellerReply = state.phase === 'ready' ? state.record.sellerReply : null;
+  const purchaseCountLabel = purchaseCount != null && purchaseCount >= 1 ? `已购买 ${purchaseCount} 次` : undefined;
 
   return (
     <div className={styles.xyDetailSection} data-testid={`phone-shopping-review-${entry.id}`}>
@@ -162,7 +208,11 @@ export function ShoppingReviewSection({ ownerAgent, ownerProfile, entry, taDispl
         <p className={styles.phoneAppHint} role="alert" style={{ margin: 0 }}>评价生成失败：{state.message}</p>
       ) : agentSide ? (
         <>
-          <ReviewSideCard side={agentSide} label={`${taDisplayName || 'TA'} 的评价`} />
+          <ReviewSideCard
+            side={agentSide}
+            label={`${taDisplayName || 'TA'} 的评价`}
+            purchaseCountLabel={purchaseCountLabel}
+          />
           {sellerReply ? (
             <div className={styles.xyReviewSellerReply} data-testid={`phone-shopping-review-seller-reply-${entry.id}`}>
               <span className={styles.xyReviewSellerReplyLabel}>{sellerName} 回复：</span>

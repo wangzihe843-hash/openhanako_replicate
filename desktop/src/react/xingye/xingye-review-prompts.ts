@@ -109,12 +109,22 @@ export function buildShoppingReviewPrompt(args: {
     content?: string;
     tags?: string[];
   };
+  /**
+   * 周期性补货品的复购信号（仅"已收到的消耗品、且之前买过同款"才传；见 computeShoppingPurchaseContext）。
+   * 用来**下调再次写评价的概率**——老顾客对用惯的东西通常懒得反复评。不传 → 按原逻辑判定是否评价。
+   */
+  repeatPurchase?: {
+    /** 这是同一核心品类的第几次购买（≥2）。 */
+    purchaseCount: number;
+    /** 之前几次里有没有「不满」信号（差评 / 退货）。false = 之前都好评 / 中评 / 没评。 */
+    priorDissatisfied: boolean;
+  };
   stableLoreBlock: string;
   keywordLoreBlock: string;
   recentSceneBlock: string;
   relationshipBlock: string;
 }): string {
-  const { agent, userName, profile, entry } = args;
+  const { agent, userName, profile, entry, repeatPurchase } = args;
   const currentUserName = userName?.trim() || '用户';
   const currentAgentName = profile?.displayName?.trim() || agent.name || '当前角色';
   const speakerContextBlock = formatXingyeSpeakerContextForPrompt({
@@ -143,6 +153,18 @@ export function buildShoppingReviewPrompt(args: {
     `- sellerReply = 店家「${sellerName}」针对**差评**的道歉小作文候选（客服腔："很抱歉给您带来不好的购物体验…我们会…"）。`,
     '  **无论 agent 是不是差评都要给一段** sellerReply 候选（调用方只在 TA 差评时按概率采用，其余情况丢弃）。',
     '  长度 20–70 字，官方客服话术感，礼貌克制，不甩锅、不真发优惠券链接、不写联系方式。',
+    ...(repeatPurchase && !isReturned
+      ? [
+        '',
+        `- **复购信号**：这已经是 TA 第 ${repeatPurchase.purchaseCount} 次买这件周期性补货的东西了`
+        + (repeatPurchase.priorDissatisfied ? '（前几次还出过不满）。' : '（前几次都没什么不满）。'),
+        repeatPurchase.priorDissatisfied
+          ? '  老毛病若这次还在，TA 可能又要吐槽；按 reason / content 判断这次到底好没好，别无脑好评。'
+          : '  老顾客对用惯的东西通常懒得反复写评价——**reviewed 更倾向 false**（买了就买了、不特地评），'
+            + '除非这次特别惊喜或特别翻车才评。',
+        '  （这条只下调"是否评价"的概率，不推翻上面"话痨 / 爱分享 / 在意返现的人设仍可能条条都评"的判断。）',
+      ]
+      : []),
     '',
     '输出 JSON schema（仅此结构，字段名必须一致）：',
     JSON.stringify(

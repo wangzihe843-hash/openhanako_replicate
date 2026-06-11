@@ -15,6 +15,7 @@ vi.mock('./xingye-storage-api', () => ({
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
 import {
+  computeShoppingPurchaseContext,
   generateSecondhandReviewWithAI,
   generateShoppingReviewWithAI,
   normalizeReviewSide,
@@ -238,6 +239,143 @@ describe('buildShoppingReviewPrompt', () => {
     expect(prompt).toContain('已退掉');
     // 默认好评：reviewed=false 留空 text 的约定要写进 prompt
     expect(prompt).toContain('reviewed:false');
+  });
+
+  it('injects the repeat-purchase down-nudge for a received consumable, but not for returns', () => {
+    const received = buildShoppingReviewPrompt({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      entry: { itemName: '牙膏', status: 'received', seller: '光阴杂货', category: '日用' },
+      repeatPurchase: { purchaseCount: 3, priorDissatisfied: false },
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      recentSceneBlock: '',
+      relationshipBlock: '',
+    });
+    expect(received).toContain('复购信号');
+    expect(received).toContain('第 3 次');
+    expect(received).toContain('reviewed 更倾向 false');
+
+    // returned 的不注入复购下调（退货评价语境不同）
+    const returned = buildShoppingReviewPrompt({
+      agent: { id: 'a', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      entry: { itemName: '牙膏', status: 'returned', seller: '光阴杂货', category: '日用' },
+      repeatPurchase: { purchaseCount: 3, priorDissatisfied: false },
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      recentSceneBlock: '',
+      relationshipBlock: '',
+    });
+    expect(returned).not.toContain('复购信号');
+  });
+});
+
+describe('computeShoppingPurchaseContext', () => {
+  const NOW = Date.parse('2026-06-11T00:00:00.000Z');
+  const daysAgoIso = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
+  type Row = Parameters<typeof computeShoppingPurchaseContext>[0]['rows'][number];
+  const row = (
+    id: string,
+    itemName: string,
+    extra: { category?: string; status?: string; daysAgo?: number } = {},
+  ): Row => ({
+    id,
+    title: itemName,
+    createdAt: daysAgoIso(extra.daysAgo ?? 0),
+    metadata: {
+      itemName,
+      ...(extra.category ? { category: extra.category } : {}),
+      ...(extra.status ? { status: extra.status } : {}),
+      occurredAt: daysAgoIso(extra.daysAgo ?? 0),
+    },
+  });
+
+  it('counts same-core purchases and flags a clean repeat (prior not dissatisfied)', () => {
+    const rows = [
+      row('p1', '黑色牙膏', { category: '日用', daysAgo: 90 }),
+      row('p2', '白色牙膏', { category: '日用', daysAgo: 40 }),
+      row('p3', '牙膏', { category: '日用', daysAgo: 1 }),
+    ];
+    const ctx = computeShoppingPurchaseContext({
+      rows,
+      entryId: 'p3',
+      itemName: '牙膏',
+      category: '日用',
+      status: 'received',
+    });
+    expect(ctx.purchaseCount).toBe(3);
+    expect(ctx.repeatPurchase).toEqual({ purchaseCount: 3, priorDissatisfied: false });
+  });
+
+  it('marks priorDissatisfied when an earlier same-core purchase was returned or badly reviewed', () => {
+    const rows = [
+      row('p1', '洗发水', { category: '日用', status: 'returned', daysAgo: 70 }),
+      row('p2', '洗发水', { category: '日用', daysAgo: 1 }),
+    ];
+    const ctx = computeShoppingPurchaseContext({
+      rows,
+      reviewBadByEntryId: new Set<string>(),
+      entryId: 'p2',
+      itemName: '洗发水',
+      category: '日用',
+      status: 'received',
+    });
+    expect(ctx.repeatPurchase?.priorDissatisfied).toBe(true);
+
+    const ctxBad = computeShoppingPurchaseContext({
+      rows: [
+        row('b1', '猫粮', { category: '日用', daysAgo: 60 }),
+        row('b2', '猫粮', { category: '日用', daysAgo: 1 }),
+      ],
+      reviewBadByEntryId: new Set<string>(['b1']),
+      entryId: 'b2',
+      itemName: '猫粮',
+      category: '日用',
+      status: 'received',
+    });
+    expect(ctxBad.repeatPurchase?.priorDissatisfied).toBe(true);
+  });
+
+  it('does not flag repeat for durables, first purchases, or returns (but still counts)', () => {
+    // 耐用品：多次同款仍计数，但不下调评价
+    const durable = computeShoppingPurchaseContext({
+      rows: [
+        row('d1', '台灯', { category: '家具', daysAgo: 30 }),
+        row('d2', '台灯', { category: '家具', daysAgo: 1 }),
+      ],
+      entryId: 'd2',
+      itemName: '台灯',
+      category: '家具',
+      status: 'received',
+    });
+    expect(durable.purchaseCount).toBe(2);
+    expect(durable.repeatPurchase).toBeUndefined();
+
+    // 首购消耗品：无更早同款 → 不下调
+    const first = computeShoppingPurchaseContext({
+      rows: [row('f1', '牙膏', { category: '日用', daysAgo: 1 })],
+      entryId: 'f1',
+      itemName: '牙膏',
+      category: '日用',
+      status: 'received',
+    });
+    expect(first.purchaseCount).toBe(1);
+    expect(first.repeatPurchase).toBeUndefined();
+
+    // 本条是退货：不下调（退货评价语境不同）
+    const ret = computeShoppingPurchaseContext({
+      rows: [
+        row('r1', '牙膏', { category: '日用', daysAgo: 60 }),
+        row('r2', '牙膏', { category: '日用', status: 'returned', daysAgo: 1 }),
+      ],
+      entryId: 'r2',
+      itemName: '牙膏',
+      category: '日用',
+      status: 'returned',
+    });
+    expect(ret.purchaseCount).toBe(2);
+    expect(ret.repeatPurchase).toBeUndefined();
   });
 });
 

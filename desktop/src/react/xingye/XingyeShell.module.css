@@ -8502,6 +8502,12 @@
   color: var(--xy-ink-soft);
 }
 
+.xyReviewStarsRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .xyReviewStars {
   display: inline-block;
   font-size: 14px;
@@ -8512,6 +8518,12 @@
 
 .xyReviewStarsEmpty {
   color: var(--xy-slate-bg);
+}
+
+.xyReviewPurchaseCount {
+  font-size: 11px;
+  color: var(--xy-ink-mute);
+  white-space: nowrap;
 }
 
 .xyReviewText {

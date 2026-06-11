@@ -9,6 +9,7 @@ import type {
   AppReviewSide,
   ReviewSentiment,
 } from './xingye-app-review-store';
+import { extractItemCoreType, isRepurchasableConsumable } from './xingye-item-dedupe';
 import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
@@ -318,6 +319,81 @@ export function normalizeShoppingReviewResult(raw: unknown): ShoppingReviewResul
   return { sides: [agentSide], sellerReply: resolveSellerReply(agentSide, aiCandidate) };
 }
 
+// ── 复购上下文（购买次数徽标 + 下调再评概率）──
+
+type PurchaseContextRow = {
+  id: string;
+  title: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+
+function purchaseRowMs(row: PurchaseContextRow): number {
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  const occurred = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
+  const t = Date.parse(occurred);
+  return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+}
+
+function purchaseRowItemName(row: PurchaseContextRow): string {
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  return typeof meta.itemName === 'string' && meta.itemName.trim() ? meta.itemName.trim() : row.title;
+}
+
+export type ShoppingPurchaseContext = {
+  /** 同一核心品类（含本条）的累计购买次数，≥1；用于「已购买 N 次」徽标。 */
+  purchaseCount: number;
+  /**
+   * 复购信号；仅在「本条是已收到的消耗品、且之前买过同款」时存在，喂给评价 prompt 下调再评概率。
+   * 退货 / 耐用品 / 首次购买 → undefined（不下调）。
+   */
+  repeatPurchase?: { purchaseCount: number; priorDissatisfied: boolean };
+};
+
+/**
+ * 纯函数：从全量购物 entries 计算本条 entry 的「购买次数 + 是否复购」上下文。
+ *
+ *  - purchaseCount = 同核心品类（extractItemCoreType 折叠变体）的 entry 数；徽标永远显示。
+ *  - repeatPurchase 仅当：本条是**已收到的消耗品** 且 存在**早于本条**的同款购买。
+ *    priorDissatisfied = 之前任一次同款是退货 或 被打了差评（reviewBadByEntryId）。
+ *
+ * 退货状态本身不下调评价概率（退货评价语境不同），耐用品 / 首购也不下调。
+ */
+export function computeShoppingPurchaseContext(params: {
+  rows: ReadonlyArray<PurchaseContextRow>;
+  /** agent(买家) 侧被判差评的 entryId 集合（懒生成、缺失即视作非差评）。 */
+  reviewBadByEntryId?: ReadonlySet<string>;
+  entryId: string;
+  itemName: string;
+  category?: string;
+  tags?: string[];
+  status: string;
+}): ShoppingPurchaseContext {
+  const core = extractItemCoreType(params.itemName || '');
+  if (!core) return { purchaseCount: 1 };
+
+  const sameCore = params.rows.filter((r) => extractItemCoreType(purchaseRowItemName(r)) === core);
+  const purchaseCount = Math.max(1, sameCore.length);
+
+  const self = params.rows.find((r) => r.id === params.entryId);
+  const selfMs = self ? purchaseRowMs(self) : Number.POSITIVE_INFINITY;
+  // 早于本条的同款（同分钟也算"之前"，用 <=；排除自身 id）。
+  const prior = sameCore.filter((r) => r.id !== params.entryId && purchaseRowMs(r) <= selfMs);
+
+  const eligible =
+    prior.length > 0 &&
+    params.status !== 'returned' &&
+    isRepurchasableConsumable(params.category, params.tags);
+  if (!eligible) return { purchaseCount };
+
+  const priorDissatisfied = prior.some((r) => {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>;
+    if (meta.status === 'returned') return true;
+    return params.reviewBadByEntryId?.has(r.id) ?? false;
+  });
+  return { purchaseCount, repeatPurchase: { purchaseCount, priorDissatisfied } };
+}
+
 export async function generateShoppingReviewWithAI(params: {
   agent: Agent;
   ownerProfile: XingyeRoleProfile | null | undefined;
@@ -331,10 +407,12 @@ export async function generateShoppingReviewWithAI(params: {
     content?: string;
     tags?: string[];
   };
+  /** 周期补货复购信号（仅复购的消耗品才传）；下调再次写评价的概率。见 computeShoppingPurchaseContext。 */
+  repeatPurchase?: { purchaseCount: number; priorDissatisfied: boolean };
   userName?: string;
   timeoutMs?: number;
 }): Promise<ShoppingReviewResult> {
-  const { agent, ownerProfile, entry } = params;
+  const { agent, ownerProfile, entry, repeatPurchase } = params;
   const timeoutMs = params.timeoutMs ?? 60_000;
   const userName = await resolveXingyeSpeakerUserName(params.userName);
 
@@ -350,6 +428,7 @@ export async function generateShoppingReviewWithAI(params: {
     userName,
     profile: ownerProfile,
     entry,
+    repeatPurchase,
     ...blocks,
   });
 
