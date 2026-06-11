@@ -191,7 +191,16 @@ export function generateChannelId(customId?) {
  * @param {string} [opts.intro] - 频道介绍（作为第一条系统消息）
  * @returns {{ filePath: string, id: string }}
  */
-export async function createChannel(channelsDir, { id, name, description, members, intro }) {
+export async function createChannel(
+  channelsDir,
+  { id, name, description, members, intro }: {
+    id?: string;
+    name?: string;
+    description?: string;
+    members: string[];
+    intro?: string;
+  },
+) {
   await fsp.mkdir(channelsDir, { recursive: true });
   const channelId = id ? (id.startsWith("ch_") ? id : `ch_${id}`) : generateChannelId();
   const filePath = path.join(channelsDir, `${channelId}.md`);

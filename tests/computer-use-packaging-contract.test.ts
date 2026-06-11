@@ -52,11 +52,12 @@ describe("Computer Use packaging contract", () => {
       path.resolve(".github", "workflows", "build.yml"),
       "utf8",
     );
-    const workflow = yaml.load(workflowText);
+    // yaml.load 返回 unknown/any；workflow YAML 没有 schema，测试里按动态结构访问即可。
+    const workflow = yaml.load(workflowText) as any;
 
     // 找跑 macOS 打包的 job：在 jobs 里挑包含 `npx electron-builder --mac` 的那个 step 所在的 job。
     // 这样不硬编码 job 名，将来重命名也不会脆断。
-    const jobs = workflow.jobs ?? {};
+    const jobs: Record<string, any> = workflow?.jobs ?? {};
     const macJobEntry = Object.entries(jobs).find(([, job]) =>
       Array.isArray(job?.steps) &&
       job.steps.some((step) => typeof step?.run === "string" && step.run.includes("npx electron-builder --mac")),

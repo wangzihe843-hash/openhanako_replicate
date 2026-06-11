@@ -25,6 +25,8 @@ function writeSkill(root, name, description) {
     description,
     filePath,
     baseDir: dir,
+    // 运行时由 frontmatter 解析得到；测试里手动挂载来模拟 override 路径。
+    displayNames: undefined as Record<string, string> | undefined,
   };
 }
 

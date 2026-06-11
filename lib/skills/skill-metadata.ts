@@ -45,7 +45,7 @@ function frontmatterMetadata(parsed) {
  */
 function normalizeDisplayNames(parsed) {
   const metadata = frontmatterMetadata(parsed);
-  const out = {};
+  const out: Record<string, string> = {};
   for (const lang of DISPLAY_NAME_LANG_KEYS) {
     const key = `display-name-${lang}`;
     const value = metadata[key] ?? parsed?.[key];
@@ -75,13 +75,13 @@ function normalizeDefaultEnabled(parsed) {
  * 引号穿透等）时整条 skill 直接消失在 UI 里、无 log 可查。第三个参数 `onError`
  * 让 caller 接到错误（典型用法：传一个 logger 的 warn），便于排查。
  */
-export function parseSkillMetadata(content, fallbackName = "", onError) {
+export function parseSkillMetadata(content, fallbackName = "", onError?: (err: any) => void) {
   const meta = {
     name: fallbackName,
     description: "",
     disableModelInvocation: false,
     defaultEnabled: true,
-    displayNames: {},
+    displayNames: {} as Record<string, string>,
   };
 
   if (typeof content !== "string" || !content.startsWith("---")) return meta;

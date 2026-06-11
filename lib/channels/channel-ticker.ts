@@ -82,6 +82,15 @@ export function createChannelTicker({
   onEvent,
   random = Math.random,
   isEnabled = () => true,
+}: {
+  channelsDir: string;
+  agentsDir: string;
+  getAgentOrder: () => string[];
+  executeCheck: (...args: any[]) => Promise<{ replied: boolean; replyContent?: string; passed?: boolean }>;
+  onMemorySummarize: (...args: any[]) => void | Promise<void>;
+  onEvent?: (event: string, data?: any) => void;
+  random?: () => number;
+  isEnabled?: () => boolean;
 }) {
   const DEFAULT_REMINDER_INTERVAL_MINUTES = 31;
   const PAUSE_MS = DEFAULT_REMINDER_INTERVAL_MINUTES * 60 * 1000;
