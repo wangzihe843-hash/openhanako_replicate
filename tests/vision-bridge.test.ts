@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   VisionBridge,
   VISUAL_PRIMITIVES_END,
@@ -15,6 +15,14 @@ const JPEG_BASE64 = "/9j/2wBD";
 const image = { type: "image", data: PNG_BASE64, mimeType: "image/png" };
 const pathA = "/tmp/upload-a.png";
 const tempDirs = [];
+// 会话 sidecar 会真实落盘到 path.dirname(sessionPath)；硬编码的 "/tmp/..." 在
+// Windows 上解析为不可创建的盘根 D:\tmp，导致 mkdirSync EPERM。统一改用 os.tmpdir()
+// 下的可写临时根（与本文件既有的 makeTempDir 同源），basename 保持不变以维持各测试
+// 间通过 sessionNotesKey 共享/区分 sidecar 的语义。
+const tmpSessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-vb-sessions-"));
+const sessionMain = path.join(tmpSessionRoot, "session.jsonl");
+const sessionA = path.join(tmpSessionRoot, "a.jsonl");
+const sessionB = path.join(tmpSessionRoot, "b.jsonl");
 
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-vision-bridge-"));
@@ -48,12 +56,15 @@ describe("VisionBridge", () => {
       fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
     }
   });
+  afterAll(() => {
+    fs.rmSync(tmpSessionRoot, { recursive: true, force: true });
+  });
 
   it("analyzes text-only model images and registers notes by attachment path", async () => {
     const { bridge, callText } = makeBridge();
 
     const result = await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -68,7 +79,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is this?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
 
     expect(injected.messages[0].content[0].text).toContain(VISION_CONTEXT_START);
     expect(injected.messages[0].content[0].text).toContain("image_overview");
@@ -312,7 +323,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhere is the error?`,
       images: [image],
@@ -326,7 +337,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhere is the error?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
     const text = injected.messages[0].content[0].text;
     expect(text).toContain(VISUAL_PRIMITIVES_START);
     expect(text).toContain('coord="norm-1000"');
@@ -367,7 +378,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhere should I click to save?`,
       images: [image],
@@ -380,7 +391,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhere should I click to save?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
     const text = injected.messages[0].content[0].text;
     expect(text).toContain("box: [710, 820, 930, 890]");
     expect(text).toContain("point: [320, 240]");
@@ -418,7 +429,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat should I interact with?`,
       images: [image],
@@ -431,7 +442,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat should I interact with?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
     const text = injected.messages[0].content[0].text;
     expect(text).toContain("point: [840, 310]");
     expect(text).toContain("box: [180, 270, 760, 350]");
@@ -466,7 +477,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is on screen?`,
       images: [image],
@@ -475,7 +486,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is on screen?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
     const text = injected.messages[0].content[0].text;
     expect(text).toContain(VISUAL_PRIMITIVES_START);
     expect(text).toContain('grounding="unavailable"');
@@ -491,7 +502,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -504,7 +515,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is this?` }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
     expect(injected.messages[0].content[0].text).not.toContain(VISUAL_PRIMITIVES_START);
   });
 
@@ -517,7 +528,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -542,7 +553,7 @@ describe("VisionBridge", () => {
     });
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -556,7 +567,7 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     const result = await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "gpt-4o", provider: "openai", input: ["text", "image"] },
       text: "what is this?",
       images: [image],
@@ -574,7 +585,7 @@ describe("VisionBridge", () => {
     });
 
     await expect(bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "what is this?",
       images: [image],
@@ -586,14 +597,14 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     await bridge.prepare({
-      sessionPath: "/tmp/a.jsonl",
+      sessionPath: sessionA,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
       imageAttachmentPaths: [pathA],
     });
     await bridge.prepare({
-      sessionPath: "/tmp/b.jsonl",
+      sessionPath: sessionB,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "[attached_image: /tmp/other.png]\nwhat is this?",
       images: [image],
@@ -607,14 +618,14 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     await bridge.prepare({
-      sessionPath: "/tmp/a.jsonl",
+      sessionPath: sessionA,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nhow many kittens are there?`,
       images: [image],
       imageAttachmentPaths: [pathA],
     });
     await bridge.prepare({
-      sessionPath: "/tmp/b.jsonl",
+      sessionPath: sessionB,
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "[attached_image: /tmp/other.png]\nwhat color is the blanket?",
       images: [image],
@@ -650,7 +661,7 @@ describe("VisionBridge", () => {
       imageAttachmentPaths: [pathA],
     };
 
-    await bridge.prepare({ ...payload, sessionPath: "/tmp/a.jsonl" });
+    await bridge.prepare({ ...payload, sessionPath: sessionA });
     model = {
       id: "qwen3-vl-plus",
       provider: "dashscope",
@@ -663,7 +674,7 @@ describe("VisionBridge", () => {
         boxOrder: "xyxy",
       },
     } as any;
-    await bridge.prepare({ ...payload, sessionPath: "/tmp/b.jsonl" });
+    await bridge.prepare({ ...payload, sessionPath: sessionB });
 
     expect(callText).toHaveBeenCalledTimes(2);
   });
@@ -673,7 +684,7 @@ describe("VisionBridge", () => {
     const targetModel = { id: "deepseek-chat", provider: "deepseek", input: ["text"] };
 
     await bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionMain,
       targetModel,
       text: `[attached_image: ${pathA}]\nfirst question`,
       images: [image],
@@ -684,7 +695,7 @@ describe("VisionBridge", () => {
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nfirst question` }] },
       { role: "assistant", content: [{ type: "text", text: "reply" }] },
       { role: "user", content: [{ type: "text", text: "follow-up" }] },
-    ], "/tmp/session.jsonl");
+    ], sessionMain);
 
     expect(result.injected).toBe(1);
     expect(result.messages[0].content[0].text).toContain(VISION_CONTEXT_START);
