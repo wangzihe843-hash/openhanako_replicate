@@ -21,15 +21,17 @@ import {
 } from './lore-studio-api';
 import { applyLoreEntries, flattenProfilePatch } from './lore-studio-apply';
 import { emptyStudioSession, loadStudioSession, saveStudioSession } from './lore-studio-session';
-import type {
-  StudioAppliedResult,
-  StudioMessage,
-  StudioPeerCandidate,
-  StudioPlanLoreEntry,
-  StudioPlanTurn,
-  StudioProfileField,
-  StudioQuestionsTurn,
-  StudioSession,
+import {
+  STUDIO_YUAN_OPTIONS,
+  type StudioAppliedResult,
+  type StudioMessage,
+  type StudioPeerCandidate,
+  type StudioPlanLoreEntry,
+  type StudioPlanTurn,
+  type StudioProfileField,
+  type StudioQuestionsTurn,
+  type StudioSession,
+  type StudioYuanKey,
 } from './lore-studio-types';
 
 interface LoreStudioDrawerProps {
@@ -192,6 +194,7 @@ export function LoreStudioDrawer({
         displayName,
         relationshipLabel,
         shortBio,
+        currentYuan: agent.yuan,
         existingProfile,
         existingLoreAnchors: toLoreAnchors(loreEntries),
         backgroundStory,
@@ -274,6 +277,14 @@ export function LoreStudioDrawer({
     });
   }
 
+  /** 改/移除方案里的思维底座建议；undefined = 保持当前（确认时不动 config），同时清掉过时理由。 */
+  function updateDraftYuan(yuan: StudioYuanKey | undefined) {
+    setSession((s) => {
+      if (!s.draftPlan) return s;
+      return { ...s, draftPlan: { ...s.draftPlan, yuan, ...(yuan === undefined ? { yuanRationale: undefined } : {}) } };
+    });
+  }
+
   async function handleConfirm() {
     const plan = session.draftPlan;
     if (!plan) return;
@@ -284,6 +295,7 @@ export function LoreStudioDrawer({
       profilePatch: flattenProfilePatch(plan.profilePatch),
       corruptionTendency: plan.corruptionTendency,
       corruptionSeed: plan.corruptionSeed,
+      yuan: plan.yuan,
     });
     // 确认后这个新角色不再是「刚分出来待微调」状态，清掉 peerContext。
     setSession((s) => ({ ...s, phase: 'done', peerContext: undefined }));
@@ -295,9 +307,10 @@ export function LoreStudioDrawer({
     const linkedContactNames = getVirtualContacts(agent.id)
       .filter((c) => typeof c.linkedAgentId === 'string' && c.linkedAgentId.trim() !== '')
       .map((c) => c.displayName);
+    const otherAgentNames = agents.filter((a) => a.id !== agent.id).map((a) => a.name);
     const scan = scanPeerUpgradeCandidates({
       loreEntries: freshLore,
-      agentNames: agents.filter((a) => a.id !== agent.id).map((a) => a.name),
+      agentNames: otherAgentNames,
       linkedContactNames,
     });
     if (!scan.candidates.length) {
@@ -321,6 +334,10 @@ export function LoreStudioDrawer({
         transcript: toWireTranscript(session.messages),
         mode: 'peer-suggest',
         peerCandidateNames: scan.candidates.map((c) => c.name),
+        // 别名兜底：确定性扫描只挡得住同名/包含，候选若是已有角色的绰号/旧称要靠模型据名单排除。
+        existingAgentNames: Array.from(
+          new Set([...otherAgentNames, ...linkedContactNames].map((n) => n.trim()).filter(Boolean)),
+        ),
       });
       if (turn.type === 'peer-suggestions' && turn.candidates.length) {
         setPeerSuggestions(turn.candidates);
@@ -423,11 +440,14 @@ export function LoreStudioDrawer({
             />
           ))}
 
-          {session.draftPlan && session.draftPlan.loreEntries.length + (session.draftPlan.profilePatch?.length ?? 0) > 0 && (
+          {session.draftPlan &&
+            session.draftPlan.loreEntries.length + (session.draftPlan.profilePatch?.length ?? 0) + (session.draftPlan.yuan ? 1 : 0) > 0 && (
             <PlanCard
               plan={session.draftPlan}
+              currentYuan={agent.yuan}
               onUpdateEntry={updateDraftEntry}
               onRemoveEntry={removeDraftEntry}
+              onUpdateYuan={updateDraftYuan}
             />
           )}
 
@@ -675,11 +695,14 @@ function MessageView({ message, isActiveQuestions, answers, onToggleOption, onSe
 
 interface PlanCardProps {
   plan: StudioPlanTurn;
+  /** 角色当前的 config.agent.yuan（可能是候选集外的 kong 等），用于「与当前一致」提示。 */
+  currentYuan?: string;
   onUpdateEntry: (index: number, patch: Partial<StudioPlanLoreEntry>) => void;
   onRemoveEntry: (index: number) => void;
+  onUpdateYuan: (yuan: StudioYuanKey | undefined) => void;
 }
 
-function PlanCard({ plan, onUpdateEntry, onRemoveEntry }: PlanCardProps) {
+function PlanCard({ plan, currentYuan, onUpdateEntry, onRemoveEntry, onUpdateYuan }: PlanCardProps) {
   // 按分类分组，保留原顺序；记录每条在原数组里的 index 以便编辑。
   const groups = useMemo(() => {
     const order: XingyeLoreCategory[] = [];
@@ -778,6 +801,46 @@ function PlanCard({ plan, onUpdateEntry, onRemoveEntry }: PlanCardProps) {
                 {p.rationale && <div className={styles.patchRationale}>理由：{p.rationale}</div>}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {plan.yuan && (
+        <div className={styles.planGroup} data-testid="studio-plan-yuan">
+          <div className={styles.planGroupLabel}>思维底座（Yuan · 确认后切换）</div>
+          <div className={styles.patchList}>
+            <div className={styles.patchItem}>
+              <div className={styles.entryRow}>
+                <select
+                  className={styles.modeSelect}
+                  data-testid="studio-plan-yuan-select"
+                  value={plan.yuan}
+                  onChange={(e) => onUpdateYuan(e.target.value as StudioYuanKey)}
+                >
+                  {STUDIO_YUAN_OPTIONS.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.removeBtn}
+                  data-testid="studio-plan-yuan-remove"
+                  onClick={() => onUpdateYuan(undefined)}
+                  aria-label="保持当前底座"
+                >
+                  保持当前
+                </button>
+              </div>
+              <div className={styles.chipDetail}>
+                {STUDIO_YUAN_OPTIONS.find((o) => o.key === plan.yuan)?.summary}
+                {currentYuan && plan.yuan === currentYuan.trim().toLowerCase()
+                  ? '（与当前一致，确认后不变）'
+                  : `（当前：${currentYuan || 'hanako'}）`}
+              </div>
+              {plan.yuanRationale && <div className={styles.patchRationale}>理由：{plan.yuanRationale}</div>}
+            </div>
           </div>
         </div>
       )}

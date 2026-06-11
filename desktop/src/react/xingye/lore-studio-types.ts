@@ -27,6 +27,19 @@ export const STUDIO_PROFILE_FIELDS = [
 
 export type StudioProfileField = (typeof STUDIO_PROFILE_FIELDS)[number];
 
+/**
+ * 工坊可建议切换的思维底座（config.agent.yuan）三选一。
+ * yuan 决定 identity/yuan/ishiki 三套模板，即 TA「思考问题的内在方式」（不是说话风格）。
+ * kong（空白底座，无内心独白协议）刻意不进候选——它没有对应的 identity 模板与视觉档案。
+ */
+export const STUDIO_YUAN_OPTIONS = [
+  { key: 'hanako', label: 'hanako · 感理兼备', summary: '感性与理性平衡：先接住情绪，也给出判断。' },
+  { key: 'butter', label: 'butter · 感性直觉', summary: '直觉与共情主导，敏锐捕捉言外之意。' },
+  { key: 'ming', label: 'ming · 理性分析', summary: '逻辑与分析主导，先拆前提再给结论。' },
+] as const;
+
+export type StudioYuanKey = (typeof STUDIO_YUAN_OPTIONS)[number]['key'];
+
 // ─────────────────────────────────────────── 模型每轮的返回 ───────────────────────────────────────────
 
 export type StudioTurnResponse =
@@ -94,6 +107,9 @@ export interface StudioPlanTurn {
   /** 阴暗面预设档位（走详情页既有的 corruptionSeed 待确认 UX）。 */
   corruptionTendency?: XingyeCorruptionTendency;
   corruptionSeed?: number;
+  /** 思维底座建议（确认后由详情页 PUT config.agent.yuan）；缺省 = 保持当前。 */
+  yuan?: StudioYuanKey;
+  yuanRationale?: string;
   notes?: string;
 }
 
@@ -152,6 +168,8 @@ export interface StudioTurnRequest {
   displayName?: string;
   relationshipLabel?: string;
   shortBio?: string;
+  /** 当前思维底座（config.agent.yuan），给模型做「保持/切换」判断的基线。 */
+  currentYuan?: string;
   existingProfile?: Record<string, unknown>;
   existingLoreAnchors?: StudioLoreAnchor[];
   backgroundStory?: string;
@@ -160,6 +178,12 @@ export interface StudioTurnRequest {
   mode?: 'extract' | 'peer-suggest';
   /** peer-suggest 模式：客户端已名字匹配出的、尚无对应 agent 的候选实体名。 */
   peerCandidateNames?: string[];
+  /**
+   * peer-suggest 模式：已是独立角色的名单（其他 agent 显示名 + 已 link 到 agent 的联系人备注名）。
+   * 确定性扫描只能挡同名/包含；候选若是名单中某人的别名/绰号/旧称，靠模型据此名单语义排除，
+   * 避免给同一个人重复建角色（同通讯录生成的 SEMANTIC_DEDUP 思路）。
+   */
+  existingAgentNames?: string[];
   /** 新角色刚从某源角色分出来时的上下文 + 已带来条目正文，驱动「微调已带来的世界观/关系」。 */
   peerContext?: StudioPeerContext;
   fineTuneEntries?: StudioFineTuneEntry[];
@@ -197,7 +221,8 @@ export const STUDIO_SESSION_RELATIVE_PATH = 'lore-studio/session.json';
 
 /**
  * 「确认写入」后抽屉回传给 RoleDetailPanel 的结果：lore 已直接落盘（给出条数），
- * 人设补丁 + corruption 提案回填到面板表单（corruptionSeed 走面板既有待确认 UX）。
+ * 人设补丁 + corruption 提案回填到面板表单（corruptionSeed 走面板既有待确认 UX），
+ * yuan 建议由面板比对当前值后经 PUT /api/agents/:id/config 落库。
  */
 export interface StudioAppliedResult {
   loreCreated: number;
@@ -205,4 +230,6 @@ export interface StudioAppliedResult {
   profilePatch: Partial<Record<StudioProfileField, string>>;
   corruptionTendency?: XingyeCorruptionTendency;
   corruptionSeed?: number;
+  /** 方案里（可能被用户改过/移除的）思维底座建议；与当前一致或缺省时面板不动 config。 */
+  yuan?: StudioYuanKey;
 }

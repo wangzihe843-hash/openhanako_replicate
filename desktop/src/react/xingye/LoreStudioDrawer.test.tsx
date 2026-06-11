@@ -128,6 +128,64 @@ describe('LoreStudioDrawer', () => {
     expect(arg.corruptionTendency).toBeUndefined();
   });
 
+  it('方案带思维底座建议：请求带 currentYuan，渲染可改的底座选择，确认回调带 yuan', async () => {
+    turnHoisted.queue = [
+      {
+        type: 'plan',
+        summary: '含底座建议的方案。',
+        loreEntries: [
+          { title: '北境秩序', content: '两族世代盟约。', category: 'worldview', insertionMode: 'keyword', keywords: ['北境'] },
+        ],
+        yuan: 'ming',
+        yuanRationale: '凡事先拆解再回应，理性主导。',
+      },
+    ];
+    const onApplied = renderDrawer();
+
+    const intro = await screen.findByPlaceholderText('粘贴完整背景故事…');
+    fireEvent.change(intro, { target: { value: '故事。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+
+    // 底座组渲染：select 预选 ming + 理由 + 当前值提示
+    await screen.findByTestId('studio-plan-yuan');
+    expect((screen.getByTestId('studio-plan-yuan-select') as HTMLSelectElement).value).toBe('ming');
+    expect(screen.getByText(/理由：凡事先拆解再回应/)).toBeInTheDocument();
+    expect(screen.getByText(/当前：hanako/)).toBeInTheDocument();
+
+    // 请求体带 currentYuan（来自 agent.yuan）
+    const turnCall = vi.mocked(hanaFetch).mock.calls.find((c) => c[0] === '/api/xingye/lore-studio/turn')!;
+    const reqBody = JSON.parse(String((turnCall[1] as RequestInit).body)) as { currentYuan?: string };
+    expect(reqBody.currentYuan).toBe('hanako');
+
+    fireEvent.click(screen.getByRole('button', { name: /确认写入/ }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
+    expect(onApplied.mock.calls[0][0].yuan).toBe('ming');
+  });
+
+  it('「保持当前」移除底座建议 → 底座组消失，确认回调不带 yuan', async () => {
+    turnHoisted.queue = [
+      {
+        type: 'plan',
+        loreEntries: [
+          { title: '北境秩序', content: '两族世代盟约。', category: 'worldview', insertionMode: 'keyword', keywords: ['北境'] },
+        ],
+        yuan: 'butter',
+      },
+    ];
+    const onApplied = renderDrawer();
+
+    const intro = await screen.findByPlaceholderText('粘贴完整背景故事…');
+    fireEvent.change(intro, { target: { value: '故事。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+
+    fireEvent.click(await screen.findByTestId('studio-plan-yuan-remove'));
+    expect(screen.queryByTestId('studio-plan-yuan')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /确认写入/ }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
+    expect(onApplied.mock.calls[0][0].yuan).toBeUndefined();
+  });
+
   it('Phase 2：确认写入后建议升级关系 → 一键生成并带过去世界观/关系 → 跳转', async () => {
     vi.mocked(hanaFetch).mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === '/api/xingye/lore-studio/turn') {
@@ -165,7 +223,10 @@ describe('LoreStudioDrawer', () => {
         shortBio=""
         existingProfile={{}}
         onApplied={vi.fn()}
-        agents={[{ id: 'agent-1', name: '林雾' }]}
+        agents={[
+          { id: 'agent-1', name: '林雾' },
+          { id: 'agent-9', name: '雪狼' },
+        ]}
         userName="阿白"
         onJumpToAgent={onJump}
       />,
@@ -181,6 +242,18 @@ describe('LoreStudioDrawer', () => {
     // peer 升级建议出现
     const genBtn = await screen.findByRole('button', { name: /一键生成并跳转/ });
     expect(screen.getAllByText(/北境军师/).length).toBeGreaterThan(0);
+
+    // peer-suggest 请求带「已是独立角色名单」（别名兜底：模型据此排除已有角色的绰号/旧称）
+    const turnCalls = vi.mocked(hanaFetch).mock.calls.filter((c) => c[0] === '/api/xingye/lore-studio/turn');
+    const peerReq = JSON.parse(String((turnCalls[turnCalls.length - 1][1] as RequestInit).body)) as {
+      mode?: string;
+      peerCandidateNames?: string[];
+      existingAgentNames?: string[];
+    };
+    expect(peerReq.mode).toBe('peer-suggest');
+    expect(peerReq.peerCandidateNames).toContain('军师·寒鸦');
+    expect(peerReq.existingAgentNames).toEqual(['雪狼']);
+
     fireEvent.click(genBtn);
 
     // 跳转到新角色

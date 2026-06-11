@@ -76,6 +76,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "files_init_entry",
   "files_batch_plan",
   "files_batch_entry",
+  "gifts_init",
 ]);
 
 const FORBIDDEN_TERMS = [
@@ -256,6 +257,12 @@ const STUDIO_LORE_CATEGORIES = new Set([
 const STUDIO_INSERTION_MODES = new Set(["always", "keyword", "manual"]);
 
 /**
+ * 工坊可建议的思维底座（config.agent.yuan）。与渲染端 STUDIO_YUAN_OPTIONS 对齐；
+ * kong（空白底座）刻意不进候选。模型给了集合外的值 → 丢弃（= 保持当前），不兜底乱切。
+ */
+const STUDIO_YUAN_KEYS = new Set(["hanako", "butter", "ming"]);
+
+/**
  * 与渲染端 defaultInsertionModeForCategory 对齐：模型漏给 / 给错 insertionMode 时按分类兜底，
  * 而不是一律落 "manual"——背景 / 关系本应 always、世界观本应 keyword，落 manual = 默认不注入（静默失效）。
  */
@@ -308,10 +315,14 @@ function renderStudioTranscript(transcript) {
 
 function buildLoreStudioPrompt(input) {
   const mode = input?.mode === "peer-suggest" ? "peer-suggest" : "extract";
+  const rawCurrentYuan = cleanString(input?.currentYuan, 32).toLowerCase();
   const context = {
     displayName: cleanString(input?.displayName, 120),
     relationshipLabel: cleanString(input?.relationshipLabel, 120),
     shortBio: cleanString(input?.shortBio, 400),
+    // 展示用：透传消毒后的原值（可能是候选集外的 kong 等）；没传时按系统默认 hanako（与 core/agent.ts 一致）。
+    // 输出侧仍只接受 STUDIO_YUAN_KEYS 三选一（见 normalizeStudioPlanTurn）。
+    currentYuan: /^[a-z0-9_-]+$/.test(rawCurrentYuan) ? rawCurrentYuan : "hanako",
     existingProfile: sanitizeStudioProfile(input?.existingProfile),
     existingLoreAnchors: Array.isArray(input?.existingLoreAnchors)
       ? input.existingLoreAnchors.slice(0, 80).map((a) => ({
@@ -328,13 +339,19 @@ function buildLoreStudioPrompt(input) {
     const candidateNames = Array.isArray(input?.peerCandidateNames)
       ? input.peerCandidateNames.map((n) => cleanString(n, 60)).filter(Boolean).slice(0, 30)
       : [];
+    // 已是独立角色的名单（其他 agent 显示名 + 已 link 联系人备注名）：客户端的确定性扫描只能挡
+    // 同名/包含，候选若是名单中某人的别名/绰号/旧称，要靠模型在这一轮语义排除，免得重复建角色
+    // （与通讯录生成 prompt 的 SEMANTIC_DEDUP_FOR_VIRTUAL_GENERATION 同思路）。
+    const existingAgentNames = Array.isArray(input?.existingAgentNames)
+      ? input.existingAgentNames.map((n) => cleanString(n, 60)).filter(Boolean).slice(0, 40)
+      : [];
     return [
       "你在帮用户判断：当前角色所在的世界里，TA 的关系 / 人物设定里提到的哪些「非用户」角色，值得被升级成「用户可以直接对话的独立角色(agent)」。",
       "给你：当前角色信息 + 既有设定库锚点 + 一组「在现有角色里还找不到对应的候选实体名」。",
       "",
       "【关键判断标准】升级后这个角色会成为用户能直接聊天的对象，所以**优先级 = 这个角色是否(会)和用户本人有互动、用户能否合理地认识或接触到 TA**：",
       "- 优先：围绕「用户 + 当前角色」日常生活的人——会和用户打照面、说得上话、或迟早会产生交集的亲友 / 同伴 / 同事 / 对手 / 邻里等。结合当前角色与用户的关系(relationshipLabel)推断谁自然会进入用户的生活圈。",
-      "- 排除(不要列)：① 纯世界观 / 历史 / 传说里的名人或背景人物——只是设定底色、不在当下生活里、用户不可能去找 TA 聊；② 只与当前角色私下相关、和用户毫无交集、也没理由认识用户的角色。",
+      "- 排除(不要列)：① 纯世界观 / 历史 / 传说里的名人或背景人物——只是设定底色、不在当下生活里、用户不可能去找 TA 聊；② 只与当前角色私下相关、和用户毫无交集、也没理由认识用户的角色；③ 实为已有角色的人——「已是独立角色名单」里的同名者已被提前筛掉，但**别名 / 绰号 / 旧称 / 代号**筛不掉：候选若疑似与名单中某人是同一个人，必须排除，不要给同一个人再建一个角色。",
       "- 数量与边界：只要存在合适的就要提（别因为保守而一个都不提）；但也别贪多——一般给 1–4 个最相关的，按「与用户互动可能性 + 重要度」排序，宁缺毋滥、但别漏掉明显该有的。",
       "- whyUpgrade 里请说清 TA 会怎样和用户产生互动 / 为什么用户会想直接和 TA 聊。",
       "",
@@ -350,6 +367,8 @@ function buildLoreStudioPrompt(input) {
       JSON.stringify(context.existingLoreAnchors, null, 2),
       "[尚无对应角色的候选实体名]",
       JSON.stringify(candidateNames, null, 2),
+      "[已是独立角色名单（含已链接到角色的联系人备注名）——别名判同后排除，不在升级范围]",
+      existingAgentNames.length ? JSON.stringify(existingAgentNames, null, 2) : "（无）",
       "[对话历史]",
       transcript,
     ].join("\n");
@@ -401,6 +420,7 @@ function buildLoreStudioPrompt(input) {
     "- 关系(relationship)：关系包含三类对象，必须分别覆盖，不要只问用户那一条：",
     "    (i) 用户与 TA 的关系；(ii) TA 与其他【具名角色 / 同世界的 peer】的关系；(iii) TA 与【配角 / NPC】的关系。",
     "- 事件 / 地点 / 组织 / 人物 / 规则：同样思路，针对模糊处提具体的二选一 / 多选一问题。",
+    "- 思维底座(见下方方案规则的 yuan)：若从背景故事看不出 TA 是感性主导、理性主导还是两者平衡，用「特定情境下 TA 的第一反应」类问题来区分（归 background 类）。例：『用户深夜带着一件搞砸的事来找 TA，TA 的第一反应是？』选项给『先安抚共情』『先拆解哪里出了问题、给办法』『先接住情绪、再帮着分析』这类可区分气质的行为。问题文案里不要出现 yuan 这种内部词。",
     "",
     "【提问输出格式】要提问时，严格返回：",
     '{"type":"questions","intro":"(可选，一句引导)","questions":[',
@@ -413,6 +433,7 @@ function buildLoreStudioPrompt(input) {
     '{"type":"plan","summary":"(一句总览)",',
     '  "loreEntries":[{"title":"...","content":"...","category":"background|worldview|relationship|event|location|organization|character|rule","insertionMode":"always|keyword|manual","keywords":["..."],"manualSuggested":false,"manualReason":"","isUpdate":false}],',
     '  "profilePatch":[{"field":"behaviorLogic","value":"...","rationale":"为什么这么改(一句)"}],',
+    '  "yuan":"hanako|butter|ming","yuanRationale":"为什么是这个底座(一句)",',
     '  "corruptionTendency":"none|latent|marked","corruptionSeed":0,"notes":"(可选)"}',
     "",
     "方案规则：",
@@ -420,6 +441,7 @@ function buildLoreStudioPrompt(input) {
     "- insertionMode 默认值按分类：背景 / 关系→always，世界观→keyword，其余→manual。但默认不要产出 manual 条目；只有当某条内容优先级确实很低时，把它标 manualSuggested:true 并写一句 manualReason 建议用户手动注入。",
     "- keyword 注入的条目必须给具体 keywords（命中词）。",
     "- profilePatch 只列你确实要改的字段，每个带一句 rationale。字段只能是：shortBio / identitySummary / backgroundSummary / personalitySummary / behaviorLogic / values / taboos / relationshipMode / speakingStyle。",
+    "- yuan（思维底座）与 yuanRationale **必填**：App 用三种内置底座决定 TA 思考问题的内在方式（注意：不是说话风格，说话风格归 speakingStyle）——hanako=感性与理性兼备（先接住情绪、也给判断）；butter=感性优先（直觉与共情主导，敏锐读言外之意）；ming=理性优先（先拆前提再推理，结论导向，不优先安抚）。按你整理出的性格选最贴的一个；当前底座见 [当前角色] 的 currentYuan，若性格与当前一致就原样返回当前值。拿不准时先用情景反应题问清（见提问策略），不要凭模糊印象切换。",
     "- corruptionTendency 与 corruptionSeed **必填**：基于你刚整理的整段背景，判断 TA 本人（只看 TA 自己——别因设定里其他角色带占有 / 善妒 / 控制欲就给 TA 套档）的黑化 / 病娇 / 强占有底色，给出档位 + 一个与之自洽的精确起点（整数 0–100）。完全没有阴暗面就 none / 0。档位基线 none=0 / latent=12 / marked=28；按强度在档内给精确值（如「比一般占有更重、但还没到病娇」给 18–22），不要跨档。这是 TA 的底色不是当下情绪，拿不准给 none / 0。",
     "- 去重：existingLoreAnchors 列了既有条目的标题 / 分类。若你要补充的其实是在更新某个已有实体，请沿用同一个 title 并标 isUpdate:true，做「更新补丁」，不要新增重复条目。",
     "- 关系 / 人物条目正文要做实体区分：写清『当前角色 ≠ 其他角色（NPC / 其他 agent）≠ 用户』分别是谁，别把对方写成主角本人；且只写**当前角色视角下所知所信**的内容，不要塞进 TA 不该知道的内幕。",
@@ -435,7 +457,7 @@ function buildLoreStudioPrompt(input) {
     "【硬性】只返回 JSON 本体，不要 Markdown 代码围栏，不要任何额外解释文字。",
     "",
     "[当前角色]",
-    JSON.stringify({ displayName: context.displayName, relationshipLabel: context.relationshipLabel, shortBio: context.shortBio }, null, 2),
+    JSON.stringify({ displayName: context.displayName, relationshipLabel: context.relationshipLabel, shortBio: context.shortBio, currentYuan: context.currentYuan }, null, 2),
     "[当前人设]",
     JSON.stringify(context.existingProfile, null, 2),
     "[既有设定库条目锚点]",
@@ -521,6 +543,13 @@ function normalizeStudioPlanTurn(parsed) {
   const turn = { type: "plan", loreEntries, profilePatch };
   const summary = clipText(parsed.summary, 400);
   if (summary) turn.summary = summary;
+  // yuan 只接受三选一；集合外（含 kong / 乱写）整段丢弃 = 保持当前底座，不做兜底猜测。
+  const rawYuan = typeof parsed.yuan === "string" ? parsed.yuan.trim().toLowerCase() : "";
+  if (STUDIO_YUAN_KEYS.has(rawYuan)) {
+    turn.yuan = rawYuan;
+    const yuanRationale = clipText(parsed.yuanRationale, 240);
+    if (yuanRationale) turn.yuanRationale = yuanRationale;
+  }
   const notes = clipText(parsed.notes, 600);
   if (notes) turn.notes = notes;
   const tendency = typeof parsed.corruptionTendency === "string" ? parsed.corruptionTendency.trim().toLowerCase() : "";
@@ -841,11 +870,13 @@ export function createXingyeRoute(engine) {
         displayName: body?.displayName,
         relationshipLabel: body?.relationshipLabel,
         shortBio: body?.shortBio,
+        currentYuan: body?.currentYuan,
         existingProfile: body?.existingProfile,
         existingLoreAnchors: body?.existingLoreAnchors,
         backgroundStory: body?.backgroundStory,
         transcript: body?.transcript,
         peerCandidateNames: body?.peerCandidateNames,
+        existingAgentNames: body?.existingAgentNames,
         peerContext: body?.peerContext,
         fineTuneEntries: body?.fineTuneEntries,
       });

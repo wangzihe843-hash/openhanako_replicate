@@ -341,6 +341,51 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(restored).toHaveTextContent('12');
   });
 
+  it('工坊方案建议切换思维底座（与当前不同）→ 确认写入后 PUT config.agent.yuan 并提示', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '边境医生', content: '长期在边境救治伤患。', category: 'background', insertionMode: 'always', keywords: [] }],
+      yuan: 'ming',
+      yuanRationale: '理性主导。',
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/config', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ agent: { yuan: 'ming' } }),
+      }));
+    });
+    expect(await screen.findByText(/思维底座已切换：hanako → ming/)).toBeInTheDocument();
+  });
+
+  it('工坊方案的思维底座与当前一致 → 不动 config', async () => {
+    mockStudioPlan({
+      type: 'plan',
+      loreEntries: [{ title: '边境医生', content: '长期在边境救治伤患。', category: 'background', insertionMode: 'always', keywords: [] }],
+      yuan: 'hanako',
+    });
+    render(
+      <RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByLabelText('星野昵称')).toBeInTheDocument());
+
+    const confirmBtn = await openStudioToPlan();
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => expect(screen.getByText(/已写入设定库/)).toBeInTheDocument());
+    const configPuts = vi.mocked(hanaFetch).mock.calls.filter(
+      (c) => c[0] === '/api/agents/agent-1/config' && (c[1] as RequestInit | undefined)?.method === 'PUT',
+    );
+    expect(configPuts).toHaveLength(0);
+  });
+
   it('工坊方案含基线黑化值（不偏离档位）→ 不弹确认层', async () => {
     mockStudioPlan({
       type: 'plan',

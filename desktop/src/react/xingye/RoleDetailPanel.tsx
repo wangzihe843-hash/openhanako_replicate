@@ -3,7 +3,7 @@ import type { Agent } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
 import { createLocalServerConnection } from '../services/server-connection';
-import { browseAgent } from '../settings/actions';
+import { browseAgent, loadAgents } from '../settings/actions';
 import { CropOverlay } from '../settings/overlays/CropOverlay';
 import { useSettingsStore } from '../settings/store';
 import {
@@ -377,6 +377,7 @@ export function RoleDetailPanel({
    * 设定工坊「确认写入」后的回填：lore 已由抽屉直接落盘；这里把人设补丁填进表单，
    * 并把 corruption 提案路由到既有的「精确黑化值待确认」弹层 UX（与原 AI 提取一致）。
    * 只设置补丁里出现的字段——未提及的字段保持不动；只有当给了 corruptionTendency 时才动黑化。
+   * yuan 建议与当前 config.agent.yuan 不同时才 PUT config 切换（用户在方案卡里已可改/保持）。
    */
   const handleStudioApplied = async (result: StudioAppliedResult) => {
     const p = result.profilePatch ?? {};
@@ -445,11 +446,35 @@ export function RoleDetailPanel({
       setPendingSeed(pending);
     }
 
+    // 思维底座：与当前不同才切换。走与「同步助手名称」相同的 PUT config 通道（服务端会校验模板存在），
+    // 失败只提示、不阻断其余回填——lore / 人设此时都已各自落盘。
+    let yuanPart = '';
+    const currentYuan = (agent.yuan || 'hanako').trim().toLowerCase();
+    if (result.yuan && result.yuan !== currentYuan) {
+      try {
+        const response = await hanaFetch(`/api/agents/${agent.id}/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: { yuan: result.yuan } }),
+        });
+        const data = await response.json();
+        if (data?.error) throw new Error(data.error);
+        yuanPart = `思维底座已切换：${currentYuan} → ${result.yuan}。`;
+        try {
+          await loadAgents();
+        } catch {
+          /* 列表刷新失败不致命，下次加载会对齐 */
+        }
+      } catch (error) {
+        yuanPart = `思维底座切换失败：${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
     const wrote = result.loreCreated + result.loreUpdated;
     const lorePart = wrote > 0 ? `已写入设定库：新增 ${result.loreCreated} 条、更新 ${result.loreUpdated} 条。` : '';
     const personaPart = Object.keys(patch).length > 0 ? '人设已保存。' : '';
     const seedPart = pending ? '黑化精确值请在上方确认。' : '';
-    setStudioStatus([lorePart, personaPart, seedPart].filter(Boolean).join(' ') || '已处理。');
+    setStudioStatus([lorePart, personaPart, seedPart, yuanPart].filter(Boolean).join(' ') || '已处理。');
   };
 
   /** 用当前面板里的（含未保存）设定值拼出黑化初始化 profile —— 重置/预览按所见即所得。 */
