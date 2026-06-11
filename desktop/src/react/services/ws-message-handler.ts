@@ -696,6 +696,14 @@ export function handleServerMessage(msg: any): void {
       break;
     }
 
+    case 'work_mode': {
+      const sp = msg.sessionPath;
+      if (!sp || sp === useStore.getState().currentSessionPath) {
+        useStore.getState().setSessionWorkMode?.(msg.enabled === true);
+      }
+      break;
+    }
+
     case 'access_mode': {
       const sp = msg.sessionPath;
       if (!sp || sp === useStore.getState().currentSessionPath) {

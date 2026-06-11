@@ -159,6 +159,19 @@
     border-color: var(--mood-border);
 }
 
+/* 工作模式开启态：用 accent 高亮，与角色扮演（默认）明显区分 */
+.work-mode-on {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.12);
+    border-color: rgba(var(--accent-rgb), 0.4);
+}
+
+.work-mode-on:hover {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.18);
+    border-color: rgba(var(--accent-rgb), 0.5);
+}
+
 .plan-mode-auto {
     color: var(--permission-auto);
     border-color: var(--permission-auto-border);

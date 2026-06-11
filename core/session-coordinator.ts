@@ -867,6 +867,7 @@ export class SessionCoordinator {
       : (agent.memoryMasterEnabled !== false && !!memoryEnabled);
     let restoredExperienceEnabled = false;
     let restoredExperimentFlags = null;
+    let restoredWorkMode = false;
     if (restore && sessionPathForMeta) {
       try {
         const metaPath = path.join(agent.sessionDir, "session-meta.json");
@@ -874,12 +875,16 @@ export class SessionCoordinator {
         const metaEntry = meta[path.basename(sessionPathForMeta)];
         restoredExperienceEnabled = metaEntry?.experienceEnabled === true;
         restoredExperimentFlags = normalizeSessionExperimentFlags(metaEntry?.experiments);
+        restoredWorkMode = metaEntry?.workMode === true;
       } catch (err) {
         if (err.code !== "ENOENT") {
           log.warn(`session-meta.json 读取 experienceEnabled 失败: ${err.message}`);
         }
       }
     }
+    // 冻结工作模式：restore 以 session-meta 为准、fresh create 默认关闭。
+    // 整会话生命周期固定，供冻结快照 / 漂移对比用同一个值（避免假能力漂移）。
+    const frozenWorkMode = restore ? restoredWorkMode : false;
     const agentHasExperienceSwitch = typeof agent.experienceEnabled === "boolean";
     const frozenExperienceEnabled = restore
       ? restoredExperienceEnabled
@@ -923,6 +928,7 @@ export class SessionCoordinator {
       planMode: initialPlanMode,
       thinkingLevel: initialThinkingLevel,
       experiments: frozenExperimentFlags,
+      workMode: frozenWorkMode,
       visibleInSessionList: visibleInSessionList === true && !restore,
     }; // pre-populated for resourceLoader proxy
     const pluginSessionMeta = normalizePluginSessionMeta({ ownerPluginId, sessionKind, sessionVisibility });
@@ -935,6 +941,7 @@ export class SessionCoordinator {
         forceExperienceEnabled: frozenExperienceEnabled,
         cwdOverride: effectiveCwd,
         targetModel: promptPatchModel,
+        workModeEnabled: frozenWorkMode,
       });
     const memoryReflectionSnapshot = (!restore && typeof agent.buildMemoryReflectionSnapshot === "function")
       ? agent.buildMemoryReflectionSnapshot({ forceMemoryEnabled: frozenMemoryEnabled })
@@ -1247,6 +1254,7 @@ export class SessionCoordinator {
             cwdOverride: effectiveCwd,
             targetModel: promptPatchModel
               || this._resolvePromptModelFromSessionManager(sessionMgr, models),
+            workModeEnabled: frozenWorkMode,
           })
           : systemPromptSnapshot;
         capabilityDrift = buildSessionCapabilityDrift({
@@ -1278,6 +1286,7 @@ export class SessionCoordinator {
       planMode: initialPlanMode,
       thinkingLevel: initialThinkingLevel,
       experiments: frozenExperimentFlags,
+      workMode: frozenWorkMode,
       toolNames: snapshotToolNames,  // null for legacy sessions (Case B), array otherwise
       activeToolDefinitions: activeToolDefinitionsFromSnapshot(allToolObjects, snapshotToolNames),
       ownerPluginId: pluginSessionMeta?.ownerPluginId || null,
@@ -1324,6 +1333,7 @@ export class SessionCoordinator {
         accessMode: initialAccessMode,
         planMode: initialPlanMode,
         thinkingLevel: initialThinkingLevel,
+        workMode: frozenWorkMode,
         promptSnapshot: promptSnapshotToWrite,
       };
       if (workspaceMount?.mountId) {
@@ -2100,6 +2110,7 @@ export class SessionCoordinator {
         xingyeWorkspaceRoot: workspaceRoot,
         userText: text,
         recentMessages: recentSessionMessageTexts(entry.session?.messages),
+        workModeEnabled: entry.workMode === true,
       });
       this._applyFinalPromptSnapshot(entry.session, runtimePrompt);
     }
@@ -2597,6 +2608,45 @@ export class SessionCoordinator {
     this._d.emitDevLog(`Permission Mode: ${label}`, "info");
   }
 
+  // ── 工作模式（按会话布尔；剥离星野角色注入 + 注入工作向 clause）──
+  // 持久化路径完全复刻 permissionMode：entry.workMode + session-meta.workMode，
+  // 实时由 promptSession 每轮 buildSystemPrompt({ workModeEnabled }) 读取。
+  getSessionWorkMode(sessionPath = this.currentSessionPath) {
+    if (!sessionPath) return false;
+    const entry = this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath);
+    return entry?.workMode === true;
+  }
+
+  _applyWorkModeToEntry(sessionPath: any, entry: any, enabled: any) {
+    const next = enabled === true;
+    entry.workMode = next;
+    this.writeSessionMeta(sessionPath, { workMode: next });
+    this._emitWorkModeChanged(next, sessionPath);
+    return { ok: true, enabled: next };
+  }
+
+  setSessionWorkMode(sessionPath: any, enabled: any) {
+    const next = enabled === true;
+    if (!sessionPath) {
+      return { ok: false, error: "session work mode requires sessionPath", enabled: false };
+    }
+    const entry = this._sessions.get(sessionPath);
+    if (!entry) {
+      const meta = this._hibernatedSessionMeta.get(sessionPath);
+      if (meta) {
+        return this._applyWorkModeToEntry(sessionPath, meta, next);
+      }
+      return { ok: false, error: "session not found", enabled: this.getSessionWorkMode(sessionPath) };
+    }
+    return this._applyWorkModeToEntry(sessionPath, entry, next);
+  }
+
+  _emitWorkModeChanged(enabled: any, sessionPath: any) {
+    const on = enabled === true;
+    this._d.emitEvent({ type: "work_mode", enabled: on }, sessionPath);
+    this._d.emitDevLog(`Work Mode: ${on ? "开" : "关"}`, "info");
+  }
+
   _emitSessionMetadataUpdated(sessionPath: any, metadata: any) {
     if (!sessionPath || !metadata || typeof metadata !== "object") return;
     this._d.emitEvent({
@@ -2759,6 +2809,7 @@ export class SessionCoordinator {
       accessMode: entry.accessMode,
       planMode: entry.planMode,
       thinkingLevel: entry.thinkingLevel,
+      workMode: entry.workMode === true,
       toolNames: Array.isArray(entry.toolNames) ? [...entry.toolNames] : entry.toolNames,
       contextUsage: entry.session?.getContextUsage?.() || null,
       hibernatedAt: Date.now(),
@@ -3201,6 +3252,7 @@ export class SessionCoordinator {
           } else if (hasSessionPermissionModeFields(metaEntry)) {
             s.permissionMode = normalizeSessionPermissionMode(metaEntry);
           }
+          s.workMode = (runtimeEntry?.workMode ?? metaEntry?.workMode) === true;
           s.pinnedAt = typeof metaEntry?.pinnedAt === "string" ? metaEntry.pinnedAt : null;
           s.projectId = typeof metaEntry?.projectId === "string" && metaEntry.projectId.trim()
             ? metaEntry.projectId.trim()

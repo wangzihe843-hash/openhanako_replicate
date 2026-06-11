@@ -537,6 +537,7 @@ export async function switchSession(path: string): Promise<void> {
     }
 
     emitSessionPermissionMode(data.permissionMode || data.accessMode);
+    useStore.getState().setSessionWorkMode?.(data.workMode === true);
     if (data.thinkingLevel) {
       useStore.getState().setThinkingLevel(data.thinkingLevel);
     }
@@ -833,6 +834,8 @@ export async function ensureSession(): Promise<boolean> {
     });
 
     emitSessionPermissionMode(data.permissionMode || data.accessMode || s.pendingNewSessionPermissionMode);
+    // 新会话默认关闭工作模式（避免上一个会话的开启态残留到新会话）。
+    useStore.getState().setSessionWorkMode?.(data.workMode === true);
 
     await loadSessions();
 

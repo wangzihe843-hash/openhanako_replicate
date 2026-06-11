@@ -341,6 +341,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // Local state
   const permissionMode = useStore(s => s.sessionPermissionMode);
   const setPermissionMode = useStore(s => s.setSessionPermissionMode);
+  const workMode = useStore(s => s.sessionWorkMode);
+  const setWorkMode = useStore(s => s.setSessionWorkMode);
   const [sending, setSending] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelected, setSlashSelected] = useState(0);
@@ -390,7 +392,20 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // 切会话也重挂。所以挂载时兑换一次即可覆盖"开新对话 / 切旧会话 / 留在原会话"所有
   // 路径——不能依赖 switchSession，它对"切回当前会话"会提前 return。
   useEffect(() => {
+    const hadStaged = useStore.getState().stagedChatQuote != null;
     useStore.getState().redeemStagedChatQuote();
+    // 从星野「去聊天」带内容进来时，该聊天自动退出工作模式（回到角色扮演）。
+    // 只在确实兑换了一条暂存引用时触发——普通挂载（无暂存）不动开关。
+    if (!hadStaged) return;
+    const sp = useStore.getState().currentSessionPath;
+    useStore.getState().setSessionWorkMode(false); // 乐观；服务端 work_mode 事件会再对齐
+    if (sp) {
+      void hanaFetch('/api/session-work-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionPath: sp, enabled: false }),
+      }).catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
@@ -1815,6 +1830,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             permissionMode={permissionMode}
             onPermissionModeChange={setPermissionMode}
             planModeLocked={inputLocked}
+            workMode={workMode}
+            onWorkModeChange={setWorkMode}
             showThinking={showThinkingControl}
             thinkingLevel={thinkingLevel}
             onThinkingChange={setThinkingLevel}

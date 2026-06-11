@@ -134,6 +134,40 @@ describe("agent Xingye lore prompt", () => {
     expect(xingyeIndex).toBeGreaterThan(memoryIndex);
   });
 
+  it("work mode strips Xingye stable + runtime lore and injects the work-mode + ui_context clauses", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    writeManagedLore(agentDir);
+    writeWorkspaceRuntimeLore(root, [runtimeLore()]);
+
+    const workPrompt = agent.buildSystemPrompt({
+      workModeEnabled: true,
+      xingyeWorkspaceRoot: root,
+      userText: "Can we go to the observatory?",
+    });
+
+    // 角色注入被剥离
+    expect(workPrompt).not.toContain("# 星野核心设定");
+    expect(workPrompt).not.toContain("Stable Xingye lore summary.");
+    expect(workPrompt).not.toContain("# 星野设定参考");
+    // 工作向 clause 注入
+    expect(workPrompt).toContain("## Work Mode");
+    expect(workPrompt).toContain("## Visible UI Context");
+    // 基础人格层（pinned/记忆）保留
+    expect(workPrompt).toContain("Pinned memory stays.");
+    expect(workPrompt).toContain("Compiled memory stays.");
+
+    // 对照：默认（角色扮演）仍注入 lore、且不含工作向 clause
+    const rolePrompt = agent.buildSystemPrompt({
+      xingyeWorkspaceRoot: root,
+      userText: "Can we go to the observatory?",
+    });
+    expect(rolePrompt).toContain("# 星野核心设定");
+    expect(rolePrompt).toContain("# 星野设定参考");
+    expect(rolePrompt).not.toContain("## Work Mode");
+    expect(rolePrompt).not.toContain("## Visible UI Context");
+  });
+
   it("does not inject an empty Xingye section when lore-memory.md is absent", () => {
     const { agent, root } = makeAgent();
     roots.push(root);

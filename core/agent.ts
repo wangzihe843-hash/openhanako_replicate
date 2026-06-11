@@ -96,6 +96,7 @@ type BuildSystemPromptOptions = {
   userText?: string;
   recentMessages?: any[];
   xingyeWorkspaceRoot?: string;
+  workModeEnabled?: boolean;
 };
 
 export class Agent {
@@ -1188,6 +1189,7 @@ export class Agent {
    */
   buildSystemPrompt( options: BuildSystemPromptOptions = {}) {
     const forSubagent = !!options.forSubagent;
+    const workModeEnabled = options.workModeEnabled === true;
     const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
       ? options.forceMemoryEnabled
       : null;
@@ -1336,14 +1338,31 @@ export class Agent {
         "- Do not decide platform-specific display or sending behavior in the Agent layer; consumers handle it"
     );
 
-    parts.push(isZh
-      ? "\n## 可见 UI 上下文\n\n" +
-        "当用户用「这个、当前、打开的、可见的、选中的、置顶的」等说法指代 Hana 界面里正在看的文件、预览或文件夹时，先调用 current_status 获取 ui_context，再决定要读哪个文件或目录。\n\n" +
-        "ui_context 是用户当前可见界面的被动元信息，可能包含当前查看的文件夹、激活文件或预览标题、以及置顶 viewer 文件。它只描述 Hana 已收集到的 UI 视野；如果返回为空或不足以确定对象，向用户确认，不要猜路径。"
-      : "\n## Visible UI Context\n\n" +
-        "When the user refers to something in the Hana UI with words like current, open, visible, selected, pinned, this file, this folder, or what I am looking at, call current_status with the ui_context key before deciding which file or folder to inspect.\n\n" +
-        "ui_context is passive metadata about the user's visible UI state. It may include the currently viewed folder, active file or preview title, and pinned viewer files. It only describes UI state Hana has collected; if it is empty or not enough to identify the target, ask the user instead of guessing a path."
-    );
+    // 可见 UI 上下文 + 工作模式提醒：只在工作模式注入。默认（角色扮演）不注入——
+    // 这段助手向指令会让角色出戏，工作模式才需要它。
+    if (workModeEnabled) {
+      parts.push(isZh
+        ? "\n## 可见 UI 上下文\n\n" +
+          "当用户用「这个、当前、打开的、可见的、选中的、置顶的」等说法指代 Hana 界面里正在看的文件、预览或文件夹时，先调用 current_status 获取 ui_context，再决定要读哪个文件或目录。\n\n" +
+          "ui_context 是用户当前可见界面的被动元信息，可能包含当前查看的文件夹、激活文件或预览标题、以及置顶 viewer 文件。它只描述 Hana 已收集到的 UI 视野；如果返回为空或不足以确定对象，向用户确认，不要猜路径。"
+        : "\n## Visible UI Context\n\n" +
+          "When the user refers to something in the Hana UI with words like current, open, visible, selected, pinned, this file, this folder, or what I am looking at, call current_status with the ui_context key before deciding which file or folder to inspect.\n\n" +
+          "ui_context is passive metadata about the user's visible UI state. It may include the currently viewed folder, active file or preview title, and pinned viewer files. It only describes UI state Hana has collected; if it is empty or not enough to identify the target, ask the user instead of guessing a path."
+      );
+
+      parts.push(isZh
+        ? "\n## 工作模式\n\n" +
+          "当前为工作模式：你是务实、诚实的助手，不进行角色扮演。\n" +
+          "- 保持诚实：你声称做过的事必须真的做了（真的调了工具、真的查了）；没做就说没做，绝不假装。\n" +
+          "- 回答事实性问题前，先联网检索核实，确保来源真实、可靠、可追溯；不要凭记忆臆断或编造来源。\n" +
+          "- 不确定就明说不确定，并说明你会怎么查清。"
+        : "\n## Work Mode\n\n" +
+          "You are in work mode: a pragmatic, honest assistant — no role-play.\n" +
+          "- Be honest: only claim you did something if you actually did it (actually called the tool, actually searched). If you didn't, say so; never pretend.\n" +
+          "- Before answering factual questions, verify via web search and ensure sources are real, reliable, and traceable; do not guess from memory or fabricate sources.\n" +
+          "- If you're unsure, say so, and state how you would find out."
+      );
+    }
 
     if (!forSubagent) {
       const proactiveDelegation = getResolvedExperimentValue(
@@ -1543,7 +1562,9 @@ export class Agent {
       parts.push(...memoryBlock);
     }
 
-    if (!forSubagent) {
+    // 工作模式：剥离全部星野角色注入（性别 / 关系 / 核心设定 / 关键词 lore），
+    // 让该会话回到纯助手。yuan/ishiki 基础人格层不在此处，保持不变。
+    if (!forSubagent && !workModeEnabled) {
       /*
        * 注入位置说明：性别 preamble 必须出现在「星野核心设定」(lore-memory.md) 之前。
        * 原因：lore 里常包含其他角色姓名 / 关系描述 / 称呼习惯，LLM 在没有先吃到

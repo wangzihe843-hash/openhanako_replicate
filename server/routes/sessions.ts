@@ -1407,6 +1407,7 @@ export function createSessionsRoute(engine, hub = null) {
         planMode: engine.planMode,
         permissionMode: engine.permissionMode,
         accessMode: engine.accessMode,
+        workMode: engine.getSessionWorkMode?.(sessionPath) === true,
         thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(sessionPath) || engine.getThinkingLevel?.()),
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
         cwd: engine.cwd,

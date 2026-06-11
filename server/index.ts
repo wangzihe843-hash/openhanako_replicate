@@ -883,6 +883,25 @@ app.post("/api/session-thinking-level", async (c) => {
   });
 });
 
+app.post("/api/session-work-mode", async (c) => {
+  const { sessionPath, enabled } = await safeJson(c);
+  const targetSessionPath = typeof sessionPath === "string" && sessionPath ? sessionPath : null;
+  if (!targetSessionPath) {
+    return c.json({ ok: false, error: "session work mode requires sessionPath" }, 400);
+  }
+  const result = engine.setSessionWorkModeForSession(targetSessionPath, enabled === true);
+  if (result?.ok === false) {
+    return c.json({ ok: false, error: result.error || "session not found", enabled: result.enabled === true }, 409);
+  }
+  return c.json({ ok: true, enabled: result?.enabled === true });
+});
+
+app.get("/api/session-work-mode", async (c) => {
+  const sessionPath = c.req.query("sessionPath");
+  const targetSessionPath = typeof sessionPath === "string" && sessionPath ? sessionPath : null;
+  return c.json({ ok: true, enabled: targetSessionPath ? engine.getSessionWorkMode(targetSessionPath) === true : false });
+});
+
 app.post("/api/session-permission-mode", async (c) => {
   const { mode, pendingNewSession, currentSessionOnly, sessionPath } = await safeJson(c);
   const targetSessionPath = typeof sessionPath === "string" && sessionPath ? sessionPath : null;

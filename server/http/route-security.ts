@@ -158,6 +158,9 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   if (routePath === "/api/session-permission-mode") {
     return (verb === "GET" || verb === "POST") ? scoped("chat") : LOCAL_ONLY;
   }
+  if (routePath === "/api/session-work-mode") {
+    return (verb === "GET" || verb === "POST") ? scoped("chat") : LOCAL_ONLY;
+  }
   if (routePath === "/api/session-thinking-level") {
     return (verb === "GET" || verb === "POST") ? scoped("chat") : LOCAL_ONLY;
   }

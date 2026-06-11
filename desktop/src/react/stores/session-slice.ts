@@ -19,6 +19,8 @@ export interface SessionSlice {
   pendingNewSessionThinkingLevel: ThinkingLevel | null;
   pendingNewSessionPermissionMode: SessionPermissionMode | null;
   sessionPermissionMode: SessionPermissionMode;
+  /** 当前 session 的工作模式（按会话布尔；开启剥离星野角色注入） */
+  sessionWorkMode: boolean;
   memoryEnabled: boolean;
   /** @deprecated 兼容层 — 读取当前 session 的 todos，新代码用 todosBySession */
   sessionTodos: TodoItem[];
@@ -44,6 +46,7 @@ export interface SessionSlice {
   setPendingNewSessionThinkingLevel: (level: ThinkingLevel | null) => void;
   setPendingNewSessionPermissionMode: (mode: SessionPermissionMode | null) => void;
   setSessionPermissionMode: (mode: SessionPermissionMode) => void;
+  setSessionWorkMode: (enabled: boolean) => void;
   setMemoryEnabled: (enabled: boolean) => void;
   setSessionTodos: (todos: TodoItem[]) => void;
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
@@ -65,6 +68,7 @@ export const createSessionSlice = (
   pendingNewSessionThinkingLevel: null,
   pendingNewSessionPermissionMode: null,
   sessionPermissionMode: 'ask',
+  sessionWorkMode: false,
   memoryEnabled: true,
   sessionTodos: [],
   todosBySession: {},
@@ -102,6 +106,7 @@ export const createSessionSlice = (
       ...(s.pendingNewSession ? { pendingNewSessionPermissionMode: normalized } : {}),
     }));
   },
+  setSessionWorkMode: (enabled) => set({ sessionWorkMode: enabled === true }),
   setMemoryEnabled: (enabled) => set({ memoryEnabled: enabled }),
   // 兼容：旧调用方仍可用，写入当前 session
   setSessionTodos: (todos) =>

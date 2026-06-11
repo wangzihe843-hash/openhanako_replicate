@@ -74,6 +74,7 @@ export interface Session {
   workspaceLabel?: string | null;
   projectId?: string | null;
   permissionMode?: SessionPermissionMode | null;
+  workMode?: boolean;
   pinnedAt?: string | null;
   hasSummary?: boolean;
   agentDeleted?: boolean;

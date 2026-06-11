@@ -948,6 +948,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       });
     } else if (event.type === "plan_mode") {
       broadcast({ type: "plan_mode", enabled: event.enabled, mode: event.mode, sessionPath });
+    } else if (event.type === "work_mode") {
+      broadcast({ type: "work_mode", enabled: event.enabled === true, sessionPath });
     } else if (event.type === "notification") {
       broadcast(toNotificationWsMessage(event, sessionPath));
     } else if (event.type === "channel_new_message") {

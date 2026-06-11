@@ -1,5 +1,6 @@
 import { memo, type RefObject } from 'react';
 import { PlanModeButton, type PermissionMode } from './PlanModeButton';
+import { WorkModeButton } from './WorkModeButton';
 import { ContextRing } from './ContextRing';
 import { ThinkingLevelButton } from './ThinkingLevelButton';
 import { ModelSelector } from './ModelSelector';
@@ -18,6 +19,8 @@ interface Props {
   permissionMode: PermissionMode;
   onPermissionModeChange: (v: PermissionMode) => void;
   planModeLocked: boolean;
+  workMode: boolean;
+  onWorkModeChange: (v: boolean) => void;
   // 右侧控制
   showThinking: boolean;
   thinkingLevel: ThinkingLevel;
@@ -42,6 +45,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
   const {
     t, onAttach, slashBtnRef, onSlashToggle,
     permissionMode, onPermissionModeChange, planModeLocked,
+    workMode, onWorkModeChange,
     showThinking, thinkingLevel, onThinkingChange, modelXhigh,
     models, sessionModel, isStreaming, hasInput, canSend,
     showAudioInput, audioRecordingActive, audioRecordingBusy, onAudioToggle,
@@ -72,6 +76,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
           </svg>
         </button>
         <PlanModeButton mode={permissionMode} onChange={onPermissionModeChange} locked={planModeLocked} />
+        <WorkModeButton enabled={workMode} onChange={onWorkModeChange} />
         <ContextRing />
       </div>
       <div className={styles['input-controls']}>
