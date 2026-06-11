@@ -339,6 +339,23 @@ export function register(app, ctx) {
 
 All three patterns are backward-compatible: plugins that don't use ctx need no changes. `ctx.bus` can directly call built-in session operations: `session:create`, `session:get`, `session:update`, `session:send`, `session:abort`, `session:history`, `session:list`, `agent:list`, `agent:profile`, `agent:create`, and `agent:update`. Operations against an existing session must include a `sessionPath` parameter. See the Route Context and Session Bus Handlers sections below for the full API.
 
+#### Request-level context (pluginRequestContext)
+
+Every HTTP request entering a plugin route gets its own request-level context, readable via `c.get("pluginRequestContext")` in all three patterns:
+
+```js
+app.post("/create-session", async (c) => {
+  const reqCtx = c.get("pluginRequestContext");
+  // reqCtx.principal        identity behind this request (owner device / this plugin's iframe surface…), null when invoked directly in tests
+  // reqCtx.agentId          current agent id injected by the proxy layer
+  // reqCtx.capabilityGrant  { accessLevel, declaredPermissions, legacyDeclaration }
+  const result = await reqCtx.bus.request("session:create", { agentId: reqCtx.agentId });
+  return c.json(result);
+});
+```
+
+`reqCtx.bus` differs from `ctx.bus` in one way: calling a system-sensitive capability through it (catalog entries with `owner: "system"` and a `permission`, e.g. `session:create` → `session.write`) is checked against the manifest declaration plus the user grant. A permission missing from manifest `capabilities` / `sensitiveCapabilities` (namespaces work: `session` covers `session.write`) returns 403 `PLUGIN_CAPABILITY_NOT_DECLARED`; a plugin without full access returns 403 `PLUGIN_CAPABILITY_NOT_GRANTED`. Error responses carry `capability` / `permission` / `pluginId` / `declared` / `granted` so the missing piece is immediately visible. Legacy manifests with no capability declarations at all (both fields absent) are treated as declaring everything, so existing plugins keep working; once either list is explicitly written, the declaration is enforced strictly — an explicit empty array (`"capabilities": []`) is not legacy and denies every system-sensitive capability. Prefer `reqCtx.bus` when handling requests that originate from iframe pages.
+
 ### Extensions (Pi SDK Event Interception) ⚡ full-access
 
 Each `.js` file in the `extensions/` directory exports a factory function that receives Pi SDK's `ExtensionAPI` and subscribes to LLM pipeline events:
@@ -512,6 +529,18 @@ The host appends `hana-theme` and `hana-css` query parameters to the iframe URL.
 ```
 
 Static frontend resources belong under the plugin's `assets/` directory and are served by the Hana host at `/api/plugins/{pluginId}/assets/...`. This follows the same boundary idea as VS Code Webview resources: the entry route is opened with the local token or `pluginIframeTicket`; after a successful page response, the host issues a short-lived HttpOnly cookie scoped only to `/api/plugins/{pluginId}/assets/`. Vite split chunks, `React.lazy()` imports, CSS, fonts, images, JSON, wasm, and related static requests should not depend on `?token` or `pluginIframeTicket`.
+
+When page scripts call the plugin's own dynamic route APIs (`/api/plugins/{pluginId}/...`), use the surface session credential the host appends to the iframe URL (query parameter `pluginSurfaceSession`) and send it back via the `X-Hana-Plugin-Surface-Session` header (or a query parameter of the same name):
+
+```js
+const surfaceSession = new URLSearchParams(location.search).get('pluginSurfaceSession');
+const res = await fetch('/api/plugins/my-plugin/create-session', {
+  method: 'POST',
+  headers: { 'X-Hana-Plugin-Surface-Session': surfaceSession },
+});
+```
+
+This credential only authorizes the plugin's own proxied route paths and carries no host scopes; the host strips it from the request before forwarding to the plugin handler. `pluginIframeTicket` is a one-time document-load credential — do not reuse it for XHR.
 
 Browser code should prefer the SDK helper:
 

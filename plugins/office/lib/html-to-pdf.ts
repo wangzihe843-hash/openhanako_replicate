@@ -130,6 +130,7 @@ function buildJobPayload(input, htmlPath, outputPath) {
     landscape: input.landscape === true,
     margins: input.margins && typeof input.margins === "object" ? input.margins : undefined,
     allowJavaScript: input.allowJavaScript === true,
+    embedHanaFonts: input.embedHanaFonts !== false,
     settleMs: Number.isFinite(Number(input.settleMs)) ? Number(input.settleMs) : DEFAULT_SETTLE_MS,
   };
 }

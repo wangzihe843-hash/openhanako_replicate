@@ -11,7 +11,7 @@ import { toggleJianSidebar } from '../stores/desk-actions';
 import { togglePreviewPanel } from '../stores/preview-actions';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import { useStore } from '../stores';
-import { createNewSession } from '../stores/session-actions';
+import { createNewSession, reconcileCurrentSessionMessages } from '../stores/session-actions';
 import {
   initializeMobileRuntime,
   loadMobileSessions,
@@ -174,9 +174,15 @@ function MobileDesktopShell({
   }, []);
 
   const refreshMobileSessions = useCallback(() => {
-    void loadMobileSessions().catch((err) => {
-      console.warn('[mobile] refresh sessions failed', err);
-    });
+    void loadMobileSessions()
+      .then(() => {
+        // 列表已新鲜：校验当前打开会话的修订点，补拉后台窗口
+        // （锁屏 / WS 断连期间 Bridge /rc 等）漏掉的消息（issue #1610）。
+        void reconcileCurrentSessionMessages('mobile_foreground_refresh');
+      })
+      .catch((err) => {
+        console.warn('[mobile] refresh sessions failed', err);
+      });
   }, []);
 
   useEffect(() => {

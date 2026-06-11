@@ -18,6 +18,7 @@ const originalGlobalDispatcher = getGlobalDispatcher();
 let currentConfig = normalizeNetworkProxyConfig(undefined);
 let currentDispatcher: any = null;
 let nodeProxyAgentCache: Map<string, any> = new Map();
+let undiciProxyDispatcherCache: Map<string, any> = new Map();
 
 function proxyProtocol(proxyUrl: any) {
   try {
@@ -89,6 +90,13 @@ function resetNodeProxyAgentCache() {
   nodeProxyAgentCache = new Map();
 }
 
+function resetUndiciProxyDispatcherCache() {
+  for (const dispatcher of undiciProxyDispatcherCache.values()) {
+    closeDispatcher(dispatcher);
+  }
+  undiciProxyDispatcherCache = new Map();
+}
+
 function closeDispatcher(dispatcher: any) {
   if (!dispatcher) return;
   try {
@@ -111,6 +119,7 @@ export function createOutboundProxyRuntime({ log = (..._args: any[]) => {}, warn
       const nextDispatcher = createGlobalDispatcher(normalized, env);
       closeDispatcher(currentDispatcher);
       resetNodeProxyAgentCache();
+      resetUndiciProxyDispatcherCache();
       currentConfig = normalized;
       currentDispatcher = nextDispatcher;
       setGlobalDispatcher((nextDispatcher || originalGlobalDispatcher) as any);
@@ -132,6 +141,7 @@ export function createOutboundProxyRuntime({ log = (..._args: any[]) => {}, warn
     reset() {
       closeDispatcher(currentDispatcher);
       resetNodeProxyAgentCache();
+      resetUndiciProxyDispatcherCache();
       currentConfig = normalizeNetworkProxyConfig(undefined);
       currentDispatcher = null;
       setGlobalDispatcher(originalGlobalDispatcher);
@@ -152,6 +162,27 @@ export function getNodeProxyAgentForUrl(targetUrl, env = process.env) {
     nodeProxyAgentCache.set(proxyUrl, agent);
   }
   return agent;
+}
+
+/**
+ * npm undici fetch 用的 per-URL 代理 dispatcher（与 WS 的 webSocketOptionsForUrl
+ * 共享同一份 apply() 注入的代理配置）。
+ *
+ * 为什么不依赖 setGlobalDispatcher：Node 内建 fetch 与 npm undici 是两份拷贝，
+ * 内建 fetch 不读取 npm 拷贝的 global dispatcher registry（Node v24 实测），
+ * 上面 apply() 设置的 global dispatcher 只对 npm undici 的 fetch/request 生效。
+ * 任何需要走代理的出站 fetch 必须显式拿这里的 dispatcher，并配合 npm undici
+ * 的 fetch 使用（同一拷贝，dispatcher 契约锁定）。
+ */
+export function fetchDispatcherForUrl(targetUrl: any, env = process.env) {
+  const proxyUrl = resolveProxyForUrl(targetUrl, currentConfig, env);
+  if (!proxyUrl) return { dispatcher: null, proxyUrl: "" };
+  let dispatcher = undiciProxyDispatcherCache.get(proxyUrl);
+  if (!dispatcher) {
+    dispatcher = createUndiciProxyDispatcher(proxyUrl);
+    undiciProxyDispatcherCache.set(proxyUrl, dispatcher);
+  }
+  return { dispatcher, proxyUrl };
 }
 
 export function webSocketOptionsForUrl(targetUrl: any) {

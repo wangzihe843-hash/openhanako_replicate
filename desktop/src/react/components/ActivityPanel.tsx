@@ -14,6 +14,7 @@ import fp from './FloatingPanels.module.css';
 import chatStyles from './chat/Chat.module.css';
 import { ChatResourceCard, type ChatResourceCardStatusTone } from './chat/ChatResourceCard';
 import automationStyles from './automation/AutomationPanel.module.css';
+import { AgentTabScroller, type AgentTabScrollerItem } from './automation/AgentTabScroller';
 import type { Activity, Agent } from '../types';
 
 interface ActivityItem extends Activity {
@@ -99,6 +100,22 @@ export function ActivityPanel() {
       : agentTabs[0] || null;
   const activeBuckets = activeAgentId ? groupedActivities.get(activeAgentId) : undefined;
   const activeActivities = activeBuckets?.get(selectedBucket) || [];
+  const agentTabItems = useMemo<AgentTabScrollerItem[]>(() => agentTabs.map(agentId => {
+    const buckets = groupedActivities.get(agentId);
+    const firstActivity = ACTIVITY_BUCKETS
+      .flatMap(bucket => buckets?.get(bucket) || [])
+      .find(Boolean);
+    const info = resolveAgentDisplayInfo({
+      id: agentId === '__unknown__' ? null : agentId,
+      agents,
+      fallbackAgentName: firstActivity?.agentName || agentName,
+    });
+    return {
+      id: agentId,
+      label: info.displayName,
+      avatar: <AgentAvatar info={info} className={automationStyles.agentTabAvatar} />,
+    };
+  }), [agentName, agentTabs, agents, groupedActivities]);
 
   useEffect(() => {
     if (activeAgentId && activeAgentId !== selectedAgentId) {
@@ -180,41 +197,17 @@ export function ActivityPanel() {
                 <div className={fp.activityEmpty}>{t('activity.empty')}</div>
               ) : (
                 <>
-                  <div className={automationStyles.agentTabsShell}>
-                    <div className={automationStyles.agentTabs} role="tablist" aria-label={t('activity.agentTabs')}>
-                      {agentTabs.map(agentId => {
-                        const buckets = groupedActivities.get(agentId);
-                        const firstActivity = ACTIVITY_BUCKETS
-                          .flatMap(bucket => buckets?.get(bucket) || [])
-                          .find(Boolean);
-                        const info = resolveAgentDisplayInfo({
-                          id: agentId === '__unknown__' ? null : agentId,
-                          agents,
-                          fallbackAgentName: firstActivity?.agentName || agentName,
-                        });
-                        const active = agentId === activeAgentId;
-                        return (
-                          <button
-                            key={agentId}
-                            className={automationStyles.agentTab}
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            data-active={active}
-                            onClick={() => {
-                              setSelectedAgentId(agentId);
-                              setSelectedBucket(firstNonEmptyBucket(groupedActivities.get(agentId)));
-                            }}
-                          >
-                            <span className={automationStyles.agentTabAvatarWrap}>
-                              <AgentAvatar info={info} className={automationStyles.agentTabAvatar} />
-                            </span>
-                            <span className={automationStyles.agentTabName}>{info.displayName}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <AgentTabScroller
+                    items={agentTabItems}
+                    activeId={activeAgentId}
+                    ariaLabel={t('activity.agentTabs')}
+                    previousLabel={t('activity.previousAgent')}
+                    nextLabel={t('activity.nextAgent')}
+                    onSelect={agentId => {
+                      setSelectedAgentId(agentId);
+                      setSelectedBucket(firstNonEmptyBucket(groupedActivities.get(agentId)));
+                    }}
+                  />
                   <div className={automationStyles.categoryTabs} role="tablist" aria-label={t('activity.categoryTabs')}>
                     {ACTIVITY_BUCKETS.map(bucket => {
                       const count = activeBuckets?.get(bucket)?.length || 0;

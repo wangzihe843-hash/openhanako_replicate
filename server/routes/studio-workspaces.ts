@@ -74,6 +74,7 @@ export function createStudioWorkspacesRoute(engine) {
 
 async function listStudioWorkspaces(engine, requestContext) {
   const studioId = requireStudioId(requestContext);
+  const discloseNativeRoot = isLocalOwnerPrincipal(requestContext?.authPrincipal);
   const workspaces = [];
   const files = fileService(engine, requestContext);
   try {
@@ -83,7 +84,7 @@ async function listStudioWorkspaces(engine, requestContext) {
   }
   for (const mount of listStudioMountsForStudio(engine.hanakoHome, studioId)) {
     if (mount.status !== "active") continue;
-    workspaces.push(workspaceFromMount(mount));
+    workspaces.push(workspaceFromMount(mount, { discloseNativeRoot }));
   }
   return {
     studioId,
@@ -116,7 +117,8 @@ async function createLocalPathWorkspace(engine, requestContext, body) {
     capabilities: ["list", "read", "write"],
     status: "active",
   });
-  return workspaceFromMount(mount);
+  // 创建入口已由路由层强制 local owner；此处对称校验保证函数签名自包含。
+  return workspaceFromMount(mount, { discloseNativeRoot: isLocalOwnerPrincipal(requestContext?.authPrincipal) });
 }
 
 function authorizeStudioWorkspace(c, engine, capability) {
@@ -153,6 +155,8 @@ function fileService(engine, requestContext) {
     createCheckpoint: typeof engine.createUserEditCheckpoint === "function"
       ? (args) => engine.createUserEditCheckpoint(args)
       : null,
+    // 只对桌面端 local owner 披露 local_fs 根的 native 路径；远端/配对设备不披露。
+    discloseNativeRoot: isLocalOwnerPrincipal(requestContext?.authPrincipal),
   });
 }
 
@@ -166,10 +170,21 @@ function workspaceFromRoot(root, { isDefault = false } = {}) {
     presentation: root.presentation || "folder",
     capabilities: Array.isArray(root.capabilities) ? root.capabilities : [],
     isDefault,
+    // resolveRoot 已按 principal 决定是否携带 nativeRootPath，这里原样透传。
+    ...(typeof root.nativeRootPath === "string" && root.nativeRootPath
+      ? { nativeRootPath: root.nativeRootPath }
+      : {}),
   };
 }
 
-function workspaceFromMount(mount) {
+function workspaceFromMount(mount, { discloseNativeRoot = false } = {}) {
+  const nativeRootPath = discloseNativeRoot
+    && mount.sourceKind === "storage"
+    && mount.provider === "local_fs"
+    && typeof mount.rootLocator?.path === "string"
+    && mount.rootLocator.path
+    ? mount.rootLocator.path
+    : null;
   return {
     workspaceId: mount.mountId,
     mountId: mount.mountId,
@@ -179,6 +194,7 @@ function workspaceFromMount(mount) {
     presentation: mount.presentation,
     capabilities: Array.isArray(mount.capabilities) ? mount.capabilities : [],
     isDefault: false,
+    ...(nativeRootPath ? { nativeRootPath } : {}),
     ...(mount.sourceKind === "studio" ? {
       sourceStudioId: mount.sourceStudioId,
       sourceResourceId: mount.sourceResourceId,

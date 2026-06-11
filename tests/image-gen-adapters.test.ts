@@ -615,6 +615,33 @@ describe("minimax adapter", () => {
     expect(result.files).toHaveLength(1);
   });
 
+  it("uses MiniMax Token Plan credentials when credentialProviderId selects that lane", async () => {
+    const { minimaxImageAdapter } = await import("../plugins/image-gen/adapters/minimax.ts");
+
+    const fakeB64 = Buffer.from("minimax-token-plan-image").toString("base64");
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: { image_base64: [fakeB64] },
+        base_resp: { status_code: 0, status_msg: "success" },
+      }),
+    });
+
+    const ctx = makeBusCtx("token-plan-key", "https://api.minimaxi.com/anthropic", "minimax-token-plan");
+    await minimaxImageAdapter.submit({
+      prompt: "a glass teapot",
+      modelId: "image-01",
+      providerId: "minimax",
+      credentialProviderId: "minimax-token-plan",
+    }, ctx);
+
+    expect(ctx.bus.request).toHaveBeenCalledWith("provider:credentials", {
+      providerId: "minimax-token-plan",
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers.Authorization).toBe("Bearer token-plan-key");
+  });
+
   it("rejects MiniMax image resolution instead of silently dropping it", async () => {
     const { minimaxImageAdapter } = await import("../plugins/image-gen/adapters/minimax.ts");
 

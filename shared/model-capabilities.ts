@@ -76,6 +76,42 @@ const OFFICIAL_MIMO_PROVIDERS = new Set([
   "xiaomi-token-plan-sgp-ams",
 ]);
 
+const MODEL_THINKING_FORMATS = new Set([
+  "anthropic",
+  "qwen",
+  "qwen-chat-template",
+  "zhipu",
+  "deepseek",
+  "openrouter",
+]);
+
+const MODEL_REASONING_PROFILES = new Set([
+  "deepseek-v4-anthropic",
+  "deepseek-v4-openai",
+  "mimo-openai",
+  "zhipu-openai",
+]);
+
+export function normalizeModelProtocolCompat(value: any): Record<string, any> | null {
+  if (!isPlainObject(value)) return null;
+  const out: Record<string, any> = {};
+
+  const thinkingFormat = lower(value.thinkingFormat);
+  if (MODEL_THINKING_FORMATS.has(thinkingFormat)) {
+    out.thinkingFormat = thinkingFormat;
+  }
+
+  const reasoningProfile = lower(value.reasoningProfile || value.thinkingProfile);
+  if (MODEL_REASONING_PROFILES.has(reasoningProfile)) {
+    out.reasoningProfile = reasoningProfile;
+  }
+
+  if (value.hanaVideoInput === true) out.hanaVideoInput = true;
+  if (value.hanaAudioInput === true) out.hanaAudioInput = true;
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export function isOfficialMimoEndpoint(model: any, context: any = {}) {
   const provider = getProvider(model, context);
   if (OFFICIAL_MIMO_PROVIDERS.has(provider)) return true;
@@ -98,6 +134,24 @@ function isDeepSeekV4ModelId(id: string): boolean {
 
 function isDeepSeekThinkingModelId(id: string): boolean {
   return id === "deepseek-reasoner" || isDeepSeekV4ModelId(id);
+}
+
+function isOpenAIReasoningApi(model: any, context: any = {}) {
+  const api = getApi(model, context);
+  return api === "openai-completions" || api === "openai-responses" || api === "";
+}
+
+function isMimoFamilyModel(model: any, context: any = {}) {
+  const text = getModelText(model, context);
+  if (!/\bmimo[-_]?v\d/.test(text)) return false;
+  return !/\bmimo[-_]?v\d+(?:[._-]\d+)?[-_]tts\b/.test(text);
+}
+
+function isMimoOpenAIProtocolModel(model: any, context: any = {}) {
+  if (!isOpenAIReasoningApi(model, context)) return false;
+  if (isOpenRouterEndpoint(model, context)) return false;
+  if (isOfficialDeepSeekEndpoint(model, context) || isOfficialZhipuEndpoint(model, context)) return false;
+  return isMimoFamilyModel(model, context);
 }
 
 export function isDeepSeekFamilyModel(model: any, context: any = {}) {
@@ -183,6 +237,10 @@ export function getThinkingFormat(model: any, context: any = {}) {
     return "zhipu";
   }
 
+  if (isMimoOpenAIProtocolModel(model, context)) {
+    return "qwen-chat-template";
+  }
+
   return null;
 }
 
@@ -199,6 +257,8 @@ export function getReasoningProfile(model: any, context: any = {}) {
   const explicit = lower(model.compat?.reasoningProfile || model.compat?.thinkingProfile);
   if (explicit) return explicit;
 
+  if (isOpenRouterEndpoint(model, context)) return null;
+
   if (isOfficialMimoEndpoint(model, context) && model.reasoning === true) {
     const api = getApi(model, context);
     if (api === "openai-completions" || api === "openai-responses" || api === "") {
@@ -213,18 +273,18 @@ export function getReasoningProfile(model: any, context: any = {}) {
     }
   }
 
-  if (!isOfficialDeepSeekEndpoint(model, context)) return null;
+  if (isOfficialDeepSeekEndpoint(model, context)) {
+    const modelId = getModelId(model, context);
+    if (!isDeepSeekV4ModelId(modelId)) return null;
 
-  const modelId = getModelId(model, context);
-  if (!isDeepSeekV4ModelId(modelId)) return null;
-
-  const api = getApi(model, context);
-  if (api === "anthropic-messages") return "deepseek-v4-anthropic";
-  if (api === "openai-completions" || api === "openai-responses" || api === "") {
-    return "deepseek-v4-openai";
+    const api = getApi(model, context);
+    if (api === "anthropic-messages") return "deepseek-v4-anthropic";
+    if (api === "openai-completions" || api === "openai-responses" || api === "") {
+      return "deepseek-v4-openai";
+    }
   }
 
-  return null;
+  return isMimoOpenAIProtocolModel(model, context) ? "mimo-openai" : null;
 }
 
 export function withThinkingFormatCompat(model: any, context: any = {}) {

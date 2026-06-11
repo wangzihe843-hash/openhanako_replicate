@@ -51,7 +51,7 @@ export function createTodoTool() {
   return {
     name: TODO_WRITE_TOOL_NAME,
     label: "Todo",
-    description: "Manage the todo list for the current session. Use it to break down and track multi-step work: when you receive a complex or multi-step task, decompose it into sub-tasks before executing step by step. Simple single-step tasks (answering questions, single lookups, simple edits) do not need it. Pass the complete todos array each call to replace the current state (replacement style).\nEach todo needs:\n- content: static description (e.g. 'Read spec')\n- activeForm: in-progress description (e.g. 'Reading spec')\n- status: pending | in_progress | completed\nConvention: at most one in_progress at a time. Mark a todo in_progress when starting it, immediately change it to completed when done and set the next one to in_progress; do not batch up completions.",
+    description: "Manage the session todo list for multi-step work. Decompose complex tasks into sub-tasks; not needed for simple single-step tasks. Each call replaces the full list (replacement style).",
     parameters: Type.Object({
       todos: Type.Array(
         Type.Object({

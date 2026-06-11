@@ -13,6 +13,7 @@ const SAFE_GLOBAL_EVENTS = new Set([
 const WRITE_MESSAGE_TYPES = new Set([
   "abort",
   "steer",
+  "interject",
   "slash",
   "compact",
   "prompt",

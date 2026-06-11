@@ -116,10 +116,13 @@ describe("SessionSummaryManager.rollingSummary prompt contract", () => {
       const prompt = (callText as any).mock.calls[0][0].systemPrompt;
       expect(prompt).toContain("### 重要事实");
       expect(prompt).toContain("### 事情经过");
-      expect(prompt).toContain("直接以 ### 重要事实 开头输出");
+      expect(prompt).toContain("第一行必须是 `### 重要事实`");
       expect(prompt).toContain("两个标题下的正文都必须使用无序列表");
       expect(prompt).toContain("列表项必须以 `- ` 开头");
-      expect(prompt).not.toContain("直接以 ## 重要事实 开头输出");
+      expect(prompt).not.toContain("第一行必须是 `## 重要事实`");
+      // “以 facts 标题开头、不要前言后记”只允许在共享格式块出现一次，
+      // 规则列表不得再硬编码标题字面量复述（#1628 审查 issue 1）
+      expect(prompt).not.toContain("直接以 ### 重要事实 开头输出");
       const formatSection = prompt.slice(
         prompt.indexOf("## 输出格式"),
         prompt.indexOf("## 内容要求"),

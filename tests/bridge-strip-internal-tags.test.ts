@@ -108,6 +108,16 @@ describe("stripInternalTags — 工具协议 XML (#1293)", () => {
     expect(stripInternalTags(input)).toBe("结果");
   });
 
+  it("DSML 命名空间形态", () => {
+    const input = '<dsml:tool_call name="bash"><dsml:parameter name="command">pwd</dsml:parameter></dsml:tool_call>结果';
+    expect(stripInternalTags(input)).toBe("结果");
+  });
+
+  it("全角工具标签形态", () => {
+    const input = '正文＜tool_calls＞＜invoke name＝＂bash＂＞pwd＜／invoke＞＜／tool_calls＞结尾';
+    expect(stripInternalTags(input)).toBe("正文结尾");
+  });
+
   it("孤立的 </invoke> / </parameter> 闭合标签也剥离", () => {
     expect(stripInternalTags("文字</invoke>更多")).toBe("文字更多");
     expect(stripInternalTags("文字</parameter>更多")).toBe("文字更多");

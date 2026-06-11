@@ -16,6 +16,9 @@ import {
   isPluginAssetRequest,
   verifyPluginAssetSessionForHostRequest,
 } from "../server/http/plugin-assets.ts";
+import { PLUGIN_SURFACE_SESSION_HEADER } from "../server/http/plugin-surface-session.ts";
+import { resolveHttpRequestPrincipal } from "../server/http/request-principal.ts";
+import { createServerAuthService } from "../core/server-auth.ts";
 
 describe("plugin route proxy", () => {
   it("dispatches to registered plugin route", async () => {
@@ -913,6 +916,119 @@ describe("plugin management API", () => {
           installAction: "install",
         }],
       });
+    });
+
+    it("clears stale install records for reconciled missing community plugins", async () => {
+      const plugin = {
+        id: "demo",
+        name: "Demo",
+        publisher: "Hana",
+        version: "1.0.0",
+        description: "Demo plugin",
+        trust: "restricted",
+        permissions: [],
+        contributions: ["tools"],
+        distribution: { kind: "source", path: "plugins/demo", resolvedPath: "/tmp/demo" },
+        readme: "# Demo",
+      };
+      let installRecord: any = {
+        pluginId: "demo",
+        installedVersion: "0.9.0",
+        source: "marketplace",
+      };
+      const removePluginInstallRecord = vi.fn((pluginId) => {
+        if (pluginId === "demo") installRecord = null;
+      });
+      const reconcileMissingPluginDirectories = vi.fn(() => [{
+        id: "demo",
+        pluginKey: "community:demo",
+        source: "community",
+        pluginDir: "/missing/demo",
+      }]);
+      const engine = mockEngine({
+        plugins: [],
+        getPluginInstallRecord: vi.fn(() => installRecord),
+        pm: { reconcileMissingPluginDirectories },
+      });
+      (engine as any).removePluginInstallRecord = removePluginInstallRecord;
+      (engine as any).pluginMarketplace = {
+        load: async () => ({ source: { kind: "file", configured: true }, schemaVersion: 1, plugins: [plugin], warnings: [] }),
+        getReadme: async () => "# Demo",
+        getPlugin: async () => plugin,
+        resolveSourceDistribution: () => "/tmp/demo",
+      };
+      const app = createApp(engine);
+
+      const listRes = await app.request("/api/plugins/marketplace");
+
+      expect(listRes.status).toBe(200);
+      expect(reconcileMissingPluginDirectories).toHaveBeenCalled();
+      expect(removePluginInstallRecord).toHaveBeenCalledWith("demo");
+      expect(await listRes.json()).toMatchObject({
+        plugins: [{
+          id: "demo",
+          installed: false,
+          installedVersion: null,
+          installAction: "install",
+        }],
+      });
+    });
+
+    it("clears stale marketplace install records when the startup scan has no live entry", async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hana-missing-marketplace-record-"));
+      try {
+        const plugin = {
+          id: "demo",
+          name: "Demo",
+          publisher: "Hana",
+          version: "1.0.0",
+          description: "Demo plugin",
+          trust: "restricted",
+          permissions: [],
+          contributions: ["tools"],
+          distribution: { kind: "source", path: "plugins/demo", resolvedPath: "/tmp/demo" },
+          readme: "# Demo",
+        };
+        let installRecord: any = {
+          pluginId: "demo",
+          installedVersion: "0.9.0",
+          source: "marketplace",
+        };
+        const removePluginInstallRecord = vi.fn((pluginId) => {
+          if (pluginId === "demo") installRecord = null;
+        });
+        const engine = mockEngine({
+          plugins: [],
+          getPluginInstallRecord: vi.fn(() => installRecord),
+          pm: {
+            getUserPluginsDir: () => path.join(tmp, "plugins"),
+            reconcileMissingPluginDirectories: vi.fn(() => []),
+          },
+        });
+        (engine as any).removePluginInstallRecord = removePluginInstallRecord;
+        (engine as any).pluginMarketplace = {
+          load: async () => ({ source: { kind: "file", configured: true }, schemaVersion: 1, plugins: [plugin], warnings: [] }),
+          getReadme: async () => "# Demo",
+          getPlugin: async () => plugin,
+          resolveSourceDistribution: () => "/tmp/demo",
+        };
+        const app = createApp(engine);
+
+        const listRes = await app.request("/api/plugins/marketplace");
+
+        expect(listRes.status).toBe(200);
+        expect(removePluginInstallRecord).toHaveBeenCalledWith("demo");
+        expect(await listRes.json()).toMatchObject({
+          plugins: [{
+            id: "demo",
+            installed: false,
+            installedVersion: null,
+            installAction: "install",
+          }],
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     });
 
     it("installs release marketplace plugins after downloading and verifying sha256", async () => {
@@ -1839,5 +1955,448 @@ describe("plugin management API", () => {
         allowDestructive: true,
       });
     });
+  });
+});
+
+// ── Plugin route request-level principal / capability context (#1629) ──
+
+function createAppWithProductionPluginSurfaceAuth(engine, { connectionKind = "local" } = {}) {
+  // 与生产同链路：主鉴权（serverAuthService）→ surface session 后备（仅
+  // missing_credential 时）→ authorizeHttpRoute，整段走 server/http/
+  // request-principal.ts 的 resolveHttpRequestPrincipal，避免测试侧重新实现
+  // 生产中间件后两边漂移。
+  const serverAuthService = createServerAuthService({
+    hanakoHome: engine.hanakoHome,
+    loopbackToken: crypto.randomBytes(16).toString("hex"),
+    runtimeContext: null,
+  });
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    const routePath = new URL(c.req.url).pathname;
+    if (
+      (c.req.method === "GET" || c.req.method === "HEAD")
+      && /^\/api\/plugins\/[^/]+\/.+$/.test(routePath)
+      && c.req.query("pluginIframeTicket")
+    ) {
+      try {
+        verifyPluginIframeTicketForHostRequest(c, engine, { requireTicket: true });
+      } catch (err) {
+        if (err instanceof PluginIframeTicketError) {
+          return c.json({ error: err.code, detail: err.message }, err.status as any);
+        }
+        throw err;
+      }
+      await next();
+      return;
+    }
+    if (routePath === "/api/plugins/iframe-ticket") {
+      // Production authenticates ticket issuance with the owner credential.
+      await next();
+      return;
+    }
+    const resolved = resolveHttpRequestPrincipal(c, engine, {
+      serverAuthService,
+      connectionKind,
+    });
+    if (!resolved.ok) {
+      return c.json(resolved.body, resolved.status as any);
+    }
+    (c as any).set("authPrincipal", resolved.principal);
+    await next();
+  });
+  app.route("/api", createPluginsRoute(engine));
+  return app;
+}
+
+async function loadRealPluginWithRoutes({ tmpHome, pluginId, manifestExtra = {}, routeSource }: {
+  tmpHome: string;
+  pluginId: string;
+  manifestExtra?: Record<string, any>;
+  routeSource: string;
+}) {
+  const pluginsDir = path.join(tmpHome, "plugins");
+  const dataDir = path.join(tmpHome, "plugin-data");
+  const pluginDir = path.join(pluginsDir, pluginId);
+  fs.mkdirSync(path.join(pluginDir, "routes"), { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "manifest.json"), JSON.stringify({
+    id: pluginId,
+    name: pluginId,
+    version: "1.0.0",
+    trust: "full-access",
+    ...manifestExtra,
+  }));
+  fs.writeFileSync(path.join(pluginDir, "routes", "api.js"), routeSource);
+
+  const { EventBus } = await import("../hub/event-bus.ts");
+  const bus = new EventBus();
+  const { PluginManager } = await import("../core/plugin-manager.ts");
+  const pm = new PluginManager({
+    pluginsDir: pluginsDir,
+    dataDir,
+    bus,
+    preferencesManager: {
+      getDisabledPlugins: () => [],
+      getAllowFullAccessPlugins: () => true,
+    },
+  } as any);
+  pm.scan();
+  await pm.loadAll();
+  const entry = pm.getPlugin(pluginId);
+  expect(entry?.status).toBe("loaded");
+  return { pm, bus };
+}
+
+const SESSION_CREATE_ROUTE_SOURCE = `
+export default function register(app) {
+  app.post("/create-session", async (c) => {
+    const requestContext = c.get("pluginRequestContext");
+    const result = await requestContext.bus.request("session:create", { agentId: "hanako" });
+    return c.json({
+      ok: true,
+      sessionPath: result.sessionPath,
+      principalKind: requestContext.principal ? requestContext.principal.kind : null,
+      principalPluginId: requestContext.principal ? requestContext.principal.pluginId : null,
+    });
+  });
+  app.get("/page", (c) => c.html("<!doctype html><title>Board</title>"));
+}
+`;
+
+describe("plugin route request-level principal and capability context", () => {
+  it("issues a plugin surface session alongside the iframe ticket", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-issue-"));
+    try {
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      const pluginApp = new Hono();
+      pluginApp.get("/page", (c) => c.html("<!doctype html>"));
+      engine.pluginManager.routeRegistry.set("media-board", pluginApp);
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({
+        pluginId: "media-board",
+        ticket: expect.any(String),
+        surfaceSession: {
+          token: expect.any(String),
+          expiresAt: expect.any(String),
+        },
+      });
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a full-access plugin surface call session:create through its own route handler", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-e2e-"));
+    try {
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: { capabilities: ["session"] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async (payload: any) => ({
+        ok: true,
+        sessionPath: "/agents/hanako/sessions/created.jsonl",
+        agentId: payload?.agentId || "hanako",
+      }));
+      bus.handle("session:create", sessionCreate);
+
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      expect(ticketRes.status).toBe(200);
+      const { surfaceSession } = await ticketRes.json();
+      expect(surfaceSession?.token).toEqual(expect.any(String));
+
+      const res = await app.request("/api/plugins/media-board/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: true,
+        sessionPath: "/agents/hanako/sessions/created.jsonl",
+        principalKind: "plugin",
+        principalPluginId: "media-board",
+      });
+      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("denies credential-less plugin route calls and cross-plugin surface sessions", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-deny-"));
+    try {
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: { capabilities: ["session"] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async () => ({ ok: true, sessionPath: "/x.jsonl" }));
+      bus.handle("session:create", sessionCreate);
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const bare = await app.request("/api/plugins/media-board/create-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(bare.status).toBe(403);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+
+      const crossPlugin = await app.request("/api/plugins/other-plugin/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+      expect(crossPlugin.status).toBe(403);
+      expect(sessionCreate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("reports undeclared sensitive capabilities with a diagnosable 403 instead of a generic error", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-undeclared-"));
+    try {
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "metrics-card",
+        manifestExtra: { capabilities: ["agent"] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async () => ({ ok: true, sessionPath: "/x.jsonl" }));
+      bus.handle("session:create", sessionCreate);
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/metrics-card/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+
+      const res = await app.request("/api/plugins/metrics-card/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "PLUGIN_CAPABILITY_NOT_DECLARED",
+        capability: "session:create",
+        permission: "session.write",
+        pluginId: "metrics-card",
+        declared: false,
+        granted: true,
+      });
+      expect(sessionCreate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an explicitly empty manifest capability declaration as strict denial, not legacy", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-empty-decl-"));
+    try {
+      // 作者显式声明空列表 = "我不需要任何敏感 capability"，必须严格拒绝；
+      // 只有完全没写声明字段的老 manifest 才算 legacy。
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: { capabilities: [], sensitiveCapabilities: [] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async () => ({ ok: true, sessionPath: "/x.jsonl" }));
+      bus.handle("session:create", sessionCreate);
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+
+      const res = await app.request("/api/plugins/media-board/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "PLUGIN_CAPABILITY_NOT_DECLARED",
+        capability: "session:create",
+        permission: "session.write",
+        declared: false,
+      });
+      expect(sessionCreate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps manifests without any capability declaration working end to end (legacy)", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-legacy-"));
+    try {
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: {}, // 老 manifest：完全没有 capabilities / sensitiveCapabilities 字段
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async () => ({
+        ok: true,
+        sessionPath: "/agents/hanako/sessions/legacy.jsonl",
+      }));
+      bus.handle("session:create", sessionCreate);
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+
+      const res = await app.request("/api/plugins/media-board/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true });
+      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an invalid bearer credential even when a valid surface session token is attached", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-mixed-cred-"));
+    try {
+      // surface session 后备只在主凭证缺席（missing_credential）时运行：
+      // 无效 / 已吊销 bearer 必须按 invalid_credential 原样拒绝，不得被同
+      // 请求附带的有效 surface token 静默掩盖成放行。
+      const { pm, bus } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: { capabilities: ["session"] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const sessionCreate = vi.fn(async () => ({ ok: true, sessionPath: "/x.jsonl" }));
+      bus.handle("session:create", sessionCreate);
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+      expect(surfaceSession?.token).toEqual(expect.any(String));
+
+      const res = await app.request("/api/plugins/media-board/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer revoked-or-bogus-device-token",
+          [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "forbidden",
+        reason: "invalid_credential",
+      });
+      expect(sessionCreate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let surface-session requests mint or renew plugin asset session cookies", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-surface-renew-"));
+    try {
+      const { pm } = await loadRealPluginWithRoutes({
+        tmpHome,
+        pluginId: "media-board",
+        manifestExtra: { capabilities: ["session"] },
+        routeSource: SESSION_CREATE_ROUTE_SOURCE,
+      });
+      const engine = mockEngine({ hanakoHome: tmpHome });
+      (engine as any).pluginManager = pm;
+      const app = createAppWithProductionPluginSurfaceAuth(engine);
+
+      const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeUrl: "/api/plugins/media-board/page" }),
+      });
+      const { surfaceSession } = await ticketRes.json();
+
+      const htmlRes = await app.request("/api/plugins/media-board/page", {
+        headers: { [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token },
+      });
+
+      expect(htmlRes.status).toBe(200);
+      expect(htmlRes.headers.get("set-cookie")).toBeNull();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });

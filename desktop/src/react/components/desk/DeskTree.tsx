@@ -12,6 +12,7 @@ import {
   deskCreateFileInSubdir,
   deskMkdirInSubdir,
   deskMoveTreeFiles,
+  deskNativeRootDir,
   deskRenameTreeItem,
   deskTrashTreeItems,
   deskUploadBrowserFilesToSubdir,
@@ -299,6 +300,9 @@ function TreeNode({
 }) {
   const deskBasePath = useStore(st => st.deskBasePath);
   const deskWorkspaceMountId = useStore(st => st.deskWorkspaceMountId);
+  // 工作台根的 native 路径：普通文件夹即 deskBasePath；local_fs mount 用服务端
+  // 披露的 native root（#1622）。远端/虚拟 mount 为 null，相关本地能力保持隐藏。
+  const nativeRootDir = useStore(deskNativeRootDir);
   const treeFilesByPath = useStore(st => st.deskTreeFilesByPath);
   const expandedPaths = useStore(st => st.deskExpandedPaths);
   const setDeskExpandedPaths = useStore(st => st.setDeskExpandedPaths);
@@ -363,7 +367,7 @@ function TreeNode({
     e.preventDefault();
     e.stopPropagation();
     if (!selectedPaths.has(subdir)) onSelect(subdir, { multi: false, shift: false });
-    const path = fullPath(deskBasePath, subdir);
+    const path = fullPath(nativeRootDir || deskBasePath, subdir);
     const actionEntries = getDragEntries(subdir);
     const deleteLabel = actionEntries.length > 1
       ? t('desk.ctx.deleteSelected', { count: actionEntries.length })
@@ -379,7 +383,7 @@ function TreeNode({
               schedulePersistCurrentWorkspaceUiState();
               void loadDeskTreeFiles(subdir, { force: true });
             } else {
-              if (isWebRuntime() || deskWorkspaceMountId) previewFile();
+              if (isWebRuntime() || !nativeRootDir) previewFile();
               else window.platform?.openFile?.(path);
             }
           },
@@ -388,10 +392,10 @@ function TreeNode({
           { label: t('desk.ctx.newMdFile'), action: () => { void onStartCreate(subdir, 'markdown'); } },
           { label: t('desk.ctx.newFolder'), action: () => { void onStartCreate(subdir, 'folder'); } },
         ] : []),
-        ...(!isWebRuntime() && !deskWorkspaceMountId ? [
+        ...(!isWebRuntime() && nativeRootDir ? [
           { label: t('desk.ctx.openInFinder'), action: () => window.platform?.showInFinder?.(path) },
         ] : []),
-        ...(!deskWorkspaceMountId ? [
+        ...(nativeRootDir ? [
           { label: t('desk.ctx.copyPath'), action: () => navigator.clipboard.writeText(path).catch(() => {}) },
         ] : []),
         { divider: true },
@@ -421,7 +425,7 @@ function TreeNode({
         },
       ],
     });
-  }, [deskBasePath, deskWorkspaceMountId, expandedPaths, file.isDir, file.name, getDragEntries, onBeginRename, onSelect, onShowMenu, onStartCreate, previewFile, selectedPaths, setDeskExpandedPaths, subdir, t]);
+  }, [deskBasePath, deskWorkspaceMountId, expandedPaths, file.isDir, file.name, getDragEntries, nativeRootDir, onBeginRename, onSelect, onShowMenu, onStartCreate, previewFile, selectedPaths, setDeskExpandedPaths, subdir, t]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key !== 'Enter' || isRenaming || inlineEdit) return;
@@ -435,12 +439,15 @@ function TreeNode({
     e.stopPropagation();
     if (!selectedPaths.has(subdir)) onSelect(subdir, { multi: false, shift: false });
     const dragEntries = getDragEntries(subdir);
+    // native root 可用时（普通文件夹 / 披露了 native root 的 local_fs mount）
+    // 携带真实绝对路径并发起原生拖拽；只有拿不到 native 路径的 mount 才退回
+    // workbench 引用（#1622）。
     const draggedFiles = dragEntries.map(entry => ({
       id: `workspace:${entry.subdir}`,
       name: entry.file.name,
-      path: deskWorkspaceMountId
+      path: deskWorkspaceMountId && !nativeRootDir
         ? `workbench:${deskWorkspaceMountId}:${entry.subdir}`
-        : fullPath(deskBasePath, entry.subdir),
+        : fullPath(nativeRootDir || deskBasePath, entry.subdir),
       sourceSubdir: entry.parent,
       isDirectory: entry.file.isDir,
     }));
@@ -452,8 +459,8 @@ function TreeNode({
     e.currentTarget.addEventListener('dragend', () => clearAppFileDragPayload(payload.dragId), { once: true });
     e.preventDefault();
     const paths = draggedFiles.map(item => item.path);
-    if (!deskWorkspaceMountId) window.platform?.startDrag?.(paths.length === 1 ? paths[0] : paths);
-  }, [deskBasePath, deskWorkspaceMountId, getDragEntries, onSelect, selectedPaths, subdir]);
+    if (!deskWorkspaceMountId || nativeRootDir) window.platform?.startDrag?.(paths.length === 1 ? paths[0] : paths);
+  }, [deskBasePath, deskWorkspaceMountId, getDragEntries, nativeRootDir, onSelect, selectedPaths, subdir]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!file.isDir) return;

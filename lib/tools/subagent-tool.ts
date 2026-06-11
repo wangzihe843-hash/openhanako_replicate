@@ -14,7 +14,7 @@ import path from "node:path";
 import { t } from "../i18n.ts";
 import { getToolSessionCwd, getToolSessionPath } from "./tool-session.ts";
 import { resolveAgentParam } from "./agent-id-resolver.ts";
-import { resolveSubagentToolAccess } from "./subagent-tool-policy.ts";
+import { resolveSubagentToolAccess, SubagentAccessDeniedError } from "./subagent-tool-policy.ts";
 import {
   mergeExecutorMetadata,
   normalizeExecutorMetadata,
@@ -192,9 +192,7 @@ export function createSubagentTool(deps) {
 
   const baseDescription =
     "Create a continuable subagent instance for a delegated task. Returns immediately with taskId and threadId; results are delivered back in the background. Use agent to target an agent, or agent=\"?\" to list agents.";
-  const delegationDescription = !deps.proactiveDelegation ? "" :
-    "\n\nIf the target is already known, use the direct tool: read for a known path, grep or find for a specific symbol or file. For broad exploration or research that would take more than 3 queries, delegate to a subagent with access=\"read\". Otherwise use read/grep/find directly." +
-    "\n\nSubagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but should not be used excessively when simpler tools suffice.";
+  const delegationDescription = "";
 
   return {
     name: "subagent",
@@ -209,7 +207,7 @@ export function createSubagentTool(deps) {
       instance: Type.Optional(Type.String({ description: "Legacy field, accepted only as label compatibility. New calls should use label; resume with threadId." })),
       access: Type.Optional(Type.Union(
         [Type.Literal("read"), Type.Literal("write")],
-        { description: "Optional permission tier: \"read\" for read-only research, exploration, or review; \"write\" for execution, edits, or commands. Omit to inherit the current session permission." },
+        { description: "Optional permission tier. \"read\": read-only subagent for research, exploration, or review tasks; it cannot edit files or run mutating commands. \"write\": operable subagent for execution, edits, or commands; requires the parent session to be in an operable (non read-only) mode, otherwise the call is rejected with an error. Omit to inherit the current session permission. Pick \"read\" whenever the task does not need to change anything." },
       )),
     }),
 
@@ -265,7 +263,16 @@ export function createSubagentTool(deps) {
       const parentPermissionMode = parentSessionPath
         ? (deps.getSessionPermissionMode?.(parentSessionPath) || null)
         : null;
-      const toolAccess = resolveSubagentToolAccess({ access, parentPermissionMode });
+      let toolAccess;
+      try {
+        toolAccess = resolveSubagentToolAccess({ access, parentPermissionMode });
+      } catch (err) {
+        // attenuation 拒绝（#1614）：父只读 + access:"write"。显式报错给出路，不静默降级。
+        if (err instanceof SubagentAccessDeniedError) {
+          return errorResult(t("error.subagentWriteAccessDenied"), { errorCode: err.code });
+        }
+        throw err;
+      }
 
       // 检查并发限制：per-session + global
       if (parentSessionPath && getActive(parentSessionPath) >= MAX_PER_SESSION) {
@@ -303,6 +310,7 @@ export function createSubagentTool(deps) {
         applyRequestedAgentMetadata(
           mergeExecutorMetadata({
             type: "subagent",
+            interlude: true,
             threadId,
             threadKind,
             label,
@@ -571,7 +579,7 @@ export function createSubagentReplyTool(deps) {
       task: Type.String({ description: "Complete instructions and required context to append to that subagent." }),
       access: Type.Optional(Type.Union(
         [Type.Literal("read"), Type.Literal("write")],
-        { description: "Optional permission tier: \"read\" or \"write\". Omit to reuse the instance access, still bounded by the current session permission." },
+        { description: "Optional permission tier. \"read\": read-only continuation for research, exploration, or review. \"write\": operable continuation for execution, edits, or commands; requires the parent session to be in an operable (non read-only) mode, otherwise the call is rejected with an error. Omit to reuse the instance access, still bounded by the current session permission." },
       )),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -594,7 +602,17 @@ export function createSubagentReplyTool(deps) {
       const explicitAccess = params.access === "read" || params.access === "write" ? params.access : undefined;
       const access = explicitAccess || initialThread.access || undefined;
       const parentPermissionMode = deps.getSessionPermissionMode?.(parentSessionPath) || null;
-      const toolAccess = resolveSubagentToolAccess({ access, parentPermissionMode });
+      let toolAccess;
+      try {
+        toolAccess = resolveSubagentToolAccess({ access, parentPermissionMode });
+      } catch (err) {
+        // attenuation 拒绝（#1614）：父只读 + write 档（显式传入或线程残留）。
+        // 出路与错误文案一致：切父会话到可操作模式，或显式 access:"read" 续接。
+        if (err instanceof SubagentAccessDeniedError) {
+          return errorResult(t("error.subagentWriteAccessDenied"), { errorCode: err.code });
+        }
+        throw err;
+      }
       const runStore = deps.getSubagentRunStore?.();
       const hub = deps.getActivityHub?.();
       const registry = deps.getTaskRegistry?.();
@@ -607,6 +625,7 @@ export function createSubagentReplyTool(deps) {
 
       store.defer(taskId, parentSessionPath, mergeExecutorMetadata({
         type: "subagent",
+        interlude: true,
         threadId,
         threadKind,
         label: initialThread.label || null,

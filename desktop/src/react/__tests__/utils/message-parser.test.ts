@@ -104,6 +104,29 @@ describe('parseUserAttachments', () => {
     expect(result.files[0].isDirectory).toBe(false);
   });
 
+  it('解析 SessionFile 机器上下文，并从正文隐藏', () => {
+    const input = [
+      '[SessionFile] {"fileId":"sf_report","sessionPath":"/sessions/main.jsonl","label":"报告2026.txt","kind":"attachment"}',
+      '请看这个',
+      '',
+      '[附件] 报告2026.txt',
+    ].join('\n');
+    const result = parseUserAttachments(input);
+
+    expect(result.text).toBe('请看这个');
+    expect(result.sessionFileRefs).toEqual([{
+      fileId: 'sf_report',
+      sessionPath: '/sessions/main.jsonl',
+      label: '报告2026.txt',
+      kind: 'attachment',
+    }]);
+    expect(result.files).toEqual([{
+      path: '报告2026.txt',
+      name: '报告2026.txt',
+      isDirectory: false,
+    }]);
+  });
+
   it('解析内部 attached_image 标记为图片引用，并从正文隐藏', () => {
     const input = '[attached_image: /Users/test/.hanako/attachments/upload-abc.png]\n(看图)';
     const result = parseUserAttachments(input);

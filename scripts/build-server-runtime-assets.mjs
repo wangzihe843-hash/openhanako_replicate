@@ -95,8 +95,15 @@ function copyMobileRuntimeAssets({ fsImpl, sourceAssetsDir, targetAssetsDir, mob
     queued.push(normalized);
   }
 
+  // SERVER_RUNTIME_ASSET_DIRS 里的目录（cover-gallery、character-cards 等）已由
+  // copyServerRuntimeAssets 复制到 desktop/src/assets/，server API 从那里读取。
+  // dist-renderer/assets/ 下同名子目录是 copyLegacyFiles 产生的未哈希原始副本，
+  // mobile 前端用的是 Vite 哈希后的顶层文件，不需要这些原始副本。跳过以避免双重复制。
+  const serverAssetDirSet = new Set(SERVER_RUNTIME_ASSET_DIRS);
   for (const name of listFilesRecursive(fsImpl, sourceAssetsDir)) {
     if (shouldExcludeRuntimeFile(name)) continue;
+    const topDir = name.split(/[\\/]/)[0];
+    if (serverAssetDirSet.has(topDir)) continue;
     if (!/\.(?:js|css)$/i.test(name)) addAsset(name);
   }
 

@@ -208,6 +208,27 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     await agent.dispose();
   });
 
+  it("system prompt tells the agent to query UI context for visible/current references", async () => {
+    const agent = makeAgent(agentsDir, tmpDir);
+    await agent.init(() => {});
+
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
+
+    expect(prompt).toContain("## Visible UI Context");
+    expect(prompt).toContain("current_status");
+    expect(prompt).toContain("ui_context");
+    expect(prompt).toContain("current, open, visible, selected, pinned");
+
+    agent._config.locale = "zh-CN";
+    const zhPrompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
+    expect(zhPrompt).toContain("## 可见 UI 上下文");
+    expect(zhPrompt).toContain("current_status");
+    expect(zhPrompt).toContain("ui_context");
+    expect(zhPrompt).toContain("这个、当前、打开的、可见的、选中的、置顶的");
+
+    await agent.dispose();
+  });
+
   it("中文 system prompt 同样区分文件工具和 shell 命令", async () => {
     const agent = makeAgent(agentsDir, tmpDir);
     await agent.init(() => {});

@@ -814,6 +814,52 @@ describe("updateModelEntry type field", () => {
     );
     expect(entry).toEqual({ id: "model-a", type: "image" });
   });
+
+  it("persists controlled protocol capabilities and filters unknown compat fields", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: [{ id: "model-a", compat: { hanaVideoInput: true } }],
+      },
+    });
+    const reg = makeRegistry();
+    reg.updateModelEntry("test-provider", "model-a", {
+      compat: {
+        thinkingFormat: "qwen",
+        reasoningProfile: "mimo-openai",
+        unsupportedWireFlag: "drop-me",
+      },
+      visionCapabilities: {
+        grounding: true,
+        boxes: true,
+        points: true,
+        coordinateSpace: "norm-1000",
+        boxOrder: "xyxy",
+        outputFormat: "qwen",
+        groundingMode: "prompted",
+        extraShape: "drop-me",
+      },
+    });
+
+    const raw = readAddedModels();
+    const entry = raw["test-provider"].models.find(
+      m => (typeof m === "object" ? m.id : m) === "model-a"
+    );
+    expect(entry.compat).toEqual({
+      hanaVideoInput: true,
+      thinkingFormat: "qwen",
+      reasoningProfile: "mimo-openai",
+    });
+    expect(entry.visionCapabilities).toEqual({
+      grounding: true,
+      boxes: true,
+      points: true,
+      coordinateSpace: "norm-1000",
+      boxOrder: "xyxy",
+      outputFormat: "qwen",
+      groundingMode: "prompted",
+    });
+  });
 });
 
 // ── media model CRUD ─────────────────────────────────────────────────────────

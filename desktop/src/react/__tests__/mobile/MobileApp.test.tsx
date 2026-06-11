@@ -378,6 +378,89 @@ describe('MobileApp', () => {
     await waitFor(() => expect(countSessionListCalls()).toBeGreaterThan(before));
   });
 
+  it('re-pulls the open session on foreground when its revision drifted while backgrounded (#1610)', async () => {
+    const sessionPath = '/hana/sessions/rc.jsonl';
+    let diskRevision = 'rev-1';
+    fetchMock.mockImplementation((input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/web-auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, principal: principal(['chat', 'resources.read', 'files.read', 'files.write']) }));
+      }
+      if (url.includes('/api/sessions/messages')) {
+        return Promise.resolve(jsonResponse({
+          messages: [], blocks: [], todos: [], hasMore: false, sessionFiles: [], revision: diskRevision,
+        }));
+      }
+      if (url.includes('/api/sessions') && !url.includes('/api/sessions/')) {
+        return Promise.resolve(jsonResponse([
+          { path: sessionPath, title: 'RC 会话', firstMessage: '', modified: '2026-06-10T00:00:00.000Z', messageCount: 2, agentId: 'hana', agentName: 'Hana', cwd: '/workspace', revision: diskRevision },
+        ]));
+      }
+      return Promise.resolve(jsonResponse(jsonResponseForMobile(url, options)));
+    });
+
+    render(<MobileApp />);
+    await waitForMobileChatReady();
+    await openMobileSession('RC 会话');
+
+    const countMessagesCalls = () => fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter(url => url.includes('/api/sessions/messages')).length;
+    await waitFor(() => expect(countMessagesCalls()).toBeGreaterThan(0));
+    const baseline = countMessagesCalls();
+
+    // 后台期间 Bridge /rc 写入了新消息 → 磁盘修订点前进
+    diskRevision = 'rev-2';
+    fireEvent(window, new Event('focus'));
+
+    await waitFor(() => expect(countMessagesCalls()).toBeGreaterThan(baseline));
+  });
+
+  it('does not re-pull the open session on foreground when its revision is unchanged', async () => {
+    const sessionPath = '/hana/sessions/idle.jsonl';
+    fetchMock.mockImplementation((input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/web-auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, principal: principal(['chat', 'resources.read', 'files.read', 'files.write']) }));
+      }
+      if (url.includes('/api/sessions/messages')) {
+        return Promise.resolve(jsonResponse({
+          messages: [], blocks: [], todos: [], hasMore: false, sessionFiles: [], revision: 'rev-stable',
+        }));
+      }
+      if (url.includes('/api/sessions') && !url.includes('/api/sessions/')) {
+        return Promise.resolve(jsonResponse([
+          { path: sessionPath, title: '安静会话', firstMessage: '', modified: '2026-06-10T00:00:00.000Z', messageCount: 2, agentId: 'hana', agentName: 'Hana', cwd: '/workspace', revision: 'rev-stable' },
+        ]));
+      }
+      return Promise.resolve(jsonResponse(jsonResponseForMobile(url, options)));
+    });
+
+    render(<MobileApp />);
+    await waitForMobileChatReady();
+    await openMobileSession('安静会话');
+
+    const countMessagesCalls = () => fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter(url => url.includes('/api/sessions/messages')).length;
+    await waitFor(() => expect(countMessagesCalls()).toBeGreaterThan(0));
+    const baseline = countMessagesCalls();
+    const countSessionListCalls = () => fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter(url => url.includes('/api/sessions') && !url.includes('/api/sessions/')).length;
+    const listBaseline = countSessionListCalls();
+
+    fireEvent(window, new Event('focus'));
+
+    // 列表刷新已发生（说明 foreground 流程跑完），但消息不应被重拉
+    await waitFor(() => expect(countSessionListCalls()).toBeGreaterThan(listBaseline));
+    // 排掉 loadMobileSessions().then(reconcile) 的微任务链后再断言「没有补拉」
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(countMessagesCalls()).toBe(baseline);
+  });
+
   it('syncs the selected session permission mode from the mobile session list', async () => {
     const planModeEvents: unknown[] = [];
     const listener = (event: Event) => {

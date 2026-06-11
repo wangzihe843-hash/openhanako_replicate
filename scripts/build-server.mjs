@@ -32,7 +32,7 @@
  *       yuan/
  *     desktop/src/assets/     ← server 运行时读取的默认头像、角色卡背、Yuan 图标
  *     desktop/src/locales/    ← i18n 资源
- *     desktop/dist-renderer/  ← PWA 静态入口和 hashed assets（/mobile/* 由 server 读取）
+ *     desktop/dist-renderer/  ← PWA 静态入口、hashed assets、themes（/mobile/* 由 server 读取）
  *     skills2set/             ← 技能包
  *     package.json            ← external deps + version（node_modules 解析 + 运行时版本读取）
  *     package-lock.json       ← npm install 生成，记录 external 安装结果
@@ -294,13 +294,10 @@ fs.mkdirSync(path.join(outDir, "desktop", "src", "locales"), { recursive: true }
 fs.cpSync(localesSrc, path.join(outDir, "desktop", "src", "locales"), { recursive: true });
 console.log("[build-server]   desktop/src/locales/");
 
-// Theme CSS（server/routes/plugins.js theme.css 端点通过 fromRoot("desktop","src","themes") 引用）
-const themesSrc = path.join(ROOT, "desktop", "src", "themes");
-if (fs.existsSync(themesSrc)) {
-  fs.mkdirSync(path.join(outDir, "desktop", "src", "themes"), { recursive: true });
-  fs.cpSync(themesSrc, path.join(outDir, "desktop", "src", "themes"), { recursive: true });
-  console.log("[build-server]   desktop/src/themes/");
-}
+// Theme CSS：不再单独复制 desktop/src/themes/。
+// dist-renderer/themes/ 由 copyServerRuntimeAssets 复制（内容完全一致），
+// server theme.css 端点有 fallback：先试 src/themes，未命中时自动走 dist-renderer/themes。
+// 省去一份 ~7MB 的重复 CSS。
 
 // 角色卡导入/导出预览由 server 读取默认头像、卡背和 Yuan 图标。
 // PWA /mobile/* 静态文件也由独立 server 进程读取。
@@ -561,6 +558,44 @@ if (fs.existsSync(koffiBuilds)) {
   if (koffiRemoved > 0) {
     console.log(`[build-server] koffi: kept ${target}, removed ${koffiRemoved} other platform binaries`);
   }
+}
+
+// ── 8c. 删除 node-pty 多余平台 prebuilt ──
+// node-pty prebuilds/ 下按 {platform}-{arch} 放置 prebuilt 二进制。
+// macOS 包含 win32-x64/arm64 各 ~30MB（含 .pdb 调试符号），Windows 包含 darwin 的。
+// 运行时只从 prebuilds/{process.platform}-{process.arch}/ 加载，其余是死重。
+// 且非当前平台的 PE/ELF 二进制无法被 codesign 签名。
+const nodePtyPrebuilds = path.join(nmDir, "node-pty", "prebuilds");
+if (fs.existsSync(nodePtyPrebuilds)) {
+  const target = `${platform}-${arch}`;
+  let nodePtyRemoved = 0;
+  for (const entry of fs.readdirSync(nodePtyPrebuilds)) {
+    if (entry !== target) {
+      fs.rmSync(path.join(nodePtyPrebuilds, entry), { recursive: true, force: true });
+      nodePtyRemoved++;
+    }
+  }
+  if (nodePtyRemoved > 0) {
+    console.log(`[build-server] node-pty: kept prebuilds/${target}, removed ${nodePtyRemoved} other platform prebuilds`);
+  }
+}
+
+// ── 8d. 清理 npm 包中运行时不需要的大体积文件 ──
+// protectedDirs 跳过了 nft 裁剪，以下是已确认安全的手动清理。
+
+// @larksuiteoapi/node-sdk: types/ 是 ~15MB 的 .d.ts 类型声明，运行时不加载
+const larkTypes = path.join(nmDir, "@larksuiteoapi", "node-sdk", "types");
+if (fs.existsSync(larkTypes)) {
+  fs.rmSync(larkTypes, { recursive: true, force: true });
+  console.log("[build-server] cleanup: removed @larksuiteoapi/node-sdk/types/ (~15MB .d.ts)");
+}
+
+// exceljs: dist/ 是 ~21MB 的 browser bundle + source map。
+// Node.js 入口是 excel.js → lib/exceljs.nodejs.js，不经过 dist/
+const exceljsDist = path.join(nmDir, "exceljs", "dist");
+if (fs.existsSync(exceljsDist)) {
+  fs.rmSync(exceljsDist, { recursive: true, force: true });
+  console.log("[build-server] cleanup: removed exceljs/dist/ (~21MB browser bundle)");
 }
 
 // ── 9. 更新 package.json ──

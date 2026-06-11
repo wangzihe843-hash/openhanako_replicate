@@ -149,6 +149,29 @@ describe('ChatArea continuous bottom scroll', () => {
     expect(metrics.scrollTop).toBe(500);
   });
 
+  it('mounts a current empty session panel instead of leaving the chat area blank', async () => {
+    useStore.setState({
+      currentSessionPath: '/chat/empty.jsonl',
+      welcomeVisible: false,
+      chatSessions: {
+        '/chat/empty.jsonl': {
+          items: [],
+          hasMore: false,
+          loadingMore: false,
+        },
+      },
+      sessions: [{ path: '/chat/empty.jsonl', agentId: 'hana', title: null, firstMessage: '', modified: '', messageCount: 0 }],
+      streamingSessions: [],
+    } as never);
+
+    const { container } = render(<ChatArea />);
+
+    await waitFor(() => {
+      expect(container.querySelector('[class*="sessionPanel"]')).toBeTruthy();
+    });
+    expect(container.querySelector('[data-testid="transcript"]')).toBeTruthy();
+  });
+
   it('captures chat text selection from the active panel on mouseup', async () => {
     useStore.setState({
       currentSessionPath: '/chat/scroll.jsonl',

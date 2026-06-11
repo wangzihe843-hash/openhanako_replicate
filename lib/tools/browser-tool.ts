@@ -152,7 +152,7 @@ export function createBrowserTool(getSessionPath: any, options: {
   return {
     name: "browser",
     label: "Browser",
-    description: "Control a headless browser (navigate, click, type, scroll, screenshot, evaluate JS). Use the action parameter to pick an operation; see its description for per-action parameters. Element [ref] ids from snapshot become stale after any navigate/click/type — those operations auto-return a fresh snapshot, always use refs from the latest one.",
+    description: "Control a headless browser (navigate, click, type, scroll, screenshot, evaluate JS). Element [ref] ids from snapshot become stale after page changes; always use refs from the latest snapshot.",
     parameters: Type.Object({
       action: StringEnum(actionValues, { description: "Which operation to run. Required params per action: navigate→url; click→ref; type→text (optional ref, pressEnter); scroll→direction (optional amount); select→ref+value; key→key; wait→(optional timeout, state); evaluate→expression. start, stop, snapshot, screenshot, show take no extra params." }),
       url: Type.Optional(Type.String({ description: "URL (required for navigate)" })),

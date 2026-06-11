@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { submitDesktopSessionMessage } from "../core/desktop-session-submit.ts";
+import {
+  MESSAGE_ORIGIN_RECORD_TYPE,
+  submitDesktopSessionInterjection,
+  submitDesktopSessionMessage,
+} from "../core/desktop-session-submit.ts";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -219,6 +223,89 @@ describe("submitDesktopSessionMessage", () => {
 
     expect(result.text).toContain("Locale updated");
     expect(result.text).toContain("Locale: zh-CN -> en");
+  });
+
+  // ── #1610: /rc 来源元信息持久化 ──
+
+  it("persists a message-origin custom entry before prompting for bridge_rc submissions", async () => {
+    const session = makeFakeSession();
+    const appendOrder: string[] = [];
+    (session as any).sessionManager = {
+      appendCustomEntry: vi.fn(() => {
+        appendOrder.push("origin-entry");
+      }),
+    };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => {
+        appendOrder.push("prompt");
+        return session.prompt(text, opts);
+      }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello from telegram",
+      displayMessage: {
+        text: "hello from telegram",
+        source: "bridge_rc",
+        bridgeSessionKey: "telegram:12345",
+      },
+    });
+
+    expect((session as any).sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      MESSAGE_ORIGIN_RECORD_TYPE,
+      expect.objectContaining({
+        source: "bridge_rc",
+        bridgeSessionKey: "telegram:12345",
+      }),
+    );
+    // 来源记录必须先于 prompt 写入，让条目紧邻它注释的 user message
+    expect(appendOrder).toEqual(["origin-entry", "prompt"]);
+  });
+
+  it("does not write a message-origin entry for plain desktop submissions", async () => {
+    const session = makeFakeSession();
+    (session as any).sessionManager = { appendCustomEntry: vi.fn() };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      displayMessage: { text: "hello" },
+    });
+
+    expect((session as any).sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+  });
+
+  it("still submits the message when the origin entry write fails", async () => {
+    const session = makeFakeSession();
+    (session as any).sessionManager = {
+      appendCustomEntry: vi.fn(() => {
+        throw new Error("disk hiccup");
+      }),
+    };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const result = await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello from qq",
+      displayMessage: { text: "hello from qq", source: "bridge_rc", bridgeSessionKey: "qq:678" },
+    });
+
+    expect(result.text).toBe("desktop reply");
   });
 
   it("still emits session_status=false when promptSession throws", async () => {
@@ -881,5 +968,140 @@ describe("submitDesktopSessionMessage", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("interjects into a streaming session after registering the same visible attachment envelope", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desktop-interject-"));
+    try {
+      const filePath = path.join(tmpDir, "note.txt");
+      fs.writeFileSync(filePath, "note");
+      const sessionPath = path.join(tmpDir, "main.jsonl");
+      fs.writeFileSync(sessionPath, "{}\n");
+      const registerSessionFile = vi.fn(({ sessionPath, filePath, label, origin, storageKind }) => ({
+        id: "sf_note",
+        fileId: "sf_note",
+        sessionPath,
+        filePath,
+        realPath: filePath,
+        displayName: label,
+        filename: path.basename(filePath),
+        label,
+        ext: "txt",
+        mime: "text/plain",
+        size: 4,
+        kind: "attachment",
+        origin,
+        storageKind,
+        createdAt: 1,
+      }));
+      const engine = {
+        hanakoHome: tmpDir,
+        registerSessionFile,
+        ensureSessionLoaded: vi.fn(async () => makeFakeSession()),
+        isSessionStreaming: vi.fn(() => true),
+        promptSession: vi.fn(),
+        steerSession: vi.fn(() => true),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+      };
+
+      const result = await submitDesktopSessionInterjection(engine, {
+        sessionPath,
+        text: "[附件] note.txt",
+        displayMessage: {
+          text: "",
+          attachments: [{
+            path: filePath,
+            name: "note.txt",
+            isDir: false,
+          }],
+        },
+        sessionFileRefs: [{
+          fileId: "sf_note",
+          sessionPath,
+          label: "note.txt",
+          kind: "attachment",
+        }],
+        uiContext: { currentTab: "chat" },
+      });
+
+      expect(result).toEqual({ text: null, toolMedia: [], steered: true });
+      expect(engine.ensureSessionLoaded).toHaveBeenCalledWith(sessionPath);
+      expect(engine.setUiContext).toHaveBeenCalledWith(sessionPath, { currentTab: "chat" });
+      expect(engine.emitEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "session_user_message",
+          message: expect.objectContaining({
+            text: "",
+            attachments: [expect.objectContaining({
+              fileId: "sf_note",
+              path: filePath,
+              name: "note.txt",
+            })],
+          }),
+        }),
+        sessionPath,
+      );
+      expect(engine.steerSession).toHaveBeenCalledWith(
+        sessionPath,
+        `${sessionFileMarker({
+          fileId: "sf_note",
+          sessionPath,
+          label: "note.txt",
+        })}\n[附件] note.txt`,
+      );
+      expect(engine.promptSession).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to a normal prompt when an interject arrives after streaming already ended", async () => {
+    const session = makeFakeSession({ replyText: "finished reply" });
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      isSessionStreaming: vi.fn(() => false),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      steerSession: vi.fn(() => true),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const result = await submitDesktopSessionInterjection(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "late interject",
+      displayMessage: { text: "late interject" },
+    });
+
+    expect(result).toMatchObject({ text: "finished reply" });
+    expect(engine.promptSession).toHaveBeenCalledWith("/tmp/desk.jsonl", "late interject", undefined);
+    expect(engine.steerSession).not.toHaveBeenCalled();
+  });
+
+  // #1610 孤儿写入修复：steer 被拒绝时不写 origin 条目
+  it("does not write a message-origin entry when steerSession returns false (session_busy race)", async () => {
+    const session = makeFakeSession();
+    const appendCustomEntry = vi.fn();
+    (session as any).sessionManager = { appendCustomEntry };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      isSessionStreaming: vi.fn(() => true),
+      steerSession: vi.fn(() => false),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await expect(submitDesktopSessionInterjection(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "interject",
+      displayMessage: {
+        text: "interject",
+        source: "bridge_rc",
+        bridgeSessionKey: "telegram:99",
+      },
+    })).rejects.toThrow("session_busy");
+
+    // origin 条目必须在 steer 成功后才写，被拒绝时不能产生孤儿
+    expect(appendCustomEntry).not.toHaveBeenCalled();
   });
 });

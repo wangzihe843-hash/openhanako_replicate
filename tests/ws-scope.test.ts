@@ -69,6 +69,10 @@ describe("websocket scope filtering", () => {
       type: "prompt",
       sessionPath: "/s/new.jsonl",
     })).toBe(true);
+    expect(wsClientCanSendMessage(client, {
+      type: "interject",
+      sessionPath: "/s/new.jsonl",
+    })).toBe(true);
   });
 
   it("allows same-Studio LAN clients to receive session-aware notifications", () => {

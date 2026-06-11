@@ -40,11 +40,32 @@ export interface DesktopNotificationOptions {
 
 export type SessionPermissionMode = 'auto' | 'operate' | 'ask' | 'read_only';
 
+/**
+ * #1624：服务端在 session restore 时算好的"工具能力有更新"提示数据
+ * （冻结快照 vs 当前 agent 配置）。前端只消费，不自行计算。
+ */
+export interface SessionCapabilityDrift {
+  version: number;
+  /** 当前 live 配置的能力 fingerprint（dismiss 时回传） */
+  fingerprint: string;
+  frozenFingerprint: string;
+  addedToolNames: string[];
+  removedToolNames: string[];
+  invalidToolNames: string[];
+  promptChanged: boolean;
+  hasDrift: boolean;
+}
+
 export interface Session {
   path: string;
   title: string | null;
   firstMessage: string;
   modified: string;
+  /**
+   * 服务端磁盘修订点（stat 签名）。null = 服务端未提供（老服务端 / 内存占位投影）。
+   * 与 chatSessions[path].revision 对比用于判断缓存内容是否落后于磁盘真相。
+   */
+  revision?: string | null;
   messageCount: number;
   agentId: string | null;
   agentName: string | null;
@@ -215,6 +236,11 @@ export interface StudioWorkspace {
   presentation?: string | null;
   capabilities?: string[];
   isDefault?: boolean;
+  /**
+   * local_fs mount 的 native 绝对根路径。仅当服务端按 principal 判定为
+   * 本地 owner 时披露；远端/虚拟 mount 恒为 null。
+   */
+  nativeRootPath?: string | null;
 }
 
 export interface WorkspaceChangePayload {

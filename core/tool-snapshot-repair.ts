@@ -1,25 +1,41 @@
 import { CORE_TOOL_NAMES, uniqueToolNames } from "../shared/tool-categories.ts";
 
-export function repairRestoredToolSnapshot(snapshotToolNames, allToolNames, {
+/**
+ * Same repair as repairRestoredToolSnapshot, but also reports which snapshot
+ * names were dropped because they are no longer registered in the runtime.
+ * #1624: the restore path surfaces these as "invalid tools" in the capability
+ * drift notice instead of filtering them fully silently.
+ */
+export function repairRestoredToolSnapshotDetailed(snapshotToolNames, allToolNames, {
   coreToolNames = CORE_TOOL_NAMES,
 } = {}) {
   const available = new Set(uniqueToolNames(allToolNames));
-  const result = [];
+  const toolNames = [];
+  const droppedToolNames = [];
   const seen = new Set();
 
   for (const name of uniqueToolNames(snapshotToolNames)) {
-    if (!available.has(name) || seen.has(name)) continue;
+    if (seen.has(name)) continue;
+    if (!available.has(name)) {
+      seen.add(name);
+      droppedToolNames.push(name);
+      continue;
+    }
     seen.add(name);
-    result.push(name);
+    toolNames.push(name);
   }
 
   for (const name of coreToolNames) {
     if (!available.has(name) || seen.has(name)) continue;
     seen.add(name);
-    result.push(name);
+    toolNames.push(name);
   }
 
-  return result;
+  return { toolNames, droppedToolNames };
+}
+
+export function repairRestoredToolSnapshot(snapshotToolNames, allToolNames, options = {}) {
+  return repairRestoredToolSnapshotDetailed(snapshotToolNames, allToolNames, options).toolNames;
 }
 
 export function sameToolNames(left, right) {

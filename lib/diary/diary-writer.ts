@@ -11,7 +11,7 @@
 import fs from "fs";
 import path from "path";
 import { scrubPII } from "../pii-guard.ts";
-import { getLogicalDay } from "../time-utils.ts";
+import { getLogicalDay, getLogicalDayForDate } from "../time-utils.ts";
 import { callText } from "../../core/llm-client.ts";
 import { getLocale } from "../i18n.ts";
 import { generateSummary } from "../pi-sdk/index.ts";
@@ -149,9 +149,13 @@ function parseTime(value) {
 }
 
 function hasMessageInRange(messages, rangeStart, rangeEnd) {
+  return filterMessagesInRange(messages, rangeStart, rangeEnd).length > 0;
+}
+
+function filterMessagesInRange(messages, rangeStart, rangeEnd) {
   const startMs = rangeStart.getTime();
   const endMs = rangeEnd.getTime();
-  return messages.some((message) => {
+  return messages.filter((message) => {
     const ts = parseTime(message.timestamp);
     return ts !== null && ts >= startMs && ts <= endMs;
   });
@@ -165,6 +169,31 @@ function getLatestMessageTime(messages) {
     if (latest === null || ts > latest) latest = ts;
   }
   return latest;
+}
+
+function getLatestMessageTimestamp(messages) {
+  const latest = getLatestMessageTime(messages);
+  return latest === null ? null : new Date(latest).toISOString();
+}
+
+function summarySourceRangeWithinRange(summary, rangeStart, rangeEnd) {
+  const source = summary?.source_time_range;
+  if (!source || typeof source !== "object") return null;
+  const start = parseTime(source.start);
+  const end = parseTime(source.end);
+  if (start === null && end === null) return null;
+  if (start === null || end === null) return false;
+  return start >= rangeStart.getTime() && end <= rangeEnd.getTime();
+}
+
+function canUseWholeSummaryForDiaryDate(summary, session, rangeStart, rangeEnd) {
+  const sourceRangeStatus = summarySourceRangeWithinRange(summary, rangeStart, rangeEnd);
+  if (sourceRangeStatus !== null) return sourceRangeStatus;
+  if (session) {
+    return session.messages.length > 0
+      && session.targetMessages.length === session.messages.length;
+  }
+  return true;
 }
 
 function needsTemporarySupplement(summary, messages) {
@@ -334,17 +363,50 @@ async function collectDiaryMaterialResult({
 
   const sessionFiles = new Map();
   for (const item of listSessionFiles(sessionDir)) {
-    const { messages, lastTimestamp } = readSessionMessages(item.filePath);
+    const { messages, lastTimestamp } = readSessionMessages(item.filePath, { full: true });
     if (!hasMessageInRange(messages, rangeStart, rangeEnd)) continue;
+    const targetMessages = filterMessagesInRange(messages, rangeStart, rangeEnd);
     sessionFiles.set(item.sessionId, {
       ...item,
       messages,
-      lastTimestamp,
+      targetMessages,
+      fullLastTimestamp: lastTimestamp,
+      lastTimestamp: getLatestMessageTimestamp(targetMessages) || lastTimestamp,
     });
   }
 
   for (const summary of summaries) {
     seenInRange.add(summary.session_id);
+    const session = sessionFiles.get(summary.session_id);
+    if (!canUseWholeSummaryForDiaryDate(summary, session, rangeStart, rangeEnd)) {
+      if (!session) {
+        addMaterialWarning(warnings, summary.session_id, "date-slice", "summary source range is outside the diary date and the session file is unavailable");
+        continue;
+      }
+      const temporary = await generateOptionalTemporarySummary({
+        warnings,
+        warningStage: "date-slice",
+        emptyMessage: "date-sliced temporary summary returned empty",
+        generateTemporarySummary,
+        sessionId: summary.session_id,
+        sessionPath: session.filePath,
+        messages: session.targetMessages,
+        previousSummary: "",
+        resolvedModel,
+        getCompactionAuth,
+        reason: "date-slice",
+      });
+      if (temporary?.trim()) {
+        materials.push({
+          kind: "temporary",
+          sessionId: summary.session_id,
+          summary: temporary,
+          at: session.lastTimestamp || summary.updated_at || summary.created_at,
+        });
+      }
+      continue;
+    }
+
     materials.push({
       kind: "summary",
       sessionId: summary.session_id,
@@ -352,9 +414,8 @@ async function collectDiaryMaterialResult({
       at: summary.created_at || summary.updated_at,
     });
 
-    const session = sessionFiles.get(summary.session_id);
-    if (!session || !needsTemporarySupplement(summary, session.messages)) continue;
-    const supplementMessages = selectSupplementMessages(summary, session.messages);
+    if (!session || !needsTemporarySupplement(summary, session.targetMessages)) continue;
+    const supplementMessages = selectSupplementMessages(summary, session.targetMessages);
     const temporary = await generateOptionalTemporarySummary({
       warnings,
       warningStage: "temporary-supplement",
@@ -383,6 +444,7 @@ async function collectDiaryMaterialResult({
     const memoryEnabled = typeof isSessionMemoryEnabledForPath === "function"
       ? isSessionMemoryEnabledForPath(session.filePath) !== false
       : true;
+    const canPersistSummary = session.targetMessages.length === session.messages.length;
     let existing: any = summariesById.get(sessionId) || null;
     if (!existing && typeof summaryManager.getSummary === "function") {
       try {
@@ -392,12 +454,12 @@ async function collectDiaryMaterialResult({
       }
     }
 
-    if (memoryEnabled) {
+    if (memoryEnabled && canPersistSummary) {
       if (typeof summaryManager.rollingSummary !== "function") {
         addMaterialWarning(warnings, sessionId, "rolling-summary", "summaryManager.rollingSummary is required to backfill diary summaries");
       } else {
         try {
-          const backfilled = await summaryManager.rollingSummary(sessionId, session.messages, resolvedModel);
+          const backfilled = await summaryManager.rollingSummary(sessionId, session.targetMessages, resolvedModel);
           if (backfilled?.trim()) {
             materials.push({
               kind: "backfilled",
@@ -420,7 +482,7 @@ async function collectDiaryMaterialResult({
         generateTemporarySummary,
         sessionId,
         sessionPath: session.filePath,
-        messages: session.messages,
+        messages: session.targetMessages,
         previousSummary: existing?.summary || "",
         resolvedModel,
         getCompactionAuth,
@@ -437,6 +499,7 @@ async function collectDiaryMaterialResult({
       continue;
     }
 
+    const temporaryReason = memoryEnabled ? "date-slice" : "memory-off";
     const temporary = await generateOptionalTemporarySummary({
       warnings,
       warningStage: "temporary-summary",
@@ -444,11 +507,11 @@ async function collectDiaryMaterialResult({
       generateTemporarySummary,
       sessionId,
       sessionPath: session.filePath,
-      messages: session.messages,
-      previousSummary: existing?.summary || "",
+      messages: session.targetMessages,
+      previousSummary: canPersistSummary ? existing?.summary || "" : "",
       resolvedModel,
       getCompactionAuth,
-      reason: "memory-off",
+      reason: temporaryReason,
     });
     if (temporary?.trim()) {
       materials.push({
@@ -480,6 +543,7 @@ export async function collectDiaryMaterials(opts) {
  * @param {string} opts.userName
  * @param {string} opts.agentName
  * @param {string} opts.cwd - 工作台目录路径
+ * @param {string} [opts.targetDate] - 目标日记逻辑日期（YYYY-MM-DD）；缺省为当前逻辑日
  * @param {import('../desk/activity-store.ts').ActivityStore} [opts.activityStore] - 活动记录（巡检+定时任务）
  * @param {string} [opts.sessionDir] - 当前 agent 的 session 目录，用于发现今天缺摘要的 session
  * @param {(sessionPath: string) => boolean} [opts.isSessionMemoryEnabledForPath] - per-session 记忆开关：
@@ -490,13 +554,15 @@ export async function writeDiary(opts) {
   const {
     summaryManager, resolvedModel,
     agentPersonality, memory, userName, agentName,
-    cwd, activityStore, sessionDir,
+    cwd, activityStore, sessionDir, targetDate,
     isSessionMemoryEnabledForPath,
     generateTemporarySummary, getCompactionAuth,
   } = opts;
 
   // 1. 计算逻辑日，收集摘要与临时补齐材料
-  const { logicalDate, rangeStart, rangeEnd } = getLogicalDay();
+  const { logicalDate, rangeStart, rangeEnd } = targetDate
+    ? getLogicalDayForDate(targetDate)
+    : getLogicalDay();
   const isZh = getLocale().startsWith("zh");
 
   let materials;
@@ -558,7 +624,7 @@ export async function writeDiary(opts) {
 
   if (memory?.trim()) {
     userPrompt.push("", "---", "",
-      isZh ? "# 你的记忆（背景参考，不要复述）" : "# Your memory (background reference — do not repeat)",
+      isZh ? "# 你的长期背景（只用于语气，不作为当天事实）" : "# Your long-term background (voice only, not diary facts)",
       "", memory);
   }
 
@@ -573,6 +639,7 @@ export async function writeDiary(opts) {
       ? [
           `- 你叫${agentName}，用户叫${userName}`,
           "- 用你自己的人格和语气写，保持一致性",
+          "- 当天发生了什么、人物关系和双链判断，只能依据“今日对话摘要”和“今日后台活动”；长期背景不能作为当天事实来源",
           "- 隐私信息（手机号、身份证、银行卡、地址等）如果出现在摘要中，不要写入日记",
           "- 不要输出 MOOD 区块，日记本身就是你的内心表达",
           "- 直接输出 Markdown 正文，不要代码块包裹",
@@ -581,6 +648,7 @@ export async function writeDiary(opts) {
       : [
           `- Your name is ${agentName}; the user's name is ${userName}`,
           "- Write in your own personality and tone — stay consistent",
+          "- For what happened today, people involved, and backlink decisions, use only Today's conversation summaries and background activities; long-term background is not an event source",
           "- If PII (phone numbers, IDs, bank cards, addresses, etc.) appears in the summaries, do NOT include it in the diary",
           "- Do NOT output a MOOD block — the diary itself is your inner expression",
           "- Output raw Markdown — no code-block wrapping",

@@ -4,6 +4,7 @@ import path from "path";
 import YAML from "js-yaml";
 import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.ts";
 import { lookupKnown } from "../shared/known-models.ts";
+import { inferMediaProtocolId } from "./media-protocols.ts";
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -18,17 +19,11 @@ function modelType(providerId, model) {
   return model.type || lookupKnown(providerId, model.id)?.type || "chat";
 }
 
-function inferImageProtocolId(providerId, modelId) {
-  if (providerId === "openai-codex-oauth") return "openai-codex-responses-image";
-  if (providerId === "openai" && String(modelId || "").startsWith("gpt-image")) return "openai-images";
-  if (providerId === "openai" && String(modelId || "").startsWith("dall-e")) return "openai-images";
-  if (providerId === "volcengine" && String(modelId || "").includes("seedream")) return "volcengine-images";
-  if (providerId === "dashscope" && String(modelId || "").startsWith("wan")) return "dashscope-wan-images";
-  if (providerId === "dashscope" && String(modelId || "").startsWith("qwen-image-2")) return "dashscope-qwen-multimodal-image";
-  if (providerId === "dashscope" && String(modelId || "").startsWith("qwen-image")) return "dashscope-qwen-text2image";
-  if (providerId === "minimax") return "minimax-images";
-  if (providerId === "gemini") return "gemini-generate-content-image";
-  return "";
+// 迁移层只掌握 providerId / modelId，不知道 provider 是否内置，
+// 所以只触发 inferMediaProtocolId 中与来源无关的内置规则；
+// 自定义 provider 的 protocol 由 ProviderRegistry 在读取时按 api/来源推断（见 core/media-protocols.ts）。
+function inferLegacyImageProtocolId(providerId, modelId) {
+  return inferMediaProtocolId(providerId, "image_generation", modelId);
 }
 
 function normalizeMediaModelEntry(providerId, model) {
@@ -36,7 +31,7 @@ function normalizeMediaModelEntry(providerId, model) {
   if (!id) return null;
   if (!isPlainObject(model)) {
     const next: Record<string, any> = { id };
-    const protocolId = inferImageProtocolId(providerId, id);
+    const protocolId = inferLegacyImageProtocolId(providerId, id);
     if (protocolId) next.protocolId = protocolId;
     return next;
   }
@@ -46,7 +41,7 @@ function normalizeMediaModelEntry(providerId, model) {
     next.name = displayName;
   }
   if (!next.protocolId && !next.protocol_id) {
-    const protocolId = inferImageProtocolId(providerId, id);
+    const protocolId = inferLegacyImageProtocolId(providerId, id);
     if (protocolId) next.protocolId = protocolId;
   }
   return next;

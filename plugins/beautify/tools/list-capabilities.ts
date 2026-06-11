@@ -23,6 +23,11 @@ export async function execute() {
         tools: ["beautify_get-cover-style-guide", "beautify_create-cover", "beautify_apply-cover-candidate"],
         imageRatio: "3:2",
         responsibility: "apply-existing-image",
+      }, {
+        id: "html-style-guide",
+        target: "html",
+        tools: ["beautify_get-html-style-guide"],
+        responsibility: "style-guide-only",
       }],
     },
   };

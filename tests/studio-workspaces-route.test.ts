@@ -55,7 +55,7 @@ describe("studio workspaces route", () => {
     tmpDir = null;
   });
 
-  it("lists the default workspace and active Studio mounts without exposing server paths", async () => {
+  it("lists the default workspace and active Studio mounts without exposing server paths to remote principals", async () => {
     tmpDir = makeTmpDir();
     const workspace = path.join(tmpDir, "workspace");
     const mountRoot = path.join(tmpDir, "design-assets");
@@ -77,7 +77,7 @@ describe("studio workspaces route", () => {
       homeCwd: workspace,
       deskCwd: workspace,
       getRuntimeContext: () => localRuntime(),
-    });
+    }, remotePrincipal());
 
     const res = await app.request("/api/studio/workspaces");
 
@@ -111,6 +111,44 @@ describe("studio workspaces route", () => {
     expect(JSON.stringify(data)).not.toContain(mountRoot);
   });
 
+  it("discloses local_fs native roots to the local owner so desktop integrations keep native paths", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    const mountRoot = path.join(tmpDir, "design-assets");
+    const hanakoHome = path.join(tmpDir, "hana");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(mountRoot, { recursive: true });
+    upsertStudioMount(hanakoHome, {
+      mountId: "mount_design",
+      hostStudioId: "studio_1",
+      sourceKind: "storage",
+      provider: "local_fs",
+      rootLocator: { path: mountRoot },
+      label: "Design Assets",
+      presentation: "folder",
+      capabilities: ["list", "read", "write"],
+    });
+    const app = await makeApp({
+      hanakoHome,
+      homeCwd: workspace,
+      deskCwd: workspace,
+      getRuntimeContext: () => localRuntime(),
+    });
+
+    const res = await app.request("/api/studio/workspaces");
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.workspaces).toEqual([
+      expect.objectContaining({ mountId: "default", nativeRootPath: workspace }),
+      expect.objectContaining({ mountId: "mount_design", nativeRootPath: mountRoot }),
+    ]);
+
+    const files = await app.request("/api/studio/workspaces/mount_design/files");
+    expect(files.status).toBe(200);
+    expect((await files.json()).mount).toMatchObject({ nativeRootPath: mountRoot });
+  });
+
   it("lets the local owner add a server-path workspace as a Studio mount", async () => {
     tmpDir = makeTmpDir();
     const workspace = path.join(tmpDir, "workspace");
@@ -141,7 +179,9 @@ describe("studio workspaces route", () => {
       capabilities: ["list", "read", "write"],
     });
     expect(data.workspace.mountId).toMatch(/^local_fs_/);
-    expect(JSON.stringify(data)).not.toContain(mountRoot);
+    // 创建入口本身已要求 local owner，因此创建响应回带 native root，
+    // 桌面端据此保留"打开文件夹/拖拽真实路径"等本地能力。
+    expect(data.workspace.nativeRootPath).toBe(mountRoot);
 
     const files = await app.request(`/api/studio/workspaces/${encodeURIComponent(data.workspace.mountId)}/files`);
     expect(files.status).toBe(200);

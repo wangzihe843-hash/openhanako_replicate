@@ -148,6 +148,29 @@ function readChannelPhoneSettingsFromMeta(meta: any) {
   };
 }
 
+function readDmPhoneSettingsFromMeta(meta: any) {
+  const override = normalizeAgentPhoneModelOverride({
+    enabled: meta.modelOverrideEnabled,
+    id: meta.modelOverrideId,
+    provider: meta.modelOverrideProvider,
+  });
+  return {
+    mode: normalizeAgentPhoneToolMode(meta.toolMode),
+    replyMinChars: readOptionalPositiveInt(meta.replyMinChars),
+    replyMaxChars: readOptionalPositiveInt(meta.replyMaxChars),
+    proactiveEnabled: meta.proactiveEnabled === undefined
+      ? DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled
+      : readBoolean(meta.proactiveEnabled),
+    reminderIntervalMinutes: positiveIntegerOrDefault(
+      meta.reminderIntervalMinutes,
+      DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+    ),
+    guardLimit: resolveAgentPhoneGuardLimit(meta.guardLimit, 2),
+    modelOverrideEnabled: override.enabled,
+    modelOverrideModel: override.model,
+  };
+}
+
 function assertAvailableModelOverride(engine: any, settings: any) {
   if (!settings.modelOverrideEnabled || !settings.modelOverrideModel) return;
   const { id, provider } = settings.modelOverrideModel;
@@ -217,17 +240,7 @@ export function createChannelsRoute(engine: any, hub: any) {
     if (id.startsWith("dm:")) {
       const agent = resolveConversationOwnerAgent(engine, c);
       const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agent.agentDir, id));
-      const projMeta: any = projection.meta;
-      return {
-        mode: normalizeAgentPhoneToolMode(projMeta.toolMode),
-        replyMinChars: readOptionalPositiveInt(projMeta.replyMinChars),
-        replyMaxChars: readOptionalPositiveInt(projMeta.replyMaxChars),
-        proactiveEnabled: DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled,
-        reminderIntervalMinutes: DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
-        guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
-        modelOverrideEnabled: false,
-        modelOverrideModel: null,
-      };
+      return readDmPhoneSettingsFromMeta(projection.meta || {});
     }
     const filePath = safeChannelPath(id);
     if (!filePath) {
@@ -252,6 +265,8 @@ export function createChannelsRoute(engine: any, hub: any) {
         throw err;
       }
       const agent = resolveConversationOwnerAgent(engine, c);
+      assertAvailableModelOverride(engine, settings);
+      const guardLimit = settings.guardLimit || defaultAgentPhoneGuardLimit(2);
       await updateAgentPhoneProjectionMeta({
         agentDir: agent.agentDir,
         agentId: agent.id,
@@ -261,13 +276,15 @@ export function createChannelsRoute(engine: any, hub: any) {
           toolMode: settings.mode,
           replyMinChars: settings.replyMinChars || "",
           replyMaxChars: settings.replyMaxChars || "",
+          proactiveEnabled: settings.proactiveEnabled ? "true" : "false",
+          reminderIntervalMinutes: settings.reminderIntervalMinutes,
+          guardLimit,
+          modelOverrideEnabled: settings.modelOverrideEnabled ? "true" : "false",
+          modelOverrideId: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.id : "",
+          modelOverrideProvider: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.provider : "",
         },
       });
-      return {
-        ...settings,
-        proactiveEnabled: DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled,
-        guardLimit: DEFAULT_AGENT_PHONE_SETTINGS.guardLimit,
-      };
+      return { ...settings, guardLimit };
     }
     const filePath = safeChannelPath(id);
     if (!filePath) {

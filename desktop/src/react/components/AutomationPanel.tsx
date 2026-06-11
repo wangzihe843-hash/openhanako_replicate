@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import { usePanel } from '../hooks/use-panel';
 import { hanaFetch } from '../hooks/use-hana-fetch';
@@ -6,6 +6,7 @@ import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import fp from './FloatingPanels.module.css';
 import styles from './automation/AutomationPanel.module.css';
 import { AutomationCard } from './automation/AutomationCard';
+import { AgentTabScroller, type AgentTabScrollerItem } from './automation/AgentTabScroller';
 import type { CronJob, ModelOption } from './automation/automation-types';
 import { jobAgentId } from './automation/automation-utils';
 import type { Agent } from '../types';
@@ -58,7 +59,6 @@ export function AutomationPanel() {
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(currentAgentId);
   const [openJobs, setOpenJobs] = useState<Record<string, boolean>>({});
-  const agentTabsScrollerRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -161,27 +161,26 @@ export function AutomationPanel() {
     ? selectedAgentId
     : tabs[0] || null;
   const activeJobs = activeAgentId ? groups.get(activeAgentId) || [] : [];
+  const agentTabItems = useMemo<AgentTabScrollerItem[]>(() => tabs.map(agentId => {
+    const info = resolveAgentDisplayInfo({
+      id: agentId === '__unknown__' ? null : agentId,
+      agents,
+      fallbackAgentName: agentName,
+      fallbackAgentYuan: agentYuan,
+      fallbackAgentAvatarUrl: agentAvatarUrl,
+    });
+    return {
+      id: agentId,
+      label: info.displayName,
+      avatar: <AgentAvatar info={info} className={styles.agentTabAvatar} />,
+    };
+  }), [agentAvatarUrl, agentName, agentYuan, agents, tabs]);
 
   useEffect(() => {
     if (activeAgentId && activeAgentId !== selectedAgentId) {
       setSelectedAgentId(activeAgentId);
     }
   }, [activeAgentId, selectedAgentId]);
-
-  useEffect(() => {
-    if (!activeAgentId) return;
-    const scroller = agentTabsScrollerRef.current;
-    if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
-    const item = scroller.querySelector(`[data-agent-id="${activeAgentId}"]`) as HTMLElement | null;
-    if (!item) return;
-    const containerRect = scroller.getBoundingClientRect();
-    const itemRect = item.getBoundingClientRect();
-    const itemLeft = itemRect.left - containerRect.left + scroller.scrollLeft;
-    const itemRight = itemLeft + itemRect.width;
-    if (itemLeft < scroller.scrollLeft || itemRight > scroller.scrollLeft + scroller.clientWidth) {
-      scroller.scrollLeft = itemLeft - (scroller.clientWidth - itemRect.width) / 2;
-    }
-  }, [activeAgentId]);
 
   if (!visible) return null;
 
@@ -211,36 +210,14 @@ export function AutomationPanel() {
               <div className={fp.automationEmpty}>{t('automation.empty')}</div>
             ) : (
               <>
-                <div className={styles.agentTabsShell} ref={agentTabsScrollerRef}>
-                  <div className={styles.agentTabs} role="tablist" aria-label={t('automation.agentTabs')}>
-                    {tabs.map(agentId => {
-                      const info = resolveAgentDisplayInfo({
-                        id: agentId === '__unknown__' ? null : agentId,
-                        agents,
-                        fallbackAgentName: agentName,
-                        fallbackAgentYuan: agentYuan,
-                        fallbackAgentAvatarUrl: agentAvatarUrl,
-                      });
-                      const active = agentId === activeAgentId;
-                      return (
-                        <button
-                          key={agentId}
-                          className={styles.agentTab}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          data-active={active}
-                          onClick={() => setSelectedAgentId(agentId)}
-                        >
-                          <span className={styles.agentTabAvatarWrap}>
-                            <AgentAvatar info={info} className={styles.agentTabAvatar} />
-                          </span>
-                          <span className={styles.agentTabName}>{info.displayName}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                <AgentTabScroller
+                  items={agentTabItems}
+                  activeId={activeAgentId}
+                  ariaLabel={t('automation.agentTabs')}
+                  previousLabel={t('automation.previousAgent')}
+                  nextLabel={t('automation.nextAgent')}
+                  onSelect={setSelectedAgentId}
+                />
                 <div className={styles.groupList}>
                   {activeJobs.length === 0 ? (
                     <div className={fp.automationEmpty}>{t('automation.emptyForAgent')}</div>

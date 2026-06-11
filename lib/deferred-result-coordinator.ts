@@ -108,10 +108,10 @@ export class DeferredResultCoordinator {
   async _deliverTask(taskId) {
     const task = this.store.query(taskId);
     if (!isDeliverable(task)) return false;
+    if (isExternallyDeliveredTask(task)) return false;
     if (isUiOnlyDeferredResultTask(task) && !shouldNotifyAgentOnFailure(task)) {
       return await this._recordUiOnlyTask(taskId, task);
     }
-    if (isExternallyDeliveredTask(task)) return false;
 
     if (
       typeof this.sessionCoordinator.isRunnableSessionPath === "function"

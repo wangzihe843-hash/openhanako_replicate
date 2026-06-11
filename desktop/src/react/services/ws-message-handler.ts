@@ -206,23 +206,22 @@ function applyCompactionLifecycle(msg: any): void {
   );
 }
 
-export function applyStreamingStatus(isStreaming: boolean, sessionPath: string | null): void {
+export function applyStreamingStatus(
+  isStreaming: boolean,
+  sessionPath: string | null,
+  identity: { streamId?: string | null; turnId?: string | null } = {},
+): boolean {
   // 元数据层：把 isStreaming 视为 sessionPath 维度的权威信号，统一写回 streamingSessions。
   // 这一层不分焦点，任何来源（普通 status、stream_resume 恢复）都必须到达这里，
   // 否则重连后服务端说「已结束」前端却留着旧的 streaming 标记，UI 会卡在"思考中"。
   const wasStreaming = !!sessionPath && useStore.getState().streamingSessions.includes(sessionPath);
   if (sessionPath) {
     if (isStreaming) {
-      useStore.setState(s => ({
-        streamingSessions: s.streamingSessions.includes(sessionPath)
-          ? s.streamingSessions
-          : [...s.streamingSessions, sessionPath],
-      }));
+      useStore.getState().addStreamingSession(sessionPath, identity);
       useStore.getState().clearInlineError(sessionPath);
     } else {
-      useStore.setState(s => ({
-        streamingSessions: s.streamingSessions.filter((p: string) => p !== sessionPath),
-      }));
+      const applied = useStore.getState().removeStreamingSession(sessionPath, identity);
+      if (!applied) return false;
     }
   }
 
@@ -236,12 +235,13 @@ export function applyStreamingStatus(isStreaming: boolean, sessionPath: string |
 
   // 渲染层：只有焦点 session 才影响 UI 占位 / sessions 列表。
   const focused = useStore.getState().currentSessionPath;
-  if (sessionPath && sessionPath !== focused) return;
+  if (sessionPath && sessionPath !== focused) return false;
   if (isStreaming) {
     ensureCurrentSessionVisible();
   } else if (hasOptimisticCurrentSession()) {
     scheduleSessionsRefresh('optimistic_session_settled');
   }
+  return true;
 }
 
 function attachmentsEqual(a: any, b: any): boolean {
@@ -840,12 +840,15 @@ export function handleServerMessage(msg: any): void {
 
     case 'status': {
       const sp = msg.sessionPath || null;
-      if (sp) {
+      // streamingSessions 维护 + 焦点 UI 占位一并由 applyStreamingStatus 处理
+      const applied = applyStreamingStatus(msg.isStreaming, sp, {
+        streamId: msg.streamId ?? null,
+        turnId: msg.turnId ?? null,
+      });
+      if (sp && applied) {
         if (msg.isStreaming) streamBufferManager.beginTurn(sp);
         else streamBufferManager.finishTurn(sp);
       }
-      // streamingSessions 维护 + 焦点 UI 占位一并由 applyStreamingStatus 处理
-      applyStreamingStatus(msg.isStreaming, sp);
       break;
     }
   }

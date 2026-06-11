@@ -29,8 +29,16 @@ import {
   createPluginAssetSessionCookie,
   issuePluginAssetSession,
 } from "../../core/plugin-asset-session-service.ts";
+import { issuePluginSurfaceSession } from "../../core/plugin-surface-session-service.ts";
 import { servePluginAsset } from "../http/plugin-assets.ts";
-import { isLocalOwnerPrincipal } from "../http/route-security.ts";
+import {
+  PLUGIN_SURFACE_SESSION_HEADER,
+  PLUGIN_SURFACE_SESSION_QUERY,
+} from "../http/plugin-surface-session.ts";
+import {
+  PLUGIN_HOST_ROUTE_PLUGIN_IDS,
+  isLocalOwnerPrincipal,
+} from "../http/route-security.ts";
 
 const log = createModuleLogger("plugin-install");
 
@@ -38,6 +46,7 @@ const MAX_PLUGIN_RELEASE_PACKAGE_SIZE = 50 * 1024 * 1024;
 const PLUGIN_IFRAME_TICKET_QUERY = "pluginIframeTicket";
 const PLUGIN_IFRAME_HOST_QUERY_PARAMS = new Set([
   PLUGIN_IFRAME_TICKET_QUERY,
+  PLUGIN_SURFACE_SESSION_QUERY,
   "agentId",
   "hana-theme",
   "hana-css",
@@ -45,12 +54,16 @@ const PLUGIN_IFRAME_HOST_QUERY_PARAMS = new Set([
 
 /**
  * 代理分发：将 /plugins/:pluginId/* 的请求转发到对应 plugin 子 app。
+ * 入口凭证（iframe ticket / surface session）在转发前剥离；请求级身份与
+ * agentId 通过 Hono env 的 `pluginRouteRequest` 显式传入插件 route app，
+ * 由 plugin-manager 的中间件铸造为 `pluginRequestContext` 请求变量。
  * @param {import("hono").Context} c
  * @param {import("hono").Hono} pluginApp
  * @param {string} pluginId
  * @param {string} [agentId] - 当前 agent id，注入到子请求的 X-Hana-Agent-Id header
+ * @param {object|null} [requestPrincipal] - 本次请求的来源身份描述
  */
-async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?: string) {
+async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?: string, requestPrincipal: any = null) {
   const url = new URL(c.req.url);
   const prefix = `/plugins/${pluginId}`;
   const prefixIndex = url.pathname.indexOf(prefix);
@@ -59,8 +72,10 @@ async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?:
     : "/";
   url.pathname = subPath;
   url.searchParams.delete(PLUGIN_IFRAME_TICKET_QUERY);
+  url.searchParams.delete(PLUGIN_SURFACE_SESSION_QUERY);
 
   const headers = new Headers(c.req.raw.headers);
+  headers.delete(PLUGIN_SURFACE_SESSION_HEADER);
   if (agentId) headers.set("X-Hana-Agent-Id", agentId);
 
   const hasBody = c.req.method !== "GET" && c.req.method !== "HEAD";
@@ -70,7 +85,13 @@ async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?:
     body: hasBody ? c.req.raw.body : undefined,
     ...(hasBody ? { duplex: "half" } : {}),
   });
-  return pluginApp.fetch(subReq);
+  return pluginApp.fetch(subReq, {
+    pluginRouteRequest: {
+      pluginId,
+      agentId: agentId || null,
+      principal: requestPrincipal,
+    },
+  });
 }
 
 /**
@@ -168,6 +189,9 @@ function appendPluginAssetSessionCookie(c: any, engine: any, pluginId: string, r
   if (!responseNeedsPluginAssetSession(c, response, iframeTicket)) return response;
   if (!engine?.hanakoHome) return response;
   const principal = readAuthPrincipal(c);
+  // Surface session 凭证不允许给自己续发资产会话 cookie：派生凭证不能再派生，
+  // 续发只能来自 ticket 或 owner / device 凭证的入口。
+  if (!iframeTicket && principal?.credentialKind === "plugin_surface_session") return response;
   const principalId = iframeTicket?.principalId || principal?.principalId;
   if (!principalId) return response;
   const issued = issuePluginAssetSession({
@@ -227,26 +251,40 @@ function assertPluginIframeSurfaceAllowed(surface: any) {
   }
 }
 
-const PLUGIN_HOST_ROUTE_PLUGIN_IDS = new Set([
-  "config-schemas",
-  "event-bus",
-  "diagnostics",
-  "dev",
-  "marketplace",
-  "install",
-  "settings",
-  "pages",
-  "widgets",
-  "ui-host-capabilities",
-  "settings-tabs",
-  "iframe-ticket",
-  "theme.css",
-]);
-
 const PLUGIN_HOST_ROUTE_SURFACE_PATHS = new Set([
   "/config",
   "/config-schema",
 ]);
+
+/**
+ * 构造插件 route handler 请求级上下文的来源身份描述。
+ * 优先采用 HTTP 鉴权铸造的 authPrincipal（owner / device / plugin surface）；
+ * ticket 加载的 surface 文档请求没有 authPrincipal，从已验证的 iframe ticket
+ * 推导。两者都缺席时为 null（如测试直连 route app）。
+ */
+function pluginRouteRequestPrincipal(authPrincipal: any, iframeTicket: any, pluginId: string) {
+  if (authPrincipal && typeof authPrincipal === "object") {
+    return {
+      kind: authPrincipal.kind ?? null,
+      principalId: authPrincipal.principalId ?? null,
+      pluginId: authPrincipal.pluginId ?? null,
+      credentialId: authPrincipal.credentialId ?? null,
+      credentialKind: authPrincipal.credentialKind ?? null,
+      connectionKind: authPrincipal.connectionKind ?? null,
+    };
+  }
+  if (iframeTicket && typeof iframeTicket === "object") {
+    return {
+      kind: "plugin",
+      principalId: iframeTicket.principalId ?? null,
+      pluginId,
+      credentialId: iframeTicket.ticketId ?? null,
+      credentialKind: "plugin_iframe_ticket",
+      connectionKind: null,
+    };
+  }
+  return null;
+}
 
 function assertInsideDir(childPath: string, parentDir: string) {
   const child = path.resolve(childPath);
@@ -299,6 +337,47 @@ function readInstalledVersion(pm: any, pluginId: string, targetDir: string) {
   } catch {
     return null;
   }
+}
+
+function removePluginInstallRecord(engine: any, pluginId: string) {
+  if (!pluginId) return;
+  if (typeof engine?.removePluginInstallRecord === "function") {
+    engine.removePluginInstallRecord(pluginId);
+  }
+}
+
+function reconcileMissingPluginDirectories(engine: any, pm: any) {
+  const removed = typeof pm?.reconcileMissingPluginDirectories === "function"
+    ? pm.reconcileMissingPluginDirectories()
+    : [];
+  if (!Array.isArray(removed) || removed.length === 0) return [];
+  for (const entry of removed) {
+    if ((entry?.source || "community") !== "community") continue;
+    removePluginInstallRecord(engine, entry.id);
+  }
+  return removed;
+}
+
+function defaultCommunityPluginDir(pm: any, pluginId: string) {
+  const userPluginsDir = typeof pm?.getUserPluginsDir === "function"
+    ? pm.getUserPluginsDir()
+    : null;
+  if (!userPluginsDir) return null;
+  return path.join(userPluginsDir, safePathSegment(pluginId, pluginId));
+}
+
+function readLiveOrReconciledInstallRecord(engine: any, pm: any, pluginId: string, installedPlugin: any) {
+  if (installedPlugin) return null;
+  const record = typeof engine?.getPluginInstallRecord === "function"
+    ? engine.getPluginInstallRecord(pluginId)
+    : null;
+  if (!record) return null;
+  const defaultDir = defaultCommunityPluginDir(pm, pluginId);
+  if (defaultDir && !fs.existsSync(defaultDir)) {
+    removePluginInstallRecord(engine, pluginId);
+    return null;
+  }
+  return record;
 }
 
 function getInstallTargetDir(pm: any, desc: any, stagedDir: string, userPluginsDir: string) {
@@ -713,6 +792,7 @@ export function createPluginsRoute(engine: any) {
    * @param {string} [opts.source] - 按 source 过滤（"community" | "builtin"）
    */
   function visiblePlugins(pm: any, opts: { source?: string } = {}) {
+    reconcileMissingPluginDirectories(engine, pm);
     let plugins = pm.listPlugins().filter((p: any) => !p.hidden);
     if (opts.source) plugins = plugins.filter((p: any) => p.source === opts.source);
     return plugins.map(p => ({
@@ -755,6 +835,7 @@ export function createPluginsRoute(engine: any) {
   route.get("/plugins/diagnostics", (c) => {
     const pm = engine.pluginManager;
     const bus = engine.getEventBus?.() || engine.eventBus || null;
+    reconcileMissingPluginDirectories(engine, pm);
     return c.json({
       plugins: typeof pm?.getDiagnostics === "function"
         ? pm.getDiagnostics().filter(p => !p.hidden)
@@ -922,12 +1003,14 @@ export function createPluginsRoute(engine: any) {
     const marketplace = getMarketplace();
     const data = await marketplace.load();
     const appVersion = getEngineAppVersion(engine);
+    reconcileMissingPluginDirectories(engine, pm);
     const installed = new Map<string, any>((pm?.listPlugins?.({ source: "community" }) || []).map((plugin: any) => [plugin.id, plugin]));
     return c.json({
       ...data,
       plugins: data.plugins.map((plugin) => {
         const installedPlugin = installed.get(plugin.id);
-        const installedVersion = installedPlugin?.version || engine.getPluginInstallRecord?.(plugin.id)?.installedVersion || null;
+        const installRecord = readLiveOrReconciledInstallRecord(engine, pm, plugin.id, installedPlugin);
+        const installedVersion = installedPlugin?.version || installRecord?.installedVersion || null;
         const versionState = getMarketplacePluginVersionState(plugin, {
           appVersion,
           installedVersion,
@@ -968,7 +1051,8 @@ export function createPluginsRoute(engine: any) {
     } = await c.req.json().catch(() => ({}));
     try {
       const installedPlugin = (pm.listPlugins?.({ source: "community" }) || []).find((item) => item.id === plugin.id);
-      const installedVersion = installedPlugin?.version || engine.getPluginInstallRecord?.(plugin.id)?.installedVersion || null;
+      const installRecord = readLiveOrReconciledInstallRecord(engine, pm, plugin.id, installedPlugin);
+      const installedVersion = installedPlugin?.version || installRecord?.installedVersion || null;
       const versionState = getMarketplacePluginVersionState(plugin, {
         appVersion: getEngineAppVersion(engine),
         installedVersion,
@@ -1081,6 +1165,7 @@ export function createPluginsRoute(engine: any) {
     try {
       const pluginDir = await pm.removePlugin(id, { source: "community" });
       await engine.syncPluginExtensions();
+      removePluginInstallRecord(engine, id);
       if (pluginDir && fs.existsSync(pluginDir)) {
         fs.rmSync(pluginDir, { recursive: true, force: true });
       }
@@ -1194,11 +1279,19 @@ export function createPluginsRoute(engine: any) {
         return c.json({ error: `Plugin "${pluginId}" not found` }, 404);
       }
       const principal = (c as any).get("authPrincipal");
+      const principalId = principal?.principalId || "principal_unknown";
       const issued = issuePluginIframeTicket({
         hanakoHome: engine.hanakoHome,
         pluginId,
         surfacePath,
-        principalId: principal?.principalId || "principal_unknown",
+        principalId,
+      } as any);
+      // Surface session 与 ticket 一并签发：ticket 只负责该 surface 的文档加载，
+      // surface session 是页面脚本调用本插件 route handler 的请求级入口凭证。
+      const surfaceSession = issuePluginSurfaceSession({
+        hanakoHome: engine.hanakoHome,
+        pluginId,
+        principalId,
       } as any);
       return c.json({
         ticket: issued.ticket,
@@ -1206,6 +1299,10 @@ export function createPluginsRoute(engine: any) {
         pluginId,
         surfacePath,
         expiresAt: issued.expiresAt,
+        surfaceSession: {
+          token: surfaceSession.token,
+          expiresAt: surfaceSession.expiresAt,
+        },
       });
     } catch (err) {
       return c.json({
@@ -1265,7 +1362,8 @@ export function createPluginsRoute(engine: any) {
     await engine.pluginManager?.activatePluginRoute?.(pluginId, subPath);
     const agent = resolveAgent(engine, c);
     const agentId = agent?.id || null;
-    const response = await proxyToPlugin(c, pluginApp, pluginId, agentId);
+    const requestPrincipal = pluginRouteRequestPrincipal(readAuthPrincipal(c), iframeTicket, pluginId);
+    const response = await proxyToPlugin(c, pluginApp, pluginId, agentId, requestPrincipal);
     return appendPluginAssetSessionCookie(c, engine, pluginId, response, iframeTicket);
   });
 

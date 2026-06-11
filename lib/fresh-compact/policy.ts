@@ -27,6 +27,20 @@ export function buildFreshCompactSnapshot({ systemPrompt = "", state = {} } = {}
   };
 }
 
+/** compaction "无事可做"的错误归类：fresh compact 视为满足（快照仍可刷新），其余照常抛出 */
+export function getFreshCompactNoopReason(error: any) {
+  const message = error?.message || String(error || "");
+  if (message.includes("Already compacted")) return "already_compacted";
+  if (message.includes("Nothing to compact")) return "nothing_to_compact";
+  return null;
+}
+
+export function normalizeFreshCompactNoopReason(reason: any) {
+  const value = String(reason || "").trim();
+  if (value === "already_compacted" || value === "nothing_to_compact") return value;
+  return null;
+}
+
 function getStoredFreshMeta(meta: Record<string, any> = {}) {
   const nested = meta?.freshCompact && typeof meta.freshCompact === "object"
     ? meta.freshCompact

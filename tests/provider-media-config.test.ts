@@ -34,6 +34,24 @@ describe("provider media config migration", () => {
     ]);
   });
 
+  it("moves custom provider image models without guessing a protocol at migration time", () => {
+    // 自定义 provider 的 protocol 由 ProviderRegistry 读时根据 api/来源推断，
+    // 迁移层不知道 provider 是否内置，不允许猜测
+    const { providers, changed } = normalizeProviderMediaConfigMap({
+      "my-proxy": {
+        api_key: "proxy-key",
+        base_url: "https://proxy.example.com/v1",
+        models: [{ id: "flux-1.1-pro", type: "image" }],
+      },
+    });
+
+    expect(changed).toBe(true);
+    expect(providers["my-proxy"].models).toEqual([]);
+    expect(providers["my-proxy"].media.image_generation.models).toEqual([
+      { id: "flux-1.1-pro" },
+    ]);
+  });
+
   it("is idempotent when media models already use the new shape", () => {
     const input = {
       openai: {

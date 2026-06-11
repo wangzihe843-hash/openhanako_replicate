@@ -15,6 +15,7 @@ export default [
       'dist-sandbox/**',
       'desktop/dist-renderer/**',
       'desktop/native/**/.build/**',
+      '.claude/**',
       '.cache/**',
       '**/*.cjs',
     ],

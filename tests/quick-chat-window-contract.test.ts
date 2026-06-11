@@ -61,4 +61,16 @@ describe("desktop quick chat window contract", () => {
     expect(createBody).toContain('skipTaskbar: process.platform !== "darwin"');
     expect(createBody).not.toContain("skipTaskbar: true");
   });
+
+  it("persists and restores user-resized chat bounds instead of collapsing to the compact width", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const resolveBody = functionBody(source, "resolveQuickChatWindowBounds");
+    const saveBody = functionBody(source, "saveQuickChatWindowState");
+    const createBody = functionBody(source, "createQuickChatWindow");
+
+    expect(resolveBody).not.toContain("{ ...base, width: QUICK_CHAT_WIDTH, height }");
+    expect(resolveBody).toContain("chatWidth");
+    expect(saveBody).toContain("chatWidth");
+    expect(createBody).toContain('quickChatWindow.on("resize", saveQuickChatWindowState)');
+  });
 });

@@ -12,6 +12,7 @@ import { safeJson } from "../hono-helpers.ts";
 import { serveFileContent } from "../http/file-content.ts";
 import { createRequestContext } from "../http/boundary.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
+import { isLocalOwnerPrincipal } from "../http/route-security.ts";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // 25MB decoded bytes become ~34MB base64 JSON; 80MB keeps normal multi-file uploads while bounding total request memory.
@@ -280,6 +281,8 @@ function fileService(engine, requestContext) {
     createCheckpoint: typeof engine.createUserEditCheckpoint === "function"
       ? (args) => engine.createUserEditCheckpoint(args)
       : null,
+    // 只对桌面端 local owner 披露 local_fs 根的 native 路径；远端/配对设备不披露。
+    discloseNativeRoot: isLocalOwnerPrincipal(requestContext?.authPrincipal),
   });
 }
 

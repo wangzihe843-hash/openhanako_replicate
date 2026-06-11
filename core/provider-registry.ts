@@ -22,7 +22,12 @@ import {
   providerCredentialAllowsMissingApiKey,
 } from "../shared/provider-auth.ts";
 import { validateProviderModels } from "../shared/provider-model-validation.ts";
+import {
+  normalizeModelProtocolCompat,
+  normalizeVisionCapabilities,
+} from "../shared/model-capabilities.ts";
 import { validateProviderRuntime } from "./media-runtime-contract.ts";
+import { capabilityKey, inferMediaProtocolId } from "./media-protocols.ts";
 
 const _defaultModels = JSON.parse(
   fs.readFileSync(fromRoot("lib", "default-models.json"), "utf-8"),
@@ -33,18 +38,6 @@ const INVALID_MODELS_CONFIG = "invalid_models_config";
 const DELETED_PROVIDERS_KEY = "_deleted_providers";
 const PROVIDER_RUNTIME_META_KEYS = new Set(["_config_error"]);
 const THINKING_LEVEL_VALUES = new Set(["auto", "off", "low", "medium", "high", "xhigh"]);
-const MEDIA_CAPABILITY_KEYS = {
-  image_generation: "imageGeneration",
-  image: "imageGeneration",
-  video_generation: "videoGeneration",
-  video: "videoGeneration",
-  speech_generation: "speechGeneration",
-  speech_recognition: "speechRecognition",
-  speechRecognition: "speechRecognition",
-  transcription: "speechRecognition",
-  asr: "speechRecognition",
-  speech: "speechGeneration",
-};
 const MEDIA_USER_CONFIG_KEYS = {
   imageGeneration: "image_generation",
   videoGeneration: "video_generation",
@@ -141,10 +134,6 @@ function stripProviderRuntimeMetaMap(providers) {
     clean[providerId] = stripProviderRuntimeMeta(config);
   }
   return clean;
-}
-
-function capabilityKey(capability) {
-  return MEDIA_CAPABILITY_KEYS[capability] || capability;
 }
 
 function mediaUserConfigKey(capability) {
@@ -252,40 +241,24 @@ function getModelId(modelEntry) {
   return typeof modelEntry === "object" && modelEntry !== null ? modelEntry.id : modelEntry;
 }
 
-function inferImageGenerationProtocolId(providerId, modelId) {
-  const id = String(modelId || "");
-  if (providerId === "openai-codex-oauth") return "openai-codex-responses-image";
-  if (providerId === "openai" && (id.startsWith("gpt-image") || id.startsWith("dall-e"))) return "openai-images";
-  if (providerId === "volcengine" && id.includes("seedream")) return "volcengine-images";
-  if (providerId === "dashscope" && id.startsWith("wan")) return "dashscope-wan-images";
-  if (providerId === "dashscope" && id.startsWith("qwen-image-2")) return "dashscope-qwen-multimodal-image";
-  if (providerId === "dashscope" && id.startsWith("qwen-image")) return "dashscope-qwen-text2image";
-  if (providerId === "minimax" && id.startsWith("image-")) return "minimax-images";
-  if (providerId === "gemini" && id.includes("image")) return "gemini-generate-content-image";
-  return "";
-}
-
-function inferMediaProtocolId(providerId, capability, modelId) {
-  if (capabilityKey(capability) === "imageGeneration") {
-    return inferImageGenerationProtocolId(providerId, modelId);
-  }
-  if (capabilityKey(capability) === "speechRecognition") {
-    const id = String(modelId || "");
-    if (providerId === "openai" && (id.includes("transcribe") || id === "whisper-1")) return "openai-audio-transcriptions";
-    if ((providerId === "mimo" || providerId === "mimo-token-plan") && id.includes("asr")) return "mimo-chat-completions-asr";
-    if (providerId === "dashscope" && id.includes("asr")) return "dashscope-qwen-asr-chat";
-    if (providerId === "volcengine-speech" && id.includes("bigasr")) return "volcengine-bigasr-transcription";
-    if (providerId === "system-speech") return "system-speech-recognition";
-  }
-  return "";
-}
-
 function omitUndefined(value) {
   const result: any = {};
   for (const [key, item] of Object.entries(value || {})) {
     if (item !== undefined) result[key] = item;
   }
   return result;
+}
+
+function mergeModelMetadata(base, patch) {
+  const merged = { ...base, ...patch };
+  if (patch.compat) {
+    merged.compat = {
+      ...(isPlainObject(base.compat) ? base.compat : {}),
+      ...patch.compat,
+    };
+  }
+  if (!merged.name) delete merged.name;
+  return merged;
 }
 
 function getModelType(providerId, modelEntry) {
@@ -295,7 +268,12 @@ function getModelType(providerId, modelEntry) {
   return (isObj && modelEntry.type) || known?.type || "chat";
 }
 
-function normalizeUserMediaModels(providerId, userConfig, capabilityName, declaredModels, runtime) {
+/** ProviderEntry → 推断上下文（唯一构造点，避免两个调用方各传一套字段） */
+function providerProtocolContext(entry) {
+  return { api: entry?.api, sourceKind: entry?.source?.kind };
+}
+
+function normalizeUserMediaModels(providerId, userConfig, capabilityName, declaredModels, entry) {
   const snake = capabilityName;
   const camel = capabilityKey(capabilityName);
   const mediaConfig = userConfig?.media?.[snake] || userConfig?.media?.[camel] || {};
@@ -309,7 +287,8 @@ function normalizeUserMediaModels(providerId, userConfig, capabilityName, declar
   const seen = new Set();
   for (const raw of rawModels) {
     const id = getModelId(raw);
-    const fallback = declaredById.get(id) || { protocolId: inferMediaProtocolId(providerId, capabilityName, id) || runtime?.protocolId };
+    const fallback = declaredById.get(id)
+      || { protocolId: inferMediaProtocolId(providerId, capabilityName, id, providerProtocolContext(entry)) || entry?.runtime?.protocolId };
     const model = normalizeMediaModel(raw, fallback);
     if (!model || seen.has(model.id)) continue;
     seen.add(model.id);
@@ -710,7 +689,7 @@ export class ProviderRegistry {
     const key = capabilityKey(capability);
     const declared = entry.capabilities?.media?.[key]?.models || [];
     const userConfig = this._loadAddedModels()[providerId] || {};
-    const userModels = normalizeUserMediaModels(providerId, userConfig, capability, declared, entry.runtime);
+    const userModels = normalizeUserMediaModels(providerId, userConfig, capability, declared, entry);
     const byId = new Map();
     for (const model of declared) byId.set(model.id, model);
     for (const model of userModels) byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
@@ -1142,7 +1121,7 @@ export class ProviderRegistry {
    * 裸字符串条目会被升级为对象
    * @param {string} providerId
    * @param {string} modelId
-   * @param {{ name?: string, context?: number, maxOutput?: number, image?: boolean, video?: boolean, reasoning?: boolean, defaultThinkingLevel?: string }} meta
+   * @param {{ name?: string, context?: number, maxOutput?: number, image?: boolean, video?: boolean, reasoning?: boolean, defaultThinkingLevel?: string, compat?: object, visionCapabilities?: object }} meta
    */
   updateModelEntry(providerId, modelId, meta) {
     const userConfig = this._loadAddedModels();
@@ -1163,6 +1142,10 @@ export class ProviderRegistry {
     for (const key of ALLOWED) {
       if (meta[key] !== undefined) safe[key] = meta[key];
     }
+    const compat = normalizeModelProtocolCompat(meta?.compat);
+    if (compat) safe.compat = compat;
+    const visionCapabilities = normalizeVisionCapabilities(meta?.visionCapabilities);
+    if (visionCapabilities) safe.visionCapabilities = visionCapabilities;
 
     let found = false;
     const nextModels = uc.models.map((m) => {
@@ -1173,13 +1156,9 @@ export class ProviderRegistry {
       // 删除旧字段 vision，避免残留
       if (base.vision !== undefined) {
         const { vision: _vision, ...cleaned } = base;
-        const merged = { ...cleaned, ...safe };
-        if (!merged.name) delete merged.name;
-        return merged;
+        return mergeModelMetadata(cleaned, safe);
       }
-      const merged = { ...base, ...safe };
-      if (!merged.name) delete merged.name;
-      return merged;
+      return mergeModelMetadata(base, safe);
     });
 
     // upsert：模型不在列表中时自动添加
@@ -1208,7 +1187,7 @@ export class ProviderRegistry {
     const key = capabilityKey(capability);
     const declared = entry?.capabilities?.media?.[key]?.models || [];
     return declared.find((model) => model.id === modelId)
-      || { protocolId: inferMediaProtocolId(providerId, capability, modelId) || entry?.runtime?.protocolId };
+      || { protocolId: inferMediaProtocolId(providerId, capability, modelId, providerProtocolContext(entry)) || entry?.runtime?.protocolId };
   }
 
   addMediaModel(providerId, capability, model) {

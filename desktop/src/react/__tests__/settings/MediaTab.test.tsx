@@ -313,6 +313,39 @@ describe('MediaTab image-gen config', () => {
     expect(option?.textContent).toContain('settings.media.adapterMissing');
   });
 
+  it('renders custom provider image models from the endpoint and offers them as selectable defaults (#1627)', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/plugins/image-gen/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            'my-proxy': {
+              providerId: 'my-proxy',
+              displayName: 'My Proxy',
+              hasCredentials: true,
+              models: [{ id: 'flux-1.1-pro', name: 'FLUX 1.1 Pro', protocolId: 'openai-images', adapterAvailable: true }],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    // 自定义 provider 出现在左侧 provider 列表
+    expect(await screen.findByText('My Proxy')).toBeInTheDocument();
+    // 详情面板选中该 provider
+    expect(screen.getByTestId('media-provider-detail')).toHaveTextContent('image:my-proxy');
+    // 其图片模型出现在全局默认模型选择器中且可选
+    const select = await screen.findByLabelText('settings.media.defaultModel');
+    const option = Array.from(select.querySelectorAll('option')).find((item) => item.value === 'my-proxy/flux-1.1-pro');
+    expect(option).toBeTruthy();
+    expect(option).not.toBeDisabled();
+    expect(option?.textContent).toContain('FLUX 1.1 Pro');
+  });
+
   it('loads speech-recognition providers from the speech endpoint', async () => {
     mocks.hanaFetch.mockImplementation((path: string) => {
       if (path === '/api/plugins/image-gen/providers') {

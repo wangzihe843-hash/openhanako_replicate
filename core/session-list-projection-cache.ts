@@ -1,6 +1,19 @@
 import fs from "fs/promises";
 import path from "path";
 
+/**
+ * Session 文件修订点：`${size}:${mtimeMs}` stat 签名。
+ *
+ * 这是会话「磁盘真相」的唯一修订标识，三处必须共用同一格式：
+ *   1. 本缓存的失效判据（signature）
+ *   2. /api/sessions 列表投影的 `revision` 字段
+ *   3. /api/sessions/messages 响应的 `revision` 字段
+ * web/mobile 端靠对比 2 和 3 决定是否补拉会话内容（issue #1610）。
+ */
+export function sessionFileRevision(stat) {
+  return `${stat.size}:${stat.mtimeMs}`;
+}
+
 export class SessionListProjectionCache {
   declare _dirs: Map<string, Map<string, any>>;
 
@@ -32,7 +45,7 @@ export class SessionListProjectionCache {
         return null;
       }
 
-      const signature = `${stat.size}:${stat.mtimeMs}`;
+      const signature = sessionFileRevision(stat);
       const cached = previous.get(filePath);
       if (cached?.signature === signature) {
         next.set(filePath, cached);
@@ -103,6 +116,7 @@ async function buildSessionProjection(filePath, stat) {
       parentSessionPath: header.parentSession,
       created: parseDate(header.timestamp) || new Date(stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs),
       modified: getSessionModifiedDate(entries, header, stat.mtime),
+      revision: sessionFileRevision(stat),
       messageCount,
       firstMessage: firstMessage || "(no messages)",
       allMessagesText: allMessages.join(" "),

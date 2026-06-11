@@ -26,6 +26,8 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { createMemoryTicker } from "../lib/memory/memory-ticker.ts";
 import { readCacheSnapshotObservation } from "../lib/memory/cache-snapshot-observation.ts";
+import { buildSessionCacheSnapshot } from "../core/session-cache-snapshot.ts";
+import { createUsageLedger } from "../lib/llm/usage-ledger.ts";
 
 function writeSession(sessionPath) {
   const lines = [
@@ -43,7 +45,7 @@ function writeSession(sessionPath) {
   fs.writeFileSync(sessionPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n", "utf-8");
 }
 
-function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner) {
+function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner, overrides: Record<string, any> = {}) {
   const agentDir = path.join(tmpDir, "agents", "hana");
   const sessionDir = path.join(agentDir, "sessions");
   const memoryDir = path.join(agentDir, "memory");
@@ -55,7 +57,7 @@ function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner) {
     quirks: ["enable_thinking"],
     reasoning: true,
   };
-  const usageLedger = { marker: "usage-ledger" };
+  const usageLedger = overrides.usageLedger || { marker: "usage-ledger" };
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(memoryDir, { recursive: true });
   fs.writeFileSync(path.join(memoryDir, "memory.md"), "# Memory\n\n现有正式记忆。\n", "utf-8");
@@ -78,7 +80,7 @@ function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner) {
     isSessionMemoryEnabled: () => true,
     getCacheSnapshotReflectionMode: () => mode,
     memoryReflectionRunner,
-    buildSessionCacheSnapshot: vi.fn((sessionPath, { reason, messages }) => ({
+    buildSessionCacheSnapshot: overrides.buildSessionCacheSnapshot || vi.fn((sessionPath, { reason, messages }) => ({
       strategy: "session_snapshot",
       strict: true,
       sessionPath,
@@ -97,7 +99,7 @@ function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner) {
       messages,
       messageCount: messages.length,
     })),
-    getSessionStreamFn: vi.fn(() => vi.fn()),
+    getSessionStreamFn: overrides.getSessionStreamFn || vi.fn(() => vi.fn()),
     sessionDir,
     memoryDir,
     memoryMdPath: path.join(memoryDir, "memory.md"),
@@ -172,11 +174,12 @@ describe("cache snapshot reflection runtime", () => {
 
   it("write mode saves the cache snapshot draft as the official rolling summary", async () => {
     const sessionId = "2026-06-03T10-00-00-000Z_cache";
+    const writeSummary = "### 重要事实\n- 无\n\n### 事情经过\n- [2026-06-03 10:01] 用户在调缓存快照。";
     const summaryData = {
       session_id: sessionId,
       created_at: "2026-06-03T10:02:00.000Z",
       updated_at: "2026-06-03T10:02:00.000Z",
-      summary: "write summary",
+      summary: writeSummary,
       messageCount: 2,
     };
     const summaryManager = {
@@ -187,7 +190,7 @@ describe("cache snapshot reflection runtime", () => {
     };
     const memoryReflectionRunner = {
       runMemoryReflection: vi.fn().mockResolvedValue({
-        summary: "write summary",
+        summary: writeSummary,
         changed: true,
         data: summaryData,
         usage: { cache: { readTokens: 1200, missTokens: 4 } },
@@ -215,7 +218,7 @@ describe("cache snapshot reflection runtime", () => {
       status: "success",
       cacheStrategy: "session_snapshot",
       strict: true,
-      summaryPreview: "write summary",
+      summaryPreview: writeSummary,
     });
   });
 
@@ -254,6 +257,42 @@ describe("cache snapshot reflection runtime", () => {
     });
   });
 
+  it("write mode refuses format-violating reflection summaries and keeps the stored summary (#1628)", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
+        summary: "自由格式摘要，没有重要事实标题段。",
+        changed: true,
+        data: { session_id: "s1", summary: "自由格式摘要，没有重要事实标题段。" },
+        usage: { cache: { readTokens: 900, missTokens: 5 } },
+        metadata: {
+          cacheStrategy: "session_snapshot",
+          strict: true,
+          cachePrefixHash: "b".repeat(64),
+          parentCachePrefixHash: "a".repeat(64),
+        },
+      }),
+    };
+    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner);
+    writeSession(sessionPath);
+
+    await expect(ticker.flushSession(sessionPath)).rejects.toThrow(/rolling summary format/i);
+    expect(summaryManager.saveSummary).not.toHaveBeenCalled();
+    const observation = readCacheSnapshotObservation(agentDir);
+    expect(observation).toMatchObject({
+      mode: "write",
+      status: "failed",
+      cacheStrategy: "session_snapshot",
+      strict: true,
+    });
+    expect(observation.reason).toMatch(/rolling summary format/i);
+  });
+
   it("passes the runtime session model and usage context to the reflection runner", async () => {
     const summaryManager = {
       rollingSummary: vi.fn().mockResolvedValue("official summary"),
@@ -286,11 +325,156 @@ describe("cache snapshot reflection runtime", () => {
     expect(args.snapshot.model).not.toHaveProperty("quirks");
     expect(args.cacheKeyParams).toEqual({ thinkingLevel: "medium" });
     expect(args.usageLedger).toBe(usageLedger);
-    expect(args.usageContext).toMatchObject({
-      subsystem: "memory",
-      operation: "cache_snapshot_reflection",
-      trigger: "manual",
+    expect(args.usageContext).toEqual({
+      source: {
+        subsystem: "memory",
+        operation: "cache_snapshot_reflection",
+        surface: "system",
+        trigger: "manual",
+      },
+      attribution: {
+        kind: "memory",
+        agentId: "hana",
+      },
     });
+  });
+
+  it("records a traceable usage ledger entry for reflection requests (#1621)", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const ledgerLogger = { warn: vi.fn() };
+    const realLedger = createUsageLedger({
+      logger: ledgerLogger,
+      requestIdFactory: () => "req-reflection",
+    });
+    const requestModelForSnapshot = {
+      id: "memory-model",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "http://localhost:1234",
+      quirks: ["enable_thinking"],
+      reasoning: true,
+    };
+    const streamFn = vi.fn(async () => ({
+      result: async () => ({
+        content: [{ type: "text", text: "### 重要事实\n- 无\n\n### 事情经过\n- [2026-06-03 10:01] 用户在调缓存快照。" }],
+        stopReason: "stop",
+        usage: { input_tokens: 120, cache_read_input_tokens: 100, output_tokens: 16 },
+      }),
+    }));
+    // 不注入 memoryReflectionRunner：走真实 runMemoryReflection → runSessionSnapshotSideTask → ledger 落账链路
+    const { ticker, sessionPath } = makeTicker(tmpDir, "write", summaryManager, undefined, {
+      usageLedger: realLedger,
+      buildSessionCacheSnapshot: vi.fn((snapshotSessionPath, { reason, messages }) => buildSessionCacheSnapshot({
+        sessionPath: snapshotSessionPath,
+        reason,
+        model: requestModelForSnapshot,
+        cacheKeyParams: { thinkingLevel: "medium" },
+        systemPrompt: "You are Hana.",
+        tools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
+        messages,
+      })),
+      getSessionStreamFn: vi.fn(() => streamFn),
+    });
+    writeSession(sessionPath);
+
+    await ticker.flushSession(sessionPath);
+
+    expect(streamFn).toHaveBeenCalledOnce();
+    const { entries } = realLedger.list({});
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      requestId: "req-reflection",
+      status: "ok",
+      source: {
+        subsystem: "memory",
+        operation: "cache_snapshot_reflection",
+        surface: "system",
+        trigger: "manual",
+      },
+      attribution: {
+        kind: "memory",
+        agentId: "hana",
+      },
+      metadata: {
+        cacheStrategy: "session_snapshot",
+        cacheGroup: "memory.reflection",
+        strict: true,
+      },
+    });
+    // source/attribution 可解析时，账本不应再告警 unknown usage context
+    expect(ledgerLogger.warn).not.toHaveBeenCalled();
+    // 账本按 source/attribution 过滤要能找回这笔 reflection 账单（可追溯性）
+    expect(realLedger.list({ subsystem: "memory", operation: "cache_snapshot_reflection" }).entries).toHaveLength(1);
+    expect(realLedger.list({ attributionKind: "memory", agentId: "hana" }).entries).toHaveLength(1);
+  });
+
+  it("records format repair usage as a separate ledger entry with a distinguishable operation", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    let requestSequence = 0;
+    const realLedger = createUsageLedger({
+      requestIdFactory: () => `req-reflection-${++requestSequence}`,
+    });
+    const requestModelForSnapshot = {
+      id: "memory-model",
+      provider: "deepseek",
+      api: "openai-completions",
+      baseUrl: "http://localhost:1234",
+    };
+    const validSummary = "### 重要事实\n- 无\n\n### 事情经过\n- [2026-06-03 10:01] 用户在调缓存快照。";
+    const streamFn = vi.fn()
+      .mockResolvedValueOnce({
+        result: async () => ({
+          content: [{ type: "text", text: "用户今天聊了聊缓存快照，没别的。" }],
+          stopReason: "stop",
+          usage: { input_tokens: 120, output_tokens: 16 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        result: async () => ({
+          content: [{ type: "text", text: validSummary }],
+          stopReason: "stop",
+          usage: { input_tokens: 140, output_tokens: 20 },
+        }),
+      });
+    const { ticker, sessionPath } = makeTicker(tmpDir, "write", summaryManager, undefined, {
+      usageLedger: realLedger,
+      buildSessionCacheSnapshot: vi.fn((snapshotSessionPath, { reason, messages }) => buildSessionCacheSnapshot({
+        sessionPath: snapshotSessionPath,
+        reason,
+        model: requestModelForSnapshot,
+        cacheKeyParams: { thinkingLevel: "medium" },
+        systemPrompt: "You are Hana.",
+        tools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
+        messages,
+      })),
+      getSessionStreamFn: vi.fn(() => streamFn),
+    });
+    writeSession(sessionPath);
+
+    await ticker.flushSession(sessionPath);
+
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    expect(summaryManager.saveSummary).toHaveBeenCalledWith("2026-06-03T10-00-00-000Z_cache", expect.objectContaining({ summary: validSummary }));
+
+    // 初次生成与格式修复各落一笔账，operation 可区分（修复不混进初次的账目）
+    const { entries } = realLedger.list({});
+    expect(entries).toHaveLength(2);
+    expect(entries[0].source.operation).toBe("cache_snapshot_reflection");
+    expect(entries[1].source.operation).toBe("cache_snapshot_reflection_repair");
+    expect(entries[1].source).toMatchObject({ subsystem: "memory", surface: "system", trigger: "manual" });
+    expect(entries[1].attribution).toEqual({ kind: "memory", agentId: "hana" });
+    expect(realLedger.list({ subsystem: "memory", operation: "cache_snapshot_reflection" }).entries).toHaveLength(1);
+    expect(realLedger.list({ subsystem: "memory", operation: "cache_snapshot_reflection_repair" }).entries).toHaveLength(1);
   });
 
   it("writes bounded failure diagnostics for shadow reflection errors", async () => {

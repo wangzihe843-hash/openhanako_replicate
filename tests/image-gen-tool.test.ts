@@ -311,6 +311,52 @@ describe("generate-image tool — adapter resolution", () => {
     });
   });
 
+  it("passes MiniMax Token Plan as the credential provider for the MiniMax image lane", async () => {
+    const minimaxAdapter = makeAdapter({
+      id: "minimax",
+      protocolId: "minimax-images",
+      submit: vi.fn(async () => ({ taskId: "task-minimax-token-plan" })),
+    });
+    const registry = {
+      get: vi.fn(() => null),
+      getProtocol: vi.fn((protocolId) => protocolId === "minimax-images" ? minimaxAdapter : null),
+      getByType: vi.fn(() => []),
+    };
+    const store = { add: vi.fn(), update: vi.fn() };
+    const poller = { add: vi.fn() };
+    const ctx = {
+      ...makeCtx({ registry, store, poller }, {
+        request: vi.fn(async (type) => {
+          if (type === "provider:resolve-media-model") {
+            return {
+              providerId: "minimax",
+              modelId: "image-01",
+              protocolId: "minimax-images",
+              credentialLaneId: "minimax-token-plan",
+              credentialProviderId: "minimax-token-plan",
+            };
+          }
+          return {};
+        }),
+      }),
+      config: {
+        get: vi.fn((key) => key === "defaultImageModel" ? { provider: "minimax", id: "image-01" } : undefined),
+      },
+    };
+
+    await execute({ prompt: "a cat" }, ctx);
+
+    expect(minimaxAdapter.submit).toHaveBeenCalledOnce();
+    expect(minimaxAdapter.submit.mock.calls[0][0]).toMatchObject({
+      providerId: "minimax",
+      modelId: "image-01",
+      model: "image-01",
+      protocolId: "minimax-images",
+      credentialLaneId: "minimax-token-plan",
+      credentialProviderId: "minimax-token-plan",
+    });
+  });
+
   it("uses last registered adapter when no provider specified", async () => {
     const { registry, store, poller } = makeMediaGen();
     const ctx = makeCtx({ registry, store, poller });

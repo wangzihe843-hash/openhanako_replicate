@@ -42,6 +42,8 @@ const initialStateFactory = (): MockState => ({
   drafts: {} as Record<string, string>,
   streamingSessions: [] as string[],
   unreadOutputSessionPaths: [] as string[],
+  capabilityDriftBySession: {} as Record<string, unknown>,
+  capabilityRefreshingSessions: [] as string[],
   inlineErrors: {} as Record<string, string | null>,
   addToast: vi.fn(),
   activePanel: null,
@@ -173,9 +175,9 @@ if (typeof window === 'undefined') {
 // Stub store methods used by loadMessages / switchSession
 function installStoreMethods() {
   const s = mockState as MockState;
-  s.initSession = vi.fn((path: string, items: unknown[], hasMore: boolean) => {
+  s.initSession = vi.fn((path: string, items: unknown[], hasMore: boolean, revision?: string | null) => {
     const chat = mockState.chatSessions as Record<string, unknown>;
-    chat[path] = { items, hasMore, loadingMore: false };
+    chat[path] = { items, hasMore, loadingMore: false, revision: revision ?? null };
   });
   s.bumpLoadMessagesVersion = vi.fn((path: string) => {
     const versions = mockState._loadMessagesVersion as Record<string, number>;
@@ -233,6 +235,17 @@ function installStoreMethods() {
     }
   });
   s.setPendingNewSessionPermissionMode = vi.fn((mode: string | null) => { mockState.pendingNewSessionPermissionMode = mode; });
+  s.setSessionCapabilityDrift = vi.fn((path: string, drift: unknown) => {
+    const bySession = mockState.capabilityDriftBySession as Record<string, unknown>;
+    if (drift) bySession[path] = drift;
+    else delete bySession[path];
+  });
+  s.setSessionCapabilityRefreshing = vi.fn((path: string, refreshing: boolean) => {
+    const list = mockState.capabilityRefreshingSessions as string[];
+    mockState.capabilityRefreshingSessions = refreshing
+      ? (list.includes(path) ? list : [...list, path])
+      : list.filter((p) => p !== path);
+  });
   s.setDeskBasePath = vi.fn((path: string) => { mockState.deskBasePath = path; });
   s.setDeskCurrentPath = vi.fn((path: string) => { mockState.deskCurrentPath = path; });
   s.setDeskFiles = vi.fn((files: unknown[]) => { mockState.deskFiles = files; });
@@ -243,7 +256,7 @@ import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { clearChat } from '../../stores/agent-actions';
 import { loadDeskFiles } from '../../stores/desk-actions';
 import { bumpMessageLiveVersion, clearMessageLiveVersion } from '../../stores/message-live-version';
-import { archiveSession, completeSessionTodos, continueDeletedAgentSession, createNewSession, ensureSession, loadMessages, loadSessions, pinSession, switchSession } from '../../stores/session-actions';
+import { archiveSession, completeSessionTodos, continueDeletedAgentSession, createNewSession, dismissSessionCapabilityDrift, ensureSession, loadMessages, loadSessions, pinSession, reconcileCurrentSessionMessages, refreshSessionCapabilities, switchSession } from '../../stores/session-actions';
 import { snapshotStreamBuffer } from '../../stores/stream-invalidator';
 
 const mockFetch = vi.mocked(hanaFetch);
@@ -1418,6 +1431,355 @@ function jsonResponse(body: unknown, ok = true): Response {
       expect(ok).toBe(false);
       expect(mockState.sessions).toBe(sessions);
       expect(mockState.addToast).toHaveBeenCalledWith('session.pinFailed', 'info', 3000);
+    });
+  });
+
+  // ── #1610: 会话修订点同步（/rc 接管期间消息漏同步修复） ──
+
+  describe('loadMessages revision stamp', () => {
+    it('stamps the server revision into the hydrated session cache', async () => {
+      const sessionPath = '/session/revisioned.jsonl';
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [{ role: 'user', content: 'hi' }],
+        blocks: [],
+        todos: [],
+        hasMore: false,
+        revision: '2048:1765500000000',
+      }));
+
+      await loadMessages(sessionPath);
+
+      const cached = (mockState.chatSessions as Record<string, { revision?: string | null }>)[sessionPath];
+      expect(cached.revision).toBe('2048:1765500000000');
+    });
+
+    it('stamps a null revision when the server omits it', async () => {
+      const sessionPath = '/session/no-revision.jsonl';
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [],
+        blocks: [],
+        todos: [],
+        hasMore: false,
+      }));
+
+      await loadMessages(sessionPath);
+
+      const cached = (mockState.chatSessions as Record<string, { revision?: string | null }>)[sessionPath];
+      expect(cached.revision).toBeNull();
+    });
+  });
+
+  describe('reconcileCurrentSessionMessages', () => {
+    const sessionPath = '/session/rc-target.jsonl';
+
+    function installCachedCurrentSession({
+      cachedRevision = 'rev-old',
+      listRevision = 'rev-new',
+    }: { cachedRevision?: string | null; listRevision?: string | null } = {}) {
+      Object.assign(mockState, {
+        currentSessionPath: sessionPath,
+        sessions: [{ path: sessionPath, revision: listRevision, modified: '2026-06-10T08:00:00.000Z', messageCount: 3 }],
+        chatSessions: {
+          [sessionPath]: { items: [], hasMore: false, loadingMore: false, revision: cachedRevision },
+        },
+      });
+    }
+
+    it('re-pulls the current session when the list revision drifts from the cached one', async () => {
+      installCachedCurrentSession({ cachedRevision: 'rev-old', listRevision: 'rev-new' });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [
+          { role: 'user', content: 'from telegram' },
+          { role: 'assistant', content: 'rc reply' },
+        ],
+        blocks: [],
+        todos: [],
+        hasMore: false,
+        revision: 'rev-new',
+      }));
+
+      await reconcileCurrentSessionMessages('test_drift');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`,
+      );
+      const cached = (mockState.chatSessions as Record<string, { items: unknown[]; revision?: string | null }>)[sessionPath];
+      expect(cached.items).toHaveLength(2);
+      expect(cached.revision).toBe('rev-new');
+    });
+
+    it('skips the fetch when the cached revision matches the list revision', async () => {
+      installCachedCurrentSession({ cachedRevision: 'rev-same', listRevision: 'rev-same' });
+
+      await reconcileCurrentSessionMessages('test_match');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('re-pulls once when the cached revision is unknown', async () => {
+      installCachedCurrentSession({ cachedRevision: null, listRevision: 'rev-new' });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [], blocks: [], todos: [], hasMore: false, revision: 'rev-new',
+      }));
+
+      await reconcileCurrentSessionMessages('test_unknown_cache');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const cached = (mockState.chatSessions as Record<string, { revision?: string | null }>)[sessionPath];
+      expect(cached.revision).toBe('rev-new');
+    });
+
+    it('does not re-pull while the session is streaming', async () => {
+      installCachedCurrentSession();
+      Object.assign(mockState, { streamingSessions: [sessionPath] });
+
+      await reconcileCurrentSessionMessages('test_streaming');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not re-pull when the session has no message cache yet', async () => {
+      installCachedCurrentSession();
+      Object.assign(mockState, { chatSessions: {} });
+
+      await reconcileCurrentSessionMessages('test_cold');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not re-pull when the list projection carries no revision', async () => {
+      installCachedCurrentSession({ listRevision: null });
+
+      await reconcileCurrentSessionMessages('test_no_list_revision');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not re-pull while a session switch is pending', async () => {
+      installCachedCurrentSession();
+      Object.assign(mockState, { pendingSessionSwitchPath: '/session/other.jsonl' });
+
+      await reconcileCurrentSessionMessages('test_pending_switch');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates concurrent triggers into one in-flight fetch', async () => {
+      installCachedCurrentSession();
+      let resolveFetch: (value: Response) => void = () => {};
+      mockFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }));
+
+      const first = reconcileCurrentSessionMessages('ws_reconnect');
+      const second = reconcileCurrentSessionMessages('window_focus');
+
+      resolveFetch(jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false, revision: 'rev-new' }));
+      await Promise.all([first, second]);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows a follow-up reconcile after the previous one settles', async () => {
+      installCachedCurrentSession();
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [], blocks: [], todos: [], hasMore: false, revision: 'rev-mid',
+      }));
+
+      await reconcileCurrentSessionMessages('first');
+
+      // 列表又前进了一个修订点
+      Object.assign(mockState, {
+        sessions: [{ path: sessionPath, revision: 'rev-final' }],
+      });
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        messages: [], blocks: [], todos: [], hasMore: false, revision: 'rev-final',
+      }));
+
+      await reconcileCurrentSessionMessages('second');
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const cached = (mockState.chatSessions as Record<string, { revision?: string | null }>)[sessionPath];
+      expect(cached.revision).toBe('rev-final');
+    });
+  });
+
+  describe('switchSession revision reconcile', () => {
+    it('re-pulls a cached session whose list revision drifted while it was in the background', async () => {
+      const target = '/session/cached-stale.jsonl';
+      Object.assign(mockState, {
+        currentSessionPath: '/session/current.jsonl',
+        sessions: [
+          { path: target, cwd: '/tmp/work', revision: 'rev-after-rc' },
+        ],
+        chatSessions: {
+          [target]: { items: [{ type: 'message', data: { id: '0' } }], hasMore: false, loadingMore: false, revision: 'rev-before-rc' },
+        },
+      });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url) === '/api/sessions/switch') {
+          return jsonResponse({ ok: true, isStreaming: false });
+        }
+        if (String(url).startsWith('/api/sessions/messages')) {
+          return jsonResponse({
+            messages: [
+              { role: 'user', content: 'old' },
+              { role: 'user', content: 'rc message' },
+            ],
+            blocks: [],
+            todos: [],
+            hasMore: false,
+            revision: 'rev-after-rc',
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await switchSession(target);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/sessions/messages?path=${encodeURIComponent(target)}`,
+      );
+      const cached = (mockState.chatSessions as Record<string, { items: unknown[]; revision?: string | null }>)[target];
+      expect(cached.items).toHaveLength(2);
+      expect(cached.revision).toBe('rev-after-rc');
+    });
+
+    it('does not re-pull a cached session whose revision still matches the list', async () => {
+      const target = '/session/cached-fresh.jsonl';
+      Object.assign(mockState, {
+        currentSessionPath: '/session/current.jsonl',
+        sessions: [
+          { path: target, cwd: '/tmp/work', revision: 'rev-same' },
+        ],
+        chatSessions: {
+          [target]: { items: [{ type: 'message', data: { id: '0' } }], hasMore: false, loadingMore: false, revision: 'rev-same' },
+        },
+      });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url) === '/api/sessions/switch') {
+          return jsonResponse({ ok: true, isStreaming: false });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await switchSession(target);
+
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        `/api/sessions/messages?path=${encodeURIComponent(target)}`,
+      );
+    });
+  });
+
+  describe('capability drift actions (#1624)', () => {
+    const target = '/session/drift.jsonl';
+    const drift = {
+      version: 1,
+      fingerprint: 'fp-live',
+      frozenFingerprint: 'fp-frozen',
+      addedToolNames: ['office'],
+      removedToolNames: [],
+      invalidToolNames: [],
+      promptChanged: false,
+      hasDrift: true,
+    };
+
+    it('switchSession hydrates capabilityDrift from the response into the keyed store', async () => {
+      Object.assign(mockState, { sessions: [{ path: target, cwd: '/tmp/work' }] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url) === '/api/sessions/switch') {
+          return jsonResponse({ ok: true, isStreaming: false, capabilityDrift: drift });
+        }
+        if (String(url).startsWith('/api/sessions/messages')) {
+          return jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await switchSession(target);
+
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toEqual(drift);
+    });
+
+    it('switchSession clears stale drift when the response has none', async () => {
+      Object.assign(mockState, {
+        sessions: [{ path: target, cwd: '/tmp/work' }],
+        capabilityDriftBySession: { [target]: drift },
+      });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url) === '/api/sessions/switch') {
+          return jsonResponse({ ok: true, isStreaming: false });
+        }
+        if (String(url).startsWith('/api/sessions/messages')) {
+          return jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await switchSession(target);
+
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toBeUndefined();
+    });
+
+    it('dismiss hides optimistically and posts the fingerprint', async () => {
+      Object.assign(mockState, { capabilityDriftBySession: { [target]: drift } });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const ok = await dismissSessionCapabilityDrift(target, 'fp-live');
+
+      expect(ok).toBe(true);
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledWith('/api/sessions/capability-drift/dismiss', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: target, fingerprint: 'fp-live' }),
+      }));
+    });
+
+    it('dismiss restores the notice when the server rejects', async () => {
+      Object.assign(mockState, { capabilityDriftBySession: { [target]: drift } });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ error: 'nope' }, false));
+
+      const ok = await dismissSessionCapabilityDrift(target, 'fp-live');
+
+      expect(ok).toBe(false);
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toEqual(drift);
+    });
+
+    it('refresh marks busy, clears drift on success, and reloads messages', async () => {
+      Object.assign(mockState, { capabilityDriftBySession: { [target]: drift } });
+      const busyDuringRequest: boolean[] = [];
+      mockFetch.mockImplementation(async (url: string) => {
+        if (String(url) === '/api/sessions/fresh-compact') {
+          busyDuringRequest.push((mockState.capabilityRefreshingSessions as string[]).includes(target));
+          return jsonResponse({ ok: true, tokensBefore: 100, tokensAfter: 10, capabilityDrift: null });
+        }
+        if (String(url).startsWith('/api/sessions/messages')) {
+          return jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      const ok = await refreshSessionCapabilities(target);
+
+      expect(ok).toBe(true);
+      expect(busyDuringRequest).toEqual([true]);
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toBeUndefined();
+      expect((mockState.capabilityRefreshingSessions as string[]).includes(target)).toBe(false);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/sessions/messages?path=${encodeURIComponent(target)}`,
+      );
+    });
+
+    it('refresh failure keeps the notice, surfaces an inline error, and clears busy', async () => {
+      Object.assign(mockState, { capabilityDriftBySession: { [target]: drift } });
+      mockFetch.mockResolvedValueOnce(jsonResponse({ error: 'already compacting' }, false));
+
+      const ok = await refreshSessionCapabilities(target);
+
+      expect(ok).toBe(false);
+      expect((mockState.capabilityDriftBySession as Record<string, unknown>)[target]).toEqual(drift);
+      expect((mockState.capabilityRefreshingSessions as string[]).includes(target)).toBe(false);
+      expect((mockState.inlineErrors as Record<string, string | null>)[target]).toContain('already compacting');
     });
   });
 });

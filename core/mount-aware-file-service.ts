@@ -36,22 +36,27 @@ export class MountAwareFileService {
   declare _defaultRoot: string;
   declare _studioId: string;
   declare _createCheckpoint: any;
+  declare _discloseNativeRoot: boolean;
 
   constructor({
     hanakoHome,
     defaultRoot,
     studioId,
     createCheckpoint,
+    discloseNativeRoot = false,
   }: Record<string, any> = {}) {
     if (!hanakoHome) throw new Error("hanakoHome required");
     this._hanakoHome = hanakoHome;
     this._defaultRoot = defaultRoot || null;
     this._studioId = studioId || null;
     this._createCheckpoint = typeof createCheckpoint === "function" ? createCheckpoint : null;
+    // 本地 owner（桌面端 loopback principal）可以拿到 local_fs 根的 native 绝对路径，
+    // 用于"打开文件夹/拖拽真实路径"等本地集成；远端 principal 一律不披露。
+    this._discloseNativeRoot = discloseNativeRoot === true;
   }
 
   resolveRoot(rootId = "default") {
-    return publicRoot(this._resolveRootInternal(rootId));
+    return publicRoot(this._resolveRootInternal(rootId), this._discloseNativeRoot);
   }
 
   resolveDirectory(rootId = "default", subdir = "") {
@@ -71,7 +76,7 @@ export class MountAwareFileService {
     return {
       rootId: root.id,
       mountId: root.mountId || root.id,
-      mount: publicRoot(root),
+      mount: publicRoot(root, this._discloseNativeRoot),
       subdir: normalized,
       files: await listFiles(dir),
     };
@@ -84,7 +89,7 @@ export class MountAwareFileService {
     return {
       rootId: root.id,
       mountId: root.mountId || root.id,
-      mount: publicRoot(root),
+      mount: publicRoot(root, this._discloseNativeRoot),
       query: q,
       results: q ? await searchFiles(root.path, q) : [],
     };
@@ -108,7 +113,7 @@ export class MountAwareFileService {
     const target = resolveFileTarget(root.path, dir, name);
     if (!target) throw fileError("invalid path", "invalid_path", 400);
     fs.mkdirSync(target, { recursive: false });
-    return workbenchWriteResult(root, "mkdir", { files: await listFiles(dir) });
+    return workbenchWriteResult(root, "mkdir", { files: await listFiles(dir) }, this._discloseNativeRoot);
   }
 
   async writeText(rootId, subdir, body: Record<string, any> = {}) {
@@ -125,7 +130,7 @@ export class MountAwareFileService {
           action: body.action,
           rootId: root.id,
           mountId: root.mountId || root.id,
-          mount: publicRoot(root),
+          mount: publicRoot(root, this._discloseNativeRoot),
           conflict: true,
           version: currentVersion,
           files: await listFiles(dir),
@@ -141,7 +146,7 @@ export class MountAwareFileService {
       action: body.action,
       rootId: root.id,
       mountId: root.mountId || root.id,
-      mount: publicRoot(root),
+      mount: publicRoot(root, this._discloseNativeRoot),
       version: statFileVersionOrNull(target),
       files: await listFiles(dir),
     };
@@ -155,7 +160,7 @@ export class MountAwareFileService {
     const target = resolveFileTarget(root.path, dir, newName);
     if (!source || !target) throw fileError("invalid path", "invalid_path", 400);
     fs.renameSync(source, target);
-    return workbenchWriteResult(root, "rename", { files: await listFiles(dir) });
+    return workbenchWriteResult(root, "rename", { files: await listFiles(dir) }, this._discloseNativeRoot);
   }
 
   async move(rootId, subdir, body: Record<string, any> = {}) {
@@ -167,7 +172,7 @@ export class MountAwareFileService {
     if (!source || !destDir) throw fileError("invalid path", "invalid_path", 400);
     fs.mkdirSync(destDir, { recursive: true });
     fs.renameSync(source, path.join(destDir, name));
-    return workbenchWriteResult(root, "move", { files: await listFiles(dir) });
+    return workbenchWriteResult(root, "move", { files: await listFiles(dir) }, this._discloseNativeRoot);
   }
 
   async movePaths(rootId, body: Record<string, any> = {}) {
@@ -202,7 +207,7 @@ export class MountAwareFileService {
     return workbenchWriteResult(root, "movePaths", {
       filesByPath,
       files: currentDir ? await listFiles(currentDir) : [],
-    });
+    }, this._discloseNativeRoot);
   }
 
   async safeDelete(rootId, subdir, body: Record<string, any> = {}) {
@@ -224,7 +229,7 @@ export class MountAwareFileService {
       originalSubdir: normalizedSubdir,
       deletedAt: new Date().toISOString(),
     }, null, 2) + "\n", "utf-8");
-    return workbenchWriteResult(root, "safeDelete", { trashId, files: await listFiles(dir) });
+    return workbenchWriteResult(root, "safeDelete", { trashId, files: await listFiles(dir) }, this._discloseNativeRoot);
   }
 
   writeFileTarget(rootId, subdir, name) {
@@ -287,13 +292,13 @@ export class MountAwareFileService {
   }
 }
 
-function workbenchWriteResult(root, action, extra = {}) {
+function workbenchWriteResult(root, action, extra = {}, discloseNativeRoot = false) {
   return {
     ok: true,
     action,
     rootId: root.id,
     mountId: root.mountId || root.id,
-    mount: publicRoot(root),
+    mount: publicRoot(root, discloseNativeRoot),
     ...extra,
   };
 }
@@ -313,8 +318,12 @@ function findLocalFsMount(hanakoHome, studioId, rootId) {
     && mount.provider === "local_fs") || null;
 }
 
-function publicRoot(root) {
-  const { path: _path, ...safe } = root;
+function publicRoot(root, discloseNativeRoot = false) {
+  const { path: rootPath, ...safe } = root;
+  if (discloseNativeRoot && root.sourceKind === "storage" && root.provider === "local_fs"
+    && typeof rootPath === "string" && rootPath) {
+    return { ...safe, nativeRootPath: rootPath };
+  }
   return safe;
 }
 

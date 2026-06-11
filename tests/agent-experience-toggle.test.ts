@@ -45,7 +45,6 @@ function makeAgent({ experienceEnabled }) {
   agent._todoTool = makeTool("todo_write");
   agent._stageFilesTool = makeTool("stage_files");
   agent._fileTool = makeTool("file");
-  agent._artifactTool = makeTool("create_artifact");
   agent._notifyTool = makeTool("notify");
   agent._stopTaskTool = makeTool("stop_task");
   agent._checkDeferredTool = makeTool("check_pending_tasks");
@@ -88,15 +87,6 @@ describe("agent experience toggle", () => {
     const toolNames = agent.getToolsSnapshot().map((tool) => tool.name);
     expect(toolNames).toContain("record_experience");
     expect(toolNames).toContain("recall_experience");
-  });
-
-  it("keeps create_artifact as an explicit legacy compatibility tool only", () => {
-    const { agent, root } = makeAgent({ experienceEnabled: false });
-    roots.push(root);
-
-    expect(agent.getToolsSnapshot().map((tool) => tool.name)).not.toContain("create_artifact");
-    expect(agent.getToolsSnapshot({ includeLegacyArtifactTool: true }).map((tool) => tool.name))
-      .toContain("create_artifact");
   });
 
   it("does not expose a top-level wait tool", () => {

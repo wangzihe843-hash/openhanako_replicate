@@ -251,6 +251,94 @@ describe("writeDiary hybrid material collection", () => {
     expect(diaryPrompt()).not.toContain("后面这句补齐失败也不能毁掉已有摘要");
   });
 
+  it("slices cross-day sessions before using them as diary material", async () => {
+    const crossDaySummary = {
+      session_id: "cross-day-session",
+      created_at: "2026-05-07T04:15:00.000Z",
+      updated_at: "2026-05-07T04:15:00.000Z",
+      messageCount: 4,
+      source_time_range: {
+        start: "2026-05-06T19:40:00.000Z",
+        end: "2026-05-07T04:12:00.000Z",
+        timezone: "Asia/Shanghai",
+        localDates: ["2026-05-06", "2026-05-07"],
+      },
+      summary: [
+        "## 事情经过",
+        "- 2026-05-06 03:40 用户和小王讨论了昨晚的角色设定。",
+        "- 2026-05-07 12:10 用户开始整理今天的日记材料。",
+      ].join("\n"),
+    };
+    const opts = baseOpts({
+      summaryManager: {
+        getSummariesInRange: vi.fn().mockReturnValue([crossDaySummary]),
+        getSummary: vi.fn().mockReturnValue(crossDaySummary),
+        rollingSummary: vi.fn(),
+      },
+      generateTemporarySummary: vi.fn().mockResolvedValue(
+        "## 临时摘要\n[12:10] 用户开始整理今天的日记材料。"
+      ),
+    });
+    makeSession(opts.sessionDir, "cross-day-session", [
+      { role: "user", content: "昨晚和小王聊角色设定。", timestamp: "2026-05-06T19:40:00.000Z" },
+      { role: "assistant", content: "我把这件事记在昨晚。", timestamp: "2026-05-06T19:45:00.000Z" },
+      { role: "user", content: "今天开始整理日记材料。", timestamp: "2026-05-07T04:10:00.000Z" },
+      { role: "assistant", content: "今天的材料应该只写今天。", timestamp: "2026-05-07T04:12:00.000Z" },
+    ]);
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toBeUndefined();
+    expect(opts.summaryManager.rollingSummary).not.toHaveBeenCalled();
+    expect(opts.generateTemporarySummary).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "cross-day-session",
+      messages: [
+        expect.objectContaining({ content: "今天开始整理日记材料。" }),
+        expect.objectContaining({ content: "今天的材料应该只写今天。" }),
+      ],
+      previousSummary: "",
+      reason: "date-slice",
+    }));
+    expect(diaryPrompt()).toContain("临时补齐");
+    expect(diaryPrompt()).toContain("今天的日记材料");
+    expect(diaryPrompt()).not.toContain("昨晚的角色设定");
+    expect(diaryPrompt()).not.toContain("小王");
+  });
+
+  it("uses an explicit target date and scans the full session file for old diary material", async () => {
+    const opts = baseOpts({
+      targetDate: "2026-05-06",
+      memory: "长期背景里提到 2026-05-07 小王去了靓妹家。",
+      generateTemporarySummary: vi.fn().mockResolvedValue(
+        "## 临时摘要\n[23:40] 用户补录 5 月 6 日的散步。"
+      ),
+    });
+    const largeTail = "后来发生的其它日期内容。".repeat(20000);
+    makeSession(opts.sessionDir, "large-cross-day-session", [
+      { role: "user", content: "补录 5 月 6 日晚上散步。", timestamp: "2026-05-06T15:40:00.000Z" },
+      { role: "assistant", content: "我只把它放进 5 月 6 日。", timestamp: "2026-05-06T15:45:00.000Z" },
+      { role: "assistant", content: largeTail, timestamp: "2026-05-07T04:05:00.000Z" },
+      { role: "user", content: "今天小王去了靓妹家。", timestamp: "2026-05-07T04:10:00.000Z" },
+    ]);
+
+    const result = await writeDiary(opts);
+
+    expect(result.error).toBeUndefined();
+    expect(result.logicalDate).toBe("2026-05-06");
+    expect(opts.generateTemporarySummary).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "large-cross-day-session",
+      messages: [
+        expect.objectContaining({ content: "补录 5 月 6 日晚上散步。" }),
+        expect.objectContaining({ content: "我只把它放进 5 月 6 日。" }),
+      ],
+      previousSummary: "",
+      reason: "date-slice",
+    }));
+    expect(diaryPrompt()).toContain("5 月 6 日的散步");
+    expect(diaryPrompt()).toContain("长期背景不能作为当天事实来源");
+    expect(diaryPrompt()).toContain("你的长期背景（只用于语气，不作为当天事实）");
+  });
+
   it("returns diagnostics when every matching session fails material collection", async () => {
     const opts = baseOpts({
       generateTemporarySummary: vi.fn().mockRejectedValue(new Error("simulated temporary failure")),

@@ -108,7 +108,7 @@ describe('injectCopyButtons', () => {
     });
   });
 
-  it('pre 被 .code-block-wrap 包裹，按钮是 wrapper 的直接子元素而非 pre 的子元素', () => {
+  it('pre 被 .code-block-wrap 包裹，toolbar 是 wrapper 的直接子元素', () => {
     const container = document.createElement('div');
     container.innerHTML = '<pre><code>const x = 1;</code></pre>';
 
@@ -120,13 +120,13 @@ describe('injectCopyButtons', () => {
     const pre = wrapper?.querySelector('pre');
     expect(pre).toBeInstanceOf(HTMLPreElement);
 
-    // 按钮是 wrapper 的直接子，不是 pre 的子
-    const btn = wrapper?.querySelector(':scope > .copy-btn');
-    expect(btn).toBeInstanceOf(HTMLButtonElement);
-    expect(pre?.querySelector('.copy-btn')).toBeNull();
+    const toolbar = wrapper?.querySelector(':scope > .code-block-toolbar');
+    expect(toolbar).toBeInstanceOf(HTMLDivElement);
+    expect(toolbar?.querySelectorAll('.code-block-toolbar-btn').length).toBe(2);
+    expect(pre?.querySelector('.code-block-toolbar-btn')).toBeNull();
   });
 
-  it('adds an icon-only copy button and shows copied state after click', async () => {
+  it('copy button shows copied state after click', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -137,20 +137,41 @@ describe('injectCopyButtons', () => {
 
     injectCopyButtons(container);
 
-    const button = container.querySelector<HTMLButtonElement>('.copy-btn');
-    expect(button).toBeInstanceOf(HTMLButtonElement);
-    expect(button?.querySelector('svg.copy-btn-icon')).toBeInstanceOf(SVGSVGElement);
-    expect(button?.textContent).toBe('');
-    expect(button?.dataset.copied).toBe('false');
-    expect(button?.dataset.copiedLabel).toBe('已复制');
-    expect(button?.getAttribute('aria-label')).toBe('复制');
+    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-block-toolbar-btn');
+    const copyBtn = buttons[1];
+    expect(copyBtn).toBeInstanceOf(HTMLButtonElement);
+    expect(copyBtn?.querySelector('svg.code-block-toolbar-btn-icon')).toBeInstanceOf(SVGSVGElement);
+    expect(copyBtn?.dataset.copied).toBe('false');
+    expect(copyBtn?.dataset.copiedLabel).toBe('已复制');
+    expect(copyBtn?.getAttribute('aria-label')).toBe('复制');
 
-    button?.click();
+    copyBtn?.click();
     await Promise.resolve();
 
     expect(writeText).toHaveBeenCalledWith('const x = 1;');
-    expect(button?.dataset.copied).toBe('true');
-    expect(button?.getAttribute('aria-label')).toBe('已复制');
+    expect(copyBtn?.dataset.copied).toBe('true');
+    expect(copyBtn?.getAttribute('aria-label')).toBe('已复制');
+  });
+
+  it('wrap button toggles data-wrap on wrapper', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<pre><code>const x = 1;</code></pre>';
+
+    injectCopyButtons(container);
+
+    const wrapper = container.querySelector<HTMLDivElement>('.code-block-wrap')!;
+    const wrapBtn = container.querySelector<HTMLButtonElement>('.code-block-toolbar-btn')!;
+
+    expect(wrapper.dataset.wrap).toBeUndefined();
+    expect(wrapBtn.dataset.active).toBe('false');
+
+    wrapBtn.click();
+    expect(wrapper.dataset.wrap).toBe('true');
+    expect(wrapBtn.dataset.active).toBe('true');
+
+    wrapBtn.click();
+    expect(wrapper.dataset.wrap).toBe('false');
+    expect(wrapBtn.dataset.active).toBe('false');
   });
 
   it('.mermaid-source 的 pre 不被包裹、不加按钮', () => {
@@ -164,12 +185,9 @@ describe('injectCopyButtons', () => {
 
     injectCopyButtons(container);
 
-    // mermaid pre 不应被 wrapper 包裹
     const mermaidPre = container.querySelector('pre.mermaid-source');
     expect(mermaidPre?.parentElement?.classList.contains('code-block-wrap')).toBe(false);
-    // mermaid pre 内不应有复制按钮
-    expect(mermaidPre?.querySelector('.copy-btn')).toBeNull();
-    // wrapper 也不应存在
+    expect(mermaidPre?.querySelector('.code-block-toolbar-btn')).toBeNull();
     expect(container.querySelector('.code-block-wrap')).toBeNull();
   });
 
@@ -181,7 +199,7 @@ describe('injectCopyButtons', () => {
     injectCopyButtons(container);
 
     expect(container.querySelectorAll('.code-block-wrap').length).toBe(1);
-    expect(container.querySelectorAll('.copy-btn').length).toBe(1);
+    expect(container.querySelectorAll('.code-block-toolbar-btn').length).toBe(2);
   });
 
   it('混合场景：普通代码块被套 wrapper，mermaid 不动', () => {
@@ -197,7 +215,7 @@ describe('injectCopyButtons', () => {
     injectCopyButtons(container);
 
     expect(container.querySelectorAll('.code-block-wrap').length).toBe(1);
-    expect(container.querySelectorAll('.copy-btn').length).toBe(1);
+    expect(container.querySelectorAll('.code-block-toolbar-btn').length).toBe(2);
     expect(container.querySelector('pre.mermaid-source')?.parentElement?.classList.contains('code-block-wrap')).toBe(false);
   });
 });

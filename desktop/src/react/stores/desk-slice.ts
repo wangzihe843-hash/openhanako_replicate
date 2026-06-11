@@ -44,6 +44,12 @@ export interface DeskSlice {
   selectedWorkspaceLabel: string | null;
   deskWorkspaceMountId: string | null;
   deskWorkspaceLabel: string | null;
+  /**
+   * 当前 mount 工作台的 native 绝对根路径（服务端按 principal 披露）。
+   * 归属与 deskWorkspaceMountId 一致：仅在 mount 工作台激活时非空；
+   * 远端/虚拟 mount 或未披露时为 null。
+   */
+  deskWorkspaceNativeRoot: string | null;
   studioWorkspaces: StudioWorkspace[];
   workspaceFolders: string[];
   cwdHistory: string[];
@@ -64,7 +70,7 @@ export interface DeskSlice {
   setHomeFolder: (folder: string | null) => void;
   setSelectedFolder: (folder: string | null) => void;
   setSelectedWorkspaceMount: (mountId: string | null, label?: string | null) => void;
-  setDeskWorkspaceMount: (mountId: string | null, label?: string | null) => void;
+  setDeskWorkspaceMount: (mountId: string | null, label?: string | null, nativeRoot?: string | null) => void;
   setStudioWorkspaces: (workspaces: StudioWorkspace[]) => void;
   setWorkspaceFolders: (folders: string[]) => void;
   setCwdHistory: (history: string[]) => void;
@@ -90,6 +96,7 @@ export const createDeskSlice = (
   selectedWorkspaceLabel: null,
   deskWorkspaceMountId: null,
   deskWorkspaceLabel: null,
+  deskWorkspaceNativeRoot: null,
   studioWorkspaces: [],
   workspaceFolders: [],
   cwdHistory: [],
@@ -133,9 +140,10 @@ export const createDeskSlice = (
     selectedWorkspaceMountId: mountId,
     selectedWorkspaceLabel: label ?? null,
   }),
-  setDeskWorkspaceMount: (mountId, label = null) => set({
+  setDeskWorkspaceMount: (mountId, label = null, nativeRoot = null) => set({
     deskWorkspaceMountId: mountId,
-    deskWorkspaceLabel: label ?? null,
+    deskWorkspaceLabel: mountId ? (label ?? null) : null,
+    deskWorkspaceNativeRoot: mountId ? (nativeRoot ?? null) : null,
   }),
   setStudioWorkspaces: (workspaces) => set({ studioWorkspaces: workspaces }),
   setWorkspaceFolders: (folders) => set({ workspaceFolders: folders }),

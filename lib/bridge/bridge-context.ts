@@ -1,4 +1,5 @@
 import { parseSessionKey } from "./session-key.ts";
+import { interactionCapabilitiesForPlatform } from "./interaction-capabilities.ts";
 
 export const BRIDGE_NOTIFY_PLATFORMS = ["wechat", "feishu", "telegram", "qq"];
 
@@ -74,6 +75,8 @@ export function buildBridgeContext(input: Record<string, any> = {}, locale = "zh
     userId,
     chatId,
     notificationHint,
+    // 派生字段：始终由平台声明表重建，不从持久化 meta / 缓存读取
+    interactionCapabilities: interactionCapabilitiesForPlatform(platform),
   };
 }
 
@@ -81,10 +84,30 @@ export function buildBridgePromptLine(context, locale = "zh") {
   if (!context?.isBridgeSession || !context.platform) return "";
   const label = bridgePlatformLabel(context.platform, locale);
   if (!label) return "";
-  if (localeKey(locale) === "zh") {
-    return `当前用户正通过${label}与你对话，仅在需要理解当前平台或“这里”等指代时参考。`;
+  const zh = localeKey(locale) === "zh";
+  const base = zh
+    ? `当前用户正通过${label}与你对话，仅在需要理解当前平台或“这里”等指代时参考。`
+    : `The user is currently talking with you through ${label}; use this only when interpreting the current platform or references like "here."`;
+  const confirmation = buildTextCommandConfirmationGuidance(context, label, zh);
+  if (!confirmation) return base;
+  return zh ? `${base}${confirmation}` : `${base} ${confirmation}`;
+}
+
+/**
+ * 文本指令确认指引（#1619）：按平台声明的 interactionCapabilities 分叉。
+ * 文本平台没有可点击的确认卡片，Agent 必须引导用户回复 /apply 等文字指令，
+ * 而不是沿用桌面端"点击确认"的交互认知。
+ */
+function buildTextCommandConfirmationGuidance(context, label, zh) {
+  if (context?.interactionCapabilities?.confirmationMode !== "text_command") return "";
+  if (zh) {
+    return `${label}对话是纯文本渠道，没有可点击的卡片、按钮或确认弹窗；`
+      + "需要用户确认的操作（如自动任务建议）由用户回复文字指令完成：回复 /apply 创建最新的自动任务建议，回复 /apply <建议ID> 指定其中一项。"
+      + "需要确认时引导用户回复指令，不要让用户点击任何界面元素。";
   }
-  return `The user is currently talking with you through ${label}; use this only when interpreting the current platform or references like "here."`;
+  return `This ${label} conversation is a text-only channel without clickable cards, buttons, or confirmation dialogs; `
+    + "actions that need the user's confirmation (such as automation suggestions) are completed by text commands: replying /apply creates the latest automation suggestion, and /apply <id> targets a specific one. "
+    + "When confirmation is needed, guide the user to reply with the command instead of clicking any UI element.";
 }
 
 export function appendBridgePromptLine(prompt, context, locale = "zh") {

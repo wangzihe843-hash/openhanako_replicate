@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { app, BrowserWindow } = require("electron");
+const { buildFontInjectionCss } = require("./office-pdf-fonts.cjs");
 
 const OFFICE_PDF_HELPER_FLAG = "--hana-office-html-to-pdf";
 const DEFAULT_TIMEOUT_MS = 60000;
@@ -60,6 +61,7 @@ function normalizeJob(raw) {
     landscape: raw.landscape === true,
     margins: raw.margins && typeof raw.margins === "object" ? raw.margins : undefined,
     allowJavaScript: raw.allowJavaScript === true,
+    embedHanaFonts: raw.embedHanaFonts !== false,
     settleMs: normalizeNumber(raw.settleMs, 250, 0, 30000),
     timeoutMs: normalizeNumber(raw.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, 5 * 60 * 1000),
   };
@@ -87,6 +89,9 @@ async function waitForPageAssets(webContents, settleMs) {
 }
 
 async function renderJob(job) {
+  // 注入素材在开窗口前构建：字体资源缺失时显式失败，不静默产出回退字体的 PDF。
+  const fontCss = job.embedHanaFonts ? buildFontInjectionCss() : null;
+
   const win = new BrowserWindow({
     show: false,
     width: job.viewport.width,
@@ -102,6 +107,12 @@ async function renderJob(job) {
   try {
     const url = pathToFileURL(job.htmlPath).href;
     await withTimeout(win.loadURL(url), job.timeoutMs, "loadURL");
+    if (fontCss) {
+      // 只声明 @font-face：页面字体栈引用这些族名才会触发按 unicode-range 的
+      // 惰性加载，未引用的页面零影响。waitForPageAssets 的 document.fonts.ready
+      // 会等注入字体加载完成。
+      await withTimeout(win.webContents.insertCSS(fontCss), job.timeoutMs, "font css inject");
+    }
     await withTimeout(waitForPageAssets(win.webContents, job.settleMs), job.timeoutMs, "asset wait");
     const pdf = await withTimeout(
       win.webContents.printToPDF({

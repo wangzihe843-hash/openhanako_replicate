@@ -61,9 +61,77 @@ export function getToolDefinitionName(tool, owner = "createAgentSession.customTo
   return tool.name;
 }
 
-export function agentToolToToolDefinition(tool) {
-  assertAgentTool(tool);
+function stableJson(value: any, seen = new WeakSet<object>()): string {
+  if (value === null || typeof value !== "object") {
+    const encoded = JSON.stringify(value);
+    return encoded === undefined ? "undefined" : encoded;
+  }
+  if (seen.has(value)) return "\"[Circular]\"";
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableJson(item, seen)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableJson(value[key], seen)}`).join(",")}}`;
+}
+
+function normalizeToolCallId(value: any): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function pickAssistantMessageId(...values: any[]): string | null {
+  for (const value of values) {
+    if (!value || typeof value !== "object") continue;
+    const candidates = [
+      value.assistantMessageId,
+      value.messageId,
+      value.assistantMessage?.id,
+      value.message?.id,
+      value.turnId,
+    ];
+    for (const candidate of candidates) {
+      const normalized = normalizeToolCallId(candidate);
+      if (normalized) return normalized;
+    }
+  }
+  return null;
+}
+
+function toolExecutionKey(toolName: string, toolCallId: any, params: any, signal: any, ctx: any): string | null {
+  const id = normalizeToolCallId(toolCallId);
+  if (id) return `toolCallId:${id}`;
+
+  const assistantMessageId = pickAssistantMessageId(ctx, signal, params);
+  if (!assistantMessageId) return null;
+  return `assistant:${assistantMessageId}:tool:${toolName}:args:${stableJson(params)}`;
+}
+
+function createToolExecutionOnceState(): Map<string, Promise<any>> {
+  return new Map();
+}
+
+function wrapToolDefinitionExecutionOnce(definition: any, state = createToolExecutionOnceState()) {
+  if (!definition || typeof definition.execute !== "function") return definition;
+  const execute = definition.execute;
   return {
+    ...definition,
+    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+      const key = toolExecutionKey(definition.name, toolCallId, params, signal, ctx);
+      if (!key) return execute(toolCallId, params, signal, onUpdate, ctx);
+
+      const existing = state.get(key);
+      if (existing) return existing;
+
+      const promise = Promise.resolve().then(() => execute(toolCallId, params, signal, onUpdate, ctx));
+      state.set(key, promise);
+      return promise;
+    },
+  };
+}
+
+export function agentToolToToolDefinition(tool, executionState = createToolExecutionOnceState()) {
+  assertAgentTool(tool);
+  return wrapToolDefinitionExecutionOnce({
     name: tool.name,
     label: tool.label,
     description: tool.description,
@@ -77,7 +145,7 @@ export function agentToolToToolDefinition(tool) {
     promptGuidelines: tool.promptGuidelines,
     execute: async (toolCallId, params, signal, onUpdate, ctx) =>
       tool.execute(toolCallId, params, signal, onUpdate, ctx),
-  };
+  }, executionState);
 }
 
 export function uniqueToolNames(names) {
@@ -97,9 +165,13 @@ export function normalizeCreateAgentSessionOptions(options, version = getPiCodin
 
   const rawTools = Array.isArray(options.tools) ? options.tools : [];
   const rawCustomTools = Array.isArray(options.customTools) ? options.customTools : [];
+  const executionState = createToolExecutionOnceState();
 
   for (const tool of rawTools) assertAgentTool(tool);
-  const convertedBaseTools = rawTools.map(agentToolToToolDefinition);
+  const convertedBaseTools = rawTools.map(tool => agentToolToToolDefinition(tool, executionState));
+  const convertedCustomTools = rawCustomTools.map(tool => (
+    wrapToolDefinitionExecutionOnce(tool, executionState)
+  ));
   const allowedNames = uniqueToolNames([
     ...rawTools.map(tool => tool.name),
     ...rawCustomTools.map(tool => getToolDefinitionName(tool)),
@@ -110,7 +182,7 @@ export function normalizeCreateAgentSessionOptions(options, version = getPiCodin
     tools: allowedNames,
     customTools: [
       ...convertedBaseTools,
-      ...rawCustomTools,
+      ...convertedCustomTools,
     ],
   };
 }

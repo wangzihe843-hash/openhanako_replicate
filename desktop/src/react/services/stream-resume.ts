@@ -16,11 +16,19 @@ import { registerSessionStreamMetaCleaner } from '../stores/stream-invalidator';
 
 // 延迟导入，打破循环依赖
 let _handleServerMessage: ((msg: any) => void) | null = null;
-let _applyStreamingStatus: ((isStreaming: boolean, sessionPath: string | null) => void) | null = null;
+let _applyStreamingStatus: ((
+  isStreaming: boolean,
+  sessionPath: string | null,
+  identity?: { streamId?: string | null; turnId?: string | null },
+) => boolean | void) | null = null;
 
 export function injectHandlers(
   handleServerMessage: (msg: any) => void,
-  applyStreamingStatus: (isStreaming: boolean, sessionPath: string | null) => void,
+  applyStreamingStatus: (
+    isStreaming: boolean,
+    sessionPath: string | null,
+    identity?: { streamId?: string | null; turnId?: string | null },
+  ) => boolean | void,
 ): void {
   _handleServerMessage = handleServerMessage;
   _applyStreamingStatus = applyStreamingStatus;
@@ -233,7 +241,9 @@ async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrat
       meta.lastSeq = Math.max(meta.lastSeq || 0, Math.max(0, msg.nextSeq - 1));
     }
 
-    _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath);
+    _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
+      streamId: msg.streamId || null,
+    });
 
     const ws = getWebSocket();
     if (isCurrentSession && useStore.getState().currentSessionPath === sessionPath && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
@@ -271,6 +281,8 @@ export function replayStreamResume(msg: any): void {
     meta.lastSeq = Math.max(meta.lastSeq || 0, Math.max(0, msg.nextSeq - 1));
   }
 
-  _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath);
+  _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
+    streamId: msg.streamId || null,
+  });
 }
 

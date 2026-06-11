@@ -4,7 +4,7 @@ import { createPluginConfigStore } from "./plugin-config.ts";
 
 /**
  * Create a PluginContext for a plugin.
- * @param {{ pluginId: string, pluginKey?: string, source?: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", permissions?: string[], capabilities?: string[], sensitiveCapabilities?: string[], registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
+ * @param {{ pluginId: string, pluginKey?: string, source?: string, pluginDir: string, dataDir: string, bus: object, accessLevel?: "full-access" | "restricted", permissions?: string[], capabilities?: string[] | null, sensitiveCapabilities?: string[] | null, registerSessionFile?: Function, configSchema?: object, logSink?: Function, runtimeContext?: object }} opts
  */
 export function createPluginContext({ pluginId, pluginKey, source, pluginDir, dataDir, bus, accessLevel, permissions, capabilities, sensitiveCapabilities, registerSessionFile: registerSessionFileImpl, configSchema, logSink, runtimeContext }) {
   const config = createPluginConfigStore({ dataDir, schema: configSchema });

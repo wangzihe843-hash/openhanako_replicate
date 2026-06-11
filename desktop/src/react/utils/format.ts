@@ -131,60 +131,58 @@ export function injectCopyButtons(container: HTMLElement): void {
   const t = window.t ?? ((p: string) => p);
   const pres = container.querySelectorAll('pre');
   for (const pre of pres) {
-    // 跳过 mermaid 图表源码 pre（不套 wrapper、不加按钮）
     if (pre.classList.contains('mermaid-source')) continue;
-    // 判重：已在 wrapper 内则跳过
     if (pre.parentElement?.classList.contains('code-block-wrap')) continue;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'code-block-wrap';
 
-    const btn = document.createElement('button');
-    btn.className = 'copy-btn';
-    btn.type = 'button';
-    btn.title = t('attach.copy');
-    btn.setAttribute('aria-label', t('attach.copy'));
-    btn.dataset.copied = 'false';
-    btn.dataset.copiedLabel = t('attach.copied');
+    const toolbar = document.createElement('div');
+    toolbar.className = 'code-block-toolbar';
 
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('class', 'copy-btn-icon');
-    icon.setAttribute('viewBox', '0 0 24 24');
-    icon.setAttribute('fill', 'none');
-    icon.setAttribute('stroke', 'currentColor');
-    icon.setAttribute('stroke-width', '1.7');
-    icon.setAttribute('stroke-linecap', 'round');
-    icon.setAttribute('stroke-linejoin', 'round');
-    icon.setAttribute('aria-hidden', 'true');
-    const rectBack = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rectBack.setAttribute('x', '8');
-    rectBack.setAttribute('y', '8');
-    rectBack.setAttribute('width', '10');
-    rectBack.setAttribute('height', '10');
-    rectBack.setAttribute('rx', '1.5');
-    const pathFront = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    pathFront.setAttribute('d', 'M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');
-    icon.append(rectBack, pathFront);
-    btn.appendChild(icon);
+    // 换行切换按钮
+    const wrapBtn = document.createElement('button');
+    wrapBtn.className = 'code-block-toolbar-btn';
+    wrapBtn.type = 'button';
+    wrapBtn.title = t('codeBlock.wordWrap');
+    wrapBtn.setAttribute('aria-label', t('codeBlock.wordWrap'));
+    wrapBtn.dataset.active = 'false';
+    wrapBtn.innerHTML = `<svg class="code-block-toolbar-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><polyline points="13 16 11 18 13 20"/><path d="M3 18h4"/></svg>`;
+    wrapBtn.addEventListener('click', () => {
+      const active = wrapper.dataset.wrap === 'true';
+      wrapper.dataset.wrap = active ? 'false' : 'true';
+      wrapBtn.dataset.active = active ? 'false' : 'true';
+    });
 
-    btn.addEventListener('click', () => {
+    // 复制按钮
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'code-block-toolbar-btn';
+    copyBtn.type = 'button';
+    copyBtn.title = t('attach.copy');
+    copyBtn.setAttribute('aria-label', t('attach.copy'));
+    copyBtn.dataset.copied = 'false';
+    copyBtn.dataset.copiedLabel = t('attach.copied');
+    copyBtn.style.position = 'relative';
+    copyBtn.innerHTML = `<svg class="code-block-toolbar-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="1.5"/><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    copyBtn.addEventListener('click', () => {
       const code = pre.querySelector('code');
       const text = code ? code.textContent : pre.textContent;
       navigator.clipboard.writeText(text || '').then(() => {
-        btn.dataset.copied = 'true';
-        btn.title = t('attach.copied');
-        btn.setAttribute('aria-label', t('attach.copied'));
+        copyBtn.dataset.copied = 'true';
+        copyBtn.title = t('attach.copied');
+        copyBtn.setAttribute('aria-label', t('attach.copied'));
         setTimeout(() => {
-          btn.dataset.copied = 'false';
-          btn.title = t('attach.copy');
-          btn.setAttribute('aria-label', t('attach.copy'));
+          copyBtn.dataset.copied = 'false';
+          copyBtn.title = t('attach.copy');
+          copyBtn.setAttribute('aria-label', t('attach.copy'));
         }, 1500);
       });
     });
 
-    // 将 pre 替换为 wrapper，wrapper 内含 pre 和 btn
+    toolbar.append(wrapBtn, copyBtn);
+
     pre.parentNode?.insertBefore(wrapper, pre);
     wrapper.appendChild(pre);
-    wrapper.appendChild(btn);
+    wrapper.appendChild(toolbar);
   }
 }

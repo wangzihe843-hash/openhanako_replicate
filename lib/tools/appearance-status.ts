@@ -1,6 +1,11 @@
 import crypto from "crypto";
+import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
+import {
+  readAgentAppearanceProfileResource,
+  readAgentAvatarResource,
+} from "../agent-appearance-summary.ts";
 import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.ts";
 
 const AVATAR_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
@@ -133,6 +138,32 @@ function summarizedSubject(meta, resource, note) {
   };
 }
 
+function profileResourceSubject(meta, resource, profile) {
+  return {
+    ...subjectBase(meta, resource),
+    summaryAvailable: true,
+    summary: profile.summary,
+    vision: {
+      status: "profile_resource",
+      reason: null,
+      reused: true,
+      updatedAt: profile.updatedAt || null,
+      model: profile.model || null,
+    },
+  };
+}
+
+function missingProfileResourceSubject(meta, resource) {
+  return {
+    ...subjectBase(meta, resource),
+    vision: {
+      status: "profile_resource_missing",
+      reason: "agent appearance profile resource is not generated",
+      reused: false,
+    },
+  };
+}
+
 function directSubject(meta, resource, contentIndex, visionStatus) {
   return {
     ...subjectBase(meta, resource),
@@ -203,20 +234,43 @@ function userName(agent) {
 async function loadSubjects(agent, userDir) {
   const userBaseDir = userDir || agent?.userDir || null;
   const agentBaseDir = agent?.agentDir || null;
-  const [userAvatar, agentAvatar] = await Promise.all([
-    readCustomAvatar(userBaseDir, "user"),
-    readCustomAvatar(agentBaseDir, "agent"),
-  ]);
+  const userAvatar = await readCustomAvatar(userBaseDir, "user");
+  const agentAvatar = readAgentProfileAvatar(agentBaseDir);
   return [
     {
       meta: { role: "user", id: "user", name: userName(agent) },
       ...userAvatar,
+      profile: null,
     },
     {
       meta: { role: "agent", id: agent?.id || null, name: agentName(agent) },
       ...agentAvatar,
     },
   ];
+}
+
+function readAgentProfileAvatar(agentDir) {
+  if (!agentDir) return { resource: null, error: null, profile: null };
+  try {
+    const avatar = readAgentAvatarResource(agentDir);
+    if (!avatar) return { resource: null, error: null, profile: null };
+    const stat = fs.statSync(avatar.path);
+    return {
+      resource: {
+        role: "agent",
+        key: avatar.key,
+        label: "agent custom avatar",
+        image: avatar.image,
+        mimeType: avatar.image.mimeType,
+        size: stat.size,
+      },
+      error: null,
+      profile: readAgentAppearanceProfileResource(agentDir),
+    };
+  } catch (err) {
+    if (isMissingFileError(err)) return { resource: null, error: null, profile: null };
+    return { resource: null, error: readFailureReason(err), profile: null };
+  }
 }
 
 export async function getAppearanceStatus({
@@ -236,6 +290,7 @@ export async function getAppearanceStatus({
 } = {}) {
   const loaded = await loadSubjects(agent, userDir);
   const resources = loaded
+    .filter((item) => item.meta.role !== "agent")
     .map((item) => item.resource)
     .filter(Boolean);
   const directCapable = modelSupportsDirectImageInput(currentModel);
@@ -269,8 +324,13 @@ export async function getAppearanceStatus({
   const directImages = [];
   const subjects = loaded.map((item) => {
     const { meta, resource, error } = item;
+    const profile = item.profile || null;
     if (error) return readFailedSubject(meta, error);
     if (!resource) return missingSubject(meta);
+    if (meta.role === "agent") {
+      if (profile) return profileResourceSubject(meta, resource, profile);
+      return missingProfileResourceSubject(meta, resource);
+    }
 
     const note = notesByKey.get(resource.key);
     if (note) return summarizedSubject(meta, resource, note);

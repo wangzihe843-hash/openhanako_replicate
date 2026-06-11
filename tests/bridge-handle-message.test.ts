@@ -33,6 +33,9 @@ import { createSlashSystem } from "../core/slash-commands/index.ts";
 /** 匹配 timeTag 前缀（<t>MM-DD HH:mm</t> ）后跟预期文本 */
 const tagged = (text) => expect.stringMatching(new RegExp(`^<t>\\d{2}-\\d{2} \\d{2}:\\d{2}</t> ${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
 
+/** executeExternalMessage 的结构化结果（#1607）：正文 / 错误 / 截断正交 */
+const bridgeReply = (text) => ({ text, toolMedia: [], error: null, truncated: false });
+
 function createMocks() {
   const adapter = {
     sendReply: (vi.fn().mockResolvedValue as any)(),
@@ -62,7 +65,7 @@ function createMocks() {
   };
 
   const hub = {
-    send: vi.fn().mockResolvedValue("AI response"),
+    send: vi.fn().mockResolvedValue(bridgeReply("AI response")),
     eventBus: { emit: vi.fn() },
   };
 
@@ -229,7 +232,7 @@ describe("BridgeManager._handleMessage", () => {
 
       expect(hub.send).toHaveBeenCalledTimes(1);
 
-      resolveFirst("response 1");
+      resolveFirst(bridgeReply("response 1"));
       await vi.waitFor(() => expect(hub.send).toHaveBeenCalledTimes(2));
 
       expect(hub.send).toHaveBeenNthCalledWith(
@@ -639,6 +642,81 @@ describe("BridgeManager._handleMessage", () => {
       });
     });
 
+    it("fans proactive replies out to every explicitly requested Bridge platform", async () => {
+      const { bm, engine } = createMocks();
+      const wechatAdapter = {
+        sendReply: (vi.fn().mockResolvedValue as any)(),
+      };
+      const feishuAdapter = {
+        sendReply: (vi.fn().mockResolvedValue as any)(),
+      };
+      bm._platforms.clear();
+      bm._platforms.set("wechat:hana", {
+        adapter: wechatAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "wechat",
+      });
+      bm._platforms.set("feishu:hana", {
+        adapter: feishuAdapter,
+        status: "connected",
+        agentId: "hana",
+        platform: "feishu",
+      });
+      engine.getAgent.mockImplementation((id) => {
+        if (id === "hana") {
+          return {
+            agentName: "TestAgent",
+            config: {
+              bridge: {
+                wechat: { owner: "wx-user" },
+                feishu: { owner: "owner-user-id" },
+              },
+            },
+            sessionDir: os.tmpdir(),
+          };
+        }
+        return null;
+      });
+      engine.getBridgeIndex = vi.fn().mockReturnValue({
+        "wx_dm_wx-user@hana": {
+          file: "owner/wx.jsonl",
+          userId: "wx-user",
+        },
+        "fs_dm_owner-open-id@hana": {
+          file: "owner/fs.jsonl",
+          userId: "owner-user-id",
+          chatId: "oc_owner_chat",
+        },
+      });
+
+      const result = await bm.sendProactive("hello", "hana", {
+        bridgePlatforms: ["wechat", "feishu"],
+      });
+
+      expect(wechatAdapter.sendReply).toHaveBeenCalledWith("wx-user", "hello");
+      expect(feishuAdapter.sendReply).toHaveBeenCalledWith("oc_owner_chat", "hello");
+      expect(result).toMatchObject({
+        platform: "wechat",
+        chatId: "wx-user",
+        sessionKey: "wx_dm_wx-user@hana",
+        deliveries: [
+          {
+            status: "sent",
+            platform: "wechat",
+            chatId: "wx-user",
+            sessionKey: "wx_dm_wx-user@hana",
+          },
+          {
+            status: "sent",
+            platform: "feishu",
+            chatId: "oc_owner_chat",
+            sessionKey: "fs_dm_owner-open-id@hana",
+          },
+        ],
+      });
+    });
+
     it("deduplicates proactive sends with the same explicit idempotency key", async () => {
       const { bm, engine } = createMocks();
       const feishuAdapter = {
@@ -816,7 +894,7 @@ describe("BridgeManager._handleMessage", () => {
       hub.send.mockImplementation(async (_text, opts) => {
         opts.onDelta("Hel", "Hel");
         opts.onDelta("lo", "Hello");
-        return "Hello";
+        return bridgeReply("Hello");
       });
 
       bm._handleMessage("telegram", {
@@ -857,7 +935,7 @@ describe("BridgeManager._handleMessage", () => {
       hub.send.mockImplementation(async (_text, opts) => {
         opts.onDelta("Hel", "Hel");
         opts.onDelta("lo", "Hello");
-        return "Hello";
+        return bridgeReply("Hello");
       });
 
       bm._handleMessage("feishu", {
@@ -909,7 +987,7 @@ describe("BridgeManager._handleMessage", () => {
       hub.send.mockImplementation(async (_text, opts) => {
         opts.onDelta("Hel", "Hel");
         opts.onDelta("lo", "Hello");
-        return "Hello";
+        return bridgeReply("Hello");
       });
 
       bm._handleMessage("feishu", {
@@ -962,7 +1040,7 @@ describe("BridgeManager._handleMessage", () => {
         stop: vi.fn(),
       };
       bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
-      hub.send.mockResolvedValue("Hello");
+      hub.send.mockResolvedValue(bridgeReply("Hello"));
 
       bm._handleMessage("feishu", {
         sessionKey: "fs_dm_owner123@hana",
@@ -986,7 +1064,7 @@ describe("BridgeManager._handleMessage", () => {
       bm.blockStreaming = true;
       hub.send.mockImplementation(async (_text, opts) => {
         expect(opts.onDelta).toBeUndefined();
-        return "final only";
+        return bridgeReply("final only");
       });
 
       bm._handleMessage("telegram", {
@@ -1001,6 +1079,84 @@ describe("BridgeManager._handleMessage", () => {
 
       expect(adapter.sendBlockReply).not.toHaveBeenCalled();
       expect(adapter.sendReply).toHaveBeenCalledWith("owner123", "final only");
+    });
+  });
+
+  // ── Reply error layering (#1607) ──
+
+  describe("reply error layering (#1607)", () => {
+    it("sends partial text first plus a brief interruption note, never the raw error string", async () => {
+      const { bm, hub, adapter } = createMocks();
+      hub.send.mockResolvedValue({
+        text: "我查到一半的内容",
+        toolMedia: [],
+        error: "terminated",
+        truncated: true,
+      });
+
+      bm._handleMessage("telegram", {
+        sessionKey: "tg_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "owner123",
+        agentId: "hana",
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+
+      const replies = adapter.sendReply.mock.calls.map((c) => c[1]);
+      expect(replies).toContain("我查到一半的内容");
+      const bodyIndex = replies.indexOf("我查到一半的内容");
+      const noteIndex = replies.findIndex((r) => /回复中断/.test(r));
+      expect(noteIndex).toBeGreaterThan(bodyIndex);
+      expect(replies.some((r) => /\[Error\]/.test(r))).toBe(false);
+      expect(replies.some((r) => /terminated/.test(r))).toBe(false);
+    });
+
+    it("sends a human-readable failure notice when no text was generated", async () => {
+      const { bm, hub, adapter } = createMocks();
+      hub.send.mockResolvedValue({
+        text: null,
+        toolMedia: [],
+        error: "terminated",
+        truncated: false,
+      });
+
+      bm._handleMessage("telegram", {
+        sessionKey: "tg_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "owner123",
+        agentId: "hana",
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+
+      const replies = adapter.sendReply.mock.calls.map((c) => c[1]);
+      expect(replies.some((r) => /回复生成失败/.test(r))).toBe(true);
+      expect(replies.some((r) => /\[Error\]/.test(r))).toBe(false);
+      expect(replies.some((r) => /terminated/.test(r))).toBe(false);
+    });
+
+    it("sends nothing extra for a clean reply without error", async () => {
+      const { bm, hub, adapter } = createMocks();
+      hub.send.mockResolvedValue({
+        text: "一切正常的回复",
+        toolMedia: [],
+        error: null,
+        truncated: false,
+      });
+
+      bm._handleMessage("telegram", {
+        sessionKey: "tg_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "owner123",
+        agentId: "hana",
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+
+      const replies = adapter.sendReply.mock.calls.map((c) => c[1]);
+      expect(replies).toContain("一切正常的回复");
+      expect(replies.some((r) => /回复中断|回复生成失败/.test(r))).toBe(false);
     });
   });
 
@@ -1310,7 +1466,7 @@ describe("BridgeManager._handleMessage", () => {
 
       expect(hub.send).toHaveBeenCalledOnce();
 
-      resolveFirst("response 1");
+      resolveFirst(bridgeReply("response 1"));
       await vi.advanceTimersByTimeAsync(600);
 
       expect(hub.send).toHaveBeenCalledTimes(2);

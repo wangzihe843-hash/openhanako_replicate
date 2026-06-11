@@ -72,6 +72,7 @@ describe("office plugin tools", () => {
 
   it("renders HTML to PDF through the desktop helper contract and stages the output", async () => {
     let observedCommand = null;
+    let observedJob = null;
     const fakeSpawn = vi.fn((command, args) => {
       observedCommand = { command, args };
       const child: any = new EventEmitter();
@@ -81,6 +82,7 @@ describe("office plugin tools", () => {
       queueMicrotask(() => {
         const jobPath = args.at(-1);
         const job = JSON.parse(fs.readFileSync(jobPath, "utf-8"));
+        observedJob = job;
         fs.mkdirSync(path.dirname(job.outputPath), { recursive: true });
         fs.writeFileSync(job.outputPath, "%PDF-1.4\n% office test\n", "utf-8");
         child.emit("close", 0);
@@ -116,11 +118,41 @@ describe("office plugin tools", () => {
       args: ["--hana-office-html-to-pdf", expect.stringMatching(/job\.json$/)],
     });
     expect(fs.readFileSync(result.outputPath, "utf-8")).toContain("%PDF-1.4");
+    expect(observedJob).toMatchObject({ embedHanaFonts: true });
     expect(stageFile).toHaveBeenCalledWith({
       sessionPath: "/sessions/office.jsonl",
       filePath: result.outputPath,
       label: "hello.pdf",
     });
     expect(result.mediaItem).toMatchObject({ type: "session_file", fileId: "sf_pdf" });
+  });
+
+  it("lets callers opt out of Hana font embedding via embedHanaFonts:false", async () => {
+    let observedJob = null;
+    const fakeSpawn = vi.fn((command, args) => {
+      const child: any = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      queueMicrotask(() => {
+        const job = JSON.parse(fs.readFileSync(args.at(-1), "utf-8"));
+        observedJob = job;
+        fs.mkdirSync(path.dirname(job.outputPath), { recursive: true });
+        fs.writeFileSync(job.outputPath, "%PDF-1.4\n% office test\n", "utf-8");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    await renderHtmlToPdf(
+      { html: "<h1>plain</h1>", embedHanaFonts: false },
+      { dataDir: tempDir },
+      {
+        env: { HANA_DESKTOP_EXEC_PATH: "/usr/local/bin/electron" },
+        spawn: fakeSpawn,
+      },
+    );
+
+    expect(observedJob).toMatchObject({ embedHanaFonts: false });
   });
 });

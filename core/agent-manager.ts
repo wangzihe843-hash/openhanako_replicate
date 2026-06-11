@@ -82,6 +82,19 @@ function agentMatchesListOptions(agent, options: any = {}) {
   return true;
 }
 
+function fallbackUserNameForLocale(locale) {
+  return String(locale || "zh").startsWith("zh") ? "用户" : "User";
+}
+
+function renderIdentityTemplateForList(identityMd, cfg, agentId) {
+  const agentName = cfg?.agent?.name || agentId;
+  const userName = cfg?.user?.name || fallbackUserNameForLocale(cfg?.locale);
+  return String(identityMd || "")
+    .replace(/\{\{userName\}\}/g, userName)
+    .replace(/\{\{agentName\}\}/g, agentName)
+    .replace(/\{\{agentId\}\}/g, agentId);
+}
+
 export class AgentManager {
   declare _activeAgentId: any;
   declare _activityStores: any;
@@ -134,6 +147,20 @@ export class AgentManager {
 
   /** 清除 listAgents 缓存（agent 增删改时调用） */
   invalidateAgentListCache() { this._agentListCache = null; }
+
+  /** 重建所有已初始化 agent 的 _systemPrompt（花名册变更时调用） */
+  _rebuildAllAgentSystemPrompts() {
+    for (const [id, agent] of this._agents) {
+      if (!agent.runtimeInitialized) continue;
+      try {
+        agent._systemPrompt = agent.buildSystemPrompt({
+          forceMemoryEnabled: agent._memoryMasterEnabled,
+        });
+      } catch (err) {
+        log.warn(`rebuild systemPrompt for ${id} failed: ${err?.message || err}`);
+      }
+    }
+  }
 
   get agents() { return this._agents; }
   get activeAgentId() { return this._activeAgentId; }
@@ -401,7 +428,8 @@ export class AgentManager {
         let identity = "";
         try {
           const idMd = fs.readFileSync(path.join(this._d.agentsDir, entry.name, "identity.md"), "utf-8");
-          const lines = idMd.split("\n").filter(l => l.trim() && !l.startsWith("#"));
+          const renderedIdMd = renderIdentityTemplateForList(idMd, cfg, entry.name);
+          const lines = renderedIdMd.split("\n").filter(l => l.trim() && !l.startsWith("#"));
           identity = lines[0]?.trim() || "";
         } catch {}
         const avatarDir = path.join(this._d.agentsDir, entry.name, "avatars");
@@ -565,10 +593,7 @@ export class AgentManager {
     ]);
     if (identitySrc) {
       const tmpl = fs.readFileSync(identitySrc, "utf-8");
-      const filled = tmpl
-        .replace(/\{\{agentName\}\}/g, name.trim())
-        .replace(/\{\{userName\}\}/g, currentAgent?.userName || t("error.fallbackUserName"));
-      fs.writeFileSync(path.join(agentDir, "identity.md"), filled, "utf-8");
+      fs.writeFileSync(path.join(agentDir, "identity.md"), tmpl, "utf-8");
     }
 
     // ishiki.md
@@ -687,6 +712,7 @@ export class AgentManager {
     }
 
     this.invalidateAgentListCache();
+    this._rebuildAllAgentSystemPrompts();
     log.log(`创建助手: ${name} (${agentId})`);
     return { id: agentId, name: name.trim() };
   }
@@ -867,6 +893,7 @@ export class AgentManager {
     }
 
     this.invalidateAgentListCache();
+    this._rebuildAllAgentSystemPrompts();
     log.log(`已删除助手: ${agentId}`);
   }
 

@@ -20,7 +20,6 @@ import { createAutomationTool } from "../lib/tools/automation-tool.ts";
 import { createWebFetchTool } from "../lib/tools/web-fetch.ts";
 import { createStageFilesTool } from "../lib/tools/output-file-tool.ts";
 import { createFileTool } from "../lib/tools/file-tool.ts";
-import { createArtifactTool } from "../lib/tools/artifact-tool.ts";
 import { createChannelTool } from "../lib/tools/channel-tool.ts";
 import { createDmTool } from "../lib/tools/dm-tool.ts";
 import { createBrowserTool } from "../lib/tools/browser-tool.ts";
@@ -68,9 +67,9 @@ import {
   type AgentAppearanceModel,
   formatAgentAppearancePrompt,
   hasAgentAppearanceSummaryCapability,
-  readCachedAgentAppearanceSummary,
+  readAgentAppearanceProfileResource,
   type ResolvedAgentAppearanceModelConfig,
-  refreshAgentAppearanceSummary,
+  refreshAgentAppearanceProfileResource,
 } from "../lib/agent-appearance-summary.ts";
 
 const moduleLog = createModuleLogger("agent");
@@ -100,7 +99,6 @@ type BuildSystemPromptOptions = {
 };
 
 export class Agent {
-  declare _artifactTool: any;
   declare _automationTool: any;
   declare _browserTool: any;
   declare _cb: any;
@@ -236,9 +234,6 @@ export class Agent {
     this._automationTool = null;
     this._stageFilesTool = null;
     this._fileTool = null;
-    // Legacy compatibility only. Fresh sessions should write files and stage
-    // them via stage_files; restored old sessions may still need this schema.
-    this._artifactTool = null;
     this._channelTool = null;
     this._browserTool = null;
     this._computerUseTool = null;
@@ -482,11 +477,6 @@ export class Agent {
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
       resolveSessionFile: (fileId, options = {}) => this._cb?.getEngine?.()?.getSessionFile?.(fileId, options) || null,
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
-    });
-    this._artifactTool = createArtifactTool({
-      getHanakoHome: () => this._cb?.getEngine?.()?.hanakoHome,
-      registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
-      getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
     });
     this._browserTool = createBrowserTool(() => this._cb?.getCurrentSessionPath?.(), {
       getSessionModel: (sessionPath) => {
@@ -799,7 +789,7 @@ export class Agent {
 
   async refreshAppearanceSummary(options: RefreshAppearanceSummaryOptions = {}) {
     const engine = this._getAppearanceEngine();
-    const summary = await refreshAgentAppearanceSummary({
+    const summary = await refreshAgentAppearanceProfileResource({
       agentDir: this.agentDir,
       agentName: this.agentName,
       visionConfig: this._resolveAppearanceVisionConfig(engine),
@@ -868,9 +858,6 @@ export class Agent {
     const computerUseTools = this._isComputerUseCandidateForThisAgent()
       ? [this._getComputerUseTool()]
       : [];
-    const legacyArtifactTools = options.includeLegacyArtifactTool === true
-      ? [this._artifactTool]
-      : [];
     return [
       ...memTools,
       ...experienceTools,
@@ -880,7 +867,6 @@ export class Agent {
       this._automationTool,
       this._stageFilesTool,
       this._fileTool,
-      ...legacyArtifactTools,
       this._channelTool,
       this._dmTool,
       this._browserTool,
@@ -1256,6 +1242,11 @@ export class Agent {
         platformPrompt
       ));
     }
+    parts.push(isZh
+      ? "\n你的所有文本输出都会直接展示给用户。每次回复都必须包含面向用户的正文内容，不允许只产生内部思考就结束回复。"
+      : "\nAll your text output is displayed directly to the user. Every response must contain user-facing content; do not end a response with only internal thinking."
+    );
+
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt
     // Subagent 场景下整块跳过（无记忆工具 = 规则和 pinned 也是孤儿噪音）
     // 注意：记忆块本身已下移到 prompt 末尾（见下方），这里只是预先准备好规则文本
@@ -1343,6 +1334,15 @@ export class Agent {
         "- Do not repeatedly stage the same file once it has already been staged; if the file is modified later and the user needs the latest version, stage it again\n" +
         "- Do not merely write file paths in text\n" +
         "- Do not decide platform-specific display or sending behavior in the Agent layer; consumers handle it"
+    );
+
+    parts.push(isZh
+      ? "\n## 可见 UI 上下文\n\n" +
+        "当用户用「这个、当前、打开的、可见的、选中的、置顶的」等说法指代 Hana 界面里正在看的文件、预览或文件夹时，先调用 current_status 获取 ui_context，再决定要读哪个文件或目录。\n\n" +
+        "ui_context 是用户当前可见界面的被动元信息，可能包含当前查看的文件夹、激活文件或预览标题、以及置顶 viewer 文件。它只描述 Hana 已收集到的 UI 视野；如果返回为空或不足以确定对象，向用户确认，不要猜路径。"
+      : "\n## Visible UI Context\n\n" +
+        "When the user refers to something in the Hana UI with words like current, open, visible, selected, pinned, this file, this folder, or what I am looking at, call current_status with the ui_context key before deciding which file or folder to inspect.\n\n" +
+        "ui_context is passive metadata about the user's visible UI state. It may include the currently viewed folder, active file or preview title, and pinned viewer files. It only describes UI state Hana has collected; if it is empty or not enough to identify the target, ask the user instead of guessing a path."
     );
 
     if (!forSubagent) {
@@ -1467,12 +1467,28 @@ export class Agent {
     // 以下内容会在不同 session 之间变化（用户档案编辑、cwd 切换、记忆更新、时间戳推进），
     // 统一放在 prompt 末尾以保护前面静态前缀的 cache 命中率。
 
-    // 用户档案（user.md，用户偶尔手动编辑）
+    // 用户档案（user.md）
+    const configuredUserName = typeof this._config?.user?.name === "string"
+      ? this._config.user.name.trim()
+      : "";
+    const userProfileLines = [
+      isZh
+        ? "以下是用户的自我描述。"
+        : "The following is the user's self-description.",
+    ];
+    if (configuredUserName) {
+      userProfileLines.push(
+        isZh
+          ? `用户的名字叫：${configuredUserName}`
+          : `The user's name is: ${configuredUserName}`
+      );
+    }
+    if (userMd) {
+      userProfileLines.push("", userMd);
+    }
     parts.push(...section(
       isZh ? "# 用户档案" : "# User Profile",
-      isZh
-        ? "以下是用户的自我描述，由用户手动维护。\n\n" + userMd
-        : "The following is the user's self-description, manually maintained by the user.\n\n" + userMd
+      userProfileLines.join("\n")
     ));
 
     // ishiki（identity + yuan + ishiki 模板，含 {{userName}} 等替换）
@@ -1480,7 +1496,7 @@ export class Agent {
     parts.push(ishiki);
 
     if (!forSubagent && this._canInjectAppearancePrompt(targetModel)) {
-      const appearance = readCachedAgentAppearanceSummary(this.agentDir);
+      const appearance = readAgentAppearanceProfileResource(this.agentDir);
       const appearancePrompt = appearance
         ? formatAgentAppearancePrompt(appearance.summary, this._config.locale || "")
         : "";

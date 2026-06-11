@@ -19,6 +19,18 @@ export function sessionFilesCacheDir(hanakoHome, sessionPath) {
   return path.join(hanakoHome, "session-files", hash);
 }
 
+export function buildSessionFileSourceKey(namespace, parts = []) {
+  const ns = String(namespace || "source")
+    .trim()
+    .replace(/[^a-zA-Z0-9_.:-]/g, "_")
+    .slice(0, 80) || "source";
+  const values = Array.isArray(parts) ? parts : [parts];
+  const hash = createHash("sha256")
+    .update(JSON.stringify(values.map((part) => part == null ? "" : String(part))))
+    .digest("hex");
+  return `${ns}:${hash}`;
+}
+
 export function moveSessionFileSidecarSync(fromSessionPath, toSessionPath) {
   const src = sessionFileSidecarPath(fromSessionPath);
   if (!fs.existsSync(src)) return false;
@@ -59,27 +71,41 @@ export class SessionFileRegistry {
     presentation = "attachment",
     listed = true,
     waveform = null,
+    sourceKey = null,
   }: any = {}) {
     if (!sessionPath) throw new Error("sessionPath is required to register a session file");
     if (!filePath || !path.isAbsolute(filePath)) throw new Error("filePath must be an absolute path");
     this._hydrateSession(sessionPath);
+    const normalizedSourceKey = normalizeSourceKey(sourceKey);
 
-    let realPath;
+    let incomingRealPath;
     try {
-      realPath = fs.realpathSync(filePath);
+      incomingRealPath = fs.realpathSync(filePath);
     } catch {
       throw new Error(`file not found: ${filePath}`);
     }
 
+    const existing = normalizedSourceKey
+      ? this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey) || this._findSessionFileByRealPath(sessionPath, incomingRealPath)
+      : this._findSessionFileByRealPath(sessionPath, incomingRealPath);
+    const shouldKeepExistingMaterialization = existing
+      && normalizedSourceKey
+      && existing.sourceKey === normalizedSourceKey
+      && !pathsReferToSameFile(existing.realPath || existing.filePath, incomingRealPath)
+      && existingMaterializationExists(existing);
+    const materializedFilePath = shouldKeepExistingMaterialization ? existing.filePath : filePath;
+    const realPath = shouldKeepExistingMaterialization
+      ? fs.realpathSync(existing.realPath || existing.filePath)
+      : incomingRealPath;
+
     const stat = fs.statSync(realPath);
-    const filename = path.basename(filePath);
+    const filename = path.basename(materializedFilePath);
     const ext = extOfName(filename);
     const sample = stat.isFile() ? readSample(realPath) : Buffer.alloc(0);
     const mime = stat.isDirectory()
       ? "inode/directory"
       : detectMime(sample, "application/octet-stream", filename);
-    const existing = this._findSessionFileByRealPath(sessionPath, realPath);
-    const id = existing?.id || buildSessionFileId({ sessionPath, realPath });
+    const id = existing?.id || buildSessionFileId({ sessionPath, realPath, sourceKey: normalizedSourceKey });
     const resolvedOperation = operation || inferOperation(origin);
     const operations = addUnique(existing?.operations, resolvedOperation);
     const normalizedWaveform = normalizeAudioWaveform(waveform);
@@ -89,8 +115,9 @@ export class SessionFileRegistry {
       id,
       sessionPath,
       origin,
-      filePath,
+      filePath: materializedFilePath,
       realPath,
+      ...(normalizedSourceKey ? { sourceKey: normalizedSourceKey } : {}),
       displayName: label || filename,
       filename,
       label: label || filename,
@@ -113,12 +140,13 @@ export class SessionFileRegistry {
     this._remember(entry, sessionPath);
     const sidecar = this._sidecarsBySession.get(sessionPath) || emptySidecar(sessionPath, this._now());
     sidecar.files[id] = entry;
-    if (shouldAppendRef(sidecar.refs, { fileId: id, origin, operation: resolvedOperation })) {
+    if (shouldAppendRef(sidecar.refs, { fileId: id, origin, operation: resolvedOperation, sourceKey: normalizedSourceKey })) {
       sidecar.refs.push({
         fileId: id,
         origin,
         operation: resolvedOperation,
         storageKind,
+        ...(normalizedSourceKey ? { sourceKey: normalizedSourceKey } : {}),
         createdAt: this._now(),
       });
     }
@@ -149,6 +177,13 @@ export class SessionFileRegistry {
       }
     }
     return null;
+  }
+
+  getBySourceKey(sourceKey, { sessionPath }: any = {}) {
+    const normalizedSourceKey = normalizeSourceKey(sourceKey);
+    if (!normalizedSourceKey) return null;
+    if (sessionPath) this._hydrateSession(sessionPath);
+    return this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey);
   }
 
   updateTranscription(fileId, transcription, { sessionPath }: any = {}) {
@@ -295,6 +330,20 @@ export class SessionFileRegistry {
       if (!entry) continue;
       const entryRealPath = normalizeExistingOrResolvedPath(entry.realPath || entry.filePath);
       if (entryRealPath === target) return entry;
+    }
+    return null;
+  }
+
+  _findSessionFileBySourceKey(sessionPath, sourceKey) {
+    const normalizedSourceKey = normalizeSourceKey(sourceKey);
+    if (!normalizedSourceKey) return null;
+    const ids = sessionPath
+      ? (this._idsBySession.get(sessionPath) || [])
+      : Array.from(this._byId.keys());
+    for (const id of ids) {
+      const entry = this._byId.get(id);
+      if (!entry?.sourceKey) continue;
+      if (entry.sourceKey === normalizedSourceKey) return entry;
     }
     return null;
   }
@@ -465,6 +514,17 @@ function normalizeExistingOrResolvedPath(filePath) {
   catch { return resolved; }
 }
 
+function pathsReferToSameFile(a, b) {
+  if (!a || !b) return false;
+  return normalizeExistingOrResolvedPath(a) === normalizeExistingOrResolvedPath(b);
+}
+
+function existingMaterializationExists(file) {
+  if (!file || file.status === "expired") return false;
+  const target = file.realPath || file.filePath;
+  return !!target && fs.existsSync(target);
+}
+
 function isInsideRoot(filePath, root) {
   const rel = path.relative(root, filePath);
   return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
@@ -481,12 +541,21 @@ function readSample(filePath) {
   }
 }
 
-function buildSessionFileId({ sessionPath, realPath }) {
+function buildSessionFileId({ sessionPath, realPath, sourceKey }) {
   const hash = createHash("sha256")
-    .update(JSON.stringify([sessionPath, realPath]))
+    .update(JSON.stringify([sessionPath, sourceKey || realPath]))
     .digest("hex")
     .slice(0, 16);
   return `sf_${hash}`;
+}
+
+function normalizeSourceKey(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") throw new Error("sourceKey must be a string");
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 512) throw new Error("sourceKey is too long");
+  return trimmed;
 }
 
 function inferOperation(origin) {
@@ -530,6 +599,14 @@ function addUnique(existing, value) {
 }
 
 function shouldAppendRef(refs, next) {
+  if (next.sourceKey && (refs || []).some(ref =>
+    ref?.fileId === next.fileId
+    && ref?.origin === next.origin
+    && (ref?.operation || inferOperation(ref?.origin)) === next.operation
+    && ref?.sourceKey === next.sourceKey
+  )) {
+    return false;
+  }
   if (next.operation !== "staged") return true;
   return !(refs || []).some(ref =>
     ref?.fileId === next.fileId

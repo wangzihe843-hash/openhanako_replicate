@@ -198,6 +198,20 @@
       "deleteConfirm": "このアーカイブを完全に削除しますか？取り消せません。",
       "deleteFailed": "削除に失敗しました",
       "daysAgo": "{days} 日前にアーカイブ"
+    },
+    "capabilityDrift": {
+      "title": "ツール構成が更新されています",
+      "addedTools": "新しいツール {count} 件",
+      "removedTools": "{count} 件のツールが利用不可",
+      "promptUpdated": "プロンプト更新",
+      "separator": "、",
+      "refreshButton": "エージェントのツールを更新",
+      "dismissButton": "閉じる",
+      "confirmText": "更新すると古い会話は要約に圧縮され、詳細が失われる可能性があります。続行しますか？",
+      "confirmButton": "更新する",
+      "cancelButton": "キャンセル",
+      "refreshing": "会話を圧縮してツールを更新中…",
+      "refreshFailed": "更新に失敗しました"
     }
   },
   "common": {
@@ -385,6 +399,9 @@
     "folder": "フォルダ",
     "copy": "コピー",
     "copied": "コピーしました ✓"
+  },
+  "codeBlock": {
+    "wordWrap": "折り返し"
   },
   "cron": {
     "typeAt": "一回のみ",
@@ -1254,7 +1271,6 @@
       "totalTokens": "合計 Tokens",
       "cacheRead": "キャッシュ読込",
       "cacheHitRate": "ヒット率",
-
       "uncached": "非キャッシュ",
       "modelMix": "モデル分布",
       "dailyUsage": "日別使用量",
@@ -1948,6 +1964,8 @@
     "patrolRuns": "巡回",
     "otherRuns": "その他のバックグラウンド作業",
     "agentTabs": "Agent で活動を絞り込み",
+    "previousAgent": "前の Agent を表示",
+    "nextAgent": "さらに Agent を表示",
     "categoryTabs": "活動タイプで絞り込み",
     "emptyForCategory": "この分類にはまだ活動がありません。",
     "patrolDone": "巡回完了",
@@ -1967,6 +1985,8 @@
     "empty": "スケジュールタスクはまだありません。\n必要に応じてアシスタントが作成します。",
     "emptyForAgent": "この Agent にはスケジュールタスクがまだありません。",
     "agentTabs": "Agent で自動化を絞り込み",
+    "previousAgent": "前の Agent を表示",
+    "nextAgent": "さらに Agent を表示",
     "draftTitle": "自動化ドラフト",
     "suggestionTitle": "提案",
     "suggested": "提案",
@@ -2194,7 +2214,10 @@
     "notConfigured": "{platform} は設定されていません",
     "goToSettings": "設定へ",
     "resetContext": "コンテキストをリセット",
-    "resetContextTip": "次のメッセージから新しい会話が始まります"
+    "resetContextTip": "次のメッセージから新しい会話が始まります",
+    "replyInterrupted": "（応答が中断されました。上記の内容は不完全な可能性があります）",
+    "replyFailed": "（応答の生成に失敗しました。しばらくしてからもう一度お試しください）",
+    "sessionBusy": "デスクトップセッションはまだ応答中です。しばらくしてから再送してください"
   },
   "notification": {
     "turnCompletionBody": "このターンは完了しました"
@@ -2349,6 +2372,7 @@
     "settingsTimeout": "「{label}」の変更確認がタイムアウトしました。設定は変更されていません",
     "subagentMaxConcurrent": "現在 {max} 個のサブエージェントが実行中です。完了をお待ちください。",
     "subagentParentSessionRequired": "subagent にはアクティブな親会話とバックグラウンドタスクストアが必要です。このコンテキストでは継続可能なインスタンスを作成できません。",
+    "subagentWriteAccessDenied": "書き込み権限を付与できません：親セッションが読み取り専用モードのため、サブエージェントの権限は親を超えられません。セッションを操作可能モードに切り替えて再試行するか、access:\"read\" で再ディスパッチしてください。",
     "subagentFailed": "サブエージェントの実行に失敗しました: {msg}",
     "subagentTimeout": "サブエージェントがタイムアウトしました（{minutes}分）",
     "subagentAborted": "サブエージェントが中止されました",

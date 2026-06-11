@@ -233,6 +233,7 @@ export class NotificationService {
         chatId: result.chatId,
         sessionKey: result.sessionKey,
         recorded: result.recorded === true,
+        ...(Array.isArray(result.deliveries) ? { bridgeDeliveries: result.deliveries } : {}),
       };
     } catch (err) {
       return { channel: CHANNEL_BRIDGE_OWNER, status: "failed", error: err.message };

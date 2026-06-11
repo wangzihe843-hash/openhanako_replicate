@@ -131,6 +131,134 @@ describe("SessionCoordinator", () => {
     expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe("MEMORY OFF");
   });
 
+  it("builds a fresh session prompt snapshot with the effective cwd", async () => {
+    const newCwd = path.join(tempDir, "new-workspace");
+    const oldCwd = path.join(tempDir, "old-workspace");
+    fs.mkdirSync(newCwd, { recursive: true });
+    fs.mkdirSync(oldCwd, { recursive: true });
+
+    const agent = {
+      id: "hana",
+      agentDir: path.join(tempDir, "agents", "hana"),
+      sessionDir: path.join(tempDir, "agents", "hana", "sessions"),
+      memoryMasterEnabled: true,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: vi.fn(({ cwdOverride }: any = {}) => `prompt cwd=${cwdOverride || "missing"}`),
+      tools: [],
+    };
+    fs.mkdirSync(agent.sessionDir, { recursive: true });
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: path.join(tempDir, "agents"),
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: { id: "m", provider: "test" },
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => oldCwd,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, newCwd, true);
+
+    expect(agent.buildSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      cwdOverride: newCwd,
+    }));
+    expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe(`prompt cwd=${newCwd}`);
+  });
+
+  it("refreshes agent appearance after the fresh session exists instead of blocking prompt snapshot", async () => {
+    const order: string[] = [];
+    const agent = {
+      sessionDir: "/tmp/agent-sessions",
+      memoryMasterEnabled: true,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      refreshAppearanceSummary: vi.fn(async () => {
+        order.push("refresh");
+        return "你的形象安静而专注。";
+      }),
+      buildSystemPrompt: vi.fn(() => {
+        order.push("prompt");
+        return "BASE";
+      }),
+    };
+
+    createAgentSessionMock.mockImplementationOnce(async (opts) => {
+      order.push("create");
+      return {
+        session: {
+          sessionManager: { getSessionFile: () => "/tmp/session.jsonl" },
+          subscribe: vi.fn(() => vi.fn()),
+          setActiveToolsByName: vi.fn(),
+          model: opts.model,
+        },
+      };
+    });
+
+    const model = { id: "vision-chat", provider: "test", input: ["text", "image"] };
+    const coordinator = new SessionCoordinator({
+      agentsDir: "/tmp/agents",
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    await coordinator.createSession(null, "/tmp/workspace", true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(agent.refreshAppearanceSummary).toHaveBeenCalledWith({
+      targetModel: model,
+      rebuildSystemPrompt: true,
+    });
+    expect(order).toEqual(["prompt", "create", "refresh"]);
+  });
+
   it("keeps different cached session memory flags without mutating the agent session flag on switch", async () => {
     const agentDir = path.join(tempDir, "agents", "hana");
     const sessionDir = path.join(agentDir, "sessions");
@@ -1487,103 +1615,6 @@ describe("SessionCoordinator", () => {
     });
   });
 
-  it("keeps legacy create_artifact out of fresh sessions but restores it for old sessions", async () => {
-    const freshSessionFile = path.join(tempDir, "agents", "hana", "sessions", "fresh.jsonl");
-    const restoredSessionFile = path.join(tempDir, "agents", "hana", "sessions", "restored.jsonl");
-    const restoredNewSessionFile = path.join(tempDir, "agents", "hana", "sessions", "restored-new.jsonl");
-    const agent = {
-      id: "hana",
-      agentDir: path.join(tempDir, "agents", "hana"),
-      sessionDir: path.join(tempDir, "agents", "hana", "sessions"),
-      memoryEnabled: true,
-      experienceEnabled: false,
-      setMemoryEnabled: vi.fn(),
-      buildSystemPrompt: () => "BASE",
-      getToolsSnapshot: vi.fn(( options: any = {}) => [
-        { name: "stage_files" },
-        ...(options.includeLegacyArtifactTool ? [{ name: "create_artifact" }] : []),
-      ]),
-    };
-    fs.mkdirSync(agent.sessionDir, { recursive: true });
-    const buildTools = vi.fn((_cwd, customTools) => ({ tools: [], customTools }));
-    createAgentSessionMock
-      .mockResolvedValueOnce({
-        session: {
-          sessionManager: { getSessionFile: () => freshSessionFile },
-          subscribe: vi.fn(() => vi.fn()),
-          setActiveToolsByName: vi.fn(),
-        },
-      })
-      .mockResolvedValueOnce({
-        session: {
-          sessionManager: { getSessionFile: () => restoredSessionFile },
-          subscribe: vi.fn(() => vi.fn()),
-          setActiveToolsByName: vi.fn(),
-        },
-      })
-      .mockResolvedValueOnce({
-        session: {
-          sessionManager: { getSessionFile: () => restoredNewSessionFile },
-          subscribe: vi.fn(() => vi.fn()),
-          setActiveToolsByName: vi.fn(),
-        },
-      });
-
-    const coordinator = new SessionCoordinator({
-      agentsDir: path.join(tempDir, "agents"),
-      getAgent: () => agent,
-      getActiveAgentId: () => "hana",
-      getModels: () => ({
-        currentModel: { name: "test-model" },
-        authStorage: {},
-        modelRegistry: {},
-        resolveThinkingLevel: () => "medium",
-      }),
-      getResourceLoader: () => ({
-        getSystemPrompt: () => "BASE",
-        getAppendSystemPrompt: () => [],
-        getExtensions: () => ({ extensions: [], errors: [] }),
-      }),
-      getSkills: () => null,
-      buildTools,
-      emitEvent: () => {},
-      getHomeCwd: () => tempDir,
-      agentIdFromSessionPath: () => "hana",
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => agent,
-      listAgents: () => [],
-    });
-
-    await coordinator.createSession(null, tempDir, true);
-    await coordinator.createSession(null, tempDir, true, null, { restore: true });
-    fs.writeFileSync(
-      path.join(agent.sessionDir, "session-meta.json"),
-      JSON.stringify({ [path.basename(restoredNewSessionFile)]: { toolNames: ["stage_files"] } }, null, 2),
-    );
-    await coordinator.createSession(
-      { getCwd: () => tempDir, getSessionFile: () => restoredNewSessionFile },
-      tempDir,
-      true,
-      null,
-      { restore: true },
-    );
-
-    expect(buildTools.mock.calls[0][1].map((tool) => tool.name)).toEqual(["stage_files"]);
-    expect(buildTools.mock.calls[1][1].map((tool) => tool.name)).toEqual([
-      "stage_files",
-      "create_artifact",
-    ]);
-    expect(buildTools.mock.calls[2][1].map((tool) => tool.name)).toEqual(["stage_files"]);
-    expect(agent.getToolsSnapshot.mock.calls[0][0]).not.toHaveProperty("includeLegacyArtifactTool", true);
-    expect(agent.getToolsSnapshot.mock.calls[1][0]).toMatchObject({
-      includeLegacyArtifactTool: true,
-    });
-    expect(agent.getToolsSnapshot.mock.calls[2][0]).not.toHaveProperty("includeLegacyArtifactTool", true);
-  });
 
   it("threads extra workspace folders into tools, prompt context, and session meta", async () => {
     const sessionFile = path.join(tempDir, "agents", "hana", "sessions", "scope.jsonl");
@@ -1816,7 +1847,11 @@ describe("SessionCoordinator", () => {
     expect(restoreOptions.resourceLoader.getAgentsFiles()).toEqual({ agentsFiles: [{ path: "/AGENTS.md", content: "rules v1" }] });
     expect(restoredSession._baseSystemPrompt).toBe("FINAL PROMPT V1");
     expect(restoredSession.agent.state.systemPrompt).toBe("FINAL PROMPT V1");
-    expect(agent.buildSystemPrompt).toHaveBeenCalledTimes(1);
+    // #1624 起 restore 会额外 build 一次"当前" prompt 做漂移对比（比较用，不得泄漏进
+    // session——上面两条断言已锁定冻结快照仍然生效），并产出 promptChanged 提示。
+    const driftNotice = coordinator.getSessionCapabilityDriftNotice(sessionFile);
+    expect(driftNotice).not.toBeNull();
+    expect(driftNotice.promptChanged).toBe(true);
   });
 
   it("restores a prompt-snapshotted session with xhigh before the SDK model is available", async () => {

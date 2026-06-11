@@ -206,7 +206,21 @@
       "daysAgo": "归档于 {days} 天前"
     },
     "subagentRunStateUnrecoverable": "历史子会话运行状态不可恢复",
-    "subagentLinkUnrecoverable": "历史子会话链接不可恢复"
+    "subagentLinkUnrecoverable": "历史子会话链接不可恢复",
+    "capabilityDrift": {
+      "title": "工具能力有更新",
+      "addedTools": "新增 {count} 个工具",
+      "removedTools": "{count} 个工具已失效",
+      "promptUpdated": "提示词有更新",
+      "separator": "、",
+      "refreshButton": "刷新 Agent 工具",
+      "dismissButton": "忽略",
+      "confirmText": "刷新会把旧对话压缩成摘要，细节可能丢失。继续吗？",
+      "confirmButton": "确认刷新",
+      "cancelButton": "取消",
+      "refreshing": "正在压缩对话并刷新工具…",
+      "refreshFailed": "刷新失败"
+    }
   },
   "common": {
     "on": "开",
@@ -487,6 +501,9 @@
     "folder": "文件夹",
     "copy": "复制",
     "copied": "已复制 ✓"
+  },
+  "codeBlock": {
+    "wordWrap": "自动换行"
   },
   "cron": {
     "typeAt": "单次",
@@ -1390,7 +1407,6 @@
       "totalTokens": "Tokens",
       "cacheRead": "缓存命中",
       "cacheHitRate": "命中率",
-
       "uncached": "未缓存消耗",
       "modelMix": "模型分布",
       "dailyUsage": "每日用量",
@@ -2153,6 +2169,8 @@
     "patrolRuns": "巡检",
     "otherRuns": "其他后台活动",
     "agentTabs": "按助手筛选活动",
+    "previousAgent": "查看前面的助手",
+    "nextAgent": "查看更多助手",
     "categoryTabs": "按活动类型筛选",
     "emptyForCategory": "当前分类暂无活动",
     "patrolDone": "日常巡检完毕",
@@ -2172,6 +2190,8 @@
     "empty": "暂无任务计划\n助手会在需要时自动创建",
     "emptyForAgent": "这个助手暂无任务计划",
     "agentTabs": "按助手筛选自动化",
+    "previousAgent": "查看前面的助手",
+    "nextAgent": "查看更多助手",
     "draftTitle": "自动化草稿",
     "suggestionTitle": "建议",
     "suggested": "建议",
@@ -2399,7 +2419,10 @@
     "notConfigured": "尚未配置 {platform}",
     "goToSettings": "前往设置",
     "resetContext": "重启上下文",
-    "resetContextTip": "下次消息将开启新对话"
+    "resetContextTip": "下次消息将开启新对话",
+    "replyInterrupted": "（回复中断，以上内容可能不完整）",
+    "replyFailed": "（回复生成失败，请稍后重试）",
+    "sessionBusy": "当前桌面会话仍在回复中，请稍后再发"
   },
   "notification": {
     "turnCompletionBody": "这一轮已经完成"
@@ -2554,6 +2577,7 @@
     "settingsTimeout": "「{label}」修改确认超时，设置未变更",
     "subagentMaxConcurrent": "当前已有 {max} 个子 agent 在运行，请等待完成后再发起。",
     "subagentParentSessionRequired": "subagent 需要活跃父会话和后台任务存储，无法在当前上下文创建可继续实例。",
+    "subagentWriteAccessDenied": "无法授予写权限：父会话处于只读模式，子代理权限不能超过父会话。请把会话切换到可操作模式后重试，或改用 access:\"read\" 重新派单。",
     "subagentFailed": "子 agent 执行失败: {msg}",
     "subagentTimeout": "子 agent 执行超时（{minutes} 分钟）",
     "subagentAborted": "子 agent 已被终止",
@@ -2896,6 +2920,18 @@
     },
     "beautify": {
       "coverStyleGuide": "Hana Markdown cover 的默认审美规范：\n\n1. 画风：现代 Anime / 动画电影 key visual，不使用传统东方刻板符号作为默认风格。\n2. 材质：强纸张质感、印刷纹理、细腻颗粒、温润材料感；像被装帧进纸本里的画面。\n3. 叙事：有电影感、有故事感、有文学气息；优先通过真实场景、人物动作、光线、道具关系、环境痕迹表达主题。\n4. 内容：阅读文章后提炼意象主题，做文章气质的视觉化，不要把文章摘要逐字画出来。\n5. 幻想感：星空、幻想、文学意象可以出现，但必须由场景自然承载，有现实重量和情感理由。\n6. 克制：避免廉价 AI 感的漂浮符号堆砌；超现实元素只有在叙事上有必要时才出现。\n7. 主题：浅色主题使用柔和暖光、低对比、干净留白、纸面纤维清晰；深色主题使用低照度、克制高光、暗部保留材料层次。\n8. 输出：默认让生图工具按横向 3:2 生成；如果供应商不支持，允许接近的横向比例，但不能拉伸图片。",
+      "htmlStyleGuide": {
+        "router": "Hana HTML 美学纪律。生成整页 HTML 前，先读下列章节再动笔；不要凭这段路由文字直接生成。本纪律只服务独立整页 HTML（网页 / 排版页 / 报告页 / 落地页），与聊天内嵌互动卡片无关。\n\n适用条件：用户明确指定了风格 → 听用户的，本纪律让位（仅兜底可读性）。用户没指定 → 按本纪律。\n\n气质：文艺、精致、沉静——像一页装帧考究的私人手账。意象：纸本文稿、宋体字、水墨、宣纸质感、书面感。\n\n五原则：\n1. 纸上得来：间距像版面留白，色彩像墨色浓淡。\n2. 克制即品质：能用一条线就不用一个框，能用透明度分层就不用实色堆叠。\n3. 安静的反馈：hover 是轻微呼吸，切换是柔和淡入；不弹跳、不闪烁。\n4. 层级即秩序：用字号 / 字重 / 明度 / 容器建层级。阅读型纯版式，结构型卡片分组。\n5. 一致即信任：同类元素全页保持一致尺寸 / 间距 / 行为。\n\n章节索引（逐节调用 beautify_get-html-style-guide 并传 section 获取）：\n- color：必读\n- typography：必读\n- layout：整页 / 多区块 / 复杂版式时必读\n- components：用到卡片 / 表格 / 按钮 / 徽章 / 链接等组件时（页面含 <a> 即应读）\n- imagery：含图标 / 图片时\n- motion：交互页 / 有动效时\n- anti-patterns：强烈建议——避开廉价 AI 感",
+        "color": "Hana HTML 美学 · color\n\n**唯一强调色**：`#537D96`（青灰蓝），hover `#456A80`，浅垫 `rgba(83,125,150,.08)`。通篇只此一种彩色强调，不引入第二种主色；强调色视觉占比 ≤ 5%，点睛而非铺陈。\n\n**底色（绝不纯白）**：页面底 `#F8F4ED`（暖纸），卡片 / 抬升面 `#FCFAF5`。整体低对比。\n\n**文字（暖中性，不用冷蓝灰）**：主文 `#3B3D3F`，次级 `#6B6F73`，弱化 / metadata `#8E9196`。绝不用纯黑 `#000`。\n\n**线与边框**：发丝细线、暖调 `rgba(122,96,88,.18)`。优先用线 + 留白分区，而非实色块。\n\n**叠层（透明度分层，非实色叠加）**：`rgba(0,0,0,.03 / .05 / .08 / .15)` 四档。\n\n**语义色（低饱和、克制）**：成功 `#7BAE7F`，危险 `#8B3A3A`，珊瑚强调 `#EC8F8D`（少用）。仅必要时出现。\n\n**硬规则**：灰必须暖调（带黄褐底），禁止冷蓝灰；不用纯白大底 / 纯黑文字；不用渐变铺底、高饱和、霓虹。\n\n本规范只定义暖纸一套配色。用户明确要求深色或其它风格时，走用户明示通道（本规范让位，仅兜底可读性与对比）。",
+        "typography": "Hana HTML 美学 · typography\n\n**衬线（主力，承载标题与正文层级）**：`'EB Garamond','Noto Serif SC','Source Han Serif SC','Songti SC','STSong','SimSun',serif`\n\n字体栈中的系统回退（`Songti SC` / `SimSun` / serif 等）保留为兜底：前列字体未覆盖的字符落系统衬线，不裂版。\n\n**UI / 功能性文字（按钮、标签、表单、导航）**：`system-ui,-apple-system,'PingFang SC',sans-serif`\n\n**代码 / 数字 metric**：`'JetBrains Mono',ui-monospace,monospace`；数字对齐加 `font-variant-numeric:tabular-nums`。\n\n**字重**：仅 400 / 500。不用 600+、不用合成粗体；层级靠字号 + 明度 + 字距，不靠加粗硬堆。\n\n**字号层级**：\n\n| 层级 | rem | 用途 |\n|---|---|---|\n| display | 2 – 2.4 | 页面主标题 / hero |\n| h1 | 1.6 | 章节大标题 |\n| h2 | 1.25 | 小节标题（可配左竖线 `border-left:2px solid #537D96;padding-left:8px;border-radius:0`） |\n| h3 | 1.05 | 子标题 |\n| body | 1（16px） | 正文，`line-height:1.7` |\n| small | 0.85 | 辅助 / caption |\n\n**中英混排**：中文衬线行高略高（1.7 – 1.8）；CJK 标题可加 `letter-spacing:.01em`。",
+        "layout": "Hana HTML 美学 · layout\n\n**间距节奏**：`4 / 8 / 16 / 24 / 40`。不用区间外魔法值。\n\n**内容宽度**：阅读型正文 `max-width:60–72ch`（约 680–760px）居中；落地型可更宽，但每个文本分区内仍守可读行宽。\n\n**留白**：区块之间 40，区块内 16 – 24。留白是层级工具，不是浪费。\n\n**响应式**：移动端单列、加大行距、控件触达 ≥ 44px；窄屏断点 ~880 / ~480。\n\n**版式模式（按内容类型选其一）**：\n\n| 类型 | 取向 | 手段 |\n|---|---|---|\n| 阅读 / 编辑型 | 纯版式分层 | 留白 + 字号层级，不套卡片；正文居中守行宽 |\n| 结构 / 仪表型 | 卡片 / 分组 | 卡片 `#FCFAF5` + 发丝边；分组标题 |\n| 落地 / 展示型 | 编辑式 hero + 分区 | 大标题 + 克制配图 + 单强调色点睛；不堆营销装饰 |\n| 交互型 | 内容居中、控件克制 | 安静动效、状态清晰 |\n\n阅读连续内容用纯版式保流畅；密集功能场景用卡片强区块感。二选一，别两者都上。",
+        "components": "Hana HTML 美学 · components\n\n底色变量沿用 color 章节。以下为默认形态。\n\n```css\n/* 区块标题 */\nh2 { font-family: serif; font-size: 1.25rem; font-weight: 500; color: #3B3D3F;\n     border-left: 2px solid #537D96; padding-left: 8px; border-radius: 0; margin: 1.6em 0 .6em; }\n\n/* 卡片 / 面板（仅结构型场景用） */\n.card { background: #FCFAF5; border: 1px solid rgba(122,96,88,.18); border-radius: 4px;\n        padding: 1rem 1.25rem; }\n\n/* 分隔线 */\nhr { border: none; border-top: 1px solid rgba(122,96,88,.18); margin: 1.5rem 0; }\n\n/* 表格：细线、紧凑、左对齐表头 */\ntable { width: 100%; border-collapse: collapse; font-size: .9rem; }\nth { text-align: left; font-weight: 500; color: #6B6F73; padding: 6px 8px;\n     border-bottom: 1px solid rgba(122,96,88,.18); }\ntd { padding: 5px 8px; border-bottom: 1px solid rgba(0,0,0,.05); color: #3B3D3F; }\ntr:last-child td { border-bottom: none; }\n\n/* 列表 */\nul, ol { padding-left: 18px; }\nli { margin: .2em 0; }\nli::marker { color: #537D96; }\n\n/* 引用 */\nblockquote { border-left: 2px solid #537D96; padding: 4px 0 4px 12px;\n             color: #6B6F73; font-style: italic; border-radius: 0; }\n\n/* 代码 */\npre { background: #F8F4ED; border: 1px solid rgba(122,96,88,.18); border-radius: 4px;\n      padding: 8px 12px; overflow-x: auto; }\ncode { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85rem; color: #3B3D3F; }\n\n/* 按钮：方角、描边优先、hover 微底色，无 :active 缩放 */\n.btn { font-family: sans-serif; border: 1px solid rgba(122,96,88,.18); border-radius: 4px;\n       background: transparent; color: #537D96; padding: 6px 14px; cursor: pointer;\n       transition: background .15s cubic-bezier(.16,1,.3,1); }\n.btn:hover { background: rgba(83,125,150,.08); }\n/* 主行动按钮可用 background:#537D96;color:#FCFAF5 实色，但每屏 ≤ 1 个 */\n\n/* 徽章 / 标签 */\n.tag { display: inline-flex; padding: 2px 8px; font-size: .75rem; font-weight: 500;\n       border-radius: 4px; background: rgba(83,125,150,.08); color: #456A80; }\n\n/* 链接：accent 色 + 细下划线，hover 加深；不按钮化、不去下划线 */\na { color: #537D96; text-decoration: underline; text-decoration-thickness: 1px;\n    text-underline-offset: 2px; text-decoration-color: rgba(83,125,150,.4);\n    transition: color .15s cubic-bezier(.16,1,.3,1), text-decoration-color .15s cubic-bezier(.16,1,.3,1); }\na:hover { color: #456A80; text-decoration-color: currentColor; }\n\n/* focus：可见但克制（motion 章节原则的具体值） */\n:focus-visible { outline: 1px solid #537D96; outline-offset: 2px; }\n```\n\n**层次与阴影**：优先发丝线 + 留白 + 底色微差建立层级；需要抬升时用极淡阴影 `box-shadow: 0 1px 4px rgba(59,61,63,.09)`。禁止重投影、glow、多层 drop-shadow。",
+        "imagery": "Hana HTML 美学 · imagery\n\n- **图标**：纯 inline SVG，stroke 线性（feather 风），`stroke=\"currentColor\" stroke-width=\"1.5\" fill=\"none\"`。**不用 emoji**，不用实心 fill 图标。\n- **装饰**：不堆漂浮符号 / 星星 / 气泡等廉价 AI 点缀；微光隐喻（柔和、非炫目）可少量点睛。\n- **图像比例**：hero 16:9，编辑插图 4:3，网格缩略 3:2；`object-fit:cover` + 合理 `object-position`，不拉伸。\n- **圆角**：图像 / 卡片 4px 小圆角（方角倾向），不用大圆角胶囊。\n- **无真实图片资源时**：**禁止热链外部图床**（unsplash / picsum 等——隐私暴露、离线即裂图）。占位用纯色块（`#FCFAF5` + 发丝边）或自绘内联 SVG（线性、低饱和、符合 color 章节），宁可留白也不外链。用户提供的本地 / 已有资源不受此限。",
+        "motion": "Hana HTML 美学 · motion\n\n- **安静**：过渡柔和短促。duration 用 `0.1 / 0.15 / 0.25` 三档；easing 入场 `cubic-bezier(.16,1,.3,1)`、退场 `cubic-bezier(.7,0,.84,0)`。\n- **hover 是轻微呼吸**（色 / 透明度微变），不放大、不弹跳。\n- **禁止**：`:active` 缩放弹跳、闪烁、旋转炫技、自动轮播抢注意。\n- **状态清晰可预期**：focus 给可见但克制的指示（具体值见 components 章节的 :focus-visible）；禁用态降透明度。\n- 尊重 `prefers-reduced-motion: reduce`，关掉非必要动效。",
+        "antiPatterns": "Hana HTML 美学 · anti-patterns\n\n| ❌ 不要 | ✅ 改用 |\n|---|---|\n| Material Design 感 / 涟漪 | 纸本手账的克制 |\n| glassmorphism 毛玻璃、模糊炫技 | 实底 + 发丝线 |\n| 纯白 `#fff` 大面积底 | 暖纸 `#F8F4ED` |\n| 纯黑 `#000` 文字 | 暖墨 `#3B3D3F` |\n| 冷蓝灰中性色 | 暖调灰 |\n| 第二种主色 / 多彩堆砌 | 单一 accent `#537D96` |\n| 霓虹、高饱和、渐变铺底 | 低饱和、低对比 |\n| 重投影 / 发光 glow | 极淡阴影或仅发丝线 |\n| 大圆角胶囊感 | 方角 / 4px 小圆角 |\n| emoji 当图标 / 装饰 | SVG stroke 图标 |\n| 600+ 粗体堆层级 | 字号 + 明度 + 400/500 |\n| 弹跳 / 缩放 / 旋转动效 | 柔和淡入、呼吸 |\n| 漂浮装饰符号堆砌 | 留白 + 克制微光 |",
+        "mustReadFirst": "先读必读章节再取 {section}。你还没有读取：{missing}。请先用 beautify_get-html-style-guide 依次获取这些必读章节（任何 Hana 页面都需要它们），再回来取 {section}。",
+        "invalidSection": "未知章节 {section}。有效章节：{valid}。不传 section 可获取章节路由器。"
+      },
       "themeTone": {
         "dark": "深色主题：低照度、克制高光、暗部仍保留纸张纤维和材料层次。",
         "light": "浅色主题：柔和暖光、低对比、干净留白、纸面纤维清晰。"
@@ -3035,6 +3071,10 @@
         "step5": "调用 beautify_create-cover 应用图片"
       }
     },
+    "getHtmlStyleGuide": {
+      "description": "生成整页 HTML（网页 / 落地页 / 报告 / 排版文章）前先调用本工具获取 Hana 默认美学规范。无参调用返回章节路由器；带 section 参数逐节获取真实规范（color 与 typography 必读）。本工具只返回指导文本，不生成、不保存 HTML；与聊天内嵌卡片无关，只服务独立整页 HTML。",
+      "sectionDesc": "要获取的规范章节。省略则返回路由器（适用条件 + 原则 + 章节索引，不含可直接套用的数值）。"
+    },
     "applyCoverCandidate": {
       "description": "把一个已有图片文件应用为 Markdown cover，并写回 frontmatter。",
       "targetFilePathDesc": "Markdown 文件绝对路径。",
@@ -3062,7 +3102,7 @@
     },
     "listCapabilities": {
       "description": "列出 Beautify 工具目前支持的审美增强能力。",
-      "text": "Beautify 当前支持 Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。"
+      "text": "Beautify 当前支持两类能力。1) Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。2) 整页 HTML 美学规范：生成网页 / 排版页 / 报告页前，先用 beautify_get-html-style-guide 获取 Hana 默认美术方向（无参拿路由器，再按 section 逐节取规范）。"
     }
   }
 }

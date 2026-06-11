@@ -130,6 +130,81 @@ describe('desk-actions workspace roots', () => {
     expect(useStore.getState().deskBasePath).toBe('studio:mount_docs');
   });
 
+  it('stores the disclosed native root of a local_fs workspace from the workbench files response', async () => {
+    useStore.setState({
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceLabel: 'Docs',
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({
+        mountId: 'mount_docs',
+        mount: { label: 'Docs', nativeRootPath: '/Users/me/docs' },
+        files: [{ name: 'remote.md', isDir: false }],
+      }))
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => '' } as unknown as Response);
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(useStore.getState().deskWorkspaceNativeRoot).toBe('/Users/me/docs');
+  });
+
+  it('clears the stored native root when the workbench files response stops disclosing it', async () => {
+    useStore.setState({
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceLabel: 'Docs',
+      deskWorkspaceNativeRoot: '/Users/me/docs',
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonResponse({
+        mountId: 'mount_docs',
+        mount: { label: 'Docs' },
+        files: [],
+      }))
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => '' } as unknown as Response);
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(useStore.getState().deskWorkspaceNativeRoot).toBeNull();
+  });
+
+  it('seeds the native root when applying a studio workspace and resets it for plain folders', async () => {
+    mockHanaFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/workbench/files')) {
+        return jsonResponse({
+          mountId: 'mount_docs',
+          mount: { label: 'Docs', nativeRootPath: '/Users/me/docs' },
+          files: [],
+        });
+      }
+      if (url.startsWith('/api/workbench/content')) {
+        return { ok: false, status: 404, text: async () => '' } as unknown as Response;
+      }
+      if (url.startsWith('/api/preferences/workspace-ui-state')) return jsonResponse({ state: null });
+      if (url.startsWith('/api/desk/')) return jsonResponse({ files: [], content: null });
+      if (url.startsWith('/api/config/workspaces/recent')) return jsonResponse({ cwd_history: [] });
+      return jsonResponse({});
+    });
+
+    const { applyStudioWorkspace, applyFolder } = await import('../../stores/desk-actions');
+    await applyStudioWorkspace({
+      mountId: 'mount_docs',
+      label: 'Docs',
+      nativeRootPath: '/Users/me/docs',
+    });
+
+    expect(useStore.getState().deskWorkspaceMountId).toBe('mount_docs');
+    expect(useStore.getState().deskWorkspaceNativeRoot).toBe('/Users/me/docs');
+
+    await applyFolder('/Users/me/plain');
+
+    expect(useStore.getState().deskWorkspaceMountId).toBeNull();
+    expect(useStore.getState().deskWorkspaceNativeRoot).toBeNull();
+  });
+
   it('adds and removes extra workspace folders without changing the primary folder', async () => {
     const { addWorkspaceFolder, removeWorkspaceFolder } = await import('../../stores/desk-actions');
 

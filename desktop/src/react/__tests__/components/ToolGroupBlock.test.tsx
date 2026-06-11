@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolGroupBlock } from '../../components/chat/ToolGroupBlock';
@@ -105,5 +107,16 @@ describe('ToolGroupBlock', () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it('keeps the tool layout box full width within its message for selection and side controls', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const toolGroupRule = css.match(/\.toolGroup\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+
+    expect(toolGroupRule).toContain('width: 100%');
+    expect(toolGroupRule).toContain('box-sizing: border-box');
   });
 });

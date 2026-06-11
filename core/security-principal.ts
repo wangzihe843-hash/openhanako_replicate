@@ -14,6 +14,7 @@ const CREDENTIAL_KINDS = new Set([
   "device_credential",
   "user_session",
   "service_token",
+  "plugin_surface_session",
   "none",
 ]);
 

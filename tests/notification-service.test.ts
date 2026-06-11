@@ -174,6 +174,58 @@ describe("NotificationService", () => {
     );
   });
 
+  it("surfaces Bridge fan-out delivery details from BridgeManager", async () => {
+    const bridgeManager = {
+      sendProactive: vi.fn().mockResolvedValue({
+        platform: "wechat",
+        chatId: "wx-user",
+        sessionKey: "wx_dm_wx-user@hana",
+        recorded: true,
+        deliveries: [
+          {
+            status: "sent",
+            platform: "wechat",
+            chatId: "wx-user",
+            sessionKey: "wx_dm_wx-user@hana",
+            recorded: true,
+          },
+          {
+            status: "sent",
+            platform: "qq",
+            chatId: "qq-user",
+            sessionKey: "qq_dm_qq-user@hana",
+            recorded: true,
+          },
+        ],
+      }),
+    };
+    const service = new NotificationService({
+      emitDesktop: vi.fn(),
+      getBridgeManager: () => bridgeManager,
+    });
+
+    const result = await service.notify(
+      {
+        title: "提醒",
+        body: "正文",
+        channels: ["bridge_owner"],
+        bridgePlatforms: ["wechat", "qq"],
+      },
+      { agentId: "hana" },
+    );
+
+    expect(result.deliveries[0]).toMatchObject({
+      channel: "bridge_owner",
+      status: "sent",
+      platform: "wechat",
+      recorded: true,
+      bridgeDeliveries: [
+        { status: "sent", platform: "wechat", chatId: "wx-user" },
+        { status: "sent", platform: "qq", chatId: "qq-user" },
+      ],
+    });
+  });
+
   it("reports explicit bridge owner delivery failure when the channel is unavailable", async () => {
     const service = new NotificationService({
       emitDesktop: vi.fn(),

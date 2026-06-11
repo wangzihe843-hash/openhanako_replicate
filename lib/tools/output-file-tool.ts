@@ -32,7 +32,7 @@ export function createStageFilesTool({ registerSessionFile, resolveSessionFile, 
   return {
     name: "stage_files",
     label: "Stage Files",
-    description: "Call this tool when you need to hand one or more files to the user, present them on desktop, or send them through Bridge/remote platforms. Prefer fileIds for files already registered in the current session. Use local absolute filepaths only for files that are not yet SessionFiles. Do not merely mention file paths in text, and do not decide how the target platform should render or send the file; consumers choose the platform-specific delivery.",
+    description: "Deliver files to the user, desktop, or Bridge platforms. Accepts SessionFile ids or local absolute paths.",
     parameters: Type.Object({
       fileIds: Type.Optional(Type.Array(Type.String(), {
         minItems: 1,

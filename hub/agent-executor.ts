@@ -358,6 +358,9 @@ export async function runAgentPhoneSession(agentId, rounds, {
     workspace: engine.getHomeCwd(agentId),
     getSessionPath: () => sessionManager?.getSessionFile?.() || null,
     getPermissionMode: () => phonePermissionMode,
+    // 拦截分层（#1614）：标记 conversation surface，read_only 拦截时错误提示
+    // 指向"会话设置面板可切换"而非通用 plan 模式提示。
+    permissionContext: { surface: "conversation" },
   });
   // @ts-expect-error filterAgentPhoneTools signature accepts 1 arg; second arg ({ toolMode }) is unused at runtime
   const { tools, customTools } = filterAgentPhoneTools(built, { toolMode });

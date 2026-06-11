@@ -110,12 +110,12 @@ export function apply(payload, model, options: { mode?: string; reasoningLevel?:
     return next;
   }
 
-  if (!shouldUseThinking(next, model, reasoningLevel)) return next;
-
   if (mode === "utility") {
     disableThinking(editable());
     return next;
   }
+
+  if (!shouldUseThinking(next, model, reasoningLevel)) return next;
 
   const p = editable();
   enableThinking(p);

@@ -87,7 +87,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
             </span>
           </button>
         </div>
-        <Collapse open={open}>
+        <Collapse open={open} className={styles.processFoldCollapse}>
           <div id={panelId} className={`${styles.message} ${styles.messageAssistant} ${styles.processFoldPanel}`}>
             {group.items.map((entry) => (
               <AssistantMessage

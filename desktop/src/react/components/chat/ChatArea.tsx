@@ -39,13 +39,12 @@ export function ChatArea() {
 
 function PanelHost() {
   const currentPath = useStore(s => s.currentSessionPath);
-  const currentHasItems = useStore(s => !!(currentPath && s.chatSessions[currentPath]?.items?.length));
   const welcomeVisible = useStore(s => s.welcomeVisible);
   const [alive, setAlive] = useState<string[]>([]);
 
   // 加入 alive 列表（不重排已有位置，避免 React 移动 DOM 节点导致 scrollTop 丢失）
   useEffect(() => {
-    if (!currentPath || !currentHasItems) return;
+    if (!currentPath) return;
     setAlive(prev => {
       if (prev.includes(currentPath)) return prev; // 已存在，不动
       if (prev.length >= MAX_ALIVE) {
@@ -58,7 +57,7 @@ function PanelHost() {
       }
       return [...prev, currentPath];
     });
-  }, [currentPath, currentHasItems]);
+  }, [currentPath]);
 
   if (welcomeVisible || !currentPath) return null;
 
@@ -220,8 +219,6 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     }
     prevLen.current = items.length;
   }, [items, items.length, active, bottomScroll]);
-
-  if (items.length === 0) return null;
 
   return (
     <div

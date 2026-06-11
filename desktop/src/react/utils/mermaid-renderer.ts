@@ -57,6 +57,10 @@ function ensureRenderedElement(diagram: Element): HTMLElement {
   return rendered;
 }
 
+function hasRenderedSvg(rendered: HTMLElement): boolean {
+  return !!rendered.querySelector('svg');
+}
+
 async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
   const source = readSource(diagram);
   const rendered = ensureRenderedElement(diagram);
@@ -64,8 +68,15 @@ async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
   const status = diagram.dataset.mermaidStatus;
 
   if (!source.trim()) return;
-  if ((status === 'loading' || status === 'rendered')
-      && diagram.dataset.mermaidSource === source) {
+  if (status === 'loading' && diagram.dataset.mermaidSource === source) {
+    return;
+  }
+  if (status === 'rendered'
+      && diagram.dataset.mermaidSource === source
+      && hasRenderedSvg(rendered)) {
+    return;
+  }
+  if (status === 'error' && diagram.dataset.mermaidSource === source && rendered.textContent) {
     return;
   }
 

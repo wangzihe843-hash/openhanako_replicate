@@ -1,6 +1,15 @@
 export const PLUGIN_UI_PROTOCOL = 'hana.plugin.ui' as const;
 export const PLUGIN_UI_PROTOCOL_VERSION = 1 as const;
 
+/**
+ * Plugin surface session 的线协议名（#1629）：宿主把会话凭证以
+ * `PLUGIN_SURFACE_SESSION_QUERY` 追加在 iframe src 上；iframe 页面调用本插件
+ * route handler 时通过 `PLUGIN_SURFACE_SESSION_HEADER`（或同名 query）回传。
+ * 服务端、桌面宿主与 iframe SDK 共用这一份定义。
+ */
+export const PLUGIN_SURFACE_SESSION_HEADER = 'X-Hana-Plugin-Surface-Session' as const;
+export const PLUGIN_SURFACE_SESSION_QUERY = 'pluginSurfaceSession' as const;
+
 export const PLUGIN_UI_ERROR_CODE = {
   BAD_MESSAGE: 'BAD_MESSAGE',
   UNSUPPORTED_VERSION: 'UNSUPPORTED_VERSION',

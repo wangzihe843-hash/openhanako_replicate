@@ -205,6 +205,22 @@ describe("AgentManager.createAgent default skills.enabled", () => {
     expect(cfg.models.chat).toEqual({ id: "test-model", provider: "test-provider" });
   });
 
+  it("keeps identity template placeholders for newly created agents", async () => {
+    fs.mkdirSync(path.join(productDir, "identity-templates"), { recursive: true });
+    fs.writeFileSync(
+      path.join(productDir, "identity-templates", "hanako.md"),
+      "# {{agentName}}\n\n{{userName}}的个人助手。\n",
+      "utf-8",
+    );
+
+    const { id: newId } = await mgr.createAgent({ name: "TemplateAgent", yuan: "hanako" });
+
+    const identity = fs.readFileSync(path.join(agentsDir, newId, "identity.md"), "utf-8");
+    expect(identity).toContain("# {{agentName}}");
+    expect(identity).toContain("{{userName}}的个人助手");
+    expect(identity).not.toContain("TemplateAgent的个人助手");
+  });
+
   it("defaults patrol to disabled with a 31 minute interval for newly created agents", async () => {
     skillsMock._allSkills = [];
 

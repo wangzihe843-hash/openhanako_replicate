@@ -17,11 +17,8 @@ describe("stage_files tool", () => {
     loadLocale("en");
     const tool = createStageFilesTool({});
 
-    expect(tool.description).toContain("hand one or more files to the user");
-    expect(tool.description).toContain("Prefer fileIds");
-    expect(tool.description).toContain("Use local absolute filepaths only");
-    expect(tool.description).toContain("Bridge/remote platforms");
-    expect(tool.description).toContain("consumers choose the platform-specific delivery");
+    expect(tool.description).toContain("Deliver files");
+    expect(tool.description).toContain("Bridge");
     expect((tool.parameters.properties.fileIds as any).description).toContain("SessionFile ids");
     expect((tool.parameters.properties.filepaths as any).description).toContain("when no SessionFile id is available");
   });

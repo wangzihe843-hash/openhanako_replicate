@@ -43,6 +43,7 @@ export interface ParsedAttachments {
   attachedImages: Array<{ path: string; name: string }>;
   attachedVideos: Array<{ path: string; name: string }>;
   attachedAudios: Array<{ path: string; name: string }>;
+  sessionFileRefs: Array<{ fileId: string; sessionPath?: string; label: string; kind: string }>;
   deskContext: { dir: string; fileCount: number } | null;
   quotedText: string | null;
 }
@@ -52,14 +53,45 @@ function baseName(p: string): string {
   return normalized.split('/').pop() || p;
 }
 
+function parseSessionFileMarker(line: string): { fileId: string; sessionPath?: string; label: string; kind: string } | null {
+  const match = line.match(/^\[SessionFile\]\s+(\{[\s\S]*\})\s*$/);
+  if (!match) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  const fileId = typeof record.fileId === 'string' ? record.fileId.trim() : '';
+  if (!fileId) return null;
+  const sessionPath = typeof record.sessionPath === 'string' && record.sessionPath.trim()
+    ? record.sessionPath
+    : undefined;
+  const label = typeof record.label === 'string' && record.label.trim()
+    ? record.label
+    : fileId;
+  const kind = typeof record.kind === 'string' && record.kind.trim()
+    ? record.kind
+    : 'attachment';
+  return {
+    fileId,
+    ...(sessionPath ? { sessionPath } : {}),
+    label,
+    kind,
+  };
+}
+
 export function parseUserAttachments(content: string): ParsedAttachments {
-  if (!content) return { text: '', files: [], attachedImages: [], attachedVideos: [], attachedAudios: [], deskContext: null, quotedText: null };
+  if (!content) return { text: '', files: [], attachedImages: [], attachedVideos: [], attachedAudios: [], sessionFileRefs: [], deskContext: null, quotedText: null };
   const lines = content.split('\n');
   const textLines: string[] = [];
   const files: Array<{ path: string; name: string; isDirectory: boolean }> = [];
   const attachedImages: Array<{ path: string; name: string }> = [];
   const attachedVideos: Array<{ path: string; name: string }> = [];
   const attachedAudios: Array<{ path: string; name: string }> = [];
+  const sessionFileRefs: Array<{ fileId: string; sessionPath?: string; label: string; kind: string }> = [];
   const attachRe = /^\[(附件|目录|参考文档)\]\s+(.+)$/;
   const attachedImageRe = /^\[attached_image:\s*(.+?)\]\s*$/;
   const attachedVideoRe = /^\[attached_video:\s*(.+?)\]\s*$/;
@@ -94,6 +126,13 @@ export function parseUserAttachments(content: string): ParsedAttachments {
     // agent 这段引用所属模块的语义）。这一行不属于用户文字，要消化掉但保留
     // pendingQuoteOriginal，让下一行的 [引用原文] 仍能进块。
     if (pendingQuoteOriginal && line.startsWith(`${QUOTE_SOURCE_PREFIX} `)) {
+      continue;
+    }
+
+    const sessionFileRef = parseSessionFileMarker(line);
+    if (sessionFileRef) {
+      pendingQuoteOriginal = false;
+      sessionFileRefs.push(sessionFileRef);
       continue;
     }
 
@@ -158,7 +197,7 @@ export function parseUserAttachments(content: string): ParsedAttachments {
     }
   }
   const text = textLines.join('\n').replace(/\n+$/, '').trim();
-  return { text, files, attachedImages, attachedVideos, attachedAudios, deskContext, quotedText };
+  return { text, files, attachedImages, attachedVideos, attachedAudios, sessionFileRefs, deskContext, quotedText };
 }
 
 // ── 工具详情提取 ──

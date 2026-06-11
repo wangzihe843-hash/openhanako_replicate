@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mockClearSessionStreamMeta = vi.fn();
 
 import { createChatSlice, type ChatSlice } from '../../stores/chat-slice';
-import type { SessionModel } from '../../stores/chat-types';
+import type { SessionModel, ChatListItem } from '../../stores/chat-types';
 import { registerStreamBufferInvalidator, registerSessionStreamMetaCleaner } from '../../stores/stream-invalidator';
 
 function makeSlice(): ChatSlice {
@@ -48,6 +48,20 @@ const MODEL: SessionModel = {
   reasoning: true,
   contextWindow: 1_000_000,
 };
+
+function interludeItem(id: string): ChatListItem {
+  return {
+    type: 'interlude',
+    id,
+    data: {
+      type: 'interlude',
+      id,
+      variant: 'deferred_result',
+      status: 'success',
+      text: '后台回复已抵达',
+    },
+  };
+}
 
 describe('chat-slice', () => {
   let slice: ChatSlice;
@@ -104,7 +118,25 @@ describe('chat-slice', () => {
         hasMore: false,
         loadingMore: false,
         oldestId: undefined,
+        revision: null,
       });
+    });
+
+    it('记录 hydrate 时的磁盘修订点，缺省为 null', () => {
+      slice.initSession('/a', [], false, '4096:1765500000000');
+      expect(slice.chatSessions['/a']?.revision).toBe('4096:1765500000000');
+
+      slice.initSession('/b', [], false);
+      expect(slice.chatSessions['/b']?.revision).toBeNull();
+    });
+
+    it('oldestId 取第一条 message，不被前置幕间条目占位', () => {
+      slice.initSession('/a', [
+        interludeItem('deferred:task-1:success'),
+        { type: 'message', data: { id: 'a1', role: 'assistant', blocks: [] } },
+      ], true);
+
+      expect(slice.chatSessions['/a']?.oldestId).toBe('a1');
     });
 
     it('LRU 淘汰只影响 chatSessions，不动 sessionModelsByPath', () => {

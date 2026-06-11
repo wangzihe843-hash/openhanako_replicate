@@ -156,7 +156,17 @@ function annotateAdapterAvailability(providers, ctx) {
         ...model,
         adapterAvailable: adapterAvailableForModel(providerId, model, ctx),
       }))
-      .filter((model) => model.adapterAvailable);
+      .filter((model) => {
+        if (model.adapterAvailable) return true;
+        // 不允许静默丢弃：被过滤的模型必须留下可观测的诊断（#1627）
+        ctx.log?.warn?.(
+          `[image-gen] settings hide media model "${providerId}/${model.id}": `
+          + (model.protocolId
+            ? `no adapter registered for protocol "${model.protocolId}"`
+            : "protocol unrecognized (model has no protocolId)"),
+        );
+        return false;
+      });
     if (models.length === 0) continue;
     const modelIds = new Set(models.map((model) => model.id));
     next[providerId] = {

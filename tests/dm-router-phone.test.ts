@@ -92,6 +92,9 @@ describe("DmRouter agent phone session", () => {
         toolMode: "write",
         replyMinChars: "20",
         replyMaxChars: "80",
+        modelOverrideEnabled: "true",
+        modelOverrideId: "deepseek-v4-flash",
+        modelOverrideProvider: "deepseek",
       },
     });
 
@@ -121,6 +124,7 @@ describe("DmRouter agent phone session", () => {
       conversationId: "dm:bob",
       conversationType: "dm",
       toolMode: "write",
+      modelOverride: { id: "deepseek-v4-flash", provider: "deepseek" },
     });
     const phonePrompt = (runAgentPhoneSessionMock.mock.calls as any)[0][1][0].text;
     expect(phonePrompt).toContain("Reflect");

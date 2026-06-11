@@ -19,6 +19,7 @@ import { debugLog, createModuleLogger } from "../../lib/debug-log.ts";
 import { t } from "../../lib/i18n.ts";
 import { getLastAssistantUsage } from "../../lib/pi-sdk/index.ts";
 import { compactSessionWithCachePreservation, isStaleExtensionContextError } from "../../core/session-compactor.ts";
+import { submitDesktopSessionInterjection } from "../../core/desktop-session-submit.ts";
 import { logLlmUsage } from "../../lib/llm/usage-observer.ts";
 import { BrowserManager } from "../../lib/browser/browser-manager.ts";
 import {
@@ -399,10 +400,12 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
   function buildDeferredResultContentEvents(sessionPath, event) {
     const events = [];
-    const interlude = buildDeferredResultInterludeBlock(event, {
-      receiverName: resolveDeferredReceiverName(engine, sessionPath),
-    });
-    if (interlude) events.push({ type: "content_block", block: interlude });
+    if (event.meta?.interlude) {
+      const interlude = buildDeferredResultInterludeBlock(event, {
+        receiverName: resolveDeferredReceiverName(engine, sessionPath),
+      });
+      if (interlude) events.push({ type: "content_block", block: interlude });
+    }
 
     if (event.status === "success") {
       for (const block of enrichSessionFileBlocks(deferredResultFileBlocks(event.result, event.taskId), engine, sessionPath)) {
@@ -869,7 +872,11 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         session: event.session || null,
       });
     } else if (event.type === "session_status") {
+      let statusStreamId = null;
       if (ss) {
+        const eventStreamId = typeof event.streamId === "string" && event.streamId.trim()
+          ? event.streamId
+          : null;
         if (event.isStreaming) {
           flushPendingDeferredContentEvents(sessionPath, ss);
           ss.pendingTurnCompletionNotification = null;
@@ -888,16 +895,23 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           ss.isAborted = false;
           ss.titleRequested = false;
           ss.titlePreview = "";
-          beginSessionStream(ss);
+          statusStreamId = beginSessionStream(ss, eventStreamId);
           scheduleTurnStallWatchdog(sessionPath, ss);
         } else if (ss.isStreaming) {
+          statusStreamId = eventStreamId || ss.streamId || null;
           finishStreamingState(ss);
         } else {
+          statusStreamId = eventStreamId || ss.streamId || null;
           ss.turnActive = false;
           clearTurnStallWatchdog(ss);
         }
       }
-      broadcast({ type: "status", isStreaming: !!event.isStreaming, sessionPath });
+      broadcast({
+        type: "status",
+        isStreaming: !!event.isStreaming,
+        sessionPath,
+        streamId: statusStreamId,
+      });
       if (ss && !event.isStreaming) {
         flushPendingDeferredContentEvents(sessionPath, ss);
         flushPendingTurnCompletionNotification(sessionPath, ss);
@@ -1160,8 +1174,14 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               let abortAccepted = false;
               try { abortAccepted = !!(await hub.abort(abortPath)); } catch {}
               if (!abortAccepted) {
+                const abortStreamId = abortSs?.streamId || null;
                 finishStreamingState(abortSs);
-                broadcast({ type: "status", isStreaming: false, sessionPath: abortPath });
+                broadcast({
+                  type: "status",
+                  isStreaming: false,
+                  sessionPath: abortPath,
+                  streamId: abortStreamId,
+                });
               }
               return;
             }
@@ -1306,7 +1326,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               return;
             }
 
-            if (msg.type === "prompt" && (msg.text || msg.images?.length || msg.videos?.length || msg.audios?.length)) {
+            if ((msg.type === "prompt" || msg.type === "interject") && (msg.text || msg.images?.length || msg.videos?.length || msg.audios?.length)) {
+              const interject = msg.type === "interject";
               // 图片校验：最多 10 张，单张 ≤ 20MB，仅允许常见图片 MIME
               if (msg.images?.length) {
                 const MAX_IMAGES = 10;
@@ -1373,13 +1394,34 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 rejectDeletedAgentSession(ws, promptSessionPath);
                 return;
               }
-              if (engine.isSessionStreaming(promptSessionPath)) {
+              if (!interject && engine.isSessionStreaming(promptSessionPath)) {
                 wsSend(ws, { type: "error", message: t("error.stillStreaming", { name: engine.agentName }), sessionPath: promptSessionPath });
                 return;
               }
               // Reject prompt while model switch is in progress
               if (engine.isSessionSwitching(promptSessionPath)) {
                 wsSend(ws, { type: "error", message: t("chat.modelSwitching"), sessionPath: promptSessionPath });
+                return;
+              }
+              if (interject && engine.isSessionStreaming(promptSessionPath)) {
+                try {
+                  await submitDesktopSessionInterjection(engine, {
+                    sessionPath: promptSessionPath,
+                    text: promptText,
+                    images: msg.images,
+                    videos: msg.videos,
+                    audios: msg.audios,
+                    uiContext: msg.uiContext ?? null,
+                    displayMessage: msg.displayMessage,
+                    sessionFileRefs: msg.sessionFileRefs,
+                  });
+                  wsSend(ws, { type: "steered", sessionPath: promptSessionPath });
+                } catch (err) {
+                  const errMessage = err.message === "session_busy"
+                    ? t("error.stillStreaming", { name: engine.agentName })
+                    : err.message;
+                  wsSend(ws, { type: "error", message: errMessage, sessionPath: promptSessionPath });
+                }
                 return;
               }
               try {

@@ -110,6 +110,63 @@ describe("session permission modes", () => {
       .toEqual({ action: "allow" });
   });
 
+  it("拦截错误分层（#1614）：deny 结果标明是哪一层拦的，并给出解锁出路", () => {
+    // 层 1：conversation tool mode（phone/DM 会话面板可切换）
+    const conversation = classifySessionPermission({
+      mode: "read_only", toolName: "bash", context: { surface: "conversation" },
+    }) as any;
+    expect(conversation).toMatchObject({
+      action: "deny",
+      code: "ACTION_BLOCKED_BY_READ_ONLY",
+      details: { toolName: "bash", layer: "conversation" },
+    });
+    expect(conversation.message).toMatch(/conversation/i);
+    expect(conversation.message).toMatch(/settings/i);
+
+    // 层 2：subagent 权限档（read 档；出路 = access:"write" 重派 + 父会话可操作）
+    const subagentAccess = classifySessionPermission({
+      mode: "read_only", toolName: "bash", context: { isSubagent: true },
+    }) as any;
+    expect(subagentAccess).toMatchObject({
+      action: "deny",
+      code: "ACTION_BLOCKED_BY_READ_ONLY",
+      details: { toolName: "bash", layer: "subagent_access" },
+    });
+    expect(subagentAccess.message).toMatch(/access:"write"/);
+    expect(subagentAccess.message).toMatch(/parent session/i);
+
+    // 层 3：subagent hard-block（任何档位都不可用）
+    const subagentBlocklist = classifySessionPermission({
+      mode: "operate", toolName: "dm", context: { isSubagent: true },
+    }) as any;
+    expect(subagentBlocklist).toMatchObject({
+      action: "deny",
+      code: "ACTION_BLOCKED_IN_SUBAGENT",
+      details: { toolName: "dm", layer: "subagent_blocklist" },
+    });
+    expect(subagentBlocklist.message).toMatch(/always|regardless/i);
+    expect(subagentBlocklist.message).toMatch(/parent session/i);
+
+    // 层 0（普通会话只读，如 plan 模式）：提示切换会话权限档
+    const session = classifySessionPermission({ mode: "read_only", toolName: "bash" }) as any;
+    expect(session).toMatchObject({
+      action: "deny",
+      code: "ACTION_BLOCKED_BY_READ_ONLY",
+      details: { toolName: "bash", layer: "session" },
+    });
+    expect(session.message).toMatch(/read-only/i);
+
+    // 动作级分类器（browser/terminal/file/session_folders）同样带分层
+    const browserDeny = classifySessionPermission({
+      mode: "read_only", toolName: "browser", params: { action: "click" }, context: { surface: "conversation" },
+    }) as any;
+    expect(browserDeny.details).toMatchObject({ layer: "conversation" });
+    const terminalDeny = classifySessionPermission({
+      mode: "read_only", toolName: "terminal", params: { action: "start" }, context: { isSubagent: true },
+    }) as any;
+    expect(terminalDeny.details).toMatchObject({ layer: "subagent_access" });
+  });
+
   it("subagent 没有确认模式：ask/auto 在 subagent 上下文坍缩为 operate（永不挂在确认上）", () => {
     // subagent 上下文 + ask：write 不 prompt，直接放行（坍缩 operate）
     expect(classifySessionPermission({ mode: "ask", toolName: "write", context: { isSubagent: true } }))

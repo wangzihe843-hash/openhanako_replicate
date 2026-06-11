@@ -137,6 +137,7 @@ describe("loadAll", () => {
         "beautify_create-cover",
         "beautify_apply-cover-candidate",
         "beautify_get-cover-style-guide",
+        "beautify_get-html-style-guide",
         "beautify_list-capabilities",
         "office_list-capabilities",
         "office_read-document",
@@ -1561,6 +1562,97 @@ describe("hot operations", () => {
     expect(pm.getPlugin("removable")).toBeNull();
     expect(pm.listPlugins()).toHaveLength(0);
     expect(pm.getAllTools().some(t => t._pluginId === "removable")).toBe(false);
+  });
+
+  it("reconciles missing community plugin directories during reload", async () => {
+    const builtinDir = path.join(tmpHome, "builtin-missing-reload");
+    fs.mkdirSync(builtinDir, { recursive: true });
+    const communityDir = path.join(tmpHome, "community-missing-reload");
+    const dir = writeToolRoutePlugin(communityDir, "missing-reload", { text: "gone" });
+    const mockPrefs = createMockPrefs({ allow_full_access_plugins: true });
+    const bus = await makeBus();
+    const events = [];
+    bus.subscribe((event) => events.push(event), { types: ["plugin_ui_changed"] });
+    const pm = new PluginManager({
+      pluginsDirs: [builtinDir, communityDir],
+      dataDir,
+      bus,
+      preferencesManager: mockPrefs,
+    } as any);
+    pm.scan();
+    await pm.loadAll();
+
+    expect(pm.getPlugin("missing-reload")).toMatchObject({ status: "loaded" });
+    expect(pm.getAllTools().some(t => t._pluginId === "missing-reload")).toBe(true);
+    expect(pm.routeRegistry.has("missing-reload")).toBe(true);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+    pm.scan();
+    await pm.loadAll();
+
+    expect(pm.getPlugin("missing-reload", { source: "community" })).toBeNull();
+    expect(pm.listPlugins({ source: "community" })).toHaveLength(0);
+    expect(pm.getDiagnostics().some(entry => entry.id === "missing-reload")).toBe(false);
+    expect(pm.getAllTools({ includeShadowed: true }).some(t => t._pluginId === "missing-reload")).toBe(false);
+    expect(pm.routeRegistry.has("missing-reload")).toBe(false);
+    expect(events.some(event => event.type === "plugin_ui_changed")).toBe(true);
+  });
+
+  it("reconciles missing community plugin directories before diagnostics", async () => {
+    const builtinDir = path.join(tmpHome, "builtin-missing-diagnostics");
+    fs.mkdirSync(builtinDir, { recursive: true });
+    const communityDir = path.join(tmpHome, "community-missing-diagnostics");
+    const dir = writeToolRoutePlugin(communityDir, "missing-diagnostics", { text: "gone" });
+    const pm = new PluginManager({
+      pluginsDirs: [builtinDir, communityDir],
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager: createMockPrefs({ allow_full_access_plugins: true }),
+    } as any);
+    pm.scan();
+    await pm.loadAll();
+    expect(pm.getDiagnostics().some(entry => entry.id === "missing-diagnostics")).toBe(true);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    expect(pm.getDiagnostics().some(entry => entry.id === "missing-diagnostics")).toBe(false);
+    expect(pm.listPlugins({ source: "community" })).toHaveLength(0);
+    expect(pm.getAllTools({ includeShadowed: true }).some(t => t._pluginId === "missing-diagnostics")).toBe(false);
+    expect(pm.routeRegistry.has("missing-diagnostics")).toBe(false);
+  });
+
+  it("keeps disabled community plugins until their directory is missing", async () => {
+    const builtinDir = path.join(tmpHome, "builtin-missing-disabled");
+    fs.mkdirSync(builtinDir, { recursive: true });
+    const communityDir = path.join(tmpHome, "community-missing-disabled");
+    const dir = path.join(communityDir, "missing-disabled");
+    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "tools", "t.js"), `
+      export const name = "t";
+      export const description = "test";
+      export const parameters = {};
+      export async function execute() { return "ok"; }
+    `);
+    const mockPrefs = createMockPrefs({ disabled_plugins: ["missing-disabled"] });
+    const pm = new PluginManager({
+      pluginsDirs: [builtinDir, communityDir],
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager: mockPrefs,
+    } as any);
+    pm.scan();
+    await pm.loadAll();
+
+    expect(pm.getPlugin("missing-disabled", { source: "community" })).toMatchObject({
+      status: "disabled",
+    });
+    expect(mockPrefs.getDisabledPlugins()).toContain("missing-disabled");
+
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    expect(pm.listPlugins({ source: "community" })).toHaveLength(0);
+    expect(pm.getPlugin("missing-disabled", { source: "community" })).toBeNull();
+    expect(mockPrefs.getDisabledPlugins()).not.toContain("missing-disabled");
   });
 
   it("removePlugin rejects builtin plugins", async () => {

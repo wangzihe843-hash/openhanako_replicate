@@ -4,6 +4,8 @@ import {
   createSubagentReplyTool,
   createSubagentTool,
 } from "../lib/tools/subagent-tool.ts";
+import { DeferredResultCoordinator } from "../lib/deferred-result-coordinator.ts";
+import { DeferredResultStore } from "../lib/deferred-result-store.ts";
 import { SubagentThreadStore } from "../lib/subagent-thread-store.ts";
 
 // ---- helpers ----------------------------------------------------------------
@@ -282,6 +284,51 @@ describe("subagent-tool (executeIsolated 原子模式)", () => {
       );
     });
     expect(mockStore.fail).not.toHaveBeenCalled();
+  });
+
+  it("routes subagent completion through deferred delivery and triggers the parent LLM turn", async () => {
+    const realStore = new (DeferredResultStore as any)();
+    const sessionCoordinator = {
+      deliverCustomMessage: vi.fn(async () => ({ ok: true, mode: "triggerTurn" })),
+      recordCustomEntry: vi.fn(),
+    };
+    const coordinator = new DeferredResultCoordinator({
+      store: realStore,
+      sessionCoordinator,
+      retryIntervalMs: 0,
+      log: { warn: vi.fn(), error: vi.fn(), log: vi.fn() } as any,
+    });
+    coordinator.start();
+    const tool = createSubagentTool(makeDeps({
+      getDeferredStore: () => realStore,
+      executeIsolated: makeExecuteIsolated({
+        replyText: "子任务完成，主任务可以继续。",
+        error: null,
+        sessionPath: "/test/child.jsonl",
+        stopReason: "stop",
+      } as any),
+    }));
+
+    try {
+      const result = await tool.execute("call_1", { task: "完成子任务后让主 agent 继续" }, null, null, mockCtx());
+      const { taskId } = result.details as any;
+
+      await vi.waitFor(() => {
+        expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledWith(
+          "/test/session.jsonl",
+          expect.objectContaining({
+            customType: "hana-background-result",
+            display: false,
+            content: expect.stringContaining(`task-id="${taskId}"`),
+          }),
+          { triggerTurn: true },
+        );
+      });
+      expect(realStore.query(taskId)).toMatchObject({ delivered: true });
+    } finally {
+      coordinator.dispose();
+      realStore.dispose();
+    }
   });
 
   it("inherits cwd and parent session identity from the tool execution ctx", async () => {
@@ -830,6 +877,54 @@ describe("subagent-tool 权限档（Codex 式：access 参数 + 继承父会话�
     const getSessionPermissionMode = vi.fn(() => "read_only");
     await captureOpts({ task: "x" }, { getSessionPermissionMode });
     expect(getSessionPermissionMode).toHaveBeenCalledWith("/test/session.jsonl");
+  });
+
+  // ── attenuation 校验（#1614）：父只读 + 显式 write → 拒绝派单，不静默降级 ──
+  it("父只读 + access:write → 派单被拒（错误结果 + 不执行 + 不登记任务）", async () => {
+    const capture = makeExecuteIsolated();
+    const tool = createSubagentTool(makeDeps({
+      executeIsolated: capture,
+      getDeferredStore: () => mockStore,
+      getSessionPermissionMode: () => "read_only",
+    }));
+    const result = await tool.execute("call_1", { task: "改代码", access: "write" }, null, null, mockCtx());
+    expect((result.details as any).errorCode).toBe("SUBAGENT_WRITE_DENIED_BY_PARENT_READ_ONLY");
+    // t() 在测试环境返回 key 本身；只断言走了对应文案 key
+    expect(result.content[0].text).toMatch(/subagentWriteAccessDenied|read-only|只读/);
+    expect(capture).not.toHaveBeenCalled();
+    expect(mockStore.defer).not.toHaveBeenCalled();
+  });
+
+  it("父只读 + access:write 的 subagent_reply 同样被拒（线程残留 write 档也不放行）", async () => {
+    const threadStore = new (SubagentThreadStore as any)();
+    threadStore.beginRun("thread-w", {
+      kind: "direct",
+      parentSessionPath: "/test/session.jsonl",
+      agentId: "other-agent",
+      access: "write",
+    });
+    threadStore.attachSession("thread-w", "/test/child.jsonl");
+    threadStore.finishRun("thread-w", { status: "resolved", summary: "ok", close: false });
+
+    const capture = makeExecuteIsolated();
+    const replyTool = createSubagentReplyTool(makeDeps({
+      executeIsolated: capture,
+      getDeferredStore: () => mockStore,
+      getSubagentThreadStore: () => threadStore,
+      getSessionPermissionMode: () => "read_only",
+    }));
+
+    // 继承线程的 write 档：父只读时拒绝
+    const denied = await replyTool.execute("c1", { threadId: "thread-w", task: "继续" }, null, null, mockCtx());
+    expect((denied.details as any).errorCode).toBe("SUBAGENT_WRITE_DENIED_BY_PARENT_READ_ONLY");
+    expect(capture).not.toHaveBeenCalled();
+    expect(mockStore.defer).not.toHaveBeenCalled();
+
+    // 显式降到 access:read：放行（给模型的出路与错误提示一致）
+    const allowed = await replyTool.execute("c2", { threadId: "thread-w", task: "只读继续", access: "read" }, null, null, mockCtx());
+    expect((allowed.details as any).errorCode).toBeUndefined();
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+    expect(capture.mock.calls[0][1].permissionMode).toBe("read_only");
   });
 });
 

@@ -1,4 +1,4 @@
-import type { Session, SessionPermissionMode, SessionStream, TodoItem } from '../types';
+import type { Session, SessionCapabilityDrift, SessionPermissionMode, SessionStream, TodoItem } from '../types';
 import type { ThinkingLevel } from './model-slice';
 
 const SESSION_PERMISSION_MODES = new Set(['auto', 'operate', 'ask', 'read_only']);
@@ -30,6 +30,10 @@ export interface SessionSlice {
    * 就跳过 hydrate 写入，避免旧快照覆盖更晚到达的实时状态。
    */
   todosLiveVersionBySession: Record<string, number>;
+  /** #1624：服务端下发的工具能力漂移提示，keyed by sessionPath（null = 无提示） */
+  capabilityDriftBySession: Record<string, SessionCapabilityDrift>;
+  /** #1624：fresh-compact 刷新进行中的 session 集合（跨切换保留 busy 态） */
+  capabilityRefreshingSessions: string[];
   setSessions: (sessions: Session[]) => void;
   setCurrentSessionPath: (path: string | null) => void;
   setPendingSessionSwitchPath: (path: string | null) => void;
@@ -45,6 +49,8 @@ export interface SessionSlice {
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
   setSessionAuthorizedFolders: (sessionPath: string, folders: string[]) => void;
   bumpTodosLiveVersion: (sessionPath: string) => void;
+  setSessionCapabilityDrift: (sessionPath: string, drift: SessionCapabilityDrift | null) => void;
+  setSessionCapabilityRefreshing: (sessionPath: string, refreshing: boolean) => void;
 }
 
 export const createSessionSlice = (
@@ -64,6 +70,8 @@ export const createSessionSlice = (
   todosBySession: {},
   sessionAuthorizedFoldersByPath: {},
   todosLiveVersionBySession: {},
+  capabilityDriftBySession: {},
+  capabilityRefreshingSessions: [],
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionPath: (path) => set({ currentSessionPath: path }),
   setPendingSessionSwitchPath: (path) => set({ pendingSessionSwitchPath: path }),
@@ -125,5 +133,21 @@ export const createSessionSlice = (
         ...s.todosLiveVersionBySession,
         [sessionPath]: (s.todosLiveVersionBySession[sessionPath] ?? 0) + 1,
       },
+    })),
+  setSessionCapabilityDrift: (sessionPath, drift) =>
+    set((s) => {
+      if (drift) {
+        return { capabilityDriftBySession: { ...s.capabilityDriftBySession, [sessionPath]: drift } };
+      }
+      const { [sessionPath]: _, ...rest } = s.capabilityDriftBySession;
+      return { capabilityDriftBySession: rest };
+    }),
+  setSessionCapabilityRefreshing: (sessionPath, refreshing) =>
+    set((s) => ({
+      capabilityRefreshingSessions: refreshing
+        ? (s.capabilityRefreshingSessions.includes(sessionPath)
+          ? s.capabilityRefreshingSessions
+          : [...s.capabilityRefreshingSessions, sessionPath])
+        : s.capabilityRefreshingSessions.filter((p) => p !== sessionPath),
     })),
 });

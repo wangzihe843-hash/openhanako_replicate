@@ -190,6 +190,7 @@ body {
     font-family: var(--font-ui);
     background-color: var(--bg);
     color: var(--text);
+    caret-color: var(--text);
     line-height: 1.7;
     font-size: 15px;
     -webkit-font-smoothing: antialiased;
@@ -223,9 +224,9 @@ option,
 }
 
 .md-content button,
-.md-content .copy-btn,
+.md-content .code-block-toolbar-btn,
 .preview-markdown button,
-.preview-code .copy-btn {
+.preview-code .code-block-toolbar-btn {
     user-select: none;
     -webkit-user-select: none;
 }
@@ -961,7 +962,7 @@ html[data-platform="linux"] .tb-toggle-right {
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: var(--space-sm) var(--space-md);
-    margin: var(--space-sm) 0;
+    margin: var(--space-md) 0;
     overflow-x: auto;
     line-height: 1.5;
 }
@@ -969,7 +970,7 @@ html[data-platform="linux"] .tb-toggle-right {
 /* 代码块 wrapper：非滚动定位祖先，让复制按钮锚在可视区右上角不随横滚漂移 */
 .md-content .code-block-wrap {
     position: relative;
-    margin: var(--space-sm) 0;
+    margin: var(--space-md) 0;
 }
 
 /* wrapper 内的 pre 边距归零，由 wrapper 接管，避免视觉跳动 */
@@ -977,11 +978,19 @@ html[data-platform="linux"] .tb-toggle-right {
     margin: 0;
 }
 
-/* 代码块复制按钮 */
-.md-content .code-block-wrap .copy-btn {
+/* 代码块右上角工具栏 */
+.md-content .code-block-wrap .code-block-toolbar {
     position: absolute;
     top: 0;
     right: 0;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-radius: 0 var(--radius-md) 0 var(--radius-sm);
+    z-index: 1;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -990,22 +999,44 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     background: transparent;
     border: 0;
-    border-radius: 0 var(--radius-md) 0 var(--radius-sm);
-    width: 2rem;
-    height: 2rem;
+    width: 1.7rem;
+    height: 1.7rem;
     padding: 0;
     cursor: default;
-    opacity: 0.45;
+    opacity: 0.35;
     transition: opacity var(--duration-fast), color var(--duration-fast);
 }
 
-.md-content .code-block-wrap .copy-btn-icon {
-    width: 0.9rem;
-    height: 0.9rem;
+.md-content .code-block-wrap .code-block-toolbar-btn:first-child {
+    border-radius: 0 0 0 var(--radius-sm);
+}
+.md-content .code-block-wrap .code-block-toolbar-btn:last-child {
+    border-radius: 0 var(--radius-md) 0 0;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn-icon {
+    width: 0.82rem;
+    height: 0.82rem;
     flex: 0 0 auto;
 }
 
-.md-content .code-block-wrap .copy-btn::after {
+.md-content .code-block-wrap .code-block-toolbar-btn:hover,
+.md-content .code-block-wrap .code-block-toolbar-btn:focus-visible {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn[data-active="true"] {
+    color: var(--accent);
+    opacity: 0.7;
+}
+
+/* 复制按钮"已复制"反馈 */
+.md-content .code-block-wrap .code-block-toolbar-btn[data-copied="true"] {
+    color: var(--accent);
+    opacity: 1;
+}
+.md-content .code-block-wrap .code-block-toolbar-btn[data-copied="true"]::after {
     content: attr(data-copied-label);
     position: absolute;
     top: 50%;
@@ -1018,19 +1049,14 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.68rem;
     white-space: nowrap;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity var(--duration-fast);
-}
-
-.md-content .code-block-wrap .copy-btn:hover,
-.md-content .code-block-wrap .copy-btn:focus-visible,
-.md-content .code-block-wrap .copy-btn[data-copied="true"] {
-    color: var(--accent);
     opacity: 1;
 }
 
-.md-content .code-block-wrap .copy-btn[data-copied="true"]::after {
-    opacity: 1;
+/* 自动换行状态 */
+.md-content .code-block-wrap[data-wrap="true"] > pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: hidden;
 }
 
 .md-content pre code {

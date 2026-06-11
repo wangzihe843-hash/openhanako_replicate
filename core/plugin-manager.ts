@@ -1,6 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { createPluginContext } from "./plugin-context.ts";
+import {
+  createPluginRouteRequestContext,
+  isPluginBusCapabilityError,
+} from "./plugin-route-request-context.ts";
 import { freshImport } from "./fresh-import.ts";
 import { normalizePluginConfigSchema } from "./plugin-config.ts";
 import { semverGte } from "../lib/plugin-versioning.ts";
@@ -107,7 +111,12 @@ function normalizeActivationEvents(raw, hasLifecycle) {
   return hasLifecycle ? ["onStartup"] : [];
 }
 
+// 区分"字段缺失"与"显式声明"：manifest 完全没写该字段（老插件）返回 null，
+// 由 plugin-route-request-context 在两个列表都缺失时按 legacy（声明全部）放行；
+// 只要写了字段（包括显式空数组、非数组的非法值）就视为显式声明，按声明严格
+// 校验——显式 `capabilities: []` 表达"不需要任何敏感 capability"，不得放行。
 function normalizeCapabilityList(raw) {
+  if (raw == null) return null;
   if (!Array.isArray(raw)) return [];
   return [...new Set(raw
     .map((item) => typeof item === "string" ? item.trim() : "")
@@ -294,6 +303,92 @@ export class PluginManager {
     if (routeRecord?.app) this.routeRegistry.set(pluginId, routeRecord.app);
   }
 
+  _isMissingReconcileablePlugin(entry) {
+    if (!entry?.pluginDir) return false;
+    if (normalizePluginSource(entry.source) !== "community") return false;
+    return !fs.existsSync(entry.pluginDir);
+  }
+
+  _cleanupPluginContributions(entry) {
+    const pluginId = entry.id;
+    const pluginKey = entry.pluginKey;
+    this._tools = this._tools.filter(t => t._pluginKey !== pluginKey);
+    this._commands = this._commands.filter(c => c._pluginKey !== pluginKey);
+    this._slashRegistry?.unregisterBySource("plugin", pluginKey);
+    this._skillPaths = this._skillPaths.filter(s => s.pluginKey !== pluginKey);
+    this._agentTemplates = this._agentTemplates.filter(t => t._pluginKey !== pluginKey);
+    this._providerPlugins = this._providerPlugins.filter(p => p._pluginKey !== pluginKey);
+    this._configSchemas = this._configSchemas.filter(s => s.pluginKey !== pluginKey);
+    this._extensionFactories = this._extensionFactories.filter(e => e.pluginKey !== pluginKey);
+    this._pages = this._pages.filter(p => p.pluginKey !== pluginKey);
+    this._widgets = this._widgets.filter(w => w.pluginKey !== pluginKey);
+    this._settingsTabs = this._settingsTabs.filter(t => t.pluginKey !== pluginKey);
+    this._routeApps.delete(pluginKey);
+    this._refreshRouteRegistryForId(pluginId);
+  }
+
+  _startPluginRuntimeCleanup(entry) {
+    entry._loadCancelled = true;
+    const instance = entry.instance || null;
+    const disposables = Array.isArray(entry._disposables)
+      ? [...entry._disposables].reverse()
+      : [];
+    entry._disposables = [];
+    entry.instance = null;
+    entry.activationState = entry.hasLifecycle ? "inactive" : "none";
+
+    const run = async () => {
+      if (instance && typeof instance.onunload === "function") {
+        try { await instance.onunload(); } catch (err) {
+          log.error(`"${entry.id}" onunload error: ${err.message}`);
+        }
+      }
+      for (const d of disposables) {
+        try { d(); } catch (err) {
+          log.error(`"${entry.id}" disposable error: ${err.message}`);
+        }
+      }
+    };
+    void run();
+  }
+
+  _forgetPluginEntry(entry, options: any = {}) {
+    const pluginId = entry.id;
+    const pluginKey = entry.pluginKey;
+    const source = normalizePluginSource(entry.source);
+    this._startPluginRuntimeCleanup(entry);
+    this._cleanupPluginContributions(entry);
+    this._plugins.delete(pluginKey);
+
+    if (source === "community" && options.removePreferences !== false && this._preferencesManager) {
+      const disabled = this._preferencesManager.getDisabledPlugins();
+      if (Array.isArray(disabled) && disabled.includes(pluginId)) {
+        this._preferencesManager.setDisabledPlugins(disabled.filter(id => id !== pluginId));
+      }
+    }
+
+    this._refreshRouteRegistryForId(pluginId);
+  }
+
+  reconcileMissingPluginDirectories(options: any = {}) {
+    const removed = [];
+    for (const entry of [...this._plugins.values()]) {
+      if (!this._isMissingReconcileablePlugin(entry)) continue;
+      log.warn(`community plugin "${entry.id}" directory missing, reconciling stale registry entry: ${entry.pluginDir}`);
+      this._forgetPluginEntry(entry, { removePreferences: true });
+      removed.push({
+        id: entry.id,
+        pluginKey: entry.pluginKey,
+        source: normalizePluginSource(entry.source),
+        pluginDir: entry.pluginDir,
+      });
+    }
+    if (removed.length > 0 && options.emitUiChanged !== false) {
+      this._bus?.emit({ type: "plugin_ui_changed" });
+    }
+    return removed;
+  }
+
   _annotateShadowing() {
     for (const entry of this._plugins.values()) {
       entry.shadowedBy = null;
@@ -349,6 +444,7 @@ export class PluginManager {
       }
     }
     this._scanned = results;
+    this.reconcileMissingPluginDirectories();
     return results;
   }
 
@@ -386,6 +482,7 @@ export class PluginManager {
   }
 
   async loadAll() {
+    this.reconcileMissingPluginDirectories();
     const descriptors = this._scanned.length > 0 ? this._scanned : this.scan();
     const disabledList = this._preferencesManager?.getDisabledPlugins() || [];
     for (const desc of descriptors) {
@@ -734,6 +831,7 @@ export class PluginManager {
   }
 
   getPluginTool(pluginId, toolName, options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const entry = options.entry || this._resolvePluginEntry(pluginId, options);
     if (!entry || !toolName) return null;
     const requestedToolName = String(toolName).trim();
@@ -755,6 +853,7 @@ export class PluginManager {
   }
 
   getAllTools( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._tools.filter((tool) => (
       includeShadowed || !tool._pluginKey || this._isPluginKeyRuntimeActive(tool._pluginKey)
@@ -777,6 +876,7 @@ export class PluginManager {
   }
 
   getSkillPaths( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._skillPaths.filter((skillPath) => (
       includeShadowed || this._isPluginKeyRuntimeActive(skillPath.pluginKey)
@@ -857,15 +957,44 @@ export class PluginManager {
 
     // Error isolation: Hono's onError is the correct hook for handler throws
     app.onError((err, c) => {
+      if (isPluginBusCapabilityError(err)) {
+        ctx.log.warn(`route bus capability denied: ${err.message}`);
+        return c.json({
+          error: (err as any).code,
+          detail: err.message,
+          capability: (err as any).capability,
+          permission: (err as any).permission,
+          pluginId: (err as any).pluginId,
+          declared: (err as any).declared,
+          granted: (err as any).granted,
+        }, 403);
+      }
       ctx.log.error("route error:", err.message);
       return c.json({ error: "Plugin internal error", plugin: entry.id }, 500);
     });
 
-    // Middleware: inject ctx + agentId (from proxy header)
+    // Middleware: inject ctx + agentId + request-level context.
+    // 代理层通过 Hono env 的 `pluginRouteRequest` 传入本次请求的 principal 与
+    // agentId；这里铸造为请求级变量 `pluginRequestContext`（principal +
+    // manifest/grant 校验的 bus），状态只挂在请求上，不落到 ctx / 全局。
+    const injectRequestContext = (c: any) => {
+      c.set("pluginCtx", ctx);
+      const request = c.env?.pluginRouteRequest || null;
+      const agentId = (typeof request?.agentId === "string" && request.agentId)
+        ? request.agentId
+        : (c.req.header("X-Hana-Agent-Id") || null);
+      c.set("agentId", agentId);
+      c.set("pluginRequestContext", createPluginRouteRequestContext({
+        pluginCtx: ctx,
+        accessLevel: entry.accessLevel,
+        capabilities: entry.capabilities,
+        sensitiveCapabilities: entry.sensitiveCapabilities,
+        principal: request?.principal || null,
+        agentId,
+      }));
+    };
     app.use("*", async (c, next) => {
-      (c as any).set("pluginCtx", ctx);
-      const agentId = c.req.header("X-Hana-Agent-Id") || null;
-      (c as any).set("agentId", agentId);
+      injectRequestContext(c);
       await next();
     });
 
@@ -877,11 +1006,9 @@ export class PluginManager {
         if (typeof mod.default === "function") {
           const sub = mod.default;
           if (sub && typeof sub.fetch === "function") {
-            // Static Hono app — inject ctx + agentId middleware onto sub-app too
+            // Static Hono app — inject the same request-context middleware onto sub-app too
             sub.use("*", async (c, next) => {
-              c.set("pluginCtx", ctx);
-              const agentId = c.req.header("X-Hana-Agent-Id") || null;
-              c.set("agentId", agentId);
+              injectRequestContext(c);
               await next();
             });
             const prefix = "/" + stripPluginSourceExt(file);
@@ -1079,6 +1206,7 @@ export class PluginManager {
   }
 
   getAgentTemplates( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._agentTemplates.filter((template) => (
       includeShadowed || this._isPluginKeyRuntimeActive(template._pluginKey)
@@ -1102,6 +1230,7 @@ export class PluginManager {
   }
 
   getProviderPlugins( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._providerPlugins.filter((provider) => (
       includeShadowed || this._isPluginKeyRuntimeActive(provider._pluginKey)
@@ -1324,7 +1453,6 @@ export class PluginManager {
 
   async _cleanupPluginEntry(entry) {
     const pluginId = entry.id;
-    const pluginKey = entry.pluginKey;
 
     // 1. 生命周期清理（onunload + disposables）
     if (entry.instance) {
@@ -1344,19 +1472,7 @@ export class PluginManager {
     entry.activationState = entry.hasLifecycle ? "inactive" : "none";
 
     // 2. 清理静态贡献（文件约定加载的 tools、commands 等）
-    this._tools = this._tools.filter(t => t._pluginKey !== pluginKey);
-    this._commands = this._commands.filter(c => c._pluginKey !== pluginKey);
-    this._slashRegistry?.unregisterBySource("plugin", pluginKey);
-    this._skillPaths = this._skillPaths.filter(s => s.pluginKey !== pluginKey);
-    this._agentTemplates = this._agentTemplates.filter(t => t._pluginKey !== pluginKey);
-    this._providerPlugins = this._providerPlugins.filter(p => p._pluginKey !== pluginKey);
-    this._configSchemas = this._configSchemas.filter(s => s.pluginKey !== pluginKey);
-    this._extensionFactories = this._extensionFactories.filter(e => e.pluginKey !== pluginKey);
-    this._pages = this._pages.filter(p => p.pluginKey !== pluginKey);
-    this._widgets = this._widgets.filter(w => w.pluginKey !== pluginKey);
-    this._settingsTabs = this._settingsTabs.filter(t => t.pluginKey !== pluginKey);
-    this._routeApps.delete(pluginKey);
-    this._refreshRouteRegistryForId(pluginId);
+    this._cleanupPluginContributions(entry);
   }
 
   async unloadPlugin(pluginId, options: any = {}) {
@@ -1396,30 +1512,36 @@ export class PluginManager {
 
   /** 获取指定插件的路由 app */
   getRouteApp(pluginId) {
+    this.reconcileMissingPluginDirectories();
     this._refreshRouteRegistryForId(pluginId);
     return this.routeRegistry.get(pluginId) || null;
   }
 
   /** 获取所有活跃插件的 extension 工厂函数（供 Engine 注入 Pi SDK） */
   getExtensionFactories() {
+    this.reconcileMissingPluginDirectories();
     return this._extensionFactories
       .filter(e => this._isPluginKeyRuntimeActive(e.pluginKey))
       .map(e => e.factory);
   }
 
   getPages( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._pages.filter((page) => includeShadowed || this._isPluginKeyRuntimeActive(page.pluginKey));
   }
   getWidgets( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._widgets.filter((widget) => includeShadowed || this._isPluginKeyRuntimeActive(widget.pluginKey));
   }
   getSettingsTabs( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     const includeShadowed = options.includeShadowed === true;
     return this._settingsTabs.filter((tab) => includeShadowed || this._isPluginKeyRuntimeActive(tab.pluginKey));
   }
   getDiagnostics() {
+    this.reconcileMissingPluginDirectories();
     this._annotateShadowing();
     return [...this._plugins.values()].map((entry) => {
       const pluginId = entry.id;
@@ -1482,10 +1604,12 @@ export class PluginManager {
   }
 
   getPlugin(id, options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     this._annotateShadowing();
     return this._resolvePluginEntry(id, options) || null;
   }
   listPlugins( options: any = {}) {
+    this.reconcileMissingPluginDirectories();
     this._annotateShadowing();
     let entries = [...this._plugins.values()];
     if (options.source) {

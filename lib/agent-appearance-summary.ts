@@ -58,6 +58,8 @@ type CachedAgentAppearanceSummary = {
   updatedAt: string;
 };
 
+export type AgentAppearanceProfileResource = CachedAgentAppearanceSummary;
+
 export type AgentAppearanceModel = Record<string, unknown>;
 
 export type ResolvedAgentAppearanceModelConfig = {
@@ -83,6 +85,10 @@ type RefreshAgentAppearanceSummaryOptions = {
 
 export function agentAppearanceSummaryPath(agentDir: string): string {
   return path.join(agentDir, "appearance-summary.json");
+}
+
+export function agentAppearanceProfileResourcePath(agentDir: string): string {
+  return agentAppearanceSummaryPath(agentDir);
 }
 
 function avatarPathForExtension(agentDir: string, ext: string): string {
@@ -198,6 +204,13 @@ export function writeCachedAgentAppearanceSummary(
   return payload;
 }
 
+export function writeAgentAppearanceProfileResource(
+  agentDir: string,
+  entry: { avatarHash: string; summary: string; model?: string | null },
+): AgentAppearanceProfileResource | null {
+  return writeCachedAgentAppearanceSummary(agentDir, entry);
+}
+
 export function readCachedAgentAppearanceSummary(agentDir: string): CachedAgentAppearanceSummary | null {
   const avatar = readAgentAvatarResource(agentDir);
   if (!avatar) return null;
@@ -220,6 +233,10 @@ export function readCachedAgentAppearanceSummary(agentDir: string): CachedAgentA
   } catch {
     return null;
   }
+}
+
+export function readAgentAppearanceProfileResource(agentDir: string): AgentAppearanceProfileResource | null {
+  return readCachedAgentAppearanceSummary(agentDir);
 }
 
 export function hasAgentAppearanceSummaryCapability(options: {
@@ -309,3 +326,5 @@ export async function refreshAgentAppearanceSummary(
   });
   return summary;
 }
+
+export const refreshAgentAppearanceProfileResource = refreshAgentAppearanceSummary;

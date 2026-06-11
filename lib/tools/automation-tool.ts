@@ -2,7 +2,8 @@
  * automation-tool.js — Agent-created scheduled automations
  *
  * User-facing automations are modeled as Agent runs. The tool returns a
- * suggestion card and writes only when that suggestion is applied.
+ * pending suggestion (desktop interactive card / bridge text protocol) and
+ * writes only when that suggestion is applied.
  */
 
 import { Type, StringEnum } from "../pi-sdk/index.ts";
@@ -80,7 +81,25 @@ function targetAgentIdFor(params, fallbackAgentId) {
     : fallbackAgentId;
 }
 
-function pendingSuggestionText() {
+/**
+ * Agent 可见的"建议已登记，等待用户确认"文案（#1619）。
+ *
+ * 文本指令平台（微信等 bridge）没有可点击的确认卡片：必须告诉 Agent
+ * 真实的确认协议是用户回复 /apply（bridge 出站层还会把建议详情和
+ * /apply 指引附加在 Agent 回复之后，见 core/bridge-session-manager.ts
+ * 的 formatAutomationSuggestionText），否则 Agent 会沿用桌面认知，
+ * 反复引导用户"点击确认按钮"。桌面端（无 bridgeContext）文案不变。
+ */
+function pendingSuggestionText(bridgeContext = null, suggestion = null) {
+  if (bridgeContext?.interactionCapabilities?.confirmationMode === "text_command" && suggestion) {
+    const shortCode = typeof suggestion.shortCode === "string" && suggestion.shortCode.trim()
+      ? suggestion.shortCode.trim()
+      : "";
+    const applyVariants = shortCode ? `/apply 或 /apply ${shortCode}` : "/apply";
+    return `我准备了一项自动任务建议${shortCode ? `（建议ID：${shortCode}）` : ""}，建议详情和「回复 /apply 创建」的指引会自动附加在本次回复之后发给用户。`
+      + `当前平台是纯文本对话，没有可点击的确认卡片或按钮：任务只会在用户回复 ${applyVariants} 之后创建，回复「确认」等普通文字不会生效。`
+      + "如果用户还没创建，请引导对方回复 /apply，不要让用户点击任何按钮或卡片。";
+  }
   return "我准备了一项自动任务建议，等你确认后再创建。";
 }
 
@@ -99,7 +118,7 @@ function automationDraftSideEffect() {
     kind: "deferred_mutation_draft",
     commit: "requires_user_confirmation",
     ruleId: "automation-draft-no-write",
-    summary: "Automation create/update generates a suggestion card; cron store writes only after the suggestion is applied.",
+    summary: "Automation create/update generates a pending suggestion; cron store writes only after the suggestion is applied.",
   };
 }
 
@@ -198,7 +217,7 @@ export function createAutomationTool(cronStore, {
   return {
     name: "automation",
     label: "Automation",
-    description: "Create and update scheduled automation suggestions. The tool returns an Automation suggestion card; the task is written only after the user applies the suggestion. Automations run as background Agent sessions.",
+    description: "Create and update scheduled automation suggestions. The suggestion is presented to the user for confirmation — an interactive card on desktop, or a reply-with-/apply text instruction on text-only bridge platforms — and the task is written only after the user applies it. Automations run as background Agent sessions.",
     sessionPermission: {
       describeSideEffect: (params) => {
         if (!isDraftMutationAction(params)) return null;
@@ -208,7 +227,7 @@ export function createAutomationTool(cronStore, {
     },
     parameters: Type.Object({
       action: StringEnum(["list", "create", "update"], {
-        description: "Action to perform. create and update produce a suggestion card instead of directly saving.",
+        description: "Action to perform. create and update produce a pending suggestion instead of directly saving.",
       }),
       id: Type.Optional(Type.String({ description: "Automation job id for update." })),
       agentId: Type.Optional(Type.String({ description: "Target Agent id. Defaults to the current Agent." })),
@@ -294,7 +313,7 @@ export function createAutomationTool(cronStore, {
         }
 
         return {
-          content: [{ type: "text", text: pendingSuggestionText() }],
+          content: [{ type: "text", text: pendingSuggestionText(context.bridgeContext, suggestion) }],
           details: suggestionDetails({
             suggestion,
             operation,

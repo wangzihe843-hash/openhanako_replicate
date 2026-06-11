@@ -444,6 +444,21 @@
     background: var(--accent-light, rgba(100, 140, 200, 0.15)) !important;
 }
 
+:global(.preview-editor.mode-markdown .cm-editor) {
+    --editor-markdown-selection-bg: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+:global(.preview-editor.mode-markdown .cm-selectionBackground) {
+    background: var(--editor-markdown-selection-bg) !important;
+}
+
+:global(.preview-editor.mode-markdown .cm-content::selection),
+:global(.preview-editor.mode-markdown .cm-content *::selection) {
+    background: var(--editor-markdown-selection-bg);
+    color: var(--text);
+    text-shadow: none;
+}
+
 :global(.preview-editor .cm-cursor) {
     border-left-color: var(--text);
 }

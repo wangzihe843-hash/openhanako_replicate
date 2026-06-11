@@ -13,7 +13,7 @@ describe("install_skill global skill-pool installation", () => {
     tmpDir = null;
   });
 
-  it("installs skill_content into the global skill pool and enables the current agent through the callback", async () => {
+  it("rejects skill_content so model-facing installs cannot create partial package shells", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-install-skill-tool-"));
     const agentDir = path.join(tmpDir, "agent");
     const userSkillsDir = path.join(tmpDir, "user-skills");
@@ -61,39 +61,14 @@ describe("install_skill global skill-pool installation", () => {
     });
 
     const skillFilePath = path.join(userSkillsDir, "demo-skill", "SKILL.md");
-    expect(registerSessionFile).toHaveBeenCalledWith({
-      sessionPath,
-      filePath: skillFilePath,
-      label: "SKILL.md",
-      origin: "install_skill_output",
-      storageKind: "install_output",
-    });
-    expect(result.details).toMatchObject({
-      skillName: "demo-skill",
-      skillFilePath,
-      installedSkillSource: {
-        kind: "skill_source",
-        owner: "user",
-        skillName: "demo-skill",
-        filePath: skillFilePath,
-        baseDir: path.dirname(skillFilePath),
-        editable: true,
-        readonly: false,
-      },
-      installedFile: {
-        id: "sf_installed_skill",
-        fileId: "sf_installed_skill",
-        sessionPath,
-        filePath: skillFilePath,
-        origin: "install_skill_output",
-        storageKind: "install_output",
-      },
-    });
-    expect(fs.readFileSync(skillFilePath, "utf-8")).toContain("default-enabled: false");
-    expect(onInstalled).toHaveBeenCalledWith("demo-skill");
+    expect(result.content?.[0]?.text).toContain("完整 skill package");
+    expect(result.details).toEqual({ rejectedInput: "skill_content" });
+    expect(fs.existsSync(skillFilePath)).toBe(false);
+    expect(registerSessionFile).not.toHaveBeenCalled();
+    expect(onInstalled).not.toHaveBeenCalled();
   });
 
-  it("replaces an existing global skill with the same semantics as manual install", async () => {
+  it("does not overwrite an existing skill when skill_content is provided", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-install-skill-tool-"));
     const agentDir = path.join(tmpDir, "agents", "agent-b");
     const userSkillsDir = path.join(tmpDir, "user-skills");
@@ -125,9 +100,10 @@ describe("install_skill global skill-pool installation", () => {
     }, null, null, {});
 
     const originalPath = path.join(userSkillsDir, "demo-skill", "SKILL.md");
-    expect(fs.readFileSync(originalPath, "utf-8")).toContain("# Different");
-    expect((result as any).details.skillName).toBe("demo-skill");
-    expect(onInstalled).toHaveBeenCalledWith("demo-skill");
+    expect(fs.readFileSync(originalPath, "utf-8")).toContain("# Existing");
+    expect(result.content?.[0]?.text).toContain("完整 skill package");
+    expect((result as any).details).toEqual({ rejectedInput: "skill_content" });
+    expect(onInstalled).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(userSkillsDir, "demo-skill-agent-b"))).toBe(false);
   });
 

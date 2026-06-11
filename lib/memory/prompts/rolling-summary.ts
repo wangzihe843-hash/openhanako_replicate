@@ -1,3 +1,9 @@
+import {
+  buildRollingSummaryFormatRequirements,
+  getFactSectionTitle,
+  getTimelineSectionTitle,
+} from "../rolling-summary-format.ts";
+
 export function buildRollingSummaryPrompt({
   locale = "zh-CN",
   agentName = "",
@@ -10,6 +16,9 @@ export function buildRollingSummaryPrompt({
   const isZh = String(locale || "").startsWith("zh");
   const resolvedAgentName = agentName || (isZh ? "这个 Agent" : "this agent");
   const resolvedUserName = userName || (isZh ? "主人" : "the user");
+  // 标题文本统一从格式契约取，prompt 文案禁止硬编码标题字面量
+  const factTitle = getFactSectionTitle(locale);
+  const timelineTitle = getTimelineSectionTitle(locale);
 
   if (!isZh) {
     return {
@@ -33,14 +42,9 @@ ${existingMemory || "(No existing long-term memory)"}
 ## Roster
 ${roster || "(No other agents)"}
 
-## Output Format
-The final answer must contain exactly two third-level headings:
-1. The first line must be \`### Key Facts\`
-2. The second heading must be \`### Timeline\`
+${buildRollingSummaryFormatRequirements(locale)}
 
-Do not extract work-style preferences, collaboration-process preferences, tool preferences, engineering rules, or task details. When in doubt, skip. Better miss than mis-record.
-
-Start output directly with ### Key Facts, no preamble or conclusion.`,
+Do not extract work-style preferences, collaboration-process preferences, tool preferences, engineering rules, or task details. When in doubt, skip. Better miss than mis-record.`,
     };
   }
 
@@ -70,18 +74,11 @@ ${roster || "（没有其他 Agent）"}
 ## 核心原则
 记忆的核心职责是维护你对${resolvedUserName}的理解，让你以后更自然地理解这个人、你们的关系、长期项目和共同语境。摘要仍然以用户侧为中心：优先记录${resolvedUserName}是谁、喜欢什么、在意什么、最近关注什么大主题。
 
-## 输出格式
-最终答案必须只包含两个三级标题，标题文本和顺序固定：
-1. 第一行必须是 \`### 重要事实\`
-2. 第二个标题必须是 \`### 事情经过\`
-
-两个标题下的正文都必须使用无序列表。列表项必须以 \`- \` 开头。
-如果某一节没有内容，也要输出一个列表项：\`- 无\`。
-标题之外不要输出前言、后记、XML 标签或代码块。
+${buildRollingSummaryFormatRequirements(locale)}
 
 ## 内容要求
 
-**重要事实一节**
+**${factTitle}一节**
 只记录用户画像类信息：身份属性、人格特质、审美和兴趣、喜欢或讨厌的事物、长期关系、生活或创作取向、近期正在关注/投入的大主题。没有则写 \`- 无\`。
 
 不要抽：
@@ -97,7 +94,7 @@ ${roster || "（没有其他 Agent）"}
 - 如果这条信息回答的是“用户最近在关注哪个领域/项目/主题”，只保留大主题，不保留该主题里的细节。
 - 拿不准一律不抽。宁可漏，不可错。
 
-**事情经过一节**
+**${timelineTitle}一节**
 按时间顺序记录本 session 发生了什么，带 YYYY-MM-DD HH:MM 时间标注，抓重点脉络。工作相关内容只允许保留到大主题层级。
 
 ## 规则
@@ -106,7 +103,6 @@ ${roster || "（没有其他 Agent）"}
 3. 只记录客观事实，不记录 MOOD 或助手内心想法
 4. 用户提供的文件/附件：只记录文件名和用途，忽略文件的具体内容
 5. 助手的长篇输出（文章、代码、分析等）：只记录产出了什么，不摘录内容
-6. 宁短勿长：摘要长度应与对话的实际信息密度成正比，闲聊几句只需一两行
-7. 直接以 ### 重要事实 开头输出，不要前言后记`,
+6. 宁短勿长：摘要长度应与对话的实际信息密度成正比，闲聊几句只需一两行`,
   };
 }

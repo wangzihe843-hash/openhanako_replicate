@@ -6,12 +6,17 @@
  * 自建 WebSocket 连接接收消息，支持频道消息和 C2C 私信。
  *
  * 凭证：appID + appSecret，从 QQ 机器人开放平台获取。
+ *
+ * 出站网络（#1612）：WS 走 webSocketOptionsForUrl 的代理；所有 REST 调用
+ * 统一走 Bridge outbound HTTP helper（同一代理配置源 + 显式超时 + 阶段化
+ * 诊断），禁止裸 fetch——Node 内建 fetch 不会跟随应用的代理配置。
  */
 
 import WebSocket from "ws";
 import { debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
+import { createBridgeOutboundHttp } from "./outbound-http.ts";
 import { QQApiError, QQ_FILE_TYPE, QQ_UPLOAD_SIZE_LIMITS, uploadQQLocalFile } from "./qq-local-upload.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
@@ -186,6 +191,7 @@ function normalizeQQReplyContext(replyContext = null) {
  * @param {(status: string, error?: string) => void} [opts.onStatus]
  */
 export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildMap, onDmGuildDiscovered, onStatus }) {
+  const http = createBridgeOutboundHttp({ platform: "qq" });
   let accessToken = null;
   let tokenExpiresAt = 0;
   let ws = null;
@@ -235,10 +241,14 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   // ── Token 管理 ──
 
   async function refreshToken() {
-    const res = await fetch(TOKEN_URL, {
+    // token 获取无副作用，允许有限重试（代理/网络抖动时自愈）
+    const res = await http.request({
+      stage: "token",
+      url: TOKEN_URL,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId: appID, clientSecret: appSecret }),
+      idempotent: true,
     });
     const data = await res.json();
     if (!data.access_token) {
@@ -260,15 +270,25 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
 
   // ── API 请求 ──
 
-  async function apiRequest(method: any, path: any, body?: any) {
+  /**
+   * QQ 开放平台 REST 统一入口。每个调用点必须显式声明 stage（阶段标识，
+   * 进诊断消息）；只有幂等/可安全重复的调用允许 idempotent: true（发送类
+   * 调用重试会重复发消息，QQ 侧没有客户端可控的去重保障）。
+   */
+  async function apiRequest(method: any, path: any, body?: any, opts?: { stage: string; idempotent?: boolean }) {
+    const stage = opts?.stage;
+    if (!stage) throw new Error(`QQ apiRequest [${path}] 缺少显式 stage 标识`);
     const token = await getToken();
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await http.request({
+      stage,
+      url: `${API_BASE}${path}`,
       method,
       headers: {
         Authorization: `QQBot ${token}`,
         "Content-Type": "application/json",
       },
       body: body ? JSON.stringify(body) : undefined,
+      idempotent: opts?.idempotent === true,
     });
     const text = await res.text().catch(() => "");
     if (!res.ok) {
@@ -279,7 +299,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         bizCode = parsed.code ?? parsed.err_code;
         message = parsed.message || parsed.msg || text;
       } catch {}
-      throw new QQApiError(`QQ API [${path}] ${res.status}: ${String(message).slice(0, 200)}`, {
+      throw new QQApiError(`QQ API [${stage} ${path}] ${res.status}: ${String(message).slice(0, 200)}`, {
         status: res.status,
         path,
         bizCode,
@@ -289,7 +309,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     try {
       return JSON.parse(text);
     } catch {
-      throw new QQApiError(`QQ API [${path}] returned invalid JSON: ${text.slice(0, 200)}`, {
+      throw new QQApiError(`QQ API [${stage} ${path}] returned invalid JSON: ${text.slice(0, 200)}`, {
         status: res.status,
         path,
       });
@@ -302,7 +322,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     if (stopped) return;
     try {
       const token = await getToken();
-      const { url } = await apiRequest("GET", "/gateway");
+      const { url } = await apiRequest("GET", "/gateway", undefined, { stage: "gateway", idempotent: true });
 
       ws = new WebSocket(url, webSocketOptionsForUrl(url));
 
@@ -571,7 +591,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     const messageEndpoints = qqMediaEndpoints(chatId, metadata, "messages");
     for (const endpoint of messageEndpoints) {
       try {
-        await apiRequest("POST", endpoint, msgBody);
+        await apiRequest("POST", endpoint, msgBody, { stage: "send_media_message" });
         return;
       } catch (err) {
         if (endpoint === messageEndpoints.at(-1)) {
@@ -599,7 +619,8 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
           const body = buildMarkdownReplyBody(endpoint, chunk);
           attachPassiveReplyFields(body, context);
           try {
-            await apiRequest("POST", endpoint.path, body);
+            // 发送有副作用：网络层绝不自动重试，避免重复发消息
+            await apiRequest("POST", endpoint.path, body, { stage: "send_reply" });
             lastError = null;
             break;
           } catch (err) {
@@ -638,7 +659,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const uploadEndpoints = qqMediaEndpoints(chatId, metadata, "files");
       for (const endpoint of uploadEndpoints) {
         try {
-          const res = await apiRequest("POST", endpoint, uploadBody);
+          const res = await apiRequest("POST", endpoint, uploadBody, { stage: "media_upload" });
           fileInfo = res.file_info;
           break;
         } catch (err) {
@@ -658,7 +679,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       if (metadata.isGroup === true && fileType === QQ_FILE_TYPE.FILE) {
         throw new Error("QQ 群聊暂不开放文件类型发送，请改用单聊或发送图片/视频/语音");
       }
-      const uploadResult = await uploadQQLocalFile({ apiRequest, chatId, filePath, fileType, metadata });
+      const uploadResult = await uploadQQLocalFile({ apiRequest, outboundHttp: http, chatId, filePath, fileType, metadata });
       if (!uploadResult?.file_info) {
         throw new Error("QQ 本地文件上传成功但未返回 file_info");
       }
@@ -682,7 +703,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     },
 
     async getMe() {
-      return apiRequest("GET", "/users/@me");
+      return apiRequest("GET", "/users/@me", undefined, { stage: "get_me", idempotent: true });
     },
 
     resolveOwnerChatId(userId) {

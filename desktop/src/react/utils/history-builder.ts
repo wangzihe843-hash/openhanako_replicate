@@ -187,6 +187,12 @@ function normalizePathKey(value: unknown): string | null {
   return trimmed.replace(/\\/g, '/');
 }
 
+function sessionFileIdLookupKey(fileId: unknown): string | null {
+  if (typeof fileId !== 'string') return null;
+  const trimmed = fileId.trim();
+  return trimmed ? `session-file:${trimmed}` : null;
+}
+
 function buildSessionFileLookup(sessionFiles: unknown): Map<string, SessionRegistryFile> {
   const lookup = new Map<string, SessionRegistryFile>();
   if (!Array.isArray(sessionFiles)) return lookup;
@@ -194,6 +200,8 @@ function buildSessionFileLookup(sessionFiles: unknown): Map<string, SessionRegis
     if (!isRecord(file)) continue;
     const record = file as SessionRegistryFile;
     const keys = [
+      sessionFileIdLookupKey(record.fileId),
+      sessionFileIdLookupKey(record.id),
       normalizePathKey(record.filePath),
       normalizePathKey(record.realPath),
       normalizePathKey(record.resource?.links?.content),
@@ -227,13 +235,15 @@ function listedForSessionFile(file: SessionRegistryFile | null | undefined, fall
 }
 
 function attachmentFromRef(
-  ref: { path: string; name: string; isDirectory?: boolean },
+  ref: { path: string; name: string; isDirectory?: boolean; fileId?: string },
   sessionFileLookup: Map<string, SessionRegistryFile>,
   fallback?: Partial<UserAttachment>,
 ): UserAttachment {
-  const sessionFile = sessionFileLookup.get(normalizePathKey(ref.path) || '');
-  const fileId = sessionFile?.fileId || sessionFile?.id;
-  const filePath = sessionFile?.filePath || sessionFile?.realPath || ref.path;
+  const sessionFile = (ref.fileId ? sessionFileLookup.get(sessionFileIdLookupKey(ref.fileId) || '') : null)
+    ?? (fallback?.fileId ? sessionFileLookup.get(sessionFileIdLookupKey(fallback.fileId) || '') : null)
+    ?? sessionFileLookup.get(normalizePathKey(ref.path) || '');
+  const fileId = sessionFile?.fileId || sessionFile?.id || ref.fileId || fallback?.fileId;
+  const filePath = sessionFile?.filePath || sessionFile?.realPath || fallback?.path || ref.path;
   const mimeType = sessionFile?.mime || fallback?.mimeType;
   const status = sessionFile?.status || fallback?.status;
   const hasMissingAt = !!sessionFile && Object.prototype.hasOwnProperty.call(sessionFile, 'missingAt')
@@ -249,7 +259,7 @@ function attachmentFromRef(
   return {
     ...(fileId ? { fileId } : {}),
     path: filePath,
-    name: displayNameForSessionFile(sessionFile, ref.path || ref.name),
+    name: displayNameForSessionFile(sessionFile, fallback?.name || ref.path || ref.name),
     isDir: sessionFile?.isDirectory ?? ref.isDirectory ?? false,
     ...(mimeType ? { mimeType } : {}),
     ...(presentation !== 'attachment' ? { presentation } : {}),
@@ -259,6 +269,29 @@ function attachmentFromRef(
     ...(transcription ? { transcription } : {}),
     ...(waveform ? { waveform } : {}),
   };
+}
+
+type SessionFileMarkerRef = { fileId: string; sessionPath?: string; label: string; kind: string };
+
+function markerMatchesAttachment(marker: SessionFileMarkerRef, ref: { path: string; name: string; isDirectory?: boolean }): boolean {
+  if (marker.kind === 'directory' && !ref.isDirectory) return false;
+  if (marker.kind !== 'directory' && ref.isDirectory) return false;
+  return marker.label === ref.path || marker.label === ref.name;
+}
+
+function consumeSessionFileMarkerForAttachment(
+  markers: SessionFileMarkerRef[],
+  consumed: Set<number>,
+  ref: { path: string; name: string; isDirectory?: boolean },
+): SessionFileMarkerRef | null {
+  for (let index = 0; index < markers.length; index += 1) {
+    if (consumed.has(index)) continue;
+    const marker = markers[index];
+    if (!markerMatchesAttachment(marker, ref)) continue;
+    consumed.add(index);
+    return marker;
+  }
+  return null;
 }
 
 function normalizeUserVisibleText(text: string, hasMediaAttachment: boolean): string {
@@ -401,14 +434,22 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         continue;
       }
 
-      const { text, files, attachedImages, attachedVideos, attachedAudios, deskContext, quotedText } = parseUserAttachments(rawContent);
+      const { text, files, attachedImages, attachedVideos, attachedAudios, sessionFileRefs, deskContext, quotedText } = parseUserAttachments(rawContent);
       const hasMarkerMedia = attachedImages.length > 0 || attachedVideos.length > 0 || attachedAudios.length > 0;
       const visibleText = normalizeUserVisibleText(text, hasMarkerMedia);
-      const fileAtts = files.map(f => attachmentFromRef({
-        path: f.path,
-        name: f.name,
-        isDirectory: f.isDirectory,
-      }, sessionFileLookup));
+      const consumedSessionFileMarkers = new Set<number>();
+      const fileAtts = files.map((f) => {
+        const marker = consumeSessionFileMarkerForAttachment(sessionFileRefs, consumedSessionFileMarkers, f);
+        return attachmentFromRef({
+          path: f.path,
+          name: f.name,
+          isDirectory: f.isDirectory,
+          ...(marker?.fileId ? { fileId: marker.fileId } : {}),
+        }, sessionFileLookup, marker ? {
+          fileId: marker.fileId,
+          name: marker.label,
+        } : undefined);
+      });
       const imageBlocks = m.images || [];
       const markerImageAtts = attachedImages.map((ref, idx) => {
         const img = imageBlocks[idx];

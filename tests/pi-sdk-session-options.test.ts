@@ -43,6 +43,40 @@ describe("Pi SDK session option normalization", () => {
     expect(result.content[0].text).toBe("ok");
   });
 
+  it("executes the same toolCallId only once and reuses the first result", async () => {
+    const read = makeAgentTool("read");
+    const definition = agentToolToToolDefinition(read);
+
+    const first = await definition.execute("call-repeat", { path: "a.txt" }, "signal", "update", { session: true });
+    const second = await definition.execute("call-repeat", { path: "a.txt" }, "signal", "update", { session: true });
+
+    expect(read.execute).toHaveBeenCalledOnce();
+    expect(second).toBe(first);
+  });
+
+  it("dedupes missing-id calls by normalized name, args, and assistantMessageId", async () => {
+    const custom = {
+      name: "web_search",
+      description: "search",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(async () => ({ content: [{ type: "text", text: "searched" }] })),
+    };
+
+    const normalized = normalizeCreateAgentSessionOptions({
+      tools: [],
+      customTools: [custom],
+    }, "0.70.2");
+    const definition = normalized.customTools[0];
+
+    const first = await definition.execute("", { query: "Hana", filters: { b: 2, a: 1 } }, null, null, { assistantMessageId: "assistant-1" });
+    const second = await definition.execute(null, { filters: { a: 1, b: 2 }, query: "Hana" }, null, null, { assistantMessageId: "assistant-1" });
+    const third = await definition.execute(null, { filters: { a: 1, b: 2 }, query: "Hana" }, null, null, { assistantMessageId: "assistant-2" });
+
+    expect(custom.execute).toHaveBeenCalledTimes(2);
+    expect(second).toBe(first);
+    expect(third.content[0].text).toBe("searched");
+  });
+
   it("normalizes Hana Tool[] plus customTools into Pi 0.68+ name allowlist and SDK custom tools", () => {
     const read = makeAgentTool("read");
     const bash = makeAgentTool("bash");
@@ -63,7 +97,7 @@ describe("Pi SDK session option normalization", () => {
     expect(normalized.tools).toEqual(["read", "bash", "web_search"]);
     expect(normalized.customTools.map(t => t.name)).toEqual(["read", "bash", "web_search"]);
     expect(normalized.customTools[0]).not.toBe(read);
-    expect(normalized.customTools[2]).toBe(custom);
+    expect(normalized.customTools[2]).not.toBe(custom);
     expect(normalized.model).toEqual({ id: "m" });
   });
 
@@ -101,7 +135,8 @@ describe("Pi SDK session option normalization", () => {
 
     expect(normalized.tools).toEqual(["read"]);
     expect(normalized.customTools.map(t => t.name)).toEqual(["read", "read"]);
-    expect(normalized.customTools[1]).toBe(customRead);
+    expect(normalized.customTools[1]).not.toBe(customRead);
+    expect(normalized.customTools[1].name).toBe(customRead.name);
   });
 
   it("throws a clear error for malformed base tools in Pi 0.68+ mode", () => {

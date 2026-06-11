@@ -53,8 +53,7 @@ const SDK_BUILTIN_OBJS = [
 ].map(makeTool);
 
 // HanaAgent custom tools — in production these come from agent.tools getter
-// and flow through buildTools.customTools. create_artifact is intentionally
-// absent from fresh sessions; it is a restore-only compatibility tool.
+// and flow through buildTools.customTools.
 const HANAKO_CUSTOM_OBJS = [
   "search_memory", "pin_memory", "unpin_memory", "web_search",
   "web_fetch", "todo_write", "notify",
@@ -899,5 +898,276 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(planList).toContain("bash");
     expect(planList).toContain("automation");
     expect(coord.getAccessMode()).toBe("read_only");
+  });
+
+  // ── #1624: capability drift detection on restore ─────────────
+
+  describe("capability drift (#1624)", () => {
+    function promptSnapshotEntry(systemPrompt) {
+      return {
+        version: 1,
+        systemPrompt,
+        appendSystemPrompt: [],
+        skillsResult: { skills: [], diagnostics: [] },
+        agentsFilesResult: { agentsFiles: [] },
+      };
+    }
+
+    it("restore computes drift when the live config has tools the frozen snapshot lacks", async () => {
+      const newTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, newTool],
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      const frozen = restoredSnapshot(allNames());
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: frozen,
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      // 默认行为零变化：active 工具仍是冻结快照
+      expect(activeToolsSpy.mock.calls[0][0]).not.toContain("office");
+
+      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
+      expect(notice).not.toBeNull();
+      expect(notice.addedToolNames).toEqual(["office"]);
+      expect(notice.removedToolNames).toEqual([]);
+      expect(notice.invalidToolNames).toEqual([]);
+      expect(notice.promptChanged).toBe(false);
+      expect(typeof notice.fingerprint).toBe("string");
+    });
+
+    it("restore reports retired tools filtered by repair as invalid instead of fully silent", async () => {
+      currentAgentConfig = { tools: { disabled: [] } };
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: [...allNames(), "retired_tool"],
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
+      expect(notice).not.toBeNull();
+      expect(notice.invalidToolNames).toEqual(["retired_tool"]);
+    });
+
+    it("restore flags prompt drift when the frozen snapshot prompt differs from the live build", async () => {
+      // 默认 harness 的 SessionManager mock 没有 getSessionFile，restore 读不到
+      // promptSnapshot；这里补上让冻结 prompt 快照真正参与对比（生产路径 open()
+      // 一定有 getSessionFile）。
+      sessionManagerCreateMock.mockReturnValue({
+        getCwd: () => tmpDir,
+        getSessionFile: () => fakeSessionPath,
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: restoredSnapshot(allNames()),
+            promptSnapshot: promptSnapshotEntry("an older persona prompt"),
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
+      expect(notice).not.toBeNull();
+      expect(notice.promptChanged).toBe(true);
+    });
+
+    it("returns no notice when frozen snapshot matches the live config", async () => {
+      currentAgentConfig = { tools: { disabled: ["dm", "beautify", "workflow"] } };
+      const frozen = restoredSnapshot(allNames().filter((n) => n !== "dm"));
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: frozen,
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
+    });
+
+    it("suppresses the notice when the dismissed fingerprint matches the live fingerprint", async () => {
+      const newTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, newTool],
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      const frozen = restoredSnapshot(allNames());
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: frozen,
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
+      expect(notice).not.toBeNull();
+
+      await coord.dismissSessionCapabilityDrift(sessionPath, notice.fingerprint);
+
+      // 当前 fingerprint 已被 dismiss → 不再提示
+      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
+      // dismiss 状态持久化在 session-meta（跟 session 走）
+      const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+      expect(meta[path.basename(fakeSessionPath)].capabilityDriftDismissedFingerprint).toBe(notice.fingerprint);
+    });
+
+    it("re-prompts after dismissal once the live fingerprint changes again", async () => {
+      const newTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, newTool],
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      const frozen = restoredSnapshot(allNames());
+      // 上一次 dismiss 留下的是"另一个" fingerprint
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: frozen,
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+            capabilityDriftDismissedFingerprint: "stale-dismissed-fingerprint",
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).not.toBeNull();
+    });
+
+    it("restore with the dismissed fingerprint persisted in meta suppresses across runtimes", async () => {
+      const newTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, newTool],
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      const frozen = restoredSnapshot(allNames());
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: frozen,
+            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+          },
+        }, null, 2),
+      );
+      const first = await coord.createSession(null, tmpDir, true, null, { restore: true });
+      const notice = coord.getSessionCapabilityDriftNotice(first.sessionPath);
+      await coord.dismissSessionCapabilityDrift(first.sessionPath, notice.fingerprint);
+
+      // 模拟重启：拆掉 runtime 后重新 restore，meta 是唯一事实源
+      await coord.discardSessionRuntime?.(first.sessionPath, "test");
+      coord._sessions.delete(first.sessionPath);
+      coord._metaCache?.clear?.();
+      const second = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+      expect(coord.getSessionCapabilityDriftNotice(second.sessionPath)).toBeNull();
+    });
+  });
+
+  // ── #1624: explicit refresh (fresh compact rebuilds both snapshots) ──
+
+  describe("refreshCapabilitySnapshots (#1624)", () => {
+    it("rebuilds the tool snapshot with Case C semantics (plugin tools included) and persists it", async () => {
+      const pluginTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, pluginTool],
+      });
+      currentAgentConfig = { tools: { disabled: [] } };
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: {
+            toolNames: ["read", "bash"],
+            promptSnapshot: {
+              version: 1,
+              systemPrompt: "an older persona prompt",
+              appendSystemPrompt: [],
+              skillsResult: { skills: [], diagnostics: [] },
+              agentsFilesResult: { agentsFiles: [] },
+            },
+            capabilityDriftDismissedFingerprint: "previously-dismissed",
+          },
+        }, null, 2),
+      );
+
+      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, {
+        restore: true,
+        refreshCapabilitySnapshots: true,
+      });
+
+      // 工具快照按当前配置重算，含插件工具
+      const appliedList = activeToolsSpy.mock.calls[0][0];
+      expect(appliedList).toContain("office");
+      expect(appliedList).toContain("browser");
+
+      // session-meta 同步更新：toolNames + promptSnapshot 重建，dismiss 状态清空
+      const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+      const entry = meta[path.basename(fakeSessionPath)];
+      expect(entry.toolNames).toContain("office");
+      expect(entry.promptSnapshot.systemPrompt).toBe("mock-prompt");
+      expect(entry.capabilityDriftDismissedFingerprint).toBeNull();
+
+      // 刷新后无漂移
+      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
+    });
+
+    it("reloadSessionRuntime passes the refresh flag through", async () => {
+      const pluginTool = { ...makeTool("office"), _pluginId: "office" };
+      coord._d.buildTools = () => ({
+        tools: SDK_BUILTIN_OBJS,
+        customTools: [...HANAKO_CUSTOM_OBJS, pluginTool],
+      });
+      coord._d.getAgentById = (id) => (id === "test" ? coord._d.getAgent() : null);
+      currentAgentConfig = { tools: { disabled: [] } };
+      await fsp.writeFile(
+        path.join(sessionDir, "session-meta.json"),
+        JSON.stringify({
+          [path.basename(fakeSessionPath)]: { toolNames: ["read", "bash"] },
+        }, null, 2),
+      );
+      sessionManagerOpenMock.mockReturnValue({ getCwd: () => tmpDir });
+
+      await coord.createSession(null, tmpDir, true, null, { restore: true });
+      expect(activeToolsSpy.mock.calls[0][0]).not.toContain("office");
+
+      await coord.reloadSessionRuntime(fakeSessionPath, { refreshCapabilitySnapshots: true });
+
+      const lastApplied = activeToolsSpy.mock.calls[activeToolsSpy.mock.calls.length - 1][0];
+      expect(lastApplied).toContain("office");
+      const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+      expect(meta[path.basename(fakeSessionPath)].toolNames).toContain("office");
+    });
   });
 });

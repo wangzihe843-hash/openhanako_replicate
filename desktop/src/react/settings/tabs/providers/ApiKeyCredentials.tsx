@@ -180,7 +180,13 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
       const testRes = await hanaFetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: providerId, base_url: urlVal.trim() || derivedBaseUrl, api, api_key: keyVal.trim() || undefined, headers }),
+        body: JSON.stringify({
+          name: providerId,
+          base_url: urlVal.trim() || derivedBaseUrl,
+          api,
+          api_key: isMaskedSecretValue(keyVal) ? undefined : keyVal.trim() || undefined,
+          headers,
+        }),
       });
       const testData = await testRes.json();
       setConnStatus(testData.ok ? 'ok' : 'fail');
@@ -202,7 +208,6 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
             value={keyVal}
             onChange={(v) => { setKeyVal(v); setKeyEdited(true); setConnStatus('idle'); }}
             onReveal={isMaskedSecretValue(keyVal) ? revealSavedApiKey : undefined}
-            onRevealValue={(v) => { setKeyVal(v); setConnStatus('idle'); }}
             onRevealError={(err) => {
               const msg = err instanceof Error ? err.message : String(err);
               showToast(msg, 'error');

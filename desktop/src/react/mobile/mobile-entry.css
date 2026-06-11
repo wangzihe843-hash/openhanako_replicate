@@ -133,6 +133,7 @@ body {
     font-family: var(--font-ui);
     background-color: var(--bg);
     color: var(--text);
+    caret-color: var(--text);
     line-height: 1.7;
     font-size: 15px;
     -webkit-font-smoothing: antialiased;
@@ -165,9 +166,9 @@ option,
 }
 
 .md-content button,
-.md-content .copy-btn,
+.md-content .code-block-toolbar-btn,
 .preview-markdown button,
-.preview-code .copy-btn {
+.preview-code .code-block-toolbar-btn {
     user-select: none;
     -webkit-user-select: none;
 }
@@ -579,34 +580,63 @@ html[data-platform="linux"] .tb-toggle-right {
     margin: 0;
 }
 
-.md-content .code-block-wrap .copy-btn {
+.md-content .code-block-wrap .code-block-toolbar {
     position: absolute;
     top: 0;
     right: 0;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-radius: 0 var(--radius-md) 0 var(--radius-sm);
+    z-index: 1;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 2rem;
+    width: 1.7rem;
+    height: 1.7rem;
     padding: 0;
     border: 0;
-    border-radius: 0 var(--radius-md) 0 var(--radius-sm);
     background: transparent;
     color: var(--text-muted);
     font: inherit;
     font-size: 0.68rem;
     cursor: default;
-    opacity: 0.45;
+    opacity: 0.35;
     transition: opacity var(--duration-fast), color var(--duration-fast);
 }
 
-.md-content .code-block-wrap .copy-btn-icon {
-    width: 0.9rem;
-    height: 0.9rem;
+.md-content .code-block-wrap .code-block-toolbar-btn:first-child {
+    border-radius: 0 0 0 var(--radius-sm);
+}
+.md-content .code-block-wrap .code-block-toolbar-btn:last-child {
+    border-radius: 0 var(--radius-md) 0 0;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn-icon {
+    width: 0.82rem;
+    height: 0.82rem;
     flex: 0 0 auto;
 }
 
-.md-content .code-block-wrap .copy-btn::after {
+.md-content .code-block-wrap .code-block-toolbar-btn:hover,
+.md-content .code-block-wrap .code-block-toolbar-btn:focus-visible {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn[data-active="true"] {
+    color: var(--accent);
+    opacity: 0.7;
+}
+
+.md-content .code-block-wrap .code-block-toolbar-btn[data-copied="true"] {
+    color: var(--accent);
+    opacity: 1;
+}
+.md-content .code-block-wrap .code-block-toolbar-btn[data-copied="true"]::after {
     content: attr(data-copied-label);
     position: absolute;
     top: 50%;
@@ -619,19 +649,13 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.68rem;
     white-space: nowrap;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity var(--duration-fast);
-}
-
-.md-content .code-block-wrap .copy-btn:hover,
-.md-content .code-block-wrap .copy-btn:focus-visible,
-.md-content .code-block-wrap .copy-btn[data-copied="true"] {
-    color: var(--accent);
     opacity: 1;
 }
 
-.md-content .code-block-wrap .copy-btn[data-copied="true"]::after {
-    opacity: 1;
+.md-content .code-block-wrap[data-wrap="true"] > pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: hidden;
 }
 
 .md-content pre code {

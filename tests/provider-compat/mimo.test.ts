@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeProviderPayload } from "../../core/provider-compat.ts";
+import { withThinkingFormatCompat } from "../../shared/model-capabilities.ts";
 
 const mimoModel = {
   id: "mimo-v2-flash",
@@ -15,6 +16,56 @@ const mimoModel = {
 };
 
 describe("provider-compat/mimo", () => {
+  it("infers MiMo thinking compat for custom proxy model IDs without changing provider identity", () => {
+    const projected = withThinkingFormatCompat({
+      id: "ch/mimo-v2.5-pro",
+      provider: "ch",
+      baseUrl: "https://proxy.example.test/v1",
+      api: "openai-completions",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false },
+    });
+
+    expect(projected.provider).toBe("ch");
+    expect(projected.compat).toMatchObject({
+      supportsDeveloperRole: false,
+      thinkingFormat: "qwen-chat-template",
+      reasoningProfile: "mimo-openai",
+    });
+  });
+
+  it("utility mode disables thinking for custom proxy MiMo models inferred from model ID", () => {
+    const proxyModel = {
+      id: "mimo-v2.5-pro",
+      provider: "ch",
+      baseUrl: "https://proxy.example.test/v1",
+      api: "openai-completions",
+      reasoning: true,
+      maxTokens: 65536,
+      compat: { supportsDeveloperRole: false },
+    };
+    const payload = {
+      model: "mimo-v2.5-pro",
+      messages: [{
+        role: "assistant",
+        content: "",
+        reasoning_content: "previous thinking",
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "date", arguments: "{}" } }],
+      }],
+      reasoning_effort: "high",
+      thinking: { type: "enabled" },
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+    };
+
+    const result = normalizeProviderPayload(payload, proxyModel, { mode: "utility" });
+
+    expect(proxyModel.provider).toBe("ch");
+    expect(result.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(result).not.toHaveProperty("thinking");
+    expect(result.messages[0]).not.toHaveProperty("reasoning_content");
+  });
+
   it("converts official MiMo audio data URLs to input_audio parts", () => {
     const audioModel = {
       id: "mimo-v2.5",

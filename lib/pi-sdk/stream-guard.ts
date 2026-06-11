@@ -1,5 +1,6 @@
 import type { AssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { isToolProtocolFragment } from "../tool-protocol-sanitizer.ts";
 
 const STREAM_GUARD_FLAG = Symbol.for("hana.piSdk.streamGuardInstalled");
 
@@ -117,15 +118,6 @@ function appendTextBlock(content, text) {
     return;
   }
   content.push({ type: "text", text });
-}
-
-// 工具协议特征前缀：模型尝试发起工具调用、SDK 抽 name 失败时，partialArgs
-// 是工具调用 XML（非 prose），不能回写成可见文本，否则会泄漏到 Bridge。
-// 注意：仅匹配「以工具协议标签起手」的串，保留「正文里字面提到 <tool_call>」的救回能力。
-const TOOL_PROTOCOL_PREFIX_RE = /^<(?:antml:)?(?:tool_calls|function_calls|invoke|parameter)\b|^<\|/i;
-
-function isToolProtocolFragment(text) {
-  return TOOL_PROTOCOL_PREFIX_RE.test(text);
 }
 
 function recoverInvalidToolCallText(block, bufferedText = "") {

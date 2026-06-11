@@ -44,7 +44,10 @@ export class QQApiError extends Error {
   }
 }
 
-export async function uploadQQLocalFile({ apiRequest, chatId, filePath, fileType, metadata = {} }: any) {
+export async function uploadQQLocalFile({ apiRequest, outboundHttp, chatId, filePath, fileType, metadata = {} }: any) {
+  if (typeof outboundHttp?.request !== "function") {
+    throw new Error("uploadQQLocalFile 需要注入 outboundHttp（Bridge outbound HTTP helper）");
+  }
   const targets = qqMediaTargets(chatId, metadata);
   let lastError = null;
   for (const target of targets) {
@@ -53,7 +56,7 @@ export async function uploadQQLocalFile({ apiRequest, chatId, filePath, fileType
       continue;
     }
     try {
-      return await chunkedUploadLocalFile({ apiRequest, target, filePath, fileType, metadata });
+      return await chunkedUploadLocalFile({ apiRequest, outboundHttp, target, filePath, fileType, metadata });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (metadata.isGroup !== undefined) throw lastError;
@@ -77,7 +80,7 @@ function qqMediaTargets(chatId: any, metadata: any = {}) {
   });
 }
 
-async function chunkedUploadLocalFile({ apiRequest, target, filePath, fileType, metadata }: any) {
+async function chunkedUploadLocalFile({ apiRequest, outboundHttp, target, filePath, fileType, metadata }: any) {
   const stat = fs.statSync(filePath);
   if (!stat.isFile()) throw new Error(`QQ 只能上传文件，不能上传目录：${filePath}`);
   if (stat.size === 0) throw new Error(`QQ 不能发送空文件：${filePath}`);
@@ -95,7 +98,7 @@ async function chunkedUploadLocalFile({ apiRequest, target, filePath, fileType, 
     md5: hashes.md5,
     sha1: hashes.sha1,
     md5_10m: hashes.md5_10m,
-  });
+  }, { stage: "upload_prepare" });
 
   const uploadId = prepare.upload_id;
   const blockSize = Number(prepare.block_size);
@@ -120,7 +123,7 @@ async function chunkedUploadLocalFile({ apiRequest, target, filePath, fileType, 
     if (length <= 0) throw new Error("QQ upload_prepare 分片范围超过文件大小");
     const chunk = await readFileChunk(filePath, offset, length);
     const md5 = crypto.createHash("md5").update(chunk).digest("hex");
-    await putToPresignedUrl(part.presigned_url, chunk);
+    await putToPresignedUrl(outboundHttp, part.presigned_url, chunk);
     await finishUploadPart(apiRequest, target.partFinish, {
       upload_id: uploadId,
       part_index: partIndex,
@@ -208,44 +211,31 @@ async function readFileChunk(filePath, offset, length) {
   }
 }
 
-async function putToPresignedUrl(url, buffer) {
-  let lastError = null;
-  for (let attempt = 0; attempt <= PART_UPLOAD_MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), PART_UPLOAD_TIMEOUT_MS);
-    try {
-      const body = new Blob([buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)]);
-      const res = await fetch(url, {
-        method: "PUT",
-        body,
-        headers: { "Content-Length": String(buffer.length) },
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`QQ part upload failed: ${res.status} ${res.statusText} ${text.slice(0, 200)}`.trim());
-      }
-      return;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (lastError.name === "AbortError") {
-        lastError = new Error(`QQ part upload timeout after ${PART_UPLOAD_TIMEOUT_MS}ms`);
-      }
-      if (attempt < PART_UPLOAD_MAX_RETRIES) {
-        await sleep(1000 * Math.pow(2, attempt));
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+async function putToPresignedUrl(outboundHttp, url, buffer) {
+  // 同字节重传同一预签名 URL 是幂等的；超时/重试/代理统一由 outbound helper
+  // 管理（stage 化诊断，预签名 query 里的签名不会进错误消息）
+  const body = new Blob([buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)]);
+  const res = await outboundHttp.request({
+    stage: "upload_part_put",
+    url,
+    method: "PUT",
+    body,
+    headers: { "Content-Length": String(buffer.length) },
+    timeoutMs: PART_UPLOAD_TIMEOUT_MS,
+    idempotent: true,
+    maxRetries: PART_UPLOAD_MAX_RETRIES,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`QQ part upload failed: ${res.status} ${res.statusText} ${text.slice(0, 200)}`.trim());
   }
-  throw lastError;
 }
 
 async function finishUploadPart(apiRequest, endpoint, body, retryTimeoutMs) {
   let lastError = null;
   for (let attempt = 0; attempt <= PART_FINISH_MAX_RETRIES; attempt++) {
     try {
-      await apiRequest("POST", endpoint, body);
+      await apiRequest("POST", endpoint, body, { stage: "upload_part_finish" });
       return;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -267,7 +257,7 @@ async function retryUploadPartFinishUntilReady(apiRequest, endpoint, body, retry
   let lastError = null;
   while (Date.now() < deadline) {
     try {
-      await apiRequest("POST", endpoint, body);
+      await apiRequest("POST", endpoint, body, { stage: "upload_part_finish" });
       return;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -284,7 +274,7 @@ async function completeUploadWithRetry(apiRequest, endpoint, body) {
   let lastError = null;
   for (let attempt = 0; attempt <= COMPLETE_UPLOAD_MAX_RETRIES; attempt++) {
     try {
-      return await apiRequest("POST", endpoint, body);
+      return await apiRequest("POST", endpoint, body, { stage: "upload_complete" });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt < COMPLETE_UPLOAD_MAX_RETRIES) {

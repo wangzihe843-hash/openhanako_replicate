@@ -131,6 +131,8 @@ const migrations = {
   39: repairAutomationOwnershipAfterAgentRunConsolidation,
   // session permission mode 收敛：旧 sidecar 的 planMode/accessMode 补齐 canonical permissionMode
   40: migrateSessionPermissionModeSidecars,
+  // identity 首启种子曾把 {{userName}} 写成空串，修回动态用户名占位符
+  41: migrateIdentityUserNamePlaceholders,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -2514,6 +2516,70 @@ function backupSessionMetaBeforeV40(metaPath, raw, log) {
   } catch (err) {
     if (err.code === "EEXIST") return;
     log?.(`[migrations] #40: failed to write session-meta backup ${backupPath}: ${err.message}`);
+    throw err;
+  }
+}
+
+function migrateIdentityUserNamePlaceholders(ctx) {
+  const { agentsDir, log } = ctx;
+  const identityPaths = collectAgentIdentityPaths(agentsDir);
+  let patched = 0;
+  for (const identityPath of identityPaths) {
+    patched += repairIdentityUserNamePlaceholder(identityPath, log);
+  }
+  log?.(`[migrations] #41: identity userName placeholders repaired (${patched})`);
+}
+
+function collectAgentIdentityPaths(agentsDir) {
+  let agentDirs;
+  try {
+    agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const dir of agentDirs) {
+    const identityPath = path.join(agentsDir, dir.name, "identity.md");
+    try {
+      if (fs.statSync(identityPath).isFile()) out.push(identityPath);
+    } catch {
+      // Imported or partially-created agents may not have identity.md yet.
+    }
+  }
+  return out;
+}
+
+function repairIdentityUserNamePlaceholder(identityPath, log) {
+  let raw;
+  try {
+    raw = fs.readFileSync(identityPath, "utf-8");
+  } catch {
+    return 0;
+  }
+
+  const repaired = restoreBlankUserNameIdentityTemplate(raw);
+  if (repaired === raw) return 0;
+
+  backupIdentityBeforeV41(identityPath, raw, log);
+  atomicWriteSync(identityPath, repaired);
+  return 1;
+}
+
+function restoreBlankUserNameIdentityTemplate(raw) {
+  if (typeof raw !== "string" || raw.includes("{{userName}}")) return raw;
+  return raw
+    .replace(/(^|\r?\n)([ \t]*)的个人助手/g, "$1$2{{userName}}的个人助手")
+    .replace(/(^|\r?\n)([ \t]*)'s personal assistant/g, "$1$2{{userName}}'s personal assistant");
+}
+
+function backupIdentityBeforeV41(identityPath, raw, log) {
+  const backupPath = `${identityPath}.pre-v41.bak`;
+  try {
+    fs.writeFileSync(backupPath, raw, { encoding: "utf-8", flag: "wx" });
+  } catch (err) {
+    if (err.code === "EEXIST") return;
+    log?.(`[migrations] #41: failed to write identity backup ${backupPath}: ${err.message}`);
     throw err;
   }
 }

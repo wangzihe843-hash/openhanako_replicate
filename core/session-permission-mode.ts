@@ -37,9 +37,6 @@ const SIDE_EFFECT_TOOLS = new Set([
   "install_skill",
   "update_settings",
   "todo_write",
-  // Legacy compatibility tools stay classified as side effects so restored
-  // sessions keep the same permission boundary until the v0.133 cleanup window.
-  "create_artifact",
   "stage_files",
   "present_files",
   "subagent",
@@ -138,13 +135,40 @@ export function isReadOnlyPermissionMode(mode) {
   return normalizeSessionPermissionMode(mode) === SESSION_PERMISSION_MODES.READ_ONLY;
 }
 
-function blocked(toolName, { code = "ACTION_BLOCKED_BY_READ_ONLY", message }: { code?: string; message?: string } = {}) {
+// 拦截分层（#1614）：deny 必须标明是哪一层拦的 + 怎么解锁，让模型/用户能自助走出去。
+//   - subagent_blocklist：subagent 固定边界（任何档位都不可用）
+//   - subagent_access：subagent 只读档（出路：access:"write" 重派 + 父会话可操作）
+//   - conversation：conversation tool mode（出路：会话设置面板切到 write）
+//   - session：普通会话只读档，如 plan 模式（出路：切换会话权限档）
+function blocked(toolName, { code = "ACTION_BLOCKED_BY_READ_ONLY", message, layer = "session" }: { code?: string; message?: string; layer?: string } = {}) {
   return {
     action: "deny",
     code,
     message: message || `${toolName} is blocked in read-only mode.`,
-    details: { toolName },
+    details: { toolName, layer },
   };
+}
+
+function blockedByReadOnly(toolName, context) {
+  if (context?.isSubagent) {
+    return blocked(toolName, {
+      layer: "subagent_access",
+      message: `${toolName} is blocked: this subagent runs in read-only mode. `
+        + `For write access, re-dispatch the subagent with access:"write" — this requires the parent session to be in an operable (non read-only) mode; a subagent's permission can never exceed its parent session.`,
+    });
+  }
+  if (context?.surface === "conversation") {
+    return blocked(toolName, {
+      layer: "conversation",
+      message: `${toolName} is blocked: this conversation's tool permission is read-only. `
+        + `The user can switch this conversation to write mode in its conversation settings panel.`,
+    });
+  }
+  return blocked(toolName, {
+    layer: "session",
+    message: `${toolName} is blocked: this session is in read-only mode. `
+      + `Switch the session permission mode out of read-only (e.g. leave plan mode) to use this tool.`,
+  });
 }
 
 function prompt(toolName) {
@@ -163,31 +187,31 @@ function review(toolName) {
   };
 }
 
-function classifyBrowserAction(mode, action) {
+function classifyBrowserAction(mode, action, context) {
   if (BROWSER_READ_ACTIONS.has(action)) return { action: "allow" };
-  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("browser");
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("browser", context);
   if (mode === SESSION_PERMISSION_MODES.AUTO) return review("browser");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("browser");
   return { action: "allow" };
 }
 
-function classifyTerminalAction(mode, action) {
+function classifyTerminalAction(mode, action, context) {
   if (TERMINAL_READ_ACTIONS.has(action)) return { action: "allow" };
-  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("terminal");
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("terminal", context);
   if (mode === SESSION_PERMISSION_MODES.AUTO) return review("terminal");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("terminal");
   return { action: "allow" };
 }
 
-function classifySessionFoldersAction(mode, action) {
+function classifySessionFoldersAction(mode, action, context) {
   if (action === "list") return { action: "allow" };
-  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("session_folders");
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("session_folders", context);
   return { action: "allow" };
 }
 
-function classifyFileAction(mode, action) {
+function classifyFileAction(mode, action, context) {
   if (FILE_READ_ACTIONS.has(action)) return { action: "allow" };
-  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blocked("file");
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("file", context);
   if (mode === SESSION_PERMISSION_MODES.AUTO) return review("file");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("file");
   return { action: "allow" };
@@ -199,7 +223,12 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
   if (!name) return { action: "allow" };
   // subagent 上下文固定边界（与 mode 无关，优先于其它判定）：防自递归 + 禁越权工具。
   if (context?.isSubagent && SUBAGENT_BLOCKED_TOOLS.has(name)) {
-    return blocked(name, { code: "ACTION_BLOCKED_IN_SUBAGENT", message: `${name} is not available inside a subagent.` });
+    return blocked(name, {
+      code: "ACTION_BLOCKED_IN_SUBAGENT",
+      layer: "subagent_blocklist",
+      message: `${name} is not available inside a subagent. `
+        + `This tool is always blocked in subagent context regardless of access level; perform this action from the parent session instead.`,
+    });
   }
   // 硬不变量：subagent 没有需要人类确认的模式。后台任务无人交互确认，若走 prompt/review
   // 会挂在永不到来的确认上（直到超时）。ASK/AUTO 在 subagent 上下文一律坍缩为 operate，
@@ -211,8 +240,8 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
     normalized = SESSION_PERMISSION_MODES.OPERATE;
   }
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
-  if (name === "browser") return classifyBrowserAction(normalized, params?.action);
-  if (name === "terminal") return classifyTerminalAction(normalized, params?.action);
+  if (name === "browser") return classifyBrowserAction(normalized, params?.action, context);
+  if (name === "terminal") return classifyTerminalAction(normalized, params?.action, context);
   // 静默草稿工具：在 ASK 提示兜底之前判定。OPERATE/ASK 一律放行（草稿非约束、面板还有「确认生成」，
   // 不该重复弹工具确认）；READ_ONLY 仍走下面的只读拦截。subagent 已在函数开头被 SUBAGENT_BLOCKED 拦死，
   // 走不到这里——故这里的放行只对主 agent 生效，二者组合时拦截优先。
@@ -220,10 +249,10 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
   if (SILENT_DRAFT_TOOLS.has(name) && normalized !== SESSION_PERMISSION_MODES.READ_ONLY) {
     return { action: "allow" };
   }
-  if (name === "session_folders") return classifySessionFoldersAction(normalized, params?.action);
-  if (name === "file") return classifyFileAction(normalized, params?.action);
+  if (name === "session_folders") return classifySessionFoldersAction(normalized, params?.action, context);
+  if (name === "file") return classifyFileAction(normalized, params?.action, context);
   if (normalized === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
-  if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blocked(name);
+  if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(name, context);
   if (normalized === SESSION_PERMISSION_MODES.AUTO) return review(name);
   if (SIDE_EFFECT_TOOLS.has(name)) return prompt(name);
   return prompt(name);

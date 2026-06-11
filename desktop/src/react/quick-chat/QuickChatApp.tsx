@@ -28,6 +28,7 @@ import {
   shouldAdoptRuntimeAgentForQuickChat,
   type QuickChatRuntimeAgent,
 } from './quick-chat-runtime';
+import { useQuickChatAutoScroll } from './use-quick-chat-auto-scroll';
 import styles from './QuickChatApp.module.css';
 
 interface AgentOption extends QuickChatRuntimeAgent {
@@ -130,6 +131,7 @@ export function QuickChatApp() {
   const reuseTimeoutMinutesRef = useRef(DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES);
   const isStreamingRef = useRef(false);
   const sendingRef = useRef(false);
+  const isComposingRef = useRef(false);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) || agents[0] || null,
@@ -361,6 +363,7 @@ export function QuickChatApp() {
 
   useEffect(() => {
     const dispose = window.hana?.onQuickChatShown?.(() => {
+      textareaRef.current?.focus();
       void (async () => {
         const runtime = await refreshQuickChatRuntimeState({
           adoptAgent: shouldAdoptRuntimeAgentForQuickChat(sessionPathRef.current),
@@ -627,11 +630,13 @@ export function QuickChatApp() {
     window.hana?.quickChatResize?.({ mode, height });
   }, [attachments.length, displayError, draft, expanded, sessionItems, isStreaming]);
 
-  useEffect(() => {
-    const scroller = transcriptScrollRef.current;
-    if (!scroller) return;
-    scroller.scrollTop = scroller.scrollHeight;
-  }, [sessionItems, isStreaming, draft]);
+  useQuickChatAutoScroll({
+    expanded,
+    isStreaming,
+    scrollRef: transcriptScrollRef,
+    sessionItems,
+    sessionPath,
+  });
 
   return (
     <div
@@ -708,11 +713,13 @@ export function QuickChatApp() {
             onChange={(event) => setDraft(event.target.value)}
             onPaste={handlePaste}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.key === 'Enter' && !event.shiftKey && !isComposingRef.current && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void send();
               }
             }}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder={t('input.placeholder')}
             rows={expanded ? 2 : 3}
           />

@@ -6,6 +6,11 @@ import path from 'node:path';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StreamingMarkdownContent } from '../../components/chat/StreamingMarkdownContent';
+import { renderMarkdown } from '../../utils/markdown';
+
+vi.mock('../../utils/mermaid-renderer', () => ({
+  renderMermaidDiagrams: vi.fn(async () => undefined),
+}));
 
 describe('StreamingMarkdownContent', () => {
   beforeEach(() => {
@@ -211,6 +216,34 @@ describe('StreamingMarkdownContent', () => {
 
     expect(finalRoot?.getAttribute('data-stream-plain-text')).toBeNull();
     expect(activeInnerHtml).toBe(finalRoot?.innerHTML);
+  });
+
+  it('uses identical mermaid html structure while streaming and after completion', () => {
+    const source = [
+      '```mermaid',
+      'graph TD',
+      '  A-->B',
+      '```',
+    ].join('\n');
+    const html = renderMarkdown(source);
+
+    const activeRender = render(
+      <StreamingMarkdownContent source={source} html={html} active />,
+    );
+    const activeRoot = activeRender.container.querySelector('.md-content');
+    const activeInnerHtml = activeRoot?.innerHTML;
+    activeRender.unmount();
+
+    const finalRender = render(
+      <StreamingMarkdownContent source={source} html={html} active={false} />,
+    );
+    const finalRoot = finalRender.container.querySelector('.md-content');
+
+    expect(activeRoot?.querySelector('.mermaid-diagram')).not.toBeNull();
+    expect(activeRoot?.querySelector('.mermaid-source code')?.textContent).toContain('graph TD');
+    expect(activeRoot?.querySelector('.mermaid-rendered')).not.toBeNull();
+    expect(activeInnerHtml).toBe(finalRoot?.innerHTML);
+    expect(activeInnerHtml).not.toContain('language-mermaid');
   });
 
   it('keeps stream motion off React animation frames and limits CSS to opacity or tiny transforms', () => {

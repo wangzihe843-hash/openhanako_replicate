@@ -15,7 +15,7 @@ const DEFAULT_SECRET_KEYS = new Set<string>([
   "refreshToken",
 ]);
 
-export function isMaskedSecretValue(value: unknown): value is string {
+export function isMaskedSecretValue(value: unknown): value is typeof MASKED_SECRET {
   return typeof value === "string" && value.trim() === MASKED_SECRET;
 }
 

@@ -35,6 +35,10 @@ function makeAgent(locale) {
   return agent;
 }
 
+function writeUserProfile(agent, content) {
+  fs.writeFileSync(path.join(agent.userDir, "user.md"), content, "utf-8");
+}
+
 afterEach(() => {
   vi.useRealTimers();
   for (const dir of tempDirs.splice(0)) {
@@ -79,5 +83,39 @@ describe("Agent platform prompt identity", () => {
     expect(prompt).toContain("15:53");
     expect(prompt).toContain("Your day starts at 04:00.");
     expect(prompt).not.toMatch(/\b(?:AM|PM)\b/);
+  });
+
+  it("injects the configured Chinese user name as an explicit profile fact", () => {
+    const agent = makeAgent("zh-CN");
+    agent._config.user = { name: "黎" };
+    agent.userName = "黎";
+    writeUserProfile(agent, "喜欢安静、克制的界面。\n");
+
+    const prompt = agent.buildSystemPrompt({
+      forceMemoryEnabled: false,
+      forceExperienceEnabled: false,
+    });
+
+    expect(prompt).toContain("# 用户档案");
+    expect(prompt).toContain("用户的名字叫：黎");
+    expect(prompt).toContain("喜欢安静、克制的界面。");
+    expect(prompt).not.toContain("由用户手动维护");
+  });
+
+  it("injects the configured English user name as an explicit profile fact", () => {
+    const agent = makeAgent("en");
+    agent._config.user = { name: "Li" };
+    agent.userName = "Li";
+    writeUserProfile(agent, "Prefers quiet interfaces.\n");
+
+    const prompt = agent.buildSystemPrompt({
+      forceMemoryEnabled: false,
+      forceExperienceEnabled: false,
+    });
+
+    expect(prompt).toContain("# User Profile");
+    expect(prompt).toContain("The user's name is: Li");
+    expect(prompt).toContain("Prefers quiet interfaces.");
+    expect(prompt).not.toContain("manually maintained");
   });
 });

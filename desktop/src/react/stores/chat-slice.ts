@@ -22,7 +22,7 @@ export interface ChatSlice {
   _loadMessagesVersion: Record<string, number>;
   scrollPositions: Record<string, number>;
 
-  initSession: (path: string, items: ChatListItem[], hasMore: boolean) => void;
+  initSession: (path: string, items: ChatListItem[], hasMore: boolean, revision?: string | null) => void;
   prependItems: (path: string, items: ChatListItem[], hasMore: boolean) => void;
   appendItem: (path: string, item: ChatListItem) => void;
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
@@ -54,7 +54,7 @@ export const createChatSlice = (
   _loadMessagesVersion: {},
   scrollPositions: {},
 
-  initSession: (path, items, hasMore) => set((s) => {
+  initSession: (path, items, hasMore, revision = null) => set((s) => {
     const sessions = { ...s.chatSessions };
     const registryFiles = { ...s.sessionRegistryFilesByPath };
     const scrollPositions = { ...s.scrollPositions };
@@ -63,6 +63,7 @@ export const createChatSlice = (
       hasMore,
       loadingMore: false,
       oldestId: firstMessageId(items),
+      revision,
     };
     // LRU 淘汰：只淘汰消息缓存，不动模型快照（模型是轻量常驻数据）。
     // 被淘汰的 session 的 FileRef 缓存（含 inlineData base64）必须同步清，

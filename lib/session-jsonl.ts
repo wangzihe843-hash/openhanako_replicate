@@ -40,14 +40,14 @@ export function listSessionFiles(sessionDir) {
  * 从 session JSONL 文件提取消息列表（带时间戳）。
  * 大文件只读尾部，保持和 memory ticker 的历史行为一致。
  */
-export function readSessionMessages(filePath, opts: { since?: any } = {}) {
+export function readSessionMessages(filePath, opts: { since?: any; full?: boolean } = {}) {
   const since = opts.since && !Number.isNaN(Date.parse(opts.since))
     ? Date.parse(opts.since)
     : null;
   let raw;
   try {
     const stat = fs.statSync(filePath);
-    if (stat.size > TAIL_READ_THRESHOLD) {
+    if (opts.full !== true && stat.size > TAIL_READ_THRESHOLD) {
       const fd = fs.openSync(filePath, "r");
       try {
         const buf = Buffer.alloc(TAIL_READ_THRESHOLD);

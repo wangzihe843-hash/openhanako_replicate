@@ -79,7 +79,7 @@ export function createFileTool({
   return {
     name: "file",
     label: "File",
-    description: "Transitional file namespace for capabilities not yet covered by the legacy file tools. In v0 it supports action=stat and action=copy only. Use stat to inspect file metadata without reading content. Use copy to materialize a SessionFile or workspace file into the current workspace. Do not use this for edit, move, delete, or delivery; stage_files remains the legacy delivery compatibility layer.",
+    description: "File operations: stat to inspect metadata without reading content, copy to materialize a file into the workspace.",
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal("stat"),

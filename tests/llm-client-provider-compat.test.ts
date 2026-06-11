@@ -153,6 +153,40 @@ describe("callText provider-compat routing", () => {
     ]);
   });
 
+  it("disables MiMo thinking for custom proxy utility requests inferred from model ID", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    } as any);
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://proxy.example.test/v1",
+      model: {
+        id: "mimo-v2.5-pro",
+        provider: "ch",
+        api: "openai-completions",
+        baseUrl: "https://proxy.example.test/v1",
+        reasoning: true,
+        compat: { supportsDeveloperRole: false },
+      },
+      messages: [{ role: "user", content: "remember this" }],
+      maxTokens: 80,
+      timeoutMs: 5_000,
+    } as any);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(url).toBe("https://proxy.example.test/v1/chat/completions");
+    expect(body.model).toBe("mimo-v2.5-pro");
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body).not.toHaveProperty("thinking");
+  });
+
   it("lets future OpenAI-compatible audio providers opt in through an explicit transport", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewRenderer } from '../../components/preview/PreviewRenderer';
+import { useStore } from '../../stores';
 import { clearAppFileDragPayload, writeAppFileDragPayload } from '../../utils/app-file-drag';
 import type { PreviewItem } from '../../types';
 
@@ -51,6 +52,9 @@ describe('PreviewRenderer HTML isolation', () => {
 
   beforeEach(() => {
     window.t = ((key: string) => key) as typeof window.t;
+    useStore.setState({
+      settingsModal: { open: false, activeTab: 'agent' },
+    } as never);
     window.platform = {
       showHtmlPreview: vi.fn(async () => true),
       updateHtmlPreviewBounds: vi.fn(async () => true),
@@ -114,6 +118,64 @@ describe('PreviewRenderer HTML isolation', () => {
     unmount();
 
     expect(window.platform.closeHtmlPreview).toHaveBeenCalledWith('html-demo');
+  });
+
+  it('suppresses the native HTML preview host while the in-window settings modal is open', async () => {
+    useStore.setState({
+      settingsModal: { open: true, activeTab: 'skills' },
+    } as never);
+
+    const { rerender } = render(<PreviewRenderer previewItem={previewItem} />);
+
+    expect(screen.queryByLabelText('demo.html')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalled();
+    });
+    expect(window.platform.showHtmlPreview).not.toHaveBeenCalled();
+
+    useStore.setState({
+      settingsModal: { open: false, activeTab: 'skills' },
+    } as never);
+    rerender(<PreviewRenderer previewItem={previewItem} />);
+
+    await waitFor(() => {
+      expect(window.platform.showHtmlPreview).toHaveBeenCalledWith({
+        previewId: 'html-demo',
+        previewUrl: 'http://127.0.0.1:14500/preview/html/pv_123?previewToken=preview_only_token',
+        bounds: {
+          x: 11,
+          y: 22,
+          width: 333,
+          height: 444,
+        },
+      });
+    });
+  });
+
+  it('closes an already shown native HTML preview host when the in-window settings modal opens', async () => {
+    const { rerender } = render(<PreviewRenderer previewItem={previewItem} />);
+
+    await waitFor(() => {
+      expect(window.platform.showHtmlPreview).toHaveBeenCalledTimes(1);
+    });
+
+    useStore.setState({
+      settingsModal: { open: true, activeTab: 'skills' },
+    } as never);
+    rerender(<PreviewRenderer previewItem={previewItem} />);
+
+    await waitFor(() => {
+      expect(window.platform.closeHtmlPreview).toHaveBeenCalledWith('html-demo');
+    });
+
+    useStore.setState({
+      settingsModal: { open: false, activeTab: 'skills' },
+    } as never);
+    rerender(<PreviewRenderer previewItem={previewItem} />);
+
+    await waitFor(() => {
+      expect(window.platform.showHtmlPreview).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('applies a workspace image dropped on the markdown cover', async () => {

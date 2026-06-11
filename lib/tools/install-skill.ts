@@ -3,9 +3,8 @@
  *
  * 让 agent 能自行安装技能（skill）到全局 skill pool，并只为当前 agent 启用。
  *
- * 两种模式：
- *   A. github_url    — 从 GitHub 仓库拉取完整 skill package（有 star 数门槛）
- *   B. skill_content — agent 直接提供 SKILL.md 内容（自行编写）
+ * 模型侧工具只接受完整 skill package 来源。当前公开入口：
+ *   A. github_url — 从 GitHub 仓库拉取完整 skill package（有 star 数门槛）
  *
  * 开关（agent config.yaml）：
  *   capabilities.learn_skills.enabled          — 整体开关
@@ -13,8 +12,8 @@
  *   capabilities.learn_skills.min_stars         — star 数门槛（默认 25，仅 GitHub）
  *
  * 安全策略：
- *   - 模式 A：GitHub URL 需满足 star 门槛 + 安全审查（审查 SKILL.md，安装完整目录）。
- *   - 模式 B：安全审查。
+ *   - GitHub URL 需满足 star 门槛 + 安全审查（审查 SKILL.md，安装完整目录）。
+ *   - 禁止用 skill_content 安装单个 SKILL.md；多文件 skill 必须保留 package 目录结构。
  */
 
 import fs from "fs";
@@ -26,7 +25,6 @@ import { getLocale } from "../i18n.ts";
 import { getToolSessionPath } from "./tool-session.ts";
 import { serializeSessionFile } from "../session-files/session-file-response.ts";
 import {
-  installSkillPackageFromContent,
   installSkillPackageFromDirectory,
   prepareGithubSkillPackage,
   sanitizeSkillName,
@@ -172,16 +170,10 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
   return {
     name: "install_skill",
     label: "Install Skill",
-    description: "Install a new skill into the shared skill pool, enabled only for the current Agent by default. Mode A: Provide a GitHub repo URL (containing SKILL.md) to auto-fetch and install. Mode B: Directly provide skill_content + skill_name, for self-authored skills.",
+    description: "Install a complete skill package into the shared skill pool, enabled only for the current Agent by default. Provide a GitHub repo URL containing SKILL.md; the full package directory is installed so references/scripts/assets are preserved. Do not provide raw skill_content or a single SKILL.md file.",
     parameters: Type.Object({
       github_url: Type.Optional(
-        Type.String({ description: "GitHub repo URL (Mode A)" })
-      ),
-      skill_content: Type.Optional(
-        Type.String({ description: "Full content of SKILL.md (Mode B)" })
-      ),
-      skill_name: Type.Optional(
-        Type.String({ description: "Skill name (required for Mode B)" })
+        Type.String({ description: "GitHub repo URL containing a complete skill package with SKILL.md" })
       ),
       reason: Type.String({ description: "Explain why this skill is needed (for audit, required)" }),
     }),
@@ -335,66 +327,16 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
         };
       }
 
-      // ── 路径 B：skill_content 模式 ──
-      if (!skill_content?.trim()) {
+      if (skill_content?.trim() || skill_name?.trim()) {
         return {
-          content: [{ type: "text", text: t("error.installSkillNeedInput") }],
-          details: {},
+          content: [{ type: "text", text: "install_skill 只能安装完整 skill package（例如 GitHub 仓库、zip、.skill 或文件夹来源），不能用 skill_content 安装单个 SKILL.md。请提供 github_url；多文件 skill 必须保留 references/scripts/assets 等配套目录。" }],
+          details: { rejectedInput: "skill_content" },
         };
       }
 
-      if (!skill_name?.trim()) {
-        return {
-          content: [{ type: "text", text: t("error.installSkillNeedName") }],
-          details: {},
-        };
-      }
-
-      const content = skill_content.trim();
-
-      // 安全审查（可通过设置关闭）
-      let safetyPassed2 = false;
-      if (!skipSafetyReview) {
-        const review = await safetyReview(content, resolveUtilityConfig);
-        if (!review.safe) {
-          return {
-            content: [{ type: "text", text: t("tool.installSkill.safetyBlocked", { reason: review.reason }) }],
-            details: {},
-          };
-        }
-        safetyPassed2 = true;
-      }
-
-      const name = sanitizeSkillName(skill_name);
-      if (!name) {
-        return {
-          content: [{ type: "text", text: t("error.installSkillNameInvalid", { name: `（"${skill_name}"）` }) }],
-          details: {},
-        };
-      }
-      const installed = await installSkillPackageFromContent({
-        content,
-        skillName: name,
-        installDir,
-        owner: "user",
-        defaultEnabled: false,
-      } as any);
-      const skillFilePath = installed.filePath;
-      const installedFile = registerInstalledSkillFile(registerSessionFile, ctx, skillFilePath);
-
-      await onInstalled?.(installed.name);
-
-      const safetyNote2 = safetyPassed2 ? t("error.installSkillSafetyPassed") : "";
       return {
-        content: [{ type: "text", text: t("error.installSkillSuccessLocal", { name: installed.name, reason }) + (safetyNote2 ? "\n" + safetyNote2 : "") }],
-        details: {
-          skillName: installed.name,
-          source: "content",
-          safetyReview: safetyPassed2,
-          skillFilePath,
-          installedSkillSource: installed.installedSkillSource,
-          ...(installedFile ? { installedFile } : {}),
-        },
+        content: [{ type: "text", text: t("error.installSkillNeedInput") }],
+        details: {},
       };
     },
   };

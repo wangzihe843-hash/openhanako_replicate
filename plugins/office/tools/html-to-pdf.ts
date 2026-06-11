@@ -8,6 +8,7 @@ export const description = [
   "Export static HTML to a PDF file using the desktop Chromium print engine.",
   "Use when the user asks to convert HTML to PDF or generate a PDF from HTML/CSS.",
   "Provide exactly one of html or htmlPath. By default this writes a generated PDF into plugin data and returns it as a SessionFile.",
+  "Hana's bundled fonts (EB Garamond / Noto Serif SC / JetBrains Mono) are injected during rendering, so pages whose font stacks reference them get the real fonts embedded in the PDF; pages that don't reference them are unaffected.",
   "This tool has file-writing side effects. It fails explicitly when the desktop Chromium helper is unavailable; it does not silently downgrade to a text-only PDF.",
 ].join(" ");
 

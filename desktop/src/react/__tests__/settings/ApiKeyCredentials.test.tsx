@@ -140,6 +140,46 @@ describe('ApiKeyCredentials', () => {
     await waitFor(() => expect(container.querySelector('input[type="text"]')).toHaveValue('sk-real-provider-key'));
   });
 
+  it('keeps revealed saved api keys out of ordinary state and blocks copy', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch
+      .mockResolvedValueOnce(jsonResponse({ api_key: 'sk-real-provider-key' }))
+      .mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { container } = render(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api_key: '********', has_credentials: true })}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const revealButton = Array.from(container.querySelectorAll('button'))
+      .find(button => button.textContent === 'settings.api.showKey') as HTMLButtonElement | undefined;
+    fireEvent.click(revealButton as HTMLButtonElement);
+
+    const input = await waitFor(() => {
+      const el = container.querySelector('input[type="text"]') as HTMLInputElement | null;
+      expect(el).toHaveValue('sk-real-provider-key');
+      return el as HTMLInputElement;
+    });
+
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true });
+    const prevented = !input.dispatchEvent(copyEvent);
+    expect(prevented).toBe(true);
+
+    const verifyButton = container.querySelector('button[title="settings.providers.verifyConnection"]') as HTMLButtonElement;
+    fireEvent.click(verifyButton);
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith(
+      '/api/providers/test',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    const testCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/providers/test');
+    const body = JSON.parse(String((testCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty('api_key', 'sk-real-provider-key');
+  });
+
   it('saves discovered Gemini models during preset setup instead of static defaults', async () => {
     const onRefresh = vi.fn(async () => {});
     mocks.hanaFetch

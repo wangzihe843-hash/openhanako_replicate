@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
-import { jumpToDeskSearchResult, loadDeskFiles, searchDeskFiles } from '../../stores/desk-actions';
+import { deskNativeRootDir, jumpToDeskSearchResult, loadDeskFiles, searchDeskFiles } from '../../stores/desk-actions';
 import { togglePreviewPanel } from '../../stores/preview-actions';
 import type { DeskSearchResult } from '../../types';
 import { isWebRuntime } from '../../utils/platform-runtime';
@@ -21,16 +21,24 @@ import {
 import s from './Desk.module.css';
 
 // ── Open in Finder 按钮 ──
+//
+// 工作台根的 native 路径走 deskNativeRootDir 单一来源：普通文件夹即 deskBasePath，
+// local_fs mount 用服务端披露的 native root（#1616）。没有 native 路径的
+// mount（远端/虚拟）继续隐藏按钮。
+
+function openDeskNativeFolder(): void {
+  const root = deskNativeRootDir(useStore.getState());
+  if (!root) return;
+  window.platform?.openFolder?.(root);
+}
 
 export function DeskOpenButton() {
-  const isMountWorkspace = useStore(s => !!s.deskWorkspaceMountId);
+  const isMountWithoutNativeRoot = useStore(st => !!st.deskWorkspaceMountId && !st.deskWorkspaceNativeRoot);
   const handleClick = useCallback(() => {
-    const s = useStore.getState();
-    if (!s.deskBasePath || s.deskWorkspaceMountId) return;
-    window.platform?.openFolder?.(s.deskBasePath);
+    openDeskNativeFolder();
   }, []);
 
-  if (isWebRuntime() || isMountWorkspace) return null;
+  if (isWebRuntime() || isMountWithoutNativeRoot) return null;
 
   return (
     <button className={s.openBtn} onClick={handleClick}>
@@ -41,19 +49,17 @@ export function DeskOpenButton() {
 }
 
 export function DeskOpenIconButton() {
-  const hasDesk = useStore(s => !!s.deskBasePath && !s.deskWorkspaceMountId);
+  const hasNativeRoot = useStore(st => !!deskNativeRootDir(st));
+  const isMountWithoutNativeRoot = useStore(st => !!st.deskWorkspaceMountId && !st.deskWorkspaceNativeRoot);
   const label = (window.t ?? ((p: string) => p))('desk.openInFinder');
   const handleClick = useCallback(() => {
-    const s = useStore.getState();
-    if (!s.deskBasePath || s.deskWorkspaceMountId) return;
-    window.platform?.openFolder?.(s.deskBasePath);
+    openDeskNativeFolder();
   }, []);
 
-  const isMountWorkspace = useStore(s => !!s.deskWorkspaceMountId);
-  if (isWebRuntime() || isMountWorkspace) return null;
+  if (isWebRuntime() || isMountWithoutNativeRoot) return null;
 
   return (
-    <button className={`${s.sortBtn} ${s.iconBtn}`} onClick={handleClick} title={label} aria-label={label} disabled={!hasDesk}>
+    <button className={`${s.sortBtn} ${s.iconBtn}`} onClick={handleClick} title={label} aria-label={label} disabled={!hasNativeRoot}>
       <span dangerouslySetInnerHTML={{ __html: ICONS.finderOpen }} />
     </button>
   );

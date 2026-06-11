@@ -32,12 +32,19 @@ export function ensureFirstRun(hanakoHome, productDir) {
 
   // 2. 如果 agents/ 没有任何 agent → 播种默认 agent
   const agentsDir = path.join(hanakoHome, "agents");
-  const hasAgent = fs.readdirSync(agentsDir, { withFileTypes: true }).some(entry => {
-    return entry.isDirectory() && !entry.name.startsWith('.');
-  });
+  const agentEntries = fs.readdirSync(agentsDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'));
+  for (const entry of agentEntries) {
+    validateAgentDirectoryForStartup(agentsDir, entry.name);
+  }
+  const hasAgent = agentEntries.some(entry => hasReadableAgentConfig(path.join(agentsDir, entry.name)));
+  const needsDefaultAgentRepair = agentEntries.some(entry => (
+    entry.name === "hanako"
+    && !hasReadableAgentConfig(path.join(agentsDir, entry.name))
+  ));
 
-  if (!hasAgent) {
-    log.log("首次启动，正在创建默认助手...");
+  if (!hasAgent || needsDefaultAgentRepair) {
+    log.log(needsDefaultAgentRepair ? "默认助手数据不完整，正在补齐..." : "首次启动，正在创建默认助手...");
     seedDefaultAgent(agentsDir, productDir);
   }
 
@@ -71,6 +78,27 @@ export function ensureFirstRun(hanakoHome, productDir) {
   }
 }
 
+function hasReadableAgentConfig(agentDir) {
+  const cfgPath = path.join(agentDir, "config.yaml");
+  if (!fs.existsSync(cfgPath)) return false;
+  void YAML.load(fs.readFileSync(cfgPath, "utf-8"));
+  return true;
+}
+
+function validateAgentDirectoryForStartup(agentsDir, agentId) {
+  const agentDir = path.join(agentsDir, agentId);
+  const cfgPath = path.join(agentDir, "config.yaml");
+  if (!fs.existsSync(cfgPath)) {
+    if (agentId === "hanako") return;
+    throw new Error(`invalid agent directory "${agentId}": config.yaml missing`);
+  }
+  try {
+    void YAML.load(fs.readFileSync(cfgPath, "utf-8"));
+  } catch (err) {
+    throw new Error(`invalid agent directory "${agentId}": config.yaml is not readable: ${err.message}`);
+  }
+}
+
 /**
  * 从模板播种默认 agent（与 engine.createAgent 相同逻辑，但纯同步、无依赖）
  */
@@ -88,9 +116,10 @@ function seedDefaultAgent(agentsDir, productDir) {
   // config.yaml（保持模板默认值：name=Hanako, yuan=hanako）
   const cfgDest = path.join(agentDir, "config.yaml");
   const configSrc = path.join(productDir, "config.example.yaml");
-  if (fs.existsSync(configSrc)) {
-    fs.copyFileSync(configSrc, cfgDest);
+  if (!fs.existsSync(configSrc)) {
+    throw new Error(`first-run template missing: ${configSrc}`);
   }
+  fs.copyFileSync(configSrc, cfgDest);
   // 写入默认工作台（per-agent，不存全局）
   const raw = fs.existsSync(cfgDest) ? YAML.load(fs.readFileSync(cfgDest, "utf-8")) || {} : {};
   raw.desk = {
@@ -118,7 +147,7 @@ function seedDefaultAgent(agentsDir, productDir) {
   const langDir = isZh ? "" : "en/";
   const firstExisting = (paths) => paths.find((p) => fs.existsSync(p));
 
-  // identity.md（填入默认名字）
+  // identity.md 保留动态占位符，在 system prompt 组装时按当前 config 渲染。
   const identitySrc = firstExisting([
     path.join(productDir, "identity-templates", `${langDir}${agentId}.md`),
     path.join(productDir, "identity-templates", `${agentId}.md`),
@@ -126,10 +155,7 @@ function seedDefaultAgent(agentsDir, productDir) {
   ]);
   if (identitySrc) {
     const tmpl = fs.readFileSync(identitySrc, "utf-8");
-    const filled = tmpl
-      .replace(/\{\{agentName\}\}/g, "Hanako")
-      .replace(/\{\{userName\}\}/g, "");
-    fs.writeFileSync(path.join(agentDir, "identity.md"), filled, "utf-8");
+    fs.writeFileSync(path.join(agentDir, "identity.md"), tmpl, "utf-8");
   }
 
   // yuan 由 buildSystemPrompt 实时从 lib/yuan/ 读取，无需复制

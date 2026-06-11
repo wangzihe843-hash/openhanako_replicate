@@ -42,7 +42,7 @@ function createMocks() {
     listSessions: vi.fn(async () => []),
   };
   const hub = {
-    send: vi.fn().mockResolvedValue("AI response"),
+    send: vi.fn().mockResolvedValue({ text: "AI response", toolMedia: [], error: null, truncated: false }),
     eventBus: { emit: vi.fn() },
   };
   const slashSystem = createSlashSystem({ engine, hub } as any);

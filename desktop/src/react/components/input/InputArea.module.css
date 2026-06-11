@@ -859,6 +859,84 @@
     box-shadow: var(--panel-card-shadow);
 }
 
+/* #1624 工具能力漂移提示：输入框上方的安静 chip，气质对齐 slash-busy-bar */
+.capability-drift-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    background: var(--panel-card-bg);
+    border: var(--panel-card-border);
+    border-radius: var(--panel-card-radius);
+    box-shadow: var(--panel-card-shadow);
+    animation: hana-fade-up var(--duration-fast) var(--ease-out);
+}
+
+.capability-drift-text {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.capability-drift-title {
+    color: var(--text);
+    flex-shrink: 0;
+}
+
+.capability-drift-detail {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.capability-drift-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.capability-drift-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 0.6rem;
+    font-family: inherit;
+    font-size: 0.74rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: default;
+    -webkit-app-region: no-drag;
+    transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.capability-drift-button:hover {
+    color: var(--text);
+    border-color: rgba(var(--accent-rgb), 0.34);
+}
+
+.capability-drift-button-primary {
+    border-color: rgba(var(--accent-rgb), 0.28);
+    color: var(--accent);
+}
+
+.capability-drift-button-primary:hover {
+    color: var(--accent);
+    background: var(--accent-light);
+}
+
 /* 输入区内所有浮层共享同一个测量与宽度上下文 */
 .input-surface {
     position: relative;

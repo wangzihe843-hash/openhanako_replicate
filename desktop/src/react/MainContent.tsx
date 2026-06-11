@@ -19,6 +19,7 @@ import {
   readAppFileDragPayload,
   type AppFileDragPayload,
 } from './utils/app-file-drag';
+import { deskNativeRootDir } from './stores/desk-actions';
 import { BrowserCard } from './components/BrowserCard';
 import { ComputerUseOverlay } from './components/ComputerUseOverlay';
 
@@ -117,9 +118,11 @@ export async function attachFilesFromPaths(
     if (srcPaths.length === 0) return;
   }
 
-  // Desk 文件直接附加（保留原始路径，不走 upload）
+  // Desk 文件直接附加（保留原始路径，不走 upload）。
+  // mount 工作台只有在服务端披露 native root（local_fs + local owner）时
+  // 才有真实路径可直接附加；远端/虚拟 mount 不走此分支。
   const s = useStore.getState();
-  const deskBase = s.deskWorkspaceMountId ? '' : toSlash(s.deskBasePath ?? '').replace(/\/+$/, '');
+  const deskBase = toSlash(deskNativeRootDir(s) ?? '').replace(/\/+$/, '');
   if (deskBase) {
     const prefix = deskBase + '/';
     const deskFileMap = new Map(s.deskFiles.map((f: any) => [f.name, f]));

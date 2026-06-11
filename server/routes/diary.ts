@@ -18,7 +18,14 @@ export function createDiaryRoute(engine) {
   /** POST /diary/write — 触发日记生成 */
   route.post("/diary/write", async (c) => {
     try {
-      const result = await engine.writeDiary();
+      let body: any = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        body = {};
+      }
+      const targetDate = typeof body?.targetDate === "string" ? body.targetDate : undefined;
+      const result = await engine.writeDiary({ targetDate });
       if (result.error) {
         return c.json({
           error: result.error,

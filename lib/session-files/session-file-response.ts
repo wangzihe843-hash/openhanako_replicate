@@ -64,6 +64,7 @@ export function registerSessionFileFromRequest(engine, {
   presentation,
   listed,
   waveform,
+  sourceKey,
 }) {
   if (!sessionPath) return null;
   if (typeof engine?.registerSessionFile !== "function") {
@@ -78,6 +79,7 @@ export function registerSessionFileFromRequest(engine, {
     ...(presentation !== undefined ? { presentation } : {}),
     ...(listed !== undefined ? { listed } : {}),
     ...(waveform !== undefined ? { waveform } : {}),
+    ...(sourceKey !== undefined ? { sourceKey } : {}),
   };
   return serializeSessionFile(engine.registerSessionFile(entry), { runtimeContext: safeRuntimeContext(engine) });
 }

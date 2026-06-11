@@ -112,6 +112,7 @@ function readHtmlPreviewBounds(element: HTMLElement | null) {
 function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const shownRef = useRef(false);
+  const settingsModalOpen = useStore(s => s.settingsModal.open);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -148,7 +149,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
   }, [previewItem.content, previewItem.filePath, previewItem.title]);
 
   useLayoutEffect(() => {
-    if (!previewUrl || !window.platform?.showHtmlPreview) return undefined;
+    if (!previewUrl || settingsModalOpen || !window.platform?.showHtmlPreview) return undefined;
 
     let closed = false;
     const syncBounds = () => {
@@ -186,7 +187,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
       shownRef.current = false;
       void window.platform?.closeHtmlPreview?.(previewItem.id);
     };
-  }, [previewItem.id, previewUrl]);
+  }, [previewItem.id, previewUrl, settingsModalOpen]);
 
   if (error) {
     return <pre className="preview-code">{error}</pre>;

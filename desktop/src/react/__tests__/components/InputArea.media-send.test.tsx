@@ -104,12 +104,18 @@ vi.mock('../../components/input/InputControlBar', () => ({
   InputControlBar: ({
     canSend,
     onSend,
+    isStreaming,
+    hasInput,
+    onSteer,
     showAudioInput,
     onAudioToggle,
     audioRecordingActive,
   }: {
     canSend: boolean;
     onSend: () => void;
+    isStreaming?: boolean;
+    hasInput?: boolean;
+    onSteer?: () => void;
     showAudioInput?: boolean;
     onAudioToggle?: () => void;
     audioRecordingActive?: boolean;
@@ -118,7 +124,12 @@ vi.mock('../../components/input/InputControlBar', () => ({
     null,
     React.createElement(
       'button',
-      { type: 'button', 'data-testid': 'send', disabled: !canSend, onClick: onSend },
+      {
+        type: 'button',
+        'data-testid': 'send',
+        disabled: isStreaming ? !hasInput : !canSend,
+        onClick: isStreaming ? onSteer : onSend,
+      },
       'send',
     ),
     showAudioInput
@@ -655,6 +666,53 @@ describe('InputArea media send', () => {
       fileId: 'sf_cjk_digits',
       path: '/Users/testuser/Desktop/测试123/报告2026.txt',
       name: '报告2026.txt',
+    });
+  });
+
+  it('interjects streaming attachment sends with the same message envelope as prompt sends', async () => {
+    useStore.setState({
+      streamingSessions: ['/session/media.jsonl'],
+      attachedFiles: [{
+        fileId: 'sf_note',
+        path: '/Users/testuser/Desktop/note.txt',
+        name: 'note.txt',
+        isDirectory: false,
+      }],
+      attachedFilesBySession: {
+        '/session/media.jsonl': [{
+          fileId: 'sf_note',
+          path: '/Users/testuser/Desktop/note.txt',
+          name: 'note.txt',
+          isDirectory: false,
+        }],
+      },
+    } as never);
+
+    render(React.createElement(InputArea));
+
+    const send = screen.getByTestId('send') as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+
+    await waitFor(() => {
+      expect(mocks.wsSend).toHaveBeenCalledTimes(1);
+    });
+    const payload = JSON.parse(String(mocks.wsSend.mock.calls[0][0]));
+    expect(payload.type).toBe('interject');
+    expect(payload.text).toBe('[附件] note.txt');
+    expect(payload.sessionFileRefs).toEqual([{
+      fileId: 'sf_note',
+      sessionPath: '/session/media.jsonl',
+      label: 'note.txt',
+      kind: 'attachment',
+    }]);
+    expect(payload.displayMessage).toMatchObject({
+      text: '',
+      attachments: [{
+        fileId: 'sf_note',
+        path: '/Users/testuser/Desktop/note.txt',
+        name: 'note.txt',
+      }],
     });
   });
 

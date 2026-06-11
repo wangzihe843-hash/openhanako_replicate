@@ -32,7 +32,45 @@ import { serializeSessionFile } from "../lib/session-files/session-file-response
 import { appendXingyeEventOnce } from "../lib/xingye/events.js";
 import { scrubPII } from "../lib/pii-guard.ts";
 
+/**
+ * 非桌面来源（bridge /rc 等）用户消息的来源元信息持久化条目类型。
+ *
+ * jsonl 的 message 条目格式归 Pi SDK 所有，不能塞自定义字段；来源元信息
+ * 走 SDK 的 custom entry 通道（与 hana-deferred-result 同一模式）。
+ * 条目写在它所注释的 user message 之前，紧邻性尽力保证；interject 路径
+ * 时，中间可能隔着在途 assistant 输出，消费方须以"其后第一条 user message"
+ * 语义关联（跳过中间 assistant 条目）。未知 customType 的 custom 条目不进
+ * 模型上下文、不进历史展示，老版本读取时自动跳过。
+ *
+ * 孤儿容忍规则：消费方必须容忍"origin 条目后没有紧随 user message"的孤儿
+ * 条目（例如 steer 被拒绝、prompt 路径写入前抛错），遇到孤儿时跳过即可，
+ * 禁止盲目前向关联到下一条消息。
+ */
+export const MESSAGE_ORIGIN_RECORD_TYPE = "hana-message-origin";
+
 const pendingDesktopSessionSubmissions = new Set();
+
+/**
+ * 持久化非桌面来源的消息 origin。写失败只告警不阻断：来源标注是辅助
+ * 元数据，不能因为它写不进去就丢掉用户消息本身。
+ */
+function recordMessageOriginEntry(session: any, sessionPath: string, displayMessage: any): void {
+  const source = displayMessage?.source;
+  if (!source || source === "desktop") return;
+  try {
+    if (typeof session?.sessionManager?.appendCustomEntry !== "function") {
+      console.warn(`[desktop-session-submit] message origin not persisted (no appendCustomEntry): ${sessionPath}`);
+      return;
+    }
+    session.sessionManager.appendCustomEntry(MESSAGE_ORIGIN_RECORD_TYPE, {
+      source,
+      bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    console.warn(`[desktop-session-submit] message origin write failed for ${sessionPath}: ${err?.message || err}`);
+  }
+}
 
 export async function submitDesktopSessionMessage(engine: any, opts: {
   sessionPath?: string;
@@ -147,6 +185,8 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
 
     const turnStartedAt = Date.now();
     engine.emitEvent?.({ type: "session_status", isStreaming: true }, sessionPath);
+    // 来源元信息先于 prompt 持久化，让 origin 条目紧邻它注释的 user message。
+    recordMessageOriginEntry(session, sessionPath, displayMessage);
     engine.emitEvent?.({
       type: "session_user_message",
       message: {
@@ -263,6 +303,148 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
   } finally {
     pendingDesktopSessionSubmissions.delete(sessionPath);
   }
+}
+
+export async function submitDesktopSessionInterjection(engine: any, opts: {
+  sessionPath?: string;
+  text?: string;
+  images?: Array<{ type: string; data: string; mimeType: string }>;
+  imageAttachmentPaths?: string[];
+  videos?: Array<{ type: string; data: string; mimeType: string }>;
+  videoAttachmentPaths?: string[];
+  audios?: Array<{ type: string; data: string; mimeType: string }>;
+  audioAttachmentPaths?: string[];
+  inboundFiles?: Array<{ type: string; filename?: string; mimeType?: string; buffer: any }>;
+  displayMessage?: any;
+  sessionFileRefs?: Array<{ fileId?: string; sessionPath?: string; label?: string; kind?: string }>;
+  uiContext?: any;
+  context?: any;
+} = {}) {
+  const {
+    sessionPath,
+    text,
+    images,
+    imageAttachmentPaths,
+    videos,
+    videoAttachmentPaths,
+    audios,
+    audioAttachmentPaths,
+    inboundFiles,
+    displayMessage,
+    sessionFileRefs,
+    uiContext,
+    context,
+  } = opts;
+
+  if (!engine || typeof engine.ensureSessionLoaded !== "function" || typeof engine.steerSession !== "function") {
+    throw new Error("desktop-session-submit: engine interjection API unavailable");
+  }
+  if (!sessionPath) throw new Error("desktop-session-submit: sessionPath is required");
+  if (!text && !images?.length && !videos?.length && !audios?.length) throw new Error("desktop-session-submit: text, images, videos, or audios required");
+
+  if (typeof engine.isSessionStreaming === "function" && !engine.isSessionStreaming(sessionPath)) {
+    return submitDesktopSessionMessage(engine, opts);
+  }
+
+  const session = await engine.ensureSessionLoaded(sessionPath);
+  if (!session) {
+    throw new Error(`desktop-session-submit: failed to load session ${sessionPath}`);
+  }
+
+  if (uiContext !== undefined) {
+    engine.setUiContext?.(sessionPath, uiContext ?? null);
+  }
+
+  let promptImageAttachmentPaths = imageAttachmentPaths || [];
+  let promptVideoAttachmentPaths = videoAttachmentPaths || [];
+  let promptAudioAttachmentPaths = audioAttachmentPaths || [];
+  let displayAttachments = displayMessage?.attachments;
+  let promptText = text || "";
+  let promptSessionFileRefs = normalizeSessionFileRefs(sessionFileRefs, sessionPath);
+
+  if (displayAttachments?.length) {
+    const registeredDisplay = registerDisplayAttachments({
+      hanakoHome: engine.hanakoHome,
+      sessionPath,
+      attachments: displayAttachments,
+      registerSessionFile: engine.registerSessionFile?.bind(engine),
+    });
+    displayAttachments = registeredDisplay.attachments;
+    promptImageAttachmentPaths = uniquePaths([
+      ...promptImageAttachmentPaths,
+      ...registeredDisplay.imageAttachmentPaths,
+    ]);
+    promptVideoAttachmentPaths = uniquePaths([
+      ...promptVideoAttachmentPaths,
+      ...registeredDisplay.videoAttachmentPaths,
+    ]);
+    if (audios?.length || promptAudioAttachmentPaths.length) {
+      promptAudioAttachmentPaths = uniquePaths([
+        ...promptAudioAttachmentPaths,
+        ...registeredDisplay.audioAttachmentPaths,
+      ]);
+    }
+    promptSessionFileRefs = mergeSessionFileRefs(
+      promptSessionFileRefs,
+      sessionFileRefsFromAttachments(displayAttachments, sessionPath),
+    );
+  }
+
+  if (inboundFiles?.length) {
+    const materialized = await materializeBridgeInboundFiles({
+      hanakoHome: engine.hanakoHome,
+      sessionPath,
+      files: inboundFiles,
+      registerSessionFile: engine.registerSessionFile?.bind(engine),
+    });
+    promptImageAttachmentPaths = uniquePaths([
+      ...promptImageAttachmentPaths,
+      ...materialized.imageAttachmentPaths,
+    ]);
+    displayAttachments = [
+      ...(displayAttachments || []),
+      ...materialized.displayAttachments,
+    ];
+    promptSessionFileRefs = mergeSessionFileRefs(
+      promptSessionFileRefs,
+      sessionFileRefsFromAttachments(materialized.displayAttachments, sessionPath),
+    );
+  }
+
+  engine.emitEvent?.({
+    type: "session_user_message",
+    message: {
+      text: displayMessage?.text ?? text ?? "",
+      timestamp: Date.now(),
+      attachments: displayAttachments,
+      quotedText: displayMessage?.quotedText,
+      skills: displayMessage?.skills,
+      deskContext: displayMessage?.deskContext ?? null,
+      source: displayMessage?.source || "desktop",
+      bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
+    },
+  }, sessionPath);
+  queueVoiceInputTranscriptions({
+    speechRecognition: engine.speechRecognition,
+    sessionPath,
+    attachments: displayAttachments,
+  });
+
+  promptText = addAttachedImageMarkers(promptText, promptImageAttachmentPaths);
+  promptText = addAttachedVideoMarkers(promptText, promptVideoAttachmentPaths);
+  promptText = addAttachedAudioMarkers(promptText, promptAudioAttachmentPaths);
+  promptText = addSessionFileRefMarkers(promptText, promptSessionFileRefs);
+  if (context?.beforeUser) {
+    promptText = `${context.beforeUser}\n\n${promptText}`;
+  }
+
+  const steered = engine.steerSession(sessionPath, promptText);
+  if (!steered) throw new Error("session_busy");
+  // 来源元信息在 steer 成功后持久化，避免 steer 被拒绝时产生孤儿条目。
+  // steerSession 同步返回，与 appendCustomEntry 之间无 await，紧邻性不受影响。
+  // 契约：origin 条目注释其后第一条 user message（中间可能隔着在途 assistant 输出）。
+  recordMessageOriginEntry(session, sessionPath, displayMessage);
+  return { text: null, toolMedia: [], steered: true };
 }
 
 function buildPromptOptions({

@@ -25,7 +25,8 @@ export class GuestHandler {
    * @param {string} sessionKey
    * @param {object} [meta]  { name, avatarUrl, userId }
    * @param {object} [opts]  { isGroup }
-   * @returns {Promise<string|null>}
+   * @returns {Promise<{text: string|null, toolMedia: any[], error: string|null, truncated: boolean}|null>}
+   *   透传 executeExternalMessage 的结构化结果（null 仅在用户中止时）
    */
   async handle(text, sessionKey, meta, opts: any = {}) {
     const isZh = getLocale().startsWith("zh");

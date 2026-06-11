@@ -119,6 +119,25 @@ describe("AgentManager.listAgents 缓存", () => {
     expect(fresh[0].identity).toBe("全新的身份描述");
   });
 
+  it("renders identity placeholders in list previews from the agent config", () => {
+    const dir = path.join(agentsDir, "hana");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "config.yaml"),
+      YAML.dump({ agent: { name: "Hana", yuan: "hanako" }, user: { name: "黎" } }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "identity.md"),
+      "# {{agentName}}\n{{userName}}的个人助手",
+      "utf-8",
+    );
+    const mgr = makeMgr();
+
+    const [agent] = mgr.listAgents();
+
+    expect(agent.identity).toBe("黎的个人助手");
+  });
+
   it("excludes tombstoned agents from the active list and exposes deleted metadata", () => {
     createTestAgent("alive", "Alive");
     createTestAgent("deleted", "Deleted");

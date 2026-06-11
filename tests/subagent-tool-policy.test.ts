@@ -1,5 +1,9 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { resolveSubagentToolAccess, resolveSubagentToolStrategy } from "../lib/tools/subagent-tool-policy.ts";
+import {
+  resolveSubagentToolAccess,
+  resolveSubagentToolStrategy,
+  SubagentAccessDeniedError,
+} from "../lib/tools/subagent-tool-policy.ts";
 
 describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承父会话档）", () => {
   afterEach(() => { delete process.env.HANA_SUBAGENT_TOOL_STRATEGY; });
@@ -21,10 +25,33 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
     expect(resolveSubagentToolAccess({ access: "read", parentPermissionMode: "operate" }).permissionMode).toBe("read_only");
   });
 
-  it("access:write → OPERATE", () => {
+  it("access:write → OPERATE（父会话非只读时）", () => {
     expect(resolveSubagentToolAccess({ access: "write" }).permissionMode).toBe("operate");
-    // 即便父会话只读，显式 write 仍可操作
-    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "read_only" }).permissionMode).toBe("operate");
+    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "operate" }).permissionMode).toBe("operate");
+    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "ask" }).permissionMode).toBe("operate");
+  });
+
+  // ── attenuation 校验：子权限不得超过父会话（#1614 越权缺口修复） ──
+  it("父只读 + 显式 access:write → 抛 SubagentAccessDeniedError（不静默降级）", () => {
+    expect(() => resolveSubagentToolAccess({ access: "write", parentPermissionMode: "read_only" }))
+      .toThrow(SubagentAccessDeniedError);
+    try {
+      resolveSubagentToolAccess({ access: "write", parentPermissionMode: "read_only" });
+      expect.unreachable("should have thrown");
+    } catch (err: any) {
+      expect(err.code).toBe("SUBAGENT_WRITE_DENIED_BY_PARENT_READ_ONLY");
+      expect(err.message).toMatch(/read-only/i);
+    }
+  });
+
+  it("父只读 + access:write 在 strip 策略下同样拒绝（attenuation 与策略正交）", () => {
+    expect(() => resolveSubagentToolAccess({ access: "write", parentPermissionMode: "read_only", strategy: "strip" }))
+      .toThrow(SubagentAccessDeniedError);
+  });
+
+  it("父只读 + access:read / 省略 access 不受影响（仍是只读，不抛错）", () => {
+    expect(resolveSubagentToolAccess({ access: "read", parentPermissionMode: "read_only" }).permissionMode).toBe("read_only");
+    expect(resolveSubagentToolAccess({ parentPermissionMode: "read_only" }).permissionMode).toBe("read_only");
   });
 
   // ── 省略 access → 继承父会话档，但 subagent 只有两态（后台不能交互确认，ASK 不可用） ──

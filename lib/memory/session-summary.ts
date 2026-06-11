@@ -5,7 +5,7 @@
  * 包含摘要文本 + 深度记忆处理的 snapshot。
  *
  * 摘要通过 rollingSummary() 滚动更新（覆盖式，非追加），
- * 输出固定为 ### 重要事实 + ### 事情经过 两节格式。
+ * 输出固定为 rolling-summary-format.ts 契约规定的 facts + timeline 两节格式。
  *
  * 同时服务：
  * - 普通记忆（compile.js 读摘要 → 递归压缩 → memory.md）
@@ -28,6 +28,15 @@ import {
 } from "./time-context.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { withMemoryReasoningBuffer } from "./llm-budget.ts";
+import {
+  MAX_ROLLING_SUMMARY_FORMAT_REPAIRS,
+  buildRollingSummaryFormatRequirements,
+  buildRollingSummaryRepairInput,
+  buildRollingSummaryRepairPrompt,
+  getFactSectionTitle,
+  getTimelineSectionTitle,
+  validateRollingSummaryFormat,
+} from "./rolling-summary-format.ts";
 
 const log = createModuleLogger("session-summary");
 
@@ -354,7 +363,7 @@ export class SessionSummaryManager {
    * 滚动更新 session 摘要：每 10 轮或 session 结束时触发。
    * 若有旧摘要则将旧摘要 + 新对话合并产出新摘要（覆盖，非追加）；
    * 若无旧摘要则直接从对话生成。
-   * 输出格式固定为两节：### 重要事实 + ### 事情经过。
+   * 输出格式固定为 rolling-summary-format.ts 契约规定的两节（facts + timeline）。
    *
    * @param {string} sessionId
    * @param {Array<{role: string, content: any, timestamp?: string}>} messages
@@ -413,7 +422,7 @@ export class SessionSummaryManager {
       returnUsage: opts.returnUsage,
       usageTrigger: opts.usageTrigger,
     });
-    const usage = typeof llmResult === "object" && llmResult !== null ? llmResult.usage || null : null;
+    let usage = typeof llmResult === "object" && llmResult !== null ? llmResult.usage || null : null;
     let newSummary: any = typeof llmResult === "object" && llmResult !== null ? llmResult.text : llmResult;
     if (!newSummary?.trim()) {
       return {
@@ -423,6 +432,30 @@ export class SessionSummaryManager {
         usage,
         reason: "empty_output",
       };
+    }
+
+    // 写入前结构校验 + 有限次数格式修复（#1628）：摘要必须满足 compileFacts
+    // 的提取假设，否则 facts 会在编译侧静默丢失。最终修不好就抛错，由调用方
+    // （memory ticker / 日记回填）按既有失败通道记录，旧摘要保持不被覆盖。
+    let repairsUsed = 0;
+    let validation = validateRollingSummaryFormat(newSummary);
+    while (!validation.ok && repairsUsed < MAX_ROLLING_SUMMARY_FORMAT_REPAIRS) {
+      repairsUsed += 1;
+      log.warn(`rolling summary format invalid for ${sessionId} (${validation.issues.join("; ")}), repair attempt ${repairsUsed}/${MAX_ROLLING_SUMMARY_FORMAT_REPAIRS}`);
+      const repairResult = await this._callRollingRepairLLM(newSummary, validation.issues, resolvedModel, turnCount, {
+        returnUsage: opts.returnUsage,
+        usageTrigger: opts.usageTrigger,
+      });
+      usage = typeof repairResult === "object" && repairResult !== null ? repairResult.usage || null : usage;
+      newSummary = typeof repairResult === "object" && repairResult !== null ? repairResult.text : repairResult;
+      if (!newSummary?.trim()) {
+        validation = { ok: false, issues: [...validation.issues, "format repair attempt returned empty output"] };
+        break;
+      }
+      validation = validateRollingSummaryFormat(newSummary);
+    }
+    if (!validation.ok) {
+      throw new Error(`rolling summary format invalid after ${repairsUsed} repair attempt(s): ${validation.issues.join("; ")}`);
     }
 
     const latestResetAt = latestSince(resetAt, readCompiledResetAt(path.dirname(this.summariesDir)));
@@ -441,6 +474,12 @@ export class SessionSummaryManager {
     if (rollingDetected.length > 0) {
       log.warn(`PII detected in rolling summary (${rollingDetected.join(", ")}), redacted`);
       newSummary = scrubbedRolling;
+    }
+
+    // 脱敏是结构保持操作；这里再守一道，确保最终落盘文本仍满足提取假设
+    const finalValidation = validateRollingSummaryFormat(newSummary);
+    if (!finalValidation.ok) {
+      throw new Error(`rolling summary format invalid after PII scrub: ${finalValidation.issues.join("; ")}`);
     }
 
     const now = new Date().toISOString();
@@ -465,6 +504,69 @@ export class SessionSummaryManager {
   }
 
   /**
+   * 滚动摘要的输出预算（单一来源，初次生成与格式修复共用 visibleMaxTokens）
+   * @param {number} turnCount
+   * @returns {{ totalBudget: number, visibleMaxTokens: number }}
+   */
+  _rollingSummaryBudget(turnCount) {
+    // 按轮数线性缩放：每轮 40 字配额，10 轮封顶 400 字
+    const totalBudget = Math.min(400, Math.max(40, turnCount * 40));
+    // max_tokens 跟着配额走，避免固定值引导 LLM 写满
+    const visibleMaxTokens = Math.max(150, Math.min(750, Math.round(totalBudget * 1.5)));
+    return { totalBudget, visibleMaxTokens };
+  }
+
+  /**
+   * 格式修复调用：把不满足 compileFacts 提取假设的摘要草稿重排进契约结构。
+   * 只基于草稿本身修复（不重发对话内容），信息不增删。
+   * @param {string} summaryText - 待修复的摘要草稿
+   * @param {string[]} issues - validateRollingSummaryFormat 给出的失败原因
+   * @param {{ model: string, api: string, api_key: string, base_url: string }} resolvedModel
+   * @param {number} turnCount
+   * @returns {Promise<string | { text: string, usage: object|null }>}
+   */
+  async _callRollingRepairLLM(summaryText, issues, resolvedModel, turnCount = 10, opts: Record<string, any> = {}) {
+    const { model: utilityModel, api, api_key, base_url } = resolvedModel;
+    const locale = getLocale();
+    const { visibleMaxTokens } = this._rollingSummaryBudget(turnCount);
+    const layout = buildUtilityPromptLayout({
+      cacheGroup: "memory.rolling_summary",
+      templateVersion: "rolling-summary-repair.v1",
+      systemPrompt: buildRollingSummaryRepairPrompt(locale),
+      userContent: buildRollingSummaryRepairInput({ locale, issues, summaryText }),
+    });
+    const usageContext = attachPromptLayoutMetadata({
+      source: {
+        subsystem: "memory",
+        // 与初次生成（rolling_summary）可区分，修复用量不混进初次的账目
+        operation: "rolling_summary_repair",
+        surface: "system",
+        trigger: opts.usageTrigger || "threshold",
+      },
+      attribution: {
+        kind: "memory",
+        agentId: resolvedModel.usageAgentId || null,
+      },
+    }, layout.usageMetadata);
+
+    return callText({
+      api, model: utilityModel,
+      apiKey: api_key,
+      baseUrl: base_url,
+      headers: undefined,
+      systemPrompt: layout.systemPrompt,
+      messages: layout.messages,
+      temperature: 0.3,
+      maxTokens: withMemoryReasoningBuffer(visibleMaxTokens, resolvedModel),
+      timeoutMs: 60_000,
+      signal: undefined,
+      returnUsage: opts.returnUsage === true,
+      usageLedger: resolvedModel.usageLedger,
+      usageContext,
+    });
+  }
+
+  /**
    * 调用 LLM 生成滚动摘要（两节格式）
    * @param {string} convText - 本次对话文本
    * @param {string} prevSummary - 上一次摘要（可为空）
@@ -474,7 +576,8 @@ export class SessionSummaryManager {
   async _callRollingLLM(convText, prevSummary, resolvedModel, turnCount = 10, opts: Record<string, any> = {}) {
     const { model: utilityModel, api, api_key, base_url } = resolvedModel;
 
-    const isZh = getLocale().startsWith("zh");
+    const locale = getLocale();
+    const isZh = locale.startsWith("zh");
     const hasPrev = !!prevSummary;
     const memorySnapshot = normalizeMemoryReflectionSnapshot(opts.memoryReflectionSnapshot);
     const agentName = memorySnapshot.agentName || (isZh ? "这个 Agent" : "this agent");
@@ -483,9 +586,12 @@ export class SessionSummaryManager {
     const userProfile = memorySnapshot.userProfile || (isZh ? "（未提供）" : "(Not provided)");
     const existingMemory = memorySnapshot.existingMemory || (isZh ? "（暂无已有长期记忆）" : "(No existing long-term memory)");
     const roster = memorySnapshot.roster || (isZh ? "（没有其他 Agent）" : "(No other agents)");
+    const formatRequirements = buildRollingSummaryFormatRequirements(locale);
+    // 标题文本统一从格式契约取，prompt 文案禁止硬编码标题字面量
+    const factTitle = getFactSectionTitle(locale);
+    const timelineTitle = getTimelineSectionTitle(locale);
 
-    // 按轮数线性缩放：每轮 40 字配额，10 轮封顶 400 字
-    const totalBudget = Math.min(400, Math.max(40, turnCount * 40));
+    const { totalBudget, visibleMaxTokens } = this._rollingSummaryBudget(turnCount);
     const factsBudget = Math.max(15, Math.round(totalBudget * 0.3));
     const eventsBudget = totalBudget - factsBudget;
 
@@ -517,18 +623,11 @@ ${roster}
 ## 核心原则
 记忆的核心职责是维护你对${userName}的理解，让你以后更自然地理解这个人、你们的关系、长期项目和共同语境。摘要仍然以用户侧为中心：优先记录${userName}是谁、喜欢什么、在意什么、最近关注什么大主题。你的回复只需记录"做了什么"（如"生成了一篇关于X的文章""写了一段代码实现Y功能"），不记录回复的具体内容，也不记录即时内心想法。
 
-## 输出格式
-最终答案必须只包含两个三级标题，标题文本和顺序固定：
-1. 第一行必须是 \`### 重要事实\`
-2. 第二个标题必须是 \`### 事情经过\`
-
-两个标题下的正文都必须使用无序列表。列表项必须以 \`- \` 开头。
-如果某一节没有内容，也要输出一个列表项：\`- 无\`。
-标题之外不要输出前言、后记、XML 标签或代码块。
+${formatRequirements}
 
 ## 内容要求
 
-**重要事实一节**
+**${factTitle}一节**
 只记录用户画像类信息：身份属性、人格特质、审美和兴趣、喜欢或讨厌的事物、长期关系、生活或创作取向、近期正在关注/投入的大主题。没有则写 \`- 无\`。
 
 不要抽：
@@ -552,7 +651,7 @@ ${roster}
 
 字数要求：按实际信息量写，遵守本次摘要预算。信息少就写短，不要凑字数。
 
-**事情经过一节**
+**${timelineTitle}一节**
 按时间顺序记录本 session 发生了什么，带 YYYY-MM-DD HH:MM 时间标注，抓重点脉络。工作相关内容只允许保留到大主题层级。
 工作内容可以写成“用户在讨论记忆系统”“用户在做 Project Hana”，不要写具体子问题、方案、文件、工具、命令、测试、执行步骤、检查顺序或协作偏好。
 字数要求：按实际信息量写，遵守本次摘要预算。三句话能说清的事不要写成一段。
@@ -563,8 +662,7 @@ ${roster}
 3. 只记录客观事实，不记录 MOOD 或助手内心想法
 4. 用户提供的文件/附件：只记录文件名和用途，忽略文件的具体内容
 5. 助手的长篇输出（文章、代码、分析等）：只记录产出了什么，不摘录内容
-6. 宁短勿长：摘要长度应与对话的实际信息密度成正比，闲聊几句只需一两行
-7. 直接以 ### 重要事实 开头输出，不要前言后记`
+6. 宁短勿长：摘要长度应与对话的实际信息密度成正比，闲聊几句只需一两行`
       : `You are ${agentName}. You are reviewing a conversation you just experienced.
 
 Below are the identity, settings, and memories you already had at the start of this session. They are background, not new facts. Review the new conversation from your own perspective and decide what deserves long-term memory.
@@ -588,18 +686,11 @@ ${roster}
 ## Core Principle
 Memory's core job is to maintain your understanding of ${userName}: who they are, your relationship with them, their long-running projects, and shared context. Keep the summary user-centric: prioritize who the user is, what they like, what they care about, and the broad themes they are currently focused on. For your replies, only record what was done (e.g. "generated an article about X", "wrote code implementing Y"), not the actual content or transient inner thoughts.
 
-## Output Format
-The final answer must contain exactly two third-level headings, with fixed text and order:
-1. The first line must be \`### Key Facts\`
-2. The second heading must be \`### Timeline\`
-
-The body under both headings must use unordered lists. Each list item must start with \`- \`.
-If a section has no content, output one list item: \`- None\`.
-Do not output any preamble, conclusion, XML tags, or code fences outside those headings.
+${formatRequirements}
 
 ## Content Requirements
 
-**Key Facts section**
+**${factTitle} section**
 Only record user-profile information: identity attributes, personality traits, aesthetics and interests, likes and dislikes, long-term relationships, life or creative orientation, and broad current themes the user is focused on. Write \`- None\` if none.
 
 Do NOT extract:
@@ -623,7 +714,7 @@ Test:
 
 Word limit: follow the per-run summary budget. Keep it short if there's little info.
 
-**Timeline section**
+**${timelineTitle} section**
 Record what happened in this session in chronological order with YYYY-MM-DD HH:MM timestamps, capturing key points. Work-related content may only be kept at the broad-theme level.
 Work can be written as "the user discussed memory systems" or "the user worked on Project Hana"; do not record subproblems, proposals, files, tools, commands, tests, execution steps, validation order, or collaboration preferences.
 Word limit: follow the per-run summary budget. If three sentences suffice, don't write a paragraph.
@@ -634,15 +725,14 @@ Word limit: follow the per-run summary budget. If three sentences suffice, don't
 3. Only record objective facts, not MOOD or assistant's inner thoughts
 4. User-provided files/attachments: only record filename and purpose, ignore file contents
 5. Assistant's long outputs (articles, code, analysis): only record what was produced, don't excerpt content
-6. Prefer brevity: summary length should be proportional to actual information density
-7. Start output directly with ### Key Facts, no preamble or conclusion`;
+6. Prefer brevity: summary length should be proportional to actual information density`;
 
     const prevLabel = isZh ? "## 已有摘要" : "## Existing Summary";
     const newLabel = isZh ? "## 新增对话" : "## New Conversation";
     const budgetLabel = isZh ? "## 本次摘要预算" : "## This Run's Summary Budget";
     const budgetText = isZh
-      ? `重要事实最多${factsBudget}字。事情经过最多${eventsBudget}字。`
-      : `Key Facts max ${factsWordBudget} words. Timeline max ${eventsWordBudget} words.`;
+      ? `${factTitle}最多${factsBudget}字。${timelineTitle}最多${eventsBudget}字。`
+      : `${factTitle} max ${factsWordBudget} words. ${timelineTitle} max ${eventsWordBudget} words.`;
     const userContent = [
       hasPrev ? `${prevLabel}\n\n${prevSummary}` : "",
       `${newLabel}\n\n${convText}`,
@@ -667,8 +757,6 @@ Word limit: follow the per-run summary budget. If three sentences suffice, don't
       },
     }, layout.usageMetadata);
 
-    // max_tokens 跟着配额走，避免固定值引导 LLM 写满
-    const visibleMaxTokens = Math.max(150, Math.min(750, Math.round(totalBudget * 1.5)));
     const maxTokens = withMemoryReasoningBuffer(visibleMaxTokens, resolvedModel);
 
     return callText({

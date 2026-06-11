@@ -94,7 +94,12 @@ function normalizeStudioWorkspace(value: any): StudioWorkspace | null {
     presentation: typeof value?.presentation === 'string' ? value.presentation : null,
     capabilities: Array.isArray(value?.capabilities) ? value.capabilities.filter((cap: unknown): cap is string => typeof cap === 'string') : [],
     isDefault: value?.isDefault === true,
+    nativeRootPath: normalizeFolder(value?.nativeRootPath),
   };
+}
+
+function normalizeMountNativeRoot(value: unknown): string | null {
+  return normalizeFolder(typeof value === 'string' ? value : null);
 }
 
 export async function loadStudioWorkspaces(): Promise<StudioWorkspace[]> {
@@ -142,17 +147,18 @@ export async function createLocalStudioWorkspaceFromFolder(folder: string): Prom
   }
 }
 
-export async function applyStudioWorkspace(workspace: Pick<StudioWorkspace, 'mountId' | 'label'>): Promise<void> {
+export async function applyStudioWorkspace(workspace: Pick<StudioWorkspace, 'mountId' | 'label'> & Partial<Pick<StudioWorkspace, 'nativeRootPath'>>): Promise<void> {
   const mountId = normalizeMountId(workspace.mountId);
   if (!mountId) return;
   const label = typeof workspace.label === 'string' && workspace.label.trim() ? workspace.label.trim() : mountId;
+  const nativeRootPath = normalizeMountNativeRoot(workspace.nativeRootPath);
   useStore.setState((s: any) => ({
     selectedWorkspaceMountId: mountId,
     selectedWorkspaceLabel: label,
     selectedFolder: null,
     workspaceFolders: s.workspaceFolders || [],
   }));
-  void activateWorkspaceDesk(null, { mountId, label, reload: false });
+  void activateWorkspaceDesk(null, { mountId, label, nativeRootPath, reload: false });
   const s = useStore.getState();
   if (!s.pendingNewSession) {
     useStore.setState({ currentSessionPath: null, pendingNewSession: true });
@@ -203,6 +209,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
   reload?: boolean;
   mountId?: string | null;
   label?: string | null;
+  nativeRootPath?: string | null;
 } = {}): Promise<void> {
   // Any workspace activation owns the visible desk state. Invalidate older file
   // loads even when the caller delays the reload until after another step
@@ -224,6 +231,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       deskBasePath: '',
       deskWorkspaceMountId: null,
       deskWorkspaceLabel: null,
+      deskWorkspaceNativeRoot: null,
       deskCurrentPath: '',
       deskFiles: [],
       deskTreeFilesByPath: {},
@@ -252,6 +260,9 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     deskBasePath: normalized || workspaceKey,
     deskWorkspaceMountId: mountId,
     deskWorkspaceLabel: options.label || null,
+    // 种子值来自调用方携带的服务端披露（如 applyStudioWorkspace 的 workspace 对象）；
+    // 后续 loadDeskFiles 的 mount 响应是同一来源的权威刷新。
+    deskWorkspaceNativeRoot: mountId ? normalizeMountNativeRoot(options.nativeRootPath) : null,
     deskCurrentPath: '',
     deskFiles: [],
     deskTreeFilesByPath: saved?.deskTreeFilesByPath || {},
@@ -307,16 +318,23 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
   }
 }
 
+/**
+ * 当前工作台根的 native 绝对路径。普通文件夹工作台即 deskBasePath；
+ * mount 工作台用服务端披露的 deskWorkspaceNativeRoot（local_fs + local owner），
+ * 远端/虚拟 mount 没有 native 路径，返回 null。
+ */
+export function deskNativeRootDir(s: Pick<ReturnType<typeof useStore.getState>, 'deskBasePath' | 'deskWorkspaceMountId' | 'deskWorkspaceNativeRoot'>): string | null {
+  if (s.deskWorkspaceMountId) return s.deskWorkspaceNativeRoot || null;
+  return s.deskBasePath || null;
+}
+
 export function deskFullPath(name: string): string | null {
-  const s = useStore.getState();
-  if (!s.deskBasePath || s.deskWorkspaceMountId) return null;
-  return s.deskBasePath + '/' + name;
+  const root = deskNativeRootDir(useStore.getState());
+  return root ? root + '/' + name : null;
 }
 
 export function deskCurrentDir(): string | null {
-  const s = useStore.getState();
-  if (!s.deskBasePath || s.deskWorkspaceMountId) return null;
-  return s.deskBasePath;
+  return deskNativeRootDir(useStore.getState());
 }
 
 // ── 文件操作 ──
@@ -352,7 +370,11 @@ export async function loadDeskFiles(subdir?: string, overrideDir?: string | null
     st.setDeskTreeFiles('', data.files || []);
     st.setDeskSelectedPath('');
     if (mountId) {
-      st.setDeskWorkspaceMount(data.mountId || mountId, data.mount?.label || st.deskWorkspaceLabel || null);
+      st.setDeskWorkspaceMount(
+        data.mountId || mountId,
+        data.mount?.label || st.deskWorkspaceLabel || null,
+        normalizeMountNativeRoot(data.mount?.nativeRootPath),
+      );
       st.setDeskBasePath(studioWorkspaceKey(data.mountId || mountId));
     } else {
       st.setDeskWorkspaceMount(null);
@@ -497,7 +519,11 @@ export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean;
     if (data.error) throw new Error(String(data.error));
     const st = useStore.getState();
     if (mountId) {
-      st.setDeskWorkspaceMount(data.mountId || mountId, data.mount?.label || st.deskWorkspaceLabel || null);
+      st.setDeskWorkspaceMount(
+        data.mountId || mountId,
+        data.mount?.label || st.deskWorkspaceLabel || null,
+        normalizeMountNativeRoot(data.mount?.nativeRootPath),
+      );
       st.setDeskBasePath(studioWorkspaceKey(data.mountId || mountId));
     } else {
       st.setDeskWorkspaceMount(null);

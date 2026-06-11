@@ -32,8 +32,8 @@ import {
   isAllowedUploadAudioMime,
   isChatAudioBase64WithinLimit,
 } from "../../shared/audio-mime.ts";
-import { registerSessionFileFromRequest } from "../../lib/session-files/session-file-response.ts";
-import { sessionFilesCacheDir } from "../../lib/session-files/session-file-registry.ts";
+import { registerSessionFileFromRequest, serializeSessionFile } from "../../lib/session-files/session-file-response.ts";
+import { buildSessionFileSourceKey, sessionFilesCacheDir } from "../../lib/session-files/session-file-registry.ts";
 
 const MAX_FILES = 9;
 const MAX_FILENAME_BYTES = 255;
@@ -239,6 +239,52 @@ function resolveUploadTarget(engine, sessionPath) {
   };
 }
 
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function sourceKeyForUploadPath({ realPath, stat }) {
+  return buildSessionFileSourceKey("upload:path:v1", [
+    realPath,
+    stat.isDirectory() ? "directory" : "file",
+    stat.size,
+    stat.mtimeMs,
+  ]);
+}
+
+function normalizeClientUploadSourceId(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 512);
+}
+
+function sourceKeyForUploadBlob({ blob, body, mimeType, presentation, buffer }) {
+  const clientSourceId = normalizeClientUploadSourceId(
+    blob?.sourceId ?? blob?.uploadId ?? body?.sourceId ?? body?.uploadId,
+  );
+  if (clientSourceId) {
+    return buildSessionFileSourceKey("upload:blob-client:v1", [presentation, mimeType, clientSourceId]);
+  }
+  return buildSessionFileSourceKey("upload:blob-content:v1", [presentation, mimeType, sha256Hex(buffer)]);
+}
+
+function existingSessionFileForSourceKey(engine, sessionPath, sourceKey) {
+  if (!sessionPath || !sourceKey || typeof engine?.getSessionFileBySourceKey !== "function") return null;
+  const existing = engine.getSessionFileBySourceKey(sourceKey, { sessionPath });
+  if (!existing || existing.status === "expired") return null;
+  const target = existing.realPath || existing.filePath;
+  if (!target || !fsSync.existsSync(target)) return null;
+  return serializeSessionFile(existing, { runtimeContext: safeRuntimeContext(engine) });
+}
+
+function safeRuntimeContext(engine) {
+  try {
+    if (typeof engine?.getRuntimeContext === "function") return engine.getRuntimeContext();
+  } catch {}
+  return engine?.runtimeContext || null;
+}
+
 function uniqueUploadName(base, ext) {
   const suffix = `_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
   const maxBaseBytes = Math.max(1, MAX_FILENAME_BYTES - Buffer.byteLength(suffix + ext, "utf8"));
@@ -300,6 +346,13 @@ export function createUploadRoute(engine) {
           continue;
         }
 
+        let realSrcPath;
+        try {
+          realSrcPath = await fs.realpath(srcPath);
+        } catch {
+          realSrcPath = path.resolve(srcPath);
+        }
+
         // 安全检查通过后再统计文件数
         const pathFileCount = await countFiles(srcPath, { limit: MAX_FILES - totalFiles });
         totalFiles += pathFileCount;
@@ -313,6 +366,18 @@ export function createUploadRoute(engine) {
 
         const name = path.basename(srcPath);
         const isDir = stat.isDirectory();
+        const sourceKey = sessionPath ? sourceKeyForUploadPath({ realPath: realSrcPath, stat }) : null;
+        const existingSessionFile = existingSessionFileForSourceKey(engine, sessionPath, sourceKey);
+        if (existingSessionFile) {
+          results.push({
+            src: srcPath,
+            dest: existingSessionFile.filePath,
+            name,
+            isDirectory: isDir,
+            ...existingSessionFile,
+          });
+          continue;
+        }
 
         // 统一命名：原名_时间戳（文件保留扩展名）
         const ext = isDir ? "" : path.extname(srcPath);
@@ -335,6 +400,7 @@ export function createUploadRoute(engine) {
           presentation: undefined,
           listed: undefined,
           waveform: waveformForUploadPath(body, srcPath),
+          sourceKey,
         });
 
         results.push({
@@ -370,6 +436,8 @@ export function createUploadRoute(engine) {
           base64Data: body.base64Data,
           mimeType: body.mimeType,
           presentation: body.presentation,
+          sourceId: body.sourceId,
+          uploadId: body.uploadId,
         }];
       }
       else return c.json({ error: t("error.pathsRequired") }, 400);
@@ -421,6 +489,19 @@ export function createUploadRoute(engine) {
         const safeName = sanitizeBlobName(name, mimeType);
         const ext = path.extname(safeName);
         const base = path.basename(safeName, ext);
+        const sourceKey = sessionPath
+          ? sourceKeyForUploadBlob({ blob: blobs[i], body, mimeType, presentation, buffer: buf })
+          : null;
+        const existingSessionFile = existingSessionFileForSourceKey(engine, sessionPath, sourceKey);
+        if (existingSessionFile) {
+          results.push({
+            dest: existingSessionFile.filePath,
+            name: safeName,
+            isDirectory: false,
+            ...existingSessionFile,
+          });
+          continue;
+        }
         const destName = uniqueUploadName(base, ext);
         const destPath = path.join(uploadsDir, destName);
 
@@ -435,6 +516,7 @@ export function createUploadRoute(engine) {
           presentation,
           listed: listedForPresentation(presentation),
           waveform: blobs[i]?.waveform ?? body?.waveform,
+          sourceKey,
         });
 
         results.push({

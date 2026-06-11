@@ -1431,6 +1431,57 @@ describe("syncModels", () => {
     });
   });
 
+  it("projects only controlled model protocol capability fields from user config", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      ollama: {
+        base_url: "http://127.0.0.1:11434/v1",
+        api: "openai-completions",
+        api_key: "local",
+        models: [{
+          id: "qwen2.5-vl-thinking",
+          image: true,
+          reasoning: true,
+          compat: {
+            thinkingFormat: "qwen",
+            reasoningProfile: "mimo-openai",
+            unsupportedWireFlag: "drop-me",
+          },
+          visionCapabilities: {
+            grounding: true,
+            boxes: true,
+            points: true,
+            coordinateSpace: "norm-1000",
+            boxOrder: "xyxy",
+            outputFormat: "qwen",
+            groundingMode: "prompted",
+            extraShape: "drop-me",
+          },
+        }],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers.ollama.models[0];
+    expect(model.compat).toEqual({
+      supportsDeveloperRole: false,
+      thinkingFormat: "qwen",
+      reasoningProfile: "mimo-openai",
+    });
+    expect(model.visionCapabilities).toEqual({
+      grounding: true,
+      boxes: true,
+      points: true,
+      coordinateSpace: "norm-1000",
+      boxOrder: "xyxy",
+      outputFormat: "qwen",
+      groundingMode: "prompted",
+    });
+  });
+
   it("projects provider request headers into models.json even without an api key", async () => {
     const syncModels = await loadSync();
 

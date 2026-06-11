@@ -3,6 +3,10 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifySessionPermission } from "../core/session-permission-mode.ts";
+import {
+  readAgentAvatarResource,
+  writeAgentAppearanceProfileResource,
+} from "../lib/agent-appearance-summary.ts";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.ts";
 import { loadLocale } from "../lib/i18n.ts";
 
@@ -46,17 +50,15 @@ describe("current_status tool", () => {
     const tool = createCurrentStatusTool();
 
     expect(tool.description).toContain('key="time"');
-    expect(tool.description).toContain("hour/minute");
-    expect(tool.description).toContain('key="logical_date"');
-    expect(tool.description).toContain("does not return hour/minute/second");
+    expect(tool.description).toContain("stale");
   });
 
   it("falls back to English toolDef for all locales", () => {
     for (const locale of ["zh", "en"]) {
       loadLocale(locale);
       const tool = createCurrentStatusTool();
-      expect(tool.description).toContain("UI context");
-      expect(tool.description).toContain("ui_context");
+      expect(tool.description).toContain("status");
+      expect(tool.description).toContain("time");
     }
   });
 
@@ -205,7 +207,7 @@ describe("current_status tool", () => {
     expect(payload.appearance.agent.directImage.included).toBe(false);
   });
 
-  it("returns direct avatar image blocks when no auxiliary summary is available but the current model supports images", async () => {
+  it("returns direct user avatar image blocks but keeps agent appearance behind the profile resource", async () => {
     const root = makeTempDir();
     const userDir = path.join(root, "user");
     const agentDir = path.join(root, "agents", "hana");
@@ -229,10 +231,10 @@ describe("current_status tool", () => {
 
     expect(payload.appearance.mode).toBe("direct_image");
     expect(payload.appearance.user.directImage).toMatchObject({ included: true, contentIndex: 1 });
-    expect(payload.appearance.agent.directImage).toMatchObject({ included: true, contentIndex: 2 });
+    expect(payload.appearance.agent.directImage).toMatchObject({ included: false, contentIndex: null });
+    expect(payload.appearance.agent.vision.status).toBe("profile_resource_missing");
     expect(result.content.slice(1)).toEqual([
       { type: "image", mimeType: "image/png", data: Buffer.from("user image bytes").toString("base64") },
-      { type: "image", mimeType: "image/png", data: Buffer.from("agent image bytes").toString("base64") },
     ]);
     expect(serializedJson).not.toContain(userDir);
     expect(serializedJson).not.toContain(agentDir);
@@ -268,16 +270,23 @@ describe("current_status tool", () => {
     expect(payload.appearance.user.directImage.included).toBe(false);
     expect(payload.appearance.agent.avatar.available).toBe(true);
     expect(payload.appearance.agent.summary).toBeNull();
-    expect(payload.appearance.agent.vision.status).toBe("not_configured");
+    expect(payload.appearance.agent.vision.status).toBe("profile_resource_missing");
     expect(payload.appearance.agent.directImage.included).toBe(false);
   });
 
-  it("summarizes custom avatars through the auxiliary vision bridge when available", async () => {
+  it("reads agent appearance from the profile resource and only summarizes user avatars through the auxiliary bridge", async () => {
     const root = makeTempDir();
     const userDir = path.join(root, "user");
     const agentDir = path.join(root, "agents", "hana");
     writeAvatar(userDir, "user", "user image bytes");
     writeAvatar(agentDir, "agent", "agent image bytes");
+    const agentAvatar = readAgentAvatarResource(agentDir);
+    expect(agentAvatar).not.toBeNull();
+    writeAgentAppearanceProfileResource(agentDir, {
+      avatarHash: agentAvatar!.hash,
+      summary: "你的形象是银白色短发，神情安静。",
+      model: "vision-profile",
+    });
     const summarizeResources = vi.fn(async ({ resources }) => ({
       notes: resources.map((resource) => ({
         key: resource.key,
@@ -307,14 +316,51 @@ describe("current_status tool", () => {
       userRequest: expect.stringContaining("appearance"),
       resources: [
         expect.objectContaining({ label: "user custom avatar" }),
-        expect.objectContaining({ label: "agent custom avatar" }),
       ],
     }));
     expect(result.content).toHaveLength(1);
     expect(payload.appearance.mode).toBe("vision_summary");
     expect(payload.appearance.user.summary).toContain("user custom avatar: calm portrait summary");
-    expect(payload.appearance.agent.summary).toContain("agent custom avatar: calm portrait summary");
+    expect(payload.appearance.agent.summary).toBe("你的形象是银白色短发，神情安静。");
+    expect(payload.appearance.agent.vision.status).toBe("profile_resource");
+    expect(payload.appearance.agent.vision.reused).toBe(true);
     expect(payload.appearance.user.directImage.included).toBe(false);
+  });
+
+  it("does not generate an agent appearance summary inside current_status when the profile resource is missing", async () => {
+    const root = makeTempDir();
+    const agentDir = path.join(root, "agents", "hana");
+    writeAvatar(agentDir, "agent", "agent image bytes");
+    const summarizeResources = vi.fn(async ({ resources }) => ({
+      notes: resources.map((resource) => ({
+        key: resource.key,
+        label: resource.label,
+        note: `${resource.label}: should not be used for agent`,
+        reused: false,
+      })),
+    }));
+
+    const tool = createCurrentStatusTool({
+      getAgent: () => ({
+        id: "hana",
+        agentName: "Hana",
+        userName: "Sample User",
+        agentDir,
+      }),
+      getVisionBridge: () => ({ summarizeResources }),
+      getCurrentModel: () => ({ id: "deepseek-chat", provider: "deepseek", input: ["text"] }),
+    });
+
+    const result = await tool.execute("call_1", { action: "get", key: "appearance" }, null, null, makeCtx());
+    const payload = textPayload(result);
+
+    expect(summarizeResources).not.toHaveBeenCalled();
+    expect(result.content).toHaveLength(1);
+    expect(payload.appearance.mode).toBe("unavailable");
+    expect(payload.appearance.agent.avatar.available).toBe(true);
+    expect(payload.appearance.agent.summary).toBeNull();
+    expect(payload.appearance.agent.vision.status).toBe("profile_resource_missing");
+    expect(payload.appearance.agent.directImage.included).toBe(false);
   });
 
   it("returns the current session model for get model", async () => {

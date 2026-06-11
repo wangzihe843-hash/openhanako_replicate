@@ -20,6 +20,25 @@ vi.mock("../lib/debug-log.js", () => ({
   createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
+// #1612：adapter 的所有出站 REST 必须经由 Bridge outbound HTTP helper（带 stage），
+// 这里 mock 成 globalThis.fetch 透传，既捕获 stage 标签，又让既有断言继续工作。
+const outboundCapture = vi.hoisted(() => ({
+  platforms: [] as string[],
+  requests: [] as Array<{ stage: string; url: string; method: string }>,
+}));
+
+vi.mock("../lib/bridge/outbound-http.ts", () => ({
+  createBridgeOutboundHttp: ({ platform }: any) => {
+    outboundCapture.platforms.push(platform);
+    return {
+      request: async ({ stage, url, method = "GET", headers, body }: any) => {
+        outboundCapture.requests.push({ stage, url: String(url), method });
+        return (globalThis as any).fetch(url, { method, headers, body });
+      },
+    };
+  },
+}));
+
 import { createQQAdapter, deriveQQPrincipal } from "../lib/bridge/qq-adapter.ts";
 
 function jsonResponse(body) {
@@ -45,6 +64,8 @@ describe("createQQAdapter media delivery", () => {
   let tmpDir = null;
 
   beforeEach(() => {
+    outboundCapture.platforms.length = 0;
+    outboundCapture.requests.length = 0;
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const href = String(url);
@@ -422,6 +443,46 @@ describe("createQQAdapter media delivery", () => {
     const uploadCall = (fetch as any).mock.calls.find(([url]: any) => String(url).includes("/v2/groups/group-openid/files"));
     expect(uploadCall).toBeTruthy();
     expect(JSON.parse(uploadCall[1].body)).toMatchObject({ file_type: 1 });
+    adapter.stop();
+  });
+
+  it("labels every QQ outbound REST call with an explicit stage for diagnostics (#1612)", async () => {
+    const filePath = makeTempFile("note.txt", "helloworld");
+    const adapter = createQQAdapter({
+      appID: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    } as any);
+
+    // 排空后台 connect()（token + gateway）的微任务链
+    await vi.advanceTimersByTimeAsync(0);
+
+    await adapter.sendReply("user-openid", "hi", {
+      messageId: "qq-dm-1",
+      targetType: "user",
+      isGroup: false,
+    });
+    await adapter.sendMediaFile("user-openid", filePath, {
+      kind: "document",
+      mime: "text/plain",
+      filename: "note.txt",
+      isGroup: false,
+    });
+
+    expect(outboundCapture.platforms).toContain("qq");
+    const stages = outboundCapture.requests.map((r) => r.stage);
+    expect(stages).toContain("token");
+    expect(stages).toContain("gateway");
+    expect(stages).toContain("send_reply");
+    expect(stages).toContain("upload_prepare");
+    expect(stages).toContain("upload_part_put");
+    expect(stages).toContain("upload_part_finish");
+    expect(stages).toContain("upload_complete");
+    expect(stages).toContain("send_media_message");
+    // 每一笔出站调用都必须显式带 stage，禁止匿名出站
+    expect(outboundCapture.requests.length).toBeGreaterThan(0);
+    expect(outboundCapture.requests.every((r) => typeof r.stage === "string" && r.stage.length > 0)).toBe(true);
     adapter.stop();
   });
 

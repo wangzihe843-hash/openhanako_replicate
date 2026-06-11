@@ -9,7 +9,13 @@ import fs from "fs";
 import { getPiModel } from "../lib/pi-sdk/index.ts";
 import { lookupKnown } from "../shared/known-models.ts";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
-import { normalizeVisionCapabilities, withHanaAudioInputCompat, withHanaVideoInputCompat, withThinkingFormatCompat } from "../shared/model-capabilities.ts";
+import {
+  normalizeModelProtocolCompat,
+  normalizeVisionCapabilities,
+  withHanaAudioInputCompat,
+  withHanaVideoInputCompat,
+  withThinkingFormatCompat,
+} from "../shared/model-capabilities.ts";
 import { normalizeProviderHeaders, providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.ts";
 import { validateProviderModels } from "../shared/provider-model-validation.ts";
 import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.ts";
@@ -109,6 +115,12 @@ function buildModelOverride(modelEntry, modelDefaults = {}) {
     });
   }
   if (modelEntry.reasoning !== undefined) override.reasoning = modelEntry.reasoning;
+  const compat = normalizeModelProtocolCompat(modelEntry.compat);
+  if (compat) override.compat = compat;
+  const visionCapabilities = image === true
+    ? normalizeVisionCapabilities(modelEntry.visionCapabilities)
+    : null;
+  if (visionCapabilities) override.visionCapabilities = visionCapabilities;
 
   let finalOverride = video === true ? withHanaVideoInputCompat(override, true) : override;
   finalOverride = audio === true ? withHanaAudioInputCompat(finalOverride, true) : finalOverride;
@@ -172,10 +184,10 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   // 3. Gemini OpenAI 兼容层（/v1beta/openai）严格校验，不识别 store 字段会 400。
   //    Native google-generative-ai 不走 Chat Completions，不需要这组 OpenAI 字段兼容。
   if (provider !== "openai") {
-    const explicitCompat = isObj && isPlainObject(modelEntry.compat)
-      ? modelEntry.compat
+    const explicitCompat = isObj
+      ? (normalizeModelProtocolCompat(modelEntry.compat) || {})
       : {};
-    const compat = { ...explicitCompat, supportsDeveloperRole: false };
+    const compat: Record<string, unknown> = { ...explicitCompat, supportsDeveloperRole: false };
     if (api === "openai-completions" && (
       provider === "gemini"
       || baseUrl.includes("generativelanguage.googleapis.com")

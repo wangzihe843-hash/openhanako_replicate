@@ -174,6 +174,33 @@ describe("server identity loader", () => {
     expect(() => loadServerIdentity(tmpDir)).toThrow("server-node.json not found");
   });
 
+  it("repairs missing identity registry files when startup explicitly ensures them", async () => {
+    tmpDir = makeTmpDir();
+    writeJson(path.join(tmpDir, "server-node.json"), {
+      schemaVersion: 1,
+      serverId: "server_partial",
+      serverNodeId: "server_partial",
+      nodeKind: "local",
+      transport: "loopback",
+      execution: { kind: "local_process" },
+      label: "Partial Server",
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+    const { ensureLocalIdentityRegistries, loadServerIdentity } = await import("../core/server-identity.ts");
+
+    const result = ensureLocalIdentityRegistries(tmpDir);
+
+    expect(result.created).toEqual(expect.arrayContaining(["users.json", "studios.json"]));
+    expect(loadServerIdentity(tmpDir)).toMatchObject({
+      serverId: "server_partial",
+      serverNodeId: "server_partial",
+      label: "Partial Server",
+      userKind: "legacy_owner",
+      studioKind: "personal",
+    });
+  });
+
   it("throws when the default studio owner does not match the default user", async () => {
     tmpDir = makeTmpDir();
     writeValidIdentity(tmpDir, {

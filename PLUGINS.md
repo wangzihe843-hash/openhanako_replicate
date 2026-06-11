@@ -375,6 +375,23 @@ export function register(app, ctx) {
 
 三种写法向后兼容：不使用 ctx 的老插件无需改动。`ctx.bus` 可直接调用内置 session 操作：`session:create`、`session:get`、`session:update`、`session:send`、`session:abort`、`session:history`、`session:list`、`agent:list`、`agent:profile`、`agent:create`、`agent:update`。所有针对已有 session 的操作必须携带 `sessionPath` 参数。详见下方 Route Context 和 Session Bus Handlers 章节。
 
+#### 请求级上下文（pluginRequestContext）
+
+每个进入插件 route 的 HTTP 请求都会得到一份独立的请求级上下文，handler 通过 `c.get("pluginRequestContext")` 读取（三种写法都可用）：
+
+```js
+app.post("/create-session", async (c) => {
+  const reqCtx = c.get("pluginRequestContext");
+  // reqCtx.principal        本次请求的来源身份（owner 设备 / 本插件 iframe surface…），测试直连时为 null
+  // reqCtx.agentId          代理层注入的当前 agent id
+  // reqCtx.capabilityGrant  { accessLevel, declaredPermissions, legacyDeclaration }
+  const result = await reqCtx.bus.request("session:create", { agentId: reqCtx.agentId });
+  return c.json(result);
+});
+```
+
+`reqCtx.bus` 与 `ctx.bus` 的区别：通过它调用系统敏感能力（capability 目录里 `owner: "system"` 且带 `permission` 的条目，如 `session:create` → `session.write`）时按「manifest 声明 + 用户授权」校验。manifest `capabilities` / `sensitiveCapabilities` 未声明对应 permission（支持命名空间，`session` 即覆盖 `session.write`）返回 403 `PLUGIN_CAPABILITY_NOT_DECLARED`；插件未获 full-access 返回 403 `PLUGIN_CAPABILITY_NOT_GRANTED`。错误响应携带 `capability` / `permission` / `pluginId` / `declared` / `granted` 字段，可直接定位缺什么。完全没写能力声明的老 manifest（两个字段都缺失）视为 legacy（等同声明全部），行为不回退；一旦显式写出任一列表即按声明严格校验——显式空数组（`"capabilities": []`）不是 legacy，会拒绝所有系统敏感能力。处理来自 iframe 页面的请求时优先使用 `reqCtx.bus`。
+
 ### Extensions（Pi SDK 事件拦截）⚡ full-access
 
 `extensions/` 目录下的每个 `.js` 文件导出一个工厂函数，接收 Pi SDK 的 `ExtensionAPI`，可以订阅 LLM 调用链上的事件：
@@ -578,6 +595,18 @@ window.parent.postMessage({ type: 'ready' }, '*');
 ```
 
 静态前端资源放在插件目录的 `assets/` 下，由 Hana 宿主通过 `/api/plugins/{pluginId}/assets/...` 统一服务。这个模型参考 VS Code Webview 的资源边界：入口 route 通过本地 token 或 `pluginIframeTicket` 打开，成功返回页面后，宿主下发一个只作用于 `/api/plugins/{pluginId}/assets/` 的 HttpOnly 短会话 cookie。Vite split chunks、`React.lazy()`、CSS、字体、图片、JSON、wasm 等资源请求不需要也不应该携带 `?token` 或 `pluginIframeTicket`。
+
+页面脚本调用本插件的动态 route API（`/api/plugins/{pluginId}/...`）时，使用宿主随 iframe URL 下发的 surface session 凭证（query 参数 `pluginSurfaceSession`），以 `X-Hana-Plugin-Surface-Session` 请求头（或同名 query 参数）回传：
+
+```js
+const surfaceSession = new URLSearchParams(location.search).get('pluginSurfaceSession');
+const res = await fetch('/api/plugins/my-plugin/create-session', {
+  method: 'POST',
+  headers: { 'X-Hana-Plugin-Surface-Session': surfaceSession },
+});
+```
+
+该凭证只授权本插件自己的 route 代理路径，不携带任何宿主 scope，宿主在转发给插件 handler 前会把它从请求中剥离。`pluginIframeTicket` 是一次性的文档加载凭证，不要把它复用到 XHR 上。
 
 浏览器代码优先使用 SDK 生成资源 URL：
 

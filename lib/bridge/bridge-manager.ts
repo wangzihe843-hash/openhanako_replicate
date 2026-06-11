@@ -25,6 +25,8 @@ import { formatSettingsUpdateText } from "../tools/settings-update-result.ts";
 import { isBridgeOwner, resolveBridgeOwnerDeliveryTarget } from "./owner-policy.ts";
 import { normalizeBridgePlatforms } from "./bridge-context.ts";
 import { createModuleLogger } from "../debug-log.ts";
+import { t } from "../i18n.ts";
+import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
 
 const log = createModuleLogger("bridge");
 const blockChunkerLog = createModuleLogger("block-chunker");
@@ -93,7 +95,7 @@ const MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024;
  * 设计纪律（绝不吃正文）：
  *   - 成对内省标签（mood/pulse/reflect/tool_code/think/thinking）连内容一起删
  *   - 裸闭合标签（无开标签的 </think> 等）只删 token 本身，前后正文保留
- *   - 工具协议标签（tool_calls/function_calls/invoke/parameter，含 antml: 命名空间）：
+ *   - 工具协议标签（XML / antml / DSML / 全角 tool_calls / invoke / parameter 变体）：
  *       成对块整段删；未闭合的从开标签起删到该 prose 段末尾（是工具调用尝试，非正文）；
  *       孤立闭合标签 token-only 删
  *   - <t>MM-DD HH:mm</t> 时间戳（timeTag parrot 回来的）连内容删
@@ -105,11 +107,6 @@ const MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024;
  */
 const STRIP_TAGS = ["mood", "pulse", "reflect", "tool_code", "think", "thinking"];
 
-// 工具协议标签名（含 antml: 命名空间形态）。
-const TOOL_TAGS = ["tool_calls", "function_calls", "invoke", "parameter"];
-
-const NS = "(?:antml:)?"; // 可选 antml: 命名空间前缀
-
 // 成对内省标签：<think>…</think> 等，连内容 + 尾随空白一起删。
 const PAIRED_INTERNAL_RE = new RegExp(
   `<(${STRIP_TAGS.join("|")})>[\\s\\S]*?<\\/\\1>\\s*`,
@@ -118,34 +115,6 @@ const PAIRED_INTERNAL_RE = new RegExp(
 // 裸闭合内省标签：</think> 等，token-only（不吃相邻空白）。
 const BARE_CLOSE_INTERNAL_RE = new RegExp(
   `<\\/(?:${STRIP_TAGS.join("|")})>`,
-  "gi",
-);
-// 成对工具协议块：<tool_calls>…</tool_calls> 等（含 antml:），整段删。
-const PAIRED_TOOL_RE = new RegExp(
-  `<${NS}(${TOOL_TAGS.join("|")})\\b[^>]*>[\\s\\S]*?<\\/${NS}\\1>\\s*`,
-  "gi",
-);
-// 工具协议开标签。全局 flag 以便遍历 prose 段内所有出现位置（区分真碎片与
-// 被正文包夹的字面提及）。
-const TOOL_OPEN_RE = new RegExp(
-  `<${NS}(?:${TOOL_TAGS.join("|")})\\b[^>]*>`,
-  "gi",
-);
-// 工具开标签自带 name= 属性 → 是真工具调用结构（流式中断的 <invoke name="bash">），
-// 非正文字面提及。形态：<invoke name="…"> / <invoke name = "…">。
-const TOOL_OPEN_WITH_NAME_RE = new RegExp(
-  `^<${NS}(?:${TOOL_TAGS.join("|")})\\b[^>]*\\bname\\s*=`,
-  "i",
-);
-// 工具开标签后（去空白）紧跟另一个工具协议标签（开或闭）→ 协议结构，是真碎片。
-// 形态：<tool_calls><invoke …> / <tool_calls></tool_calls>。
-const TOOL_TAG_NEXT_RE = new RegExp(
-  `^\\s*<\\/?${NS}(?:${TOOL_TAGS.join("|")})\\b`,
-  "i",
-);
-// 孤立工具协议闭合标签：</invoke> 等，token-only 删。
-const TOOL_CLOSE_RE = new RegExp(
-  `<\\/${NS}(?:${TOOL_TAGS.join("|")})>`,
   "gi",
 );
 // <t>MM-DD HH:mm</t> 时间戳：连内容删（内容是内部时间戳，非正文）。
@@ -157,50 +126,6 @@ const CHANNEL_MARKER_RE = /<\|[^|]*\|>/g;
 const BACKTICK_INTERNAL_RE = /```(?:mood|pulse|reflect)[\s\S]*?```\n*/gi;
 
 /**
- * 处理 prose 段内的工具协议【开】标签。调用方已先剥掉成对工具块与孤立闭合标签，
- * 这里剩下的开标签要么是真碎片（流式中断的工具调用），要么是正文字面提及。
- *
- * 判定一个开标签是否为「真碎片起点」，只看「协议结构特征」（位置无关）：
- *   - 标签自带 name= 属性（流式中断的 <invoke name="bash">），或
- *   - 其后（去空白）紧跟另一个工具协议标签（<tool_calls><invoke …>）。
- * 命中真碎片 → 从该标签起整段后续都是工具调用数据，截断丢弃。
- * 否则（孤立、被正文包夹或仅出现一次的开标签，即正文字面提及）→ token-only 删，
- * 绝不吃后续正文（与孤立闭合标签 </invoke> 的 token-only 处理对称）。
- *
- * 为什么不看「段首起手」位置：本函数同时服务两条路径——edit_message 整段一次
- * 清洗，block 模式逐行清洗。位置类判据（如「以工具开标签起手」）在两条路径下
- * 含义不同（整段段首 ≠ 某一行行首），会让同一输入产生不一致结果且让块模式误吃
- * 行首正文。协议结构判据是位置无关的，两条路径恒等。真碎片
- * `<tool_calls><invoke name="bash">…` 必然满足结构判据，无需依赖位置。
- *
- * @param {string} text - 单个 prose 片段
- * @returns {string}
- */
-function stripToolOpenTags(text) {
-  TOOL_OPEN_RE.lastIndex = 0;
-  let result = "";
-  let cursor = 0; // 已写入 result 的原文位置
-  let match;
-  while ((match = TOOL_OPEN_RE.exec(text)) !== null) {
-    const tag = match[0];
-    const after = text.slice(match.index + tag.length);
-    const hasName = TOOL_OPEN_WITH_NAME_RE.test(tag); // 自带 name= 属性
-    const nextIsToolTag = TOOL_TAG_NEXT_RE.test(after); // 后紧跟工具协议标签
-
-    if (hasName || nextIsToolTag) {
-      // 真碎片：从该开标签起整段后续都是工具调用数据，截断。
-      result += text.slice(cursor, match.index);
-      return result;
-    }
-    // 孤立开标签（正文字面提及）：token-only 删，保留前后正文。
-    result += text.slice(cursor, match.index);
-    cursor = match.index + tag.length;
-  }
-  result += text.slice(cursor);
-  return result;
-}
-
-/**
  * 在单个 prose 片段（已确保不在 code fence / 行内 code 内）上清洗内部标签。
  * 只接受纯正文片段，绝不传 code 片段进来。
  */
@@ -210,33 +135,16 @@ function stripInternalTagsFromProse(text) {
   // 1) 成对内省标签（连内容）。
   out = out.replace(PAIRED_INTERNAL_RE, "");
 
-  // 2) 成对工具协议块（连内容，含 antml:）。多轮以处理嵌套被外层吃掉后的残留。
-  let prev;
-  do {
-    prev = out;
-    out = out.replace(PAIRED_TOOL_RE, "");
-  } while (out !== prev);
+  // 2) 工具协议标签（XML / antml / DSML / 全角变体）统一走 runtime sanitizer。
+  out = stripToolProtocolTagsFromProse(out);
 
-  // 3) 孤立工具协议闭合标签 token-only（必须在「未闭合开标签丢到段末」之前，
-  //    否则前置的孤立闭合标签会被误当作碎片起点）。
-  out = out.replace(TOOL_CLOSE_RE, "");
-
-  // 4) 工具协议开标签。区分两种形态，绝不误删正文（详见 stripToolOpenTags）：
-  //    - 真碎片（流式中断的工具调用 <tool_calls><invoke name="bash">…）：开标签
-  //      自带 name= 属性 / 后紧跟另一个工具协议标签 → 从该标签起截断丢弃。
-  //    - 孤立的、被正文包夹的工具开标签（正文字面提到 <invoke>/<parameter>/
-  //      <tool_calls>/<function_calls>）：token-only 删（与孤立闭合标签对称）。
-  //    只看协议结构、不看位置，使 edit_message 整段清洗与 block 逐行清洗结果一致。
-  //    与 stream-guard 的「保住正文字面提及」哲学一致。
-  out = stripToolOpenTags(out);
-
-  // 5) 裸闭合内省标签 token-only。
+  // 3) 裸闭合内省标签 token-only。
   out = out.replace(BARE_CLOSE_INTERNAL_RE, "");
 
-  // 6) <t> 时间戳（连内容）。
+  // 4) <t> 时间戳（连内容）。
   out = out.replace(TIME_TAG_RE, "");
 
-  // 7) channel marker token-only。
+  // 5) channel marker token-only。
   out = out.replace(CHANNEL_MARKER_RE, "");
 
   return out;
@@ -1646,7 +1554,7 @@ export class BridgeManager {
 
       debugLog()?.log("bridge", `flush ${platform} ${isGroup ? "group" : "dm"} (${lines.length} msg(s), ${merged.length} chars${images.length ? `, ${images.length} image(s)` : ""})`);
 
-      let reply = await this._hub.send(merged, {
+      const result = await this._hub.send(merged, {
         sessionKey,
         agentId,
         role: bridgeRole,
@@ -1662,26 +1570,31 @@ export class BridgeManager {
         },
       });
 
-      // bridge-session 返回 error 标记时，发送简短错误提示给用户
-      if (reply && typeof reply === "object" && reply.__bridgeError) {
-        if (adapter) {
-          const errMsg = `[Error] ${reply.message || "Unable to process message"}`;
-          // best-effort 错误提示：提示本身发送失败时无法再通知用户，吞掉即可。
-          try { await this._sendAdapterReply(adapter, chatId, errMsg, replyContext); } catch {}
-        }
-        reply = null;
-      }
+      // executeExternalMessage 合约（#1607）：
+      // null 仅出现在 prompt 开始前被中止（如 vision prepare 抛 AbortError）；
+      // 流中中止返回已生成 partial，error 为 null。
+      // 非 null：{ text, toolMedia, error, truncated } —— 正文 / 错误 / 截断三者正交。
+      const reply = result?.text || null;
+      const toolMedia = Array.isArray(result?.toolMedia) ? result.toolMedia : [];
+      const replyError = result?.error || null;
+      const replyTruncated = result?.truncated === true;
 
-      // 提取结构化返回中的 toolMedia（来自 details.media 合约）
-      let toolMedia = [];
-      if (reply && typeof reply === "object" && !reply.__bridgeError) {
-        toolMedia = Array.isArray(reply.toolMedia) ? reply.toolMedia : [];
-        reply = reply.text;
+      // provider/transport 层错误只进诊断通道（日志），
+      // 低层错误字符串不允许作为聊天正文发出。
+      if (replyError) {
+        log.error(`${platform} 回复生成出错 (${sessionKey}): ${replyError}`);
+        debugLog()?.error("bridge", `${platform} reply generation error (${sessionKey}): ${replyError}`);
       }
 
       if (reply && adapter) {
         const cleaned = this._cleanReplyForPlatform(reply);
         let allMediaUrls = await delivery.finish(cleaned);
+
+        // 正文因错误中断：附加简短截断说明（人话，不携带低层错误字符串）
+        if (replyTruncated) {
+          // best-effort 说明：说明本身发送失败不影响已送达的正文。
+          try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyInterrupted"), replyContext); } catch {}
+        }
 
         // 合入工具 details.media 产出的媒体，并归一化去重
         if (toolMedia.length) {
@@ -1706,6 +1619,10 @@ export class BridgeManager {
           sender, text: cleaned,
           isGroup, ts: Date.now(),
         });
+      } else if (replyError && adapter) {
+        // 完全没有可见正文时才发用户可理解的失败提示。
+        // best-effort 提示：提示本身发送失败时无法再通知用户，吞掉即可。
+        try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext); } catch {}
       }
     } catch (err) {
       if (!isAbortLikeError(err)) {
@@ -1836,14 +1753,15 @@ export class BridgeManager {
       }
     } catch (err) {
       if (!isAbortLikeError(err)) {
-        const errMsg = err.message === "session_busy"
-          ? "当前桌面会话仍在回复中，请稍后再发"
-          : err.message;
-        log.error(`rc-attached prompt failed (${platform}, ${desktopSessionPath}): ${errMsg}`);
-        debugLog()?.error("bridge", `rc-attached failed: ${errMsg}`);
+        log.error(`rc-attached prompt failed (${platform}, ${desktopSessionPath}): ${err.message}`);
+        debugLog()?.error("bridge", `rc-attached failed: ${err.message}`);
         if (adapter) {
+          // 用户提示用人话：低层错误字符串只进日志，不作为聊天正文发出（#1607）。
+          const notice = err.message === "session_busy"
+            ? t("bridge.sessionBusy")
+            : t("bridge.replyFailed");
           // best-effort 错误提示：提示本身发送失败时无法再通知用户，吞掉即可。
-          try { await this._sendAdapterReply(adapter, chatId, `[Error] ${errMsg}`, replyContext); } catch {}
+          try { await this._sendAdapterReply(adapter, chatId, notice, replyContext); } catch {}
         }
       }
     } finally {
@@ -2263,7 +2181,7 @@ export class BridgeManager {
    * @param {string} text - 要发送的文本（会自动 clean mood/pulse 标签）
    * @param {string} [targetAgentId]
    * @param {{ contextPolicy?: "none"|"record_when_delivered", bridgePlatforms?: string[], idempotencyKey?: string }} [opts]
-   * @returns {{ platform: string, chatId: string, sessionKey: string, recorded: boolean } | null} 发送成功返回平台信息，失败返回 null
+   * @returns {{ platform: string, chatId: string, sessionKey: string, recorded: boolean, deliveries?: Array<any> } | null} 发送成功返回平台信息，失败返回 null
    */
   async sendProactive(text, targetAgentId, opts: any = {}) {
     const cleaned = this._cleanReplyForPlatform(text);
@@ -2304,6 +2222,8 @@ export class BridgeManager {
     const deliveryEntries = bridgePlatforms.length
       ? bridgePlatforms.flatMap((platform) => platformEntries.filter((entry) => entry.platform === platform))
       : platformEntries;
+    const fanOut = bridgePlatforms.length > 0;
+    const deliveries = [];
 
     for (const entry of deliveryEntries) {
       if (entry.status !== "connected" || !entry.adapter) continue;
@@ -2364,19 +2284,57 @@ export class BridgeManager {
           isGroup: false, ts: Date.now(),
         });
 
-        const result = { platform, chatId, sessionKey, recorded };
-        if (idempotencyKey) {
-          this._proactiveIdempotency.set(idempotencyKey, {
-            promise: null,
-            createdAt: Date.now(),
-            result,
+        const delivery = { status: "sent", platform, chatId, sessionKey, recorded };
+        deliveries.push(delivery);
+        if (!fanOut) {
+          const result = {
+            platform,
+            chatId,
+            sessionKey,
+            recorded,
+            deliveries: [delivery],
+          };
+          if (idempotencyKey) {
+            this._proactiveIdempotency.set(idempotencyKey, {
+              promise: null,
+              createdAt: Date.now(),
+              result,
+            });
+          }
+          return result;
+        }
+      } catch (err) {
+        if (fanOut) {
+          deliveries.push({
+            status: "failed",
+            platform,
+            chatId,
+            error: err.message,
           });
         }
-        return result;
-      } catch (err) {
         log.error(`proactive send failed (${platform}): ${err.message}`);
         debugLog()?.error("bridge", `proactive send failed (${platform}): ${err.message}`);
       }
+    }
+
+    const successful = deliveries.filter((delivery) => delivery.status === "sent");
+    if (successful.length) {
+      const primary = successful[0];
+      const result = {
+        platform: primary.platform,
+        chatId: primary.chatId,
+        sessionKey: primary.sessionKey,
+        recorded: successful.some((delivery) => delivery.recorded === true),
+        deliveries,
+      };
+      if (idempotencyKey) {
+        this._proactiveIdempotency.set(idempotencyKey, {
+          promise: null,
+          createdAt: Date.now(),
+          result,
+        });
+      }
+      return result;
     }
 
     if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);

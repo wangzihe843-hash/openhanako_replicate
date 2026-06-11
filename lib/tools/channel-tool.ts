@@ -185,7 +185,7 @@ export function createChannelTool({
   return {
     name: "channel",
     label: "Channel",
-    description: "Manage channel messages (for broadcasts and group discussions).\nActions:\n- read(channel, count?): View recent messages in a channel\n- post(channel, content): Send a message to a channel\n- create(name, members, intro?): Create a new channel\n- list: View channels you have joined\nNote: For one-on-one messaging with an agent, use the dm tool instead of simulating a private chat via channels.",
+    description: "Manage channel messages for broadcasts and group discussions. For one-on-one messaging, use the dm tool instead.",
     parameters: Type.Object({
       action: StringEnum(
         ["read", "post", "create", "list"],

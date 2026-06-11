@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { getNativeSelectionAnchorRect } from '../../stores/selection-actions';
+import type { QuotedSelection } from '../../stores/input-slice';
 import { computeFloatingInputPosition } from '../floating-input/position';
 import styles from './SelectionQuoteActionSurface.module.css';
 
@@ -14,6 +15,10 @@ function getViewportSize() {
     width: window.innerWidth || document.documentElement.clientWidth || 0,
     height: window.innerHeight || document.documentElement.clientHeight || 0,
   };
+}
+
+function canRefreshAnchorFromNativeSelection(selectionAnchorKind: QuotedSelection['selectionAnchorKind']): boolean {
+  return selectionAnchorKind !== 'codemirror';
 }
 
 export function SelectionQuoteActionSurface() {
@@ -72,7 +77,9 @@ export function SelectionQuoteActionSurface() {
     return () => observer.disconnect();
   }, [quoteCandidate]);
 
-  const liveAnchorRect = getLiveSelectionAnchorRect(quoteCandidate?.text, viewport);
+  const liveAnchorRect = canRefreshAnchorFromNativeSelection(quoteCandidate?.selectionAnchorKind)
+    ? getLiveSelectionAnchorRect(quoteCandidate?.text, viewport)
+    : undefined;
   const anchorRect = liveAnchorRect === null ? null : liveAnchorRect ?? quoteCandidate?.anchorRect;
   const position = anchorRect && viewport.width > 0 && viewport.height > 0
     ? computeFloatingInputPosition(

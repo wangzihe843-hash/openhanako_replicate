@@ -181,7 +181,7 @@ describe('buildItemsFromHistory user image restoration', () => {
         status: 'available',
         missingAt: null,
       }],
-    } as any);
+    });
 
     const first = items[0];
     expect(first.type).toBe('message');
@@ -310,7 +310,7 @@ describe('buildItemsFromHistory user image restoration', () => {
         status: 'available',
         missingAt: null,
       }],
-    } as any);
+    });
 
     const first = items[0];
     expect(first.type).toBe('message');
@@ -323,6 +323,49 @@ describe('buildItemsFromHistory user image restoration', () => {
       name: '粘贴图片.png',
       isDir: false,
       mimeType: 'image/png',
+      status: 'available',
+      missingAt: null,
+    }]);
+  });
+
+  it('从 SessionFile 机器上下文恢复展示名附件，并把机器行排除出可见正文', () => {
+    const filePath = '/Users/test/.hanako/uploads/报告2026_mq6l.txt';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-session-file',
+        role: 'user',
+        content: [
+          '[SessionFile] {"fileId":"sf_report","sessionPath":"/sessions/main.jsonl","label":"报告2026.txt","kind":"attachment"}',
+          '请分析这个报告',
+          '',
+          '[附件] 报告2026.txt',
+        ].join('\n'),
+      }],
+      sessionFiles: [{
+        fileId: 'sf_report',
+        filePath,
+        realPath: filePath,
+        displayName: '报告2026.txt',
+        label: '报告2026.txt',
+        filename: '报告2026_mq6l.txt',
+        mime: 'text/plain',
+        kind: 'attachment',
+        status: 'available',
+        missingAt: null,
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.text).toBe('请分析这个报告');
+    expect(first.data.textHtml).not.toContain('SessionFile');
+    expect(first.data.attachments).toEqual([{
+      fileId: 'sf_report',
+      path: filePath,
+      name: '报告2026.txt',
+      isDir: false,
+      mimeType: 'text/plain',
       status: 'available',
       missingAt: null,
     }]);

@@ -4,6 +4,7 @@ import path from "path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { countFiles, createUploadRoute } from "../server/routes/upload.ts";
+import { SessionFileRegistry } from "../lib/session-files/session-file-registry.ts";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-upload-route-"));
@@ -149,6 +150,7 @@ describe("upload route", () => {
       label: "note.txt",
       origin: "user_upload",
       storageKind: "managed_cache",
+      sourceKey: expect.stringMatching(/^upload:path:v1:[a-f0-9]{64}$/),
     });
     expect(data.uploads[0].dest.startsWith(path.join(hanakoHome, "session-files"))).toBe(true);
     expect(data.uploads[0]).toMatchObject({
@@ -161,6 +163,45 @@ describe("upload route", () => {
       origin: "user_upload",
       storageKind: "managed_cache",
     });
+  });
+
+  it("reuses one session file for repeated uploads of the same source file", async () => {
+    tmpDir = mktemp();
+    const source = path.join(tmpDir, "note.txt");
+    fs.writeFileSync(source, "hello", "utf-8");
+    const hanakoHome = path.join(tmpDir, "hana-home");
+    const sessionPath = path.join(tmpDir, "sessions", "upload.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, "{}\n");
+    const registry = new SessionFileRegistry({ managedCacheRoot: path.join(hanakoHome, "session-files") });
+    const engine = {
+      hanakoHome,
+      registerSessionFile: registry.registerFile.bind(registry),
+      getSessionFileBySourceKey: registry.getBySourceKey.bind(registry),
+    };
+    const app = new Hono();
+    app.route("/api", createUploadRoute(engine));
+
+    const body = JSON.stringify({ paths: [source], sessionPath });
+    const firstRes = await app.request("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const first = await firstRes.json();
+    const secondRes = await app.request("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const second = await secondRes.json();
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(second.uploads[0].fileId).toBe(first.uploads[0].fileId);
+    expect(second.uploads[0].dest).toBe(first.uploads[0].dest);
+    expect(registry.list(sessionPath)).toHaveLength(1);
+    expect(fs.readdirSync(path.dirname(first.uploads[0].dest))).toHaveLength(1);
   });
 
   it("upload-blob stores session-owned pasted images under session file cache", async () => {
@@ -207,12 +248,57 @@ describe("upload route", () => {
       storageKind: "managed_cache",
       presentation: "attachment",
       listed: true,
+      sourceKey: expect.stringMatching(/^upload:blob-content:v1:[a-f0-9]{64}$/),
     });
     expect(data.uploads[0]).toMatchObject({
       fileId: "sf_blob",
       sessionPath,
       storageKind: "managed_cache",
     });
+  });
+
+  it("reuses one session file for repeated blob uploads with the same bytes", async () => {
+    tmpDir = mktemp();
+    const hanakoHome = path.join(tmpDir, "hana-home");
+    const sessionPath = path.join(tmpDir, "sessions", "blob.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, "{}\n");
+    const registry = new SessionFileRegistry({ managedCacheRoot: path.join(hanakoHome, "session-files") });
+    const engine = {
+      hanakoHome,
+      registerSessionFile: registry.registerFile.bind(registry),
+      getSessionFileBySourceKey: registry.getBySourceKey.bind(registry),
+    };
+    const app = new Hono();
+    app.route("/api", createUploadRoute(engine));
+    const audioBytes = Buffer.from("webm audio bytes");
+    const body = JSON.stringify({
+      sessionPath,
+      name: "recording.webm",
+      base64Data: audioBytes.toString("base64"),
+      mimeType: "audio/webm",
+      presentation: "voice-input",
+    });
+
+    const firstRes = await app.request("/api/upload-blob", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const first = await firstRes.json();
+    const secondRes = await app.request("/api/upload-blob", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const second = await secondRes.json();
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(second.uploads[0].fileId).toBe(first.uploads[0].fileId);
+    expect(second.uploads[0].dest).toBe(first.uploads[0].dest);
+    expect(registry.list(sessionPath)).toHaveLength(1);
+    expect(fs.readdirSync(path.dirname(first.uploads[0].dest))).toHaveLength(1);
   });
 
   it("upload-blob stores session-owned recorded audio under session file cache", async () => {
@@ -267,6 +353,7 @@ describe("upload route", () => {
       storageKind: "managed_cache",
       presentation: "voice-input",
       listed: false,
+      sourceKey: expect.stringMatching(/^upload:blob-content:v1:[a-f0-9]{64}$/),
     });
     expect(data.uploads[0]).toMatchObject({
       fileId: "sf_audio",

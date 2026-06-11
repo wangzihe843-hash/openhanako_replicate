@@ -286,7 +286,7 @@ describe("HTTP route security policy", () => {
       .toMatchObject({
         allowed: false,
         status: 403,
-        error: "studio_owner_required",
+        error: "plugin_route_forbidden",
       });
     expect(authorizeHttpRoute({ method: "GET", path: "/api/plugins/demo/page", principal: owner }))
       .toMatchObject({ allowed: true });
@@ -655,6 +655,117 @@ describe("HTTP route security policy", () => {
       allowed: false,
       status: 403,
       error: "studio_owner_required",
+    });
+  });
+
+  describe("plugin route proxy policy", () => {
+    function pluginSurfacePrincipal(pluginId, overrides: any = {}) {
+      return Object.freeze({
+        kind: "plugin",
+        pluginId,
+        credentialKind: "plugin_surface_session",
+        connectionKind: "local",
+        scopes: [],
+        ...overrides,
+      });
+    }
+
+    it("classifies plugin proxy sub-paths as plugin_route with the plugin id", async () => {
+      const { classifyHttpRoute } = await import("../server/http/route-security.ts");
+
+      expect(classifyHttpRoute({ method: "POST", path: "/api/plugins/media-board/api/create-session" }))
+        .toMatchObject({ kind: "plugin_route", pluginId: "media-board" });
+      expect(classifyHttpRoute({ method: "GET", path: "/api/plugins/media-board/page" }))
+        .toMatchObject({ kind: "plugin_route", pluginId: "media-board" });
+    });
+
+    it("keeps host-owned plugin management routes out of the plugin_route policy", async () => {
+      const { classifyHttpRoute } = await import("../server/http/route-security.ts");
+
+      expect(classifyHttpRoute({ method: "POST", path: "/api/plugins/dev/install" }))
+        .toMatchObject({ kind: "local_only" });
+      expect(classifyHttpRoute({ method: "GET", path: "/api/plugins/media-board/config" }))
+        .toMatchObject({ kind: "scope", scope: "settings.read" });
+      expect(classifyHttpRoute({ method: "GET", path: "/api/plugins/event-bus/capabilities" }))
+        .toMatchObject({ kind: "scope", scope: "settings.read" });
+      expect(classifyHttpRoute({ method: "POST", path: "/api/plugins/event-bus/capabilities" }))
+        .not.toMatchObject({ kind: "plugin_route" });
+      expect(classifyHttpRoute({ method: "GET", path: "/api/plugins/media-board/assets/dist/app.js" }))
+        .toMatchObject({ kind: "scope", scope: "chat" });
+    });
+
+    it("authorizes matching plugin surface principals on their own plugin routes only", async () => {
+      const { authorizeHttpRoute } = await import("../server/http/route-security.ts");
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/media-board/api/create-session",
+        principal: pluginSurfacePrincipal("media-board"),
+      })).toMatchObject({ allowed: true });
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/other-plugin/api/create-session",
+        principal: pluginSurfacePrincipal("media-board"),
+      })).toMatchObject({
+        allowed: false,
+        status: 403,
+        error: "plugin_route_forbidden",
+      });
+    });
+
+    it("keeps owner access and denies non-owner device principals on plugin routes", async () => {
+      const { authorizeHttpRoute } = await import("../server/http/route-security.ts");
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/media-board/api/create-session",
+        principal: localPrincipal,
+      })).toMatchObject({ allowed: true });
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/media-board/api/create-session",
+        principal: desktopOwnerPrincipal(),
+      })).toMatchObject({ allowed: true });
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/media-board/api/create-session",
+        principal: mobilePrincipal(),
+      })).toMatchObject({ allowed: false, status: 403, error: "plugin_route_forbidden" });
+
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: "/api/plugins/media-board/api/create-session",
+        principal: null,
+      })).toMatchObject({ allowed: false, status: 403 });
+    });
+
+    it("does not let plugin surface principals reach host scope or studio owner routes", async () => {
+      const { authorizeHttpRoute } = await import("../server/http/route-security.ts");
+      const principal = pluginSurfacePrincipal("media-board");
+
+      expect(authorizeHttpRoute({
+        method: "GET",
+        path: "/api/plugins/media-board/config",
+        principal,
+      })).toMatchObject({ allowed: false, status: 403 });
+      expect(authorizeHttpRoute({
+        method: "PUT",
+        path: "/api/plugins/settings",
+        principal,
+      })).toMatchObject({ allowed: false, status: 403 });
+      expect(authorizeHttpRoute({
+        method: "GET",
+        path: "/api/sessions",
+        principal,
+      })).toMatchObject({ allowed: false, status: 403 });
+      expect(authorizeHttpRoute({
+        method: "GET",
+        path: "/api/usage/llm",
+        principal,
+      })).toMatchObject({ allowed: false, status: 403 });
     });
   });
 });

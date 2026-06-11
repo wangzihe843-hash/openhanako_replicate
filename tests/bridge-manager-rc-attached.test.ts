@@ -129,7 +129,7 @@ describe("BridgeManager RC attached-session routing", () => {
     expect(engine.ensureSessionLoaded).not.toHaveBeenCalled();
   });
 
-  it("desktop session prompt failure → sends [Error] to bridge", async () => {
+  it("desktop session prompt failure → sends a human-readable notice, raw error stays in logs (#1607)", async () => {
     const { bm, adapter, hub, rcState } = createMocks();
     hub.send.mockRejectedValueOnce(new Error("model timeout"));
     rcState.attach("tg_dm_owner123@hana", "/err.jsonl");
@@ -145,7 +145,29 @@ describe("BridgeManager RC attached-session routing", () => {
     await vi.advanceTimersByTimeAsync(2500);
 
     const replies = adapter.sendReply.mock.calls.map(c => c[1]);
-    expect(replies.some(r => /\[Error\].*model timeout/.test(r))).toBe(true);
+    expect(replies.some(r => /回复生成失败/.test(r))).toBe(true);
+    expect(replies.some(r => /\[Error\]/.test(r))).toBe(false);
+    expect(replies.some(r => /model timeout/.test(r))).toBe(false);
+  });
+
+  it("desktop session busy → keeps the dedicated busy notice", async () => {
+    const { bm, adapter, hub, rcState } = createMocks();
+    hub.send.mockRejectedValueOnce(new Error("session_busy"));
+    rcState.attach("tg_dm_owner123@hana", "/busy.jsonl");
+
+    bm._handleMessage("telegram", {
+      sessionKey: "tg_dm_owner123@hana",
+      text: "x",
+      userId: "owner123",
+      chatId: "owner123",
+      agentId: "hana",
+    });
+
+    await vi.advanceTimersByTimeAsync(2500);
+
+    const replies = adapter.sendReply.mock.calls.map(c => c[1]);
+    expect(replies.some(r => /当前桌面会话仍在回复中/.test(r))).toBe(true);
+    expect(replies.some(r => /session_busy/.test(r))).toBe(false);
   });
 
   it("tool media from desktop session → forwarded via adapter", async () => {

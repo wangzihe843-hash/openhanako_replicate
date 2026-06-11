@@ -42,6 +42,37 @@ describe('MainContent app file drag attachments', () => {
     expect(useStore.getState().attachedFilesBySession['/sessions/main.jsonl']).toEqual(useStore.getState().attachedFiles);
   });
 
+  it('attaches workspace files dragged from a native-root mount directly by absolute path', async () => {
+    vi.mocked(hanaFetch).mockClear();
+    useStore.setState({
+      currentTab: 'chat',
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceNativeRoot: '/Users/me/docs',
+      deskFiles: [{ name: 'report.md', isDir: false }],
+    } as never);
+    const { attachAppFileDragPayloadToInput } = await import('../../MainContent');
+
+    await attachAppFileDragPayloadToInput({
+      dragId: 'hana-drag-mount-workspace',
+      source: 'workspace',
+      files: [{
+        id: 'workspace:report.md',
+        name: 'report.md',
+        path: '/Users/me/docs/report.md',
+        sourceSubdir: '',
+        isDirectory: false,
+      }],
+    });
+
+    expect(useStore.getState().attachedFiles).toEqual([{
+      path: '/Users/me/docs/report.md',
+      name: 'report.md',
+      isDirectory: false,
+    }]);
+    expect(hanaFetch).not.toHaveBeenCalled();
+  });
+
   it('does not attach dragged files to the chat input while viewing channels', async () => {
     const addToast = vi.fn();
     useStore.setState({

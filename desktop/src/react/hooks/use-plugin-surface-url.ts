@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PLUGIN_SURFACE_SESSION_QUERY } from '@hana/plugin-protocol';
 import { useStore } from '../stores';
 import {
   appendConnectionAuth,
@@ -10,12 +11,13 @@ import { DEFAULT_THEME } from '../../shared/theme-registry';
 
 type SurfaceUrlStatus = 'loading' | 'ready' | 'error';
 
-interface RemoteTicketState {
+interface IssuedSurfaceCredentials {
   key: string;
-  ticket: string;
+  ticket: string | null;
+  surfaceSession: string | null;
 }
 
-interface RemoteTicketError {
+interface SurfaceIssueError {
   key: string;
   message: string;
 }
@@ -27,10 +29,18 @@ export interface PluginSurfaceUrlState {
   retry: () => void;
 }
 
+/**
+ * 为插件 iframe 表面构造 src：
+ * - 本地 owner 连接：文档加载沿用 loopback query token；
+ * - 远程连接：文档加载使用一次性 iframe ticket（凭证不进 iframe URL 之外的位置）；
+ * - 两种连接都向宿主签发 plugin surface session 并随 URL 下发
+ *   （`pluginSurfaceSession`），页面脚本调用本插件 route handler 时显式携带，
+ *   服务端据此铸造请求级 plugin principal（#1629）。
+ */
 export function usePluginSurfaceUrl(routeUrl: string | null, agentId?: string | null): PluginSurfaceUrlState {
   const connection = useStore(s => s.activeServerConnection);
-  const [remoteTicket, setRemoteTicket] = useState<RemoteTicketState | null>(null);
-  const [remoteError, setRemoteError] = useState<RemoteTicketError | null>(null);
+  const [issued, setIssued] = useState<IssuedSurfaceCredentials | null>(null);
+  const [issueError, setIssueError] = useState<SurfaceIssueError | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
   const requestKey = connection && routeUrl
@@ -45,15 +55,15 @@ export function usePluginSurfaceUrl(routeUrl: string | null, agentId?: string | 
   const localOwner = isLocalOwnerConnection(connection);
 
   useEffect(() => {
-    if (!connection || !routeUrl || localOwner) {
-      setRemoteTicket(null);
-      setRemoteError(null);
+    if (!connection || !routeUrl) {
+      setIssued(null);
+      setIssueError(null);
       return;
     }
 
     const controller = new AbortController();
-    setRemoteTicket(null);
-    setRemoteError(null);
+    setIssued(null);
+    setIssueError(null);
 
     void fetch(buildConnectionUrl(connection, '/api/plugins/iframe-ticket'), {
       method: 'POST',
@@ -66,13 +76,17 @@ export function usePluginSurfaceUrl(routeUrl: string | null, agentId?: string | 
       return res.json();
     }).then((data) => {
       if (controller.signal.aborted) return;
-      if (typeof data?.ticket !== 'string' || !data.ticket) {
+      const ticket = typeof data?.ticket === 'string' && data.ticket ? data.ticket : null;
+      const surfaceSession = typeof data?.surfaceSession?.token === 'string' && data.surfaceSession.token
+        ? data.surfaceSession.token
+        : null;
+      if (!localOwner && !ticket) {
         throw new Error('plugin iframe ticket missing');
       }
-      setRemoteTicket({ key: requestKey, ticket: data.ticket });
+      setIssued({ key: requestKey, ticket, surfaceSession });
     }).catch((err) => {
       if (controller.signal.aborted) return;
-      setRemoteError({ key: requestKey, message: err instanceof Error ? err.message : String(err) });
+      setIssueError({ key: requestKey, message: err instanceof Error ? err.message : String(err) });
     });
 
     return () => controller.abort();
@@ -80,23 +94,22 @@ export function usePluginSurfaceUrl(routeUrl: string | null, agentId?: string | 
 
   const iframeSrc = useMemo(() => {
     if (!connection || !routeUrl) return null;
-    if (!localOwner && remoteTicket?.key !== requestKey) return null;
-    const ticket = localOwner ? null : remoteTicket?.ticket || null;
+    if (issued?.key !== requestKey) return null;
     return buildPluginSurfaceUrl({
       connection,
       routeUrl,
       agentId,
-      ticket,
+      ticket: localOwner ? null : issued.ticket,
+      surfaceSession: issued.surfaceSession,
       theme: document.documentElement.dataset.theme || DEFAULT_THEME,
     });
-  }, [agentId, connection, localOwner, remoteTicket, requestKey, routeUrl]);
+  }, [agentId, connection, issued, localOwner, requestKey, routeUrl]);
 
   const retry = useCallback(() => setRetryNonce(n => n + 1), []);
 
   if (!connection || !routeUrl) return { iframeSrc: null, status: 'loading', error: null, retry };
-  if (localOwner) return { iframeSrc, status: 'ready', error: null, retry };
-  if (remoteError?.key === requestKey) return { iframeSrc: null, status: 'error', error: remoteError.message, retry };
-  if (remoteTicket?.key === requestKey && iframeSrc) return { iframeSrc, status: 'ready', error: null, retry };
+  if (issueError?.key === requestKey) return { iframeSrc: null, status: 'error', error: issueError.message, retry };
+  if (issued?.key === requestKey && iframeSrc) return { iframeSrc, status: 'ready', error: null, retry };
   return { iframeSrc: null, status: 'loading', error: null, retry };
 }
 
@@ -105,12 +118,14 @@ export function buildPluginSurfaceUrl({
   routeUrl,
   agentId,
   ticket,
+  surfaceSession,
   theme,
 }: {
   connection: ServerConnection;
   routeUrl: string;
   agentId?: string | null;
   ticket?: string | null;
+  surfaceSession?: string | null;
   theme: string;
 }): string {
   const cssUrl = buildConnectionUrl(
@@ -121,6 +136,7 @@ export function buildPluginSurfaceUrl({
   const fullUrl = buildConnectionUrl(connection, routeUrl, { includeTokenQuery: true });
   const url = new URL(fullUrl);
   if (ticket) url.searchParams.set('pluginIframeTicket', ticket);
+  if (surfaceSession) url.searchParams.set('pluginSurfaceSession', surfaceSession);
   url.searchParams.set('agentId', agentId || '');
   url.searchParams.set('hana-theme', theme);
   url.searchParams.set('hana-css', cssUrl);

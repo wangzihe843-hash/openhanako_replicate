@@ -71,11 +71,13 @@ import {
   isPluginAssetRequest,
   verifyPluginAssetSessionForHostRequest,
 } from "./http/plugin-assets.ts";
+import { resolveHttpRequestPrincipal } from "./http/request-principal.ts";
 import { createCheckpointsRoute } from "./routes/checkpoints.ts";
 import { createCommandsRoute } from "./routes/commands.ts";
 import { createServerIdentityRoute } from "./routes/server-identity.ts";
 import { createXingyeRoute } from "./routes/xingye.js";
 import { createXingyeStorageRoute } from "./routes/xingye-storage.js";
+import { ensureLocalIdentityRegistries } from "../core/server-identity.ts";
 import { createResourcesRoute } from "./routes/resources.ts";
 import { createUsageRoute } from "./routes/usage.ts";
 import { createWebAuthRoute } from "./routes/web-auth.ts";
@@ -251,6 +253,10 @@ log.log("① ensureFirstRun...");
 ensureFirstRun(hanakoHome, productDir);
 log.log("① ensureFirstRun 完成");
 
+log.log("① ensureLocalIdentityRegistries...");
+ensureLocalIdentityRegistries(hanakoHome);
+log.log("① ensureLocalIdentityRegistries 完成");
+
 // ── 初始化 Debug 日志 ──
 const dlog = initDebugLog(path.join(hanakoHome, "logs"));
 
@@ -396,36 +402,16 @@ app.use("*", async (c: any, next: any) => {
     return;
   }
 
-  const authResult = serverAuthService.authenticateRequestDetailed({
-    authorization: c.req.header("authorization"),
-    queryToken: c.req.query("token"),
-    cookieHeader: c.req.header("cookie"),
-    allowQueryToken: true,
+  // 主鉴权 → plugin surface session 后备（仅 missing_credential 时）→ 路由授权。
+  // 链路实现与契约见 server/http/request-principal.ts（与测试共用）。
+  const resolved = resolveHttpRequestPrincipal(c, engine, {
+    serverAuthService,
     connectionKind: transport.connectionKind,
   });
-  const authPrincipal = authResult.principal;
-  if (!authPrincipal) {
-    const denied = authResult.denied || {};
-    return c.json({
-      error: denied.error || "forbidden",
-      reason: denied.reason || "auth_failed",
-      ...(denied.credentialSource ? { credentialSource: denied.credentialSource } : {}),
-      connectionKind: denied.connectionKind || transport.connectionKind,
-    }, 403);
+  if (!resolved.ok) {
+    return c.json(resolved.body, resolved.status);
   }
-  const authz: any = authorizeHttpRoute({
-    method: c.req.method,
-    path: routePath,
-    principal: authPrincipal,
-  });
-  if (!authz.allowed) {
-    return c.json({
-      error: authz.error,
-      ...(authz.reason ? { reason: authz.reason } : {}),
-      ...(authz.requiredScope ? { requiredScope: authz.requiredScope } : {}),
-    }, authz.status);
-  }
-  c.set("authPrincipal", authPrincipal);
+  c.set("authPrincipal", resolved.principal);
 
   await next();
 });

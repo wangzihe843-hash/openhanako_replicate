@@ -14,10 +14,23 @@ describe("server transport ownership", () => {
     const bindIndex = source.indexOf("await bindServerTransportOwnership");
     expect(bindIndex).toBeGreaterThan(-1);
     expect(bindIndex).toBeLessThan(source.indexOf("ensureFirstRun("));
+    expect(bindIndex).toBeLessThan(source.indexOf("ensureLocalIdentityRegistries("));
     expect(bindIndex).toBeLessThan(source.indexOf("new HanaEngine("));
     expect(bindIndex).toBeLessThan(source.indexOf("await engine.init("));
     expect(bindIndex).toBeLessThan(source.indexOf("await engine.initPlugins("));
     expect(bindIndex).toBeLessThan(source.indexOf("hub.initSchedulers()"));
+  });
+
+  it("repairs local identity registries after first-run and before engine initialization", () => {
+    const source = fs.readFileSync(path.join(root, "server", "index.ts"), "utf-8");
+
+    const firstRunIndex = source.indexOf("ensureFirstRun(");
+    const identityIndex = source.indexOf("ensureLocalIdentityRegistries(");
+    const engineIndex = source.indexOf("new HanaEngine(");
+
+    expect(firstRunIndex).toBeGreaterThan(-1);
+    expect(identityIndex).toBeGreaterThan(firstRunIndex);
+    expect(identityIndex).toBeLessThan(engineIndex);
   });
 
   it("reports PORT_IN_USE with host, port, network mode, and recovery suggestions", () => {
@@ -82,6 +95,7 @@ describe("server transport ownership", () => {
       expect(result).toEqual({ code: 1, signal: null });
       expect(stderr).toContain("PORT_IN_USE");
       expect(stdout + stderr).not.toContain("ensureFirstRun");
+      expect(stdout + stderr).not.toContain("ensureLocalIdentityRegistries");
       expect(stdout + stderr).not.toContain("HanaEngine");
     } finally {
       blocker.close();

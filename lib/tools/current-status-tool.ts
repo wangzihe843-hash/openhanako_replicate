@@ -407,7 +407,7 @@ export function createCurrentStatusTool(deps: Record<string, any> = {}) {
   return {
     name: "current_status",
     label: "Current Status",
-    description: "Lightweight current-environment status. Use it to check fresh state such as time, logical date, agent identity, user/agent avatar appearance, model identity, current session folder scope, Bridge platform context, open sub-agent instances, and the user's visible UI context. IMPORTANT: The date/time shown in the system prompt is a snapshot from when the session was created and may be outdated. For precise current time, scheduling, reminders, date calculations that need clock time, greetings, or any case where hour/minute matters, call this tool with action=\"get\", key=\"time\". Use key=\"logical_date\" only when you need to know which calendar day Hana should treat as today under the 4:00 boundary; it does not return hour/minute/second. Use key=\"appearance\" when the user asks what the user or current agent looks like. Use key=\"session_folders\" to inspect which folders the current session can access. When the user refers to this file, here, the current/open/visible/selected item, the pinned window, current Bridge chat/platform, or the current folder, call this tool with action=\"get\", key=\"ui_context\" first to resolve the reference.",
+    description: "Lightweight current-environment status (time, agent identity, UI context, Bridge context, etc.). System prompt time is a snapshot and may be stale; call with key=\"time\" for precise current time. Use action=list to discover available keys.",
     parameters: Type.Object({
       action: StringEnum(["list", "get"], {
         description: "list returns available status keys; get returns one status key value.",

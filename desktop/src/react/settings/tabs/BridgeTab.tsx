@@ -76,6 +76,15 @@ export function BridgeTab() {
         </span>
       </div>
 
+      {/* 微信 */}
+      <WechatSection
+        status={wxInfo}
+        showToast={b.showToast}
+        onSaveConfig={(creds, enabled) => b.saveBridgeConfig('wechat', creds, enabled)}
+        onReload={b.loadStatus}
+        agentId={b.selectedAgentId}
+      />
+
       {/* Telegram */}
       <PlatformSection
         platform="telegram"
@@ -156,15 +165,6 @@ export function BridgeTab() {
         ownerUsers={b.status?.knownUsers?.qq || []}
         currentOwner={b.status?.owner?.qq}
         onOwnerChange={(userId) => b.setOwner('qq', userId)}
-      />
-
-      {/* 微信 */}
-      <WechatSection
-        status={wxInfo}
-        showToast={b.showToast}
-        onSaveConfig={(creds, enabled) => b.saveBridgeConfig('wechat', creds, enabled)}
-        onReload={b.loadStatus}
-        agentId={b.selectedAgentId}
       />
     </div>
   );

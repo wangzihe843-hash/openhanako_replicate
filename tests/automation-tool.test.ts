@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAutomationTool } from "../lib/tools/automation-tool.ts";
+import { buildBridgeContext } from "../lib/bridge/bridge-context.ts";
 
 function makeStore(initialJobs: any[] = [], id = "studio_job_1") {
   const store: any = {
@@ -89,6 +90,108 @@ describe("automation tool", () => {
     expect("confirmId" in result.details).toBe(false);
     expect(result.content[0].text).not.toContain("/confirm");
     expect(store.addJob).not.toHaveBeenCalled();
+  });
+
+  it("issues reply-based /apply guidance on text-command bridge platforms (#1619)", async () => {
+    const store = makeStore();
+    const { store: suggestionStore } = makeSuggestionStore("automation_suggestion_wx", "3827");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+      getHomeCwd: (agentId: string) => `/home/${agentId}`,
+    });
+
+    const result = await tool.execute(
+      "call_wechat",
+      {
+        action: "create",
+        scheduleType: "cron",
+        schedule: "0 9 * * *",
+        label: "Morning Review",
+        prompt: "Review my notes.",
+      },
+      undefined,
+      undefined,
+      {
+        sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" },
+        bridgeContext: buildBridgeContext({
+          sessionKey: "wx_dm_owner@agent-a",
+          role: "owner",
+        }, "zh"),
+      },
+    );
+
+    const text = result.content[0].text;
+    // Agent 必须知道：纯文本平台、确认协议是回复 /apply（含建议ID 精确形式）
+    expect(text).toContain("/apply");
+    expect(text).toContain("3827");
+    expect(text).toContain("没有可点击");
+    // 禁止桌面交互式指令措辞，也不再用语义模糊的"等你确认"
+    expect(text).not.toMatch(/请点击|点击确认|点击按钮|点击卡片/);
+    expect(text).not.toContain("等你确认后再创建");
+    expect(store.addJob).not.toHaveBeenCalled();
+  });
+
+  it("keeps the desktop suggestion copy unchanged outside bridge sessions", async () => {
+    const store = makeStore();
+    const { store: suggestionStore } = makeSuggestionStore("automation_suggestion_desk", "5120");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+      getHomeCwd: (agentId: string) => `/home/${agentId}`,
+    });
+
+    const result = await tool.execute(
+      "call_desktop",
+      {
+        action: "create",
+        scheduleType: "cron",
+        schedule: "0 9 * * *",
+        label: "Morning Review",
+        prompt: "Review my notes.",
+      },
+      undefined,
+      undefined,
+      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+    );
+
+    expect(result.content[0].text).toBe("我准备了一项自动任务建议，等你确认后再创建。");
+  });
+
+  it("keeps generic suggestion copy when the bridge context declares no interaction capabilities", async () => {
+    const store = makeStore();
+    const { store: suggestionStore } = makeSuggestionStore("automation_suggestion_legacy", "7045");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+      getHomeCwd: (agentId: string) => `/home/${agentId}`,
+    });
+
+    const result = await tool.execute(
+      "call_legacy_bridge_ctx",
+      {
+        action: "create",
+        scheduleType: "cron",
+        schedule: "0 9 * * *",
+        label: "Morning Review",
+        prompt: "Review my notes.",
+      },
+      undefined,
+      undefined,
+      {
+        sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" },
+        // 手工拼的 bridgeContext（无 interactionCapabilities）：能力未声明就不输出文本协议指引
+        bridgeContext: { isBridgeSession: true, platform: "wechat", sessionKey: "wechat_dm_owner@agent-a" },
+      },
+    );
+
+    expect(result.content[0].text).toBe("我准备了一项自动任务建议，等你确认后再创建。");
   });
 
   it("uses edited suggestion fields when an automation suggestion is applied", async () => {

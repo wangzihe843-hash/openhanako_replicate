@@ -198,6 +198,20 @@
       "deleteConfirm": "이 보관 항목을 영구 삭제할까요? 되돌릴 수 없습니다.",
       "deleteFailed": "삭제 실패",
       "daysAgo": "{days}일 전 보관됨"
+    },
+    "capabilityDrift": {
+      "title": "도구 구성이 업데이트되었습니다",
+      "addedTools": "새 도구 {count}개",
+      "removedTools": "도구 {count}개 사용 불가",
+      "promptUpdated": "프롬프트 업데이트됨",
+      "separator": ", ",
+      "refreshButton": "에이전트 도구 새로고침",
+      "dismissButton": "닫기",
+      "confirmText": "새로고침하면 이전 대화가 요약으로 압축되며 세부 내용이 손실될 수 있습니다. 계속할까요?",
+      "confirmButton": "새로고침",
+      "cancelButton": "취소",
+      "refreshing": "대화를 압축하고 도구를 새로고침하는 중…",
+      "refreshFailed": "새로고침 실패"
     }
   },
   "common": {
@@ -385,6 +399,9 @@
     "folder": "폴더",
     "copy": "복사",
     "copied": "복사됨 ✓"
+  },
+  "codeBlock": {
+    "wordWrap": "자동 줄 바꿈"
   },
   "cron": {
     "typeAt": "1회",
@@ -1254,7 +1271,6 @@
       "totalTokens": "총 Tokens",
       "cacheRead": "캐시 읽기",
       "cacheHitRate": "히트율",
-
       "uncached": "비캐시 사용",
       "modelMix": "모델 분포",
       "dailyUsage": "일별 사용량",
@@ -1948,6 +1964,8 @@
     "patrolRuns": "순찰",
     "otherRuns": "기타 백그라운드 작업",
     "agentTabs": "Agent별 활동 필터",
+    "previousAgent": "이전 Agent 보기",
+    "nextAgent": "Agent 더 보기",
     "categoryTabs": "활동 유형별 필터",
     "emptyForCategory": "이 분류에는 아직 활동이 없어요.",
     "patrolDone": "순찰 완료",
@@ -1967,6 +1985,8 @@
     "empty": "아직 예약 작업이 없어요.\n필요할 때 어시스턴트가 만들어 줄 거예요.",
     "emptyForAgent": "이 Agent에는 아직 예약 작업이 없어요.",
     "agentTabs": "Agent별 자동화 필터",
+    "previousAgent": "이전 Agent 보기",
+    "nextAgent": "Agent 더 보기",
     "draftTitle": "자동화 초안",
     "suggestionTitle": "제안",
     "suggested": "제안",
@@ -2194,7 +2214,10 @@
     "notConfigured": "{platform}이(가) 설정되지 않았어요",
     "goToSettings": "설정으로 이동",
     "resetContext": "컨텍스트 리셋",
-    "resetContextTip": "다음 메시지부터 새 대화가 시작돼요"
+    "resetContextTip": "다음 메시지부터 새 대화가 시작돼요",
+    "replyInterrupted": "(응답이 중단되어 위 내용이 불완전할 수 있어요)",
+    "replyFailed": "(응답 생성에 실패했어요. 잠시 후 다시 시도해 주세요)",
+    "sessionBusy": "데스크톱 세션이 아직 응답 중이에요. 잠시 후 다시 보내 주세요"
   },
   "notification": {
     "turnCompletionBody": "이번 턴이 완료됐어요"
@@ -2349,6 +2372,7 @@
     "settingsTimeout": "\"{label}\" 변경 확인 시간이 초과되었어요. 설정이 변경되지 않았어요",
     "subagentMaxConcurrent": "현재 {max}개의 서브 에이전트가 실행 중이에요. 완료될 때까지 기다려 주세요.",
     "subagentParentSessionRequired": "subagent에는 활성 부모 대화와 백그라운드 작업 저장소가 필요해요. 현재 컨텍스트에서는 계속 가능한 인스턴스를 만들 수 없어요.",
+    "subagentWriteAccessDenied": "쓰기 권한을 부여할 수 없어요: 부모 세션이 읽기 전용 모드라서 서브에이전트 권한은 부모를 초과할 수 없어요. 세션을 조작 가능 모드로 전환한 뒤 다시 시도하거나, access:\"read\"로 다시 디스패치해 주세요.",
     "subagentFailed": "서브 에이전트 실행 실패: {msg}",
     "subagentTimeout": "서브 에이전트 실행 시간 초과 ({minutes}분)",
     "subagentAborted": "서브 에이전트가 중단되었어요",

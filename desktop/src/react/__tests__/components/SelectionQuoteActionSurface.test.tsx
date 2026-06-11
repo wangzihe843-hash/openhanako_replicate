@@ -120,4 +120,31 @@ describe('SelectionQuoteActionSurface', () => {
     requestAnimationFrame.mockRestore();
     cancelAnimationFrame.mockRestore();
   });
+
+  it('keeps a CodeMirror candidate anchored to the editor-owned rect', () => {
+    const getSelection = vi.spyOn(window, 'getSelection').mockReturnValue({
+      rangeCount: 1,
+      toString: () => '第一段引用',
+      getRangeAt: () => ({
+        getBoundingClientRect: () => ({ left: 100, right: 180, top: 360, bottom: 380, width: 80, height: 20 }),
+      }),
+    } as unknown as Selection);
+
+    useStore.getState().setQuoteCandidate({
+      text: '第一段引用',
+      sourceTitle: 'note.md',
+      sourceKind: 'preview',
+      sourceFilePath: '/notes/note.md',
+      selectionAnchorKind: 'codemirror',
+      charCount: 5,
+      anchorRect: { left: 100, right: 180, top: 120, bottom: 140, width: 80, height: 20 },
+    });
+    render(<SelectionQuoteActionSurface />);
+
+    const surface = screen.getByRole('button', { name: 'selection.quoteToChat' }).closest('[data-selection-ignore="true"]') as HTMLElement;
+    expect(surface.style.left).toBe('94px');
+    expect(surface.style.top).toBe('76px');
+
+    getSelection.mockRestore();
+  });
 });

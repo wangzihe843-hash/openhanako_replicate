@@ -26,6 +26,15 @@ import {
   buildCompileWeekPrompt,
 } from "./prompts/compile.ts";
 import { withMemoryReasoningBuffer } from "./llm-budget.ts";
+import {
+  FACT_SECTION_TITLES,
+  extractFactSection,
+  hasFactSectionHeading,
+  isEmptyFactSection,
+} from "./rolling-summary-format.ts";
+import { createModuleLogger } from "../debug-log.ts";
+
+const log = createModuleLogger("memory-compile");
 
 function _isZh() { return getLocale().startsWith("zh"); }
 
@@ -309,10 +318,20 @@ export async function compileFacts(summaryManager, outputPath, resolvedModel, op
   const sessions = summaryManager.getSummariesInRange(thirtyDaysAgo, now, { since: opts.since || null });
 
   const factParts = [];
+  const skippedSessionIds = [];
   for (const s of sessions) {
     if (!s.summary) continue;
-    const text = extractMarkdownSection(s.summary, ["重要事实", "Key Facts"]);
+    // 读时兼容（#1628）：缺少 重要事实 / Key Facts 标题段的旧自由格式摘要
+    // 无法提取，显式跳过并记录，不能静默吞掉也不能崩溃。
+    if (!hasFactSectionHeading(s.summary)) {
+      skippedSessionIds.push(s.session_id);
+      continue;
+    }
+    const text = extractFactSection(s.summary);
     if (text && !isEmptyFactSection(text)) factParts.push(text);
+  }
+  if (skippedSessionIds.length > 0) {
+    log.warn(`compileFacts: ${skippedSessionIds.length} 份摘要缺少 ${FACT_SECTION_TITLES.join("/")} 标题段，已跳过: ${skippedSessionIds.join(", ")}`);
   }
 
   // 没有新摘要时：保留旧 facts 原样
@@ -340,53 +359,6 @@ export async function compileFacts(summaryManager, outputPath, resolvedModel, op
 
   atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileFacts"));
   return "compiled";
-}
-
-function extractMarkdownSection(markdown, titles) {
-  if (!markdown) return "";
-  const wanted = new Set(titles.map(normalizeHeadingTitle));
-  const lines = String(markdown).split(/\r?\n/);
-
-  for (let i = 0; i < lines.length; i++) {
-    const heading = parseMarkdownHeading(lines[i]);
-    if (!heading || !wanted.has(normalizeHeadingTitle(heading.title))) continue;
-
-    const body = [];
-    for (let j = i + 1; j < lines.length; j++) {
-      const nextHeading = parseMarkdownHeading(lines[j]);
-      if (nextHeading && nextHeading.level <= heading.level) break;
-      body.push(lines[j]);
-    }
-    return body.join("\n").trim();
-  }
-
-  return "";
-}
-
-function parseMarkdownHeading(line) {
-  const match = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(String(line || ""));
-  if (!match) return null;
-  return {
-    level: match[1].length,
-    title: match[2].replace(/[ \t]+#+[ \t]*$/, "").trim(),
-  };
-}
-
-function normalizeHeadingTitle(title) {
-  return String(title || "").trim().toLowerCase();
-}
-
-function isEmptyFactSection(text) {
-  const lines = String(text || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (lines.length === 0) return true;
-  return lines.every((line) => {
-    const itemText = line.replace(/^[-*+][ \t]+/, "").trim().toLowerCase();
-    return itemText === "无" || itemText === "none";
-  });
 }
 
 /**

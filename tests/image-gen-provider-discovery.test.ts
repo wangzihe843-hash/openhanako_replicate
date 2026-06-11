@@ -83,6 +83,88 @@ describe("image-gen provider discovery", () => {
     expect(body.providers).toEqual({});
   });
 
+  it("keeps custom provider models whose inferred protocol has a registered adapter", async () => {
+    const app = new Hono();
+    mediaRoute(app, {
+      dataDir: "/tmp/hana-image-gen-test",
+      config: { get: () => ({}) },
+      _mediaGen: {
+        registry: {
+          getProtocol: (protocolId) => protocolId === "openai-images" ? { id: "openai" } : null,
+          get: () => null,
+        },
+      },
+      bus: {
+        async request(type) {
+          if (type === "provider:media-providers") {
+            return {
+              providers: {
+                "my-proxy": {
+                  providerId: "my-proxy",
+                  displayName: "My Proxy",
+                  hasCredentials: true,
+                  models: [{ id: "flux-1.1-pro", name: "FLUX 1.1 Pro", protocolId: "openai-images" }],
+                  availableModels: [],
+                },
+              },
+            };
+          }
+          throw new Error(`unexpected bus request: ${type}`);
+        },
+      },
+    });
+
+    const res = await app.request("/providers");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.providers["my-proxy"]).toMatchObject({
+      displayName: "My Proxy",
+      models: [{ id: "flux-1.1-pro", name: "FLUX 1.1 Pro", protocolId: "openai-images", adapterAvailable: true }],
+    });
+  });
+
+  it("logs a diagnostic instead of silently dropping models without a recognized protocol", async () => {
+    const warn = [];
+    const app = new Hono();
+    mediaRoute(app, {
+      dataDir: "/tmp/hana-image-gen-test",
+      config: { get: () => ({}) },
+      log: { warn: (...args) => warn.push(args.join(" ")) },
+      _mediaGen: {
+        registry: {
+          getProtocol: () => null,
+          get: () => null,
+        },
+      },
+      bus: {
+        async request(type) {
+          if (type === "provider:media-providers") {
+            return {
+              providers: {
+                "my-anthropic-proxy": {
+                  providerId: "my-anthropic-proxy",
+                  displayName: "My Anthropic Proxy",
+                  hasCredentials: true,
+                  models: [{ id: "claude-image-x", name: "Claude Image X" }],
+                  availableModels: [],
+                },
+              },
+            };
+          }
+          throw new Error(`unexpected bus request: ${type}`);
+        },
+      },
+    });
+
+    const res = await app.request("/providers");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.providers).toEqual({});
+    expect(warn.some((line) => line.includes("my-anthropic-proxy/claude-image-x"))).toBe(true);
+  });
+
   it("adds and removes image models through media provider bus handlers", async () => {
     const calls = [];
     const app = new Hono();

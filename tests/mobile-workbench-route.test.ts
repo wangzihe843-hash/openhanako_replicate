@@ -47,6 +47,53 @@ describe("mobile workbench route", () => {
     expect(JSON.stringify(data)).not.toContain(workspace);
   });
 
+  it("discloses local_fs native roots to the local owner principal only", async () => {
+    const { upsertStudioMount } = await import("../core/studio-mounts.ts");
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    const mountRoot = path.join(tmpDir, "client-project");
+    const hanakoHome = path.join(tmpDir, "hana");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(mountRoot, { recursive: true });
+    fs.writeFileSync(path.join(mountRoot, "brief.md"), "brief", "utf-8");
+    upsertStudioMount(hanakoHome, {
+      mountId: "mount_client",
+      hostStudioId: "studio_1",
+      sourceKind: "storage",
+      provider: "local_fs",
+      rootLocator: { path: mountRoot },
+      label: "Client Project",
+      presentation: "folder",
+      capabilities: ["list", "read", "write"],
+    });
+    const app = await makeApp({
+      hanakoHome,
+      deskCwd: workspace,
+      homeCwd: workspace,
+      getRuntimeContext: () => ({
+        serverId: "server_1",
+        serverNodeId: "node_1",
+        userId: "user_1",
+        studioId: "studio_1",
+        connectionKind: "local",
+        credentialKind: "loopback_token",
+      }),
+    });
+
+    const mounted = await app.request("/api/workbench/files?mountId=mount_client");
+    expect(mounted.status).toBe(200);
+    const mountedData = await mounted.json();
+    expect(mountedData.mount).toMatchObject({
+      mountId: "mount_client",
+      nativeRootPath: mountRoot,
+    });
+    expect(JSON.stringify(mountedData)).not.toContain(`"path"`);
+
+    const fallback = await app.request("/api/workbench/files");
+    expect(fallback.status).toBe(200);
+    expect((await fallback.json()).mount).toMatchObject({ nativeRootPath: workspace });
+  });
+
   it("exposes the same server workbench through desktop-neutral aliases", async () => {
     tmpDir = makeTmpDir();
     const workspace = path.join(tmpDir, "workspace");
@@ -438,7 +485,10 @@ describe("mobile workbench route", () => {
       rootId: "mount_docs",
       files: [{ name: "mounted.md", isDir: false }],
     });
-    expect(JSON.stringify(data)).not.toContain(mountRoot);
+    // local owner principal 通过显式 nativeRootPath 字段拿 native 根；
+    // 内部 path 字段永不外漏。
+    expect(data.mount).not.toHaveProperty("path");
+    expect(data.mount.nativeRootPath).toBe(mountRoot);
   });
 
   it("accepts mountId as the canonical workbench mount selector while preserving rootId in the response", async () => {

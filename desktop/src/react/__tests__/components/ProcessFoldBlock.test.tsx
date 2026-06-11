@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatTranscript } from '../../components/chat/ChatTranscript';
@@ -124,5 +126,21 @@ describe('ProcessFoldBlock', () => {
     expect(screen.getByText('npm test')).toBeInTheDocument();
     expect(screen.getByText('现在开始执行。')).toBeInTheDocument();
     expect(screen.getAllByText('思考完成')).toHaveLength(4);
+  });
+
+  it('keeps the process-fold Collapse shell full width inside the assistant flex column', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/ProcessFoldBlock.tsx'),
+      'utf8',
+    );
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const processFoldCollapseRule = css.match(/\.processFoldCollapse\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+
+    expect(source).toContain('className={styles.processFoldCollapse}');
+    expect(processFoldCollapseRule).toContain('width: 100%');
+    expect(processFoldCollapseRule).toContain('box-sizing: border-box');
   });
 });

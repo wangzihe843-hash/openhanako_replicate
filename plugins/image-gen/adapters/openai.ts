@@ -84,13 +84,15 @@ export const openaiImageAdapter = {
 
     const { apiKey, baseUrl } = creds;
 
-    // 2. Resolve model — short names resolved via shared catalog
+    // 2. Resolve model — catalog 按媒体 provider 查：内置 openai 解析短名别名，
+    //    自定义 OpenAI 兼容 provider 没有 catalog，模型 id 原样透传（不允许改写成 catalog 默认值）
+    const mediaProviderId = params.providerId || "openai";
     const rawModel = params.modelId || params.model || ctx.config?.get?.("defaultImageModel")?.id || "gpt-image-1.5";
-    const modelId = resolveModelId("openai", rawModel);
+    const modelId = resolveModelId(mediaProviderId, rawModel);
 
-    // 3. Get provider defaults
+    // 3. Get provider defaults — 与设置页的存储键一致（按媒体 providerId）
     const allDefaults = ctx.config?.get?.("providerDefaults") || {};
-    const providerDefaults = allDefaults["openai"] || {};
+    const providerDefaults = allDefaults[mediaProviderId] || {};
 
     // 4. Translate params → API body
     const outputFormat = params.format || providerDefaults?.format || "jpeg";

@@ -152,6 +152,34 @@ describe("Pi SDK stream guard", () => {
     expect(result.content).toEqual([]);
   });
 
+  it("does NOT recover antml / DSML / full-width tool protocol fragments as visible text", async () => {
+    const cases = [
+      '<antml:function_calls><antml:invoke name="bash"><antml:parameter name="command">pwd',
+      '<dsml:tool_call name="browser.open"><dsml:parameter name="url">https://example.com',
+      '＜tool_calls＞＜invoke name＝＂bash＂＞pwd',
+    ];
+
+    for (const [index, partialArgs] of cases.entries()) {
+      const invalidTool = {
+        type: "toolCall",
+        id: `call_protocol_${index}`,
+        name: "",
+        arguments: {},
+        partialArgs,
+      };
+      const finalMessage = assistantMessage([invalidTool]);
+      const inner = makeStream([
+        { type: "start", partial: assistantMessage([]) },
+        { type: "toolcall_end", contentIndex: 0, toolCall: invalidTool, partial: assistantMessage([invalidTool]) },
+        { type: "done", reason: "stop", message: finalMessage },
+      ], finalMessage);
+
+      const { events, result } = await collect(guardAssistantMessageStream(inner));
+      expect(events.map((event) => event.type)).toEqual(["start", "done"]);
+      expect(result.content).toEqual([]);
+    }
+  });
+
   it("leaves valid tool calls untouched", async () => {
     const validTool = { type: "toolCall", id: "call_read", name: "read", arguments: { path: "a.txt" }, partialArgs: "{\"path\":\"a.txt\"}" };
     const finalMessage = assistantMessage([validTool]);

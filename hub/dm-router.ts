@@ -35,7 +35,10 @@ import {
 import { normalizeAgentPhoneToolMode } from "../lib/conversations/agent-phone-session.ts";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
+  defaultAgentPhoneGuardLimit,
   formatAgentPhonePromptGuidance,
+  normalizeAgentPhoneModelOverride,
+  positiveIntegerOrDefault,
   positiveIntegerOrNull,
 } from "../lib/conversations/agent-phone-prompt.ts";
 
@@ -93,13 +96,34 @@ export class DmRouter {
       const agentDir = agent?.agentDir || path.join(this._engine.agentsDir, agentId);
       const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, `dm:${peerId}`));
       const meta = projection.meta as any;
+      const override = normalizeAgentPhoneModelOverride({
+        enabled: meta.modelOverrideEnabled,
+        id: meta.modelOverrideId,
+        provider: meta.modelOverrideProvider,
+      });
       return {
         toolMode: normalizeAgentPhoneToolMode(meta.toolMode),
         replyMinChars: positiveIntegerOrNull(meta.replyMinChars),
         replyMaxChars: positiveIntegerOrNull(meta.replyMaxChars),
+        proactiveEnabled: meta.proactiveEnabled === undefined
+          ? DEFAULT_AGENT_PHONE_SETTINGS.proactiveEnabled
+          : meta.proactiveEnabled === true || meta.proactiveEnabled === "true",
+        reminderIntervalMinutes: positiveIntegerOrDefault(
+          meta.reminderIntervalMinutes,
+          DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
+        ),
+        guardLimit: positiveIntegerOrDefault(
+          meta.guardLimit,
+          defaultAgentPhoneGuardLimit(2),
+        ),
+        modelOverrideEnabled: override.enabled,
+        modelOverrideModel: override.model,
       };
     } catch {
-      return DEFAULT_AGENT_PHONE_SETTINGS;
+      return {
+        ...DEFAULT_AGENT_PHONE_SETTINGS,
+        guardLimit: defaultAgentPhoneGuardLimit(2),
+      };
     }
   }
 
@@ -253,6 +277,7 @@ export class DmRouter {
           conversationId: `dm:${fromId}`,
           conversationType: "dm",
           toolMode: phoneSettings.toolMode,
+          modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
           emitEvents: true,
           ...(peerLore ? { systemAppend: peerLore } : {}),
           onSessionReady: (sessionPath) => {
