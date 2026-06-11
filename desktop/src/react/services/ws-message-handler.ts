@@ -515,8 +515,8 @@ export function handleServerMessage(msg: any): void {
 
     case 'activity_update':
       if (msg.activity) {
+        const incoming = msg.activity;
         useStore.setState((current: any) => {
-          const incoming = msg.activity;
           const existing = current.activities.find((activity: any) => activity.id === incoming.id);
           const merged = existing ? { ...existing, ...incoming } : incoming;
           return {
@@ -526,6 +526,18 @@ export function handleServerMessage(msg: any): void {
             ].slice(0, 500),
           };
         });
+        // 心跳掉落礼物：弹一条几秒后自动消失的漂浮提示。dedupeKey 防同一次掉落
+        // 在 activity_update 多次重发（合并/重连）时重复弹。礼物已入全体共享库存。
+        const drop = incoming.giftDrop;
+        if (drop && typeof drop.nameZh === 'string' && drop.nameZh) {
+          const who = incoming.agentName || '角色';
+          useStore.getState().addToast(
+            `${who}巡检时捡到了「${drop.nameZh}」`,
+            'info',
+            4000,
+            { dedupeKey: `giftdrop_${incoming.id}` },
+          );
+        }
       }
       break;
 

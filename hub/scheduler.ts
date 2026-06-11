@@ -20,9 +20,17 @@ import { createFreshCompactDailyScheduler } from "../lib/fresh-compact/daily-sch
 import { FreshCompactMaintainer } from "./fresh-compact-maintainer.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { WORKSPACE_OUTPUT_ROOT_DIRNAME } from "../shared/workspace-output.ts";
+import { ALL_GIFT_KEYS, giftNameZhByKey } from "../shared/xingye-gift-catalog-data.ts";
+import { adjustSharedGiftInventory } from "../lib/xingye/gift-inventory.ts";
 
 const log = createModuleLogger("scheduler");
 const freshCompactLog = createModuleLogger("fresh-compact");
+
+/**
+ * 心跳掉落概率：每次成功巡检有此概率掉落一件随机礼物到全体共享库存。
+ * 纯机械随机，无 LLM。玩起来卡手（太稀缺/太频繁）就调这个常量。
+ */
+const HEARTBEAT_GIFT_DROP_RATE = 0.1;
 
 function normalizeCronExecutionContext(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -399,6 +407,22 @@ export class Scheduler {
       const r = xingyeConsumed.result;
       if (typeof r.summaryZh === "string" && r.summaryZh) (entry as any).summaryZh = r.summaryZh;
       if (typeof r.eventCount === "number") (entry as any).consumedCount = r.eventCount;
+    }
+
+    // 心跳掉落：成功巡检按 HEARTBEAT_GIFT_DROP_RATE 概率掉落一件随机礼物到全体共享库存。
+    // 增量先入库（权威，无 UI 也不丢），再把礼物名挂到 activity，前端据 giftDrop 弹一条漂浮提示。
+    // 失败（如读盘瞬时错误）只跳过本次掉落，绝不影响巡检本身。
+    if (type === "heartbeat" && !failed && Math.random() < HEARTBEAT_GIFT_DROP_RATE) {
+      const key = ALL_GIFT_KEYS[Math.floor(Math.random() * ALL_GIFT_KEYS.length)];
+      const nameZh = key ? giftNameZhByKey(key) : null;
+      if (key && nameZh) {
+        try {
+          const res = await adjustSharedGiftInventory(engine.agentsDir, { [key]: 1 });
+          if (res.ok) (entry as any).giftDrop = { nameZh };
+        } catch (err: any) {
+          log.error(`[xingye] heartbeat gift drop failed (${agentId}): ${err?.message || err}`);
+        }
+      }
     }
 
     // 写入对应 agent 的 ActivityStore

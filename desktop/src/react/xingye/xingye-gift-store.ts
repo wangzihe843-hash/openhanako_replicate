@@ -178,3 +178,54 @@ export async function listGiftLog(agentId: string): Promise<XingyeGiftLogRecord[
 export function hasFavoriteHit(log: XingyeGiftLogRecord[]): boolean {
   return log.some((row) => row.tier === 'favorite');
 }
+
+/**
+ * 全体共享礼物库存（不属于任何具体角色，落在 __shared__ 作用域）。
+ *
+ * 服务端单一事实源见 lib/xingye/gift-inventory.ts；这里只做渲染端的读/增减封装：
+ *  - load：读快照（缺文件 → 空）；展示用，读失败不致命（调用方 catch）。
+ *  - consume：送礼前**原子扣 1**，库存不足返回 ok:false（不扣、不动任何数值），调用方据此拦住送礼。
+ *  - grantInit：赠礼系统初始化时给每种礼物 +1，按 agent 幂等（重复调用安全）。
+ */
+const SHARED_GIFT_SCOPE_ID = '__shared__';
+const GIFT_INVENTORY_PATH = 'gifts/inventory.json';
+
+export type SharedGiftCounts = Record<string, number>;
+
+function normalizeCounts(rawCounts: unknown): SharedGiftCounts {
+  const counts: SharedGiftCounts = {};
+  if (rawCounts && typeof rawCounts === 'object' && !Array.isArray(rawCounts)) {
+    for (const [key, value] of Object.entries(rawCounts as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) counts[key] = Math.floor(value);
+    }
+  }
+  return counts;
+}
+
+export async function loadSharedGiftInventory(): Promise<SharedGiftCounts> {
+  const raw = await backend.readJson<{ counts?: unknown }>(SHARED_GIFT_SCOPE_ID, GIFT_INVENTORY_PATH);
+  return normalizeCounts(raw?.counts);
+}
+
+export async function consumeGiftFromInventory(
+  key: string,
+): Promise<{ ok: boolean; counts: SharedGiftCounts }> {
+  const data = await postXingyeStorage({
+    action: 'adjustGifts',
+    agentId: SHARED_GIFT_SCOPE_ID,
+    deltas: { [key]: -1 },
+    requireAvailable: true,
+  });
+  return { ok: Boolean(data?.ok), counts: normalizeCounts(data?.counts) };
+}
+
+export async function grantInitGiftInventory(agentId: string): Promise<SharedGiftCounts> {
+  const aid = String(agentId ?? '').trim();
+  if (!aid) return {};
+  const data = await postXingyeStorage({
+    action: 'grantInitGifts',
+    agentId: SHARED_GIFT_SCOPE_ID,
+    grantAgentId: aid,
+  });
+  return normalizeCounts(data?.counts);
+}

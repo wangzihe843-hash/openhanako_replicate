@@ -19,6 +19,11 @@ import {
 } from "../../lib/xingye/events.js";
 import { safeJson } from "../hono-helpers.ts";
 import { realPath } from "../utils/path-security.ts";
+import {
+  SHARED_GIFT_SCOPE_ID,
+  adjustSharedGiftInventory,
+  grantInitGifts,
+} from "../../lib/xingye/gift-inventory.ts";
 
 const XINGYE_ROOT_DIR = "xingye";
 /**
@@ -57,6 +62,9 @@ const ACTIONS = new Set([
   "delete",
   "appendEventLog",
   "markEventConsumed",
+  // 共享礼物库存（__shared__ 作用域）：增减 / 初始化幂等灌注。读库存复用 readJson。
+  "adjustGifts",
+  "grantInitGifts",
 ]);
 
 function isSafeAgentId(agentId) {
@@ -216,9 +224,49 @@ export function createXingyeStorageRoute(engine) {
     if (!isSafeAgentId(agentId)) {
       return c.json({ error: "invalid agentId" }, 400);
     }
-    // 保留作用域 __user__（用户本人）没有 agent 记录，跳过存在性校验；其余 id 仍需是已注册角色。
-    if (agentId !== RESERVED_USER_SCOPE_ID && !engine.getAgent?.(agentId)) {
+    // 保留作用域 __user__（用户本人）/ __shared__（全体共享礼物库存）没有 agent 记录，
+    // 跳过存在性校验；其余 id 仍需是已注册角色。
+    if (
+      agentId !== RESERVED_USER_SCOPE_ID
+      && agentId !== SHARED_GIFT_SCOPE_ID
+      && !engine.getAgent?.(agentId)
+    ) {
       return c.json({ error: `agent "${agentId}" not found` }, 404);
+    }
+
+    // 共享礼物库存的增减/初始化：固定落在 __shared__ 作用域，不走 per-path target 解析。
+    if (action === "adjustGifts" || action === "grantInitGifts") {
+      if (agentId !== SHARED_GIFT_SCOPE_ID) {
+        return c.json({ error: "gift inventory actions require __shared__ scope" }, 400);
+      }
+      try {
+        if (action === "adjustGifts") {
+          const deltas =
+            body?.deltas && typeof body.deltas === "object" && !Array.isArray(body.deltas)
+              ? body.deltas
+              : null;
+          if (!deltas) return c.json({ error: "deltas required" }, 400);
+          const requireAvailable = body?.requireAvailable === true;
+          const result = await adjustSharedGiftInventory(engine.agentsDir, deltas, { requireAvailable });
+          return c.json({
+            ok: result.ok,
+            counts: result.counts,
+            ...(result.insufficient ? { insufficient: result.insufficient } : {}),
+          });
+        }
+        // grantInitGifts：按 grantAgentId 幂等地给共享池每种礼物 +1。
+        const grantAgentId = typeof body?.grantAgentId === "string" ? body.grantAgentId : "";
+        if (!isSafeAgentId(grantAgentId)) {
+          return c.json({ error: "invalid grantAgentId" }, 400);
+        }
+        if (!engine.getAgent?.(grantAgentId)) {
+          return c.json({ error: `agent "${grantAgentId}" not found` }, 404);
+        }
+        const inv = await grantInitGifts(engine.agentsDir, grantAgentId);
+        return c.json({ ok: true, counts: inv.counts });
+      } catch (err) {
+        return c.json({ error: `gift inventory failed: ${err.message}` }, 500);
+      }
     }
 
     const base = xingyeBaseDir(engine, agentId);

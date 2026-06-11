@@ -24,6 +24,7 @@ import { getRelationshipState, updateRelationshipState } from './xingye-state-st
 import {
   XINGYE_GIFT_SETS,
   getGiftSet,
+  giftKey,
   type XingyeGiftItem,
   type XingyeGiftSet,
   type XingyeGiftSetId,
@@ -38,10 +39,14 @@ import {
 import { generateGiftInitWithAI } from './xingye-gifts-ai';
 import {
   appendGiftLog,
+  consumeGiftFromInventory,
+  grantInitGiftInventory,
   hasFavoriteHit,
   listGiftLog,
   loadGiftState,
+  loadSharedGiftInventory,
   saveGiftState,
+  type SharedGiftCounts,
   type XingyeGiftLogRecord,
   type XingyeGiftState,
 } from './xingye-gift-store';
@@ -114,6 +119,10 @@ export function GiftPanel({ agent }: GiftPanelProps) {
   const [selected, setSelected] = useState<{ setId: XingyeGiftSetId; gift: XingyeGiftItem } | null>(null);
   const [sending, setSending] = useState(false);
   const [reactionDisplay, setReactionDisplay] = useState<ReactionDisplay | null>(null);
+  /** 全体共享库存 `setId/giftId` → 数量；空对象表示都没货。 */
+  const [inventory, setInventory] = useState<SharedGiftCounts>({});
+  /** 送礼瞬间库存被扣空时的临时提示。 */
+  const [sendNotice, setSendNotice] = useState<string | null>(null);
 
   const reloadSeqRef = useRef(0);
   const initialBootstrapTriedRef = useRef<string | null>(null);
@@ -151,6 +160,14 @@ export function GiftPanel({ agent }: GiftPanelProps) {
         stances: result.stances,
         replies: result.replies,
       });
+      // 赠礼系统初始化：给全体共享池每种礼物 +1（按 agent 幂等）。失败不阻断 init——
+      // 人设定性层已落盘，库存灌注只是附带动作。
+      try {
+        const counts = await grantInitGiftInventory(targetAgent.id);
+        if (ownerAgentId === targetAgent.id) setInventory(counts);
+      } catch (error) {
+        console.warn('[GiftPanel] grant init inventory failed:', error);
+      }
       if (ownerAgentId === targetAgent.id) {
         setGiftState(next);
       }
@@ -174,13 +191,15 @@ export function GiftPanel({ agent }: GiftPanelProps) {
     const seq = ++reloadSeqRef.current;
     setLoadError(null);
     try {
-      const [state, logRows] = await Promise.all([
+      const [state, logRows, inv] = await Promise.all([
         loadGiftState(agent.id),
         listGiftLog(agent.id).catch(() => [] as XingyeGiftLogRecord[]),
+        loadSharedGiftInventory().catch(() => ({} as SharedGiftCounts)),
       ]);
       if (seq !== reloadSeqRef.current) return;
       setGiftState(state);
       setLog(logRows);
+      setInventory(inv);
       // 首次打开自动初始化：每个 agent 只自动尝试一次；读取失败（抛错）不会走到这里，
       // 不会被误判为未初始化。
       if (!state.initializedAt && initialBootstrapTriedRef.current !== agent.id) {
@@ -198,6 +217,7 @@ export function GiftPanel({ agent }: GiftPanelProps) {
     setSelected(null);
     setReactionDisplay(null);
     setInitError(null);
+    setSendNotice(null);
     void reload();
   }, [reload]);
 
@@ -249,6 +269,15 @@ export function GiftPanel({ agent }: GiftPanelProps) {
     setSending(true);
     try {
       const { setId, gift } = selected;
+      // 送礼前先原子扣共享库存：不足直接拦下，下面的好感/数值逻辑一行不碰
+      // （共享库存是有限资源，但「赠礼改对应 agent 好感」的算法保持不变）。
+      const consumed = await consumeGiftFromInventory(giftKey(setId, gift.id));
+      setInventory(consumed.counts);
+      if (!consumed.ok) {
+        setSendNotice(`「${gift.nameZh}」暂时没货了，等巡检再捡到吧。`);
+        return;
+      }
+      setSendNotice(null);
       const familiarity = resolveGiftFamiliarity(giftState.eraSetId, setId);
       const isFavorite = familiarity === 'native' && gift.id === giftState.favoriteGiftId;
       const currentCorruption = getRelationshipState(agent.id)?.corruption ?? 0;
@@ -362,16 +391,24 @@ export function GiftPanel({ agent }: GiftPanelProps) {
             <div className={styles.giftGrid}>
               {set.items.map((gift) => {
                 const isSelected = selected?.setId === set.id && selected.gift.id === gift.id;
+                const count = inventory[giftKey(set.id, gift.id)] ?? 0;
+                const empty = count <= 0;
                 return (
                   <button
                     key={gift.id}
                     type="button"
-                    className={`${styles.giftCard}${isSelected ? ` ${styles.giftCardSelected}` : ''}`}
-                    title={gift.desc}
-                    onClick={() => setSelected(isSelected ? null : { setId: set.id, gift })}
+                    className={`${styles.giftCard}${isSelected ? ` ${styles.giftCardSelected}` : ''}${empty ? ` ${styles.giftCardEmpty}` : ''}`}
+                    title={empty ? `${gift.desc}（暂无库存）` : gift.desc}
+                    disabled={empty}
+                    onClick={() => {
+                      if (empty) return;
+                      setSendNotice(null);
+                      setSelected(isSelected ? null : { setId: set.id, gift });
+                    }}
                   >
                     <img className={styles.giftImage} src={gift.image} alt={gift.nameZh} />
                     <span className={styles.giftName}>{gift.nameZh}</span>
+                    <span className={`${styles.giftBadge}${empty ? ` ${styles.giftBadgeEmpty}` : ''}`}>×{count}</span>
                   </button>
                 );
               })}
@@ -380,23 +417,31 @@ export function GiftPanel({ agent }: GiftPanelProps) {
         );
       })}
 
-      {selected ? (
-        <div className={styles.sendBar}>
-          <img className={styles.sendBarImage} src={selected.gift.image} alt="" />
-          <div className={styles.sendBarMeta}>
-            <p className={styles.sendBarName}>{selected.gift.nameZh}</p>
-            <p className={styles.sendBarDesc}>{selected.gift.desc}</p>
-          </div>
-          <button
-            className={styles.sendButton}
-            type="button"
-            disabled={sending || !initialized}
-            onClick={() => void handleSend()}
-          >
-            {sending ? '送出中…' : initialized ? `送给 ${displayName}` : '准备中…'}
-          </button>
-        </div>
+      {sendNotice ? (
+        <div className={`${styles.notice} ${styles.noticeError}`}>{sendNotice}</div>
       ) : null}
+
+      {selected ? (() => {
+        const selectedCount = inventory[giftKey(selected.setId, selected.gift.id)] ?? 0;
+        const outOfStock = selectedCount <= 0;
+        return (
+          <div className={styles.sendBar}>
+            <img className={styles.sendBarImage} src={selected.gift.image} alt="" />
+            <div className={styles.sendBarMeta}>
+              <p className={styles.sendBarName}>{selected.gift.nameZh}<span className={styles.sendBarCount}>库存 ×{selectedCount}</span></p>
+              <p className={styles.sendBarDesc}>{selected.gift.desc}</p>
+            </div>
+            <button
+              className={styles.sendButton}
+              type="button"
+              disabled={sending || !initialized || outOfStock}
+              onClick={() => void handleSend()}
+            >
+              {sending ? '送出中…' : !initialized ? '准备中…' : outOfStock ? '没货了' : `送给 ${displayName}`}
+            </button>
+          </div>
+        );
+      })() : null}
 
       {log.length ? (
         <section className={styles.historySection}>
