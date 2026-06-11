@@ -1,0 +1,36 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <path d="M 570 290 C 660 296 718 350 718 436 C 718 548 656 668 568 740 L 540 740 C 624 660 676 540 676 436 C 676 360 632 312 558 306 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="180" ry="15" fill="#EADBBD"/>
+
+  <!-- scale: shield shape, iridescent bands -->
+  <path d="M 512 232 C 610 232 676 290 676 380 C 676 500 610 626 512 700 C 414 626 348 500 348 380 C 348 290 414 232 512 232 Z" fill="#6F9A8F"/>
+  <clipPath id="scale"><path d="M 512 232 C 610 232 676 290 676 380 C 676 500 610 626 512 700 C 414 626 348 500 348 380 C 348 290 414 232 512 232 Z"/></clipPath>
+  <g clip-path="url(#scale)">
+    <path d="M 330 320 Q 512 250 694 320 L 694 230 L 330 230 Z" fill="#9CCFC4"/>
+    <path d="M 330 430 Q 512 360 694 430 L 694 308 Q 512 240 330 308 Z" fill="#8FB3B8"/>
+    <path d="M 330 552 Q 512 478 694 552 L 694 418 Q 512 348 330 418 Z" fill="#8E9FC4"/>
+    <path d="M 330 720 Q 512 620 694 720 L 694 540 Q 512 466 330 540 Z" fill="#A98BC4"/>
+    <path d="M 420 690 Q 512 740 626 668 L 626 760 L 420 760 Z" fill="#8E6FB1"/>
+  </g>
+  <!-- rim -->
+  <path d="M 512 232 C 610 232 676 290 676 380 C 676 500 610 626 512 700 C 414 626 348 500 348 380 C 348 290 414 232 512 232 Z"
+        fill="none" stroke="#5C8278" stroke-width="8"/>
+  <!-- ridge line -->
+  <path d="M 512 252 Q 512 480 512 676" fill="none" stroke="#FFFFFF" stroke-width="6" opacity="0.35"/>
+  <path d="M 506 260 Q 506 470 506 660" fill="none" stroke="#5C8278" stroke-width="3" opacity="0.4"/>
+  <!-- highlight crescent -->
+  <path d="M 414 312 Q 392 368 396 432" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.55"/>
+  <!-- shimmer streaks -->
+  <g stroke="#FFFFFF" stroke-linecap="round" opacity="0.5">
+    <line x1="560" y1="330" x2="600" y2="288" stroke-width="7"/>
+    <line x1="588" y1="352" x2="612" y2="326" stroke-width="5"/>
+    <line x1="440" y1="560" x2="466" y2="530" stroke-width="5"/>
+  </g>
+
+  <!-- sparkles -->
+  <path d="M 668 240 L 674 256 L 690 262 L 674 268 L 668 284 L 662 268 L 646 262 L 662 256 Z" fill="#C8E6DD"/>
+  <circle cx="350" cy="240" r="6" fill="#C7B3DC" opacity="0.8"/>
+</svg>

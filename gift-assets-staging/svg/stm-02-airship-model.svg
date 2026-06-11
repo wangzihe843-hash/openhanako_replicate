@@ -1,0 +1,64 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<rect width="1024" height="1024" fill="#FAF3E6"/>
+<!-- long shadow (2 pieces: envelope / gondola+rod+base) -->
+<g fill="#F1E3C9" transform="translate(60,44)">
+  <ellipse cx="500" cy="380" rx="240" ry="110"/>
+  <rect x="425" y="486" width="160" height="114" rx="14"/>
+  <rect x="496" y="588" width="26" height="122"/>
+  <rect x="378" y="700" width="268" height="44" rx="12"/>
+</g>
+<!-- ground -->
+<ellipse cx="512" cy="748" rx="240" ry="15" fill="#EADBBD"/>
+<!-- tail fins -->
+<polygon points="672,318 780,272 756,330 700,348" fill="#C28F3F"/>
+<polygon points="672,442 780,488 756,430 700,412" fill="#A87844"/>
+<!-- propeller -->
+<g transform="rotate(12 752 380)">
+  <ellipse cx="752" cy="336" rx="13" ry="42" fill="#8C6239"/>
+  <ellipse cx="752" cy="424" rx="13" ry="42" fill="#8C6239"/>
+</g>
+<circle cx="752" cy="380" r="12" fill="#C28F3F"/>
+<circle cx="752" cy="380" r="5" fill="#5E4730"/>
+<!-- suspension cables -->
+<line x1="420" y1="468" x2="448" y2="528" stroke="#8C6239" stroke-width="5"/>
+<line x1="472" y1="480" x2="480" y2="528" stroke="#8C6239" stroke-width="5"/>
+<line x1="540" y1="480" x2="532" y2="528" stroke="#8C6239" stroke-width="5"/>
+<line x1="590" y1="468" x2="562" y2="528" stroke="#8C6239" stroke-width="5"/>
+<!-- envelope -->
+<ellipse cx="500" cy="380" rx="238" ry="108" fill="#A87844"/>
+<ellipse cx="500" cy="368" rx="228" ry="96" fill="#C09058"/>
+<ellipse cx="500" cy="342" rx="186" ry="56" fill="#D8B077"/>
+<path d="M 380 280 Q 368 380 380 478" stroke="#A87844" stroke-width="5" fill="none" opacity="0.8"/>
+<path d="M 500 273 L 500 487" stroke="#A87844" stroke-width="5" opacity="0.8"/>
+<path d="M 620 280 Q 632 380 620 478" stroke="#A87844" stroke-width="5" fill="none" opacity="0.8"/>
+<path d="M 272 358 Q 500 326 728 358" stroke="#A87844" stroke-width="4" fill="none" opacity="0.6"/>
+<!-- nose cap -->
+<ellipse cx="280" cy="380" rx="30" ry="72" fill="#C28F3F"/>
+<circle cx="304" cy="334" r="4.5" fill="#8C6239"/>
+<circle cx="311" cy="380" r="4.5" fill="#8C6239"/>
+<circle cx="304" cy="426" r="4.5" fill="#8C6239"/>
+<!-- envelope top highlight arc -->
+<path d="M 360 300 Q 470 272 590 290" stroke="#EFCB8B" stroke-width="9" fill="none" opacity="0.9" stroke-linecap="round"/>
+<!-- gondola -->
+<rect x="425" y="522" width="160" height="72" rx="16" fill="#8C6239"/>
+<rect x="425" y="522" width="160" height="18" rx="8" fill="#A87844"/>
+<circle cx="460" cy="566" r="11" fill="#EFCB8B" stroke="#5E4730" stroke-width="3"/>
+<circle cx="505" cy="566" r="11" fill="#EFCB8B" stroke="#5E4730" stroke-width="3"/>
+<circle cx="550" cy="566" r="11" fill="#EFCB8B" stroke="#5E4730" stroke-width="3"/>
+<circle cx="438" cy="536" r="4" fill="#5E4730"/>
+<circle cx="572" cy="536" r="4" fill="#5E4730"/>
+<circle cx="438" cy="584" r="4" fill="#5E4730"/>
+<circle cx="572" cy="584" r="4" fill="#5E4730"/>
+<!-- stand rod -->
+<ellipse cx="512" cy="596" rx="22" ry="6" fill="#5E4730" opacity="0.5"/>
+<rect x="504" y="594" width="16" height="112" fill="#C28F3F"/>
+<line x1="508" y1="598" x2="508" y2="700" stroke="#EFCB8B" stroke-width="3" opacity="0.8"/>
+<rect x="494" y="594" width="36" height="12" rx="5" fill="#A87844"/>
+<rect x="494" y="694" width="36" height="14" rx="5" fill="#A87844"/>
+<!-- base -->
+<rect x="378" y="706" width="268" height="38" rx="12" fill="#8C6239"/>
+<rect x="390" y="700" width="244" height="14" rx="7" fill="#A87844"/>
+<path d="M 404 728 L 470 728" stroke="#6B5132" stroke-width="4" stroke-linecap="round"/>
+<path d="M 554 728 L 620 728" stroke="#6B5132" stroke-width="4" stroke-linecap="round"/>
+<rect x="480" y="716" width="64" height="14" rx="4" fill="#C28F3F"/>
+</svg>

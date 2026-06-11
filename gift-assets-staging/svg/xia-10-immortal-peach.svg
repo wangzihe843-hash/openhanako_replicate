@@ -1,0 +1,53 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="peachG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#EFA9B3"/>
+      <stop offset="0.38" stop-color="#F4BFC6"/>
+      <stop offset="0.72" stop-color="#F8E7D8"/>
+      <stop offset="1" stop-color="#F3E2CB"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- faint warm halo (slight glow) -->
+  <circle cx="512" cy="460" r="300" fill="#F5E9DC" opacity="0.5"/>
+  <circle cx="512" cy="460" r="230" fill="#F4E3D2" opacity="0.4"/>
+  <!-- long shadow: peach + leaves, offset (60,44) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M512 286 C594 318 666 386 672 488 C678 600 598 678 512 680 C426 678 346 600 352 488 C358 386 430 318 512 286 Z"/>
+    <path d="M520 278 C566 234 638 226 678 252 C652 290 580 304 524 290 Z"/>
+    <path d="M514 272 C522 218 566 188 614 190 C606 232 564 262 518 280 Z"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="692" rx="195" ry="14" fill="#EADBBD"/>
+  <ellipse cx="512" cy="684" rx="120" ry="10" fill="#DBC59C" opacity="0.9"/>
+  <!-- stem behind leaves -->
+  <path d="M504 268 C504 252 508 240 514 232 L530 238 C522 248 518 260 518 272 Z" fill="#8C6239"/>
+  <!-- leaves -->
+  <path d="M514 272 C522 218 566 188 614 190 C606 232 564 262 518 280 Z" fill="#7E9B74"/>
+  <path d="M518 276 C546 244 578 216 608 196" stroke="#6D8A63" stroke-width="4" fill="none" opacity="0.7"/>
+  <path d="M520 278 C566 234 638 226 678 252 C652 290 580 304 524 290 Z" fill="#8FA882"/>
+  <path d="M526 286 C570 268 624 258 666 254" stroke="#7C9170" stroke-width="4" fill="none" opacity="0.8"/>
+  <!-- peach body -->
+  <path d="M512 286 C594 318 666 386 672 488 C678 600 598 678 512 680 C426 678 346 600 352 488 C358 386 430 318 512 286 Z" fill="url(#peachG)"/>
+  <!-- pink tip accent -->
+  <path d="M512 286 C540 298 566 316 586 340 C556 322 532 310 512 304 C492 310 468 322 438 340 C458 316 484 298 512 286 Z" fill="#E89AA6" opacity="0.9"/>
+  <!-- cleft -->
+  <path d="M510 292 C466 352 446 442 456 552" stroke="#E2949D" stroke-width="7" fill="none" opacity="0.85" stroke-linecap="round"/>
+  <!-- bottom shade crescent -->
+  <path d="M380 580 C412 648 470 676 540 676 C460 690 388 650 366 568 Z" fill="#E6CDB2" opacity="0.8"/>
+  <!-- left highlight -->
+  <path d="M420 380 C396 416 384 466 388 516" stroke="#FFFFFF" stroke-width="9" fill="none" opacity="0.75" stroke-linecap="round"/>
+  <circle cx="560" cy="380" r="6" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="590" cy="432" r="4" fill="#FFFFFF" opacity="0.7"/>
+  <!-- sparkles all around (slight glow) -->
+  <path d="M0 -12 Q3 -3 12 0 Q3 3 0 12 Q-3 3 -12 0 Q-3 -3 0 -12 Z" transform="translate(352,330)" fill="#E5C878"/>
+  <path d="M0 -10 Q2.5 -2.5 10 0 Q2.5 2.5 0 10 Q-2.5 2.5 -10 0 Q-2.5 -2.5 0 -10 Z" transform="translate(664,360)" fill="#E5C878" opacity="0.95"/>
+  <path d="M0 -8 Q2 -2 8 0 Q2 2 0 8 Q-2 2 -8 0 Q-2 -2 0 -8 Z" transform="translate(336,520)" fill="#E5C878" opacity="0.85"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(688,500)" fill="#E5C878" opacity="0.9"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(420,250)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -8 Q2 -2 8 0 Q2 2 0 8 Q-2 2 -8 0 Q-2 -2 0 -8 Z" transform="translate(606,320)" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="398" cy="268" r="4" fill="#E5C878" opacity="0.8"/>
+  <circle cx="640" cy="440" r="4" fill="#E5C878" opacity="0.8"/>
+  <circle cx="446" cy="218" r="3" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="672" cy="300" r="3" fill="#FFFFFF" opacity="0.8"/>
+</svg>

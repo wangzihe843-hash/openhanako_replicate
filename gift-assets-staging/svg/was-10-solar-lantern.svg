@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- warm glow aura -->
+  <circle cx="512" cy="520" r="260" fill="#F8ECCB" opacity="0.55"/>
+  <circle cx="512" cy="520" r="190" fill="#F6E4B4" opacity="0.5"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="772" rx="175" ry="14" fill="#EADBBD"/>
+
+  <!-- wire handle -->
+  <path d="M 420 392 Q 420 250 512 250 Q 604 250 604 392" fill="none" stroke="#8F96A1" stroke-width="11" stroke-linecap="round"/>
+  <path d="M 430 380 Q 432 270 500 256" fill="none" stroke="#C9CDD4" stroke-width="4" stroke-linecap="round"/>
+  <!-- handle mounts -->
+  <circle cx="420" cy="396" r="11" fill="#7C8492"/>
+  <circle cx="604" cy="396" r="11" fill="#7C8492"/>
+
+  <!-- solar panel top -->
+  <path d="M 404 414 Q 404 370 452 364 L 572 364 Q 620 370 620 414 L 620 428 L 404 428 Z" fill="#5C6B85"/>
+  <path d="M 404 414 Q 404 370 452 364 L 512 364 L 512 428 L 404 428 Z" fill="#6B7A94"/>
+  <!-- panel grid -->
+  <g stroke="#4E5A74" stroke-width="3.5">
+    <line x1="428" y1="376" x2="428" y2="424"/>
+    <line x1="470" y1="368" x2="470" y2="424"/>
+    <line x1="512" y1="366" x2="512" y2="424"/>
+    <line x1="554" y1="368" x2="554" y2="424"/>
+    <line x1="596" y1="376" x2="596" y2="424"/>
+    <line x1="408" y1="398" x2="620" y2="398"/>
+  </g>
+  <path d="M 416 380 Q 440 370 468 368" fill="none" stroke="#8E9FC4" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <!-- top cap rim -->
+  <rect x="396" y="424" width="232" height="20" rx="9" fill="#7C8492"/>
+
+  <!-- glass body -->
+  <path d="M 416 444 L 608 444 L 596 672 L 428 672 Z" fill="#FBF3DC" stroke="#D8C9A4" stroke-width="6" opacity="0.97"/>
+  <!-- inner light core -->
+  <circle cx="512" cy="556" r="64" fill="#F6C26B" opacity="0.6"/>
+  <circle cx="512" cy="552" r="38" fill="#FBDA9A" opacity="0.95"/>
+  <!-- filament bulb -->
+  <circle cx="512" cy="548" r="20" fill="#FDF0CE"/>
+  <path d="M 512 568 L 512 596" stroke="#C9802E" stroke-width="5" stroke-linecap="round"/>
+  <rect x="500" y="592" width="24" height="16" rx="6" fill="#A9AFB8"/>
+  <!-- glass corner braces -->
+  <g stroke="#8F96A1" stroke-width="6">
+    <line x1="424" y1="450" x2="434" y2="666"/>
+    <line x1="600" y1="450" x2="590" y2="666"/>
+  </g>
+  <!-- glass highlight -->
+  <path d="M 446 470 Q 440 540 446 630" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- base -->
+  <path d="M 412 672 L 612 672 L 600 716 Q 512 728 424 716 Z" fill="#7C8492"/>
+  <path d="M 412 672 L 480 672 L 474 720 Q 444 719 424 716 Z" fill="#8F96A1"/>
+  <!-- base rust patch -->
+  <path d="M 540 696 Q 558 688 572 698 Q 562 710 544 708 Z" fill="#B07050" opacity="0.85"/>
+  <!-- feet -->
+  <rect x="436" y="716" width="40" height="16" rx="7" fill="#5F6671"/>
+  <rect x="548" y="716" width="40" height="16" rx="7" fill="#5F6671"/>
+
+  <!-- drifting fireflies/sparks -->
+  <circle cx="350" cy="430" r="6" fill="#F6C26B" opacity="0.85"/>
+  <circle cx="680" cy="470" r="5" fill="#F6C26B" opacity="0.75"/>
+  <path d="M 688 320 L 693 333 L 706 338 L 693 343 L 688 356 L 683 343 L 670 338 L 683 333 Z" fill="#E5C878"/>
+</svg>

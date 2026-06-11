@@ -1,0 +1,79 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <circle cx="574" cy="478" r="222"/>
+    <rect x="540" y="660" width="70" height="160" rx="20"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="806" rx="190" ry="15" fill="#EADBBD"/>
+
+  <!-- pipe fitting below -->
+  <rect x="488" y="640" width="48" height="120" rx="12" fill="#C28F3F"/>
+  <rect x="488" y="640" width="20" height="120" rx="10" fill="#D9A856"/>
+  <!-- hex nut -->
+  <path d="M 470 676 L 482 656 L 542 656 L 554 676 L 542 696 L 482 696 Z" fill="#A8762F"/>
+  <path d="M 470 676 L 482 656 L 542 656 L 542 668 L 482 668 Z" fill="#C28F3F"/>
+  <!-- valve wheel -->
+  <circle cx="584" cy="700" r="26" fill="none" stroke="#8C6239" stroke-width="9"/>
+  <line x1="584" y1="678" x2="584" y2="722" stroke="#8C6239" stroke-width="6"/>
+  <line x1="562" y1="700" x2="606" y2="700" stroke="#8C6239" stroke-width="6"/>
+  <rect x="528" y="692" width="34" height="16" rx="7" fill="#A8762F"/>
+  <!-- pipe end flange -->
+  <rect x="478" y="752" width="68" height="22" rx="10" fill="#A8762F"/>
+  <line x1="488" y1="758" x2="536" y2="758" stroke="#C28F3F" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- gauge body -->
+  <circle cx="512" cy="440" r="212" fill="#C28F3F"/>
+  <path d="M 332 350 A 206 206 0 0 1 472 240" fill="none" stroke="#D9A856" stroke-width="16" stroke-linecap="round"/>
+  <!-- bezel rivets -->
+  <g fill="#A8762F">
+    <circle cx="512" cy="244" r="6"/>
+    <circle cx="650" cy="302" r="6"/>
+    <circle cx="708" cy="440" r="6"/>
+    <circle cx="650" cy="578" r="6"/>
+    <circle cx="512" cy="636" r="6"/>
+    <circle cx="374" cy="578" r="6"/>
+    <circle cx="316" cy="440" r="6"/>
+    <circle cx="374" cy="302" r="6"/>
+  </g>
+  <!-- dial face -->
+  <circle cx="512" cy="440" r="168" fill="#F2E9D8"/>
+  <circle cx="512" cy="440" r="168" fill="none" stroke="#A8762F" stroke-width="5"/>
+  <circle cx="512" cy="440" r="146" fill="none" stroke="#D9CBAE" stroke-width="3"/>
+  <!-- tick marks only (no numbers) -->
+  <g stroke="#6E5A4E" stroke-width="6" stroke-linecap="round">
+    <line x1="512" y1="296" x2="512" y2="322"/>
+    <line x1="614" y1="338" x2="596" y2="356"/>
+    <line x1="656" y1="440" x2="630" y2="440"/>
+    <line x1="614" y1="542" x2="596" y2="524"/>
+    <line x1="512" y1="584" x2="512" y2="558"/>
+    <line x1="410" y1="542" x2="428" y2="524"/>
+    <line x1="368" y1="440" x2="394" y2="440"/>
+    <line x1="410" y1="338" x2="428" y2="356"/>
+  </g>
+  <g stroke="#A98A5E" stroke-width="3" stroke-linecap="round">
+    <line x1="566" y1="310" x2="560" y2="330"/><line x1="641" y1="385" x2="622" y2="394"/>
+    <line x1="641" y1="495" x2="622" y2="486"/><line x1="566" y1="570" x2="560" y2="550"/>
+    <line x1="458" y1="570" x2="464" y2="550"/><line x1="383" y1="495" x2="402" y2="486"/>
+    <line x1="383" y1="385" x2="402" y2="394"/><line x1="458" y1="310" x2="464" y2="330"/>
+  </g>
+  <!-- red zone arc -->
+  <path d="M 596 356 A 120 120 0 0 1 632 440" fill="none" stroke="#C9574C" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- needle -->
+  <path d="M 512 440 L 420 348" stroke="#B83E35" stroke-width="9" stroke-linecap="round"/>
+  <path d="M 512 440 L 540 468" stroke="#B83E35" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="512" cy="440" r="17" fill="#D9A856"/>
+  <circle cx="512" cy="440" r="9" fill="#A8762F"/>
+
+  <!-- glass highlight -->
+  <path d="M 392 330 Q 430 282 492 266" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- tiny steam puff at valve -->
+  <g fill="#F4EEE0">
+    <circle cx="648" cy="652" r="14"/>
+    <circle cx="668" cy="640" r="10"/>
+  </g>
+</svg>

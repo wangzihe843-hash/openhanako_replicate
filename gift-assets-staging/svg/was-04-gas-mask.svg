@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="lensL"><circle cx="428" cy="452" r="54"/></clipPath>
+    <clipPath id="lensR"><circle cx="596" cy="452" r="54"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M512,280 C612,280 678,348 684,452 C688,540 650,650 564,716 Q512,752 460,716 C374,650 336,540 340,452 C346,348 412,280 512,280 Z"/>
+    <circle cx="360" cy="634" r="64"/>
+    <circle cx="664" cy="634" r="64"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="752" rx="290" ry="16" fill="#EADBBD"/>
+
+  <!-- straps -->
+  <path d="M352,392 L258,372 L260,406 L352,420 z" fill="#7C6C57"/>
+  <path d="M348,520 L264,540 L272,572 L356,548 z" fill="#7C6C57"/>
+  <path d="M672,392 L766,372 L764,406 L672,420 z" fill="#7C6C57"/>
+  <path d="M676,520 L760,540 L752,572 L668,548 z" fill="#7C6C57"/>
+  <rect x="252" y="368" width="14" height="40" rx="4" fill="#5F5343"/>
+  <rect x="758" y="368" width="14" height="40" rx="4" fill="#5F5343"/>
+  <rect x="258" y="536" width="14" height="38" rx="4" fill="#5F5343"/>
+  <rect x="752" y="536" width="14" height="38" rx="4" fill="#5F5343"/>
+
+  <!-- mask facepiece -->
+  <path d="M512,280 C612,280 678,348 684,452 C688,540 650,650 564,716 Q512,752 460,716 C374,650 336,540 340,452 C346,348 412,280 512,280 Z" fill="#9A9B6E"/>
+  <!-- light side -->
+  <path d="M512,280 C440,280 380,322 356,398 C346,470 350,560 410,660 C432,694 450,710 460,716 C394,640 376,520 388,420 C398,340 444,294 512,280 Z" fill="#B0B186"/>
+  <!-- dark side -->
+  <path d="M512,280 C588,284 654,336 678,420 C690,520 660,630 564,716 C634,628 648,520 640,430 C630,348 580,294 512,280 Z" fill="#7E7F58"/>
+
+  <!-- seam lines on rubber -->
+  <path d="M512,300 v66" stroke="#75764F" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M512,540 v40" stroke="#75764F" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- scratches / wear -->
+  <path d="M430,330 l44,-18" stroke="#C9C8A8" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M456,352 l28,-12" stroke="#C9C8A8" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+  <path d="M620,560 l30,-16" stroke="#C9C8A8" stroke-width="4.5" stroke-linecap="round" opacity="0.5"/>
+  <!-- patch -->
+  <rect x="560" y="330" width="58" height="40" rx="8" fill="#8C8D60" transform="rotate(14 589 350)"/>
+  <path d="M566,338 l46,8 M564,352 l46,8" stroke="#6B6C4C" stroke-width="3" stroke-dasharray="6 6" transform="rotate(14 589 350)"/>
+
+  <!-- eyepieces -->
+  <circle cx="428" cy="452" r="76" fill="#75764F"/>
+  <circle cx="428" cy="452" r="64" fill="#8F96A1"/>
+  <circle cx="428" cy="452" r="54" fill="#56666B"/>
+  <g clip-path="url(#lensL)">
+    <rect x="370" y="420" width="130" height="22" fill="#FFFFFF" opacity="0.30" transform="rotate(-38 428 452)"/>
+    <rect x="370" y="452" width="130" height="10" fill="#FFFFFF" opacity="0.22" transform="rotate(-38 428 452)"/>
+  </g>
+  <path d="M392,422 a48,48 0 0 1 22,-18" stroke="#FFFFFF" stroke-width="6" fill="none" opacity="0.8" stroke-linecap="round"/>
+  <circle cx="428" cy="452" r="64" fill="none" stroke="#6E747D" stroke-width="4"/>
+
+  <circle cx="596" cy="452" r="76" fill="#75764F"/>
+  <circle cx="596" cy="452" r="64" fill="#8F96A1"/>
+  <circle cx="596" cy="452" r="54" fill="#56666B"/>
+  <g clip-path="url(#lensR)">
+    <rect x="538" y="420" width="130" height="22" fill="#FFFFFF" opacity="0.30" transform="rotate(-38 596 452)"/>
+    <rect x="538" y="452" width="130" height="10" fill="#FFFFFF" opacity="0.22" transform="rotate(-38 596 452)"/>
+  </g>
+  <path d="M560,422 a48,48 0 0 1 22,-18" stroke="#FFFFFF" stroke-width="6" fill="none" opacity="0.8" stroke-linecap="round"/>
+  <circle cx="596" cy="452" r="64" fill="none" stroke="#6E747D" stroke-width="4"/>
+
+  <!-- exhale valve -->
+  <circle cx="512" cy="618" r="32" fill="#8F96A1"/>
+  <circle cx="512" cy="618" r="22" fill="#7C828C"/>
+  <line x1="498" y1="611" x2="526" y2="611" stroke="#6E747D" stroke-width="4"/>
+  <line x1="496" y1="620" x2="528" y2="620" stroke="#6E747D" stroke-width="4"/>
+  <line x1="500" y1="629" x2="524" y2="629" stroke="#6E747D" stroke-width="4"/>
+
+  <!-- filters -->
+  <g>
+    <circle cx="360" cy="634" r="62" fill="#B5A284"/>
+    <circle cx="360" cy="634" r="62" fill="none" stroke="#8F7E63" stroke-width="5"/>
+    <circle cx="360" cy="634" r="44" fill="none" stroke="#97856B" stroke-width="6"/>
+    <circle cx="360" cy="634" r="24" fill="#97856B"/>
+    <circle cx="360" cy="634" r="4.5" fill="#6B5E4C"/>
+    <circle cx="360" cy="618" r="4.5" fill="#6B5E4C"/>
+    <circle cx="374" cy="626" r="4.5" fill="#6B5E4C"/>
+    <circle cx="374" cy="642" r="4.5" fill="#6B5E4C"/>
+    <circle cx="360" cy="650" r="4.5" fill="#6B5E4C"/>
+    <circle cx="346" cy="642" r="4.5" fill="#6B5E4C"/>
+    <circle cx="346" cy="626" r="4.5" fill="#6B5E4C"/>
+    <path d="M322,600 a52,52 0 0 1 22,-16" stroke="#E8DEC8" stroke-width="6" fill="none" opacity="0.85" stroke-linecap="round"/>
+  </g>
+  <g>
+    <circle cx="664" cy="634" r="62" fill="#B5A284"/>
+    <circle cx="664" cy="634" r="62" fill="none" stroke="#8F7E63" stroke-width="5"/>
+    <circle cx="664" cy="634" r="44" fill="none" stroke="#97856B" stroke-width="6"/>
+    <circle cx="664" cy="634" r="24" fill="#97856B"/>
+    <circle cx="664" cy="634" r="4.5" fill="#6B5E4C"/>
+    <circle cx="664" cy="618" r="4.5" fill="#6B5E4C"/>
+    <circle cx="678" cy="626" r="4.5" fill="#6B5E4C"/>
+    <circle cx="678" cy="642" r="4.5" fill="#6B5E4C"/>
+    <circle cx="664" cy="650" r="4.5" fill="#6B5E4C"/>
+    <circle cx="650" cy="642" r="4.5" fill="#6B5E4C"/>
+    <circle cx="650" cy="626" r="4.5" fill="#6B5E4C"/>
+    <path d="M626,600 a52,52 0 0 1 22,-16" stroke="#E8DEC8" stroke-width="6" fill="none" opacity="0.85" stroke-linecap="round"/>
+  </g>
+
+  <!-- occlusion where filters meet ground -->
+  <ellipse cx="512" cy="744" rx="120" ry="9" fill="#D8C7A4" opacity="0.8"/>
+
+  <!-- forehead highlight -->
+  <path d="M420,316 c24,-20 56,-30 92,-32" stroke="#FFFFFF" stroke-width="7" fill="none" opacity="0.6" stroke-linecap="round"/>
+</svg>

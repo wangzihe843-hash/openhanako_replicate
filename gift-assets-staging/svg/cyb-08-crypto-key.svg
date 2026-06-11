@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- faint tech aura -->
+  <circle cx="512" cy="500" r="250" fill="#E8F1F2" opacity="0.5"/>
+
+  <!-- long cast shadow: diagonal swath -->
+  <path d="M 388 642 L 700 408 Q 730 390 742 418 Q 750 444 722 464 L 416 696 Q 388 714 376 688 Q 368 662 388 642 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="240" ry="16" fill="#EADBBD"/>
+
+  <g transform="rotate(-32 512 500)">
+    <!-- key head: rounded square fob -->
+    <rect x="318" y="404" width="190" height="190" rx="38" fill="#5C6B85"/>
+    <rect x="318" y="404" width="190" height="70" rx="35" fill="#6B7A94"/>
+    <rect x="318" y="404" width="190" height="190" rx="38" fill="none" stroke="#4E5A74" stroke-width="6"/>
+    <!-- hole -->
+    <circle cx="413" cy="452" r="22" fill="#FAF3E6"/>
+    <circle cx="413" cy="452" r="22" fill="none" stroke="#4E5A74" stroke-width="6"/>
+    <!-- glowing circuit traces -->
+    <g stroke="#7FB8BF" stroke-width="5" fill="none" stroke-linecap="round">
+      <path d="M 354 500 L 392 500 L 404 516 L 404 548"/>
+      <path d="M 470 492 L 470 524 L 448 544"/>
+      <path d="M 354 548 L 376 548"/>
+    </g>
+    <g fill="#A8D8DC">
+      <circle cx="404" cy="552" r="6"/>
+      <circle cx="446" cy="546" r="6"/>
+      <circle cx="380" cy="548" r="5"/>
+      <circle cx="470" cy="490" r="6"/>
+    </g>
+    <!-- magenta power dot -->
+    <circle cx="470" cy="436" r="10" fill="#C77DA6"/>
+    <circle cx="467" cy="433" r="3.5" fill="#E5B3CC"/>
+
+    <!-- shaft -->
+    <rect x="508" y="478" width="240" height="44" rx="14" fill="#8F96A1"/>
+    <rect x="508" y="478" width="240" height="18" rx="9" fill="#C9CDD4"/>
+    <!-- glowing bit notches -->
+    <rect x="566" y="510" width="26" height="40" rx="7" fill="#7FB8BF"/>
+    <rect x="620" y="510" width="26" height="56" rx="7" fill="#7FB8BF"/>
+    <rect x="674" y="510" width="26" height="32" rx="7" fill="#7FB8BF"/>
+    <rect x="570" y="514" width="8" height="30" rx="4" fill="#A8D8DC"/>
+    <rect x="624" y="514" width="8" height="44" rx="4" fill="#A8D8DC"/>
+    <!-- tip -->
+    <path d="M 744 478 L 776 488 Q 786 500 776 512 L 744 522 Z" fill="#C9CDD4"/>
+  </g>
+
+  <!-- data sparkles -->
+  <path d="M 700 280 L 706 296 L 722 302 L 706 308 L 700 324 L 694 308 L 678 302 L 694 296 Z" fill="#7FB8BF"/>
+  <circle cx="330" cy="310" r="5" fill="#A8D8DC" opacity="0.85"/>
+  <circle cx="760" cy="560" r="4.5" fill="#C77DA6" opacity="0.7"/>
+</svg>

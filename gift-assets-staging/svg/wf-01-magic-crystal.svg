@@ -1,0 +1,41 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- detached shadow (floating) -->
+  <ellipse cx="512" cy="752" rx="120" ry="13" fill="#EDDDC0"/>
+
+  <!-- stepped aura -->
+  <circle cx="512" cy="430" r="280" fill="#F0EAF6" opacity="0.55"/>
+  <circle cx="512" cy="430" r="214" fill="#EAE1F2" opacity="0.55"/>
+
+  <!-- crystal: elongated hexagon -->
+  <g>
+    <path d="M 512 200 L 580 326 L 562 552 L 512 646 L 462 552 L 444 326 Z" fill="#A98BC4"/>
+    <path d="M 512 200 L 580 326 L 562 552 L 512 646 Z" fill="#8E6FB1"/>
+    <path d="M 512 200 L 444 326 L 458 500 L 484 500 L 478 330 Z" fill="#C7B3DC" opacity="0.95"/>
+    <path d="M 512 646 L 538 560 L 512 552 L 488 560 Z" fill="#7C5DA0"/>
+    <!-- inner glow core -->
+    <path d="M 512 300 L 540 370 L 532 520 L 496 520 L 488 370 Z" fill="#E5DBF1" opacity="0.8"/>
+    <path d="M 512 330 L 528 380 L 523 490 L 503 490 L 498 380 Z" fill="#F4EFF9" opacity="0.85"/>
+    <!-- facet edge lines -->
+    <path d="M 512 200 L 580 326 L 562 552" fill="none" stroke="#7C5DA0" stroke-width="3" opacity="0.7"/>
+    <path d="M 444 326 L 462 552" fill="none" stroke="#BCA4D6" stroke-width="2.5" opacity="0.8"/>
+    <!-- refraction slashes -->
+    <path d="M 470 360 L 492 332" stroke="#E5DBF1" stroke-width="5" stroke-linecap="round" opacity="0.8"/>
+    <path d="M 540 440 L 556 416" stroke="#C7B3DC" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  </g>
+
+  <!-- small orbiting shards (faceted) -->
+  <path d="M 376 380 L 392 404 L 380 436 L 364 410 Z" fill="#C7B3DC"/>
+  <path d="M 376 380 L 392 404 L 380 436 Z" fill="#A98BC4"/>
+  <path d="M 652 470 L 666 490 L 656 516 L 642 494 Z" fill="#A98BC4"/>
+  <path d="M 652 470 L 666 490 L 656 516 Z" fill="#8E6FB1"/>
+  <path d="M 420 540 L 430 554 L 423 572 L 413 556 Z" fill="#C7B3DC" opacity="0.8"/>
+  <!-- dust ring under crystal -->
+  <ellipse cx="512" cy="676" rx="84" ry="10" fill="#D9C8EA" opacity="0.45"/>
+
+  <!-- sparkles -->
+  <path d="M 632 252 L 640 274 L 662 282 L 640 290 L 632 312 L 624 290 L 602 282 L 624 274 Z" fill="#FFFFFF"/>
+  <path d="M 398 264 L 403 278 L 417 283 L 403 288 L 398 302 L 393 288 L 379 283 L 393 278 Z" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="668" cy="372" r="6" fill="#D9C8EA"/>
+  <circle cx="370" cy="520" r="5" fill="#D9C8EA" opacity="0.85"/>
+</svg>

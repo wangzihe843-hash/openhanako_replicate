@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: merged hat+veil silhouette offset (60,44) -->
+  <path d="M572,306 L296,600 L354,890 L790,890 L852,600 Z" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="866" rx="308" ry="16" fill="#EADBBD"/>
+
+  <!-- ===== veil (hangs from brim, vertical) ===== -->
+  <path d="M254,562 Q512,646 770,562 L728,846
+           C706,860 688,838 660,850 C632,862 612,838 584,850
+           C556,862 536,838 508,850 C480,862 460,838 432,850
+           C404,862 384,838 356,850 C334,858 312,852 296,846 Z" fill="#F3ECDA"/>
+  <!-- veil side shading -->
+  <path d="M254,562 L296,846 C310,851 320,852 332,849 L300,572 Z" fill="#E8DEC6"/>
+  <path d="M770,562 L728,846 C716,852 706,852 694,848 L726,570 Z" fill="#E8DEC6"/>
+  <!-- veil fold lines -->
+  <path d="M350,608 L332,840" stroke="#DCCFB0" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M420,626 L412,846" stroke="#E3D8BE" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M490,634 L488,848" stroke="#DCCFB0" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M560,632 L566,848" stroke="#E3D8BE" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M630,620 L644,844" stroke="#DCCFB0" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M698,598 L704,838" stroke="#E3D8BE" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <!-- gauze sheen -->
+  <path d="M455,640 L452,830" stroke="#FFFFFF" stroke-width="8" opacity="0.45" fill="none" stroke-linecap="round"/>
+  <path d="M530,642 L534,832" stroke="#FFFFFF" stroke-width="6" opacity="0.35" fill="none" stroke-linecap="round"/>
+
+  <!-- occlusion under brim on veil -->
+  <path d="M270,572 Q512,650 754,572" stroke="#C9B894" stroke-width="14" opacity="0.45" fill="none"/>
+
+  <!-- ===== hat cone ===== -->
+  <path d="M512,262 L236,556 A276,62 0 0 0 788,556 Z" fill="#C49258"/>
+  <!-- light face (left) -->
+  <path d="M512,262 L236,556 A276,62 0 0 0 512,618 Z" fill="#CDA266"/>
+  <!-- dark edge (far right) -->
+  <path d="M512,262 L788,556 A276,62 0 0 1 700,604 Z" fill="#B08350"/>
+
+  <!-- weave: concentric arcs -->
+  <path d="M401.6,379.6 A110.4,24.8 0 0 0 622.4,379.6" stroke="#8C6239" stroke-width="3" opacity="0.32" fill="none"/>
+  <path d="M332.6,453 A179.4,40.3 0 0 0 691.4,453" stroke="#8C6239" stroke-width="3" opacity="0.32" fill="none"/>
+  <path d="M269.1,520.7 A242.9,54.6 0 0 0 754.9,520.7" stroke="#8C6239" stroke-width="3" opacity="0.32" fill="none"/>
+  <!-- weave: radiating lines -->
+  <path d="M512,268 L778.6,572" stroke="#8C6239" stroke-width="3" opacity="0.3" fill="none"/>
+  <path d="M512,268 L707.2,599.8" stroke="#8FA882" stroke-width="3" opacity="0.5" fill="none"/>
+  <path d="M512,268 L583.4,615.9" stroke="#8C6239" stroke-width="3" opacity="0.3" fill="none"/>
+  <path d="M512,268 L440.6,615.9" stroke="#8FA882" stroke-width="3" opacity="0.5" fill="none"/>
+  <path d="M512,268 L316.8,599.8" stroke="#8C6239" stroke-width="3" opacity="0.3" fill="none"/>
+  <path d="M512,268 L245.4,572" stroke="#8FA882" stroke-width="3" opacity="0.5" fill="none"/>
+  <!-- bamboo-green rim band -->
+  <path d="M252.6,538.4 A259.4,58.3 0 0 0 771.4,538.4" stroke="#8FA882" stroke-width="11" opacity="0.85" fill="none"/>
+  <!-- brim rim -->
+  <path d="M236,556 A276,62 0 0 0 788,556" stroke="#8C6239" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <!-- cone edge highlight -->
+  <path d="M500,280 L300,494" stroke="#E8CFA0" stroke-width="6" opacity="0.7" fill="none" stroke-linecap="round"/>
+  <!-- apex knob -->
+  <circle cx="512" cy="258" r="17" fill="#8C6239"/>
+  <circle cx="506" cy="252" r="5" fill="#D8B077" opacity="0.8"/>
+</svg>

@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow (canteen + cup, merged blob) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M438,242 h84 a16,16 0 0 1 16,16 v64 c62,38 94,106 94,184 v180 c0,72 -50,108 -118,108 H446 c-68,0 -118,-36 -118,-108 V506 c0,-78 32,-146 94,-184 v-64 a16,16 0 0 1 16,-16 z"/>
+    <rect x="598" y="648" width="182" height="138" rx="34"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="545" cy="786" rx="305" ry="16" fill="#EADBBD"/>
+
+  <!-- ===== canteen ===== -->
+  <!-- neck -->
+  <rect x="450" y="284" width="60" height="50" fill="#7E7F58"/>
+  <!-- body base -->
+  <path d="M428,312 c-62,36 -98,108 -98,194 v178 c0,70 48,106 116,106 h68 c68,0 116,-36 116,-106 V506 c0,-86 -36,-158 -98,-194 z" fill="#9A9B6E"/>
+  <!-- light side -->
+  <path d="M428,312 c-62,36 -98,108 -98,194 v178 c0,70 48,106 116,106 h6 c-38,-34 -52,-118 -52,-208 0,-118 12,-218 42,-270 z" fill="#B0B186"/>
+  <!-- dark side -->
+  <path d="M532,312 c62,36 98,108 98,194 v178 c0,70 -48,106 -116,106 h-4 c42,-38 56,-116 56,-206 0,-118 -10,-220 -34,-272 z" fill="#7E7F58"/>
+  <!-- occlusion under neck -->
+  <path d="M428,312 h104 c6,10 10,22 12,34 -42,12 -86,12 -128,0 2,-12 6,-24 12,-34 z" fill="#6B6C4C" opacity="0.55"/>
+  <!-- fabric band -->
+  <path d="M331,592 h298 v66 h-298 z" fill="#8C8D60"/>
+  <path d="M331,592 h298 v12 h-298 z" fill="#75764F" opacity="0.6"/>
+  <line x1="340" y1="610" x2="620" y2="610" stroke="#6B6C4C" stroke-width="4" stroke-dasharray="14 10"/>
+  <line x1="340" y1="640" x2="620" y2="640" stroke="#6B6C4C" stroke-width="4" stroke-dasharray="14 10"/>
+  <!-- buckle on band -->
+  <rect x="476" y="600" width="56" height="50" rx="8" fill="#75764F"/>
+  <rect x="486" y="610" width="36" height="30" rx="5" fill="#A4A578"/>
+  <!-- scratches -->
+  <path d="M392,430 l46,-26" stroke="#C9C8A8" stroke-width="5" stroke-linecap="round" opacity="0.75"/>
+  <path d="M414,462 l30,-17" stroke="#C9C8A8" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+  <path d="M560,520 l38,-22" stroke="#C9C8A8" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <path d="M488,742 l34,-14" stroke="#75764F" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+  <!-- chip mark -->
+  <ellipse cx="608" cy="412" rx="9" ry="14" fill="#C9C8A8" opacity="0.7" transform="rotate(24 608 412)"/>
+  <!-- rim highlight -->
+  <path d="M404,344 c-36,30 -56,84 -60,140" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.65"/>
+  <!-- bottom occlusion -->
+  <path d="M352,742 c40,32 276,32 316,0 -10,28 -52,48 -106,48 h-104 c-54,0 -96,-20 -106,-48 z" fill="#6B6C4C" opacity="0.35"/>
+
+  <!-- cap -->
+  <rect x="432" y="238" width="96" height="56" rx="12" fill="#8F96A1"/>
+  <rect x="432" y="238" width="96" height="18" rx="9" fill="#A9AFB8"/>
+  <line x1="452" y1="244" x2="452" y2="288" stroke="#7C828C" stroke-width="5"/>
+  <line x1="472" y1="242" x2="472" y2="292" stroke="#7C828C" stroke-width="5"/>
+  <line x1="492" y1="242" x2="492" y2="292" stroke="#7C828C" stroke-width="5"/>
+  <line x1="512" y1="242" x2="512" y2="290" stroke="#7C828C" stroke-width="5"/>
+  <path d="M438,250 q4,-8 14,-9" stroke="#FFFFFF" stroke-width="5" fill="none" opacity="0.7" stroke-linecap="round"/>
+
+  <!-- ===== cup of clear water ===== -->
+  <!-- cup body -->
+  <path d="M654,664 h104 l-10,108 a14,14 0 0 1 -14,12 h-56 a14,14 0 0 1 -14,-12 z" fill="#A9AFB8"/>
+  <path d="M654,664 h26 l8,120 h-12 a14,14 0 0 1 -14,-12 z" fill="#C9CDD4"/>
+  <path d="M758,664 h-22 l-8,120 h10 a14,14 0 0 0 14,-12 z" fill="#8F96A1"/>
+  <!-- rim -->
+  <ellipse cx="706" cy="664" rx="52" ry="14" fill="#C9CDD4"/>
+  <ellipse cx="706" cy="664" rx="42" ry="10" fill="#7C828C"/>
+  <!-- water -->
+  <ellipse cx="706" cy="665" rx="38" ry="8.5" fill="#CFE6E2"/>
+  <path d="M680,663 q14,-4 34,-1" stroke="#FFFFFF" stroke-width="4" fill="none" opacity="0.85" stroke-linecap="round"/>
+  <circle cx="724" cy="667" r="3" fill="#FFFFFF" opacity="0.8"/>
+  <!-- cup highlight + seam -->
+  <path d="M672,690 l6,76" stroke="#E2E5EA" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <path d="M654,664 h104" stroke="#E2E5EA" stroke-width="0"/>
+  <path d="M660,726 h92" stroke="#8F96A1" stroke-width="3" opacity="0.6"/>
+  <!-- contact occlusion -->
+  <ellipse cx="706" cy="783" rx="48" ry="8" fill="#D8C7A4" opacity="0.8"/>
+  <ellipse cx="510" cy="786" rx="160" ry="9" fill="#D8C7A4" opacity="0.7"/>
+</svg>

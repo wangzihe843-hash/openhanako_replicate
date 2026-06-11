@@ -1,0 +1,106 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<rect width="1024" height="1024" fill="#FAF3E6"/>
+<!-- long shadow -->
+<g fill="#F1E3C9" transform="translate(60,44)">
+  <circle cx="512" cy="196" r="46"/>
+  <rect x="486" y="196" width="52" height="120"/>
+  <circle cx="512" cy="505" r="235"/>
+</g>
+<!-- ground -->
+<ellipse cx="512" cy="748" rx="250" ry="15" fill="#EADBBD"/>
+<!-- bow ring -->
+<circle cx="512" cy="196" r="36" fill="none" stroke="#A87844" stroke-width="24"/>
+<circle cx="512" cy="196" r="36" fill="none" stroke="#C28F3F" stroke-width="14"/>
+<path d="M 485 175 A 36 36 0 0 1 540 176" fill="none" stroke="#EFCB8B" stroke-width="7" stroke-linecap="round"/>
+<!-- crown -->
+<rect x="484" y="230" width="56" height="42" rx="9" fill="#C28F3F"/>
+<line x1="498" y1="236" x2="498" y2="264" stroke="#8C6239" stroke-width="5"/>
+<line x1="512" y1="236" x2="512" y2="264" stroke="#8C6239" stroke-width="5"/>
+<line x1="526" y1="236" x2="526" y2="264" stroke="#8C6239" stroke-width="5"/>
+<rect x="484" y="262" width="56" height="9" fill="#8C6239" opacity="0.65"/>
+<!-- case -->
+<circle cx="512" cy="505" r="235" fill="#C28F3F"/>
+<path d="M 302 384 A 235 235 0 0 1 508 270" fill="none" stroke="#EFCB8B" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+<circle cx="512" cy="505" r="213" fill="#D9A856"/>
+<circle cx="512" cy="505" r="198" fill="#A87844"/>
+<circle cx="512" cy="505" r="190" fill="#F6ECD7"/>
+<circle cx="512" cy="505" r="173" fill="none" stroke="#D9C39A" stroke-width="3"/>
+<!-- ticks -->
+<g stroke="#8C6239" stroke-linecap="round">
+  <g stroke-width="11">
+    <g transform="rotate(0 512 505)"><line x1="512" y1="327" x2="512" y2="358"/></g>
+    <g transform="rotate(90 512 505)"><line x1="512" y1="327" x2="512" y2="358"/></g>
+    <g transform="rotate(180 512 505)"><line x1="512" y1="327" x2="512" y2="358"/></g>
+    <g transform="rotate(270 512 505)"><line x1="512" y1="327" x2="512" y2="358"/></g>
+  </g>
+  <g stroke-width="6">
+    <g transform="rotate(30 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(60 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(120 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(150 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(210 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(240 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(300 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+    <g transform="rotate(330 512 505)"><line x1="512" y1="332" x2="512" y2="356"/></g>
+  </g>
+</g>
+<!-- skeleton cutout -->
+<circle cx="512" cy="505" r="110" fill="#5E4730"/>
+<path d="M 402 505 A 110 110 0 0 1 622 505 Z" fill="#6B5132"/>
+<circle cx="512" cy="505" r="110" fill="none" stroke="#8C6239" stroke-width="8"/>
+<!-- gear A -->
+<g transform="translate(470 512)">
+  <g fill="#C09058">
+    <rect x="-8" y="-54" width="16" height="22" rx="4"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(45)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(90)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(135)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(180)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(225)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(270)"/>
+    <rect x="-8" y="-54" width="16" height="22" rx="4" transform="rotate(315)"/>
+  </g>
+  <circle r="42" fill="#D9A856"/>
+  <circle r="42" fill="none" stroke="#C09058" stroke-width="4"/>
+  <circle r="14" fill="#5E4730"/>
+  <circle r="14" fill="none" stroke="#8C6239" stroke-width="4"/>
+</g>
+<!-- gear B -->
+<g transform="translate(552 462)">
+  <g fill="#D8B077">
+    <rect x="-7" y="-40" width="14" height="18" rx="4"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(45)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(90)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(135)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(180)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(225)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(270)"/>
+    <rect x="-7" y="-40" width="14" height="18" rx="4" transform="rotate(315)"/>
+  </g>
+  <circle r="30" fill="#EFCB8B"/>
+  <circle r="30" fill="none" stroke="#C28F3F" stroke-width="4"/>
+  <circle r="10" fill="#5E4730"/>
+</g>
+<!-- gear C -->
+<g transform="translate(540 572)">
+  <g fill="#C28F3F">
+    <rect x="-6" y="-30" width="12" height="14" rx="3"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(45)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(90)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(135)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(180)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(225)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(270)"/>
+    <rect x="-6" y="-30" width="12" height="14" rx="3" transform="rotate(315)"/>
+  </g>
+  <circle r="22" fill="#C09058"/>
+  <circle r="7" fill="#5E4730"/>
+</g>
+<!-- hands -->
+<line x1="512" y1="505" x2="466" y2="436" stroke="#4A3B30" stroke-width="15" stroke-linecap="round"/>
+<line x1="512" y1="505" x2="580" y2="420" stroke="#4A3B30" stroke-width="11" stroke-linecap="round"/>
+<circle cx="512" cy="505" r="15" fill="#C28F3F"/>
+<circle cx="512" cy="505" r="7" fill="#5E4730"/>
+<!-- glass highlight -->
+<path d="M 372 418 A 166 166 0 0 1 452 352" stroke="#FFFFFF" stroke-width="13" opacity="0.6" fill="none" stroke-linecap="round"/>
+</svg>

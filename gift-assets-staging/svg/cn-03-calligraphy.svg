@@ -1,0 +1,70 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="394" y="652" width="380" height="110" rx="40"/>
+    <g transform="rotate(14 720 600)"><rect x="700" y="510" width="54" height="200" rx="10"/></g>
+    <g transform="rotate(-32 570 510)"><rect x="556" y="240" width="30" height="300" rx="14"/></g>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="742" rx="230" ry="15" fill="#EADBBD"/>
+
+  <!-- ink stick (leaning) -->
+  <g transform="rotate(14 668 560)">
+    <rect x="641" y="455" width="54" height="210" rx="10" fill="#3E332C"/>
+    <rect x="641" y="455" width="54" height="200" rx="10" fill="#4A3B33"/>
+    <rect x="641" y="455" width="18" height="200" rx="9" fill="#5C4A40"/>
+    <!-- gold band with embossed dot motif -->
+    <rect x="641" y="528" width="54" height="30" fill="#D9A856"/>
+    <rect x="641" y="528" width="18" height="30" fill="#C28F3F"/>
+    <circle cx="668" cy="543" r="6" fill="#C28F3F"/>
+    <circle cx="668" cy="543" r="2.5" fill="#EFCB8B"/>
+    <!-- top bevel -->
+    <path d="M 641 465 Q 641 455 651 455 L 685 455 Q 695 455 695 465 L 695 472 L 641 472 Z" fill="#5C4A40"/>
+  </g>
+
+  <!-- ink stone -->
+  <g>
+    <rect x="330" y="604" width="364" height="114" rx="40" fill="#4A3B33"/>
+    <rect x="330" y="592" width="364" height="100" rx="38" fill="#6E5A4E"/>
+    <rect x="338" y="592" width="348" height="14" rx="7" fill="#7E6A5C"/>
+    <!-- carved rim line -->
+    <rect x="352" y="606" width="320" height="64" rx="28" fill="none" stroke="#5C4A40" stroke-width="5"/>
+    <!-- ink pool -->
+    <ellipse cx="512" cy="640" rx="132" ry="32" fill="#2E2520"/>
+    <ellipse cx="512" cy="636" rx="124" ry="27" fill="#3E322C"/>
+    <!-- ink sheen -->
+    <path d="M 420 630 Q 470 618 540 622" fill="none" stroke="#55453C" stroke-width="8" stroke-linecap="round"/>
+    <ellipse cx="466" cy="628" rx="26" ry="7" fill="#6B584C"/>
+    <!-- side gloss on stone -->
+    <path d="M 348 700 Q 512 712 676 700" fill="none" stroke="#5C4A40" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  </g>
+
+  <!-- brush -->
+  <g transform="rotate(-32 512 470)">
+    <!-- shaft -->
+    <rect x="498" y="178" width="28" height="268" rx="13" fill="#C09058"/>
+    <rect x="514" y="180" width="10" height="264" rx="5" fill="#A87844"/>
+    <line x1="505" y1="190" x2="505" y2="436" stroke="#D8B077" stroke-width="2.5"/>
+    <!-- bamboo nodes -->
+    <rect x="498" y="252" width="28" height="7" rx="3.5" fill="#A87844"/>
+    <rect x="498" y="332" width="28" height="7" rx="3.5" fill="#A87844"/>
+    <!-- hanging loop on top -->
+    <circle cx="512" cy="172" r="9" fill="none" stroke="#8A6242" stroke-width="4"/>
+    <!-- ferrule double band -->
+    <rect x="493" y="440" width="38" height="26" rx="8" fill="#D9A856"/>
+    <rect x="493" y="452" width="38" height="6" fill="#C28F3F"/>
+    <!-- bristles -->
+    <path d="M 497 464 L 527 464 Q 535 506 526 538 Q 519 556 512 562 Q 505 556 498 538 Q 489 506 497 464 Z" fill="#F2E9D8"/>
+    <!-- hair strands -->
+    <g stroke="#DCCDB2" stroke-width="2" stroke-linecap="round">
+      <path d="M 503 468 Q 500 510 505 540"/>
+      <path d="M 512 468 Q 512 514 512 552"/>
+      <path d="M 521 468 Q 524 510 519 540"/>
+    </g>
+    <!-- ink-soaked tip -->
+    <path d="M 500 528 Q 504 552 512 562 Q 520 552 524 528 Q 518 540 512 543 Q 506 540 500 528 Z" fill="#3E322C"/>
+    <path d="M 506 538 Q 510 552 512 558 Q 514 552 518 538 Q 514 545 512 546 Q 510 545 506 538 Z" fill="#2E2520"/>
+  </g>
+</svg>

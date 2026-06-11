@@ -1,0 +1,66 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- soft diagonal cast shadow -->
+  <path d="M 560 400 Q 636 404 652 480 Q 672 580 636 668 Q 598 716 548 696 Q 530 600 534 500 Q 538 432 560 400 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="165" ry="14" fill="#EADBBD"/>
+
+  <!-- necklace chain -->
+  <g stroke="#C28F3F" stroke-width="5" fill="none" stroke-dasharray="9 6">
+    <path d="M 396 148 Q 424 266 480 348"/>
+    <path d="M 628 148 Q 600 266 544 348"/>
+  </g>
+  <!-- bail -->
+  <circle cx="512" cy="362" r="18" fill="none" stroke="#D9A856" stroke-width="9"/>
+  <path d="M 500 372 A 18 18 0 0 0 512 380" fill="none" stroke="#A8762F" stroke-width="4.5"/>
+  <rect x="500" y="382" width="24" height="20" rx="8" fill="#D9A856"/>
+
+  <!-- pendant disc -->
+  <circle cx="512" cy="548" r="150" fill="#C28F3F"/>
+  <path d="M 398 462 A 144 144 0 0 1 478 408" fill="none" stroke="#D9A856" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="512" cy="548" r="150" fill="none" stroke="#A8762F" stroke-width="5"/>
+  <!-- night sky face -->
+  <circle cx="512" cy="548" r="122" fill="#5C6B85"/>
+  <circle cx="512" cy="548" r="122" fill="none" stroke="#4E5A74" stroke-width="4"/>
+  <path d="M 412 498 A 112 112 0 0 1 470 442" fill="none" stroke="#6B7A94" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- constellation: connected stars (abstract little dipper-ish) -->
+  <g stroke="#C5D0E8" stroke-width="3" fill="none" opacity="0.9">
+    <path d="M 438 612 L 478 576 L 466 524 L 506 488 L 552 502 L 586 472 L 600 524"/>
+  </g>
+  <g fill="#F0E9F8">
+    <circle cx="438" cy="612" r="7"/>
+    <circle cx="478" cy="576" r="5.5"/>
+    <circle cx="466" cy="524" r="6"/>
+    <circle cx="506" cy="488" r="7.5"/>
+    <circle cx="552" cy="502" r="5.5"/>
+    <circle cx="586" cy="472" r="6"/>
+    <circle cx="600" cy="524" r="8"/>
+  </g>
+  <!-- brightest star with 4-point flare -->
+  <path d="M 600 506 L 605 519 L 618 524 L 605 529 L 600 542 L 595 529 L 582 524 L 595 519 Z" fill="#FFFFFF"/>
+  <!-- scattered dust stars -->
+  <g fill="#A9B8D6">
+    <circle cx="452" cy="476" r="2.6"/>
+    <circle cx="530" cy="544" r="2.6"/>
+    <circle cx="490" cy="636" r="2.6"/>
+    <circle cx="572" cy="600" r="2.6"/>
+    <circle cx="544" cy="452" r="2.2"/>
+  </g>
+  <!-- tiny crescent moon (shape, not letter) -->
+  <path d="M 466 586 A 16 16 0 1 0 482 608 A 12 12 0 0 1 466 586 Z" fill="#E5C878"/>
+
+  <!-- rim studs -->
+  <g fill="#A8762F">
+    <circle cx="512" cy="412" r="4"/>
+    <circle cx="630" cy="486" r="4"/>
+    <circle cx="630" cy="610" r="4"/>
+    <circle cx="512" cy="684" r="4"/>
+    <circle cx="394" cy="610" r="4"/>
+    <circle cx="394" cy="486" r="4"/>
+  </g>
+
+  <!-- sparkle -->
+  <path d="M 350 300 L 356 316 L 372 322 L 356 328 L 350 344 L 344 328 L 328 322 L 344 316 Z" fill="#E5C878"/>
+</svg>

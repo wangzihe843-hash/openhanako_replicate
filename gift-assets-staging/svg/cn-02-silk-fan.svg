@@ -1,0 +1,138 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow (Canva-style, offset silhouette) -->
+  <g fill="#F1E3C9">
+    <circle cx="576" cy="416" r="235"/>
+    <rect x="560" y="630" width="32" height="310" rx="16"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="952" rx="130" ry="13" fill="#EADBBD"/>
+
+  <!-- fan rim (binding) -->
+  <circle cx="512" cy="368" r="235" fill="#D9C49C"/>
+  <circle cx="512" cy="368" r="227" fill="#E8D7B5"/>
+  <!-- rim binding wraps -->
+  <g stroke="#C7AF82" stroke-width="5" stroke-linecap="round">
+    <line x1="512" y1="130" x2="512" y2="146"/>
+    <line x1="629" y1="161" x2="621" y2="175"/>
+    <line x1="715" y1="247" x2="701" y2="255"/>
+    <line x1="747" y1="368" x2="731" y2="368"/>
+    <line x1="715" y1="489" x2="701" y2="481"/>
+    <line x1="629" y1="575" x2="621" y2="561"/>
+    <line x1="512" y1="606" x2="512" y2="590"/>
+    <line x1="395" y1="575" x2="403" y2="561"/>
+    <line x1="309" y1="489" x2="323" y2="481"/>
+    <line x1="277" y1="368" x2="293" y2="368"/>
+    <line x1="309" y1="247" x2="323" y2="255"/>
+    <line x1="395" y1="161" x2="403" y2="175"/>
+  </g>
+
+  <!-- silk face -->
+  <circle cx="512" cy="368" r="218" fill="#FFF9EE"/>
+  <clipPath id="face"><circle cx="512" cy="368" r="218"/></clipPath>
+  <g clip-path="url(#face)">
+    <!-- lower-right silk shade -->
+    <path d="M 730 368 A 218 218 0 0 1 512 586 L 512 660 L 760 660 Z" fill="#F5EAD4"/>
+    <path d="M 294 368 A 218 218 0 0 0 512 586 L 512 620 Q 350 600 294 430 Z" fill="#F9F0DE" opacity="0.8"/>
+    <!-- diagonal silk sheen -->
+    <path d="M 300 470 L 600 150 L 668 188 L 360 510 Z" fill="#FFFFFF" opacity="0.28"/>
+
+    <!-- plum branch: shadow pass then main -->
+    <path d="M 320 544 Q 422 474 502 414 Q 592 346 650 268 Q 670 240 680 218"
+          fill="none" stroke="#6E4D33" stroke-width="12" stroke-linecap="round" opacity="0.5"/>
+    <path d="M 318 540 Q 420 470 500 410 Q 590 342 648 264 Q 668 236 678 214"
+          fill="none" stroke="#8A6242" stroke-width="10" stroke-linecap="round"/>
+    <path d="M 470 432 Q 510 420 545 424" fill="none" stroke="#8A6242" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M 600 318 Q 632 312 656 320" fill="none" stroke="#8A6242" stroke-width="5.5" stroke-linecap="round"/>
+    <!-- bark nubs -->
+    <circle cx="436" cy="466" r="4.5" fill="#6E4D33"/>
+    <circle cx="572" cy="362" r="4" fill="#6E4D33"/>
+
+    <!-- blossom A -->
+    <g stroke="#D88A93" stroke-width="2.5">
+      <circle cx="428" cy="408" r="16" fill="#E2949D"/>
+      <circle cx="408" cy="438" r="16" fill="#E2949D"/>
+      <circle cx="440" cy="452" r="16" fill="#EFADB4"/>
+      <circle cx="396" cy="412" r="16" fill="#EFADB4"/>
+      <circle cx="418" cy="392" r="16" fill="#EFADB4"/>
+    </g>
+    <circle cx="419" cy="424" r="15" fill="#F6C6CB"/>
+    <path d="M 408 416 A 14 14 0 0 1 430 418" fill="none" stroke="#FBDDE0" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="419" cy="424" r="6" fill="#FFF6EA"/>
+    <g fill="#D9A856">
+      <circle cx="419" cy="411" r="2.6"/><circle cx="431" cy="420" r="2.6"/><circle cx="427" cy="434" r="2.6"/>
+      <circle cx="411" cy="434" r="2.6"/><circle cx="407" cy="420" r="2.6"/>
+    </g>
+    <!-- stamens -->
+    <g stroke="#E5C878" stroke-width="1.8">
+      <line x1="419" y1="424" x2="419" y2="412"/><line x1="419" y1="424" x2="430" y2="420"/>
+      <line x1="419" y1="424" x2="427" y2="433"/><line x1="419" y1="424" x2="411" y2="433"/>
+      <line x1="419" y1="424" x2="408" y2="420"/>
+    </g>
+
+    <!-- blossom B -->
+    <g stroke="#D88A93" stroke-width="2.2">
+      <circle cx="572" cy="330" r="13" fill="#E2949D"/>
+      <circle cx="554" cy="354" r="13" fill="#E2949D"/>
+      <circle cx="580" cy="362" r="13" fill="#EFADB4"/>
+      <circle cx="546" cy="332" r="13" fill="#EFADB4"/>
+      <circle cx="564" cy="318" r="13" fill="#EFADB4"/>
+    </g>
+    <circle cx="563" cy="342" r="11" fill="#F6C6CB"/>
+    <circle cx="563" cy="342" r="5" fill="#FFF6EA"/>
+    <g fill="#D9A856">
+      <circle cx="563" cy="332" r="2.1"/><circle cx="572" cy="339" r="2.1"/><circle cx="569" cy="350" r="2.1"/>
+      <circle cx="557" cy="350" r="2.1"/><circle cx="554" cy="339" r="2.1"/>
+    </g>
+
+    <!-- blossom C -->
+    <g stroke="#D88A93" stroke-width="2">
+      <circle cx="668" cy="248" r="10" fill="#E2949D"/>
+      <circle cx="654" cy="266" r="10" fill="#EFADB4"/>
+      <circle cx="674" cy="272" r="10" fill="#EFADB4"/>
+      <circle cx="650" cy="250" r="10" fill="#EFADB4"/>
+      <circle cx="662" cy="240" r="10" fill="#EFADB4"/>
+    </g>
+    <circle cx="662" cy="258" r="8" fill="#F6C6CB"/>
+    <circle cx="662" cy="258" r="3.5" fill="#FFF6EA"/>
+
+    <!-- buds with sepals -->
+    <circle cx="548" cy="424" r="8" fill="#E2949D"/>
+    <path d="M 542 430 Q 548 438 554 430" fill="none" stroke="#8A6242" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="659" cy="320" r="7" fill="#E2949D"/>
+    <path d="M 654 325 Q 659 331 664 325" fill="none" stroke="#8A6242" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="345" cy="520" r="7" fill="#EFADB4"/>
+  </g>
+  <!-- inner border: double ring -->
+  <circle cx="512" cy="368" r="204" fill="none" stroke="#E8D7B5" stroke-width="3"/>
+  <circle cx="512" cy="368" r="196" fill="none" stroke="#F0E3CB" stroke-width="2"/>
+
+  <!-- ferrule -->
+  <rect x="492" y="594" width="40" height="30" rx="10" fill="#8C6239"/>
+  <rect x="492" y="594" width="40" height="14" rx="7" fill="#9C7252"/>
+
+  <!-- handle with wood grain -->
+  <rect x="500" y="616" width="24" height="186" rx="12" fill="#C09058"/>
+  <path d="M 516 618 L 516 798 Q 524 792 524 784 L 524 630 Q 524 622 516 618 Z" fill="#A87844"/>
+  <line x1="506" y1="630" x2="506" y2="780" stroke="#B5895A" stroke-width="2.5"/>
+  <line x1="511" y1="640" x2="511" y2="760" stroke="#D8B077" stroke-width="2"/>
+  <!-- end knob -->
+  <circle cx="512" cy="806" r="12" fill="#A87844"/>
+  <circle cx="509" cy="802" r="4" fill="#C09058"/>
+
+  <!-- tassel -->
+  <path d="M 512 814 Q 498 826 512 838 Q 526 826 512 814" fill="none" stroke="#D34E42" stroke-width="5"/>
+  <circle cx="512" cy="846" r="9" fill="#D9A856"/>
+  <circle cx="509" cy="843" r="3" fill="#EFCB8B"/>
+  <rect x="499" y="858" width="26" height="14" rx="6" fill="#B83E35"/>
+  <line x1="504" y1="861" x2="520" y2="861" stroke="#D34E42" stroke-width="2.5"/>
+  <path d="M 495 868 L 529 868 Q 532 906 527 934 Q 512 946 497 934 Q 492 906 495 868 Z" fill="#D34E42"/>
+  <g stroke="#B83E35" stroke-width="2.6" stroke-linecap="round">
+    <line x1="501" y1="874" x2="500" y2="930"/>
+    <line x1="508" y1="874" x2="507" y2="936"/>
+    <line x1="516" y1="874" x2="517" y2="936"/>
+    <line x1="523" y1="874" x2="524" y2="930"/>
+  </g>
+  <path d="M 497 874 Q 495 906 499 932" fill="none" stroke="#E8766B" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

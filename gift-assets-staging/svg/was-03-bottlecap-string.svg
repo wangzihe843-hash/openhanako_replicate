@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024">
+  <defs>
+    <path id="crimp" d="M52.0,0.0 L46.1,6.1 L50.2,13.5 L43.0,17.8 L45.0,26.0 L36.9,28.3 L36.8,36.8 L28.3,36.9 L26.0,45.0 L17.8,43.0 L13.5,50.2 L6.1,46.1 L0.0,52.0 L-6.1,46.1 L-13.5,50.2 L-17.8,43.0 L-26.0,45.0 L-28.3,36.9 L-36.8,36.8 L-36.9,28.3 L-45.0,26.0 L-43.0,17.8 L-50.2,13.5 L-46.1,6.1 L-52.0,0.0 L-46.1,-6.1 L-50.2,-13.5 L-43.0,-17.8 L-45.0,-26.0 L-36.9,-28.3 L-36.8,-36.8 L-28.3,-36.9 L-26.0,-45.0 L-17.8,-43.0 L-13.5,-50.2 L-6.1,-46.1 L-0.0,-52.0 L6.1,-46.1 L13.5,-50.2 L17.8,-43.0 L26.0,-45.0 L28.3,-36.9 L36.8,-36.8 L36.9,-28.3 L45.0,-26.0 L43.0,-17.8 L50.2,-13.5 L46.1,-6.1 Z"/>
+  </defs>
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow -->
+  <rect x="452" y="214" width="134" height="648" rx="64" transform="translate(60,44)" fill="#F1E3C9"/>
+
+  <!-- ground -->
+  <ellipse cx="528" cy="888" rx="210" ry="14" fill="#EADBBD"/>
+
+  <!-- rope: top loop -->
+  <circle cx="512" cy="222" r="26" fill="none" stroke="#B5A284" stroke-width="12"/>
+  <circle cx="512" cy="222" r="26" fill="none" stroke="#97856B" stroke-width="4" stroke-dasharray="7 9"/>
+  <!-- knot bulge -->
+  <ellipse cx="512" cy="258" rx="17" ry="13" fill="#A79372"/>
+  <path d="M501,254 q11,9 22,0" stroke="#7C6C57" stroke-width="3.5" fill="none"/>
+  <!-- rope down -->
+  <line x1="512" y1="264" x2="512" y2="836" stroke="#B5A284" stroke-width="11"/>
+  <path d="M506,278 l12,8 M506,294 l12,8" stroke="#97856B" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- caps (top to bottom) -->
+  <g transform="translate(512,330) rotate(9)">
+    <use xlink:href="#crimp" fill="#8F5A40"/>
+    <circle r="38" fill="#B07050"/>
+    <circle r="28" fill="none" stroke="#8F5A40" stroke-width="4"/>
+    <path d="M-22,-18 a28,28 0 0 1 16,-12" stroke="#D8A488" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle r="6.5" fill="#4A4038"/>
+  </g>
+  <g transform="translate(502,448) rotate(-13)">
+    <use xlink:href="#crimp" fill="#75764F"/>
+    <circle r="38" fill="#9A9B6E"/>
+    <circle r="28" fill="none" stroke="#75764F" stroke-width="4"/>
+    <path d="M-22,-18 a28,28 0 0 1 16,-12" stroke="#C5C69E" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle r="6.5" fill="#4A4038"/>
+    <path d="M6,16 l16,-8" stroke="#75764F" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(524,566) rotate(21)">
+    <use xlink:href="#crimp" fill="#A03F35"/>
+    <circle r="38" fill="#C9574C"/>
+    <circle r="28" fill="none" stroke="#A03F35" stroke-width="4"/>
+    <path d="M-22,-18 a28,28 0 0 1 16,-12" stroke="#E8766B" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle r="6.5" fill="#4A4038"/>
+  </g>
+  <g transform="translate(504,684) rotate(-6)">
+    <use xlink:href="#crimp" fill="#8F7E63"/>
+    <circle r="38" fill="#B5A284"/>
+    <circle r="28" fill="none" stroke="#8F7E63" stroke-width="4"/>
+    <path d="M-22,-18 a28,28 0 0 1 16,-12" stroke="#DACBAE" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle r="6.5" fill="#4A4038"/>
+    <path d="M-14,12 l18,6" stroke="#8F7E63" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(518,800) rotate(15)">
+    <use xlink:href="#crimp" fill="#868D96"/>
+    <circle r="38" fill="#A9AFB8"/>
+    <circle r="28" fill="none" stroke="#868D96" stroke-width="4"/>
+    <path d="M-22,-18 a28,28 0 0 1 16,-12" stroke="#D6DAE0" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle r="6.5" fill="#4A4038"/>
+  </g>
+
+  <!-- bottom knot + frayed ends -->
+  <ellipse cx="514" cy="862" rx="14" ry="11" fill="#A79372"/>
+  <path d="M505,858 q9,8 18,0" stroke="#7C6C57" stroke-width="3" fill="none"/>
+  <path d="M508,872 q-8,16 -16,22" stroke="#B5A284" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M514,873 q1,16 -2,24" stroke="#A79372" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M520,872 q9,14 18,19" stroke="#B5A284" stroke-width="5" fill="none" stroke-linecap="round"/>
+</svg>

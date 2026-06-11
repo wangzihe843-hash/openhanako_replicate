@@ -1,0 +1,78 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow (tube + pouch, offset 60,44, capped at ground) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M 346 304 L 454 304 L 450 340 L 446 620 L 444 664 L 356 664 L 354 620 L 350 340 Z"/>
+    <rect x="510" y="430" width="164" height="232" rx="18" transform="rotate(-7 592 546)"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="516" cy="712" rx="255" ry="16" fill="#EADBBD"/>
+
+  <!-- ===== tube (standing on cap) ===== -->
+  <!-- cap -->
+  <path d="M 356 648 L 444 648 L 444 696 Q 444 708 432 708 L 368 708 Q 356 708 356 696 Z" fill="#A9AFB8"/>
+  <rect x="356" y="648" width="88" height="12" fill="#C9CDD4"/>
+  <line x1="372" y1="662" x2="372" y2="702" stroke="#8F96A1" stroke-width="3"/>
+  <line x1="388" y1="662" x2="388" y2="704" stroke="#8F96A1" stroke-width="3"/>
+  <line x1="404" y1="662" x2="404" y2="704" stroke="#8F96A1" stroke-width="3"/>
+  <line x1="420" y1="662" x2="420" y2="704" stroke="#8F96A1" stroke-width="3"/>
+  <ellipse cx="400" cy="708" rx="40" ry="5" fill="#3E332C" opacity="0.14"/>
+
+  <!-- body -->
+  <path d="M 366 648 C 362 556, 360 462, 366 372 L 370 322 L 430 322 L 434 372 C 440 462, 438 556, 434 648 Z" fill="#C9CDD4"/>
+  <path d="M 366 648 C 362 556, 360 462, 366 372 L 370 322 L 388 322 L 385 372 C 380 462, 381 556, 384 648 Z" fill="#E2E5EA"/>
+  <path d="M 421 322 L 430 322 L 434 372 C 440 462, 438 556, 434 648 L 416 648 C 420 556, 421 462, 416 372 Z" fill="#A9AFB8"/>
+  <!-- flat crimped top (thin fold) -->
+  <rect x="346" y="302" width="108" height="20" rx="5" fill="#8F96A1"/>
+  <rect x="346" y="302" width="108" height="7" rx="3.5" fill="#A9AFB8"/>
+  <line x1="376" y1="306" x2="376" y2="318" stroke="#6E747D" stroke-width="3"/>
+  <line x1="400" y1="306" x2="400" y2="318" stroke="#6E747D" stroke-width="3"/>
+  <line x1="424" y1="306" x2="424" y2="318" stroke="#6E747D" stroke-width="3"/>
+  <path d="M 370 324 L 430 324" stroke="#3E332C" stroke-width="4" opacity="0.15"/>
+
+  <!-- label band -->
+  <path d="M 362 420 L 438 420 C 440 472, 440 510, 438 552 L 362 552 C 360 510, 360 472, 362 420 Z" fill="#6E7FA8"/>
+  <path d="M 362 420 L 438 420 C 439 436, 439 444, 439 452 L 361 452 C 361 444, 361 436, 362 420 Z" fill="#8E9FC4"/>
+  <!-- ringed planet icon -->
+  <circle cx="400" cy="496" r="18" fill="#E5C878"/>
+  <path d="M 387 484 A 18 18 0 0 1 401 478" fill="none" stroke="#FBF2D9" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <ellipse cx="400" cy="496" rx="31" ry="9" fill="none" stroke="#C28F3F" stroke-width="5" transform="rotate(-20 400 496)"/>
+  <!-- gold stripe -->
+  <rect x="364" y="532" width="73" height="10" rx="5" fill="#E5C878"/>
+  <!-- body highlight -->
+  <path d="M 376 356 C 372 440, 372 520, 375 600" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.75"/>
+
+  <!-- ===== vacuum pouch ===== -->
+  <g transform="rotate(-7 592 565)">
+    <!-- body -->
+    <rect x="510" y="430" width="164" height="270" rx="18" fill="#8E9FC4"/>
+    <!-- side shading -->
+    <path d="M 644 430 L 656 430 Q 674 430 674 448 L 674 682 Q 674 700 656 700 L 644 700 Q 660 565 644 430 Z" fill="#6E7FA8" opacity="0.65"/>
+    <path d="M 510 448 Q 510 430 528 430 L 540 430 Q 524 565 540 700 L 528 700 Q 510 700 510 682 Z" fill="#C7D2E8" opacity="0.7"/>
+    <!-- seal band (thin) -->
+    <path d="M 510 446 Q 510 430 528 430 L 656 430 Q 674 430 674 446 L 674 460 L 510 460 Z" fill="#C9CDD4"/>
+    <line x1="510" y1="464" x2="674" y2="464" stroke="#8F96A1" stroke-width="4"/>
+    <line x1="544" y1="436" x2="544" y2="456" stroke="#A9AFB8" stroke-width="3"/>
+    <line x1="566" y1="436" x2="566" y2="456" stroke="#A9AFB8" stroke-width="3"/>
+    <line x1="618" y1="436" x2="618" y2="456" stroke="#A9AFB8" stroke-width="3"/>
+    <line x1="640" y1="436" x2="640" y2="456" stroke="#A9AFB8" stroke-width="3"/>
+    <!-- tear notches -->
+    <path d="M 510 444 L 521 449 L 510 454 Z" fill="#6E7FA8"/>
+    <path d="M 674 444 L 663 449 L 674 454 Z" fill="#6E7FA8"/>
+    <!-- color block design -->
+    <rect x="534" y="496" width="116" height="150" rx="12" fill="#6E7FA8"/>
+    <circle cx="592" cy="548" r="22" fill="#E5C878"/>
+    <path d="M 577 534 A 22 22 0 0 1 593 526" fill="none" stroke="#FBF2D9" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+    <ellipse cx="592" cy="548" rx="37" ry="11" fill="none" stroke="#C28F3F" stroke-width="5" transform="rotate(-20 592 548)"/>
+    <rect x="552" y="598" width="80" height="9" rx="4.5" fill="#C7D2E8"/>
+    <rect x="552" y="616" width="52" height="9" rx="4.5" fill="#C9574C"/>
+    <!-- bottom crease -->
+    <path d="M 524 676 L 660 676" stroke="#6E7FA8" stroke-width="3" opacity="0.6"/>
+    <!-- pouch highlight -->
+    <path d="M 548 486 C 544 560, 544 620, 548 682" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.55"/>
+  </g>
+  <!-- occlusion under pouch -->
+  <ellipse cx="612" cy="706" rx="80" ry="7" fill="#3E332C" opacity="0.13"/>
+</svg>

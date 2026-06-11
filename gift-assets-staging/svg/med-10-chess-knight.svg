@@ -1,0 +1,57 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 560 280 Q 668 320 672 440 L 700 700 Q 700 740 650 744 L 560 744 L 540 720 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="752" rx="200" ry="15" fill="#EADBBD"/>
+
+  <!-- base tiers -->
+  <ellipse cx="512" cy="716" rx="148" ry="30" fill="#8C6239"/>
+  <ellipse cx="512" cy="708" rx="148" ry="28" fill="#A87844"/>
+  <ellipse cx="512" cy="702" rx="116" ry="20" fill="#C09058"/>
+  <path d="M 412 668 Q 412 640 442 636 L 582 636 Q 612 640 612 668 L 612 684 Q 560 700 512 700 Q 464 700 412 684 Z" fill="#B5895A"/>
+  <path d="M 420 672 Q 470 660 512 660" fill="none" stroke="#D8B077" stroke-width="5" stroke-linecap="round"/>
+  <!-- collar ring -->
+  <ellipse cx="512" cy="636" rx="86" ry="18" fill="#8C6239"/>
+  <ellipse cx="512" cy="630" rx="86" ry="16" fill="#C09058"/>
+
+  <!-- knight horse head (profile facing left) -->
+  <path d="M 462 636
+           Q 436 560 452 490
+           Q 462 440 502 404
+           Q 524 384 528 356
+           Q 530 340 542 344
+           Q 552 348 560 366
+           Q 600 376 628 414
+           Q 660 460 656 520
+           Q 654 560 632 580
+           Q 620 590 610 580
+           Q 596 564 580 562
+           Q 568 560 564 572
+           Q 560 590 572 636 Z" fill="#E8E4DA"/>
+  <!-- shaded side -->
+  <path d="M 560 366 Q 600 376 628 414 Q 660 460 656 520 Q 654 560 632 580 Q 620 590 610 580 Q 624 540 622 488 Q 618 428 576 392 Q 564 380 560 366 Z" fill="#D5CFC0"/>
+  <!-- muzzle + nostril -->
+  <path d="M 452 490 Q 462 440 502 404 Q 478 460 470 510 Q 460 504 452 490 Z" fill="#F4F1E8"/>
+  <circle cx="470" cy="478" r="7" fill="#B8B3A6"/>
+  <!-- mouth slit -->
+  <path d="M 452 502 Q 466 512 478 510" fill="none" stroke="#B8B3A6" stroke-width="5" stroke-linecap="round"/>
+  <!-- eye: small almond, not a dot pair -->
+  <path d="M 528 446 Q 542 438 552 446 Q 542 454 528 446 Z" fill="#8F8A7C"/>
+  <!-- mane notches -->
+  <g fill="#D5CFC0">
+    <path d="M 560 380 Q 586 392 596 412 Q 576 410 562 398 Z"/>
+    <path d="M 588 420 Q 612 436 618 460 Q 598 454 586 440 Z"/>
+    <path d="M 606 472 Q 626 490 628 514 Q 610 506 600 490 Z"/>
+  </g>
+  <!-- ear -->
+  <path d="M 540 352 Q 548 330 560 326 Q 562 346 554 362 Z" fill="#D5CFC0"/>
+  <!-- neck highlight -->
+  <path d="M 478 560 Q 470 500 494 448" fill="none" stroke="#FFFDF4" stroke-width="9" stroke-linecap="round" opacity="0.8"/>
+  <!-- occlusion above collar -->
+  <path d="M 462 628 Q 512 640 572 628 L 572 638 Q 512 648 462 638 Z" fill="#B8B3A6" opacity="0.6"/>
+
+  <!-- sparkle -->
+  <path d="M 330 330 L 336 346 L 352 352 L 336 358 L 330 374 L 324 358 L 308 352 L 324 346 Z" fill="#E5C878"/>
+</svg>

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <ellipse cx="512" cy="222" rx="26" ry="54"/>
+    <rect x="482" y="266" width="60" height="200"/>
+    <ellipse cx="512" cy="478" rx="96" ry="18"/>
+    <path d="M 478 470 L 546 470 L 600 762 L 424 762 Z"/>
+    <ellipse cx="512" cy="762" rx="165" ry="30"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="792" rx="255" ry="17" fill="#EADBBD"/>
+  <!-- base -->
+  <ellipse cx="512" cy="768" rx="165" ry="28" fill="#8F96A1"/>
+  <ellipse cx="512" cy="756" rx="165" ry="28" fill="#A9AFB8"/>
+  <ellipse cx="512" cy="748" rx="112" ry="19" fill="#B9BEC6"/>
+  <ellipse cx="512" cy="756" rx="140" ry="23" fill="none" stroke="#8F96A1" stroke-width="3" opacity="0.7"/>
+  <path d="M 372 752 A 150 24 0 0 1 500 733" fill="none" stroke="#E2E6EB" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <ellipse cx="512" cy="742" rx="72" ry="12" fill="#7E848E" opacity="0.3"/>
+  <ellipse cx="512" cy="728" rx="64" ry="18" fill="#A9AFB8"/>
+  <path d="M 454 724 A 60 15 0 0 1 510 712" fill="none" stroke="#DDE1E6" stroke-width="5" stroke-linecap="round" opacity="0.8"/>
+  <!-- stem -->
+  <rect x="498" y="474" width="28" height="260" fill="#A9AFB8"/>
+  <rect x="518" y="474" width="8" height="260" fill="#8F96A1"/>
+  <line x1="503" y1="482" x2="503" y2="726" stroke="#DDE1E6" stroke-width="5" opacity="0.85"/>
+  <line x1="498" y1="660" x2="526" y2="660" stroke="#8F96A1" stroke-width="3"/>
+  <line x1="498" y1="672" x2="526" y2="672" stroke="#8F96A1" stroke-width="3"/>
+  <!-- knop -->
+  <ellipse cx="512" cy="590" rx="46" ry="32" fill="#8F96A1"/>
+  <ellipse cx="506" cy="584" rx="40" ry="27" fill="#B9BEC6"/>
+  <path d="M 478 578 A 36 24 0 0 1 510 564" fill="none" stroke="#E6E9EE" stroke-width="6" stroke-linecap="round" opacity="0.9"/>
+  <!-- drip pan -->
+  <ellipse cx="512" cy="484" rx="96" ry="18" fill="#8F96A1"/>
+  <ellipse cx="512" cy="476" rx="96" ry="18" fill="#C9CDD4"/>
+  <ellipse cx="512" cy="476" rx="78" ry="13" fill="none" stroke="#A9AFB8" stroke-width="3"/>
+  <ellipse cx="512" cy="476" rx="48" ry="10" fill="#6F7680" opacity="0.3"/>
+  <!-- candle -->
+  <rect x="484" y="270" width="56" height="170" fill="#F2E8D5"/>
+  <rect x="524" y="270" width="16" height="170" fill="#E3D6BD"/>
+  <rect x="488" y="274" width="8" height="162" fill="#FAF2E2"/>
+  <ellipse cx="512" cy="270" rx="28" ry="9" fill="#F7EFDD" stroke="#D9CBB0" stroke-width="2.5"/>
+  <path d="M 484 282 C 477 290 476 306 481 318 C 484 326 488 322 488 312 L 488 282 Z" fill="#F7EFDD"/>
+  <rect x="528" y="276" width="7" height="26" rx="3.5" fill="#FAF2E2" opacity="0.9"/>
+  <!-- socket over candle base -->
+  <ellipse cx="512" cy="434" rx="26" ry="6" fill="#C9B998" opacity="0.4"/>
+  <path d="M 478 432 L 484 468 L 540 468 L 546 432 Z" fill="#A9AFB8"/>
+  <path d="M 478 432 L 484 468 L 498 468 L 493 432 Z" fill="#C9CDD4"/>
+  <ellipse cx="512" cy="432" rx="34" ry="10" fill="#C9CDD4" stroke="#8F96A1" stroke-width="3"/>
+  <!-- wick + flame -->
+  <line x1="512" y1="252" x2="512" y2="268" stroke="#7A6A55" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="512" cy="212" r="62" fill="#F6E7C6" opacity="0.5"/>
+  <circle cx="512" cy="212" r="38" fill="#F9EDD2" opacity="0.65"/>
+  <path d="M 512 162 C 530 190 540 210 540 228 C 540 252 528 264 512 264 C 496 264 484 252 484 228 C 484 210 494 190 512 162 Z" fill="#E59A45"/>
+  <path d="M 512 184 C 522 202 528 214 528 228 C 528 244 521 252 512 252 C 503 252 496 244 496 228 C 496 214 502 202 512 184 Z" fill="#F2C063"/>
+  <ellipse cx="512" cy="234" rx="7" ry="10" fill="#FBE9C0"/>
+</svg>

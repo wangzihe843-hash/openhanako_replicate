@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <circle cx="512" cy="222" r="34"/>
+    <rect x="492" y="250" width="40" height="120"/>
+    <rect x="396" y="354" width="232" height="36" rx="17"/>
+    <path d="M 472 384 L 552 384 L 538 720 C 536 766 528 798 512 800 C 496 798 488 766 486 720 Z"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="798" rx="190" ry="14" fill="#EADBBD"/>
+  <!-- scabbard leather -->
+  <path d="M 472 390 L 552 390 L 538 720 C 536 766 528 798 512 800 C 496 798 488 766 486 720 Z" fill="#A87844"/>
+  <path d="M 538 390 L 552 390 L 538 720 C 536 760 528 790 517 798 C 523 778 527 749 528 720 L 538 390 Z" fill="#8C6239"/>
+  <path d="M 472 390 L 484 390 L 490 720 C 491 748 494 772 500 788 C 493 776 489 750 486 720 L 472 390 Z" fill="#C09058"/>
+  <line x1="512" y1="446" x2="512" y2="548" stroke="#8C6239" stroke-width="3" stroke-dasharray="9 11" opacity="0.6"/>
+  <line x1="512" y1="592" x2="512" y2="690" stroke="#8C6239" stroke-width="3" stroke-dasharray="9 11" opacity="0.6"/>
+  <!-- mid band -->
+  <rect x="476" y="556" width="72" height="26" rx="5" fill="#C9CDD4"/>
+  <rect x="476" y="570" width="72" height="12" rx="5" fill="#A9AFB8"/>
+  <line x1="480" y1="562" x2="544" y2="562" stroke="#E6E9EE" stroke-width="3" opacity="0.9"/>
+  <!-- chape (metal tip) -->
+  <path d="M 487 704 L 537 704 L 536 730 C 534 768 526 798 512 800 C 498 798 490 768 488 730 Z" fill="#C9CDD4"/>
+  <path d="M 524 704 L 537 704 L 536 730 C 534 764 528 790 516 798 C 522 780 525 752 525 730 L 524 704 Z" fill="#A9AFB8"/>
+  <line x1="489" y1="714" x2="535" y2="714" stroke="#8F96A1" stroke-width="3" opacity="0.7"/>
+  <path d="M 496 760 C 498 778 503 790 510 794" fill="none" stroke="#E6E9EE" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <!-- locket (top metal collar) -->
+  <rect x="466" y="388" width="92" height="46" rx="6" fill="#C9CDD4"/>
+  <rect x="466" y="416" width="92" height="18" rx="6" fill="#A9AFB8"/>
+  <line x1="472" y1="394" x2="550" y2="394" stroke="#E6E9EE" stroke-width="3" opacity="0.9"/>
+  <line x1="470" y1="404" x2="554" y2="404" stroke="#8F96A1" stroke-width="3" opacity="0.7"/>
+  <rect x="470" y="388" width="84" height="7" fill="#5F666F" opacity="0.3"/>
+  <!-- grip -->
+  <rect x="492" y="250" width="40" height="108" fill="#B83E35"/>
+  <rect x="494" y="252" width="7" height="104" fill="#D34E42"/>
+  <line x1="492" y1="274" x2="532" y2="264" stroke="#8F3029" stroke-width="6"/>
+  <line x1="492" y1="292" x2="532" y2="282" stroke="#8F3029" stroke-width="6"/>
+  <line x1="492" y1="310" x2="532" y2="300" stroke="#8F3029" stroke-width="6"/>
+  <line x1="492" y1="328" x2="532" y2="318" stroke="#8F3029" stroke-width="6"/>
+  <line x1="492" y1="346" x2="532" y2="336" stroke="#8F3029" stroke-width="6"/>
+  <ellipse cx="512" cy="256" rx="17" ry="5" fill="#7A2B25" opacity="0.4"/>
+  <!-- pommel -->
+  <defs>
+    <clipPath id="pommel"><circle cx="512" cy="222" r="34"/></clipPath>
+  </defs>
+  <g clip-path="url(#pommel)">
+    <circle cx="512" cy="222" r="34" fill="#A9AFB8"/>
+    <circle cx="505" cy="215" r="34" fill="#C9CDD4"/>
+  </g>
+  <path d="M 489 204 A 26 26 0 0 1 520 197" fill="none" stroke="#E9ECF0" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="512" cy="222" r="8" fill="#8F96A1"/>
+  <!-- cross guard -->
+  <rect x="396" y="354" width="232" height="36" rx="17" fill="#C9CDD4"/>
+  <rect x="396" y="372" width="232" height="18" rx="9" fill="#A9AFB8"/>
+  <line x1="412" y1="365" x2="612" y2="365" stroke="#E6E9EE" stroke-width="3" opacity="0.9"/>
+  <rect x="398" y="356" width="14" height="32" rx="7" fill="#8F96A1"/>
+  <rect x="612" y="356" width="14" height="32" rx="7" fill="#8F96A1"/>
+  <ellipse cx="512" cy="358" rx="22" ry="5" fill="#5F666F" opacity="0.3"/>
+</svg>

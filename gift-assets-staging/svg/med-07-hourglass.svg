@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 560 300 L 668 312 L 712 700 L 596 728 L 560 700 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="220" ry="16" fill="#EADBBD"/>
+
+  <!-- bottom plate -->
+  <ellipse cx="512" cy="712" rx="180" ry="30" fill="#8C6239"/>
+  <ellipse cx="512" cy="704" rx="180" ry="28" fill="#A87844"/>
+  <ellipse cx="512" cy="700" rx="146" ry="20" fill="#C09058"/>
+  <!-- top plate -->
+  <ellipse cx="512" cy="300" rx="180" ry="28" fill="#A87844"/>
+  <ellipse cx="512" cy="292" rx="180" ry="26" fill="#C09058"/>
+  <ellipse cx="512" cy="290" rx="146" ry="18" fill="#D8B077"/>
+
+  <!-- side pillars -->
+  <rect x="346" y="304" width="26" height="404" rx="12" fill="#A87844"/>
+  <rect x="346" y="304" width="11" height="404" rx="5" fill="#C09058"/>
+  <rect x="652" y="304" width="26" height="404" rx="12" fill="#8C6239"/>
+  <rect x="652" y="304" width="11" height="404" rx="5" fill="#A87844"/>
+  <!-- pillar caps -->
+  <circle cx="359" cy="304" r="11" fill="#C28F3F"/>
+  <circle cx="359" cy="708" r="11" fill="#C28F3F"/>
+  <circle cx="665" cy="304" r="11" fill="#C28F3F"/>
+  <circle cx="665" cy="708" r="11" fill="#C28F3F"/>
+
+  <!-- glass double bulb -->
+  <path d="M 416 318 L 608 318 C 608 408 548 460 524 496 Q 520 502 520 510 L 520 514 Q 520 522 524 528 C 548 564 608 616 608 700 L 416 700 C 416 616 476 564 500 528 Q 504 522 504 514 L 504 510 Q 504 502 500 496 C 476 460 416 408 416 318 Z"
+        fill="#F7F3E8" stroke="#D8CBB0" stroke-width="6" opacity="0.97"/>
+
+  <!-- sand: top remaining -->
+  <clipPath id="topbulb"><path d="M 420 322 L 604 322 C 604 406 546 458 522 494 L 502 494 C 478 458 420 406 420 322 Z"/></clipPath>
+  <g clip-path="url(#topbulb)">
+    <path d="M 430 420 Q 512 396 594 420 L 594 500 L 430 500 Z" fill="#E2B96B"/>
+    <path d="M 522 430 Q 560 424 594 432 L 594 500 L 502 500 Q 540 470 522 430 Z" fill="#D3A654"/>
+    <path d="M 436 428 Q 470 418 504 422" fill="none" stroke="#F0CE8B" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <!-- falling stream -->
+  <rect x="508" y="492" width="8" height="130" fill="#E2B96B"/>
+  <!-- sand: bottom pile -->
+  <clipPath id="botbulb"><path d="M 420 696 L 604 696 C 604 612 546 560 522 524 L 502 524 C 478 560 420 612 420 696 Z"/></clipPath>
+  <g clip-path="url(#botbulb)">
+    <path d="M 512 596 Q 556 648 612 668 L 612 700 L 412 700 L 412 668 Q 468 648 512 596 Z" fill="#E2B96B"/>
+    <path d="M 512 596 Q 556 648 612 668 L 612 700 L 512 700 Z" fill="#D3A654"/>
+    <path d="M 484 644 Q 502 624 512 606" fill="none" stroke="#F0CE8B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- glass highlights -->
+  <path d="M 444 352 Q 436 396 458 436" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.75"/>
+  <path d="M 446 636 Q 438 600 460 566" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+  <path d="M 576 360 Q 584 400 566 436" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.4"/>
+
+  <!-- waist collar -->
+  <rect x="488" y="498" width="48" height="28" rx="12" fill="#C28F3F"/>
+  <line x1="496" y1="505" x2="528" y2="505" stroke="#EFCB8B" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- top plate wood ring detail -->
+  <ellipse cx="512" cy="290" rx="110" ry="12" fill="none" stroke="#A87844" stroke-width="4"/>
+
+  <!-- sparkle -->
+  <path d="M 758 350 L 764 366 L 780 372 L 764 378 L 758 394 L 752 378 L 736 372 L 752 366 Z" fill="#E5C878"/>
+</svg>

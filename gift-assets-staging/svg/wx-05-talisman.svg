@@ -1,0 +1,63 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <path d="M 500 320 L 668 308 L 700 758 L 540 800 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="800" rx="150" ry="13" fill="#EADBBD"/>
+
+  <!-- red hanging string -->
+  <path d="M 512 226 Q 512 198 534 198 Q 556 198 556 222 Q 556 244 534 246 Q 518 247 514 236"
+        fill="none" stroke="#C9574C" stroke-width="7" stroke-linecap="round"/>
+  <path d="M 512 226 Q 510 252 510 274" fill="none" stroke="#C9574C" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 520 212 A 16 16 0 0 0 534 204" fill="none" stroke="#A8362E" stroke-width="3.5"/>
+
+  <!-- paper strip with slight tilt -->
+  <g transform="rotate(-4 512 510)">
+    <!-- back fold of curled corner -->
+    <path d="M 600 738 L 600 700 L 558 738 Z" fill="#D9C48C"/>
+    <!-- paper -->
+    <path d="M 424 252 L 600 252 L 600 700 L 558 738 L 424 738 Z" fill="#EFD9A0"/>
+    <!-- left edge shade -->
+    <path d="M 424 252 L 446 252 L 446 738 L 424 738 Z" fill="#E5CC8E"/>
+    <!-- punch hole -->
+    <circle cx="512" cy="282" r="10" fill="#FAF3E6"/>
+    <circle cx="512" cy="282" r="10" fill="none" stroke="#D9C48C" stroke-width="4"/>
+    <path d="M 512 274 A 10 10 0 0 0 504 286" fill="none" stroke="#C2A86E" stroke-width="3"/>
+
+    <!-- paper fiber flecks -->
+    <g fill="#E2C98E">
+      <circle cx="468" cy="320" r="3"/>
+      <circle cx="556" cy="402" r="2.6"/>
+      <circle cx="452" cy="500" r="3"/>
+      <circle cx="566" cy="560" r="2.6"/>
+      <circle cx="470" cy="640" r="3"/>
+      <circle cx="540" cy="300" r="2.2"/>
+      <circle cx="448" cy="408" r="2.2"/>
+    </g>
+    <!-- right edge shade -->
+    <path d="M 584 252 L 600 252 L 600 700 L 584 712 Z" fill="#E5CC8E" opacity="0.7"/>
+
+    <!-- abstract cinnabar sigil: light echo then dark core (brush depth) -->
+    <g stroke="#E08A7E" fill="none" stroke-linecap="round" opacity="0.7" transform="translate(4 3)">
+      <circle cx="512" cy="350" r="26" stroke-width="9"/>
+      <path d="M 512 416 L 480 470 L 544 488 L 492 556 L 540 572 L 508 636" stroke-width="11"/>
+    </g>
+    <g stroke="#C0392B" fill="none" stroke-linecap="round">
+      <circle cx="512" cy="350" r="26" stroke-width="9"/>
+      <line x1="478" y1="350" x2="546" y2="350" stroke-width="7"/>
+      <path d="M 512 376 L 512 416" stroke-width="9"/>
+      <path d="M 512 416 L 480 470 L 544 488 L 492 556 L 540 572 L 508 636" stroke-width="11"/>
+      <line x1="470" y1="446" x2="500" y2="438" stroke-width="7"/>
+      <line x1="524" y1="530" x2="554" y2="522" stroke-width="7"/>
+    </g>
+    <!-- brush tip flick -->
+    <path d="M 508 636 Q 504 650 496 658" stroke="#C0392B" stroke-width="5" fill="none" stroke-linecap="round"/>
+
+    <!-- seal stamp: filled with abstract maze emboss -->
+    <rect x="476" y="674" width="52" height="52" rx="8" fill="#C0392B"/>
+    <g stroke="#E08A7E" stroke-width="4" fill="none" stroke-linecap="round">
+      <path d="M 488 688 L 516 688 L 516 700"/>
+      <path d="M 488 700 L 500 700 L 500 714 L 516 714"/>
+    </g>
+  </g>
+</svg>

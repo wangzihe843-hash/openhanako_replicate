@@ -1,0 +1,86 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 576 396 C 660 416 712 480 712 550 C 712 632 652 690 576 698 C 500 690 440 632 440 550 C 440 480 492 416 576 396 Z"/>
+    <rect x="564" y="690" width="26" height="130" rx="13"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="826" rx="155" ry="14" fill="#EADBBD"/>
+
+  <!-- hanging cord (braided) -->
+  <path d="M 512 318 Q 512 270 512 252 Q 512 222 538 222 Q 564 222 564 250 Q 564 274 538 276"
+        fill="none" stroke="#C28F3F" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 512 300 L 518 292 M 512 280 L 518 272 M 512 260 L 518 252" stroke="#A8762F" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- ruffle above the drawstring (multi-fold) -->
+  <path d="M 470 348 Q 458 306 478 290 Q 492 314 498 344 Z" fill="#A8362E"/>
+  <path d="M 554 348 Q 566 306 546 290 Q 532 314 526 344 Z" fill="#A8362E"/>
+  <path d="M 484 346 Q 478 306 494 292 Q 504 314 508 344 Z" fill="#B83E35"/>
+  <path d="M 540 346 Q 546 306 530 292 Q 520 314 516 344 Z" fill="#B83E35"/>
+  <path d="M 498 344 Q 502 300 512 288 Q 522 300 526 344 Z" fill="#C9574C"/>
+
+  <!-- pouch body -->
+  <path d="M 512 352 C 596 372 648 436 648 506 C 648 588 588 646 512 654 C 436 646 376 588 376 506 C 376 436 428 372 512 352 Z" fill="#C9574C"/>
+  <!-- right shade -->
+  <path d="M 512 352 C 596 372 648 436 648 506 C 648 588 588 646 512 654 C 560 624 590 570 590 506 C 590 436 560 380 512 352 Z" fill="#B83E35" opacity="0.5"/>
+  <!-- left fabric sheen -->
+  <path d="M 452 408 C 422 448 410 492 416 544" fill="none" stroke="#E8766B" stroke-width="14" stroke-linecap="round" opacity="0.6"/>
+  <!-- bottom occlusion -->
+  <path d="M 440 600 Q 512 668 584 600 Q 552 648 512 654 Q 472 648 440 600 Z" fill="#A8362E" opacity="0.55"/>
+
+  <!-- drawstring band with pattern -->
+  <rect x="448" y="346" width="128" height="24" rx="12" fill="#D9A856"/>
+  <g stroke="#C28F3F" stroke-width="2.5">
+    <line x1="468" y1="350" x2="468" y2="366"/>
+    <line x1="488" y1="350" x2="488" y2="366"/>
+    <line x1="508" y1="350" x2="508" y2="366"/>
+    <line x1="528" y1="350" x2="528" y2="366"/>
+    <line x1="548" y1="350" x2="548" y2="366"/>
+  </g>
+  <circle cx="448" cy="358" r="9" fill="#C28F3F"/>
+  <circle cx="576" cy="358" r="9" fill="#C28F3F"/>
+  <circle cx="445" cy="355" r="3" fill="#EFCB8B"/>
+  <circle cx="573" cy="355" r="3" fill="#EFCB8B"/>
+
+  <!-- embroidery: stems + blossom + buds -->
+  <path d="M 512 520 Q 488 540 470 524" fill="none" stroke="#7C9670" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 512 520 Q 536 540 554 524" fill="none" stroke="#7C9670" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 470 520 Q 446 530 442 550 Q 462 550 474 532 Z" fill="#8FA882"/>
+  <path d="M 554 520 Q 578 530 582 550 Q 562 550 550 532 Z" fill="#8FA882"/>
+  <g stroke="#E2949D" stroke-width="2">
+    <circle cx="512" cy="452" r="17" fill="#F6C6CB"/>
+    <circle cx="487" cy="470" r="17" fill="#F6C6CB"/>
+    <circle cx="537" cy="470" r="17" fill="#F6C6CB"/>
+    <circle cx="496" cy="498" r="17" fill="#EFADB4"/>
+    <circle cx="528" cy="498" r="17" fill="#EFADB4"/>
+  </g>
+  <circle cx="512" cy="480" r="10" fill="#FFF6EA"/>
+  <circle cx="512" cy="480" r="4" fill="#D9A856"/>
+  <g stroke="#E5C878" stroke-width="1.8">
+    <line x1="512" y1="480" x2="512" y2="468"/><line x1="512" y1="480" x2="523" y2="475"/>
+    <line x1="512" y1="480" x2="520" y2="490"/><line x1="512" y1="480" x2="504" y2="490"/>
+    <line x1="512" y1="480" x2="501" y2="475"/>
+  </g>
+  <!-- small bud accents -->
+  <circle cx="462" cy="446" r="7" fill="#F6C6CB"/>
+  <circle cx="564" cy="446" r="7" fill="#F6C6CB"/>
+  <circle cx="450" cy="458" r="4.5" fill="#EFADB4"/>
+  <circle cx="576" cy="458" r="4.5" fill="#EFADB4"/>
+
+  <!-- tassel -->
+  <line x1="512" y1="654" x2="512" y2="676" stroke="#B83E35" stroke-width="5"/>
+  <circle cx="512" cy="686" r="9" fill="#D9A856"/>
+  <circle cx="509" cy="683" r="3" fill="#EFCB8B"/>
+  <rect x="500" y="697" width="24" height="13" rx="5" fill="#B83E35"/>
+  <line x1="505" y1="700" x2="519" y2="700" stroke="#D34E42" stroke-width="2.2"/>
+  <path d="M 496 708 L 528 708 Q 531 748 526 776 Q 512 788 498 776 Q 493 748 496 708 Z" fill="#D34E42"/>
+  <g stroke="#B83E35" stroke-width="2.4" stroke-linecap="round">
+    <line x1="502" y1="714" x2="501" y2="772"/>
+    <line x1="509" y1="714" x2="508" y2="778"/>
+    <line x1="516" y1="714" x2="517" y2="778"/>
+    <line x1="522" y1="714" x2="523" y2="772"/>
+  </g>
+  <path d="M 498 714 Q 496 746 500 774" fill="none" stroke="#E8766B" stroke-width="2" stroke-linecap="round"/>
+</svg>

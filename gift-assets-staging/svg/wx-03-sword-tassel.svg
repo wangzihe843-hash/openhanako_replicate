@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- soft diagonal cast shadow -->
+  <path d="M 556 400 Q 614 396 622 452 L 630 700 Q 628 744 584 744 Q 544 744 542 700 L 538 452 Q 540 408 556 400 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="772" rx="160" ry="14" fill="#EADBBD"/>
+
+  <!-- hanging loop -->
+  <ellipse cx="512" cy="200" rx="34" ry="44" fill="none" stroke="#C9574C" stroke-width="9"/>
+  <path d="M 487 218 A 34 44 0 0 0 512 244" fill="none" stroke="#A8362E" stroke-width="5"/>
+  <line x1="512" y1="244" x2="512" y2="298" stroke="#C9574C" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- woven knot -->
+  <path d="M 488 298 L 536 298 L 544 338 L 480 338 Z" fill="#C9574C"/>
+  <path d="M 488 298 L 512 318 L 536 298 M 480 338 L 512 318 L 544 338" fill="none" stroke="#B83E35" stroke-width="6"/>
+  <path d="M 500 308 L 512 300 L 524 308" fill="none" stroke="#E8766B" stroke-width="3"/>
+
+  <!-- carved jade bead -->
+  <circle cx="512" cy="396" r="52" fill="#A8C3A0"/>
+  <path d="M 472 426 A 52 52 0 0 0 552 426 Q 512 446 472 426 Z" fill="#8FA882"/>
+  <circle cx="512" cy="392" r="44" fill="#B8D0AE"/>
+  <!-- carve: cloud curls -->
+  <g fill="none" stroke="#8FA882" stroke-width="5" stroke-linecap="round">
+    <path d="M 484 382 Q 498 370 514 378 Q 528 384 526 396"/>
+    <path d="M 490 408 Q 506 418 524 410"/>
+    <path d="M 532 380 Q 542 386 540 396"/>
+  </g>
+  <!-- jade highlight -->
+  <path d="M 482 370 A 44 44 0 0 1 506 352" fill="none" stroke="#D7E6CF" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- gold collar -->
+  <rect x="488" y="450" width="48" height="16" rx="7" fill="#D9A856"/>
+  <rect x="488" y="464" width="48" height="12" rx="6" fill="#C28F3F"/>
+  <line x1="496" y1="454" x2="528" y2="454" stroke="#EFCB8B" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- fringe skirt -->
+  <path d="M 480 476 L 544 476 Q 562 590 558 700
+           L 544 712 L 530 702 L 512 714 L 494 702 L 480 712 L 466 700
+           Q 462 590 480 476 Z" fill="#D34E42"/>
+  <!-- strand shading -->
+  <g stroke="#B83E35" stroke-width="3.5" stroke-linecap="round">
+    <path d="M 484 492 Q 476 596 472 696"/>
+    <path d="M 497 494 Q 492 600 490 706"/>
+    <path d="M 512 494 Q 512 602 512 710"/>
+    <path d="M 527 494 Q 532 600 534 706"/>
+    <path d="M 540 492 Q 548 596 552 696"/>
+  </g>
+  <!-- strand highlights -->
+  <g stroke="#E8766B" stroke-width="2.5" stroke-linecap="round">
+    <path d="M 490 494 Q 484 596 481 700"/>
+    <path d="M 520 494 Q 524 600 526 708"/>
+  </g>
+  <!-- skirt top occlusion -->
+  <path d="M 480 476 L 544 476 L 542 492 Q 512 502 482 492 Z" fill="#B83E35" opacity="0.6"/>
+
+  <!-- side thin cords with beads -->
+  <path d="M 484 472 Q 440 560 446 668" fill="none" stroke="#C9574C" stroke-width="4"/>
+  <circle cx="446" cy="680" r="10" fill="#D9A856"/>
+  <circle cx="443" cy="677" r="3.5" fill="#EFCB8B"/>
+  <path d="M 540 472 Q 584 560 578 668" fill="none" stroke="#C9574C" stroke-width="4"/>
+  <circle cx="578" cy="680" r="10" fill="#D9A856"/>
+  <circle cx="575" cy="677" r="3.5" fill="#EFCB8B"/>
+</svg>

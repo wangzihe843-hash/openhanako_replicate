@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow: jar silhouette + bandage roll, offset (60,44) -->
+  <path d="M500,366 C540,366 568,390 572,444 C578,484 635,504 635,604 C635,704 595,784 560,800 L440,800 C405,784 365,704 365,604 C365,504 422,484 428,444 C432,390 460,366 500,366 Z" fill="#F1E3C9"/>
+  <rect x="678" y="692" width="150" height="118" rx="44" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="540" cy="786" rx="295" ry="16" fill="#EADBBD"/>
+
+  <!-- ===== porcelain jar ===== -->
+  <path d="M375,390 C362,440 305,460 305,560 C305,660 345,740 380,756 L500,756 C535,740 575,660 575,560 C575,460 518,440 505,390 Z" fill="#F6F2E7"/>
+  <!-- right side shade -->
+  <path d="M505,390 C518,440 575,460 575,560 C575,660 535,740 500,756 L466,756 C510,736 540,656 540,560 C540,466 500,438 492,392 Z" fill="#E6DEC9"/>
+  <path d="M515,420 C548,452 562,500 562,560 C562,640 536,710 506,742" stroke="#D8CFB6" stroke-width="5" opacity="0.7" fill="none" stroke-linecap="round"/>
+  <!-- left highlight -->
+  <path d="M352,478 C334,510 328,556 332,604" stroke="#FFFFFF" stroke-width="10" opacity="0.85" fill="none" stroke-linecap="round"/>
+  <!-- bamboo-green double band -->
+  <path d="M312,596 Q440,622 568,596" stroke="#8FA882" stroke-width="6" opacity="0.85" fill="none"/>
+  <path d="M316,616 Q440,640 564,616" stroke="#8FA882" stroke-width="4" opacity="0.6" fill="none"/>
+  <!-- foot -->
+  <rect x="370" y="756" width="140" height="18" rx="7" fill="#E2DBC8"/>
+  <rect x="378" y="756" width="124" height="6" fill="#3E332C" opacity="0.15"/>
+
+  <!-- ===== red cloth cover ===== -->
+  <path d="M368,400 C372,346 400,322 440,322 C480,322 508,346 512,400
+           Q500,418 488,404 Q476,420 462,406 Q450,420 436,406 Q424,420 410,406 Q398,420 384,404 Q374,414 368,400 Z" fill="#C9574C"/>
+  <!-- cloth folds -->
+  <path d="M440,326 L440,400" stroke="#B83E35" stroke-width="4" opacity="0.7" fill="none"/>
+  <path d="M408,332 L398,402" stroke="#B83E35" stroke-width="4" opacity="0.7" fill="none"/>
+  <path d="M472,332 L482,402" stroke="#B83E35" stroke-width="4" opacity="0.7" fill="none"/>
+  <path d="M398,348 C406,338 420,330 438,330" stroke="#E8766B" stroke-width="6" opacity="0.85" fill="none" stroke-linecap="round"/>
+  <!-- tie cord + knot -->
+  <path d="M372,418 Q440,432 508,418" stroke="#A87844" stroke-width="6" fill="none"/>
+  <path d="M372,430 Q440,444 508,430" stroke="#A87844" stroke-width="6" fill="none"/>
+  <circle cx="514" cy="426" r="8" fill="#8C6239"/>
+  <path d="M518,432 q16,16 10,36" stroke="#8C6239" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M514,434 q-4,20 -16,30" stroke="#8C6239" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- occlusion under cloth on jar -->
+  <path d="M376,408 Q440,424 504,408 L505,418 Q440,432 375,418 Z" fill="#3E332C" opacity="0.15"/>
+
+  <!-- ===== bandage roll ===== -->
+  <!-- unrolled tail -->
+  <path d="M652,756 C610,770 580,766 548,776 L548,792 C584,782 616,786 656,772 Z" fill="#EFE7D2"/>
+  <path d="M560,778 L572,774 M590,772 L602,768 M620,768 L632,764" stroke="#D9CDB0" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- roll body -->
+  <path d="M660,648 L740,652 C758,656 766,676 766,706 C766,736 758,756 740,760 L660,764 Z" fill="#EFE7D2"/>
+  <path d="M700,652 C716,668 716,744 700,760 M734,654 C748,672 748,740 734,758" stroke="#DFD4B8" stroke-width="4" opacity="0.8" fill="none"/>
+  <path d="M748,668 C756,678 758,692 758,706" stroke="#FFFFFF" stroke-width="5" opacity="0.7" fill="none" stroke-linecap="round"/>
+  <!-- roll face with spiral -->
+  <ellipse cx="660" cy="706" rx="38" ry="58" fill="#F4EEDD"/>
+  <ellipse cx="660" cy="706" rx="38" ry="58" stroke="#DFD4B8" stroke-width="3" fill="none"/>
+  <path d="M644,672 A26,40 0 0 1 678,700" stroke="#CDC1A2" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M652,690 A14,22 0 0 1 668,710" stroke="#CDC1A2" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- occlusion: roll on ground / tail under roll -->
+  <path d="M630,752 C640,760 652,762 664,762" stroke="#3E332C" stroke-width="6" opacity="0.15" fill="none" stroke-linecap="round"/>
+</svg>

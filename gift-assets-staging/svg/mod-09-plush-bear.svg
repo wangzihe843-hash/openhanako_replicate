@@ -1,0 +1,48 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAE8D1"/>
+  <!-- ground shadow -->
+  <ellipse cx="512" cy="798" rx="208" ry="17" fill="#F2CB9C" opacity="0.85"/>
+
+  <!-- ears (behind head) -->
+  <circle cx="398" cy="284" r="56" fill="#C89B66" stroke="#7A5638" stroke-width="9"/>
+  <circle cx="626" cy="284" r="56" fill="#C89B66" stroke="#7A5638" stroke-width="9"/>
+  <circle cx="402" cy="290" r="27" fill="#EFD9B4"/>
+  <circle cx="622" cy="290" r="27" fill="#EFD9B4"/>
+
+  <!-- arms behind body -->
+  <ellipse cx="372" cy="602" rx="48" ry="90" fill="#C89B66" stroke="#7A5638" stroke-width="9" transform="rotate(18 372 602)"/>
+  <ellipse cx="652" cy="602" rx="48" ry="90" fill="#C89B66" stroke="#7A5638" stroke-width="9" transform="rotate(-18 652 602)"/>
+
+  <!-- body -->
+  <ellipse cx="512" cy="640" rx="158" ry="142" fill="#C89B66" stroke="#7A5638" stroke-width="9"/>
+  <ellipse cx="512" cy="662" rx="96" ry="86" fill="#EFD9B4"/>
+  <!-- belly shading -->
+  <path d="M 444 712 Q 512 744 580 712" fill="none" stroke="#E0C593" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- legs -->
+  <ellipse cx="418" cy="744" rx="64" ry="50" fill="#C89B66" stroke="#7A5638" stroke-width="9" transform="rotate(-6 418 744)"/>
+  <ellipse cx="606" cy="744" rx="64" ry="50" fill="#C89B66" stroke="#7A5638" stroke-width="9" transform="rotate(6 606 744)"/>
+  <ellipse cx="412" cy="748" rx="33" ry="26" fill="#EFD9B4" transform="rotate(-6 412 748)"/>
+  <ellipse cx="612" cy="748" rx="33" ry="26" fill="#EFD9B4" transform="rotate(6 612 748)"/>
+
+  <!-- head -->
+  <circle cx="512" cy="400" r="150" fill="#C89B66" stroke="#7A5638" stroke-width="9"/>
+  <!-- head highlight -->
+  <path d="M 412 308 Q 460 268 524 264" fill="none" stroke="#E8CB97" stroke-width="12" stroke-linecap="round" opacity="0.8"/>
+  <!-- muzzle -->
+  <ellipse cx="512" cy="454" rx="62" ry="46" fill="#EFD9B4"/>
+  <!-- nose -->
+  <path d="M 492 432 Q 512 422 532 432 Q 532 450 512 458 Q 492 450 492 432 Z" fill="#5C4433"/>
+  <!-- eyes: small wide-set dots -->
+  <circle cx="442" cy="398" r="11" fill="#4A3526"/>
+  <circle cx="582" cy="398" r="11" fill="#4A3526"/>
+
+  <!-- ribbon bow at neck -->
+  <path d="M 506 540 C 458 508 404 512 406 544 C 408 572 466 570 506 542 Z" fill="#D34E42" stroke="#7A5638" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M 518 540 C 566 508 620 512 618 544 C 616 572 558 570 518 542 Z" fill="#D34E42" stroke="#7A5638" stroke-width="8" stroke-linejoin="round"/>
+  <!-- bow tails (wide ribbons, swallowtail ends, hang vertically) -->
+  <path d="M 494 552 L 458 628 L 478 614 L 492 632 L 512 556 Z" fill="#B83E35" stroke="#7A5638" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M 530 552 L 566 628 L 546 614 L 532 632 L 512 556 Z" fill="#B83E35" stroke="#7A5638" stroke-width="7" stroke-linejoin="round"/>
+  <!-- knot -->
+  <rect x="492" y="522" width="40" height="34" rx="10" fill="#B83E35" stroke="#7A5638" stroke-width="8"/>
+</svg>

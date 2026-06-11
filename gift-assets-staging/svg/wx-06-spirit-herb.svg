@@ -1,0 +1,52 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="754" rx="200" ry="15" fill="#EADBBD"/>
+  <!-- soil mound -->
+  <path d="M 380 740 Q 420 712 512 712 Q 604 712 644 740 Q 604 728 512 728 Q 420 728 380 740 Z" fill="#C7B08A"/>
+
+  <!-- soft glow aura -->
+  <circle cx="512" cy="480" r="270" fill="#EFF3DC" opacity="0.55"/>
+  <circle cx="512" cy="480" r="206" fill="#EAF0CF" opacity="0.55"/>
+
+  <!-- big lingzhi: stem -->
+  <path d="M 488 560 Q 482 640 470 716 L 540 716 Q 528 640 526 560 Z" fill="#C9935F"/>
+  <path d="M 488 560 Q 482 640 470 716 L 500 716 Q 504 640 506 560 Z" fill="#B57F4C"/>
+  <path d="M 514 570 Q 514 644 522 710" fill="none" stroke="#DDAF7C" stroke-width="4" stroke-linecap="round"/>
+  <!-- under-cap glow -->
+  <ellipse cx="506" cy="556" rx="150" ry="22" fill="#F4E9C4" opacity="0.85"/>
+
+  <!-- big lingzhi: kidney cap with rim rings -->
+  <path d="M 290 520 Q 270 380 420 336 Q 560 296 668 372 Q 760 438 718 510 Q 690 552 600 548 Q 510 544 440 548 Q 340 554 290 520 Z" fill="#B86A50"/>
+  <path d="M 318 500 Q 308 396 436 360 Q 556 328 648 392 Q 718 442 686 496 Q 660 528 590 524 Q 510 520 446 524 Q 360 530 318 500 Z" fill="#C97E5C"/>
+  <path d="M 360 478 Q 358 408 462 382 Q 558 358 626 408 Q 676 446 652 482 Q 628 506 572 502 Q 506 496 452 502 Q 392 506 360 478 Z" fill="#DDA173"/>
+  <path d="M 412 458 Q 418 416 490 402 Q 560 390 606 424 Q 638 450 618 470 Q 596 486 548 480 Q 500 474 462 480 Q 428 482 412 458 Z" fill="#EFC498"/>
+  <!-- cream rim edge -->
+  <path d="M 290 520 Q 340 554 440 548 Q 510 544 600 548 Q 690 552 718 510 Q 712 538 668 548 Q 600 562 512 558 Q 420 554 348 552 Q 306 548 290 520 Z" fill="#F2E2C4"/>
+  <!-- concentric growth ring arcs -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M 346 470 Q 350 408 446 376" stroke="#A85A44" stroke-width="5" opacity="0.7"/>
+    <path d="M 386 466 Q 396 420 470 398" stroke="#B86A50" stroke-width="4" opacity="0.8"/>
+    <path d="M 600 396 Q 648 416 668 452" stroke="#A85A44" stroke-width="5" opacity="0.6"/>
+    <path d="M 452 432 Q 510 414 572 430" stroke="#C98E66" stroke-width="4" opacity="0.9"/>
+  </g>
+  <!-- cap top sheen -->
+  <path d="M 430 384 Q 500 360 580 380" fill="none" stroke="#F6D9B2" stroke-width="9" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- small companion mushroom -->
+  <path d="M 650 640 Q 648 686 642 716 L 686 716 Q 680 684 678 640 Z" fill="#C9935F"/>
+  <path d="M 606 646 Q 608 596 664 588 Q 718 582 736 622 Q 744 648 712 654 Q 678 658 648 656 Q 618 656 606 646 Z" fill="#C97E5C"/>
+  <path d="M 632 632 Q 640 606 672 604 Q 704 602 714 624 Q 718 638 696 640 Q 668 642 650 640 Q 636 640 632 632 Z" fill="#DDA173"/>
+
+  <!-- glow particles -->
+  <circle cx="380" cy="300" r="7" fill="#D9DFA8"/>
+  <circle cx="660" cy="270" r="5" fill="#D9DFA8" opacity="0.85"/>
+  <circle cx="730" cy="380" r="6" fill="#D9DFA8" opacity="0.7"/>
+  <circle cx="300" cy="420" r="5" fill="#D9DFA8" opacity="0.7"/>
+  <path d="M 558 250 L 563 264 L 577 269 L 563 274 L 558 288 L 553 274 L 539 269 L 553 264 Z" fill="#E3E8B4"/>
+
+  <!-- grass tufts -->
+  <path d="M 386 716 Q 380 686 360 672 Q 372 700 374 716 Z" fill="#8FA882"/>
+  <path d="M 398 716 Q 400 682 416 668 Q 408 698 408 716 Z" fill="#A8C3A0"/>
+  <path d="M 600 716 Q 596 692 580 680 Q 590 702 592 716 Z" fill="#8FA882"/>
+</svg>

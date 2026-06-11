@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 470 360 L 642 348 C 712 392 740 470 740 556 C 740 660 700 716 620 740 L 540 744 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="746" rx="225" ry="16" fill="#EADBBD"/>
+
+  <!-- glass jar body -->
+  <path d="M 392 400 L 632 400 C 668 440 686 492 686 556 C 686 660 612 724 512 724 C 412 724 338 660 338 556 C 338 492 356 440 392 400 Z" fill="#F4EEE0" stroke="#D8CBB0" stroke-width="6"/>
+
+  <!-- candies inside -->
+  <clipPath id="jar"><path d="M 396 404 L 628 404 C 663 443 681 494 681 556 C 681 657 609 719 512 719 C 415 719 343 657 343 556 C 343 494 361 443 396 404 Z"/></clipPath>
+  <g clip-path="url(#jar)">
+    <!-- candy pile back row -->
+    <circle cx="430" cy="640" r="34" fill="#E2949D"/>
+    <circle cx="500" cy="656" r="36" fill="#D9A856"/>
+    <circle cx="572" cy="642" r="34" fill="#9CCFC4"/>
+    <circle cx="630" cy="660" r="32" fill="#EFADB4"/>
+    <circle cx="378" cy="662" r="30" fill="#C7B3DC"/>
+    <!-- wrapped candies (twisted ends) -->
+    <g>
+      <ellipse cx="466" cy="586" rx="34" ry="24" fill="#C9574C"/>
+      <path d="M 432 586 L 408 572 L 414 586 L 408 600 Z" fill="#B83E35"/>
+      <path d="M 500 586 L 524 572 L 518 586 L 524 600 Z" fill="#B83E35"/>
+      <path d="M 452 578 Q 466 570 480 578" fill="none" stroke="#E8766B" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g>
+      <ellipse cx="568" cy="580" rx="30" ry="21" fill="#7FAFA3"/>
+      <path d="M 538 580 L 516 568 L 522 580 L 516 592 Z" fill="#6F9A8F"/>
+      <path d="M 598 580 L 620 568 L 614 580 L 620 592 Z" fill="#6F9A8F"/>
+      <path d="M 556 573 Q 568 566 580 573" fill="none" stroke="#A8CDC4" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <!-- candy shine dots -->
+    <circle cx="422" cy="632" r="7" fill="#F6C6CB"/>
+    <circle cx="492" cy="648" r="7" fill="#EFCB8B"/>
+    <circle cx="564" cy="634" r="7" fill="#C8E6DD"/>
+    <!-- inner glass shade right -->
+    <path d="M 620 410 C 660 450 676 500 676 556 C 676 640 630 700 560 716 C 640 680 656 600 650 540 C 645 480 636 440 620 410 Z" fill="#E8DCC4" opacity="0.6"/>
+  </g>
+
+  <!-- glass highlights -->
+  <path d="M 398 440 Q 372 492 372 556" fill="none" stroke="#FFFDF4" stroke-width="13" stroke-linecap="round" opacity="0.9"/>
+  <path d="M 412 416 Q 426 408 446 404" fill="none" stroke="#FFFDF4" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- jar neck + glass lid -->
+  <rect x="380" y="380" width="264" height="28" rx="12" fill="#E8DCC4"/>
+  <path d="M 400 380 Q 412 374 430 372 L 594 372 Q 612 374 624 380 Z" fill="#D8CBB0"/>
+  <path d="M 426 372 Q 426 330 512 330 Q 598 330 598 372 Z" fill="#F4EEE0" stroke="#D8CBB0" stroke-width="5"/>
+  <circle cx="512" cy="322" r="17" fill="#E8DCC4" stroke="#D8CBB0" stroke-width="4"/>
+  <circle cx="507" cy="317" r="5" fill="#FFFDF4"/>
+  <path d="M 446 358 Q 460 342 484 338" fill="none" stroke="#FFFDF4" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- two candies on the ground -->
+  <g>
+    <ellipse cx="726" cy="722" rx="26" ry="18" fill="#E2949D"/>
+    <path d="M 700 722 L 682 712 L 687 722 L 682 732 Z" fill="#D87E89"/>
+    <path d="M 752 722 L 770 712 L 765 722 L 770 732 Z" fill="#D87E89"/>
+    <ellipse cx="726" cy="744" rx="24" ry="5" fill="#D8C8A4" opacity="0.7"/>
+  </g>
+  <circle cx="300" cy="724" r="17" fill="#D9A856"/>
+  <circle cx="295" cy="719" r="5" fill="#EFCB8B"/>
+  <ellipse cx="300" cy="744" rx="16" ry="4" fill="#D8C8A4" opacity="0.7"/>
+</svg>

@@ -1,0 +1,58 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <rect x="498" y="170" width="28" height="340" rx="14"/>
+    <circle cx="512" cy="630" r="200"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="838" rx="185" ry="15" fill="#EADBBD"/>
+  <!-- chain (hangs vertically) -->
+  <circle cx="512" cy="185" r="20" fill="none" stroke="#C28F3F" stroke-width="9"/>
+  <path d="M500,176 A20,20 0 0 1 524,180" stroke="#EFCB8B" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <g fill="none" stroke="#C28F3F" stroke-width="8">
+    <ellipse cx="512" cy="215" rx="11" ry="18"/>
+    <ellipse cx="512" cy="248" rx="11" ry="18"/>
+    <ellipse cx="512" cy="281" rx="11" ry="18"/>
+    <ellipse cx="512" cy="314" rx="11" ry="18"/>
+    <ellipse cx="512" cy="347" rx="11" ry="18"/>
+  </g>
+  <circle cx="512" cy="374" r="23" fill="none" stroke="#C28F3F" stroke-width="11"/>
+  <!-- crown -->
+  <rect x="488" y="398" width="48" height="42" rx="9" fill="#C28F3F"/>
+  <line x1="500" y1="404" x2="500" y2="432" stroke="#8C6239" stroke-width="4"/>
+  <line x1="512" y1="404" x2="512" y2="432" stroke="#8C6239" stroke-width="4"/>
+  <line x1="524" y1="404" x2="524" y2="432" stroke="#8C6239" stroke-width="4"/>
+  <ellipse cx="512" cy="446" rx="32" ry="9" fill="#8C6239" opacity="0.5"/>
+  <!-- case -->
+  <circle cx="512" cy="630" r="195" fill="#C28F3F"/>
+  <circle cx="512" cy="630" r="176" fill="#D9A856"/>
+  <circle cx="512" cy="630" r="160" fill="none" stroke="#C28F3F" stroke-width="3"/>
+  <circle cx="512" cy="630" r="152" fill="#FBF6EA"/>
+  <circle cx="512" cy="630" r="126" fill="none" stroke="#E7DABC" stroke-width="2.5"/>
+  <!-- ticks: quarters long, others short -->
+  <g stroke="#5A4636" stroke-linecap="round">
+    <line x1="512" y1="490" x2="512" y2="512" stroke-width="6"/>
+    <line x1="512" y1="490" x2="512" y2="512" stroke-width="6" transform="rotate(90 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="512" stroke-width="6" transform="rotate(180 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="512" stroke-width="6" transform="rotate(270 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(30 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(60 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(120 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(150 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(210 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(240 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(300 512 630)"/>
+    <line x1="512" y1="490" x2="512" y2="504" stroke-width="4" transform="rotate(330 512 630)"/>
+  </g>
+  <!-- hands ~10:10 -->
+  <line x1="512" y1="630" x2="447" y2="592" stroke="#4A3A2E" stroke-width="12" stroke-linecap="round"/>
+  <line x1="512" y1="630" x2="603" y2="577" stroke="#4A3A2E" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="512" cy="630" r="11" fill="#C28F3F"/>
+  <circle cx="512" cy="630" r="4" fill="#EFCB8B"/>
+  <!-- glass sheen -->
+  <ellipse cx="448" cy="560" rx="86" ry="30" transform="rotate(-32 448 560)" fill="#FFFFFF" opacity="0.12"/>
+  <!-- case highlight + lower inner shading -->
+  <path d="M337,566 A186,186 0 0 1 448,455" stroke="#FFFFFF" stroke-width="9" fill="none" stroke-linecap="round" opacity="0.65"/>
+  <path d="M420,790 Q512,828 604,790" stroke="#A87844" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.5"/>
+</svg>

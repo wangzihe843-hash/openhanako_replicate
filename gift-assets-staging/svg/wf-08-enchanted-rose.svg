@@ -1,0 +1,56 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 426 660 L 426 510 Q 426 296 564 296 Q 702 296 702 510 L 702 660 Z"/>
+    <rect x="416" y="688" width="300" height="48" rx="16"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="205" ry="15" fill="#EADBBD"/>
+  <!-- soft glow behind rose -->
+  <circle cx="512" cy="420" r="120" fill="#F6E0DC" opacity="0.5"/>
+
+  <!-- rose inside (drawn before glass tint) -->
+  <!-- stem -->
+  <path d="M 512 470 Q 506 540 510 612" fill="none" stroke="#6F8F66" stroke-width="9" stroke-linecap="round"/>
+  <path d="M 510 540 Q 478 528 466 502 Q 496 502 512 522 Z" fill="#8FB98B"/>
+  <path d="M 511 572 Q 544 562 558 536 Q 526 534 509 556 Z" fill="#8FB98B"/>
+  <!-- rose head: layered petals -->
+  <circle cx="512" cy="408" r="64" fill="#B83E35"/>
+  <circle cx="478" cy="394" r="38" fill="#C9574C"/>
+  <circle cx="548" cy="396" r="36" fill="#C9574C"/>
+  <circle cx="512" cy="368" r="38" fill="#D34E42"/>
+  <circle cx="512" cy="404" r="30" fill="#D34E42"/>
+  <path d="M 512 380 Q 536 392 530 416 Q 514 432 494 420 Q 482 402 498 388 Q 506 382 512 380 Z" fill="#B83E35"/>
+  <circle cx="512" cy="404" r="10" fill="#A8322A"/>
+  <!-- fallen petals -->
+  <path d="M 570 600 Q 588 590 600 602 Q 592 616 572 612 Z" fill="#C9574C"/>
+  <path d="M 438 580 Q 452 570 462 580 Q 456 592 440 588 Z" fill="#D34E42"/>
+  <!-- floating petal mid-air -->
+  <path d="M 588 480 Q 602 470 612 480 Q 606 492 590 488 Z" fill="#D34E42" opacity="0.95"/>
+
+  <!-- sparkles inside -->
+  <path d="M 588 310 L 593 324 L 607 329 L 593 334 L 588 348 L 583 334 L 569 329 L 583 324 Z" fill="#F6C6CB"/>
+  <circle cx="432" cy="330" r="5" fill="#F6C6CB" opacity="0.9"/>
+  <circle cx="448" cy="560" r="4" fill="#F6C6CB" opacity="0.7"/>
+
+  <!-- glass dome (translucent tint over the rose) -->
+  <path d="M 368 622 L 368 470 Q 368 250 512 250 Q 656 250 656 470 L 656 622 Z" fill="#FFFFFF" opacity="0.22"/>
+  <path d="M 368 622 L 368 470 Q 368 250 512 250 Q 656 250 656 470 L 656 622 Z" fill="none" stroke="#D8CBB0" stroke-width="7"/>
+  <!-- glass highlights -->
+  <path d="M 410 320 Q 392 380 392 460" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.8"/>
+  <path d="M 428 292 Q 452 268 484 260" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.65"/>
+  <path d="M 636 480 Q 640 540 630 590" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- wooden base with brass band -->
+  <rect x="348" y="618" width="328" height="34" rx="14" fill="#A87844"/>
+  <line x1="362" y1="626" x2="662" y2="626" stroke="#C9A06A" stroke-width="4" stroke-linecap="round"/>
+  <rect x="348" y="644" width="328" height="10" rx="5" fill="#D9A856"/>
+  <rect x="362" y="652" width="300" height="42" rx="16" fill="#8C6239"/>
+  <rect x="362" y="652" width="300" height="18" rx="9" fill="#9C7252"/>
+  <g stroke="#7A5530" stroke-width="3" stroke-linecap="round">
+    <line x1="396" y1="676" x2="436" y2="676"/>
+    <line x1="500" y1="682" x2="556" y2="682"/>
+    <line x1="600" y1="674" x2="636" y2="674"/>
+  </g>
+</svg>

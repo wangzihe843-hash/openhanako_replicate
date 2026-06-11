@@ -1,0 +1,61 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 560 430 L 648 444 L 678 720 L 580 740 L 552 716 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="742" rx="185" ry="15" fill="#EADBBD"/>
+
+  <!-- sprout (behind can rim) -->
+  <path d="M 510 470 Q 506 380 512 318" fill="none" stroke="#7C9670" stroke-width="10" stroke-linecap="round"/>
+  <!-- leaves -->
+  <path d="M 512 330 Q 448 314 422 252 Q 492 248 520 308 Q 524 320 512 330 Z" fill="#8FB98B"/>
+  <path d="M 512 330 Q 470 310 446 268 Q 460 304 500 326 Z" fill="#6F9A66"/>
+  <path d="M 514 318 Q 580 300 604 240 Q 534 238 508 296 Q 504 310 514 318 Z" fill="#A8C9A0"/>
+  <path d="M 514 318 Q 556 298 580 258 Q 564 296 524 314 Z" fill="#8FB98B"/>
+  <path d="M 511 372 Q 466 366 448 330 Q 494 332 512 360 Z" fill="#8FB98B"/>
+  <!-- tiny dew drop -->
+  <circle cx="582" cy="276" r="8" fill="#C8E6DD"/>
+  <circle cx="580" cy="273" r="3" fill="#EFF8F4"/>
+
+  <!-- can -->
+  <g>
+    <!-- body -->
+    <path d="M 416 470 L 608 470 L 596 716 Q 512 730 428 716 Z" fill="#C9CDD4"/>
+    <path d="M 416 470 L 470 470 L 478 718 Q 450 718 428 716 Z" fill="#E3E6EB"/>
+    <path d="M 608 470 L 556 470 L 552 720 Q 580 719 596 716 Z" fill="#A9AFB8"/>
+    <!-- ribs -->
+    <g stroke="#A9AFB8" stroke-width="4" opacity="0.85">
+      <path d="M 420 520 Q 512 532 604 520"/>
+      <path d="M 424 586 Q 512 598 600 586"/>
+      <path d="M 426 652 Q 512 664 598 652"/>
+    </g>
+    <g stroke="#E3E6EB" stroke-width="3" opacity="0.9">
+      <path d="M 420 528 Q 512 540 604 528"/>
+      <path d="M 424 594 Q 512 606 600 594"/>
+    </g>
+    <!-- dent -->
+    <path d="M 574 600 Q 558 620 562 648 Q 578 636 582 612 Z" fill="#8F96A1" opacity="0.7"/>
+    <!-- rust patch -->
+    <path d="M 444 668 Q 462 658 478 668 Q 470 684 450 682 Z" fill="#B07050" opacity="0.85"/>
+    <circle cx="488" cy="690" r="6" fill="#B07050" opacity="0.7"/>
+    <!-- peeled label strip -->
+    <path d="M 416 556 L 470 556 L 458 580 L 470 600 L 416 600 Z" fill="#E0D2B4"/>
+    <line x1="424" y1="570" x2="452" y2="570" stroke="#C2B190" stroke-width="4" stroke-linecap="round"/>
+    <line x1="424" y1="584" x2="446" y2="584" stroke="#C2B190" stroke-width="4" stroke-linecap="round"/>
+    <!-- rim -->
+    <ellipse cx="512" cy="470" rx="96" ry="22" fill="#A9AFB8"/>
+    <ellipse cx="512" cy="466" rx="96" ry="20" fill="#C9CDD4"/>
+    <ellipse cx="512" cy="468" rx="78" ry="14" fill="#8F96A1"/>
+    <!-- soil -->
+    <ellipse cx="512" cy="470" rx="72" ry="11" fill="#6B4D34"/>
+    <ellipse cx="500" cy="468" rx="50" ry="7" fill="#7E5C40"/>
+    <!-- rim highlight + pull-tab remnant -->
+    <path d="M 430 458 Q 460 448 496 446" fill="none" stroke="#EDF0F4" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="592" cy="452" r="9" fill="none" stroke="#8F96A1" stroke-width="5"/>
+  </g>
+
+  <!-- dust motes -->
+  <circle cx="340" cy="300" r="5" fill="#C2B190" opacity="0.8"/>
+  <path d="M 700 330 L 705 343 L 718 348 L 705 353 L 700 366 L 695 353 L 682 348 L 695 343 Z" fill="#C2B190"/>
+</svg>

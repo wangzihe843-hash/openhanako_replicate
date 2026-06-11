@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <defs>
+    <clipPath id="gripClip"><rect x="484" y="262" width="56" height="100" rx="12"/></clipPath>
+  </defs>
+
+  <!-- long shadow (2 merged shapes) -->
+  <path d="M534,300 C534,280 548,270 572,270 C596,270 610,280 610,300 L606,430 L596,798 C596,832 572,856 572,856 C572,856 548,832 548,798 L538,430 Z" fill="#F1E3C9"/>
+  <rect x="504" y="398" width="136" height="30" rx="15" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="850" rx="180" ry="14" fill="#EADBBD"/>
+
+  <!-- ===== sheath ===== -->
+  <path d="M472,384 L552,384 L538,756 C538,790 512,812 512,812 C512,812 486,790 486,756 Z" fill="#A87844"/>
+  <path d="M474,388 L492,388 L485,756 L477,700 Z" fill="#C09058"/>
+  <path d="M534,388 L552,388 L538,756 L533,700 Z" fill="#8C6239"/>
+  <path d="M500,420 L496,720" stroke="#D8B077" stroke-width="5" opacity="0.8" fill="none" stroke-linecap="round"/>
+
+  <!-- chape (metal tip) -->
+  <path d="M489,728 L536,728 L535,756 C535,788 512,808 512,808 C512,808 489,788 489,756 Z" fill="#C28F3F"/>
+  <path d="M490,738 L535,738" stroke="#8C6239" stroke-width="4" fill="none"/>
+  <path d="M495,752 C496,776 504,792 510,798" stroke="#EFCB8B" stroke-width="4" opacity="0.7" fill="none" stroke-linecap="round"/>
+
+  <!-- cord wrap -->
+  <path d="M476,472 Q512,480 548,472" stroke="#E3CD9A" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M475,486 Q512,494 549,486" stroke="#E3CD9A" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M475,500 Q512,508 549,500" stroke="#E3CD9A" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M476,514 Q512,522 548,514" stroke="#E3CD9A" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M476,477 Q512,485 548,477" stroke="#C9AC72" stroke-width="3" fill="none" opacity="0.7"/>
+  <path d="M475,491 Q512,499 549,491" stroke="#C9AC72" stroke-width="3" fill="none" opacity="0.7"/>
+  <path d="M475,505 Q512,513 549,505" stroke="#C9AC72" stroke-width="3" fill="none" opacity="0.7"/>
+  <path d="M476,519 Q512,527 548,519" stroke="#C9AC72" stroke-width="3" fill="none" opacity="0.7"/>
+
+  <!-- knot + jade charm (hangs vertical) -->
+  <ellipse cx="551" cy="492" rx="10" ry="8" fill="#D9BD84"/>
+  <path d="M555,498 L556,556" stroke="#C9AC72" stroke-width="5" fill="none"/>
+  <rect x="549" y="554" width="14" height="9" rx="3" fill="#C28F3F"/>
+  <ellipse cx="556" cy="582" rx="15" ry="20" fill="#9CCFC4"/>
+  <path d="M562,565 C570,572 570,592 562,599 C568,590 568,574 562,565 Z" fill="#6FA89B"/>
+  <path d="M549,570 C546,576 546,586 549,592" stroke="#FFFFFF" stroke-width="4" opacity="0.8" fill="none" stroke-linecap="round"/>
+
+  <!-- throat band -->
+  <rect x="468" y="384" width="88" height="26" rx="6" fill="#C28F3F"/>
+  <rect x="474" y="388" width="60" height="5" rx="2.5" fill="#EFCB8B" opacity="0.85"/>
+  <rect x="474" y="410" width="76" height="7" fill="#3E332C" opacity="0.18"/>
+
+  <!-- ===== guard ===== -->
+  <rect x="444" y="354" width="136" height="30" rx="15" fill="#C28F3F"/>
+  <rect x="452" y="358" width="100" height="6" rx="3" fill="#EFCB8B" opacity="0.85"/>
+  <rect x="468" y="384" width="88" height="8" fill="#3E332C" opacity="0.22"/>
+
+  <!-- ===== grip ===== -->
+  <rect x="484" y="262" width="56" height="100" rx="12" fill="#7A5634"/>
+  <g clip-path="url(#gripClip)">
+    <path d="M470,294 L554,268" stroke="#9A7244" stroke-width="9" fill="none"/>
+    <path d="M470,322 L554,296" stroke="#9A7244" stroke-width="9" fill="none"/>
+    <path d="M470,350 L554,324" stroke="#9A7244" stroke-width="9" fill="none"/>
+    <path d="M470,378 L554,352" stroke="#9A7244" stroke-width="9" fill="none"/>
+    <path d="M470,272 L554,298" stroke="#5E4226" stroke-width="4" opacity="0.55" fill="none"/>
+    <path d="M470,300 L554,326" stroke="#5E4226" stroke-width="4" opacity="0.55" fill="none"/>
+    <path d="M470,328 L554,354" stroke="#5E4226" stroke-width="4" opacity="0.55" fill="none"/>
+  </g>
+  <path d="M490,276 C487,300 487,330 490,352" stroke="#FFFFFF" stroke-width="4" opacity="0.45" fill="none" stroke-linecap="round"/>
+  <rect x="486" y="354" width="52" height="6" fill="#3E332C" opacity="0.2"/>
+
+  <!-- ===== pommel ===== -->
+  <ellipse cx="512" cy="256" rx="36" ry="25" fill="#C28F3F"/>
+  <ellipse cx="512" cy="252" rx="26" ry="16" fill="#D9A856"/>
+  <path d="M496,244 C502,238 516,236 524,240" stroke="#EFCB8B" stroke-width="5" opacity="0.9" fill="none" stroke-linecap="round"/>
+  <rect x="488" y="274" width="48" height="6" fill="#3E332C" opacity="0.2"/>
+</svg>

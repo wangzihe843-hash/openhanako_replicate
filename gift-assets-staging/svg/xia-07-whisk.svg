@@ -1,0 +1,41 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: handle + bundle silhouette, offset (60,44) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M368.2 782.5 L632.2 364.5 L655.8 379.5 L391.8 797.5 Z"/>
+    <circle cx="380" cy="790" r="16"/>
+    <path d="M620 382 C642 340 682 324 720 340 C758 356 776 400 780 464 C784 544 778 634 762 720 C760 734 756 746 750 756 L738 746 L732 760 L718 748 L710 762 L698 748 L688 758 L678 744 L666 752 C662 694 658 614 656 544 C654 484 646 430 626 396 Z"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="530" cy="830" rx="230" ry="16" fill="#EADBBD"/>
+  <!-- jade ring at butt (hangs vertically) -->
+  <path d="M380 802 L380 812" stroke="#C28F3F" stroke-width="5"/>
+  <circle cx="380" cy="830" r="20" fill="none" stroke="#9CCFC4" stroke-width="11"/>
+  <path d="M367 820 A17 17 0 0 1 380 813" stroke="#FFFFFF" stroke-width="4" fill="none" opacity="0.7"/>
+  <path d="M394 838 A17 17 0 0 1 372 845" stroke="#6FA89B" stroke-width="5" fill="none" opacity="0.6"/>
+  <!-- wooden handle -->
+  <path d="M368.2 782.5 L632.2 364.5 L655.8 379.5 L391.8 797.5 Z" fill="#A87844"/>
+  <path d="M368.2 782.5 L632.2 364.5 L642.3 370.9 L378.3 788.9 Z" fill="#C09058"/>
+  <path d="M396 752 L576 467" stroke="#8C6239" stroke-width="3" opacity="0.45" fill="none"/>
+  <path d="M412 745 L600 444" stroke="#8C6239" stroke-width="3" opacity="0.35" fill="none"/>
+  <circle cx="380" cy="790" r="16" fill="#8C6239"/>
+  <circle cx="376" cy="786" r="5" fill="#C09058" opacity="0.8"/>
+  <!-- silk strands: bundle falls vertically -->
+  <path d="M620 382 C642 340 682 324 720 340 C758 356 776 400 780 464 C784 544 778 634 762 720 C760 734 756 746 750 756 L738 746 L732 760 L718 748 L710 762 L698 748 L688 758 L678 744 L666 752 C662 694 658 614 656 544 C654 484 646 430 626 396 Z" fill="#F4EFE1"/>
+  <path d="M626 396 C646 430 654 484 656 544 C658 614 662 694 666 752 L682 746 C674 684 670 594 670 524 C668 464 660 424 644 402 Z" fill="#E8E0CB" opacity="0.95"/>
+  <path d="M648 386 C682 364 714 364 736 386 C758 414 766 474 764 554 C762 634 756 694 748 740" stroke="#E3DAC4" stroke-width="5" fill="none"/>
+  <path d="M634 390 C662 376 690 380 710 400 C730 426 736 484 734 564 C732 644 726 702 718 746" stroke="#E3DAC4" stroke-width="5" fill="none"/>
+  <path d="M626 394 C644 390 664 398 678 418 C694 446 698 504 696 579 C694 654 690 706 682 748" stroke="#E3DAC4" stroke-width="5" fill="none"/>
+  <path d="M666 414 C674 434 678 484 677 554 C676 634 672 694 664 742" stroke="#E3DAC4" stroke-width="4" fill="none" opacity="0.8"/>
+  <path d="M700 360 C730 376 746 420 750 480" stroke="#FFFFFF" stroke-width="6" fill="none" opacity="0.8"/>
+  <!-- occlusion where bundle meets collar -->
+  <ellipse cx="634" cy="392" rx="26" ry="10" fill="#C9BFA4" opacity="0.5" transform="rotate(-32 634 392)"/>
+  <!-- gold collar binding -->
+  <path d="M655.3 391.5 L642.5 411.9 L608.7 390.5 L621.5 370.1 Z" fill="#D9A856"/>
+  <path d="M647 401 L616 381" stroke="#C28F3F" stroke-width="4"/>
+  <path d="M652 386 L624 368" stroke="#EFCB8B" stroke-width="3" opacity="0.9"/>
+  <!-- sparkles -->
+  <path d="M0 -12 Q3 -3 12 0 Q3 3 0 12 Q-3 3 -12 0 Q-3 -3 0 -12 Z" transform="translate(470,420)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -10 Q2.5 -2.5 10 0 Q2.5 2.5 0 10 Q-2.5 2.5 -10 0 Q-2.5 -2.5 0 -10 Z" transform="translate(730,290)" fill="#E5C878" opacity="0.9"/>
+  <circle cx="540" cy="330" r="4" fill="#E5C878" opacity="0.8"/>
+</svg>

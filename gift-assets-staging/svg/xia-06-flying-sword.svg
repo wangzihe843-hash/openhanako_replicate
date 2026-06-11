@@ -1,0 +1,51 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- glow halo -->
+  <circle cx="512" cy="450" r="320" fill="#EAF3EE" opacity="0.5"/>
+  <circle cx="512" cy="450" r="252" fill="#E2EFE7" opacity="0.48"/>
+  <circle cx="512" cy="450" r="188" fill="#DBEBE1" opacity="0.42"/>
+  <!-- detached ground shadow (floating) -->
+  <ellipse cx="512" cy="822" rx="105" ry="12" fill="#EADBBD"/>
+  <!-- blade aura -->
+  <path d="M512 166 L558 262 L558 590 L466 590 L466 262 Z" fill="#BFE3D8" opacity="0.45"/>
+  <!-- qi ring: back arc (behind sword) -->
+  <path d="M338 642 A174 44 0 0 1 686 642" stroke="#9CCFC4" stroke-width="11" fill="none" opacity="0.85"/>
+  <path d="M366 642 A146 34 0 0 1 658 642" stroke="#C9E4DC" stroke-width="5" fill="none" opacity="0.8"/>
+  <!-- blade -->
+  <path d="M512 190 L548 274 L548 566 L476 566 L476 274 Z" fill="#CDE7DF"/>
+  <path d="M512 190 L512 566 L476 566 L476 274 Z" fill="#EFF8F5"/>
+  <path d="M512 206 L512 560" stroke="#9CCFC4" stroke-width="3" opacity="0.9"/>
+  <path d="M480 292 L480 540" stroke="#FFFFFF" stroke-width="4" opacity="0.7"/>
+  <path d="M498 244 C506 260 514 274 522 286" stroke="#FFFFFF" stroke-width="5" fill="none" opacity="0.8" stroke-linecap="round"/>
+  <!-- guard -->
+  <rect x="444" y="566" width="136" height="28" rx="13" fill="#D9A856"/>
+  <rect x="444" y="584" width="136" height="10" rx="5" fill="#C28F3F"/>
+  <circle cx="512" cy="580" r="9" fill="#6FA89B"/>
+  <circle cx="509" cy="577" r="3" fill="#FFFFFF" opacity="0.85"/>
+  <!-- handle with wrap -->
+  <rect x="494" y="594" width="36" height="92" rx="12" fill="#8C6239"/>
+  <path d="M494 614 L530 602" stroke="#C09058" stroke-width="6" opacity="0.9"/>
+  <path d="M494 636 L530 624" stroke="#C09058" stroke-width="6" opacity="0.9"/>
+  <path d="M494 658 L530 646" stroke="#C09058" stroke-width="6" opacity="0.9"/>
+  <path d="M494 680 L530 668" stroke="#C09058" stroke-width="6" opacity="0.9"/>
+  <!-- pommel + tassel (hangs vertically) -->
+  <circle cx="512" cy="700" r="17" fill="#D9A856"/>
+  <path d="M502 692 A13 13 0 0 1 516 688" stroke="#EFCB8B" stroke-width="4" fill="none"/>
+  <path d="M512 717 L512 745" stroke="#C9574C" stroke-width="6"/>
+  <rect x="500" y="745" width="24" height="38" rx="9" fill="#C9574C"/>
+  <rect x="500" y="745" width="24" height="10" rx="5" fill="#B83E35"/>
+  <path d="M507 762 L506 778 M517 762 L516 778" stroke="#B83E35" stroke-width="3" opacity="0.6"/>
+  <!-- qi ring: front arc (in front of sword) -->
+  <path d="M338 642 A174 44 0 0 0 686 642" stroke="#8FC4B7" stroke-width="12" fill="none"/>
+  <path d="M366 642 A146 34 0 0 0 658 642" stroke="#D6ECE4" stroke-width="5" fill="none" opacity="0.9"/>
+  <circle cx="380" cy="668" r="5" fill="#E5C878"/>
+  <circle cx="612" cy="674" r="4" fill="#E5C878"/>
+  <circle cx="520" cy="688" r="4" fill="#F6FBF8"/>
+  <!-- sparkles -->
+  <path d="M0 -15 Q4 -4 15 0 Q4 4 0 15 Q-4 4 -15 0 Q-4 -4 0 -15 Z" transform="translate(392,286)" fill="#FFFFFF" opacity="0.95"/>
+  <path d="M0 -12 Q3 -3 12 0 Q3 3 0 12 Q-3 3 -12 0 Q-3 -3 0 -12 Z" transform="translate(648,348)" fill="#E5C878"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(640,222)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(376,470)" fill="#E5C878" opacity="0.9"/>
+  <circle cx="412" cy="386" r="4" fill="#E5C878" opacity="0.8"/>
+  <circle cx="626" cy="492" r="5" fill="#FFFFFF" opacity="0.8"/>
+</svg>

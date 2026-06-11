@@ -1,0 +1,46 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: body + ruffle silhouette, offset (60,44) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M468 428 C396 452 352 534 352 616 C352 714 424 760 512 760 C600 760 672 714 672 616 C672 534 628 452 556 428 C540 422 484 422 468 428 Z"/>
+    <path d="M468 430 C456 392 462 356 480 342 C488 362 494 374 500 380 C500 352 506 330 514 322 C522 330 526 352 528 380 C534 374 542 362 548 342 C566 356 570 392 556 430 Z"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="778" rx="200" ry="16" fill="#EADBBD"/>
+  <ellipse cx="512" cy="752" rx="95" ry="9" fill="#6FA89B" opacity="0.35"/>
+  <!-- ruffled mouth above cinch -->
+  <path d="M468 430 C456 392 462 356 480 342 C488 362 494 374 500 380 C500 352 506 330 514 322 C522 330 526 352 528 380 C534 374 542 362 548 342 C566 356 570 392 556 430 Z" fill="#8FC0B4"/>
+  <path d="M500 380 C502 360 506 340 514 326" stroke="#6FA89B" stroke-width="3" fill="none" opacity="0.45"/>
+  <path d="M528 380 C526 358 522 340 514 326" stroke="#6FA89B" stroke-width="3" fill="none" opacity="0.45"/>
+  <ellipse cx="514" cy="330" rx="10" ry="6" fill="#5E9387" opacity="0.5"/>
+  <!-- escaping light mist -->
+  <path d="M508 344 C480 314 496 284 526 276 C550 270 558 252 551 235 L565 228 C576 254 564 284 536 293 C512 300 502 322 521 342 Z" fill="#FFF2D9" opacity="0.92"/>
+  <circle cx="548" cy="212" r="4" fill="#E5C878"/>
+  <path d="M0 -10 Q2.5 -2.5 10 0 Q2.5 2.5 0 10 Q-2.5 2.5 -10 0 Q-2.5 -2.5 0 -10 Z" transform="translate(578,246)" fill="#E5C878" opacity="0.95"/>
+  <path d="M0 -8 Q2 -2 8 0 Q2 2 0 8 Q-2 2 -8 0 Q-2 -2 0 -8 Z" transform="translate(478,268)" fill="#FFFFFF" opacity="0.9"/>
+  <!-- pouch body -->
+  <path d="M468 428 C396 452 352 534 352 616 C352 714 424 760 512 760 C600 760 672 714 672 616 C672 534 628 452 556 428 C540 422 484 422 468 428 Z" fill="#9CCFC4"/>
+  <path d="M460 436 C398 462 364 534 362 612 C362 668 382 712 414 736 C390 690 386 612 398 552 C412 496 446 456 488 436 Z" fill="#BCDCD2"/>
+  <path d="M620 470 C652 516 670 566 670 618 C670 712 600 758 512 758 C570 752 640 716 648 626 C654 560 642 506 620 470 Z" fill="#6FA89B" opacity="0.9"/>
+  <!-- cloud embroidery -->
+  <path d="M404 612 C396 580 416 558 446 562 C470 566 478 590 462 604 C450 614 432 610 430 596" stroke="#D5EAE2" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M586 660 C604 648 626 656 628 676 C630 690 618 700 604 696" stroke="#D5EAE2" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M470 692 C462 680 470 668 484 670" stroke="#D5EAE2" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="530" cy="580" r="5" fill="#E5C878"/>
+  <circle cx="456" cy="648" r="4" fill="#E5C878" opacity="0.9"/>
+  <circle cx="560" cy="706" r="4" fill="#E5C878" opacity="0.85"/>
+  <!-- gold cinch cord + bead + tails -->
+  <ellipse cx="512" cy="436" rx="62" ry="10" fill="#5E9387" opacity="0.35"/>
+  <rect x="452" y="416" width="120" height="24" rx="12" fill="#D9A856"/>
+  <rect x="452" y="432" width="120" height="8" rx="4" fill="#C28F3F"/>
+  <circle cx="578" cy="430" r="13" fill="#C28F3F"/>
+  <circle cx="574" cy="426" r="4" fill="#EFCB8B"/>
+  <path d="M574 442 C568 478 566 506 568 530" stroke="#C28F3F" stroke-width="7" fill="none"/>
+  <path d="M586 442 C590 478 592 504 590 526" stroke="#C28F3F" stroke-width="7" fill="none"/>
+  <circle cx="568" cy="538" r="9" fill="#D9A856"/>
+  <circle cx="590" cy="534" r="8" fill="#D9A856"/>
+  <!-- sparkles -->
+  <path d="M0 -12 Q3 -3 12 0 Q3 3 0 12 Q-3 3 -12 0 Q-3 -3 0 -12 Z" transform="translate(396,328)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(660,380)" fill="#E5C878" opacity="0.9"/>
+  <circle cx="430" cy="380" r="4" fill="#E5C878" opacity="0.8"/>
+</svg>

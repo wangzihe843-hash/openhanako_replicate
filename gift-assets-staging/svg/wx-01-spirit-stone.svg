@@ -1,0 +1,55 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="775" rx="225" ry="17" fill="#EADBBD"/>
+
+  <!-- stepped aura -->
+  <circle cx="512" cy="470" r="290" fill="#EAF3EE" opacity="0.55"/>
+  <circle cx="512" cy="470" r="225" fill="#E0EEE7" opacity="0.6"/>
+  <circle cx="512" cy="470" r="165" fill="#D6E8DF" opacity="0.5"/>
+
+  <!-- rock base -->
+  <path d="M 360 776 Q 348 730 396 718 L 640 718 Q 684 728 668 776 Z" fill="#B5A284"/>
+  <path d="M 396 718 L 640 718 Q 684 728 668 776 L 540 776 Q 560 730 528 718 Z" fill="#9C8A6E"/>
+  <path d="M 392 744 L 420 730 L 442 748 L 414 762 Z" fill="#C7B59A"/>
+  <path d="M 590 738 L 616 728 L 634 746 L 610 758 Z" fill="#C7B59A"/>
+
+  <!-- side crystal left -->
+  <g>
+    <path d="M 408 462 L 446 516 L 440 726 L 384 726 L 372 522 Z" fill="#8FC2B4"/>
+    <path d="M 408 462 L 446 516 L 440 726 L 414 726 Z" fill="#6FA89B"/>
+    <path d="M 408 462 L 384 522 L 388 670 L 404 670 Z" fill="#B7DCD1" opacity="0.85"/>
+    <path d="M 408 462 L 446 516 L 440 726" fill="none" stroke="#5F9286" stroke-width="3" opacity="0.7"/>
+  </g>
+  <!-- side crystal right -->
+  <g>
+    <path d="M 626 500 L 654 550 L 646 726 L 596 726 L 590 548 Z" fill="#8FC2B4"/>
+    <path d="M 626 500 L 654 550 L 646 726 L 624 726 Z" fill="#6FA89B"/>
+    <path d="M 626 500 L 608 548 L 612 680 L 624 680 Z" fill="#B7DCD1" opacity="0.7"/>
+  </g>
+
+  <!-- main crystal -->
+  <g>
+    <path d="M 512 274 L 566 388 L 552 730 L 472 730 L 458 388 Z" fill="#9CCFC4"/>
+    <path d="M 512 274 L 566 388 L 552 730 L 512 730 Z" fill="#6FA89B"/>
+    <path d="M 512 274 L 458 388 L 468 630 L 492 630 L 488 390 Z" fill="#C8E6DD" opacity="0.9"/>
+    <!-- inner glow core -->
+    <path d="M 512 360 L 534 420 L 528 600 L 498 600 L 492 420 Z" fill="#E6F6F0" opacity="0.85"/>
+    <!-- facet edges -->
+    <path d="M 512 274 L 566 388 L 552 730" fill="none" stroke="#5F9286" stroke-width="3" opacity="0.7"/>
+    <path d="M 512 274 L 512 730" fill="none" stroke="#86B8AC" stroke-width="2.5" opacity="0.6"/>
+  </g>
+
+  <!-- occlusion where crystals meet rock -->
+  <path d="M 380 724 Q 512 712 648 724 L 648 732 Q 512 722 380 732 Z" fill="#857358" opacity="0.5"/>
+
+  <!-- sparkles & dust -->
+  <path d="M 642 340 L 650 362 L 672 370 L 650 378 L 642 400 L 634 378 L 612 370 L 634 362 Z" fill="#FFFFFF"/>
+  <path d="M 384 370 L 390 386 L 406 392 L 390 398 L 384 414 L 378 398 L 362 392 L 378 386 Z" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M 596 266 L 600 278 L 612 282 L 600 286 L 596 298 L 592 286 L 580 282 L 592 278 Z" fill="#C8E6DD"/>
+  <circle cx="430" cy="290" r="6" fill="#C8E6DD"/>
+  <circle cx="664" cy="462" r="5" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="356" cy="540" r="4.5" fill="#C8E6DD" opacity="0.8"/>
+  <circle cx="688" cy="600" r="4" fill="#C8E6DD" opacity="0.7"/>
+</svg>

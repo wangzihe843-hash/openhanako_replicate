@@ -1,0 +1,77 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- glow halo (replaces long shadow) -->
+  <circle cx="512" cy="430" r="300" fill="#F7EDD2" opacity="0.45"/>
+  <circle cx="512" cy="430" r="215" fill="#F9F0DA" opacity="0.55"/>
+
+  <!-- beam fan -->
+  <path d="M 478 420 L 312 186 Q 512 112 712 186 L 546 420 Z" fill="#F6E9C5" opacity="0.6"/>
+  <path d="M 488 420 L 376 200 Q 512 152 648 200 L 536 420 Z" fill="#FBF2D9" opacity="0.8"/>
+
+  <!-- stars inside beam -->
+  <path d="M 512 168 Q 515 185 530 188 Q 515 191 512 208 Q 509 191 494 188 Q 509 185 512 168 Z" fill="#E5C878"/>
+  <path d="M 416 252 Q 418 264 429 266 Q 418 268 416 280 Q 414 268 403 266 Q 414 264 416 252 Z" fill="#E5C878"/>
+  <path d="M 606 240 Q 608 252 619 254 Q 608 256 606 268 Q 604 256 595 254 Q 604 252 606 240 Z" fill="#D9A856"/>
+  <circle cx="548" cy="300" r="7" fill="#E5C878"/>
+  <circle cx="466" cy="330" r="5" fill="#D9A856"/>
+  <circle cx="588" cy="356" r="4.5" fill="#E5C878"/>
+  <circle cx="500" cy="262" r="4" fill="#EFCB8B"/>
+  <circle cx="438" cy="386" r="4" fill="#E5C878"/>
+  <circle cx="576" cy="408" r="3.5" fill="#EFCB8B"/>
+  <!-- stray stars just outside the beam -->
+  <circle cx="330" cy="300" r="4" fill="#E5C878" opacity="0.85"/>
+  <circle cx="700" cy="320" r="4" fill="#E5C878" opacity="0.85"/>
+  <path d="M 282 232 Q 284 242 293 244 Q 284 246 282 256 Q 280 246 271 244 Q 280 242 282 232 Z" fill="#D9A856" opacity="0.8"/>
+  <path d="M 742 250 Q 744 260 753 262 Q 744 264 742 274 Q 740 264 731 262 Q 740 260 742 250 Z" fill="#E5C878" opacity="0.8"/>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="734" rx="195" ry="15" fill="#EADBBD"/>
+
+  <!-- base foot (brass) -->
+  <path d="M 432 690 L 592 690 L 604 722 Q 604 732 592 732 L 432 732 Q 420 732 420 722 Z" fill="#C28F3F"/>
+  <path d="M 432 690 L 592 690 L 597 704 L 427 704 Z" fill="#D9A856"/>
+  <rect x="420" y="722" width="184" height="10" rx="5" fill="#A87844"/>
+  <ellipse cx="512" cy="730" rx="78" ry="6" fill="#3E332C" opacity="0.15"/>
+
+  <!-- sphere body -->
+  <circle cx="512" cy="560" r="150" fill="#6E7FA8"/>
+  <!-- dark lower-right -->
+  <path d="M 632 470 A 150 150 0 0 1 392 650 A 196 196 0 0 0 632 470 Z" fill="#5C6B92"/>
+  <path d="M 512 710 A 150 150 0 0 0 648 624 A 210 170 0 0 1 512 710 Z" fill="#5C6B92"/>
+  <!-- light upper-left -->
+  <path d="M 392 480 A 150 150 0 0 1 540 414 A 190 190 0 0 0 400 530 A 150 150 0 0 1 392 480 Z" fill="#8E9FC4"/>
+  <!-- occlusion where sphere meets base -->
+  <path d="M 444 678 Q 512 706 580 678 L 580 690 Q 512 716 444 690 Z" fill="#3E332C" opacity="0.16"/>
+
+  <!-- seam line -->
+  <path d="M 372 530 Q 512 596 652 530" fill="none" stroke="#5C6B92" stroke-width="4" opacity="0.8"/>
+  <!-- projection pinholes on upper sphere -->
+  <circle cx="452" cy="500" r="4.5" fill="#C7D2E8"/>
+  <circle cx="500" cy="472" r="3.5" fill="#C7D2E8"/>
+  <circle cx="556" cy="490" r="4.5" fill="#C7D2E8"/>
+  <circle cx="596" cy="528" r="3.5" fill="#C7D2E8"/>
+  <circle cx="430" cy="548" r="3.5" fill="#C7D2E8"/>
+  <circle cx="524" cy="530" r="3" fill="#C7D2E8"/>
+  <line x1="452" y1="500" x2="500" y2="472" stroke="#C7D2E8" stroke-width="2" opacity="0.6"/>
+  <line x1="500" y1="472" x2="556" y2="490" stroke="#C7D2E8" stroke-width="2" opacity="0.6"/>
+  <line x1="556" y1="490" x2="596" y2="528" stroke="#C7D2E8" stroke-width="2" opacity="0.6"/>
+
+  <!-- pinholes lower band -->
+  <circle cx="470" cy="624" r="3.5" fill="#8E9FC4"/>
+  <circle cx="520" cy="640" r="3" fill="#8E9FC4"/>
+  <circle cx="568" cy="618" r="3.5" fill="#8E9FC4"/>
+
+  <!-- knob -->
+  <circle cx="512" cy="664" r="13" fill="#D9A856"/>
+  <circle cx="512" cy="664" r="13" fill="none" stroke="#A87844" stroke-width="3"/>
+  <line x1="512" y1="656" x2="512" y2="664" stroke="#A87844" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- lens on top -->
+  <ellipse cx="512" cy="414" rx="40" ry="16" fill="#E5C878"/>
+  <ellipse cx="512" cy="411" rx="30" ry="11" fill="#FBF2D9"/>
+  <ellipse cx="512" cy="410" rx="16" ry="6" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- sphere highlight arc -->
+  <path d="M 412 478 A 122 122 0 0 1 472 432" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+</svg>

@@ -1,0 +1,56 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 510 392 L 510 444 C 448 470 414 524 414 584 C 414 664 470 722 540 726 C 612 722 668 664 668 584 C 668 524 634 470 572 444 L 572 392 Z"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="742" rx="215" ry="16" fill="#EADBBD"/>
+
+  <!-- porcelain bottle -->
+  <g transform="translate(-36 30)">
+    <path d="M 478 330 L 478 386 C 410 412 376 470 376 532 C 376 616 436 678 512 678 C 588 678 648 616 648 532 C 648 470 614 412 546 386 L 546 330 Z" fill="#FFF9EE"/>
+    <!-- left crescent shade -->
+    <path d="M 444 420 C 408 458 396 496 400 548 C 404 600 436 644 478 664 C 428 616 412 560 416 512 C 420 468 430 440 444 420 Z" fill="#EFE3CC"/>
+    <!-- neck shade -->
+    <rect x="478" y="334" width="14" height="52" fill="#EFE3CC"/>
+    <!-- body bands -->
+    <path d="M 416 478 Q 512 514 608 478" fill="none" stroke="#C9574C" stroke-width="7" stroke-linecap="round"/>
+    <path d="M 422 502 Q 512 536 602 502" fill="none" stroke="#C9574C" stroke-width="4.5" stroke-linecap="round" opacity="0.75"/>
+    <!-- foot ring -->
+    <path d="M 462 670 Q 512 686 562 670 L 556 682 Q 512 694 468 682 Z" fill="#E8DCC4"/>
+    <!-- flared lip -->
+    <rect x="462" y="310" width="100" height="26" rx="12" fill="#F4ECDA"/>
+    <rect x="462" y="310" width="36" height="26" rx="12" fill="#E8DCC4"/>
+    <line x1="466" y1="314" x2="558" y2="314" stroke="#FFFDF4" stroke-width="3" stroke-linecap="round"/>
+    <!-- red cloth stopper -->
+    <path d="M 470 310 Q 470 268 512 268 Q 554 268 554 310 Z" fill="#C9574C"/>
+    <path d="M 522 272 Q 552 280 554 310 L 536 310 Q 536 284 522 272 Z" fill="#B83E35"/>
+    <path d="M 486 278 Q 498 270 512 270" fill="none" stroke="#E8766B" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- neck cord -->
+    <path d="M 476 330 Q 444 352 448 380" fill="none" stroke="#B83E35" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="450" cy="390" r="9" fill="#B83E35"/>
+    <circle cx="447" cy="387" r="3" fill="#D34E42"/>
+    <path d="M 444 398 Q 438 414 444 426" fill="none" stroke="#B83E35" stroke-width="4" stroke-linecap="round"/>
+    <path d="M 456 398 Q 462 414 456 426" fill="none" stroke="#8F2F28" stroke-width="4" stroke-linecap="round"/>
+    <!-- glaze highlights -->
+    <path d="M 560 430 Q 590 462 594 510" fill="none" stroke="#FFFDF4" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+    <path d="M 552 408 Q 564 418 572 434" fill="none" stroke="#FFFDF4" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+  </g>
+
+  <!-- golden pills beside the bottle -->
+  <g>
+    <circle cx="660" cy="704" r="26" fill="#D9A856"/>
+    <path d="M 644 694 A 22 22 0 0 1 668 684" fill="none" stroke="#EFCB8B" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 648 718 A 24 24 0 0 0 678 716" fill="none" stroke="#B98C3C" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+    <circle cx="722" cy="690" r="22" fill="#C99C49"/>
+    <path d="M 709 682 A 18 18 0 0 1 729 674" fill="none" stroke="#E5BC74" stroke-width="5" stroke-linecap="round"/>
+    <line x1="704" y1="694" x2="740" y2="686" stroke="#B98C3C" stroke-width="3" opacity="0.7"/>
+    <circle cx="694" cy="734" r="20" fill="#D9A856"/>
+    <path d="M 682 727 A 16 16 0 0 1 700 720" fill="none" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <!-- pill contact shadows -->
+  <ellipse cx="660" cy="732" rx="24" ry="5" fill="#D8C8A4" opacity="0.7"/>
+  <ellipse cx="722" cy="714" rx="20" ry="4.5" fill="#D8C8A4" opacity="0.7"/>
+</svg>

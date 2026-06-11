@@ -1,0 +1,69 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow: single diagonal swath -->
+  <path d="M 700 330 Q 720 360 706 392 L 488 812 Q 470 826 462 808 L 648 330 Q 672 306 700 330 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="852" rx="165" ry="14" fill="#EADBBD"/>
+
+  <!-- pin shaft: twisted gold texture -->
+  <path d="M 620 305 L 600 295 L 400 766 Q 398 776 405 770 Z" fill="#C28F3F"/>
+  <path d="M 611 301 L 600 295 L 400 766 Z" fill="#D9A856"/>
+  <path d="M 580 370 L 590 374 M 536 474 L 546 478 M 492 578 L 502 582 M 448 682 L 458 686"
+        stroke="#B5832F" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- dangling strands as chain links -->
+  <g stroke="#C28F3F" stroke-width="3.5" fill="none" stroke-dasharray="7 4">
+    <line x1="566" y1="338" x2="566" y2="452"/>
+    <line x1="612" y1="352" x2="612" y2="496"/>
+    <line x1="656" y1="336" x2="656" y2="452"/>
+  </g>
+  <!-- gold beads on strands -->
+  <g>
+    <circle cx="566" cy="398" r="7" fill="#D9A856"/><circle cx="564" cy="396" r="2.5" fill="#EFCB8B"/>
+    <circle cx="612" cy="420" r="7" fill="#D9A856"/><circle cx="610" cy="418" r="2.5" fill="#EFCB8B"/>
+    <circle cx="656" cy="396" r="7" fill="#D9A856"/><circle cx="654" cy="394" r="2.5" fill="#EFCB8B"/>
+  </g>
+  <!-- pearl drops with cap -->
+  <g>
+    <path d="M 559 452 Q 566 444 573 452 L 570 458 L 562 458 Z" fill="#C28F3F"/>
+    <circle cx="566" cy="468" r="14" fill="#F6EFE2"/>
+    <path d="M 560 477 A 14 14 0 0 0 576 472" fill="none" stroke="#E0D4BC" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="561" cy="462" r="4.5" fill="#FFFDF7"/>
+
+    <path d="M 605 496 Q 612 488 619 496 L 616 502 L 608 502 Z" fill="#C28F3F"/>
+    <circle cx="612" cy="514" r="15" fill="#F6EFE2"/>
+    <path d="M 605 524 A 15 15 0 0 0 622 518" fill="none" stroke="#E0D4BC" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="607" cy="508" r="5" fill="#FFFDF7"/>
+
+    <path d="M 649 452 Q 656 444 663 452 L 660 458 L 652 458 Z" fill="#C28F3F"/>
+    <circle cx="656" cy="468" r="14" fill="#F6EFE2"/>
+    <path d="M 650 477 A 14 14 0 0 0 666 472" fill="none" stroke="#E0D4BC" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="651" cy="462" r="4.5" fill="#FFFDF7"/>
+  </g>
+
+  <!-- flower head -->
+  <g stroke="#B5832F" stroke-width="3">
+    <circle cx="610" cy="252" r="23" fill="#D9A856"/>
+    <circle cx="656" cy="286" r="23" fill="#D9A856"/>
+    <circle cx="638" cy="338" r="23" fill="#C9973F"/>
+    <circle cx="582" cy="338" r="23" fill="#C9973F"/>
+    <circle cx="564" cy="286" r="23" fill="#D9A856"/>
+  </g>
+  <!-- petal inner highlights -->
+  <g fill="#EFCB8B" opacity="0.9">
+    <circle cx="605" cy="246" r="7"/>
+    <circle cx="651" cy="280" r="7"/>
+    <circle cx="559" cy="280" r="7"/>
+    <circle cx="577" cy="332" r="6"/>
+    <circle cx="633" cy="332" r="6"/>
+  </g>
+  <!-- center: gold ring + pearl -->
+  <circle cx="610" cy="300" r="17" fill="#C28F3F"/>
+  <circle cx="610" cy="300" r="13.5" fill="#F6EFE2"/>
+  <path d="M 603 309 A 13 13 0 0 0 618 305" fill="none" stroke="#E0D4BC" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="606" cy="295" r="4.5" fill="#FFFDF7"/>
+
+  <!-- tiny sparkle -->
+  <path d="M 700 218 L 705 232 L 719 237 L 705 242 L 700 256 L 695 242 L 681 237 L 695 232 Z" fill="#EFCB8B"/>
+</svg>

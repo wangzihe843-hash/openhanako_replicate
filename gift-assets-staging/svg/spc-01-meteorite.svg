@@ -1,0 +1,71 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow (rock + stand silhouette, offset 60,44) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M 344 412 C 330 348, 376 276, 456 250 C 530 226, 614 238, 662 288 C 704 332, 714 402, 692 462 C 670 520, 616 558, 546 570 C 468 582, 396 558, 362 508 C 342 480, 350 450, 344 412 Z"/>
+    <path d="M 448 540 L 576 540 L 576 622 L 596 622 Q 612 622 612 638 L 612 646 Q 612 660 596 660 L 428 660 Q 412 660 412 646 L 412 638 Q 412 622 428 622 L 448 622 Z"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="706" rx="215" ry="16" fill="#EADBBD"/>
+
+  <!-- stand stem -->
+  <rect x="488" y="590" width="48" height="80" rx="10" fill="#A9AFB8"/>
+  <rect x="488" y="590" width="18" height="80" rx="9" fill="#C9CDD4"/>
+  <line x1="494" y1="632" x2="530" y2="632" stroke="#8F96A1" stroke-width="3"/>
+  <line x1="494" y1="642" x2="530" y2="642" stroke="#8F96A1" stroke-width="3"/>
+
+  <!-- stand base -->
+  <rect x="412" y="660" width="200" height="42" rx="16" fill="#A9AFB8"/>
+  <rect x="412" y="660" width="200" height="14" rx="7" fill="#C9CDD4"/>
+  <rect x="412" y="690" width="200" height="12" rx="6" fill="#8F96A1"/>
+  <circle cx="442" cy="681" r="4.5" fill="#8F96A1"/>
+  <circle cx="582" cy="681" r="4.5" fill="#8F96A1"/>
+  <!-- occlusion under base -->
+  <ellipse cx="512" cy="703" rx="100" ry="7" fill="#3E332C" opacity="0.14"/>
+
+  <!-- meteorite body (irregular) -->
+  <path d="M 344 412 C 330 348, 376 276, 456 250 C 492 238, 530 230, 566 242 C 600 230, 640 262, 662 288 C 704 332, 714 402, 692 462 C 684 498, 648 530, 614 548 C 580 566, 510 580, 546 570 C 468 582, 396 558, 362 508 C 342 480, 350 450, 344 412 Z" fill="#8A8076"/>
+  <!-- dark lower part -->
+  <path d="M 352 466 C 376 526, 444 576, 548 570 C 622 558, 672 518, 692 462 C 656 502, 578 538, 498 536 C 428 534, 382 506, 352 466 Z" fill="#6E655C"/>
+  <!-- light upper-left -->
+  <path d="M 354 386 C 362 318, 408 274, 470 254 C 518 238, 562 242, 596 258 C 538 250, 470 266, 424 306 C 386 338, 366 360, 354 386 Z" fill="#A39889"/>
+
+  <!-- cut polished facet (irregular quad, right-center) -->
+  <path d="M 556 366 L 646 346 L 672 428 L 592 460 Z" fill="#B6BCC6"/>
+  <path d="M 556 366 L 646 346 L 656 378 L 572 400 Z" fill="#C9CDD4"/>
+  <path d="M 592 460 L 672 428 L 656 378 L 580 408 Z" fill="#A4ABB6"/>
+  <path d="M 556 366 L 646 346 L 672 428 L 592 460 Z" fill="none" stroke="#8F96A1" stroke-width="4" stroke-linejoin="round"/>
+  <!-- metal flecks in facet -->
+  <circle cx="600" cy="390" r="7" fill="#E5C878"/>
+  <circle cx="634" cy="420" r="6" fill="#E5C878"/>
+  <circle cx="610" cy="432" r="4.5" fill="#EFCB8B"/>
+  <circle cx="640" cy="376" r="4" fill="#EFCB8B"/>
+
+  <!-- craters / pits with rims -->
+  <ellipse cx="430" cy="350" rx="20" ry="16" fill="#57504A"/>
+  <ellipse cx="427" cy="347" rx="13" ry="10" fill="#4A443E"/>
+  <path d="M 412 342 A 20 16 0 0 1 446 339" fill="none" stroke="#B0A595" stroke-width="5" opacity="0.9"/>
+  <ellipse cx="502" cy="300" rx="14" ry="11" fill="#57504A"/>
+  <path d="M 490 295 A 14 11 0 0 1 514 293" fill="none" stroke="#B0A595" stroke-width="4" opacity="0.9"/>
+  <ellipse cx="398" cy="450" rx="15" ry="12" fill="#57504A"/>
+  <path d="M 385 445 A 15 12 0 0 1 411 442" fill="none" stroke="#A39889" stroke-width="4" opacity="0.8"/>
+  <ellipse cx="486" cy="408" rx="10" ry="8" fill="#5E564E"/>
+  <path d="M 477 404 A 10 8 0 0 1 494 402" fill="none" stroke="#A39889" stroke-width="3" opacity="0.7"/>
+  <ellipse cx="548" cy="320" rx="8" ry="6" fill="#5E564E"/>
+  <ellipse cx="452" cy="492" rx="11" ry="8" fill="#4E4740"/>
+  <ellipse cx="532" cy="486" rx="8" ry="6" fill="#4E4740"/>
+
+  <!-- rim highlight -->
+  <path d="M 372 336 C 392 294, 436 262, 488 248" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" opacity="0.65"/>
+
+  <!-- solid bowl cradle in front of rock -->
+  <path d="M 400 500 Q 512 584 624 500 L 608 566 Q 512 636 416 566 Z" fill="#A9AFB8"/>
+  <!-- bowl lip highlight -->
+  <path d="M 400 500 Q 512 584 624 500 L 620 516 Q 512 598 404 516 Z" fill="#C9CDD4"/>
+  <!-- bowl lower shade -->
+  <path d="M 420 580 Q 512 638 604 580 L 608 566 Q 512 636 416 566 Z" fill="#8F96A1"/>
+  <!-- occlusion: rock pressing into bowl -->
+  <path d="M 416 508 Q 512 586 608 508" fill="none" stroke="#3E332C" stroke-width="8" opacity="0.18"/>
+</svg>

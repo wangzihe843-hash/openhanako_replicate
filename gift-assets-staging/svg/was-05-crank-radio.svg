@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow -->
+  <g transform="translate(60,44)">
+    <rect x="290" y="430" width="424" height="320" rx="36" fill="#F1E3C9"/>
+    <rect x="700" y="540" width="110" height="160" rx="40" fill="#F1E3C9"/>
+    <line x1="664" y1="436" x2="826" y2="216" stroke="#F1E3C9" stroke-width="12" stroke-linecap="round"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="756" rx="300" ry="16" fill="#EADBBD"/>
+
+  <!-- antenna -->
+  <line x1="660" y1="436" x2="756" y2="306" stroke="#8F96A1" stroke-width="9" stroke-linecap="round"/>
+  <line x1="756" y1="306" x2="824" y2="214" stroke="#A9AFB8" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="826" cy="211" r="8" fill="#8F96A1"/>
+  <rect x="644" y="416" width="34" height="30" rx="8" fill="#7C828C"/>
+
+  <!-- crank on right side -->
+  <line x1="716" y1="566" x2="772" y2="646" stroke="#7C6C57" stroke-width="15" stroke-linecap="round"/>
+  <rect x="758" y="640" width="28" height="64" rx="13" fill="#4A4038"/>
+  <rect x="762" y="644" width="9" height="56" rx="4" fill="#6B5E4C"/>
+  <circle cx="716" cy="566" r="17" fill="#7C6C57"/>
+  <circle cx="716" cy="566" r="7" fill="#5F5343"/>
+
+  <!-- body -->
+  <rect x="290" y="430" width="424" height="320" rx="36" fill="#B07050"/>
+  <rect x="290" y="430" width="80" height="320" rx="36" fill="#C08868"/>
+  <path d="M664,430 h14 a36,36 0 0 1 36,36 v248 a36,36 0 0 1 -36,36 h-14 z" fill="#8F5A40"/>
+  <!-- top edge band -->
+  <path d="M326,430 h352 a36,36 0 0 1 36,36 v6 h-424 v-6 a36,36 0 0 1 36,-36 z" fill="#8F5A40" opacity="0.45"/>
+
+  <!-- speaker grille -->
+  <rect x="330" y="492" width="178" height="222" rx="20" fill="#8F5A40"/>
+  <rect x="330" y="492" width="178" height="222" rx="20" fill="none" stroke="#75452F" stroke-width="4"/>
+  <line x1="348" y1="524" x2="490" y2="524" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+  <line x1="348" y1="556" x2="490" y2="556" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+  <line x1="348" y1="588" x2="490" y2="588" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+  <line x1="348" y1="620" x2="490" y2="620" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+  <line x1="348" y1="652" x2="490" y2="652" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+  <line x1="348" y1="684" x2="490" y2="684" stroke="#6E4534" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- dial -->
+  <circle cx="596" cy="556" r="58" fill="#8C6239"/>
+  <circle cx="596" cy="556" r="48" fill="#EFE3CC"/>
+  <g stroke="#8C6239" stroke-width="4" stroke-linecap="round">
+    <line x1="596" y1="516" x2="596" y2="528"/>
+    <line x1="624" y1="528" x2="617" y2="538"/>
+    <line x1="636" y1="556" x2="624" y2="556"/>
+    <line x1="624" y1="584" x2="617" y2="574"/>
+    <line x1="596" y1="596" x2="596" y2="584"/>
+    <line x1="568" y1="584" x2="575" y2="574"/>
+    <line x1="556" y1="556" x2="568" y2="556"/>
+    <line x1="568" y1="528" x2="575" y2="538"/>
+  </g>
+  <line x1="596" y1="556" x2="622" y2="532" stroke="#C9574C" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="596" cy="556" r="6" fill="#8C6239"/>
+
+  <!-- knob + switch -->
+  <circle cx="566" cy="672" r="24" fill="#8C6239"/>
+  <circle cx="566" cy="672" r="24" fill="none" stroke="#75452F" stroke-width="4"/>
+  <line x1="566" y1="672" x2="566" y2="654" stroke="#EFE3CC" stroke-width="5" stroke-linecap="round"/>
+  <rect x="616" y="660" width="52" height="24" rx="12" fill="#75452F"/>
+  <circle cx="654" cy="672" r="9" fill="#EFCB8B"/>
+
+  <!-- duct tape patch (torn ends) -->
+  <g transform="translate(352,470) rotate(-26)">
+    <path d="M-58,-22 L58,-22 L52,-12 L59,-2 L51,8 L58,22 L-58,22 L-51,12 L-59,2 L-50,-8 Z" fill="#B6BBC2" opacity="0.93"/>
+    <line x1="-44" y1="-8" x2="44" y2="-8" stroke="#9CA2AC" stroke-width="3" opacity="0.8"/>
+    <line x1="-40" y1="6" x2="40" y2="6" stroke="#9CA2AC" stroke-width="3" opacity="0.6"/>
+  </g>
+
+  <!-- scratches -->
+  <path d="M404,762 l0,0" stroke="none"/>
+  <path d="M620,724 l34,-14" stroke="#D8A488" stroke-width="4.5" stroke-linecap="round" opacity="0.8"/>
+  <path d="M310,560 l-2,44" stroke="#D8A488" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <ellipse cx="438" cy="466" rx="10" ry="6" fill="#D8A488" opacity="0.8"/>
+
+  <!-- body highlight -->
+  <path d="M306,486 q2,-34 34,-44" stroke="#FFFFFF" stroke-width="6" fill="none" opacity="0.55" stroke-linecap="round"/>
+
+  <!-- bottom occlusion -->
+  <path d="M320,742 c50,14 334,14 384,0 -8,16 -376,16 -384,0 z" fill="#75452F" opacity="0.45"/>
+</svg>

@@ -1,0 +1,49 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow (parallel to flute, offset down-right) -->
+  <g transform="rotate(-22 512 480)">
+    <rect x="300" y="540" width="500" height="42" rx="21" fill="#F1E3C9"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="752" rx="250" ry="16" fill="#EADBBD"/>
+
+  <g transform="rotate(-22 512 480)">
+    <!-- flute body -->
+    <rect x="262" y="460" width="500" height="40" rx="20" fill="#B9D4B0"/>
+    <!-- jade translucent core band -->
+    <rect x="290" y="468" width="440" height="10" rx="5" fill="#CFE3C7"/>
+    <path d="M 262 480 Q 262 500 282 500 L 742 500 Q 762 500 762 480 L 262 480 Z" fill="#9CBF92"/>
+    <!-- darker end tints (jade density) -->
+    <path d="M 262 480 Q 262 460 282 460 L 312 460 L 312 500 L 282 500 Q 262 500 262 480 Z" fill="#A9C79F"/>
+    <path d="M 712 460 L 742 460 Q 762 460 762 480 Q 762 500 742 500 L 712 500 Z" fill="#A9C79F"/>
+    <!-- gold bands with double line -->
+    <rect x="296" y="458" width="16" height="44" rx="6" fill="#D9A856"/>
+    <line x1="304" y1="460" x2="304" y2="500" stroke="#C28F3F" stroke-width="3"/>
+    <rect x="712" y="458" width="16" height="44" rx="6" fill="#D9A856"/>
+    <line x1="720" y1="460" x2="720" y2="500" stroke="#C28F3F" stroke-width="3"/>
+    <rect x="396" y="458" width="12" height="44" rx="5" fill="#D9A856" opacity="0.9"/>
+    <!-- blow hole with rim -->
+    <ellipse cx="352" cy="476" rx="12" ry="9" fill="#5F7A56"/>
+    <path d="M 343 471 A 11 8 0 0 1 361 471" fill="none" stroke="#7E9B74" stroke-width="2.5"/>
+    <!-- finger holes with rim shading -->
+    <g>
+      <circle cx="470" cy="478" r="8" fill="#5F7A56"/><path d="M 464 474 A 8 8 0 0 1 476 474" fill="none" stroke="#7E9B74" stroke-width="2"/>
+      <circle cx="514" cy="478" r="8" fill="#5F7A56"/><path d="M 508 474 A 8 8 0 0 1 520 474" fill="none" stroke="#7E9B74" stroke-width="2"/>
+      <circle cx="558" cy="478" r="8" fill="#5F7A56"/><path d="M 552 474 A 8 8 0 0 1 564 474" fill="none" stroke="#7E9B74" stroke-width="2"/>
+      <circle cx="602" cy="478" r="8" fill="#5F7A56"/><path d="M 596 474 A 8 8 0 0 1 608 474" fill="none" stroke="#7E9B74" stroke-width="2"/>
+      <circle cx="646" cy="478" r="8" fill="#5F7A56"/><path d="M 640 474 A 8 8 0 0 1 652 474" fill="none" stroke="#7E9B74" stroke-width="2"/>
+    </g>
+    <!-- highlights -->
+    <rect x="316" y="464" width="76" height="7" rx="3.5" fill="#D6E8CF"/>
+    <rect x="430" y="464" width="40" height="5" rx="2.5" fill="#D6E8CF" opacity="0.8"/>
+  </g>
+
+  <!-- red tassel hanging from the upper (right) end of the flute -->
+  <path d="M 726 396 Q 744 420 748 452" fill="none" stroke="#C9574C" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="748" cy="462" r="8" fill="#D9A856"/>
+  <rect x="738" y="472" width="20" height="11" rx="5" fill="#B83E35"/>
+  <path d="M 735 480 L 761 480 Q 763 514 759 540 Q 748 550 737 540 Q 733 514 735 480 Z" fill="#D34E42"/>
+  <line x1="742" y1="486" x2="741" y2="536" stroke="#B83E35" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="748" y1="486" x2="748" y2="540" stroke="#B83E35" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="754" y1="486" x2="755" y2="536" stroke="#B83E35" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

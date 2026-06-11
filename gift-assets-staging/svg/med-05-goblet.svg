@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <defs>
+    <clipPath id="bowl">
+      <path d="M 377 300 L 647 300 C 647 420 592 502 512 512 C 432 502 377 420 377 300 Z"/>
+    </clipPath>
+  </defs>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <ellipse cx="512" cy="300" rx="135" ry="27"/>
+    <path d="M 377 300 L 647 300 C 647 420 592 502 512 512 C 432 502 377 420 377 300 Z"/>
+    <rect x="499" y="505" width="26" height="125"/>
+    <path d="M 499 622 L 525 622 L 564 682 L 460 682 Z"/>
+    <ellipse cx="512" cy="698" rx="112" ry="24"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="726" rx="205" ry="15" fill="#EADBBD"/>
+  <!-- foot -->
+  <ellipse cx="512" cy="700" rx="112" ry="24" fill="#8F96A1"/>
+  <ellipse cx="512" cy="692" rx="112" ry="24" fill="#A9AFB8"/>
+  <ellipse cx="512" cy="688" rx="76" ry="15" fill="#B9BEC6"/>
+  <ellipse cx="512" cy="692" rx="92" ry="18" fill="none" stroke="#8F96A1" stroke-width="2.5" opacity="0.7"/>
+  <path d="M 418 688 A 100 18 0 0 1 506 672" fill="none" stroke="#E2E6EB" stroke-width="5" stroke-linecap="round" opacity="0.85"/>
+  <!-- cone to foot -->
+  <path d="M 499 622 L 525 622 L 564 682 L 460 682 Z" fill="#A9AFB8"/>
+  <path d="M 499 622 L 510 622 L 488 682 L 460 682 Z" fill="#B9BEC6"/>
+  <ellipse cx="512" cy="684" rx="44" ry="8" fill="#6F7680" opacity="0.25"/>
+  <!-- stem -->
+  <rect x="499" y="505" width="26" height="122" fill="#A9AFB8"/>
+  <rect x="518" y="505" width="7" height="122" fill="#8F96A1"/>
+  <line x1="504" y1="510" x2="504" y2="622" stroke="#DDE1E6" stroke-width="4" opacity="0.85"/>
+  <!-- knop -->
+  <ellipse cx="512" cy="585" rx="31" ry="22" fill="#8F96A1"/>
+  <ellipse cx="507" cy="581" rx="26" ry="18" fill="#B9BEC6"/>
+  <path d="M 489 578 A 24 16 0 0 1 510 568" fill="none" stroke="#E6E9EE" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <!-- bowl -->
+  <g clip-path="url(#bowl)">
+    <path d="M 377 300 L 647 300 C 647 420 592 502 512 512 C 432 502 377 420 377 300 Z" fill="#8F96A1"/>
+    <path d="M 377 300 L 647 300 C 647 420 592 502 512 512 C 432 502 377 420 377 300 Z" transform="translate(-16,-8)" fill="#A9AFB8"/>
+    <path d="M 377 300 L 647 300 C 647 420 592 502 512 512 C 432 502 377 420 377 300 Z" transform="translate(-48,-26)" fill="#B9BEC6"/>
+    <!-- embossed band -->
+    <path d="M 360 368 C 458 404 566 404 664 368" fill="none" stroke="#C9CDD4" stroke-width="38"/>
+    <path d="M 360 350 C 458 386 566 386 664 350" fill="none" stroke="#8F96A1" stroke-width="3"/>
+    <path d="M 360 387 C 458 423 566 423 664 387" fill="none" stroke="#8F96A1" stroke-width="3"/>
+    <line x1="430" y1="377" x2="430" y2="397" stroke="#8F96A1" stroke-width="3"/>
+    <line x1="468" y1="383" x2="468" y2="403" stroke="#8F96A1" stroke-width="3"/>
+    <line x1="556" y1="383" x2="556" y2="403" stroke="#8F96A1" stroke-width="3"/>
+    <line x1="594" y1="377" x2="594" y2="397" stroke="#8F96A1" stroke-width="3"/>
+  </g>
+  <!-- gem -->
+  <circle cx="512" cy="394" r="24" fill="#D9A856" stroke="#C28F3F" stroke-width="2.5"/>
+  <circle cx="512" cy="394" r="17" fill="#B83E35"/>
+  <path d="M 512 380 L 523 390 L 519 407 L 505 407 L 501 390 Z" fill="none" stroke="#8F3029" stroke-width="2" opacity="0.75"/>
+  <path d="M 503 387 A 11 11 0 0 1 511 382" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+  <!-- bowl highlight -->
+  <path d="M 415 340 C 410 410 430 468 458 494" fill="none" stroke="#E6E9EE" stroke-width="8" stroke-linecap="round" opacity="0.85"/>
+  <!-- bowl-stem occlusion -->
+  <ellipse cx="512" cy="510" rx="26" ry="7" fill="#6F7680" opacity="0.35"/>
+  <!-- rim -->
+  <ellipse cx="512" cy="300" rx="135" ry="27" fill="#C9CDD4" stroke="#8F96A1" stroke-width="3"/>
+  <ellipse cx="512" cy="303" rx="117" ry="20" fill="#7E848E"/>
+  <path d="M 392 292 A 128 24 0 0 1 500 274" fill="none" stroke="#E9ECF0" stroke-width="5" stroke-linecap="round" opacity="0.9"/>
+</svg>

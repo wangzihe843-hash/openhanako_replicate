@@ -97,7 +97,8 @@ reviews/
 .cursor/
 
 
-# 赠礼系统图片生成的暂存区（全分辨率原图 9.5MB，纯冗余）：
-# 应用实际加载的是 desktop/src/assets/xingye-gifts 下的 512px 版本，
-# 目录数据已编码进 xingye-gift-catalog.ts。SVG 源在仓库外的临时目录。
-gift-assets-staging/
+# 赠礼系统图片生成的暂存区：忽略全分辨率原图 PNG（9.5MB 纯冗余，应用实际加载的是
+# desktop/src/assets/xingye-gifts 下的 512px 版本），但收 svg/ 子目录——101 张本地
+# 手绘 SVG 源 + 风格规范，是礼物图唯一可编辑/可复现的来源。
+gift-assets-staging/*
+!gift-assets-staging/svg/

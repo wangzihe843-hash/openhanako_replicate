@@ -1,0 +1,69 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 560 300 Q 660 320 668 420 L 700 680 Q 706 724 660 730 L 580 736 L 540 720 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="752" rx="195" ry="15" fill="#EADBBD"/>
+
+  <!-- round display base -->
+  <ellipse cx="512" cy="722" rx="160" ry="30" fill="#8E9FC4"/>
+  <ellipse cx="512" cy="714" rx="160" ry="28" fill="#A9B8D6"/>
+  <ellipse cx="512" cy="710" rx="126" ry="19" fill="#C5D0E8"/>
+  <!-- tiny craters on base -->
+  <ellipse cx="452" cy="708" rx="16" ry="6" fill="#8E9FC4"/>
+  <ellipse cx="572" cy="714" rx="12" ry="5" fill="#8E9FC4"/>
+
+  <!-- backpack (behind body) -->
+  <rect x="404" y="406" width="80" height="140" rx="22" fill="#A9AFB8"/>
+  <rect x="404" y="406" width="80" height="30" rx="15" fill="#C9CDD4"/>
+
+  <!-- legs -->
+  <path d="M 458 580 L 458 668 Q 458 686 478 686 L 498 686 L 498 580 Z" fill="#E8E4DA"/>
+  <path d="M 526 580 L 526 668 Q 526 686 546 686 L 566 686 L 566 580 Z" fill="#DDD8CC"/>
+  <!-- boots -->
+  <rect x="446" y="668" width="64" height="34" rx="14" fill="#8F96A1"/>
+  <rect x="514" y="668" width="64" height="34" rx="14" fill="#7C8492"/>
+  <!-- knee joints -->
+  <rect x="456" y="612" width="44" height="12" rx="6" fill="#C9CDD4"/>
+  <rect x="524" y="612" width="44" height="12" rx="6" fill="#B8B3A6"/>
+
+  <!-- torso -->
+  <rect x="436" y="440" width="152" height="158" rx="34" fill="#F2EFE6"/>
+  <path d="M 568 446 Q 588 470 588 520 Q 588 570 566 592 Q 588 560 586 506 Q 584 466 568 446 Z" fill="#DDD8CC"/>
+  <!-- chest panel -->
+  <rect x="476" y="478" width="72" height="56" rx="12" fill="#C9CDD4"/>
+  <circle cx="496" cy="498" r="8" fill="#C9574C"/>
+  <circle cx="494" cy="496" r="3" fill="#E8766B"/>
+  <circle cx="524" cy="498" r="8" fill="#7FAFA3"/>
+  <rect x="486" y="514" width="52" height="8" rx="4" fill="#8F96A1"/>
+  <!-- waist ring -->
+  <rect x="446" y="572" width="132" height="14" rx="7" fill="#8E9FC4"/>
+
+  <!-- arms -->
+  <path d="M 436 462 Q 396 472 388 524 Q 384 562 404 588 Q 420 600 432 588 Q 416 560 420 520 Q 424 484 444 470 Z" fill="#E8E4DA"/>
+  <path d="M 588 462 Q 628 472 636 524 Q 640 562 620 588 Q 604 600 592 588 Q 608 560 604 520 Q 600 484 580 470 Z" fill="#DDD8CC"/>
+  <!-- gloves -->
+  <circle cx="414" cy="598" r="22" fill="#8E9FC4"/>
+  <circle cx="408" cy="592" r="7" fill="#A9B8D6"/>
+  <circle cx="610" cy="598" r="22" fill="#7A8BB4"/>
+  <!-- waving flag? no - right glove holds tiny star -->
+  <path d="M 610 566 L 616 580 L 630 585 L 616 590 L 610 604 L 604 590 L 590 585 L 604 580 Z" fill="#E5C878"/>
+
+  <!-- helmet -->
+  <circle cx="512" cy="368" r="92" fill="#F2EFE6"/>
+  <path d="M 588 320 A 92 92 0 0 1 600 396 Q 588 360 572 336 Z" fill="#DDD8CC"/>
+  <!-- visor (no face, reflective) -->
+  <path d="M 446 352 Q 446 296 512 296 Q 578 296 578 352 Q 578 408 512 408 Q 446 408 446 352 Z" fill="#5C6B85"/>
+  <path d="M 462 330 Q 478 310 506 308 Q 482 322 474 344 Q 466 340 462 330 Z" fill="#8E9FC4"/>
+  <path d="M 524 316 L 548 324 L 500 392 L 482 380 Z" fill="#A9B8D6" opacity="0.55"/>
+  <!-- helmet rim -->
+  <path d="M 446 352 Q 446 296 512 296 Q 578 296 578 352 Q 578 408 512 408 Q 446 408 446 352 Z" fill="none" stroke="#C9CDD4" stroke-width="7"/>
+  <!-- antenna -->
+  <rect x="596" y="330" width="10" height="34" rx="5" fill="#8F96A1"/>
+  <circle cx="601" cy="324" r="8" fill="#C9574C"/>
+
+  <!-- floating sparkles -->
+  <circle cx="350" cy="280" r="5" fill="#8E9FC4" opacity="0.75"/>
+  <path d="M 692 250 L 697 264 L 711 269 L 697 274 L 692 288 L 687 274 L 673 269 L 687 264 Z" fill="#E5C878"/>
+</svg>

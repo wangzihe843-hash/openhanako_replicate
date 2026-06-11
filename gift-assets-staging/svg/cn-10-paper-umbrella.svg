@@ -1,0 +1,83 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow (canopy + shaft merged) -->
+  <path d="M 307 476 Q 350 288 572 249 Q 794 288 837 476 L 592 476 L 592 814 L 562 814 L 562 476 Z" fill="#F1E3C9"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="776" rx="150" ry="14" fill="#EADBBD"/>
+
+  <!-- canopy: side view dome with scalloped edge -->
+  <path d="M 247 432
+           Q 290 244 512 205
+           Q 734 244 777 432
+           Q 745 426 701 449
+           Q 670 442 626 462
+           Q 597 454 550 469
+           Q 512 461 474 469
+           Q 427 454 399 462
+           Q 354 442 323 449
+           Q 279 426 247 432 Z" fill="#F2E2BE"/>
+
+  <!-- canopy clip for paint and sheen -->
+  <clipPath id="canopy">
+    <path d="M 247 432 Q 290 244 512 205 Q 734 244 777 432 Q 745 426 701 449 Q 670 442 626 462 Q 597 454 550 469 Q 512 461 474 469 Q 427 454 399 462 Q 354 442 323 449 Q 279 426 247 432 Z"/>
+  </clipPath>
+  <g clip-path="url(#canopy)">
+    <!-- sheen on left -->
+    <path d="M 247 432 Q 290 244 512 205 L 512 205 Q 380 240 330 440 Z" fill="#F8ECCF" opacity="0.8"/>
+    <!-- shade near bottom edge -->
+    <path d="M 247 470 Q 512 530 777 470 L 777 400 Q 512 480 247 400 Z" fill="#E4CC97" opacity="0.7"/>
+    <!-- painted peach blossom branch -->
+    <path d="M 432 348 C 500 318 560 312 648 296" fill="none" stroke="#8C6239" stroke-width="9" stroke-linecap="round"/>
+    <path d="M 540 320 C 560 332 568 344 570 358" fill="none" stroke="#8C6239" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 600 306 C 614 296 620 286 622 276" fill="none" stroke="#8C6239" stroke-width="6" stroke-linecap="round"/>
+    <!-- blossom 1 -->
+    <g>
+      <circle cx="478" cy="322" r="14" fill="#F6C6CB"/><circle cx="496" cy="312" r="14" fill="#F6C6CB"/>
+      <circle cx="494" cy="332" r="14" fill="#EFADB4"/><circle cx="478" cy="340" r="13" fill="#F6C6CB"/>
+      <circle cx="464" cy="332" r="13" fill="#EFADB4"/>
+      <circle cx="482" cy="326" r="6" fill="#FFF8E8"/><circle cx="474" cy="322" r="2.5" fill="#E2949D"/><circle cx="488" cy="320" r="2.5" fill="#E2949D"/>
+    </g>
+    <!-- blossom 2 -->
+    <g>
+      <circle cx="586" cy="296" r="13" fill="#F6C6CB"/><circle cx="602" cy="288" r="13" fill="#EFADB4"/>
+      <circle cx="600" cy="306" r="13" fill="#F6C6CB"/><circle cx="584" cy="312" r="12" fill="#EFADB4"/>
+      <circle cx="574" cy="302" r="12" fill="#F6C6CB"/>
+      <circle cx="588" cy="300" r="5" fill="#FFF8E8"/>
+    </g>
+    <!-- buds -->
+    <circle cx="572" cy="362" r="9" fill="#EFADB4"/>
+    <circle cx="624" cy="272" r="8" fill="#EFADB4"/>
+    <circle cx="652" cy="294" r="7" fill="#F6C6CB"/>
+  </g>
+
+  <!-- rib seam lines radiating from apex to scallop tips -->
+  <g stroke="#DCC48F" stroke-width="4" opacity="0.85">
+    <path d="M 512 212 L 323 449" fill="none"/>
+    <path d="M 512 212 L 399 462" fill="none"/>
+    <path d="M 512 212 L 474 469" fill="none"/>
+    <path d="M 512 212 L 550 469" fill="none"/>
+    <path d="M 512 212 L 626 462" fill="none"/>
+    <path d="M 512 212 L 701 449" fill="none"/>
+  </g>
+  <!-- rib tips -->
+  <g fill="#C09058">
+    <circle cx="247" cy="432" r="5"/><circle cx="323" cy="449" r="5"/><circle cx="399" cy="462" r="5"/>
+    <circle cx="474" cy="469" r="5"/><circle cx="550" cy="469" r="5"/><circle cx="626" cy="462" r="5"/>
+    <circle cx="701" cy="449" r="5"/><circle cx="777" cy="432" r="5"/>
+  </g>
+
+  <!-- finial -->
+  <rect x="504" y="158" width="16" height="52" rx="7" fill="#A87844"/>
+  <ellipse cx="512" cy="160" rx="11" ry="5" fill="#C09058"/>
+
+  <!-- bamboo shaft -->
+  <rect x="502" y="448" width="20" height="316" rx="9" fill="#C09058"/>
+  <path d="M 518 452 L 518 758" stroke="#A87844" stroke-width="5"/>
+  <path d="M 504 560 L 520 560 M 504 648 L 520 648" stroke="#8C6239" stroke-width="5" stroke-linecap="round"/>
+  <!-- handle knob -->
+  <rect x="496" y="752" width="32" height="22" rx="10" fill="#A87844"/>
+  <!-- occlusion where shaft meets canopy -->
+  <path d="M 500 452 L 524 452" stroke="#B89255" stroke-width="10" stroke-linecap="round" opacity="0.7"/>
+</svg>

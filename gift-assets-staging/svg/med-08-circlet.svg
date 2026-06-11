@@ -1,0 +1,52 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 350 480 L 730 460 Q 800 480 790 580 L 740 720 L 420 740 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="265" ry="16" fill="#EADBBD"/>
+
+  <!-- velvet cushion -->
+  <path d="M 286 560 Q 280 500 350 496 L 674 496 Q 744 500 738 560 L 730 660 Q 726 712 668 716 L 356 716 Q 298 712 294 660 Z" fill="#A8485C"/>
+  <path d="M 286 560 Q 280 500 350 496 L 500 496 Q 380 520 360 600 Q 348 668 380 712 L 356 716 Q 298 712 294 660 Z" fill="#B85A6E"/>
+  <path d="M 730 660 Q 726 712 668 716 L 540 716 Q 660 700 690 620 Q 700 560 690 510 Q 740 520 738 560 Z" fill="#8F3A4C"/>
+  <!-- cushion seam -->
+  <path d="M 310 600 Q 512 632 714 600" fill="none" stroke="#8F3A4C" stroke-width="5" opacity="0.7"/>
+  <!-- corner tassels -->
+  <circle cx="296" cy="540" r="13" fill="#D9A856"/>
+  <path d="M 286 550 Q 276 576 284 596 Q 298 590 300 556 Z" fill="#C28F3F"/>
+  <circle cx="728" cy="540" r="13" fill="#D9A856"/>
+  <path d="M 738 550 Q 748 576 740 596 Q 726 590 724 556 Z" fill="#C28F3F"/>
+  <!-- cushion top highlight -->
+  <path d="M 360 516 Q 512 498 664 516" fill="none" stroke="#C9707F" stroke-width="8" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- circlet band (small ellipse resting on the cushion top) -->
+  <ellipse cx="512" cy="462" rx="148" ry="54" fill="none" stroke="#C28F3F" stroke-width="18"/>
+  <path d="M 370 448 A 146 52 0 0 1 448 412" fill="none" stroke="#D9A856" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 654 476 A 146 52 0 0 1 580 510" fill="none" stroke="#A8762F" stroke-width="8" stroke-linecap="round"/>
+  <!-- occlusion under circlet -->
+  <ellipse cx="512" cy="520" rx="130" ry="14" fill="#8F3A4C" opacity="0.55"/>
+
+  <!-- center peak with gem -->
+  <path d="M 478 416 L 512 344 L 546 416 Q 512 404 478 416 Z" fill="#D9A856"/>
+  <path d="M 512 344 L 546 416 Q 528 410 512 408 Z" fill="#C28F3F"/>
+  <circle cx="512" cy="398" r="18" fill="#A8762F"/>
+  <path d="M 512 385 L 525 398 L 512 411 L 499 398 Z" fill="#A8485C"/>
+  <path d="M 512 385 L 525 398 L 512 401 Z" fill="#C9707F"/>
+  <circle cx="512" cy="340" r="9" fill="#D9A856"/>
+  <circle cx="510" cy="338" r="3.5" fill="#EFCB8B"/>
+
+  <!-- side leaf motifs -->
+  <g fill="#D9A856">
+    <path d="M 416 432 Q 400 412 410 394 Q 426 406 426 426 Z"/>
+    <path d="M 608 432 Q 624 412 614 394 Q 598 406 598 426 Z"/>
+  </g>
+  <!-- small pearls on band -->
+  <circle cx="372" cy="450" r="7" fill="#F6EFE2"/>
+  <circle cx="370" cy="448" r="2.6" fill="#FFFDF7"/>
+  <circle cx="652" cy="450" r="7" fill="#F6EFE2"/>
+  <circle cx="650" cy="448" r="2.6" fill="#FFFDF7"/>
+
+  <!-- sparkle -->
+  <path d="M 742 312 L 748 328 L 764 334 L 748 340 L 742 356 L 736 340 L 720 334 L 736 328 Z" fill="#E5C878"/>
+</svg>

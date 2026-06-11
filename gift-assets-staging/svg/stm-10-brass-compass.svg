@@ -1,0 +1,72 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <circle cx="592" cy="520" r="198"/>
+    <ellipse cx="306" cy="552" rx="84" ry="170"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="748" rx="265" ry="16" fill="#EADBBD"/>
+
+  <!-- opened hinged lid (left, seen edge-on as tilted disc) -->
+  <g>
+    <ellipse cx="282" cy="500" rx="74" ry="186" fill="#A8762F"/>
+    <ellipse cx="296" cy="500" rx="64" ry="172" fill="#C28F3F"/>
+    <ellipse cx="304" cy="500" rx="48" ry="150" fill="#D9A856"/>
+    <!-- lid inner engraved ring -->
+    <ellipse cx="306" cy="500" rx="34" ry="120" fill="none" stroke="#A8762F" stroke-width="4"/>
+    <path d="M 300 372 Q 282 440 284 512" fill="none" stroke="#EFCB8B" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <!-- hinge -->
+  <rect x="346" y="468" width="36" height="64" rx="12" fill="#8C6239"/>
+  <circle cx="364" cy="484" r="4" fill="#6E5238"/>
+  <circle cx="364" cy="516" r="4" fill="#6E5238"/>
+
+  <!-- compass body -->
+  <circle cx="556" cy="500" r="196" fill="#C28F3F"/>
+  <path d="M 392 408 A 190 190 0 0 1 520 310" fill="none" stroke="#D9A856" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="556" cy="500" r="196" fill="none" stroke="#A8762F" stroke-width="6"/>
+  <!-- crown/stem at top -->
+  <rect x="538" y="280" width="36" height="34" rx="8" fill="#A8762F"/>
+  <circle cx="556" cy="270" r="17" fill="none" stroke="#C28F3F" stroke-width="10"/>
+
+  <!-- dial face -->
+  <circle cx="556" cy="500" r="152" fill="#F2E9D8"/>
+  <circle cx="556" cy="500" r="152" fill="none" stroke="#A8762F" stroke-width="5"/>
+  <circle cx="556" cy="500" r="128" fill="none" stroke="#D9CBAE" stroke-width="3"/>
+  <!-- cardinal tick marks (lines only) -->
+  <g stroke="#6E5A4E" stroke-width="6" stroke-linecap="round">
+    <line x1="556" y1="364" x2="556" y2="392"/>
+    <line x1="556" y1="636" x2="556" y2="608"/>
+    <line x1="420" y1="500" x2="448" y2="500"/>
+    <line x1="692" y1="500" x2="664" y2="500"/>
+  </g>
+  <g stroke="#A98A5E" stroke-width="3.5" stroke-linecap="round">
+    <line x1="652" y1="404" x2="634" y2="422"/>
+    <line x1="652" y1="596" x2="634" y2="578"/>
+    <line x1="460" y1="404" x2="478" y2="422"/>
+    <line x1="460" y1="596" x2="478" y2="578"/>
+  </g>
+  <!-- inner cross lines -->
+  <g stroke="#E5DAC0" stroke-width="2.5">
+    <line x1="556" y1="372" x2="556" y2="628"/>
+    <line x1="428" y1="500" x2="684" y2="500"/>
+  </g>
+
+  <!-- needle (red north / steel south diamond) -->
+  <g transform="rotate(38 556 500)">
+    <path d="M 556 386 L 578 500 L 556 514 L 534 500 Z" fill="#C9574C"/>
+    <path d="M 556 386 L 578 500 L 556 500 Z" fill="#E8766B"/>
+    <path d="M 556 614 L 578 500 L 556 486 L 534 500 Z" fill="#A9AFB8"/>
+    <path d="M 556 614 L 534 500 L 556 500 Z" fill="#8F96A1"/>
+  </g>
+  <circle cx="556" cy="500" r="16" fill="#D9A856"/>
+  <circle cx="556" cy="500" r="8" fill="#A8762F"/>
+
+  <!-- glass highlight -->
+  <path d="M 446 408 Q 478 360 538 344" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- sparkle -->
+  <path d="M 790 320 L 796 336 L 812 342 L 796 348 L 790 364 L 784 348 L 768 342 L 784 336 Z" fill="#E5C878"/>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <circle cx="512" cy="560" r="195"/>
+    <ellipse cx="512" cy="340" rx="130" ry="92"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="760" rx="235" ry="16" fill="#EADBBD"/>
+  <defs>
+    <clipPath id="band"><circle cx="512" cy="560" r="195"/></clipPath>
+  </defs>
+  <!-- band -->
+  <g clip-path="url(#band)">
+    <circle cx="512" cy="560" r="195" fill="#A87844"/>
+    <circle cx="500" cy="548" r="195" fill="#C28F3F"/>
+    <ellipse cx="512" cy="438" rx="125" ry="30" fill="#8C6239" opacity="0.3"/>
+  </g>
+  <!-- finger hole -->
+  <circle cx="512" cy="560" r="124" fill="#FAF3E6"/>
+  <circle cx="512" cy="560" r="128" fill="none" stroke="#8C6239" stroke-width="6" opacity="0.35"/>
+  <!-- band engraved line along bottom -->
+  <path d="M 393 679 A 168 168 0 0 0 631 679" fill="none" stroke="#8C6239" stroke-width="4" opacity="0.5"/>
+  <!-- band outer highlight -->
+  <path d="M 329 560 A 183 183 0 0 1 512 377" fill="none" stroke="#EFCB8B" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+  <!-- bezel plate thickness then face -->
+  <ellipse cx="512" cy="350" rx="130" ry="92" fill="#A87844"/>
+  <ellipse cx="512" cy="340" rx="130" ry="92" fill="#D9A856" stroke="#A87844" stroke-width="5"/>
+  <ellipse cx="512" cy="340" rx="100" ry="66" fill="none" stroke="#A87844" stroke-width="5" opacity="0.8"/>
+  <path d="M 452 348 L 512 300 L 572 348" fill="none" stroke="#A87844" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 512 356 L 544 382 L 512 408 L 480 382 Z" fill="none" stroke="#A87844" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M 415 296 A 118 84 0 0 1 500 254" fill="none" stroke="#F4DFA8" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+</svg>

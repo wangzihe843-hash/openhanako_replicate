@@ -1,0 +1,54 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- warm glow aura (luminous: no long shadow) -->
+  <circle cx="512" cy="420" r="280" fill="#F8ECCB" opacity="0.55"/>
+  <circle cx="512" cy="420" r="206" fill="#F6E4B4" opacity="0.5"/>
+  <circle cx="512" cy="420" r="140" fill="#F4DCA0" opacity="0.45"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="788" rx="170" ry="14" fill="#EADBBD"/>
+
+  <!-- wooden stand block -->
+  <rect x="408" y="724" width="208" height="58" rx="16" fill="#A87844"/>
+  <rect x="408" y="724" width="208" height="24" rx="12" fill="#C09058"/>
+  <path d="M 432 762 L 472 762 M 540 768 L 590 768" stroke="#8C6239" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- brass screw base -->
+  <rect x="464" y="620" width="96" height="110" rx="14" fill="#C28F3F"/>
+  <g stroke="#A8762F" stroke-width="6">
+    <path d="M 466 644 Q 512 654 558 644"/>
+    <path d="M 466 670 Q 512 680 558 670"/>
+    <path d="M 466 696 Q 512 706 558 696"/>
+  </g>
+  <path d="M 470 632 Q 490 624 512 624" fill="none" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+  <!-- base collar -->
+  <rect x="452" y="606" width="120" height="26" rx="12" fill="#D9A856"/>
+  <line x1="464" y1="612" x2="540" y2="612" stroke="#EFCB8B" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- glass bulb -->
+  <path d="M 462 614 L 562 614 L 562 560 C 614 540 648 488 648 424 C 648 340 588 280 512 280 C 436 280 376 340 376 424 C 376 488 410 540 462 560 Z"
+        fill="#FBF3DC" stroke="#E2CFA0" stroke-width="6" opacity="0.96"/>
+
+  <!-- filament -->
+  <g stroke="#C9802E" stroke-width="6" fill="none" stroke-linecap="round">
+    <line x1="488" y1="608" x2="488" y2="498"/>
+    <line x1="536" y1="608" x2="536" y2="498"/>
+  </g>
+  <path d="M 488 498 L 472 468 L 504 438 L 480 408 L 512 378 L 544 408 L 520 438 L 552 468 L 536 498"
+        fill="none" stroke="#E89A3C" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- filament glow core -->
+  <circle cx="512" cy="438" r="56" fill="#F6C26B" opacity="0.5"/>
+  <circle cx="512" cy="432" r="30" fill="#FBDA9A" opacity="0.8"/>
+  <!-- glass tip nub -->
+  <circle cx="512" cy="282" r="9" fill="#E2CFA0"/>
+
+  <!-- glass highlight -->
+  <path d="M 420 360 Q 402 400 404 452" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.75"/>
+  <path d="M 438 322 Q 452 306 474 298" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- drifting warm sparkles -->
+  <path d="M 690 300 L 696 316 L 712 322 L 696 328 L 690 344 L 684 328 L 668 322 L 684 316 Z" fill="#E5C878"/>
+  <circle cx="332" cy="280" r="6" fill="#E5C878" opacity="0.8"/>
+  <circle cx="700" cy="500" r="5" fill="#E5C878" opacity="0.7"/>
+</svg>

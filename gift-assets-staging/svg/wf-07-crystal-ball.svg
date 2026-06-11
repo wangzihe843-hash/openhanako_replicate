@@ -1,0 +1,55 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <circle cx="572" cy="452" r="204"/>
+    <path d="M 460 626 Q 572 684 684 626 L 660 712 L 484 712 Z"/>
+    <rect x="456" y="708" width="232" height="30" rx="14"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="752" rx="210" ry="16" fill="#EADBBD"/>
+
+  <!-- glass sphere -->
+  <circle cx="512" cy="408" r="204" fill="#EFF3F0"/>
+  <circle cx="512" cy="408" r="204" fill="none" stroke="#D8CBB0" stroke-width="6"/>
+  <!-- inner mist -->
+  <clipPath id="ball"><circle cx="512" cy="408" r="198"/></clipPath>
+  <g clip-path="url(#ball)" fill="none" stroke-linecap="round">
+    <path d="M 360 430 Q 440 380 520 426 Q 600 470 668 422" stroke="#C9DCD5" stroke-width="26"/>
+    <path d="M 380 500 Q 470 458 560 502 Q 620 530 666 506" stroke="#D5E4DE" stroke-width="20"/>
+    <path d="M 400 340 Q 480 300 570 342" stroke="#D5E4DE" stroke-width="16" opacity="0.9"/>
+    <circle cx="452" cy="448" r="7" fill="#FFFFFF" stroke="none"/>
+    <circle cx="586" cy="380" r="5" fill="#FFFFFF" stroke="none"/>
+    <!-- tiny stars inside the mist -->
+    <path d="M 540 330 L 544 341 L 555 345 L 544 349 L 540 360 L 536 349 L 525 345 L 536 341 Z" fill="#FFFFFF" stroke="none" opacity="0.9"/>
+    <path d="M 446 510 L 449 518 L 457 521 L 449 524 L 446 532 L 443 524 L 435 521 L 443 518 Z" fill="#FFFFFF" stroke="none" opacity="0.8"/>
+    <circle cx="600" cy="470" r="4" fill="#FFFFFF" stroke="none" opacity="0.8"/>
+    <!-- bottom inner reflection -->
+    <path d="M 420 540 Q 512 588 604 540" stroke="#FFFFFF" stroke-width="8" opacity="0.4"/>
+  </g>
+  <!-- glass highlights -->
+  <path d="M 396 300 Q 372 350 372 408" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 420 268 Q 444 252 474 246" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- bronze stand -->
+  <path d="M 400 582 Q 512 640 624 582 L 600 668 L 424 668 Z" fill="#C28F3F"/>
+  <path d="M 512 612 Q 568 612 600 668 L 512 668 Z" fill="#A8762F"/>
+  <!-- engraved band -->
+  <path d="M 420 624 Q 512 664 604 624" fill="none" stroke="#A8762F" stroke-width="4" stroke-linecap="round"/>
+  <g fill="#D9A856">
+    <circle cx="468" cy="636" r="4"/>
+    <circle cx="512" cy="646" r="4"/>
+    <circle cx="556" cy="636" r="4"/>
+  </g>
+  <rect x="396" y="664" width="232" height="30" rx="14" fill="#A8762F"/>
+  <rect x="396" y="664" width="232" height="16" rx="8" fill="#C28F3F"/>
+  <line x1="408" y1="672" x2="616" y2="672" stroke="#D9A856" stroke-width="3" stroke-linecap="round"/>
+  <!-- claw feet -->
+  <path d="M 412 694 Q 406 712 418 716 L 434 716 Q 428 704 430 694 Z" fill="#A8762F"/>
+  <path d="M 594 694 Q 600 712 588 716 L 572 716 Q 578 704 576 694 Z" fill="#A8762F"/>
+  <!-- occlusion under sphere -->
+  <path d="M 430 596 Q 512 636 594 596 Q 560 622 512 622 Q 464 622 430 596 Z" fill="#8F6326" opacity="0.45"/>
+
+  <!-- sparkle -->
+  <path d="M 688 240 L 694 256 L 710 262 L 694 268 L 688 284 L 682 268 L 666 262 L 682 256 Z" fill="#FFFFFF" opacity="0.95"/>
+</svg>

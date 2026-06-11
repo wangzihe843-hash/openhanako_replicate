@@ -1,0 +1,58 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 560 320
+             C 610 334 656 360 656 410
+             C 656 448 636 474 608 490
+             C 676 514 716 572 716 634
+             C 716 700 668 744 600 754
+             L 560 754 Z"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="736" rx="180" ry="15" fill="#EADBBD"/>
+
+  <!-- cork stopper -->
+  <rect x="496" y="232" width="32" height="44" rx="9" fill="#8C6239"/>
+  <ellipse cx="512" cy="234" rx="16" ry="6" fill="#A87844"/>
+  <ellipse cx="512" cy="234" rx="9" ry="3.5" fill="#C09058"/>
+  <rect x="488" y="262" width="48" height="18" rx="9" fill="#A87844"/>
+  <line x1="494" y1="266" x2="530" y2="266" stroke="#C09058" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- gourd body: two lobes -->
+  <path d="M 512 276
+           C 568 276 600 318 600 366
+           C 600 404 580 430 552 446
+           C 620 470 660 528 660 590
+           C 660 672 596 724 512 724
+           C 428 724 364 672 364 590
+           C 364 528 404 470 472 446
+           C 444 430 424 404 424 366
+           C 424 318 456 276 512 276 Z" fill="#B5895A"/>
+  <!-- right shade -->
+  <path d="M 540 282
+           C 580 296 600 330 600 366
+           C 600 404 580 430 552 446
+           C 620 470 660 528 660 590
+           C 660 660 614 708 544 720
+           C 600 690 622 644 622 590
+           C 622 528 588 472 528 450
+           C 556 428 570 400 570 366
+           C 570 330 560 300 540 282 Z" fill="#A87844"/>
+  <!-- highlight -->
+  <path d="M 432 520 Q 408 560 412 612" fill="none" stroke="#D8B077" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 458 320 Q 448 348 452 378" fill="none" stroke="#D8B077" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- base occlusion -->
+  <path d="M 400 680 Q 512 738 624 680 Q 590 724 512 724 Q 434 724 400 680 Z" fill="#8C6239" opacity="0.45"/>
+
+  <!-- red cord at waist with twist texture -->
+  <path d="M 446 458 Q 512 484 578 458" fill="none" stroke="#C9574C" stroke-width="9" stroke-linecap="round"/>
+  <path d="M 460 466 L 466 458 M 488 474 L 494 466 M 516 478 L 522 470 M 544 474 L 550 466 M 566 464 L 572 456" stroke="#A8362E" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 452 472 Q 512 496 572 472" fill="none" stroke="#C9574C" stroke-width="6" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 506 470 Q 482 452 472 462 Q 466 474 500 482 Z" fill="#C9574C"/>
+  <path d="M 522 470 Q 546 452 556 462 Q 562 474 528 482 Z" fill="#C9574C"/>
+  <circle cx="514" cy="476" r="9" fill="#B83E35"/>
+  <path d="M 508 484 Q 500 506 506 522" fill="none" stroke="#B83E35" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 520 484 Q 528 506 522 522" fill="none" stroke="#B83E35" stroke-width="5" stroke-linecap="round"/>
+</svg>

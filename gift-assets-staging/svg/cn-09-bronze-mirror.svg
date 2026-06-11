@@ -1,0 +1,58 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow (disc + stand merged) -->
+  <circle cx="572" cy="464" r="235" fill="#F1E3C9"/>
+  <path d="M 470 620 L 706 620 L 716 786 L 446 786 Z" fill="#F1E3C9"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="235" ry="15" fill="#EADBBD"/>
+
+  <!-- mirror disc, back facing viewer -->
+  <circle cx="512" cy="420" r="235" fill="#C28F3F"/>
+  <circle cx="512" cy="420" r="205" fill="#D9A856"/>
+  <!-- rim light / shade -->
+  <path d="M 309 304 A 220 220 0 0 1 622 226" fill="none" stroke="#EFCB8B" stroke-width="11" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 719 496 A 220 220 0 0 1 432 632" fill="none" stroke="#8C6239" stroke-width="11" stroke-linecap="round" opacity="0.6"/>
+  <!-- field light / shade -->
+  <path d="M 335 356 A 188 188 0 0 1 576 243" fill="none" stroke="#EFCB8B" stroke-width="20" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 689 484 A 188 188 0 0 1 448 597" fill="none" stroke="#A87844" stroke-width="20" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- concentric relief ribs -->
+  <circle cx="512" cy="420" r="176" fill="none" stroke="#B58A3C" stroke-width="6"/>
+  <circle cx="512" cy="420" r="118" fill="none" stroke="#B58A3C" stroke-width="6"/>
+
+  <!-- scrolling vine relief: one stem repeated x4 -->
+  <g>
+    <g id="vine">
+      <path d="M 636 428 C 664 400 696 408 694 436 C 692 458 668 462 658 446 C 652 436 660 426 670 428"
+            fill="none" stroke="#B58A3C" stroke-width="8" stroke-linecap="round"/>
+      <ellipse cx="648" cy="396" rx="14" ry="7" fill="#B58A3C" transform="rotate(-32 648 396)"/>
+      <ellipse cx="686" cy="466" rx="12" ry="6" fill="#B58A3C" transform="rotate(48 686 466)"/>
+    </g>
+    <use href="#vine" transform="rotate(90 512 420)"/>
+    <use href="#vine" transform="rotate(180 512 420)"/>
+    <use href="#vine" transform="rotate(270 512 420)"/>
+  </g>
+
+  <!-- central knob -->
+  <circle cx="512" cy="420" r="62" fill="none" stroke="#B58A3C" stroke-width="6"/>
+  <circle cx="512" cy="420" r="42" fill="#8C6239"/>
+  <path d="M 488 402 A 30 30 0 0 1 522 392" fill="none" stroke="#D8B077" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- occlusion where cradle grips disc -->
+  <path d="M 372 580 A 226 226 0 0 0 652 580" fill="none" stroke="#8C6239" stroke-width="12" opacity="0.35"/>
+
+  <!-- wooden cradle (front) -->
+  <path d="M 351 612 A 250 250 0 0 0 673 612 L 655 590 A 222 222 0 0 1 369 590 Z" fill="#A87844"/>
+  <path d="M 360 600 A 236 236 0 0 0 664 600" fill="none" stroke="#8C6239" stroke-width="6" opacity="0.7"/>
+  <!-- stem -->
+  <rect x="494" y="656" width="36" height="52" rx="8" fill="#8C6239"/>
+  <!-- base -->
+  <rect x="376" y="698" width="272" height="36" rx="16" fill="#A87844"/>
+  <path d="M 392 706 L 632 706" stroke="#C09058" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 404 722 Q 512 716 620 722" fill="none" stroke="#8C6239" stroke-width="4" opacity="0.6"/>
+  <!-- feet -->
+  <rect x="396" y="730" width="54" height="16" rx="8" fill="#8C6239"/>
+  <rect x="574" y="730" width="54" height="16" rx="8" fill="#8C6239"/>
+</svg>

@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <rect x="412" y="370" width="320" height="368" rx="12" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="215" ry="15" fill="#EADBBD"/>
+
+  <!-- page block -->
+  <rect x="364" y="338" width="306" height="366" rx="8" fill="#E0D2B4"/>
+  <g stroke="#CDBC98" stroke-width="2.5">
+    <line x1="368" y1="698" x2="666" y2="698"/>
+    <line x1="370" y1="692" x2="664" y2="692"/>
+    <line x1="666" y1="344" x2="666" y2="696"/>
+    <line x1="660" y1="348" x2="660" y2="692"/>
+  </g>
+  <!-- warped page peeking -->
+  <path d="M 364 338 L 670 338 L 670 348 Q 540 336 364 350 Z" fill="#D4C29C"/>
+
+  <!-- cover (worn brown) -->
+  <path d="M 354 326 L 600 326 Q 622 332 638 350 L 656 380 L 656 676 Q 656 690 642 690 L 366 690 Q 354 690 354 678 Z" fill="#9A7350"/>
+  <!-- burnt/charred corner (top-right) -->
+  <path d="M 600 326 Q 622 332 638 350 L 656 380 L 656 430 Q 630 420 618 396 Q 604 372 606 348 Q 602 334 600 326 Z" fill="#5C4A40"/>
+  <path d="M 612 344 Q 620 368 636 388 Q 646 400 656 408 L 656 380 L 638 350 Q 626 336 612 344 Z" fill="#3E332C"/>
+  <path d="M 590 330 Q 600 352 596 372" fill="none" stroke="#6E5A4E" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <!-- spine band -->
+  <rect x="354" y="326" width="40" height="364" fill="#7E5C40"/>
+  <line x1="394" y1="330" x2="394" y2="686" stroke="#6B4D34" stroke-width="3"/>
+  <!-- spine ridges -->
+  <g stroke="#6B4D34" stroke-width="4" stroke-linecap="round">
+    <line x1="360" y1="380" x2="388" y2="380"/>
+    <line x1="360" y1="500" x2="388" y2="500"/>
+    <line x1="360" y1="620" x2="388" y2="620"/>
+  </g>
+
+  <!-- cover scuffs -->
+  <path d="M 430 380 Q 470 372 504 378" fill="none" stroke="#B08A64" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M 560 620 Q 600 614 628 622" fill="none" stroke="#B08A64" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M 412 656 Q 440 648 466 654" fill="none" stroke="#6B4D34" stroke-width="3.5" stroke-linecap="round" opacity="0.7"/>
+  <circle cx="588" cy="556" r="5" fill="#6B4D34" opacity="0.6"/>
+  <circle cx="446" cy="606" r="4" fill="#B08A64" opacity="0.8"/>
+
+  <!-- tape repair strip (diagonal) -->
+  <g transform="rotate(-32 470 470)">
+    <rect x="408" y="452" width="124" height="34" rx="4" fill="#D9CBAE" opacity="0.92"/>
+    <line x1="416" y1="458" x2="416" y2="480" stroke="#C2B190" stroke-width="3"/>
+    <line x1="524" y1="458" x2="524" y2="480" stroke="#C2B190" stroke-width="3"/>
+  </g>
+
+  <!-- blank label (no text) -->
+  <rect x="436" y="430" width="160" height="100" rx="8" fill="#E0D2B4"/>
+  <rect x="436" y="430" width="160" height="100" rx="8" fill="none" stroke="#C2B190" stroke-width="4"/>
+  <path d="M 588 430 L 596 438 L 588 446 Z" fill="#C2B190"/>
+  <!-- faded stripe on label -->
+  <rect x="452" y="500" width="96" height="9" rx="4.5" fill="#C2B190" opacity="0.8"/>
+  <rect x="452" y="482" width="128" height="9" rx="4.5" fill="#C2B190" opacity="0.6"/>
+
+  <!-- pressed little flower kept inside (peeking bookmark) -->
+  <path d="M 596 690 L 596 724 Q 604 718 610 724 L 610 690 Z" fill="#C9574C"/>
+
+  <!-- dust motes -->
+  <circle cx="330" cy="280" r="5" fill="#C2B190" opacity="0.8"/>
+  <path d="M 712 290 L 717 303 L 730 308 L 717 313 L 712 326 L 707 313 L 694 308 L 707 303 Z" fill="#C2B190"/>
+</svg>

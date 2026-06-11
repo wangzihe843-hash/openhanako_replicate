@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- soft pink aura -->
+  <circle cx="512" cy="520" r="245" fill="#F8E8EA" opacity="0.55"/>
+  <circle cx="512" cy="540" r="175" fill="#F6DEE2" opacity="0.5"/>
+
+  <!-- long cast shadow -->
+  <path d="M 560 380 L 630 396 C 678 470 692 560 672 660 L 600 718 L 568 696 C 600 590 596 470 560 404 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="730" rx="180" ry="15" fill="#EADBBD"/>
+
+  <!-- cork -->
+  <rect x="466" y="294" width="92" height="62" rx="14" fill="#C09058"/>
+  <rect x="466" y="294" width="34" height="62" rx="14" fill="#A87844"/>
+  <ellipse cx="512" cy="296" rx="46" ry="11" fill="#D8B077"/>
+  <line x1="474" y1="330" x2="550" y2="330" stroke="#8C6239" stroke-width="4"/>
+  <!-- blank paper tag on string -->
+  <path d="M 470 348 Q 432 368 424 404" fill="none" stroke="#C28F3F" stroke-width="4.5" stroke-linecap="round"/>
+  <g transform="rotate(-12 424 436)">
+    <rect x="394" y="406" width="62" height="44" rx="7" fill="#F2E9D8"/>
+    <rect x="394" y="406" width="62" height="44" rx="7" fill="none" stroke="#D9CBAE" stroke-width="3"/>
+    <circle cx="404" cy="416" r="4" fill="#D9CBAE"/>
+    <line x1="412" y1="432" x2="444" y2="432" stroke="#D9CBAE" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- round glass jar -->
+  <circle cx="512" cy="540" r="186" fill="#F7F0EE" stroke="#DCC9C4" stroke-width="6" opacity="0.97"/>
+  <rect x="470" y="350" width="84" height="34" rx="12" fill="#F7F0EE" stroke="#DCC9C4" stroke-width="6"/>
+
+  <!-- glowing fairy dust swirl inside -->
+  <clipPath id="jar9"><circle cx="512" cy="540" r="180"/></clipPath>
+  <g clip-path="url(#jar9)">
+    <!-- dust pool at bottom -->
+    <path d="M 340 622 Q 430 596 512 610 Q 600 624 690 604 L 690 730 L 340 730 Z" fill="#EFADB4"/>
+    <path d="M 540 614 Q 612 622 690 604 L 690 730 L 480 730 Q 566 686 540 614 Z" fill="#E2949D"/>
+    <path d="M 348 636 Q 432 610 512 622 Q 596 634 682 618 L 682 640 Q 598 654 512 642 Q 430 632 348 656 Z" fill="#F6C6CB" opacity="0.9"/>
+    <!-- rising swirl -->
+    <path d="M 444 600 Q 412 540 458 492 Q 506 444 480 396"
+          fill="none" stroke="#F6C6CB" stroke-width="13" stroke-linecap="round" opacity="0.85"/>
+    <path d="M 560 606 Q 600 540 560 480 Q 524 428 552 388"
+          fill="none" stroke="#EFD9A0" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+    <!-- glow core -->
+    <ellipse cx="512" cy="636" rx="84" ry="48" fill="#FBDDE0" opacity="0.85"/>
+    <ellipse cx="512" cy="630" rx="44" ry="26" fill="#FDF0F1" opacity="0.95"/>
+    <!-- floating sparkles inside -->
+    <path d="M 466 470 L 471 483 L 484 488 L 471 493 L 466 506 L 461 493 L 448 488 L 461 483 Z" fill="#E5C878"/>
+    <path d="M 568 440 L 572 450 L 582 454 L 572 458 L 568 468 L 564 458 L 554 454 L 564 450 Z" fill="#FDF0F1"/>
+    <circle cx="540" cy="520" r="6" fill="#E5C878"/>
+    <circle cx="470" cy="560" r="5" fill="#FBDDE0"/>
+    <circle cx="586" cy="560" r="5" fill="#E5C878"/>
+    <circle cx="446" cy="420" r="4" fill="#F6C6CB"/>
+  </g>
+
+  <!-- glass highlights -->
+  <path d="M 396 444 Q 372 492 372 552" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 416 408 Q 432 392 456 384" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.65"/>
+  <path d="M 648 590 Q 644 646 612 686" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.4"/>
+
+  <!-- escaped sparkles -->
+  <path d="M 668 300 L 674 316 L 690 322 L 674 328 L 668 344 L 662 328 L 646 322 L 662 316 Z" fill="#E5C878"/>
+  <circle cx="346" cy="350" r="5" fill="#F6C6CB" opacity="0.9"/>
+  <circle cx="700" cy="440" r="4.5" fill="#FBDDE0" opacity="0.85"/>
+</svg>

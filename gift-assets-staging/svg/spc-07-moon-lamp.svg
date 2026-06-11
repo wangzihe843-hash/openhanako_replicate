@@ -1,0 +1,46 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- warm glow aura (luminous) -->
+  <circle cx="512" cy="466" r="290" fill="#F8ECCB" opacity="0.55"/>
+  <circle cx="512" cy="466" r="222" fill="#F6E4B4" opacity="0.5"/>
+
+  <!-- ground contact -->
+  <ellipse cx="512" cy="772" rx="180" ry="14" fill="#EADBBD"/>
+
+  <!-- wooden cradle stand -->
+  <ellipse cx="512" cy="742" rx="128" ry="24" fill="#8C6239"/>
+  <ellipse cx="512" cy="736" rx="128" ry="22" fill="#A87844"/>
+  <path d="M 412 716 Q 402 660 452 632 L 472 654 Q 432 676 436 712 Z" fill="#A87844"/>
+  <path d="M 612 716 Q 622 660 572 632 L 552 654 Q 592 676 588 712 Z" fill="#8C6239"/>
+  <path d="M 416 712 Q 410 668 450 642" fill="none" stroke="#C09058" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- moon sphere -->
+  <g transform="translate(0 38)">
+  <circle cx="512" cy="430" r="196" fill="#F6E4B4"/>
+  <path d="M 588 250 A 196 196 0 0 1 700 480 Q 660 380 588 320 Z" fill="#EFD79A" opacity="0.8"/>
+  <!-- craters -->
+  <g fill="#EBD193">
+    <circle cx="440" cy="360" r="34"/>
+    <circle cx="560" cy="320" r="22"/>
+    <circle cx="600" cy="450" r="40"/>
+    <circle cx="460" cy="500" r="26"/>
+    <circle cx="530" cy="560" r="18"/>
+    <circle cx="386" cy="446" r="16"/>
+  </g>
+  <g fill="none" stroke="#E2C684" stroke-width="4" opacity="0.85">
+    <path d="M 414 346 A 34 34 0 0 1 462 340"/>
+    <path d="M 568 437 A 40 40 0 0 1 626 432"/>
+    <path d="M 442 488 A 26 26 0 0 1 478 486"/>
+  </g>
+  <!-- soft top-left light -->
+  <path d="M 376 320 A 196 196 0 0 1 470 244" fill="none" stroke="#FCF3D6" stroke-width="16" stroke-linecap="round" opacity="0.9"/>
+  </g>
+  <!-- occlusion where moon meets cradle -->
+  <path d="M 432 666 Q 512 706 592 666 Q 562 694 512 696 Q 462 694 432 666 Z" fill="#D9B96E" opacity="0.5"/>
+
+  <!-- drifting sparkles -->
+  <path d="M 740 270 L 746 286 L 762 292 L 746 298 L 740 314 L 734 298 L 718 292 L 734 286 Z" fill="#E5C878"/>
+  <circle cx="300" cy="300" r="6" fill="#E5C878" opacity="0.8"/>
+  <circle cx="772" cy="480" r="5" fill="#E5C878" opacity="0.7"/>
+</svg>

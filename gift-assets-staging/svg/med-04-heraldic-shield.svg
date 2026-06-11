@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <defs>
+    <clipPath id="shield">
+      <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z"/>
+    </clipPath>
+  </defs>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <circle cx="512" cy="272" r="30"/>
+    <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="772" rx="200" ry="15" fill="#EADBBD"/>
+  <!-- hanger ring (behind shield) -->
+  <circle cx="512" cy="272" r="24" fill="none" stroke="#C28F3F" stroke-width="13"/>
+  <path d="M 494 258 A 22 22 0 0 1 522 252" fill="none" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+  <!-- field -->
+  <g clip-path="url(#shield)">
+    <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z" fill="#9C352E"/>
+    <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z" transform="translate(-12,-10)" fill="#B83E35"/>
+    <line x1="346" y1="304" x2="678" y2="304" stroke="#C9574C" stroke-width="9" opacity="0.85"/>
+    <!-- bend (diagonal stripe) -->
+    <g transform="rotate(48 512 476)">
+      <rect x="152" y="430" width="720" height="92" fill="#C9CDD4"/>
+      <rect x="152" y="426" width="720" height="7" fill="#8F96A1"/>
+      <rect x="152" y="519" width="720" height="7" fill="#8F96A1"/>
+      <rect x="152" y="437" width="720" height="5" fill="#E6E9EE" opacity="0.75"/>
+    </g>
+  </g>
+  <!-- lozenges -->
+  <path d="M 600 348 L 632 380 L 600 412 L 568 380 Z" fill="#D9A856" stroke="#C28F3F" stroke-width="3"/>
+  <path d="M 612 360 L 622 370" stroke="#EFCB8B" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 424 548 L 456 580 L 424 612 L 392 580 Z" fill="#D9A856" stroke="#C28F3F" stroke-width="3"/>
+  <path d="M 436 560 L 446 570" stroke="#EFCB8B" stroke-width="4" stroke-linecap="round"/>
+  <!-- gold rim -->
+  <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z" fill="none" stroke="#C28F3F" stroke-width="20"/>
+  <path d="M 332 290 L 692 290 L 692 420 C 692 580 612 700 512 762 C 412 700 332 580 332 420 Z" fill="none" stroke="#D9A856" stroke-width="11"/>
+  <!-- ring contact occlusion -->
+  <rect x="498" y="286" width="28" height="9" fill="#7A2B25" opacity="0.4"/>
+</svg>

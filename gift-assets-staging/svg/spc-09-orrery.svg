@@ -1,0 +1,63 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <ellipse cx="600" cy="468" rx="248" ry="120"/>
+    <rect x="540" y="540" width="60" height="180" rx="20"/>
+    <ellipse cx="586" cy="730" rx="140" ry="30"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="746" rx="235" ry="16" fill="#EADBBD"/>
+
+  <!-- wooden base -->
+  <ellipse cx="512" cy="712" rx="150" ry="28" fill="#8C6239"/>
+  <ellipse cx="512" cy="704" rx="150" ry="26" fill="#A87844"/>
+  <ellipse cx="512" cy="700" rx="116" ry="17" fill="#C09058"/>
+  <path d="M 420 700 Q 470 690 512 690" fill="none" stroke="#D8B077" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- pillar -->
+  <path d="M 496 690 L 500 520 L 524 520 L 528 690 Z" fill="#C28F3F"/>
+  <path d="M 496 690 L 500 520 L 509 520 L 506 690 Z" fill="#D9A856"/>
+  <rect x="488" y="676" width="48" height="20" rx="9" fill="#A8762F"/>
+
+  <!-- orbit rings (tilted ellipses) -->
+  <g transform="rotate(-12 512 440)">
+    <ellipse cx="512" cy="440" rx="252" ry="92" fill="none" stroke="#C28F3F" stroke-width="9"/>
+    <path d="M 270 414 A 252 92 0 0 1 400 358" fill="none" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+    <ellipse cx="512" cy="440" rx="158" ry="56" fill="none" stroke="#A8762F" stroke-width="7"/>
+  </g>
+
+  <!-- sun at center -->
+  <circle cx="512" cy="440" r="58" fill="#D9A856"/>
+  <path d="M 470 410 A 52 52 0 0 1 510 384" fill="none" stroke="#EFCB8B" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="512" cy="440" r="58" fill="none" stroke="#A8762F" stroke-width="4"/>
+  <!-- sun rays (tiny studs) -->
+  <g fill="#C28F3F">
+    <circle cx="512" cy="372" r="5"/>
+    <circle cx="568" cy="396" r="5"/>
+    <circle cx="568" cy="484" r="5"/>
+    <circle cx="512" cy="508" r="5"/>
+    <circle cx="456" cy="484" r="5"/>
+    <circle cx="456" cy="396" r="5"/>
+  </g>
+
+  <!-- planets on rings -->
+  <g transform="rotate(-12 512 440)">
+    <!-- inner planet (rust) -->
+    <circle cx="368" cy="468" r="22" fill="#B07050"/>
+    <circle cx="362" cy="462" r="7" fill="#CE9579"/>
+    <!-- outer planet (muted blue) with tiny moon -->
+    <circle cx="724" cy="404" r="30" fill="#6E7FA8"/>
+    <circle cx="716" cy="396" r="10" fill="#8E9FC4"/>
+    <circle cx="762" cy="384" r="9" fill="#C9CDD4"/>
+  </g>
+
+  <!-- finial star on top of sun -->
+  <line x1="512" y1="382" x2="512" y2="330" stroke="#C28F3F" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 512 296 L 520 316 L 540 324 L 520 332 L 512 352 L 504 332 L 484 324 L 504 316 Z" fill="#D9A856"/>
+
+  <!-- sparkle -->
+  <path d="M 778 270 L 784 286 L 800 292 L 784 298 L 778 314 L 772 298 L 756 292 L 772 286 Z" fill="#E5C878"/>
+  <circle cx="260" cy="300" r="5" fill="#E5C878" opacity="0.8"/>
+</svg>

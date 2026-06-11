@@ -1,0 +1,60 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<rect width="1024" height="1024" fill="#FAF3E6"/>
+<!-- long shadow -->
+<g transform="translate(60,44)">
+  <path d="M 232 560 C 240 380 360 250 512 250 C 664 250 784 380 792 560" fill="none" stroke="#F1E3C9" stroke-width="46"/>
+  <circle cx="360" cy="565" r="145" fill="#F1E3C9"/>
+  <circle cx="664" cy="565" r="145" fill="#F1E3C9"/>
+  <rect x="460" y="520" width="104" height="40" fill="#F1E3C9"/>
+</g>
+<!-- ground -->
+<ellipse cx="512" cy="716" rx="330" ry="16" fill="#EADBBD"/>
+<!-- strap loop -->
+<path d="M 232 560 C 240 380 360 250 512 250 C 664 250 784 380 792 560" fill="none" stroke="#8C6239" stroke-width="46"/>
+<path d="M 232 560 C 240 380 360 250 512 250 C 664 250 784 380 792 560" fill="none" stroke="#C09058" stroke-width="4" stroke-dasharray="4 18" opacity="0.9"/>
+<!-- strap buckle at apex -->
+<rect x="486" y="218" width="52" height="60" rx="10" fill="#C28F3F"/>
+<rect x="498" y="230" width="28" height="36" rx="6" fill="#8C6239"/>
+<rect x="508" y="224" width="8" height="50" fill="#C28F3F"/>
+<!-- bridge -->
+<path d="M 466 548 Q 512 502 558 548" fill="none" stroke="#C28F3F" stroke-width="22"/>
+<!-- left lens -->
+<circle cx="360" cy="565" r="145" fill="#C28F3F"/>
+<circle cx="360" cy="565" r="145" fill="none" stroke="#8C6239" stroke-width="4"/>
+<circle cx="360" cy="565" r="118" fill="#A87844"/>
+<circle cx="360" cy="565" r="103" fill="#D7E4DD"/>
+<path d="M 257 565 A 103 103 0 0 0 463 565 Z" fill="#C3D6CE"/>
+<circle cx="360" cy="565" r="103" fill="none" stroke="#5E4730" stroke-width="3" opacity="0.5"/>
+<path d="M 290 510 A 92 92 0 0 1 340 470" stroke="#FFFFFF" stroke-width="11" opacity="0.75" fill="none" stroke-linecap="round"/>
+<path d="M 300 628 A 92 92 0 0 0 332 650" stroke="#FFFFFF" stroke-width="7" opacity="0.45" fill="none" stroke-linecap="round"/>
+<g fill="#5E4730">
+  <circle cx="360" cy="433" r="6.5"/>
+  <circle cx="474" cy="499" r="6.5"/>
+  <circle cx="474" cy="631" r="6.5"/>
+  <circle cx="360" cy="697" r="6.5"/>
+  <circle cx="246" cy="631" r="6.5"/>
+  <circle cx="246" cy="499" r="6.5"/>
+</g>
+<!-- right lens: multi-ring magnifier -->
+<circle cx="664" cy="565" r="145" fill="#C28F3F"/>
+<circle cx="664" cy="565" r="145" fill="none" stroke="#8C6239" stroke-width="4"/>
+<circle cx="664" cy="565" r="122" fill="#D9A856"/>
+<circle cx="664" cy="565" r="122" fill="none" stroke="#A87844" stroke-width="3"/>
+<circle cx="664" cy="565" r="100" fill="#C28F3F"/>
+<circle cx="664" cy="565" r="100" fill="none" stroke="#8C6239" stroke-width="3"/>
+<circle cx="664" cy="565" r="80" fill="#A87844"/>
+<circle cx="664" cy="565" r="62" fill="#D7E4DD"/>
+<path d="M 602 565 A 62 62 0 0 0 726 565 Z" fill="#C3D6CE"/>
+<circle cx="664" cy="565" r="62" fill="none" stroke="#5E4730" stroke-width="3" opacity="0.5"/>
+<path d="M 624 530 A 52 52 0 0 1 654 508" stroke="#FFFFFF" stroke-width="9" opacity="0.8" fill="none" stroke-linecap="round"/>
+<g fill="#5E4730">
+  <circle cx="664" cy="433" r="6.5"/>
+  <circle cx="778" cy="499" r="6.5"/>
+  <circle cx="778" cy="631" r="6.5"/>
+  <circle cx="664" cy="697" r="6.5"/>
+  <circle cx="550" cy="631" r="6.5"/>
+  <circle cx="550" cy="499" r="6.5"/>
+</g>
+<!-- verdigris accent on brass ring -->
+<path d="M 245 632 A 133 133 0 0 0 275 667" stroke="#6FA89B" stroke-width="9" opacity="0.55" fill="none" stroke-linecap="round"/>
+</svg>

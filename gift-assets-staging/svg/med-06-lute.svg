@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <defs>
+    <clipPath id="lutebody">
+      <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z"/>
+    </clipPath>
+  </defs>
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z"/>
+    <rect x="494" y="296" width="36" height="124"/>
+    <rect x="496" y="192" width="32" height="112" rx="8" transform="rotate(-58 512 300)"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="776" rx="215" ry="16" fill="#EADBBD"/>
+  <!-- pegbox (bent back) -->
+  <g transform="rotate(-58 512 300)">
+    <rect x="496" y="192" width="32" height="112" rx="8" fill="#8C6239"/>
+    <rect x="501" y="198" width="11" height="100" rx="5" fill="#A87844"/>
+    <circle cx="492" cy="215" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+    <circle cx="492" cy="243" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+    <circle cx="492" cy="271" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+    <circle cx="532" cy="229" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+    <circle cx="532" cy="257" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+    <circle cx="532" cy="285" r="7" fill="#A87844" stroke="#6B4F35" stroke-width="1.5"/>
+  </g>
+  <!-- neck -->
+  <rect x="494" y="300" width="36" height="124" fill="#8C6239"/>
+  <line x1="497" y1="302" x2="497" y2="420" stroke="#A87844" stroke-width="3"/>
+  <line x1="494" y1="322" x2="530" y2="322" stroke="#D8B077" stroke-width="3"/>
+  <line x1="494" y1="348" x2="530" y2="348" stroke="#D8B077" stroke-width="3"/>
+  <line x1="494" y1="374" x2="530" y2="374" stroke="#D8B077" stroke-width="3"/>
+  <line x1="494" y1="400" x2="530" y2="400" stroke="#D8B077" stroke-width="3"/>
+  <rect x="490" y="294" width="44" height="10" rx="3" fill="#E8D9B8"/>
+  <!-- body -->
+  <g clip-path="url(#lutebody)">
+    <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z" fill="#8C6239"/>
+    <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z" transform="translate(-14,-9)" fill="#A87844"/>
+    <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z" transform="translate(-40,-24)" fill="#C09058"/>
+    <path d="M 420 700 C 470 726 554 726 604 700" fill="none" stroke="#A87844" stroke-width="2.5" opacity="0.6"/>
+    <path d="M 436 730 C 478 750 546 750 588 730" fill="none" stroke="#A87844" stroke-width="2.5" opacity="0.6"/>
+  </g>
+  <path d="M 512 408 C 590 408 660 470 660 590 C 660 700 600 770 512 770 C 424 770 364 700 364 590 C 364 470 434 408 512 408 Z" fill="none" stroke="#8C6239" stroke-width="5"/>
+  <!-- neck-body occlusion -->
+  <ellipse cx="512" cy="416" rx="24" ry="7" fill="#5E4628" opacity="0.45"/>
+  <!-- rosette -->
+  <circle cx="512" cy="560" r="46" fill="#7A5530" stroke="#8C6239" stroke-width="6"/>
+  <line x1="478" y1="560" x2="546" y2="560" stroke="#C09058" stroke-width="3" opacity="0.9"/>
+  <line x1="482" y1="540" x2="542" y2="580" stroke="#C09058" stroke-width="3" opacity="0.9"/>
+  <line x1="482" y1="580" x2="542" y2="540" stroke="#C09058" stroke-width="3" opacity="0.9"/>
+  <circle cx="512" cy="560" r="20" fill="none" stroke="#C09058" stroke-width="3" opacity="0.9"/>
+  <!-- body highlight -->
+  <path d="M 408 470 C 384 520 376 570 380 618" fill="none" stroke="#E2BD86" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <!-- strings -->
+  <line x1="496" y1="304" x2="496" y2="666" stroke="#E8D9B8" stroke-width="2" opacity="0.9"/>
+  <line x1="504" y1="304" x2="504" y2="666" stroke="#E8D9B8" stroke-width="2" opacity="0.9"/>
+  <line x1="512" y1="304" x2="512" y2="666" stroke="#E8D9B8" stroke-width="2" opacity="0.9"/>
+  <line x1="520" y1="304" x2="520" y2="666" stroke="#E8D9B8" stroke-width="2" opacity="0.9"/>
+  <line x1="528" y1="304" x2="528" y2="666" stroke="#E8D9B8" stroke-width="2" opacity="0.9"/>
+  <!-- bridge -->
+  <rect x="466" y="680" width="92" height="6" rx="3" fill="#6B4F35" opacity="0.35"/>
+  <rect x="462" y="664" width="100" height="16" rx="7" fill="#7A5530"/>
+  <line x1="468" y1="668" x2="554" y2="668" stroke="#A87844" stroke-width="2.5"/>
+</svg>

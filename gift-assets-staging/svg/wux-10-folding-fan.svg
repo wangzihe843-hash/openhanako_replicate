@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow: leaf sector + rib triangle + tassel tab (sharing the inner arc) -->
+  <path d="M219.7,567.4 A430,430 0 0 1 924.3,567.4 L711.3,716.5 A170,170 0 0 0 432.7,716.5 Z" fill="#F1E3C9"/>
+  <path d="M432.7,716.5 A170,170 0 0 1 711.3,716.5 L590,824 L590,924 L554,924 L554,824 Z" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="888" rx="270" ry="15" fill="#EADBBD"/>
+
+  <!-- ===== inner ribs (pivot to leaf) ===== -->
+  <path d="M479.2,747.1 L372.7,672.5" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M484.2,741.2 L393.9,647.7" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M490.2,736.5 L419.4,627.4" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M497,732.9 L448.3,612.4" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M504.4,730.7 L479.6,603.1" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M512,730 L512,600" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M519.6,730.7 L544.4,603.1" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M527,732.9 L575.7,612.4" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M533.8,736.5 L604.6,627.4" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M539.8,741.2 L630.1,647.7" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M544.8,747.1 L651.3,672.5" stroke="#B08A56" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- ===== leaf ===== -->
+  <path d="M159.7,523.4 A430,430 0 0 1 864.3,523.4 L651.3,672.5 A170,170 0 0 0 372.7,672.5 Z" fill="#F6F0DF"/>
+  <!-- pleat shading (alternating wedges) -->
+  <path d="M372.7,672.5 L159.7,523.4 A430,430 0 0 1 213.3,460.7 L393.9,647.7 A170,170 0 0 0 372.7,672.5 Z" fill="#ECE3CB"/>
+  <path d="M419.4,627.4 L277.8,409.4 A430,430 0 0 1 350.9,371.3 L448.3,612.4 A170,170 0 0 0 419.4,627.4 Z" fill="#ECE3CB"/>
+  <path d="M479.6,603.1 L430,347.9 A430,430 0 0 1 512,340 L512,600 A170,170 0 0 0 479.6,603.1 Z" fill="#ECE3CB"/>
+  <path d="M544.4,603.1 L594,347.9 A430,430 0 0 1 673.1,371.3 L575.7,612.4 A170,170 0 0 0 544.4,603.1 Z" fill="#ECE3CB"/>
+  <path d="M604.6,627.4 L746.2,409.4 A430,430 0 0 1 810.7,460.7 L630.1,647.7 A170,170 0 0 0 604.6,627.4 Z" fill="#ECE3CB"/>
+  <!-- fold crease lines -->
+  <path d="M393.9,647.7 L213.3,460.7" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M419.4,627.4 L277.8,409.4" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M448.3,612.4 L350.9,371.3" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M479.6,603.1 L430,347.9" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M512,600 L512,340" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M544.4,603.1 L594,347.9" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M575.7,612.4 L673.1,371.3" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M604.6,627.4 L746.2,409.4" stroke="#DCCFB2" stroke-width="3"/>
+  <path d="M630.1,647.7 L810.7,460.7" stroke="#DCCFB2" stroke-width="3"/>
+  <!-- leaf edges -->
+  <path d="M159.7,523.4 A430,430 0 0 1 864.3,523.4" stroke="#E3D7BC" stroke-width="4" fill="none"/>
+  <path d="M372.7,672.5 A170,170 0 0 1 651.3,672.5" stroke="#E0D3B6" stroke-width="3" fill="none"/>
+
+  <!-- ===== ink bamboo painting ===== -->
+  <path d="M396,604 L408,545" stroke="#5C6B54" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <path d="M410,537 L422,478" stroke="#5C6B54" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M424,470 L434,418" stroke="#5C6B54" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M410,540 q28,-14 52,-18" stroke="#5C6B54" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M423,475 q24,-12 46,-12" stroke="#5C6B54" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- leaves: cluster 1 -->
+  <path d="M462,522 Q478,512 500,514 Q480,526 462,522 Z" fill="#5C6B54"/>
+  <path d="M458,526 Q470,540 490,544 Q468,544 458,526 Z" fill="#5C6B54" opacity="0.85"/>
+  <path d="M452,518 Q448,500 456,486 Q460,504 452,518 Z" fill="#74836B"/>
+  <!-- leaves: cluster 2 -->
+  <path d="M468,462 Q486,454 506,458 Q486,468 468,462 Z" fill="#5C6B54"/>
+  <path d="M466,456 Q476,440 494,434 Q478,450 466,456 Z" fill="#74836B"/>
+  <path d="M464,468 Q474,482 492,488 Q472,486 464,468 Z" fill="#5C6B54" opacity="0.85"/>
+  <!-- small accent leaf high -->
+  <path d="M438,414 Q452,404 470,406 Q452,416 438,414 Z" fill="#74836B"/>
+
+  <!-- ===== guard ribs ===== -->
+  <path d="M512,770 L159.7,523.4" stroke="#A87844" stroke-width="13" stroke-linecap="round"/>
+  <path d="M510,766 L166,527" stroke="#C9A05E" stroke-width="5" stroke-linecap="round"/>
+  <path d="M512,770 L864.3,523.4" stroke="#8C6239" stroke-width="13" stroke-linecap="round"/>
+  <path d="M514,766 L858,527" stroke="#A87844" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- rivet -->
+  <circle cx="512" cy="770" r="16" fill="#C28F3F"/>
+  <circle cx="512" cy="770" r="6" fill="#8C6239"/>
+  <path d="M503,762 C506,758 512,756 517,757" stroke="#EFCB8B" stroke-width="3" opacity="0.9" fill="none" stroke-linecap="round"/>
+
+  <!-- ===== red tassel (hangs vertical) ===== -->
+  <circle cx="512" cy="794" r="9" stroke="#C28F3F" stroke-width="5" fill="none"/>
+  <path d="M512,803 L512,824" stroke="#B83E35" stroke-width="5" fill="none"/>
+  <rect x="500" y="824" width="24" height="10" rx="3" fill="#D9A856"/>
+  <path d="M500,834 L524,834 L527,872 L521,884 L515,874 L508,884 L502,873 L497,872 Z" fill="#C9574C"/>
+  <path d="M505,840 L505,868 M512,840 L512,870 M519,840 L519,868" stroke="#B83E35" stroke-width="2" fill="none"/>
+</svg>

@@ -1,0 +1,76 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow (orb + base, offset 60,44) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <circle cx="512" cy="460" r="215"/>
+    <rect x="420" y="624" width="220" height="48" rx="14"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="716" rx="210" ry="15" fill="#EADBBD"/>
+
+  <!-- glass orb -->
+  <circle cx="512" cy="460" r="215" fill="#F5EFE1"/>
+  <path d="M 670 320 A 215 215 0 0 1 512 675 A 246 246 0 0 0 670 320 Z" fill="#E8E0CC"/>
+  <circle cx="512" cy="460" r="215" fill="none" stroke="#C4BBA2" stroke-width="6"/>
+
+  <!-- floating plant -->
+  <!-- roots dangling -->
+  <path d="M 500 462 C 492 510, 506 540, 488 588 C 482 606, 470 614, 458 618" fill="none" stroke="#C9A06A" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 514 466 C 516 520, 506 556, 522 600 C 528 616, 540 622, 552 620" fill="none" stroke="#C9A06A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 528 460 C 540 500, 556 524, 552 562" fill="none" stroke="#D8B077" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- root hairs -->
+  <line x1="496" y1="520" x2="484" y2="514" stroke="#C9A06A" stroke-width="3" stroke-linecap="round"/>
+  <line x1="510" y1="560" x2="522" y2="556" stroke="#C9A06A" stroke-width="3" stroke-linecap="round"/>
+  <line x1="488" y1="588" x2="498" y2="592" stroke="#D8B077" stroke-width="3" stroke-linecap="round"/>
+  <line x1="552" y1="528" x2="562" y2="522" stroke="#D8B077" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- root crown -->
+  <ellipse cx="512" cy="452" rx="26" ry="16" fill="#A87844"/>
+  <ellipse cx="512" cy="448" rx="26" ry="12" fill="#C09058"/>
+
+  <!-- leaves -->
+  <path d="M 512 446 Q 448 420 430 356 Q 492 372 512 440 Z" fill="#8FA882"/>
+  <path d="M 512 446 Q 576 420 594 356 Q 532 372 512 440 Z" fill="#8FA882"/>
+  <path d="M 510 442 Q 478 392 494 322 Q 524 376 514 440 Z" fill="#8FB98B"/>
+  <path d="M 514 442 Q 552 396 546 330 Q 518 380 510 440 Z" fill="#7FA87B"/>
+  <path d="M 512 444 Q 504 386 512 312 Q 522 386 514 444 Z" fill="#8FB98B"/>
+  <!-- leaf midrib -->
+  <path d="M 512 436 Q 508 380 512 326" fill="none" stroke="#7FA87B" stroke-width="2.5" opacity="0.8"/>
+
+  <!-- floating soil crumbs -->
+  <circle cx="424" cy="520" r="6" fill="#8C6239"/>
+  <circle cx="596" cy="498" r="5" fill="#8C6239"/>
+  <circle cx="452" cy="572" r="4" fill="#A87844"/>
+  <circle cx="580" cy="568" r="4.5" fill="#A87844"/>
+  <circle cx="406" cy="430" r="4" fill="#A87844"/>
+  <circle cx="612" cy="412" r="4" fill="#8C6239"/>
+  <!-- tiny floating droplets -->
+  <circle cx="438" cy="372" r="5" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="586" cy="340" r="4" fill="#FFFFFF" opacity="0.7"/>
+
+  <!-- glass highlights (double) -->
+  <path d="M 360 350 A 185 185 0 0 1 442 282" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 350 420 A 190 190 0 0 1 358 384" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.7"/>
+  <path d="M 640 588 A 200 200 0 0 0 668 552" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- flat seal collar on top -->
+  <path d="M 472 254 Q 512 232 552 254 L 552 226 Q 552 214 540 214 L 484 214 Q 472 214 472 226 Z" fill="#C28F3F"/>
+  <rect x="472" y="208" width="80" height="14" rx="7" fill="#D9A856"/>
+  <rect x="478" y="226" width="10" height="24" rx="5" fill="#D9A856" opacity="0.8"/>
+  <path d="M 476 256 Q 512 238 548 256" fill="none" stroke="#3E332C" stroke-width="5" opacity="0.16"/>
+
+  <!-- wooden base -->
+  <path d="M 412 666 L 612 666 Q 626 666 626 680 L 626 696 Q 626 710 612 710 L 412 710 Q 398 710 398 696 L 398 680 Q 398 666 412 666 Z" fill="#A87844"/>
+  <rect x="398" y="666" width="228" height="14" rx="7" fill="#C09058"/>
+  <rect x="398" y="698" width="228" height="12" rx="6" fill="#8C6239"/>
+  <!-- recess where orb sits -->
+  <path d="M 430 668 Q 512 702 594 668 Z" fill="#8C6239"/>
+  <path d="M 436 668 Q 512 698 588 668" fill="none" stroke="#3E332C" stroke-width="5" opacity="0.2"/>
+  <!-- wood grain -->
+  <path d="M 420 688 Q 470 684 510 690" fill="none" stroke="#8C6239" stroke-width="2.5" opacity="0.7"/>
+  <path d="M 540 692 Q 580 686 606 690" fill="none" stroke="#8C6239" stroke-width="2.5" opacity="0.7"/>
+  <!-- occlusion under base -->
+  <ellipse cx="512" cy="711" rx="100" ry="7" fill="#3E332C" opacity="0.13"/>
+</svg>

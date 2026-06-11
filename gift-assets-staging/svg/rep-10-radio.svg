@@ -1,0 +1,67 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 392 348 L 700 348 Q 770 348 786 420 L 800 660 Q 800 724 730 736 L 560 744 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="255" ry="16" fill="#EADBBD"/>
+
+  <!-- radio cabinet (arch top) -->
+  <path d="M 322 728 L 322 440 Q 322 318 512 318 Q 702 318 702 440 L 702 728 Z" fill="#A87844"/>
+  <path d="M 322 728 L 322 440 Q 322 326 480 320 Q 360 340 348 446 L 348 728 Z" fill="#C09058"/>
+  <!-- cabinet trim -->
+  <path d="M 342 728 L 342 446 Q 342 342 512 342 Q 682 342 682 446 L 682 728" fill="none" stroke="#8C6239" stroke-width="6"/>
+  <!-- base plinth -->
+  <rect x="306" y="712" width="412" height="40" rx="14" fill="#8C6239"/>
+  <rect x="306" y="712" width="412" height="16" rx="8" fill="#A87844"/>
+  <!-- feet -->
+  <rect x="338" y="746" width="44" height="16" rx="7" fill="#6E5238"/>
+  <rect x="642" y="746" width="44" height="16" rx="7" fill="#6E5238"/>
+
+  <!-- speaker grille (round, cloth + crossbars) -->
+  <circle cx="512" cy="478" r="108" fill="#8C6239"/>
+  <circle cx="512" cy="474" r="100" fill="#D9BE93"/>
+  <clipPath id="grille"><circle cx="512" cy="474" r="100"/></clipPath>
+  <g clip-path="url(#grille)">
+    <g stroke="#C4A678" stroke-width="4">
+      <line x1="412" y1="438" x2="612" y2="438"/>
+      <line x1="412" y1="474" x2="612" y2="474"/>
+      <line x1="412" y1="510" x2="612" y2="510"/>
+      <line x1="476" y1="374" x2="476" y2="574"/>
+      <line x1="548" y1="374" x2="548" y2="574"/>
+    </g>
+    <path d="M 432 398 Q 472 372 524 378" fill="none" stroke="#E8D7B5" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+  </g>
+  <!-- grille brass spokes -->
+  <g stroke="#C28F3F" stroke-width="10" stroke-linecap="round">
+    <line x1="512" y1="380" x2="512" y2="568"/>
+    <line x1="424" y1="430" x2="600" y2="518"/>
+    <line x1="600" y1="430" x2="424" y2="518"/>
+  </g>
+  <circle cx="512" cy="474" r="13" fill="#C28F3F"/>
+  <circle cx="509" cy="471" r="4.5" fill="#EFCB8B"/>
+
+  <!-- tuning dial strip (ticks only) -->
+  <rect x="376" y="610" width="272" height="44" rx="12" fill="#F2E9D8"/>
+  <rect x="376" y="610" width="272" height="44" rx="12" fill="none" stroke="#8C6239" stroke-width="4"/>
+  <g stroke="#A98A5E" stroke-width="3">
+    <line x1="398" y1="618" x2="398" y2="634"/><line x1="424" y1="618" x2="424" y2="628"/>
+    <line x1="450" y1="618" x2="450" y2="634"/><line x1="476" y1="618" x2="476" y2="628"/>
+    <line x1="502" y1="618" x2="502" y2="634"/><line x1="528" y1="618" x2="528" y2="628"/>
+    <line x1="554" y1="618" x2="554" y2="634"/><line x1="580" y1="618" x2="580" y2="628"/>
+    <line x1="606" y1="618" x2="606" y2="634"/><line x1="628" y1="618" x2="628" y2="628"/>
+  </g>
+  <!-- dial needle -->
+  <line x1="470" y1="614" x2="470" y2="650" stroke="#C9574C" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- knobs -->
+  <circle cx="376" cy="560" r="26" fill="#8C6239"/>
+  <circle cx="372" cy="556" r="20" fill="#C28F3F"/>
+  <rect x="368" y="544" width="8" height="24" rx="4" fill="#8C6239"/>
+  <circle cx="648" cy="560" r="26" fill="#8C6239"/>
+  <circle cx="644" cy="556" r="20" fill="#C28F3F"/>
+  <rect x="640" y="544" width="8" height="24" rx="4" fill="#8C6239"/>
+
+  <!-- top wood grain -->
+  <path d="M 420 350 Q 512 336 604 350" fill="none" stroke="#8C6239" stroke-width="3.5" stroke-linecap="round" opacity="0.7"/>
+</svg>

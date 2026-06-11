@@ -1,0 +1,40 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: can silhouette offset (60,44) -->
+  <path d="M502 344 a70 16 0 0 1 140 0 V744 a70 16 0 0 1 -140 0 Z" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="722" rx="180" ry="14" fill="#EADBBD"/>
+  <path d="M446 706 a66 13 0 0 0 132 0" fill="#3E332C" opacity="0.13"/>
+  <!-- can body -->
+  <path d="M442 300 H582 V700 a70 16 0 0 1 -140 0 Z" fill="#C9CDD4"/>
+  <!-- right-side shading -->
+  <path d="M540 300 H582 V700 a70 16 0 0 1 -42 14.6 Z" fill="#B2B7BF"/>
+  <!-- label band -->
+  <path d="M442 380 H582 V566 H442 Z" fill="#C77DA6"/>
+  <path d="M540 380 H582 V566 H540 Z" fill="#B36C95"/>
+  <path d="M442 380 H582 V392 H442 Z" fill="#A9608A" opacity="0.6"/>
+  <path d="M442 554 H582 V566 H442 Z" fill="#A9608A" opacity="0.6"/>
+  <!-- lightning bolt -->
+  <path d="M530 396 L468 480 L506 480 L484 548 L556 462 L516 462 L544 396 Z" fill="#FAF3E6"/>
+  <path d="M530 396 L468 480 L506 480 L484 548 L556 462 L516 462 L544 396 Z" fill="none" stroke="#7FB8BF" stroke-width="5"/>
+  <!-- small echo bolt -->
+  <path d="M470 412 L452 438 L464 438 L456 460 L478 434 L466 434 L474 412 Z" fill="#EADFF0" opacity="0.9"/>
+  <!-- bottom rim -->
+  <path d="M442 692 a70 16 0 0 0 140 0 V700 a70 16 0 0 1 -140 0 Z" fill="#8F96A1"/>
+  <!-- top neck rings -->
+  <path d="M442 320 H582 V328 H442 Z" fill="#A9AFB8" opacity="0.7"/>
+  <!-- lid -->
+  <ellipse cx="512" cy="300" rx="70" ry="16" fill="#A9AFB8"/>
+  <ellipse cx="512" cy="298" rx="62" ry="13" fill="#C9CDD4"/>
+  <ellipse cx="512" cy="299" rx="50" ry="10" fill="#B6BBC3"/>
+  <!-- pull tab -->
+  <rect x="498" y="284" width="44" height="13" rx="6.5" fill="#8F96A1"/>
+  <circle cx="534" cy="290" r="5" fill="#C9CDD4"/>
+  <!-- highlights -->
+  <path d="M458 330 V650" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.65"/>
+  <path d="M474 312 V348" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+  <!-- condensation droplets -->
+  <circle cx="556" cy="342" r="6" fill="#FFFFFF" opacity="0.55"/>
+  <circle cx="470" cy="600" r="5" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="552" cy="624" r="7" fill="#FFFFFF" opacity="0.45"/>
+</svg>

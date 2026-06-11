@@ -1,0 +1,56 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="378" y="420" width="324" height="196" rx="8"/>
+    <rect x="324" y="402" width="62" height="230" rx="28"/>
+    <rect x="694" y="402" width="62" height="230" rx="28"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="688" rx="270" ry="16" fill="#EADBBD"/>
+
+  <!-- unrolled parchment band -->
+  <rect x="350" y="392" width="324" height="196" fill="#EFE3C8"/>
+  <rect x="350" y="392" width="324" height="18" fill="#E2D2AE"/>
+  <rect x="350" y="570" width="324" height="18" fill="#E2D2AE"/>
+  <!-- parchment fiber texture -->
+  <g stroke="#E2D2AE" stroke-width="2.5" stroke-linecap="round" opacity="0.8">
+    <line x1="392" y1="448" x2="448" y2="446"/>
+    <line x1="560" y1="430" x2="640" y2="428"/>
+    <line x1="380" y1="540" x2="430" y2="538"/>
+    <line x1="600" y1="560" x2="656" y2="558"/>
+    <line x1="430" y1="492" x2="470" y2="490"/>
+  </g>
+  <!-- edge burn spots -->
+  <circle cx="372" cy="470" r="4" fill="#D9C49C"/>
+  <circle cx="652" cy="450" r="3.5" fill="#D9C49C"/>
+
+  <!-- left vertical roll -->
+  <rect x="296" y="376" width="62" height="228" rx="28" fill="#D9C49C"/>
+  <rect x="310" y="376" width="26" height="228" rx="13" fill="#EFE3C8"/>
+  <ellipse cx="327" cy="382" rx="28" ry="12" fill="#E2D2AE"/>
+  <ellipse cx="327" cy="382" rx="14" ry="6" fill="#C7B084"/>
+
+  <!-- right vertical roll -->
+  <rect x="666" y="376" width="62" height="228" rx="28" fill="#D9C49C"/>
+  <rect x="680" y="376" width="26" height="228" rx="13" fill="#EFE3C8"/>
+  <ellipse cx="697" cy="382" rx="28" ry="12" fill="#E2D2AE"/>
+  <ellipse cx="697" cy="382" rx="14" ry="6" fill="#C7B084"/>
+
+  <!-- ribbon under seal -->
+  <path d="M 532 540 L 532 642 L 556 618 L 580 642 L 580 540 Z" fill="#C9574C"/>
+  <path d="M 556 540 L 556 618 L 580 642 L 580 540 Z" fill="#B83E35"/>
+
+  <!-- wax seal with drips -->
+  <path d="M 516 542 Q 506 556 514 564 Q 524 568 528 552 Z" fill="#C0392B"/>
+  <path d="M 596 540 Q 606 558 598 566 Q 588 570 586 552 Z" fill="#C0392B"/>
+  <circle cx="556" cy="514" r="50" fill="#C0392B"/>
+  <circle cx="556" cy="510" r="42" fill="#C9574C"/>
+  <path d="M 530 488 A 36 36 0 0 1 560 476" fill="none" stroke="#D9746A" stroke-width="6" stroke-linecap="round"/>
+  <path d="M 556 484 L 564 501 L 583 503 L 569 516 L 572 535 L 556 525 L 540 535 L 543 516 L 529 503 L 548 501 Z"
+        fill="none" stroke="#A8322A" stroke-width="5" stroke-linejoin="round"/>
+
+  <!-- faint magic sparkles -->
+  <path d="M 720 320 L 726 336 L 742 342 L 726 348 L 720 364 L 714 348 L 698 342 L 714 336 Z" fill="#C7B3DC" opacity="0.9"/>
+  <circle cx="312" cy="330" r="6" fill="#C7B3DC" opacity="0.75"/>
+</svg>

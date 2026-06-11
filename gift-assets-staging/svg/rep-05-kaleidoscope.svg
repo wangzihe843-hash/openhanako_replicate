@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow: parallel diagonal swath -->
+  <path d="M 392 600 L 736 372 Q 766 356 776 384 Q 784 408 758 426 L 416 652 Q 388 668 378 642 Q 370 618 392 600 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="235" ry="16" fill="#EADBBD"/>
+
+  <g transform="rotate(-28 512 470)">
+    <!-- main tube: three segments -->
+    <rect x="282" y="436" width="200" height="78" rx="18" fill="#C28F3F"/>
+    <rect x="282" y="436" width="200" height="30" rx="15" fill="#D9A856"/>
+    <rect x="282" y="496" width="200" height="18" rx="9" fill="#A8762F"/>
+    <rect x="474" y="430" width="160" height="90" rx="16" fill="#8C6239"/>
+    <rect x="474" y="430" width="160" height="34" rx="16" fill="#A87844"/>
+    <!-- leather wrap ticks on mid segment -->
+    <g stroke="#6E5238" stroke-width="3.5" opacity="0.8">
+      <line x1="496" y1="434" x2="496" y2="516"/>
+      <line x1="524" y1="434" x2="524" y2="516"/>
+      <line x1="552" y1="434" x2="552" y2="516"/>
+      <line x1="580" y1="434" x2="580" y2="516"/>
+      <line x1="608" y1="434" x2="608" y2="516"/>
+    </g>
+    <rect x="626" y="424" width="100" height="102" rx="18" fill="#C28F3F"/>
+    <rect x="626" y="424" width="100" height="38" rx="18" fill="#D9A856"/>
+    <!-- brass bands -->
+    <rect x="466" y="426" width="18" height="98" rx="8" fill="#D9A856"/>
+    <rect x="618" y="420" width="18" height="110" rx="8" fill="#D9A856"/>
+    <!-- eyepiece (small end) -->
+    <rect x="252" y="452" width="34" height="46" rx="12" fill="#A8762F"/>
+    <ellipse cx="254" cy="475" rx="9" ry="17" fill="#5C4A40"/>
+
+    <!-- big end: patterned glass face -->
+    <ellipse cx="730" cy="475" rx="24" ry="53" fill="#A8762F"/>
+    <ellipse cx="734" cy="475" rx="18" ry="45" fill="#FFF9EE"/>
+    <clipPath id="kview"><ellipse cx="734" cy="475" rx="18" ry="45"/></clipPath>
+    <g clip-path="url(#kview)">
+      <path d="M 734 475 L 716 430 L 752 430 Z" fill="#E2949D"/>
+      <path d="M 734 475 L 752 430 L 752 520 Z" fill="#9CCFC4"/>
+      <path d="M 734 475 L 752 520 L 716 520 Z" fill="#D9A856"/>
+      <path d="M 734 475 L 716 520 L 716 430 Z" fill="#C7B3DC"/>
+      <circle cx="734" cy="475" r="7" fill="#FFF6EA"/>
+    </g>
+
+    <!-- tube highlight -->
+    <line x1="300" y1="448" x2="450" y2="448" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- floating pattern motes (echo of the view) -->
+  <circle cx="700" cy="270" r="7" fill="#E2949D" opacity="0.85"/>
+  <circle cx="736" cy="300" r="5" fill="#9CCFC4" opacity="0.85"/>
+  <path d="M 766 252 L 771 266 L 785 271 L 771 276 L 766 290 L 761 276 L 747 271 L 761 266 Z" fill="#D9A856" opacity="0.9"/>
+</svg>

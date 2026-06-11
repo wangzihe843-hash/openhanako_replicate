@@ -1,0 +1,61 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: merged silhouette offset (60,44) -->
+  <g fill="#F1E3C9">
+    <rect x="472" y="314" width="200" height="150" rx="56"/>
+    <rect x="542" y="440" width="60" height="60"/>
+    <rect x="492" y="484" width="160" height="206" rx="42"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="676" rx="240" ry="15" fill="#EADBBD"/>
+  <ellipse cx="462" cy="666" rx="32" ry="7" fill="#3E332C" opacity="0.14"/>
+  <ellipse cx="562" cy="666" rx="32" ry="7" fill="#3E332C" opacity="0.14"/>
+  <!-- antenna tail -->
+  <path d="M588 480 C652 452 670 408 662 366" fill="none" stroke="#8F96A1" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="661" cy="360" r="12" fill="#C77DA6"/>
+  <circle cx="657" cy="356" r="4" fill="#FFFFFF" opacity="0.9"/>
+  <!-- legs -->
+  <g>
+    <rect x="440" y="592" width="44" height="76" rx="20" fill="#A9AFB8"/>
+    <rect x="540" y="592" width="44" height="76" rx="20" fill="#A9AFB8"/>
+    <path d="M440 646 h44 v2 a22 20 0 0 1 -44 0 Z" fill="#8F96A1"/>
+    <path d="M540 646 h44 v2 a22 20 0 0 1 -44 0 Z" fill="#8F96A1"/>
+  </g>
+  <!-- body -->
+  <rect x="432" y="440" width="160" height="170" rx="46" fill="#C9CDD4"/>
+  <rect x="432" y="440" width="160" height="170" rx="46" fill="none" stroke="#B2B7BF" stroke-width="4"/>
+  <!-- ball-joint shoulders -->
+  <circle cx="462" cy="596" r="17" fill="#8F96A1"/>
+  <circle cx="562" cy="596" r="17" fill="#8F96A1"/>
+  <circle cx="457" cy="591" r="5" fill="#C9CDD4" opacity="0.8"/>
+  <circle cx="557" cy="591" r="5" fill="#C9CDD4" opacity="0.8"/>
+  <!-- belly panel -->
+  <rect x="462" y="476" width="100" height="92" rx="26" fill="#D9DCE1"/>
+  <line x1="472" y1="522" x2="552" y2="522" stroke="#B2B7BF" stroke-width="3"/>
+  <circle cx="512" cy="500" r="11" fill="#7FB8BF"/>
+  <circle cx="509" cy="497" r="3.5" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="478" cy="556" r="4" fill="#A9AFB8"/>
+  <circle cx="546" cy="556" r="4" fill="#A9AFB8"/>
+  <!-- neck -->
+  <rect x="482" y="408" width="60" height="44" rx="14" fill="#A9AFB8"/>
+  <rect x="482" y="408" width="60" height="12" rx="6" fill="#8F96A1" opacity="0.7"/>
+  <!-- ears (behind head) -->
+  <g fill="#A9AFB8">
+    <rect x="414" y="222" width="46" height="70" rx="22" transform="rotate(-16 437 257)"/>
+    <rect x="564" y="222" width="46" height="70" rx="22" transform="rotate(16 587 257)"/>
+  </g>
+  <g fill="#8F96A1" opacity="0.6">
+    <rect x="426" y="236" width="22" height="42" rx="11" transform="rotate(-16 437 257)"/>
+    <rect x="576" y="236" width="22" height="42" rx="11" transform="rotate(16 587 257)"/>
+  </g>
+  <!-- head -->
+  <rect x="412" y="270" width="200" height="152" rx="58" fill="#C9CDD4"/>
+  <path d="M436 310 a56 44 0 0 1 44 -28" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+  <!-- visor -->
+  <rect x="446" y="322" width="132" height="40" rx="20" fill="#6B7280"/>
+  <rect x="456" y="332" width="112" height="20" rx="10" fill="#7FB8BF"/>
+  <rect x="466" y="336" width="34" height="12" rx="6" fill="#FFFFFF" opacity="0.85"/>
+  <!-- chin seam + bolt -->
+  <line x1="468" y1="392" x2="556" y2="392" stroke="#B2B7BF" stroke-width="3.5"/>
+  <circle cx="588" cy="300" r="4.5" fill="#8F96A1"/>
+</svg>

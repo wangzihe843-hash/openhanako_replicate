@@ -1,0 +1,85 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="350" y="412" width="430" height="280" rx="24"/>
+    <rect x="700" y="330" width="80" height="160" rx="14"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="730" rx="260" ry="16" fill="#EADBBD"/>
+
+  <!-- wooden display plinth -->
+  <rect x="300" y="668" width="424" height="44" rx="14" fill="#A87844"/>
+  <rect x="300" y="668" width="424" height="18" rx="9" fill="#C09058"/>
+  <path d="M 330 700 L 380 700 M 560 704 L 640 704" stroke="#8C6239" stroke-width="3" stroke-linecap="round"/>
+  <!-- rail -->
+  <rect x="316" y="652" width="392" height="12" rx="6" fill="#8F96A1"/>
+
+  <!-- wheels with connecting rod -->
+  <g>
+    <circle cx="420" cy="618" r="46" fill="#5C4A40"/>
+    <circle cx="420" cy="618" r="34" fill="#8C6239"/>
+    <circle cx="420" cy="618" r="10" fill="#C28F3F"/>
+    <g stroke="#5C4A40" stroke-width="6"><line x1="420" y1="590" x2="420" y2="646"/><line x1="392" y1="618" x2="448" y2="618"/></g>
+    <circle cx="540" cy="618" r="46" fill="#5C4A40"/>
+    <circle cx="540" cy="618" r="34" fill="#8C6239"/>
+    <circle cx="540" cy="618" r="10" fill="#C28F3F"/>
+    <g stroke="#5C4A40" stroke-width="6"><line x1="540" y1="590" x2="540" y2="646"/><line x1="512" y1="618" x2="568" y2="618"/></g>
+    <circle cx="644" cy="630" r="32" fill="#5C4A40"/>
+    <circle cx="644" cy="630" r="22" fill="#8C6239"/>
+    <circle cx="644" cy="630" r="8" fill="#C28F3F"/>
+    <!-- connecting rod -->
+    <rect x="412" y="630" width="240" height="12" rx="6" fill="#C9CDD4"/>
+    <circle cx="420" cy="636" r="8" fill="#A9AFB8"/>
+    <circle cx="540" cy="636" r="8" fill="#A9AFB8"/>
+  </g>
+
+  <!-- boiler -->
+  <rect x="332" y="488" width="290" height="124" rx="56" fill="#7C8A74"/>
+  <rect x="332" y="488" width="290" height="52" rx="26" fill="#93A586"/>
+  <path d="M 350 588 Q 480 606 614 592" fill="none" stroke="#5F7A56" stroke-width="9" opacity="0.6"/>
+  <!-- brass boiler bands -->
+  <rect x="408" y="484" width="16" height="130" rx="7" fill="#D9A856"/>
+  <rect x="500" y="484" width="16" height="130" rx="7" fill="#D9A856"/>
+  <!-- rivets -->
+  <g fill="#5F7A56">
+    <circle cx="372" cy="500" r="3.5"/><circle cx="372" cy="596" r="3.5"/>
+    <circle cx="462" cy="498" r="3.5"/><circle cx="462" cy="600" r="3.5"/>
+    <circle cx="556" cy="500" r="3.5"/><circle cx="556" cy="598" r="3.5"/>
+  </g>
+  <!-- smokebox front -->
+  <rect x="318" y="496" width="36" height="110" rx="16" fill="#5C4A40"/>
+  <circle cx="336" cy="551" r="22" fill="#6E5A4E"/>
+  <circle cx="332" cy="547" r="8" fill="#8C7A6C"/>
+  <!-- chimney -->
+  <path d="M 360 492 L 360 428 L 348 412 L 412 412 L 400 428 L 400 492 Z" fill="#5C4A40"/>
+  <rect x="348" y="404" width="64" height="16" rx="8" fill="#C28F3F"/>
+  <!-- steam dome -->
+  <path d="M 450 488 Q 450 452 480 452 Q 510 452 510 488 Z" fill="#D9A856"/>
+  <circle cx="480" cy="452" r="9" fill="#C28F3F"/>
+
+  <!-- cab -->
+  <rect x="608" y="448" width="120" height="208" rx="14" fill="#8C6239"/>
+  <rect x="608" y="448" width="120" height="20" rx="10" fill="#A87844"/>
+  <rect x="596" y="436" width="144" height="22" rx="10" fill="#C28F3F"/>
+  <!-- cab window -->
+  <rect x="632" y="486" width="72" height="64" rx="10" fill="#F2E9D8"/>
+  <rect x="632" y="486" width="72" height="64" rx="10" fill="none" stroke="#6E5238" stroke-width="5"/>
+  <path d="M 642 532 L 668 498" stroke="#FFFDF4" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <!-- cab panel lines -->
+  <line x1="624" y1="580" x2="712" y2="580" stroke="#6E5238" stroke-width="4"/>
+  <circle cx="668" cy="612" r="9" fill="#D9A856"/>
+  <circle cx="665" cy="609" r="3" fill="#EFCB8B"/>
+
+  <!-- puff of steam (flat cloud) -->
+  <g fill="#F4EEE0">
+    <circle cx="392" cy="358" r="26"/>
+    <circle cx="424" cy="344" r="20"/>
+    <circle cx="362" cy="346" r="18"/>
+  </g>
+  <g fill="#FFF9EE">
+    <circle cx="396" cy="350" r="18"/>
+    <circle cx="420" cy="338" r="13"/>
+  </g>
+</svg>

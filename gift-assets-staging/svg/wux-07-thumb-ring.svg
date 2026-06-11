@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <defs>
+    <clipPath id="lidClip"><rect x="350" y="606" width="324" height="60" rx="14"/></clipPath>
+  </defs>
+
+  <!-- long shadow: ring circle + box, overlapping -->
+  <circle cx="572" cy="514" r="158" fill="#F1E3C9"/>
+  <rect x="410" y="650" width="324" height="186" rx="16" fill="#F1E3C9"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="806" rx="250" ry="15" fill="#EADBBD"/>
+
+  <!-- ===== brocade box ===== -->
+  <!-- body -->
+  <rect x="368" y="672" width="288" height="120" rx="12" fill="#B83E35"/>
+  <path d="M584,672 L644,672 Q656,672 656,684 L656,780 Q656,792 644,792 L584,792 Z" fill="#9E332B"/>
+  <!-- gold band -->
+  <rect x="346" y="662" width="332" height="13" rx="6" fill="#D9A856"/>
+  <rect x="352" y="664" width="180" height="4" rx="2" fill="#EFCB8B" opacity="0.9"/>
+  <!-- lid -->
+  <rect x="350" y="606" width="324" height="60" rx="14" fill="#C9574C"/>
+  <g clip-path="url(#lidClip)" opacity="0.35">
+    <path d="M330,666 L410,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M370,666 L450,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M410,666 L490,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M450,666 L530,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M490,666 L570,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M530,666 L610,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M570,666 L650,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M610,666 L690,596" stroke="#E8766B" stroke-width="3"/>
+    <path d="M340,596 L420,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M380,596 L460,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M420,596 L500,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M460,596 L540,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M500,596 L580,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M540,596 L620,666" stroke="#E8766B" stroke-width="3"/>
+    <path d="M580,596 L660,666" stroke="#E8766B" stroke-width="3"/>
+  </g>
+  <path d="M590,606 L660,606 Q674,606 674,620 L674,652 Q674,666 660,666 L590,666 Z" fill="#B8483E" opacity="0.7"/>
+  <rect x="362" y="611" width="170" height="7" rx="3.5" fill="#E8766B" opacity="0.8"/>
+  <!-- clasp -->
+  <rect x="496" y="666" width="32" height="24" rx="6" fill="#D9A856"/>
+  <circle cx="512" cy="678" r="6" fill="#C28F3F"/>
+  <!-- occlusion: box body under lid -->
+  <rect x="368" y="675" width="288" height="8" fill="#3E332C" opacity="0.2"/>
+
+  <!-- contact shadow of ring on lid -->
+  <ellipse cx="512" cy="620" rx="82" ry="10" fill="#7E2B24" opacity="0.4"/>
+
+  <!-- ===== jade thumb ring ===== -->
+  <!-- band base -->
+  <circle cx="512" cy="470" r="122" stroke="#ECEFE0" stroke-width="72" fill="none"/>
+  <!-- lower-right shading -->
+  <path d="M617.7,409 A122,122 0 0 1 451,575.7" stroke="#D8DEC9" stroke-width="72" fill="none"/>
+  <!-- deeper shade near inner edge bottom -->
+  <path d="M594.3,517.5 A95,95 0 0 1 429.7,517.5" stroke="#C4CDB2" stroke-width="18" fill="none"/>
+  <!-- outer lower rim shade -->
+  <path d="M605.9,548.4 A150,150 0 0 1 418.1,548.4" stroke="#C9D0B8" stroke-width="14" fill="none"/>
+  <!-- edges -->
+  <circle cx="512" cy="470" r="158" stroke="#C9D0B8" stroke-width="4" fill="none"/>
+  <circle cx="512" cy="470" r="86" fill="#FAF3E6" stroke="#C2CBB0" stroke-width="4"/>
+  <!-- inner far-wall hint (depth) -->
+  <path d="M441.6,420.7 A86,86 0 0 1 582.4,420.7 A150,150 0 0 0 441.6,420.7 Z" fill="#DDE3CE" opacity="0.9"/>
+  <!-- the single bold highlight -->
+  <path d="M397.4,428.3 A140,140 0 0 1 470.3,355.4" stroke="#FFFFFF" stroke-width="16" opacity="0.92" fill="none" stroke-linecap="round"/>
+</svg>

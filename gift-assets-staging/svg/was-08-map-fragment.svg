@@ -1,0 +1,58 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <path d="M 360 420 L 720 380 L 762 660 L 700 736 L 410 752 L 372 600 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="758" rx="265" ry="16" fill="#EADBBD"/>
+
+  <g transform="rotate(-5 512 520)">
+    <!-- torn map paper -->
+    <path d="M 318 356
+             L 420 340 L 452 352 L 540 336 L 624 350 L 700 338
+             L 716 420 L 702 470 L 718 560 L 700 640 L 712 690
+             L 620 706 L 560 692 L 470 708 L 392 696 L 322 706
+             L 334 620 L 318 540 L 336 470 Z" fill="#E0D2B4"/>
+    <!-- worn edge shade -->
+    <path d="M 318 356 L 420 340 L 452 352 L 540 336 L 624 350 L 700 338 L 716 420 L 700 424 Q 600 360 460 372 Q 380 378 330 398 Z" fill="#D4C29C" opacity="0.7"/>
+    <path d="M 712 690 L 620 706 L 560 692 L 470 708 L 392 696 L 322 706 L 326 680 Q 460 700 600 678 Q 670 668 706 668 Z" fill="#CDBC98" opacity="0.7"/>
+    <!-- crease folds -->
+    <line x1="448" y1="346" x2="442" y2="700" stroke="#CDBC98" stroke-width="4" opacity="0.8"/>
+    <line x1="590" y1="342" x2="586" y2="696" stroke="#CDBC98" stroke-width="4" opacity="0.6"/>
+
+    <!-- map drawings -->
+    <!-- coastline -->
+    <path d="M 344 560 Q 400 520 460 548 Q 520 576 580 540" fill="none" stroke="#9A9B6E" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 344 580 Q 400 542 460 568 Q 520 594 578 560" fill="none" stroke="#B6B78C" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+    <!-- mountains -->
+    <g fill="none" stroke="#8A6242" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 380 430 L 406 392 L 432 430"/>
+      <path d="M 428 442 L 450 410 L 472 442"/>
+    </g>
+    <!-- forest dots -->
+    <g fill="#9A9B6E">
+      <circle cx="530" cy="430" r="8"/>
+      <circle cx="556" cy="446" r="7"/>
+      <circle cx="540" cy="464" r="6"/>
+    </g>
+    <!-- dashed route -->
+    <path d="M 388 640 Q 460 600 520 614 Q 590 630 620 568 Q 640 520 628 470"
+          fill="none" stroke="#B07050" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 18"/>
+    <!-- destination: red target -->
+    <circle cx="630" cy="448" r="20" fill="none" stroke="#C9574C" stroke-width="6"/>
+    <circle cx="630" cy="448" r="7" fill="#C9574C"/>
+    <!-- compass rose (4-point star) -->
+    <path d="M 660 620 L 668 642 L 690 650 L 668 658 L 660 680 L 652 658 L 630 650 L 652 642 Z" fill="#8A6242"/>
+    <circle cx="660" cy="650" r="6" fill="#E0D2B4"/>
+    <!-- coffee/water stain ring -->
+    <circle cx="416" cy="500" r="30" fill="none" stroke="#C9AE7E" stroke-width="7" opacity="0.55"/>
+  </g>
+
+  <!-- rusty pin at corner -->
+  <circle cx="700" cy="360" r="14" fill="#B07050"/>
+  <circle cx="696" cy="356" r="5" fill="#CE9579"/>
+
+  <!-- dust motes -->
+  <circle cx="310" cy="300" r="5" fill="#C2B190" opacity="0.8"/>
+  <path d="M 760 270 L 765 283 L 778 288 L 765 293 L 760 306 L 755 293 L 742 288 L 755 283 Z" fill="#C2B190"/>
+</svg>

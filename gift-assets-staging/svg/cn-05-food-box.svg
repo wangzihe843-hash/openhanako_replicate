@@ -1,0 +1,70 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="430" y="430" width="296" height="290" rx="20"/>
+    <rect x="656" y="430" width="44" height="280" rx="20"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="742" rx="195" ry="15" fill="#EADBBD"/>
+
+  <!-- handle frame (behind box) -->
+  <path d="M 388 660 L 388 322 Q 388 286 424 286 L 600 286 Q 636 286 636 322 L 636 660"
+        fill="none" stroke="#8A6242" stroke-width="20" stroke-linecap="round"/>
+  <path d="M 396 600 L 396 326 Q 396 296 424 294" fill="none" stroke="#9C7252" stroke-width="6" stroke-linecap="round"/>
+  <!-- bamboo wrap ticks on handle top -->
+  <g stroke="#6E5238" stroke-width="4" stroke-linecap="round">
+    <line x1="446" y1="280" x2="446" y2="296"/>
+    <line x1="470" y1="278" x2="470" y2="294"/>
+    <line x1="554" y1="278" x2="554" y2="294"/>
+    <line x1="578" y1="280" x2="578" y2="296"/>
+  </g>
+  <!-- red cord bow on handle -->
+  <path d="M 506 284 Q 480 266 471 279 Q 465 292 502 295 Z" fill="#C9574C"/>
+  <path d="M 518 284 Q 544 266 553 279 Q 559 292 522 295 Z" fill="#C9574C"/>
+  <path d="M 500 280 Q 486 272 480 278" fill="none" stroke="#E8766B" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 524 280 Q 538 272 544 278" fill="none" stroke="#E8766B" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 506 292 Q 496 314 502 326 Q 511 321 511 296 Z" fill="#B83E35"/>
+  <path d="M 518 292 Q 528 314 522 326 Q 513 321 513 296 Z" fill="#B83E35"/>
+  <circle cx="512" cy="288" r="9" fill="#B83E35"/>
+  <circle cx="509" cy="285" r="3" fill="#D34E42"/>
+
+  <!-- bottom tier -->
+  <rect x="362" y="610" width="300" height="106" rx="18" fill="#C09058"/>
+  <rect x="362" y="690" width="300" height="26" rx="13" fill="#A87844"/>
+  <rect x="362" y="610" width="300" height="12" rx="6" fill="#8C6239" opacity="0.5"/>
+  <!-- middle tier -->
+  <rect x="368" y="512" width="288" height="102" rx="18" fill="#C09058"/>
+  <rect x="368" y="588" width="288" height="26" rx="13" fill="#A87844"/>
+  <rect x="368" y="512" width="288" height="12" rx="6" fill="#8C6239" opacity="0.5"/>
+  <!-- top tier -->
+  <rect x="374" y="416" width="276" height="100" rx="18" fill="#C09058"/>
+  <rect x="374" y="490" width="276" height="26" rx="13" fill="#A87844"/>
+
+  <!-- wood grain: vertical slat lines per tier -->
+  <g stroke="#AD7F4D" stroke-width="3">
+    <line x1="430" y1="424" x2="430" y2="488"/><line x1="486" y1="424" x2="486" y2="488"/>
+    <line x1="542" y1="424" x2="542" y2="488"/><line x1="598" y1="424" x2="598" y2="488"/>
+    <line x1="424" y1="520" x2="424" y2="586"/><line x1="480" y1="520" x2="480" y2="586"/>
+    <line x1="536" y1="520" x2="536" y2="586"/><line x1="592" y1="520" x2="592" y2="586"/>
+    <line x1="418" y1="618" x2="418" y2="688"/><line x1="474" y1="618" x2="474" y2="688"/>
+    <line x1="530" y1="618" x2="530" y2="688"/><line x1="586" y1="618" x2="586" y2="688"/><line x1="640" y1="618" x2="640" y2="688"/>
+  </g>
+  <!-- left edge highlights -->
+  <rect x="380" y="428" width="11" height="74" rx="5.5" fill="#D8B077"/>
+  <rect x="374" y="524" width="11" height="76" rx="5.5" fill="#D8B077"/>
+  <rect x="368" y="622" width="11" height="80" rx="5.5" fill="#D8B077"/>
+  <!-- ambient occlusion under tiers -->
+  <rect x="374" y="608" width="288" height="8" rx="4" fill="#6E5238" opacity="0.35"/>
+  <rect x="380" y="510" width="276" height="8" rx="4" fill="#6E5238" opacity="0.35"/>
+
+  <!-- lid -->
+  <rect x="380" y="376" width="264" height="48" rx="20" fill="#A87844"/>
+  <rect x="380" y="376" width="264" height="26" rx="13" fill="#B5895A"/>
+  <path d="M 392 384 Q 512 372 632 384" fill="none" stroke="#C9A06A" stroke-width="4" stroke-linecap="round"/>
+  <!-- lid knob -->
+  <circle cx="512" cy="372" r="17" fill="#8C6239"/>
+  <circle cx="512" cy="368" r="13" fill="#A87844"/>
+  <circle cx="507" cy="364" r="5" fill="#C09058"/>
+</svg>

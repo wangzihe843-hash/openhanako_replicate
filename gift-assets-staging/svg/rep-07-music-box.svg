@@ -1,0 +1,76 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="392" y="430" width="400" height="290" rx="20"/>
+    <path d="M 398 372 L 700 306 L 760 330 L 460 400 Z"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="724" rx="240" ry="16" fill="#EADBBD"/>
+
+  <!-- open lid (tilted back) -->
+  <g>
+    <path d="M 348 392 L 648 322 L 692 348 L 392 414 Z" fill="#A87844"/>
+    <path d="M 348 392 L 648 322 L 648 334 L 352 402 Z" fill="#C09058"/>
+    <!-- inner lid face -->
+    <path d="M 362 396 L 642 334 L 676 352 L 398 412 Z" fill="#D8B077"/>
+    <!-- inner lid mirror -->
+    <path d="M 398 392 L 612 344 L 640 358 L 428 404 Z" fill="#EFF3F0"/>
+    <path d="M 420 390 L 540 364" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+    <!-- hinge -->
+    <rect x="384" y="408" width="36" height="12" rx="5" fill="#8C6239"/>
+    <rect x="580" y="408" width="36" height="12" rx="5" fill="#8C6239"/>
+  </g>
+
+  <!-- box body -->
+  <rect x="340" y="416" width="392" height="270" rx="18" fill="#C09058"/>
+  <rect x="340" y="416" width="392" height="20" rx="10" fill="#8C6239" opacity="0.6"/>
+  <rect x="340" y="650" width="392" height="36" rx="16" fill="#A87844"/>
+  <!-- wood grain -->
+  <g stroke="#AD7F4D" stroke-width="3">
+    <line x1="372" y1="560" x2="372" y2="640"/>
+    <line x1="700" y1="560" x2="700" y2="640"/>
+  </g>
+  <path d="M 360 588 Q 420 580 470 588" fill="none" stroke="#AD7F4D" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 600 600 Q 650 592 712 600" fill="none" stroke="#AD7F4D" stroke-width="3" stroke-linecap="round"/>
+  <!-- brass corner caps -->
+  <path d="M 340 660 Q 340 686 366 686 L 392 686 L 392 660 Z" fill="#C28F3F"/>
+  <path d="M 732 660 Q 732 686 706 686 L 680 686 L 680 660 Z" fill="#C28F3F"/>
+  <circle cx="366" cy="672" r="3.5" fill="#A8762F"/>
+  <circle cx="706" cy="672" r="3.5" fill="#A8762F"/>
+
+  <!-- interior opening with mechanism -->
+  <rect x="362" y="436" width="348" height="120" rx="10" fill="#6E5238"/>
+  <rect x="362" y="436" width="348" height="14" rx="7" fill="#5C4530"/>
+  <!-- pinned cylinder -->
+  <rect x="392" y="462" width="240" height="64" rx="30" fill="#D9A856"/>
+  <rect x="392" y="462" width="240" height="26" rx="13" fill="#EFCB8B"/>
+  <rect x="392" y="508" width="240" height="18" rx="9" fill="#C28F3F"/>
+  <!-- pins -->
+  <g fill="#A8762F">
+    <circle cx="420" cy="488" r="3.5"/><circle cx="452" cy="498" r="3.5"/><circle cx="484" cy="484" r="3.5"/>
+    <circle cx="516" cy="496" r="3.5"/><circle cx="548" cy="486" r="3.5"/><circle cx="580" cy="498" r="3.5"/>
+    <circle cx="608" cy="488" r="3.5"/>
+  </g>
+  <ellipse cx="634" cy="494" rx="13" ry="32" fill="#C28F3F"/>
+  <ellipse cx="637" cy="494" rx="8" ry="26" fill="#A8762F"/>
+  <!-- comb -->
+  <rect x="648" y="466" width="44" height="60" rx="6" fill="#C9CDD4"/>
+  <g stroke="#8F96A1" stroke-width="3">
+    <line x1="656" y1="472" x2="656" y2="520"/>
+    <line x1="666" y1="472" x2="666" y2="520"/>
+    <line x1="676" y1="472" x2="676" y2="520"/>
+    <line x1="686" y1="472" x2="686" y2="520"/>
+  </g>
+
+  <!-- side crank key -->
+  <rect x="726" y="556" width="48" height="14" rx="7" fill="#C28F3F"/>
+  <rect x="768" y="528" width="14" height="56" rx="7" fill="#D9A856"/>
+  <circle cx="775" cy="522" r="11" fill="#C28F3F"/>
+  <circle cx="772" cy="519" r="4" fill="#EFCB8B"/>
+
+  <!-- floating music notes? NO TEXT — use small sparkles instead -->
+  <path d="M 770 280 L 776 296 L 792 302 L 776 308 L 770 324 L 764 308 L 748 302 L 764 296 Z" fill="#E5C878"/>
+  <circle cx="730" cy="252" r="5" fill="#E5C878" opacity="0.8"/>
+</svg>

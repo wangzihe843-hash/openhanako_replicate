@@ -1,0 +1,93 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <rect x="330" y="400" width="466" height="226" rx="8"/>
+    <rect x="282" y="364" width="58" height="296" rx="26"/>
+    <rect x="744" y="364" width="74" height="296" rx="32"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="700" rx="330" ry="17" fill="#EADBBD"/>
+
+  <g transform="translate(512 480) scale(1.32) translate(-512 -472)">
+  <!-- unrolled paper -->
+  <rect x="330" y="382" width="364" height="180" fill="#FFF9EE"/>
+  <rect x="330" y="382" width="364" height="180" fill="none" stroke="#EFE3CC" stroke-width="4"/>
+  <!-- roll curvature hints -->
+  <rect x="338" y="384" width="10" height="176" fill="#F0E3CB"/>
+  <rect x="676" y="384" width="10" height="176" fill="#F0E3CB"/>
+
+  <!-- brocade mounting strips at paper edges -->
+  <g>
+    <rect x="346" y="384" width="22" height="176" fill="#C9A06A"/>
+    <rect x="656" y="384" width="22" height="176" fill="#C9A06A"/>
+    <g fill="#B5832F">
+      <path d="M 357 402 L 363 410 L 357 418 L 351 410 Z"/>
+      <path d="M 357 442 L 363 450 L 357 458 L 351 450 Z"/>
+      <path d="M 357 482 L 363 490 L 357 498 L 351 490 Z"/>
+      <path d="M 357 522 L 363 530 L 357 538 L 351 530 Z"/>
+      <path d="M 667 402 L 673 410 L 667 418 L 661 410 Z"/>
+      <path d="M 667 442 L 673 450 L 667 458 L 661 450 Z"/>
+      <path d="M 667 482 L 673 490 L 667 498 L 661 490 Z"/>
+      <path d="M 667 522 L 673 530 L 667 538 L 661 530 Z"/>
+    </g>
+  </g>
+
+  <!-- painted landscape -->
+  <clipPath id="paper"><rect x="368" y="394" width="288" height="156"/></clipPath>
+  <g clip-path="url(#paper)">
+    <!-- sun with halo -->
+    <circle cx="610" cy="436" r="34" fill="#F0CFA3" opacity="0.6"/>
+    <circle cx="610" cy="436" r="24" fill="#E2B07A"/>
+    <!-- distant mountains with mist -->
+    <path d="M 340 552 Q 420 442 484 552 Z" fill="#C2CFB2"/>
+    <path d="M 545 552 Q 640 462 730 552 Z" fill="#C2CFB2"/>
+    <!-- mist band -->
+    <rect x="368" y="496" width="288" height="16" fill="#FFF9EE" opacity="0.65"/>
+    <!-- near mountain -->
+    <path d="M 405 552 Q 515 416 615 552 Z" fill="#A8B89A"/>
+    <!-- tiny pagoda silhouette -->
+    <g fill="#7C9670">
+      <rect x="445" y="486" width="16" height="22"/>
+      <path d="M 440 488 L 466 488 L 453 474 Z"/>
+      <path d="M 442 500 L 464 500 L 463 494 L 443 494 Z"/>
+    </g>
+    <!-- river with reflections -->
+    <path d="M 368 532 Q 460 520 656 530 L 656 552 L 368 552 Z" fill="#D7E0CC" opacity="0.85"/>
+    <g stroke="#C2CFB2" stroke-width="3" stroke-linecap="round">
+      <line x1="420" y1="540" x2="452" y2="540"/>
+      <line x1="540" y1="544" x2="576" y2="544"/>
+      <line x1="610" y1="538" x2="634" y2="538"/>
+    </g>
+    <!-- tiny boat -->
+    <path d="M 488 534 Q 502 544 516 534 L 510 528 L 494 528 Z" fill="#8A6242"/>
+    <line x1="502" y1="528" x2="502" y2="514" stroke="#8A6242" stroke-width="3"/>
+  </g>
+  <!-- red collector seal -->
+  <rect x="628" y="514" width="20" height="20" rx="4" fill="#C9574C"/>
+  <rect x="632" y="518" width="12" height="12" rx="2" fill="none" stroke="#A8362E" stroke-width="2"/>
+
+  <!-- left roller -->
+  <rect x="296" y="356" width="38" height="232" rx="19" fill="#8A6242"/>
+  <rect x="296" y="356" width="16" height="232" rx="8" fill="#9C7252"/>
+  <line x1="306" y1="370" x2="306" y2="578" stroke="#B08560" stroke-width="3"/>
+  <line x1="324" y1="370" x2="324" y2="578" stroke="#6E5238" stroke-width="3"/>
+  <circle cx="315" cy="350" r="13" fill="#6E5238"/>
+  <circle cx="315" cy="350" r="6" fill="#8A6242"/>
+  <circle cx="315" cy="594" r="13" fill="#6E5238"/>
+  <circle cx="315" cy="594" r="6" fill="#8A6242"/>
+
+  <!-- right roller (thicker: paper still rolled) -->
+  <rect x="690" y="356" width="52" height="232" rx="24" fill="#8A6242"/>
+  <rect x="690" y="356" width="20" height="232" rx="10" fill="#9C7252"/>
+  <rect x="700" y="368" width="34" height="208" rx="15" fill="#EFE3CC"/>
+  <rect x="704" y="368" width="12" height="208" rx="6" fill="#FFF9EE"/>
+  <line x1="726" y1="376" x2="726" y2="568" stroke="#DFD0B0" stroke-width="3"/>
+  <ellipse cx="717" cy="372" rx="17" ry="7" fill="#DFD0B0"/>
+  <ellipse cx="717" cy="372" rx="8" ry="3.5" fill="#BFA77E"/>
+  <circle cx="716" cy="350" r="13" fill="#6E5238"/>
+  <circle cx="716" cy="350" r="6" fill="#8A6242"/>
+  <circle cx="716" cy="594" r="13" fill="#6E5238"/>
+  <circle cx="716" cy="594" r="6" fill="#8A6242"/>
+  </g>
+</svg>

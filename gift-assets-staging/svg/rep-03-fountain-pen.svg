@@ -1,0 +1,44 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow (one continuous slab: open lid + base) -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <rect x="292" y="300" width="440" height="460" rx="16"/>
+  </g>
+  <!-- ground -->
+  <ellipse cx="512" cy="768" rx="260" ry="16" fill="#EADBBD"/>
+  <!-- open lid (inner face toward viewer) -->
+  <rect x="292" y="300" width="440" height="230" rx="16" fill="#8C6239"/>
+  <rect x="312" y="320" width="400" height="192" rx="10" fill="#7FAFA3"/>
+  <rect x="312" y="320" width="400" height="34" rx="10" fill="#6FA89B"/>
+  <rect x="330" y="340" width="364" height="156" rx="8" fill="none" stroke="#EFCB8B" stroke-width="3" opacity="0.55"/>
+  <path d="M352,492 L470,344" stroke="#FFFFFF" stroke-width="10" opacity="0.07"/>
+  <path d="M420,492 L538,344" stroke="#FFFFFF" stroke-width="22" opacity="0.06"/>
+  <ellipse cx="420" cy="378" rx="70" ry="22" transform="rotate(-18 420 378)" fill="#FFFFFF" opacity="0.10"/>
+  <line x1="306" y1="308" x2="718" y2="308" stroke="#C09058" stroke-width="4" opacity="0.7"/>
+  <!-- hinges -->
+  <rect x="366" y="526" width="46" height="22" rx="5" fill="#C28F3F"/>
+  <rect x="612" y="526" width="46" height="22" rx="5" fill="#C28F3F"/>
+  <!-- base box -->
+  <rect x="292" y="545" width="440" height="215" rx="16" fill="#A87844"/>
+  <!-- velvet interior -->
+  <rect x="312" y="561" width="400" height="132" rx="8" fill="#6FA89B"/>
+  <rect x="312" y="561" width="400" height="54" rx="8" fill="#7FAFA3"/>
+  <rect x="312" y="641" width="400" height="52" rx="8" fill="#7FAFA3"/>
+  <!-- occlusion under pen -->
+  <rect x="336" y="638" width="352" height="12" rx="6" fill="#4E7E74" opacity="0.55"/>
+  <!-- pen (capped, gold clip) -->
+  <rect x="336" y="612" width="352" height="32" rx="16" fill="#4A3A32"/>
+  <rect x="336" y="610" width="158" height="36" rx="18" fill="#564840"/>
+  <rect x="486" y="610" width="12" height="36" fill="#D9A856"/>
+  <rect x="652" y="612" width="9" height="32" fill="#D9A856"/>
+  <rect x="356" y="599" width="104" height="9" rx="4.5" fill="#D9A856"/>
+  <circle cx="460" cy="605" r="6" fill="#D9A856"/>
+  <line x1="354" y1="618" x2="664" y2="618" stroke="#FFFFFF" stroke-width="3.5" opacity="0.35" stroke-linecap="round"/>
+  <path d="M352,620 Q360,613 376,612" stroke="#FFFFFF" stroke-width="4" fill="none" opacity="0.55" stroke-linecap="round"/>
+  <!-- box front face details -->
+  <path d="M320,712 Q420,706 520,712 T720,710" stroke="#8C6239" stroke-width="3" fill="none" opacity="0.55"/>
+  <path d="M330,736 Q450,742 560,736 T712,738" stroke="#8C6239" stroke-width="3" fill="none" opacity="0.45"/>
+  <rect x="498" y="694" width="28" height="24" rx="6" fill="#D9A856"/>
+  <line x1="498" y1="706" x2="526" y2="706" stroke="#A87844" stroke-width="3"/>
+  <line x1="298" y1="551" x2="726" y2="551" stroke="#C09058" stroke-width="4" opacity="0.8"/>
+</svg>

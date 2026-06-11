@@ -1,0 +1,61 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 330 480 L 760 360 Q 800 352 802 388 Q 802 416 766 426 L 360 532 Q 326 540 320 512 Q 316 490 330 480 Z"/>
+    <rect x="500" y="620" width="220" height="120" rx="30"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="744" rx="245" ry="16" fill="#EADBBD"/>
+
+  <!-- display base -->
+  <ellipse cx="512" cy="712" rx="150" ry="26" fill="#8C6239"/>
+  <ellipse cx="512" cy="704" rx="150" ry="24" fill="#A87844"/>
+  <ellipse cx="512" cy="700" rx="118" ry="16" fill="#C09058"/>
+  <!-- stand rod (reaches the hull belly) -->
+  <path d="M 524 690 L 554 494 L 576 498 L 546 694 Z" fill="#C9CDD4"/>
+  <path d="M 524 690 L 554 494 L 563 496 L 534 692 Z" fill="#E3E6EB"/>
+
+  <!-- starship (tilted upward) -->
+  <g transform="rotate(-16 512 440)">
+    <!-- rear engine block -->
+    <rect x="306" y="404" width="80" height="92" rx="18" fill="#6E7FA8"/>
+    <!-- engine nozzles -->
+    <path d="M 306 416 L 270 408 L 270 436 L 306 430 Z" fill="#8F96A1"/>
+    <path d="M 306 466 L 270 460 L 270 488 L 306 482 Z" fill="#8F96A1"/>
+    <ellipse cx="270" cy="422" rx="7" ry="14" fill="#5C6B85"/>
+    <ellipse cx="270" cy="474" rx="7" ry="14" fill="#5C6B85"/>
+    <!-- engine glow -->
+    <ellipse cx="252" cy="422" rx="12" ry="9" fill="#F6C26B" opacity="0.85"/>
+    <ellipse cx="252" cy="474" rx="12" ry="9" fill="#F6C26B" opacity="0.85"/>
+    <ellipse cx="240" cy="448" rx="9" ry="7" fill="#FBDA9A" opacity="0.8"/>
+
+    <!-- main hull -->
+    <path d="M 370 396 L 600 396 C 680 396 740 422 768 450 C 740 478 680 504 600 504 L 370 504 Q 348 504 348 482 L 348 418 Q 348 396 370 396 Z" fill="#C9CDD4"/>
+    <!-- hull top light -->
+    <path d="M 370 396 L 600 396 C 660 396 712 412 746 434 L 370 434 Q 352 434 352 416 Q 352 396 370 396 Z" fill="#E3E6EB"/>
+    <!-- hull belly shade -->
+    <path d="M 360 480 L 700 474 C 660 494 620 504 600 504 L 370 504 Q 352 504 360 480 Z" fill="#A9AFB8"/>
+    <!-- blue accent stripe -->
+    <path d="M 380 446 L 720 442 L 716 462 L 380 464 Z" fill="#6E7FA8"/>
+    <path d="M 380 446 L 540 444 L 540 452 L 380 452 Z" fill="#8E9FC4"/>
+    <!-- cockpit canopy -->
+    <path d="M 600 408 Q 668 412 706 434 Q 668 432 612 432 Q 596 432 596 420 Q 596 408 600 408 Z" fill="#9CCFC4"/>
+    <path d="M 608 412 Q 632 412 650 418 Q 628 422 612 424 Q 604 420 608 412 Z" fill="#D6F0E8"/>
+    <!-- porthole rivets -->
+    <circle cx="430" cy="478" r="7" fill="#8F96A1"/>
+    <circle cx="478" cy="478" r="7" fill="#8F96A1"/>
+    <circle cx="526" cy="478" r="7" fill="#8F96A1"/>
+    <!-- dorsal fin -->
+    <path d="M 430 396 L 472 332 Q 482 322 488 334 L 502 396 Z" fill="#8E9FC4"/>
+    <path d="M 430 396 L 472 332 Q 478 326 482 336 L 470 396 Z" fill="#A9B8D6"/>
+    <!-- ventral fin -->
+    <path d="M 446 504 L 478 560 Q 486 570 492 558 L 500 504 Z" fill="#8E9FC4"/>
+  </g>
+
+  <!-- star sparkles -->
+  <path d="M 760 250 L 766 266 L 782 272 L 766 278 L 760 294 L 754 278 L 738 272 L 754 266 Z" fill="#E5C878"/>
+  <circle cx="288" cy="262" r="5" fill="#E5C878" opacity="0.8"/>
+  <circle cx="812" cy="540" r="4.5" fill="#8E9FC4" opacity="0.7"/>
+</svg>

@@ -1,0 +1,51 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="coneOuter" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#A8D2D6" stop-opacity="0.4"/>
+      <stop offset="0.6" stop-color="#A8D2D6" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#A8D2D6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="coneInner" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#E8F5F6" stop-opacity="0.65"/>
+      <stop offset="0.55" stop-color="#E8F5F6" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#E8F5F6" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- glow halo -->
+  <circle cx="512" cy="420" r="300" fill="#E9F2F3" opacity="0.5"/>
+  <circle cx="512" cy="420" r="225" fill="#DFEEF0" opacity="0.55"/>
+  <circle cx="512" cy="420" r="150" fill="#D4E8EA" opacity="0.6"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="736" rx="250" ry="16" fill="#EADBBD"/>
+  <ellipse cx="512" cy="724" rx="180" ry="12" fill="#3E332C" opacity="0.1"/>
+  <!-- disc cylinder -->
+  <path d="M330 650 L330 696 A182 40 0 0 0 694 696 L694 650 Z" fill="#A9AFB8"/>
+  <path d="M512 650 L694 650 L694 696 A182 40 0 0 1 512 736 Z" fill="#9CA3AD"/>
+  <path d="M333 664 a182 38 0 0 0 358 0" fill="none" stroke="#8F96A1" stroke-width="3"/>
+  <path d="M333 672 a182 38 0 0 0 358 0" fill="none" stroke="#C9CDD4" stroke-width="2" opacity="0.7"/>
+  <circle cx="392" cy="692" r="4.5" fill="#777E89"/>
+  <circle cx="512" cy="703" r="4.5" fill="#777E89"/>
+  <circle cx="622" cy="688" r="7" fill="#C77DA6"/>
+  <circle cx="620" cy="686" r="2.5" fill="#FFFFFF" opacity="0.9"/>
+  <!-- disc top -->
+  <ellipse cx="512" cy="650" rx="182" ry="40" fill="#C9CDD4"/>
+  <ellipse cx="512" cy="650" rx="150" ry="32" fill="#BDC2CA"/>
+  <path d="M372 642 a150 30 0 0 1 120 -26" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
+  <!-- emitter -->
+  <ellipse cx="512" cy="650" rx="95" ry="21" fill="#E6F3F4" stroke="#7FB8BF" stroke-width="6"/>
+  <ellipse cx="512" cy="650" rx="56" ry="12" fill="#FFFFFF" opacity="0.95"/>
+  <!-- light cone (fades upward) -->
+  <path d="M420 648 Q512 670 604 648 L706 226 Q512 174 318 226 Z" fill="url(#coneOuter)"/>
+  <path d="M452 652 Q512 666 572 652 L620 230 Q512 198 404 230 Z" fill="url(#coneInner)"/>
+  <!-- scanlines -->
+  <ellipse cx="512" cy="362" rx="155" ry="14" fill="#FFFFFF" opacity="0.22"/>
+  <ellipse cx="512" cy="462" rx="135" ry="13" fill="#FFFFFF" opacity="0.26"/>
+  <ellipse cx="512" cy="560" rx="112" ry="11" fill="#FFFFFF" opacity="0.3"/>
+  <!-- floating motes -->
+  <circle cx="462" cy="322" r="10" fill="#FFFFFF" stroke="#7FB8BF" stroke-width="4"/>
+  <circle cx="588" cy="368" r="7" fill="#FFFFFF" stroke="#7FB8BF" stroke-width="3.5"/>
+  <circle cx="534" cy="288" r="5" fill="#C77DA6"/>
+  <circle cx="470" cy="474" r="8" fill="#FFFFFF" stroke="#7FB8BF" stroke-width="3.5"/>
+  <circle cx="574" cy="524" r="5.5" fill="#FFFFFF" stroke="#7FB8BF" stroke-width="3"/>
+</svg>

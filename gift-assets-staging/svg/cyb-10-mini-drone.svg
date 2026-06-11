@@ -1,0 +1,69 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- hover: detached ground shadow -->
+  <ellipse cx="512" cy="744" rx="150" ry="14" fill="#EADBBD"/>
+  <ellipse cx="512" cy="744" rx="86" ry="9" fill="#E0CFA8" opacity="0.8"/>
+
+  <!-- rotor motion arcs -->
+  <g stroke="#C9CDD4" stroke-width="5" fill="none" opacity="0.7">
+    <ellipse cx="330" cy="380" rx="86" ry="20"/>
+    <ellipse cx="694" cy="380" rx="86" ry="20"/>
+  </g>
+  <g stroke="#E3E6EB" stroke-width="3" fill="none" opacity="0.8">
+    <ellipse cx="330" cy="376" rx="70" ry="15"/>
+    <ellipse cx="694" cy="376" rx="70" ry="15"/>
+  </g>
+  <!-- rotor hubs -->
+  <circle cx="330" cy="380" r="14" fill="#7C8492"/>
+  <circle cx="694" cy="380" r="14" fill="#7C8492"/>
+  <circle cx="327" cy="377" r="5" fill="#A9AFB8"/>
+  <circle cx="691" cy="377" r="5" fill="#A9AFB8"/>
+
+  <!-- arms -->
+  <path d="M 344 388 L 452 442 L 444 462 L 336 400 Z" fill="#8F96A1"/>
+  <path d="M 680 388 L 572 442 L 580 462 L 688 400 Z" fill="#7C8492"/>
+  <!-- arm joints -->
+  <circle cx="338" cy="394" r="11" fill="#5F6671"/>
+  <circle cx="686" cy="394" r="11" fill="#5F6671"/>
+
+  <!-- body pod -->
+  <path d="M 420 440 Q 420 404 470 398 L 554 398 Q 604 404 604 440 L 604 488 Q 604 528 554 534 L 470 534 Q 420 528 420 488 Z" fill="#5C6B85"/>
+  <path d="M 420 440 Q 420 404 470 398 L 512 398 L 512 534 L 470 534 Q 420 528 420 488 Z" fill="#6B7A94"/>
+  <path d="M 432 414 Q 456 402 488 400" fill="none" stroke="#8E9FC4" stroke-width="5" stroke-linecap="round"/>
+  <!-- top sensor bump -->
+  <path d="M 480 398 Q 480 378 512 378 Q 544 378 544 398 Z" fill="#4E5A74"/>
+  <circle cx="512" cy="390" r="6" fill="#C77DA6"/>
+
+  <!-- camera lens -->
+  <circle cx="512" cy="470" r="42" fill="#3F4A60"/>
+  <circle cx="512" cy="470" r="42" fill="none" stroke="#2F3848" stroke-width="5"/>
+  <circle cx="512" cy="470" r="26" fill="#5C6B85"/>
+  <circle cx="512" cy="470" r="14" fill="#7FB8BF"/>
+  <circle cx="506" cy="464" r="5" fill="#D6F0F2"/>
+  <!-- LED dots -->
+  <circle cx="442" cy="510" r="7" fill="#7FB8BF"/>
+  <circle cx="582" cy="510" r="7" fill="#C77DA6"/>
+  <!-- vent slits -->
+  <g stroke="#4E5A74" stroke-width="4" stroke-linecap="round">
+    <line x1="446" y1="430" x2="446" y2="450"/>
+    <line x1="462" y1="430" x2="462" y2="450"/>
+    <line x1="578" y1="430" x2="578" y2="450"/>
+  </g>
+
+  <!-- landing skids -->
+  <g stroke="#7C8492" stroke-width="9" fill="none" stroke-linecap="round">
+    <path d="M 462 534 L 452 574 L 420 580"/>
+    <path d="M 562 534 L 572 574 L 604 580"/>
+  </g>
+
+  <!-- downdraft hint lines -->
+  <g stroke="#E0CFA8" stroke-width="4" stroke-linecap="round" opacity="0.8">
+    <line x1="330" y1="430" x2="330" y2="470"/>
+    <line x1="694" y1="430" x2="694" y2="470"/>
+  </g>
+
+  <!-- sparkles -->
+  <path d="M 740 270 L 746 286 L 762 292 L 746 298 L 740 314 L 734 298 L 718 292 L 734 286 Z" fill="#7FB8BF"/>
+  <circle cx="300" cy="290" r="5" fill="#C77DA6" opacity="0.8"/>
+</svg>

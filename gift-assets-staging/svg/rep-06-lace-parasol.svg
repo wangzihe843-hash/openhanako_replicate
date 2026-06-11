@@ -1,0 +1,63 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <g fill="#F1E3C9">
+    <path d="M 232 470 Q 572 240 852 474 Q 866 500 838 506 L 262 506 Q 230 500 232 470 Z"/>
+    <rect x="562" y="500" width="26" height="330" rx="13"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="858" rx="190" ry="14" fill="#EADBBD"/>
+
+  <!-- ferrule top -->
+  <rect x="504" y="186" width="16" height="44" rx="7" fill="#A87844"/>
+  <circle cx="512" cy="182" r="10" fill="#D9A856"/>
+  <circle cx="509" cy="179" r="3.5" fill="#EFCB8B"/>
+
+  <!-- canopy -->
+  <path d="M 192 470 Q 512 196 832 470 Z" fill="#F2DDD6"/>
+  <!-- panels -->
+  <path d="M 192 470 Q 290 280 392 470 Z" fill="#EFD2C9"/>
+  <path d="M 392 470 Q 452 250 512 470 Z" fill="#F6E8E0"/>
+  <path d="M 512 470 Q 572 250 632 470 Z" fill="#EFD2C9"/>
+  <path d="M 632 470 Q 734 280 832 470 Z" fill="#F6E8E0"/>
+  <!-- rib seams -->
+  <g stroke="#DDB9AE" stroke-width="4" fill="none">
+    <path d="M 392 470 Q 452 250 512 226"/>
+    <path d="M 512 470 Q 572 250 512 226"/>
+    <path d="M 632 470 Q 734 280 512 226"/>
+    <path d="M 192 470 Q 290 280 512 226"/>
+    <path d="M 832 470 Q 734 280 512 226"/>
+  </g>
+  <!-- canopy left light -->
+  <path d="M 232 440 Q 320 300 460 256 Q 350 320 268 452 Z" fill="#FBF0EA" opacity="0.85"/>
+
+  <!-- scalloped lace edge -->
+  <g fill="#FFF9EE">
+    <path d="M 192 470 Q 218 502 244 470 Q 270 502 296 470 Q 322 502 348 470 Q 374 502 400 470 Q 426 502 452 470 Q 478 502 504 470 Q 530 502 556 470 Q 582 502 608 470 Q 634 502 660 470 Q 686 502 712 470 Q 738 502 764 470 Q 790 502 816 470 L 832 470 L 832 478 Q 806 510 780 478 Q 754 510 728 478 Q 702 510 676 478 Q 650 510 624 478 Q 598 510 572 478 Q 546 510 520 478 Q 494 510 468 478 Q 442 510 416 478 Q 390 510 364 478 Q 338 510 312 478 Q 286 510 260 478 Q 234 510 208 478 L 192 478 Z" opacity="0"/>
+  </g>
+  <g fill="#F2DDD6">
+    <circle cx="218" cy="472" r="26"/><circle cx="270" cy="472" r="26"/><circle cx="322" cy="472" r="26"/>
+    <circle cx="374" cy="472" r="26"/><circle cx="426" cy="472" r="26"/><circle cx="478" cy="472" r="26"/>
+    <circle cx="530" cy="472" r="26"/><circle cx="582" cy="472" r="26"/><circle cx="634" cy="472" r="26"/>
+    <circle cx="686" cy="472" r="26"/><circle cx="738" cy="472" r="26"/><circle cx="790" cy="472" r="26"/>
+  </g>
+  <!-- lace dots -->
+  <g fill="#FFF9EE">
+    <circle cx="218" cy="478" r="6"/><circle cx="270" cy="478" r="6"/><circle cx="322" cy="478" r="6"/>
+    <circle cx="374" cy="478" r="6"/><circle cx="426" cy="478" r="6"/><circle cx="478" cy="478" r="6"/>
+    <circle cx="530" cy="478" r="6"/><circle cx="582" cy="478" r="6"/><circle cx="634" cy="478" r="6"/>
+    <circle cx="686" cy="478" r="6"/><circle cx="738" cy="478" r="6"/><circle cx="790" cy="478" r="6"/>
+  </g>
+
+  <!-- shaft -->
+  <rect x="503" y="470" width="18" height="328" rx="9" fill="#A87844"/>
+  <rect x="503" y="470" width="8" height="328" rx="4" fill="#C09058"/>
+  <!-- curved handle -->
+  <path d="M 512 790 Q 512 850 462 850 Q 418 850 418 806" fill="none" stroke="#A87844" stroke-width="18" stroke-linecap="round"/>
+  <path d="M 512 790 Q 512 842 466 844" fill="none" stroke="#C09058" stroke-width="7" stroke-linecap="round"/>
+  <!-- small ribbon on shaft -->
+  <path d="M 504 540 Q 484 528 478 538 Q 474 548 502 552 Z" fill="#C9574C"/>
+  <path d="M 520 540 Q 540 528 546 538 Q 550 548 522 552 Z" fill="#C9574C"/>
+  <circle cx="512" cy="546" r="7" fill="#B83E35"/>
+</svg>

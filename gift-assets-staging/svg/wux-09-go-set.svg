@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow: bowl + lid, overlapping -->
+  <path d="M360,574 C360,496 430,480 530,480 C630,480 700,496 700,574 C700,714 650,874 530,874 C410,874 360,714 360,574 Z" fill="#F1E3C9"/>
+  <ellipse cx="675" cy="502" rx="150" ry="32" fill="#F1E3C9" transform="rotate(-15 675 502)"/>
+  <!-- ground -->
+  <ellipse cx="500" cy="852" rx="320" ry="17" fill="#EADBBD"/>
+
+  <!-- ===== wooden bowl ===== -->
+  <path d="M300,530 C300,452 370,436 470,436 C570,436 640,452 640,530 C640,670 590,830 470,830 C350,830 300,670 300,530 Z" fill="#C09058"/>
+  <!-- right shade -->
+  <path d="M560,448 C610,462 640,490 640,530 C640,670 590,830 470,830 C560,800 612,650 600,520 C596,480 580,458 560,448 Z" fill="#A87844"/>
+  <!-- wood grain -->
+  <path d="M330,560 Q470,590 610,560" stroke="#8C6239" stroke-width="3" opacity="0.4" fill="none"/>
+  <path d="M322,640 Q470,668 618,640" stroke="#8C6239" stroke-width="3" opacity="0.4" fill="none"/>
+  <path d="M348,724 Q470,748 592,724" stroke="#8C6239" stroke-width="3" opacity="0.4" fill="none"/>
+  <!-- left highlight -->
+  <path d="M342,506 C330,580 348,700 398,778" stroke="#FFFFFF" stroke-width="9" opacity="0.35" fill="none" stroke-linecap="round"/>
+
+  <!-- mouth: dark interior -->
+  <ellipse cx="470" cy="470" rx="160" ry="34" fill="#54422F"/>
+  <ellipse cx="470" cy="470" rx="160" ry="34" stroke="#D8B077" stroke-width="5" fill="none"/>
+  <!-- stones inside -->
+  <ellipse cx="350" cy="474" rx="30" ry="13" fill="#4A3B30"/>
+  <path d="M336,468 C342,464 354,463 362,466" stroke="#FFFFFF" stroke-width="3" opacity="0.3" fill="none" stroke-linecap="round"/>
+  <ellipse cx="402" cy="466" rx="34" ry="15" fill="#F2EDDE"/>
+  <path d="M380,470 C390,475 414,475 424,470" stroke="#D9CFB8" stroke-width="3" opacity="0.8" fill="none"/>
+
+  <!-- lid shadow on mouth -->
+  <ellipse cx="520" cy="496" rx="72" ry="16" fill="#3E332C" opacity="0.3"/>
+
+  <!-- ===== lid, tilted on rim ===== -->
+  <g transform="rotate(-15 615 455)">
+    <ellipse cx="615" cy="470" rx="150" ry="32" fill="#8C6239"/>
+    <ellipse cx="615" cy="458" rx="150" ry="32" fill="#C9A05E"/>
+    <ellipse cx="615" cy="458" rx="118" ry="24" stroke="#A87844" stroke-width="3" opacity="0.6" fill="none"/>
+    <path d="M520,448 C540,440 570,435 600,434" stroke="#FFFFFF" stroke-width="6" opacity="0.5" fill="none" stroke-linecap="round"/>
+    <rect x="606" y="430" width="18" height="14" rx="4" fill="#8C6239"/>
+    <ellipse cx="615" cy="428" rx="23" ry="13" fill="#A87844"/>
+    <path d="M604,423 C608,420 618,419 624,421" stroke="#D8B077" stroke-width="4" opacity="0.8" fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- ===== scattered stones ===== -->
+  <!-- black left -->
+  <ellipse cx="308" cy="855" rx="36" ry="16" fill="#2E2620"/>
+  <ellipse cx="308" cy="850" rx="36" ry="16" fill="#4A3B30"/>
+  <path d="M290,844 C298,839 314,838 324,841" stroke="#FFFFFF" stroke-width="4" opacity="0.3" fill="none" stroke-linecap="round"/>
+  <!-- white mid-left -->
+  <ellipse cx="378" cy="864" rx="34" ry="15" fill="#CDC2A8"/>
+  <ellipse cx="378" cy="859" rx="34" ry="15" fill="#F2EDDE"/>
+  <path d="M360,853 C368,848 386,847 396,850" stroke="#FFFFFF" stroke-width="4" opacity="0.8" fill="none" stroke-linecap="round"/>
+  <!-- white right -->
+  <ellipse cx="668" cy="846" rx="34" ry="15" fill="#CDC2A8"/>
+  <ellipse cx="668" cy="841" rx="34" ry="15" fill="#F2EDDE"/>
+  <path d="M650,835 C658,830 676,829 686,832" stroke="#FFFFFF" stroke-width="4" opacity="0.8" fill="none" stroke-linecap="round"/>
+  <!-- black far right -->
+  <ellipse cx="730" cy="862" rx="33" ry="15" fill="#2E2620"/>
+  <ellipse cx="730" cy="857" rx="33" ry="15" fill="#4A3B30"/>
+  <path d="M714,851 C722,846 736,845 746,848" stroke="#FFFFFF" stroke-width="4" opacity="0.3" fill="none" stroke-linecap="round"/>
+</svg>

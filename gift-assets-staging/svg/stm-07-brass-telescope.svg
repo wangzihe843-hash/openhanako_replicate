@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow: parallel diagonal swath -->
+  <path d="M 350 634 L 716 398 Q 748 380 760 410 Q 768 436 740 456 L 380 690 Q 350 708 338 680 Q 330 654 350 634 Z" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="760" rx="250" ry="16" fill="#EADBBD"/>
+
+  <g transform="rotate(-26 512 480)">
+    <!-- objective segment (largest) -->
+    <rect x="244" y="424" width="220" height="112" rx="22" fill="#C28F3F"/>
+    <rect x="244" y="424" width="220" height="44" rx="22" fill="#D9A856"/>
+    <rect x="244" y="510" width="220" height="26" rx="13" fill="#A8762F"/>
+    <!-- leather wrap -->
+    <rect x="290" y="420" width="130" height="120" rx="14" fill="#8C6239"/>
+    <rect x="290" y="420" width="130" height="44" rx="14" fill="#A87844"/>
+    <g stroke="#6E5238" stroke-width="3.5" opacity="0.85">
+      <line x1="312" y1="424" x2="312" y2="536"/>
+      <line x1="336" y1="424" x2="336" y2="536"/>
+      <line x1="360" y1="424" x2="360" y2="536"/>
+      <line x1="384" y1="424" x2="384" y2="536"/>
+    </g>
+    <!-- objective rim + lens -->
+    <rect x="226" y="416" width="30" height="128" rx="14" fill="#D9A856"/>
+    <ellipse cx="232" cy="480" rx="12" ry="52" fill="#A8762F"/>
+    <ellipse cx="234" cy="480" rx="8" ry="44" fill="#9CCFC4"/>
+    <path d="M 232 446 Q 228 462 229 484" fill="none" stroke="#D6F0E8" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- middle segment -->
+    <rect x="462" y="438" width="150" height="84" rx="18" fill="#C28F3F"/>
+    <rect x="462" y="438" width="150" height="34" rx="17" fill="#D9A856"/>
+    <rect x="462" y="502" width="150" height="20" rx="10" fill="#A8762F"/>
+    <rect x="452" y="432" width="22" height="96" rx="10" fill="#D9A856"/>
+    <!-- rivet -->
+    <circle cx="536" cy="456" r="4" fill="#A8762F"/>
+
+    <!-- eyepiece segment (smallest) -->
+    <rect x="610" y="450" width="120" height="60" rx="14" fill="#C28F3F"/>
+    <rect x="610" y="450" width="120" height="24" rx="12" fill="#D9A856"/>
+    <rect x="600" y="444" width="20" height="72" rx="9" fill="#D9A856"/>
+    <!-- eye cup -->
+    <rect x="726" y="456" width="26" height="48" rx="11" fill="#5C4A40"/>
+    <ellipse cx="750" cy="480" rx="8" ry="18" fill="#3E332C"/>
+
+    <!-- body highlight -->
+    <line x1="262" y1="438" x2="286" y2="438" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+    <line x1="476" y1="450" x2="540" y2="450" stroke="#EFCB8B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- tiny star glints (what it's pointed at) -->
+  <path d="M 268 268 L 274 284 L 290 290 L 274 296 L 268 312 L 262 296 L 246 290 L 262 284 Z" fill="#E5C878"/>
+  <circle cx="318" cy="240" r="5" fill="#E5C878" opacity="0.8"/>
+</svg>

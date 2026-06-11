@@ -1,0 +1,47 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- warm glow halo (glowing object: halo replaces long shadow) -->
+  <circle cx="512" cy="480" r="320" fill="#F6ECD7" opacity="0.55"/>
+  <circle cx="512" cy="480" r="250" fill="#F4E6C9" opacity="0.5"/>
+  <circle cx="512" cy="480" r="185" fill="#F2DFBA" opacity="0.42"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="792" rx="180" ry="15" fill="#EADBBD"/>
+  <!-- back petal row -->
+  <path d="M396 588 C368 510 376 432 416 380 C442 440 452 520 446 580 Z" fill="#E8A2AC"/>
+  <path d="M628 588 C656 510 648 432 608 380 C582 440 572 520 578 580 Z" fill="#E8A2AC"/>
+  <path d="M452 566 C436 470 452 384 494 336 C516 400 520 488 508 560 Z" fill="#EFAEB8"/>
+  <path d="M572 566 C588 470 572 384 530 336 C508 400 504 488 516 560 Z" fill="#EBA8B2"/>
+  <!-- bowl inner shadow -->
+  <ellipse cx="512" cy="588" rx="80" ry="16" fill="#D98E9B" opacity="0.35"/>
+  <!-- flame glow + wick -->
+  <circle cx="512" cy="500" r="92" fill="#FFE9C2" opacity="0.55"/>
+  <circle cx="512" cy="500" r="62" fill="#FFE2AC" opacity="0.8"/>
+  <path d="M512 408 C538 446 544 478 512 506 C480 478 486 446 512 408 Z" fill="#E5C878"/>
+  <path d="M512 436 C526 456 528 476 512 492 C496 476 498 456 512 436 Z" fill="#FFF6E1"/>
+  <!-- front petal row -->
+  <path d="M512 712 C402 702 352 612 372 478 C424 564 478 600 512 616 Z" fill="#F6C6CB"/>
+  <path d="M512 712 C622 702 672 612 652 478 C600 564 546 600 512 616 Z" fill="#F1B7BF"/>
+  <path d="M512 720 C444 712 408 642 422 546 C458 602 566 602 602 546 C616 642 580 720 512 720 Z" fill="#F9D6DA"/>
+  <!-- petal edge highlights -->
+  <path d="M372 478 C424 564 478 600 512 616" stroke="#FFF1F2" stroke-width="5" fill="none" opacity="0.85"/>
+  <path d="M652 478 C600 564 546 600 512 616" stroke="#FFF1F2" stroke-width="5" fill="none" opacity="0.85"/>
+  <path d="M422 546 C458 602 566 602 602 546" stroke="#FFF1F2" stroke-width="5" fill="none" opacity="0.9"/>
+  <!-- petal veins -->
+  <path d="M452 560 C462 600 484 640 506 660" stroke="#E2949D" stroke-width="3" fill="none" opacity="0.5"/>
+  <path d="M572 560 C562 600 540 640 518 660" stroke="#E2949D" stroke-width="3" fill="none" opacity="0.5"/>
+  <path d="M512 624 C512 656 512 686 512 706" stroke="#E2949D" stroke-width="3" fill="none" opacity="0.45"/>
+  <!-- occlusion under bowl -->
+  <ellipse cx="512" cy="714" rx="60" ry="8" fill="#8C6239" opacity="0.35"/>
+  <!-- gold pedestal -->
+  <rect x="448" y="706" width="128" height="16" rx="8" fill="#D9A856"/>
+  <path d="M462 720 L562 720 L548 762 L476 762 Z" fill="#C28F3F"/>
+  <rect x="444" y="760" width="136" height="16" rx="8" fill="#A87844"/>
+  <path d="M470 726 L478 754" stroke="#D9A856" stroke-width="4" opacity="0.8"/>
+  <!-- sparkles -->
+  <path d="M0 -12 Q3 -3 12 0 Q3 3 0 12 Q-3 3 -12 0 Q-3 -3 0 -12 Z" transform="translate(392,396)" fill="#E5C878"/>
+  <path d="M0 -10 Q2.5 -2.5 10 0 Q2.5 2.5 0 10 Q-2.5 2.5 -10 0 Q-2.5 -2.5 0 -10 Z" transform="translate(648,430)" fill="#E5C878" opacity="0.9"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(620,330)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -8 Q2 -2 8 0 Q2 2 0 8 Q-2 2 -8 0 Q-2 -2 0 -8 Z" transform="translate(424,318)" fill="#E5C878" opacity="0.85"/>
+  <circle cx="560" cy="368" r="4" fill="#FFF1D6" opacity="0.9"/>
+  <circle cx="452" cy="442" r="4" fill="#FFFFFF" opacity="0.8"/>
+</svg>

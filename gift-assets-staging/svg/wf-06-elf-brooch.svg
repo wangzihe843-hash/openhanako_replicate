@@ -1,0 +1,55 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long cast shadow -->
+  <g transform="rotate(34 560 510)" fill="#F1E3C9">
+    <path d="M 560 280 C 652 366 682 454 666 544 C 652 614 612 670 560 712 C 508 670 468 614 454 544 C 438 454 468 366 560 280 Z"/>
+  </g>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="724" rx="200" ry="15" fill="#EADBBD"/>
+
+  <!-- pin bar behind the leaf -->
+  <line x1="368" y1="610" x2="688" y2="430" stroke="#A9AFB8" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="688" cy="430" r="12" fill="#8F96A1"/>
+
+  <!-- silver leaf -->
+  <g transform="rotate(34 512 470)">
+    <path d="M 512 226 C 612 318 644 414 626 510 C 612 586 568 646 512 690 C 456 646 412 586 398 510 C 380 414 412 318 512 226 Z" fill="#C9CDD4"/>
+    <path d="M 512 226 C 612 318 644 414 626 510 C 612 586 568 646 512 690 L 512 226 Z" fill="#AEB4BE"/>
+    <!-- serrated edge hints -->
+    <g stroke="#8F96A1" stroke-width="3" stroke-linecap="round">
+      <line x1="618" y1="430" x2="630" y2="424"/>
+      <line x1="624" y1="490" x2="637" y2="486"/>
+      <line x1="612" y1="552" x2="624" y2="550"/>
+      <line x1="406" y1="430" x2="394" y2="424"/>
+      <line x1="400" y1="490" x2="387" y2="486"/>
+    </g>
+    <!-- midrib -->
+    <line x1="512" y1="252" x2="512" y2="668" stroke="#8F96A1" stroke-width="7"/>
+    <line x1="517" y1="270" x2="517" y2="650" stroke="#E3E6EB" stroke-width="2.5" opacity="0.8"/>
+    <!-- veins -->
+    <g stroke="#8F96A1" stroke-width="4.5" stroke-linecap="round">
+      <line x1="512" y1="340" x2="448" y2="416"/>
+      <line x1="512" y1="340" x2="576" y2="416"/>
+      <line x1="512" y1="432" x2="442" y2="508"/>
+      <line x1="512" y1="432" x2="582" y2="508"/>
+      <line x1="512" y1="524" x2="456" y2="588"/>
+      <line x1="512" y1="524" x2="568" y2="588"/>
+    </g>
+  </g>
+
+  <!-- green gem at the stem with prongs -->
+  <circle cx="394" cy="664" r="30" fill="#A9AFB8"/>
+  <path d="M 372 646 A 28 28 0 0 1 394 636" fill="none" stroke="#C9CDD4" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="394" cy="664" r="22" fill="#8FB98B"/>
+  <path d="M 380 678 A 22 22 0 0 0 408 676" fill="none" stroke="#6F9A6B" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="388" cy="657" r="7" fill="#B8D5B0"/>
+  <g fill="#8F96A1">
+    <circle cx="394" cy="640" r="3.5"/>
+    <circle cx="418" cy="664" r="3.5"/>
+    <circle cx="394" cy="688" r="3.5"/>
+    <circle cx="370" cy="664" r="3.5"/>
+  </g>
+
+  <!-- sparkle -->
+  <path d="M 680 280 L 686 296 L 702 302 L 686 308 L 680 324 L 674 308 L 658 302 L 674 296 Z" fill="#FFFFFF" opacity="0.95"/>
+</svg>

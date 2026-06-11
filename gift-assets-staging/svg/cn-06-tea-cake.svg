@@ -1,0 +1,84 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long cast shadow -->
+  <circle cx="586" cy="540" r="244" fill="#F1E3C9"/>
+  <!-- ground contact -->
+  <ellipse cx="512" cy="766" rx="235" ry="16" fill="#EADBBD"/>
+
+  <!-- side depth -->
+  <circle cx="512" cy="490" r="244" fill="#B0905E"/>
+  <circle cx="512" cy="486" r="244" fill="#BA9B6C"/>
+  <!-- paper face -->
+  <circle cx="512" cy="478" r="240" fill="#D9BE93"/>
+
+  <clipPath id="disc"><circle cx="512" cy="478" r="240"/></clipPath>
+  <g clip-path="url(#disc)">
+    <!-- alternating crease wedges -->
+    <path d="M 512 478 L 512 238 A 240 240 0 0 1 682 308 Z" fill="#D0B284"/>
+    <path d="M 512 478 L 752 478 A 240 240 0 0 1 682 648 Z" fill="#D0B284"/>
+    <path d="M 512 478 L 512 718 A 240 240 0 0 1 342 648 Z" fill="#D0B284"/>
+    <path d="M 512 478 L 272 478 A 240 240 0 0 1 342 308 Z" fill="#D0B284"/>
+    <!-- top-left light -->
+    <path d="M 290 380 A 240 240 0 0 1 600 252 L 512 478 Z" fill="#E2CBA2" opacity="0.55"/>
+    <!-- crease lines -->
+    <g stroke="#C4A678" stroke-width="4" stroke-linecap="round">
+      <line x1="512" y1="478" x2="512" y2="244"/>
+      <line x1="512" y1="478" x2="678" y2="312"/>
+      <line x1="512" y1="478" x2="746" y2="478"/>
+      <line x1="512" y1="478" x2="678" y2="644"/>
+      <line x1="512" y1="478" x2="512" y2="712"/>
+      <line x1="512" y1="478" x2="346" y2="644"/>
+      <line x1="512" y1="478" x2="278" y2="478"/>
+      <line x1="512" y1="478" x2="346" y2="312"/>
+    </g>
+    <!-- secondary fine creases -->
+    <g stroke="#CDB084" stroke-width="2.5" stroke-linecap="round" opacity="0.8">
+      <line x1="512" y1="478" x2="600" y2="262"/>
+      <line x1="512" y1="478" x2="726" y2="390"/>
+      <line x1="512" y1="478" x2="600" y2="694"/>
+      <line x1="512" y1="478" x2="298" y2="390"/>
+      <line x1="512" y1="478" x2="424" y2="262"/>
+      <line x1="512" y1="478" x2="424" y2="694"/>
+      <line x1="512" y1="478" x2="726" y2="566"/>
+      <line x1="512" y1="478" x2="298" y2="566"/>
+    </g>
+    <!-- bottom inner shade -->
+    <path d="M 280 560 Q 512 660 744 560 L 744 730 L 280 730 Z" fill="#C9AC7C" opacity="0.6"/>
+  </g>
+
+  <!-- gathered fold hub -->
+  <circle cx="512" cy="478" r="42" fill="#C4A678"/>
+  <circle cx="512" cy="475" r="33" fill="#B89A6A"/>
+  <g stroke="#A98A5E" stroke-width="3.5" fill="none" stroke-linecap="round">
+    <path d="M 494 464 Q 512 455 530 464"/>
+    <path d="M 491 480 Q 512 473 533 480"/>
+    <path d="M 496 493 Q 512 500 528 493"/>
+  </g>
+  <path d="M 498 462 Q 512 454 526 462" fill="none" stroke="#D9BE93" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- tying strings with twist ticks -->
+  <g clip-path="url(#disc)">
+    <rect x="262" y="468" width="500" height="10" fill="#8A6242"/>
+    <rect x="262" y="476" width="500" height="4" fill="#6E5238" opacity="0.6"/>
+    <rect x="505" y="228" width="10" height="500" fill="#8A6242"/>
+    <rect x="513" y="228" width="4" height="500" fill="#6E5238" opacity="0.6"/>
+    <!-- twist ticks -->
+    <g stroke="#6E5238" stroke-width="2.2" opacity="0.85">
+      <line x1="330" y1="469" x2="336" y2="478"/><line x1="396" y1="469" x2="402" y2="478"/>
+      <line x1="620" y1="469" x2="626" y2="478"/><line x1="688" y1="469" x2="694" y2="478"/>
+      <line x1="506" y1="300" x2="515" y2="306"/><line x1="506" y1="368" x2="515" y2="374"/>
+      <line x1="506" y1="590" x2="515" y2="596"/><line x1="506" y1="656" x2="515" y2="662"/>
+    </g>
+  </g>
+  <!-- knot bow over hub -->
+  <path d="M 498 462 Q 476 446 466 456 Q 460 468 492 476 Z" fill="#8A6242"/>
+  <path d="M 526 462 Q 548 446 558 456 Q 564 468 532 476 Z" fill="#8A6242"/>
+  <path d="M 494 458 Q 482 452 474 456" fill="none" stroke="#A98255" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 530 458 Q 542 452 550 456" fill="none" stroke="#A98255" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="498" y="464" width="28" height="26" rx="7" fill="#6E5238"/>
+  <rect x="498" y="464" width="28" height="12" rx="6" fill="#8A6242"/>
+
+  <!-- bottom edge depth -->
+  <path d="M 276 530 A 240 240 0 0 0 748 530 L 748 546 A 244 244 0 0 1 276 546 Z" fill="#A98A5E" opacity="0.5"/>
+</svg>

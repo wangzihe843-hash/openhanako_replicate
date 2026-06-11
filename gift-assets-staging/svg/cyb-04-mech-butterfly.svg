@@ -1,0 +1,61 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- long shadow: single merged silhouette offset (60,44) -->
+  <path transform="translate(60 44)" fill="#F1E3C9" d="M498 420 C420 300 300 260 262 330 C230 392 296 478 462 474 C384 506 336 572 362 636 C386 690 456 668 506 614 C510 624 514 624 518 614 C568 668 638 690 662 636 C688 572 640 506 562 474 C728 478 794 392 762 330 C724 260 604 300 526 420 C521 396 503 396 498 420 Z"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="700" rx="250" ry="15" fill="#EADBBD"/>
+  <ellipse cx="512" cy="672" rx="44" ry="9" fill="#3E332C" opacity="0.12"/>
+  <!-- opaque underlay so shadow doesn't show through membranes -->
+  <g fill="#FAF3E6">
+    <path d="M498 420 C420 300 300 260 262 330 C230 392 300 490 496 470 Z"/>
+    <path d="M526 420 C604 300 724 260 762 330 C794 392 724 490 528 470 Z"/>
+    <path d="M498 478 C400 500 330 580 360 650 C390 716 480 650 504 540 Z"/>
+    <path d="M526 478 C624 500 694 580 664 650 C634 716 544 650 520 540 Z"/>
+  </g>
+  <!-- antennae -->
+  <path d="M504 332 C490 292 470 266 446 256" stroke="#8F96A1" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M520 332 C534 292 554 266 578 256" stroke="#8F96A1" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <circle cx="442" cy="254" r="7" fill="#A9AFB8"/>
+  <circle cx="582" cy="254" r="7" fill="#A9AFB8"/>
+  <!-- wings: membranes -->
+  <path d="M498 420 C420 300 300 260 262 330 C230 392 300 490 496 470 Z" fill="#D9AECB" opacity="0.85"/>
+  <path d="M526 420 C604 300 724 260 762 330 C794 392 724 490 528 470 Z" fill="#D9AECB" opacity="0.85"/>
+  <path d="M498 478 C400 500 330 580 360 650 C390 716 480 650 504 540 Z" fill="#BCA6D6" opacity="0.85"/>
+  <path d="M526 478 C624 500 694 580 664 650 C634 716 544 650 520 540 Z" fill="#BCA6D6" opacity="0.85"/>
+  <!-- iridescent sheen near body -->
+  <path d="M498 432 C460 392 396 360 352 366 C390 430 440 462 496 466 Z" fill="#AFD6DA" opacity="0.7"/>
+  <path d="M526 432 C564 392 628 360 672 366 C634 430 584 462 528 466 Z" fill="#AFD6DA" opacity="0.7"/>
+  <path d="M500 492 C452 510 410 556 416 600 C452 580 488 540 503 506 Z" fill="#AFD6DA" opacity="0.6"/>
+  <path d="M524 492 C572 510 614 556 608 600 C572 580 536 540 521 506 Z" fill="#AFD6DA" opacity="0.6"/>
+  <!-- highlight arcs -->
+  <path d="M300 332 C322 300 372 296 416 326" stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.65"/>
+  <path d="M620 318 C660 300 706 308 726 338" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.5"/>
+  <!-- metal wing frames -->
+  <path d="M498 420 C420 300 300 260 262 330 C230 392 300 490 496 470 Z" fill="none" stroke="#8F96A1" stroke-width="7"/>
+  <path d="M526 420 C604 300 724 260 762 330 C794 392 724 490 528 470 Z" fill="none" stroke="#8F96A1" stroke-width="7"/>
+  <path d="M498 478 C400 500 330 580 360 650 C390 716 480 650 504 540 Z" fill="none" stroke="#8F96A1" stroke-width="7"/>
+  <path d="M526 478 C624 500 694 580 664 650 C634 716 544 650 520 540 Z" fill="none" stroke="#8F96A1" stroke-width="7"/>
+  <!-- veins -->
+  <g stroke="#A9AFB8" stroke-width="3.5" fill="none" opacity="0.9">
+    <path d="M496 446 L330 320"/>
+    <path d="M496 456 L296 374"/>
+    <path d="M496 464 L322 444"/>
+    <path d="M528 446 L694 320"/>
+    <path d="M528 456 L728 374"/>
+    <path d="M528 464 L702 444"/>
+    <path d="M502 510 L388 580"/>
+    <path d="M504 528 L412 628"/>
+    <path d="M522 510 L636 580"/>
+    <path d="M520 528 L612 628"/>
+  </g>
+  <!-- body -->
+  <path d="M512 438 C542 470 540 580 512 648 C484 580 482 470 512 438 Z" fill="#9AA0AA"/>
+  <path d="M489 492 C504 500 520 500 535 492 M487 530 C504 540 520 540 537 530 M491 570 C504 578 520 578 533 570" stroke="#8F96A1" stroke-width="3.5" fill="none"/>
+  <ellipse cx="512" cy="400" rx="28" ry="46" fill="#A9AFB8"/>
+  <circle cx="512" cy="346" r="24" fill="#C9CDD4"/>
+  <path d="M498 338 a18 18 0 0 1 14 -8" stroke="#FFFFFF" stroke-width="4.5" fill="none" stroke-linecap="round" opacity="0.8"/>
+  <path d="M512 360 a26 42 0 0 1 -18 40" stroke="#C9CDD4" stroke-width="4" fill="none" opacity="0.7"/>
+  <!-- mechanical collar bands (no dot pairs) -->
+  <rect x="486" y="436" width="52" height="11" rx="5.5" fill="#8F96A1"/>
+  <rect x="489" y="486" width="46" height="9" rx="4.5" fill="#8F96A1"/>
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+
+  <!-- long shadow -->
+  <g transform="translate(60,44)" fill="#F1E3C9">
+    <path d="M352,348 v372 c0,20 72,36 160,36 s160,-16 160,-36 V348 z"/>
+    <ellipse cx="512" cy="348" rx="160" ry="34"/>
+  </g>
+
+  <!-- ground -->
+  <ellipse cx="512" cy="756" rx="270" ry="16" fill="#EADBBD"/>
+
+  <!-- ===== can body ===== -->
+  <path d="M352,350 v370 c0,20 72,36 160,36 s160,-16 160,-36 V350 z" fill="#AEB4BC"/>
+  <!-- light side -->
+  <path d="M352,350 v370 c0,14 34,26 84,32 -18,-110 -18,-330 0,-402 z" fill="#C6CBD2"/>
+  <!-- dark side -->
+  <path d="M672,350 v370 c0,14 -36,27 -88,32 20,-110 20,-330 0,-402 z" fill="#959BA5"/>
+
+  <!-- label band -->
+  <path d="M352,432 c0,20 72,36 160,36 s160,-16 160,-36 v196 c0,20 -72,36 -160,36 s-160,-16 -160,-36 z" fill="#EFE0C0"/>
+  <path d="M352,432 c0,20 72,36 160,36 s160,-16 160,-36 v14 c0,20 -72,36 -160,36 s-160,-16 -160,-36 z" fill="#D9C9A6"/>
+  <path d="M352,614 c0,20 72,36 160,36 s160,-16 160,-36 v14 c0,20 -72,36 -160,36 s-160,-16 -160,-36 z" fill="#D9C9A6"/>
+  <!-- label shading to keep cylinder roundness -->
+  <path d="M352,432 c0,20 30,30 76,34 -8,-66 -8,-150 0,-216 l-76,0 z" fill="#FFFFFF" opacity="0.0"/>
+  <path d="M352,436 c10,12 36,22 78,28 v200 c-42,-6 -68,-16 -78,-28 z" fill="#FFFFFF" opacity="0.35"/>
+  <path d="M672,436 c-10,12 -38,23 -82,29 v200 c44,-6 72,-17 82,-29 z" fill="#8C6239" opacity="0.14"/>
+
+  <!-- fruit graphic on label -->
+  <circle cx="512" cy="556" r="58" fill="#D9A856"/>
+  <circle cx="494" cy="538" r="16" fill="#EFCB8B"/>
+  <path d="M512,498 q-2,-18 -14,-26" stroke="#8C6239" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <ellipse cx="538" cy="478" rx="24" ry="11" fill="#8FA882" transform="rotate(-24 538 478)"/>
+  <!-- abstract color blocks flanking fruit -->
+  <rect x="398" y="520" width="34" height="72" rx="8" fill="#C9574C"/>
+  <rect x="592" y="520" width="34" height="72" rx="8" fill="#9A9B6E"/>
+
+  <!-- body ribs -->
+  <path d="M362,400 c30,16 90,26 150,26 s120,-10 150,-26" stroke="#8F96A1" stroke-width="5" fill="none" opacity="0.8"/>
+  <path d="M362,682 c30,16 90,26 150,26 s120,-10 150,-26" stroke="#8F96A1" stroke-width="5" fill="none" opacity="0.8"/>
+
+  <!-- rust patches + scratches -->
+  <path d="M612,668 q16,-8 26,4 q12,12 -2,22 q-16,10 -26,-2 q-8,-14 2,-24 z" fill="#B07050" opacity="0.9"/>
+  <circle cx="588" cy="704" r="9" fill="#B07050" opacity="0.75"/>
+  <circle cx="636" cy="708" r="6" fill="#8C5A3E" opacity="0.7"/>
+  <path d="M396,376 l40,-14" stroke="#E2E5EA" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M420,392 l28,-10" stroke="#E2E5EA" stroke-width="3.5" stroke-linecap="round" opacity="0.65"/>
+  <!-- small dent on left metal -->
+  <path d="M380,690 q14,-10 26,0 q-12,14 -26,0 z" fill="#7C828C" opacity="0.5"/>
+
+  <!-- bottom occlusion -->
+  <path d="M384,738 c34,16 222,16 256,0 -22,22 -234,22 -256,0 z" fill="#6E747D" opacity="0.4"/>
+
+  <!-- ===== lid ===== -->
+  <ellipse cx="512" cy="350" rx="160" ry="34" fill="#C9CDD4"/>
+  <ellipse cx="512" cy="350" rx="136" ry="26" fill="#B3B9C1"/>
+  <ellipse cx="512" cy="350" rx="110" ry="20" fill="none" stroke="#9CA2AC" stroke-width="4"/>
+  <!-- occlusion under lid on body -->
+  <path d="M356,366 c20,20 88,33 156,33 s136,-13 156,-33 c-6,14 -70,30 -156,30 s-150,-16 -156,-30 z" fill="#6E747D" opacity="0.35"/>
+  <!-- pull ring -->
+  <ellipse cx="512" cy="346" rx="42" ry="14" fill="none" stroke="#7E858F" stroke-width="9"/>
+  <ellipse cx="512" cy="344" rx="42" ry="14" fill="none" stroke="#959BA5" stroke-width="4"/>
+  <rect x="498" y="322" width="28" height="14" rx="6" fill="#7E858F"/>
+  <circle cx="512" cy="324" r="9" fill="#8F96A1"/>
+  <circle cx="512" cy="324" r="9" fill="none" stroke="#6E747D" stroke-width="3"/>
+  <!-- lid highlight -->
+  <path d="M398,336 q40,-18 104,-19" stroke="#FFFFFF" stroke-width="6" fill="none" opacity="0.75" stroke-linecap="round"/>
+</svg>

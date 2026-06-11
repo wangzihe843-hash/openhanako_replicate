@@ -1,0 +1,43 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#FAF3E6"/>
+  <!-- glow halo (glowing object: halo replaces long shadow) -->
+  <circle cx="512" cy="480" r="320" fill="#EAF3EE" opacity="0.55"/>
+  <circle cx="512" cy="480" r="250" fill="#E2EFE7" opacity="0.5"/>
+  <circle cx="512" cy="480" r="185" fill="#DBEBE1" opacity="0.45"/>
+  <!-- ground -->
+  <ellipse cx="512" cy="768" rx="130" ry="14" fill="#EADBBD"/>
+  <!-- slim slip body: dark base / main face / light strip -->
+  <rect x="437" y="250" width="150" height="510" rx="24" fill="#6FA89B"/>
+  <rect x="437" y="250" width="122" height="510" rx="24" fill="#9CCFC4"/>
+  <rect x="437" y="250" width="64" height="510" rx="24" fill="#BCDCD2"/>
+  <!-- top edge bevel highlight -->
+  <path d="M449 262 C470 253 554 253 575 262" stroke="#D8EDE6" stroke-width="5" fill="none" opacity="0.85"/>
+  <!-- flowing spirit light: single S stream -->
+  <path d="M462 380 C522 422 476 520 538 562" stroke="#EAF7F2" stroke-width="9" fill="none" opacity="0.9" stroke-linecap="round"/>
+  <path d="M470 612 C504 638 514 668 498 700" stroke="#EAF7F2" stroke-width="6" fill="none" opacity="0.7" stroke-linecap="round"/>
+  <circle cx="500" cy="470" r="5" fill="#F6FBF8" opacity="0.95"/>
+  <circle cx="528" cy="640" r="3.5" fill="#F6FBF8" opacity="0.8"/>
+  <!-- left edge highlight -->
+  <path d="M458 292 C452 400 452 600 462 718" stroke="#EDF8F4" stroke-width="6" fill="none" opacity="0.85"/>
+  <!-- hanging hole -->
+  <circle cx="512" cy="300" r="16" fill="#5E9387"/>
+  <circle cx="512" cy="300" r="9" fill="#E4F0E9"/>
+  <!-- red cord: loop above, through hole, knot + one tassel swung to right edge -->
+  <ellipse cx="512" cy="212" rx="22" ry="27" fill="none" stroke="#C9574C" stroke-width="8"/>
+  <path d="M501 236 L507 294" stroke="#C9574C" stroke-width="8" stroke-linecap="round"/>
+  <path d="M523 236 L517 294" stroke="#C9574C" stroke-width="8" stroke-linecap="round"/>
+  <ellipse cx="512" cy="330" rx="24" ry="7" fill="#5E9387" opacity="0.3"/>
+  <circle cx="512" cy="318" r="9" fill="#B83E35"/>
+  <circle cx="509.5" cy="315.5" r="3" fill="#E8766B"/>
+  <path d="M518 326 C540 350 552 380 551 412" stroke="#C9574C" stroke-width="7" fill="none"/>
+  <circle cx="551" cy="416" r="6" fill="#D9A856"/>
+  <rect x="542" y="420" width="18" height="36" rx="8" fill="#C9574C"/>
+  <rect x="542" y="420" width="18" height="9" rx="4" fill="#B83E35"/>
+  <!-- sparkles -->
+  <path d="M0 -16 Q4 -4 16 0 Q4 4 0 16 Q-4 4 -16 0 Q-4 -4 0 -16 Z" transform="translate(388,332)" fill="#FFFFFF" opacity="0.95"/>
+  <path d="M0 -13 Q3.3 -3.3 13 0 Q3.3 3.3 0 13 Q-3.3 3.3 -13 0 Q-3.3 -3.3 0 -13 Z" transform="translate(652,420)" fill="#E5C878"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(640,268)" fill="#FFFFFF" opacity="0.9"/>
+  <path d="M0 -9 Q2.3 -2.3 9 0 Q2.3 2.3 0 9 Q-2.3 2.3 -9 0 Q-2.3 -2.3 0 -9 Z" transform="translate(372,560)" fill="#E5C878" opacity="0.9"/>
+  <circle cx="626" cy="560" r="5" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="396" cy="448" r="4" fill="#E5C878" opacity="0.8"/>
+</svg>
