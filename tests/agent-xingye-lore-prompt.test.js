@@ -61,6 +61,12 @@ function writeManagedLore(agentDir, body = "Stable Xingye lore summary.") {
   );
 }
 
+function writeProfile(agentDir, profile) {
+  const dir = path.join(agentDir, "xingye");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "profile.json"), JSON.stringify(profile, null, 2), "utf-8");
+}
+
 function writeWorkspaceRuntimeLore(root, entries) {
   const loreDir = path.join(root, ".xingye", "agents", "hana");
   fs.mkdirSync(loreDir, { recursive: true });
@@ -134,38 +140,55 @@ describe("agent Xingye lore prompt", () => {
     expect(xingyeIndex).toBeGreaterThan(memoryIndex);
   });
 
-  it("work mode strips Xingye stable + runtime lore and injects the work-mode + ui_context clauses", () => {
+  it("work mode <-> 角色扮演 双向对称：profile(性别/关系) + lore 与工作向 clause 互斥", () => {
     const { agent, root, agentDir } = makeAgent();
     roots.push(root);
+    writeProfile(agentDir, {
+      gender: "female",
+      relationshipLabel: "恋人",
+      relationshipMode: "亲密",
+    });
     writeManagedLore(agentDir);
     writeWorkspaceRuntimeLore(root, [runtimeLore()]);
 
+    // ── 工作模式 ON：剥离 4 个星野注入位（性别/关系/核心设定/关键词 lore），注入工作向 clause ──
     const workPrompt = agent.buildSystemPrompt({
       workModeEnabled: true,
       xingyeWorkspaceRoot: root,
       userText: "Can we go to the observatory?",
     });
-
-    // 角色注入被剥离
-    expect(workPrompt).not.toContain("# 星野核心设定");
+    // makeAgent 用 locale "en"：性别/关系段是英文标题；lore 标题恒为中文。
+    expect(workPrompt).not.toContain("# Role Gender and Pronoun Rules"); // profile.gender
+    expect(workPrompt).not.toContain("# Your Relationship with User");   // profile.relationship
+    expect(workPrompt).not.toContain("# 星野核心设定");          // stable lore
     expect(workPrompt).not.toContain("Stable Xingye lore summary.");
-    expect(workPrompt).not.toContain("# 星野设定参考");
-    // 工作向 clause 注入
+    expect(workPrompt).not.toContain("# 星野设定参考");          // runtime keyword lore
     expect(workPrompt).toContain("## Work Mode");
     expect(workPrompt).toContain("## Visible UI Context");
-    // 基础人格层（pinned/记忆）保留
+    // 基础人格层（pinned/记忆）始终保留
     expect(workPrompt).toContain("Pinned memory stays.");
     expect(workPrompt).toContain("Compiled memory stays.");
 
-    // 对照：默认（角色扮演）仍注入 lore、且不含工作向 clause
+    // ── 工作模式 OFF（默认角色扮演）：4 个星野注入位全在、且绝无工作向 clause ──
     const rolePrompt = agent.buildSystemPrompt({
       xingyeWorkspaceRoot: root,
       userText: "Can we go to the observatory?",
     });
+    expect(rolePrompt).toContain("# Role Gender and Pronoun Rules");
+    expect(rolePrompt).toContain("# Your Relationship with User");
     expect(rolePrompt).toContain("# 星野核心设定");
+    expect(rolePrompt).toContain("Stable Xingye lore summary.");
     expect(rolePrompt).toContain("# 星野设定参考");
     expect(rolePrompt).not.toContain("## Work Mode");
     expect(rolePrompt).not.toContain("## Visible UI Context");
+
+    // 显式传 workModeEnabled:false 必须与不传完全等价（默认即关闭）
+    const explicitOff = agent.buildSystemPrompt({
+      workModeEnabled: false,
+      xingyeWorkspaceRoot: root,
+      userText: "Can we go to the observatory?",
+    });
+    expect(explicitOff).toBe(rolePrompt);
   });
 
   it("does not inject an empty Xingye section when lore-memory.md is absent", () => {
